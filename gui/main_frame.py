@@ -1,16 +1,13 @@
-from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGroupBox,
-    QComboBox, QPushButton, QListWidget, QLineEdit, QLabel,
-    QMessageBox
-)
-from PySide6.QtGui import QAction, QCursor
+# main_frame.py
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QComboBox, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
+from PySide6.QtGui import QCursor
 from PySide6.QtCore import Qt, QPoint
-from .log_panel import LogPanel
+from gui.widgets.py_log.log_panel import LogPanel
 from .styles import Styles, get_default_font
 from controllers.adb_controller import ADBController
 from controllers.email_controller import EmailController
 from controllers.log_controller import LogController
-from gui.custom_menu_bar import CustomMenuBar
+from gui.widgets.py_menu_bar.custom_menu_bar import MenuBarCreator  # 导入新的菜单栏类
 
 
 class MainFrame(QMainWindow):
@@ -38,23 +35,8 @@ class MainFrame(QMainWindow):
 
     def _create_menu(self):
         """ 创建自定义菜单栏 """
-        menu_bar = CustomMenuBar(self)
-        self.setMenuBar(menu_bar)
-
-        # File 菜单
-        file_menu = menu_bar.addMenu("File")
-        restore_action = QAction("Restore Default Size", self)
-        restore_action.triggered.connect(self.restore_default_size)
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(restore_action)
-        file_menu.addAction(exit_action)
-
-        # Help 菜单
-        help_menu = menu_bar.addMenu("Help")
-        about_action = QAction("About", self)
-        about_action.triggered.connect(self.show_about_dialog)
-        help_menu.addAction(about_action)
+        menu_bar_creator = MenuBarCreator(self)
+        self.setMenuBar(menu_bar_creator.get_menu_bar())
 
     def show_about_dialog(self):
         QMessageBox.about(self, "About", "ADB Manager GUI\nVersion 1.0\nPySide6 Example")

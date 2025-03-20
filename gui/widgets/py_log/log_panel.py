@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
-from .styles import Styles
+from gui.styles import Styles
 
 class LogPanel(QWidget):
     def __init__(self, parent=None):
