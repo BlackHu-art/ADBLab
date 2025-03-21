@@ -13,6 +13,11 @@ class Styles:
     LOG_BACKGROUND = "#000000"
     LOG_TEXT_COLOR = "#FFFFFF"
     WINDOW_BACKGROUND = "#f0f0f0"
+    # styles.py
+    MENU_BAR_BG = "#333333"      # 菜单栏背景色
+    MENU_TEXT_COLOR = "#888888"  # 菜单文字颜色
+    MENU_ITEM_HOVER = "#404040"  # 菜单项悬停背景
+    BORDER_COLOR = "#555555"     # 分割线颜色
 
     # 在styles.py中添加：
     SCROLLBAR_STYLE = """

@@ -1,69 +1,122 @@
-# menu_bar_creator.py
-from PySide6.QtWidgets import QMenuBar, QPushButton, QHBoxLayout, QWidget
-from PySide6.QtGui import QCursor, QAction
+from PySide6.QtWidgets import QMenuBar, QWidget
+from PySide6.QtGui import QMouseEvent, QAction
 from PySide6.QtCore import Qt, QPoint
-
+from typing import Optional
+from gui.styles import Styles  # 新增导入
 
 class CustomMenuBar(QMenuBar):
-    def __init__(self, parent):
-        super().__init__(parent)
-        self.parent = parent
-        self._drag_pos = None
-        self._create_menu()
+    """自定义菜单栏，支持窗口拖拽和常用操作"""
+    
+    # ... 其他代码保持不变 ...
 
-    def _create_menu(self):
-        """ 创建自定义菜单栏 """
-        # File 菜单
-        file_menu = self.addMenu("File")
-        restore_action = QAction("Restore Default Size", self.parent)
-        restore_action.triggered.connect(self.parent.restore_default_size)
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.parent_window = parent
+        self._drag_pos: Optional[QPoint] = None
+        self._setup_ui()
+        self._setup_styles()  # 新增样式初始化
+
+    def _setup_styles(self) -> None:
+        """设置菜单栏视觉样式"""
+        self.setStyleSheet(f"""
+            QMenuBar {{
+                border-bottom: 1px solid {Styles.BORDER_COLOR};
+                background: {Styles.MENU_BAR_BG};
+                spacing: 5px;
+            }}
+            QMenuBar::item {{
+                color: {Styles.MENU_TEXT_COLOR};
+                padding: 5px 12px;
+                border-radius: 3px;
+            }}
+            QMenuBar::item:selected {{
+                background: {Styles.MENU_ITEM_HOVER};
+            }}
+        """)
+    
+    # 菜单项常量
+    MENU_TITLES = {
+        "file": "File",
+        "help": "Help",
+        "minimize": "Minimize",
+        "exit": "Exit"
+    }
+    
+    ACTION_TEXTS = {
+        "restore": "Restore Default Size",
+        "about": "About"
+    }
+
+    def _setup_ui(self) -> None:
+        """初始化菜单栏界面"""
+        self._create_file_menu()
+        self._create_help_menu()
+        self._create_window_controls()
+
+    def _create_file_menu(self) -> None:
+        """创建File菜单及其子项"""
+        file_menu = self.addMenu(self.MENU_TITLES["file"])
+        restore_action = QAction(self.ACTION_TEXTS["restore"], self.parent_window)
+        restore_action.triggered.connect(self.parent_window.restore_default_size)
         file_menu.addAction(restore_action)
 
-        # Help 菜单
-        help_menu = self.addMenu("Help")
-        about_action = QAction("About", self.parent)
-        about_action.triggered.connect(self.parent.show_about_dialog)
+    def _create_help_menu(self) -> None:
+        """创建Help菜单及其子项"""
+        help_menu = self.addMenu(self.MENU_TITLES["help"])
+        about_action = QAction(self.ACTION_TEXTS["about"], self.parent_window)
+        about_action.triggered.connect(self.parent_window.show_about_dialog)
         help_menu.addAction(about_action)
-        
-        # 最小化按钮（与 File、Help、Exit 同级）
-        minimize_action = QAction("Minimize", self.parent)
-        minimize_action.triggered.connect(self.parent.showMinimized)
-        self.addAction(minimize_action)  # 直接添加到菜单栏
-        
-        # 退出按钮（与 File、Help 同级）
-        exit_action = QAction("Exit", self.parent)
-        exit_action.triggered.connect(self.parent.close)
-        self.addAction(exit_action)  # 直接添加到菜单栏
 
-    def mousePressEvent(self, event):
-        # 仅处理鼠标左键点击事件
-        if event.button() == Qt.LeftButton:
-            # 如果点击位置上没有菜单项，则认为点击在空白区域
-            if self.actionAt(event.pos()) is None:
-                # 计算鼠标点击位置与窗口左上角的偏移量（全局坐标）
-                self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
-                event.accept()
-                return  # 直接返回，不调用父类方法，防止干扰拖动
-        # 如果点击在菜单项上，交由父类处理
-        super().mousePressEvent(event)
+    def _create_window_controls(self) -> None:
+        """创建窗口控制按钮"""
+        minimize_action = QAction(self.MENU_TITLES["minimize"], self.parent_window)
+        minimize_action.triggered.connect(self.parent_window.showMinimized)
+        self.addAction(minimize_action)
 
-    def mouseMoveEvent(self, event):
-        # 如果正在拖动（左键按下且_drag_pos不为空），则移动窗口
-        if event.buttons() & Qt.LeftButton and self._drag_pos is not None:
+        exit_action = QAction(self.MENU_TITLES["exit"], self.parent_window)
+        exit_action.triggered.connect(self.parent_window.close)
+        self.addAction(exit_action)
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """处理鼠标按下事件"""
+        if event.button() == Qt.LeftButton and self._is_blank_area(event.pos()):
+            self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """处理鼠标移动事件"""
+        if self._is_dragging(event):
             self.window().move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
-            return  # 拖动事件已处理，不再传递
-        super().mouseMoveEvent(event)
+        else:
+            super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event):
-        # 鼠标释放时，重置拖动状态
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """处理鼠标释放事件"""
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
+    def _is_blank_area(self, pos: QPoint) -> bool:
+        """判断点击位置是否为空白区域"""
+        return self.actionAt(pos) is None
+
+    def _is_dragging(self, event: QMouseEvent) -> bool:
+        """判断是否处于拖拽状态"""
+        return bool(
+            event.buttons() & Qt.LeftButton 
+            and self._drag_pos is not None
+        )
+
+
 class MenuBarCreator:
-    def __init__(self, parent):
+    """菜单栏创建工厂类"""
+    
+    def __init__(self, parent: QWidget):
         self.parent = parent
         self.menu_bar = CustomMenuBar(parent)
 
-    def get_menu_bar(self):
+    def get_menu_bar(self) -> QMenuBar:
+        """获取创建好的菜单栏实例"""
         return self.menu_bar
