@@ -1,107 +1,133 @@
 # left_panel.py
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton, QListWidget
+from typing import List
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
+                              QGroupBox, QComboBox, QPushButton, QListWidget)
 from controllers.adb_controller import ADBController
-from gui.styles import Styles, get_default_font
+from gui.styles import get_default_font
 
 
 class LeftPanel(QWidget):
-    """ 左侧面板，包含设备管理和操作按钮 """
+    """左侧操作面板，集成ADB设备管理功能"""
+    # 界面常量
+    PANEL_WIDTH = 500
+    GROUP_TITLES = ("Device Management", "Actions")
+    BUTTON_TEXTS = (
+        "Connect", "Refresh", "Device Info", "Current Activity",
+        "Select APK", "Get ANR Files", "Kill All Apps", "Installed Apps"
+    )
 
-    def __init__(self, main_frame):
+    def __init__(self, main_frame: QWidget):
         super().__init__()
-        self.main_frame = main_frame  # 保存主窗口实例以调用日志方法
-        self.setFixedWidth(500)
+        self.main_frame = main_frame  # 主窗口引用
+        self.adb_controller = ADBController(self)
+        self._init_ui_settings()
+        self._create_ui_components()
 
-        # 初始化控制器
-        self.adb_controller = ADBController(self)  # 将 LeftPanel 实例传递给 ADBController
+    def _init_ui_settings(self):
+        """初始化界面基本设置"""
+        self.setFixedWidth(self.PANEL_WIDTH)
+        self._base_font = get_default_font()
 
-        self._setup_ui()
+    def _create_ui_components(self):
+        """创建所有UI组件"""
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(8)
+        main_layout.setContentsMargins(8, 8, 8, 8)
 
-    def _setup_ui(self):
-        """ 设置左侧面板布局 """
-        layout = QVBoxLayout(self)
-        layout.setSpacing(1)
-        layout.setContentsMargins(1, 1, 1, 1)
+        # 设备管理区域
+        main_layout.addWidget(self._create_device_group())
+        # 操作按钮区域
+        main_layout.addWidget(self._create_actions_group())
+        main_layout.addStretch()
 
-        # Device Management
-        device_group = QGroupBox("Device Management")
-        device_group.setFont(get_default_font())
-        device_layout = QVBoxLayout()
+    def _create_device_group(self) -> QGroupBox:
+        """创建设备管理分组"""
+        group = QGroupBox(self.GROUP_TITLES[0])
+        group.setFont(self._base_font)
 
-        # IP Address Entry and Connect Button
-        ip_layout = QHBoxLayout()
+        layout = QVBoxLayout()
+        layout.addLayout(self._create_connect_bar())
+        layout.addWidget(self._create_device_list())
+        group.setLayout(layout)
+
+        return group
+
+    def _create_connect_bar(self) -> QHBoxLayout:
+        """创建IP输入栏和连接按钮"""
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
-        self.ip_entry.setFont(get_default_font())
-        ip_layout.addWidget(self.ip_entry)
-        self.btn_connect = QPushButton("Connect")
-        self.btn_connect.setFont(get_default_font())
-        self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
-        ip_layout.addWidget(self.btn_connect)
-        device_layout.addLayout(ip_layout)
+        self.ip_entry.setFont(self._base_font)
 
-        # Device List
+        self.btn_connect = self._create_button(self.BUTTON_TEXTS[0], 
+                                             self.adb_controller.on_connect_device)
+
+        connect_layout = QHBoxLayout()
+        connect_layout.addWidget(self.ip_entry, stretch=3)
+        connect_layout.addWidget(self.btn_connect, stretch=1)
+        return connect_layout
+
+    def _create_device_list(self) -> QListWidget:
+        """创建设备列表"""
         self.listbox_devices = QListWidget()
-        self.listbox_devices.setFont(get_default_font())
-        device_layout.addWidget(self.listbox_devices)
-        device_group.setLayout(device_layout)
-        layout.addWidget(device_group)
-
-        # Actions
-        actions_group = QGroupBox("Actions")
-        actions_group.setFont(get_default_font())
-        actions_layout = QVBoxLayout()
-
-        # Row 1: Refresh Devices, Get Info, Get Activity
-        row1 = QHBoxLayout()
-        self.btn_refresh_devices = QPushButton("Refresh")
-        self.btn_refresh_devices.setFont(get_default_font())
-        self.btn_refresh_devices.clicked.connect(self.adb_controller.on_refresh_devices)
-        row1.addWidget(self.btn_refresh_devices)
-        self.btn_get_device_info = QPushButton("Device Info")
-        self.btn_get_device_info.setFont(get_default_font())
-        self.btn_get_device_info.clicked.connect(self.adb_controller.on_get_device_info)
-        row1.addWidget(self.btn_get_device_info)
-        self.btn_current_activity = QPushButton("Current Activity")
-        self.btn_current_activity.setFont(get_default_font())
-        self.btn_current_activity.clicked.connect(self.adb_controller.on_current_activity)
-        row1.addWidget(self.btn_current_activity)
-        actions_layout.addLayout(row1)
-
-        # Row 2: Select APK
-        row2 = QHBoxLayout()
-        self.btn_select_apk = QPushButton("Select APK")
-        self.btn_select_apk.setFont(get_default_font())
-        self.btn_select_apk.clicked.connect(self.adb_controller.on_select_apk)
-        row2.addWidget(self.btn_select_apk)
-        actions_layout.addLayout(row2)
-
-        # Row 3: ANR Files, Kill Apps, Package List
-        row3 = QHBoxLayout()
-        self.btn_get_anr_files = QPushButton("Get ANR Files")
-        self.btn_get_anr_files.setFont(get_default_font())
-        self.btn_get_anr_files.clicked.connect(self.adb_controller.on_get_anr_files)
-        row3.addWidget(self.btn_get_anr_files)
-        self.btn_kill_all_apps = QPushButton("Kill All Apps")
-        self.btn_kill_all_apps.setFont(get_default_font())
-        self.btn_kill_all_apps.clicked.connect(self.adb_controller.on_kill_all_apps)
-        row3.addWidget(self.btn_kill_all_apps)
-        self.btn_get_packages = QPushButton("Installed Apps")
-        self.btn_get_packages.setFont(get_default_font())
-        self.btn_get_packages.clicked.connect(self.adb_controller.on_get_installed_packages)
-        row3.addWidget(self.btn_get_packages)
-        actions_layout.addLayout(row3)
-        actions_group.setLayout(actions_layout)
-        layout.addWidget(actions_group)
-
-        layout.addStretch()
-
-    # 提供对控件的访问接口
-    def get_ip_entry(self):
-        return self.ip_entry
-
-    def get_listbox_devices(self):
+        self.listbox_devices.setFont(self._base_font)
         return self.listbox_devices
 
-    def get_selected_devices(self):
+    def _create_actions_group(self) -> QGroupBox:
+        """创建操作按钮分组"""
+        group = QGroupBox(self.GROUP_TITLES[1])
+        group.setFont(self._base_font)
+
+        layout = QVBoxLayout()
+        layout.addLayout(self._create_action_row1())
+        layout.addLayout(self._create_action_row2())
+        layout.addLayout(self._create_action_row3())
+        group.setLayout(layout)
+
+        return group
+
+    def _create_action_row1(self) -> QHBoxLayout:
+        """创建第一行操作按钮"""
+        return self._create_button_row([
+            (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
+            (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
+            (self.BUTTON_TEXTS[3], self.adb_controller.on_current_activity)
+        ])
+
+    def _create_action_row2(self) -> QHBoxLayout:
+        """创建第二行操作按钮"""
+        return self._create_button_row([
+            (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk)
+        ])
+
+    def _create_action_row3(self) -> QHBoxLayout:
+        """创建第三行操作按钮"""
+        return self._create_button_row([
+            (self.BUTTON_TEXTS[5], self.adb_controller.on_get_anr_files),
+            (self.BUTTON_TEXTS[6], self.adb_controller.on_kill_all_apps),
+            (self.BUTTON_TEXTS[7], self.adb_controller.on_get_installed_packages)
+        ])
+
+    def _create_button_row(self, button_specs: List[tuple]) -> QHBoxLayout:
+        """通用按钮行创建方法"""
+        row = QHBoxLayout()
+        for text, callback in button_specs:
+            btn = self._create_button(text, callback)
+            row.addWidget(btn)
+        return row
+
+    def _create_button(self, text: str, callback) -> QPushButton:
+        """通用按钮创建方法"""
+        btn = QPushButton(text)
+        btn.setFont(self._base_font)
+        btn.clicked.connect(callback)
+        return btn
+
+    @property
+    def selected_devices(self) -> List[str]:
+        """获取已选设备列表（属性方式访问）"""
         return [item.text() for item in self.listbox_devices.selectedItems()]
+
+    @property
+    def ip_address(self) -> str:
+        """获取当前输入的IP地址"""
+        return self.ip_entry.currentText()
