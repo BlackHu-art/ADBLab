@@ -21,6 +21,10 @@ class MainFrame(QMainWindow):
         self.setWindowTitle("ADB Manager GUI")
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
+        
+        # 添加字体配置
+        default_font = get_default_font()  # 修改为可靠字体
+        self.setFont(default_font)
 
         self._drag_pos = None
         self._resizing = False

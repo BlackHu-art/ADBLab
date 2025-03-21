@@ -12,4 +12,4 @@ class Styles:
     WINDOW_BACKGROUND = "#f0f0f0"
 
 def get_default_font():
-    return QFont("", Styles.DEFAULT_FONT_SIZE)
+    return QFont("Segoe UI", Styles.DEFAULT_FONT_SIZE)
