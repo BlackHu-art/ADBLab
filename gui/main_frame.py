@@ -2,7 +2,8 @@
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QGroupBox, QComboBox, QPushButton, QListWidget, QLineEdit, QLabel, QMessageBox
 from PySide6.QtGui import QCursor
 from PySide6.QtCore import Qt, QPoint
-from gui.widgets.py_log.log_panel import LogPanel
+from gui.widgets.py_panel.log_panel import LogPanel
+from gui.widgets.py_panel.left_panel import LeftPanel
 from .styles import Styles, get_default_font
 from controllers.adb_controller import ADBController
 from controllers.email_controller import EmailController
@@ -24,11 +25,6 @@ class MainFrame(QMainWindow):
         self._drag_pos = None
         self._resizing = False
         self._resize_direction = None
-
-        # 初始化控制器
-        self.adb_controller = ADBController(self)
-        self.email_controller = EmailController(self)
-        self.log_controller = LogController(self)
 
         self._setup_ui()
         self._create_menu()
@@ -52,84 +48,9 @@ class MainFrame(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # ---------------- Left Panel ----------------
-        left_panel = QWidget()
-        left_panel.setFixedWidth(500)
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setSpacing(1)
-        left_layout.setContentsMargins(1, 1, 1, 1)
-
-        # Device Management
-        device_group = QGroupBox("Device Management")
-        device_group.setFont(get_default_font())
-        device_layout = QVBoxLayout()
-        # IP Address Entry and Connect Button
-        ip_layout = QHBoxLayout()
-        self.ip_entry = QComboBox()
-        self.ip_entry.setEditable(True)
-        self.ip_entry.setFont(get_default_font())
-        ip_layout.addWidget(self.ip_entry)
-        self.btn_connect = QPushButton("Connect")
-        self.btn_connect.setFont(get_default_font())
-        self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
-        ip_layout.addWidget(self.btn_connect)
-        device_layout.addLayout(ip_layout)
-        # Device List
-        self.listbox_devices = QListWidget()
-        self.listbox_devices.setFont(get_default_font())
-        device_layout.addWidget(self.listbox_devices)
-        device_group.setLayout(device_layout)
-        left_layout.addWidget(device_group)
-
-        # Actions
-        actions_group = QGroupBox("Actions")
-        actions_group.setFont(get_default_font())
-        actions_layout = QVBoxLayout()
-
-        # Row 1: Refresh Devices, Get Info, Get Activity
-        row1 = QHBoxLayout()
-        self.btn_refresh_devices = QPushButton("Refresh")
-        self.btn_refresh_devices.setFont(get_default_font())
-        self.btn_refresh_devices.clicked.connect(self.adb_controller.on_refresh_devices)
-        row1.addWidget(self.btn_refresh_devices)
-        self.btn_get_device_info = QPushButton("Device Info")
-        self.btn_get_device_info.setFont(get_default_font())
-        self.btn_get_device_info.clicked.connect(self.adb_controller.on_get_device_info)
-        row1.addWidget(self.btn_get_device_info)
-        self.btn_current_activity = QPushButton("Current Activity")
-        self.btn_current_activity.setFont(get_default_font())
-        self.btn_current_activity.clicked.connect(self.adb_controller.on_current_activity)
-        row1.addWidget(self.btn_current_activity)
-        actions_layout.addLayout(row1)
-
-        # Row 2: Select APK
-        row2 = QHBoxLayout()
-        self.btn_select_apk = QPushButton("Select APK")
-        self.btn_select_apk.setFont(get_default_font())
-        self.btn_select_apk.clicked.connect(self.adb_controller.on_select_apk)
-        row2.addWidget(self.btn_select_apk)
-        actions_layout.addLayout(row2)
-
-        # Row 3: ANR Files, Kill Apps, Package List
-        row3 = QHBoxLayout()
-        self.btn_get_anr_files = QPushButton("Get ANR Files")
-        self.btn_get_anr_files.setFont(get_default_font())
-        self.btn_get_anr_files.clicked.connect(self.adb_controller.on_get_anr_files)
-        row3.addWidget(self.btn_get_anr_files)
-        self.btn_kill_all_apps = QPushButton("Kill All Apps")
-        self.btn_kill_all_apps.setFont(get_default_font())
-        self.btn_kill_all_apps.clicked.connect(self.adb_controller.on_kill_all_apps)
-        row3.addWidget(self.btn_kill_all_apps)
-        self.btn_get_packages = QPushButton("Installed Apps")
-        self.btn_get_packages.setFont(get_default_font())
-        self.btn_get_packages.clicked.connect(self.adb_controller.on_get_installed_packages)
-        row3.addWidget(self.btn_get_packages)
-        actions_layout.addLayout(row3)
-        actions_group.setLayout(actions_layout)
-        left_layout.addWidget(actions_group)
-
-        left_layout.addStretch()
-        main_layout.addWidget(left_panel)
-
+        self.left_panel = LeftPanel(self)  # 将主窗口实例传递给 LeftPanel
+        main_layout.addWidget(self.left_panel)
+        
         # ---------------- Right Log Panel ----------------
         self.log_panel = LogPanel()
         main_layout.addWidget(self.log_panel)
