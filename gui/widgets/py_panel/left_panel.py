@@ -31,8 +31,8 @@ class LeftPanel(QWidget):
     def _create_ui_components(self):
         """创建所有UI组件"""
         main_layout = QVBoxLayout(self)
-        main_layout.setSpacing(8)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
         # 设备管理区域
         main_layout.addWidget(self._create_device_group())
