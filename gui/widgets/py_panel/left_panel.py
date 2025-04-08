@@ -1,7 +1,8 @@
 # left_panel.py
 from typing import List
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                              QGroupBox, QComboBox, QPushButton, QListWidget)
+                              QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem)
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
 
@@ -70,6 +71,7 @@ class LeftPanel(QWidget):
         """创建设备列表"""
         self.listbox_devices = QListWidget()
         self.listbox_devices.setFont(self._base_font)
+        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)  # 禁用默认选中机制，改用复选框
         return self.listbox_devices
 
     def _create_actions_group(self) -> QGroupBox:
@@ -122,10 +124,24 @@ class LeftPanel(QWidget):
         btn.clicked.connect(callback)
         return btn
 
+    def update_device_list(self, devices: list[str]):
+        self.listbox_devices.clear()
+        for device in devices:
+            item = QListWidgetItem(device)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            self.listbox_devices.addItem(item)
+            
     @property
     def selected_devices(self) -> List[str]:
-        """获取已选设备列表（属性方式访问）"""
-        return [item.text() for item in self.listbox_devices.selectedItems()]
+        """获取复选框勾选的设备列表"""
+        selected = []
+        for i in range(self.listbox_devices.count()):
+            item = self.listbox_devices.item(i)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.text())
+        return selected
+
 
     @property
     def ip_address(self) -> str:

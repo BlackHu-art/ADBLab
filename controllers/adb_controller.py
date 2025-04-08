@@ -27,11 +27,9 @@ class ADBController:
     def on_refresh_devices(self, event=None):
         try:
             devices = ADBModel.get_devices()
-            listbox = self.left_panel.listbox_devices
-            listbox.clear()
-            
+            self.left_panel.update_device_list(devices)
+
             if devices:
-                listbox.addItems(devices)
                 self.left_panel.main_frame.log_message("INFO", 
                     f"Found {len(devices)} device(s): {', '.join(devices)}")
             else:
