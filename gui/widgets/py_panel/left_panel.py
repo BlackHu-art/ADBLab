@@ -1,15 +1,16 @@
-# left_panel.py
 from typing import List
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, 
-                              QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem)
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout,
+    QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem, QFrame
+)
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
 
 
 class LeftPanel(QWidget):
     """左侧操作面板，集成ADB设备管理功能"""
-    # 界面常量
     PANEL_WIDTH = 500
     GROUP_TITLES = ("Device Management", "Actions")
     BUTTON_TEXTS = (
@@ -19,63 +20,74 @@ class LeftPanel(QWidget):
 
     def __init__(self, main_frame: QWidget):
         super().__init__()
-        self.main_frame = main_frame  # 主窗口引用
+        self.main_frame = main_frame
         self.adb_controller = ADBController(self)
         self._init_ui_settings()
         self._create_ui_components()
 
     def _init_ui_settings(self):
-        """初始化界面基本设置"""
         self.setFixedWidth(self.PANEL_WIDTH)
         self._base_font = get_default_font()
 
     def _create_ui_components(self):
-        """创建所有UI组件"""
         main_layout = QVBoxLayout(self)
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        # 设备管理区域
         main_layout.addWidget(self._create_device_group())
-        # 操作按钮区域
         main_layout.addWidget(self._create_actions_group())
         main_layout.addStretch()
 
     def _create_device_group(self) -> QGroupBox:
-        """创建设备管理分组"""
         group = QGroupBox(self.GROUP_TITLES[0])
         group.setFont(self._base_font)
 
         layout = QVBoxLayout()
         layout.addLayout(self._create_connect_bar())
-        layout.addWidget(self._create_device_list())
+        layout.addLayout(self._create_device_list_section())
         group.setLayout(layout)
 
         return group
 
     def _create_connect_bar(self) -> QHBoxLayout:
-        """创建IP输入栏和连接按钮"""
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
 
-        self.btn_connect = self._create_button(self.BUTTON_TEXTS[0], 
-                                             self.adb_controller.on_connect_device)
+        self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
+        self.btn_connect.setFont(self._base_font)
+        self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
 
         connect_layout = QHBoxLayout()
         connect_layout.addWidget(self.ip_entry, stretch=3)
         connect_layout.addWidget(self.btn_connect, stretch=1)
         return connect_layout
 
-    def _create_device_list(self) -> QListWidget:
-        """创建设备列表"""
+    def _create_device_list_section(self) -> QHBoxLayout:
+        layout = QHBoxLayout()
+
         self.listbox_devices = QListWidget()
         self.listbox_devices.setFont(self._base_font)
-        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)  # 禁用默认选中机制，改用复选框
-        return self.listbox_devices
+        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
+        self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
+
+        button_panel = QFrame()
+        button_layout = QVBoxLayout(button_panel)
+        button_layout.setSpacing(5)
+        button_layout.setContentsMargins(0, 0, 0, 0)
+        btn1 = QPushButton("Example 1")
+        btn2 = QPushButton("Example 2")
+        btn1.setFont(self._base_font)
+        btn2.setFont(self._base_font)
+        button_layout.addWidget(btn1)
+        button_layout.addWidget(btn2)
+        button_layout.addStretch()
+
+        layout.addWidget(self.listbox_devices, 1)
+        layout.addWidget(button_panel, 1)
+        return layout
 
     def _create_actions_group(self) -> QGroupBox:
-        """创建操作按钮分组"""
         group = QGroupBox(self.GROUP_TITLES[1])
         group.setFont(self._base_font)
 
@@ -88,7 +100,6 @@ class LeftPanel(QWidget):
         return group
 
     def _create_action_row1(self) -> QHBoxLayout:
-        """创建第一行操作按钮"""
         return self._create_button_row([
             (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
             (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
@@ -96,13 +107,11 @@ class LeftPanel(QWidget):
         ])
 
     def _create_action_row2(self) -> QHBoxLayout:
-        """创建第二行操作按钮"""
         return self._create_button_row([
             (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk)
         ])
 
     def _create_action_row3(self) -> QHBoxLayout:
-        """创建第三行操作按钮"""
         return self._create_button_row([
             (self.BUTTON_TEXTS[5], self.adb_controller.on_get_anr_files),
             (self.BUTTON_TEXTS[6], self.adb_controller.on_kill_all_apps),
@@ -110,40 +119,34 @@ class LeftPanel(QWidget):
         ])
 
     def _create_button_row(self, button_specs: List[tuple]) -> QHBoxLayout:
-        """通用按钮行创建方法"""
         row = QHBoxLayout()
         for text, callback in button_specs:
-            btn = self._create_button(text, callback)
+            btn = QPushButton(text)
+            btn.setFont(self._base_font)
+            btn.clicked.connect(callback)
             row.addWidget(btn)
         return row
 
-    def _create_button(self, text: str, callback) -> QPushButton:
-        """通用按钮创建方法"""
-        btn = QPushButton(text)
-        btn.setFont(self._base_font)
-        btn.clicked.connect(callback)
-        return btn
-
-    def update_device_list(self, devices: list[str]):
+    def update_device_list(self, devices: List[str]):
         self.listbox_devices.clear()
         for device in devices:
             item = QListWidgetItem(device)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
+            item.setFont(self._base_font)
             self.listbox_devices.addItem(item)
-            
+
+    def _on_device_item_double_clicked(self, item: QListWidgetItem):
+        """双击设备列表项，切换其选中状态"""
+        new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
+        item.setCheckState(new_state)
+
     @property
     def selected_devices(self) -> List[str]:
-        """获取复选框勾选的设备列表"""
-        selected = []
-        for i in range(self.listbox_devices.count()):
-            item = self.listbox_devices.item(i)
-            if item.checkState() == Qt.Checked:
-                selected.append(item.text())
-        return selected
-
+        return [self.listbox_devices.item(i).text()
+                for i in range(self.listbox_devices.count())
+                if self.listbox_devices.item(i).checkState() == Qt.Checked]
 
     @property
     def ip_address(self) -> str:
-        """获取当前输入的IP地址"""
         return self.ip_entry.currentText()
