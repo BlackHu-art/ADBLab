@@ -1,5 +1,5 @@
 # main_frame.py
-from PySide6.QtCore import Qt, QPoint
+from PySide6.QtCore import Qt, QPoint, QTimer
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QMessageBox
 from gui.widgets.py_panel.log_panel import LogPanel
@@ -20,6 +20,10 @@ class MainFrame(QMainWindow):
         self._init_ui_components()
         self._setup_ui()
         self._create_menu()
+        
+        # 启动后延迟100毫秒刷新设备
+        QTimer.singleShot(100, self.left_panel.adb_controller.on_refresh_devices)
+
 
     def _setup_window_properties(self):
         """配置窗口基本属性"""
