@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem, QFrame
+    QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem, QFrame, QSizePolicy
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -34,7 +34,9 @@ class LeftPanel(QWidget):
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        main_layout.addWidget(self._create_device_group())
+        device_group = self._create_device_group()
+        device_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        main_layout.addWidget(device_group)
         main_layout.addWidget(self._create_actions_group())
         main_layout.addStretch()
 
@@ -59,7 +61,7 @@ class LeftPanel(QWidget):
         self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
 
         connect_layout = QHBoxLayout()
-        connect_layout.addWidget(self.ip_entry, stretch=3)
+        connect_layout.addWidget(self.ip_entry, stretch=2)
         connect_layout.addWidget(self.btn_connect, stretch=1)
         return connect_layout
 
@@ -70,20 +72,36 @@ class LeftPanel(QWidget):
         self.listbox_devices.setFont(self._base_font)
         self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
+        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
         button_layout.setSpacing(5)
         button_layout.setContentsMargins(0, 0, 0, 0)
-        btn1 = QPushButton("Example 1")
-        btn2 = QPushButton("Example 2")
-        btn1.setFont(self._base_font)
-        btn2.setFont(self._base_font)
-        button_layout.addWidget(btn1)
-        button_layout.addWidget(btn2)
+        button_panel.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+
+        btn_refresh = QPushButton(self.BUTTON_TEXTS[1])
+        btn_info = QPushButton(self.BUTTON_TEXTS[2])
+        btn_activity = QPushButton(self.BUTTON_TEXTS[3])
+        btn_example1 = QPushButton("Example 1")
+        btn_example2 = QPushButton("Example 2")
+        btn_example3 = QPushButton("Example 3")
+
+        for btn, handler in zip([btn_refresh, btn_info, btn_activity],
+                                [self.adb_controller.on_refresh_devices,
+                                 self.adb_controller.on_get_device_info,
+                                 self.adb_controller.on_current_activity]):
+            btn.setFont(self._base_font)
+            btn.clicked.connect(handler)
+            button_layout.addWidget(btn)
+
+        for btn in [btn_example1, btn_example2, btn_example3]:
+            btn.setFont(self._base_font)
+            button_layout.addWidget(btn)
+
         button_layout.addStretch()
 
-        layout.addWidget(self.listbox_devices, 1)
+        layout.addWidget(self.listbox_devices, 2)
         layout.addWidget(button_panel, 1)
         return layout
 
@@ -92,19 +110,11 @@ class LeftPanel(QWidget):
         group.setFont(self._base_font)
 
         layout = QVBoxLayout()
-        layout.addLayout(self._create_action_row1())
         layout.addLayout(self._create_action_row2())
         layout.addLayout(self._create_action_row3())
         group.setLayout(layout)
 
         return group
-
-    def _create_action_row1(self) -> QHBoxLayout:
-        return self._create_button_row([
-            (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
-            (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
-            (self.BUTTON_TEXTS[3], self.adb_controller.on_current_activity)
-        ])
 
     def _create_action_row2(self) -> QHBoxLayout:
         return self._create_button_row([
@@ -137,7 +147,6 @@ class LeftPanel(QWidget):
             self.listbox_devices.addItem(item)
 
     def _on_device_item_double_clicked(self, item: QListWidgetItem):
-        """双击设备列表项，切换其选中状态"""
         new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
         item.setCheckState(new_state)
 
