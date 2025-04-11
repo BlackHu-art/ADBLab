@@ -22,6 +22,7 @@ class LeftPanel(QWidget):
         super().__init__()
         self.main_frame = main_frame
         self.adb_controller = ADBController(self)
+        self.connected_device_cache = []  # 新增：缓存已连接设备列表
         self._init_ui_settings()
         self._create_ui_components()
 
@@ -120,6 +121,7 @@ class LeftPanel(QWidget):
 
     def update_device_list(self, devices: List[str]):
         self.listbox_devices.clear()
+        self.connected_device_cache = devices  # 更新缓存
         for device in devices:
             item = QListWidgetItem(device)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)

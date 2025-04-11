@@ -13,7 +13,9 @@ class ADBController:
         if not ip_address:
             self.left_panel.main_frame.log_message("WARNING", "IP address cannot be empty")
             return
-            
+        if ip_address in self.left_panel.connected_device_cache:
+            self.left_panel.main_frame.log_message("WARNING", f"{ip_address} is already connected")
+            return
         try:
             result = ADBModel.connect_device(ip_address)
             if "connected" in result.lower():
