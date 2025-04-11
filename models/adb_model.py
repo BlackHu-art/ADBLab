@@ -12,6 +12,18 @@ class ADBModel:
             return output.strip()
         except subprocess.CalledProcessError as e:
             return f"Error: {e.output.strip()}"
+        
+    @staticmethod
+    def get_connected_devices():
+        """返回所有通过 adb 连接的设备"""
+        result = os.popen("adb devices").read()
+        lines = result.strip().splitlines()[1:]  # 跳过第一行 'List of devices attached'
+        devices = []
+        for line in lines:
+            if "device" in line:
+                device_id = line.split("\t")[0]
+                devices.append(device_id)
+        return devices
 
     @staticmethod
     def get_devices():
