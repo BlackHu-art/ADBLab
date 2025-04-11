@@ -1,9 +1,9 @@
 from typing import List
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout,
-    QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem, QFrame, QSizePolicy
+    QGroupBox, QComboBox, QPushButton, QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -34,9 +34,7 @@ class LeftPanel(QWidget):
         main_layout.setSpacing(0)
         main_layout.setContentsMargins(0, 0, 0, 0)
 
-        device_group = self._create_device_group()
-        device_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        main_layout.addWidget(device_group)
+        main_layout.addWidget(self._create_device_group())
         main_layout.addWidget(self._create_actions_group())
         main_layout.addStretch()
 
@@ -45,97 +43,80 @@ class LeftPanel(QWidget):
         group.setFont(self._base_font)
 
         layout = QVBoxLayout()
-        layout.addLayout(self._create_connect_bar())
-        layout.addLayout(self._create_device_list_section())
-        group.setLayout(layout)
 
-        return group
-
-    def _create_connect_bar(self) -> QHBoxLayout:
+        ip_layout = QHBoxLayout()
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
-
         self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
         self.btn_connect.setFont(self._base_font)
         self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
+        ip_layout.addWidget(self.ip_entry, stretch=2)
+        ip_layout.addWidget(self.btn_connect, stretch=1)
+        layout.addLayout(ip_layout)
 
-        connect_layout = QHBoxLayout()
-        connect_layout.addWidget(self.ip_entry, stretch=2)
-        connect_layout.addWidget(self.btn_connect, stretch=1)
-        return connect_layout
-
-    def _create_device_list_section(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-
+        device_layout = QHBoxLayout()
         self.listbox_devices = QListWidget()
         self.listbox_devices.setFont(self._base_font)
         self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
-        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
         button_layout.setSpacing(5)
         button_layout.setContentsMargins(0, 0, 0, 0)
-        button_panel.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+        button_panel.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Maximum)
 
-        btn_refresh = QPushButton(self.BUTTON_TEXTS[1])
-        btn_info = QPushButton(self.BUTTON_TEXTS[2])
-        btn_activity = QPushButton(self.BUTTON_TEXTS[3])
-        btn_example1 = QPushButton("Example 1")
-        btn_example2 = QPushButton("Example 2")
-        btn_example3 = QPushButton("Example 3")
+        button_specs = [
+            (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
+            (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
+            (self.BUTTON_TEXTS[3], self.adb_controller.on_current_activity),
+            ("Example 1", lambda: None),
+            ("Example 2", lambda: None),
+            ("Example 3", lambda: None),
+        ]
 
-        for btn, handler in zip([btn_refresh, btn_info, btn_activity],
-                                [self.adb_controller.on_refresh_devices,
-                                 self.adb_controller.on_get_device_info,
-                                 self.adb_controller.on_current_activity]):
+        for text, handler in button_specs:
+            btn = QPushButton(text)
             btn.setFont(self._base_font)
             btn.clicked.connect(handler)
             button_layout.addWidget(btn)
 
-        for btn in [btn_example1, btn_example2, btn_example3]:
-            btn.setFont(self._base_font)
-            button_layout.addWidget(btn)
-
         button_layout.addStretch()
 
-        layout.addWidget(self.listbox_devices, 2)
-        layout.addWidget(button_panel, 1)
-        return layout
+        device_layout.addWidget(self.listbox_devices, 2)
+        device_layout.addWidget(button_panel, 1)
+        layout.addLayout(device_layout)
+
+        group.setLayout(layout)
+        return group
 
     def _create_actions_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[1])
         group.setFont(self._base_font)
 
         layout = QVBoxLayout()
-        layout.addLayout(self._create_action_row2())
-        layout.addLayout(self._create_action_row3())
-        group.setLayout(layout)
 
-        return group
-
-    def _create_action_row2(self) -> QHBoxLayout:
-        return self._create_button_row([
-            (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk)
-        ])
-
-    def _create_action_row3(self) -> QHBoxLayout:
-        return self._create_button_row([
+        # 三列按钮布局
+        button_specs = [
+            (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk),
             (self.BUTTON_TEXTS[5], self.adb_controller.on_get_anr_files),
             (self.BUTTON_TEXTS[6], self.adb_controller.on_kill_all_apps),
             (self.BUTTON_TEXTS[7], self.adb_controller.on_get_installed_packages)
-        ])
+        ]
 
-    def _create_button_row(self, button_specs: List[tuple]) -> QHBoxLayout:
-        row = QHBoxLayout()
-        for text, callback in button_specs:
+        grid = QGridLayout()
+        for idx, (text, callback) in enumerate(button_specs):
             btn = QPushButton(text)
             btn.setFont(self._base_font)
             btn.clicked.connect(callback)
-            row.addWidget(btn)
-        return row
+            row, col = divmod(idx, 3)
+            grid.addWidget(btn, row, col)
+
+        layout.addLayout(grid)
+        group.setLayout(layout)
+        return group
 
     def update_device_list(self, devices: List[str]):
         self.listbox_devices.clear()
