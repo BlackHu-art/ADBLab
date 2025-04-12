@@ -3,25 +3,38 @@ import yaml
 
 class DeviceStore:
     _devices = {}
+    _file_path = os.path.join("resources", "connected_devices.yaml")
+
+    @classmethod
+    def load(cls):
+        """从 YAML 文件中加载设备列表"""
+        cls._devices.clear()
+        if os.path.exists(cls._file_path):
+            try:
+                with open(cls._file_path, "r", encoding="utf-8") as f:
+                    content = yaml.safe_load(f) or {}
+                    for d in content.get("devices", []):
+                        alias = d.get("alias")
+                        ip = d.get("ip")
+                        if alias and ip:
+                            cls._devices[alias] = ip
+            except Exception as e:
+                print(f"[DeviceStore] Failed to load devices: {e}")
 
     @classmethod
     def add_device(cls, alias: str, ip: str):
-        """添加或更新设备到设备池"""
         cls._devices[alias] = ip
 
     @classmethod
     def get_all(cls):
-        """返回所有设备的 (alias, ip) 元组列表"""
         return list(cls._devices.items())
 
     @classmethod
     def get_ip_by_alias(cls, alias: str) -> str:
-        """根据别名获取 IP"""
         return cls._devices.get(alias, "")
 
     @classmethod
     def get_alias_by_ip(cls, ip: str) -> str:
-        """根据 IP 获取别名"""
         for alias, device_ip in cls._devices.items():
             if device_ip == ip:
                 return alias
@@ -29,11 +42,9 @@ class DeviceStore:
 
     @classmethod
     def remove_device(cls, alias: str):
-        """移除设备"""
         if alias in cls._devices:
             del cls._devices[alias]
 
     @classmethod
     def clear(cls):
-        """清空所有设备"""
         cls._devices.clear()

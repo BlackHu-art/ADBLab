@@ -121,6 +121,8 @@ class LeftPanel(QWidget):
             self.listbox_devices.addItem(item)
 
     def refresh_device_combobox(self):
+        if not hasattr(self, "ip_entry"):
+            return  # 防止未初始化时被错误调用
         self.ip_entry.clear()
         for alias, ip in DeviceStore.get_all():
             self.ip_entry.addItem(f"{alias}: {ip}")

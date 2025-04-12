@@ -1,17 +1,22 @@
-import json
 import os
+import json
 import threading
 import yaml
 from models.adb_model import ADBModel
-from models.device_store import DeviceStore  # 统一设备信息存储
+from models.device_store import DeviceStore
 
 def sanitize_device_name(device_name: str) -> str:
-    return "".join([c if c.isalnum() else "_" for c in device_name])
+    return "".join(c if c.isalnum() else "_" for c in device_name)
 
 class ADBController:
     def __init__(self, left_panel):
         self.left_panel = left_panel
         self.connected_devices_file = "resources/connected_devices.yaml"
+        self._load_devices_from_file()
+
+    def _load_devices_from_file(self):
+        DeviceStore.load()
+        self.left_panel.refresh_device_combobox()
 
     def on_connect_device(self, event=None):
         ip_address = self.left_panel.ip_address
@@ -33,43 +38,41 @@ class ADBController:
             self.left_panel.main_frame.log_message("CRITICAL", f"Connection error: {str(e)}")
 
     def _save_connected_device(self, ip_address: str):
-        sanitized_name = sanitize_device_name(ip_address)
-        data = {"alias": sanitized_name, "ip": ip_address}
+        alias = sanitize_device_name(ip_address)
+        new_device = {"alias": alias, "ip": ip_address}
 
-        # 初始化 YAML 文件结构
         if not os.path.exists(self.connected_devices_file):
-            with open(self.connected_devices_file, 'w') as f:
+            os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
+            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
                 yaml.safe_dump({"devices": []}, f)
 
-        # 读取并更新 YAML 文件
-        with open(self.connected_devices_file, 'r') as f:
+        with open(self.connected_devices_file, "r", encoding="utf-8") as f:
             content = yaml.safe_load(f) or {"devices": []}
 
         devices = content.get("devices", [])
-        if not any(d.get("ip") == ip_address for d in devices):
-            devices.append(data)
+        if not any(d["ip"] == ip_address for d in devices):
+            devices.append(new_device)
             content["devices"] = devices
-            with open(self.connected_devices_file, 'w') as f:
+            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
                 yaml.safe_dump(content, f)
-            self.left_panel.main_frame.log_message("INFO", f"{ip_address} saved to {self.connected_devices_file}")
 
-        # 更新内存中的 DeviceStore 与 UI ComboBox
-        DeviceStore.add_device(sanitized_name, ip_address)
+        DeviceStore.add_device(alias, ip_address)
         self.left_panel.refresh_device_combobox()
+        self.left_panel.main_frame.log_message("INFO", f"{ip_address} saved to {self.connected_devices_file}")
 
     def on_refresh_devices(self, event=None):
         try:
             devices = ADBModel.get_connected_devices()
             self.left_panel.update_device_list(devices)
-            # self.left_panel.update_ip_entry_options(devices)
-
             if devices:
-                self.left_panel.main_frame.log_message("INFO", 
-                    f"Found {len(devices)} device(s): {', '.join(devices)}")
+                self.left_panel.main_frame.log_message("INFO", f"Found {len(devices)} device(s): {', '.join(devices)}")
             else:
                 self.left_panel.main_frame.log_message("WARNING", "No devices detected")
         except Exception as e:
             self.left_panel.main_frame.log_message("ERROR", f"Refresh failed: {str(e)}")
+
+    # 其余方法保持不变……
+
 
     def on_get_device_info(self, event=None):
         devices = self.left_panel.selected_devices
