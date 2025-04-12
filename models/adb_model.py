@@ -6,12 +6,30 @@ from utils.adb_utils import execute_adb_command
 
 class ADBModel:
     @staticmethod
-    def connect_device(ip_address):
+    def connect_device(ip_address: str) -> str:
+        """返回标准化连接状态信息，不抛出异常"""
         try:
-            output = subprocess.check_output(f"adb connect {ip_address}", shell=True, encoding="utf-8", stderr=subprocess.STDOUT)
-            return output.strip()
-        except subprocess.CalledProcessError as e:
-            return f"Error: {e.output.strip()}"
+            result = subprocess.run(
+                ["adb", "connect", ip_address],
+                capture_output=True,
+                text=True,
+                timeout=10  # 增加超时控制
+            )
+            
+            # 解析adb返回信息
+            if "connected" in result.stdout.lower():
+                return f"Success: {result.stdout.strip()}"
+            elif "already connected" in result.stdout.lower():
+                return "Already connected"
+            elif result.returncode != 0:
+                return f"Error[{result.returncode}]: {result.stderr.strip() or result.stdout.strip()}"
+            else:
+                return "Unknown connection status"
+                
+        except subprocess.TimeoutExpired:
+            return "Timeout: Connection attempt exceeded 10 seconds"
+        except Exception as e:
+            return f"SystemError: {str(e)}"
         
     @staticmethod
     def get_connected_devices():

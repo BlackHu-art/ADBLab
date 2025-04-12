@@ -21,21 +21,29 @@ class ADBController:
     def on_connect_device(self, event=None):
         ip_address = self.left_panel.ip_address
         if not ip_address:
-            self.left_panel.main_frame.log_message("WARNING", "IP address cannot be empty")
+            self._log_warning("ERROR", "IP address cannot be empty")
             return
-        if ip_address in self.left_panel.connected_device_cache:
-            self.left_panel.main_frame.log_message("WARNING", f"{ip_address} is already connected")
-            return
+
         try:
+            # 调用增强后的连接方法
             result = ADBModel.connect_device(ip_address)
-            if "connected" in result.lower():
-                self.left_panel.main_frame.log_message("DEBUG", f"Successfully connected to {ip_address}")
-                self._save_connected_device(ip_address)
-                self.on_refresh_devices()
+            
+            # 统一处理连接结果
+            if result.startswith("Success"):
+                self._handle_success_connection(ip_address)
+            elif result == "Already connected":
+                self._log_warning("ERROR", f"{ip_address} is already connected")
             else:
-                self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result}")
-        except Exception as e:
-            self.left_panel.main_frame.log_message("CRITICAL", f"Connection error: {str(e)}")
+                self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result.split(':', 1)[-1].strip()}")
+                
+        except Exception as e:  # 冗余安全层
+            self.left_panel.main_frame.log_message("ERROR", f"Unexpected error: {str(e)}")
+
+    def _handle_success_connection(self, ip: str):
+        """成功连接后的统一处理"""
+        self._save_connected_device(ip)
+        self.on_refresh_devices()
+        self._log_debug("INFO", f"Successfully connected to {ip}")
 
     def _save_connected_device(self, ip_address: str):
         alias = sanitize_device_name(ip_address)

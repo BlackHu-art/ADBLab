@@ -21,8 +21,15 @@ class MainFrame(QMainWindow):
         self._setup_ui()
         self._create_menu()
         
-        # 启动后延迟100毫秒刷新设备
-        QTimer.singleShot(100, self.left_panel.adb_controller.on_refresh_devices)
+        # 延迟操作前添加存在性检查
+        if hasattr(self, 'left_panel') and hasattr(self.left_panel, 'adb_controller'):
+            QTimer.singleShot(100, self.safe_refresh_devices)
+
+    def safe_refresh_devices(self):
+        try:
+            self.left_panel.adb_controller.on_refresh_devices()
+        except AttributeError as e:
+            print(f"Controller not initialized: {e}")
 
 
     def _setup_window_properties(self):
@@ -57,13 +64,13 @@ class MainFrame(QMainWindow):
         self.log_panel = LogPanel()
         main_layout.addWidget(self.log_panel, stretch=2)
 
-    # region 公共方法
+    # 在MainFrame中统一处理错误
     def log_message(self, level: str, message: str):
-        """记录日志消息
-        :param level: 日志级别（INFO/WARN/ERROR）
-        :param message: 日志内容
-        """
-        self.log_panel.log_message(level, message)
+        # 添加崩溃防护
+        try:
+            self.log_panel.log_message(level, message)
+        except RuntimeError as e:
+            print(f"UI Already Destroyed: {e}")
 
     def clear_log(self):
         """清空日志面板"""

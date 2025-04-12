@@ -1,7 +1,10 @@
 import os
 import yaml
+from threading import Lock
+
 
 class DeviceStore:
+    _lock = Lock()
     _devices = {}
     _file_path = os.path.join("resources", "connected_devices.yaml")
 
@@ -22,12 +25,14 @@ class DeviceStore:
                 print(f"[DeviceStore] Failed to load devices: {e}")
 
     @classmethod
-    def add_device(cls, alias: str, ip: str):
-        cls._devices[alias] = ip
-
-    @classmethod
     def get_all(cls):
-        return list(cls._devices.items())
+        with cls._lock:
+            return list(cls._devices.items())
+    
+    @classmethod
+    def add_device(cls, alias: str, ip: str):
+        with cls._lock:
+            cls._devices[alias] = ip
 
     @classmethod
     def get_ip_by_alias(cls, alias: str) -> str:
