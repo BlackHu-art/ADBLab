@@ -39,6 +39,7 @@ class CustomMenuBar(QMenuBar):
         "file": "File",
         "help": "Help",
         "minimize": "Minimize",
+        "clear_log": "Clear logs",
         "exit": "Exit"
     }
     
@@ -68,11 +69,19 @@ class CustomMenuBar(QMenuBar):
         help_menu.addAction(about_action)
 
     def _create_window_controls(self) -> None:
-        """创建窗口控制按钮"""
+        """创建窗口控制按钮（一级按钮）"""
+
+        # 最小化按钮
         minimize_action = QAction(self.MENU_TITLES["minimize"], self.parent_window)
         minimize_action.triggered.connect(self.parent_window.showMinimized)
         self.addAction(minimize_action)
 
+        # ✅ Clear Logs 作为一级按钮
+        clear_logs_action = QAction(self.MENU_TITLES["clear_log"], self.parent_window)
+        clear_logs_action.triggered.connect(self.parent_window.clear_log)
+        self.addAction(clear_logs_action)
+
+        # 退出按钮
         exit_action = QAction(self.MENU_TITLES["exit"], self.parent_window)
         exit_action.triggered.connect(self.parent_window.close)
         self.addAction(exit_action)
