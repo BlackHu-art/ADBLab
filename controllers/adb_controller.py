@@ -21,7 +21,7 @@ class ADBController:
     def on_connect_device(self, event=None):
         ip_address = self.left_panel.ip_address
         if not ip_address:
-            self._log_warning("ERROR", "IP address cannot be empty")
+            self.left_panel.main_frame.log_message("ERROR", "IP address cannot be empty")
             return
 
         try:
@@ -32,7 +32,7 @@ class ADBController:
             if result.startswith("Success"):
                 self._handle_success_connection(ip_address)
             elif result == "Already connected":
-                self._log_warning("ERROR", f"{ip_address} is already connected")
+                self.left_panel.main_frame.log_message("ERROR", f"{ip_address} is already connected")
             else:
                 self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result.split(':', 1)[-1].strip()}")
                 
@@ -43,7 +43,7 @@ class ADBController:
         """成功连接后的统一处理"""
         self._save_connected_device(ip)
         self.on_refresh_devices()
-        self._log_debug("INFO", f"Successfully connected to {ip}")
+        self.left_panel.main_frame.log_message("INFO", f"Successfully connected to {ip}")
 
     def _save_connected_device(self, ip_address: str):
         alias = sanitize_device_name(ip_address)
