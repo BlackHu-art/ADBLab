@@ -81,3 +81,21 @@ class ADBModel:
             except subprocess.CalledProcessError:
                 device_info[key] = "Error fetching info"
         return device_info
+    
+    @staticmethod
+    def get_devices_basic_info(device):
+        # 获取设备基本信息，示例：型号、品牌、Android版本、序列号、存储信息等
+        commands = {
+            "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
+            "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
+            "Android Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
+            "SDK Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.sdk"],
+        }
+        device_info = {}
+        for key, cmd in commands.items():
+            try:                
+                output = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.STDOUT).strip()
+                device_info[key] = output
+            except subprocess.CalledProcessError:
+                device_info[key] = "Error fetching info"
+        return device_info
