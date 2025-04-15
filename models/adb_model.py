@@ -61,13 +61,23 @@ class ADBModel:
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
             "Android Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
             "Serial Number": ["adb", "-s", device, "shell", "getprop", "ro.serialno"],
-            "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"]
+            "SDK Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.sdk"],
+            "CPU Architecture": ["adb", "-s", device, "shell", "getprop", "ro.product.cpu.abi"],
+            "Hardware": ["adb", "-s", device, "shell", "getprop", "ro.hardware"],
+            "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"],
+            "Total Memory": ["adb", "-s", device, "shell", "cat", "/proc/meminfo", "|", "grep", "MemTotal"],
+            "Available Memory": ["adb", "-s", device, "shell", "cat", "/proc/meminfo", "|", "grep",
+                                 "MemAvailable"],
+            "Resolution": ["adb", "-s", device, "shell", "wm", "size"],
+            "Density": ["adb", "-s", device, "shell", "wm", "density"],
+            "Timezone": ["adb", "-s", device, "shell", "getprop", "persist.sys.timezone"],
+            "Mac": ["adb", "-s", device, "shell", "ip", "addr", "show", "wlan0"],
         }
-        info = {}
+        device_info = {}
         for key, cmd in commands.items():
-            try:
+            try:                
                 output = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.STDOUT).strip()
-                info[key] = output
+                device_info[key] = output
             except subprocess.CalledProcessError:
-                info[key] = "Error fetching info"
-        return info
+                device_info[key] = "Error fetching info"
+        return device_info
