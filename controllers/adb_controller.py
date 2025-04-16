@@ -19,12 +19,16 @@ class ADBController:
         self.left_panel.refresh_device_combobox()
 
     def on_connect_device(self, event=None):
-        ip = self.left_panel.ip_address.strip()
+        # ⛔ 不再使用 currentData，直接读取输入框内容
+        ip = self.left_panel.ip_entry.currentText().strip()
+
         if not ip:
             self.left_panel.main_frame.log_message("ERROR", "IP address cannot be empty.")
             return
 
-        # ✅ 判断是否已连接（左侧列表缓存判断）
+        # ✅ 如果你依然希望支持用户从下拉中选数据，你可以用正则提取
+        # 或保留 userData 但明确以 currentText 为主（推荐）
+
         if ip in self.left_panel.connected_device_cache:
             self.left_panel.main_frame.log_message("WARNING", f"{ip} is already connected.")
             return

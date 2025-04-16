@@ -58,7 +58,6 @@ class LeftPanel(QWidget):
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
-        self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
         self.refresh_device_combobox()
         self.ip_entry.activated.connect(self._on_ip_selected)
 
@@ -155,7 +154,7 @@ class LeftPanel(QWidget):
             self._user_selected_ip = False
 
             # ✅ 设置提示语
-            self.ip_entry.lineEdit().setPlaceholderText("请选择设备或输入 IP:端口")
+            self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
 
     def _on_ip_selected(self, index):
         """当用户从下拉中选中设备时，仅显示 IP"""
@@ -177,16 +176,8 @@ class LeftPanel(QWidget):
 
     @property
     def ip_address(self) -> str:
-        data = self.ip_entry.currentData()
-        if data:
-            return data.strip()
-
         text = self.ip_entry.currentText().strip()
-        if not text:
-            return ""  # ✅ 返回空字符串，确保 controller 检查成立
-
-        match = search(r'(\\d{1,3}(?:\\.\\d{1,3}){3}:\\d+)', text)
-        return match.group(1) if match else text
+        return text  # 只用输入内容，不用 itemData 缓存
 
 
 
