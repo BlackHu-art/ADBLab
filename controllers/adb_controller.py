@@ -12,9 +12,6 @@ class ADBController:
     def __init__(self, left_panel):
         self.left_panel = left_panel
         self.connected_devices_file = "resources/connected_devices.yaml"
-        self._load_devices_from_file()
-
-    def _load_devices_from_file(self):
         DeviceStore.load()
         self.left_panel.refresh_device_combobox()
 
@@ -47,8 +44,11 @@ class ADBController:
             else:
                 self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result}")
 
+        except ConnectionRefusedError:
+            self.left_panel.main_frame.log_message("ERROR", f"{ip} refused connection.")
         except Exception as e:
             self.left_panel.main_frame.log_message("CRITICAL", f"Connection error: {str(e)}")
+
 
     def _save_connected_device(self, ip: str):
         alias = sanitize_device_name(ip)
@@ -79,7 +79,12 @@ class ADBController:
             yaml.safe_dump(content, f)
 
         # 更新内存并刷新 UI
-        DeviceStore.add_device(alias, ip)
+        DeviceStore.add_device(
+            alias=alias,
+            ip=ip,
+            brand=basic_info.get("Brand", "Unknown"),
+            model=basic_info.get("Model", "Unknown")
+        )
         DeviceStore.load()  # ✅ 重新加载，确保 ComboBox 不重复
         self.left_panel.refresh_device_combobox()
 

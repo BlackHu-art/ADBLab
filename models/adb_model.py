@@ -1,7 +1,5 @@
 import subprocess
-import time
 import os
-import zipfile
 from utils.adb_utils import execute_adb_command
 
 class ADBModel:

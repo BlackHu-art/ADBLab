@@ -18,7 +18,7 @@ class DeviceStore:
                     content = yaml.safe_load(f) or {}
                     for device_id, info in content.items():
                         if isinstance(info, dict):
-                            cls._devices[device_id] = info.get("ip", "")
+                            cls._devices[device_id] = info
             except Exception as e:
                 print(f"[DeviceStore] Failed to load devices: {e}")
 
@@ -28,9 +28,20 @@ class DeviceStore:
             return list(cls._devices.items())
     
     @classmethod
-    def add_device(cls, alias: str, ip: str):
-        with cls._lock:
-            cls._devices[alias] = ip
+    def get_basic_devices_info(cls):
+        """返回 [(brand, model, ip)] 格式"""
+        return [
+            (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
+            for data in cls._devices.values() if isinstance(data, dict)
+        ]
+
+    @classmethod
+    def add_device(cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown"):
+        cls._devices[alias] = {
+            "ip": ip,
+            "Brand": brand,
+            "Model": model
+        }
 
     @classmethod
     def get_ip_by_alias(cls, alias: str) -> str:

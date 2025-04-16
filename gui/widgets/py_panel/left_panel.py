@@ -59,7 +59,7 @@ class LeftPanel(QWidget):
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
         self.refresh_device_combobox()
-        self.ip_entry.activated.connect(self._on_ip_selected)
+        self.ip_entry.activated[int].connect(self._on_ip_selected)
 
         self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
         self.btn_connect.setFont(self._base_font)
@@ -146,8 +146,8 @@ class LeftPanel(QWidget):
             self.ip_entry.clear()
             
             # 添加设备项
-            for alias, ip in DeviceStore.get_all():
-                self.ip_entry.addItem(f"{alias} | {ip}", userData=ip)
+            for Brand, Model, ip in DeviceStore.get_basic_devices_info():
+                self.ip_entry.addItem(f"{Brand} | {Model} | {ip}", userData=ip)
 
             # ✅ 设置显示为空（让用户自己选择）
             self.ip_entry.setCurrentText("")
@@ -161,8 +161,9 @@ class LeftPanel(QWidget):
         if index >= 0:
             ip = self.ip_entry.itemData(index)
             if ip:
-                with BlockSignals(self.ip_entry):  # 防止触发循环信号
-                    self.ip_entry.setCurrentText(ip)  # 显示 IP
+                with BlockSignals(self.ip_entry):
+                    self.ip_entry.setCurrentText(ip)
+                self._user_selected_ip = True  # ✅ 标记为用户主动选择
 
     def _on_device_item_double_clicked(self, item: QListWidgetItem):
         new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
@@ -177,7 +178,8 @@ class LeftPanel(QWidget):
     @property
     def ip_address(self) -> str:
         text = self.ip_entry.currentText().strip()
-        return text  # 只用输入内容，不用 itemData 缓存
+        return text if self._user_selected_ip or text else ""
+
 
 
 
