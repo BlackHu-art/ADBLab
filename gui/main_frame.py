@@ -79,7 +79,6 @@ class MainFrame(QMainWindow):
     def restore_default_size(self):
         """恢复窗口默认尺寸"""
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
-    # endregion
 
     # region 窗口操作事件处理
     def mousePressEvent(self, event: QMouseEvent):
@@ -97,7 +96,6 @@ class MainFrame(QMainWindow):
     def mouseReleaseEvent(self, event: QMouseEvent):
         """处理鼠标释放事件"""
         self._drag_pos = None
-    # endregion
 
     def show_about_dialog(self):
         """显示关于对话框"""

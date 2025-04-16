@@ -8,7 +8,17 @@ from PySide6.QtWidgets import (
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
 from models.device_store import DeviceStore
+from contextlib import contextmanager
 
+@contextmanager
+def BlockSignals(widget):
+    """通用信号阻断工具"""
+    widget.blockSignals(True)
+    try:
+        yield
+    finally:
+        widget.blockSignals(False)
+        
 class LeftPanel(QWidget):
     PANEL_WIDTH = 500
     GROUP_TITLES = ("Device Management", "Actions")
@@ -47,6 +57,8 @@ class LeftPanel(QWidget):
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
         self.refresh_device_combobox()  # 初次加载
+        # 添加信号连接
+        self.ip_entry.activated.connect(self._on_ip_selected)
         self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
         self.btn_connect.setFont(self._base_font)
         self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
@@ -125,17 +137,21 @@ class LeftPanel(QWidget):
         if not hasattr(self, "ip_entry"):
             return
         
-        # 保存当前输入内容
-        current_text = self.ip_entry.currentText()
-        
         self.ip_entry.clear()
         for alias, ip in DeviceStore.get_all():
             # 添加带用户数据的选项
             self.ip_entry.addItem(f"{alias} | {ip}", userData=ip)
         
-        # 恢复用户输入（如果不是列表中的选项）
-        if current_text and not self.ip_entry.findText(current_text):
-            self.ip_entry.setCurrentText(current_text)
+        # 强制设置空内容
+        self.ip_entry.setCurrentText("")  # 新增此行
+            
+    def _on_ip_selected(self, index):
+        """仅当用户主动选择时触发"""
+        if index >= 0:
+            # 直接设置显示文本为IP
+            ip = self.ip_entry.itemData(index)
+            with BlockSignals(self.ip_entry):  # 临时阻断信号
+                self.ip_entry.setCurrentText(ip)
 
     def _on_device_item_double_clicked(self, item: QListWidgetItem):
         new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
