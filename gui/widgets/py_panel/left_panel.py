@@ -120,12 +120,22 @@ class LeftPanel(QWidget):
             item.setFont(self._base_font)
             self.listbox_devices.addItem(item)
 
+    # 修改下拉框刷新方法
     def refresh_device_combobox(self):
         if not hasattr(self, "ip_entry"):
-            return  # 防止未初始化时被错误调用
+            return
+        
+        # 保存当前输入内容
+        current_text = self.ip_entry.currentText()
+        
         self.ip_entry.clear()
         for alias, ip in DeviceStore.get_all():
-            self.ip_entry.addItem(f"{alias}: {ip}")
+            # 添加带用户数据的选项
+            self.ip_entry.addItem(f"{alias} | {ip}", userData=ip)
+        
+        # 恢复用户输入（如果不是列表中的选项）
+        if current_text and not self.ip_entry.findText(current_text):
+            self.ip_entry.setCurrentText(current_text)
 
     def _on_device_item_double_clicked(self, item: QListWidgetItem):
         new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
@@ -137,12 +147,15 @@ class LeftPanel(QWidget):
                 for i in range(self.listbox_devices.count())
                 if self.listbox_devices.item(i).checkState() == Qt.Checked]
 
+    # 修改ip_address属性
     @property
     def ip_address(self) -> str:
+        # 优先获取存储的原始IP数据
+        if ip_data := self.ip_entry.currentData():
+            return ip_data
+        
+        # 次选解析输入文本
         text = self.ip_entry.currentText().strip()
-        # 匹配 IP:端口 格式
         match = search(r'(\d{1,3}(?:\.\d{1,3}){3}:\d+)', text)
-        if match:
-            return match.group(1)
-        return text  # 若直接是 IP:PORT 格式，也返回原文本
+        return match.group(1) if match else text
 

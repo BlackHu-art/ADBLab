@@ -10,17 +10,15 @@ class DeviceStore:
 
     @classmethod
     def load(cls):
-        """从 YAML 文件中加载设备列表"""
+        """适配新YAML格式"""
         cls._devices.clear()
         if os.path.exists(cls._file_path):
             try:
                 with open(cls._file_path, "r", encoding="utf-8") as f:
                     content = yaml.safe_load(f) or {}
-                    for d in content.get("devices", []):
-                        alias = d.get("alias")
-                        ip = d.get("ip")
-                        if alias and ip:
-                            cls._devices[alias] = ip
+                    for device_id, info in content.items():
+                        if isinstance(info, dict):
+                            cls._devices[device_id] = info.get("ip", "")
             except Exception as e:
                 print(f"[DeviceStore] Failed to load devices: {e}")
 

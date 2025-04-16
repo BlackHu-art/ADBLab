@@ -91,11 +91,11 @@ class ADBModel:
             "Android Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
             "SDK Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.sdk"],
         }
-        device_info = {}
+        basic_info = {}
         for key, cmd in commands.items():
             try:                
                 output = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.STDOUT).strip()
-                device_info[key] = output
+                basic_info[key] = output
             except subprocess.CalledProcessError:
-                device_info[key] = "Error fetching info"
-        return device_info
+                basic_info[key] = "Error fetching info"
+        return basic_info

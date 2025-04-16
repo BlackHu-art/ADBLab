@@ -1,3 +1,6 @@
-devices:
-- alias: 'B13'
+device_10_0_0_195_5555:
+  Android Version: '12'
+  Brand: Xiaomi
+  Model: MIBOX4
+  SDK Version: '31'
   ip: 10.0.0.195:5555

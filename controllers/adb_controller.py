@@ -47,23 +47,33 @@ class ADBController:
 
     def _save_connected_device(self, ip_address: str):
         alias = sanitize_device_name(ip_address)
-        new_device = {"alias": alias, "ip": ip_address}
+        basic_info = ADBModel.get_devices_basic_info(ip_address)
+            # 直接构建新设备数据
+        new_device = {
+            f"device_{alias}": {
+                "ip": ip_address, # 保留原始IP字段
+                "Model": basic_info.get("Model", ip_address),
+                "Brand": basic_info.get("Brand", "Unknown"),
+                "Android Version": basic_info.get("Android Version", "Unknown"),
+                "SDK Version": basic_info.get("SDK Version", "Unknown")
+            }
+        }
 
-        if not os.path.exists(self.connected_devices_file):
-            os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
-            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
-                yaml.safe_dump({"devices": []}, f)
+        # 读取/初始化存储文件
+        content = {}
+        if os.path.exists(self.connected_devices_file):
+            with open(self.connected_devices_file, "r", encoding="utf-8") as f:
+                content = yaml.safe_load(f) or {}
 
-        with open(self.connected_devices_file, "r", encoding="utf-8") as f:
-            content = yaml.safe_load(f) or {"devices": []}
+        # 合并数据（保留现有设备，覆盖同别名设备）
+        content.update(new_device)
+        
+        # 写入文件
+        os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
+        with open(self.connected_devices_file, "w", encoding="utf-8") as f:
+            yaml.safe_dump(content, f)
 
-        devices = content.get("devices", [])
-        if not any(d["ip"] == ip_address for d in devices):
-            devices.append(new_device)
-            content["devices"] = devices
-            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(content, f)
-
+        # 保持原有DeviceStore调用
         DeviceStore.add_device(alias, ip_address)
         self.left_panel.refresh_device_combobox()
         self.left_panel.main_frame.log_message("INFO", f"{ip_address} saved to {self.connected_devices_file}")
