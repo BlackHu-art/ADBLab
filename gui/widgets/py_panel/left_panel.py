@@ -50,24 +50,28 @@ class LeftPanel(QWidget):
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
         group.setFont(self._base_font)
-        layout = QVBoxLayout()
 
-        ip_layout = QHBoxLayout()
+        main_layout = QVBoxLayout()
+
+        # ▶️ 顶部 IP输入框 + Connect 按钮
+        ip_row = QHBoxLayout()
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
-        self.ip_entry.lineEdit().setPlaceholderText("select or input IP: port")
-        self.refresh_device_combobox()  # 初次加载
-        # 添加信号连接
+        self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
+        self.refresh_device_combobox()
         self.ip_entry.activated.connect(self._on_ip_selected)
+
         self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
         self.btn_connect.setFont(self._base_font)
         self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
-        ip_layout.addWidget(self.ip_entry, 2)
-        ip_layout.addWidget(self.btn_connect, 1)
-        layout.addLayout(ip_layout)
 
-        device_layout = QHBoxLayout()
+        ip_row.addWidget(self.ip_entry, 2)
+        ip_row.addWidget(self.btn_connect, 1)
+        main_layout.addLayout(ip_row)
+
+        # ▶️ 中部 设备列表 + 按钮操作面板
+        device_row = QHBoxLayout()
         self.listbox_devices = QListWidget()
         self.listbox_devices.setFont(self._base_font)
         self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
@@ -94,11 +98,13 @@ class LeftPanel(QWidget):
             button_layout.addWidget(btn)
 
         button_layout.addStretch()
-        device_layout.addWidget(self.listbox_devices, 2)
-        device_layout.addWidget(button_panel, 1)
-        layout.addLayout(device_layout)
-        group.setLayout(layout)
+        device_row.addWidget(self.listbox_devices, 2)
+        device_row.addWidget(button_panel, 1)
+
+        main_layout.addLayout(device_row)
+        group.setLayout(main_layout)
         return group
+
 
     def _create_actions_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[1])
