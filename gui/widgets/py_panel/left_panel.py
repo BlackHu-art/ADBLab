@@ -1,6 +1,7 @@
 from re import search
 from typing import List
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout
@@ -76,6 +77,7 @@ class LeftPanel(QWidget):
         self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
         self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # 动态设置，读取右侧按钮区域高度
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
@@ -144,16 +146,25 @@ class LeftPanel(QWidget):
 
         with BlockSignals(self.ip_entry):
             self.ip_entry.clear()
-            
-            # 添加设备项
-            for Brand, Model, ip in DeviceStore.get_basic_devices_info():
-                self.ip_entry.addItem(f"{Brand} | {Model} | {ip}", userData=ip)
 
-            # ✅ 设置显示为空（让用户自己选择）
+            font_metrics = QFontMetrics(self.ip_entry.font())  # 使用当前字体度量
+
+            # 先计算最长 Brand 和 Model 的宽度（像素）
+            max_brand_width = max_model_width = 0
+            data = DeviceStore.get_basic_devices_info()
+            for brand, model, _ in data:
+                max_brand_width = max(max_brand_width, font_metrics.horizontalAdvance(brand))
+                max_model_width = max(max_model_width, font_metrics.horizontalAdvance(model))
+
+            # 添加项时用空格填充对齐
+            for brand, model, ip in data:
+                padded_brand = brand + " " * ((max_brand_width - font_metrics.horizontalAdvance(brand)) // font_metrics.horizontalAdvance(" "))
+                padded_model = model + " " * ((max_model_width - font_metrics.horizontalAdvance(model)) // font_metrics.horizontalAdvance(" "))
+                display = f"{padded_brand} | {padded_model} | {ip}"
+                self.ip_entry.addItem(display, userData=ip)
+
             self.ip_entry.setCurrentText("")
             self._user_selected_ip = False
-
-            # ✅ 设置提示语
             self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
 
     def _on_ip_selected(self, index):
