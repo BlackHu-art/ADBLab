@@ -1,6 +1,4 @@
 import os
-import json
-import threading
 import yaml
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
@@ -19,64 +17,67 @@ class ADBController:
         self.left_panel.refresh_device_combobox()
 
     def on_connect_device(self, event=None):
-        ip_address = self.left_panel.ip_address
-        if not ip_address:
-            self.left_panel.main_frame.log_message("ERROR", "IP address cannot be empty")
+        ip = self.left_panel.ip_address.strip()
+        if not ip:
+            self.left_panel.main_frame.log_message("ERROR", "IP address cannot be empty.")
+            return
+
+        # ✅ 判断是否已连接（左侧列表缓存判断）
+        if ip in self.left_panel.connected_device_cache:
+            self.left_panel.main_frame.log_message("WARNING", f"{ip} is already connected.")
             return
 
         try:
-            # 调用增强后的连接方法
-            result = ADBModel.connect_device(ip_address)
-            
-            # 统一处理连接结果
-            if result.startswith("Success"):
-                self._handle_success_connection(ip_address)
-            elif result == "Already connected":
-                self.left_panel.main_frame.log_message("ERROR", f"{ip_address} is already connected")
+            result = ADBModel.connect_device(ip)
+            if not result:
+                self.left_panel.main_frame.log_message("ERROR", "No response from ADB.")
+                return
+
+            if "connected" in result.lower():
+                self._save_connected_device(ip)
+                self.on_refresh_devices()
+            elif "already connected" in result.lower():
+                self.left_panel.main_frame.log_message("INFO", f"{ip} is already connected.")
             else:
-                self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result.split(':', 1)[-1].strip()}")
-                
-        except Exception as e:  # 冗余安全层
-            self.left_panel.main_frame.log_message("ERROR", f"Unexpected error: {str(e)}")
+                self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result}")
 
-    def _handle_success_connection(self, ip: str):
-        """成功连接后的统一处理"""
-        self._save_connected_device(ip)
-        self.on_refresh_devices()
-        self.left_panel.main_frame.log_message("INFO", f"Successfully connected to {ip}")
+        except Exception as e:
+            self.left_panel.main_frame.log_message("CRITICAL", f"Connection error: {str(e)}")
 
-    def _save_connected_device(self, ip_address: str):
-        alias = sanitize_device_name(ip_address)
-        basic_info = ADBModel.get_devices_basic_info(ip_address)
-            # 直接构建新设备数据
-        new_device = {
+    def _save_connected_device(self, ip: str):
+        alias = sanitize_device_name(ip)
+        basic_info = ADBModel.get_devices_basic_info(ip)
+
+        device_entry = {
             f"device_{alias}": {
-                "ip": ip_address, # 保留原始IP字段
-                "Model": basic_info.get("Model", ip_address),
+                "ip": ip,
+                "Model": basic_info.get("Model", ip),
                 "Brand": basic_info.get("Brand", "Unknown"),
                 "Android Version": basic_info.get("Android Version", "Unknown"),
                 "SDK Version": basic_info.get("SDK Version", "Unknown")
             }
         }
 
-        # 读取/初始化存储文件
+        # 加载或初始化文件
         content = {}
         if os.path.exists(self.connected_devices_file):
             with open(self.connected_devices_file, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f) or {}
 
-        # 合并数据（保留现有设备，覆盖同别名设备）
-        content.update(new_device)
-        
+        # 更新或添加设备数据
+        content.update(device_entry)
+
         # 写入文件
         os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
         with open(self.connected_devices_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(content, f)
 
-        # 保持原有DeviceStore调用
-        DeviceStore.add_device(alias, ip_address)
+        # 更新内存并刷新 UI
+        DeviceStore.add_device(alias, ip)
+        DeviceStore.load()  # ✅ 重新加载，确保 ComboBox 不重复
         self.left_panel.refresh_device_combobox()
-        self.left_panel.main_frame.log_message("INFO", f"{ip_address} saved to {self.connected_devices_file}")
+
+        self.left_panel.main_frame.log_message("SUCCESS", f"{ip} connected and saved to device list.")
 
     def on_refresh_devices(self, event=None):
         try:
@@ -85,9 +86,10 @@ class ADBController:
             if devices:
                 self.left_panel.main_frame.log_message("INFO", f"Found {len(devices)} device(s): {', '.join(devices)}")
             else:
-                self.left_panel.main_frame.log_message("WARNING", "No devices detected")
+                self.left_panel.main_frame.log_message("WARNING", "No devices detected.")
         except Exception as e:
             self.left_panel.main_frame.log_message("ERROR", f"Refresh failed: {str(e)}")
+
 
     # 其余方法保持不变……
 

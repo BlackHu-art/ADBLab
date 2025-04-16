@@ -1,3 +1,9 @@
+device_10_0_0_111_5188:
+  Android Version: '11'
+  Brand: BTV
+  Model: B13
+  SDK Version: '30'
+  ip: 10.0.0.111:5188
 device_10_0_0_195_5555:
   Android Version: '12'
   Brand: Xiaomi

@@ -56,13 +56,14 @@ class LeftPanel(QWidget):
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
+        self.ip_entry.lineEdit().setPlaceholderText("select or input IP: port")
         self.refresh_device_combobox()  # 初次加载
         # 添加信号连接
         self.ip_entry.activated.connect(self._on_ip_selected)
         self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
         self.btn_connect.setFont(self._base_font)
         self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
-        ip_layout.addWidget(self.ip_entry, 3)
+        ip_layout.addWidget(self.ip_entry, 2)
         ip_layout.addWidget(self.btn_connect, 1)
         layout.addLayout(ip_layout)
 
@@ -93,7 +94,7 @@ class LeftPanel(QWidget):
             button_layout.addWidget(btn)
 
         button_layout.addStretch()
-        device_layout.addWidget(self.listbox_devices, 3)
+        device_layout.addWidget(self.listbox_devices, 2)
         device_layout.addWidget(button_panel, 1)
         layout.addLayout(device_layout)
         group.setLayout(layout)
@@ -132,26 +133,31 @@ class LeftPanel(QWidget):
             item.setFont(self._base_font)
             self.listbox_devices.addItem(item)
 
-    # 修改下拉框刷新方法
     def refresh_device_combobox(self):
         if not hasattr(self, "ip_entry"):
             return
-        
-        self.ip_entry.clear()
-        for alias, ip in DeviceStore.get_all():
-            # 添加带用户数据的选项
-            self.ip_entry.addItem(f"{alias} | {ip}", userData=ip)
-        
-        # 强制设置空内容
-        self.ip_entry.setCurrentText("")  # 新增此行
+
+        with BlockSignals(self.ip_entry):
+            self.ip_entry.clear()
             
+            # 添加设备项
+            for alias, ip in DeviceStore.get_all():
+                self.ip_entry.addItem(f"{alias} | {ip}", userData=ip)
+
+            # ✅ 设置显示为空（让用户自己选择）
+            self.ip_entry.setCurrentText("")
+            self._user_selected_ip = False
+
+            # ✅ 设置提示语
+            self.ip_entry.lineEdit().setPlaceholderText("请选择设备或输入 IP:端口")
+
     def _on_ip_selected(self, index):
-        """仅当用户主动选择时触发"""
+        """当用户从下拉中选中设备时，仅显示 IP"""
         if index >= 0:
-            # 直接设置显示文本为IP
             ip = self.ip_entry.itemData(index)
-            with BlockSignals(self.ip_entry):  # 临时阻断信号
-                self.ip_entry.setCurrentText(ip)
+            if ip:
+                with BlockSignals(self.ip_entry):  # 防止触发循环信号
+                    self.ip_entry.setCurrentText(ip)  # 显示 IP
 
     def _on_device_item_double_clicked(self, item: QListWidgetItem):
         new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
@@ -163,15 +169,18 @@ class LeftPanel(QWidget):
                 for i in range(self.listbox_devices.count())
                 if self.listbox_devices.item(i).checkState() == Qt.Checked]
 
-    # 修改ip_address属性
     @property
     def ip_address(self) -> str:
-        # 优先获取存储的原始IP数据
-        if ip_data := self.ip_entry.currentData():
-            return ip_data
-        
-        # 次选解析输入文本
+        data = self.ip_entry.currentData()
+        if data:
+            return data.strip()
+
         text = self.ip_entry.currentText().strip()
-        match = search(r'(\d{1,3}(?:\.\d{1,3}){3}:\d+)', text)
+        if not text:
+            return ""  # ✅ 返回空字符串，确保 controller 检查成立
+
+        match = search(r'(\\d{1,3}(?:\\.\\d{1,3}){3}:\\d+)', text)
         return match.group(1) if match else text
+
+
 
