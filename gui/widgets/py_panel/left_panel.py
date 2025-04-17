@@ -24,8 +24,8 @@ class LeftPanel(QWidget):
     PANEL_WIDTH = 500
     GROUP_TITLES = ("Device Management", "Actions")
     BUTTON_TEXTS = (
-        "Connect", "Refresh", "Device Info", "Current Activity",
-        "Select APK", "Get ANR Files", "Kill All Apps", "Installed Apps"
+        "Connect", "Refresh", "Device Info", "Disconnect",
+        "Select APK", "Get ANR Files", "Kill All Apps", "Installed Apps", "Current Activity"
     )
 
     def __init__(self, main_frame: QWidget):
@@ -87,7 +87,7 @@ class LeftPanel(QWidget):
         button_specs = [
             (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
             (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
-            (self.BUTTON_TEXTS[3], self.adb_controller.on_current_activity),
+            (self.BUTTON_TEXTS[3], self.adb_controller.on_disconnect_device),
             ("Example 1", lambda: None),
             ("Example 2", lambda: None),
             ("Example 3", lambda: None),
@@ -117,7 +117,8 @@ class LeftPanel(QWidget):
             (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk),
             (self.BUTTON_TEXTS[5], self.adb_controller.on_get_anr_files),
             (self.BUTTON_TEXTS[6], self.adb_controller.on_kill_all_apps),
-            (self.BUTTON_TEXTS[7], self.adb_controller.on_get_installed_packages)
+            (self.BUTTON_TEXTS[7], self.adb_controller.on_get_installed_packages),
+            (self.BUTTON_TEXTS[8], self.adb_controller.on_current_activity)
         ]
         for idx, (text, handler) in enumerate(button_specs):
             btn = QPushButton(text)

@@ -34,10 +34,11 @@ class ADBController:
                 self.left_panel.main_frame.log_message("ERROR", "No response from ADB.")
                 return
 
-            if "connected" in result.lower():
+            if "connected" in result:
+                self.left_panel.main_frame.log_message("WARNING", f"{result}")
                 self._save_devices_basic_info(ip)
                 self.on_refresh_devices()
-            elif "already connected" in result.lower():
+            elif "already connected" in result:
                 self.left_panel.main_frame.log_message("INFO", f"{ip} is already connected.")
             else:
                 self.left_panel.main_frame.log_message("ERROR", f"Connection failed: {result}")
@@ -114,12 +115,7 @@ class ADBController:
         # ✅ 刷新 UI 设备列表
         self.left_panel.update_device_list(device_ips)
 
-
-
-
     # 其余方法保持不变……
-
-
     def on_get_device_info(self, event=None):
         devices = self.left_panel.selected_devices
         if not devices:
@@ -135,6 +131,24 @@ class ADBController:
             except Exception as e:
                 self.left_panel.main_frame.log_message("ERROR", 
                     f"Failed to get info for {device}: {str(e)}")
+    
+    def on_disconnect_device(self, event=None):
+        devices = self.left_panel.selected_devices
+        if not devices:
+            self.left_panel.main_frame.log_message("WARNING", "No device selected")
+            return
+        for device in devices:
+            try:
+                result = ADBModel.disconnect_device(device)
+                if "disconnected" in result:
+                    self.left_panel.main_frame.log_message("INFO", f"Disconnected {device} successfully")
+                    self.left_panel.connected_device_cache.remove(device)
+                    self.left_panel.update_device_list()
+                else:
+                    self.left_panel.main_frame.log_message("WARNING", f"{device} is not connected")
+            except Exception as e:
+                self.left_panel.main_frame.log_message("ERROR", f"Failed to disconnect {device}: {str(e)}")
+                continue
 
     def on_current_activity(self, event=None):
         devices = self.left_panel.selected_devices

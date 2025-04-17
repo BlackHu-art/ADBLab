@@ -11,19 +11,12 @@ class ADBModel:
                 ["adb", "connect", ip_address],
                 capture_output=True,
                 text=True,
-                timeout=10  # 增加超时控制
+                timeout=10,  # 增加超时控制
+                encoding='utf-8',
+                errors='ignore',
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
-            
-            # 解析adb返回信息
-            if "connected" in result.stdout.lower():
-                return f"Success: {result.stdout.strip()}"
-            elif "already connected" in result.stdout.lower():
-                return "Already connected"
-            elif result.returncode != 0:
-                return f"Error[{result.returncode}]: {result.stderr.strip() or result.stdout.strip()}"
-            else:
-                return "Unknown connection status"
-                
+            return f"{result.stdout.strip()}"
         except subprocess.TimeoutExpired:
             return "Timeout: Connection attempt exceeded 10 seconds"
         except Exception as e:
@@ -95,3 +88,22 @@ class ADBModel:
             except subprocess.CalledProcessError:
                 basic_info[key] = "Error fetching info"
         return basic_info
+    
+    @staticmethod
+    def disconnect_device(devices):
+        cmmmands = f"adb disconnect {devices}"
+        try:
+            result = subprocess.run(
+                cmmmands,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding='utf-8',
+                errors='ignore',
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return f"{result.stdout.strip()}"
+        except subprocess.TimeoutExpired:
+            return "Timeout: Disconnection attempt exceeded 10 seconds"
+        except Exception as e:
+            return f"SystemError: {str(e)}"
