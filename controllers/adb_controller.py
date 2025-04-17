@@ -70,8 +70,13 @@ class ADBController:
 
         content.update(device_entry)
         os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
-        with open(self.connected_devices_file, "w", encoding="utf-8") as f:
-            yaml.safe_dump(content, f)
+        try:
+            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
+                yaml.safe_dump(content, f)
+        except IOError as e:
+            self.left_panel.main_frame.log_message("ERROR", 
+                f"Failed to save device info: {str(e)}")
+            return False
 
         # 更新 DeviceStore 并刷新 ComboBox
         DeviceStore.add_device(

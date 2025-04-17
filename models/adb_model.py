@@ -3,46 +3,34 @@ import os
 from utils.adb_utils import execute_adb_command
 
 class ADBModel:
+    
     @staticmethod
     def connect_device(ip_address: str) -> str:
-        """返回标准化连接状态信息，不抛出异常"""
-        try:
-            result = subprocess.run(
-                ["adb", "connect", ip_address],
-                capture_output=True,
-                text=True,
-                timeout=10,  # 增加超时控制
-                encoding='utf-8',
-                errors='ignore',
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            return f"{result.stdout.strip()}"
-        except subprocess.TimeoutExpired:
-            return "Timeout: Connection attempt exceeded 10 seconds"
-        except Exception as e:
-            return f"SystemError: {str(e)}"
-        
+        """使用公共方法优化"""
+        return ADBModel._execute_command(["adb", "connect", ip_address])
+
     @staticmethod
     def get_connected_devices():
-        """返回所有通过 adb 连接的设备"""
-        result = os.popen("adb devices").read()
-        lines = result.strip().splitlines()[1:]  # 跳过第一行 'List of devices attached'
-        devices = []
-        for line in lines:
-            if "device" in line:
-                device_id = line.split("\t")[0]
-                devices.append(device_id)
-        return devices
+        """获取已连接设备（优化版）"""
+        result = ADBModel._execute_command(["adb", "devices"])
+        if result.startswith(("Timeout:", "SystemError:")):
+            return []
+            
+        lines = result.strip().splitlines()[1:]  # 跳过第一行说明
+        return [line.split("\t")[0] for line in lines if "device" in line]
 
     @staticmethod
     def get_devices():
-        try:
-            output = subprocess.check_output("adb devices", shell=True, encoding="utf-8", stderr=subprocess.STDOUT)
-            # 忽略第一行，筛选状态为 device 的设备
-            devices = [line.split()[0].strip() for line in output.splitlines()[1:] if line.strip().endswith("device")]
-            return devices
-        except subprocess.CalledProcessError:
-            return []
+        """获取有效设备（优化版）"""
+        result = ADBModel._execute_command(["adb", "devices"])
+        return [line.split()[0] 
+               for line in result.splitlines()[1:] 
+               if line.strip().endswith("device")]
+
+    @staticmethod
+    def disconnect_device(devices):
+        """设备断开连接（优化版）"""
+        return ADBModel._execute_command(["adb", "disconnect", devices])
         
     @staticmethod
     def get_device_info(device):
@@ -66,11 +54,8 @@ class ADBModel:
         }
         device_info = {}
         for key, cmd in commands.items():
-            try:                
-                output = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.STDOUT).strip()
-                device_info[key] = output
-            except subprocess.CalledProcessError:
-                device_info[key] = "Error fetching info"
+            output = ADBModel._execute_command(cmd)
+            device_info[key] = output if not output.startswith(("Timeout:", "SystemError:")) else "N/A"
         return device_info
     
     @staticmethod
@@ -80,30 +65,27 @@ class ADBModel:
             "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
         }
-        basic_info = {}
+        device_info = {}
         for key, cmd in commands.items():
-            try:                
-                output = subprocess.check_output(cmd, encoding="utf-8", stderr=subprocess.STDOUT).strip()
-                basic_info[key] = output
-            except subprocess.CalledProcessError:
-                basic_info[key] = "Error fetching info"
-        return basic_info
+            output = ADBModel._execute_command(cmd)
+            device_info[key] = output if not output.startswith(("Timeout:", "SystemError:")) else "N/A"
+        return device_info
     
-    @staticmethod
-    def disconnect_device(devices):
-        cmmmands = f"adb disconnect {devices}"
+    @classmethod
+    def _execute_command(cls, command: list, timeout: int = 10) -> str:
+        """执行ADB命令的公共方法"""
         try:
             result = subprocess.run(
-                cmmmands,
+                command,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=timeout,
                 encoding='utf-8',
                 errors='ignore',
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
-            return f"{result.stdout.strip()}"
+            return result.stdout.strip()
         except subprocess.TimeoutExpired:
-            return "Timeout: Disconnection attempt exceeded 10 seconds"
+            return f"Timeout: Command execution exceeded {timeout} seconds"
         except Exception as e:
             return f"SystemError: {str(e)}"
