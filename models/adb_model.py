@@ -86,8 +86,6 @@ class ADBModel:
         commands = {
             "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
-            "Android Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
-            "SDK Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.sdk"],
         }
         basic_info = {}
         for key, cmd in commands.items():

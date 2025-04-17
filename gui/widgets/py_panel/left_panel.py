@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QTableWidget, QTableWidgetItem
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -73,11 +73,11 @@ class LeftPanel(QWidget):
         # ▶️ 中部 设备列表 + 按钮操作面板
         device_row = QHBoxLayout()
         self.listbox_devices = QListWidget()
+        self.listbox_devices.setEditTriggers(QListWidget.NoEditTriggers)
+        self.listbox_devices.setSelectionBehavior(QListWidget.SelectRows)
+        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)  # 只通过勾选来选中
         self.listbox_devices.setFont(self._base_font)
-        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
-        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        # 动态设置，读取右侧按钮区域高度
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
@@ -130,11 +130,23 @@ class LeftPanel(QWidget):
         group.setLayout(layout)
         return group
 
-    def update_device_list(self, devices: List[str]):
+    def update_device_list(self, devices: List[str] = None):
+        from models.device_store import DeviceStore
+        from models.adb_model import ADBModel
+
+        # ① 若未传入则主动获取当前在线设备
+        if devices is None:
+            devices = ADBModel.get_connected_devices()
+
         self.listbox_devices.clear()
         self.connected_device_cache = devices
-        for device in devices:
-            item = QListWidgetItem(device)
+
+        device_info_list = DeviceStore.get_full_devices_info(devices)
+
+        for info in device_info_list:
+            display = f"{info.get('Model', 'Unknown')} | {info.get('Brand', 'Unknown')} | " \
+                    f"{info.get('ip', '')}"
+            item = QListWidgetItem(display)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
             item.setFont(self._base_font)
@@ -182,9 +194,16 @@ class LeftPanel(QWidget):
 
     @property
     def selected_devices(self) -> List[str]:
-        return [self.listbox_devices.item(i).text()
-                for i in range(self.listbox_devices.count())
-                if self.listbox_devices.item(i).checkState() == Qt.Checked]
+        selected_ips = []
+        for i in range(self.listbox_devices.count()):
+            item = self.listbox_devices.item(i)
+            if item.checkState() == Qt.Checked:
+                text = item.text()
+                parts = text.split("|")
+                if len(parts) >= 3:
+                    selected_ips.append(parts[2].strip())  # 提取 IP
+        return selected_ips
+
 
     @property
     def ip_address(self) -> str:

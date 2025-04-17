@@ -5,8 +5,6 @@ import yaml
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 
-def sanitize_device_name(device_name: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in device_name)
 
 class ADBController:
     def __init__(self, left_panel):
@@ -37,7 +35,7 @@ class ADBController:
                 return
 
             if "connected" in result.lower():
-                self._save_connected_device(ip)
+                self._save_devices_basic_info(ip)
                 self.on_refresh_devices()
             elif "already connected" in result.lower():
                 self.left_panel.main_frame.log_message("INFO", f"{ip} is already connected.")
@@ -50,12 +48,11 @@ class ADBController:
             self.left_panel.main_frame.log_message("CRITICAL", f"Connection error: {str(e)}")
 
 
-    def _save_connected_device(self, ip: str):
-        alias = sanitize_device_name(ip)
+    def _save_devices_basic_info(self, ip: str):
         basic_info = ADBModel.get_devices_basic_info(ip)
 
         device_entry = {
-            f"device_{alias}": {
+            f"device_{ip}": {
                 "ip": ip,
                 "Model": basic_info.get("Model", ip),
                 "Brand": basic_info.get("Brand", "Unknown"),
@@ -64,42 +61,60 @@ class ADBController:
             }
         }
 
-        # 加载或初始化文件
+        # 更新 YAML 文件
         content = {}
         if os.path.exists(self.connected_devices_file):
             with open(self.connected_devices_file, "r", encoding="utf-8") as f:
                 content = yaml.safe_load(f) or {}
 
-        # 更新或添加设备数据
         content.update(device_entry)
-
-        # 写入文件
         os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
         with open(self.connected_devices_file, "w", encoding="utf-8") as f:
             yaml.safe_dump(content, f)
 
-        # 更新内存并刷新 UI
+        # 更新 DeviceStore 并刷新 ComboBox
         DeviceStore.add_device(
-            alias=alias,
+            alias=f"device_{ip}",
             ip=ip,
             brand=basic_info.get("Brand", "Unknown"),
             model=basic_info.get("Model", "Unknown")
         )
-        DeviceStore.load()  # ✅ 重新加载，确保 ComboBox 不重复
+        DeviceStore.load()
         self.left_panel.refresh_device_combobox()
 
-        self.left_panel.main_frame.log_message("SUCCESS", f"{ip} connected and saved to device list.")
 
     def on_refresh_devices(self, event=None):
         try:
             devices = ADBModel.get_connected_devices()
-            self.left_panel.update_device_list(devices)
-            if devices:
-                self.left_panel.main_frame.log_message("INFO", f"Found {len(devices)} device(s): {', '.join(devices)}")
+            if not devices:
+                self.left_panel.main_frame.log_message("WARNING", "No devices connected.")
+                return
             else:
-                self.left_panel.main_frame.log_message("WARNING", "No devices detected.")
+                self.left_panel.main_frame.log_message("INFO", f"{len(devices)} devices connected.")
+
+            # ⏳ 启动后台线程获取并保存设备信息
+            thread = threading.Thread(
+                target=self._refresh_and_save_devices_async,
+                args=(devices,),
+                daemon=True
+            )
+            thread.start()
+
         except Exception as e:
             self.left_panel.main_frame.log_message("ERROR", f"Refresh failed: {str(e)}")
+
+
+    def _refresh_and_save_devices_async(self, device_ips):
+        for ip in device_ips:
+            try:
+                self._save_devices_basic_info(ip)
+            except Exception as e:
+                self.left_panel.main_frame.log_message("ERROR", f"[{ip}] fetch failed: {str(e)}")
+
+        # ✅ 刷新 UI 设备列表
+        self.left_panel.update_device_list(device_ips)
+
+
 
 
     # 其余方法保持不变……

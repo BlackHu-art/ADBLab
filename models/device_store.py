@@ -1,4 +1,5 @@
 import os
+from typing import List
 import yaml
 from threading import Lock
 
@@ -10,7 +11,6 @@ class DeviceStore:
 
     @classmethod
     def load(cls):
-        """适配新YAML格式"""
         cls._devices.clear()
         if os.path.exists(cls._file_path):
             try:
@@ -23,17 +23,10 @@ class DeviceStore:
                 print(f"[DeviceStore] Failed to load devices: {e}")
 
     @classmethod
-    def get_all(cls):
-        with cls._lock:
-            return list(cls._devices.items())
-    
-    @classmethod
-    def get_basic_devices_info(cls):
-        """返回 [(brand, model, ip)] 格式"""
-        return [
-            (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
-            for data in cls._devices.values() if isinstance(data, dict)
-        ]
+    def save(cls):
+        os.makedirs(os.path.dirname(cls._file_path), exist_ok=True)
+        with open(cls._file_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cls._devices, f)
 
     @classmethod
     def add_device(cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown"):
@@ -42,23 +35,23 @@ class DeviceStore:
             "Brand": brand,
             "Model": model
         }
+        cls.save()
 
     @classmethod
-    def get_ip_by_alias(cls, alias: str) -> str:
-        return cls._devices.get(alias, "")
+    def get_all(cls):
+        with cls._lock:
+            return list(cls._devices.items())
 
     @classmethod
-    def get_alias_by_ip(cls, ip: str) -> str:
-        for alias, device_ip in cls._devices.items():
-            if device_ip == ip:
-                return alias
-        return ""
+    def get_basic_devices_info(cls):
+        return [
+            (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
+            for data in cls._devices.values() if isinstance(data, dict)
+        ]
 
     @classmethod
-    def remove_device(cls, alias: str):
-        if alias in cls._devices:
-            del cls._devices[alias]
-
-    @classmethod
-    def clear(cls):
-        cls._devices.clear()
+    def get_full_devices_info(cls, ip_list: List[str]) -> List[dict]:
+        return [
+            device for device in cls._devices.values()
+            if isinstance(device, dict) and device.get("ip") in ip_list
+        ]
