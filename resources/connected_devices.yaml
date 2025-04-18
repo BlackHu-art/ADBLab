@@ -14,3 +14,7 @@ device_RFCW71D91SP:
   Brand: samsung
   Model: SM-S911U
   ip: RFCW71D91SP
+device_ZT322KPNPX:
+  Brand: motorola
+  Model: moto g24
+  ip: ZT322KPNPX

@@ -169,6 +169,15 @@ class ADBController:
             except Exception as e:
                 self.log_service.log("ERROR", f"Failed to restart {device}: {str(e)}")
                 continue
+            
+    def on_restart_adb(self, event=None):
+        try:
+            self.log_service.log("INFO", "Restarting ADB")
+            result = ADBModel.restart_adb()
+            self.log_service.log("INFO", f"ADB restarted {result}")
+        except Exception as e:
+            self.log_service.log("ERROR", f"Failed to restart ADB: {str(e)}")
+            return
 
     def on_current_activity(self, event=None):
         devices = self.left_panel.selected_devices

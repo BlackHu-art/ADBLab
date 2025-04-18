@@ -1,4 +1,6 @@
 import subprocess
+import threading
+from typing import Callable, Optional
 
 class ADBModel:
     
@@ -33,7 +35,12 @@ class ADBModel:
     def restart_device(device):
         """重启设备"""
         return ADBModel._execute_command(["adb", "-s", device, "reboot"])
-        
+    
+    @staticmethod
+    def restart_adb():
+        ADBModel._execute_command(["adb", "kill-server"])
+        return ADBModel._execute_command(["adb", "start-server"])
+
     @staticmethod
     def get_device_info(device):
         # 获取设备基本信息，示例：型号、品牌、Android版本、序列号、存储信息等
@@ -81,6 +88,7 @@ class ADBModel:
                 command,
                 capture_output=True,
                 text=True,
+                check=True,
                 timeout=timeout,
                 encoding='utf-8',
                 errors='ignore',
@@ -93,3 +101,44 @@ class ADBModel:
             return f"Timeout: Command execution exceeded {timeout} seconds"
         except Exception as e:
             return f"SystemError: {str(e)}"
+
+    @classmethod
+    def execute_command_threaded(
+        cls,
+        command: list,
+        timeout: int = 10,
+        on_success: Optional[Callable[[str], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None
+    ):
+        """在线程中执行ADB命令"""
+
+        def run():
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=timeout,
+                    encoding='utf-8',
+                    errors='ignore',
+                    creationflags=subprocess.CREATE_NO_WINDOW
+                )
+                output = result.stdout.strip()
+                if on_success:
+                    on_success(output)
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Error: {str(e)}"
+                if on_error:
+                    on_error(error_msg)
+            except subprocess.TimeoutExpired:
+                error_msg = f"Timeout: Command execution exceeded {timeout} seconds"
+                if on_error:
+                    on_error(error_msg)
+            except Exception as e:
+                error_msg = f"SystemError: {str(e)}"
+                if on_error:
+                    on_error(error_msg)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()

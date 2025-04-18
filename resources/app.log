@@ -154,3 +154,18 @@
 2025-04-18 15:51:49,992 - INFO - 3 devices connected.
 2025-04-18 15:51:57,940 - INFO - Restarting 10.0.0.111:5188
 2025-04-18 15:51:57,941 - INFO - 10.0.0.111:5188 restarted
+2025-04-18 16:04:09,016 - INFO - 3 devices connected.
+2025-04-18 16:04:17,649 - INFO - Restarting ADB
+2025-04-18 16:04:17,649 - INFO - ADB restarted List of devices attached
+4f5ddfa30000	unauthorized
+RFCW71D91SP	device
+ZT322KPNPX	unauthorized
+2025-04-18 16:04:49,205 - INFO - 3 devices connected.
+2025-04-18 16:06:44,822 - INFO - 3 devices connected.
+2025-04-18 16:06:48,127 - WARNING - No devices selected
+2025-04-18 16:06:55,689 - INFO - Restarting ADB
+2025-04-18 16:06:55,690 - INFO - ADB restarted 
+2025-04-18 16:06:59,017 - INFO - 3 devices connected.
+2025-04-18 16:07:29,242 - WARNING - No devices selected
+2025-04-18 16:07:35,821 - INFO - Restarting ADB
+2025-04-18 16:07:35,822 - INFO - ADB restarted 
