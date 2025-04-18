@@ -1,13 +1,15 @@
+# log_panel.py
 from typing import Dict, Optional
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
-from PySide6.QtCore import Qt
 from gui.styles import Styles
+from services.log_service import LogService
 
 class LogPanel(QWidget):
     """带颜色分级和自动滚动的日志显示面板"""
     
-    # 日志等级颜色映射
+    # 日志等级颜色映射（保持原有样式）
     LEVEL_COLORS: Dict[str, str] = {
         "DEBUG": Styles.DEBUG_COLOR,
         "INFO": Styles.INFO_COLOR,
@@ -19,11 +21,13 @@ class LogPanel(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.log_service = LogService()  # 添加日志服务
         self._init_ui()
         self._setup_styles()
+        self._connect_signals()  # 添加信号连接
 
     def _init_ui(self) -> None:
-        """初始化UI组件"""
+        """初始化UI组件（保持原有结构）"""
         self.text_output = QTextEdit(self)
         self.text_output.setReadOnly(True)
         self._configure_font()
@@ -34,13 +38,13 @@ class LogPanel(QWidget):
         self.setLayout(layout)
 
     def _configure_font(self) -> None:
-        """配置日志字体"""
+        """保持原有字体配置"""
         log_font = QFont(Styles.LOG_FONT, Styles.LOG_FONT_SIZE)
-        log_font.setStyleHint(QFont.Monospace)  # 等宽字体保证对齐
+        log_font.setStyleHint(QFont.Monospace)
         self.text_output.setFont(log_font)
 
     def _setup_styles(self) -> None:
-        """设置组件样式"""
+        """保持原有样式表"""
         self.text_output.setStyleSheet(f"""
             QTextEdit {{
                 background-color: {Styles.LOG_BACKGROUND};
@@ -48,62 +52,62 @@ class LogPanel(QWidget):
                 border: none;
                 padding: 5px;
             }}
-            {Styles.SCROLLBAR_STYLE}  # 从styles.py导入滚动条样式
+            {Styles.SCROLLBAR_STYLE}
         """)
 
-    def log_message(self, level: str, message: str) -> None:
-        """记录带格式的日志消息
-        :param level: 日志级别(DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL)
-        :param message: 日志内容
-        """
-        cursor = self.text_output.textCursor()
-        self._append_formatted_text(cursor, level, message)
-        self._auto_scroll(cursor)
+    def _connect_signals(self):
+        """更安全的信号连接方式"""
+        # 使用UniqueConnection确保只连接一次
+        self.log_service.log_received.connect(
+            self._handle_log, 
+            Qt.ConnectionType.UniqueConnection  # 关键修改点
+        )
 
-    def _append_formatted_text(self, cursor: QTextCursor, level: str, message: str) -> None:
-        """插入带格式的文本"""
+    def log_message(self, level: str, message: str) -> None:
+        """统一的外部接口（保持兼容性）"""
+        self._append_formatted_text(level, message)
+
+    def _handle_log(self, level: str, message: str):
+        """信号处理适配方法"""
+        self.log_message(level, message)
+
+    def _append_formatted_text(self, level: str, message: str) -> None:
+        """优化后的日志添加方法"""
+        cursor = self.text_output.textCursor()
         full_message = f"[{level.upper()}] {message}"
         
         fmt = QTextCharFormat()
-        fmt.setForeground(self._get_log_color(level))
+        fmt.setForeground(QColor(self.LEVEL_COLORS[level.upper()]))
         
-        # 保存当前格式
+        # 保存当前格式状态
         old_fmt = cursor.charFormat()
         
         cursor.movePosition(QTextCursor.End)
         cursor.setCharFormat(fmt)
         cursor.insertText(full_message + "\n")
+        cursor.setCharFormat(old_fmt)  # 恢复原始格式
         
-        # 恢复原有格式
-        cursor.setCharFormat(old_fmt)
-
-    def _get_log_color(self, level: str) -> QColor:
-        """获取日志等级对应的颜色"""
-        return QColor(self.LEVEL_COLORS.get(level.upper(), Styles.LOG_TEXT_COLOR))
+        self._auto_scroll(cursor)
 
     def _auto_scroll(self, cursor: QTextCursor) -> None:
-        """优化后的智能滚动控制"""
-        # 确保光标可见
+        """优化滚动控制逻辑"""
         self.text_output.ensureCursorVisible()
-        
-        # 直接操作滚动条到最底部
         scrollbar = self.text_output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-        
-        # 更新光标位置确保视图同步
+        if scrollbar.maximum() > 0:
+            scrollbar.setValue(scrollbar.maximum())
         cursor.movePosition(QTextCursor.End)
         self.text_output.setTextCursor(cursor)
 
     def clear(self) -> None:
-        """清空日志内容"""
+        """保持原有清空功能"""
         self.text_output.clear()
 
     def set_max_lines(self, max_lines: int = 1000) -> None:
-        """设置最大保留日志行数"""
+        """优化性能的日志截断"""
         cursor = self.text_output.textCursor()
         cursor.select(QTextCursor.Document)
-        text = cursor.selectedText().split('\n')
+        content = cursor.selectedText().split('\u2029')  # Qt的换行符表示
         
-        if len(text) > max_lines:
-            new_text = '\n'.join(text[-max_lines:])
-            self.text_output.setPlainText(new_text)
+        if len(content) > max_lines:
+            new_content = '\n'.join(content[-max_lines:])
+            self.text_output.setPlainText(new_content)

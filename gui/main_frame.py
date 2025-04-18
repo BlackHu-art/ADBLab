@@ -20,7 +20,6 @@ class MainFrame(QMainWindow):
         self._init_ui_components()
         self._setup_ui()
         self._create_menu()
-        
         # 延迟操作前添加存在性检查
         if hasattr(self, 'left_panel') and hasattr(self.left_panel, 'adb_controller'):
             QTimer.singleShot(100, self.safe_refresh_devices)
@@ -65,12 +64,12 @@ class MainFrame(QMainWindow):
         main_layout.addWidget(self.log_panel, stretch=2)
 
     # 在MainFrame中统一处理错误
-    def log_message(self, level: str, message: str):
-        # 添加崩溃防护
-        try:
-            self.log_panel.log_message(level, message)
-        except RuntimeError as e:
-            print(f"UI Already Destroyed: {e}")
+    # def log_message(self, level: str, message: str):
+    #     # 添加崩溃防护
+    #     try:
+    #         self.log_panel.log_message(level, message)
+    #     except RuntimeError as e:
+    #         print(f"UI Already Destroyed: {e}")
 
     def clear_log(self):
         """清空日志面板"""

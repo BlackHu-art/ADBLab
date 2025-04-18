@@ -1,0 +1,127 @@
+2025-04-18 09:51:17,544 - INFO - 3 devices connected.
+2025-04-18 09:57:35,896 - INFO - 3 devices connected.
+2025-04-18 10:00:36,413 - INFO - 3 devices connected.
+2025-04-18 10:00:38,814 - INFO - 3 devices connected.
+2025-04-18 10:00:41,693 - WARNING - 10.0.0.195:5555 is already connected.
+2025-04-18 10:00:45,065 - INFO - 3 devices connected.
+2025-04-18 10:00:52,831 - WARNING - 10.0.0.195:5555 is already connected.
+2025-04-18 10:00:55,239 - WARNING - 10.0.0.111:5188 is already connected.
+2025-04-18 10:00:58,033 - INFO - 3 devices connected.
+2025-04-18 10:01:00,552 - WARNING - No device selected
+2025-04-18 10:01:04,003 - INFO - Disconnected 10.0.0.111:5188 successfully
+2025-04-18 10:01:07,675 - INFO - 2 devices connected.
+2025-04-18 10:01:11,670 - WARNING - connected to 10.0.0.111:5188
+2025-04-18 10:01:11,670 - INFO - 3 devices connected.
+2025-04-18 10:07:21,023 - INFO - 3 devices connected.
+2025-04-18 10:07:31,805 - INFO - Device info for 10.0.0.111:5188:
+{
+    "Model": "B13",
+    "Brand": "BTV",
+    "Android Version": "11",
+    "Serial Number": "565eeb67ab0cf54644bd765c680ab0b2",
+    "SDK Version": "30",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size  Used Avail Use% Mounted on\n/dev/block/userdata  11G   10G  1.5G  87% /storage/emulated/0/Android/obb",
+    "Total Memory": "MemTotal:        2038268 kB",
+    "Available Memory": "MemAvailable:     715084 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 240",
+    "Timezone": "America/Recife",
+    "Mac": "7: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc pfifo_fast state DOWN group default qlen 1000\n    link/ether e0:75:26:14:9b:be brd ff:ff:ff:ff:ff:ff"
+}
+2025-04-18 10:07:31,808 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     767252 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
+2025-04-18 10:07:52,127 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     777352 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
+2025-04-18 10:07:57,159 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     776052 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
+2025-04-18 10:08:08,893 - INFO - 3 devices connected.
+2025-04-18 10:08:12,792 - ERROR - IP address cannot be empty.
+2025-04-18 10:37:26,476 - INFO - 3 devices connected.
+2025-04-18 10:37:31,897 - INFO - 3 devices connected.
+2025-04-18 10:39:56,356 - INFO - 3 devices connected.
+2025-04-18 10:41:51,283 - INFO - 3 devices connected.
+2025-04-18 10:42:39,963 - INFO - 3 devices connected.
+2025-04-18 10:42:57,338 - ERROR - IP address cannot be empty.
+2025-04-18 10:42:59,058 - ERROR - IP address cannot be empty.
+2025-04-18 10:43:01,292 - WARNING - 10.0.0.111:5188 is already connected.
+2025-04-18 10:43:08,916 - INFO - Device info for 10.0.0.111:5188:
+{
+    "Model": "B13",
+    "Brand": "BTV",
+    "Android Version": "11",
+    "Serial Number": "565eeb67ab0cf54644bd765c680ab0b2",
+    "SDK Version": "30",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size  Used Avail Use% Mounted on\n/dev/block/userdata  11G   10G  1.5G  87% /storage/emulated/0/Android/obb",
+    "Total Memory": "MemTotal:        2038268 kB",
+    "Available Memory": "MemAvailable:     760184 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 240",
+    "Timezone": "America/Recife",
+    "Mac": "7: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc pfifo_fast state DOWN group default qlen 1000\n    link/ether e0:75:26:14:9b:be brd ff:ff:ff:ff:ff:ff"
+}
+2025-04-18 10:43:08,917 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     756552 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
