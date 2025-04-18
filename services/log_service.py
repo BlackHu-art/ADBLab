@@ -34,7 +34,7 @@ class LogService(QObject):
         # 文件日志配置（保持不变）
         self.file_logger = logging.getLogger("app")
         self.file_logger.setLevel(logging.DEBUG)
-        handler = logging.FileHandler("app.log", encoding="utf-8")
+        handler = logging.FileHandler("resources/app.log", encoding="utf-8")
         formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         self.file_logger.addHandler(handler)
