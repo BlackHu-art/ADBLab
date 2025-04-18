@@ -24,7 +24,7 @@ class LeftPanel(QWidget):
     PANEL_WIDTH = 500
     GROUP_TITLES = ("Device Management", "Actions")
     BUTTON_TEXTS = (
-        "Connect", "Refresh", "Device Info", "Disconnect",
+        "Connect", "Refresh", "Device Info", "Disconnect", "Restart Devices",
         "Select APK", "Get ANR Files", "Kill All Apps", "Installed Apps", "Current Activity"
     )
 
@@ -89,7 +89,7 @@ class LeftPanel(QWidget):
             (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
             (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
             (self.BUTTON_TEXTS[3], self.adb_controller.on_disconnect_device),
-            ("Example 1", lambda: None),
+            (self.BUTTON_TEXTS[3], self.adb_controller.on_restart_devices),
             ("Example 2", lambda: None),
             ("Example 1", lambda: None),
             ("Example 2", lambda: None),

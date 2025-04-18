@@ -1,17 +1,14 @@
 import subprocess
-import os
-from utils.adb_utils import execute_adb_command
 
 class ADBModel:
     
     @staticmethod
     def connect_device(ip_address: str) -> str:
-        """使用公共方法优化"""
         return ADBModel._execute_command(["adb", "connect", ip_address])
 
     @staticmethod
     def get_connected_devices():
-        """获取已连接设备（优化版）"""
+        """获取已连接设备"""
         result = ADBModel._execute_command(["adb", "devices"])
         if result.startswith(("Timeout:", "SystemError:")):
             return []
@@ -21,7 +18,7 @@ class ADBModel:
 
     @staticmethod
     def get_devices():
-        """获取有效设备（优化版）"""
+        """获取有效设备"""
         result = ADBModel._execute_command(["adb", "devices"])
         return [line.split()[0] 
                for line in result.splitlines()[1:] 
@@ -29,8 +26,13 @@ class ADBModel:
 
     @staticmethod
     def disconnect_device(devices):
-        """设备断开连接（优化版）"""
+        """设备断开连接"""
         return ADBModel._execute_command(["adb", "disconnect", devices])
+    
+    @staticmethod
+    def restart_device(device):
+        """重启设备"""
+        return ADBModel._execute_command(["adb", "-s", device, "reboot"])
         
     @staticmethod
     def get_device_info(device):
@@ -85,6 +87,8 @@ class ADBModel:
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            return f"Error: {str(e)}"
         except subprocess.TimeoutExpired:
             return f"Timeout: Command execution exceeded {timeout} seconds"
         except Exception as e:

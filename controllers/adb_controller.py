@@ -156,6 +156,19 @@ class ADBController:
             except Exception as e:
                 self.log_service.log("ERROR", f"Failed to disconnect {device}: {str(e)}")
                 continue
+    
+    def on_restart_devices(self, event=None):
+        devices = self.left_panel.selected_devices
+        if not devices:
+            self.log_service.log("WARNING", "No devices selected")
+            return
+        for device in devices:
+            try:
+                ADBModel.restart_device(device)
+                self.log_service.log("INFO", f"{device} restarted")
+            except Exception as e:
+                self.log_service.log("ERROR", f"Failed to restart {device}: {str(e)}")
+                continue
 
     def on_current_activity(self, event=None):
         devices = self.left_panel.selected_devices
