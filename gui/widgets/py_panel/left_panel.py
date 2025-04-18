@@ -76,6 +76,7 @@ class LeftPanel(QWidget):
         self.listbox_devices.setEditTriggers(QListWidget.NoEditTriggers)
         self.listbox_devices.setSelectionBehavior(QListWidget.SelectRows)
         self.listbox_devices.setSelectionMode(QListWidget.NoSelection)  # 只通过勾选来选中
+        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.listbox_devices.setFont(self._base_font)
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
 
@@ -90,19 +91,32 @@ class LeftPanel(QWidget):
             (self.BUTTON_TEXTS[3], self.adb_controller.on_disconnect_device),
             ("Example 1", lambda: None),
             ("Example 2", lambda: None),
-            ("Example 3", lambda: None),
+            ("Example 1", lambda: None),
+            ("Example 2", lambda: None),
+            ("Example 1", lambda: None),
         ]
         for text, handler in button_specs:
             btn = QPushButton(text)
             btn.setFont(self._base_font)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
             btn.clicked.connect(handler)
             button_layout.addWidget(btn)
 
         button_layout.addStretch()
         device_row.addWidget(self.listbox_devices, 2)
         device_row.addWidget(button_panel, 1)
-
         main_layout.addLayout(device_row)
+        
+        # ▶️ 底部 示例按钮一行（水平平铺）
+        example_row = QHBoxLayout()
+        for text in ["Example 1", "Example 2", "Example 3"]:
+            btn = QPushButton(text)
+            btn.setFont(self._base_font)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            btn.clicked.connect(lambda _, t=text: print(f"{t} clicked"))  # 示例功能
+            example_row.addWidget(btn)
+        main_layout.addLayout(example_row)
+        
         group.setLayout(main_layout)
         return group
 
