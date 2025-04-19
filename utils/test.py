@@ -1,221 +1,242 @@
 import sys
-from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QSplitter, QTreeWidget, QTreeWidgetItem,
-    QTabWidget, QTextEdit, QToolBar, QLineEdit, QPushButton, QMenu, QStyle, QHBoxLayout
-)
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtWidgets import (QApplication, QWidget, QGridLayout, QLabel, 
+                              QScrollArea, QStyle, QVBoxLayout, QComboBox, QHBoxLayout, QPushButton)
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QFontDatabase, QFont, QPainter
+import qtawesome as qta
 
-class TermiusClone(QMainWindow):
+class IconBrowser(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.FramelessWindowHint)
-        # 允许窗口背景透明（可选）
-        # self.setAttribute(Qt.WA_TranslucentBackground)
-        # self.setWindowTitle("Termius Clone")
-        self.setGeometry(100, 100, 1200, 800)
-        self.setup_ui()
-        self.load_sample_data()
-        self.setup_styles()
-        self.menuBar().setVisible(False)
-
-    def setup_ui(self):
-        main_splitter = QSplitter()
+        self.setWindowTitle("Multi-Icon Library Browser")
+        self.setGeometry(300, 300, 1024, 768)
         
-        # 左侧边栏
-        self.sidebar = QTreeWidget()
-        self.sidebar.setHeaderHidden(True)
-        self.sidebar.setIndentation(15)
-        self.sidebar.itemDoubleClicked.connect(self.connect_to_server)
-        
-        # 右侧主区域
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setTabsClosable(True)
-        self.tab_widget.tabCloseRequested.connect(self.close_tab)
-        
-        main_splitter.addWidget(self.sidebar)
-        main_splitter.addWidget(self.tab_widget)
-        main_splitter.setSizes([200, 1000])
-        
-        # 主工具栏
-        main_toolbar = QToolBar("Main Toolbar")
-        main_toolbar.setIconSize(QSize(24, 24))
-        self.addToolBar(main_toolbar)
-        
-        # 左侧工具按钮
-        self.new_action = QAction(QIcon.fromTheme("list-add"), "New", self)
-        self.new_action.triggered.connect(self.new_connection)
-        main_toolbar.addAction(self.new_action)
-        
-        self.edit_action = QAction(QIcon.fromTheme("edit"), "Edit", self)
-        self.edit_action.triggered.connect(self.edit_item)
-        main_toolbar.addAction(self.edit_action)
-        
-        self.delete_action = QAction(QIcon.fromTheme("edit-delete"), "Delete", self)
-        self.delete_action.triggered.connect(self.delete_item)
-        main_toolbar.addAction(self.delete_action)
-        
-        main_toolbar.addSeparator()
-        
-        # 搜索框
-        self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Search...")
-        self.search_box.setFixedWidth(200)
-        main_toolbar.addWidget(self.search_box)
-        
-        # 右侧菜单按钮
-        main_toolbar.addSeparator()
-        self.setup_menu_buttons(main_toolbar)
-        
-        self.setCentralWidget(main_splitter)
-        
-        # 上下文菜单
-        self.sidebar.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.sidebar.customContextMenuRequested.connect(self.show_context_menu)
-
-    def setup_menu_buttons(self, toolbar):
-        menu_widget = QWidget()
-        menu_layout = QHBoxLayout()
-        menu_layout.setContentsMargins(0, 0, 0, 0)
-        menu_layout.setSpacing(5)
-        
-        # 文件菜单
-        self.file_btn = QPushButton("File")
-        file_menu = QMenu(self)
-        file_menu.addAction("New Window").triggered.connect(self.new_window)
-        file_menu.addSeparator()
-        file_menu.addAction("Settings").triggered.connect(self.show_settings)
-        file_menu.addSeparator()
-        file_menu.addAction("Exit").triggered.connect(self.close)
-        self.file_btn.setMenu(file_menu)
-        menu_layout.addWidget(self.file_btn)
-        
-        # 编辑菜单
-        self.edit_btn = QPushButton("Edit")
-        edit_menu = QMenu(self)
-        edit_menu.addAction("Copy").triggered.connect(self.copy_text)
-        edit_menu.addAction("Paste").triggered.connect(self.paste_text)
-        self.edit_btn.setMenu(edit_menu)
-        menu_layout.addWidget(self.edit_btn)
-        
-        # 视图菜单
-        self.view_btn = QPushButton("View")
-        view_menu = QMenu(self)
-        self.fullscreen_action = view_menu.addAction("Toggle Full Screen")
-        self.fullscreen_action.triggered.connect(self.toggle_fullscreen)
-        view_menu.addSeparator()
-        view_menu.addAction("Zoom In").triggered.connect(self.zoom_in)
-        view_menu.addAction("Zoom Out").triggered.connect(self.zoom_out)
-        self.view_btn.setMenu(view_menu)
-        menu_layout.addWidget(self.view_btn)
-        
-        # 帮助菜单
-        self.help_btn = QPushButton("Help")
-        help_menu = QMenu(self)
-        help_menu.addAction("Documentation").triggered.connect(self.show_docs)
-        help_menu.addSeparator()
-        help_menu.addAction("About").triggered.connect(self.show_about)
-        self.help_btn.setMenu(help_menu)
-        menu_layout.addWidget(self.help_btn)
-        
-        menu_widget.setLayout(menu_layout)
-        toolbar.addWidget(menu_widget)
-
-    def setup_styles(self):
-        self.setStyleSheet("""
-            QMainWindow { background-color: #2D2D2D; }
-            QTreeWidget { 
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                border: none;
-            }
-            QTabWidget::pane { border: 0; background: #1E1E1E; }
-            QTabBar::tab { 
-                background: #333333;
-                color: #FFFFFF;
-                padding: 8px;
-                border-top-left-radius: 4px;
-                border-top-right-radius: 4px;
-            }
-            QTabBar::tab:selected { background: #1E1E1E; }
-            QTextEdit { 
-                background-color: #1E1E1E;
-                color: #FFFFFF;
-                font-family: Consolas;
-                font-size: 12pt;
-                border: none;
-            }
-            QPushButton { 
-                background: transparent; 
-                color: white;
-                padding: 5px;
-                border: none;
-            }
-            QPushButton:hover { background: #404040; }
-        """)
-
-    def load_sample_data(self):
-        data = {
-            "Groups": [{
-                "name": "Production",
-                "hosts": [
-                    {"name": "Web Server 1", "address": "192.168.1.100"},
-                    {"name": "DB Server", "address": "192.168.1.101"}
-                ]
-            }]
+        # 初始化图标库选项
+        self.icon_libraries = {
+            "Qt Standard": self.load_qt_icons,
+            "QtAwesome (FontAwesome)": self.load_qtawesome_icons,
+            "Material Design": self.load_material_icons
         }
-        for group in data["Groups"]:
-            group_item = QTreeWidgetItem(self.sidebar)
-            group_item.setText(0, group["name"])
-            group_item.setIcon(0, self.style().standardIcon(QStyle.SP_DirIcon))
-            for host in group["hosts"]:
-                host_item = QTreeWidgetItem(group_item)
-                host_item.setText(0, host["name"])
-                host_item.setIcon(0, self.style().standardIcon(QStyle.SP_ComputerIcon))
-                host_item.setData(0, Qt.UserRole, host["address"])
-        self.sidebar.expandAll()
+        
+        self._init_ui()
+        self.load_icons("Qt Standard")
 
-    # 以下是所有必需的最小化方法实现
-    def show_context_menu(self, position):
-        item = self.sidebar.currentItem()
-        if not item: return
-        menu = QMenu()
-        connect_action = menu.addAction("Connect")
-        edit_action = menu.addAction("Edit")
-        delete_action = menu.addAction("Delete")
-        action = menu.exec_(self.sidebar.mapToGlobal(position))
-        if action == connect_action: self.connect_to_server(item)
-        elif action == edit_action: self.edit_item()
-        elif action == delete_action: self.delete_item()
+    def _init_ui(self):
+        main_layout = QVBoxLayout(self)
+        
+        # 下拉选择框样式优化
+        self.combo = QComboBox()
+        self.combo.setFixedWidth(200)
+        self.combo.addItems(self.icon_libraries.keys())
+        self.combo.setStyleSheet("""
+            QComboBox {
+                font: 14px;
+                padding: 5px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+            }
+        """)
+        self.combo.currentTextChanged.connect(self.load_icons)
+        main_layout.addWidget(self.combo, alignment=Qt.AlignCenter)
 
-    def connect_to_server(self, item):
-        if item.childCount() == 0:
-            address = item.data(0, Qt.UserRole)
-            self.create_new_tab(f"SSH: {address}", f"Connecting to {address}...\n")
+        # 滚动区域优化
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        self.content = QWidget()
+        self.grid = QGridLayout(self.content)
+        self.grid.setSpacing(20)  # 增加网格间距
+        self.grid.setContentsMargins(20, 20, 20, 20)
+        scroll.setWidget(self.content)
+        main_layout.addWidget(scroll)
 
-    def create_new_tab(self, title, content):
-        terminal = QTextEdit()
-        terminal.setPlainText(content)
-        self.tab_widget.addTab(terminal, title)
+    def load_icons(self, library_name):
+        # 清空布局前先删除所有子控件
+        for i in reversed(range(self.grid.count())): 
+            self.grid.itemAt(i).widget().deleteLater()
+        
+        # 重置布局参数
+        self.grid.setRowStretch(self.grid.rowCount(), 0)
+        self.grid.setColumnStretch(self.grid.columnCount(), 0)
+        
+        # 加载新图标
+        self.icon_libraries[library_name]()
 
-    def close_tab(self, index):
-        self.tab_widget.removeTab(index)
+    def load_qt_icons(self):
+        """加载Qt标准图标"""
+        row = col = 0
+        for name, value in QStyle.StandardPixmap.__members__.items():
+            if name.startswith('SP_'):
+                icon = self.style().standardIcon(value)
+                if not icon.isNull():
+                    self._add_item(
+                        icon=icon,
+                        title=name.replace("SP_", ""),
+                        tooltip=f"Qt Standard: {name}",
+                        row=row,
+                        col=col
+                    )
+                    col = (col + 1) % 4
+                    row += 1 if col == 0 else 0
 
-    def new_connection(self): pass
-    def edit_item(self): pass
-    def delete_item(self): pass
-    def new_window(self): TermiusClone().show()
-    def show_settings(self): pass
-    def copy_text(self): pass
-    def paste_text(self): pass
-    def toggle_fullscreen(self): self.showFullScreen() if not self.isFullScreen() else self.showNormal()
-    def zoom_in(self): pass
-    def zoom_out(self): pass
-    def show_docs(self): pass
-    def show_about(self): pass
+    def load_qtawesome_icons(self):
+        """动态加载QtAwesome全部图标"""
+        try:
+            # 使用官方API获取所有图标名称
+            all_icons = qta.icons()
+            
+            # 分页加载配置
+            self.current_page = 0
+            self.page_size = 200  # 调整为每页200个图标
+            self.all_icon_names = sorted(all_icons)
+            
+            self._load_qtawesome_page()
+            self._add_pagination_controls()
+            
+        except Exception as e:
+            print(f"加载QtAwesome图标失败: {str(e)}")
+
+    def _load_qtawesome_page(self):
+        """加载当前分页的图标（优化版）"""
+        start = self.current_page * self.page_size
+        end = start + self.page_size
+        icons_to_show = self.all_icon_names[start:end]
+        
+        row = col = 0
+        for icon_name in icons_to_show:
+            try:
+                # 创建基础图标
+                base_icon = qta.icon(icon_name, color="#2196F3")
+                if base_icon.isNull():
+                    continue
+                    
+                self._add_item(
+                    icon=base_icon,
+                    title=icon_name,
+                    tooltip=f"Icon: {icon_name}\n复制名称：{icon_name}",
+                    row=row,
+                    col=col
+                )
+                
+                col = (col + 1) % 4
+                row += 1 if col == 0 else 0
+                
+            except Exception as e:
+                print(f"加载图标 {icon_name} 失败: {str(e)}")
+
+    def _add_pagination_controls(self):
+        """添加分页导航栏"""
+        pagination = QWidget()
+        layout = QHBoxLayout(pagination)
+        
+        btn_prev = QPushButton("上一页")
+        btn_prev.clicked.connect(lambda: self._change_page(-1))
+        btn_next = QPushButton("下一页")
+        btn_next.clicked.connect(lambda: self._change_page(1))
+        
+        self.lbl_page = QLabel()
+        self._update_page_label()
+        
+        layout.addWidget(btn_prev)
+        layout.addWidget(self.lbl_page)
+        layout.addWidget(btn_next)
+        
+        self.grid.addWidget(pagination, self.grid.rowCount()+1, 0, 1, 4)
+
+    def _change_page(self, delta):
+        """切换分页"""
+        new_page = self.current_page + delta
+        max_page = len(self.all_icon_names) // self.page_size
+        
+        if 0 <= new_page <= max_page:
+            self.current_page = new_page
+            self.load_icons("QtAwesome (FontAwesome)")  # 重新加载当前库
+            self._update_page_label()
+
+    def _update_page_label(self):
+        """更新分页信息"""
+        total = len(self.all_icon_names)
+        current_start = self.current_page * self.page_size + 1
+        current_end = min((self.current_page + 1) * self.page_size, total)
+        self.lbl_page.setText(f"显示 {current_start}-{current_end} / 共 {total} 个图标")
+
+    def load_material_icons(self):
+        """加载Material Design图标"""
+        font_id = QFontDatabase.addApplicationFont("materialdesignicons-webfont.ttf")
+        if font_id == -1: return
+        
+        font = QFont(QFontDatabase.applicationFontFamilies(font_id)[0], 24)
+        icons = [
+            ("\uF4A9", "账户", "#E91E63"),
+            ("\uF156", "设置", "#3F51B5"),
+            ("\uF2C7", "下载", "#009688"),
+            ("\uF1C9", "上传", "#FF5722")
+        ]
+        
+        row = col = 0
+        for code, title, color in icons:
+            label = QLabel(code)
+            label.setFont(font)
+            label.setStyleSheet(f"color: {color};")
+            label.setAlignment(Qt.AlignCenter)
+            
+            self._add_custom_item(
+                widget=label,
+                title=title,
+                tooltip=f"Material Design: {code}",
+                row=row,
+                col=col
+            )
+            col = (col + 1) % 4
+            row += 1 if col == 0 else 0
+
+    def _add_item(self, icon, title, tooltip, row, col):
+        """通用图标项组件"""
+        container = QWidget()
+        container.setMinimumSize(180, 180)  # 固定最小尺寸防止重叠
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # 图标显示
+        icon_label = QLabel()
+        icon_label.setPixmap(icon.pixmap(64, 64))
+        icon_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(icon_label)
+        
+        # 可复制文本标签
+        text_label = QLabel(title)
+        text_label.setAlignment(Qt.AlignCenter)
+        text_label.setStyleSheet("font: 14px; color: #666;")
+        text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)  # 允许复制
+        text_label.setCursor(Qt.IBeamCursor)  # 显示文本光标
+        layout.addWidget(text_label)
+        
+        container.setToolTip(tooltip)
+        self.grid.addWidget(container, row, col)
+
+    def _add_custom_item(self, widget, title, tooltip, row, col):
+        """自定义组件项"""
+        container = QWidget()
+        container.setMinimumSize(180, 180)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(10, 10, 10, 10)
+        
+        # 图标部件
+        widget.setFixedSize(64, 64)
+        layout.addWidget(widget, alignment=Qt.AlignCenter)
+        
+        # 可复制文本标签
+        text_label = QLabel(title)
+        text_label.setAlignment(Qt.AlignCenter)
+        text_label.setStyleSheet("font: 14px; color: #666;")
+        text_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        text_label.setCursor(Qt.IBeamCursor)
+        layout.addWidget(text_label)
+        
+        container.setToolTip(tooltip)
+        self.grid.addWidget(container, row, col)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = TermiusClone()
+    window = IconBrowser()
     window.show()
     sys.exit(app.exec())

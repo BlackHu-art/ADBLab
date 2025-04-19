@@ -1,10 +1,10 @@
 from re import search
 from typing import List
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontMetrics
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QTableWidget, QTableWidgetItem
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QStyle
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -86,20 +86,58 @@ class LeftPanel(QWidget):
         button_layout.setContentsMargins(0, 0, 0, 0)
 
         button_specs = [
-            (self.BUTTON_TEXTS[1], self.adb_controller.on_refresh_devices),
-            (self.BUTTON_TEXTS[2], self.adb_controller.on_get_device_info),
-            (self.BUTTON_TEXTS[3], self.adb_controller.on_disconnect_device),
-            (self.BUTTON_TEXTS[4], self.adb_controller.on_restart_devices),
-            (self.BUTTON_TEXTS[5], self.adb_controller.on_restart_adb),
-            ("Example 1", lambda: None),
-            ("Example 2", lambda: None),
-            ("Example 1", lambda: None),
+            {
+                "text": self.BUTTON_TEXTS[1],  # Refresh
+                "handler": self.adb_controller.on_refresh_devices,
+                "icon": "resources/icons/Refresh.svg"
+
+            },
+            {
+                "text": self.BUTTON_TEXTS[2],  # Device Info
+                "handler": self.adb_controller.on_get_device_info,
+                "icon": "resources/icons/Info.svg"
+
+            },
+            {
+                "text": self.BUTTON_TEXTS[3],  # Disconnect
+                "handler": self.adb_controller.on_disconnect_device,
+            },
+            {
+                "text": self.BUTTON_TEXTS[4],  # Restart Devices
+                "handler": self.adb_controller.on_restart_devices,
+            },
+            {
+                "text": self.BUTTON_TEXTS[5],  # Restart ADB
+                "handler": self.adb_controller.on_restart_adb,
+            },
+            # 其他按钮...
+            {
+                "text": "Example",
+                "handler": "",
+            },
+            {
+                "text": "Example",
+                "handler": "",
+            },
+            {
+                "text": "Example",
+                "handler": "",
+            },
         ]
-        for text, handler in button_specs:
-            btn = QPushButton(text)
+        for spec in button_specs:
+            btn = QPushButton(spec["text"])
             btn.setFont(self._base_font)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            btn.clicked.connect(handler)
+            btn.clicked.connect(spec["handler"])
+            if "icon" in spec:
+                # 使用系统标准图标
+                btn.setIcon(QIcon(spec["icon"]))
+                        # 设置按钮样式表
+                # btn.setStyleSheet("""
+                #     QPushButton::menu-indicator {
+                #         width: 0;  /* 隐藏菜单指示器 */
+                #     }
+                # """)
             button_layout.addWidget(btn)
 
         button_layout.addStretch()
