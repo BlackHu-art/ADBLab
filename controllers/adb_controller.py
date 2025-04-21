@@ -1,7 +1,5 @@
 import json
-import os
 import threading
-import yaml
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from services.log_service import LogService
@@ -23,9 +21,6 @@ class ADBController:
         if not ip:
             self.log_service.log("ERROR", "IP address cannot be empty.")
             return
-
-        # ✅ 如果你依然希望支持用户从下拉中选数据，你可以用正则提取
-        # 或保留 userData 但明确以 currentText 为主（推荐）
 
         if ip in self.left_panel.connected_device_cache:
             self.log_service.log("WARNING", f"{ip} is already connected.")
