@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QLineEdit
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -62,11 +62,7 @@ class LeftPanel(QWidget):
         self.refresh_device_combobox()
         self.ip_entry.activated[int].connect(self._on_ip_selected)
         # 使用统一按钮创建方法
-        self.btn_connect = self._create_button(
-            text=self.BUTTON_TEXTS[0],
-            handler=self.adb_controller.on_connect_device,
-            icon_path="resources/icons/Connect.svg"
-        )
+        self.btn_connect = self._create_button("Connect", self.adb_controller.on_connect_device, "resources/icons/Connect.svg")
         ip_row.addWidget(self.ip_entry, 2)
         ip_row.addWidget(self.btn_connect, 1)
         main_layout.addLayout(ip_row)
@@ -88,36 +84,21 @@ class LeftPanel(QWidget):
         button_layout.setContentsMargins(0, 0, 0, 0)
 
         button_specs = [
-            {"text": self.BUTTON_TEXTS[1],"handler": self.adb_controller.on_refresh_devices,
-             "icon": "resources/icons/Refresh.svg"},
-            {"text": self.BUTTON_TEXTS[2],"handler": self.adb_controller.on_get_device_info,
-             "icon": "resources/icons/Info.svg"},
-            {"text": self.BUTTON_TEXTS[3],"handler": self.adb_controller.on_disconnect_device,
-             "icon": "resources/icons/Disconnect.svg"},
-            {"text": self.BUTTON_TEXTS[4],"handler": self.adb_controller.on_restart_devices,
-             "icon": "resources/icons/Restart.svg"},
-            {"text": self.BUTTON_TEXTS[5],"handler": self.adb_controller.on_restart_adb,
-             "icon": "resources/icons/Restore.svg"
-            },
+            {"text": self.BUTTON_TEXTS[1], "handler": self.adb_controller.on_refresh_devices, "icon": "resources/icons/Refresh.svg"},
+            {"text": self.BUTTON_TEXTS[2], "handler": self.adb_controller.on_get_device_info, "icon": "resources/icons/Info.svg"},
+            {"text": self.BUTTON_TEXTS[3], "handler": self.adb_controller.on_disconnect_device, "icon": "resources/icons/Disconnect.svg"},
+            {"text": self.BUTTON_TEXTS[4], "handler": self.adb_controller.on_restart_devices, "icon": "resources/icons/Restart.svg"},
+            {"text": self.BUTTON_TEXTS[5], "handler": self.adb_controller.on_restart_adb, "icon": "resources/icons/Restore.svg"},
             # 其他按钮...
-            {
-                "text": "Example",
-                "handler": "",
-            },
-            {
-                "text": "Example",
-                "handler": "",
-            },
-            {
-                "text": "Example",
-                "handler": "",
-            },
+            {"text": "Example","handler": "",},
+            {"text": "Example","handler": "",},
+            {"text": "Example","handler": "",},
         ]
         for spec in button_specs:
             btn = self._create_button(
                 text=spec["text"],
-                handler=spec.get("handler"),
-                icon_path=spec.get("icon")
+                handler=spec.get("handler"),  # 使用get方法安全访问
+                icon_path=spec.get("icon")     # 键名改为icon_path对应
             )
             button_layout.addWidget(btn)
 
@@ -126,13 +107,31 @@ class LeftPanel(QWidget):
         device_row.addWidget(button_panel, 1)
         main_layout.addLayout(device_row)
         
-        # ▶️ 底部 示例按钮一行（水平平铺）
-        example_row = QHBoxLayout()
-        for text in ["Example 1", "Example 2", "Example 3"]:
-            btn = self._create_button(text, lambda _, t=text: print(f"{t} clicked"))
-            example_row.addWidget(btn)
-            
-        main_layout.addLayout(example_row)
+        # ▶️ 底部布局改为垂直布局
+        last_row = QVBoxLayout()
+        last_row1 = QHBoxLayout()
+        btn_input = self._create_button("Send to devices", self.adb_controller.on_refresh_devices, "resources/icons/Input.svg")
+        input_edit = QLineEdit()
+        input_edit.setFont(self._base_font)
+        input_edit.setPlaceholderText("Input text here")
+        last_row1.addWidget(btn_input, 1)
+        last_row1.addWidget(input_edit, 2)
+        last_row.addLayout(last_row1)
+        
+        last_row2 = QHBoxLayout()
+        btn_generate_email = self._create_button("Generate Email", self.adb_controller.on_refresh_devices, "resources/icons/Email.svg")
+        device_input_1 = QLineEdit()
+        device_input_1.setFont(self._base_font)
+        device_input_1.setPlaceholderText("Generate Email")
+        device_input_2 = QLineEdit()
+        device_input_2.setFont(self._base_font)
+        device_input_2.setPlaceholderText("Get verification code")
+        last_row2.addWidget(btn_generate_email, 1)
+        last_row2.addWidget(device_input_1, 1)
+        last_row2.addWidget(device_input_2, 1)
+        last_row.addLayout(last_row2)
+        
+        main_layout.addLayout(last_row)
         group.setLayout(main_layout)
         return group
 
