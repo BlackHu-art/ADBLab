@@ -280,3 +280,70 @@ ZT322KPNPX	unauthorized
 2025-04-21 14:17:14,101 - WARNING - Please select at least one device
 2025-04-21 14:17:16,609 - WARNING - No devices selected
 2025-04-21 14:17:17,447 - WARNING - No device selected
+2025-04-21 15:26:54,890 - INFO - 5 devices connected.
+2025-04-21 15:27:00,325 - INFO - 5 devices connected.
+2025-04-21 15:27:05,328 - INFO - Device info for 10.0.0.111:5188:
+{
+    "Model": "B13",
+    "Brand": "BTV",
+    "Android Version": "11",
+    "Serial Number": "565eeb67ab0cf54644bd765c680ab0b2",
+    "SDK Version": "30",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size  Used Avail Use% Mounted on\n/dev/block/userdata  11G   10G  1.4G  87% /storage/emulated/0/Android/obb",
+    "Total Memory": "MemTotal:        2038268 kB",
+    "Available Memory": "MemAvailable:    1050568 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 240",
+    "Timezone": "America/Recife",
+    "Mac": "7: wlan0: <NO-CARRIER,BROADCAST,MULTICAST,UP> mtu 1500 qdisc pfifo_fast state DOWN group default qlen 1000\n    link/ether e0:75:26:14:9b:be brd ff:ff:ff:ff:ff:ff"
+}
+2025-04-21 15:37:08,874 - INFO - 5 devices connected.
+2025-04-21 15:37:10,398 - INFO - 5 devices connected.
+2025-04-21 15:37:14,936 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     812820 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
+2025-04-21 15:37:19,488 - INFO - Device info for 10.0.0.195:5555:
+{
+    "Model": "MIBOX4",
+    "Brand": "Xiaomi",
+    "Android Version": "12",
+    "Serial Number": "18762280641696",
+    "SDK Version": "31",
+    "CPU Architecture": "armeabi-v7a",
+    "Hardware": "amlogic",
+    "Storage": "Filesystem          Size Used Avail Use% Mounted on\n/dev/block/userdata 5.0G 3.2G  1.7G  65% /data/user/0",
+    "Total Memory": "MemTotal:        1982892 kB",
+    "Available Memory": "MemAvailable:     813276 kB",
+    "Resolution": "Physical size: 1920x1080",
+    "Density": "Physical density: 320",
+    "Timezone": "Asia/Singapore",
+    "Mac": "6: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP group default qlen 1000\n    link/ether ec:fa:5c:94:8a:07 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.195/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::a98c:81d8:534b:f4f5/64 scope link stable-privacy \n       valid_lft forever preferred_lft forever"
+}
+2025-04-21 15:37:29,583 - INFO - Restarting ADB
+2025-04-21 15:37:29,587 - INFO - ADB restarted 
+2025-04-21 15:37:29,799 - ERROR - IP address cannot be empty.
+2025-04-21 15:37:35,221 - INFO - 3 devices connected.
+2025-04-21 15:37:37,994 - WARNING - connected to 10.0.0.111:5188
+2025-04-21 15:37:37,995 - INFO - 4 devices connected.
+2025-04-21 15:37:41,373 - WARNING - connected to 10.0.0.195:5555
+2025-04-21 15:37:41,374 - INFO - 5 devices connected.
+2025-04-21 15:37:41,675 - ERROR - IP address cannot be empty.
+2025-04-21 15:37:42,646 - ERROR - IP address cannot be empty.
+2025-04-21 15:37:43,263 - ERROR - IP address cannot be empty.
+2025-04-21 15:37:44,951 - INFO - 5 devices connected.

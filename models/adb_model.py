@@ -102,19 +102,3 @@ class ADBModel:
         except Exception as e:
             return f"SystemError: {str(e)}"
 
-    def run_in_thread(
-        target_func: Callable[..., Any],
-        args: tuple = (),
-        callback: Optional[Callable[[Any], None]] = None
-    ):
-        """
-        :param target_func: 要执行的ADB函数
-        :param args: 函数参数，传入元组形式
-        :param callback: 执行完成后的回调函数，接收函数返回值
-        """
-        def thread_func():
-            result = target_func(*args)
-            if callback:
-                callback(result)
-
-        threading.Thread(target=thread_func, daemon=True).start()
