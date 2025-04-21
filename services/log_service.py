@@ -22,7 +22,7 @@ class LogService(QObject):
         if not self._initialized:
             super().__init__()
             self._initialized = True
-            self._enable_file_log = True  # ✅ 控制是否写入文件
+            self._enable_file_log = False  # ✅ 控制是否写入文件
             self._log_path = "resources/app.log"
             self._setup()
 
