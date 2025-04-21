@@ -214,3 +214,32 @@ ZT322KPNPX	unauthorized
 2025-04-19 15:54:29,374 - WARNING - No devices connected.
 2025-04-19 15:55:10,782 - WARNING - No devices connected.
 2025-04-19 15:55:29,880 - WARNING - No devices connected.
+2025-04-21 09:00:43,132 - INFO - 3 devices connected.
+2025-04-21 09:00:45,865 - INFO - 3 devices connected.
+2025-04-21 09:00:54,572 - INFO - 3 devices connected.
+2025-04-21 09:00:55,309 - WARNING - Please select at least one device
+2025-04-21 09:00:57,444 - WARNING - No device selected
+2025-04-21 09:01:00,240 - WARNING - No devices selected
+2025-04-21 09:11:06,988 - INFO - 3 devices connected.
+2025-04-21 09:11:39,540 - INFO - 3 devices connected.
+2025-04-21 09:12:11,272 - INFO - 3 devices connected.
+2025-04-21 09:42:50,626 - INFO - 3 devices connected.
+2025-04-21 09:42:54,870 - INFO - 3 devices connected.
+2025-04-21 09:42:56,264 - WARNING - Please select at least one device
+2025-04-21 09:43:00,890 - INFO - Device info for ZT322KPNPX:
+{
+    "Model": "moto g24",
+    "Brand": "motorola",
+    "Android Version": "14",
+    "Serial Number": "ZT322KPNPX",
+    "SDK Version": "34",
+    "CPU Architecture": "arm64-v8a",
+    "Hardware": "mt6768",
+    "Storage": "Filesystem       Size Used Avail Use% Mounted on\n/dev/block/dm-61 106G  13G   93G  12% /storage/emulated/0/Android/obb",
+    "Total Memory": "MemTotal:        7978932 kB",
+    "Available Memory": "MemAvailable:    5473996 kB",
+    "Resolution": "Physical size: 720x1612",
+    "Density": "Physical density: 280",
+    "Timezone": "Asia/Shanghai",
+    "Mac": "37: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 3000\n    link/ether 0a:54:5e:28:9b:65 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.249/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::854:5eff:fe28:9b65/64 scope link \n       valid_lft forever preferred_lft forever"
+}

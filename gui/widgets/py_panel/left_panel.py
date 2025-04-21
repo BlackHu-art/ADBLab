@@ -86,29 +86,16 @@ class LeftPanel(QWidget):
         button_layout.setContentsMargins(0, 0, 0, 0)
 
         button_specs = [
-            {
-                "text": self.BUTTON_TEXTS[1],  # Refresh
-                "handler": self.adb_controller.on_refresh_devices,
-                "icon": "resources/icons/Refresh.svg"
-
-            },
-            {
-                "text": self.BUTTON_TEXTS[2],  # Device Info
-                "handler": self.adb_controller.on_get_device_info,
-                "icon": "resources/icons/Info.svg"
-
-            },
-            {
-                "text": self.BUTTON_TEXTS[3],  # Disconnect
-                "handler": self.adb_controller.on_disconnect_device,
-            },
-            {
-                "text": self.BUTTON_TEXTS[4],  # Restart Devices
-                "handler": self.adb_controller.on_restart_devices,
-            },
-            {
-                "text": self.BUTTON_TEXTS[5],  # Restart ADB
-                "handler": self.adb_controller.on_restart_adb,
+            {"text": self.BUTTON_TEXTS[1],"handler": self.adb_controller.on_refresh_devices,
+             "icon": "resources/icons/Refresh.svg"},
+            {"text": self.BUTTON_TEXTS[2],"handler": self.adb_controller.on_get_device_info,
+             "icon": "resources/icons/Info.svg"},
+            {"text": self.BUTTON_TEXTS[3],"handler": self.adb_controller.on_disconnect_device,
+             "icon": "resources/icons/Disconnect.svg"},
+            {"text": self.BUTTON_TEXTS[4],"handler": self.adb_controller.on_restart_devices,
+             "icon": "resources/icons/Restart.svg"},
+            {"text": self.BUTTON_TEXTS[5],"handler": self.adb_controller.on_restart_adb,
+             "icon": "resources/icons/Restore.svg"
             },
             # 其他按钮...
             {
@@ -125,19 +112,11 @@ class LeftPanel(QWidget):
             },
         ]
         for spec in button_specs:
-            btn = QPushButton(spec["text"])
-            btn.setFont(self._base_font)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            btn.clicked.connect(spec["handler"])
-            if "icon" in spec:
-                # 使用系统标准图标
-                btn.setIcon(QIcon(spec["icon"]))
-                        # 设置按钮样式表
-                # btn.setStyleSheet("""
-                #     QPushButton::menu-indicator {
-                #         width: 0;  /* 隐藏菜单指示器 */
-                #     }
-                # """)
+            btn = self._create_button(
+                text=spec["text"],
+                handler=spec.get("handler"),
+                icon_path=spec.get("icon")
+            )
             button_layout.addWidget(btn)
 
         button_layout.addStretch()
@@ -148,16 +127,25 @@ class LeftPanel(QWidget):
         # ▶️ 底部 示例按钮一行（水平平铺）
         example_row = QHBoxLayout()
         for text in ["Example 1", "Example 2", "Example 3"]:
-            btn = QPushButton(text)
-            btn.setFont(self._base_font)
-            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-            btn.clicked.connect(lambda _, t=text: print(f"{t} clicked"))  # 示例功能
+            btn = self._create_button(text, lambda _, t=text: print(f"{t} clicked"))
             example_row.addWidget(btn)
+            
         main_layout.addLayout(example_row)
-        
         group.setLayout(main_layout)
         return group
 
+    def _create_button(self, text: str, handler=None, icon_path: str = None) -> QPushButton:
+        btn = QPushButton(text)
+        btn.setFont(self._base_font)
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        if handler:
+            btn.clicked.connect(handler)
+        if icon_path:
+            btn.setIcon(QIcon(icon_path))
+            btn.setStyleSheet("QPushButton { padding-left: 6px; }")
+        else:
+            btn.setStyleSheet("QPushButton { padding: 4px 8px; }")
+        return btn
 
     def _create_actions_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[1])
