@@ -61,14 +61,16 @@ class LeftPanel(QWidget):
         self.ip_entry.setFont(self._base_font)
         self.refresh_device_combobox()
         self.ip_entry.activated[int].connect(self._on_ip_selected)
-
-        self.btn_connect = QPushButton(self.BUTTON_TEXTS[0])
-        self.btn_connect.setFont(self._base_font)
-        self.btn_connect.clicked.connect(self.adb_controller.on_connect_device)
-
+        # 使用统一按钮创建方法
+        self.btn_connect = self._create_button(
+            text=self.BUTTON_TEXTS[0],
+            handler=self.adb_controller.on_connect_device,
+            icon_path="resources/icons/Connect.svg"
+        )
         ip_row.addWidget(self.ip_entry, 2)
         ip_row.addWidget(self.btn_connect, 1)
         main_layout.addLayout(ip_row)
+
 
         # ▶️ 中部 设备列表 + 按钮操作面板
         device_row = QHBoxLayout()
@@ -142,9 +144,6 @@ class LeftPanel(QWidget):
             btn.clicked.connect(handler)
         if icon_path:
             btn.setIcon(QIcon(icon_path))
-            btn.setStyleSheet("QPushButton { padding-left: 6px; }")
-        else:
-            btn.setStyleSheet("QPushButton { padding: 4px 8px; }")
         return btn
 
     def _create_actions_group(self) -> QGroupBox:

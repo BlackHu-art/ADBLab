@@ -243,3 +243,9 @@ ZT322KPNPX	unauthorized
     "Timezone": "Asia/Shanghai",
     "Mac": "37: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 3000\n    link/ether 0a:54:5e:28:9b:65 brd ff:ff:ff:ff:ff:ff\n    inet 10.0.0.249/24 brd 10.0.0.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::854:5eff:fe28:9b65/64 scope link \n       valid_lft forever preferred_lft forever"
 }
+2025-04-21 09:44:36,670 - INFO - 3 devices connected.
+2025-04-21 09:45:09,389 - INFO - 3 devices connected.
+2025-04-21 09:49:32,351 - INFO - 3 devices connected.
+2025-04-21 09:49:56,464 - INFO - 3 devices connected.
+2025-04-21 09:50:00,218 - ERROR - IP address cannot be empty.
+2025-04-21 09:52:38,920 - INFO - 3 devices connected.
