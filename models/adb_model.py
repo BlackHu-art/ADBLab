@@ -1,6 +1,6 @@
 import subprocess
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 
 class ADBModel:
     
@@ -102,43 +102,19 @@ class ADBModel:
         except Exception as e:
             return f"SystemError: {str(e)}"
 
-    @classmethod
-    def execute_command_threaded(
-        cls,
-        command: list,
-        timeout: int = 10,
-        on_success: Optional[Callable[[str], None]] = None,
-        on_error: Optional[Callable[[str], None]] = None
+    def run_in_thread(
+        target_func: Callable[..., Any],
+        args: tuple = (),
+        callback: Optional[Callable[[Any], None]] = None
     ):
-        """在线程中执行ADB命令"""
+        """
+        :param target_func: 要执行的ADB函数
+        :param args: 函数参数，传入元组形式
+        :param callback: 执行完成后的回调函数，接收函数返回值
+        """
+        def thread_func():
+            result = target_func(*args)
+            if callback:
+                callback(result)
 
-        def run():
-            try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                    timeout=timeout,
-                    encoding='utf-8',
-                    errors='ignore',
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
-                output = result.stdout.strip()
-                if on_success:
-                    on_success(output)
-            except subprocess.CalledProcessError as e:
-                error_msg = f"Error: {str(e)}"
-                if on_error:
-                    on_error(error_msg)
-            except subprocess.TimeoutExpired:
-                error_msg = f"Timeout: Command execution exceeded {timeout} seconds"
-                if on_error:
-                    on_error(error_msg)
-            except Exception as e:
-                error_msg = f"SystemError: {str(e)}"
-                if on_error:
-                    on_error(error_msg)
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
+        threading.Thread(target=thread_func, daemon=True).start()

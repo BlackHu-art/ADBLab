@@ -1,10 +1,10 @@
 from re import search
 from typing import List
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QStyle
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout
 )
 from controllers.adb_controller import ADBController
 from gui.styles import get_default_font
@@ -192,6 +192,7 @@ class LeftPanel(QWidget):
             item.setFont(self._base_font)
             self.listbox_devices.addItem(item)
 
+    @Slot()
     def refresh_device_combobox(self):
         if not hasattr(self, "ip_entry"):
             return

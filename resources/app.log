@@ -249,3 +249,34 @@ ZT322KPNPX	unauthorized
 2025-04-21 09:49:56,464 - INFO - 3 devices connected.
 2025-04-21 09:50:00,218 - ERROR - IP address cannot be empty.
 2025-04-21 09:52:38,920 - INFO - 3 devices connected.
+2025-04-21 13:58:55,760 - INFO - 3 devices connected.
+2025-04-21 13:59:00,800 - ERROR - IP address cannot be empty.
+2025-04-21 13:59:04,991 - INFO - Device info for RFCW71D91SP:
+{
+    "Model": "SM-S911U",
+    "Brand": "samsung",
+    "Android Version": "14",
+    "Serial Number": "RFCW71D91SP",
+    "SDK Version": "34",
+    "CPU Architecture": "arm64-v8a",
+    "Hardware": "qcom",
+    "Storage": "Filesystem       Size Used Avail Use% Mounted on\n/dev/block/dm-58 104G  16G   87G  16% /storage/emulated/0/Android/obb",
+    "Total Memory": "MemTotal:        7226616 kB",
+    "Available Memory": "MemAvailable:    3413892 kB",
+    "Resolution": "Physical size: 1080x2340",
+    "Density": "Physical density: 480",
+    "Timezone": "Asia/Shanghai",
+    "Mac": "49: wlan0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc mq state UP group default qlen 3000\n    link/ether 3e:fd:6e:5f:84:c1 brd ff:ff:ff:ff:ff:ff\n    inet 10.10.10.47/23 brd 10.10.11.255 scope global wlan0\n       valid_lft forever preferred_lft forever\n    inet6 fe80::3cfd:6eff:fe5f:84c1/64 scope link \n       valid_lft forever preferred_lft forever"
+}
+2025-04-21 13:59:08,945 - WARNING - connected to 10.0.0.195:5555
+2025-04-21 13:59:08,945 - INFO - 4 devices connected.
+2025-04-21 13:59:11,195 - WARNING - 10.0.0.195:5555 is already connected.
+2025-04-21 13:59:18,558 - WARNING - connected to 10.0.0.111:5188
+2025-04-21 13:59:18,559 - INFO - 5 devices connected.
+2025-04-21 13:59:25,694 - INFO - 5 devices connected.
+2025-04-21 14:17:06,428 - INFO - 5 devices connected.
+2025-04-21 14:17:11,373 - ERROR - IP address cannot be empty.
+2025-04-21 14:17:12,507 - INFO - 5 devices connected.
+2025-04-21 14:17:14,101 - WARNING - Please select at least one device
+2025-04-21 14:17:16,609 - WARNING - No devices selected
+2025-04-21 14:17:17,447 - WARNING - No device selected

@@ -5,6 +5,7 @@ import yaml
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from services.log_service import LogService
+from utils.yaml_util import YamlTool
 
 
 class ADBController:
@@ -64,21 +65,14 @@ class ADBController:
             }
         }
 
-        # 更新 YAML 文件
-        content = {}
-        if os.path.exists(self.connected_devices_file):
-            with open(self.connected_devices_file, "r", encoding="utf-8") as f:
-                content = yaml.safe_load(f) or {}
-
+        # 加载并更新 YAML
+        yaml_path = self.connected_devices_file
+        content = YamlTool.load_yaml(yaml_path)
         content.update(device_entry)
-        os.makedirs(os.path.dirname(self.connected_devices_file), exist_ok=True)
-        try:
-            with open(self.connected_devices_file, "w", encoding="utf-8") as f:
-                yaml.safe_dump(content, f)
-        except IOError as e:
-            self.log_service.log("ERROR", 
-                f"Failed to save device info: {str(e)}")
-            return False
+
+        if not YamlTool.write_yaml(yaml_path, content):
+            self._log_safe("ERROR", f"Failed to save device info for {ip}")
+            return
 
         # 更新 DeviceStore 并刷新 ComboBox
         DeviceStore.add_device(
