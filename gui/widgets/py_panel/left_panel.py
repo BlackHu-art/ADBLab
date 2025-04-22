@@ -22,10 +22,10 @@ def BlockSignals(widget):
         
 class LeftPanel(QWidget):
     PANEL_WIDTH = 500
-    GROUP_TITLES = ("Device Management", "Actions")
+    GROUP_TITLES = ("Device Management", "Actions", "Performance")
     BUTTON_TEXTS = (
         "Connect", "Refresh", "Device Info", "Disconnect", "Restart Devices", "Restart ADB",
-        "Select APK", "Get ANR Files", "Kill All Apps", "Installed Apps", "Current Activity"
+        "Screenshot", "Retrieve device logs", "Clean up device logs"
     )
 
     def __init__(self, main_frame: QWidget):
@@ -46,6 +46,7 @@ class LeftPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._create_device_group())
         layout.addWidget(self._create_actions_group())
+        layout.addWidget(self._create_performance_group())
         layout.addStretch()
 
     def _create_device_group(self) -> QGroupBox:
@@ -89,10 +90,9 @@ class LeftPanel(QWidget):
             {"text": self.BUTTON_TEXTS[3], "handler": self.adb_controller.on_disconnect_device, "icon": "resources/icons/Disconnect.svg"},
             {"text": self.BUTTON_TEXTS[4], "handler": self.adb_controller.on_restart_devices, "icon": "resources/icons/Restart.svg"},
             {"text": self.BUTTON_TEXTS[5], "handler": self.adb_controller.on_restart_adb, "icon": "resources/icons/Restore.svg"},
-            # 其他按钮...
-            {"text": "Example","handler": "",},
-            {"text": "Example","handler": "",},
-            {"text": "Example","handler": "",},
+            {"text": self.BUTTON_TEXTS[6], "handler": "","icon": "resources/icons/Screenshot.svg"},
+            {"text": self.BUTTON_TEXTS[7], "handler": "","icon": "resources/icons/Save_alt.svg"},
+            {"text": self.BUTTON_TEXTS[8], "handler": "","icon": "resources/icons/Cleaning_services.svg"},
         ]
         for spec in button_specs:
             btn = self._create_button(
@@ -110,7 +110,7 @@ class LeftPanel(QWidget):
         # ▶️ 底部布局改为垂直布局
         last_row = QVBoxLayout()
         last_row1 = QHBoxLayout()
-        btn_input = self._create_button("Send to devices", self.adb_controller.on_refresh_devices, "resources/icons/Input.svg")
+        btn_input = self._create_button("Send to devices", "", "resources/icons/Input.svg")
         input_edit = QLineEdit()
         input_edit.setFont(self._base_font)
         input_edit.setPlaceholderText("Input text here")
@@ -119,7 +119,7 @@ class LeftPanel(QWidget):
         last_row.addLayout(last_row1)
         
         last_row2 = QHBoxLayout()
-        btn_generate_email = self._create_button("Generate Email", self.adb_controller.on_refresh_devices, "resources/icons/Email.svg")
+        btn_generate_email = self._create_button("Generate Email", "", "resources/icons/Email.svg")
         device_input_1 = QLineEdit()
         device_input_1.setFont(self._base_font)
         device_input_1.setPlaceholderText("Generate Email")
@@ -149,25 +149,50 @@ class LeftPanel(QWidget):
         group = QGroupBox(self.GROUP_TITLES[1])
         group.setFont(self._base_font)
         layout = QVBoxLayout()
-        grid = QGridLayout()
 
-        button_specs = [
-            (self.BUTTON_TEXTS[4], self.adb_controller.on_select_apk),
-            (self.BUTTON_TEXTS[5], self.adb_controller.on_get_anr_files),
-            (self.BUTTON_TEXTS[6], self.adb_controller.on_kill_all_apps),
-            (self.BUTTON_TEXTS[7], self.adb_controller.on_get_installed_packages),
-            (self.BUTTON_TEXTS[8], self.adb_controller.on_current_activity)
-        ]
-        for idx, (text, handler) in enumerate(button_specs):
-            btn = QPushButton(text)
-            btn.setFont(self._base_font)
-            btn.clicked.connect(handler)
-            row, col = divmod(idx, 3)
-            grid.addWidget(btn, row, col)
+        # ▶️ 第一行：输入框 + 按钮
+        action_row1 = QHBoxLayout()
+        input_edit = QComboBox()
+        input_edit.setEditable(True)
+        input_edit.setFont(self._base_font)
+        input_edit.lineEdit().setPlaceholderText("Select program")
+        btn_input = self._create_button("Get current program", "", "resources/icons/Select_activity.svg")
+        action_row1.addWidget(input_edit, 2)
+        action_row1.addWidget(btn_input, 1)
+        layout.addLayout(action_row1)
 
-        layout.addLayout(grid)
+        # ▶️ 第二行：三个按钮
+        action_row2 = QHBoxLayout()
+        action_btn1 = self._create_button("Install App", "", "resources/icons/Install_App.svg")
+        action_btn2 = self._create_button("Uninstall App", "", "resources/icons/Uninstall_app.svg")
+        action_btn3 = self._create_button("Clear App Data", "", "resources/icons/Clear_data.svg")
+        for btn in (action_btn1, action_btn2, action_btn3):
+            action_row2.addWidget(btn, 1)
+        layout.addLayout(action_row2)
+
+        # ▶️ 第三行：示例按钮区域（可拓展）
+        action_row3 = QHBoxLayout()
+        action_btn1 = self._create_button("Restart App", "", "resources/icons/Restart_app.svg")
+        action_btn2 = self._create_button("Print Current Activity", "", "resources/icons/Print.svg")
+        action_btn3 = self._create_button("Parse APK Info", "", "resources/icons/Parse_APK.svg")
+        for btn in (action_btn1, action_btn2, action_btn3):
+            action_row3.addWidget(btn, 1)
+        layout.addLayout(action_row3)
+
+        layout.addStretch()
         group.setLayout(layout)
         return group
+    
+    def _create_performance_group(self) -> QGroupBox:
+        group = QGroupBox(self.GROUP_TITLES[2])
+        group.setFont(self._base_font)
+        layout = QVBoxLayout()
+        
+        
+        layout.addStretch()
+        group.setLayout(layout)
+        return group
+
 
     def update_device_list(self, devices: List[str] = None):
         from models.device_store import DeviceStore
