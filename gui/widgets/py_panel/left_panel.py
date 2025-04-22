@@ -161,7 +161,7 @@ class LeftPanel(QWidget):
         action_row1.addWidget(btn_input, 1)
         layout.addLayout(action_row1)
 
-        # ▶️ 第二行：三个按钮
+        # ▶️ 第二行
         action_row2 = QHBoxLayout()
         action_btn1 = self._create_button("Install App", "", "resources/icons/Install_App.svg")
         action_btn2 = self._create_button("Uninstall App", "", "resources/icons/Uninstall_app.svg")
@@ -170,7 +170,7 @@ class LeftPanel(QWidget):
             action_row2.addWidget(btn, 1)
         layout.addLayout(action_row2)
 
-        # ▶️ 第三行：示例按钮区域（可拓展）
+        # ▶️ 第三行
         action_row3 = QHBoxLayout()
         action_btn1 = self._create_button("Restart App", "", "resources/icons/Restart_app.svg")
         action_btn2 = self._create_button("Print Current Activity", "", "resources/icons/Print.svg")
@@ -188,6 +188,38 @@ class LeftPanel(QWidget):
         group.setFont(self._base_font)
         layout = QVBoxLayout()
         
+        # ▶️ 第一行：输入框 + 按钮
+        perf_row1 = QHBoxLayout()
+        # 添加设备类型下拉框
+        device_type = QComboBox()
+        device_type.addItems(["STB", "Mobile"])  # 固定选项
+        device_type.setFont(self._base_font)
+        input_times = QLineEdit()
+        input_times.setFont(self._base_font)
+        input_times.setPlaceholderText("Input Run times")
+        btn_start = self._create_button("Start Monkey", "", "resources/icons/Monkey.svg")
+        perf_row1.addWidget(device_type, 1)
+        perf_row1.addWidget(input_times, 1)
+        perf_row1.addWidget(btn_start, 1)
+        layout.addLayout(perf_row1)
+        
+        # ▶️ 第二行：三个按钮
+        perf_row2 = QHBoxLayout()
+        perf_btn1 = self._create_button("Kill Monkey", "", "resources/icons/Kill_monkey.svg")
+        perf_btn2 = self._create_button("Get ANR File", "", "resources/icons/Get_ANR.svg")
+        perf_btn3 = self._create_button("Get Bugreport", "", "resources/icons/bugreport.svg")
+        for btn in (perf_btn1, perf_btn2, perf_btn3):
+            perf_row2.addWidget(btn, 1)
+        layout.addLayout(perf_row2)
+        
+                # ▶️ 第三行
+        perf_row3 = QHBoxLayout()
+        perf_btn1 = self._create_button("Packages List", "", "resources/icons/Restart_app.svg")
+        perf_btn2 = self._create_button("Print", "", "resources/icons/Print.svg")
+        perf_btn3 = self._create_button("Parse", "", "resources/icons/Parse_APK.svg")
+        for btn in (perf_btn1, perf_btn2, perf_btn3):
+            perf_row3.addWidget(btn, 1)
+        layout.addLayout(perf_row3)
         
         layout.addStretch()
         group.setLayout(layout)

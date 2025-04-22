@@ -11,7 +11,7 @@ from gui.widgets.py_menu_bar.custom_menu_bar import MenuBarCreator
 class MainFrame(QMainWindow):
     """主窗口类，实现无边框可拖拽的GUI界面"""
     DEFAULT_WIDTH = 1100
-    DEFAULT_HEIGHT = 800
+    DEFAULT_HEIGHT = 600
 
     def __init__(self):
         """初始化主窗口"""
