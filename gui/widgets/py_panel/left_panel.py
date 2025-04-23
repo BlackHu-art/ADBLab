@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit, QCompleter
 )
 from gui.widgets.style.base_styles import get_default_font
 from models.device_store import DeviceStore
@@ -85,7 +85,6 @@ class LeftPanel(QWidget):
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
         self.ip_entry.editTextChanged.connect(self._on_ip_edited)
-        # self.ip_entry.activated[int].connect(self._on_ip_selected)
         # 使用统一按钮创建方法
         self.btn_connect_devices = self._create_button("Connect", "resources/icons/Connect.svg")
         ip_row.addWidget(self.ip_entry, 2)
@@ -296,9 +295,14 @@ class LeftPanel(QWidget):
                 display = f"{padded_brand} | {padded_model} | {ip}"
                 self.ip_entry.addItem(display, userData=ip)
 
-            self.ip_entry.setCurrentText("")
-            self._user_selected_ip = False
+            # 关键修复：强制清空显示内容
+            self.ip_entry.setCurrentIndex(-1)
+            self.ip_entry.lineEdit().setText("")
             self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
+            
+            # 禁用自动填充
+            self.ip_entry.setInsertPolicy(QComboBox.NoInsert)
+            self.ip_entry.completer().setCompletionMode(QCompleter.PopupCompletion)
 
     def _on_ip_selected(self, index):
         """当用户从下拉中选中设备时，仅显示 IP"""
@@ -306,6 +310,7 @@ class LeftPanel(QWidget):
             ip = self.ip_entry.itemData(index)
             if ip:
                 with BlockSignals(self.ip_entry):
+                    self.ip_entry.setCurrentIndex(-1)
                     self.ip_entry.setCurrentText(ip)
                 self._user_selected_ip = True  # ✅ 标记为用户主动选择
                 
