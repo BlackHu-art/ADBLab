@@ -42,6 +42,15 @@ class MainFrame(QMainWindow):
         """设置菜单栏（无需信号连接）"""
         self.menu_bar = CustomMenuBar(self)
         self.setMenuBar(self.menu_bar)
+        # 连接菜单栏信号
+        self._connect_menu_signals()
+        
+    def _connect_menu_signals(self):
+        """连接菜单栏信号到主窗口方法"""
+        self.menu_bar.restore_size_requested.connect(self.restore_default_size)
+        self.menu_bar.minimize_requested.connect(self.showMinimized)
+        self.menu_bar.clear_log_requested.connect(self.clear_log)
+        self.menu_bar.exit_requested.connect(self.close)
 
     def safe_refresh_devices(self):
         """安全刷新设备列表"""
