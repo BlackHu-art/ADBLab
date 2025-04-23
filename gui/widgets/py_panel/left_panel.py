@@ -326,8 +326,8 @@ class LeftPanel(QWidget):
         self.listbox_devices.viewport().update()
         
         # 4. 打印调试信息
-        state = "Checked" if item.checkState() == Qt.Checked else "Unchecked"
-        print(f"设备 {item.text()} 状态已切换为: {state}")
+        # state = "Checked" if item.checkState() == Qt.Checked else "Unchecked"
+        # print(f"设备 {item.text()} 状态已切换为: {state}")
 
     @property
     def selected_devices(self) -> List[str]:

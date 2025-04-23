@@ -1,4 +1,5 @@
 import os
+import threading
 import yaml
 from threading import Lock
 from typing import Dict, Any, Optional
@@ -107,3 +108,11 @@ class YamlTool:
                 YamlTool._deep_update(original[key], value)
             else:
                 original[key] = value
+    
+    @staticmethod
+    def atomic_update(file_path: str, new_data: dict):
+        """线程安全的YAML更新"""
+        with threading.Lock():
+            existing = YamlTool.load_yaml(file_path) or {}
+            existing.update(new_data)
+            YamlTool.write_yaml(file_path, existing)
