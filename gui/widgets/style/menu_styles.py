@@ -1,14 +1,19 @@
 from PySide6.QtGui import QColor
-from gui.widgets.style.base_styles import Styles
+from gui.widgets.style.base_styles import BaseStyles
 
-class MenuStyles:
-    """菜单专用样式扩展（不修改原有样式）"""
+class MenuBarStyles:
+    
+    WINDOW_BG = BaseStyles.MENU_BAR_BG  # 与主窗口一致
+    BORDER_COLOR = "#d1d8e0"
+    CONTENT_BG = "#ffffff"
+    TITLE_COLOR = "#2c3e50"
+    TEXT_COLOR = "#34495e"
     
     # 从原有样式继承颜色
-    MENU_BAR_BG = Styles.MENU_BAR_BG
-    MENU_TEXT = Styles.MENU_TEXT_COLOR
-    MENU_HOVER = Styles.MENU_ITEM_HOVER
-    BORDER = Styles.BORDER_COLOR
+    MENU_BAR_BG = BaseStyles.MENU_BAR_BG
+    MENU_TEXT = BaseStyles.MENU_TEXT_COLOR
+    MENU_HOVER = BaseStyles.MENU_ITEM_HOVER
+    BORDER = BaseStyles.BORDER_COLOR
     
     # 扩展的菜单样式
     STYLE_SHEET = f"""

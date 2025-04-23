@@ -2,7 +2,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
-from gui.widgets.style.base_styles import Styles
+from gui.widgets.style.base_styles import BaseStyles
 from services.log_service import LogService
 
 
@@ -11,12 +11,12 @@ class LogPanel(QWidget):
     
     # 日志等级颜色映射（保持原有样式）
     LEVEL_COLORS: Dict[str, str] = {
-        "DEBUG": Styles.DEBUG_COLOR,
-        "INFO": Styles.INFO_COLOR,
-        "SUCCESS": Styles.SUCCESS_COLOR,
-        "WARNING": Styles.WARNING_COLOR,
-        "ERROR": Styles.ERROR_COLOR,
-        "CRITICAL": Styles.CRITICAL_COLOR
+        "DEBUG": BaseStyles.DEBUG_COLOR,
+        "INFO": BaseStyles.INFO_COLOR,
+        "SUCCESS": BaseStyles.SUCCESS_COLOR,
+        "WARNING": BaseStyles.WARNING_COLOR,
+        "ERROR": BaseStyles.ERROR_COLOR,
+        "CRITICAL": BaseStyles.CRITICAL_COLOR
     }
 
     # 自定义信号
@@ -43,7 +43,7 @@ class LogPanel(QWidget):
 
     def _configure_font(self) -> None:
         """配置日志字体（保持原有样式）"""
-        log_font = QFont(Styles.LOG_FONT, Styles.LOG_FONT_SIZE)
+        log_font = QFont(BaseStyles.LOG_FONT, BaseStyles.LOG_FONT_SIZE)
         log_font.setStyleHint(QFont.Monospace)
         self.text_output.setFont(log_font)
 
@@ -51,12 +51,12 @@ class LogPanel(QWidget):
         """设置样式表（保持原有样式）"""
         self.text_output.setStyleSheet(f"""
             QTextEdit {{
-                background-color: {Styles.LOG_BACKGROUND};
-                color: {Styles.LOG_TEXT_COLOR};
+                background-color: {BaseStyles.LOG_BACKGROUND};
+                color: {BaseStyles.LOG_TEXT_COLOR};
                 border: none;
                 padding: 5px;
             }}
-            {Styles.SCROLLBAR_STYLE}
+            {BaseStyles.SCROLLBAR_STYLE}
         """)
 
     def _connect_services(self) -> None:
@@ -99,7 +99,7 @@ class LogPanel(QWidget):
         """添加带格式的日志文本"""
         cursor = self.text_output.textCursor()
         fmt = QTextCharFormat()
-        fmt.setForeground(QColor(self.LEVEL_COLORS.get(level, Styles.INFO_COLOR)))
+        fmt.setForeground(QColor(self.LEVEL_COLORS.get(level, BaseStyles.INFO_COLOR)))
         
         cursor.movePosition(QTextCursor.End)
         cursor.insertText(f"[{level}] {message}\n", fmt)

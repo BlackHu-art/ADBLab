@@ -3,7 +3,7 @@ from typing import Dict, Any, Final
 from dataclasses import dataclass
 
 
-class Styles:
+class BaseStyles:
     
     # 字体常量（保持原有名称）
     DEFAULT_FONT_SIZE: Final[int] = 10
@@ -86,4 +86,4 @@ class Styles:
 # 保持原有导入兼容性
 def get_default_font() -> QFont:
     """兼容旧版导入的全局函数"""
-    return Styles.get_default_font()
+    return BaseStyles.get_default_font()
