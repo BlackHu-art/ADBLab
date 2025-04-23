@@ -1,74 +1,158 @@
 import logging
-from PySide6.QtCore import QObject, Signal, QTimer
+from typing import Optional, Dict, Callable
+from PySide6.QtCore import QObject, Signal, QTimer, QMutex, Qt
+from dataclasses import dataclass
 
+
+@dataclass(frozen=True)
 class LogLevel:
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"
     CRITICAL = "CRITICAL"
+    SUCCESS = "SUCCESS"
+
 
 class LogService(QObject):
+    """线程安全的日志服务，支持缓冲写入和多种输出方式"""
+    
     log_received = Signal(str, str)  # level, message
-    _instance = None
+    _instance: Optional['LogService'] = None
+    _lock = QMutex()  # 类级别的线程锁
 
     def __new__(cls):
-        if not cls._instance:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
+        cls._lock.lock()  # 手动加锁替代with语句
+        try:
+            if not cls._instance:
+                cls._instance = super().__new__(cls)
+                cls._instance._initialized = False
+            return cls._instance
+        finally:
+            cls._lock.unlock()  # 确保锁释放
 
     def __init__(self):
+        """初始化日志服务（单例模式）"""
         if not self._initialized:
             super().__init__()
             self._initialized = True
-            self._enable_file_log = False  # ✅ 控制是否写入文件
-            self._log_path = "resources/app.log"
-            self._setup()
+            self._buffer = []
+            self._buffer_lock = QMutex()
+            self._setup_logging()
 
-    def _setup(self):
-        # 清除所有 console 日志
+    def _setup_logging(self) -> None:
+        """配置日志记录器"""
+        self._enable_file_log = False
+        self._log_path = "resources/app.log"
+        self._flush_interval = 200  # ms
+        
+        self._timer = QTimer()
+        self._timer.setInterval(self._flush_interval)
+        self._timer.timeout.connect(self._flush_buffer)
+        
         logging.getLogger().handlers.clear()
         logging.getLogger().propagate = False
-
-        self._buffer = []
-        self._timer = QTimer()
-        self._timer.setInterval(200)
-        self._timer.timeout.connect(self._flush_buffer)
-
-        # 专属日志记录器
         self.logger = logging.getLogger("app")
         self.logger.setLevel(logging.DEBUG)
-        self.logger.propagate = False
         self.logger.handlers.clear()
 
         if self._enable_file_log:
-            file_handler = logging.FileHandler(self._log_path, encoding="utf-8")
-            formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-            file_handler.setFormatter(formatter)
-            self.logger.addHandler(file_handler)
+            self._add_file_handler()
 
-    def log(self, level: str, message: str):
-        """线程安全，支持缓冲的日志接口"""
-        self._buffer.append((level, message))
-        if not self._timer.isActive():
-            self._timer.start()
+    def _add_file_handler(self) -> None:
+        """添加文件日志处理器"""
+        file_handler = logging.FileHandler(
+            self._log_path, 
+            encoding="utf-8",
+            delay=True
+        )
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
 
-    def _flush_buffer(self):
-        for level, message in self._buffer:
+    def log(self, level: str, message: str) -> None:
+        """
+        线程安全的日志记录方法
+        参数:
+            level: 日志级别 (使用LogLevel中的常量)
+            message: 日志消息
+        """
+        self._buffer_lock.lock()
+        try:
+            self._buffer.append((level, str(message)))
+            if not self._timer.isActive():
+                self._timer.start()
+        finally:
+            self._buffer_lock.unlock()
+
+    def _flush_buffer(self) -> None:
+        """刷新缓冲区到所有输出"""
+        self._buffer_lock.lock()
+        try:
+            if not self._buffer:
+                self._timer.stop()
+                return
+
+            current_batch = self._buffer.copy()
+            self._buffer.clear()
+        finally:
+            self._buffer_lock.unlock()
+
+        for level, message in current_batch:
             self._write_file_log(level, message)
-            self.log_received.emit(level, message)  # 发射至 UI 控件
-        self._buffer.clear()
-        self._timer.stop()
+            self.log_received.emit(level, message)
 
-    def _write_file_log(self, level: str, message: str):
+    def _write_file_log(self, level: str, message: str) -> None:
+        """写入文件日志（如果启用）"""
         if not self._enable_file_log:
             return
-        level_map = {
+
+        log_funcs: Dict[str, Callable[[str], None]] = {
             LogLevel.DEBUG: self.logger.debug,
             LogLevel.INFO: self.logger.info,
             LogLevel.WARNING: self.logger.warning,
             LogLevel.ERROR: self.logger.error,
-            LogLevel.CRITICAL: self.logger.critical
+            LogLevel.CRITICAL: self.logger.critical,
+            LogLevel.SUCCESS: self.logger.info
         }
-        level_map.get(level, self.logger.info)(message)
+        
+        log_func = log_funcs.get(level, self.logger.info)
+        try:
+            log_func(message)
+        except (IOError, PermissionError) as e:
+            print(f"Failed to write log: {e}")
+
+    def enable_file_logging(self, enabled: bool) -> None:
+        """动态启用/禁用文件日志"""
+        self._buffer_lock.lock()
+        try:
+            self._enable_file_log = enabled
+            if enabled and not any(
+                isinstance(h, logging.FileHandler) for h in self.logger.handlers
+            ):
+                self._add_file_handler()
+        finally:
+            self._buffer_lock.unlock()
+
+    def set_flush_interval(self, interval_ms: int) -> None:
+        """设置缓冲区刷新间隔（毫秒）"""
+        self._buffer_lock.lock()
+        try:
+            self._flush_interval = max(50, interval_ms)
+            self._timer.setInterval(self._flush_interval)
+        finally:
+            self._buffer_lock.unlock()
+
+    def shutdown(self) -> None:
+        """安全关闭日志服务"""
+        self._buffer_lock.lock()
+        try:
+            self._timer.stop()
+            self._flush_buffer()
+            for handler in self.logger.handlers:
+                handler.close()
+        finally:
+            self._buffer_lock.unlock()
