@@ -1,131 +1,198 @@
-from PySide6.QtWidgets import QMenuBar, QWidget
-from PySide6.QtGui import QMouseEvent, QAction
-from PySide6.QtCore import Qt, QPoint
-from typing import Optional
-from gui.styles import Styles  # 新增导入
+from PySide6.QtWidgets import (QMenuBar, QDialog, 
+                              QVBoxLayout, QLabel, QPushButton, QGraphicsOpacityEffect)
+from PySide6.QtCore import Qt, QEasingCurve, QPropertyAnimation, QTimer
+from PySide6.QtGui import QMouseEvent
+from gui.widgets.style.base_styles import get_default_font
+
 
 class CustomMenuBar(QMenuBar):
-    """自定义菜单栏，支持窗口拖拽和常用操作"""
+    """完全自包含的菜单栏，内部实现About对话框"""
     
-    # ... 其他代码保持不变 ...
-
-    def __init__(self, parent: QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.parent_window = parent
-        self._drag_pos: Optional[QPoint] = None
         self._setup_ui()
-        self._setup_styles()  # 新增样式初始化
+        self._drag_pos = None
 
-    def _setup_styles(self) -> None:
-        """设置菜单栏视觉样式"""
-        self.setStyleSheet(f"""
-            QMenuBar {{
-                border-bottom: 1px solid {Styles.BORDER_COLOR};
-                background: {Styles.MENU_BAR_BG};
+    def _setup_ui(self):
+        """初始化UI组件"""
+        self.setFont(get_default_font())
+        self._setup_styles()
+        self._create_menus()
+
+    def _setup_styles(self):
+        """设置菜单栏样式（与主样式一致）"""
+        self.setStyleSheet("""
+            QMenuBar {
+                background-color: #f0f0f0;
+                border-bottom: 1px solid #555555;
                 spacing: 5px;
-            }}
-            QMenuBar::item {{
-                color: {Styles.MENU_TEXT_COLOR};
-                padding: 5px 12px;
+            }
+            QMenuBar::item {
+                padding: 5px 10px;
                 border-radius: 3px;
-            }}
-            QMenuBar::item:selected {{
-                background: {Styles.MENU_ITEM_HOVER};
-            }}
+            }
+            QMenuBar::item:selected {
+                background-color: #eeeee4;
+            }
+            /* About对话框样式 */
+            QDialog {
+                background-color: #f0f0f0;
+                font-family: 'Segoe UI';
+            }
+            QLabel#title {
+                font-size: 16px;
+                font-weight: bold;
+                color: #2c3e50;
+                padding: 10px;
+            }
         """)
-    
-    # 菜单项常量
-    MENU_TITLES = {
-        "file": "File",
-        "help": "Help",
-        "minimize": "Minimize",
-        "clear_log": "Clear logs",
-        "exit": "Exit"
-    }
-    
-    ACTION_TEXTS = {
-        "restore": "Restore Default Size",
-        "about": "About"
-    }
 
-    def _setup_ui(self) -> None:
-        """初始化菜单栏界面"""
-        self._create_file_menu()
-        self._create_help_menu()
-        self._create_window_controls()
+    def _create_menus(self):
+        """创建菜单结构（直接绑定槽函数）"""
+        # File菜单
+        file_menu = self.addMenu("File")
+        file_menu.addAction("Restore Default Size", self.parent().restore_default_size)
+        
+        # Help菜单（直接绑定对话框显示）
+        help_menu = self.addMenu("Help")
+        help_menu.addAction("About", self._show_about_dialog)
 
-    def _create_file_menu(self) -> None:
-        """创建File菜单及其子项"""
-        file_menu = self.addMenu(self.MENU_TITLES["file"])
-        restore_action = QAction(self.ACTION_TEXTS["restore"], self.parent_window)
-        restore_action.triggered.connect(self.parent_window.restore_default_size)
-        file_menu.addAction(restore_action)
+        # 窗口控制按钮
+        self.addAction("Minimize", self.parent().showMinimized)
+        self.addAction("Clear Logs", self.parent().clear_log)
+        self.addAction("Exit", self.parent().close)
 
-    def _create_help_menu(self) -> None:
-        """创建Help菜单及其子项"""
-        help_menu = self.addMenu(self.MENU_TITLES["help"])
-        about_action = QAction(self.ACTION_TEXTS["about"], self.parent_window)
-        about_action.triggered.connect(self.parent_window.show_about_dialog)
-        help_menu.addAction(about_action)
+    def _show_about_dialog(self):
+        """无标题栏对话框的稳定拖拽实现"""
+        dialog = QDialog(self.parent())
+        dialog.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        dialog.setFixedSize(480, 380)  # 必须固定尺寸
+        
+        # 关键设置：移除窗口标题栏和边框
+        dialog.setWindowFlags(
+            Qt.Dialog | 
+            Qt.FramelessWindowHint |  # 无边框
+            Qt.NoDropShadowWindowHint  # 无阴影（可选）
+        )
+        
+        # 现代化样式表（适配无标题栏）
+        dialog.setStyleSheet("""
+            QDialog {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #f5f7fa, stop:1 #e4e8f0);
+                border: 2px solid #c4d0dc;
+                border-radius: 12px;
+            }
+            /* 标题样式 */
+            QLabel#title {
+                font: bold 20px 'Segoe UI';
+                color: #2c3e50;
+                padding: 20px 0 5px 0;
+                background: transparent;
+            }
+            /* 版本信息 */
+            QLabel#version {
+                font: 13px 'Segoe UI';
+                color: #7f8c8d;
+                padding-bottom: 15px;
+                background: transparent;
+            }
+            /* 内容卡片 */
+            QLabel#content {
+                font: 14px 'Segoe UI';
+                color: #34495e;
+                background: rgba(255,255,255,0.75);
+                border-radius: 8px;
+                padding: 20px;
+                margin: 0 25px;
+                border: 1px solid #d1d8e0;
+            }
+            /* 关闭按钮 */
+            QPushButton#close_btn {
+                background: #3498db;
+                color: white;
+                border: none;
+                padding: 8px 24px;
+                border-radius: 4px;
+                min-width: 100px;
+                font: 13px 'Segoe UI';
+            }
+            QPushButton#close_btn:hover {
+                background: #2980b9;
+            }
+            QPushButton#close_btn:pressed {
+                background: #1a6da8;
+            }
+        """)
+        
+        # 主布局（增加顶部间距补偿缺失的标题栏）
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(25, 25, 25, 25)
+        layout.setSpacing(15)
 
-    def _create_window_controls(self) -> None:
-        """创建窗口控制按钮（一级按钮）"""
+        # 标题区
+        title = QLabel("ADB Manager")
+        title.setObjectName("title")
+        title.setAlignment(Qt.AlignCenter)
 
-        # 最小化按钮
-        minimize_action = QAction(self.MENU_TITLES["minimize"], self.parent_window)
-        minimize_action.triggered.connect(self.parent_window.showMinimized)
-        self.addAction(minimize_action)
+        version = QLabel("Version 2.4.0")
+        version.setObjectName("version")
+        version.setAlignment(Qt.AlignCenter)
 
-        # ✅ Clear Logs 作为一级按钮
-        clear_logs_action = QAction(self.MENU_TITLES["clear_log"], self.parent_window)
-        clear_logs_action.triggered.connect(self.parent_window.clear_log)
-        self.addAction(clear_logs_action)
+        # 内容区（富文本）
+        content = QLabel()
+        content.setObjectName("content")
+        content.setTextFormat(Qt.RichText)
+        content.setText("""
+            <div style='text-align: center; line-height: 1.7;'>
+                <ul style='margin: 15px 0; text-align: left; 
+                        display: inline-block; list-style-type: none;'>
+                    <li>• Multi-device control</li>
+                    <li>• Real-time performance metrics</li>
+                    <li>• Automated testing framework</li>
+                    <li>• Secure log collection</li>
+                </ul>
+                <p style='color: #95a5a6; font-size: 12px;'>
+                    Copyright © 2025.4 Frankie Hu. All rights reserved.
+                </p>
+            </div>
+        """)
+        content.setWordWrap(True)
 
-        # 退出按钮
-        exit_action = QAction(self.MENU_TITLES["exit"], self.parent_window)
-        exit_action.triggered.connect(self.parent_window.close)
-        self.addAction(exit_action)
+        # 自定义关闭按钮（替代标题栏关闭功能）
+        btn_close = QPushButton("Close")
+        btn_close.setObjectName("close_btn")
+        btn_close.setCursor(Qt.PointingHandCursor)
+        btn_close.clicked.connect(dialog.accept)
+        
 
-    def mousePressEvent(self, event: QMouseEvent) -> None:
-        """处理鼠标按下事件"""
-        if event.button() == Qt.LeftButton and self._is_blank_area(event.pos()):
+        # 组装布局
+        layout.addWidget(title)
+        layout.addWidget(version)
+        layout.addWidget(content, 1)
+        layout.addWidget(btn_close, 0, Qt.AlignCenter)
+
+        # 显示对话框（无动画避免闪烁）
+        dialog.exec()
+
+    # 保留窗口拖拽功能
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton and not self.actionAt(event.pos()):
             self._drag_pos = event.globalPosition().toPoint() - self.window().frameGeometry().topLeft()
             event.accept()
         else:
             super().mousePressEvent(event)
 
-    def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """处理鼠标移动事件"""
+    def mouseMoveEvent(self, event: QMouseEvent):
         if self._is_dragging(event):
             self.window().move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
         else:
             super().mouseMoveEvent(event)
 
-    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-        """处理鼠标释放事件"""
+    def mouseReleaseEvent(self, event: QMouseEvent):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
-    def _is_blank_area(self, pos: QPoint) -> bool:
-        """判断点击位置是否为空白区域"""
-        return self.actionAt(pos) is None
-
-    def _is_dragging(self, event: QMouseEvent) -> bool:
-        """判断是否处于拖拽状态"""
-        return bool(
-            event.buttons() & Qt.LeftButton 
-            and self._drag_pos is not None
-        )
-
-
-class MenuBarCreator:
-    """菜单栏创建工厂类"""
-    
-    def __init__(self, parent: QWidget):
-        self.parent = parent
-        self.menu_bar = CustomMenuBar(parent)
-
-    def get_menu_bar(self) -> QMenuBar:
-        """获取创建好的菜单栏实例"""
-        return self.menu_bar
+    def _is_dragging(self, event):
+        return bool(event.buttons() & Qt.LeftButton and self._drag_pos)

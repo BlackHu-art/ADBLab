@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QLineEdit
 )
 from controllers.adb_controller import ADBController
-from gui.styles import get_default_font
+from gui.widgets.style.base_styles import get_default_font
 from models.device_store import DeviceStore
 from contextlib import contextmanager
 
