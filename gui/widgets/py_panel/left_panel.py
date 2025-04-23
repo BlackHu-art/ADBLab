@@ -104,7 +104,7 @@ class LeftPanel(QWidget):
         # 关键修复：设置Item特性
         self.listbox_devices.setProperty("showDropIndicator", False)
         self.listbox_devices.setDragDropMode(QAbstractItemView.NoDragDrop)
-        self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
+        # self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
@@ -314,22 +314,20 @@ class LeftPanel(QWidget):
         self._current_ip = text.strip()  # 更新当前IP
 
     def _on_device_double_click(self, item):
-        """处理设备列表双击事件"""
-        # 确保item是可勾选的
+        """处理设备列表双击事件（优化版）"""
+        # 1. 确保item是可勾选的（安全检查）
         if not (item.flags() & Qt.ItemIsUserCheckable):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         
-        # 切换选中状态（安全版本）
-        try:
-            current_state = item.checkState()
-            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
-            item.setCheckState(new_state)
-            
-            # 可选：保持与selection状态的同步
-            if new_state == Qt.Checked:
-                self.listbox_devices.setCurrentItem(item)
-        except Exception as e:
-            print(f"切换选中状态失败: {str(e)}")
+        # 2. 直接切换状态（更高效的方式）
+        item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+        
+        # 3. 确保视觉反馈（可选）
+        self.listbox_devices.viewport().update()
+        
+        # 4. 打印调试信息
+        state = "Checked" if item.checkState() == Qt.Checked else "Unchecked"
+        print(f"设备 {item.text()} 状态已切换为: {state}")
 
     @property
     def selected_devices(self) -> List[str]:
