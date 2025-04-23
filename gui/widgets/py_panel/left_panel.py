@@ -4,12 +4,12 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
-    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QGridLayout, QLineEdit
+    QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit
 )
-from controllers.adb_controller import ADBController
 from gui.widgets.style.base_styles import get_default_font
 from models.device_store import DeviceStore
 from contextlib import contextmanager
+from gui.widgets.py_panel.left_panel_signals import LeftPanelSignals
 
 @contextmanager
 def BlockSignals(widget):
@@ -23,18 +23,16 @@ def BlockSignals(widget):
 class LeftPanel(QWidget):
     PANEL_WIDTH = 500
     GROUP_TITLES = ("Device Management", "Actions", "Performance")
-    BUTTON_TEXTS = (
-        "Connect", "Refresh", "Device Info", "Disconnect", "Restart Devices", "Restart ADB",
-        "Screenshot", "Retrieve device logs", "Clean up device logs"
-    )
 
-    def __init__(self, main_frame: QWidget):
-        super().__init__()
-        self.main_frame = main_frame
-        self.adb_controller = ADBController(self)
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.signals = LeftPanelSignals()
         self.connected_device_cache = []
+        self._user_selected_ip = False
+        
         self._init_ui_settings()
         self._create_ui_components()
+        self._connect_signals()
 
     def _init_ui_settings(self):
         self.setFixedWidth(self.PANEL_WIDTH)
@@ -48,6 +46,30 @@ class LeftPanel(QWidget):
         layout.addWidget(self._create_actions_group())
         layout.addWidget(self._create_performance_group())
         layout.addStretch()
+    
+    def _connect_signals(self):
+        """连接所有按钮信号到对应的控制器方法"""
+        # 连接IP输入框信号按钮
+        self.btn_connect_devices.clicked.connect(lambda: self.signals.connect_requested.emit(self.ip_address))
+        # 刷新设备按钮
+        self.btn_refresh_devices.clicked.connect(lambda: self.signals.refresh_devices_requested.emit())
+        # 设备信息按钮
+        self.btn_devices_Info.clicked.connect(lambda: self.signals.device_info_requested.emit(self.selected_devices))
+        # 断开设备连接按钮
+        self.btn_disconnect_devices.clicked.connect(lambda: self.signals.disconnect_requested.emit(self.selected_devices))
+        # 重启设备按钮
+        self.btn_restart_devices.clicked.connect(lambda: self.signals.restart_devices_requested.emit(self.selected_devices))
+        # 重启ADB按钮
+        self.btn_restart_adb.clicked.connect(self.signals.restart_adb_requested.emit)
+        # 截图按钮
+        self.btn_screenshot.clicked.connect(lambda: self.signals.screenshot_requested.emit(self.selected_devices))
+        # 获取设备日志按钮
+        self.btn_retrieve_devices_logs.clicked.connect(lambda: self.signals.retrieve_logs_requested.emit(self.selected_devices))
+        # 清理日志按钮
+        self.btn_cleanup_logs.clicked.connect(lambda: self.signals.cleanup_logs_requested.emit(self.selected_devices))
+        # 设备列表双击事件
+        self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
+        # 连接其他按钮信号...
 
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -60,12 +82,14 @@ class LeftPanel(QWidget):
         self.ip_entry = QComboBox()
         self.ip_entry.setEditable(True)
         self.ip_entry.setFont(self._base_font)
-        self.refresh_device_combobox()
-        self.ip_entry.activated[int].connect(self._on_ip_selected)
+        self._refresh_device_combobox()
+        self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
+        self.ip_entry.editTextChanged.connect(self._on_ip_edited)
+        # self.ip_entry.activated[int].connect(self._on_ip_selected)
         # 使用统一按钮创建方法
-        self.btn_connect = self._create_button("Connect", self.adb_controller.on_connect_device, "resources/icons/Connect.svg")
+        self.btn_connect_devices = self._create_button("Connect", "resources/icons/Connect.svg")
         ip_row.addWidget(self.ip_entry, 2)
-        ip_row.addWidget(self.btn_connect, 1)
+        ip_row.addWidget(self.btn_connect_devices, 1)
         main_layout.addLayout(ip_row)
 
 
@@ -74,33 +98,35 @@ class LeftPanel(QWidget):
         self.listbox_devices = QListWidget()
         self.listbox_devices.setEditTriggers(QListWidget.NoEditTriggers)
         self.listbox_devices.setSelectionBehavior(QListWidget.SelectRows)
-        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)  # 只通过勾选来选中
+        self.listbox_devices.setSelectionMode(QListWidget.MultiSelection)
         self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.listbox_devices.setFont(self._base_font)
-        self.listbox_devices.itemDoubleClicked.connect(self._on_device_item_double_clicked)
+        # 关键修复：设置Item特性
+        self.listbox_devices.setProperty("showDropIndicator", False)
+        self.listbox_devices.setDragDropMode(QAbstractItemView.NoDragDrop)
+        self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
-        button_layout.setSpacing(5)
+        button_layout.setSpacing(0)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
-        button_specs = [
-            {"text": self.BUTTON_TEXTS[1], "handler": self.adb_controller.on_refresh_devices, "icon": "resources/icons/Refresh.svg"},
-            {"text": self.BUTTON_TEXTS[2], "handler": self.adb_controller.on_get_device_info, "icon": "resources/icons/Info.svg"},
-            {"text": self.BUTTON_TEXTS[3], "handler": self.adb_controller.on_disconnect_device, "icon": "resources/icons/Disconnect.svg"},
-            {"text": self.BUTTON_TEXTS[4], "handler": self.adb_controller.on_restart_devices, "icon": "resources/icons/Restart.svg"},
-            {"text": self.BUTTON_TEXTS[5], "handler": self.adb_controller.on_restart_adb, "icon": "resources/icons/Restore.svg"},
-            {"text": self.BUTTON_TEXTS[6], "handler": "","icon": "resources/icons/Screenshot.svg"},
-            {"text": self.BUTTON_TEXTS[7], "handler": "","icon": "resources/icons/Save_alt.svg"},
-            {"text": self.BUTTON_TEXTS[8], "handler": "","icon": "resources/icons/Cleaning_services.svg"},
-        ]
-        for spec in button_specs:
-            btn = self._create_button(
-                text=spec["text"],
-                handler=spec.get("handler"),  # 使用get方法安全访问
-                icon_path=spec.get("icon")     # 键名改为icon_path对应
-            )
-            button_layout.addWidget(btn)
+        self.btn_refresh_devices = self._create_button("Refresh", "resources/icons/Refresh.svg")
+        self.btn_devices_Info = self._create_button("Device Info", "resources/icons/Info.svg")
+        self.btn_disconnect_devices = self._create_button("Disconnect", "resources/icons/Disconnect.svg")
+        self.btn_restart_devices = self._create_button("Restart Devices", "resources/icons/Restart.svg")
+        self.btn_restart_adb = self._create_button("Restart ADB", "resources/icons/Restore.svg")
+        self.btn_screenshot = self._create_button("Screenshot", "resources/icons/Screenshot.svg")
+        self.btn_retrieve_devices_logs = self._create_button("Retrieve device logs", "resources/icons/Save_alt.svg")
+        self.btn_cleanup_logs = self._create_button("Cleanup logs", "resources/icons/Cleaning_services.svg")
+        button_layout.addWidget(self.btn_refresh_devices)
+        button_layout.addWidget(self.btn_devices_Info)
+        button_layout.addWidget(self.btn_disconnect_devices)
+        button_layout.addWidget(self.btn_restart_devices)
+        button_layout.addWidget(self.btn_restart_adb)
+        button_layout.addWidget(self.btn_screenshot)
+        button_layout.addWidget(self.btn_retrieve_devices_logs)
+        button_layout.addWidget(self.btn_cleanup_logs)
 
         button_layout.addStretch()
         device_row.addWidget(self.listbox_devices, 2)
@@ -110,37 +136,35 @@ class LeftPanel(QWidget):
         # ▶️ 底部布局改为垂直布局
         last_row = QVBoxLayout()
         last_row1 = QHBoxLayout()
-        btn_input = self._create_button("Send to devices", "", "resources/icons/Input.svg")
+        btn_send_text = self._create_button("Send to devices", "resources/icons/Input.svg")
         input_edit = QLineEdit()
         input_edit.setFont(self._base_font)
         input_edit.setPlaceholderText("Input text here")
-        last_row1.addWidget(btn_input, 1)
+        last_row1.addWidget(btn_send_text, 1)
         last_row1.addWidget(input_edit, 2)
         last_row.addLayout(last_row1)
         
         last_row2 = QHBoxLayout()
-        btn_generate_email = self._create_button("Generate Email", "", "resources/icons/Email.svg")
-        device_input_1 = QLineEdit()
-        device_input_1.setFont(self._base_font)
-        device_input_1.setPlaceholderText("Generate Email")
-        device_input_2 = QLineEdit()
-        device_input_2.setFont(self._base_font)
-        device_input_2.setPlaceholderText("Get verification code")
+        btn_generate_email = self._create_button("Generate Email", "resources/icons/Email.svg")
+        email_text_sender = QLineEdit()
+        email_text_sender.setFont(self._base_font)
+        email_text_sender.setPlaceholderText("Generate Email")
+        verfication_text_send = QLineEdit()
+        verfication_text_send.setFont(self._base_font)
+        verfication_text_send.setPlaceholderText("Get verification code")
         last_row2.addWidget(btn_generate_email, 1)
-        last_row2.addWidget(device_input_1, 1)
-        last_row2.addWidget(device_input_2, 1)
+        last_row2.addWidget(email_text_sender, 1)
+        last_row2.addWidget(verfication_text_send, 1)
         last_row.addLayout(last_row2)
         
         main_layout.addLayout(last_row)
         group.setLayout(main_layout)
         return group
 
-    def _create_button(self, text: str, handler=None, icon_path: str = None) -> QPushButton:
+    def _create_button(self, text: str, icon_path: str = None) -> QPushButton:
         btn = QPushButton(text)
         btn.setFont(self._base_font)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        if handler:
-            btn.clicked.connect(handler)
         if icon_path:
             btn.setIcon(QIcon(icon_path))
         return btn
@@ -156,25 +180,25 @@ class LeftPanel(QWidget):
         input_edit.setEditable(True)
         input_edit.setFont(self._base_font)
         input_edit.lineEdit().setPlaceholderText("Select program")
-        btn_input = self._create_button("Get current program", "", "resources/icons/Select_activity.svg")
+        btn_input = self._create_button("Get current program", "resources/icons/Select_activity.svg")
         action_row1.addWidget(input_edit, 2)
         action_row1.addWidget(btn_input, 1)
         layout.addLayout(action_row1)
 
         # ▶️ 第二行
         action_row2 = QHBoxLayout()
-        action_btn1 = self._create_button("Install App", "", "resources/icons/Install_App.svg")
-        action_btn2 = self._create_button("Uninstall App", "", "resources/icons/Uninstall_app.svg")
-        action_btn3 = self._create_button("Clear App Data", "", "resources/icons/Clear_data.svg")
+        action_btn1 = self._create_button("Install App", "resources/icons/Install_App.svg")
+        action_btn2 = self._create_button("Uninstall App", "resources/icons/Uninstall_app.svg")
+        action_btn3 = self._create_button("Clear App Data", "resources/icons/Clear_data.svg")
         for btn in (action_btn1, action_btn2, action_btn3):
             action_row2.addWidget(btn, 1)
         layout.addLayout(action_row2)
 
         # ▶️ 第三行
         action_row3 = QHBoxLayout()
-        action_btn1 = self._create_button("Restart App", "", "resources/icons/Restart_app.svg")
-        action_btn2 = self._create_button("Print Current Activity", "", "resources/icons/Print.svg")
-        action_btn3 = self._create_button("Parse APK Info", "", "resources/icons/Parse_APK.svg")
+        action_btn1 = self._create_button("Restart App", "resources/icons/Restart_app.svg")
+        action_btn2 = self._create_button("Print Current Activity", "resources/icons/Print.svg")
+        action_btn3 = self._create_button("Parse APK Info", "resources/icons/Parse_APK.svg")
         for btn in (action_btn1, action_btn2, action_btn3):
             action_row3.addWidget(btn, 1)
         layout.addLayout(action_row3)
@@ -197,7 +221,7 @@ class LeftPanel(QWidget):
         input_times = QLineEdit()
         input_times.setFont(self._base_font)
         input_times.setPlaceholderText("Input Run times")
-        btn_start = self._create_button("Start Monkey", "", "resources/icons/Monkey.svg")
+        btn_start = self._create_button("Start Monkey", "resources/icons/Monkey.svg")
         perf_row1.addWidget(device_type, 1)
         perf_row1.addWidget(input_times, 1)
         perf_row1.addWidget(btn_start, 1)
@@ -205,18 +229,18 @@ class LeftPanel(QWidget):
         
         # ▶️ 第二行：三个按钮
         perf_row2 = QHBoxLayout()
-        perf_btn1 = self._create_button("Kill Monkey", "", "resources/icons/Kill_monkey.svg")
-        perf_btn2 = self._create_button("Get ANR File", "", "resources/icons/Get_ANR.svg")
-        perf_btn3 = self._create_button("Get Bugreport", "", "resources/icons/bugreport.svg")
+        perf_btn1 = self._create_button("Kill Monkey", "resources/icons/Kill_monkey.svg")
+        perf_btn2 = self._create_button("Get ANR File", "resources/icons/Get_ANR.svg")
+        perf_btn3 = self._create_button("Get Bugreport", "resources/icons/bugreport.svg")
         for btn in (perf_btn1, perf_btn2, perf_btn3):
             perf_row2.addWidget(btn, 1)
         layout.addLayout(perf_row2)
         
                 # ▶️ 第三行
         perf_row3 = QHBoxLayout()
-        perf_btn1 = self._create_button("Packages List", "", "resources/icons/Restart_app.svg")
-        perf_btn2 = self._create_button("Print", "", "resources/icons/Print.svg")
-        perf_btn3 = self._create_button("Parse", "", "resources/icons/Parse_APK.svg")
+        perf_btn1 = self._create_button("Packages List", "resources/icons/Restart_app.svg")
+        perf_btn2 = self._create_button("Print", "resources/icons/Print.svg")
+        perf_btn3 = self._create_button("Parse", "resources/icons/Parse_APK.svg")
         for btn in (perf_btn1, perf_btn2, perf_btn3):
             perf_row3.addWidget(btn, 1)
         layout.addLayout(perf_row3)
@@ -249,7 +273,7 @@ class LeftPanel(QWidget):
             self.listbox_devices.addItem(item)
 
     @Slot()
-    def refresh_device_combobox(self):
+    def _refresh_device_combobox(self):
         if not hasattr(self, "ip_entry"):
             return
 
@@ -284,10 +308,28 @@ class LeftPanel(QWidget):
                 with BlockSignals(self.ip_entry):
                     self.ip_entry.setCurrentText(ip)
                 self._user_selected_ip = True  # ✅ 标记为用户主动选择
+                
+    def _on_ip_edited(self, text):
+        """处理手动输入IP"""
+        self._current_ip = text.strip()  # 更新当前IP
 
-    def _on_device_item_double_clicked(self, item: QListWidgetItem):
-        new_state = Qt.Checked if item.checkState() == Qt.Unchecked else Qt.Unchecked
-        item.setCheckState(new_state)
+    def _on_device_double_click(self, item):
+        """处理设备列表双击事件"""
+        # 确保item是可勾选的
+        if not (item.flags() & Qt.ItemIsUserCheckable):
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        
+        # 切换选中状态（安全版本）
+        try:
+            current_state = item.checkState()
+            new_state = Qt.Unchecked if current_state == Qt.Checked else Qt.Checked
+            item.setCheckState(new_state)
+            
+            # 可选：保持与selection状态的同步
+            if new_state == Qt.Checked:
+                self.listbox_devices.setCurrentItem(item)
+        except Exception as e:
+            print(f"切换选中状态失败: {str(e)}")
 
     @property
     def selected_devices(self) -> List[str]:
