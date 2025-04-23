@@ -63,14 +63,6 @@ class MainFrame(QMainWindow):
         self.log_panel = LogPanel()
         main_layout.addWidget(self.log_panel, stretch=2)
 
-    # 在MainFrame中统一处理错误
-    # def log_message(self, level: str, message: str):
-    #     # 添加崩溃防护
-    #     try:
-    #         self.log_panel.log_message(level, message)
-    #     except RuntimeError as e:
-    #         print(f"UI Already Destroyed: {e}")
-
     def clear_log(self):
         """清空日志面板"""
         self.log_panel.clear()
