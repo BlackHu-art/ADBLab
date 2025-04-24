@@ -1,5 +1,6 @@
 import subprocess
 from functools import wraps
+from typing import Dict, List
 from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
 
 class ADBModel(QObject):
@@ -65,6 +66,10 @@ class ADBModel(QObject):
     @async_command
     def connect_device_async(self, ip_address: str):
         return self._execute_command(["adb", "connect", ip_address])
+        
+    @staticmethod
+    def connect_device(ip_address: str) -> str:
+        return ADBModel._execute_command(["adb", "connect", ip_address])
 
     @async_command
     def get_connected_devices_async(self):
@@ -76,10 +81,6 @@ class ADBModel(QObject):
                if "device" in line]
         
     @staticmethod
-    def connect_device(ip_address: str) -> str:
-        return ADBModel._execute_command(["adb", "connect", ip_address])
-
-    @staticmethod
     def get_connected_devices():
         """获取已连接设备"""
         result = ADBModel._execute_command(["adb", "devices"])
@@ -89,24 +90,47 @@ class ADBModel(QObject):
         lines = result.strip().splitlines()[1:]  # 跳过第一行说明
         return [line.split("\t")[0] for line in lines if "device" in line]
 
-    @staticmethod
-    def disconnect_device(devices):
-        """设备断开连接"""
-        return ADBModel._execute_command(["adb", "disconnect", devices])
-    
-    @staticmethod
-    def restart_device(device):
-        """重启设备"""
-        return ADBModel._execute_command(["adb", "-s", device, "reboot"])
+    @async_command
+    def disconnect_device_async(self, device: str) -> dict:
+        """新增异步版本"""
+        try:
+            result = self._execute_command(["adb", "disconnect", device])
+            return {"ip": device,"raw_result": result,"success": "disconnected" in result.lower()}
+        except Exception as e:
+            return {"ip": device,"raw_result": str(e),"success": False}
+
+    @async_command
+    def restart_device_async(self, device: str) -> dict:
+        """增强版重启异步方法"""
+        try:
+            # 先检查设备状态
+            check_result = self._execute_command(["adb", "-s", device, "get-state"])
+            if "device" not in check_result:
+                return {"ip": device,"success": False,"error": f"设备状态异常: {check_result.strip()}","requires_refresh": False}
+            # 执行重启（设置超时防止永久阻塞）
+            result = self._execute_command(["adb", "-s", device, "reboot"],timeout=3)  # 3秒后超时
+            # 如果执行到这里说明reboot命令异常（正常情况不会返回）
+            return {"ip": device,"success": False,"error": f"异常返回: {result}","requires_refresh": False}
+        except subprocess.TimeoutExpired:
+            # 这是预期中的成功情况
+            return {"ip": device,"success": True,"requires_refresh": True,"raw_result": "设备开始重启"}
+        except Exception as e:
+            return {"ip": device,"success": False,"error": str(e),"requires_refresh": False}
+
+    @async_command
+    def restart_adb_async(self) -> str:
+        """异步重启ADB服务"""
+        self._execute_command(["adb", "kill-server"])
+        return self._execute_command(["adb", "start-server"])
     
     @staticmethod
     def restart_adb():
         ADBModel._execute_command(["adb", "kill-server"])
         return ADBModel._execute_command(["adb", "start-server"])
 
-    @staticmethod
-    def get_device_info(device):
-        # 获取设备基本信息，示例：型号、品牌、Android版本、序列号、存储信息等
+    @async_command
+    def get_device_info_async(self, device: str) -> Dict[str, str]:
+        """异步获取设备完整信息"""
         commands = {
             "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
@@ -124,12 +148,20 @@ class ADBModel(QObject):
             "Timezone": ["adb", "-s", device, "shell", "getprop", "persist.sys.timezone"],
             "Mac": ["adb", "-s", device, "shell", "ip", "addr", "show", "wlan0"],
         }
-        device_info = {}
-        for key, cmd in commands.items():
-            output = ADBModel._execute_command(cmd)
-            device_info[key] = output if not output.startswith(("Timeout:", "SystemError:")) else "N/A"
-        return device_info
-    
+        info = self._fetch_device_info(commands)
+        info['ip'] = device  # 添加IP字段
+        return info
+
+    @async_command
+    def get_devices_basic_info_async(self, device: str) -> Dict[str, str]:
+        """异步获取设备基础信息"""
+        commands = {
+            "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
+            "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
+            "Aversion": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
+        }
+        return self._fetch_device_info(commands)
+
     @staticmethod
     def get_devices_basic_info(device):
         # 获取设备基本信息，示例：型号、品牌、Android版本、序列号、存储信息等
@@ -138,9 +170,15 @@ class ADBModel(QObject):
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
             "Aversion": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
         }
+        return ADBModel._fetch_device_info(commands)
+    
+    @staticmethod
+    def _fetch_device_info(commands: Dict[str, List[str]]) -> Dict[str, str]:
+        """通用的设备信息获取方法"""
         device_info = {}
         for key, cmd in commands.items():
             output = ADBModel._execute_command(cmd)
-            device_info[key] = output if not output.startswith(("Timeout:", "SystemError:")) else "N/A"
+            device_info[key] = output if not output.startswith(
+                ("Error:", "Timeout:", "SystemError:")
+            ) else "N/A"
         return device_info
-    

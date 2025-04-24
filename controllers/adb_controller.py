@@ -1,6 +1,6 @@
 import json
 import threading
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QTimer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from services.log_service import LogService
@@ -20,7 +20,11 @@ class ADBController:
     def __init__(self, log_service: LogService):
         self.signals = ADBControllerSignals()
         self.log_service = log_service
+        self.adb_model = ADBModel()
         self.connected_devices_file = "resources/connected_devices.yaml"
+        # 连接ADBModel的信号
+        self._pending_operations = {}  # 跟踪进行中的异步操作
+        self.adb_model.command_finished.connect(self._handle_async_response)
         
         try:
             DeviceStore.load()
@@ -29,8 +33,6 @@ class ADBController:
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
             DeviceStore.initialize_empty()
         
-        # Connect log service
-        # self.signals.operation_completed.connect(self._log_operation_result)
     
     # ----- Core Device Operations -----
     def connect_device(self, ip: str):
@@ -100,48 +102,68 @@ class ADBController:
 
     # ----- Button Functionalities -----
     def get_device_info(self, devices: list):
-        """Get detailed info for selected devices"""
+        """获取设备信息（同步/异步双模式）"""
         if not devices:
             self._emit_operation("get_info", False, "Please select at least one device")
             return
-
+        # 标记当前操作用于信号处理
+        self._current_operation = "get_info"
+        # 异步获取每个设备的信息
         for ip in devices:
-            try:
-                info = ADBModel.get_device_info(ip)
-                self.signals.device_info_updated.emit(ip, info)
-                self._emit_operation("get_info", True, f"Successfully retrieved info for {ip}")
-            except Exception as e:
-                self._emit_operation("get_info", False, f"Failed to get info for {ip}: {str(e)}")
+            self.adb_model.get_device_info_async(ip)
+    
+    def _process_device_info_result(self, result: dict):
+        """专属设备信息处理器"""
+        self.signals.device_info_updated.emit(result["ip"], result)
+        self._emit_operation("get_info", True, f"Obtained {result['ip']} informations")
 
     def disconnect_devices(self, devices: list):
-        """Disconnect selected devices"""
+        """断开设备连接（异步优化版）"""
         if not devices:
-            self._emit_operation("disconnect", False, "No devices selected")
+            self._emit_operation("disconnect", False, "Please select at least one device")
             return
-            
+        # 标记当前操作类型
+        self._current_operation = "disconnect"
+        # 批量发起异步断开请求
         for ip in devices:
-            try:
-                result = ADBModel.disconnect_device(ip)
-                if "disconnected" in result:
-                    self.refresh_devices()
-                    self._emit_operation("disconnect", True, f"Successfully disconnected {ip}")
-                else:
-                    self._emit_operation("disconnect", False, f"{ip} is not connected")
-            except Exception as e:
-                self._emit_operation("disconnect", False, f"Failed to disconnect {ip}: {str(e)}")
+            self.adb_model.disconnect_device_async(ip)
+    
+    def _process_disconnect_result(self, result: dict):
+        """专属断开连接处理器"""
+        ip = result["ip"]
+        if result.get("success"):
+            self.refresh_devices()
+            self._emit_operation("disconnect", True, f"Successfully disconnected {ip}")
+        else:
+            self._emit_operation(
+                "disconnect", 
+                False, 
+                f"Disconnect failed: {result.get('error', 'unknown error')}"
+            )
 
     def restart_devices(self, devices: list):
-        """Restart selected devices"""
+        """重启设备（异步优化版）"""
         if not devices:
-            self._emit_operation("restart", False, "No devices selected")
+            self._emit_operation("restart", False, "Please select at least one device")
             return
-            
+
+        self._current_operation = "restart"
         for ip in devices:
-            try:
-                ADBModel.restart_device(ip)
-                self._emit_operation("restart", True, f"Restarting device {ip}...")
-            except Exception as e:
-                self._emit_operation("restart", False, f"Failed to restart {ip}: {str(e)}")
+            self.adb_model.restart_device_async(ip)
+    
+    def _process_restart_devices_resoult(self, result: dict):
+        """健壮的重启结果处理"""
+        ip = result.get("ip", "unknown device")
+        
+        if result.get("success"):
+            # 延迟10秒后刷新（等待设备重启完成）
+            QTimer.singleShot(10_000, lambda: (
+                self.refresh_devices(),
+                self._emit_operation("restart", True, f"{ip} Restart completed, device list refreshed")
+            ))
+            self._emit_operation("restart", True, f"{ip} Restarting in progress...")
+        else:
+            self._emit_operation("restart", False, f"{ip} Restart failed: {result.get('error', 'unknown device')}")
 
     def restart_adb(self):
         """Restart ADB service"""
@@ -231,4 +253,35 @@ class ADBController:
         level = "INFO" if success else "ERROR"
         self.log_service.log(level, f"[{operation}] {message}")
         self.signals.operation_completed.emit(operation, success, message)
+    
+    def _handle_async_response(self, method_name: str, result):
+        """统一信号处理器（整合所有异步操作处理）"""
+        # 提取基础操作类型（去掉_async后缀）
+        op_type = method_name.replace("_async", "")
+        
+        # 错误处理（所有异步操作通用）
+        if isinstance(result, str) and result.startswith("AsyncError:"):
+            self._emit_operation(op_type, False, result[11:])
+            return
+            
+        # 操作专属处理器映射表
+        handler_map = {
+            "disconnect_device": self._process_disconnect_result,
+            "get_device_info": self._process_device_info_result,
+            "restart_devices": self._process_restart_devices_resoult
+            # 其他操作在此添加...
+        }
+        
+        # 动态选择处理器
+        handler = handler_map.get(op_type)
+        if handler:
+            handler(result)
+        else:
+            self._default_async_handler(op_type, result)  # 明确传递两个参数
+        
+    def _default_async_handler(self, op_type: str, result):
+        """默认的异步结果处理器"""
+        if op_type == "get_device_info" and isinstance(result, dict):
+            self.signals.device_info_updated.emit(result['ip'], result)
+        self._emit_operation(op_type, True, f"{op_type} completed")
         
