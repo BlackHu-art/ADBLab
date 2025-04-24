@@ -19,14 +19,6 @@ class ADBModel:
         return [line.split("\t")[0] for line in lines if "device" in line]
 
     @staticmethod
-    def get_devices():
-        """获取有效设备"""
-        result = ADBModel._execute_command(["adb", "devices"])
-        return [line.split()[0] 
-               for line in result.splitlines()[1:] 
-               if line.strip().endswith("device")]
-
-    @staticmethod
     def disconnect_device(devices):
         """设备断开连接"""
         return ADBModel._execute_command(["adb", "disconnect", devices])

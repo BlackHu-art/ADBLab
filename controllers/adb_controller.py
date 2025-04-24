@@ -38,6 +38,13 @@ class ADBController:
         if not ip:
             self._emit_operation("connect", False, "IP address cannot be empty")
             return
+        try:
+            devices = ADBModel.get_connected_devices()
+            if ip in devices:
+                self._emit_operation("connect", False, "{ip} allready connected")
+                return
+        except Exception:
+            return
 
         try:
             result = ADBModel.connect_device(ip)
