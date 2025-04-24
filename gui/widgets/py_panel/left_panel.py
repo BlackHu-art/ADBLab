@@ -1,5 +1,5 @@
 from re import search
-from typing import List
+from typing import List, Union
 from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QFontMetrics, QIcon
 from PySide6.QtWidgets import (
@@ -10,6 +10,7 @@ from gui.widgets.style.base_styles import get_default_font
 from models.device_store import DeviceStore
 from contextlib import contextmanager
 from gui.widgets.py_panel.left_panel_signals import LeftPanelSignals
+from utils.double_click_button import DoubleClickButton
 
 @contextmanager
 def BlockSignals(widget):
@@ -59,8 +60,8 @@ class LeftPanel(QWidget):
         self.btn_disconnect_devices.clicked.connect(lambda: self.signals.disconnect_requested.emit(self.selected_devices))
         # 重启设备按钮
         self.btn_restart_devices.clicked.connect(lambda: self.signals.restart_devices_requested.emit(self.selected_devices))
-        # 重启ADB按钮
-        self.btn_restart_adb.clicked.connect(self.signals.restart_adb_requested.emit)
+        # 重启ADB按钮,需要双击启用
+        self.btn_restart_adb.doubleClicked.connect(self.signals.restart_adb_requested.emit)
         # 截图按钮
         self.btn_screenshot.clicked.connect(lambda: self.signals.screenshot_requested.emit(self.selected_devices))
         # 获取设备日志按钮
@@ -114,7 +115,8 @@ class LeftPanel(QWidget):
         self.btn_devices_Info = self._create_button("Device Info", "resources/icons/Info.svg")
         self.btn_disconnect_devices = self._create_button("Disconnect", "resources/icons/Disconnect.svg")
         self.btn_restart_devices = self._create_button("Restart Devices", "resources/icons/Restart.svg")
-        self.btn_restart_adb = self._create_button("Restart ADB", "resources/icons/Restore.svg")
+        self.btn_restart_adb = self._create_button("Restart ADB", "resources/icons/Restore.svg", double_click=True)
+        self.btn_restart_adb.setToolTip("Double click to restart")
         self.btn_screenshot = self._create_button("Screenshot", "resources/icons/Screenshot.svg")
         self.btn_retrieve_devices_logs = self._create_button("Retrieve device logs", "resources/icons/Save_alt.svg")
         self.btn_cleanup_logs = self._create_button("Cleanup logs", "resources/icons/Cleaning_services.svg")
@@ -160,8 +162,9 @@ class LeftPanel(QWidget):
         group.setLayout(main_layout)
         return group
 
-    def _create_button(self, text: str, icon_path: str = None) -> QPushButton:
-        btn = QPushButton(text)
+    def _create_button(self, text: str, icon_path: str = None, double_click: bool = False) -> Union[QPushButton, DoubleClickButton]:
+        """扩展按钮创建方法"""
+        btn = DoubleClickButton(text) if double_click else QPushButton(text)
         btn.setFont(self._base_font)
         btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         if icon_path:
