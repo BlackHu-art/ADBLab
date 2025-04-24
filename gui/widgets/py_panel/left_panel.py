@@ -21,7 +21,7 @@ def BlockSignals(widget):
         widget.blockSignals(False)
         
 class LeftPanel(QWidget):
-    PANEL_WIDTH = 500
+    PANEL_WIDTH = 600
     GROUP_TITLES = ("Device Management", "Actions", "Performance")
 
     def __init__(self, parent=None):
@@ -252,23 +252,39 @@ class LeftPanel(QWidget):
     def update_device_list(self, devices: List[str] = None):
         from models.device_store import DeviceStore
         from models.adb_model import ADBModel
-
         # ① 若未传入则主动获取当前在线设备
         if devices is None:
             devices = ADBModel.get_connected_devices()
-
         self.listbox_devices.clear()
         self.connected_device_cache = devices
-
+        # 获取完整设备信息
         device_info_list = DeviceStore.get_full_devices_info(devices)
-
+        # 计算各字段最大宽度
+        max_lengths = {'model': 0,'brand': 0,'version': 0,'ip': 0}
+        # 第一次遍历计算最大宽度
         for info in device_info_list:
-            display = f"{info.get('Model', 'Unknown')} | {info.get('Brand', 'Unknown')} | " \
-                    f"{info.get('ip', '')}"
+            max_lengths['model'] = max(max_lengths['model'], len(info.get('Model', 'Unknown')))
+            max_lengths['brand'] = max(max_lengths['brand'], len(info.get('Brand', 'Unknown')))
+            max_lengths['ip'] = max(max_lengths['ip'], len(info.get('ip', '')))
+        # 第二次遍历创建对齐的显示项
+        for info in device_info_list:
+            model = info.get('Model', 'Unknown').ljust(max_lengths['model'])
+            brand = info.get('Brand', 'Unknown').ljust(max_lengths['brand'])
+            version = info.get('Aversion', 'Unknown')
+            ip = info.get('ip', '').ljust(max_lengths['ip'])
+            
+            # 使用等宽字体保证对齐效果
+            display = f"{model} | {brand} | {version} | {ip}"
+            
             item = QListWidgetItem(display)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
+            # 设置等宽字体（确保对齐）
+            font = self._base_font
+            font.setFamily("Courier New")  # 等宽字体
             item.setFont(self._base_font)
+            # 存储原始数据用于后续操作
+            item.setData(Qt.UserRole, info)
             self.listbox_devices.addItem(item)
 
     @Slot()
@@ -343,7 +359,7 @@ class LeftPanel(QWidget):
                 text = item.text()
                 parts = text.split("|")
                 if len(parts) >= 3:
-                    selected_ips.append(parts[2].strip())  # 提取 IP
+                    selected_ips.append(parts[3].strip())  # 提取 IP
         return selected_ips
 
 

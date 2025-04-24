@@ -1,9 +1,80 @@
 import subprocess
-import threading
-from typing import Callable, Optional, Any
+from functools import wraps
+from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
 
-class ADBModel:
+class ADBModel(QObject):
+    # 定义信号用于异步返回结果
+    command_finished = Signal(str, object)  # (method_name, result)
     
+    def __init__(self):
+        super().__init__()
+        self.thread_pool = QThreadPool.globalInstance()
+    
+    @staticmethod
+    def _execute_command(command: list, timeout: int = 10) -> str:
+        """同步执行ADB命令"""
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=timeout,
+                encoding='utf-8',
+                errors='ignore',
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            return f"Error: {str(e)}"
+        except subprocess.TimeoutExpired:
+            return f"Timeout: Command execution exceeded {timeout} seconds"
+        except Exception as e:
+            return f"SystemError: {str(e)}"
+    
+    # 异步执行装饰器
+    @staticmethod
+    def async_command(method):
+        """将方法转换为异步执行的装饰器"""
+        @wraps(method)
+        def wrapper(self, *args, **kwargs):
+            class CommandTask(QRunnable):
+                def __init__(self, model, method_ref, *args, **kwargs):
+                    super().__init__()
+                    self.model = model
+                    self.method_ref = method_ref
+                    self.args = args
+                    self.kwargs = kwargs
+                
+                def run(self):
+                    try:
+                        result = self.method_ref(self.model, *self.args, **self.kwargs)
+                        self.model.command_finished.emit(self.method_ref.__name__, result)
+                    except Exception as e:
+                        self.model.command_finished.emit(
+                            self.method_ref.__name__, f"AsyncError: {str(e)}"
+                        )
+            
+            task = CommandTask(self, method, *args, **kwargs)
+            self.thread_pool.start(task)
+        
+        return wrapper
+        
+    
+    # 保持原有静态方法的同时添加异步版本
+    @async_command
+    def connect_device_async(self, ip_address: str):
+        return self._execute_command(["adb", "connect", ip_address])
+
+    @async_command
+    def get_connected_devices_async(self):
+        result = self._execute_command(["adb", "devices"])
+        if result.startswith(("Timeout:", "SystemError:")):
+            return []
+        return [line.split("\t")[0] 
+               for line in result.strip().splitlines()[1:] 
+               if "device" in line]
+        
     @staticmethod
     def connect_device(ip_address: str) -> str:
         return ADBModel._execute_command(["adb", "connect", ip_address])
@@ -65,6 +136,7 @@ class ADBModel:
         commands = {
             "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
             "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
+            "Aversion": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
         }
         device_info = {}
         for key, cmd in commands.items():
@@ -72,25 +144,3 @@ class ADBModel:
             device_info[key] = output if not output.startswith(("Timeout:", "SystemError:")) else "N/A"
         return device_info
     
-    @classmethod
-    def _execute_command(cls, command: list, timeout: int = 10) -> str:
-        """执行ADB命令的公共方法"""
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=timeout,
-                encoding='utf-8',
-                errors='ignore',
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            return f"Error: {str(e)}"
-        except subprocess.TimeoutExpired:
-            return f"Timeout: Command execution exceeded {timeout} seconds"
-        except Exception as e:
-            return f"SystemError: {str(e)}"
-

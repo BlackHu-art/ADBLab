@@ -13,7 +13,7 @@ from .widgets.style.base_styles import get_default_font
 class MainFrame(QMainWindow):
     """主窗口框架，集成所有组件"""
     
-    DEFAULT_WIDTH = 1100
+    DEFAULT_WIDTH = 1200
     DEFAULT_HEIGHT = 680
 
     def __init__(self):

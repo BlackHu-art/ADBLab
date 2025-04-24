@@ -123,6 +123,7 @@ class ADBController:
             try:
                 result = ADBModel.disconnect_device(ip)
                 if "disconnected" in result:
+                    self.refresh_devices()
                     self._emit_operation("disconnect", True, f"Successfully disconnected {ip}")
                 else:
                     self._emit_operation("disconnect", False, f"{ip} is not connected")
@@ -201,8 +202,7 @@ class ADBController:
                     "ip": ip,
                     "Model": info.get("Model", ip),
                     "Brand": info.get("Brand", "Unknown"),
-                    "Android Version": info.get("Android Version", "Unknown"),
-                    "SDK Version": info.get("SDK Version", "Unknown")
+                    "Aversion": info.get("Aversion", "Unknown"),
                 }
             }
             
@@ -216,7 +216,9 @@ class ADBController:
                 alias=f"device_{ip}",
                 ip=ip,
                 brand=info.get("Brand", "Unknown"),
-                model=info.get("Model", "Unknown")
+                model=info.get("Model", "Unknown"),
+                aversion = info.get("Aversion", "Unknown")
+                
             )
             DeviceStore.load()
             
