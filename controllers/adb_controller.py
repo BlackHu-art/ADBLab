@@ -1,6 +1,4 @@
-import json
 import threading
-import time
 from PySide6.QtCore import QObject, Signal, QTimer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
@@ -99,6 +97,39 @@ class ADBController:
                 self._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
         
         self.signals.devices_updated.emit(devices)
+    
+    def _save_device_info(self, ip: str):
+        """Save device information to YAML"""
+        try:
+            info = ADBModel.get_devices_basic_info(ip)
+            device_data = {
+                f"device_{ip}": {
+                    "ip": ip,
+                    "Model": info.get("Model", ip),
+                    "Brand": info.get("Brand", "Unknown"),
+                    "Aversion": info.get("Aversion", "Unknown"),
+                }
+            }
+            
+            # Update YAML file
+            yaml_data = YamlTool.load_yaml(self.connected_devices_file) or {}
+            yaml_data.update(device_data)
+            YamlTool.write_yaml(self.connected_devices_file, yaml_data)
+            
+            # Update device store
+            DeviceStore.add_device(
+                alias=f"device_{ip}",
+                ip=ip,
+                brand=info.get("Brand", "Unknown"),
+                model=info.get("Model", "Unknown"),
+                aversion = info.get("Aversion", "Unknown")
+                
+            )
+            DeviceStore.load()
+            
+        except Exception as e:
+            self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")
+            raise
 
     # ----- Button Functionalities -----
     def get_device_info(self, devices: list):
@@ -221,38 +252,6 @@ class ADBController:
                 self._emit_operation("clean_logs", False, f"Failed to clean logs for {ip}: {str(e)}")
 
     # ----- Private Methods -----
-    def _save_device_info(self, ip: str):
-        """Save device information to YAML"""
-        try:
-            info = ADBModel.get_devices_basic_info(ip)
-            device_data = {
-                f"device_{ip}": {
-                    "ip": ip,
-                    "Model": info.get("Model", ip),
-                    "Brand": info.get("Brand", "Unknown"),
-                    "Aversion": info.get("Aversion", "Unknown"),
-                }
-            }
-            
-            # Update YAML file
-            yaml_data = YamlTool.load_yaml(self.connected_devices_file) or {}
-            yaml_data.update(device_data)
-            YamlTool.write_yaml(self.connected_devices_file, yaml_data)
-            
-            # Update device store
-            DeviceStore.add_device(
-                alias=f"device_{ip}",
-                ip=ip,
-                brand=info.get("Brand", "Unknown"),
-                model=info.get("Model", "Unknown"),
-                aversion = info.get("Aversion", "Unknown")
-                
-            )
-            DeviceStore.load()
-            
-        except Exception as e:
-            self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")
-            raise
 
     def _emit_operation(self, operation: str, success: bool, message: str):
 
