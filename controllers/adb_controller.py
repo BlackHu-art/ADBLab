@@ -260,34 +260,60 @@ class ADBController:
         self.signals.operation_completed.emit(operation, success, message)
     
     def _handle_async_response(self, method_name: str, result):
-        """统一信号处理器（整合所有异步操作处理）"""
+
         # 提取基础操作类型（去掉_async后缀）
         op_type = method_name.replace("_async", "")
         
-        # 错误处理（所有异步操作通用）
+        # 统一错误处理
         if isinstance(result, str) and result.startswith("AsyncError:"):
-            self._emit_operation(op_type, False, result[11:])
+            error_msg = result[11:]
+            self.log_service.log("ERROR", f"[{op_type}] {error_msg}")
+            self._emit_operation(op_type, False, error_msg)
+            return
+        
+        # 设备列表处理
+        if op_type == "get_connected_devices":
+            if isinstance(result, list):
+                self._process_device_list(result)
+            else:
+                self._emit_operation(op_type, False, "Invalid device list format")
             return
             
-        # 操作专属处理器映射表
+        # 操作处理器映射表（扩展版）
         handler_map = {
             "disconnect_device": self._process_disconnect_result,
             "get_device_info": self._process_device_info_result,
             "restart_devices": self._process_restart_devices_resoult,
             "restart_adb": self._process_restart_adb_result,
-            # 其他操作在此添加...
+            # 可以继续添加其他操作...
         }
         
-        # 动态选择处理器
+        # 获取对应的处理器
         handler = handler_map.get(op_type)
-        if handler:
-            handler(result)
-        else:
-            self._default_async_handler(op_type, result)  # 明确传递两个参数
         
+        if handler:
+            try:
+                handler(result)
+            except Exception as e:
+                self.log_service.log("ERROR", f"[{op_type}] Handler error: {str(e)}")
+                self._emit_operation(op_type, False, f"处理失败: {str(e)}")
+        else:
+            self._default_async_handler(op_type, result)
+
     def _default_async_handler(self, op_type: str, result):
-        """默认的异步结果处理器"""
-        if op_type == "get_device_info" and isinstance(result, dict):
-            self.signals.device_info_updated.emit(result['ip'], result)
-        self._emit_operation(op_type, True, f"{op_type} completed")
+
+        if isinstance(result, dict):
+            # 如果有IP字段，尝试更新设备信息
+            if 'ip' in result:
+                self.signals.device_info_updated.emit(result['ip'], result)
+            # 如果有成功标志，发射操作完成信号
+            if result.get('success', False):
+                self._emit_operation(op_type, True, f"{op_type} completed")
+            else:
+                error_msg = result.get('error', 'Unknown error')
+                self._emit_operation(op_type, False, error_msg)
+        else:
+            # 对于其他类型的成功结果
+            self._emit_operation(op_type, True, f"{op_type} completed")
+
         
