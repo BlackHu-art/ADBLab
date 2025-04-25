@@ -1,5 +1,6 @@
 import subprocess
 from functools import wraps
+import time
 from typing import Dict, List
 from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
 
@@ -106,27 +107,27 @@ class ADBModel(QObject):
             # 先检查设备状态
             check_result = self._execute_command(["adb", "-s", device, "get-state"])
             if "device" not in check_result:
-                return {"ip": device,"success": False,"error": f"设备状态异常: {check_result.strip()}","requires_refresh": False}
+                return {"ip": device,"success": False,"error": f"Abnormal device status: {check_result.strip()}","requires_refresh": False}
             # 执行重启（设置超时防止永久阻塞）
             result = self._execute_command(["adb", "-s", device, "reboot"],timeout=3)  # 3秒后超时
             # 如果执行到这里说明reboot命令异常（正常情况不会返回）
-            return {"ip": device,"success": False,"error": f"异常返回: {result}","requires_refresh": False}
+            return {"ip": device,"success": False,"error": f"abnormal return: {result}","requires_refresh": False}
         except subprocess.TimeoutExpired:
             # 这是预期中的成功情况
-            return {"ip": device,"success": True,"requires_refresh": True,"raw_result": "设备开始重启"}
+            return {"ip": device,"success": True,"requires_refresh": True,"raw_result": "The device is starting to restart"}
         except Exception as e:
             return {"ip": device,"success": False,"error": str(e),"requires_refresh": False}
 
     @async_command
     def restart_adb_async(self) -> str:
         """异步重启ADB服务"""
-        self._execute_command(["adb", "kill-server"])
-        return self._execute_command(["adb", "start-server"])
-    
-    @staticmethod
-    def restart_adb():
-        ADBModel._execute_command(["adb", "kill-server"])
-        return ADBModel._execute_command(["adb", "start-server"])
+        try:
+            self._execute_command(["adb", "kill-server"])
+            time.sleep(1)  # 确保服务停止
+            self._execute_command(["adb", "start-server"], timeout=5)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     @async_command
     def get_device_info_async(self, device: str) -> Dict[str, str]:

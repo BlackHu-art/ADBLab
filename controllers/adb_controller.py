@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 from PySide6.QtCore import QObject, Signal, QTimer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
@@ -32,8 +33,7 @@ class ADBController:
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
             DeviceStore.initialize_empty()
-        
-    
+
     # ----- Core Device Operations -----
     def connect_device(self, ip: str):
         """Connect to a device"""
@@ -166,12 +166,18 @@ class ADBController:
             self._emit_operation("restart", False, f"{ip} Restart failed: {result.get('error', 'unknown device')}")
 
     def restart_adb(self):
-        """Restart ADB service"""
-        try:
-            result = ADBModel.restart_adb()
-            self._emit_operation("restart_adb", True, f"ADB restarted: {result}")
-        except Exception as e:
-            self._emit_operation("restart_adb", False, f"Failed to restart ADB: {str(e)}")
+        """重启ADB服务"""
+        self._current_operation = "restart_adb"
+        self.adb_model.restart_adb_async()
+    
+    def _process_restart_adb_result(self, result: dict):
+        """ADB重启结果处理"""
+        if result.get("success"):
+            # 延迟3秒后刷新（等待ADB服务稳定）
+            QTimer.singleShot(3000, self.refresh_devices)  # 非阻塞延迟,但是会导致主界面卡顿一下
+            self._emit_operation("restart_adb", True, f"ADB service has been restarted: {result.get('raw_output', '')}")
+        else:
+            self._emit_operation("restart_adb", False, f"ADB restart failed: {result.get('error', 'unknown error')}")
 
     def take_screenshot(self, devices: list):
         """Take screenshot of selected devices"""
@@ -268,7 +274,8 @@ class ADBController:
         handler_map = {
             "disconnect_device": self._process_disconnect_result,
             "get_device_info": self._process_device_info_result,
-            "restart_devices": self._process_restart_devices_resoult
+            "restart_devices": self._process_restart_devices_resoult,
+            "restart_adb": self._process_restart_adb_result,
             # 其他操作在此添加...
         }
         

@@ -1,7 +1,7 @@
 from re import search
 from typing import List, Union
 from PySide6.QtCore import Qt, Slot
-from PySide6.QtGui import QFontMetrics, QIcon
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit, QCompleter
@@ -292,36 +292,50 @@ class LeftPanel(QWidget):
 
     @Slot()
     def _refresh_device_combobox(self):
+        """使用等宽字体优化设备下拉框显示"""
         if not hasattr(self, "ip_entry"):
             return
 
+        # 使用等宽字体确保对齐
+        font = QFont("Courier New", self.ip_entry.font().pointSize())
+        self.ip_entry.setFont(font)
+        
         with BlockSignals(self.ip_entry):
             self.ip_entry.clear()
+            
+            # 获取设备数据
+            devices = DeviceStore.get_basic_devices_info()
+            if not devices:
+                self.ip_entry.lineEdit().setPlaceholderText("No devices available")
+                return
 
-            font_metrics = QFontMetrics(self.ip_entry.font())  # 使用当前字体度量
+            # 计算各列最大字符长度（等宽字体下字符宽度相同）
+            max_lens = {
+                'brand': max(len(brand) for brand, _, _ in devices),
+                'model': max(len(model) for _, model, _ in devices),
+                'ip': max(len(ip) for _, _, ip in devices)
+            }
 
-            # 先计算最长 Brand 和 Model 的宽度（像素）
-            max_brand_width = max_model_width = 0
-            data = DeviceStore.get_basic_devices_info()
-            for brand, model, _ in data:
-                max_brand_width = max(max_brand_width, font_metrics.horizontalAdvance(brand))
-                max_model_width = max(max_model_width, font_metrics.horizontalAdvance(model))
+            # 生成格式化字符串模板
+            fmt_str = (f"{{brand:<{max_lens['brand']}}} | "
+                    f"{{model:<{max_lens['model']}}} | "
+                    f"{{ip:<{max_lens['ip']}}}")
 
-            # 添加项时用空格填充对齐
-            for brand, model, ip in data:
-                padded_brand = brand + " " * ((max_brand_width - font_metrics.horizontalAdvance(brand)) // font_metrics.horizontalAdvance(" "))
-                padded_model = model + " " * ((max_model_width - font_metrics.horizontalAdvance(model)) // font_metrics.horizontalAdvance(" "))
-                display = f"{padded_brand} | {padded_model} | {ip}"
+            # 添加格式化后的选项
+            for brand, model, ip in devices:
+                display = fmt_str.format(brand=brand, model=model, ip=ip)
                 self.ip_entry.addItem(display, userData=ip)
 
-            # 关键修复：强制清空显示内容
+            # 重置控件状态
             self.ip_entry.setCurrentIndex(-1)
-            self.ip_entry.lineEdit().setText("")
+            self.ip_entry.lineEdit().clear()
             self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
             
-            # 禁用自动填充
+            # 配置自动完成行为
             self.ip_entry.setInsertPolicy(QComboBox.NoInsert)
-            self.ip_entry.completer().setCompletionMode(QCompleter.PopupCompletion)
+            completer = self.ip_entry.completer()
+            completer.setCompletionMode(QCompleter.PopupCompletion)
+            completer.setFilterMode(Qt.MatchContains)
 
     def _on_ip_selected(self, index):
         """当用户从下拉中选中设备时，仅显示 IP"""
