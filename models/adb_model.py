@@ -195,3 +195,31 @@ class ADBModel(QObject):
                 "device_ip": device_ip,
                 "error": str(e)
             }
+    
+    @async_command
+    def save_device_log_async(self, device_ip: str, log_path: str) -> dict:
+        """异步保存设备日志"""
+        try:
+            log_content = self._execute_command(["adb", "-s", device_ip, "logcat", "-d"])
+            if log_content.startswith(("Error:", "Timeout:", "SystemError:")):
+                return {"success": False, "device_ip": device_ip, "error": log_content}
+            
+            # 写入文件（文件操作仍在工作线程）
+            with open(log_path, 'w', encoding='utf-8') as f:
+                f.write(log_content)
+                
+            return {"success": True, "device_ip": device_ip, "log_path": log_path}
+            
+        except Exception as e:
+            return {"success": False, "device_ip": device_ip, "error": f"FileError: {str(e)}"}
+
+    @async_command
+    def clear_device_log_async(self, device_ip: str) -> dict:
+        """异步清除设备日志"""
+        result = self._execute_command(
+            ["adb", "-s", device_ip, "logcat", "-c"]
+        )
+        
+        if result.startswith(("Error:", "Timeout:", "SystemError:")):
+            return {"success": False,"device_ip": device_ip,"error": result}
+        return {"success": True,"device_ip": device_ip,"output": result}

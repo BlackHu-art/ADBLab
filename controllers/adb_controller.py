@@ -348,31 +348,74 @@ class ADBController:
         viewer.exec()
 
     def retrieve_device_logs(self, devices: list):
-        """Retrieve logs from selected devices"""
+        """保存设备日志到文件"""
         if not devices:
-            self._emit_operation("get_logs", False, "No devices selected")
+            self._emit_operation("retrieve_device_logs", False, "No devices selected")
             return
             
-        for ip in devices:
-            try:
-                logs = ADBModel.get_device_logs(ip)
-                self.signals.logs_retrieved.emit(ip, logs)
-                self._emit_operation("get_logs", True, f"Successfully retrieved logs for {ip}")
-            except Exception as e:
-                self._emit_operation("get_logs", False, f"Failed to get logs for {ip}: {str(e)}")
+        save_dir = QFileDialog.getExistingDirectory(
+            None,
+            "Select Log Save Directory",
+            os.path.expanduser("~")
+        )
+        
+        if not save_dir:
+            self._emit_operation("retrieve_device_logs", False, "No directory selected")
+            return
+            
+        for device_ip in devices:
+            self._save_single_device_log(device_ip, save_dir)
+    
+    def _save_single_device_log(self, device_ip: str, save_dir: str):
+        """保存单个设备日志"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sanitized_ip = device_ip.replace(":", "_")
+        log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
+        
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("retrieve_device_logs", device_ip)
+        self.adb_model.save_device_log_async(device_ip, log_path)
+    
+    def _process_retrieve_logs_result(self, result: dict):
+        """处理保存日志结果"""
+        device_ip = result.get("device_ip")
+        
+        if result.get("success"):
+            # 直接传入完整消息（不再让 _emit_operation 添加额外前缀）
+            message = f"Log saved for {device_ip} at {result['log_path']}"
+            self._emit_operation("retrieve_device_logs", True, message)
+            self.signals.logs_saved.emit(device_ip, result['log_path'])
+        else:
+            error = result.get("error", "Unknown error")
+            # 提取错误消息的最终部分（去掉 "Error:" 等前缀）
+            error_msg = error.split(":")[-1].strip() if ":" in error else error
+            message = f"Failed to save log for {device_ip}: {error_msg}"
+            self._emit_operation("retrieve_device_logs", False, message)
 
     def cleanup_device_logs(self, devices: list):
-        """Clean up logs on selected devices"""
+        """清除设备日志"""
         if not devices:
-            self._emit_operation("clean_logs", False, "No devices selected")
+            self._emit_operation("cleanup_device_logs", False, "No devices selected")
             return
             
-        for ip in devices:
-            try:
-                ADBModel.cleanup_logs(ip)
-                self._emit_operation("clean_logs", True, f"Successfully cleaned logs for {ip}")
-            except Exception as e:
-                self._emit_operation("clean_logs", False, f"Failed to clean logs for {ip}: {str(e)}")
+        for device_ip in devices:
+            operation_id = self._generate_operation_id()
+            self._pending_operations[operation_id] = ("cleanup_device_logs", device_ip)
+            self.adb_model.clear_device_log_async(device_ip)
+    
+    def _process_cleanup_logs_result(self, result: dict):
+        """处理清除日志结果"""
+        device_ip = result.get("device_ip")
+        
+        if result.get("success"):
+            message = f"Log cleared for {device_ip}"
+            self._emit_operation("cleanup_device_logs", True, message)
+            self.signals.logs_cleared.emit(device_ip)
+        else:
+            error = result.get("error", "Unknown error")
+            error_msg = error.split(":")[-1].strip() if ":" in error else error
+            message = f"Failed to clear log for {device_ip}: {error_msg}"
+            self._emit_operation("cleanup_device_logs", False, message)
 
     # ----- Private Methods -----
 
@@ -412,6 +455,8 @@ class ADBController:
             "restart_devices": self._process_restart_devices_resoult,
             "restart_adb": self._process_restart_adb_result,
             "take_screenshot": self._process_screenshot_result,
+            "retrieve_device_logs": self._process_retrieve_logs_result,
+            "cleanup_device_logs": self._process_cleanup_logs_result,
             # 可以继续添加其他操作...
         }
         
