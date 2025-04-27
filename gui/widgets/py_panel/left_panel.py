@@ -86,6 +86,7 @@ class LeftPanel(QWidget):
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
         self.ip_entry.editTextChanged.connect(self._on_ip_edited)
+        self.ip_entry.completer().activated.connect(lambda text: self._on_ip_selected_completer(text))
         # 使用统一按钮创建方法
         self.btn_connect_devices = self._create_button("Connect", "resources/icons/Connect.svg")
         ip_row.addWidget(self.ip_entry, 2)
@@ -309,33 +310,41 @@ class LeftPanel(QWidget):
                 self.ip_entry.lineEdit().setPlaceholderText("No devices available")
                 return
 
-            # 计算各列最大字符长度（等宽字体下字符宽度相同）
+            # 新增：收集纯IP列表
+            ip_list = [ip for _, _, ip in devices]  # ✅ 保持原有设备数据获取逻辑
+            
+            # 生成格式化字符串模板（保持原有显示逻辑）
             max_lens = {
                 'brand': max(len(brand) for brand, _, _ in devices),
                 'model': max(len(model) for _, model, _ in devices),
                 'ip': max(len(ip) for _, _, ip in devices)
             }
-
-            # 生成格式化字符串模板
             fmt_str = (f"{{brand:<{max_lens['brand']}}} | "
                     f"{{model:<{max_lens['model']}}} | "
                     f"{{ip:<{max_lens['ip']}}}")
 
-            # 添加格式化后的选项
+            # 添加格式化后的选项（保持原有显示逻辑）
             for brand, model, ip in devices:
                 display = fmt_str.format(brand=brand, model=model, ip=ip)
-                self.ip_entry.addItem(display, userData=ip)
+                self.ip_entry.addItem(display, userData=ip)  # ✅ 显示格式不变
 
-            # 重置控件状态
+            # 改进自动完成配置
+            completer = QCompleter(ip_list, self)  # ✅ 使用纯IP列表
+            completer.setCaseSensitivity(Qt.CaseInsensitive)
+            completer.setFilterMode(Qt.MatchContains)
+            self.ip_entry.setCompleter(completer)  # ✅ 替换为专用自动完成器
+
+            # 保持原有控件状态设置
             self.ip_entry.setCurrentIndex(-1)
             self.ip_entry.lineEdit().clear()
             self.ip_entry.lineEdit().setPlaceholderText("Select or input IP:port")
-            
-            # 配置自动完成行为
             self.ip_entry.setInsertPolicy(QComboBox.NoInsert)
-            completer = self.ip_entry.completer()
-            completer.setCompletionMode(QCompleter.PopupCompletion)
-            completer.setFilterMode(Qt.MatchContains)
+    
+    def _on_ip_selected_completer(self, ip):
+        """处理补全列表的选择"""
+        with BlockSignals(self.ip_entry):
+            self.ip_entry.setCurrentText(ip)
+        self._user_selected_ip = True
 
     def _on_ip_selected(self, index):
         """当用户从下拉中选中设备时，仅显示 IP"""

@@ -67,10 +67,6 @@ class ADBModel(QObject):
     @async_command
     def connect_device_async(self, ip_address: str):
         return self._execute_command(["adb", "connect", ip_address])
-        
-    @staticmethod
-    def connect_device(ip_address: str) -> str:
-        return ADBModel._execute_command(["adb", "connect", ip_address])
 
     @async_command
     def get_connected_devices_async(self):
@@ -80,16 +76,6 @@ class ADBModel(QObject):
         return [line.split("\t")[0] 
                for line in result.strip().splitlines()[1:] 
                if "device" in line]
-        
-    @staticmethod
-    def get_connected_devices():
-        """获取已连接设备"""
-        result = ADBModel._execute_command(["adb", "devices"])
-        if result.startswith(("Timeout:", "SystemError:")):
-            return []
-            
-        lines = result.strip().splitlines()[1:]  # 跳过第一行说明
-        return [line.split("\t")[0] for line in lines if "device" in line]
 
     @async_command
     def disconnect_device_async(self, device: str) -> dict:
