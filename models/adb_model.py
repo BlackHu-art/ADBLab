@@ -169,3 +169,29 @@ class ADBModel(QObject):
                 ("Error:", "Timeout:", "SystemError:")
             ) else "N/A"
         return device_info
+    
+    @async_command
+    def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
+        """异步截图方法"""
+        try:
+            # 第一步：在设备上执行截图
+            temp_path = "/sdcard/screenshot.png"
+            self._execute_command(["adb", "-s", device_ip, "shell", "screencap", "-p", temp_path])
+            
+            # 第二步：将截图拉取到本地
+            self._execute_command(["adb", "-s", device_ip, "pull", temp_path, save_path])
+            
+            # 第三步：删除设备上的临时文件
+            self._execute_command(["adb", "-s", device_ip, "shell", "rm", temp_path])
+            
+            return {
+                "success": True,
+                "device_ip": device_ip,
+                "screenshot_path": save_path
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": str(e)
+            }

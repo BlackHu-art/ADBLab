@@ -119,6 +119,7 @@ class LeftPanel(QWidget):
         self.btn_restart_adb = self._create_button("Restart ADB", "resources/icons/Restore.svg", double_click=True)
         self.btn_restart_adb.setToolTip("Double click to restart")
         self.btn_screenshot = self._create_button("Screenshot", "resources/icons/Screenshot.svg")
+        self.btn_screenshot.setToolTip("Select a file save path once")
         self.btn_retrieve_devices_logs = self._create_button("Retrieve device logs", "resources/icons/Save_alt.svg")
         self.btn_cleanup_logs = self._create_button("Cleanup logs", "resources/icons/Cleaning_services.svg")
         button_layout.addWidget(self.btn_refresh_devices)

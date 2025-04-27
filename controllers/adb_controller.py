@@ -1,6 +1,9 @@
-import threading
+import os
 import uuid
+from datetime import datetime
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Slot
+from PySide6.QtWidgets import QFileDialog, QWidget
+from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from services.log_service import LogService
@@ -26,6 +29,7 @@ class ADBController:
         self._pending_operations = {}  # 跟踪进行中的异步操作
         self._active_threads = []  # 跟踪所有活动线程
         self.adb_model.command_finished.connect(self._handle_async_response)
+        self.last_save_dir = None  # 新增，记录上次保存的文件夹
         
         try:
             DeviceStore.load()
@@ -274,18 +278,74 @@ class ADBController:
             self._emit_operation("restart_adb", False, f"ADB restart failed: {result.get('error', 'unknown error')}")
 
     def take_screenshot(self, devices: list):
-        """Take screenshot of selected devices"""
+        """触发截图流程"""
         if not devices:
-            self._emit_operation("screenshot", False, "No devices selected")
+            self._emit_operation("screenshot", False, "No device selected")
             return
-            
-        for ip in devices:
-            try:
-                screenshot_path = ADBModel.capture_screenshot(ip)
-                self.signals.screenshot_captured.emit(ip, screenshot_path)
-                self._emit_operation("screenshot", True, f"Screenshot saved for {ip}")
-            except Exception as e:
-                self._emit_operation("screenshot", False, f"Failed to capture screenshot for {ip}: {str(e)}")
+
+        screenshot_dir = self._get_or_select_directory()
+        if not screenshot_dir:
+            self._emit_operation("screenshot", False, "No directory selected")
+            return
+
+        for device_ip in devices:
+            if device_ip:
+                self._start_screenshot_process(device_ip, screenshot_dir)
+
+    def _get_or_select_directory(self) -> str:
+        """如果已有保存目录，直接用；否则弹窗选择"""
+        if self.last_save_dir and os.path.exists(self.last_save_dir):
+            return self.last_save_dir
+        
+        # 第一次弹出选择框
+        default_path = os.path.join(os.path.expanduser("~"), "Pictures")  # 默认打开“图片”文件夹
+        screenshot_dir = QFileDialog.getExistingDirectory(
+            None,
+            "Select Screenshot Directory",
+            default_path
+        )
+        if screenshot_dir:
+            self.last_save_dir = screenshot_dir  # 保存用户选的路径
+        return screenshot_dir
+
+
+    def _select_screenshot_directory(self) -> str:
+        """弹出选择截图保存目录"""
+        return QFileDialog.getExistingDirectory(
+            None,
+            "Select Screenshot Directory",
+            os.path.expanduser("~")
+        )
+
+    def _start_screenshot_process(self, device_ip: str, save_dir: str):
+        """启动单个设备的截图流程"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sanitized_ip = device_ip.replace(":", "_").replace(".", "_")
+        filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
+        save_path = os.path.join(save_dir, filename)
+
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("screenshot", device_ip)
+
+        self.adb_model.take_screenshot_async(device_ip, save_path)
+
+    def _process_screenshot_result(self, result: dict):
+        """处理截图结果"""
+        device_ip = result.get("device_ip", "")
+
+        if result.get("success"):
+            path = result["screenshot_path"]
+            self.signals.screenshot_captured.emit(device_ip, path)
+            self._emit_operation("screenshot", True, f"Screenshot saved to {path}")
+            QTimer.singleShot(0, lambda: self._show_screenshot_viewer(path))
+        else:
+            error = result.get("error", "Unknown error")
+            self._emit_operation("screenshot", False, f"Failed to capture screenshot on {device_ip}: {error}")
+
+    def _show_screenshot_viewer(self, image_path: str):
+        """显示截图查看窗口"""
+        viewer = ScreenshotViewer(image_path)
+        viewer.exec()
 
     def retrieve_device_logs(self, devices: list):
         """Retrieve logs from selected devices"""
@@ -351,6 +411,7 @@ class ADBController:
             "get_device_info": self._process_device_info_result,
             "restart_devices": self._process_restart_devices_resoult,
             "restart_adb": self._process_restart_adb_result,
+            "take_screenshot": self._process_screenshot_result,
             # 可以继续添加其他操作...
         }
         
