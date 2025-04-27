@@ -1,5 +1,7 @@
+import base64
 import subprocess
 from functools import wraps
+from urllib.parse import quote
 import time
 from typing import Dict, List
 from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
@@ -223,3 +225,27 @@ class ADBModel(QObject):
         if result.startswith(("Error:", "Timeout:", "SystemError:")):
             return {"success": False,"device_ip": device_ip,"error": result}
         return {"success": True,"device_ip": device_ip,"output": result}
+    
+    @staticmethod
+    def _encode_text_for_adb(text: str) -> str:
+        """终极兼容方案 Base64编码+URL编码双重保护"""
+        # 先进行Base64编码
+        b64_encoded = base64.b64encode(text.encode('utf-8')).decode('ascii')
+        # 再进行URL编码防止特殊符号干扰
+        return quote(b64_encoded)
+    
+    @async_command
+    def input_text_async(self, device_ip: str, text: str) -> dict:
+        """异步向设备输入文本"""
+        try:
+            result = self._execute_command(
+                ["adb", "-s", device_ip, "shell", "input", "text", text]
+            )
+            
+            if result.startswith(("Error:", "Timeout:", "SystemError:")):
+                return {"success": False,"device_ip": device_ip,"error": result,"text": text}
+                
+            return {"success": True,"device_ip": device_ip,"text": text,"output": result}
+            
+        except Exception as e:
+            return {"success": False,"device_ip": device_ip,"error": str(e),"text": text}

@@ -16,6 +16,7 @@ class ADBControllerSignals(QObject):
     screenshot_captured = Signal(str, str)  # Screenshot captured (ip, image path)
     logs_retrieved = Signal(str, str)  # Logs retrieved (ip, log content)
     operation_completed = Signal(str, bool, str)  # Operation result (operation name, success, message)
+    text_input = Signal(str, str)  # (device_ip, input_text)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -417,13 +418,39 @@ class ADBController:
             message = f"Failed to clear log for {device_ip}: {error_msg}"
             self._emit_operation("cleanup_device_logs", False, message)
     
-    def send_text_to_device(self, devices: list, text: str):
-        """发送文本到设备"""
+    def input_text(self, devices: list, text: str):
+        """向多个设备输入文本"""
         if not devices:
-            self._emit_operation("send_text_to_device", False, "No devices selected")
+            self._emit_operation("input_text", False, "No devices selected")
             return
-        if not text:
-            self._emit_operation("send_text_to_device", False, "No text provided")
+            
+        if not text.strip():
+            self._emit_operation("input_text", False, "Input text cannot be empty")
+            return
+            
+        for device_ip in devices:
+            self._send_text_to_device(device_ip, text)
+    
+    def _send_text_to_device(self, device_ip: str, text: str):
+        """向单个设备发送文本"""
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("input_text", device_ip)
+        self.adb_model.input_text_async(device_ip, text)
+
+    def _process_input_text_result(self, result: dict):
+        """处理文本输入结果"""
+        device_ip = result.get("device_ip")
+        text = result.get("text", "")
+        
+        if result.get("success"):
+            message = f"Text '{text}' input on {device_ip}"
+            self._emit_operation("input_text", True, message)
+            self.signals.text_input.emit(device_ip, text)
+        else:
+            error = result.get("error", "Unknown error")
+            error_msg = error.split(":")[-1].strip() if ":" in error else error
+            message = f"Failed to input text on {device_ip}: {error_msg}"
+            self._emit_operation("input_text", False, message)
 
     # ----- Private Methods -----
     
@@ -471,6 +498,7 @@ class ADBController:
             "take_screenshot": self._process_screenshot_result,
             "retrieve_device_logs": self._process_retrieve_logs_result,
             "cleanup_device_logs": self._process_cleanup_logs_result,
+            "input_text": self._process_input_text_result,
             # 可以继续添加其他操作...
         }
         

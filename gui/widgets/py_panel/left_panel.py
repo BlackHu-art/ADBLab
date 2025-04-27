@@ -61,6 +61,7 @@ class LeftPanel(QWidget):
         self.btn_retrieve_devices_logs.clicked.connect(lambda: self.signals.retrieve_logs_requested.emit(self.selected_devices))
         self.btn_cleanup_logs.clicked.connect(lambda: self.signals.cleanup_logs_requested.emit(self.selected_devices))
         self.btn_send_text.clicked.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.input_text_edit.text()))
+        self.input_text_edit.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.input_text_edit.text()))
         self.btn_generate_email.clicked.connect(lambda: self.signals.generate_email_requested.emit(self.ip_address))
         # 设备列表双击事件
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
