@@ -29,12 +29,12 @@ class DeviceStore:
             yaml.safe_dump(cls._devices, f)
 
     @classmethod
-    def add_device(cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: int = ""):
+    def add_device(cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: str = ""):
         cls._devices[alias] = {
             "ip": ip,
             "Brand": brand,
             "Model": model,
-            "Aversion": int(aversion)
+            "Aversion": str(aversion)
         }
         cls.save()
 

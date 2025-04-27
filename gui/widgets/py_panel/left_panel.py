@@ -265,12 +265,13 @@ class LeftPanel(QWidget):
         for info in device_info_list:
             max_lengths['model'] = max(max_lengths['model'], len(info.get('Model', 'Unknown')))
             max_lengths['brand'] = max(max_lengths['brand'], len(info.get('Brand', 'Unknown')))
+            max_lengths['version'] = max(max_lengths['version'], len(info.get('Aversion', 'Unknown')))
             max_lengths['ip'] = max(max_lengths['ip'], len(info.get('ip', '')))
         # 第二次遍历创建对齐的显示项
         for info in device_info_list:
             model = info.get('Model', 'Unknown').ljust(max_lengths['model'])
             brand = info.get('Brand', 'Unknown').ljust(max_lengths['brand'])
-            version = info.get('Aversion', 'Unknown')
+            version = info.get('Aversion', 'Unknown').ljust(max_lengths['version'])
             ip = info.get('ip', '').ljust(max_lengths['ip'])
             
             # 使用等宽字体保证对齐效果
