@@ -426,6 +426,12 @@ class ADBController:
             self._emit_operation("send_text_to_device", False, "No text provided")
 
     # ----- Private Methods -----
+    
+    def generate_email(self, devices: list):
+        if not devices:
+            self._emit_operation("generate_email", False, "No devices selected")
+            return
+        
 
 
     @Slot(str, bool, str)
