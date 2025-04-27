@@ -354,11 +354,7 @@ class ADBController:
             self._emit_operation("retrieve_device_logs", False, "No devices selected")
             return
             
-        save_dir = QFileDialog.getExistingDirectory(
-            None,
-            "Select Log Save Directory",
-            os.path.expanduser("~")
-        )
+        save_dir = self._get_or_select_directory()
         
         if not save_dir:
             self._emit_operation("retrieve_device_logs", False, "No directory selected")
