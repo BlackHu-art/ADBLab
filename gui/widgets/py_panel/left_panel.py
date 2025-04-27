@@ -108,7 +108,7 @@ class LeftPanel(QWidget):
 
         button_panel = QFrame()
         button_layout = QVBoxLayout(button_panel)
-        button_layout.setSpacing(0)
+        button_layout.setSpacing(5)
         button_layout.setContentsMargins(0, 0, 0, 0)
 
         self.btn_refresh_devices = self._create_button("Refresh", "resources/icons/Refresh.svg")

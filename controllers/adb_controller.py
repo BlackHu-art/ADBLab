@@ -1,5 +1,6 @@
 import threading
-from PySide6.QtCore import QObject, Signal, QTimer
+import uuid
+from PySide6.QtCore import QObject, Signal, QTimer, QThread, Slot
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from services.log_service import LogService
@@ -23,6 +24,7 @@ class ADBController:
         self.connected_devices_file = "resources/connected_devices.yaml"
         # 连接ADBModel的信号
         self._pending_operations = {}  # 跟踪进行中的异步操作
+        self._active_threads = []  # 跟踪所有活动线程
         self.adb_model.command_finished.connect(self._handle_async_response)
         
         try:
@@ -31,75 +33,139 @@ class ADBController:
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
             DeviceStore.initialize_empty()
+    def __del__(self):
+        """析构函数，确保所有线程正确停止"""
+        self._cleanup_threads()
+    
+    def _cleanup_threads(self):
+        """清理所有活动线程"""
+        for thread in self._active_threads:
+            if thread.isRunning():
+                thread.quit()
+                thread.wait()
+        self._active_threads.clear()
+    
+    def _generate_operation_id(self) -> str:
+        """生成唯一的操作ID"""
+        return str(uuid.uuid4())
+    
+    def _add_thread(self, thread: QThread):
+        """添加线程到跟踪列表"""
+        self._active_threads.append(thread)
+        thread.finished.connect(lambda: self._remove_thread(thread))
 
+    def _remove_thread(self, thread: QThread):
+        """从跟踪列表移除线程"""
+        if thread in self._active_threads:
+            self._active_threads.remove(thread)
+        thread.deleteLater()
+    
     # ----- Core Device Operations -----
     def connect_device(self, ip: str):
-        """Connect to a device"""
+        """Connect to a device asynchronously"""
         if not ip:
             self._emit_operation("connect", False, "IP address cannot be empty")
             return
-        try:
-            devices = ADBModel.get_connected_devices()
-            if ip in devices:
-                self._emit_operation("connect", False, "{ip} allready connected")
-                return
-        except Exception:
+        
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("connect", ip)
+        
+        class ConnectThread(QThread):
+            def __init__(self, controller, ip):
+                super().__init__()
+                self.controller = controller
+                self.ip = ip
+            
+            def run(self):
+                try:
+                    self.controller.adb_model.connect_device_async(self.ip)
+                except Exception as e:
+                    self.controller._emit_operation("connect", False, f"Connection error: {str(e)}")
+        
+        thread = ConnectThread(self, ip)
+        self._add_thread(thread)
+        thread.start()
+        
+    def _process_connect_device_result(self, result: str):
+        ip = None
+        for op_id, (op_name, op_ip) in self._pending_operations.items():
+            if op_name == "connect":
+                ip = op_ip
+                break
+        
+        if not ip:
+            self._emit_operation("connect", False, "Unknown device connection")
             return
-
-        try:
-            result = ADBModel.connect_device(ip)
-            if not result:
-                self._emit_operation("connect", False, "No response from ADB")
-                return
-
-            if "connected" in result:
-                self._save_device_info(ip)
-                self.refresh_devices()
-                self._emit_operation("connect", True, f"Successfully connected to {ip}")
-            elif "already connected" in result:
-                self._emit_operation("connect", True, f"{ip} is already connected")
-            else:
-                self._emit_operation("connect", False, f"Connection failed: {result}")
-
-        except ConnectionRefusedError:
-            self._emit_operation("connect", False, f"{ip} refused connection")
-        except Exception as e:
-            self._emit_operation("connect", False, f"Connection error: {str(e)}")
+            
+        if "connected" in result:
+            self._save_device_info(ip)
+            self.refresh_devices()
+            self._emit_operation("connect", True, f"Successfully connected to {ip}")
+        elif "already connected" in result:
+            self._emit_operation("connect", True, f"{ip} is already connected")
+        else:
+            self._emit_operation("connect", False, f"Connection failed: {result}")
+    
+    def _process_device_list(self, devices: list):
+        self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
+        self._async_update_devices(devices)
 
     def refresh_devices(self):
-        """Refresh the list of connected devices"""
+        """Refresh the list of connected devices asynchronously"""
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("refresh", None)
+        
         try:
-            devices = ADBModel.get_connected_devices()
-            self.log_service.log("DEBUG", f"Raw devices from ADB: {devices}")
-            
-            if not devices:
-                self._emit_operation("refresh", True, "No devices currently connected")
-                self.signals.devices_updated.emit([])
-                return
-            
-            self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
-            threading.Thread(
-                target=self._async_update_devices,
-                args=(devices,),
-                daemon=True
-            ).start()
-
+            self.adb_model.get_connected_devices_async()
         except Exception as e:
             self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
             self.signals.devices_updated.emit([])
 
     def _async_update_devices(self, devices: list):
         """Asynchronously update all device information"""
-        for ip in devices:
-            try:
-                self._save_device_info(ip)
-            except Exception as e:
-                self._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
+        class UpdateThread(QThread):
+            def __init__(self, controller, devices):
+                super().__init__()
+                self.controller = controller
+                self.devices = devices
+            
+            def run(self):
+                for ip in self.devices:
+                    try:
+                        info = ADBModel.get_devices_basic_info(ip)
+                        device_data = {
+                            f"device_{ip}": {
+                                "ip": ip,
+                                "Model": info.get("Model", ip),
+                                "Brand": info.get("Brand", "Unknown"),
+                                "Aversion": info.get("Aversion", "Unknown"),
+                            }
+                        }
+                        
+                        yaml_data = YamlTool.load_yaml(self.controller.connected_devices_file) or {}
+                        yaml_data.update(device_data)
+                        YamlTool.write_yaml(self.controller.connected_devices_file, yaml_data)
+                        
+                        DeviceStore.add_device(
+                            alias=f"device_{ip}",
+                            ip=ip,
+                            brand=info.get("Brand", "Unknown"),
+                            model=info.get("Model", "Unknown"),
+                            aversion=info.get("Aversion", "Unknown")
+                        )
+                        DeviceStore.load()
+                        
+                    except Exception as e:
+                        self.controller._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
+                
+                self.controller.signals.devices_updated.emit(self.devices)
         
-        self.signals.devices_updated.emit(devices)
+        thread = UpdateThread(self, devices)
+        self._add_thread(thread)
+        thread.start()
     
     def _save_device_info(self, ip: str):
-        """Save device information to YAML"""
+        """Save device information to YAML (同步方法)"""
         try:
             info = ADBModel.get_devices_basic_info(ip)
             device_data = {
@@ -111,19 +177,16 @@ class ADBController:
                 }
             }
             
-            # Update YAML file
             yaml_data = YamlTool.load_yaml(self.connected_devices_file) or {}
             yaml_data.update(device_data)
             YamlTool.write_yaml(self.connected_devices_file, yaml_data)
             
-            # Update device store
             DeviceStore.add_device(
                 alias=f"device_{ip}",
                 ip=ip,
                 brand=info.get("Brand", "Unknown"),
                 model=info.get("Model", "Unknown"),
-                aversion = info.get("Aversion", "Unknown")
-                
+                aversion=info.get("Aversion", "Unknown")
             )
             DeviceStore.load()
             
@@ -253,8 +316,10 @@ class ADBController:
 
     # ----- Private Methods -----
 
-    def _emit_operation(self, operation: str, success: bool, message: str):
 
+    @Slot(str, bool, str)
+    def _emit_operation(self, operation: str, success: bool, message: str):
+        """确保信号在主线程中发射"""
         level = "INFO" if success else "ERROR"
         self.log_service.log(level, f"[{operation}] {message}")
         self.signals.operation_completed.emit(operation, success, message)
@@ -281,6 +346,7 @@ class ADBController:
             
         # 操作处理器映射表（扩展版）
         handler_map = {
+            "connect_device": self._process_connect_device_result,
             "disconnect_device": self._process_disconnect_result,
             "get_device_info": self._process_device_info_result,
             "restart_devices": self._process_restart_devices_resoult,
