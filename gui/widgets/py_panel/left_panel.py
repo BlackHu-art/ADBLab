@@ -136,7 +136,7 @@ class LeftPanel(QWidget):
         self.btn_send_text = self._create_button("Send txt to devices", "resources/icons/Input.svg")
         self.input_text_edit = QLineEdit()
         self.input_text_edit.setFont(self._base_font)
-        self.input_text_edit.setPlaceholderText("Input text here")
+        self.input_text_edit.setPlaceholderText("Input text here, Press Enter to send")
         last_row1.addWidget(self.btn_send_text, 1)
         last_row1.addWidget(self.input_text_edit, 2)
         last_row.addLayout(last_row1)
