@@ -68,6 +68,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.screenshot_requested.connect(self.adb_controller.take_screenshot)
         self.left_panel.signals.retrieve_logs_requested.connect(self.adb_controller.retrieve_device_logs)
         self.left_panel.signals.cleanup_logs_requested.connect(self.adb_controller.cleanup_device_logs)
+        self.left_panel.signals.send_text_requested.connect(self.adb_controller.send_text_to_device)
         
         # 连接日志信号
         self.adb_controller.signals.operation_completed.connect(self._handle_operation_result)

@@ -50,24 +50,17 @@ class LeftPanel(QWidget):
     
     def _connect_signals(self):
         """连接所有按钮信号到对应的控制器方法"""
-        # 连接IP输入框信号按钮
+        # 顶部
         self.btn_connect_devices.clicked.connect(lambda: self.signals.connect_requested.emit(self.ip_address))
-        # 刷新设备按钮
         self.btn_refresh_devices.clicked.connect(lambda: self.signals.refresh_devices_requested.emit())
-        # 设备信息按钮
         self.btn_devices_Info.clicked.connect(lambda: self.signals.device_info_requested.emit(self.selected_devices))
-        # 断开设备连接按钮
         self.btn_disconnect_devices.clicked.connect(lambda: self.signals.disconnect_requested.emit(self.selected_devices))
-        # 重启设备按钮
         self.btn_restart_devices.clicked.connect(lambda: self.signals.restart_devices_requested.emit(self.selected_devices))
-        # 重启ADB按钮,需要双击启用
         self.btn_restart_adb.doubleClicked.connect(self.signals.restart_adb_requested.emit)
-        # 截图按钮
         self.btn_screenshot.clicked.connect(lambda: self.signals.screenshot_requested.emit(self.selected_devices))
-        # 获取设备日志按钮
         self.btn_retrieve_devices_logs.clicked.connect(lambda: self.signals.retrieve_logs_requested.emit(self.selected_devices))
-        # 清理日志按钮
         self.btn_cleanup_logs.clicked.connect(lambda: self.signals.cleanup_logs_requested.emit(self.selected_devices))
+        self.btn_send_text.clicked.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.input_text_edit.text()))
         # 设备列表双击事件
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         # 连接其他按钮信号...
@@ -139,12 +132,12 @@ class LeftPanel(QWidget):
         # ▶️ 底部布局改为垂直布局
         last_row = QVBoxLayout()
         last_row1 = QHBoxLayout()
-        btn_send_text = self._create_button("Send to devices", "resources/icons/Input.svg")
-        input_edit = QLineEdit()
-        input_edit.setFont(self._base_font)
-        input_edit.setPlaceholderText("Input text here")
-        last_row1.addWidget(btn_send_text, 1)
-        last_row1.addWidget(input_edit, 2)
+        self.btn_send_text = self._create_button("Send txt to devices", "resources/icons/Input.svg")
+        self.input_text_edit = QLineEdit()
+        self.input_text_edit.setFont(self._base_font)
+        self.input_text_edit.setPlaceholderText("Input text here")
+        last_row1.addWidget(self.btn_send_text, 1)
+        last_row1.addWidget(self.input_text_edit, 2)
         last_row.addLayout(last_row1)
         
         last_row2 = QHBoxLayout()

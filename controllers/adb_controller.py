@@ -416,6 +416,14 @@ class ADBController:
             error_msg = error.split(":")[-1].strip() if ":" in error else error
             message = f"Failed to clear log for {device_ip}: {error_msg}"
             self._emit_operation("cleanup_device_logs", False, message)
+    
+    def send_text_to_device(self, devices: list, text: str):
+        """发送文本到设备"""
+        if not devices:
+            self._emit_operation("send_text_to_device", False, "No devices selected")
+            return
+        if not text:
+            self._emit_operation("send_text_to_device", False, "No text provided")
 
     # ----- Private Methods -----
 
@@ -424,7 +432,7 @@ class ADBController:
     def _emit_operation(self, operation: str, success: bool, message: str):
         """确保信号在主线程中发射"""
         level = "INFO" if success else "ERROR"
-        self.log_service.log(level, f"[{operation}] {message}")
+        self.log_service.log(level, f"{message}")
         self.signals.operation_completed.emit(operation, success, message)
     
     def _handle_async_response(self, method_name: str, result):
