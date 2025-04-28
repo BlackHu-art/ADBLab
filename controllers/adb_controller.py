@@ -1,6 +1,7 @@
 import os
 import uuid
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Slot
 from PySide6.QtWidgets import QFileDialog, QWidget
 from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
@@ -33,6 +34,7 @@ class ADBController:
         self._active_threads = []  # 跟踪所有活动线程
         self.adb_model.command_finished.connect(self._handle_async_response)
         self.last_save_dir = None  # 新增，记录上次保存的文件夹
+        self.executor = ThreadPoolExecutor(max_workers=4)  # 最大并发数
         
         try:
             DeviceStore.load()
@@ -451,12 +453,22 @@ class ADBController:
             self._emit_operation("input_text", False, message)
     
     def get_current_package(self, devices: list):
+        if not devices:
+            self._emit_operation("get_package", False, "No devices selected")
+            return
         """获取设备当前运行的程序包名"""
         for device_ip in devices:
-            operation_id = self._generate_operation_id()
-            self._pending_operations[operation_id] = ("get_package", device_ip)
-            self.adb_model.get_current_package_async(device_ip)
-
+            self.executor.submit(
+                self._get_single_device_package, 
+                device_ip
+            )
+    
+    def _get_single_device_package(self, device_ip: str):
+        """单个设备获取方法"""
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("get_package", device_ip)
+        self.adb_model.get_current_package_async(device_ip)
+            
     def _process_get_package_result(self, result: dict):
         """处理获取包名结果"""
         device_ip = result.get("device_ip")

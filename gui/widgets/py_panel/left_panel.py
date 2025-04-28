@@ -399,19 +399,22 @@ class LeftPanel(QWidget):
     
     def update_current_package(self, device_ip: str, package_name: str):
         """更新当前程序包名显示"""
-        if not package_name:
-            return
         # 确保在主线程执行UI更新
         def _update():
-            # 添加到历史记录（如果不存在）
-            if package_name not in self.package_history:
-                self.package_history.append(package_name)
-                self.completer.model().setStringList(self.package_history)
-            # 更新下拉框
-            if package_name not in [self.program_edit.itemText(i) 
-                                 for i in range(self.program_edit.count())]:
-                self.program_edit.addItem(package_name)
-            self.program_edit.setCurrentText(package_name)
+            # 在设备列表中查找对应的项
+            for i in range(self.listbox_devices.count()):
+                item = self.listbox_devices.item(i)
+                if device_ip in item.text():
+                    # 在设备名后追加程序名
+                    base_text = item.text().split("|")[0].strip()
+                    item.setText(f"{base_text} | {package_name}")
+                    
+                    # 更新下拉框
+                    if package_name not in [self.program_edit.itemText(i) 
+                                          for i in range(self.program_edit.count())]:
+                        self.program_edit.addItem(package_name)
+                    break
+        
         QTimer.singleShot(0, _update)
 
 

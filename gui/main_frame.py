@@ -80,7 +80,7 @@ class MainFrame(QMainWindow):
                 "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}")
         )
         # 连接获取程序请求
-        self.left_panel.signals.get_program_requested.connect(self._handle_get_program_request)
+        self.left_panel.signals.get_program_requested.connect(self.adb_controller.get_current_package)
         # 连接包名更新信号
         self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
 
@@ -131,10 +131,10 @@ class MainFrame(QMainWindow):
         if operation == "refresh" and success:
             self.left_panel._refresh_device_combobox()
     
-    def _handle_get_program_request(self, devices: list): 
-        if  not devices: 
-            self.log_panel._append_log("WARNING", "No devices selected")
-            return
-        # 只获取第一个选中设备的程序
-        self.adb_controller.get_current_package([devices[0]])
+    # def _handle_get_program_request(self, devices: list): 
+    #     if  not devices: 
+    #         self.log_panel._append_log("WARNING", "No devices selected")
+    #         return
+    #     # 只获取第一个选中设备的程序
+    #     self.adb_controller.get_current_package([devices[0]])
     
