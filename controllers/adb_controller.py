@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QFileDialog, QWidget
 from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
-from services.log_service import LogService
+from common.log_service import LogService
 from utils.yaml_tool import YamlTool
 
 class ADBControllerSignals(QObject):
@@ -452,10 +452,6 @@ class ADBController:
     
     def get_current_package(self, devices: list):
         """获取设备当前运行的程序包名"""
-        if not devices:
-            self._emit_operation("get_package", False, "No devices selected")
-            return
-            
         for device_ip in devices:
             operation_id = self._generate_operation_id()
             self._pending_operations[operation_id] = ("get_package", device_ip)

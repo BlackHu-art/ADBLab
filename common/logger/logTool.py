@@ -4,7 +4,6 @@
 """
 @author      :  Frankie
 @description :  loguru 封装类，导入即可直接使用
-                当前文件名 Logger.py
 @time        :    10:14
 """
 
@@ -14,7 +13,7 @@ import datetime
 from loguru import logger as loguru_logger
 from pathlib import Path
 import configparser
-from services.pathTool import path_tool
+from common.pathTool import path_tool
 
 def singleton_class(cls):
     """

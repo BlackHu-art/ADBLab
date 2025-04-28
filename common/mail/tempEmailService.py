@@ -11,8 +11,8 @@ import re
 import time
 
 import requests
-from services.logger.logTool import logger
-from services.yamlTool import YamlTool
+from common.logger.logTool import logger
+from common.yamlTool import YamlTool
 
 
 class HttpRequest:

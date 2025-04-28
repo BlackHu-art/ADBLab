@@ -5,7 +5,7 @@ from controllers.adb_controller import ADBController
 from gui.widgets.py_panel.log_panel import LogPanel
 from gui.widgets.py_panel.left_panel import LeftPanel
 from gui.widgets.py_menu_bar.custom_menu_bar import CustomMenuBar
-from services.log_service import LogService
+from common.log_service import LogService
 from gui.widgets.py_menu_bar.about_dialog import AboutDialog
 from .widgets.style.base_styles import get_default_font
 
