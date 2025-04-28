@@ -1,6 +1,6 @@
 import json
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QProgressDialog
 from controllers.adb_controller import ADBController
 from gui.widgets.py_panel.log_panel import LogPanel
 from gui.widgets.py_panel.left_panel import LeftPanel
@@ -70,7 +70,6 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.cleanup_logs_requested.connect(self.adb_controller.cleanup_device_logs)
         self.left_panel.signals.send_text_requested.connect(self.adb_controller.input_text)
         self.left_panel.signals.generate_email_requested.connect(self.adb_controller.generate_email)
-        
         # 连接日志信号
         self.adb_controller.signals.operation_completed.connect(self._handle_operation_result)
         
@@ -79,13 +78,11 @@ class MainFrame(QMainWindow):
             lambda ip, info: self.log_panel._append_log(
                 "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}")
         )
-        # 连接获取程序请求
+        # 连接获取程序请求 连接包名更新信号
         self.left_panel.signals.get_program_requested.connect(self.adb_controller.get_current_package)
-        # 连接包名更新信号
         self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
-
-
-
+        # 连接安装
+        self.left_panel.signals.install_app_requested.connect(self.adb_controller.install_apk)
 
         
     def _setup_menu(self):
@@ -131,10 +128,4 @@ class MainFrame(QMainWindow):
         if operation == "refresh" and success:
             self.left_panel._refresh_device_combobox()
     
-    # def _handle_get_program_request(self, devices: list): 
-    #     if  not devices: 
-    #         self.log_panel._append_log("WARNING", "No devices selected")
-    #         return
-    #     # 只获取第一个选中设备的程序
-    #     self.adb_controller.get_current_package([devices[0]])
     

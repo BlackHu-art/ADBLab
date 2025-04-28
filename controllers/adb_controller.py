@@ -19,7 +19,7 @@ class ADBControllerSignals(QObject):
     operation_completed = Signal(str, bool, str)  # Operation result (operation name, success, message)
     text_input = Signal(str, str)  # (device_ip, input_text)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
-
+    install_apk_result  = Signal(dict)  # 请求选择APK文件
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -411,7 +411,6 @@ class ADBController:
         if result.get("success"):
             message = f"Log cleared for {device_ip}"
             self._emit_operation("cleanup_device_logs", True, message)
-            self.signals.logs_cleared.emit(device_ip)
         else:
             error = result.get("error", "Unknown error")
             error_msg = error.split(":")[-1].strip() if ":" in error else error
@@ -489,7 +488,41 @@ class ADBController:
                 False,
                 f"Failed to get package on {device_ip}: {error}"
             )
-            
+    
+    def install_apk(self, devices: list):
+        """批量安装APK入口"""
+        if not devices:
+            self._emit_operation("install", False, "No devices selected")
+            return
+
+        apk_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Select APK File",
+            "",
+            "APK Files (*.apk);;All Files (*)"
+        )
+        if not apk_path:
+            self._emit_operation("install", False, "APK selection canceled")
+            return
+
+        for device_ip in devices:
+            self.executor.submit(self.adb_model.install_apk_async, device_ip,apk_path)
+
+    def _process_install_apk_result(self, result: dict):
+        """安装完成后的统一回调处理"""
+        apk_path = result.get("apk_path")
+        device_ip = result.get("device_ip")
+        
+        if result.get("success"):
+            output = result.get("output", "")
+            message = f"Installed {apk_path} on {device_ip}"
+            self._emit_operation("install", True, message)
+        else:
+            error = result.get("error", "Unknown error")
+            message = f"Failed to install {apk_path} on {device_ip}\nADB Output:\n{error}"
+            self._emit_operation("install", False, message)
+        
+
     # ----- Private Methods -----
     
     def generate_email(self, devices: list):
@@ -539,6 +572,8 @@ class ADBController:
             "input_text": self._process_input_text_result,
             # 可以继续添加其他操作...
             "get_current_package": self._process_get_package_result,
+            "install_apk": self._process_install_apk_result
+
 
         }
         

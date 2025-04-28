@@ -68,6 +68,7 @@ class LeftPanel(QWidget):
         # 设备列表双击事件
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         self.btn_get_program.clicked.connect(lambda: self.signals.get_program_requested.emit(self.selected_devices))
+        self.btn_install_app.clicked.connect(lambda: self.signals.install_app_requested.emit(self.selected_devices))
 
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -192,10 +193,10 @@ class LeftPanel(QWidget):
 
         # ▶️ 第二行
         action_row2 = QHBoxLayout()
-        action_btn1 = self._create_button("Install App", "resources/icons/Install_App.svg")
+        self.btn_install_app = self._create_button("Install App", "resources/icons/Install_App.svg")
         action_btn2 = self._create_button("Uninstall App", "resources/icons/Uninstall_app.svg")
         action_btn3 = self._create_button("Clear App Data", "resources/icons/Clear_data.svg")
-        for btn in (action_btn1, action_btn2, action_btn3):
+        for btn in (self.btn_install_app, action_btn2, action_btn3):
             action_row2.addWidget(btn, 1)
         layout.addLayout(action_row2)
 

@@ -15,3 +15,4 @@ class LeftPanelSignals(QObject):
     generate_email_requested = Signal(str)  # 邮箱和验证码
     get_program_requested = Signal(list)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
+    install_app_requested = Signal(list)  # (devices, apk_path)
