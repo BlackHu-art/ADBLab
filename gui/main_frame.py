@@ -132,6 +132,9 @@ class MainFrame(QMainWindow):
             self.left_panel._refresh_device_combobox()
     
     def _handle_get_program_request(self, devices: list): 
+        if  not devices: 
+            self.log_panel._append_log("WARNING", "No devices selected")
+            return
         # 只获取第一个选中设备的程序
         self.adb_controller.get_current_package([devices[0]])
     

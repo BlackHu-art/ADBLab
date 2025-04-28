@@ -1,25 +1,25 @@
 device_10.0.0.111:5188:
-  Aversion: 11
+  Aversion: '11'
   Brand: BTV
   Model: B13
   ip: 10.0.0.111:5188
 device_10.0.0.195:5555:
-  Aversion: 12
+  Aversion: '12'
   Brand: Xiaomi
   Model: MIBOX4
   ip: 10.0.0.195:5555
 device_4f5ddfa30000:
-  Aversion: 14
+  Aversion: '14'
   Brand: POCO
   Model: 22111317PG
   ip: 4f5ddfa30000
 device_RFCW71D91SP:
-  Aversion: 14
+  Aversion: '14'
   Brand: samsung
   Model: SM-S911U
   ip: RFCW71D91SP
 device_ZT322KPNPX:
-  Aversion: 14
+  Aversion: '14'
   Brand: motorola
   Model: moto g24
   ip: ZT322KPNPX
