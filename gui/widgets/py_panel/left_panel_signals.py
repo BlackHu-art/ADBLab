@@ -13,3 +13,4 @@ class LeftPanelSignals(QObject):
     cleanup_logs_requested = Signal(list)
     send_text_requested = Signal(list, str)  # 设备列表和文本
     generate_email_requested = Signal(str)  # 邮箱和验证码
+    get_program_requested = Signal(list)

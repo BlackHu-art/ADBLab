@@ -1,4 +1,5 @@
 import base64
+import re
 import subprocess
 from functools import wraps
 from urllib.parse import quote
@@ -249,3 +250,43 @@ class ADBModel(QObject):
             
         except Exception as e:
             return {"success": False,"device_ip": device_ip,"error": str(e),"text": text}
+    
+    
+    
+
+    @async_command
+    def get_current_package_async(self, device_ip: str) -> dict:
+        """异步获取当前前台应用包名"""
+        try:
+            # 正确执行命令
+            command = ["adb", "-s", device_ip, "shell", "dumpsys", "window"]
+            result = self._execute_command(command)
+
+            # 提取 mCurrentFocus 行
+            current_focus_line = ""
+            for line in result.splitlines():
+                if "mCurrentFocus" in line:
+                    current_focus_line = line.strip()
+                    break
+            
+            if not current_focus_line:
+                return {"success": False, "device_ip": device_ip, "error": "No mCurrentFocus found"}
+            
+            # 用正则提取 package/activity
+            match = re.search(r"mCurrentFocus=Window\{.*?\s(\S+?)/(\S+)\}", current_focus_line)
+            if match:
+                package_name = match.group(1)
+                activity_name = match.group(2)
+                return {
+                    "success": True,
+                    "device_ip": device_ip,
+                    "package_name": package_name,
+                    "activity_name": activity_name
+                }
+            else:
+                return {"success": False, "device_ip": device_ip, "error": "Could not parse package name"}
+
+        except Exception as e:
+            return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
+
+

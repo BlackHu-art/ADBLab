@@ -79,7 +79,15 @@ class MainFrame(QMainWindow):
             lambda ip, info: self.log_panel._append_log(
                 "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}")
         )
+        # 连接获取程序请求
+        self.left_panel.signals.get_program_requested.connect(self._handle_get_program_request)
+        # 连接包名更新信号
+        self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
 
+
+
+
+        
     def _setup_menu(self):
         """初始化菜单栏"""
         self.menu_bar = CustomMenuBar(self)
@@ -122,4 +130,8 @@ class MainFrame(QMainWindow):
         # 如果是刷新操作且成功，则更新下拉框
         if operation == "refresh" and success:
             self.left_panel._refresh_device_combobox()
+    
+    def _handle_get_program_request(self, devices: list): 
+        # 只获取第一个选中设备的程序
+        self.adb_controller.get_current_package([devices[0]])
     

@@ -17,6 +17,8 @@ class ADBControllerSignals(QObject):
     logs_retrieved = Signal(str, str)  # Logs retrieved (ip, log content)
     operation_completed = Signal(str, bool, str)  # Operation result (operation name, success, message)
     text_input = Signal(str, str)  # (device_ip, input_text)
+    current_package_received = Signal(str, str)  # (device_ip, package_name)
+
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -451,7 +453,39 @@ class ADBController:
             error_msg = error.split(":")[-1].strip() if ":" in error else error
             message = f"Failed to input text on {device_ip}: {error_msg}"
             self._emit_operation("input_text", False, message)
+    
+    def get_current_package(self, devices: list):
+        """获取设备当前运行的程序包名"""
+        if not devices:
+            self._emit_operation("get_package", False, "No devices selected")
+            return
+            
+        for device_ip in devices:
+            operation_id = self._generate_operation_id()
+            self._pending_operations[operation_id] = ("get_package", device_ip)
+            self.adb_model.get_current_package_async(device_ip)
 
+    def _process_get_package_result(self, result: dict):
+        """处理获取包名结果"""
+        device_ip = result.get("device_ip")
+        
+        if result.get("success"):
+            package_name = result["package_name"]
+            self._emit_operation(
+                "get_package",
+                True,
+                f"Current package on {device_ip}: {package_name}"
+            )
+            # 发射带设备IP和包名的信号
+            self.signals.current_package_received.emit(device_ip, package_name)
+        else:
+            error = result.get("error", "Unknown error")
+            self._emit_operation(
+                "get_package",
+                False,
+                f"Failed to get package on {device_ip}: {error}"
+            )
+            
     # ----- Private Methods -----
     
     def generate_email(self, devices: list):
@@ -500,6 +534,8 @@ class ADBController:
             "cleanup_device_logs": self._process_cleanup_logs_result,
             "input_text": self._process_input_text_result,
             # 可以继续添加其他操作...
+            "get_current_package": self._process_get_package_result,
+
         }
         
         # 获取对应的处理器

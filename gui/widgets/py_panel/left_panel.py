@@ -1,6 +1,6 @@
 from re import search
 from typing import List, Union
-from PySide6.QtCore import Qt, Slot
+from PySide6.QtCore import Qt, Slot, QTimer
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
@@ -29,6 +29,8 @@ class LeftPanel(QWidget):
         super().__init__(parent)
         self.signals = LeftPanelSignals()
         self.connected_device_cache = []
+        # 添加包名历史记录
+        self.package_history = []
         self._user_selected_ip = False
         
         self._init_ui_settings()
@@ -65,7 +67,7 @@ class LeftPanel(QWidget):
         self.btn_generate_email.clicked.connect(lambda: self.signals.generate_email_requested.emit(self.ip_address))
         # 设备列表双击事件
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
-        # 连接其他按钮信号...
+        self.btn_get_program.clicked.connect(lambda: self.signals.get_program_requested.emit(self.selected_devices))
 
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -175,13 +177,17 @@ class LeftPanel(QWidget):
 
         # ▶️ 第一行：输入框 + 按钮
         action_row1 = QHBoxLayout()
-        input_edit = QComboBox()
-        input_edit.setEditable(True)
-        input_edit.setFont(self._base_font)
-        input_edit.lineEdit().setPlaceholderText("Select program")
-        btn_input = self._create_button("Get current program", "resources/icons/Select_activity.svg")
-        action_row1.addWidget(input_edit, 2)
-        action_row1.addWidget(btn_input, 1)
+        self.program_edit = QComboBox()
+        self.program_edit.setEditable(True)
+        self.program_edit.setFont(self._base_font)
+        self.program_edit.lineEdit().setPlaceholderText("Select or input package name")
+        # 添加自动补全
+        self.completer = QCompleter(self.package_history)
+        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.program_edit.setCompleter(self.completer)
+        self.btn_get_program = self._create_button("Get current program", "resources/icons/Select_activity.svg")
+        action_row1.addWidget(self.program_edit, 2)
+        action_row1.addWidget(self.btn_get_program, 1)
         layout.addLayout(action_row1)
 
         # ▶️ 第二行
@@ -389,6 +395,23 @@ class LeftPanel(QWidget):
     def ip_address(self) -> str:
         text = self.ip_entry.currentText().strip()
         return text if self._user_selected_ip or text else ""
+    
+    def update_current_package(self, device_ip: str, package_name: str):
+        """更新当前程序包名显示"""
+        if not package_name:
+            return
+        # 确保在主线程执行UI更新
+        def _update():
+            # 添加到历史记录（如果不存在）
+            if package_name not in self.package_history:
+                self.package_history.append(package_name)
+                self.completer.model().setStringList(self.package_history)
+            # 更新下拉框
+            if package_name not in [self.program_edit.itemText(i) 
+                                 for i in range(self.program_edit.count())]:
+                self.program_edit.addItem(package_name)
+            self.program_edit.setCurrentText(package_name)
+        QTimer.singleShot(0, _update)
 
 
 
