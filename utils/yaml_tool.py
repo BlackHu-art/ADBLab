@@ -1,8 +1,9 @@
+from datetime import datetime
 import os
 import threading
 import yaml
 from threading import Lock
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 
@@ -82,7 +83,7 @@ class YamlTool:
     def update_yaml(file_path: str, updates: Dict[str, Any], 
                    *, merge_nested: bool = True) -> bool:
         """
-        更新YAML文件内容（读取-修改-写入）
+        更新YAML文件内容 读取-修改-写入
         参数:
             file_path: 文件路径
             updates: 要更新的键值对
@@ -116,3 +117,89 @@ class YamlTool:
             existing = YamlTool.load_yaml(file_path) or {}
             existing.update(new_data)
             YamlTool.write_yaml(file_path, existing)
+
+
+class YamlPackageCache:
+    _lock = threading.Lock()
+    
+    @classmethod
+    def add_package(cls, file_path: str, device_ip: str, package_name: str) -> bool:
+        """添加包名到指定设备（使用packagesX格式）"""
+        with cls._lock:
+            try:
+                # 加载或初始化数据
+                data = cls._load_or_init(file_path)
+                
+                # 初始化设备数据结构
+                if device_ip not in data:
+                    data[device_ip] = {
+                        'packages1': package_name,
+                        'last_updated': datetime.now().isoformat()
+                    }
+                    return cls._atomic_write(file_path, data)
+                
+                # 查找可用的packagesX键
+                max_index = 0
+                for key in data[device_ip].keys():
+                    if key.startswith('packages'):
+                        try:
+                            idx = int(key.replace('packages', ''))
+                            max_index = max(max_index, idx)
+                        except ValueError:
+                            continue
+                
+                # 检查是否已存在
+                for i in range(1, max_index + 1):
+                    if data[device_ip].get(f'packages{i}') == package_name:
+                        return False
+                
+                # 添加新包名
+                new_key = f'packages{max_index + 1}'
+                data[device_ip][new_key] = package_name
+                data[device_ip]['last_updated'] = datetime.now().isoformat()
+                
+                return cls._atomic_write(file_path, data)
+                
+            except Exception as e:
+                print(f"Add package failed: {str(e)}")
+                return False
+
+    @classmethod
+    def get_device_packages(cls, file_path: str, device_ip: str) -> List[str]:
+        """获取设备的所有包名按packagesX顺序"""
+        with cls._lock:
+            data = cls._load_or_init(file_path)
+            if device_ip not in data:
+                return []
+                
+            packages = []
+            for key in sorted(data[device_ip].keys()):
+                if key.startswith('packages'):
+                    packages.append(data[device_ip][key])
+            return packages
+
+    @classmethod
+    def _load_or_init(cls, file_path: str) -> Dict:
+        """加载或初始化YAML数据"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+        except (FileNotFoundError, yaml.YAMLError):
+            return {}
+
+    @classmethod
+    def _atomic_write(cls, file_path: str, data: Dict) -> bool:
+        """原子化写入文件"""
+        try:
+            Path(file_path).parent.mkdir(exist_ok=True)
+            temp_path = f"{file_path}.tmp"
+            with open(temp_path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(data, f, sort_keys=False)
+            
+            os.replace(temp_path, file_path)
+            return True
+        except Exception as e:
+            print(f"Atomic write failed: {str(e)}")
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+            return False

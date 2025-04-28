@@ -8,7 +8,7 @@ from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from common.log_service import LogService
-from utils.yaml_tool import YamlTool
+from utils.yaml_tool import YamlTool, YamlPackageCache
 
 class ADBControllerSignals(QObject):
     """ADB Controller Signal Definitions"""
@@ -29,6 +29,7 @@ class ADBController:
         self.log_service = log_service
         self.adb_model = ADBModel()
         self.connected_devices_file = "resources/connected_devices.yaml"
+        self.package_info = "resources/package_info.yaml"
         # 连接ADBModel的信号
         self._pending_operations = {}  # 跟踪进行中的异步操作
         self._active_threads = []  # 跟踪所有活动线程

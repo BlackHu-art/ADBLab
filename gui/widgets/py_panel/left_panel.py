@@ -36,6 +36,7 @@ class LeftPanel(QWidget):
         self._init_ui_settings()
         self._create_ui_components()
         self._connect_signals()
+        # self._load_package_history()
 
     def _init_ui_settings(self):
         self.setFixedWidth(self.PANEL_WIDTH)
@@ -182,6 +183,7 @@ class LeftPanel(QWidget):
         self.program_edit.setEditable(True)
         self.program_edit.setFont(self._base_font)
         self.program_edit.lineEdit().setPlaceholderText("Select or input package name")
+        # self.program_edit.currentTextChanged.connect(self._on_package_selected)
         # 添加自动补全
         self.completer = QCompleter(self.package_history)
         self.completer.setCaseSensitivity(Qt.CaseInsensitive)
