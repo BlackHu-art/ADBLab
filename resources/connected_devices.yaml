@@ -23,3 +23,8 @@ device_ZT322KPNPX:
   Brand: motorola
   Model: moto g24
   ip: ZT322KPNPX
+device_emulator-5554:
+  Aversion: 5.1.1
+  Brand: BTV
+  Model: B11
+  ip: emulator-5554
