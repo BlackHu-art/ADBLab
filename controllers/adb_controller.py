@@ -491,7 +491,7 @@ class ADBController:
             )
     
     def install_apk(self, devices: list):
-        """批量安装APK入口"""
+        """批量安装 APK"""
         if not devices:
             self._emit_operation("install", False, "No devices selected")
             return
@@ -506,22 +506,57 @@ class ADBController:
             self._emit_operation("install", False, "APK selection canceled")
             return
 
-        for device_ip in devices:
-            self.executor.submit(self.adb_model.install_apk_async, device_ip,apk_path)
+        self.total_devices = len(devices)
+        self.finished_devices = 0
+        apk_nama = os.path.basename(apk_path)
+
+        for idx, device_ip in enumerate(devices, 1):
+            # 提交安装任务
+            self.executor.submit(self._install_single_device, idx, device_ip, apk_path, apk_nama)
+
+    def _install_single_device(self, idx: int, device_ip: str, apk_path: str, apk_nama: str):
+        """单设备APK安装任务（带设备序号）"""
+        try:
+                        # 开始前打印提示
+            self._emit_operation("install", True, f"Start install ({idx}/{self.total_devices}) {apk_nama} on {device_ip} ...")
+            result = self.adb_model.install_apk_async(device_ip, apk_path, apk_nama, idx)
+            result.update({
+                "apk_name": apk_nama,
+                "device_ip": device_ip,
+                "index": idx  # 记录当前是第几台设备
+            })
+            self.signals.install_apk_result.emit(result)
+
+        except Exception as e:
+            self.signals.install_apk_result.emit({
+                "success": False,
+                "apk_name": apk_nama,
+                "device_ip": device_ip,
+                "index": idx,
+                "error": str(e)
+            })
 
     def _process_install_apk_result(self, result: dict):
-        """安装完成后的统一回调处理"""
-        apk_path = result.get("apk_path")
+        """每台设备安装完成后的处理"""
+        apk_name = result.get("apk_name")
         device_ip = result.get("device_ip")
-        
+        idx = result.get("index", 1)
+
         if result.get("success"):
             output = result.get("output", "")
-            message = f"Installed {apk_path} on {device_ip}"
+            message = f"✅ install success ({idx}/{self.total_devices}) {apk_name} on {device_ip}\nADB output:{output}"
             self._emit_operation("install", True, message)
         else:
             error = result.get("error", "Unknown error")
-            message = f"Failed to install {apk_path} on {device_ip}\nADB Output:\n{error}"
+            message = f"❌ install failed ({idx}/{self.total_devices}) {apk_name} on {device_ip}\n错误信息:{error}"
             self._emit_operation("install", False, message)
+
+        # 更新完成数量
+        self.finished_devices += 1
+        # 如果全部完成，可以打一个总提示
+        if self.finished_devices == self.total_devices:
+            self._emit_operation("install", True, "🎯 所有设备安装任务完成")
+
         
 
     # ----- Private Methods -----

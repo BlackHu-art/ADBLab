@@ -291,7 +291,7 @@ class ADBModel(QObject):
             return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
 
     @async_command
-    def install_apk_async(self, device_ip: str, apk_path: str):
+    def install_apk_async(self, device_ip: str, apk_path: str, apk_name: str, idx: int):
         """同步安装APK 直接执行命令"""
         try:
             cmd = ["adb", "-s", device_ip, "install", "-r", apk_path]
@@ -300,11 +300,11 @@ class ADBModel(QObject):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=30,
+                timeout=120,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             output = result.stdout.strip()
-            return {"success": True, "device_ip": device_ip, "apk_path": apk_path}
+            return {"success": True, "device_ip": device_ip, "apk_path": apk_path, "output": output, "index": idx, "apk_name": apk_name}
             
         except subprocess.TimeoutExpired as e:
             return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
