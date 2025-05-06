@@ -20,6 +20,7 @@ class ADBControllerSignals(QObject):
     text_input = Signal(str, str)  # (device_ip, input_text)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
     install_apk_result  = Signal(dict)  # 请求选择APK文件
+    uninstall_apk_result = Signal(str, str)  # (device_ip, package_name)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -556,6 +557,71 @@ class ADBController:
         # 如果全部完成，可以打一个总提示
         if self.finished_devices == self.total_devices:
             self._emit_operation("install", True, "🎯 所有设备安装任务完成")
+            
+    def uninstall_apk(self, devices: list, package_name: str):
+        """批量卸载 APK（初始化计数器 + 提高健壮性）"""
+        if not devices:
+            self._emit_operation("uninstall", False, "No devices selected")
+            return
+
+        if not package_name:
+            self._emit_operation("uninstall", False, "No package name provided")
+            return
+
+        self.total_uninstall = len(devices)
+        self.success_uninstall = 0         # ✅ 初始化成功计数
+        self.finished_uninstall = 0        # ✅ 初始化完成计数
+
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(
+                self._execute_uninstall_task,
+                idx,
+                device_ip,
+                package_name
+            )
+
+    def _execute_uninstall_task(self, idx: int, ip: str, pkg: str):
+        try:
+            result = self.adb_model.uninstall_app_sync(ip, pkg)
+            result["index"] = idx
+            self.signals.uninstall_apk_result.emit(result)
+        except Exception as e:
+            self.signals.uninstall_apk_result.emit({
+                "success": False,
+                "device_ip": ip,
+                "package_name": pkg,
+                "output": str(e),
+                "index": idx
+            })
+
+    def _process_uninstall_apk_result(self, result: dict):
+        """统一结果处理方法"""
+        success = result.get("success", False)
+        ip = result["device_ip"]
+        pkg = result["package_name"]
+        idx = result["index"]
+        output = result.get("output", "")
+
+        log_msg = (
+            f"({'✅' if success else '❌'}) "
+            f"({idx}/{self.total_uninstall}) "
+            f"{pkg} on {ip}\n"
+            f"Output:\n{output}"
+        )
+        
+        if success:
+            self.success_uninstall += 1
+        self.finished_uninstall += 1
+
+        self._emit_operation("uninstall", success, log_msg)
+
+        if self.finished_uninstall == self.total_uninstall:
+            summary = (
+                f"🎯 Uninstall completed\n"
+                f"Success: {self.success_uninstall}\n"
+                f"Failed: {self.total_uninstall - self.success_uninstall}"
+            )
+            self._emit_operation("uninstall", True, summary)
 
         
 
@@ -608,8 +674,8 @@ class ADBController:
             "input_text": self._process_input_text_result,
             # 可以继续添加其他操作...
             "get_current_package": self._process_get_package_result,
-            "install_apk": self._process_install_apk_result
-
+            "install_apk": self._process_install_apk_result,
+            "uninstall_apk": self._process_uninstall_apk_result
 
         }
         

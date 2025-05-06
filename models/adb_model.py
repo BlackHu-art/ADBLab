@@ -252,9 +252,6 @@ class ADBModel(QObject):
         except Exception as e:
             return {"success": False,"device_ip": device_ip,"error": str(e),"text": text}
     
-    
-    
-
     @async_command
     def get_current_package_async(self, device_ip: str) -> dict:
         """异步获取当前前台应用包名"""
@@ -310,3 +307,40 @@ class ADBModel(QObject):
             return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
+    
+    def uninstall_app_sync(self, device_ip: str, package_name: str) -> dict:
+        """修正的同步卸载方法"""
+        try:
+            result = subprocess.run(
+                ["adb", "-s", device_ip, "uninstall", package_name],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=30,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+            output = result.stdout.strip()
+            
+            # 修复：正确判断ADB输出
+            success = "Success" in output or "success" in output.lower()
+            return {
+                "success": success,  # 明确返回布尔值
+                "output": output,
+                "device_ip": device_ip,
+                "package_name": package_name
+            }
+            
+        except subprocess.TimeoutExpired as e:
+            return {
+                "success": False,
+                "output": f"Timeout after 30 seconds: {str(e)}",
+                "device_ip": device_ip,
+                "package_name": package_name
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "output": f"Execution failed: {str(e)}",
+                "device_ip": device_ip,
+                "package_name": package_name
+            }

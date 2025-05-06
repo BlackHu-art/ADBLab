@@ -83,6 +83,7 @@ class MainFrame(QMainWindow):
         self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
         # 连接安装
         self.left_panel.signals.install_app_requested.connect(self.adb_controller.install_apk)
+        self.left_panel.signals.uninstall_app_requested.connect(self.adb_controller.uninstall_apk)
 
         
     def _setup_menu(self):

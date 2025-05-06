@@ -11,6 +11,8 @@ from models.device_store import DeviceStore
 from contextlib import contextmanager
 from gui.widgets.py_panel.left_panel_signals import LeftPanelSignals
 from utils.double_click_button import DoubleClickButton
+from models.device_store import DeviceStore
+from models.adb_model import ADBModel
 
 @contextmanager
 def BlockSignals(widget):
@@ -32,7 +34,7 @@ class LeftPanel(QWidget):
         # 添加包名历史记录
         self.package_history = []
         self._user_selected_ip = False
-        
+                
         self._init_ui_settings()
         self._create_ui_components()
         self._connect_signals()
@@ -69,6 +71,8 @@ class LeftPanel(QWidget):
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         self.btn_get_program.clicked.connect(lambda: self.signals.get_program_requested.emit(self.selected_devices))
         self.btn_install_app.clicked.connect(lambda: self.signals.install_app_requested.emit(self.selected_devices))
+        self.uninstall_btn.clicked.connect(lambda: self.signals.uninstall_app_requested.emit(self.selected_devices, self.program_edit.currentText()))
+        # self.clear_app_data_btn.connect(lambda: self.signals.uninstall_app_requested.emit(self.selected_devices))
 
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -193,9 +197,9 @@ class LeftPanel(QWidget):
         # ▶️ 第二行
         action_row2 = QHBoxLayout()
         self.btn_install_app = self._create_button("Install App", "resources/icons/Install_App.svg")
-        action_btn2 = self._create_button("Uninstall App", "resources/icons/Uninstall_app.svg")
-        action_btn3 = self._create_button("Clear App Data", "resources/icons/Clear_data.svg")
-        for btn in (self.btn_install_app, action_btn2, action_btn3):
+        self.uninstall_btn = self._create_button("Uninstall App", "resources/icons/Uninstall_app.svg")
+        self.clear_app_data_btn = self._create_button("Clear App Data", "resources/icons/Clear_data.svg")
+        for btn in (self.btn_install_app, self.uninstall_btn, self.clear_app_data_btn):
             action_row2.addWidget(btn, 1)
         layout.addLayout(action_row2)
 
@@ -256,42 +260,54 @@ class LeftPanel(QWidget):
 
 
     def update_device_list(self, devices: List[str] = None):
-        from models.device_store import DeviceStore
-        from models.adb_model import ADBModel
+        """刷新设备列表（保留勾选状态 + 等宽字体显示 + 用户数据绑定）"""
         # ① 若未传入则主动获取当前在线设备
         if devices is None:
-            devices = ADBModel.get_connected_devices()
+            devices = ADBModel.get_connected_devices_async()
+        
+        # ② 获取之前勾选的设备 IP
+        previously_selected_ips = set(self.selected_devices)
+        
+        # ③ 清空设备列表，更新缓存
         self.listbox_devices.clear()
         self.connected_device_cache = devices
-        # 获取完整设备信息
+        
+        # ④ 获取完整设备信息
         device_info_list = DeviceStore.get_full_devices_info(devices)
-        # 计算各字段最大宽度
-        max_lengths = {'model': 0,'brand': 0,'version': 0,'ip': 0}
-        # 第一次遍历计算最大宽度
+
+        # ⑤ 计算最大宽度以便等宽对齐
+        max_lengths = {'model': 0, 'brand': 0, 'version': 0, 'ip': 0}
         for info in device_info_list:
             max_lengths['model'] = max(max_lengths['model'], len(info.get('Model', 'Unknown')))
             max_lengths['brand'] = max(max_lengths['brand'], len(info.get('Brand', 'Unknown')))
             max_lengths['version'] = max(max_lengths['version'], len(info.get('Aversion', 'Unknown')))
             max_lengths['ip'] = max(max_lengths['ip'], len(info.get('ip', '')))
-        # 第二次遍历创建对齐的显示项
+
+        # ⑥ 遍历设备，创建列表项
         for info in device_info_list:
             model = info.get('Model', 'Unknown').ljust(max_lengths['model'])
             brand = info.get('Brand', 'Unknown').ljust(max_lengths['brand'])
             version = info.get('Aversion', 'Unknown').ljust(max_lengths['version'])
             ip = info.get('ip', '').ljust(max_lengths['ip'])
             
-            # 使用等宽字体保证对齐效果
             display = f"{model} | {brand} | {version} | {ip}"
-            
             item = QListWidgetItem(display)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Unchecked)
-            # 设置等宽字体（确保对齐）
+            
+            # 如果之前选中过这个设备，则恢复选中状态
+            if info.get('ip') in previously_selected_ips:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+            
+            # 设置等宽字体
             font = self._base_font
-            font.setFamily("Courier New")  # 等宽字体
-            item.setFont(self._base_font)
-            # 存储原始数据用于后续操作
+            font.setFamily("Courier New")
+            item.setFont(font)
+
+            # 存储原始设备信息到 UserRole
             item.setData(Qt.UserRole, info)
+            
             self.listbox_devices.addItem(item)
 
     @Slot()
@@ -363,32 +379,24 @@ class LeftPanel(QWidget):
         """处理手动输入IP"""
         self._current_ip = text.strip()  # 更新当前IP
 
-    def _on_device_double_click(self, item):
-        """处理设备列表双击事件（优化版）"""
-        # 1. 确保item是可勾选的（安全检查）
+    def _on_device_double_click(self, item: QListWidgetItem):
+        """处理设备列表双击事件（切换勾选状态）"""
         if not (item.flags() & Qt.ItemIsUserCheckable):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-        
-        # 2. 直接切换状态（更高效的方式）
         item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
-        
-        # 3. 确保视觉反馈（可选）
         self.listbox_devices.viewport().update()
-        
-        # 4. 打印调试信息
-        # state = "Checked" if item.checkState() == Qt.Checked else "Unchecked"
-        # print(f"设备 {item.text()} 状态已切换为: {state}")
 
     @property
     def selected_devices(self) -> List[str]:
+        """返回所有勾选设备的 IP 列表"""
         selected_ips = []
         for i in range(self.listbox_devices.count()):
             item = self.listbox_devices.item(i)
             if item.checkState() == Qt.Checked:
-                text = item.text()
-                parts = text.split("|")
-                if len(parts) >= 3:
-                    selected_ips.append(parts[3].strip())  # 提取 IP
+                info = item.data(Qt.UserRole)
+                ip = info.get("ip", "")
+                if ip:
+                    selected_ips.append(ip)
         return selected_ips
 
 
@@ -398,23 +406,27 @@ class LeftPanel(QWidget):
         return text if self._user_selected_ip or text else ""
     
     def update_current_package(self, device_ip: str, package_name: str):
-        """更新当前程序包名显示"""
-        # 确保在主线程执行UI更新
+        """更新设备列表中对应设备的程序包名显示"""
         def _update():
-            # 在设备列表中查找对应的项
             for i in range(self.listbox_devices.count()):
                 item = self.listbox_devices.item(i)
-                if device_ip in item.text():
-                    # 在设备名后追加程序名
-                    base_text = item.text().split("|")[0].strip()
-                    item.setText(f"{base_text} | {package_name}")
-                    
-                    # 更新下拉框
-                    if package_name not in [self.program_edit.itemText(i) 
-                                          for i in range(self.program_edit.count())]:
+                info = item.data(Qt.UserRole)
+                if not info:
+                    continue
+                ip = info.get("ip", "")
+                if ip == device_ip:
+                    # 更新 item 显示文本，仅在末尾加上包名提示
+                    # model = info.get("Model", "Unknown")
+                    # brand = info.get("Brand", "Unknown")
+                    # version = info.get("Aversion", "Unknown")
+                    display = f"{ip} | {package_name}"
+                    item.setText(display)
+
+                    # 自动添加到下拉框（避免重复）
+                    if package_name not in [self.program_edit.itemText(i) for i in range(self.program_edit.count())]:
                         self.program_edit.addItem(package_name)
                     break
-        
+
         QTimer.singleShot(0, _update)
 
 

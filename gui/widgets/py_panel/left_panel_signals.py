@@ -16,3 +16,4 @@ class LeftPanelSignals(QObject):
     get_program_requested = Signal(list)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
     install_app_requested = Signal(list)  # (devices, apk_path)
+    uninstall_app_requested = Signal(list, str)
