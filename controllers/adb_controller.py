@@ -559,69 +559,67 @@ class ADBController:
             self._emit_operation("install", True, "🎯 所有设备安装任务完成")
             
     def uninstall_apk(self, devices: list, package_name: str):
-        """批量卸载 APK（初始化计数器 + 提高健壮性）"""
+        """批量卸载 APK（结构与安装保持一致）"""
         if not devices:
-            self._emit_operation("uninstall", False, "No devices selected")
+            self._emit_operation("uninstall", False, "⚠️ No devices selected")
             return
 
         if not package_name:
-            self._emit_operation("uninstall", False, "No package name provided")
+            self._emit_operation("uninstall", False, "⚠️ No package name provided")
             return
 
         self.total_uninstall = len(devices)
-        self.success_uninstall = 0         # ✅ 初始化成功计数
-        self.finished_uninstall = 0        # ✅ 初始化完成计数
+        self.finished_uninstall = 0
+        self.success_uninstall = 0
 
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(
-                self._execute_uninstall_task,
-                idx,
-                device_ip,
-                package_name
-            )
+            # 提交异步任务
+            self.executor.submit(self._execute_uninstall_task, idx, device_ip, package_name)
 
-    def _execute_uninstall_task(self, idx: int, ip: str, pkg: str):
+    def _execute_uninstall_task(self, idx: int, device_ip: str, package_name: str):
+        """单设备卸载任务（带编号）"""
         try:
-            result = self.adb_model.uninstall_app_sync(ip, pkg)
-            result["index"] = idx
+            # 开始提示
+            self._emit_operation("uninstall", True, f"🚀 Start uninstall ({idx}/{self.total_uninstall}) {package_name} on {device_ip} ...")
+            result = self.adb_model.uninstall_app_sync(device_ip, package_name, idx)
+            result.update({
+                "device_ip": device_ip,
+                "package_name": package_name,
+                "index": idx
+            })
             self.signals.uninstall_apk_result.emit(result)
         except Exception as e:
             self.signals.uninstall_apk_result.emit({
                 "success": False,
-                "device_ip": ip,
-                "package_name": pkg,
-                "output": str(e),
+                "device_ip": device_ip,
+                "package_name": package_name,
+                "output": f"Exception: {str(e)}",
                 "index": idx
             })
 
     def _process_uninstall_apk_result(self, result: dict):
-        """统一结果处理方法"""
+        """处理每台设备的卸载结果"""
+        idx = result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
         success = result.get("success", False)
-        ip = result["device_ip"]
-        pkg = result["package_name"]
-        idx = result["index"]
         output = result.get("output", "")
 
-        log_msg = (
-            f"({'✅' if success else '❌'}) "
-            f"({idx}/{self.total_uninstall}) "
-            f"{pkg} on {ip}\n"
-            f"Output:\n{output}"
-        )
-        
-        if success:
-            self.success_uninstall += 1
-        self.finished_uninstall += 1
+        if result.get("success"):
+            output = result.get("output", "")
+            message = f"✅ uninstall success ({idx}/{self.total_devices}) {pkg} on {ip}\nADB output:{output}"
+            self._emit_operation("install", True, message)
+        else:
+            error = result.get("error", "Unknown error")
+            message = f"❌ uninstall failed ({idx}/{self.total_devices}) {pkg} on {ip}\n错误信息:{error}"
+            self._emit_operation("install", False, message)
 
-        self._emit_operation("uninstall", success, log_msg)
+        # 更新完成数量
+        self.finished_devices += 1
+        # 如果全部完成，可以打一个总提示
+        if self.finished_devices == self.total_devices:
+            self._emit_operation("install", True, "🎯 所有设备安装任务完成")
 
-        if self.finished_uninstall == self.total_uninstall:
-            summary = (
-                f"🎯 Uninstall completed\n"
-                f"Success: {self.success_uninstall}\n"
-                f"Failed: {self.total_uninstall - self.success_uninstall}"
-            )
-            self._emit_operation("uninstall", True, summary)
 
         
 

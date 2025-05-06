@@ -308,7 +308,8 @@ class ADBModel(QObject):
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
     
-    def uninstall_app_sync(self, device_ip: str, package_name: str) -> dict:
+    @async_command
+    def uninstall_app_sync(self, device_ip: str, package_name: str, idx: int) -> dict:
         """修正的同步卸载方法"""
         try:
             result = subprocess.run(
@@ -317,17 +318,15 @@ class ADBModel(QObject):
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             output = result.stdout.strip()
-            
-            # 修复：正确判断ADB输出
-            success = "Success" in output or "success" in output.lower()
             return {
-                "success": success,  # 明确返回布尔值
+                "success": True,  # 明确返回布尔值
                 "output": output,
                 "device_ip": device_ip,
-                "package_name": package_name
+                "package_name": package_name,
+                "index": idx
             }
             
         except subprocess.TimeoutExpired as e:
