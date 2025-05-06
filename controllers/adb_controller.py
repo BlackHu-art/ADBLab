@@ -76,7 +76,7 @@ class ADBController:
     def connect_device(self, ip: str):
         """Connect to a device asynchronously"""
         if not ip:
-            self._emit_operation("connect", False, "IP address cannot be empty")
+            self._emit_operation("connect", False, "⚠️ IP address cannot be empty")
             return
         
         operation_id = self._generate_operation_id()
@@ -106,7 +106,7 @@ class ADBController:
                 break
         
         if not ip:
-            self._emit_operation("connect", False, "Unknown device connection")
+            self._emit_operation("connect", False, "⚠️ Unknown device connection")
             return
             
         if "connected" in result:
@@ -226,7 +226,7 @@ class ADBController:
     def disconnect_devices(self, devices: list):
         """断开设备连接（异步优化版）"""
         if not devices:
-            self._emit_operation("disconnect", False, "Please select at least one device")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
         # 标记当前操作类型
         self._current_operation = "disconnect"
@@ -250,7 +250,7 @@ class ADBController:
     def restart_devices(self, devices: list):
         """重启设备（异步优化版）"""
         if not devices:
-            self._emit_operation("restart", False, "Please select at least one device")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
 
         self._current_operation = "restart"
@@ -288,7 +288,7 @@ class ADBController:
     def take_screenshot(self, devices: list):
         """触发截图流程"""
         if not devices:
-            self._emit_operation("screenshot", False, "No device selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
 
         screenshot_dir = self._get_or_select_directory()
@@ -358,7 +358,7 @@ class ADBController:
     def retrieve_device_logs(self, devices: list):
         """保存设备日志到文件"""
         if not devices:
-            self._emit_operation("retrieve_device_logs", False, "No devices selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
             
         save_dir = self._get_or_select_directory()
@@ -399,7 +399,7 @@ class ADBController:
     def cleanup_device_logs(self, devices: list):
         """清除设备日志"""
         if not devices:
-            self._emit_operation("cleanup_device_logs", False, "No devices selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
             
         for device_ip in devices:
@@ -423,11 +423,11 @@ class ADBController:
     def input_text(self, devices: list, text: str):
         """向多个设备输入文本"""
         if not devices:
-            self._emit_operation("input_text", False, "No devices selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
             
         if not text.strip():
-            self._emit_operation("input_text", False, "Input text cannot be empty")
+            self._emit_operation("input_text", False, "⚠️ Input text cannot be empty")
             return
             
         for device_ip in devices:
@@ -456,7 +456,7 @@ class ADBController:
     
     def get_current_package(self, devices: list):
         if not devices:
-            self._emit_operation("get_package", False, "No devices selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
         """获取设备当前运行的程序包名"""
         for device_ip in devices:
@@ -495,7 +495,7 @@ class ADBController:
     def install_apk(self, devices: list):
         """批量安装 APK"""
         if not devices:
-            self._emit_operation("install", False, "No devices selected")
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
             return
 
         apk_path, _ = QFileDialog.getOpenFileName(
