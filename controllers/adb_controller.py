@@ -618,7 +618,7 @@ class ADBController:
         self.finished_devices += 1
         # 如果全部完成，可以打一个总提示
         if self.finished_devices == self.total_devices:
-            self._emit_operation("install", True, "🎯 所有设备安装任务完成")
+            self._emit_operation("install", True, "🎯 所有设备卸载任务完成")
 
 
         
