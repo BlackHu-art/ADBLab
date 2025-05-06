@@ -72,7 +72,7 @@ class LeftPanel(QWidget):
         self.btn_get_program.clicked.connect(lambda: self.signals.get_program_requested.emit(self.selected_devices))
         self.btn_install_app.clicked.connect(lambda: self.signals.install_app_requested.emit(self.selected_devices))
         self.uninstall_btn.clicked.connect(lambda: self.signals.uninstall_app_requested.emit(self.selected_devices, self.program_edit.currentText()))
-        # self.clear_app_data_btn.connect(lambda: self.signals.uninstall_app_requested.emit(self.selected_devices))
+        self.clear_app_data_btn.clicked.connect(lambda: self.signals.clear_app_data_requested.emit(self.selected_devices, self.program_edit.currentText()))
 
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])

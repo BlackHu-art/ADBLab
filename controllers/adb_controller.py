@@ -21,6 +21,7 @@ class ADBControllerSignals(QObject):
     current_package_received = Signal(str, str)  # (device_ip, package_name)
     install_apk_result  = Signal(dict)  # 请求选择APK文件
     uninstall_apk_result = Signal(str, str)  # (device_ip, package_name)
+    clear_app_data_result = Signal(str, str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -602,7 +603,6 @@ class ADBController:
         idx = result.get("index", 1)
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
-        success = result.get("success", False)
         output = result.get("output", "")
 
         if result.get("success"):
@@ -620,6 +620,48 @@ class ADBController:
         if self.finished_devices == self.total_devices:
             self._emit_operation("install", True, "🎯 所有设备卸载任务完成")
 
+    def clear_app_data(self, devices: list, package_name: str):
+        """批量清除应用数据"""
+        if not devices:
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
+            return
+        if not package_name:
+            self._emit_operation("clear_data", False, "⚠️ No package name provided")
+            return
+
+        self.total_clear_data = len(devices)
+        self.finished_clear_data = 0
+        self.success_clear_data = 0
+
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.adb_model.clear_app_data_async, device_ip, package_name, idx)
+
+    def _process_clear_app_data_result(self, result: dict):
+        """处理清除数据结果"""
+        idx = result.get("idx", 1)
+        device_ip = result.get("device_ip", "unknown")
+        package_name = result.get("package_name", "unknown")
+        output = result.get("output", "")
+        success = result.get("success", False)
+
+        msg = (
+            f"{'✅ Success' if success else '❌ Failed'} "
+            f"({idx}/{self.total_clear_data}) clear data for {package_name} on {device_ip}\n"
+            f"ADB output:\n{output}"
+        )
+        self._emit_operation("clear_data", True, msg)
+
+        if success:
+            self.success_clear_data += 1
+        self.finished_clear_data += 1
+
+        if self.finished_clear_data == self.total_clear_data:
+            summary = (
+                f"🎯 Clear app data completed\n"
+                f"✅ Success: {self.success_clear_data}\n"
+                f"❌ Failed: {self.total_clear_data - self.success_clear_data}"
+            )
+            self._emit_operation("clear_data", True, summary)
 
         
 
@@ -629,13 +671,13 @@ class ADBController:
         if not devices:
             self._emit_operation("generate_email", False, "No devices selected")
             return
-        
-
 
     @Slot(str, bool, str)
     def _emit_operation(self, operation: str, success: bool, message: str):
         """确保信号在主线程中发射"""
         level = "INFO" if success else "ERROR"
+        if not message.strip():
+            return  # 防止输出空内容日志
         self.log_service.log(level, f"{message}")
         self.signals.operation_completed.emit(operation, success, message)
     
@@ -673,7 +715,8 @@ class ADBController:
             # 可以继续添加其他操作...
             "get_current_package": self._process_get_package_result,
             "install_apk": self._process_install_apk_result,
-            "uninstall_apk": self._process_uninstall_apk_result
+            "uninstall_apk": self._process_uninstall_apk_result,
+            "clear_app_data": self._process_clear_app_data_result,            
 
         }
         

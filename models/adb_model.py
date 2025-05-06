@@ -343,3 +343,27 @@ class ADBModel(QObject):
                 "device_ip": device_ip,
                 "package_name": package_name
             }
+
+    @async_command
+    def clear_app_data_async(self, device_ip: str, package_name: str, idx: int):
+        """异步清除应用数据"""
+        try:
+            result = self._execute_command(
+                ["adb", "-s", device_ip, "shell", "pm", "clear", package_name]
+            )
+            success = result.strip() == "Success" or "success" in result.lower()
+            self.command_finished.emit("clear_app_data", {
+                "success": success,
+                "device_ip": device_ip,
+                "package_name": package_name,
+                "output": result,
+                "idx": idx
+            })
+        except Exception as e:
+            self.command_finished.emit("clear_app_data", {
+                "success": False,
+                "device_ip": device_ip,
+                "package_name": package_name,
+                "output": str(e),
+                "idx": idx
+            })
