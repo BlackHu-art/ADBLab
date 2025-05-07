@@ -610,7 +610,7 @@ class ADBController:
             message = f"✅ uninstall success ({idx}/{self.total_devices}) {pkg} on {ip}\nADB output:{output}"
             self._emit_operation("install", True, message)
         else:
-            error = result.get("error", "Unknown error")
+            error = result.get("output", "")
             message = f"❌ uninstall failed ({idx}/{self.total_devices}) {pkg} on {ip}\n错误信息:{error}"
             self._emit_operation("install", False, message)
 
@@ -638,27 +638,26 @@ class ADBController:
 
     def _process_clear_app_data_result(self, result: dict):
         """处理清除数据结果"""
-        idx = result.get("idx", 1)
-        device_ip = result.get("device_ip", "unknown")
-        package_name = result.get("package_name", "unknown")
+        idx = result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
         output = result.get("output", "")
-        success = result.get("success", False)
-
-        msg = (
-            f"{'✅ Success' if success else '❌ Failed'} "
-            f"({idx}/{self.total_clear_data}) clear data for {package_name} on {device_ip}\n"
-            f"ADB output:\n{output}"
-        )
-        self._emit_operation("clear_data", True, msg)
-
-        if success:
+        
+        if result.get("success"):
             self.success_clear_data += 1
-        self.finished_clear_data += 1
+            output = result.get("output", "")
+            message = f"✅ clear data success ({idx}/{self.total_clear_data}) {pkg} on {ip}\nADB output:{output}"
+            self._emit_operation("clear_data", True, message)
+        else:
+            error = result.get("output", "")
+            message = f"❌ clear data failed ({idx}/{self.total_clear_data}) {pkg} on {ip}\n错误信息:{error}"
+            self._emit_operation("clear_data", False, message)
 
+        self.finished_clear_data += 1
         if self.finished_clear_data == self.total_clear_data:
             summary = (
-                f"🎯 Clear app data completed\n"
-                f"✅ Success: {self.success_clear_data}\n"
+                f"🎯 Clear app data completed; "
+                f"✅ Success: {self.success_clear_data}; "
                 f"❌ Failed: {self.total_clear_data - self.success_clear_data}"
             )
             self._emit_operation("clear_data", True, summary)
@@ -716,7 +715,7 @@ class ADBController:
             "get_current_package": self._process_get_package_result,
             "install_apk": self._process_install_apk_result,
             "uninstall_apk": self._process_uninstall_apk_result,
-            "clear_app_data": self._process_clear_app_data_result,            
+            "clear_app_data": self._process_clear_app_data_result            
 
         }
         
