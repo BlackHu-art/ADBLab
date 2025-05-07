@@ -86,6 +86,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.uninstall_app_requested.connect(self.adb_controller.uninstall_apk)
         self.left_panel.signals.clear_app_data_requested.connect(self.adb_controller.clear_app_data)
         self.left_panel.signals.restart_app_requested.connect(self.adb_controller.restart_app)
+        self.left_panel.signals.print_activity_requested.connect(self.adb_controller.get_current_activity)
 
         
     def _setup_menu(self):

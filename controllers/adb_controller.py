@@ -23,6 +23,7 @@ class ADBControllerSignals(QObject):
     uninstall_apk_result = Signal(str, str)  # (device_ip, package_name)
     clear_app_data_result = Signal(str, str)
     restart_app_result = Signal(str, str)
+    print_activity_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -703,6 +704,39 @@ class ADBController:
             )
             self._emit_operation("restart_app", True, summary)
 
+    def get_current_activity(self, devices: list[str]):
+        if not devices:
+            self._emit_operation("current_activity", False, "⚠️ No device selected")
+            return
+
+        self.total_activity = len(devices)
+        self.finished_activity = 0
+
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.adb_model.get_current_activity_async, device_ip, idx)
+
+    def _process_get_current_activity_result(self, result: dict):
+        """处理 Activity 查询结果"""
+        device = result.get("device_ip", "unknown")
+        idx = result.get("index", 0)
+
+        if result.get("success"):
+            focus = result.get("current_focus", "")
+            resumed = result.get("resumed_activity", "")
+            if focus:
+                self._emit_operation("current_activity", True, f"📱 ({idx}) {device}\nCurrent Activity:\n{focus}")
+            else:
+                self._emit_operation("current_activity", False, f"⚠️ No mCurrentFocus found on {device}")
+            if resumed:
+                self._emit_operation("current_activity", True, f"Resumed Activity:\n{resumed}")
+            else:
+                self._emit_operation("current_activity", False, f"⚠️ No mResumedActivity found on {device}")
+        else:
+            self._emit_operation("current_activity", False, f"❌ Failed to get activity on {device}\n{result.get('error')}")
+
+        self.finished_activity += 1
+        if self.finished_activity == self.total_activity:
+            self._emit_operation("current_activity", True, "🎯 Activity info fetch complete")
 
         
 
@@ -759,6 +793,7 @@ class ADBController:
             "uninstall_apk": self._process_uninstall_apk_result,
             "clear_app_data": self._process_clear_app_data_result,
             "restart_app": self._process_restart_app_result,
+            "get_current_activity": self._process_get_current_activity_result
 
         }
         

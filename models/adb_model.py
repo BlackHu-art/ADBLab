@@ -381,3 +381,43 @@ class ADBModel(QObject):
             return {"success": False,"device_ip": device_ip,"package_name": package_name,"output": e.output,"index": index}
         except Exception as e:
             return {"success": False,"device_ip": device_ip,"package_name": package_name,"output": str(e),"index": index}
+
+
+    @async_command
+    def get_current_activity_async(self, device_ip: str, index: int = 0) -> dict:
+        """获取设备当前的 mCurrentFocus 和 mResumedActivity"""
+        try:
+            current_cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "window"]
+            resumed_cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "activities"]
+
+            current_output = self._execute_command(current_cmd)
+            resumed_output = self._execute_command(resumed_cmd)
+
+            # 提取匹配行
+            current_focus = ""
+            resumed_activity = ""
+
+            for line in current_output.splitlines():
+                if "mCurrentFocus" in line:
+                    current_focus = line.strip()
+                    break
+
+            for line in resumed_output.splitlines():
+                if "mResumedActivity" in line:
+                    resumed_activity = line.strip()
+                    break
+
+            return {
+                "success": True,
+                "device_ip": device_ip,
+                "index": index,
+                "current_focus": current_focus,
+                "resumed_activity": resumed_activity,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "index": index,
+                "error": str(e)
+            }

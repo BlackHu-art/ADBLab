@@ -74,7 +74,7 @@ class LeftPanel(QWidget):
         self.uninstall_btn.clicked.connect(lambda: self.signals.uninstall_app_requested.emit(self.selected_devices, self.program_edit.currentText()))
         self.clear_app_data_btn.clicked.connect(lambda: self.signals.clear_app_data_requested.emit(self.selected_devices, self.program_edit.currentText()))
         self.restart_app_btn.clicked.connect(lambda: self.signals.restart_app_requested.emit(self.selected_devices, self.program_edit.currentText()))
-        
+        self.print_activity_btn.clicked.connect(lambda: self.signals.print_activity_requested.emit(self.selected_devices))
         
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -208,9 +208,9 @@ class LeftPanel(QWidget):
         # ▶️ 第三行
         action_row3 = QHBoxLayout()
         self.restart_app_btn = self._create_button("Restart App", "resources/icons/Restart_app.svg")
-        action_btn2 = self._create_button("Print Current Activity", "resources/icons/Print.svg")
+        self.print_activity_btn = self._create_button("Print Current Activity", "resources/icons/Print.svg")
         action_btn3 = self._create_button("Parse APK Info", "resources/icons/Parse_APK.svg")
-        for btn in (self.restart_app_btn, action_btn2, action_btn3):
+        for btn in (self.restart_app_btn, self.print_activity_btn, action_btn3):
             action_row3.addWidget(btn, 1)
         layout.addLayout(action_row3)
 

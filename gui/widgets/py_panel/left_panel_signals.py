@@ -19,3 +19,4 @@ class LeftPanelSignals(QObject):
     uninstall_app_requested = Signal(list, str)
     clear_app_data_requested = Signal(list, str)
     restart_app_requested = Signal(list, str)
+    print_activity_requested = Signal(list)
