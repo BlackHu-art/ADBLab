@@ -26,6 +26,7 @@ class ADBControllerSignals(QObject):
     restart_app_result = Signal(str, str)
     print_activity_result = Signal(str)
     parse_apk_info_result = Signal()
+    kill_monkey_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -795,7 +796,7 @@ class ADBController:
     🛠️ 构建版本: {build_version.group(1) if build_version else 'N/A'}
     🖼️ 应用图标: {icon_path}
     🔐 权限数: {len(permissions)} 项
-    ⚙️ 特性声明: {", ".join(features) if features else "无"}
+    ⚙️ 特性声明: {", ".join(features) if features else "None"}
     🧬 支持架构: {", ".join(native_code) if native_code else "未声明"}
     """
 
@@ -805,11 +806,29 @@ class ADBController:
                 self._emit_operation("apk_info", True, formatted)
 
             except Exception as e:
-                self._emit_operation("apk_info", False, f"⚠️ APK 字段解析异常: {apk_path}\n错误: {str(e)}")
+                self._emit_operation("apk_info", False, f"⚠️ APK Field parsing exception: {apk_path}\nError: {str(e)}")
 
         else:
             error = result.get("error", "Unknown error")
-            self._emit_operation("apk_info", False, f"❌ APK 解析失败: {apk_path}\n错误: {error}")
+            self._emit_operation("apk_info", False, f"❌ APK Analysis failed: {apk_path}\nError: {error}")
+
+    def kill_monkey(self, devices: list):
+        if not devices:
+            self._emit_operation("kill_monkey", False, "⚠️ No devices selected")
+            return
+
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.adb_model.kill_monkey_async, device_ip, idx)
+
+    def _process_kill_monkey_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+
+        if result.get("success"):
+            self._emit_operation("kill_monkey", True, f"✅ {idx}. Monkey process killed on {device_ip}")
+        else:
+            self._emit_operation("kill_monkey", False, f"❌ {idx}. Failed to kill monkey process on {device_ip}:\nError: {result['message']}")
+
 
 
 
@@ -869,6 +888,7 @@ class ADBController:
             "restart_app": self._process_restart_app_result,
             "get_current_activity": self._process_get_current_activity_result,
             "parse_apk_info": self._process_parse_apk_info_result,
+            "kill_monkey": self._process_kill_monkey_result,
 
         }
         

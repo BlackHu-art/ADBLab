@@ -421,3 +421,55 @@ class ADBModel(QObject):
             return {"success": True,"apk_path": apk_path,"output": output}
         except Exception as e:
             return {"success": False,"apk_path": apk_path,"error": str(e)}
+
+    @async_command
+    def kill_monkey_async(self, device_ip: str, index: int) -> dict:
+        """Asynchronously kill the monkey test process on the device"""
+        result = {
+            "device_ip": device_ip,
+            "index": index,
+            "success": False,
+            "message": ""
+        }
+
+        try:
+            cmd = ["adb", "-s", device_ip, "shell", "ps | grep monkey"]
+            output = subprocess.check_output(
+                cmd,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            ).strip()
+
+            if not output:
+                result["message"] = "No monkey process is running on the device"
+                return result
+
+            lines = output.splitlines()
+            for line in lines:
+                parts = line.split()
+                if len(parts) > 1:
+                    pid = parts[1]
+                    try:
+                        kill_cmd = ["adb", "-s", device_ip, "shell", "kill", pid]
+                        subprocess.check_output(
+                            kill_cmd,
+                            stderr=subprocess.STDOUT,
+                            text=True,
+                            creationflags=subprocess.CREATE_NO_WINDOW
+                        )
+                        result["success"] = True
+                        result["message"] = f"Monkey process (PID: {pid}) successfully killed"
+                        return result
+                    except subprocess.CalledProcessError as e:
+                        result["message"] = f"Failed to kill monkey process (PID: {pid}): {e.output}"
+                        return result
+
+            result["message"] = "Monkey process PID not found in the process list"
+            return result
+
+        except subprocess.CalledProcessError as e:
+            result["message"] = f"Error executing 'ps | grep monkey': {e.output}"
+            return result
+
+

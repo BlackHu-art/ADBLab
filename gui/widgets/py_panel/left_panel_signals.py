@@ -21,3 +21,4 @@ class LeftPanelSignals(QObject):
     restart_app_requested = Signal(list, str)
     print_activity_requested = Signal(list)
     parse_apk_info_requested = Signal()
+    kill_monkey_requested = Signal(list)

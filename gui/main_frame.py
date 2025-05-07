@@ -87,6 +87,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.print_activity_requested.connect(self.adb_controller.get_current_activity)
         self.left_panel.signals.parse_apk_info_requested.connect(self.adb_controller.parse_apk_info)
 
+        self.left_panel.signals.kill_monkey_requested.connect(self.adb_controller.kill_monkey)
         
     def _setup_menu(self):
         """初始化菜单栏"""
