@@ -17,7 +17,7 @@ class ADBModel(QObject):
         self.thread_pool = QThreadPool.globalInstance()
     
     @staticmethod
-    def _execute_command(command: list, timeout: int = 10) -> str:
+    def _execute_command(command: list, timeout: int = 30) -> str:
         """同步执行ADB命令"""
         try:
             result = subprocess.run(
@@ -360,3 +360,24 @@ class ADBModel(QObject):
             return {"success": True, "device_ip": device_ip, "package_name": package_name, "output": output, "index": idx}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "package_name": package_name, "output": str(e), "idnex": idx}
+
+    @async_command
+    def restart_app_async(self, device_ip: str, package_name: str, index: int):
+        """异步重启应用"""
+        try:
+            # 停止应用
+            stop_cmd = ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name]
+            stop_output = self._execute_command(stop_cmd)
+
+            # 启动应用
+            start_cmd = [
+                "adb", "-s", device_ip, "shell", "monkey", "-p", package_name,
+                "-c", "android.intent.category.LAUNCHER", "1"
+            ]
+            start_output = self._execute_command(start_cmd)
+
+            return{"success": True,"device_ip": device_ip,"package_name": package_name,"output": f"{stop_output}\n{start_output}","index": index}
+        except subprocess.CalledProcessError as e:
+            return {"success": False,"device_ip": device_ip,"package_name": package_name,"output": e.output,"index": index}
+        except Exception as e:
+            return {"success": False,"device_ip": device_ip,"package_name": package_name,"output": str(e),"index": index}

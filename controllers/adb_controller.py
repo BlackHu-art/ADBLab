@@ -22,6 +22,7 @@ class ADBControllerSignals(QObject):
     install_apk_result  = Signal(dict)  # 请求选择APK文件
     uninstall_apk_result = Signal(str, str)  # (device_ip, package_name)
     clear_app_data_result = Signal(str, str)
+    restart_app_result = Signal(str, str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -661,6 +662,47 @@ class ADBController:
                 f"❌ Failed: {self.total_clear_data - self.success_clear_data}"
             )
             self._emit_operation("clear_data", True, summary)
+            
+    def restart_app(self, devices: list, package_name: str):
+        """批量重启应用"""
+        if not devices:
+            self._emit_operation("restart_app", False, "⚠️ No devices selected")
+            return
+        if not package_name:
+            self._emit_operation("restart_app", False, "⚠️ No package name provided")
+            return
+
+        self.total_restart = len(devices)
+        self.finished_restart = 0
+        self.success_restart = 0
+
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.adb_model.restart_app_async, device_ip, package_name, idx)
+
+    def _process_restart_app_result(self, result: dict):
+        """处理重启结果"""
+        idx = result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
+        output = result.get("output", "")
+
+        if result.get("success"):
+            self.success_restart += 1
+            msg = f"✅ restart success ({idx}/{self.total_restart}) {pkg} on {ip}\n{output}"
+            self._emit_operation("restart_app", True, msg)
+        else:
+            msg = f"❌ restart failed ({idx}/{self.total_restart}) {pkg} on {ip}\n错误信息: {output}"
+            self._emit_operation("restart_app", False, msg)
+
+        self.finished_restart += 1
+        if self.finished_restart == self.total_restart:
+            summary = (
+                f"🎯 Restart app completed; "
+                f"✅ Success: {self.success_restart}; "
+                f"❌ Failed: {self.total_restart - self.success_restart}"
+            )
+            self._emit_operation("restart_app", True, summary)
+
 
         
 
@@ -715,7 +757,8 @@ class ADBController:
             "get_current_package": self._process_get_package_result,
             "install_apk": self._process_install_apk_result,
             "uninstall_apk": self._process_uninstall_apk_result,
-            "clear_app_data": self._process_clear_app_data_result            
+            "clear_app_data": self._process_clear_app_data_result,
+            "restart_app": self._process_restart_app_result,
 
         }
         
