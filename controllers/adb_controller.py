@@ -28,6 +28,7 @@ class ADBControllerSignals(QObject):
     parse_apk_info_result = Signal()
     kill_monkey_result = Signal(str)
     pull_anr_file_result = Signal(str)
+    list_packages_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -830,6 +831,28 @@ class ADBController:
         else:
             self._emit_operation("kill_monkey", False, f"❌ {idx}. Failed to kill monkey process on {device_ip}:\nError: {result['message']}")
 
+    def list_installed_packages(self, devices: list[str]):
+        if not devices:
+            self._emit_operation("installed_packages", False, "⚠️ No devices selected")
+            return
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.adb_model.list_installed_packages_async, device_ip, idx)
+
+    def _process_list_installed_packages_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+
+        if result.get("success"):
+            packages = result.get("packages", [])
+            formatted = "\n".join(f"{i+1}. {pkg}" for i, pkg in enumerate(packages))
+            msg = f"📦 {idx}. Installed packages on {device_ip}:\n{formatted or '(None found)'}"
+            self._emit_operation("installed_packages", True, msg)
+        else:
+            msg = result.get("message", "Unknown error")
+            self._emit_operation("installed_packages", False, f"❌ {idx}. Failed to get packages from {device_ip}:\n{msg}")
+
+
+
     def pull_anr_files(self, devices: list[str]):
         """拉取设备上的 ANR 文件，弹出保存路径选择框"""
         if not devices:
@@ -921,6 +944,7 @@ class ADBController:
             "get_current_activity": self._process_get_current_activity_result,
             "parse_apk_info": self._process_parse_apk_info_result,
             "kill_monkey": self._process_kill_monkey_result,
+            "list_installed_packages": self._process_list_installed_packages_result,
             "pull_anr_files": self._process_pull_anr_result,
 
         }

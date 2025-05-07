@@ -88,6 +88,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.parse_apk_info_requested.connect(self.adb_controller.parse_apk_info)
 
         self.left_panel.signals.kill_monkey_requested.connect(self.adb_controller.kill_monkey)
+        self.left_panel.signals.list_installed_packages_requested.connect(self.adb_controller.list_installed_packages)
         self.left_panel.signals.pull_anr_file_requested.connect(self.adb_controller.pull_anr_files)
         
     def _setup_menu(self):

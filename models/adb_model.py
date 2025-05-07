@@ -473,6 +473,22 @@ class ADBModel(QObject):
             return result
 
     @async_command
+    def list_installed_packages_async(self, device_ip: str, index: int) -> dict:
+        """获取设备上的已安装包名"""
+        try:
+            cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "packages"]
+            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            packages = [line.replace("package:", "").strip() for line in output.splitlines() if line.startswith("package:")]
+            return {"device_ip": device_ip, "success": True, "packages": packages, "index": index}
+        except subprocess.CalledProcessError as e:
+            return {"device_ip": device_ip, "success": False, "message": e.output, "index": index}
+
+
+
+
+
+
+    @async_command
     def pull_anr_files_async(self, device_ip: str, sanitized_name: str, save_dir: str, index: int) -> dict:
         """从指定设备拉取 /data/anr 文件夹"""
         try:
