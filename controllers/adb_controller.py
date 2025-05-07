@@ -646,11 +646,11 @@ class ADBController:
         if result.get("success"):
             self.success_clear_data += 1
             output = result.get("output", "")
-            message = f"✅ clear data success ({idx}/{self.total_clear_data}) {pkg} on {ip}\nADB output:{output}"
+            message = f"✅ clear data success ({idx}/{self.total_clear_data}) \n{pkg} on {ip}\nADB output:{output}"
             self._emit_operation("clear_data", True, message)
         else:
             error = result.get("output", "")
-            message = f"❌ clear data failed ({idx}/{self.total_clear_data}) {pkg} on {ip}\n错误信息:{error}"
+            message = f"❌ clear data failed ({idx}/{self.total_clear_data}) \n{pkg} on {ip}\n错误信息:{error}"
             self._emit_operation("clear_data", False, message)
 
         self.finished_clear_data += 1
