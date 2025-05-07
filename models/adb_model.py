@@ -487,7 +487,7 @@ class ADBModel(QObject):
 
     @async_command
     def capture_bugreport_async(self, device_ip: str, save_root: str, index: int, callback=None) -> dict:
-        def log(msg):  # 可选日志回调
+        def log(msg):
             if callback:
                 callback(f"[{device_ip}] {msg}")
 
@@ -497,6 +497,7 @@ class ADBModel(QObject):
         os.makedirs(target_dir, exist_ok=True)
         log(f"📁 Created directory: {target_dir}")
 
+        # 获取 Android 版本
         log("🔍 Getting Android version...")
         version_cmd = ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"]
         version_proc = subprocess.run(version_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -508,30 +509,30 @@ class ADBModel(QObject):
         except ValueError:
             return {"device_ip": device_ip, "index": index, "success": False, "message": "Invalid Android version format"}
 
-        if android_version >= (8, 0):
-            log("🚀 Running: adb bugreport <dir> ... this may take 1-2 minutes")
-            cmd = ["adb", "-s", device_ip, "bugreport", target_dir]
-        else:
-            log("🚀 Running: adb bugreport <file> ... this may take 1-2 minutes")
-            output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
-            cmd = ["adb", "-s", device_ip, "bugreport", output_file]
+        # 执行 bugreport
+        try:
+            if android_version >= (8, 0):
+                log("🚀 Running: adb bugreport <dir> ... this may take 1-2 minutes")
+                cmd = ["adb", "-s", device_ip, "bugreport", target_dir]
+            else:
+                log("🚀 Running: adb bugreport <file> ... this may take 1-2 minutes")
+                output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
+                cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
-        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        log("✅ Bugreport command completed")
+            proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            log("✅ Bugreport command completed")
+        except Exception as e:
+            return {"device_ip": device_ip, "index": index, "success": False, "message": f"Bugreport failed: {e}"}
 
-        zip_files = [f for f in os.listdir(target_dir) if f.endswith(".zip")]
-        if zip_files:
-            try:
-                for zip_file in zip_files:
-                    zip_path = os.path.join(target_dir, zip_file)
-                    log(f"📦 Extracting ZIP: {zip_file}")
-                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                        zip_ref.extractall(target_dir)
-                log("✅ Extracted ZIP successfully")
-            except Exception as e:
-                return {"device_ip": device_ip, "index": index, "success": False, "message": f"Failed to unzip: {e}"}
-        else:
-            log("⚠️ No ZIP found, continuing")
+        # 解压 ZIP 文件
+        if not self._extract_bugreport_zips(target_dir, log):
+            return {"device_ip": device_ip, "index": index, "success": False, "message": "Failed to extract bugreport ZIP"}
+
+        # 扫描并转换 HTML
+        found_html = self._scan_and_convert_bugreport_txt(target_dir, log)
+
+        if not found_html:
+            log("⚠️ No bugreport text files converted to HTML.")
 
         return {
             "device_ip": device_ip,
@@ -540,6 +541,70 @@ class ADBModel(QObject):
             "message": f"Bugreport saved in {target_dir}",
             "bugreport_path": target_dir
         }
+
+    def _extract_bugreport_zips(self, target_dir: str, log) -> bool:
+        zip_files = [f for f in os.listdir(target_dir) if f.endswith(".zip")]
+        if not zip_files:
+            log("⚠️ No ZIP found, continuing")
+            return True
+
+        try:
+            for zip_file in zip_files:
+                zip_path = os.path.join(target_dir, zip_file)
+                log(f"📦 Extracting ZIP: {zip_file}")
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(target_dir)
+            log("✅ Extracted ZIP successfully")
+            return True
+        except Exception as e:
+            log(f"❌ Failed to unzip: {e}")
+            return False
+
+    def _scan_and_convert_bugreport_txt(self, target_dir: str, log) -> bool:
+        log("🔍 Scanning for bugreport text files...")
+        found_html = False
+
+        for root, _, files in os.walk(target_dir):
+            for f in files:
+                if f.startswith("bugreport") and f.endswith(".txt"):
+                    txt_path = os.path.join(root, f)
+                    log(f"📑 Found bugreport text: {f}")
+                    try:
+                        self.convert_bugreport_to_html(txt_path, log=log)
+                        found_html = True
+                    except Exception:
+                        continue
+        return found_html
+
+    def convert_bugreport_to_html(self, bugreport_txt_path: str, log=None):
+        jar_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "resources", "chkbugreport-0.5-215.jar"))
+        cmd = ["java", "-jar", jar_path, bugreport_txt_path]
+
+        if log:
+            log(f"📄 Converting to HTML: {os.path.basename(bugreport_txt_path)}")
+            log(f"🧪 Command: {' '.join(cmd)}")
+
+        try:
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            )
+            if result.returncode == 0:
+                if log:
+                    log("✅ Bugreport HTML generated successfully.")
+            else:
+                raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=result.stderr)
+        except subprocess.CalledProcessError as e:
+            if log:
+                log(f"❌ Conversion failed: {e.stderr.strip()}")
+            raise
+        except Exception as e:
+            if log:
+                log(f"❌ Unexpected error: {str(e)}")
+            raise
 
 
 
