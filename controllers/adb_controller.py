@@ -27,6 +27,7 @@ class ADBControllerSignals(QObject):
     print_activity_result = Signal(str)
     parse_apk_info_result = Signal()
     kill_monkey_result = Signal(str)
+    pull_anr_file_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -829,6 +830,37 @@ class ADBController:
         else:
             self._emit_operation("kill_monkey", False, f"❌ {idx}. Failed to kill monkey process on {device_ip}:\nError: {result['message']}")
 
+    def pull_anr_files(self, devices: list[str]):
+        """拉取设备上的 ANR 文件，弹出保存路径选择框"""
+        if not devices:
+            self._emit_operation("pull_anr", False, "⚠️ No devices selected")
+            return
+
+        # 选择保存目录
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
+        if not save_dir:
+            self._emit_operation("pull_anr", False, "⚠️ No target directory selected")
+            return
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for idx, device_ip in enumerate(devices, 1):
+            sanitized_name = re.sub(r'\W+', '_', device_ip)
+            self.executor.submit(
+                self.adb_model.pull_anr_files_async,
+                device_ip,
+                f"{sanitized_name}_anr_{timestamp}",
+                save_dir,
+                idx
+            )
+
+    def _process_pull_anr_result(self, result: dict):
+        device_ip = result.get("device_ip", "unknown")
+        idx = result.get("index", "?")
+
+        if result.get("success"):
+            self._emit_operation("pull_anr", True, f"✅ {idx}. Pulled ANR files from {device_ip}:\n{result['message']}")
+        else:
+            self._emit_operation("pull_anr", False, f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{result['message']}")
 
 
 
@@ -889,6 +921,7 @@ class ADBController:
             "get_current_activity": self._process_get_current_activity_result,
             "parse_apk_info": self._process_parse_apk_info_result,
             "kill_monkey": self._process_kill_monkey_result,
+            "pull_anr_files": self._process_pull_anr_result,
 
         }
         

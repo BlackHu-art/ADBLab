@@ -22,3 +22,4 @@ class LeftPanelSignals(QObject):
     print_activity_requested = Signal(list)
     parse_apk_info_requested = Signal()
     kill_monkey_requested = Signal(list)
+    pull_anr_file_requested = Signal(list)

@@ -78,6 +78,7 @@ class LeftPanel(QWidget):
         self.parse_apk_info_btn.clicked.connect(lambda: self.signals.parse_apk_info_requested.emit())
         
         self.kill_monkey_btn.clicked.connect(lambda: self.signals.kill_monkey_requested.emit(self.selected_devices))
+        self.get_anr_file_btn.clicked.connect(lambda: self.signals.pull_anr_file_requested.emit(self.selected_devices))
         
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
@@ -244,18 +245,18 @@ class LeftPanel(QWidget):
         # ▶️ 第二行：三个按钮
         perf_row2 = QHBoxLayout()
         self.kill_monkey_btn = self._create_button("Kill Monkey", "resources/icons/Kill_monkey.svg")
-        perf_btn2 = self._create_button("Get ANR File", "resources/icons/Get_ANR.svg")
+        self.perf_btn1 = self._create_button("Packages List", "resources/icons/Restart_app.svg")
         perf_btn3 = self._create_button("Get Bugreport", "resources/icons/bugreport.svg")
-        for btn in (self.kill_monkey_btn, perf_btn2, perf_btn3):
+        for btn in (self.kill_monkey_btn, self.perf_btn1, perf_btn3):
             perf_row2.addWidget(btn, 1)
         layout.addLayout(perf_row2)
         
                 # ▶️ 第三行
         perf_row3 = QHBoxLayout()
-        perf_btn1 = self._create_button("Packages List", "resources/icons/Restart_app.svg")
+        self.get_anr_file_btn = self._create_button("Get ANR File", "resources/icons/Get_ANR.svg")
         perf_btn2 = self._create_button("Print", "resources/icons/Print.svg")
         perf_btn3 = self._create_button("Parse", "resources/icons/Parse_APK.svg")
-        for btn in (perf_btn1, perf_btn2, perf_btn3):
+        for btn in (self.get_anr_file_btn, perf_btn2, perf_btn3):
             perf_row3.addWidget(btn, 1)
         layout.addLayout(perf_row3)
         

@@ -472,4 +472,29 @@ class ADBModel(QObject):
             result["message"] = f"Error executing 'ps | grep monkey': {e.output}"
             return result
 
+    @async_command
+    def pull_anr_files_async(self, device_ip: str, sanitized_name: str, save_dir: str, index: int) -> dict:
+        """从指定设备拉取 /data/anr 文件夹"""
+        try:
+            device_anr_dir = os.path.join(save_dir, f"{sanitized_name}_anr")
+            os.makedirs(device_anr_dir, exist_ok=True)
 
+            pull_command = ["adb", "-s", device_ip, "pull", "/data/anr", device_anr_dir]
+            subprocess.check_output(pull_command, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+
+            return {
+                "device_ip": device_ip,
+                "success": True,
+                "message": f"ANR files saved to {device_anr_dir}",
+                "index": index
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                "device_ip": device_ip,
+                "success": False,
+                "message": (
+                    f"Failed to pull ANR files.\nCommand: {' '.join(e.cmd)}\n"
+                    f"Return code: {e.returncode}\nError output:\n{e.output.strip()}"
+                ),
+                "index": index
+            }
