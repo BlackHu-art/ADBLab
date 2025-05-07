@@ -491,7 +491,7 @@ class ADBModel(QObject):
             if callback:
                 callback(f"[{device_ip}] {msg}")
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%H%M%S")
         sanitized = re.sub(r'\W+', '_', device_ip)
         target_dir = os.path.join(save_root, f"{sanitized}_bugreport_{timestamp}")
         os.makedirs(target_dir, exist_ok=True)

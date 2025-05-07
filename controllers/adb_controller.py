@@ -335,8 +335,8 @@ class ADBController:
 
     def _start_screenshot_process(self, device_ip: str, save_dir: str):
         """启动单个设备的截图流程"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        sanitized_ip = device_ip.replace(":", "_").replace(".", "_")
+        timestamp = datetime.now().strftime("%H%M%S")
+        sanitized_ip = re.sub(r'\W+', '_', device_ip)
         filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
         save_path = os.path.join(save_dir, filename)
 
@@ -380,8 +380,8 @@ class ADBController:
     
     def _save_single_device_log(self, device_ip: str, save_dir: str):
         """保存单个设备日志"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        sanitized_ip = device_ip.replace(":", "_")
+        timestamp = datetime.now().strftime("%H%M%S")
+        sanitized_ip = re.sub(r'\W+', '_', device_ip)
         log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
         
         operation_id = self._generate_operation_id()
@@ -892,7 +892,7 @@ class ADBController:
             self._emit_operation("pull_anr", False, "⚠️ No target directory selected")
             return
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%H%M%S")
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r'\W+', '_', device_ip)
             self.executor.submit(
