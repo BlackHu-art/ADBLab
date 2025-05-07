@@ -24,3 +24,4 @@ class LeftPanelSignals(QObject):
     kill_monkey_requested = Signal(list)
     pull_anr_file_requested = Signal(list)
     list_installed_packages_requested = Signal(list)
+    capture_bugreport_requested = Signal(list)

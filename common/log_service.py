@@ -1,6 +1,6 @@
 import logging
 from typing import Optional, Dict, Callable
-from PySide6.QtCore import QObject, Signal, QTimer, QMutex, Qt
+from PySide6.QtCore import QObject, Signal, QTimer, QMutex, QThread
 from dataclasses import dataclass
 
 
@@ -73,17 +73,17 @@ class LogService(QObject):
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
-    def log(self, level: str, message: str) -> None:
-        """
-        线程安全的日志记录方法
-        参数:
-            level: 日志级别 (使用LogLevel中的常量)
-            message: 日志消息
-        """
+    def log(self, level: str, message: str, *args, **kwargs) -> None:
+        """线程安全的日志记录方法，支持立即刷新"""
+        flush_immediately = kwargs.pop("flush_immediately", False)
+
         self._buffer_lock.lock()
         try:
             self._buffer.append((level, str(message)))
-            if not self._timer.isActive():
+
+            if flush_immediately:
+                self._flush_buffer()
+            elif QThread.currentThread() == self.thread() and not self._timer.isActive():
                 self._timer.start()
         finally:
             self._buffer_lock.unlock()

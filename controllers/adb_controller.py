@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QFileDialog, QWidget
 from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
-from common.log_service import LogService
+from common.log_service import LogLevel, LogService
 from utils.yaml_tool import YamlTool, YamlPackageCache
 
 class ADBControllerSignals(QObject):
@@ -29,6 +29,7 @@ class ADBControllerSignals(QObject):
     kill_monkey_result = Signal(str)
     pull_anr_file_result = Signal(str)
     list_packages_result = Signal(str)
+    get_bugreport_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -851,6 +852,32 @@ class ADBController:
             msg = result.get("message", "Unknown error")
             self._emit_operation("installed_packages", False, f"❌ {idx}. Failed to get packages from {device_ip}:\n{msg}")
 
+    def capture_bugreport(self, devices: list):
+        if not devices:
+            self._emit_operation("bugreport", False, "⚠️ No devices selected.")
+            return
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
+        log = LogService().log
+        for idx, device in enumerate(devices, 1):
+            self.executor.submit(
+                self.adb_model.capture_bugreport_async,
+                device,
+                save_dir,
+                idx,
+                callback=lambda msg: log(LogLevel.INFO, msg)  # ✅ 这里是传入一个真正的函数
+            )
+
+    def _process_capture_bugreport_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+        success = result.get("success", False)
+        message = result.get("message", "")
+        
+        if success:
+            bug_path = result.get("bugreport_path")
+            self._emit_operation("bugreport", True, f"✅ {idx}. Bugreport saved from {device_ip}:\n{bug_path}")
+        else:
+            self._emit_operation("bugreport", False, f"❌ {idx}. Failed on {device_ip}:\n{message}")
 
 
     def pull_anr_files(self, devices: list[str]):
@@ -945,6 +972,7 @@ class ADBController:
             "parse_apk_info": self._process_parse_apk_info_result,
             "kill_monkey": self._process_kill_monkey_result,
             "list_installed_packages": self._process_list_installed_packages_result,
+            "capture_bugreport": self._process_capture_bugreport_result,
             "pull_anr_files": self._process_pull_anr_result,
 
         }

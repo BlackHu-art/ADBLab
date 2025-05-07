@@ -79,6 +79,7 @@ class LeftPanel(QWidget):
         
         self.kill_monkey_btn.clicked.connect(lambda: self.signals.kill_monkey_requested.emit(self.selected_devices))
         self.list_package_btn.clicked.connect(lambda: self.signals.list_installed_packages_requested.emit(self.selected_devices))
+        self.get_bugreport_btn.clicked.connect(lambda: self.signals.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: self.signals.pull_anr_file_requested.emit(self.selected_devices))
         
     def _create_device_group(self) -> QGroupBox:
@@ -247,8 +248,8 @@ class LeftPanel(QWidget):
         perf_row2 = QHBoxLayout()
         self.kill_monkey_btn = self._create_button("Kill Monkey", "resources/icons/Kill_monkey.svg")
         self.list_package_btn = self._create_button("Packages List", "resources/icons/format_list_bulleted.svg")
-        perf_btn3 = self._create_button("Get Bugreport", "resources/icons/bugreport.svg")
-        for btn in (self.kill_monkey_btn, self.list_package_btn, perf_btn3):
+        self.get_bugreport_btn = self._create_button("Capture Bugreport", "resources/icons/bugreport.svg")
+        for btn in (self.kill_monkey_btn, self.list_package_btn, self.get_bugreport_btn):
             perf_row2.addWidget(btn, 1)
         layout.addLayout(perf_row2)
         

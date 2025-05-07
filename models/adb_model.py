@@ -1,4 +1,5 @@
 import base64
+from datetime import datetime
 import os
 import re
 import subprocess
@@ -6,6 +7,7 @@ from functools import wraps
 from urllib.parse import quote
 import time
 from typing import Dict, List
+import zipfile
 from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
 
 class ADBModel(QObject):
@@ -483,6 +485,61 @@ class ADBModel(QObject):
         except subprocess.CalledProcessError as e:
             return {"device_ip": device_ip, "success": False, "message": e.output, "index": index}
 
+    @async_command
+    def capture_bugreport_async(self, device_ip: str, save_root: str, index: int, callback=None) -> dict:
+        def log(msg):  # 可选日志回调
+            if callback:
+                callback(f"[{device_ip}] {msg}")
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        sanitized = device_ip.replace(":", "_").replace(".", "_")
+        target_dir = os.path.join(save_root, f"{sanitized}_bugreport_{timestamp}")
+        os.makedirs(target_dir, exist_ok=True)
+        log(f"📁 Created directory: {target_dir}")
+
+        log("🔍 Getting Android version...")
+        version_cmd = ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"]
+        version_proc = subprocess.run(version_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        version_str = version_proc.stdout.strip()
+        log(f"📱 Android version: {version_str or 'unknown'}")
+
+        try:
+            android_version = tuple(map(int, version_str.split('.')))
+        except ValueError:
+            return {"device_ip": device_ip, "index": index, "success": False, "message": "Invalid Android version format"}
+
+        if android_version >= (8, 0):
+            log("🚀 Running: adb bugreport <dir> ... this may take 1-2 minutes")
+            cmd = ["adb", "-s", device_ip, "bugreport", target_dir]
+        else:
+            log("🚀 Running: adb bugreport <file> ... this may take 1-2 minutes")
+            output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
+            cmd = ["adb", "-s", device_ip, "bugreport", output_file]
+
+        proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        log("✅ Bugreport command completed")
+
+        zip_files = [f for f in os.listdir(target_dir) if f.endswith(".zip")]
+        if zip_files:
+            try:
+                for zip_file in zip_files:
+                    zip_path = os.path.join(target_dir, zip_file)
+                    log(f"📦 Extracting ZIP: {zip_file}")
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(target_dir)
+                log("✅ Extracted ZIP successfully")
+            except Exception as e:
+                return {"device_ip": device_ip, "index": index, "success": False, "message": f"Failed to unzip: {e}"}
+        else:
+            log("⚠️ No ZIP found, continuing")
+
+        return {
+            "device_ip": device_ip,
+            "index": index,
+            "success": True,
+            "message": f"Bugreport saved in {target_dir}",
+            "bugreport_path": target_dir
+        }
 
 
 
