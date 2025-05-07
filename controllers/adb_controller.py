@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +25,7 @@ class ADBControllerSignals(QObject):
     clear_app_data_result = Signal(str, str)
     restart_app_result = Signal(str, str)
     print_activity_result = Signal(str)
+    parse_apk_info_result = Signal()
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -738,7 +740,79 @@ class ADBController:
         if self.finished_activity == self.total_activity:
             self._emit_operation("current_activity", True, "🎯 Activity info fetch complete")
 
-        
+    def parse_apk_info(self):
+        """弹出系统文件选择对话框并解析 APK"""
+        apk_path, _ = QFileDialog.getOpenFileName(
+            None,
+            "Select APK File",
+            "",
+            "APK Files (*.apk);;All Files (*)"
+        )
+
+        if not apk_path:
+            self._emit_operation("apk_info", False, "⚠️ APK file selection cancelled")
+            return
+
+        if not apk_path.endswith(".apk"):
+            self._emit_operation("apk_info", False, f"❌ Invalid APK file selected: {apk_path}")
+            return
+
+        self._emit_operation("apk_info", True, f"📦 Selected APK: {apk_path}")
+        self.executor.submit(self.adb_model.parse_apk_info_async, apk_path)
+
+    def _process_parse_apk_info_result(self, result: dict):
+        """处理 APK 解析结果并提取关键字段"""
+        apk_path = result.get("apk_path", "unknown")
+
+        if result.get("success"):
+            raw_output = result.get("output", "")
+            try:
+                # 正则提取核心字段
+                package_name = re.search(r"package: name='(.*?)'", raw_output)
+                version_code = re.search(r"versionCode='(.*?)'", raw_output)
+                version_name = re.search(r"versionName='(.*?)'", raw_output)
+                min_sdk = re.search(r"sdkVersion:'(.*?)'", raw_output)
+                target_sdk = re.search(r"targetSdkVersion:'(.*?)'", raw_output)
+                compile_sdk = re.search(r"compileSdkVersion='(.*?)'", raw_output)
+                build_version = re.search(r"platformBuildVersionName='(.*?)'", raw_output)
+
+                label_match = re.search(r"application-label(?:-[\w\-]+)?:'(.*?)'", raw_output)
+                app_label = label_match.group(1) if label_match else "N/A"
+
+                icon_match = re.search(r"application: label='.*?' icon='(.*?)'", raw_output)
+                icon_path = icon_match.group(1) if icon_match else "N/A"
+
+                permissions = re.findall(r"uses-permission: name='(.*?)'", raw_output)
+                features = re.findall(r"uses-feature(?:-not-required)?: name='(.*?)'", raw_output)
+                native_code = re.findall(r"native-code: '(.*?)'", raw_output)
+
+                # 格式化输出
+                formatted = f"""
+    🔹 应用名称: {app_label}
+    📦 包名: {package_name.group(1) if package_name else 'N/A'}
+    🔢 版本号: {version_name.group(1) if version_name else 'N/A'} (Code: {version_code.group(1) if version_code else 'N/A'})
+    🎯 SDK版本: min={min_sdk.group(1) if min_sdk else 'N/A'}, target={target_sdk.group(1) if target_sdk else 'N/A'}, compile={compile_sdk.group(1) if compile_sdk else 'N/A'}
+    🛠️ 构建版本: {build_version.group(1) if build_version else 'N/A'}
+    🖼️ 应用图标: {icon_path}
+    🔐 权限数: {len(permissions)} 项
+    ⚙️ 特性声明: {", ".join(features) if features else "无"}
+    🧬 支持架构: {", ".join(native_code) if native_code else "未声明"}
+    """
+
+                # 可选附加调试信息（开发时开启）
+                # formatted += f"\n--- 原始输出 ---\n{raw_output}"
+
+                self._emit_operation("apk_info", True, formatted)
+
+            except Exception as e:
+                self._emit_operation("apk_info", False, f"⚠️ APK 字段解析异常: {apk_path}\n错误: {str(e)}")
+
+        else:
+            error = result.get("error", "Unknown error")
+            self._emit_operation("apk_info", False, f"❌ APK 解析失败: {apk_path}\n错误: {error}")
+
+
+
 
     # ----- Private Methods -----
     
@@ -793,7 +867,8 @@ class ADBController:
             "uninstall_apk": self._process_uninstall_apk_result,
             "clear_app_data": self._process_clear_app_data_result,
             "restart_app": self._process_restart_app_result,
-            "get_current_activity": self._process_get_current_activity_result
+            "get_current_activity": self._process_get_current_activity_result,
+            "parse_apk_info": self._process_parse_apk_info_result,
 
         }
         

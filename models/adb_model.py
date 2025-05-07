@@ -407,17 +407,17 @@ class ADBModel(QObject):
                     resumed_activity = line.strip()
                     break
 
-            return {
-                "success": True,
-                "device_ip": device_ip,
-                "index": index,
-                "current_focus": current_focus,
-                "resumed_activity": resumed_activity,
-            }
+            return {"success": True,"device_ip": device_ip,"index": index,"current_focus": current_focus,"resumed_activity": resumed_activity,}
         except Exception as e:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "index": index,
-                "error": str(e)
-            }
+            return {"success": False,"device_ip": device_ip,"index": index,"error": str(e)}
+
+    @async_command
+    def parse_apk_info_async(self, apk_path: str) -> dict:
+        """使用 aapt 异步解析 APK 信息"""
+
+        try:
+            command = ["aapt", "dump", "badging", apk_path]
+            output = self._execute_command(command, timeout=15)
+            return {"success": True,"apk_path": apk_path,"output": output}
+        except Exception as e:
+            return {"success": False,"apk_path": apk_path,"error": str(e)}

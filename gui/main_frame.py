@@ -57,8 +57,6 @@ class MainFrame(QMainWindow):
         # ADB控制器 -> UI组件
         self.adb_controller.signals.devices_updated.connect(self.left_panel.update_device_list)
         self.adb_controller.signals.operation_completed.connect(self.log_panel._append_log)
-        
-        # 左侧面板 -> ADB控制器
         self.left_panel.signals.connect_requested.connect(self.adb_controller.connect_device)
         self.left_panel.signals.refresh_devices_requested.connect(self.adb_controller.refresh_devices)
         self.left_panel.signals.device_info_requested.connect(self.adb_controller.get_device_info)
@@ -87,6 +85,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.clear_app_data_requested.connect(self.adb_controller.clear_app_data)
         self.left_panel.signals.restart_app_requested.connect(self.adb_controller.restart_app)
         self.left_panel.signals.print_activity_requested.connect(self.adb_controller.get_current_activity)
+        self.left_panel.signals.parse_apk_info_requested.connect(self.adb_controller.parse_apk_info)
 
         
     def _setup_menu(self):
