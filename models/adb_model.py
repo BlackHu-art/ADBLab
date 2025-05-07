@@ -492,7 +492,7 @@ class ADBModel(QObject):
                 callback(f"[{device_ip}] {msg}")
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        sanitized = device_ip.replace(":", "_").replace(".", "_")
+        sanitized = re.sub(r'\W+', '_', device_ip)
         target_dir = os.path.join(save_root, f"{sanitized}_bugreport_{timestamp}")
         os.makedirs(target_dir, exist_ok=True)
         log(f"📁 Created directory: {target_dir}")
