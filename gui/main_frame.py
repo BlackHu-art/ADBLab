@@ -1,5 +1,6 @@
 import json
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QProgressDialog
 from controllers.adb_controller import ADBController
 from gui.widgets.py_panel.log_panel import LogPanel
@@ -35,6 +36,7 @@ class MainFrame(QMainWindow):
     def _setup_window(self):
         """基础窗口设置"""
         self.setWindowTitle("ADBLab")
+        self.setWindowIcon(QIcon("icon.ico"))
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
         self.setFont(get_default_font())

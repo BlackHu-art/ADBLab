@@ -1,5 +1,6 @@
 import os
 import re
+from textwrap import indent
 import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -228,9 +229,32 @@ class ADBController:
             self.adb_model.get_device_info_async(ip)
     
     def _process_device_info_result(self, result: dict):
-        """专属设备信息处理器"""
-        self.signals.device_info_updated.emit(result["ip"], result)
-        self._emit_operation("get_info", True, f"Obtained {result['ip']} informations")
+        """优化后的设备信息处理器"""
+        device_ip = result.get("ip", "Unknown")
+        # self.signals.device_info_updated.emit(ip, result)
+
+        log = LogService().log
+        log(LogLevel.INFO, f"📱 Device Info - {device_ip}")
+        log(LogLevel.INFO, f"  🧭 Model            : {result.get('Model', '-')}")
+        log(LogLevel.INFO, f"  🏷️ Brand            : {result.get('Brand', '-')}")
+        log(LogLevel.INFO, f"  🤖 Android Version  : {result.get('Android Version', '-')}")
+        log(LogLevel.INFO, f"  🧪 SDK Version      : {result.get('SDK Version', '-')}")
+        log(LogLevel.INFO, f"  🧬 CPU Architecture : {result.get('CPU Architecture', '-')}")
+        log(LogLevel.INFO, f"  🔧 Hardware         : {result.get('Hardware', '-')}")
+        log(LogLevel.INFO, f"  🖼️ Resolution       : {result.get('Resolution', '-')}".replace("Physical size: ", ""))
+        log(LogLevel.INFO, f"  🧮 Density          : {result.get('Density', '-')}".replace("Physical density: ", ""))
+        log(LogLevel.INFO, f"  🌐 Timezone         : {result.get('Timezone', '-')}")
+        log(LogLevel.INFO, f"  🆔 Serial Number    : {result.get('Serial Number', '-')}")
+        log(LogLevel.INFO, f"  💾 Total Memory     : {result.get('Total Memory', '-')}")
+        log(LogLevel.INFO, f"  📉 Available Memory : {result.get('Available Memory', '-')}")
+        
+        log(LogLevel.INFO, f"  📂 Storage          :")
+        for line in result.get("Storage", "").splitlines():
+            log(LogLevel.INFO, f"    {line}")
+
+        log(LogLevel.INFO, f"  📡 MAC / IP Info    :")
+        for line in result.get("Mac", "").splitlines():
+            log(LogLevel.INFO, f"    {line}")
 
     def disconnect_devices(self, devices: list):
         """断开设备连接（异步优化版）"""
