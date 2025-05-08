@@ -34,7 +34,7 @@ class MainFrame(QMainWindow):
 
     def _setup_window(self):
         """基础窗口设置"""
-        self.setWindowTitle("ADB Manager GUI")
+        self.setWindowTitle("ADBLab")
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
         self.setFont(get_default_font())
