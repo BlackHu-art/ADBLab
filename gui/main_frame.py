@@ -86,7 +86,7 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.restart_app_requested.connect(self.adb_controller.restart_app)
         self.left_panel.signals.print_activity_requested.connect(self.adb_controller.get_current_activity)
         self.left_panel.signals.parse_apk_info_requested.connect(self.adb_controller.parse_apk_info)
-
+        self.left_panel.signals.start_monkey_requested.connect(self.adb_controller.run_monkey_test)
         self.left_panel.signals.kill_monkey_requested.connect(self.adb_controller.kill_monkey)
         self.left_panel.signals.list_installed_packages_requested.connect(self.adb_controller.list_installed_packages)
         self.left_panel.signals.capture_bugreport_requested.connect(self.adb_controller.capture_bugreport)

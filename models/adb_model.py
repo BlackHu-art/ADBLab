@@ -595,6 +595,35 @@ class ADBModel(QObject):
             if result.returncode == 0:
                 if log:
                     log("✅ Bugreport HTML generated successfully.")
+                                    # 在原始报告目录中查找生成目录  这一坨代码需要优化
+                # base_dir = os.path.dirname(bugreport_txt_path)
+                # report_dirs = sorted(
+                #     [d for d in os.listdir(base_dir) 
+                #     if re.match(r'^bugreport.*_out$', d) 
+                #     and os.path.isdir(os.path.join(base_dir, d))],
+                #     key=lambda x: os.path.getmtime(os.path.join(base_dir, x)),
+                #     reverse=True
+                # )
+                
+                # if report_dirs:
+                #     target_dir = os.path.join(base_dir, report_dirs[0])
+                #     html_name = os.path.splitext(os.path.basename(bugreport_txt_path))[0] + ".html"
+                #     html_path = os.path.join(target_dir, html_name)
+                    
+                #     if log:
+                #         log(f"🔍 Found {len(report_dirs)} report directories")
+                #         log(f"📁 Using latest report directory: {report_dirs[0]}")
+                # else:
+                #     html_path = os.path.splitext(bugreport_txt_path)[0] + ".html"
+                # # ==== 修改结束 ====
+
+                # if os.path.exists(html_path):
+                #     log(f"🌐 Opening HTML report in Edge: {html_path}")
+                #     if os.name == "nt":
+                #         edge_url = f"microsoft-edge:{os.path.abspath(html_path)}"
+                #         webbrowser.get("windows-default").open(edge_url)
+                #     else:
+                #         webbrowser.open_new_tab(html_path)
             else:
                 raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=result.stderr)
         except subprocess.CalledProcessError as e:
@@ -606,6 +635,143 @@ class ADBModel(QObject):
                 log(f"❌ Unexpected error: {str(e)}")
             raise
 
+    @async_command
+    def run_monkey_test_async(
+        self,
+        device_ip: str,
+        package_name: str,
+        count: str,
+        device_type: str,
+        sanitized_name: str,
+        save_dir: str,
+        index: int,
+        callback=None
+    ) -> dict:
+        
+        def log(msg):
+            if callback:
+                callback(f"[{device_ip}] {msg}")
+
+        timestamp = datetime.now().strftime("%H%M%S")
+        log_dir = os.path.join(save_dir, f"{sanitized_name}_monkey_{timestamp}")
+        os.makedirs(log_dir, exist_ok=True)
+        monkey_log_path = os.path.join(log_dir, "monkey.txt")
+        logcat_log_path = os.path.join(log_dir, "logcat.txt")
+
+        start_time = datetime.now()
+        result = {
+            "device_ip": device_ip,
+            "success": False,
+            "monkey_log": monkey_log_path,
+            "logcat_log": logcat_log_path,
+            "duration": "",
+            "error": "",
+            "index": index
+        }
+
+        try:
+            # 清理设备历史日志
+            log("🧹 Clearing previous device logs...")
+            subprocess.run(
+                ["adb", "-s", device_ip, "logcat", "-c"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            # 启动 logcat
+            log(f"📄 Starting logcat collection → {logcat_log_path}")
+            logcat_proc = subprocess.Popen(
+                ["adb", "-s", device_ip, "logcat", "-v", "time"],
+                stdout=open(logcat_log_path, "w", encoding="utf-8"),
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            # 构造 Monkey 命令
+            log(f"🧪 Launching Monkey test on {device_type}...")
+            throttle = "500" if device_type == "Mobile" else "1000"
+            monkey_cmd = [
+                "adb", "-s", device_ip, "shell", "monkey",
+                "-p", package_name, "-v", "-v", "-v",
+                "--throttle", throttle,
+                "--ignore-crashes", "--ignore-timeouts", "--ignore-security-exceptions",
+                "--pct-touch", "35" if device_type == "Mobile" else "21",
+                "--pct-motion", "15" if device_type == "Mobile" else "5",
+                "--pct-trackball", "0",
+                "--pct-nav", "25" if device_type == "Mobile" else "67",
+                "--pct-majornav", "10" if device_type == "Mobile" else "5",
+                "--pct-syskeys", "2" if device_type == "Mobile" else "1",
+                "--pct-appswitch", "10" if device_type == "Mobile" else "0",
+                "--pct-anyevent", "3" if device_type == "Mobile" else "1",
+                "-s", "12345",
+                count
+            ]
+
+            monkey_proc = subprocess.Popen(
+                monkey_cmd,
+                stdout=open(monkey_log_path, "w", encoding="utf-8"),
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+
+            # 开始轮询监控前台应用
+            log("🔁 Starting Monkey Test monitoring loop...")
+            last_switch_time = 0
+            cooldown = 30
+            interval = 15
+
+            while monkey_proc.poll() is None:
+                try:
+                    output = subprocess.check_output(
+                        ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
+                        stderr=subprocess.DEVNULL,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        text=True
+                    )
+                    current_app = ""
+                    for line in output.splitlines():
+                        if "mCurrentFocus" in line or "mFocusedApp" in line:
+                            current_app = line.split()[-1].split("/")[0]
+                            break
+
+                    if current_app != package_name and (time.time() - last_switch_time) > cooldown:
+                        log("🕹️ App in background, switching back to target app...")
+                        subprocess.run(["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        subprocess.run(["adb", "-s", device_ip, "shell", "monkey", "-p", package_name, "1"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        last_switch_time = time.time()
+
+                    time.sleep(interval)
+
+                except Exception as e:
+                    log(f"⚠️ Polling exception: {str(e)}")
+                    time.sleep(interval)
+
+            # 检查 monkey 错误输出
+            stderr = monkey_proc.stderr.read()
+            if stderr:
+                result["error"] = stderr.decode(errors="ignore")
+            
+            result["success"] = True
+            result["duration"] = str(datetime.now() - start_time)
+            log(f"✅ Monkey test complete for {device_ip} / ({index})")
+
+        except Exception as e:
+            result["error"] = str(e)
+            result["duration"] = str(datetime.now() - start_time)
+            log(f"❌ Monkey test failed: {e} | Time: {result['duration']}")
+
+        finally:
+            try:
+                logcat_proc.terminate()
+                logcat_proc.wait()
+                log("🛑 logcat process terminated.")
+            except Exception as e:
+                log(f"⚠️ Failed to terminate logcat process: {e}")
+
+        return result
 
 
 

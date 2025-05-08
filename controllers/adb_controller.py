@@ -30,6 +30,7 @@ class ADBControllerSignals(QObject):
     pull_anr_file_result = Signal(str)
     list_packages_result = Signal(str)
     get_bugreport_result = Signal(str)
+    start_monkey_result = Signal(str)
 
 class ADBController:
     """Fully decoupled ADB controller communicating via signals"""
@@ -49,7 +50,7 @@ class ADBController:
         
         try:
             DeviceStore.load()
-            self.log_service.log("INFO", "DeviceStore loaded successfully")
+            # self.log_service.log("INFO", "DeviceStore loaded successfully")
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
             DeviceStore.initialize_empty()
@@ -912,6 +913,75 @@ class ADBController:
         else:
             self._emit_operation("pull_anr", False, f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{result['message']}")
 
+    def run_monkey_test(self, devices: list, device_type: str, package_name: str, count: str):
+        """执行 Monkey 测试任务调度"""
+        # 参数校验
+        if not devices:
+            return self._emit_operation("monkey", False, "⚠️ No devices selected")
+        if not device_type:
+            return self._emit_operation("monkey", False, "⚠️ No device type selected")
+        if not package_name:
+            return self._emit_operation("monkey", False, "⚠️ No package name provided")
+        if not count:
+            return self._emit_operation("monkey", False, "⚠️ No monkey count provided")
+
+        # 获取保存目录
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save Monkey logs")
+        if not save_dir:
+            return self._emit_operation("monkey", False, "⚠️ No target directory selected")
+
+        log = LogService().log
+        log(LogLevel.INFO, f"📦 Starting Monkey tests on {len(devices)} devices...")
+        log(LogLevel.INFO, f"📁 Log save directory: {save_dir}")
+
+        # 提交任务
+        for idx, device_ip in enumerate(devices, 1):
+            sanitized_name = re.sub(r'\W+', '_', device_ip)
+            self.executor.submit(
+                self.adb_model.run_monkey_test_async,
+                device_ip,
+                package_name,
+                count,
+                device_type,
+                sanitized_name,
+                save_dir,
+                idx,
+                callback=lambda msg: log(LogLevel.INFO, msg)  # ✅ 这里是传入一个真正的函数
+            )
+
+    def _process_run_monkey_test_result(self, result: dict):
+        """处理单个 Monkey 测试结果（优化版）"""
+        device_ip = result.get("device_ip", "unknown")
+        duration = result.get("duration", "N/A")
+        monkey_log = result.get("monkey_log", "")
+        logcat_log = result.get("logcat_log", "")
+        error = result.get("error", "None")
+
+        if result.get("success"):
+            message = (
+                "\n╔═══════════════════════════════════════════════════════════════════════════\n"
+                f"║ ✅ Monkey 测试报告 - 设备: {device_ip}\n"
+                "╠═══════════════════════════════════════════════════════════════════════════\n"
+                f"║ ⏱️ 执行时长: {duration}\n"
+                f"║ 📄 Monkey 日志: {monkey_log}\n"
+                f"║ 📄 Logcat 日志: {logcat_log}\n"
+                "╚═══════════════════════════════════════════════════════════════════════════"
+            )
+        else:
+            message = (
+                "\n╔═══════════════════════════════════════════════════════════════════════════\n"
+                f"║ ❌ Monkey 测试失败 - 设备: {device_ip}\n"
+                "╠═══════════════════════════════════════════════════════════════════════════\n"
+                f"║ ⏱️ 执行时长: {duration}\n"
+                f"║ 💥 错误详情: {error[:200]}{'...' if len(error)>200 else ''}\n"
+                f"║ 🔍 详细日志: {monkey_log}\n"
+                "╚═══════════════════════════════════════════════════════════════════════════"
+            )
+
+        return self._emit_operation("monkey", result.get("success"), message)
+
+
+
 
 
 
@@ -970,6 +1040,7 @@ class ADBController:
             "restart_app": self._process_restart_app_result,
             "get_current_activity": self._process_get_current_activity_result,
             "parse_apk_info": self._process_parse_apk_info_result,
+            "run_monkey_test": self._process_run_monkey_test_result,
             "kill_monkey": self._process_kill_monkey_result,
             "list_installed_packages": self._process_list_installed_packages_result,
             "capture_bugreport": self._process_capture_bugreport_result,

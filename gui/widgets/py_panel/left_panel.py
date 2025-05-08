@@ -1,7 +1,7 @@
 from re import search
 from typing import List, Union
 from PySide6.QtCore import Qt, Slot, QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QIntValidator
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit, QCompleter
@@ -76,7 +76,7 @@ class LeftPanel(QWidget):
         self.restart_app_btn.clicked.connect(lambda: self.signals.restart_app_requested.emit(self.selected_devices, self.program_edit.currentText()))
         self.print_activity_btn.clicked.connect(lambda: self.signals.print_activity_requested.emit(self.selected_devices))
         self.parse_apk_info_btn.clicked.connect(lambda: self.signals.parse_apk_info_requested.emit())
-        
+        self.start_monkey_btn.clicked.connect(lambda: self.signals.start_monkey_requested.emit(self.selected_devices, self.device_type.currentText(), self.program_edit.currentText(), self.select_times.currentText()))
         self.kill_monkey_btn.clicked.connect(lambda: self.signals.kill_monkey_requested.emit(self.selected_devices))
         self.list_package_btn.clicked.connect(lambda: self.signals.list_installed_packages_requested.emit(self.selected_devices))
         self.get_bugreport_btn.clicked.connect(lambda: self.signals.capture_bugreport_requested.emit(self.selected_devices))
@@ -232,16 +232,19 @@ class LeftPanel(QWidget):
         # ▶️ 第一行：输入框 + 按钮
         perf_row1 = QHBoxLayout()
         # 添加设备类型下拉框
-        device_type = QComboBox()
-        device_type.addItems(["STB", "Mobile"])  # 固定选项
-        device_type.setFont(self._base_font)
-        input_times = QLineEdit()
-        input_times.setFont(self._base_font)
-        input_times.setPlaceholderText("Input Run times")
-        btn_start = self._create_button("Start Monkey", "resources/icons/Monkey.svg")
-        perf_row1.addWidget(device_type, 1)
-        perf_row1.addWidget(input_times, 1)
-        perf_row1.addWidget(btn_start, 1)
+        self.device_type = QComboBox()
+        self.device_type.addItems(["STB", "Mobile"])  # 固定选项
+        self.device_type.setToolTip("Select Device Type")
+        self.device_type.setFont(self._base_font)
+        self.select_times = QComboBox()
+        self.select_times.addItems(["100", "10000", "100000", "500000"])
+        self.select_times.setCurrentIndex(0)  # 默认选中10000
+        self.select_times.setFont(self._base_font)
+        self.select_times.setToolTip("Select the number of times to run")
+        self.start_monkey_btn = self._create_button("Start Monkey", "resources/icons/Monkey.svg")
+        perf_row1.addWidget(self.device_type, 1)
+        perf_row1.addWidget(self.select_times, 1)
+        perf_row1.addWidget(self.start_monkey_btn, 1)
         layout.addLayout(perf_row1)
         
         # ▶️ 第二行：三个按钮
