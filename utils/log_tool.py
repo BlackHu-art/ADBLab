@@ -1,6 +1,6 @@
 # log_tool.py
 from typing import Optional
-from labgui.widgets.style.base_styles import Styles
+from gui.widgets.style.base_styles import Styles
 from PySide6.QtWidgets import QTextEdit
 from PySide6.QtCore import Qt
 

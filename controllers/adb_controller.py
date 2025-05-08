@@ -6,7 +6,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Slot
 from PySide6.QtWidgets import QFileDialog, QWidget
-from labgui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
+from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from common.log_service import LogLevel, LogService

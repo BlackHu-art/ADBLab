@@ -1,5 +1,5 @@
 from PySide6.QtGui import QColor
-from labgui.widgets.style.base_styles import BaseStyles
+from gui.widgets.style.base_styles import BaseStyles
 
 class MenuBarStyles:
     
