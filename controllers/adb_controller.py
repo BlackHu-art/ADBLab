@@ -6,7 +6,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Slot
 from PySide6.QtWidgets import QFileDialog, QWidget
-from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
+from labgui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
 from models.adb_model import ADBModel
 from models.device_store import DeviceStore
 from common.log_service import LogLevel, LogService
@@ -255,6 +255,8 @@ class ADBController:
         log(LogLevel.INFO, f"  📡 MAC / IP Info    :")
         for line in result.get("Mac", "").splitlines():
             log(LogLevel.INFO, f"    {line}")
+        log(LogLevel.INFO, f"  ✅ complete\n")
+
 
     def disconnect_devices(self, devices: list):
         """断开设备连接（异步优化版）"""

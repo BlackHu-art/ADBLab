@@ -6,10 +6,10 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit, QCompleter
 )
-from gui.widgets.style.base_styles import get_default_font
+from labgui.widgets.style.base_styles import get_default_font
 from models.device_store import DeviceStore
 from contextlib import contextmanager
-from gui.widgets.py_panel.left_panel_signals import LeftPanelSignals
+from labgui.widgets.py_panel.left_panel_signals import LeftPanelSignals
 from utils.double_click_button import DoubleClickButton
 from models.device_store import DeviceStore
 from models.adb_model import ADBModel

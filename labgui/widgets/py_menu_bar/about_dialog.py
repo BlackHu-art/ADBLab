@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel,
 from PySide6.QtCore import Qt, QPropertyAnimation
 from PySide6.QtGui import QColor
 
-from gui.widgets.style.menubar_styles import MENUBAR_STYLES
+from labgui.widgets.style.menubar_styles import MENUBAR_STYLES
 
 class AboutDialog(QDialog):
     """使用全局样式的关于对话框"""

@@ -2,7 +2,7 @@ from typing import Dict, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout
 from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
-from gui.widgets.style.base_styles import BaseStyles
+from labgui.widgets.style.base_styles import BaseStyles
 from common.log_service import LogService
 
 

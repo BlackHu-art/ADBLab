@@ -2,7 +2,7 @@ from PySide6.QtWidgets import QMenuBar
 from PySide6.QtCore import Qt, Signal 
 from PySide6.QtGui import QMouseEvent, QAction
 
-from gui.widgets.py_menu_bar.about_dialog import AboutDialog
+from labgui.widgets.py_menu_bar.about_dialog import AboutDialog
 
 class CustomMenuBar(QMenuBar):
     """优化后的自定义菜单栏"""
