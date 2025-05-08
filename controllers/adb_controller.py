@@ -718,24 +718,41 @@ class ADBController:
         idx = result.get("index", 1)
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
-        output = result.get("output", "")
+        output = result.get("output", "").strip()
 
         if result.get("success"):
             self.success_restart += 1
-            msg = f"✅ restart success ({idx}/{self.total_restart}) {pkg} on {ip}\n{output}"
+            msg = (
+                f"✅ Restart Success ({idx}/{self.total_restart})\n"
+                f"   📦 Package : {pkg}\n"
+                f"   🌐 Device  : {ip}\n"
+                f"   📤 Output  :\n"
+                f"{self._indent_output(output)}"
+            )
             self._emit_operation("restart_app", True, msg)
         else:
-            msg = f"❌ restart failed ({idx}/{self.total_restart}) {pkg} on {ip}\n错误信息: {output}"
+            msg = (
+                f"❌ Restart Failed ({idx}/{self.total_restart})\n"
+                f"   📦 Package : {pkg}\n"
+                f"   🌐 Device  : {ip}\n"
+                f"   ⚠️ Error   :\n"
+                f"{self._indent_output(output)}"
+            )
             self._emit_operation("restart_app", False, msg)
 
         self.finished_restart += 1
         if self.finished_restart == self.total_restart:
             summary = (
-                f"🎯 Restart app completed; "
-                f"✅ Success: {self.success_restart}; "
-                f"❌ Failed: {self.total_restart - self.success_restart}"
+                f"🏁 Restart App Completed\n"
+                f"   ✅ Success : {self.success_restart}\n"
+                f"   ❌ Failed  : {self.total_restart - self.success_restart}"
             )
             self._emit_operation("restart_app", True, summary)
+
+    def _indent_output(self, text: str, prefix: str = "     ") -> str:
+        """为多行输出添加缩进美化"""
+        return "\n".join(f"{prefix}{line}" for line in text.splitlines() if line.strip())
+
 
     def get_current_activity(self, devices: list[str]):
         if not devices:
