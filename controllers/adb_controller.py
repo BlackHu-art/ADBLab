@@ -769,24 +769,32 @@ class ADBController:
         """处理 Activity 查询结果"""
         device = result.get("device_ip", "unknown")
         idx = result.get("index", 0)
+        success = result.get("success", False)
+        focus = result.get("current_focus", "").strip()
+        resumed = result.get("resumed_activity", "").strip()
+        error = result.get("error", "").strip()
 
-        if result.get("success"):
-            focus = result.get("current_focus", "")
-            resumed = result.get("resumed_activity", "")
+        if success:
+            msg_lines = [f"📱 ({idx}) {device} - Activity Info"]
             if focus:
-                self._emit_operation("current_activity", True, f"📱 ({idx}) {device}\nCurrent Activity:\n{focus}")
+                msg_lines.append(f"   🔍 Current Focus   :\n{self._indent_output(focus)}")
             else:
-                self._emit_operation("current_activity", False, f"⚠️ No mCurrentFocus found on {device}")
+                msg_lines.append(f"   ⚠️  No mCurrentFocus found")
             if resumed:
-                self._emit_operation("current_activity", True, f"Resumed Activity:\n{resumed}")
+                msg_lines.append(f"   🎯 Resumed Activity:\n{self._indent_output(resumed)}")
             else:
-                self._emit_operation("current_activity", False, f"⚠️ No mResumedActivity found on {device}")
+                msg_lines.append(f"   ⚠️  No mResumedActivity found")
+            self._emit_operation("current_activity", True, "\n".join(msg_lines))
         else:
-            self._emit_operation("current_activity", False, f"❌ Failed to get activity on {device}\n{result.get('error')}")
+            msg = (
+                f"❌ Failed to get activity on ({idx}) {device}\n"
+                f"{self._indent_output(error)}"
+            )
+            self._emit_operation("current_activity", False, msg)
 
         self.finished_activity += 1
         if self.finished_activity == self.total_activity:
-            self._emit_operation("current_activity", True, "🎯 Activity info fetch complete")
+            self._emit_operation("current_activity", True, "✅ Activity info fetch completed.")
 
     def parse_apk_info(self):
         """弹出系统文件选择对话框并解析 APK"""
