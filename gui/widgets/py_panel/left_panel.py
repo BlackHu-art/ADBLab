@@ -1,7 +1,7 @@
 from re import search
 from typing import List, Union
 from PySide6.QtCore import Qt, Slot, QTimer
-from PySide6.QtGui import QFont, QIcon, QIntValidator
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox, QComboBox, QPushButton,
     QListWidget, QListWidgetItem, QFrame, QSizePolicy, QAbstractItemView, QLineEdit, QCompleter
@@ -82,6 +82,11 @@ class LeftPanel(QWidget):
         self.get_bugreport_btn.clicked.connect(lambda: self.signals.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: self.signals.pull_anr_file_requested.emit(self.selected_devices))
         
+        # self.btn_generate_email.clicked.connect(self.on_generate_email_clicked)
+        self.email_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.email_text_sender.text()))
+        self.verfication_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.verfication_text_sender.text()))
+
+
     def _create_device_group(self) -> QGroupBox:
         group = QGroupBox(self.GROUP_TITLES[0])
         group.setFont(self._base_font)
@@ -161,12 +166,12 @@ class LeftPanel(QWidget):
         self.email_text_sender = QLineEdit()
         self.email_text_sender.setFont(self._base_font)
         self.email_text_sender.setPlaceholderText("Generate Email")
-        verfication_text_send = QLineEdit()
-        verfication_text_send.setFont(self._base_font)
-        verfication_text_send.setPlaceholderText("Get verification code")
+        self.verfication_text_sender = QLineEdit()
+        self.verfication_text_sender.setFont(self._base_font)
+        self.verfication_text_sender.setPlaceholderText("verification code")
         last_row2.addWidget(self.btn_generate_email, 1)
         last_row2.addWidget(self.email_text_sender, 1)
-        last_row2.addWidget(verfication_text_send, 1)
+        last_row2.addWidget(self.verfication_text_sender, 1)
         last_row.addLayout(last_row2)
         
         main_layout.addLayout(last_row)
@@ -439,7 +444,6 @@ class LeftPanel(QWidget):
                     break
 
         QTimer.singleShot(0, _update)
-
 
 
 

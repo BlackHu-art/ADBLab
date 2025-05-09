@@ -70,15 +70,13 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.cleanup_logs_requested.connect(self.adb_controller.cleanup_device_logs)
         self.left_panel.signals.send_text_requested.connect(self.adb_controller.input_text)
         self.left_panel.signals.generate_email_requested.connect(self.adb_controller.generate_email)
-        # 连接日志信号
-        self.adb_controller.signals.operation_completed.connect(self._handle_operation_result)
-        
+        self.adb_controller.signals.operation_completed.connect(self.left_panel._refresh_device_combobox())
         # 设备信息更新特殊处理
         self.adb_controller.signals.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
                 "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}")
         )
-        # 连接获取程序请求 连接包名更新信号
+        # left_panel连接获取程序请求 adb_controller返回包名更新信号后在left_panel执行更新
         self.left_panel.signals.get_program_requested.connect(self.adb_controller.get_current_package)
         self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
         # 连接安装
@@ -132,9 +130,5 @@ class MainFrame(QMainWindow):
         self.log_panel._append_log("INFO", "Application shutting down...")
         super().closeEvent(event)
     
-    def _handle_operation_result(self, operation: str, success: bool, message: str):
-        # 如果是刷新操作且成功，则更新下拉框
-        if operation == "refresh" and success:
-            self.left_panel._refresh_device_combobox()
     
     
