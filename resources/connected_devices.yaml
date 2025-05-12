@@ -8,6 +8,11 @@ device_10.0.0.195:5555:
   Brand: Xiaomi
   Model: MIBOX4
   ip: 10.0.0.195:5555
+device_10630373C3002140:
+  Aversion: '14'
+  Brand: TECNO
+  Model: TECNO LH7n
+  ip: 10630373C3002140
 device_4f5ddfa30000:
   Aversion: '14'
   Brand: POCO

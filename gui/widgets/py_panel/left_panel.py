@@ -82,7 +82,7 @@ class LeftPanel(QWidget):
         self.get_bugreport_btn.clicked.connect(lambda: self.signals.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: self.signals.pull_anr_file_requested.emit(self.selected_devices))
         
-        # self.btn_generate_email.clicked.connect(self.on_generate_email_clicked)
+        # self.btn_generate_email.clicked.connect(self.on_generate_email_clicked) 
         self.email_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.email_text_sender.text()))
         self.verfication_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.verfication_text_sender.text()))
 
@@ -160,7 +160,7 @@ class LeftPanel(QWidget):
         last_row1.addWidget(self.btn_send_text, 1)
         last_row1.addWidget(self.input_text_edit, 2)
         last_row.addLayout(last_row1)
-        
+        # 需要完善
         last_row2 = QHBoxLayout()
         self.btn_generate_email = self._create_button("Generate Email", "resources/icons/Email.svg")
         self.email_text_sender = QLineEdit()
