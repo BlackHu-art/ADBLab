@@ -12,7 +12,7 @@ class LeftPanelSignals(QObject):
     retrieve_logs_requested = Signal(list)
     cleanup_logs_requested = Signal(list)
     send_text_requested = Signal(list, str)  # 设备列表和文本
-    generate_email_requested = Signal(str)  # 邮箱和验证码
+    generate_email_requested = Signal()  # 邮箱和验证码
     get_program_requested = Signal(list)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
     install_app_requested = Signal(list)  # (devices, apk_path)

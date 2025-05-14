@@ -66,7 +66,6 @@ class LeftPanel(QWidget):
         self.btn_cleanup_logs.clicked.connect(lambda: self.signals.cleanup_logs_requested.emit(self.selected_devices))
         self.btn_send_text.clicked.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.input_text_edit.text()))
         self.input_text_edit.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.input_text_edit.text()))
-        self.btn_generate_email.clicked.connect(lambda: self.signals.generate_email_requested.emit(self.ip_address))
         # 设备列表双击事件
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         self.btn_get_program.clicked.connect(lambda: self.signals.get_program_requested.emit(self.selected_devices))
@@ -82,7 +81,7 @@ class LeftPanel(QWidget):
         self.get_bugreport_btn.clicked.connect(lambda: self.signals.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: self.signals.pull_anr_file_requested.emit(self.selected_devices))
         
-        # self.btn_generate_email.clicked.connect(self.on_generate_email_clicked) 
+        self.btn_generate_email.clicked.connect(lambda: self.signals.generate_email_requested.emit()) 
         self.email_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.email_text_sender.text()))
         self.verfication_text_sender.returnPressed.connect(lambda: self.signals.send_text_requested.emit(self.selected_devices, self.verfication_text_sender.text()))
 
@@ -444,6 +443,12 @@ class LeftPanel(QWidget):
                     break
 
         QTimer.singleShot(0, _update)
+        
+    def update_email(self, text: str):
+        self.email_text_sender.setText(text)
+
+    def update_vercode(self, text: str):
+        self.verfication_text_sender.setText(text)
 
 
 

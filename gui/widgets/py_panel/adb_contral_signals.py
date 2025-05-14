@@ -21,3 +21,6 @@ class ADBControllerSignals(QObject):
     list_packages_result = Signal(str)
     get_bugreport_result = Signal(str)
     start_monkey_result = Signal(str)
+    
+    email_updated = Signal(str)      # 设置 email_input 内容
+    vercode_updated = Signal(str)    # 设置 vercode_input 内容

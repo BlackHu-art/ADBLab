@@ -69,7 +69,10 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.retrieve_logs_requested.connect(self.adb_controller.retrieve_device_logs)
         self.left_panel.signals.cleanup_logs_requested.connect(self.adb_controller.cleanup_device_logs)
         self.left_panel.signals.send_text_requested.connect(self.adb_controller.input_text)
-        self.left_panel.signals.generate_email_requested.connect(self.adb_controller.generate_email)
+        # 生成临时邮箱信号处理和接收
+        self.left_panel.signals.generate_email_requested.connect(self.adb_controller.get_random_email_and_code)
+        self.adb_controller.signals.email_updated.connect(self.left_panel.update_email)
+        self.adb_controller.signals.vercode_updated.connect(self.left_panel.update_vercode)
         self.adb_controller.signals.operation_completed.connect(self.left_panel._refresh_device_combobox())
         # 设备信息更新特殊处理
         self.adb_controller.signals.device_info_updated.connect(
