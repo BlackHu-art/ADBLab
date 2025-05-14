@@ -6,8 +6,9 @@ import time
 import uuid
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from PySide6.QtCore import QTimer, QThread, Slot
+from PySide6.QtCore import QTimer, QThread, Slot, QThreadPool
 from PySide6.QtWidgets import QFileDialog
+from common.mail.email_task import GetRandomEmailTask
 from common.mail.tempEmailService import EmailService
 from gui.widgets.py_panel.adb_contral_signals import ADBControllerSignals
 from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
@@ -26,7 +27,7 @@ class ADBController:
         self.adb_model = ADBModel()
         self.connected_devices_file = "resources/connected_devices.yaml"
         self.package_info = "resources/package_info.yaml"
-        self.email_thread_running = False
+        self.thread_pool = QThreadPool.globalInstance()
         # 连接ADBModel的信号
         self._pending_operations = {}  # 跟踪进行中的异步操作
         self._active_threads = []  # 跟踪所有活动线程
@@ -1017,53 +1018,14 @@ class ADBController:
         return self._emit_operation("monkey", result.get("success"), message)
 
     def get_random_email_and_code(self):
-        if self.email_thread_running:
-            self.log_service.log("WARNING", "Previous process is still running. Aborting...")
-            return
+        task = GetRandomEmailTask()
 
-        self.email_thread_running = True
+        # 转发信号给 UI（或主 controller）
+        task.signals.log_signal.connect(self.log_service.log)
+        task.signals.email_updated.connect(self.signals.email_updated)
+        task.signals.vercode_updated.connect(self.signals.vercode_updated)
 
-        def task():
-            try:
-                email_service = EmailService()
-                random_email_data = email_service.get_random_email()
-
-                if random_email_data and random_email_data.get("data", {}).get("account"):
-                    email_account = random_email_data["data"]["account"]
-                    self.log_service.log("INFO", f"Random Email Account Retrieved: {email_account}")
-                    # self.email_updated.emit(email_account)
-                    # self.signals.current_package_received.emit(device_ip, package_name)
-                    self.signals.email_updated.emit(email_account)
-
-                    for attempt in range(10):
-                        email_list_data = email_service.get_email_list()
-                        if email_list_data and email_list_data.get("data", {}).get("total") == 1:
-                            self.log_service.log("INFO", "Email list retrieved successfully.")
-                            rows = email_list_data.get("data", {}).get("rows", [])
-                            if rows:
-                                email_service.emailId = rows[0].get("id")
-                                self.log_service.log("INFO", "Found email with ID.")
-                                break
-                        else:
-                            self.log_service.log("WARNING", f"No email found. Attempt {attempt + 1}/10. Retrying in 10 seconds...")
-                            time.sleep(10)
-                    else:
-                        self.log_service.log("ERROR", "Failed to retrieve email after 10 attempts.")
-                        return
-
-                    verification_code = email_service.get_email_detail()
-                    if verification_code:
-                        # self.vercode_updated.emit(verification_code)
-                        self.signals.vercode_updated.emit(verification_code)
-                        self.log_service.log("INFO", f"Verification Code Retrieved: {verification_code}")
-                    else:
-                        self.log_service.log("ERROR", "Failed to retrieve verification code.")
-                else:
-                    self.log_service.log("ERROR", "Failed to retrieve random email account.")
-            finally:
-                self.email_thread_running = False
-
-        threading.Thread(target=task, daemon=True).start()
+        self.thread_pool.start(task)
 
 
 
