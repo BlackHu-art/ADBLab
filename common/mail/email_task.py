@@ -3,6 +3,8 @@ from PySide6.QtCore import QObject, Signal, QRunnable
 import time
 from datetime import datetime
 
+import requests
+
 from common.mail.tempEmailService import EmailService
 
 
@@ -85,6 +87,8 @@ class GetRandomEmailTask(QRunnable):
             else:
                 self.log("ERROR", "❌ Failed to extract verification code")
 
+        except requests.exceptions.RequestException as e:
+            self.log("ERROR", f"🌐 Network error: {e}")
         except Exception as e:
             self.log("CRITICAL", f"‼️ System failure: {str(e)}")
             raise  # Preserve original exception stack
