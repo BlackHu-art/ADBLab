@@ -159,14 +159,26 @@ class EmailService(HttpRequest):
 
     def extract_verification_code(self, text_body):
         """
-        从 text_body 中提取四位数字验证码
-        :param text_body: 邮件正文的纯文本
-        :return: 提取的验证码字符串，如果未找到则返回 None
+        从邮件正文中提取四位数字验证码，优先匹配“验证码”或“code”等上下文关键词周围的数字。
         """
-        match = re.search(r"\b\d{4}\b", text_body)
+        # 优先匹配关键词前后有数字的情况
+        keyword_patterns = [
+            r"(?:验证码|verification\s*code|code)[^\d]{0,10}(\d{4,6})",  # 中文验证码、英文 verification code
+            r"(\d{4,6})[^\d]{0,10}(?:验证码|verification\s*code|code)",  # 数字在前的情况
+        ]
+
+        for pattern in keyword_patterns:
+            match = re.search(pattern, text_body, re.IGNORECASE)
+            if match:
+                return match.group(1)
+
+        # 如果没有关键词相关匹配，退而求其次抓第一个 4~6 位纯数字
+        match = re.search(r"\b\d{4,6}\b", text_body)
         if match:
             return match.group(0)
+
         return None
+
 
     def get_email_detail(self,):
         """
