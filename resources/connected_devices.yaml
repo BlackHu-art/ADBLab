@@ -3,11 +3,21 @@ device_10.0.0.111:5188:
   Brand: BTV
   Model: B13
   ip: 10.0.0.111:5188
+device_10.0.0.136:5188:
+  Aversion: '9'
+  Brand: BTV
+  Model: B11
+  ip: 10.0.0.136:5188
 device_10.0.0.195:5555:
   Aversion: '12'
   Brand: Xiaomi
   Model: MIBOX4
   ip: 10.0.0.195:5555
+device_10.0.0.212:5555:
+  Aversion: '10'
+  Brand: MECOOL
+  Model: KM9PRO
+  ip: 10.0.0.212:5555
 device_10630373C3002140:
   Aversion: '14'
   Brand: TECNO
