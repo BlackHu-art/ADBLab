@@ -3,8 +3,8 @@
 
 # 生产账号及验证码
 userRegisterInfoPro:
-  account: wtbbly@nm123.com
-  verifyCode: '3777'
+  account: 5fcbse@nm123.com
+  verifyCode: '5286'
   password: '000000'
   fingerprint: "4794d495216cb6f6f1c31bc4fcbfc771"
 
