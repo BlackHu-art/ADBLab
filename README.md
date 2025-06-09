@@ -2,7 +2,7 @@
 # 📱 多设备管理与自动化测试工具功能文档
 
 本工具基于 PySide6 框架开发，集成了 ADB 接口，支持设备连接、调试、应用操作与性能测试等功能，提升 TV App 与 Mobile App 测试效率。
-
+![alt text](image.png)
 ---
 
 ## 🧩 模块一：设备连接与基础操作（Device Group）
