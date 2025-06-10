@@ -399,17 +399,17 @@ class ADBController:
         
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("retrieve_device_logs", device_ip)
-        self.adb_model.save_device_log_async(device_ip, log_path)
+        self.adb_model.retrieve_device_logs_async(device_ip, log_path)
     
     def _process_retrieve_logs_result(self, result: dict):
         """处理保存日志结果"""
         device_ip = result.get("device_ip")
+        log_path = result.get("log_path")
         
         if result.get("success"):
             # 直接传入完整消息（不再让 _emit_operation 添加额外前缀）
-            message = f"Log saved for {device_ip} at {result['log_path']}"
-            self._emit_operation("retrieve_device_logs", True, message)
-            self.signals.logs_saved.emit(device_ip, result['log_path'])
+            self._emit_operation("retrieve_device_logs", True, f"✅ Log saved for {device_ip} at {log_path}")
+            self.signals.logs_retrieved.emit(device_ip, log_path)
         else:
             error = result.get("error", "Unknown error")
             # 提取错误消息的最终部分（去掉 "Error:" 等前缀）
@@ -426,14 +426,14 @@ class ADBController:
         for device_ip in devices:
             operation_id = self._generate_operation_id()
             self._pending_operations[operation_id] = ("cleanup_device_logs", device_ip)
-            self.adb_model.clear_device_log_async(device_ip)
+            self.adb_model.cleanup_device_logs_async(device_ip)
     
     def _process_cleanup_logs_result(self, result: dict):
         """处理清除日志结果"""
         device_ip = result.get("device_ip")
         
         if result.get("success"):
-            message = f"Log cleared for {device_ip}"
+            message = f"✅ Log cleared for {device_ip}"
             self._emit_operation("cleanup_device_logs", True, message)
         else:
             error = result.get("error", "Unknown error")
