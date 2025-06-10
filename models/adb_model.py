@@ -203,7 +203,7 @@ class ADBModel(QObject):
             }
     
     @async_command
-    def save_device_log_async(self, device_ip: str, log_path: str) -> dict:
+    def retrieve_device_logs_async(self, device_ip: str, log_path: str) -> dict:
         """异步保存设备日志"""
         try:
             log_content = self._execute_command(["adb", "-s", device_ip, "logcat", "-d"])
@@ -220,7 +220,7 @@ class ADBModel(QObject):
             return {"success": False, "device_ip": device_ip, "error": f"FileError: {str(e)}"}
 
     @async_command
-    def clear_device_log_async(self, device_ip: str) -> dict:
+    def cleanup_device_logs_async(self, device_ip: str) -> dict:
         """异步清除设备日志"""
         result = self._execute_command(
             ["adb", "-s", device_ip, "logcat", "-c"]
