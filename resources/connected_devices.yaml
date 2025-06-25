@@ -39,7 +39,7 @@ device_ZT322KPNPX:
   Model: moto g24
   ip: ZT322KPNPX
 device_emulator-5554:
-  Aversion: 5.1.1
-  Brand: BTV
-  Model: B11
+  Aversion: '9'
+  Brand: HUAWEI
+  Model: LIO-AN00
   ip: emulator-5554

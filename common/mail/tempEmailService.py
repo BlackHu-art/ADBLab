@@ -7,6 +7,8 @@
  @time        :    10:18
 """
 import datetime
+import random
+import string
 import re
 import time
 
@@ -111,27 +113,14 @@ class EmailService(HttpRequest):
 
     def update_fingerprint(self):
         """
-        更新 fingerprint 的值
+        随机生成 fingerprint 并更新
         """
-        current_fingerprint = YamlTool("common/mail/mail.yaml").get_nested_value("userRegisterInfoPro", "fingerprint")
+        # 生成一个固定长度的 fingerprint（与原始示例一致，长度为36）
+        new_fingerprint = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
 
-        # 分割 fingerprint 为两段
-        prefix = current_fingerprint[:-3]
-        suffix = current_fingerprint[-3:]
-
-        try:
-            # 将后缀部分转换为整数并加1
-            new_suffix = str(int(suffix) + 1)
-
-            # 确保新后缀仍然是三位数
-            if len(new_suffix) < 3:
-                new_suffix = new_suffix.zfill(3)
-
-            # 重新拼接 fingerprint
-            new_fingerprint = prefix + new_suffix
-            YamlTool("common/mail/mail.yaml").update_nested_value("userRegisterInfoPro", "fingerprint", new_fingerprint)
-        except ValueError:
-            logger.error("Invalid fingerprint value. Cannot convert to integer.")
+        # 更新 YAML 中的 fingerprint 值
+        YamlTool("common/mail/mail.yaml").update_nested_value("userRegisterInfoPro", "fingerprint", new_fingerprint)
+        logger.info(f"Fingerprint updated to: {new_fingerprint}")
 
     def get_email_list(self):
         """获取邮箱列表"""
