@@ -3,10 +3,15 @@ device_10.0.0.111:5188:
   Brand: BTV
   Model: B13
   ip: 10.0.0.111:5188
-device_10.0.0.136:5188:
+device_10.0.0.132:5188:
   Aversion: '9'
   Brand: BTV
   Model: B11
+  ip: 10.0.0.132:5188
+device_10.0.0.136:5188:
+  Aversion: N/A
+  Brand: N/A
+  Model: N/A
   ip: 10.0.0.136:5188
 device_10.0.0.195:5555:
   Aversion: '12'
@@ -18,6 +23,11 @@ device_10.0.0.212:5555:
   Brand: MECOOL
   Model: KM9PRO
   ip: 10.0.0.212:5555
+device_10.0.0.233:5555:
+  Aversion: '9'
+  Brand: BTV
+  Model: E10
+  ip: 10.0.0.233:5555
 device_10630373C3002140:
   Aversion: '14'
   Brand: TECNO
@@ -29,7 +39,7 @@ device_4f5ddfa30000:
   Model: 22111317PG
   ip: 4f5ddfa30000
 device_RFCW71D91SP:
-  Aversion: '14'
+  Aversion: '15'
   Brand: samsung
   Model: SM-S911U
   ip: RFCW71D91SP
