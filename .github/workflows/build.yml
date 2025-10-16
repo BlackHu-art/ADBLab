@@ -1,0 +1,135 @@
+name: Build EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["master"]
+
+permissions: write-all
+
+env:
+  APP_NAME: ADBLab
+  VERSION: v2.0.${{ github.run_number }}
+
+jobs:
+  build:
+    name: Build Windows Executable
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        arch: [x86, x64]
+
+    outputs:
+      artifact_name: ${{ steps.setname.outputs.artifact_name }}
+
+    steps:
+      # 1. 拉取仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 设置 Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: ${{ matrix.arch }}
+
+      # 3. pip 缓存
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: C:\Users\runneradmin\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      # 4. 清理构建目录
+      - name: Clean environment
+        shell: powershell
+        run: |
+          Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
+
+      # 5. 安装依赖
+      - name: Install dependencies
+        shell: powershell
+        run: |
+          python -m pip install --upgrade pip wheel
+          pip install -r requirements.txt
+
+      # 6. PyInstaller 打包
+      - name: Build EXE
+        shell: powershell
+        run: |
+          python -m PyInstaller `
+            --name "${{ env.APP_NAME }}-${{ matrix.arch }}-${{ env.VERSION }}" `
+            --onefile `
+            --windowed `
+            --icon icon.ico `
+            --hidden-import pywin32 `
+            entry.py
+
+      # 7. 创建 ZIP 包
+      - name: Create ZIP Package
+        shell: powershell
+        run: |
+          $zipFile = "${{ env.APP_NAME }}-${{ matrix.arch }}-${{ env.VERSION }}.zip"
+          Compress-Archive -Path dist\*.exe -DestinationPath $zipFile
+
+      # 8. 设置 artifact 名字
+      - name: Set artifact name
+        id: setname
+        run: echo "artifact_name=${{ env.APP_NAME }}-${{ matrix.arch }}-${{ env.VERSION }}" >> $GITHUB_OUTPUT
+
+      # 9. 上传构建产物
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.setname.outputs.artifact_name }}
+          path: |
+            dist/*.exe
+            *.zip
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 拉取仓库
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 下载所有 artifacts（x86 + x64）
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      # 3. 自动生成 CHANGELOG
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          LOG=$(git log -10 --pretty=format:"- %s (%an)")
+          echo "log<<EOF" >> $GITHUB_OUTPUT
+          echo "$LOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      # 4. 创建 Release
+      - name: Publish Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: "Release ${{ env.VERSION }}"
+          body: |
+            ## 🚀 ADBLab Release ${{ env.VERSION }}
+
+            ### 🔥 更新内容 (自动生成)
+            ${{ steps.changelog.outputs.log }}
+
+            ### 🧊 包含以下构建：
+            - x64
+            - x86
+
+            ### 📦 文件已附加在本次发布中。
+          files: artifacts/**/*
