@@ -54,8 +54,7 @@ jobs:
       - name: Install dependencies
         shell: powershell
         run: |
-          Write-Host "📦 Installing dependencies..."
-          python -m pip install --upgrade pip wheel
+          Write-Host "Installing dependencies..."
           pip install -r requirements.txt
 
       # 6. 使用 PyInstaller 打包
