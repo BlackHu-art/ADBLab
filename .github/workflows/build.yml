@@ -62,13 +62,27 @@ jobs:
       - name: Build EXE with PyInstaller
         shell: powershell
         run: |
-          Write-Host "🚀 Building for ${{ matrix.arch }}..."
+          # 检查必要文件是否存在
+          if (!(Test-Path "main.py")) {
+            Write-Error "main.py not found in current directory"
+            exit 1
+          }
+          
+          if (!(Test-Path "icon.ico")) {
+            Write-Warning "icon.ico not found, building without icon"
+            $iconParam = ""
+          } else {
+            $iconParam = "--icon icon.ico"
+          }
+
+          # 构建命令
           python -m PyInstaller `
             --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} `
             --onefile `
             --windowed `
-            --icon icon.ico `
+            $iconParam `
             main.py
+
 
       # 7. 打包 ZIP（多架构合并用）
       - name: ZIP artifacts
