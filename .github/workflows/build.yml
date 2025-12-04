@@ -68,7 +68,7 @@ jobs:
             --windowed `
             --icon icon.ico `
             --hidden-import pywin32 `
-            entry.py
+            main.py
 
       # 7. 创建 ZIP 包
       - name: Create ZIP Package
