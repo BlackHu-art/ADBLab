@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - arch: x86
+#          - arch: x86
           - arch: x64
 
     steps:
