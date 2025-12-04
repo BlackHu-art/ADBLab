@@ -82,23 +82,13 @@ jobs:
           Invoke-Expression $command
 
 
-
-      # 7. 打包 ZIP（多架构合并用）
-      - name: ZIP artifacts
-        shell: powershell
-        run: |
-          $zipName = "ADBLab-${{ matrix.arch }}-${{ env.VERSION }}.zip"
-          Compress-Archive -Path dist\*.exe -DestinationPath $zipName
-          Write-Host "Created $zipName"
-
-      # 8. 上传构建产物
+      # 7. 上传构建产物
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: ADBLab-${{ matrix.arch }}-exe
           path: |
             dist/*.exe
-            *.zip
           if-no-files-found: error
 
   # Release Job
