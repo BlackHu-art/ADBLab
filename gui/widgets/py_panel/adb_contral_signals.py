@@ -11,7 +11,7 @@ class ADBControllerSignals(QObject):
     text_input = Signal(str, str)  # (device_ip, input_text)
     current_package_received = Signal(str, str)  # (device_ip, package_name)
     install_apk_result  = Signal(dict)  # 请求选择APK文件
-    uninstall_apk_result = Signal(str, str)  # (device_ip, package_name)
+    uninstall_apk_result = Signal(dict)
     clear_app_data_result = Signal(str, str)
     restart_app_result = Signal(str, str)
     print_activity_result = Signal(str)

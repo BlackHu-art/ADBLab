@@ -1,10 +1,8 @@
-import base64
-from datetime import datetime
 import os
 import re
 import subprocess
+from datetime import datetime
 from functools import wraps
-from urllib.parse import quote
 import time
 from typing import Dict, List
 import zipfile
@@ -111,7 +109,7 @@ class ADBModel(QObject):
             return {"ip": device,"success": False,"error": str(e),"requires_refresh": False}
 
     @async_command
-    def restart_adb_async(self) -> str:
+    def restart_adb_async(self) -> dict:
         """异步重启ADB服务"""
         try:
             self._execute_command(["adb", "kill-server"])
@@ -133,9 +131,8 @@ class ADBModel(QObject):
             "CPU Architecture": ["adb", "-s", device, "shell", "getprop", "ro.product.cpu.abi"],
             "Hardware": ["adb", "-s", device, "shell", "getprop", "ro.hardware"],
             "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"],
-            "Total Memory": ["adb", "-s", device, "shell", "cat", "/proc/meminfo", "|", "grep", "MemTotal"],
-            "Available Memory": ["adb", "-s", device, "shell", "cat", "/proc/meminfo", "|", "grep",
-                                 "MemAvailable"],
+            "Total Memory": ["adb", "-s", device, "shell", "cat /proc/meminfo | grep MemTotal"],
+            "Available Memory": ["adb", "-s", device, "shell", "cat /proc/meminfo | grep MemAvailable"],
             "Resolution": ["adb", "-s", device, "shell", "wm", "size"],
             "Density": ["adb", "-s", device, "shell", "wm", "density"],
             "Timezone": ["adb", "-s", device, "shell", "getprop", "persist.sys.timezone"],
@@ -229,14 +226,6 @@ class ADBModel(QObject):
         if result.startswith(("Error:", "Timeout:", "SystemError:")):
             return {"success": False,"device_ip": device_ip,"error": result}
         return {"success": True,"device_ip": device_ip,"output": result}
-    
-    @staticmethod
-    def _encode_text_for_adb(text: str) -> str:
-        """终极兼容方案 Base64编码+URL编码双重保护"""
-        # 先进行Base64编码
-        b64_encoded = base64.b64encode(text.encode('utf-8')).decode('ascii')
-        # 再进行URL编码防止特殊符号干扰
-        return quote(b64_encoded)
     
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:
@@ -361,7 +350,7 @@ class ADBModel(QObject):
             output = result.stdout.strip()
             return {"success": True, "device_ip": device_ip, "package_name": package_name, "output": output, "index": idx}
         except Exception as e:
-            return {"success": False, "device_ip": device_ip, "package_name": package_name, "output": str(e), "idnex": idx}
+            return {"success": False, "device_ip": device_ip, "package_name": package_name, "output": str(e), "index": idx}
 
     @async_command
     def restart_app_async(self, device_ip: str, package_name: str, index: int):
@@ -500,7 +489,7 @@ class ADBModel(QObject):
         # 获取 Android 版本
         log("🔍 Getting Android version...")
         version_cmd = ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"]
-        version_proc = subprocess.run(version_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        version_proc = subprocess.run(version_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
         version_str = version_proc.stdout.strip()
         log(f"📱 Android version: {version_str or 'unknown'}")
 
@@ -519,7 +508,7 @@ class ADBModel(QObject):
                 output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
                 cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
-            proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=subprocess.CREATE_NO_WINDOW)
             log("✅ Bugreport command completed")
         except Exception as e:
             return {"device_ip": device_ip, "index": index, "success": False, "message": f"Bugreport failed: {e}"}
@@ -595,35 +584,6 @@ class ADBModel(QObject):
             if result.returncode == 0:
                 if log:
                     log("✅ Bugreport HTML generated successfully.")
-                                    # 在原始报告目录中查找生成目录  这一坨代码需要优化
-                # base_dir = os.path.dirname(bugreport_txt_path)
-                # report_dirs = sorted(
-                #     [d for d in os.listdir(base_dir) 
-                #     if re.match(r'^bugreport.*_out$', d) 
-                #     and os.path.isdir(os.path.join(base_dir, d))],
-                #     key=lambda x: os.path.getmtime(os.path.join(base_dir, x)),
-                #     reverse=True
-                # )
-                
-                # if report_dirs:
-                #     target_dir = os.path.join(base_dir, report_dirs[0])
-                #     html_name = os.path.splitext(os.path.basename(bugreport_txt_path))[0] + ".html"
-                #     html_path = os.path.join(target_dir, html_name)
-                    
-                #     if log:
-                #         log(f"🔍 Found {len(report_dirs)} report directories")
-                #         log(f"📁 Using latest report directory: {report_dirs[0]}")
-                # else:
-                #     html_path = os.path.splitext(bugreport_txt_path)[0] + ".html"
-                # # ==== 修改结束 ====
-
-                # if os.path.exists(html_path):
-                #     log(f"🌐 Opening HTML report in Edge: {html_path}")
-                #     if os.name == "nt":
-                #         edge_url = f"microsoft-edge:{os.path.abspath(html_path)}"
-                #         webbrowser.get("windows-default").open(edge_url)
-                #     else:
-                #         webbrowser.open_new_tab(html_path)
             else:
                 raise subprocess.CalledProcessError(result.returncode, result.args, output=result.stdout, stderr=result.stderr)
         except subprocess.CalledProcessError as e:
@@ -738,9 +698,11 @@ class ADBModel(QObject):
                     if current_app != package_name and (time.time() - last_switch_time) > cooldown:
                         log("🕹️ App in background, switching back to target app...")
                         subprocess.run(["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
                         subprocess.run(["adb", "-s", device_ip, "shell", "monkey", "-p", package_name, "1"],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    creationflags=subprocess.CREATE_NO_WINDOW)
                         last_switch_time = time.time()
 
                     time.sleep(interval)

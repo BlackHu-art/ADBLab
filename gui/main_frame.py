@@ -1,7 +1,7 @@
 import json
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QProgressDialog
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout
 from controllers.adb_controller import ADBController
 from gui.widgets.py_panel.log_panel import LogPanel
 from gui.widgets.py_panel.left_panel import LeftPanel
@@ -55,46 +55,49 @@ class MainFrame(QMainWindow):
         self._connect_all_signals()
 
     def _connect_all_signals(self):
-        """连接所有组件信号"""
-        # ADB控制器 -> UI组件
-        self.adb_controller.signals.devices_updated.connect(self.left_panel.update_device_list)
-        self.adb_controller.signals.operation_completed.connect(self.log_panel._append_log)
-        self.left_panel.signals.connect_requested.connect(self.adb_controller.connect_device)
-        self.left_panel.signals.refresh_devices_requested.connect(self.adb_controller.refresh_devices)
-        self.left_panel.signals.device_info_requested.connect(self.adb_controller.get_device_info)
-        self.left_panel.signals.disconnect_requested.connect(self.adb_controller.disconnect_devices)
-        self.left_panel.signals.restart_devices_requested.connect(self.adb_controller.restart_devices)
-        self.left_panel.signals.restart_adb_requested.connect(self.adb_controller.restart_adb)
-        self.left_panel.signals.screenshot_requested.connect(self.adb_controller.take_screenshot)
-        self.left_panel.signals.retrieve_logs_requested.connect(self.adb_controller.retrieve_device_logs)
-        self.left_panel.signals.cleanup_logs_requested.connect(self.adb_controller.cleanup_device_logs)
-        self.left_panel.signals.send_text_requested.connect(self.adb_controller.input_text)
-        # 生成临时邮箱信号处理和接收
-        self.left_panel.signals.generate_email_requested.connect(self.adb_controller.get_random_email_and_code)
-        self.adb_controller.signals.email_updated.connect(self.left_panel.update_email)
-        self.adb_controller.signals.vercode_updated.connect(self.left_panel.update_vercode)
-        self.adb_controller.signals.operation_completed.connect(self.left_panel._refresh_device_combobox())
-        # 设备信息更新特殊处理
-        self.adb_controller.signals.device_info_updated.connect(
+        LP = self.left_panel.signals
+        CTL = self.adb_controller.signals
+        AC = self.adb_controller
+
+        # Controller → UI
+        CTL.devices_updated.connect(self.left_panel.update_device_list)
+        CTL.operation_completed.connect(self.log_panel._append_log)
+        CTL.operation_completed.connect(lambda *args: self.left_panel._refresh_device_combobox())
+        CTL.email_updated.connect(self.left_panel.update_email)
+        CTL.vercode_updated.connect(self.left_panel.update_vercode)
+        CTL.current_package_received.connect(self.left_panel.update_current_package)
+        CTL.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
                 "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}")
         )
-        # left_panel连接获取程序请求 adb_controller返回包名更新信号后在left_panel执行更新
-        self.left_panel.signals.get_program_requested.connect(self.adb_controller.get_current_package)
-        self.adb_controller.signals.current_package_received.connect(self.left_panel.update_current_package)
-        # 连接安装
-        self.left_panel.signals.install_app_requested.connect(self.adb_controller.install_apk)
-        self.left_panel.signals.uninstall_app_requested.connect(self.adb_controller.uninstall_apk)
-        self.left_panel.signals.clear_app_data_requested.connect(self.adb_controller.clear_app_data)
-        self.left_panel.signals.restart_app_requested.connect(self.adb_controller.restart_app)
-        self.left_panel.signals.print_activity_requested.connect(self.adb_controller.get_current_activity)
-        self.left_panel.signals.parse_apk_info_requested.connect(self.adb_controller.parse_apk_info)
-        self.left_panel.signals.start_monkey_requested.connect(self.adb_controller.run_monkey_test)
-        self.left_panel.signals.kill_monkey_requested.connect(self.adb_controller.kill_monkey)
-        self.left_panel.signals.list_installed_packages_requested.connect(self.adb_controller.list_installed_packages)
-        self.left_panel.signals.capture_bugreport_requested.connect(self.adb_controller.capture_bugreport)
-        self.left_panel.signals.pull_anr_file_requested.connect(self.adb_controller.pull_anr_files)
-        
+
+        # LeftPanel → Controller (table-driven one-to-one connections)
+        for signal_, handler in [
+            (LP.connect_requested,             AC.connect_device),
+            (LP.refresh_devices_requested,     AC.refresh_devices),
+            (LP.device_info_requested,         AC.get_device_info),
+            (LP.disconnect_requested,          AC.disconnect_devices),
+            (LP.restart_devices_requested,      AC.restart_devices),
+            (LP.restart_adb_requested,         AC.restart_adb),
+            (LP.screenshot_requested,          AC.take_screenshot),
+            (LP.retrieve_logs_requested,        AC.retrieve_device_logs),
+            (LP.cleanup_logs_requested,        AC.cleanup_device_logs),
+            (LP.send_text_requested,           AC.input_text),
+            (LP.generate_email_requested,      AC.get_random_email_and_code),
+            (LP.get_program_requested,         AC.get_current_package),
+            (LP.install_app_requested,         AC.install_apk),
+            (LP.uninstall_app_requested,       AC.uninstall_apk),
+            (LP.clear_app_data_requested,      AC.clear_app_data),
+            (LP.restart_app_requested,         AC.restart_app),
+            (LP.print_activity_requested,      AC.get_current_activity),
+            (LP.parse_apk_info_requested,      AC.parse_apk_info),
+            (LP.start_monkey_requested,        AC.run_monkey_test),
+            (LP.kill_monkey_requested,         AC.kill_monkey),
+            (LP.list_installed_packages_requested, AC.list_installed_packages),
+            (LP.capture_bugreport_requested,   AC.capture_bugreport),
+            (LP.pull_anr_file_requested,       AC.pull_anr_files),
+        ]:
+            signal_.connect(handler)
     def _setup_menu(self):
         """初始化菜单栏"""
         self.menu_bar = CustomMenuBar(self)
