@@ -5,7 +5,7 @@ from datetime import datetime
 
 import requests
 
-from common.mail.tempEmailService import EmailService
+from core.mail.email_service import EmailService
 
 
 class EmailSignals(QObject):

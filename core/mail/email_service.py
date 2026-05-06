@@ -13,8 +13,41 @@ import re
 import time
 
 import requests
-from common.logger.logTool import logger
-from common.yamlTool import YamlTool
+from core.logger.log_tool import logger
+from pathlib import Path
+from ruamel.yaml import YAML
+
+_yaml = YAML()
+_yaml.preserve_quotes = True
+_MAIL_YAML = Path(__file__).parent / "mail.yaml"
+
+
+def _load_mail_yaml():
+    if _MAIL_YAML.exists():
+        with open(_MAIL_YAML, 'r', encoding='utf-8') as f:
+            data = _yaml.load(f)
+            return data if data is not None else {}
+    return {}
+
+
+def _save_mail_yaml(data):
+    with open(_MAIL_YAML, 'w', encoding='utf-8') as f:
+        _yaml.dump(data, f)
+
+
+def _get_nested(parent_key, child_key):
+    data = _load_mail_yaml()
+    parent = data.get(parent_key)
+    if isinstance(parent, dict):
+        return parent.get(child_key)
+    return None
+
+
+def _update_nested(parent_key, child_key, value):
+    data = _load_mail_yaml()
+    if parent_key in data and isinstance(data[parent_key], dict):
+        data[parent_key][child_key] = str(value)
+        _save_mail_yaml(data)
 
 
 class HttpRequest:
@@ -78,7 +111,7 @@ class EmailService(HttpRequest):
                 headers = {
                     **self.common_headers,
                     "fingerprint": str(
-                        YamlTool("common/mail/mail.yaml").get_nested_value("userRegisterInfoPro", "fingerprint"))
+                        _get_nested("userRegisterInfoPro", "fingerprint"))
                 }
 
                 logger.info(f"Requesting random email from {url}")
@@ -94,8 +127,7 @@ class EmailService(HttpRequest):
                     if account:
                         logger.info(f"Random Email Account: {account}")
                         self.account = account
-                        YamlTool("common/mail/mail.yaml").update_nested_value("userRegisterInfoPro", "account",
-                                                                              self.account)
+                        _update_nested("userRegisterInfoPro", "account", self.account)
                     else:
                         logger.error("Account not found in response data")
                     return data
@@ -119,7 +151,7 @@ class EmailService(HttpRequest):
         new_fingerprint = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
 
         # 更新 YAML 中的 fingerprint 值
-        YamlTool("common/mail/mail.yaml").update_nested_value("userRegisterInfoPro", "fingerprint", new_fingerprint)
+        _update_nested("userRegisterInfoPro", "fingerprint", new_fingerprint)
         logger.info(f"Fingerprint updated to: {new_fingerprint}")
 
     def get_email_list(self):
@@ -195,7 +227,7 @@ class EmailService(HttpRequest):
                 code = self.extract_verification_code(text_body)
                 if code:
                     logger.info(f"Verification Code Extracted: {code}")
-                    YamlTool("common/mail/mail.yaml").update_nested_value("userRegisterInfoPro", "verifyCode", code)
+                    _update_nested("userRegisterInfoPro", "verifyCode", code)
                     return code
                 else:
                     logger.warning("No verification code found in the email body.")

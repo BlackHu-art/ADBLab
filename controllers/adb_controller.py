@@ -5,13 +5,15 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QTimer, Slot, QThreadPool
 from PySide6.QtWidgets import QFileDialog
-from common.mail.email_task import GetRandomEmailTask
+from core.mail.email_task import GetRandomEmailTask
 
-from gui.widgets.py_panel.adb_contral_signals import ADBControllerSignals
-from gui.widgets.py_screenshot.screenshot_viewer import ScreenshotViewer
-from models.adb_model import ADBModel
+from gui.panels.adb_control_signals import ADBControllerSignals
+from gui.dialogs.screenshot_viewer import ScreenshotViewer
+from models.adb_device import ADBDevice
+from models.adb_app import ADBApp
+from models.adb_testing import ADBTesting
 from models.device_store import DeviceStore
-from common.log_service import LogLevel, LogService
+from core.log_service import LogLevel, LogService
 from utils.batch_tracker import BatchOperationTracker
 
 
@@ -21,12 +23,17 @@ class ADBController:
     def __init__(self, log_service: LogService):
         self.signals = ADBControllerSignals()
         self.log_service = log_service
-        self.adb_model = ADBModel()
+        self.device_model = ADBDevice()
+        self.app_model = ADBApp()
+        self.testing_model = ADBTesting()
         self.connected_devices_file = "resources/connected_devices.yaml"
         self.package_info = "resources/package_info.yaml"
         self.thread_pool = QThreadPool.globalInstance()
         self._pending_operations = {}
-        self.adb_model.command_finished.connect(self._handle_async_response)
+        # Wire all three model signals to the same handler
+        self.device_model.command_finished.connect(self._handle_async_response)
+        self.app_model.command_finished.connect(self._handle_async_response)
+        self.testing_model.command_finished.connect(self._handle_async_response)
         self.last_save_dir = None
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._batch_trackers = {}
@@ -51,7 +58,7 @@ class ADBController:
 
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("connect", ip)
-        self.adb_model.connect_device_async(ip)
+        self.device_model.connect_device_async(ip)
         
     def _process_connect_device_result(self, result: str):
         ip = None
@@ -87,7 +94,7 @@ class ADBController:
         self._pending_operations[operation_id] = ("refresh", None)
         
         try:
-            self.adb_model.get_connected_devices_async()
+            self.device_model.get_connected_devices_async()
         except Exception as e:
             self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
             self.signals.devices_updated.emit([])
@@ -96,7 +103,7 @@ class ADBController:
         def _update():
             for ip in devices:
                 try:
-                    info = ADBModel.get_devices_basic_info(ip)
+                    info = ADBDevice.get_devices_basic_info(ip)
                     DeviceStore.add_device(
                         alias=f"device_{ip}",
                         ip=ip,
@@ -112,7 +119,7 @@ class ADBController:
     
     def _save_device_info(self, ip: str):
         try:
-            info = ADBModel.get_devices_basic_info(ip)
+            info = ADBDevice.get_devices_basic_info(ip)
             DeviceStore.add_device(
                 alias=f"device_{ip}",
                 ip=ip,
@@ -131,7 +138,7 @@ class ADBController:
             self._emit_operation("get_info", False, "Please select at least one device")
             return
         for ip in devices:
-            self.adb_model.get_device_info_async(ip)
+            self.device_model.get_device_info_async(ip)
     
     def _process_device_info_result(self, result: dict):
         """优化后的设备信息处理器"""
@@ -170,7 +177,7 @@ class ADBController:
             return
 
         for ip in devices:
-            self.adb_model.disconnect_device_async(ip)
+            self.device_model.disconnect_device_async(ip)
     
     def _process_disconnect_result(self, result: dict):
         """专属断开连接处理器"""
@@ -192,7 +199,7 @@ class ADBController:
             return
 
         for ip in devices:
-            self.adb_model.restart_device_async(ip)
+            self.device_model.restart_device_async(ip)
     
     def _process_restart_devices_result(self, result: dict):
         """健壮的重启结果处理"""
@@ -209,7 +216,7 @@ class ADBController:
             self._emit_operation("restart", False, f"{ip} Restart failed: {result.get('error', 'unknown device')}")
 
     def restart_adb(self):
-        self.adb_model.restart_adb_async()
+        self.device_model.restart_adb_async()
     
     def _process_restart_adb_result(self, result: dict):
         """ADB重启结果处理"""
@@ -262,7 +269,7 @@ class ADBController:
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("screenshot", device_ip)
 
-        self.adb_model.take_screenshot_async(device_ip, save_path)
+        self.testing_model.take_screenshot_async(device_ip, save_path)
 
     def _process_screenshot_result(self, result: dict):
         """处理截图结果"""
@@ -305,7 +312,7 @@ class ADBController:
         
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("retrieve_device_logs", device_ip)
-        self.adb_model.retrieve_device_logs_async(device_ip, log_path)
+        self.testing_model.retrieve_device_logs_async(device_ip, log_path)
     
     def _process_retrieve_logs_result(self, result: dict):
         """处理保存日志结果"""
@@ -332,7 +339,7 @@ class ADBController:
         for device_ip in devices:
             operation_id = self._generate_operation_id()
             self._pending_operations[operation_id] = ("cleanup_device_logs", device_ip)
-            self.adb_model.cleanup_device_logs_async(device_ip)
+            self.testing_model.cleanup_device_logs_async(device_ip)
     
     def _process_cleanup_logs_result(self, result: dict):
         """处理清除日志结果"""
@@ -363,7 +370,7 @@ class ADBController:
         """向单个设备发送文本"""
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("input_text", device_ip)
-        self.adb_model.input_text_async(device_ip, text)
+        self.app_model.input_text_async(device_ip, text)
 
     def _process_input_text_result(self, result: dict):
         """处理文本输入结果"""
@@ -394,7 +401,7 @@ class ADBController:
         """单个设备获取方法"""
         operation_id = self._generate_operation_id()
         self._pending_operations[operation_id] = ("get_package", device_ip)
-        self.adb_model.get_current_package_async(device_ip)
+        self.app_model.get_current_package_async(device_ip)
             
     def _process_get_package_result(self, result: dict):
         """处理获取包名结果"""
@@ -438,18 +445,10 @@ class ADBController:
             self.executor.submit(self._install_single_device, idx, device_ip, apk_path, apk_name)
 
     def _install_single_device(self, idx: int, device_ip: str, apk_path: str, apk_name: str):
-        try:
-            tracker = self._batch_trackers.get("install")
-            total = tracker.total if tracker else "?"
-            self._emit_operation("install", True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ...")
-            result = self.adb_model.install_apk_async(device_ip, apk_path, apk_name, idx)
-            result.update({"apk_name": apk_name, "device_ip": device_ip, "index": idx})
-            self.signals.install_apk_result.emit(result)
-        except Exception as e:
-            self.signals.install_apk_result.emit({
-                "success": False, "apk_name": apk_name, "device_ip": device_ip,
-                "index": idx, "error": str(e)
-            })
+        tracker = self._batch_trackers.get("install")
+        total = tracker.total if tracker else "?"
+        self._emit_operation("install", True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ...")
+        self.app_model.install_apk_async(device_ip, apk_path, apk_name, idx)
 
     def _process_install_apk_result(self, result: dict):
         apk_name = result.get("apk_name")
@@ -481,18 +480,10 @@ class ADBController:
             self.executor.submit(self._execute_uninstall_task, idx, device_ip, package_name)
 
     def _execute_uninstall_task(self, idx: int, device_ip: str, package_name: str):
-        try:
-            tracker = self._batch_trackers.get("uninstall")
-            total = tracker.total if tracker else "?"
-            self._emit_operation("uninstall", True, f"🚀 Start uninstall ({idx}/{total}) {package_name} on {device_ip} ...")
-            result = self.adb_model.uninstall_app_sync(device_ip, package_name, idx)
-            result.update({"device_ip": device_ip, "package_name": package_name, "index": idx})
-            self.signals.uninstall_apk_result.emit(result)
-        except Exception as e:
-            self.signals.uninstall_apk_result.emit({
-                "success": False, "device_ip": device_ip,
-                "package_name": package_name, "output": f"Exception: {str(e)}", "index": idx
-            })
+        tracker = self._batch_trackers.get("uninstall")
+        total = tracker.total if tracker else "?"
+        self._emit_operation("uninstall", True, f"Start uninstall ({idx}/{total}) {package_name} on {device_ip} ...")
+        self.app_model.uninstall_app_async(device_ip, package_name, idx)
 
     def _process_uninstall_apk_result(self, result: dict):
         idx = result.get("index", 1)
@@ -521,7 +512,7 @@ class ADBController:
             len(devices), "Clear App Data", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.adb_model.clear_app_data_async, device_ip, package_name, idx)
+            self.executor.submit(self.app_model.clear_app_data_async, device_ip, package_name, idx)
 
     def _process_clear_app_data_result(self, result: dict):
         idx = result.get("index", 1)
@@ -550,7 +541,7 @@ class ADBController:
             len(devices), "Restart App", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.adb_model.restart_app_async, device_ip, package_name, idx)
+            self.executor.submit(self.app_model.restart_app_async, device_ip, package_name, idx)
 
     def _process_restart_app_result(self, result: dict):
         idx = result.get("index", 1)
@@ -592,7 +583,7 @@ class ADBController:
             len(devices), "Activity Info", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.adb_model.get_current_activity_async, device_ip, idx)
+            self.executor.submit(self.app_model.get_current_activity_async, device_ip, idx)
 
     def _process_get_current_activity_result(self, result: dict):
         device = result.get("device_ip", "unknown")
@@ -637,7 +628,7 @@ class ADBController:
             return
 
         self._emit_operation("apk_info", True, f"📦 Selected APK: {apk_path}")
-        self.executor.submit(self.adb_model.parse_apk_info_async, apk_path)
+        self.executor.submit(self.app_model.parse_apk_info_async, apk_path)
 
     def _process_parse_apk_info_result(self, result: dict):
         """处理 APK 解析结果并提取关键字段"""
@@ -696,7 +687,7 @@ class ADBController:
             return
 
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.adb_model.kill_monkey_async, device_ip, idx)
+            self.executor.submit(self.testing_model.kill_monkey_async, device_ip, idx)
 
     def _process_kill_monkey_result(self, result: dict):
         device_ip = result.get("device_ip")
@@ -712,7 +703,7 @@ class ADBController:
             self._emit_operation("installed_packages", False, "⚠️ No devices selected")
             return
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.adb_model.list_installed_packages_async, device_ip, idx)
+            self.executor.submit(self.app_model.list_installed_packages_async, device_ip, idx)
 
     def _process_list_installed_packages_result(self, result: dict):
         device_ip = result.get("device_ip")
@@ -735,7 +726,7 @@ class ADBController:
         log = self.log_service.log
         for idx, device in enumerate(devices, 1):
             self.executor.submit(
-                self.adb_model.capture_bugreport_async,
+                self.testing_model.capture_bugreport_async,
                 device,
                 save_dir,
                 idx,
@@ -771,7 +762,7 @@ class ADBController:
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r'\W+', '_', device_ip)
             self.executor.submit(
-                self.adb_model.pull_anr_files_async,
+                self.testing_model.pull_anr_files_async,
                 device_ip,
                 f"{sanitized_name}_anr_{timestamp}",
                 save_dir,
@@ -812,7 +803,7 @@ class ADBController:
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r'\W+', '_', device_ip)
             self.executor.submit(
-                self.adb_model.run_monkey_test_async,
+                self.testing_model.run_monkey_test_async,
                 device_ip,
                 package_name,
                 count,
@@ -856,6 +847,7 @@ class ADBController:
 
     def get_random_email_and_code(self):
         task = GetRandomEmailTask()
+        self._email_task = task  # prevent GC while thread is running
 
         # 转发信号给 UI（或主 controller）
         task.signals.log_signal.connect(self.log_service.log)
@@ -903,7 +895,7 @@ class ADBController:
             "connect_device": self._process_connect_device_result,
             "disconnect_device": self._process_disconnect_result,
             "get_device_info": self._process_device_info_result,
-            "restart_devices": self._process_restart_devices_result,
+            "restart_device": self._process_restart_devices_result,
             "restart_adb": self._process_restart_adb_result,
             "take_screenshot": self._process_screenshot_result,
             "retrieve_device_logs": self._process_retrieve_logs_result,
@@ -912,7 +904,7 @@ class ADBController:
             # 可以继续添加其他操作...
             "get_current_package": self._process_get_package_result,
             "install_apk": self._process_install_apk_result,
-            "uninstall_apk": self._process_uninstall_apk_result,
+            "uninstall_app": self._process_uninstall_apk_result,
             "clear_app_data": self._process_clear_app_data_result,
             "restart_app": self._process_restart_app_result,
             "get_current_activity": self._process_get_current_activity_result,

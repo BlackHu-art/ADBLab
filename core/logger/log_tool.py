@@ -13,7 +13,6 @@ import datetime
 from loguru import logger as loguru_logger
 from pathlib import Path
 import configparser
-from common.pathTool import path_tool
 
 def singleton_class(cls):
     """
@@ -37,7 +36,7 @@ class Logger:
 
     def __init__(self):
         self.config = self._load_config()
-        self.project_path = path_tool.get_project_path()  # 初始化项目路径
+        self.project_path = str(Path(__file__).resolve().parent.parent.parent)  # 初始化项目路径
         self._setup_logger()  # 初始化日志配置
 
     @staticmethod

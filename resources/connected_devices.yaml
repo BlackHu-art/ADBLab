@@ -50,6 +50,6 @@ device_ZT322KPNPX:
   ip: ZT322KPNPX
 device_emulator-5554:
   Aversion: '9'
-  Brand: HUAWEI
-  Model: LIO-AN00
+  Brand: Redmi
+  Model: 22127RK46C
   ip: emulator-5554
