@@ -87,9 +87,12 @@ _current_theme: str = "Light"
 
 # ── Fonts ───────────────────────────────────────────────────────────────────
 DEFAULT_FONT_FAMILY: Final[str] = "Segoe UI"
-DEFAULT_FONT_SIZE: Final[int] = 11
+DEFAULT_FONT_SIZE: Final[int] = 12
+SMALL_FONT_SIZE: Final[int] = 12
+TAB_FONT_SIZE: Final[int] = 12
 LOG_FONT: Final[str] = "Consolas"
 LOG_FONT_SIZE: Final[int] = 9
+MONO_FONT_SIZE: Final[int] = 9
 
 # ── Icon sizes ──────────────────────────────────────────────────────────────
 ICON_SIZE: Final[int] = 18
@@ -135,6 +138,9 @@ class BaseStyles:
     RADIUS_XL = RADIUS_XL
     LOG_FONT = LOG_FONT
     LOG_FONT_SIZE = LOG_FONT_SIZE
+    SMALL_FONT_SIZE = SMALL_FONT_SIZE
+    TAB_FONT_SIZE = TAB_FONT_SIZE
+    MONO_FONT_SIZE = MONO_FONT_SIZE
     DEFAULT_FONT_FAMILY = DEFAULT_FONT_FAMILY
     DEFAULT_FONT_SIZE = DEFAULT_FONT_SIZE
     ICON_SIZE = ICON_SIZE
@@ -142,6 +148,21 @@ class BaseStyles:
     WINDOW_BACKGROUND = WINDOW_BACKGROUND
 
     theme_changed = _theme_signal.changed
+    settings_changed = _theme_signal.changed  # reuse same signal for font updates
+
+    # ── Settings reload ─────────────────────────────────────────────────
+
+    @classmethod
+    def reload_from_settings(cls):
+        """Reload font sizes from AppSettings and emit changed signal."""
+        global DEFAULT_FONT_SIZE, SMALL_FONT_SIZE, TAB_FONT_SIZE, MONO_FONT_SIZE
+        from core.settings_manager import AppSettings
+        s = AppSettings.instance()
+        DEFAULT_FONT_SIZE = cls.DEFAULT_FONT_SIZE = s.get("font_base_size", 12)
+        SMALL_FONT_SIZE = cls.SMALL_FONT_SIZE = s.get("font_small_size", 12)
+        TAB_FONT_SIZE = cls.TAB_FONT_SIZE = s.get("font_tab_size", 12)
+        MONO_FONT_SIZE = cls.MONO_FONT_SIZE = s.get("font_mono_size", 10)
+        _theme_signal.changed.emit(_current_theme)
 
     # ── Theme management ────────────────────────────────────────────────
 
@@ -175,46 +196,44 @@ class BaseStyles:
 
     @classmethod
     def SCROLLBAR_STYLE(cls) -> str:
+        h = _tc('SCROLLBAR_HANDLE')
+        hh = _tc('SCROLLBAR_HANDLE_HOVER')
         return f"""
+        QScrollBar {{
+            background: transparent; border: none;
+        }}
         QScrollBar:vertical {{
-            background: {_tc('SCROLLBAR_BG')};
-            width: 8px;
-            margin: 2px;
-            border-radius: 4px;
-        }}
-        QScrollBar::handle:vertical {{
-            background: {_tc('SCROLLBAR_HANDLE')};
-            min-height: 28px;
-            border-radius: 4px;
-        }}
-        QScrollBar::handle:vertical:hover {{
-            background: {_tc('SCROLLBAR_HANDLE_HOVER')};
-        }}
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-            height: 0px;
-        }}
-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-            background: none;
+            width: 8px; padding: 2px 1px;
         }}
         QScrollBar:horizontal {{
-            background: {_tc('SCROLLBAR_BG')};
-            height: 8px;
-            margin: 2px;
-            border-radius: 4px;
+            height: 8px; padding: 1px 2px;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {h};
+            min-height: 30px; border-radius: 4px;
         }}
         QScrollBar::handle:horizontal {{
-            background: {_tc('SCROLLBAR_HANDLE')};
-            min-width: 28px;
-            border-radius: 4px;
+            background: {h};
+            min-width: 30px; border-radius: 4px;
         }}
+        QScrollBar::handle:vertical:hover,
         QScrollBar::handle:horizontal:hover {{
-            background: {_tc('SCROLLBAR_HANDLE_HOVER')};
+            background: {hh};
         }}
-        QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-            width: 0px;
+        QScrollBar::handle:vertical:pressed,
+        QScrollBar::handle:horizontal:pressed {{
+            background: {_tc('BORDER_FOCUS')};
         }}
-        QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+        QScrollBar::add-line,
+        QScrollBar::sub-line {{
+            height: 0; width: 0; border: none; background: none;
+        }}
+        QScrollBar::add-page,
+        QScrollBar::sub-page {{
             background: none;
+        }}
+        QScrollBar::corner {{
+            background: transparent;
         }}
         """
 
@@ -288,11 +307,21 @@ class BaseStyles:
             border: 1px solid {_tc('BORDER_COLOR')};
             border-radius: {RADIUS_SM}px;
             selection-background-color: {_tc('SELECTION_BG')};
+            selection-color: {_tc('SELECTION_TEXT')};
             outline: none;
             font-family: 'Courier New', monospace;
         }}
+        QComboBox QAbstractItemView::item {{
+            color: {_tc('TEXT_PRIMARY')};
+            padding: 4px 8px;
+        }}
+        QComboBox QAbstractItemView::item:selected {{
+            background-color: {_tc('SELECTION_BG')};
+            color: {_tc('SELECTION_TEXT')};
+        }}
         QComboBox QAbstractItemView::item:hover {{
             background-color: {_tc('BUTTON_HOVER')};
+            color: {_tc('TEXT_PRIMARY')};
         }}
         """
 
@@ -433,8 +462,14 @@ class BaseStyles:
     def PANEL_BASE_STYLE(cls) -> str:
         return (
             cls.BUTTON_STYLE() + cls.INPUT_STYLE() + cls.LIST_WIDGET_STYLE()
-            + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; }} "
-            + "QFrame { background-color: transparent; border: none; }"
+            + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }} "
+            + f"QFrame {{ background-color: transparent; border: none; color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
+            + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QStatusBar {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QTableWidget {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QHeaderView::section {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + cls.SCROLLBAR_STYLE()
         )
 
     # ── Font factory methods ────────────────────────────────────────────

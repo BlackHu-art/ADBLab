@@ -35,7 +35,7 @@ class LogPanel(QWidget):
                 color: {BaseStyles.color('LOG_TEXT_COLOR')};
                 border: 1px solid {BaseStyles.color('BORDER_COLOR')};
                 border-radius: {BaseStyles.RADIUS_LG}px;
-                padding: 8px;
+                padding: 4px;
             }}
             {BaseStyles.SCROLLBAR_STYLE()}
         """)
@@ -55,7 +55,7 @@ class LogPanel(QWidget):
         self.text_output.setFont(log_font)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 8, 8)
+        layout.setContentsMargins(0, 2, 4, 4)
         layout.addWidget(self.text_output)
 
         self._apply_style()

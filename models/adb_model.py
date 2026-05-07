@@ -27,13 +27,21 @@ def async_command(method):
                 self.kwargs = kwargs
 
             def run(self):
+                import shiboken6
                 try:
                     result = self.method_ref(self.model, *self.args, **self.kwargs)
+                    if not shiboken6.isValid(self.model):
+                        return
                     self.model.command_finished.emit(self.method_ref.__name__, result)
+                except RuntimeError:
+                    pass  # C++ object already deleted
                 except Exception as e:
-                    self.model.command_finished.emit(
-                        self.method_ref.__name__, f"AsyncError: {str(e)}"
-                    )
+                    if shiboken6.isValid(self.model):
+                        try:
+                            self.model.command_finished.emit(
+                                self.method_ref.__name__, f"AsyncError: {str(e)}")
+                        except RuntimeError:
+                            pass
 
         task = CommandTask(self, method, *args, **kwargs)
         self.thread_pool.start(task)
