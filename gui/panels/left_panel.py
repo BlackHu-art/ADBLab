@@ -1,4 +1,4 @@
-"""Left control panel — 4-tab interface: Devices | Apps | Input & Diag | Advanced"""
+"""左侧控制面板 — 四标签页：设备管理 | 应用管理 | 输入与诊断 | 高级功能"""
 from typing import List, Union
 from PySide6.QtCore import Qt, Slot, QTimer, QSize
 from PySide6.QtGui import QFont, QIcon
@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from gui.panels.left_panel_signals import LeftPanelSignals
 from gui.widgets.double_click_button import DoubleClickButton
 from models.adb_device import ADBDevice
+from utils.resource_path import resource_path
 
 @contextmanager
 def BlockSignals(widget):
@@ -73,11 +74,11 @@ class LeftPanel(QWidget):
 
     def _apply_device_list_style(self):
         bs=BaseStyles
-        self.listbox_devices.setStyleSheet(f"""QListWidget#deviceList{{background-color:{bs.color('INPUT_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;padding:2px;font-family:'Courier New';font-size:{bs.MONO_FONT_SIZE}px;outline:none;}}QListWidget#deviceList::item{{padding:3px 6px;color:{bs.color('TEXT_PRIMARY')};}}QListWidget#deviceList::item:selected{{background-color:{bs.color('SELECTION_BG')};color:{bs.color('SELECTION_TEXT')};}}QListWidget#deviceList::item:hover{{background-color:{bs.color('BUTTON_HOVER')};}}QListWidget::indicator{{width:16px;height:16px;}}QListWidget::indicator:unchecked{{image:none;border:2px solid {bs.color('BORDER_COLOR')};border-radius:3px;background-color:{bs.color('INPUT_BG')};}}QListWidget::indicator:checked{{image:url(resources/icons/Checkmark.svg);border:none;}}""")
+        self.listbox_devices.setStyleSheet(f"""QListWidget#deviceList{{background-color:{bs.color('INPUT_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;padding:2px;font-family:'Courier New';font-size:{bs.MONO_FONT_SIZE}px;outline:none;}}QListWidget#deviceList::item{{padding:3px 6px;color:{bs.color('TEXT_PRIMARY')};}}QListWidget#deviceList::item:selected{{background-color:{bs.color('SELECTION_BG')};color:{bs.color('SELECTION_TEXT')};}}QListWidget#deviceList::item:hover{{background-color:{bs.color('BUTTON_HOVER')};}}QListWidget::indicator{{width:16px;height:16px;}}QListWidget::indicator:unchecked{{image:none;border:2px solid {bs.color('BORDER_COLOR')};border-radius:3px;background-color:{bs.color('INPUT_BG')};}}QListWidget::indicator:checked{{image:url(icons:Checkmark.svg);border:none;}}""")
 
-    # helpers
+    # ── 辅助方法 ──────────────────────────────────────────────────────────
     def _g(self,t): g=QGroupBox(t); g.setFont(self._font_base); g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE()); g.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Preferred); return g
-    def _b(self,t,i,dc=False): b=DoubleClickButton(t) if dc else QPushButton(t); b.setFont(self._font_sm); b.setSizePolicy(QSizePolicy.Minimum,QSizePolicy.Fixed); b.setMinimumHeight(28); b.setIcon(QIcon(f"resources/icons/{i}")); b.setIconSize(QSize(14,14)); return b
+    def _b(self,t,i,dc=False): b=DoubleClickButton(t) if dc else QPushButton(t); b.setFont(self._font_sm); b.setSizePolicy(QSizePolicy.Minimum,QSizePolicy.Fixed); b.setMinimumHeight(28); b.setIcon(QIcon(resource_path(f"resources/icons/{i}"))); b.setIconSize(QSize(14,14)); return b
     def _qb(self,t): b=QPushButton(t); b.setFont(self._font_sm); b.setSizePolicy(QSizePolicy.Minimum,QSizePolicy.Fixed); b.setMinimumHeight(28); return b
     def _in(self, p, w=0):
         i = QLineEdit(); i.setFont(self._font_sm); i.setPlaceholderText(p)
@@ -89,7 +90,7 @@ class LeftPanel(QWidget):
     def _sh(self,c): self.signals.shell_command_requested.emit(self._sd(),c)
     def _ke(self,c): self.signals.input_keyevent_requested.emit(self._sd(),c)
 
-    # ═══ Tab 1: Devices ═══
+    # ═══ 标签页 1: 设备管理 ═══
     def _mk_devices(self):
         w=QWidget(); lo=QVBoxLayout(w); lo.setSpacing(3); lo.setContentsMargins(4,4,4,4)
         g1=self._g("Connection"); gl1=QVBoxLayout(g1); gl1.setSpacing(2)
@@ -139,7 +140,7 @@ class LeftPanel(QWidget):
         gl5.addWidget(self.btn_generate_email,1); gl5.addWidget(self.email_text_sender,2); gl5.addWidget(self.verfication_text_sender,2); lo.addWidget(g5)
         return w
 
-    # ═══ Tab 2: Apps ═══
+    # ═══ 标签页 2: 应用管理 ═══
     def _mk_apps(self):
         w=QWidget(); lo=QVBoxLayout(w); lo.setSpacing(3); lo.setContentsMargins(4,4,4,4)
         g0=self._g("Package Selector"); gl0=QHBoxLayout(g0); gl0.setSpacing(4)
@@ -193,7 +194,7 @@ class LeftPanel(QWidget):
         rd_.addWidget(self.deep_link_uri,2); rd_.addWidget(self.btn_deep_link,1); gl4.addLayout(rd_); lo.addWidget(g4)
         lo.addStretch(); return w
 
-    # ═══ Tab 3: Input & Diag ═══
+    # ═══ 标签页 3: 输入与诊断 ═══
     def _mk_diag(self):
         w=QWidget(); lo=QVBoxLayout(w); lo.setSpacing(3); lo.setContentsMargins(4,4,4,4)
 
@@ -267,7 +268,7 @@ class LeftPanel(QWidget):
         r7b.addWidget(self.logcat_tag,1); r7b.addWidget(self.logcat_regex,1); r7b.addWidget(self.btn_logcat_filter,1); gl7.addLayout(r7b); lo.addWidget(g7)
         lo.addStretch(); return w
 
-    # ═══ Tab 4: Advanced ═══
+    # ═══ 标签页 4: 高级功能 ═══
     def _mk_advanced(self):
         w=QWidget(); lo=QVBoxLayout(w); lo.setSpacing(3); lo.setContentsMargins(4,4,4,4)
         g1=self._g("Shell Command"); gl1=QHBoxLayout(g1); gl1.setSpacing(4)
@@ -334,7 +335,7 @@ class LeftPanel(QWidget):
         re2.addWidget(self.emu_call_num,1); re2.addWidget(self.btn_emu_call); re2.addWidget(self.emu_geo_lon,1); re2.addWidget(self.emu_geo_lat,1); re2.addWidget(self.btn_emu_geo); gl7.addLayout(re2); lo.addWidget(g7)
         lo.addStretch(); return w
 
-    # ═══ Signals ═══
+    # ═══ 信号连接 ═══
     def _connect_signals(self):
         LP=self.signals; sd=self._sd; pg=self._pg
         self.btn_connect_devices.clicked.connect(lambda:LP.connect_requested.emit(self.ip_address))
@@ -411,7 +412,7 @@ class LeftPanel(QWidget):
         self.email_text_sender.returnPressed.connect(lambda:LP.send_text_requested.emit(sd(),self.email_text_sender.text()))
         self.verfication_text_sender.returnPressed.connect(lambda:LP.send_text_requested.emit(sd(),self.verfication_text_sender.text()))
 
-    # ═══ Device List ═══
+    # ═══ 设备列表 ═══
     def update_device_list(self, devices:List[str]=None):
         if devices is None: devices=ADBDevice.get_connected_devices_async();
         if not devices: return

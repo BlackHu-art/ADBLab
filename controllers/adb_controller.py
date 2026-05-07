@@ -18,6 +18,7 @@ from models.device_store import DeviceStore
 from core.log_service import LogLevel, LogService
 from core.settings_manager import AppSettings
 from utils.batch_tracker import BatchOperationTracker
+from utils.resource_path import resource_path
 
 
 class ADBController:
@@ -30,11 +31,11 @@ class ADBController:
         self.app_model = ADBApp()
         self.testing_model = ADBTesting()
         self.advanced_model = ADBAdvanced()
-        self.connected_devices_file = "resources/connected_devices.yaml"
-        self.package_info = "resources/package_info.yaml"
+        self.connected_devices_file = resource_path("resources/connected_devices.yaml")
+        self.package_info = resource_path("resources/package_info.yaml")
         self.thread_pool = QThreadPool.globalInstance()
         self._pending_operations = {}
-        # Wire all four model signals to the same handler
+        # 将所有模型信号连接到统一处理器
         self.device_model.command_finished.connect(self._handle_async_response)
         self.app_model.command_finished.connect(self._handle_async_response)
         self.testing_model.command_finished.connect(self._handle_async_response)
@@ -57,7 +58,7 @@ class ADBController:
         return str(uuid.uuid4())
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Device Operations (existing)
+    # ── 设备操作 ───────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def connect_device(self, ip: str):
@@ -209,7 +210,7 @@ class ADBController:
                                  f"ADB restart failed: {result.get('error', 'unknown error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Reboot Modes (new)
+    # ── 重启模式 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def reboot_mode(self, devices: list, mode: str):
@@ -231,7 +232,7 @@ class ADBController:
                                  f"{ip} reboot failed: {result.get('error', '')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Screenshot & Screen Recording (recording new)
+    # ── 截图与录屏 ────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def take_screenshot(self, devices: list):
@@ -288,7 +289,7 @@ class ADBController:
                                  if v in self._active_viewers else None)
         viewer.show()
 
-    # ── Screen Recording ─────────────────────────────────────────────────
+    # ── 屏幕录制 ──────────────────────────────────────────────────────
 
     def start_screen_record(self, devices: list, duration: int = 180):
         if not devices:
@@ -336,7 +337,7 @@ class ADBController:
                                  f"Failed to pull recording from {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Input Events (new)
+    # ── 输入事件 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def input_tap(self, devices: list, x: int, y: int):
@@ -388,7 +389,7 @@ class ADBController:
                                  f"Key event failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Performance Diagnostics (new)
+    # ── 性能诊断 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def dumpsys_meminfo(self, devices: list, package: str = ""):
@@ -440,7 +441,7 @@ class ADBController:
                                  f"Battery info failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Battery Simulation (new)
+    # ── 电池模拟 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def battery_set(self, devices: list, param: str, value: str):
@@ -487,7 +488,7 @@ class ADBController:
                                  f"Battery reset failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Logcat Filtering (new)
+    # ── Logcat 过滤 ───────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def logcat_filtered(self, devices: list, buffer: str = "main",
@@ -514,7 +515,7 @@ class ADBController:
                                  f"Logcat filter failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Port Forwarding (new)
+    # ── 端口转发 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def forward_port(self, devices: list, local_port: str, remote_port: str):
@@ -615,7 +616,7 @@ class ADBController:
                                  f"Remove reverse failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Settings (new)
+    # ── 系统设置 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def settings_list(self, devices: list, namespace: str = "system"):
@@ -668,7 +669,7 @@ class ADBController:
                                  f"Settings put failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Shell Command (new)
+    # ── Shell 命令 ────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def run_shell_command(self, devices: list, command: str):
@@ -692,7 +693,7 @@ class ADBController:
                                  f"Shell failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # File Manager (new)
+    # ── 文件管理 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def file_list(self, devices: list, path: str = "/sdcard"):
@@ -747,7 +748,7 @@ class ADBController:
                                  f"Pull failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # App Permissions (new)
+    # ── 应用权限 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def grant_permission(self, devices: list, package: str, permission: str):
@@ -783,7 +784,7 @@ class ADBController:
                                  f"Revoke failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # App Disable/Enable (new)
+    # ── 应用禁用/启用 ──────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def disable_app(self, devices: list, package: str):
@@ -834,7 +835,7 @@ class ADBController:
                                  f"Force stop failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Broadcast & Activity (new)
+    # ── 广播与 Activity ───────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def send_broadcast(self, devices: list, action: str):
@@ -892,7 +893,7 @@ class ADBController:
                                  f"Deep link failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Wireless Pairing (new)
+    # ── 无线配对 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def pair_device(self, ip: str, port: str, pairing_code: str):
@@ -927,7 +928,7 @@ class ADBController:
                                  f"TCP/IP mode failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Process Management (new)
+    # ── 进程管理 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def list_processes(self, devices: list):
@@ -963,7 +964,7 @@ class ADBController:
                                  f"Kill failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Content Provider (new)
+    # ── Content Provider ──────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def content_query(self, devices: list, uri: str):
@@ -983,7 +984,7 @@ class ADBController:
                                  f"Content query failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Quick Settings (new)
+    # ── 快捷设置 ──────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def quick_setting(self, devices: list, action: str):
@@ -1003,7 +1004,7 @@ class ADBController:
                                  f"Quick setting failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # IME Management (new)
+    # ── 输入法管理 ────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def ime_list(self, devices: list):
@@ -1038,7 +1039,7 @@ class ADBController:
                                  f"IME set failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Emulator Control (new)
+    # ── 模拟器控制 ────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def emu_sms(self, devices: list, sender: str, text: str):
@@ -1089,7 +1090,7 @@ class ADBController:
                                  f"Emu geo failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Package Info Extended (new)
+    # ── 包信息扩展 ────────────────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def pm_features(self, devices: list):
@@ -1125,7 +1126,7 @@ class ADBController:
                                  f"Uptime failed on {ip}: {result.get('error')}")
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Existing App Operations (keep as-is)
+    # ── 现有应用操作（保持原样）───────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     def retrieve_device_logs(self, devices: list):
@@ -1607,7 +1608,7 @@ class ADBController:
         self.thread_pool.start(task)
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Signal & Handler Infrastructure
+    # ── 信号与处理器基础设施 ───────────────────────────────────────────
     # ═══════════════════════════════════════════════════════════════════════
 
     @Slot(str, bool, str)

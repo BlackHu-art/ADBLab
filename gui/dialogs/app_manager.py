@@ -1,6 +1,4 @@
-"""
-App Manager dialog — list, filter, manage, backup/restore apps on a device.
-"""
+"""应用管理器对话框 — 列出、筛选、管理、备份/恢复设备上的应用。"""
 
 import os, re, sys, json, tempfile, shutil, zipfile, subprocess, concurrent.futures
 from typing import List
@@ -14,9 +12,10 @@ from PySide6.QtWidgets import (
     QGroupBox, QFrame, QSizePolicy, QStatusBar, QStackedWidget, QStyledItemDelegate,
 )
 from gui.styles.base_styles import BaseStyles
+from utils.resource_path import resource_path
 
 
-# ── Worker ────────────────────────────────────────────────────────────────
+# ── 后台工作线程 ──────────────────────────────────────────────────────────
 
 class AppManagerWorker(QThread):
     log_message = Signal(str)
@@ -195,7 +194,7 @@ class AppManagerWorker(QThread):
         self.operation_done.emit("restore")
 
 
-# ── Sort Proxy ─────────────────────────────────────────────────────────────
+# ── 排序代理模型 ──────────────────────────────────────────────────────────
 
 class AppSortProxy(QSortFilterProxyModel):
     STATUS_ORDER = {"Enabled": 0, "Disabled": 1}
@@ -208,7 +207,7 @@ class AppSortProxy(QSortFilterProxyModel):
         return super().lessThan(left, right)
 
 
-# ── App Details Dialog ─────────────────────────────────────────────────────
+# ── 应用详情对话框 ─────────────────────────────────────────────────────────
 
 class AppDetailsDialog(QDialog):
     def __init__(self, parent, device_ip: str, package_name: str):
@@ -299,7 +298,7 @@ class AppDetailsDialog(QDialog):
         super().closeEvent(event)
 
 
-# ── Main App Manager Dialog ────────────────────────────────────────────────
+# ── 主应用管理器对话框 ────────────────────────────────────────────────────
 
 class AppManagerDialog(QDialog):
     def __init__(self, parent, device_ip: str):
@@ -331,7 +330,7 @@ class AppManagerDialog(QDialog):
         self.view_toggle = QPushButton(); self.view_toggle.setFixedSize(28, 28)
         self.view_toggle.setToolTip("Toggle Icon / List view")
         self.view_toggle.clicked.connect(self._toggle_view)
-        self.view_toggle.setIcon(QIcon("resources/icons/format_list_bulleted.svg"))
+        self.view_toggle.setIcon(QIcon(resource_path("resources/icons/format_list_bulleted.svg")))
         self.view_toggle.setIconSize(QSize(16, 16))
         top.addWidget(self.view_toggle)
         self.refresh_btn = QPushButton("Refresh"); self.refresh_btn.clicked.connect(self._load_apps)
@@ -420,7 +419,7 @@ class AppManagerDialog(QDialog):
         self.log_output.append(msg)
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
 
-    # ── Load / Filter ──────────────────────────────────────────────────────
+    # ── 加载 / 筛选 ────────────────────────────────────────────────────────
 
     def _load_apps(self):
         self.model.removeRows(0, self.model.rowCount()); self.selected_packages.clear()
@@ -494,7 +493,7 @@ class AppManagerDialog(QDialog):
     def _toggle_view(self):
         self._view_mode = not self._view_mode
         self.stack.setCurrentIndex(1 if self._view_mode else 0)
-        self.view_toggle.setIcon(QIcon("resources/icons/format_list_bulleted.svg" if self._view_mode else "resources/icons/Install_app.svg"))
+        self.view_toggle.setIcon(QIcon(resource_path("resources/icons/format_list_bulleted.svg" if self._view_mode else "resources/icons/Install_app.svg")))
         self.view_toggle.setToolTip("Switch to List view" if self._view_mode else "Switch to Icon view")
 
     def _icon_context_menu(self, pos):
@@ -547,7 +546,7 @@ class AppManagerDialog(QDialog):
             text_match = (not text or text in name or text in pkg)
             item.setHidden(not (type_match and text_match))
 
-    # ── Click / Context ────────────────────────────────────────────────────
+    # ── 点击 / 右键菜单 ────────────────────────────────────────────────────
 
     def _on_row_clicked(self, index):
         src = self.proxy.mapToSource(index); row = src.row()
@@ -617,7 +616,7 @@ class AppManagerDialog(QDialog):
         self.icon_list.clearSelection()
         self.selected_packages.clear(); self.log("Deselected all.")
 
-    # ── Batch Actions ──────────────────────────────────────────────────────
+    # ── 批量操作 ───────────────────────────────────────────────────────────
 
     def _get_selected_pkgs(self):
         if self._view_mode:
@@ -661,7 +660,7 @@ class AppManagerDialog(QDialog):
             pkg = self.model.item(src.row(), 2).text()
         if pkg: AppDetailsDialog(self, self.device_ip, pkg).show()
 
-    # ── Presets ────────────────────────────────────────────────────────────
+    # ── 预设操作 ───────────────────────────────────────────────────────────
 
     def _create_preset(self):
         if not self.selected_packages: QMessageBox.warning(self, "None", "Select apps first."); return
@@ -693,7 +692,7 @@ class AppManagerDialog(QDialog):
             if p in pkgs: self.model.item(r, 0).setCheckState(Qt.CheckState.Checked); self.selected_packages.add(p)
         self.log(f"Loaded preset '{data.get('name','?')}' ({len(self.selected_packages)} apps).")
 
-    # ── Lifecycle ──────────────────────────────────────────────────────────
+    # ── 应用生命周期操作 ───────────────────────────────────────────────────
 
     def _track_worker(self, w):
         w.setParent(self); self._workers.append(w)

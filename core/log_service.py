@@ -2,6 +2,7 @@ import logging
 from typing import Optional, Dict, Callable
 from PySide6.QtCore import QObject, Signal, QTimer, QMutex, QThread
 from dataclasses import dataclass
+from utils.resource_path import resource_path
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class LogService(QObject):
     def _setup_logging(self) -> None:
         """配置日志记录器"""
         self._enable_file_log = False
-        self._log_path = "resources/app.log"
+        self._log_path = resource_path("resources/app.log")
         self._flush_interval = 200  # ms
         
         self._timer = QTimer()

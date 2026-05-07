@@ -1,9 +1,7 @@
-"""
-Central theme and style system for ADBLab.
+"""ADBLab 中心主题与样式系统。
 
-Defines Light/Dark color palettes, QSS (Qt Style Sheet) templates,
-font constants, and a runtime theme-switching mechanism driven by
-ThemeSignal (a QObject Signal that notifies all connected widgets).
+定义 Light/Dark 双主题调色板、QSS 模板、字体常量，以及基于
+ThemeSignal 的运行时主题切换机制。
 """
 
 from PySide6.QtGui import QFont, QColor
@@ -12,13 +10,13 @@ from typing import Final
 
 
 class ThemeSignal(QObject):
-    """Signal emitter for theme change notifications."""
+    """主题变更信号发射器。"""
     changed = Signal(str)
 
 
 _theme_signal = ThemeSignal()
 
-# ── Theme color definitions ────────────────────────────────────────────────
+# ── 主题颜色定义 ──────────────────────────────────────────────────────────────
 
 THEMES = {
     "Light": {
@@ -85,7 +83,7 @@ THEMES = {
 
 _current_theme: str = "Light"
 
-# ── Fonts ───────────────────────────────────────────────────────────────────
+# ── 字体 ───────────────────────────────────────────────────────────────────────
 DEFAULT_FONT_FAMILY: Final[str] = "Segoe UI"
 DEFAULT_FONT_SIZE: Final[int] = 12
 SMALL_FONT_SIZE: Final[int] = 12
@@ -94,11 +92,11 @@ LOG_FONT: Final[str] = "Consolas"
 LOG_FONT_SIZE: Final[int] = 9
 MONO_FONT_SIZE: Final[int] = 9
 
-# ── Icon sizes ──────────────────────────────────────────────────────────────
+# ── 图标尺寸 ──────────────────────────────────────────────────────────────────
 ICON_SIZE: Final[int] = 18
 TOOLBAR_ICON_SIZE: Final[int] = 16
 
-# ── Log level colors (theme-independent) ────────────────────────────────────
+# ── 日志等级颜色（主题无关）────────────────────────────────────────────────────
 DEBUG_COLOR: Final[str] = "#6C757D"
 INFO_COLOR: Final[str] = "#17A2B8"
 SUCCESS_COLOR: Final[str] = "#28A745"
@@ -107,24 +105,24 @@ ERROR_COLOR: Final[str] = "#DC3545"
 CRITICAL_COLOR: Final[str] = "#FF4081"
 TIMESTAMP_COLOR: Final[str] = "#6C757D"
 
-# ── Border radius ──────────────────────────────────────────────────────────
+# ── 圆角半径 ──────────────────────────────────────────────────────────────────
 RADIUS_SM: Final[int] = 4
 RADIUS_MD: Final[int] = 6
 RADIUS_LG: Final[int] = 8
 RADIUS_XL: Final[int] = 12
 
-# ── Legacy compatibility ────────────────────────────────────────────────────
+# ── 遗留兼容 ──────────────────────────────────────────────────────────────────
 WINDOW_BACKGROUND: Final[str] = "#f0f0f0"
 
 
 def _tc(key: str) -> str:
-    """Look up a color key in the current theme, falling back to Light default."""
+    """从当前主题查颜色值，未找到则回退到 Light 主题默认值。"""
     return THEMES[_current_theme].get(key, THEMES["Light"].get(key, "#000000"))
 
 
 class BaseStyles:
 
-    # Re-exported module constants
+    # 重新导出模块级常量
     DEBUG_COLOR = DEBUG_COLOR
     INFO_COLOR = INFO_COLOR
     SUCCESS_COLOR = SUCCESS_COLOR
@@ -148,13 +146,13 @@ class BaseStyles:
     WINDOW_BACKGROUND = WINDOW_BACKGROUND
 
     theme_changed = _theme_signal.changed
-    settings_changed = _theme_signal.changed  # reuse same signal for font updates
+    settings_changed = _theme_signal.changed  # 复用同一信号触发字体更新
 
-    # ── Settings reload ─────────────────────────────────────────────────
+    # ── 设置重载 ───────────────────────────────────────────────────────
 
     @classmethod
     def reload_from_settings(cls):
-        """Reload font sizes from AppSettings and emit changed signal."""
+        """从 AppSettings 重新加载字体大小并发射变更信号。"""
         global DEFAULT_FONT_SIZE, SMALL_FONT_SIZE, TAB_FONT_SIZE, MONO_FONT_SIZE
         from core.settings_manager import AppSettings
         s = AppSettings.instance()
@@ -164,7 +162,7 @@ class BaseStyles:
         MONO_FONT_SIZE = cls.MONO_FONT_SIZE = s.get("font_mono_size", 10)
         _theme_signal.changed.emit(_current_theme)
 
-    # ── Theme management ────────────────────────────────────────────────
+    # ── 主题管理 ────────────────────────────────────────────────────────
 
     @classmethod
     def theme_names(cls):
@@ -183,7 +181,7 @@ class BaseStyles:
 
     @classmethod
     def toggle_theme(cls) -> str:
-        """Toggle between Light and Dark themes, returns the new theme name."""
+        """在 Light / Dark 主题间切换，返回新主题名称。"""
         next_theme = "Dark" if _current_theme == "Light" else "Light"
         cls.switch_theme(next_theme)
         return next_theme
@@ -192,7 +190,7 @@ class BaseStyles:
     def color(cls, key: str) -> str:
         return _tc(key)
 
-    # ── QSS Templates ──────────────────────────────────────────────────
+    # ── QSS 模板 ──────────────────────────────────────────────────────
 
     @classmethod
     def SCROLLBAR_STYLE(cls) -> str:
@@ -296,7 +294,7 @@ class BaseStyles:
             background-color: {_tc('BUTTON_HOVER')};
         }}
         QComboBox::down-arrow {{
-            image: url(resources/icons/dropdown_arrow.svg);
+            image: url(icons:dropdown_arrow.svg);
             width: 10px;
             height: 6px;
             margin-right: 4px;
@@ -456,7 +454,7 @@ class BaseStyles:
         }}
         """
 
-    # ── Composite styles ────────────────────────────────────────────────
+    # ── 组合样式 ────────────────────────────────────────────────────────
 
     @classmethod
     def PANEL_BASE_STYLE(cls) -> str:
@@ -472,7 +470,7 @@ class BaseStyles:
             + cls.SCROLLBAR_STYLE()
         )
 
-    # ── Font factory methods ────────────────────────────────────────────
+    # ── 字体工厂 ────────────────────────────────────────────────────────
 
     @classmethod
     def get_default_font(cls, size: int = None) -> QFont:

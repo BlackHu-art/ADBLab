@@ -12,6 +12,7 @@ from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.settings_dialog import SettingsDialog
+from utils.resource_path import resource_path
 from .styles.base_styles import get_default_font, BaseStyles
 
 
@@ -38,7 +39,7 @@ class MainFrame(QMainWindow):
 
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
-        self.setWindowIcon(QIcon("icon.ico"))
+        self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
@@ -56,7 +57,7 @@ class MainFrame(QMainWindow):
         """)
 
     def _init_panels(self):
-        """Build central widget: toolbar on top, panels below."""
+        """构建中央控件：顶部工具栏 + 下方面板区域。"""
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
         central_widget.setStyleSheet(f"""
@@ -67,14 +68,14 @@ class MainFrame(QMainWindow):
             }}
         """)
 
-        # Vertical layout: full-width toolbar + horizontal panel area
+        # 垂直布局: 全宽工具栏 + 水平面板区域
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         main_layout.addWidget(self._create_toolbar())
 
-        # Horizontal panel area
+        # 水平面板区域
         panel_row = QHBoxLayout()
         panel_row.setContentsMargins(3, 1, 3, 3)
         panel_row.setSpacing(4)
@@ -88,14 +89,14 @@ class MainFrame(QMainWindow):
         self._connect_all_signals()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
 
-        # USB device auto-detect polling (every 3s)
+        # USB 设备自动检测轮询（每 3 秒）
         self._usb_timer = QTimer(self)
         self._usb_timer.timeout.connect(self._check_new_devices)
         self._usb_timer.start(3000)
         self._known_device_count = 0
 
     def _check_new_devices(self):
-        """Poll for new USB devices and auto-refresh if detected."""
+        """轮询检测新 USB 设备，发现变化时自动刷新设备列表。"""
         import subprocess, sys
         try:
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -110,10 +111,10 @@ class MainFrame(QMainWindow):
         except Exception:
             pass
 
-    # ── Top toolbar (full-width, replaces menu bar) ────────────────────
+    # ── 顶部工具栏（全宽，替代菜单栏）──────────────────────────────────
 
     def _create_toolbar(self) -> QFrame:
-        """Full-width top toolbar with app title, theme toggle, and window controls."""
+        """创建全宽顶部工具栏，含标题、功能按钮、主题切换和窗口控制。"""
         bar = QFrame()
         bar.setObjectName("toolbar")
         bar.setFixedHeight(32)
@@ -123,7 +124,7 @@ class MainFrame(QMainWindow):
         layout.setContentsMargins(10, 0, 6, 0)
         layout.setSpacing(4)
 
-        # App title + App Manager button
+        # 应用标题 + 功能按钮
         title = QLabel("ADBLab")
         layout.addWidget(title)
         self.tb_app_mgr = self._create_toolbar_btn("App Manager", "resources/icons/Install_app.svg")
@@ -140,13 +141,13 @@ class MainFrame(QMainWindow):
         layout.addWidget(self.tb_settings)
         layout.addStretch()
 
-        # Tool buttons (right side)
+        # 右侧工具按钮
         self.tb_clear = self._create_toolbar_btn("Clear Log", "resources/icons/Cleaning_services.svg")
         self.tb_about = self._create_toolbar_btn("About", "resources/icons/Info.svg")
 
-        # Theme toggle button (2nd from right)
+        # 主题切换按钮（右侧倒数第二）
         self.theme_btn = QPushButton()
-        self.theme_btn.setIcon(QIcon("resources/icons/theme.svg"))
+        self.theme_btn.setIcon(QIcon(resource_path("resources/icons/theme.svg")))
         self.theme_btn.setIconSize(QSize(16, 16))
         self.theme_btn.setToolTip("Toggle Light/Dark theme")
         self.theme_btn.setFixedSize(28, 24)
@@ -157,7 +158,7 @@ class MainFrame(QMainWindow):
         self.tb_exit = self._create_toolbar_btn("Exit", "resources/icons/Close.svg")
         self.tb_exit.setObjectName("exit_btn")
 
-        # Connect toolbar button actions
+        # 连接工具栏按钮动作
         self.tb_clear.clicked.connect(self.clear_log)
         self.tb_about.clicked.connect(self._show_about_dialog)
         self.tb_app_mgr.clicked.connect(self._show_app_manager)
@@ -175,16 +176,16 @@ class MainFrame(QMainWindow):
         return bar
 
     def _create_toolbar_btn(self, tooltip: str, icon_path: str) -> QPushButton:
-        """Create a flat toolbar button with icon and tooltip."""
+        """创建扁平工具栏按钮（图标 + 提示）。"""
         btn = QPushButton()
-        btn.setIcon(QIcon(icon_path))
+        btn.setIcon(QIcon(resource_path(icon_path)))
         btn.setIconSize(QSize(14, 14))
         btn.setToolTip(tooltip)
         btn.setFlat(True)
         return btn
 
     def _on_theme_changed(self, _name: str):
-        """Re-apply central widget and toolbar styles on theme switch."""
+        """主题切换时重新应用中央控件和工具栏样式。"""
         self.centralWidget().setStyleSheet(f"""
             #centralWidget {{
                 background-color: {BaseStyles.color('WINDOW_BG')};
@@ -192,12 +193,12 @@ class MainFrame(QMainWindow):
                 border: 1px solid {BaseStyles.color('BORDER_COLOR')};
             }}
         """)
-        # Refresh toolbar style
+        # 刷新工具栏样式
         for bar in self.findChildren(QFrame, "toolbar"):
             bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
 
     def _connect_all_signals(self):
-        """Wire left_panel signals and controller signals."""
+        """连接左侧面板信号与 ADB 控制器信号。"""
         LP = self.left_panel.signals
         CTL = self.adb_controller.signals
         AC = self.adb_controller
@@ -215,7 +216,7 @@ class MainFrame(QMainWindow):
 
         # Left panel → ADB controller signal mapping
         signal_map = [
-            # Device Management
+            # 设备管理
             (LP.connect_requested,                AC.connect_device),
             (LP.refresh_devices_requested,        AC.refresh_devices),
             (LP.device_info_requested,            AC.get_device_info),
@@ -225,23 +226,23 @@ class MainFrame(QMainWindow):
             (LP.reboot_mode_requested,            AC.reboot_mode),
             (LP.pair_device_requested,            AC.pair_device),
             (LP.tcpip_mode_requested,             AC.tcpip_mode),
-            # Screenshot & Recording
+            # 截图与录屏
             (LP.screenshot_requested,             AC.take_screenshot),
             (LP.screen_record_requested,          AC.start_screen_record),
             (LP.pull_recording_requested,         AC.pull_recordings),
             (LP.batch_install_requested,          AC.batch_install_apk),
-            # Logs
+            # 日志
             (LP.retrieve_logs_requested,          AC.retrieve_device_logs),
             (LP.cleanup_logs_requested,           AC.cleanup_device_logs),
             (LP.logcat_filtered_requested,        AC.logcat_filtered),
-            # Input
+            # 输入
             (LP.send_text_requested,              AC.input_text),
             (LP.input_tap_requested,              AC.input_tap),
             (LP.input_swipe_requested,            AC.input_swipe),
             (LP.input_keyevent_requested,         AC.input_keyevent),
-            # Email
+            # 邮箱
             (LP.generate_email_requested,         AC.get_random_email_and_code),
-            # App Management
+            # 应用管理
             (LP.get_program_requested,            AC.get_current_package),
             (LP.install_app_requested,            AC.install_apk),
             (LP.uninstall_app_requested,          AC.uninstall_apk),
@@ -257,7 +258,7 @@ class MainFrame(QMainWindow):
             (LP.send_broadcast_requested,         AC.send_broadcast),
             (LP.start_activity_requested,         AC.start_activity),
             (LP.open_deep_link_requested,         AC.open_deep_link),
-            # Testing
+            # 测试
             (LP.start_monkey_requested,           AC.run_monkey_test),
             (LP.kill_monkey_requested,            AC.kill_monkey),
             (LP.list_installed_packages_requested, AC.list_installed_packages),
@@ -266,12 +267,12 @@ class MainFrame(QMainWindow):
             (LP.dumpsys_meminfo_requested,        AC.dumpsys_meminfo),
             (LP.dumpsys_cpuinfo_requested,        AC.dumpsys_cpuinfo),
             (LP.dumpsys_battery_requested,        AC.dumpsys_battery),
-            # Shell & File
+            # Shell 与文件
             (LP.shell_command_requested,          AC.run_shell_command),
             (LP.file_list_requested,              AC.file_list),
             (LP.file_push_requested,              AC.file_push),
             (LP.file_pull_requested,              AC.file_pull),
-            # Network & Settings
+            # 网络与设置
             (LP.forward_port_requested,           AC.forward_port),
             (LP.list_forwards_requested,          AC.list_forwards),
             (LP.remove_forwards_requested,        AC.remove_forwards),
@@ -282,7 +283,7 @@ class MainFrame(QMainWindow):
             (LP.settings_get_requested,           AC.settings_get),
             (LP.settings_put_requested,           AC.settings_put),
             (LP.content_query_requested,          AC.content_query),
-            # Advanced
+            # 高级功能
             (LP.list_processes_requested,         AC.list_processes),
             (LP.kill_process_requested,           AC.kill_process),
             (LP.battery_set_requested,            AC.battery_set),
@@ -300,10 +301,10 @@ class MainFrame(QMainWindow):
             signal_.connect(handler)
 
     def _initial_refresh(self):
-        """Initial device list refresh after UI is fully loaded."""
+        """UI 完全加载后执行初始设备列表刷新。"""
         try:
             self.adb_controller.refresh_devices()
-            # Sync known device count for USB poller
+            # 同步 USB 轮询器的设备计数
             import subprocess, sys
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             r = subprocess.run(["adb", "devices"], capture_output=True, text=True,
@@ -314,17 +315,17 @@ class MainFrame(QMainWindow):
             self.log_panel._append_log("ERROR", f"Initial refresh failed: {str(e)}")
 
     def clear_log(self):
-        """Clear the log panel."""
+        """清空日志面板。"""
         self.log_panel.clear()
         self.log_panel._append_log("INFO", "Log cleared")
 
     def restore_default_size(self):
-        """Restore the window to its default size."""
+        """恢复窗口到默认尺寸。"""
         self.resize(self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT)
         self.log_panel._append_log("INFO", "Window size restored to default")
 
     def _show_about_dialog(self):
-        """Show the About dialog."""
+        """显示关于对话框。"""
         dialog = AboutDialog(self)
         dialog.exec_()
 
@@ -356,11 +357,11 @@ class MainFrame(QMainWindow):
             dlg = LiveLogcatDialog(self, ip); dlg.show()
 
     def _show_settings(self):
-        """Show the Settings dialog."""
+        """显示设置对话框。"""
         dialog = SettingsDialog(self)
         dialog.exec_()
 
-    # ── Edge resize detection ──────────────────────────────────────────
+    # ── 边缘拖拽调整窗口大小 ──────────────────────────────────────────
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.HoverMove:
