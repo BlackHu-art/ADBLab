@@ -33,8 +33,8 @@ class DeviceManager(BasePanel):
         w.setObjectName("deviceManager")
         w.setAttribute(Qt.WA_StyledBackground, True)
         lo = QVBoxLayout(w)
-        lo.setSpacing(3)
-        lo.setContentsMargins(4, 4, 4, 4)
+        lo.setSpacing(1)
+        lo.setContentsMargins(0, 0, 0, 0)
 
         # ── 设备管理 ──
         g_dev = self._g("Devices")
@@ -78,7 +78,7 @@ class DeviceManager(BasePanel):
         self.btn_disconnect_devices = self._b("Disconnect", "Disconnect.svg")
         self.btn_restart_devices = self._b("Restart Device", "Restart.svg")
         self.btn_restart_adb = self._b("Restart ADB", "Restore.svg", dc=True)
-        self.btn_restart_adb.setToolTip("双击重启 ADB 服务")
+        self.btn_restart_adb.setToolTip("Double-click to restart ADB service")
         self.btn_batch_install = self._b("Batch Install APK", "Install_app.svg")
         self.btn_sel_all = self._qb("Select All")
         self.btn_sel_none = self._qb("Deselect All")

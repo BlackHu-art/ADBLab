@@ -1,309 +1,332 @@
-# ADBLab — 项目文档
+# ADBLab
 
-## 概述
+## Overview
 
-**ADBLab** 是一个基于 PySide6 的桌面 GUI 工具，用于 Android 设备的批量管理与自动化测试。通过图形界面封装 ADB 命令，支持设备连接、应用管理、文件浏览、实时日志、Monkey 压力测试、Bugreport 抓取与解析等功能。
+**ADBLab** is a PySide6 desktop GUI tool for Android device management and automated testing. It wraps ADB commands into a graphical interface supporting device connection, app management, file browsing, live logcat, Monkey stress testing, and bugreport capture/analysis.
 
-![ADBLab 界面预览](./mge.png)
+![ADBLab UI Preview](./mge.png)
 
-- **语言**: Python 3
-- **GUI 框架**: PySide6 (Qt 6)
-- **作者**: Frankie Hu (Copyright (c) 2025.4)
-- **版本**: 2.7.0
+- **Language**: Python 3.11
+- **GUI Framework**: PySide6 (Qt 6)
+- **Author**: Frankie Hu (Copyright (c) 2025.4)
+- **Version**: 2.8.0
 
 ---
 
-## 目录结构
+## Directory Structure
 
 ```
 ADBLab/
-├── main.py                          # 入口：创建 QApplication → MainFrame → 事件循环
-├── requirements.txt                 # Python 依赖
-├── README.md                        # 中文功能说明文档
-├── icon.ico                         # 应用图标 (用于 Windows EXE)
+├── main.py                          # Entry: QApplication → MainFrame → event loop
+├── requirements.txt                 # Python dependencies
+├── README.md
+├── icon.ico                         # App icon (for Windows EXE)
 ├── .gitignore
 ├── .github/workflows/
-│   ├── Build-exe.yaml               # PyInstaller 打包 EXE + GitHub Release
-│   └── Auto-Clean.yaml              # 定时清理旧构建产物与旧 Release
+│   ├── Build-exe.yaml               # PyInstaller EXE build + GitHub Release
+│   └── Auto-Clean.yaml              # Scheduled cleanup of old builds/releases
 │
-├── core/                            # 核心基础设施
-│   ├── log_service.py               # 线程安全单例日志服务 (QTimer 缓冲 → signal → GUI)
-│   ├── settings_manager.py         # 应用设置持久化 (JSON 单例)
-│   ├── logger/                      # loguru 日志方案
-│   │   ├── log.ini                  #   日志配置 (文件/控制台开关)
-│   │   └── log_tool.py             #   loguru 单例封装
-│   └── mail/                        # 临时邮箱服务
-│       ├── email_service.py         #   AMZ123 临时邮箱 API 客户端
-│       ├── email_task.py           #   QRunnable 异步获取邮箱+验证码
-│       └── mail.yaml               #   邮箱账号/验证码持久化
+├── core/                            # Core infrastructure
+│   ├── log_service.py               # Thread-safe singleton log service (QTimer buffer → signal → GUI)
+│   ├── settings_manager.py          # App settings persistence (JSON singleton, atomic write)
+│   ├── logger/                      # loguru-based logger (unused by active codebase)
+│   │   ├── log.ini
+│   │   └── log_tool.py
+│   └── mail/                        # Temporary email service
+│       ├── email_service.py          # AMZ123 temp email API client
+│       └── email_task.py            # QRunnable async email + verification code fetch
 │
-├── controllers/                     # 控制器层 (业务逻辑 + 信号绑定)
-│   └── adb_controller.py           # 核心 ADB 控制器 (~1500行)
+├── controllers/                     # Controller layer (mixins assembled into ADBController)
+│   ├── __init__.py                  # Composed ADBController class (5 mixins)
+│   ├── _base.py                     # Shared infrastructure: models, signals, handler dispatch, ThreadPoolExecutor
+│   ├── _device.py                   # Device connection, disconnect, restart, reboot, pairing
+│   ├── _app.py                      # App install, uninstall, clear, permissions, broadcast, activity, deeplink
+│   ├── _input.py                    # Text input, tap, swipe, keyevent, settings
+│   ├── _file.py                     # File list, push, pull, shell, port forwarding
+│   └── _media.py                    # Screenshots, screen recording, performance, battery, processes
 │
-├── models/                          # 模型层 (数据 + ADB 命令执行)
-│   ├── adb_model.py                 # 核心基础设施：@async_command 装饰器 + ADBModelCore 基类
-│   ├── adb_device.py               # 设备管理：连接、断开、重启、设备信息查询
-│   ├── adb_app.py                  # 应用管理：安装、卸载、清除数据、获取包名/Activity
-│   ├── adb_testing.py             # 测试诊断：截图、Monkey、Bugreport、ANR、日志
-│   ├── adb_advanced.py            # 高级操作：录屏、输入事件、性能诊断、端口转发、Settings、Shell、文件管理、权限、广播、无线配对、进程管理、Content Provider、电池模拟、CMD工具、模拟器、IME
-│   └── device_store.py            # 线程安全 YAML 设备信息存储
+├── models/                          # Model layer (data + ADB command execution)
+│   ├── adb_model.py                 # Core: @async_command decorator + ADBModelCore base class
+│   ├── adb_device.py                # Device mgmt: connect, disconnect, restart, device info
+│   ├── adb_app.py                   # App mgmt: install, uninstall, clear, package/activity queries
+│   ├── adb_testing.py               # Testing: screenshot, monkey, bugreport, ANR, logs, dumpsys
+│   ├── adb_advanced.py              # Advanced: recording, input, port forward, settings, shell, file, permissions, broadcasts, pairing, processes, content provider, battery, IME, emulator (~900 lines)
+│   └── device_store.py              # Thread-safe YAML device info persistence
 │
-├── gui/                             # 视图层
-│   ├── main_frame.py               # 主窗口：无边框+工具栏+面板布局+信号全量绑定
+├── gui/                             # View layer
+│   ├── main_frame.py                # Main window: frameless, toolbar, QSplitter left/right, signal wiring
 │   ├── panels/
-│   │   ├── left_panel.py           #   左侧标签页控制面板 (5个标签页)
-│   │   ├── left_panel_signals.py  #   LeftPanel 信号定义
-│   │   ├── adb_control_signals.py  #   ADBController 信号定义
-│   │   └── log_panel.py           #   右侧日志面板 (6色日志、自动滚动)
+│   │   ├── side_panel.py            # Right-side 4-tab container (Apps / Testing / System / Remote)
+│   │   ├── side_panel_signals.py    # 50+ signal definitions for all user actions
+│   │   ├── adb_control_signals.py   # 8 ADBController → UI signals
+│   │   ├── base_panel.py            # Abstract tab base: UI factories (_g, _b, _in, _combo), shared state access
+│   │   ├── device_manager.py        # Left-side device panel: connect, device list, text input, screenshots
+│   │   ├── app_panel.py             # Tab 1 "Apps": package selector, lifecycle, permissions, broadcast, intents
+│   │   ├── testing_panel.py         # Tab 2 "Testing": reboot modes, monkey, reports, performance, logcat, input
+│   │   ├── system_panel.py          # Tab 3 "System": shell, port forwarding, service toggles, settings, tools, battery, IME, emulator
+│   │   ├── remote_panel.py          # Tab 4 "Remote": scrcpy mirroring, D-Pad, keys, gestures, capture
+│   │   └── log_panel.py             # Left-side color-coded log panel (6 levels, auto-scroll, re-render on theme)
 │   ├── dialogs/
-│   │   ├── about_dialog.py         #   关于对话框
-│   │   ├── screenshot_viewer.py   #   截图查看器 (无边框、置顶、缩放)
-│   │   ├── app_manager.py         #   应用管理器 (列表、备份、权限、预设)
-│   │   ├── file_explorer.py       #   文件浏览器 (浏览、拉取、推送、编辑、权限)
-│   │   ├── live_logcat.py        #   实时日志查看器 (流式、过滤、顏色高亮、导出)
-│   │   └── settings_dialog.py    #   设置对话框 (字体、路径、行为参数)
+│   │   ├── about_dialog.py          # About dialog (frameless, drag-to-move)
+│   │   ├── screenshot_viewer.py     # Screenshot viewer (frameless, zoom, navigation, pin toggle)
+│   │   ├── app_manager.py           # App manager (list, backup, permissions, presets, batch ops)
+│   │   ├── file_explorer.py         # File explorer (browse, pull, push, edit, permissions, chmod)
+│   │   ├── live_logcat.py           # Live logcat viewer (streaming, filter, color highlight, export)
+│   │   └── settings_dialog.py       # Settings dialog (theme, font, window/panel size, save path, behavior)
 │   ├── styles/
-│   │   └── base_styles.py         #   主题系统 (明/暗双主题、字体、QSS)
+│   │   └── base_styles.py           # Theme system (Light/Dark dual theme, QSS templates, fonts, ThemeSignal)
 │   └── widgets/
-│       └── double_click_button.py  #   双击安全按钮 (防误触)
+│       └── double_click_button.py   # QPushButton with double-click signal (safety guard)
 │
-├── utils/                           # 工具层
-│   └── batch_tracker.py            # 批量操作进度追踪 (N/Total)
+├── utils/                           # Utilities
+│   ├── resource_path.py             # Resource path resolution (dev + PyInstaller bundled)
+│   └── batch_tracker.py            # Batch operation progress tracker (N/Total + summary)
 │
-└── resources/                       # 静态资源
-    ├── connected_devices.yaml       # 设备连接历史持久化
-    ├── package_info.yaml            # 包名历史记录
-    ├── chkbugreport-0.5-215.jar    # Bugreport txt→html 转换工具
-    ├── app_settings.json             # 应用设置持久化
-    ├── app.log                      # 应用日志
-    └── icons/                       # 28 个 SVG 矢量图标
+└── resources/                       # Static resources
+    ├── connected_devices.yaml       # Device connection history
+    ├── package_info.yaml            # Package name history
+    ├── chkbugreport-0.5-215.jar    # Bugreport txt→html converter
+    ├── app_settings.json            # App settings persistence
+    └── icons/                       # SVG vector icons
 ```
 
 ---
 
-## 架构设计
+## Architecture
 
-### 整体模式：MVC + 信号/槽
+### MVC + Signal/Slot Pattern
 
 ```
-用户点击按钮 (LeftPanel)
-  → LeftPanel 发射信号 (如 connect_requested)
-  → ADBController 接收，分发到对应 Model
-  → Model 在后台线程执行 ADB 命令
-  → Model 发射 command_finished 信号
-  → ADBController 处理结果，通过 handler_map 分发到对应处理器
-  → 发射 UI 信号 → LogPanel / LeftPanel 更新显示
+User clicks button (SidePanel tab)
+  → SidePanel emits signal (e.g., connect_requested)
+  → ADBController receives, dispatches to model
+  → Model executes ADB command on background thread (QRunnable)
+  → Model emits command_finished signal
+  → ADBController processes result via handler_map dispatch
+  → Emits UI signal → LogPanel / SidePanel updates display
 ```
 
-### 关键设计模式
+### Key Design Patterns
 
-| 模式 | 位置 | 说明 |
-|------|------|------|
-| **单例** | `LogService` | `__new__` + `QMutex` 线程安全单例 |
-| **观察者** | 全局 | Qt 信号/槽解耦 UI 与业务逻辑 |
-| **异步命令** | `adb_model.async_command` | 装饰器将同步方法转为 QRunnable 异步执行 |
-| **处理器映射** | `ADBController._handle_async_response` | 字典分发 70+ 种操作结果 |
-| **批量追踪** | `batch_tracker.py` | 多设备操作进度 (N / Total) 及最终汇总 |
+| Pattern | Location | Description |
+|---------|----------|-------------|
+| **Singleton** | `LogService`, `AppSettings` | Thread-safe singletons with `__new__` + mutex |
+| **Observer** | Global | Qt signal/slot decoupling UI from business logic |
+| **Async Command** | `adb_model.async_command` | Decorator wrapping sync methods into QRunnable async execution |
+| **Handler Map** | `_ADBControllerBase._handle_async_response` | Dict dispatch for 70+ operation result types |
+| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 5 functional mixins + base |
+| **Batch Tracker** | `batch_tracker.py` | Multi-device operation progress (N/Total) with summary callback |
 
-### 线程模型
+### Thread Model
 
-- **主线程**: Qt 事件循环 + UI 渲染
-- **工作线程**: `QThreadPool` (QRunnable) + `ThreadPoolExecutor`，所有 ADB 命令在后台执行
-- **线程通信**: Qt 跨线程信号/槽 (自动队列化)
-- **日志缓冲**: `LogService` 用 QTimer 每 200ms 批量刷新到 GUI
+- **Main thread**: Qt event loop + UI rendering
+- **Worker threads**: `QThreadPool` (QRunnable) + `ThreadPoolExecutor(max_workers=4)`, all ADB commands execute off-main-thread
+- **Thread communication**: Qt cross-thread signals/slots (auto-queued)
+- **Log buffering**: `LogService` uses QTimer at 200ms intervals to batch-flush to GUI
 
 ---
 
-## 功能模块
+## GUI Layout
 
-### GUI 布局
+Main window: top toolbar + left/right split panels (QSplitter, draggable divider):
 
-主窗口采用顶部工具栏 + 左右分栏布局（4 个标签页）：
+```
+┌─ Toolbar ───────────────────────────────────────────────┐
+│ ADBLab | AppMgr | FileExpl | Logcat | Settings | CMD    │
+│                              Clear | About | ☀ | ─ | ✕ │
+├─ Left Column ──────┬── Right Tabs ─────────────────────┤
+│ ┌─ Devices Panel ┐ │ ┌ Apps ─┬ Testing ─┬ System ─┬ Remote ─┐ │
+│ │ IP Connect     │ │ │       │          │         │         │ │
+│ │ Device List    │ │ │       │          │         │         │ │
+│ │ Buttons        │ │ │       │          │         │         │ │
+│ └────────────────┘ │ └──────────────────────────────────────┘ │
+│ ┌─ Log Panel ────┐ │                                          │
+│ │ Color logs     │ │                                          │
+│ │ Auto-scroll    │ │                                          │
+│ └────────────────┘ │                                          │
+└────────────────────┴──────────────────────────────────────────┘
+```
 
-- **顶栏**: ADBLab | App Manager | File Explorer | Live Logcat | Settings ——— Clear Log | About | 主题 | 最小化 | 关闭
-- **左侧**: 4 标签页 (Devices / Apps / Input & Diag / Advanced)，每个标签页内含滚动区
-- **右侧**: 6 级彩色日志面板 (DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL)，支持自动滚动和行数裁切
+- **Left column**: Device Manager (fixed height) + Log Panel (fills remaining space)
+- **Right tabs**: Apps / Testing / System / Remote (4 tabs with scroll areas)
+- **QSplitter**: Draggable 5px handle between left and right, left panel fixed width, right panel stretches with window
+- **Window**: Frameless with toolbar drag-to-move, fixed default size (1200×650), adjustable via Settings
 
-### 标签页一：Devices（设备管理）
+---
 
-| 功能 | ADB 命令 |
-|------|----------|
-| IP 连接设备 | `adb connect` |
-| 无线配对 (Android 11+) | `adb pair` |
-| 刷新设备列表 | `adb devices` |
-| 设备信息 (14项) | `getprop` + `df` + `wm size/density` + `cat /proc/meminfo` |
-| 断开连接 | `adb disconnect` |
-| 重启设备 | `adb reboot` |
-| 重启模式 (System/Bootloader/Recovery/Fastboot) | `adb reboot <mode>` |
-| 重启 ADB 服务 | `adb kill-server && adb start-server` |
-| ADB over TCP/IP | `adb tcpip` |
-| 截图 | `adb shell screencap` → `adb pull` |
-| 屏幕录制 | `adb shell screenrecord` → `adb pull` |
-| 临时邮箱 | HTTP API (AMZ123) |
+## Tab Details
 
-### 标签页二：Apps（应用管理）
+### Tab 1: Apps
 
-| 功能 | ADB 命令 |
-|------|----------|
-| 获取前台应用 | `adb shell dumpsys window` |
-| 安装 APK | `adb install -r` |
-| 卸载应用 | `adb uninstall` |
-| 清除数据 | `adb shell pm clear` |
-| 重启应用 | `am force-stop` → `monkey -p <pkg> 1` |
-| 打印当前 Activity | `dumpsys window` + `dumpsys activity activities` |
-| 强制停止 | `am force-stop` |
-| 解析 APK 信息 | `aapt dump badging` (外部工具) |
-| PM Path | `pm path <pkg>` 查询 APK 安装路径 |
-| PM Dump | `pm dump <pkg>` 查询完整包信息 |
-| 3rd Party 包列表 | `pm list packages -3` |
-| 系统包列表 | `pm list packages -s` |
-| 权限授予/撤销 | `pm grant / pm revoke` |
-| 权限列表 | `pm dump <pkg>` |
-| 禁用/启用应用 | `pm disable / pm enable / pm disable-user` |
-| 发送广播 | `am broadcast -a <action>` |
-| 启动 Activity | `am start -n <component>` |
-| 打开 Deep Link | `am start -d <uri>` |
+| Feature | ADB Command |
+|---------|-------------|
+| Get foreground app | `adb shell dumpsys window` |
+| Uninstall app | `adb uninstall` |
+| Clear data | `adb shell pm clear` |
+| Restart app | `am force-stop` → `monkey -p <pkg> 1` |
+| Activity info | `dumpsys window` + `dumpsys activity activities` |
+| Force stop | `am force-stop` |
+| Parse APK info | `aapt dump badging` (external tool) |
+| PM Path / PM Dump | `pm path <pkg>` / `pm dump <pkg>` |
+| 3rd Party / System packages | `pm list packages -3 / -s` |
+| Grant / Revoke permissions | `pm grant / pm revoke` |
+| List permissions | `pm dump <pkg>` |
+| Disable / Enable app | `pm disable / pm enable / pm disable-user` |
+| Send broadcast | `am broadcast -a <action>` |
+| Start activity | `am start -n <component>` |
+| Open deep link | `am start -d <uri>` |
 
-### 标签页三：Input & Diag（输入控制 & 诊断）
+### Tab 2: Testing
 
-| 功能 | ADB 命令 |
-|------|----------|
-| 重启模式 | `adb reboot <mode>` |
-| TCP/IP 模式 | `adb tcpip <port>` |
-| 点击/长按/滑动/拖放 | `input tap/swipe/draganddrop` |
-| 快速按键 (15键) | HOME/BACK/POWER/APP SWITCH/VOL±/ENTER/DEL/DPAD |
-| 高级按键 (27种) | SLEEP/WAKEUP/BRIGHTNESS/CHANNEL 等 |
-| Monkey 测试 | `adb shell monkey` + 同步 logcat + 自动切回前台 |
-| 停止 Monkey | `ps \| grep monkey` → `kill <pid>` |
-| 包列表 | `pm list packages` |
+| Feature | ADB Command |
+|---------|-------------|
+| Reboot modes | `adb reboot <mode>` |
+| TCP/IP mode | `adb tcpip <port>` |
+| Monkey test | `adb shell monkey` + synced logcat + auto-foreground restore |
+| Kill monkey | `ps \| grep monkey` → `kill <pid>` |
+| List packages | `pm list packages` |
 | Bugreport / ANR | `adb bugreport / pull /data/anr` |
-| 日志获取/清理 | `adb logcat -d / -c` |
-| 性能诊断 | `dumpsys meminfo/cpuinfo/battery` + `uptime` + `top` |
-| GFX/Wakelocks/Net | `dumpsys gfxinfo / cat /proc/wakelocks / dumpsys netstats` |
-| Logcat 过滤 | `adb logcat -d -b <buf> *:<prio> -e <regex>` |
+| Retrieve / Cleanup logs | `adb logcat -d / -c` |
+| Memory / CPU / Battery | `dumpsys meminfo/cpuinfo/battery` |
+| Uptime | `uptime` |
+| Top / GFX / Wakelocks / Net | `top` / `dumpsys gfxinfo/netstats` / `/proc/wakelocks` |
 
-### 标签页四：Advanced（高级操作）
+### Tab 3: System
 
-| 功能 | ADB 命令 |
-|------|----------|
-| 自定义 Shell | `adb shell <任意命令>` |
-| 文件列表 | `adb shell ls -la` |
-| 文件 Push/Pull | `adb push / adb pull` |
-| 端口转发 (Forward/Reverse) | `adb forward / reverse / --list / --remove-all` |
-| SVC 服务开关 | `svc wifi/data/bluetooth/nfc enable/disable` |
-| Android Settings 读写 | `adb shell settings list/get/put` (system/global/secure) |
-| Content Provider 查询 | `adb shell content query --uri` |
-| 进程管理 | `ps -A` / `kill <pid>` |
-| Dumpsys 服务查询 | 17 种常用服务下拉 + 自定义输入 |
-| 内核版本 | `cat /proc/version` |
-| CPU 硬件信息 | `cat /proc/cpuinfo` |
-| PM Features | `adb shell pm list features` |
-| 电池模拟 | `dumpsys battery set level/status / reset` |
-| 快捷设置 | 动画开关 / 充电常亮 |
-| IME 管理 | `adb shell ime list / set` |
-| 模拟器 SMS/来电/GPS | `adb emu sms send / call / geo fix` |
+| Feature | ADB Command |
+|---------|-------------|
+| Custom shell | `adb shell <any command>` |
+| Port forward / reverse | `adb forward / reverse / --list / --remove-all` |
+| Service toggles (svc) | `svc wifi/data/bluetooth/nfc enable/disable` |
+| Android Settings | `adb shell settings list/get/put` (system/global/secure) |
+| Content query | `adb shell content query --uri` |
+| Process list / kill | `ps -A` / `kill <pid>` |
+| Dumpsys services | 17 common services dropdown + custom input |
+| Kernel / CPU info | `cat /proc/version` / `cat /proc/cpuinfo` |
+| PM features | `adb shell pm list features` |
+| Battery simulation | `dumpsys battery set level/status / reset` |
+| Quick settings | Animation toggle / stay awake |
+| IME management | `adb shell ime list / set` |
+| Emulator SMS/Call/GPS | `adb emu sms send / call / geo fix` |
 
-### 独立弹窗
+### Tab 4: Remote (scrcpy)
 
-| 弹窗 | 说明 |
-|------|------|
-| **App Manager** | 应用列表 (用户/系统/供应商)、批量卸载/禁用/启用、APK 备份(ZIP)/恢复、权限管理 (授予/撤销)、预设 (JSON 导入/导出) |
-| **File Explorer** | 设备文件浏览器：目录导航 (前进/后退/上级)、Pull/Push、新建文件夹/文件、删除/重命名、文本查看编辑、图片预览、复制/剪切/粘贴、chmod 权限管理、安装 APK、执行 Shell 脚本、Root 支持、排序/搜索 |
-| **Live Logcat** | 实时日志流 (`-v threadtime`)、组合过滤 Level+Package+Tag、颜色高亮 (QSyntaxHighlighter)、8000 行缓冲区、导出 txt、一键获取当前前台应用包名 |
-| **Screenshot Viewer** | 截图查看器：缩放 (Ctrl+滚轮)、多图导航、复制到剪贴板、另存为、打开文件夹、置顶切换 |
+| Feature | Description |
+|---------|-------------|
+| Screen mirroring | scrcpy launch with preset configs (resolution, FPS, bitrate) |
+| D-Pad | Directional pad: up/down/left/right/center |
+| Quick keys | 16 system keys: HOME, BACK, POWER, RECENTS, MENU, VOL+/-, APP_SWITCH, NOTIFICATION, SETTINGS, CAMERA, SEARCH, MEDIA controls, ENTER |
+| Touch gestures | Tap, swipe, long press, drag with coordinates |
+| Capture | Screenshot and screen recording via scrcpy |
 
----
+### Standalone Dialogs
 
-## 主题系统
-
-支持明/暗双主题一键切换，通过 `BaseStyles` 类管理：
-
-- 27 种颜色键值 (WINDOW_BG, PANEL_BG, INPUT_BG, BUTTON_BG, TEXT_PRIMARY 等)
-- 统一字体方案：`Segoe UI 12px` (按钮12px)，等宽 `Courier New 10px`
-- 所有组件 (面板、对话框、弹窗) 通过 `BaseStyles.theme_changed` 信号自动响应主题切换
-- QSS 模板方法：`BUTTON_STYLE()`, `INPUT_STYLE()`, `GROUP_BOX_STYLE()`, `TOOLBAR_STYLE()` 等
-- 全局 8px 圆角滚动条，三态 (normal/hover/pressed)
-
-## 关键特性
-
-- **USB 自动检测**: 3 秒轮询 `adb devices`，设备数变化自动刷新列表
-- **批量安装 APK**: 设备列表右侧按钮，多文件 × 多设备排队安装
-- **App Manager 双视图**: 列表视图 + 图标视图切换；后台加载应用中文名称和版本信息
-- **Live Logcat 组合过滤**: Level + Package (pidof 查询 PID) + Tag 三条件同时生效
-- **多设备弹窗**: App Manager / File Explorer / Live Logcat 支持每台选中设备打开独立窗口
-
-## 设置系统
-
-通过 `AppSettings` 单例管理持久化配置 (`resources/app_settings.json`)：
-
-| 设置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `font_base_size` | 12 | 基础字体大小 |
-| `font_small_size` | 12 | 按钮/输入框字体 |
-| `font_tab_size` | 12 | 标签页字体 |
-| `font_mono_size` | 10 | 等宽字体 |
-| `save_directory` | `~/ADBLab` | 默认文件保存位置 |
-| `log_max_lines` | 2000 | 日志面板最大行数 |
-| `monkey_default_count` | 10000 | Monkey 测试默认事件数 |
-| `screen_record_duration` | 180 | 录屏默认时长(秒) |
-| `confirm_dangerous_ops` | true | 危险操作前确认 |
-| `auto_refresh_on_connect` | true | 连接后自动刷新设备列表 |
-| `theme` | Light | 当前主题 |
-
-设置对话框通过顶栏齿轮图标打开，单页展示所有配置，修改后即时生效。
+| Dialog | Description |
+|--------|-------------|
+| **App Manager** | App list (user/system/vendor), batch uninstall/disable/enable, APK backup (ZIP)/restore, permission management, presets (JSON import/export) |
+| **File Explorer** | Device file browser: navigation, Pull/Push, new folder/file, delete/rename, text viewer/editor, image preview, copy/cut/paste, chmod, APK install, shell script execution, sort/search |
+| **Live Logcat** | Real-time log stream (`-v threadtime`), combined Level+Package+Tag filter, color highlighting (QSyntaxHighlighter), 8000 line buffer, export to txt, fetch current foreground app package |
+| **Screenshot Viewer** | Zoom (Ctrl+Scroll), multi-image navigation, copy to clipboard, save as, open folder, pin/unpin toggle |
 
 ---
 
-## 依赖
+## Theme System
+
+Light/Dark dual theme with one-click toggle via toolbar button, managed by `BaseStyles`:
+
+- 28 color keys per theme (WINDOW_BG, PANEL_BG, INPUT_BG, BUTTON_BG, TEXT_PRIMARY, etc.)
+- Font: `Segoe UI 12px` base, `Courier New 10px` monospace
+- All components (panels, dialogs, popups) auto-respond via `BaseStyles.theme_changed` signal
+- QSS templates: `BUTTON_STYLE()`, `INPUT_STYLE()`, `GROUP_BOX_STYLE()`, `TOOLBAR_STYLE()`, `PANEL_BASE_STYLE()`, etc.
+- Theme persisted to settings, restored on startup
+- Splitter handle color follows theme (BORDER_COLOR)
+- QWidget base background rule ensures consistent dark mode coverage across all child widgets
+
+---
+
+## Settings System
+
+Managed by `AppSettings` singleton (`resources/app_settings.json`):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `theme` | Light | Current theme |
+| `font_base_size` | 12 | Base font size |
+| `window_width` / `window_height` | 1200 / 650 | Window dimensions (adjustable in Settings) |
+| `left_panel_width` / `right_panel_width` | auto-calc | Panel widths (linked: left + right + overhead = window width) |
+| `save_directory` | `~/ADBLab` | Default file save location |
+| `log_max_lines` | 2000 | Log panel max line count |
+| `monkey_default_count` | 10000 | Monkey test default event count |
+| `screen_record_duration` | 180 | Default recording duration (seconds) |
+| `confirm_dangerous_ops` | true | Confirm before dangerous operations |
+| `auto_refresh_on_connect` | true | Auto-refresh device list after connect |
+
+Settings dialog: real-time preview, window size and panel widths with linked constraints (left max = window - right min - overhead).
+
+---
+
+## Key Features
+
+- **USB auto-detection**: 3-second `adb devices` poll, auto-refresh on device count change
+- **Multi-device dialogs**: App Manager / File Explorer / Live Logcat open independent windows per selected device
+- **Live Logcat combined filter**: Level + Package (pidof PID lookup) + Tag with color highlighting
+- **Batch install APK**: Multi-file × multi-device queued installation
+- **Theme persistence**: Theme saved on toggle, restored on next launch
+- **QSplitter draggable divider**: Independent left/right panel resizing, sizes saved on drag
+
+---
+
+## Dependencies
 
 ### Python (requirements.txt)
 
-| 包 | 版本 | 用途 |
-|-------|------|------|
+| Package | Version | Purpose |
+|---------|---------|---------|
 | PySide6 / PySide6_Essentials / PySide6_Addons | 6.8.1.1 | Qt 6 GUI |
-| loguru | 0.7.3 | 高级日志 |
-| PyYAML | 6.0.2 | YAML 解析 |
-| ruamel.yaml | latest | YAML 读写 (保留注释) |
-| Requests | 2.32.5 | HTTP 客户端 |
-| pyinstaller | latest | EXE 打包 |
-| Pillow | latest | 图片处理 |
+| loguru | 0.7.3 | Advanced logging (legacy) |
+| PyYAML | 6.0.2 | YAML parsing |
+| ruamel.yaml | latest | YAML read/write (preserves comments) |
+| Requests | 2.32.5 | HTTP client |
+| pyinstaller | latest | EXE packaging |
+| Pillow | latest | Image processing |
 
-### 系统依赖
+### System Requirements
 
-- **ADB** — 需在 PATH 中
-- **aapt** — APK 解析
-- **Java JRE** — `chkbugreport-0.5-215.jar` 运行
+- **ADB** — bundled in `scrcpy-win64-v3.3.1/` (no system PATH needed)
+- **aapt** — APK parsing (external tool)
+- **Java JRE** — for `chkbugreport-0.5-215.jar`
 
 ---
 
 ## CI/CD
 
 ### Build-exe.yaml
-- **触发**: `workflow_dispatch` 手动触发 或 push `main` 分支
-- **环境**: `windows-latest`, Python 3.11 x64
-- **构建**: PyInstaller `--onefile --windowed` 单文件 EXE
-- **产物**: `ADBLab-x64-v2.0.{run_id}.exe` → GitHub Release
+- **Trigger**: `workflow_dispatch` manual or push to `main`
+- **Environment**: `windows-latest`, Python 3.11 x64
+- **Build**: PyInstaller `--onefile --windowed` single EXE
+- **Artifact**: `ADBLab-x64-v2.0.{run_id}.exe` → GitHub Release
 
 ### Auto-Clean.yaml
-- **触发**: 每月 1 号 18:00 UTC 或手动
-- **动作**: 删除 2 天前的运行记录，保留最新 8 个 Release
+- **Trigger**: 1st of each month 18:00 UTC or manual
+- **Action**: Delete runs older than 2 days, keep latest 8 releases
 
 ---
 
-## 开发指南
+## Development
 
-### 启动项目
+### Quick Start
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
 
-### 代码约定
-- UI 与逻辑严格分离：GUI 类不包含业务逻辑
-- 所有 ADB 操作必须异步执行，禁止阻塞主线程
-- 信号定义集中在 `*_signals.py` 文件中
-- 新增 Model 方法遵循 `@async_command` 装饰器模式
-- 新增 Controller 方法遵循 `handler_map` 字典分发模式
-- 所有弹窗继承 ADBLab 主题系统 (`BaseStyles`)
-- YAML 持久化使用 `DeviceStore` 类
-- 日志使用 `LogService` 单例
+### Code Conventions
+- UI strictly separated from business logic
+- All ADB operations must be async, never block the main thread
+- Signal definitions centralized in `*_signals.py`
+- New model methods follow `@async_command` decorator pattern
+- New controller methods follow `handler_map` dispatch pattern
+- All dialogs inherit from the ADBLab theme system (`BaseStyles`)
+- YAML persistence via `DeviceStore` class
+- Logging via `LogService` singleton
+- User-facing strings in English only

@@ -10,8 +10,8 @@
   "confirm_dangerous_ops": true,
   "auto_refresh_on_connect": true,
   "theme": "Light",
-  "window_width": 1410,
-  "window_height": 637,
-  "left_panel_width": 400,
-  "right_panel_width": 600
+  "window_width": 1200,
+  "window_height": 650,
+  "left_panel_width": 595,
+  "right_panel_width": 594
 }

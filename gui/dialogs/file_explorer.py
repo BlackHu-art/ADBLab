@@ -133,7 +133,7 @@ class FileExplorerDialog(QDialog):
     }
     IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "bmp"}
 
-    def __init__(self, parent, device_ip: str):
+    def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
         self.device_ip = device_ip
         self.current_path = "/storage/emulated/0"
@@ -150,6 +150,7 @@ class FileExplorerDialog(QDialog):
         self.setMinimumSize(950, 620)
         self.resize(1000, 650)
         self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
         self._refresh()

@@ -147,7 +147,7 @@ class LogcatHighlighter(QSyntaxHighlighter):
 class LiveLogcatDialog(QDialog):
     MAX_BUFFER = 8000
 
-    def __init__(self, parent, device_ip: str):
+    def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
         self.device_ip = device_ip
         self.worker = None
@@ -157,6 +157,7 @@ class LiveLogcatDialog(QDialog):
         self.setMinimumSize(980, 620)
         self.resize(1000, 650)
         self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
 

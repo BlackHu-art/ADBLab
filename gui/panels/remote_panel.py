@@ -63,8 +63,8 @@ class RemotePanel(BasePanel):
     def build_ui(self) -> QWidget:
         w = QWidget()
         lo = QVBoxLayout(w)
-        lo.setSpacing(4)
-        lo.setContentsMargins(4, 4, 4, 4)
+        lo.setSpacing(1)
+        lo.setContentsMargins(0, 0, 0, 0)
 
         lo.addWidget(self._build_mirroring_section())
         lo.addWidget(self._build_remote_section())
@@ -180,7 +180,7 @@ class RemotePanel(BasePanel):
 
         def _dkey(label: str, code: str) -> QPushButton:
             b = QPushButton(label)
-            b.setFont(self._font_base)
+            b.setFont(self._font_sm)
             b.setMinimumSize(36, 36)
             b.setMaximumSize(48, 48)
             b.clicked.connect(lambda: self._send_keyevent(code))

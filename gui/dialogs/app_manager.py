@@ -421,7 +421,7 @@ class AppDetailsDialog(QDialog):
 
 
 class AppManagerDialog(QDialog):
-    def __init__(self, parent, device_ip: str):
+    def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
         self.device_ip = device_ip
         self.selected_packages = set()
@@ -431,6 +431,7 @@ class AppManagerDialog(QDialog):
         self.setMinimumSize(960, 600)
         self.resize(1000, 660)
         self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)

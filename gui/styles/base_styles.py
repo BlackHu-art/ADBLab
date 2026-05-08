@@ -4,8 +4,6 @@
 ThemeSignal 的运行时主题切换机制。
 """
 
-from typing import Final
-
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QColor, QFont
 
@@ -86,35 +84,35 @@ THEMES = {
 _current_theme: str = "Light"
 
 # ── 字体 ───────────────────────────────────────────────────────────────────────
-DEFAULT_FONT_FAMILY: Final[str] = "Segoe UI"
-DEFAULT_FONT_SIZE: Final[int] = 12
-SMALL_FONT_SIZE: Final[int] = 12
-TAB_FONT_SIZE: Final[int] = 12
-LOG_FONT: Final[str] = "Consolas"
-LOG_FONT_SIZE: Final[int] = 9
-MONO_FONT_SIZE: Final[int] = 9
+DEFAULT_FONT_FAMILY: str = "Segoe UI"
+DEFAULT_FONT_SIZE: int = 12
+SMALL_FONT_SIZE: int = 12
+TAB_FONT_SIZE: int = 12
+LOG_FONT: str = "Consolas"
+LOG_FONT_SIZE: int = 9
+MONO_FONT_SIZE: int = 9
 
 # ── 图标尺寸 ──────────────────────────────────────────────────────────────────
-ICON_SIZE: Final[int] = 18
-TOOLBAR_ICON_SIZE: Final[int] = 16
+ICON_SIZE: int = 18
+TOOLBAR_ICON_SIZE: int = 16
 
 # ── 日志等级颜色（主题无关）────────────────────────────────────────────────────
-DEBUG_COLOR: Final[str] = "#6C757D"
-INFO_COLOR: Final[str] = "#17A2B8"
-SUCCESS_COLOR: Final[str] = "#28A745"
-WARNING_COLOR: Final[str] = "#FFC107"
-ERROR_COLOR: Final[str] = "#DC3545"
-CRITICAL_COLOR: Final[str] = "#FF4081"
-TIMESTAMP_COLOR: Final[str] = "#6C757D"
+DEBUG_COLOR: str = "#6C757D"
+INFO_COLOR: str = "#17A2B8"
+SUCCESS_COLOR: str = "#28A745"
+WARNING_COLOR: str = "#FFC107"
+ERROR_COLOR: str = "#DC3545"
+CRITICAL_COLOR: str = "#FF4081"
+TIMESTAMP_COLOR: str = "#6C757D"
 
 # ── 圆角半径 ──────────────────────────────────────────────────────────────────
-RADIUS_SM: Final[int] = 4
-RADIUS_MD: Final[int] = 6
-RADIUS_LG: Final[int] = 8
-RADIUS_XL: Final[int] = 12
+RADIUS_SM: int = 4
+RADIUS_MD: int = 6
+RADIUS_LG: int = 8
+RADIUS_XL: int = 12
 
 # ── 遗留兼容 ──────────────────────────────────────────────────────────────────
-WINDOW_BACKGROUND: Final[str] = "#f0f0f0"
+WINDOW_BACKGROUND: str = "#f0f0f0"
 
 
 def _tc(key: str) -> str:
@@ -333,8 +331,8 @@ class BaseStyles:
             background-color: {_tc('PANEL_BG')};
             border: 1px solid {_tc('BORDER_COLOR')};
             border-radius: {RADIUS_LG}px;
-            margin-top: 8px;
-            padding: 6px 6px 4px 6px;
+            margin-top: 4px;
+            padding: 2px 4px 1px 4px;
             font-family: '{DEFAULT_FONT_FAMILY}';
             font-size: {DEFAULT_FONT_SIZE}px;
             font-weight: bold;
@@ -465,8 +463,7 @@ class BaseStyles:
             cls.BUTTON_STYLE()
             + cls.INPUT_STYLE()
             + cls.LIST_WIDGET_STYLE()
-            + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }} "
-            + f"QWidget#deviceManager {{ background-color: {_tc('WINDOW_BG')}; }} "
+            + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QFrame {{ background-color: transparent; border: none; color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
             + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"

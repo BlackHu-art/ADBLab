@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QVBoxLayout,
-    QWidget,
 )
 
 from core.settings_manager import AppSettings
@@ -28,12 +27,15 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.s = AppSettings.instance()
         self.setWindowTitle("Settings")
-        self.setMinimumSize(460, 420)
+        self.setMinimumSize(520, 560)
         self.setModal(True)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._build_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        pw = self.parent()
+        if pw and hasattr(pw, "_panel_splitter"):
+            pw._panel_splitter.splitterMoved.connect(self._on_splitter_changed)
 
     # ── UI 构建 ────────────────────────────────────────────────────────
 
@@ -72,58 +74,80 @@ class SettingsDialog(QDialog):
         g1l.addLayout(r2)
         outer.addWidget(g1)
 
-        # ── Panel Size ──
-        g2 = QGroupBox("Panel Size")
-        g2l = QVBoxLayout(g2)
-        g2l.setSpacing(6)
+        # ── Window Size ──
+        g_ws = QGroupBox("Window Size")
+        g_ws_l = QVBoxLayout(g_ws)
+        g_ws_l.setSpacing(4)
+        pw = self.parent()
+        cur_w = pw.width() if pw else self.s.get("window_width", 1200)
+        cur_h = pw.height() if pw else self.s.get("window_height", 700)
+        if pw and hasattr(pw, "panel_sizes"):
+            sizes = pw.panel_sizes()
+            cur_left = sizes[0] if len(sizes) == 2 else self.s.get("left_panel_width", 400)
+        else:
+            cur_left = self.s.get("left_panel_width", 400)
 
-        r2a = QHBoxLayout()
-        r2a.setSpacing(6)
-        r2a.addWidget(QLabel("Left Panel"))
+        r_ww = QHBoxLayout()
+        r_ww.setSpacing(8)
+        r_ww.addWidget(QLabel("Width"))
+        self.spin_win_w = QSpinBox()
+        self.spin_win_w.setRange(860, 2560)
+        self.spin_win_w.setSingleStep(20)
+        self.spin_win_w.setSuffix(" px")
+        self.spin_win_w.setFixedWidth(100)
+        self.spin_win_w.setValue(cur_w)
+        r_ww.addWidget(self.spin_win_w)
+        r_ww.addStretch()
+        g_ws_l.addLayout(r_ww)
+
+        r_wh = QHBoxLayout()
+        r_wh.setSpacing(8)
+        r_wh.addWidget(QLabel("Height"))
+        self.spin_win_h = QSpinBox()
+        self.spin_win_h.setRange(500, 1800)
+        self.spin_win_h.setSingleStep(20)
+        self.spin_win_h.setSuffix(" px")
+        self.spin_win_h.setFixedWidth(100)
+        self.spin_win_h.setValue(cur_h)
+        r_wh.addWidget(self.spin_win_h)
+        r_wh.addStretch()
+        g_ws_l.addLayout(r_wh)
+
+        self.spin_win_w.valueChanged.connect(self._on_window_size_changed)
+        self.spin_win_h.valueChanged.connect(self._on_window_height_changed)
+        outer.addWidget(g_ws)
+
+        # ── Panel Size ──
+        g_ps = QGroupBox("Panel Size")
+        g_ps_l = QVBoxLayout(g_ps)
+        g_ps_l.setSpacing(4)
+
+        self._overhead = 13  # border(2) + margins(6) + splitter handle(5)
+
+        r_lp = QHBoxLayout()
+        r_lp.setSpacing(8)
+        r_lp.addWidget(QLabel("Left Panel"))
         self.spin_left_w = QSpinBox()
-        self.spin_left_w.setRange(200, 1200)
+        self.spin_left_w.setRange(200, max(200, cur_w - 311))
         self.spin_left_w.setSingleStep(10)
         self.spin_left_w.setSuffix(" px")
-        self.spin_left_w.setFixedWidth(90)
-        # 从当前窗口实际宽度读取面板尺寸
-        pw = self.parent()
-        if pw:
-            for child in pw.findChildren(QWidget):
-                if child.objectName() == "leftPanelWrapper":
-                    self.spin_left_w.setValue(child.width())
-                    break
-            else:
-                self.spin_left_w.setValue(self.s.get("left_panel_width", 400))
-        else:
-            self.spin_left_w.setValue(self.s.get("left_panel_width", 400))
-        self.spin_left_w.valueChanged.connect(self._on_panel_size_changed)
-        r2a.addWidget(self.spin_left_w)
-        r2a.addStretch()
-        g2l.addLayout(r2a)
+        self.spin_left_w.setFixedWidth(100)
+        self.spin_left_w.setValue(cur_left)
+        r_lp.addWidget(self.spin_left_w)
+        r_lp.addStretch()
+        g_ps_l.addLayout(r_lp)
 
-        r2b = QHBoxLayout()
-        r2b.setSpacing(6)
-        r2b.addWidget(QLabel("Right Panel"))
-        self.spin_right_w = QSpinBox()
-        self.spin_right_w.setRange(300, 1600)
-        self.spin_right_w.setSingleStep(10)
-        self.spin_right_w.setSuffix(" px")
-        self.spin_right_w.setFixedWidth(90)
-        # 从当前窗口实际宽度读取面板尺寸
-        if pw:
-            for child in pw.findChildren(QWidget):
-                if hasattr(child, "tabs"):
-                    self.spin_right_w.setValue(child.width())
-                    break
-            else:
-                self.spin_right_w.setValue(self.s.get("right_panel_width", 600))
-        else:
-            self.spin_right_w.setValue(self.s.get("right_panel_width", 600))
-        self.spin_right_w.valueChanged.connect(self._on_panel_size_changed)
-        r2b.addWidget(self.spin_right_w)
-        r2b.addStretch()
-        g2l.addLayout(r2b)
-        outer.addWidget(g2)
+        r_rp = QHBoxLayout()
+        r_rp.setSpacing(8)
+        r_rp.addWidget(QLabel("Right Panel"))
+        self.lbl_right_w = QLabel()
+        self._update_right_label()
+        r_rp.addWidget(self.lbl_right_w)
+        r_rp.addStretch()
+        g_ps_l.addLayout(r_rp)
+
+        self.spin_left_w.valueChanged.connect(self._apply_panels)
+        outer.addWidget(g_ps)
 
         # ── Save Location ──
         g3 = QGroupBox("Default Save Location")
@@ -179,20 +203,60 @@ class SettingsDialog(QDialog):
         self.s.set("font_mono_size", max(8, v - 2))
         BaseStyles.reload_from_settings()
 
-    def _on_panel_size_changed(self):
-        left = self.spin_left_w.value()
-        right = self.spin_right_w.value()
-        self.s.set("left_panel_width", left)
-        self.s.set("right_panel_width", right)
-        # 实时应用到当前窗口面板
+    def _update_right_label(self):
+        right_w = self.spin_win_w.value() - self.spin_left_w.value() - self._overhead
+        self.lbl_right_w.setText(f"{right_w} px")
+
+    def _update_left_range(self):
+        left_max = self.spin_win_w.value() - 311
+        if left_max < 200:
+            left_max = 200
+        self.spin_left_w.setMaximum(left_max)
+
+    def _on_window_size_changed(self):
+        w = self.spin_win_w.value()
+        h = self.spin_win_h.value()
+        self.s.set("window_width", w)
+        self.s.set("window_height", h)
         pw = self.parent()
-        if pw:
-            for child in pw.findChildren(QWidget):
-                if child.objectName() == "leftPanelWrapper":
-                    child.setMinimumWidth(left)
-                    child.setMaximumWidth(left)
-                if isinstance(child, QWidget) and hasattr(child, "tabs"):
-                    child.setMinimumWidth(right)
+        if pw and hasattr(pw, "apply_window_size"):
+            pw.apply_window_size(w, h)
+        self._update_left_range()
+        self._apply_panels()
+
+    def _on_window_height_changed(self):
+        h = self.spin_win_h.value()
+        self.s.set("window_height", h)
+        pw = self.parent()
+        if pw and hasattr(pw, "apply_window_size"):
+            pw.apply_window_size(self.spin_win_w.value(), h)
+
+    def _on_splitter_changed(self, _pos, _index):
+        pw = self.parent()
+        if pw and hasattr(pw, "panel_sizes"):
+            sizes = pw.panel_sizes()
+            if len(sizes) == 2:
+                self.spin_left_w.blockSignals(True)
+                self.spin_left_w.setValue(sizes[0])
+                self.spin_left_w.blockSignals(False)
+                self._update_right_label()
+
+    def _apply_panels(self):
+        left_w = self.spin_left_w.value()
+        win_w = self.spin_win_w.value()
+        right_w = win_w - left_w - self._overhead
+        if right_w < 300:
+            right_w = 300
+            left_w = win_w - right_w - self._overhead
+            self.spin_left_w.blockSignals(True)
+            self.spin_left_w.setValue(left_w)
+            self.spin_left_w.blockSignals(False)
+        self.s.set("left_panel_width", left_w)
+        self.s.set("right_panel_width", right_w)
+        pw = self.parent()
+        if pw and hasattr(pw, "apply_panel_sizes"):
+            pw.apply_panel_sizes(left_w, right_w)
+        self._update_right_label()
 
     def _on_save_dir_changed(self, t: str):
         self.s.set("save_directory", t.strip())
@@ -223,7 +287,7 @@ class SettingsDialog(QDialog):
         self.setStyleSheet(f"""
             QDialog                {{ background-color: {bg}; }}
             QLabel                 {{ color: {fg}; background: transparent; }}
-            QCheckBox              {{ color: {fg}; spacing: 8px; }}
+            QCheckBox              {{ color: {fg}; spacing: 8px; background: transparent; }}
             QCheckBox::indicator   {{ width: 16px; height: 16px; border: 2px solid {border}; border-radius: 3px; background: {ibg}; image: none; }}
             QCheckBox::indicator:checked {{ background: {accent}; border-color: {accent}; image: none; }}
             QCheckBox::indicator:unchecked {{ image: none; }}
@@ -243,7 +307,7 @@ class SettingsDialog(QDialog):
             QPushButton            {{ background: {btn}; color: {fg}; border: 1px solid {border}; border-radius: {r}px; padding: 4px 14px; }}
             QPushButton:hover      {{ background: {hov}; border-color: {accent}; }}
             QPushButton:pressed    {{ background: {prs}; }}
-            QGroupBox              {{ font-weight: bold; color: {gt}; border: 1px solid {border}; border-radius: {r}px; margin-top: 10px; padding: 12px 14px 10px 14px; background: transparent; }}
+            QGroupBox              {{ font-weight: bold; color: {gt}; border: 1px solid {border}; border-radius: {r}px; margin-top: 8px; padding: 8px 10px 6px 10px; background: transparent; }}
             QGroupBox::title       {{ subcontrol-origin: margin; subcontrol-position: top left; padding: 0 8px; left: 10px; color: {gt}; background: transparent; }}
         """)
 

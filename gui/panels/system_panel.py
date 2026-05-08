@@ -17,8 +17,8 @@ class SystemPanel(BasePanel):
     def build_ui(self) -> QWidget:
         w = QWidget()
         lo = QVBoxLayout(w)
-        lo.setSpacing(3)
-        lo.setContentsMargins(4, 4, 4, 4)
+        lo.setSpacing(1)
+        lo.setContentsMargins(0, 0, 0, 0)
 
         # ── Shell Command ──
         g1 = self._g("Shell Command")
@@ -29,28 +29,6 @@ class SystemPanel(BasePanel):
         gl1.addWidget(self.shell_cmd_input, 3)
         gl1.addWidget(self.btn_shell_run, 1)
         lo.addWidget(g1)
-
-        # ── File Operations ──
-        g2 = self._g("File Operations")
-        gl2 = QVBoxLayout(g2)
-        gl2.setSpacing(2)
-        rf = QHBoxLayout()
-        rf.setSpacing(4)
-        self.file_path_input = self._in("Remote path (/sdcard/Download)")
-        self.btn_file_list = self._b("List Files", "Save_alt.svg")
-        rf.addWidget(self.file_path_input, 2)
-        rf.addWidget(self.btn_file_list, 1)
-        gl2.addLayout(rf)
-        rf2 = QHBoxLayout()
-        rf2.setSpacing(4)
-        self.file_local_input = self._in("Local path")
-        self.btn_file_push = self._b("Push to Device", "Install_app.svg")
-        self.btn_file_pull = self._b("Pull from Device", "Save_alt.svg")
-        rf2.addWidget(self.file_local_input, 2)
-        rf2.addWidget(self.btn_file_push, 1)
-        rf2.addWidget(self.btn_file_pull, 1)
-        gl2.addLayout(rf2)
-        lo.addWidget(g2)
 
         # ── Port Forwarding ──
         g3 = self._g("Port Forwarding")
@@ -281,23 +259,6 @@ class SystemPanel(BasePanel):
         self.shell_cmd_input.returnPressed.connect(
             lambda: LP.shell_command_requested.emit(
                 self.selected_devices, self.shell_cmd_input.text()
-            )
-        )
-        self.btn_file_list.clicked.connect(
-            lambda: LP.file_list_requested.emit(
-                self.selected_devices, self.file_path_input.text().strip() or "/sdcard"
-            )
-        )
-        self.btn_file_push.clicked.connect(
-            lambda: LP.file_push_requested.emit(
-                self.selected_devices,
-                self.file_local_input.text().strip(),
-                self.file_path_input.text().strip(),
-            )
-        )
-        self.btn_file_pull.clicked.connect(
-            lambda: LP.file_pull_requested.emit(
-                self.selected_devices, self.file_path_input.text().strip()
             )
         )
         self.btn_forward.clicked.connect(

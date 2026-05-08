@@ -77,7 +77,7 @@ class ScreenshotViewer(QDialog):
         self._original_pixmap = None
         self._drag_pos = QPoint()
         self._resize_edge = 0
-        self._pinned = True
+        self._pinned = False
         self._closed = False
 
         self._init_window()
@@ -90,6 +90,7 @@ class ScreenshotViewer(QDialog):
             self._show_placeholder("No screenshot available")
 
         self._start_fade_in()
+        BaseStyles.theme_changed.connect(self._apply_theme)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Window setup
@@ -97,7 +98,7 @@ class ScreenshotViewer(QDialog):
 
     def _init_window(self) -> None:
         self.setWindowTitle("Screenshot Viewer")
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setMinimumSize(360, 260)
@@ -209,6 +210,7 @@ class ScreenshotViewer(QDialog):
         close_btn.setCursor(Qt.PointingHandCursor)
         close_btn.setStyleSheet(self._close_btn_qss())
         close_btn.clicked.connect(self.close)
+        self._top_close_btn = close_btn
         bar.addWidget(close_btn)
 
         return bar
@@ -314,6 +316,7 @@ class ScreenshotViewer(QDialog):
         close_btn.setToolTip("Close (Esc)")
         close_btn.clicked.connect(self.close)
         close_btn.setStyleSheet(self._accent_btn_qss())
+        self._bottom_close_btn = close_btn
         bar.addWidget(close_btn)
 
         self._update_nav_visibility()
@@ -678,6 +681,24 @@ class ScreenshotViewer(QDialog):
             f"QMenu::item:selected {{ background: {C('BUTTON_HOVER')}; }}"
             f"QMenu::separator {{ height: 1px; background: {C('BORDER_COLOR')}; margin: 4px 8px; }}"
         )
+
+    def _apply_theme(self, _name: str = ""):
+        """Re-apply all stylesheets to reflect theme change."""
+        self.setStyleSheet(self._window_qss())
+        self._info_label.setStyleSheet(
+            f"color: {self._c('TEXT_SECONDARY')}; font-size: 11px; padding: 3px 0;"
+        )
+        self._scroll.setStyleSheet(
+            f"QScrollArea {{ background-color: {self._c('INPUT_BG')}; "
+            f"border-radius: {BaseStyles.RADIUS_LG}px; border: none; }}"
+        )
+        self._nav_label.setStyleSheet(
+            f"color: {self._c('TEXT_SECONDARY')}; font-size: 11px; font-weight: bold;"
+        )
+        self._top_close_btn.setStyleSheet(self._close_btn_qss())
+        self._bottom_close_btn.setStyleSheet(self._accent_btn_qss())
+        self._pin_btn.setStyleSheet(self._tool_btn_qss())
+        self._delete_btn.setStyleSheet(self._tool_btn_qss())
 
     # ═══════════════════════════════════════════════════════════════════════
     # Animation

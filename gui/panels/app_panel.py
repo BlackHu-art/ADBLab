@@ -18,8 +18,8 @@ class AppPanel(BasePanel):
     def build_ui(self) -> QWidget:
         w = QWidget()
         lo = QVBoxLayout(w)
-        lo.setSpacing(3)
-        lo.setContentsMargins(4, 4, 4, 4)
+        lo.setSpacing(1)
+        lo.setContentsMargins(0, 0, 0, 0)
 
         # ── 文本与邮箱 ──
         g_te = self._g("Text & Email")
@@ -73,12 +73,10 @@ class AppPanel(BasePanel):
         gl1.setSpacing(2)
         r1 = QHBoxLayout()
         r1.setSpacing(4)
-        self.btn_install_app = self._b("Install APK", "Install_app.svg")
         self.uninstall_btn = self._b("Uninstall App", "Uninstall_app.svg")
         self.clear_app_data_btn = self._b("Clear Data", "Clear_data.svg")
         self.restart_app_btn = self._b("Restart App", "Restart_app.svg")
         for b in (
-            self.btn_install_app,
             self.uninstall_btn,
             self.clear_app_data_btn,
             self.restart_app_btn,
@@ -193,9 +191,6 @@ class AppPanel(BasePanel):
         LP = self.signals
         self.btn_get_program.clicked.connect(
             lambda: LP.get_program_requested.emit(self.selected_devices)
-        )
-        self.btn_install_app.clicked.connect(
-            lambda: LP.install_app_requested.emit(self.selected_devices)
         )
         self.uninstall_btn.clicked.connect(
             lambda: LP.uninstall_app_requested.emit(self.selected_devices, self.package_text)

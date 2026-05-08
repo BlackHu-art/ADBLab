@@ -57,7 +57,7 @@ class LogPanel(QWidget):
         self.text_output.setFont(log_font)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 2, 4, 4)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.text_output)
 
         self._apply_style()

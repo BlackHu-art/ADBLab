@@ -31,16 +31,14 @@ class SidePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("sidePanel")
         self.signals = SidePanelSignals()
         self._package_history = []
         self._connected_device_cache = []
         self._user_selected_ip = False
         self._current_ip = ""
 
-        from core.settings_manager import AppSettings
-
-        s = AppSettings.instance()
-        self.setMinimumWidth(s.get("right_panel_width", 600))
+        self.setMinimumWidth(300)
         self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         BaseStyles.theme_changed.connect(self._on_theme_changed)
 
@@ -63,7 +61,7 @@ class SidePanel(QWidget):
     def _create_ui(self):
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(3)
+        lo.setSpacing(0)
 
         # 设备管理（UI 由 MainFrame 放入左列，先构建以便 connect_signals）
         self._devices_tab = DeviceManager(self)
@@ -164,6 +162,10 @@ class SidePanel(QWidget):
             cb.setFont(self._font_sm)
         for sl in self.findChildren(QSlider):
             sl.setFont(self._font_sm)
+        for s in self.findChildren(QScrollArea):
+            s.setStyleSheet(
+                f"QScrollArea {{ border: none; background: transparent; }}\n{BaseStyles.SCROLLBAR_STYLE()}"
+            )
         self._devices_tab._apply_device_list_style()
         if hasattr(self._devices_tab, "ip_entry"):
             self._apply_completer_style(self._devices_tab.ip_entry.completer())

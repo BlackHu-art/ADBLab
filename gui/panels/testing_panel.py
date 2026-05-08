@@ -17,8 +17,8 @@ class TestingPanel(BasePanel):
     def build_ui(self) -> QWidget:
         w = QWidget()
         lo = QVBoxLayout(w)
-        lo.setSpacing(3)
-        lo.setContentsMargins(4, 4, 4, 4)
+        lo.setSpacing(1)
+        lo.setContentsMargins(0, 0, 0, 0)
 
         # ── Reboot & Modes ──
         g0 = self._g("Reboot & Modes")
@@ -107,34 +107,6 @@ class TestingPanel(BasePanel):
         gl6.addLayout(r6b)
         lo.addWidget(g6)
 
-        # ── Logcat Filter ──
-        g7 = self._g("Logcat Filter")
-        gl7 = QVBoxLayout(g7)
-        gl7.setSpacing(2)
-        r7a = QHBoxLayout()
-        r7a.setSpacing(4)
-        self.logcat_buffer = QComboBox()
-        self.logcat_buffer.addItems(["main", "system", "crash", "events", "radio"])
-        self.logcat_buffer.setFont(self._font_sm)
-        self.logcat_priority = QComboBox()
-        self.logcat_priority.addItems(["V", "D", "I", "W", "E", "F"])
-        self.logcat_priority.setCurrentText("V")
-        self.logcat_priority.setFont(self._font_sm)
-        r7a.addWidget(QLabel("Buf"))
-        r7a.addWidget(self.logcat_buffer, 1)
-        r7a.addWidget(QLabel("Prio"))
-        r7a.addWidget(self.logcat_priority, 1)
-        gl7.addLayout(r7a)
-        r7b = QHBoxLayout()
-        r7b.setSpacing(4)
-        self.logcat_tag = self._in("Tag", 70)
-        self.logcat_regex = self._in("Regex", 70)
-        self.btn_logcat_filter = self._b("Fetch Logs", "Save_alt.svg")
-        r7b.addWidget(self.logcat_tag, 1)
-        r7b.addWidget(self.logcat_regex, 1)
-        r7b.addWidget(self.btn_logcat_filter, 1)
-        gl7.addLayout(r7b)
-        lo.addWidget(g7)
         lo.addStretch()
         return w
 
@@ -198,12 +170,3 @@ class TestingPanel(BasePanel):
         )
         self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
         self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
-        self.btn_logcat_filter.clicked.connect(
-            lambda: LP.logcat_filtered_requested.emit(
-                self.selected_devices,
-                self.logcat_buffer.currentText(),
-                self.logcat_priority.currentText(),
-                self.logcat_tag.text().strip(),
-                self.logcat_regex.text().strip(),
-            )
-        )
