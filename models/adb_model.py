@@ -8,14 +8,15 @@ ADBModelCore and are used independently by the controller.
 
 import subprocess
 from functools import wraps
-from typing import Dict, List
 
-from PySide6.QtCore import QObject, Signal, QThreadPool, QRunnable
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 # ── Module-level async decorator ─────────────────────────────────────────
 
+
 def async_command(method):
     """Decorator: run a synchronous method on QThreadPool, emit result via Signal."""
+
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         class CommandTask(QRunnable):
@@ -28,6 +29,7 @@ def async_command(method):
 
             def run(self):
                 import shiboken6
+
                 try:
                     result = self.method_ref(self.model, *self.args, **self.kwargs)
                     if not shiboken6.isValid(self.model):
@@ -39,7 +41,8 @@ def async_command(method):
                     if shiboken6.isValid(self.model):
                         try:
                             self.model.command_finished.emit(
-                                self.method_ref.__name__, f"AsyncError: {str(e)}")
+                                self.method_ref.__name__, f"AsyncError: {str(e)}"
+                            )
                         except RuntimeError:
                             pass
 
@@ -50,6 +53,7 @@ def async_command(method):
 
 
 # ── Core model base (shared infrastructure) ──────────────────────────────
+
 
 class ADBModelCore(QObject):
     """Shared infrastructure: signal, thread pool, command execution.
@@ -74,9 +78,9 @@ class ADBModelCore(QObject):
                 text=True,
                 check=True,
                 timeout=timeout,
-                encoding='utf-8',
-                errors='ignore',
-                creationflags=subprocess.CREATE_NO_WINDOW
+                encoding="utf-8",
+                errors="ignore",
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
@@ -87,12 +91,12 @@ class ADBModelCore(QObject):
             return f"SystemError: {str(e)}"
 
     @staticmethod
-    def _fetch_device_info(commands: Dict[str, List[str]]) -> Dict[str, str]:
+    def _fetch_device_info(commands: dict[str, list[str]]) -> dict[str, str]:
         """Run a batch of shell commands on a device and collect results."""
         device_info = {}
         for key, cmd in commands.items():
             output = ADBModelCore._execute_command(cmd)
-            device_info[key] = output if not output.startswith(
-                ("Error:", "Timeout:", "SystemError:")
-            ) else "N/A"
+            device_info[key] = (
+                output if not output.startswith(("Error:", "Timeout:", "SystemError:")) else "N/A"
+            )
         return device_info

@@ -1,8 +1,23 @@
+from contextlib import contextmanager
+
 from PySide6.QtCore import QObject, Signal
 
 
-class LeftPanelSignals(QObject):
-    """All signals emitted by LeftPanel."""
+@contextmanager
+def BlockSignals(widget):
+    """上下文管理器：临时阻塞 widget 的所有信号。"""
+    widget.blockSignals(True)
+    try:
+        yield
+    finally:
+        widget.blockSignals(False)
+
+
+class SidePanelSignals(QObject):
+    """All signals emitted by SidePanel."""
+
+    # ── Log ──
+    log_message = Signal(str, str)  # (level, message) → 日志输出
 
     # ── Device Management ──
     connect_requested = Signal(str)
@@ -24,7 +39,9 @@ class LeftPanelSignals(QObject):
     # ── Logs ──
     retrieve_logs_requested = Signal(list)
     cleanup_logs_requested = Signal(list)
-    logcat_filtered_requested = Signal(list, str, str, str, str)  # (devices, buffer, priority, tag, regex)
+    logcat_filtered_requested = Signal(
+        list, str, str, str, str
+    )  # (devices, buffer, priority, tag, regex)
 
     # ── Input ──
     send_text_requested = Signal(list, str)

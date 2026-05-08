@@ -14,7 +14,7 @@ def _base_dir() -> str:
 
     PyInstaller 打包后资源解压到 sys._MEIPASS；开发模式下为项目根目录（utils/ 的上一级）。
     """
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         return sys._MEIPASS
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -36,4 +36,5 @@ def setup_qt_search_paths() -> None:
     只需在 QApplication 创建后、窗口初始化前调用一次。
     """
     from PySide6.QtCore import QDir
-    QDir.setSearchPaths('icons', [resource_path('resources/icons')])
+
+    QDir.setSearchPaths("icons", [resource_path("resources/icons")])

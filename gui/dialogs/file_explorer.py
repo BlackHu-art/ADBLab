@@ -4,28 +4,41 @@ File Explorer dialog - browse, pull, push, edit, and manage files on a device.
 Adapted to use ADBLab's BaseStyles theme system.
 """
 
+import base64
 import os
 import re
-import sys
-import base64
-import tempfile
 import subprocess
-from datetime import datetime
+import sys
+import tempfile
 
-from PySide6.QtCore import Qt, QThread, Signal, QSize
-from PySide6.QtGui import QFont, QPixmap, QIcon
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QFileDialog,
-    QPlainTextEdit, QMessageBox, QMenu, QInputDialog, QCheckBox,
-    QStatusBar, QWidget, QSizePolicy, QFrame, QGridLayout,
+    QCheckBox,
+    QDialog,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMenu,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QStatusBar,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
 )
-
 
 # ── Worker Threads ───────────────────────────────────────────────────────
 
+
 class ADBWorker(QThread):
     """Run a simple adb shell command and return output."""
+
     finished = Signal(str, bool)
 
     def __init__(self, device_ip: str, args: list):
@@ -37,8 +50,9 @@ class ADBWorker(QThread):
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            output = subprocess.check_output(cmd, text=True, stderr=subprocess.STDOUT,
-                                             creationflags=creationflags)
+            output = subprocess.check_output(
+                cmd, text=True, stderr=subprocess.STDOUT, creationflags=creationflags
+            )
             self.finished.emit(output, False)
         except subprocess.CalledProcessError as e:
             self.finished.emit(e.output or str(e), True)
@@ -48,6 +62,7 @@ class ADBWorker(QThread):
 
 class TransferWorker(QThread):
     """Run pull/push operations with progress lines."""
+
     progress = Signal(str)
     finished = Signal(str, bool, str)
 
@@ -61,9 +76,15 @@ class TransferWorker(QThread):
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                    cwd=self.cwd, universal_newlines=True, bufsize=1,
-                                    creationflags=creationflags)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=self.cwd,
+                universal_newlines=True,
+                bufsize=1,
+                creationflags=creationflags,
+            )
             last = ""
             while True:
                 line = proc.stdout.readline()
@@ -84,11 +105,32 @@ class TransferWorker(QThread):
 
 # ── File Explorer Dialog ─────────────────────────────────────────────────
 
+
 class FileExplorerDialog(QDialog):
 
-    TEXT_EXTS = {"txt", "log", "json", "xml", "html", "csv", "md", "ini",
-                 "conf", "prop", "sh", "bat", "py", "js", "css", "cpp",
-                 "h", "hpp", "c", "rc", ""}
+    TEXT_EXTS = {
+        "txt",
+        "log",
+        "json",
+        "xml",
+        "html",
+        "csv",
+        "md",
+        "ini",
+        "conf",
+        "prop",
+        "sh",
+        "bat",
+        "py",
+        "js",
+        "css",
+        "cpp",
+        "h",
+        "hpp",
+        "c",
+        "rc",
+        "",
+    }
     IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "bmp"}
 
     def __init__(self, parent, device_ip: str):
@@ -122,7 +164,9 @@ class FileExplorerDialog(QDialog):
         self.path_layout.setSpacing(4)
         self.path_layout.addWidget(QLabel("Path:"))
         self.path_field = QLineEdit(self.current_path)
-        self.path_field.returnPressed.connect(lambda: self._navigate(self.path_field.text().strip()))
+        self.path_field.returnPressed.connect(
+            lambda: self._navigate(self.path_field.text().strip())
+        )
         self.path_field.setFont(QFont("Consolas", 9))
         self.path_layout.addWidget(self.path_field, 1)
         self.search_field = QLineEdit()
@@ -157,9 +201,17 @@ class FileExplorerDialog(QDialog):
         self.push_btn.clicked.connect(self._push_file)
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.clicked.connect(self._delete_selected)
-        for b in (self.back_btn, self.fwd_btn, self.up_btn, self.refresh_btn,
-                  self.mkdir_btn, self.touch_btn, self.pull_btn, self.push_btn,
-                  self.delete_btn):
+        for b in (
+            self.back_btn,
+            self.fwd_btn,
+            self.up_btn,
+            self.refresh_btn,
+            self.mkdir_btn,
+            self.touch_btn,
+            self.pull_btn,
+            self.push_btn,
+            self.delete_btn,
+        ):
             b.setFont(QFont("Segoe UI", 9))
             tb.addWidget(b)
         tb.addStretch()
@@ -174,7 +226,9 @@ class FileExplorerDialog(QDialog):
         self.table.setHorizontalHeaderLabels(["Name", "Type", "Size", "Modified"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         for i in range(1, 4):
-            self.table.horizontalHeader().setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
+            self.table.horizontalHeader().setSectionResizeMode(
+                i, QHeaderView.ResizeMode.Interactive
+            )
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -195,14 +249,15 @@ class FileExplorerDialog(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         from gui.styles.base_styles import BaseStyles
+
         bs = BaseStyles
         self.setStyleSheet(bs.PANEL_BASE_STYLE())
-        bg = bs.color('INPUT_BG')
-        fg = bs.color('TEXT_PRIMARY')
-        border = bs.color('BORDER_COLOR')
-        sel_bg = bs.color('SELECTION_BG')
-        sel_fg = bs.color('SELECTION_TEXT')
-        btn_bg = bs.color('BUTTON_BG')
+        bg = bs.color("INPUT_BG")
+        fg = bs.color("TEXT_PRIMARY")
+        border = bs.color("BORDER_COLOR")
+        sel_bg = bs.color("SELECTION_BG")
+        sel_fg = bs.color("SELECTION_TEXT")
+        btn_bg = bs.color("BUTTON_BG")
         self.table.setStyleSheet(f"""
             QTableWidget {{ background-color: {bg}; color: {fg};
                 border: 1px solid {border}; border-radius: {bs.RADIUS_MD}px;
@@ -212,19 +267,22 @@ class FileExplorerDialog(QDialog):
                 padding: 4px; border: 1px solid {border}; }}
         """)
         self.status_bar.setStyleSheet(
-            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}")
+            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}"
+        )
         self.path_field.setStyleSheet(
             f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
-            f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;")
+            f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;"
+        )
         self.search_field.setStyleSheet(self.path_field.styleSheet())
 
         from gui.styles.base_styles import BaseStyles as BS
+
         BS.theme_changed.connect(self._apply_theme)
 
     # ── ADB helpers ──────────────────────────────────────────────────────
 
     def _root(self, cmd: str) -> str:
-        return f"su -c \"{cmd}\"" if self.root_cb.isChecked() else cmd
+        return f'su -c "{cmd}"' if self.root_cb.isChecked() else cmd
 
     def _dpath(self, *parts) -> str:
         return os.path.join(*parts).replace("\\", "/")
@@ -314,8 +372,9 @@ class FileExplorerDialog(QDialog):
             is_dir = entry["perms"].startswith(("d", "l"))
             ftype = "Folder" if is_dir else self._ext(name)
             size_str = "-" if is_dir else self._fmt_size(entry["size"])
-            rows.append((name, ftype, size_str, entry["modified"],
-                        self._safe_int(entry["size"]), is_dir))
+            rows.append(
+                (name, ftype, size_str, entry["modified"], self._safe_int(entry["size"]), is_dir)
+            )
 
         rows.sort(key=lambda x: (not x[5], x[0].lower()))
         for name, ftype, size_str, date_str, _, is_dir in rows:
@@ -337,16 +396,20 @@ class FileExplorerDialog(QDialog):
         self.table.setSortingEnabled(True)
         folders = sum(1 for r in rows if r[5])
         files = len(rows) - folders
-        self.status_bar.showMessage(
-            f"{self.current_path}  |  {folders} folders, {files} files")
+        self.status_bar.showMessage(f"{self.current_path}  |  {folders} folders, {files} files")
 
     def _parse_ls(self, line: str) -> dict | None:
         parts = line.strip().split(maxsplit=7)
         if len(parts) < 8:
             return None
-        return {"perms": parts[0], "owner": parts[2], "group": parts[3],
-                "size": parts[4], "modified": f"{parts[5]} {parts[6]}",
-                "name": parts[7]}
+        return {
+            "perms": parts[0],
+            "owner": parts[2],
+            "group": parts[3],
+            "size": parts[4],
+            "modified": f"{parts[5]} {parts[6]}",
+            "name": parts[7],
+        }
 
     def _ext(self, name: str) -> str:
         return name.rsplit(".", 1)[-1].upper() if "." in name else "File"
@@ -377,7 +440,11 @@ class FileExplorerDialog(QDialog):
             self._go_parent()
         elif ftype == "Folder":
             target = self.symlink_targets.get(name)
-            new_path = target if target and target.startswith("/") else self._dpath(self.current_path, name)
+            new_path = (
+                target
+                if target and target.startswith("/")
+                else self._dpath(self.current_path, name)
+            )
             self._navigate(new_path)
         else:
             self._view_or_pull(name)
@@ -388,8 +455,11 @@ class FileExplorerDialog(QDialog):
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self.TEXT_EXTS or ext in self.IMAGE_EXTS
         view = menu.addAction("View") if viewable else None
-        act = menu.exec(self.table.mapToGlobal(self.table.visualItemRect(
-            self.table.item(self.table.currentRow(), 0)).center()))
+        act = menu.exec(
+            self.table.mapToGlobal(
+                self.table.visualItemRect(self.table.item(self.table.currentRow(), 0)).center()
+            )
+        )
         if act == pull:
             self._pull_file(name)
         elif view and act == view:
@@ -412,7 +482,7 @@ class FileExplorerDialog(QDialog):
         dlg.setWindowTitle(name)
         dlg.setMinimumSize(750, 550)
         dlg.setModal(True)
-        l = QVBoxLayout(dlg)
+        QVBoxLayout(dlg)
 
         tmp_dir = os.path.join(tempfile.gettempdir(), "adblab_explorer")
         os.makedirs(tmp_dir, exist_ok=True)
@@ -420,14 +490,20 @@ class FileExplorerDialog(QDialog):
 
         if self.root_cb.isChecked():
             dev_tmp = f"/data/local/tmp/{name}"
-            w1 = self._run_adb("shell", self._root(f'dd if="{full_path}" of="{dev_tmp}" && chmod 644 "{dev_tmp}"'))
+            w1 = self._run_adb(
+                "shell", self._root(f'dd if="{full_path}" of="{dev_tmp}" && chmod 644 "{dev_tmp}"')
+            )
+
             def _on_copy(o, e):
                 if e:
                     QMessageBox.critical(dlg, "Error", o)
                     return
                 w2 = self._run_transfer("pull", dev_tmp, tmp_path)
-                w2.finished.connect(lambda o2, e2, d: self._show_image(dlg, name, tmp_path, dev_tmp))
+                w2.finished.connect(
+                    lambda o2, e2, d: self._show_image(dlg, name, tmp_path, dev_tmp)
+                )
                 w2.start()
+
             w1.finished.connect(_on_copy)
             w1.start()
         else:
@@ -447,8 +523,12 @@ class FileExplorerDialog(QDialog):
         lbl = QLabel()
         pm = QPixmap(tmp_path)
         if pm.width() > 730 or pm.height() > 530:
-            pm = pm.scaled(730, 530, Qt.AspectRatioMode.KeepAspectRatio,
-                          Qt.TransformationMode.SmoothTransformation)
+            pm = pm.scaled(
+                730,
+                530,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
         lbl.setPixmap(pm)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dlg.layout().addWidget(lbl)
@@ -467,34 +547,39 @@ class FileExplorerDialog(QDialog):
         dlg.setWindowTitle(name)
         dlg.setMinimumSize(750, 550)
         dlg.setModal(True)
-        l = QVBoxLayout(dlg)
+        lo = QVBoxLayout(dlg)
         editor = QPlainTextEdit()
         editor.setPlainText(content)
         editor.setFont(QFont("Consolas", 10))
-        l.addWidget(editor)
+        lo.addWidget(editor)
         btns = QHBoxLayout()
         save_as = QPushButton("Save As...")
         save_as.clicked.connect(lambda: self._save_as(name, editor.toPlainText()))
         save_dev = QPushButton("Save to Device")
-        save_dev.clicked.connect(lambda: self._save_to_device(name, editor.toPlainText(), full_path))
+        save_dev.clicked.connect(
+            lambda: self._save_to_device(name, editor.toPlainText(), full_path)
+        )
         close = QPushButton("Close")
         close.clicked.connect(dlg.accept)
         for b in (save_as, save_dev, close):
             btns.addWidget(b)
-        l.addLayout(btns)
+        lo.addLayout(btns)
         dlg.exec()
 
     def _save_as(self, name, content):
         fp, _ = QFileDialog.getSaveFileName(self, "Save As", name)
         if fp:
-            with open(fp, 'w', encoding='utf-8') as f:
+            with open(fp, "w", encoding="utf-8") as f:
                 f.write(content)
 
     def _save_to_device(self, name, content, full_path):
-        if QMessageBox.question(self, "Confirm", f"Save to {full_path}?") != QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(self, "Confirm", f"Save to {full_path}?")
+            != QMessageBox.StandardButton.Yes
+        ):
             return
-        b64 = base64.b64encode(content.encode('utf-8')).decode('ascii')
-        cmd = self._root(f'echo \'{b64}\' | base64 -d > "{full_path}"')
+        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+        cmd = self._root(f"echo '{b64}' | base64 -d > \"{full_path}\"")
         w = self._run_adb("shell", cmd)
         w.finished.connect(lambda o, e: self._on_save_result(o, e, name))
         w.start()
@@ -520,7 +605,7 @@ class FileExplorerDialog(QDialog):
             w.start()
         else:
             w = self._run_transfer("pull", full, save_path)
-            w.progress.connect(lambda l: self.status_bar.showMessage(l))
+            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
             w.finished.connect(lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"))
             w.start()
 
@@ -529,10 +614,13 @@ class FileExplorerDialog(QDialog):
             QMessageBox.critical(self, "Error", o)
             return
         w = self._run_transfer("pull", dev_tmp, save_path)
-        w.progress.connect(lambda l: self.status_bar.showMessage(l))
-        w.finished.connect(lambda o2, e2, d: (
-            self._run_adb("shell", f'rm "{dev_tmp}"').start(),
-            self._on_transfer_done(o2, e2, f"Pulled {name}")))
+        w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
+        w.finished.connect(
+            lambda o2, e2, d: (
+                self._run_adb("shell", f'rm "{dev_tmp}"').start(),
+                self._on_transfer_done(o2, e2, f"Pulled {name}"),
+            )
+        )
         w.start()
 
     def _pull_selected(self):
@@ -546,11 +634,10 @@ class FileExplorerDialog(QDialog):
             name = self.table.item(row, 0).text()
             if name == "..":
                 continue
-            is_dir = self.table.item(row, 1).text() == "Folder"
             src = self._dpath(self.current_path, name)
             dst = os.path.join(dest, name)
             w = self._run_transfer("pull", src, dst)
-            w.progress.connect(lambda l: self.status_bar.showMessage(l))
+            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
             w.finished.connect(lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"))
             w.start()
 
@@ -561,8 +648,10 @@ class FileExplorerDialog(QDialog):
         for fp in files:
             dst = self._dpath(self.current_path, os.path.basename(fp))
             w = self._run_transfer("push", fp, dst)
-            w.progress.connect(lambda l: self.status_bar.showMessage(l))
-            w.finished.connect(lambda o, e, d: self._on_transfer_done(o, e, f"Pushed {os.path.basename(fp)}"))
+            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
+            w.finished.connect(
+                lambda o, e, d: self._on_transfer_done(o, e, f"Pushed {os.path.basename(fp)}")
+            )
             w.start()
 
     def _on_transfer_done(self, o, e, msg):
@@ -579,7 +668,9 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(f'mkdir -p "{full}"'))
-        w.finished.connect(lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}")))
+        w.finished.connect(
+            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
+        )
         w.start()
 
     def _touch(self):
@@ -588,7 +679,9 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(f'touch "{full}"'))
-        w.finished.connect(lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}")))
+        w.finished.connect(
+            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
+        )
         w.start()
 
     def _rename_item(self, name: str):
@@ -598,22 +691,32 @@ class FileExplorerDialog(QDialog):
         old = self._dpath(self.current_path, name)
         new_p = self._dpath(self.current_path, new)
         w = self._run_adb("shell", self._root(f'mv "{old}" "{new_p}"'))
-        w.finished.connect(lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Renamed {name} -> {new}")))
+        w.finished.connect(
+            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Renamed {name} -> {new}"))
+        )
         w.start()
 
     def _delete_item(self, name: str):
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(f'rm -rf "{full}"'))
-        w.finished.connect(lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Deleted {name}")))
+        w.finished.connect(
+            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Deleted {name}"))
+        )
         w.start()
 
     def _delete_selected(self):
         rows = set(i.row() for i in self.table.selectedIndexes())
-        items = [self.table.item(r, 0).text() for r in rows
-                if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."]
+        items = [
+            self.table.item(r, 0).text()
+            for r in rows
+            if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."
+        ]
         if not items:
             return
-        if QMessageBox.question(self, "Delete", f"Delete {len(items)} item(s)?") != QMessageBox.StandardButton.Yes:
+        if (
+            QMessageBox.question(self, "Delete", f"Delete {len(items)} item(s)?")
+            != QMessageBox.StandardButton.Yes
+        ):
             return
         for name in items:
             self._delete_item(name)
@@ -622,10 +725,15 @@ class FileExplorerDialog(QDialog):
 
     def _copy_items(self, copy_mode: bool):
         rows = set(i.row() for i in self.table.selectedIndexes())
-        self.clipboard = [self._dpath(self.current_path, self.table.item(r, 0).text())
-                         for r in rows if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."]
+        self.clipboard = [
+            self._dpath(self.current_path, self.table.item(r, 0).text())
+            for r in rows
+            if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."
+        ]
         self.copy_mode = copy_mode
-        self.status_bar.showMessage(f"{'Copied' if copy_mode else 'Cut'} {len(self.clipboard)} item(s)")
+        self.status_bar.showMessage(
+            f"{'Copied' if copy_mode else 'Cut'} {len(self.clipboard)} item(s)"
+        )
 
     def _paste_items(self):
         if not self.clipboard:
@@ -653,7 +761,7 @@ class FileExplorerDialog(QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Permissions - {name}")
         dlg.setModal(True)
-        l = QVBoxLayout(dlg)
+        lo = QVBoxLayout(dlg)
 
         grid = QGridLayout()
         grid.addWidget(QLabel(""), 0, 0)
@@ -666,10 +774,10 @@ class FileExplorerDialog(QDialog):
                 cb = QCheckBox()
                 grid.addWidget(cb, r, c, alignment=Qt.AlignmentFlag.AlignCenter)
                 cbs[(col, key)] = cb
-        l.addLayout(grid)
+        lo.addLayout(grid)
 
         preview = QLabel("chmod: ")
-        l.addWidget(preview)
+        lo.addWidget(preview)
         btn_row = QHBoxLayout()
         apply_btn = QPushButton("Apply")
         revert_btn = QPushButton("Revert")
@@ -677,45 +785,64 @@ class FileExplorerDialog(QDialog):
         btn_row.addStretch()
         for b in (revert_btn, apply_btn, close_btn):
             btn_row.addWidget(b)
-        l.addLayout(btn_row)
+        lo.addLayout(btn_row)
         close_btn.clicked.connect(dlg.reject)
 
         def to_mode():
-            o = (4 if cbs[("owner","r")].isChecked() else 0) + (2 if cbs[("owner","w")].isChecked() else 0) + (1 if cbs[("owner","x")].isChecked() else 0)
-            g = (4 if cbs[("group","r")].isChecked() else 0) + (2 if cbs[("group","w")].isChecked() else 0) + (1 if cbs[("group","x")].isChecked() else 0)
-            ot = (4 if cbs[("other","r")].isChecked() else 0) + (2 if cbs[("other","w")].isChecked() else 0) + (1 if cbs[("other","x")].isChecked() else 0)
+            o = (
+                (4 if cbs[("owner", "r")].isChecked() else 0)
+                + (2 if cbs[("owner", "w")].isChecked() else 0)
+                + (1 if cbs[("owner", "x")].isChecked() else 0)
+            )
+            g = (
+                (4 if cbs[("group", "r")].isChecked() else 0)
+                + (2 if cbs[("group", "w")].isChecked() else 0)
+                + (1 if cbs[("group", "x")].isChecked() else 0)
+            )
+            ot = (
+                (4 if cbs[("other", "r")].isChecked() else 0)
+                + (2 if cbs[("other", "w")].isChecked() else 0)
+                + (1 if cbs[("other", "x")].isChecked() else 0)
+            )
             return f"{o}{g}{ot}"
 
         def set_from_mode(m):
             try:
                 for i, col in enumerate(["owner", "group", "other"]):
                     v = int(m[i])
-                    cbs[(col,"r")].setChecked(bool(v & 4))
-                    cbs[(col,"w")].setChecked(bool(v & 2))
-                    cbs[(col,"x")].setChecked(bool(v & 1))
+                    cbs[(col, "r")].setChecked(bool(v & 4))
+                    cbs[(col, "w")].setChecked(bool(v & 2))
+                    cbs[(col, "x")].setChecked(bool(v & 1))
             except Exception:
                 pass
 
         orig = [""]
         w = self._run_adb("shell", f'stat -c %a "{full}"')
+
         def _on_stat(o, e):
             m = (o or "").strip()
-            if re.match(r'^[0-7]{3,4}$', m):
+            if re.match(r"^[0-7]{3,4}$", m):
                 orig[0] = m.lstrip("0")[-3:]
             else:
                 orig[0] = "644" if not is_dir else "755"
             set_from_mode(orig[0])
             preview.setText(f"chmod {to_mode()}  {full}")
+
         w.finished.connect(_on_stat)
         w.start()
 
         for cb in cbs.values():
             cb.stateChanged.connect(lambda: preview.setText(f"chmod {to_mode()}  {full}"))
-        revert_btn.clicked.connect(lambda: (set_from_mode(orig[0]), preview.setText(f"chmod {to_mode()}  {full}")))
-        apply_btn.clicked.connect(lambda: (
-            self._run_adb("shell", self._root(f'chmod {to_mode()} "{full}"')).start(),
-            dlg.accept(),
-            self._refresh()))
+        revert_btn.clicked.connect(
+            lambda: (set_from_mode(orig[0]), preview.setText(f"chmod {to_mode()}  {full}"))
+        )
+        apply_btn.clicked.connect(
+            lambda: (
+                self._run_adb("shell", self._root(f'chmod {to_mode()} "{full}"')).start(),
+                dlg.accept(),
+                self._refresh(),
+            )
+        )
         dlg.resize(420, 240)
         dlg.exec()
 
@@ -760,8 +887,11 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         cmd = self._root(f'pm install -r "{full}"')
         w = self._run_adb("shell", cmd)
-        w.finished.connect(lambda o, e: self.status_bar.showMessage(
-            f"APK {name} installed" if not e else f"APK install failed: {o}"))
+        w.finished.connect(
+            lambda o, e: self.status_bar.showMessage(
+                f"APK {name} installed" if not e else f"APK install failed: {o}"
+            )
+        )
         w.start()
 
     def _exec_script(self, name: str):
@@ -778,22 +908,26 @@ class FileExplorerDialog(QDialog):
         dlg.setWindowTitle(f"Output: {name}")
         dlg.setMinimumSize(700, 400)
         dlg.setModal(False)
-        l = QVBoxLayout(dlg)
+        lo = QVBoxLayout(dlg)
         v = QPlainTextEdit()
         v.setReadOnly(True)
         v.setPlainText(output)
         v.setFont(QFont("Consolas", 9))
-        l.addWidget(v)
+        lo.addWidget(v)
         cb = QPushButton("Close")
         cb.clicked.connect(dlg.accept)
-        l.addWidget(cb)
+        lo.addWidget(cb)
         dlg.show()
 
     def _show_props(self, name: str, is_dir: bool):
         full = self._dpath(self.current_path, name)
         if is_dir:
             w = self._run_adb("shell", f'du -sh "{full}"')
-            w.finished.connect(lambda o, e: self._show_props_done(name, full, "Folder", o.strip().split()[0] if o.strip() else "?", e))
+            w.finished.connect(
+                lambda o, e: self._show_props_done(
+                    name, full, "Folder", o.strip().split()[0] if o.strip() else "?", e
+                )
+            )
             w.start()
         else:
             w = self._run_adb("shell", f'ls -la "{full}"')
@@ -803,11 +937,13 @@ class FileExplorerDialog(QDialog):
     def _show_props_file(self, name, full, output, error):
         entry = self._parse_ls(output.splitlines()[0] if output.strip() else "")
         if entry:
-            info = (f"Name: {name}\nType: {self._ext(name)}\n"
-                    f"Size: {self._fmt_size(entry['size'])}\nPath: {full}\n"
-                    f"Permissions: {entry['perms']}\n"
-                    f"Owner: {entry['owner']}:{entry['group']}\n"
-                    f"Modified: {entry['modified']}")
+            info = (
+                f"Name: {name}\nType: {self._ext(name)}\n"
+                f"Size: {self._fmt_size(entry['size'])}\nPath: {full}\n"
+                f"Permissions: {entry['perms']}\n"
+                f"Owner: {entry['owner']}:{entry['group']}\n"
+                f"Modified: {entry['modified']}"
+            )
         else:
             info = f"Name: {name}\nPath: {full}"
         QMessageBox.information(self, f"Properties: {name}", info)
@@ -827,7 +963,11 @@ class FileExplorerDialog(QDialog):
 
     def _header_clicked(self, col):
         if col == self._sort_col:
-            self._sort_order = Qt.SortOrder.DescendingOrder if self._sort_order == Qt.SortOrder.AscendingOrder else Qt.SortOrder.AscendingOrder
+            self._sort_order = (
+                Qt.SortOrder.DescendingOrder
+                if self._sort_order == Qt.SortOrder.AscendingOrder
+                else Qt.SortOrder.AscendingOrder
+            )
         else:
             self._sort_col = col
             self._sort_order = Qt.SortOrder.AscendingOrder

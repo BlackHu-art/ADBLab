@@ -1,11 +1,13 @@
 """Theme-aware log panel with auto-scroll, line trimming, and re-render on theme change."""
 
 from datetime import datetime
+
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QWidget, QTextEdit, QVBoxLayout
-from PySide6.QtGui import QFont, QColor, QTextCharFormat, QTextCursor
-from gui.styles.base_styles import BaseStyles
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
+
 from core.log_service import LogService
+from gui.styles.base_styles import BaseStyles
 
 
 class LogPanel(QWidget):
@@ -61,9 +63,7 @@ class LogPanel(QWidget):
         self._apply_style()
 
     def _connect_services(self):
-        LogService().log_received.connect(
-            self._append_log, Qt.ConnectionType.QueuedConnection
-        )
+        LogService().log_received.connect(self._append_log, Qt.ConnectionType.QueuedConnection)
 
     def _append_log(self, level: str, message: str):
         """Add a log entry and render it with theme-appropriate colors."""
@@ -87,7 +87,7 @@ class LogPanel(QWidget):
         cursor.insertText(f"[{level}]", lv_fmt)
 
         msg_fmt = QTextCharFormat()
-        msg_fmt.setForeground(QColor(BaseStyles.color('LOG_TEXT_COLOR')))
+        msg_fmt.setForeground(QColor(BaseStyles.color("LOG_TEXT_COLOR")))
         cursor.insertText(f" {message}\n", msg_fmt)
 
     def _rerender_all(self):

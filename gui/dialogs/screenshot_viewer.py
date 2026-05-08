@@ -15,21 +15,34 @@ Features:
 - Drag to move
 """
 
+import ctypes
 import os
 import sys
-import ctypes
 from datetime import datetime
 
-from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QApplication, QFrame, QScrollArea,
-    QMenu, QFileDialog, QMessageBox, QSizePolicy, QWidget,
-)
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import (
-    QPixmap, QGuiApplication, QFont, QMouseEvent,
-    QAction, QKeySequence, QShortcut, QWheelEvent,
+    QGuiApplication,
+    QKeySequence,
+    QMouseEvent,
+    QPixmap,
+    QShortcut,
+    QWheelEvent,
 )
-from PySide6.QtCore import Qt, QTimer, QPoint, QPropertyAnimation, QEasingCurve
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 from gui.styles.base_styles import BaseStyles
 
@@ -56,7 +69,9 @@ class ScreenshotViewer(QDialog):
     def __init__(self, image_paths: list, current_index: int = 0, parent=None):
         super().__init__(parent)
         self._image_paths = list(image_paths) if image_paths else []
-        self._current_idx = max(0, min(current_index, len(self._image_paths) - 1)) if self._image_paths else 0
+        self._current_idx = (
+            max(0, min(current_index, len(self._image_paths) - 1)) if self._image_paths else 0
+        )
         self._zoom_factor = 1.0
         self._fit_to_window = True
         self._original_pixmap = None
@@ -82,9 +97,7 @@ class ScreenshotViewer(QDialog):
 
     def _init_window(self) -> None:
         self.setWindowTitle("Screenshot Viewer")
-        self.setWindowFlags(
-            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog
-        )
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.setMinimumSize(360, 260)
@@ -354,8 +367,10 @@ class ScreenshotViewer(QDialog):
         self._fit_to_window = True
 
         scaled = self._original_pixmap.scaled(
-            int(pw * scale), int(ph * scale),
-            Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            int(pw * scale),
+            int(ph * scale),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
         )
         self._image_label.setPixmap(scaled)
         self._image_label.adjustSize()
@@ -369,8 +384,10 @@ class ScreenshotViewer(QDialog):
 
         pw, ph = self._original_pixmap.width(), self._original_pixmap.height()
         scaled = self._original_pixmap.scaled(
-            int(pw * self._zoom_factor), int(ph * self._zoom_factor),
-            Qt.KeepAspectRatio, Qt.SmoothTransformation,
+            int(pw * self._zoom_factor),
+            int(ph * self._zoom_factor),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
         )
         self._image_label.setPixmap(scaled)
         self._image_label.adjustSize()
@@ -520,7 +537,9 @@ class ScreenshotViewer(QDialog):
             return
         default_name = os.path.basename(path)
         dest, _ = QFileDialog.getSaveFileName(
-            self, "Save Screenshot As", default_name,
+            self,
+            "Save Screenshot As",
+            default_name,
             "PNG Images (*.png);;All Files (*)",
         )
         if not dest:
@@ -542,6 +561,7 @@ class ScreenshotViewer(QDialog):
             os.startfile(folder)
         else:
             import subprocess
+
             subprocess.Popen(["xdg-open", folder])
 
     def _delete_file(self) -> None:
@@ -549,9 +569,11 @@ class ScreenshotViewer(QDialog):
         if not path or not os.path.exists(path):
             return
         reply = QMessageBox.question(
-            self, "Delete Screenshot",
+            self,
+            "Delete Screenshot",
             f"Delete this file permanently?\n\n{os.path.basename(path)}",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
@@ -576,13 +598,25 @@ class ScreenshotViewer(QDialog):
             hwnd = int(self.winId())
             if self._pinned:
                 ctypes.windll.user32.SetWindowPos(
-                    hwnd, -1, 0, 0, 0, 0, 0x0002 | 0x0001,
+                    hwnd,
+                    -1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x0002 | 0x0001,
                 )
                 self._pin_btn.setText("📌")
                 self._pin_btn.setToolTip("Unpin (toggle always-on-top)")
             else:
                 ctypes.windll.user32.SetWindowPos(
-                    hwnd, -2, 0, 0, 0, 0, 0x0002 | 0x0001,
+                    hwnd,
+                    -2,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0x0002 | 0x0001,
                 )
                 self._pin_btn.setText("📍")
                 self._pin_btn.setToolTip("Pin (toggle always-on-top)")
@@ -664,13 +698,13 @@ class ScreenshotViewer(QDialog):
 
     def _cursor_for_edge(self, edge: int):
         return {
-            HTLEFT:       Qt.SizeHorCursor,
-            HTRIGHT:      Qt.SizeHorCursor,
-            HTTOP:        Qt.SizeVerCursor,
-            HTBOTTOM:     Qt.SizeVerCursor,
-            HTTOPLEFT:    Qt.SizeFDiagCursor,
+            HTLEFT: Qt.SizeHorCursor,
+            HTRIGHT: Qt.SizeHorCursor,
+            HTTOP: Qt.SizeVerCursor,
+            HTBOTTOM: Qt.SizeVerCursor,
+            HTTOPLEFT: Qt.SizeFDiagCursor,
             HTBOTTOMRIGHT: Qt.SizeFDiagCursor,
-            HTTOPRIGHT:   Qt.SizeBDiagCursor,
+            HTTOPRIGHT: Qt.SizeBDiagCursor,
             HTBOTTOMLEFT: Qt.SizeBDiagCursor,
         }.get(edge)
 
@@ -706,6 +740,7 @@ class ScreenshotViewer(QDialog):
         if widget is None:
             return False
         from PySide6.QtWidgets import QPushButton, QScrollBar
+
         while widget is not None:
             if isinstance(widget, (QPushButton, QScrollBar)):
                 return True

@@ -1,21 +1,22 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 
 """
- @author      :  Frankie
- @description :  
- @time        :    10:18
+@author      :  Frankie
+@description :
+@time        :    10:18
 """
+
 import datetime
 import random
-import string
 import re
+import string
 import time
+from pathlib import Path
 
 import requests
-from core.logger.log_tool import logger
-from pathlib import Path
 from ruamel.yaml import YAML
+
+from core.logger.log_tool import logger
 
 _yaml = YAML()
 _yaml.preserve_quotes = True
@@ -24,14 +25,14 @@ _MAIL_YAML = Path(__file__).parent / "mail.yaml"
 
 def _load_mail_yaml():
     if _MAIL_YAML.exists():
-        with open(_MAIL_YAML, 'r', encoding='utf-8') as f:
+        with open(_MAIL_YAML, encoding="utf-8") as f:
             data = _yaml.load(f)
             return data if data is not None else {}
     return {}
 
 
 def _save_mail_yaml(data):
-    with open(_MAIL_YAML, 'w', encoding='utf-8') as f:
+    with open(_MAIL_YAML, "w", encoding="utf-8") as f:
         _yaml.dump(data, f)
 
 
@@ -90,10 +91,10 @@ class EmailService(HttpRequest):
             "origin": "https://www.amz123.com",
             "referer": "https://www.amz123.com/",
             "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                          "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
             "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
             "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"'
+            "sec-ch-ua-platform": '"Windows"',
             # "fingerprint": "4794d495216cb6f6f1c31bc4fcbfc770"
         }
         self.account = None
@@ -110,8 +111,7 @@ class EmailService(HttpRequest):
             try:
                 headers = {
                     **self.common_headers,
-                    "fingerprint": str(
-                        _get_nested("userRegisterInfoPro", "fingerprint"))
+                    "fingerprint": str(_get_nested("userRegisterInfoPro", "fingerprint")),
                 }
 
                 logger.info(f"Requesting random email from {url}")
@@ -148,7 +148,7 @@ class EmailService(HttpRequest):
         随机生成 fingerprint 并更新
         """
         # 生成一个固定长度的 fingerprint（与原始示例一致，长度为36）
-        new_fingerprint = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
+        new_fingerprint = "".join(random.choices(string.ascii_lowercase + string.digits, k=36))
 
         # 更新 YAML 中的 fingerprint 值
         _update_nested("userRegisterInfoPro", "fingerprint", new_fingerprint)
@@ -164,10 +164,7 @@ class EmailService(HttpRequest):
             "sign": "41a562316ccfe7f9e0e8ff7ed5f574e8",
             "timestamp": str(int(datetime.datetime.now().timestamp())),
         }
-        data = {
-            "account": self.account,
-            "page": {"sorts": [{"condition": "date", "order": -1}]}
-        }
+        data = {"account": self.account, "page": {"sorts": [{"condition": "date", "order": -1}]}}
         try:
             logger.info(f"Requesting email list for account: {self.account}")
             response = self.session.post(url, headers=headers, json=data)
@@ -200,8 +197,9 @@ class EmailService(HttpRequest):
 
         return None
 
-
-    def get_email_detail(self,):
+    def get_email_detail(
+        self,
+    ):
         """
         获取邮箱详情，并提取验证码
         :return: 提取到的验证码字符串，如果失败返回 None
@@ -213,7 +211,7 @@ class EmailService(HttpRequest):
             response = self.session.post(url, headers=self.common_headers, json=payload)
             response.raise_for_status()
             data = response.json()
-            logger.info(f"Response received successfully.")
+            logger.info("Response received successfully.")
 
             # 校验响应状态
             if data.get("status") != 0:

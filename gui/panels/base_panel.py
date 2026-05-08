@@ -1,0 +1,104 @@
+"""标签页基类 — 提供共享的 UI 工厂方法和设备/包名访问器。"""
+
+from PySide6.QtCore import QSize
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGroupBox,
+    QLineEdit,
+    QPushButton,
+    QSizePolicy,
+    QWidget,
+)
+
+from gui.styles.base_styles import BaseStyles
+from gui.widgets.double_click_button import DoubleClickButton
+from utils.resource_path import resource_path
+
+
+class BasePanel(QWidget):
+    """所有标签页的抽象基类。通过 `panel` 属性访问 SidePanel 的共享状态。"""
+
+    def __init__(self, panel, parent=None):
+        super().__init__(parent)
+        self.panel = panel
+
+    # ── 共享属性快捷访问 ──
+
+    @property
+    def signals(self):
+        return self.panel.signals
+
+    @property
+    def selected_devices(self):
+        return self.panel.selected_devices
+
+    @property
+    def current_package(self):
+        """当前选中的包名（来自 AppPanel 的 program_edit）。"""
+        if hasattr(self.panel, "_apps_tab") and self.panel._apps_tab:
+            return self.panel._apps_tab.package_text
+        return ""
+
+    @property
+    def _font_sm(self):
+        return self.panel._font_sm
+
+    @property
+    def _font_mono(self):
+        return self.panel._font_mono
+
+    @property
+    def _font_base(self):
+        return self.panel._font_base
+
+    @property
+    def _font_tab(self):
+        return self.panel._font_tab
+
+    # ── UI 工厂方法 ──
+
+    def _g(self, t):
+        """创建统一样式的 QGroupBox。"""
+        g = QGroupBox(t)
+        g.setFont(self._font_base)
+        g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
+        g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        return g
+
+    def _b(self, t, i, dc=False):
+        """创建带图标的按钮。"""
+        b = DoubleClickButton(t) if dc else QPushButton(t)
+        b.setFont(self._font_sm)
+        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setMinimumHeight(28)
+        b.setIcon(QIcon(resource_path(f"resources/icons/{i}")))
+        b.setIconSize(QSize(14, 14))
+        return b
+
+    def _qb(self, t):
+        """创建纯文本按钮（无图标）。"""
+        b = QPushButton(t)
+        b.setFont(self._font_sm)
+        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setMinimumHeight(28)
+        return b
+
+    def _in(self, p, w=0):
+        """创建统一样式的输入框。"""
+        i = QLineEdit()
+        i.setFont(self._font_sm)
+        i.setPlaceholderText(p)
+        i.setMaximumHeight(28)
+        i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        if w:
+            i.setMaximumWidth(w)
+        return i
+
+    def _combo(self, items=None, font=None):
+        """创建统一样式的下拉框。"""
+        c = QComboBox()
+        c.setFont(font or self._font_sm)
+        if items:
+            c.addItems(items)
+        return c

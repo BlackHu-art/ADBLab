@@ -4,13 +4,15 @@
 ThemeSignal 的运行时主题切换机制。
 """
 
-from PySide6.QtGui import QFont, QColor
-from PySide6.QtCore import Signal, QObject
 from typing import Final
+
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QColor, QFont
 
 
 class ThemeSignal(QObject):
     """主题变更信号发射器。"""
+
     changed = Signal(str)
 
 
@@ -155,6 +157,7 @@ class BaseStyles:
         """从 AppSettings 重新加载字体大小并发射变更信号。"""
         global DEFAULT_FONT_SIZE, SMALL_FONT_SIZE, TAB_FONT_SIZE, MONO_FONT_SIZE
         from core.settings_manager import AppSettings
+
         s = AppSettings.instance()
         DEFAULT_FONT_SIZE = cls.DEFAULT_FONT_SIZE = s.get("font_base_size", 12)
         SMALL_FONT_SIZE = cls.SMALL_FONT_SIZE = s.get("font_small_size", 12)
@@ -194,8 +197,8 @@ class BaseStyles:
 
     @classmethod
     def SCROLLBAR_STYLE(cls) -> str:
-        h = _tc('SCROLLBAR_HANDLE')
-        hh = _tc('SCROLLBAR_HANDLE_HOVER')
+        h = _tc("SCROLLBAR_HANDLE")
+        hh = _tc("SCROLLBAR_HANDLE_HOVER")
         return f"""
         QScrollBar {{
             background: transparent; border: none;
@@ -459,8 +462,11 @@ class BaseStyles:
     @classmethod
     def PANEL_BASE_STYLE(cls) -> str:
         return (
-            cls.BUTTON_STYLE() + cls.INPUT_STYLE() + cls.LIST_WIDGET_STYLE()
+            cls.BUTTON_STYLE()
+            + cls.INPUT_STYLE()
+            + cls.LIST_WIDGET_STYLE()
             + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }} "
+            + f"QWidget#deviceManager {{ background-color: {_tc('WINDOW_BG')}; }} "
             + f"QFrame {{ background-color: transparent; border: none; color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
             + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"

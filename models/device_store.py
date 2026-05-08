@@ -1,7 +1,7 @@
 import os
-from typing import List
-import yaml
 from threading import Lock
+
+import yaml
 
 
 class DeviceStore:
@@ -14,7 +14,7 @@ class DeviceStore:
         cls._devices.clear()
         if os.path.exists(cls._file_path):
             try:
-                with open(cls._file_path, "r", encoding="utf-8") as f:
+                with open(cls._file_path, encoding="utf-8") as f:
                     content = yaml.safe_load(f) or {}
                     for device_id, info in content.items():
                         if isinstance(info, dict):
@@ -29,13 +29,10 @@ class DeviceStore:
             yaml.safe_dump(cls._devices, f)
 
     @classmethod
-    def add_device(cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: str = ""):
-        cls._devices[alias] = {
-            "ip": ip,
-            "Brand": brand,
-            "Model": model,
-            "Aversion": str(aversion)
-        }
+    def add_device(
+        cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: str = ""
+    ):
+        cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(aversion)}
         cls.save()
 
     @classmethod
@@ -47,12 +44,14 @@ class DeviceStore:
     def get_basic_devices_info(cls):
         return [
             (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
-            for data in cls._devices.values() if isinstance(data, dict)
+            for data in cls._devices.values()
+            if isinstance(data, dict)
         ]
 
     @classmethod
-    def get_full_devices_info(cls, ip_list: List[str]) -> List[dict]:
+    def get_full_devices_info(cls, ip_list: list[str]) -> list[dict]:
         return [
-            device for device in cls._devices.values()
+            device
+            for device in cls._devices.values()
             if isinstance(device, dict) and device.get("ip") in ip_list
         ]
