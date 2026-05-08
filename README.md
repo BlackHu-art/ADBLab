@@ -3,7 +3,8 @@
 ## 概述
 
 **ADBLab** 是一个基于 PySide6 的桌面 GUI 工具，用于 Android 设备的批量管理与自动化测试。通过图形界面封装 ADB 命令，支持设备连接、应用管理、文件浏览、实时日志、Monkey 压力测试、Bugreport 抓取与解析等功能。
-![ADBLab 界面预览](mge.png)
+
+![ADBLab 界面预览](./mge.png)
 
 - **语言**: Python 3
 - **GUI 框架**: PySide6 (Qt 6)
