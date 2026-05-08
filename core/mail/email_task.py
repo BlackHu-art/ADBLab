@@ -1,9 +1,9 @@
 # email_task.py
-from PySide6.QtCore import QObject, Signal, QRunnable
 import time
 from datetime import datetime
 
 import requests
+from PySide6.QtCore import QObject, QRunnable, Signal
 
 from core.mail.email_service import EmailService
 
@@ -48,7 +48,7 @@ class GetRandomEmailTask(QRunnable):
             self.log("INFO", "🔍 Checking inbox (max 10 attempts)...")
             for attempt in range(1, 11):
                 self.log("DEBUG", f"Attempt #{attempt}: Requesting email list")
-                
+
                 email_list_data = email_service.get_email_list()
                 if not email_list_data:
                     self.log("WARNING", f"⚠️ Attempt {attempt}: Email list request failed")
@@ -62,11 +62,10 @@ class GetRandomEmailTask(QRunnable):
                         email_service.emailId = rows[0].get("id")
                         self.log("SUCCESS", f"📨 Target email found (ID: {email_service.emailId})")
                         break
-                
+
                 # Progress tracking
                 remaining = 10 - attempt
-                self.log("INFO", 
-                    f"⏳ Waiting for email... (Remaining attempts: {remaining})")
+                self.log("INFO", f"⏳ Waiting for email... (Remaining attempts: {remaining})")
                 for i in range(10, 0, -1):
                     time.sleep(1)
                     if i % 5 == 0:  # Update countdown every 5 seconds
@@ -79,10 +78,12 @@ class GetRandomEmailTask(QRunnable):
             # 3. Verification code extraction
             self.log("INFO", "🔢 Extracting verification code...")
             verification_code = email_service.get_email_detail()
-            
+
             if verification_code:
-                self.log("SUCCESS", 
-                    f"✅ Verification code retrieved\n{'═'*30}\n║ Code: {verification_code:^24} ║\n{'═'*30}")
+                self.log(
+                    "SUCCESS",
+                    f"✅ Verification code retrieved\n{'═'*30}\n║ Code: {verification_code:^24} ║\n{'═'*30}",
+                )
                 self.signals.vercode_updated.emit(verification_code)
             else:
                 self.log("ERROR", "❌ Failed to extract verification code")

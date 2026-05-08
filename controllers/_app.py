@@ -1,0 +1,806 @@
+from __future__ import annotations
+
+import os
+import re
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
+
+from PySide6.QtWidgets import QFileDialog
+
+from controllers._base import _ADBControllerBase
+from core.log_service import LogLevel, LogService
+from gui.panels.adb_control_signals import ADBControllerSignals
+from models.adb_advanced import ADBAdvanced
+from models.adb_app import ADBApp
+from models.adb_testing import ADBTesting
+from utils.batch_tracker import BatchOperationTracker
+
+
+class ADBAppMixin(_ADBControllerBase):
+    """App management: install, uninstall, permissions, testing, broadcast, activity, emulation, IME."""
+
+    # ── Provided by _ADBControllerBase ──
+    app_model: ADBApp
+    testing_model: ADBTesting
+    advanced_model: ADBAdvanced
+    signals: ADBControllerSignals
+    log_service: LogService
+    executor: ThreadPoolExecutor
+    _batch_trackers: dict
+    _pending_operations: dict
+
+    _handlers = {
+        "get_current_package": "_process_get_package_result",
+        "install_apk": "_process_install_apk_result",
+        "uninstall_app": "_process_uninstall_apk_result",
+        "clear_app_data": "_process_clear_app_data_result",
+        "restart_app": "_process_restart_app_result",
+        "get_current_activity": "_process_get_current_activity_result",
+        "parse_apk_info": "_process_parse_apk_info_result",
+        "list_installed_packages": "_process_list_installed_packages_result",
+        "run_monkey_test": "_process_run_monkey_test_result",
+        "kill_monkey": "_process_kill_monkey_result",
+        "capture_bugreport": "_process_capture_bugreport_result",
+        "pull_anr_files": "_process_pull_anr_result",
+        "retrieve_device_logs": "_process_retrieve_logs_result",
+        "cleanup_device_logs": "_process_cleanup_logs_result",
+        "grant_permission": "_process_grant_permission_result",
+        "revoke_permission": "_process_revoke_permission_result",
+        "disable_package": "_process_disable_package_result",
+        "enable_package": "_process_enable_package_result",
+        "force_stop": "_process_force_stop_result",
+        "send_broadcast": "_process_send_broadcast_result",
+        "start_activity": "_process_start_activity_result",
+        "open_deep_link": "_process_open_deep_link_result",
+        "ime_list": "_process_ime_list_result",
+        "ime_set": "_process_ime_set_result",
+        "emu_sms_send": "_process_emu_sms_send_result",
+        "emu_call": "_process_emu_call_result",
+        "emu_geo_fix": "_process_emu_geo_fix_result",
+    }
+
+    # ── 获取包 / 安装 / 卸载 ──
+
+    def get_current_package(self, devices: list):
+        if not devices:
+            self._emit_operation("get_package", False, "⚠️ No devices selected")
+            return
+        for device_ip in devices:
+            self.executor.submit(self._get_single_device_package, device_ip)
+
+    def _get_single_device_package(self, device_ip: str):
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("get_package", device_ip)
+        self.app_model.get_current_package_async(device_ip)
+
+    def _process_get_package_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        if result.get("success"):
+            package_name = result["package_name"]
+            self._emit_operation(
+                "get_package", True, f"Current package on {device_ip}: {package_name}"
+            )
+            self.signals.current_package_received.emit(device_ip, package_name)
+        else:
+            error = result.get("error", "Unknown error")
+            self._emit_operation(
+                "get_package", False, f"Failed to get package on {device_ip}: {error}"
+            )
+
+    def install_apk(self, devices: list):
+        if not devices:
+            self._emit_operation("install", False, "⚠️ No devices selected")
+            return
+        apk_path, _ = QFileDialog.getOpenFileName(
+            None, "Select APK File", "", "APK Files (*.apk);;All Files (*)"
+        )
+        if not apk_path:
+            self._emit_operation("install", False, "APK selection canceled")
+            return
+        apk_name = os.path.basename(apk_path)
+        self._batch_trackers["install"] = BatchOperationTracker(
+            len(devices), "Install App", self._emit_operation
+        )
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self._install_single_device, idx, device_ip, apk_path, apk_name)
+
+    def batch_install_apk(self, devices: list):
+        if not devices:
+            self._emit_operation("batch_install", False, "⚠️ No devices selected")
+            return
+        apk_paths, _ = QFileDialog.getOpenFileNames(
+            None, "Select APK files to install", "", "APK Files (*.apk);;All Files (*)"
+        )
+        if not apk_paths:
+            self._emit_operation("batch_install", False, "APK selection canceled")
+            return
+        total_tasks = len(devices) * len(apk_paths)
+        self._batch_trackers["batch_install"] = BatchOperationTracker(
+            total_tasks, "Batch Install", self._emit_operation
+        )
+        for apk_path in apk_paths:
+            apk_name = os.path.basename(apk_path)
+            for idx, device_ip in enumerate(devices, 1):
+                self.executor.submit(
+                    self._install_single_device, idx, device_ip, apk_path, apk_name
+                )
+        self._emit_operation(
+            "batch_install",
+            True,
+            f"Queued {len(apk_paths)} APKs → {len(devices)} devices ({total_tasks} tasks)",
+        )
+
+    def _install_single_device(self, idx: int, device_ip: str, apk_path: str, apk_name: str):
+        tracker = self._batch_trackers.get("install")
+        total = tracker.total if tracker else "?"
+        self._emit_operation(
+            "install", True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ..."
+        )
+        self.app_model.install_apk_async(device_ip, apk_path, apk_name, idx)
+
+    def _process_install_apk_result(self, result: dict):
+        apk_name = result.get("apk_name")
+        device_ip = result.get("device_ip")
+        result.get("index", 1)
+        success = result.get("success")
+        tracker = self._batch_trackers.get("install")
+        progress = tracker.record(success) if tracker else ""
+        if success:
+            self._emit_operation(
+                "install", True, f"✅ install success {progress} {apk_name} on {device_ip}"
+            )
+        else:
+            self._emit_operation(
+                "install",
+                False,
+                f"❌ install failed {progress} {apk_name} on {device_ip}\n"
+                f"Error: {result.get('error', 'Unknown error')}",
+            )
+
+    def uninstall_apk(self, devices: list, package_name: str):
+        if not devices:
+            self._emit_operation("uninstall", False, "⚠️ No devices selected")
+            return
+        if not package_name:
+            self._emit_operation("uninstall", False, "⚠️ No package name provided")
+            return
+        self._batch_trackers["uninstall"] = BatchOperationTracker(
+            len(devices), "Uninstall App", self._emit_operation
+        )
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self._execute_uninstall_task, idx, device_ip, package_name)
+
+    def _execute_uninstall_task(self, idx: int, device_ip: str, package_name: str):
+        tracker = self._batch_trackers.get("uninstall")
+        total = tracker.total if tracker else "?"
+        self._emit_operation(
+            "uninstall", True, f"Start uninstall ({idx}/{total}) {package_name} on {device_ip} ..."
+        )
+        self.app_model.uninstall_app_async(device_ip, package_name, idx)
+
+    def _process_uninstall_apk_result(self, result: dict):
+        result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
+        success = result.get("success")
+        tracker = self._batch_trackers.get("uninstall")
+        progress = tracker.record(success) if tracker else ""
+        if success:
+            self._emit_operation(
+                "uninstall", True, f"✅ uninstall success {progress} {pkg} on {ip}"
+            )
+        else:
+            self._emit_operation(
+                "uninstall", False, f"❌ uninstall failed {progress} {pkg} on {ip}"
+            )
+
+    def clear_app_data(self, devices: list, package_name: str):
+        if not devices:
+            self._emit_operation("clear_data", False, "⚠️ No devices selected")
+            return
+        if not package_name:
+            self._emit_operation("clear_data", False, "⚠️ No package name provided")
+            return
+        self._batch_trackers["clear_data"] = BatchOperationTracker(
+            len(devices), "Clear App Data", self._emit_operation
+        )
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.app_model.clear_app_data_async, device_ip, package_name, idx)
+
+    def _process_clear_app_data_result(self, result: dict):
+        result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
+        success = result.get("success")
+        tracker = self._batch_trackers.get("clear_data")
+        progress = tracker.record(success) if tracker else ""
+        if success:
+            self._emit_operation(
+                "clear_data", True, f"✅ clear data success {progress} {pkg} on {ip}"
+            )
+        else:
+            self._emit_operation(
+                "clear_data", False, f"❌ clear data failed {progress} {pkg} on {ip}"
+            )
+
+    def restart_app(self, devices: list, package_name: str):
+        if not devices:
+            self._emit_operation("restart_app", False, "⚠️ No devices selected")
+            return
+        if not package_name:
+            self._emit_operation("restart_app", False, "⚠️ No package name provided")
+            return
+        self._batch_trackers["restart_app"] = BatchOperationTracker(
+            len(devices), "Restart App", self._emit_operation
+        )
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.app_model.restart_app_async, device_ip, package_name, idx)
+
+    def _process_restart_app_result(self, result: dict):
+        result.get("index", 1)
+        ip = result.get("device_ip", "unknown")
+        pkg = result.get("package_name", "unknown")
+        output = result.get("output", "").strip()
+        success = result.get("success")
+        tracker = self._batch_trackers.get("restart_app")
+        progress = tracker.record(success) if tracker else ""
+        if success:
+            msg = (
+                f"✅ Restart Success {progress}\n"
+                f"   📦 Package : {pkg}\n   🌐 Device  : {ip}\n"
+                f"   📤 Output  :\n{self._indent_output(output)}"
+            )
+            self._emit_operation("restart_app", True, msg)
+        else:
+            msg = (
+                f"❌ Restart Failed {progress}\n"
+                f"   📦 Package : {pkg}\n   🌐 Device  : {ip}\n"
+                f"   ⚠️ Error   :\n{self._indent_output(output)}"
+            )
+            self._emit_operation("restart_app", False, msg)
+
+    def get_current_activity(self, devices: list[str]):
+        if not devices:
+            self._emit_operation("current_activity", False, "⚠️ No device selected")
+            return
+        self._batch_trackers["current_activity"] = BatchOperationTracker(
+            len(devices), "Activity Info", self._emit_operation
+        )
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.app_model.get_current_activity_async, device_ip, idx)
+
+    def _process_get_current_activity_result(self, result: dict):
+        device = result.get("device_ip", "unknown")
+        idx = result.get("index", 0)
+        success = result.get("success", False)
+        focus = result.get("current_focus", "").strip()
+        resumed = result.get("resumed_activity", "").strip()
+        error = result.get("error", "").strip()
+        tracker = self._batch_trackers.get("current_activity")
+        progress = tracker.record(success) if tracker else ""
+        if success:
+            msg_lines = [f"📱 ({idx}) {device} {progress} - Activity Info"]
+            if focus:
+                msg_lines.append(f"   🔍 Current Focus   :\n{self._indent_output(focus)}")
+            else:
+                msg_lines.append("   ⚠️  No mCurrentFocus found")
+            if resumed:
+                msg_lines.append(f"   🎯 Resumed Activity:\n{self._indent_output(resumed)}")
+            else:
+                msg_lines.append("   ⚠️  No mResumedActivity found")
+            self._emit_operation("current_activity", True, "\n".join(msg_lines))
+        else:
+            msg = f"❌ Failed to get activity on ({idx}) {device} {progress}\n{self._indent_output(error)}"
+            self._emit_operation("current_activity", False, msg)
+
+    def parse_apk_info(self):
+        apk_path, _ = QFileDialog.getOpenFileName(
+            None, "Select APK File", "", "APK Files (*.apk);;All Files (*)"
+        )
+        if not apk_path:
+            self._emit_operation("apk_info", False, "⚠️ APK file selection cancelled")
+            return
+        if not apk_path.endswith(".apk"):
+            self._emit_operation("apk_info", False, f"❌ Invalid APK file selected: {apk_path}")
+            return
+        self._emit_operation("apk_info", True, f"📦 Selected APK: {apk_path}")
+        self.executor.submit(self.app_model.parse_apk_info_async, apk_path)
+
+    def _process_parse_apk_info_result(self, result: dict):
+        apk_path = result.get("apk_path", "unknown")
+        if result.get("success"):
+            raw_output = result.get("output", "")
+            try:
+                package_name = re.search(r"package: name='(.*?)'", raw_output)
+                version_code = re.search(r"versionCode='(.*?)'", raw_output)
+                version_name = re.search(r"versionName='(.*?)'", raw_output)
+                min_sdk = re.search(r"sdkVersion:'(.*?)'", raw_output)
+                target_sdk = re.search(r"targetSdkVersion:'(.*?)'", raw_output)
+                compile_sdk = re.search(r"compileSdkVersion='(.*?)'", raw_output)
+                build_version = re.search(r"platformBuildVersionName='(.*?)'", raw_output)
+                label_match = re.search(r"application-label(?:-[\w\-]+)?:'(.*?)'", raw_output)
+                app_label = label_match.group(1) if label_match else "N/A"
+                icon_match = re.search(r"application: label='.*?' icon='(.*?)'", raw_output)
+                icon_path = icon_match.group(1) if icon_match else "N/A"
+                permissions = re.findall(r"uses-permission: name='(.*?)'", raw_output)
+                features = re.findall(r"uses-feature(?:-not-required)?: name='(.*?)'", raw_output)
+                native_code = re.findall(r"native-code: '(.*?)'", raw_output)
+                formatted = f"""
+    🔹 App: {app_label}
+    📦 Package: {package_name.group(1) if package_name else 'N/A'}
+    🔢 Version: {version_name.group(1) if version_name else 'N/A'} (Code: {version_code.group(1) if version_code else 'N/A'})
+    🎯 SDK: min={min_sdk.group(1) if min_sdk else 'N/A'}, target={target_sdk.group(1) if target_sdk else 'N/A'}, compile={compile_sdk.group(1) if compile_sdk else 'N/A'}
+    🛠️ Build: {build_version.group(1) if build_version else 'N/A'}
+    🖼️ Icon: {icon_path}
+    🔐 Permissions: {len(permissions)} items
+    ⚙️ Features: {", ".join(features) if features else "None"}
+    🧬 Architectures: {", ".join(native_code) if native_code else "None"}
+    """
+                self._emit_operation("apk_info", True, formatted)
+            except Exception as e:
+                self._emit_operation(
+                    "apk_info",
+                    False,
+                    f"⚠️ APK Field parsing exception: {apk_path}\nError: {str(e)}",
+                )
+        else:
+            error = result.get("error", "Unknown error")
+            self._emit_operation(
+                "apk_info", False, f"❌ APK Analysis failed: {apk_path}\nError: {error}"
+            )
+
+    def kill_monkey(self, devices: list):
+        if not devices:
+            self._emit_operation("kill_monkey", False, "⚠️ No devices selected")
+            return
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.testing_model.kill_monkey_async, device_ip, idx)
+
+    def _process_kill_monkey_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+        if result.get("success"):
+            self._emit_operation(
+                "kill_monkey", True, f"✅ {idx}. Monkey process killed on {device_ip}"
+            )
+        else:
+            self._emit_operation(
+                "kill_monkey",
+                False,
+                f"❌ {idx}. Failed to kill monkey on {device_ip}:\nError: {result['message']}",
+            )
+
+    def list_installed_packages(self, devices: list[str]):
+        if not devices:
+            self._emit_operation("installed_packages", False, "⚠️ No devices selected")
+            return
+        for idx, device_ip in enumerate(devices, 1):
+            self.executor.submit(self.app_model.list_installed_packages_async, device_ip, idx)
+
+    def _process_list_installed_packages_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+        if result.get("success"):
+            packages = result.get("packages", [])
+            formatted = "\n".join(f"{i+1}. {pkg}" for i, pkg in enumerate(packages))
+            msg = f"📦 {idx}. Installed packages on {device_ip}:\n{formatted or '(None found)'}"
+            self._emit_operation("installed_packages", True, msg)
+        else:
+            msg = result.get("message", "Unknown error")
+            self._emit_operation(
+                "installed_packages",
+                False,
+                f"❌ {idx}. Failed to get packages from {device_ip}:\n{msg}",
+            )
+
+    def capture_bugreport(self, devices: list):
+        if not devices:
+            self._emit_operation("bugreport", False, "⚠️ No devices selected.")
+            return
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
+        log = self.log_service.log
+        for idx, device in enumerate(devices, 1):
+            self.executor.submit(
+                self.testing_model.capture_bugreport_async,
+                device,
+                save_dir,
+                idx,
+                callback=lambda msg: log(LogLevel.INFO, msg),
+            )
+
+    def _process_capture_bugreport_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        idx = result.get("index")
+        success = result.get("success", False)
+        message = result.get("message", "")
+        if success:
+            bug_path = result.get("bugreport_path")
+            self._emit_operation(
+                "bugreport", True, f"✅ {idx}. Bugreport saved from {device_ip}:\n{bug_path}"
+            )
+        else:
+            self._emit_operation("bugreport", False, f"❌ {idx}. Failed on {device_ip}:\n{message}")
+
+    def pull_anr_files(self, devices: list[str]):
+        if not devices:
+            self._emit_operation("pull_anr", False, "⚠️ No devices selected")
+            return
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
+        if not save_dir:
+            self._emit_operation("pull_anr", False, "⚠️ No target directory selected")
+            return
+        timestamp = datetime.now().strftime("%H%M%S")
+        for idx, device_ip in enumerate(devices, 1):
+            sanitized_name = re.sub(r"\W+", "_", device_ip)
+            self.executor.submit(
+                self.testing_model.pull_anr_files_async,
+                device_ip,
+                f"{sanitized_name}_anr_{timestamp}",
+                save_dir,
+                idx,
+            )
+
+    def _process_pull_anr_result(self, result: dict):
+        device_ip = result.get("device_ip", "unknown")
+        idx = result.get("index", "?")
+        if result.get("success"):
+            self._emit_operation(
+                "pull_anr",
+                True,
+                f"✅ {idx}. Pulled ANR files from {device_ip}:\n{result['message']}",
+            )
+        else:
+            self._emit_operation(
+                "pull_anr",
+                False,
+                f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{result['message']}",
+            )
+
+    def run_monkey_test(self, devices: list, device_type: str, package_name: str, count: str):
+        if not devices:
+            return self._emit_operation("monkey", False, "⚠️ No devices selected")
+        if not device_type:
+            return self._emit_operation("monkey", False, "⚠️ No device type selected")
+        if not package_name:
+            return self._emit_operation("monkey", False, "⚠️ No package name provided")
+        if not count:
+            return self._emit_operation("monkey", False, "⚠️ No monkey count provided")
+        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save Monkey logs")
+        if not save_dir:
+            return self._emit_operation("monkey", False, "⚠️ No target directory selected")
+        log = self.log_service.log
+        log(LogLevel.INFO, f"📦 Starting Monkey tests on {len(devices)} devices...")
+        log(LogLevel.INFO, f"📁 Log save directory: {save_dir}")
+        for idx, device_ip in enumerate(devices, 1):
+            sanitized_name = re.sub(r"\W+", "_", device_ip)
+            self.executor.submit(
+                self.testing_model.run_monkey_test_async,
+                device_ip,
+                package_name,
+                count,
+                device_type,
+                sanitized_name,
+                save_dir,
+                idx,
+                callback=lambda msg: self.log_service.log(LogLevel.INFO, msg),
+            )
+
+    def _process_run_monkey_test_result(self, result: dict):
+        device_ip = result.get("device_ip", "unknown")
+        duration = result.get("duration", "N/A")
+        monkey_log = result.get("monkey_log", "")
+        logcat_log = result.get("logcat_log", "")
+        error = result.get("error", "None")
+        if result.get("success"):
+            message = (
+                "\n╔════════════════════════════════════════════════════════════════╗\n"
+                f"║ ✅ Monkey Test Report - Device: {device_ip}\n"
+                "╠════════════════════════════════════════════════════════════════╣\n"
+                f"║ ⏱️ Duration: {duration}\n"
+                f"║ 📄 Monkey Log: {monkey_log}\n"
+                f"║ 📄 Logcat Log: {logcat_log}\n"
+                "╚════════════════════════════════════════════════════════════════╝"
+            )
+        else:
+            message = (
+                "\n╔════════════════════════════════════════════════════════════════╗\n"
+                f"║ ❌ Monkey Test Failed - Device: {device_ip}\n"
+                "╠════════════════════════════════════════════════════════════════╣\n"
+                f"║ ⏱️ Duration: {duration}\n"
+                f"║ 💥 Error: {error[:200]}{'...' if len(error)>200 else ''}\n"
+                f"║ 🔍 Detailed Log: {monkey_log}\n"
+                "╚════════════════════════════════════════════════════════════════╝"
+            )
+        return self._emit_operation("monkey", result.get("success"), message)
+
+    # ── 日志检索 ──
+
+    def retrieve_device_logs(self, devices: list):
+        if not devices:
+            self._emit_operation("retrieve_device_logs", False, "⚠️ No devices selected")
+            return
+        save_dir = self._get_screenshot_dir()
+        if not save_dir:
+            self._emit_operation("retrieve_device_logs", False, "No directory selected")
+            return
+        for device_ip in devices:
+            self._save_single_device_log(device_ip, save_dir)
+
+    def _save_single_device_log(self, device_ip: str, save_dir: str):
+        timestamp = datetime.now().strftime("%H%M%S")
+        sanitized_ip = re.sub(r"\W+", "_", device_ip)
+        log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
+        operation_id = self._generate_operation_id()
+        self._pending_operations[operation_id] = ("retrieve_device_logs", device_ip)
+        self.testing_model.retrieve_device_logs_async(device_ip, log_path)
+
+    def _process_retrieve_logs_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        log_path = result.get("log_path")
+        if result.get("success"):
+            self._emit_operation(
+                "retrieve_device_logs", True, f"✅ Log saved for {device_ip} at {log_path}"
+            )
+            self.signals.logs_retrieved.emit(device_ip, log_path)
+        else:
+            error = result.get("error", "Unknown error")
+            error_msg = error.split(":")[-1].strip() if ":" in error else error
+            self._emit_operation(
+                "retrieve_device_logs", False, f"Failed to save log for {device_ip}: {error_msg}"
+            )
+
+    def cleanup_device_logs(self, devices: list):
+        if not devices:
+            self._emit_operation("cleanup_device_logs", False, "⚠️ No devices selected")
+            return
+        for device_ip in devices:
+            operation_id = self._generate_operation_id()
+            self._pending_operations[operation_id] = ("cleanup_device_logs", device_ip)
+            self.testing_model.cleanup_device_logs_async(device_ip)
+
+    def _process_cleanup_logs_result(self, result: dict):
+        device_ip = result.get("device_ip")
+        if result.get("success"):
+            self._emit_operation("cleanup_device_logs", True, f"✅ Log cleared for {device_ip}")
+        else:
+            error = result.get("error", "Unknown error")
+            error_msg = error.split(":")[-1].strip() if ":" in error else error
+            self._emit_operation(
+                "cleanup_device_logs", False, f"Failed to clear log for {device_ip}: {error_msg}"
+            )
+
+    # ── 权限 ──
+
+    def grant_permission(self, devices: list, package: str, permission: str):
+        if not devices:
+            self._emit_operation("grant_permission", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.grant_permission_async(ip, package, permission)
+
+    def _process_grant_permission_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "grant_permission",
+                True,
+                f"Granted {result.get('permission')} to {result.get('package')} on {ip}",
+            )
+        else:
+            self._emit_operation(
+                "grant_permission", False, f"Grant failed on {ip}: {result.get('error')}"
+            )
+
+    def revoke_permission(self, devices: list, package: str, permission: str):
+        if not devices:
+            self._emit_operation("revoke_permission", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.revoke_permission_async(ip, package, permission)
+
+    def _process_revoke_permission_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "revoke_permission",
+                True,
+                f"Revoked {result.get('permission')} from {result.get('package')} on {ip}",
+            )
+        else:
+            self._emit_operation(
+                "revoke_permission", False, f"Revoke failed on {ip}: {result.get('error')}"
+            )
+
+    # ── 禁用/启用/强停 ──
+
+    def disable_app(self, devices: list, package: str):
+        if not devices:
+            self._emit_operation("disable_app", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.disable_package_async(ip, package)
+
+    def _process_disable_package_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("disable_app", True, f"Disabled {result.get('package')} on {ip}")
+        else:
+            self._emit_operation(
+                "disable_app", False, f"Disable failed on {ip}: {result.get('error')}"
+            )
+
+    def enable_app(self, devices: list, package: str):
+        if not devices:
+            self._emit_operation("enable_app", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.enable_package_async(ip, package)
+
+    def _process_enable_package_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("enable_app", True, f"Enabled {result.get('package')} on {ip}")
+        else:
+            self._emit_operation(
+                "enable_app", False, f"Enable failed on {ip}: {result.get('error')}"
+            )
+
+    def force_stop(self, devices: list, package: str):
+        if not devices:
+            self._emit_operation("force_stop", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.force_stop_async(ip, package)
+
+    def _process_force_stop_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("force_stop", True, f"Force stopped app on {ip}")
+        else:
+            self._emit_operation(
+                "force_stop", False, f"Force stop failed on {ip}: {result.get('error')}"
+            )
+
+    # ── 广播 / Activity / DeepLink ──
+
+    def send_broadcast(self, devices: list, action: str):
+        if not devices:
+            self._emit_operation("send_broadcast", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.send_broadcast_async(ip, action)
+
+    def _process_send_broadcast_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "send_broadcast", True, f"Broadcast sent on {ip}:\n{result.get('output', '')}"
+            )
+        else:
+            self._emit_operation(
+                "send_broadcast", False, f"Broadcast failed on {ip}: {result.get('error')}"
+            )
+
+    def start_activity(self, devices: list, component_or_action: str):
+        if not devices:
+            self._emit_operation("start_activity", False, "⚠️ No devices selected")
+            return
+        spec = component_or_action.strip()
+        for ip in devices:
+            if "/" in spec:
+                self.advanced_model.start_activity_async(ip, component=spec)
+            elif spec.startswith("http"):
+                self.advanced_model.open_deep_link_async(ip, spec)
+            else:
+                self.advanced_model.start_activity_async(ip, action=spec)
+
+    def _process_start_activity_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "start_activity", True, f"Activity started on {ip}:\n{result.get('output', '')}"
+            )
+        else:
+            self._emit_operation(
+                "start_activity", False, f"Start activity failed on {ip}: {result.get('error')}"
+            )
+
+    def open_deep_link(self, devices: list, uri: str):
+        if not devices:
+            self._emit_operation("deep_link", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.open_deep_link_async(ip, uri)
+
+    def _process_open_deep_link_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "deep_link", True, f"Deep link opened on {ip}: {result.get('uri')}"
+            )
+        else:
+            self._emit_operation(
+                "deep_link", False, f"Deep link failed on {ip}: {result.get('error')}"
+            )
+
+    # ── IME ──
+
+    def ime_list(self, devices: list):
+        if not devices:
+            self._emit_operation("ime_list", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.ime_list_async(ip)
+
+    def _process_ime_list_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("ime_list", True, f"IME list ({ip}):\n{result.get('output', '')}")
+        else:
+            self._emit_operation(
+                "ime_list", False, f"IME list failed on {ip}: {result.get('error')}"
+            )
+
+    def ime_set(self, devices: list, ime_id: str):
+        if not devices:
+            self._emit_operation("ime_set", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.ime_set_async(ip, ime_id)
+
+    def _process_ime_set_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("ime_set", True, f"IME set on {ip}")
+        else:
+            self._emit_operation("ime_set", False, f"IME set failed on {ip}: {result.get('error')}")
+
+    # ── 模拟器 ──
+
+    def emu_sms(self, devices: list, sender: str, text: str):
+        if not devices:
+            self._emit_operation("emu_sms", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.emu_sms_send_async(ip, sender, text)
+
+    def _process_emu_sms_send_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("emu_sms", True, f"SMS from {result.get('sender')} sent to {ip}")
+        else:
+            self._emit_operation("emu_sms", False, f"Emu SMS failed on {ip}: {result.get('error')}")
+
+    def emu_call(self, devices: list, number: str):
+        if not devices:
+            self._emit_operation("emu_call", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.emu_call_async(ip, number)
+
+    def _process_emu_call_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation("emu_call", True, f"Call to {result.get('number')} on {ip}")
+        else:
+            self._emit_operation(
+                "emu_call", False, f"Emu call failed on {ip}: {result.get('error')}"
+            )
+
+    def emu_geo(self, devices: list, longitude: str, latitude: str):
+        if not devices:
+            self._emit_operation("emu_geo", False, "⚠️ No devices selected")
+            return
+        for ip in devices:
+            self.advanced_model.emu_geo_fix_async(ip, longitude, latitude)
+
+    def _process_emu_geo_fix_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "emu_geo",
+                True,
+                f"GPS set on {ip}: {result.get('longitude')},{result.get('latitude')}",
+            )
+        else:
+            self._emit_operation("emu_geo", False, f"Emu geo failed on {ip}: {result.get('error')}")

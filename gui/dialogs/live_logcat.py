@@ -4,27 +4,40 @@ Live Logcat viewer - stream, filter, highlight and export device logs.
 Adapted to use ADBLab's BaseStyles theme system.
 """
 
-import os
 import re
 import subprocess
 import sys
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QSyntaxHighlighter, QFont
+from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QComboBox,
-    QPlainTextEdit, QFileDialog, QMessageBox, QStatusBar, QWidget, QLineEdit,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QStatusBar,
+    QVBoxLayout,
 )
 
-
-THREADTIME_RE = re.compile(
-    r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
+THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
 FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
 
 LEVEL_ORDER = {"V": 0, "D": 1, "I": 2, "W": 3, "E": 4, "F": 5, "S": 6}
-LEVEL_LABELS = {"V": "Verbose+", "D": "Debug+", "I": "Info+",
-                "W": "Warning+", "E": "Error+", "F": "Fatal", "S": "Silent"}
+LEVEL_LABELS = {
+    "V": "Verbose+",
+    "D": "Debug+",
+    "I": "Info+",
+    "W": "Warning+",
+    "E": "Error+",
+    "F": "Fatal",
+    "S": "Silent",
+}
 
 
 class LogcatWorker(QThread):
@@ -42,8 +55,10 @@ class LogcatWorker(QThread):
     def stop(self):
         self._stop = True
         if self._proc and self._proc.poll() is None:
-            try: self._proc.terminate()
-            except Exception: pass
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
 
     def run(self):
         cmd = ["adb", "-s", self.device_ip, "logcat", "-T", "1", "-v", "threadtime"]
@@ -52,8 +67,13 @@ class LogcatWorker(QThread):
         if self.package:
             try:
                 cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                r = subprocess.run(["adb", "-s", self.device_ip, "shell", "pidof", self.package],
-                                   capture_output=True, text=True, creationflags=cf, timeout=5)
+                r = subprocess.run(
+                    ["adb", "-s", self.device_ip, "shell", "pidof", self.package],
+                    capture_output=True,
+                    text=True,
+                    creationflags=cf,
+                    timeout=5,
+                )
                 pid = r.stdout.strip().split()[0] if r.stdout.strip() else ""
                 if pid and pid.isdigit():
                     filter_pid = int(pid)
@@ -67,13 +87,19 @@ class LogcatWorker(QThread):
         self.status_changed.emit("Starting logcat...")
         try:
             self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, creationflags=creationflags)
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=creationflags,
+            )
             self.status_changed.emit("Logcat running")
             while not self._stop:
                 line = self._proc.stdout.readline()
                 if not line:
-                    if self._proc.poll() is not None: break
+                    if self._proc.poll() is not None:
+                        break
                     continue
                 text = line.rstrip("\r\n")
                 if text:
@@ -83,10 +109,15 @@ class LogcatWorker(QThread):
         finally:
             if self._proc:
                 try:
-                    if self._proc.poll() is None: self._proc.terminate(); self._proc.wait(2)
-                except Exception: pass
-                try: self._proc.stdout.close()
-                except Exception: pass
+                    if self._proc.poll() is None:
+                        self._proc.terminate()
+                        self._proc.wait(2)
+                except Exception:
+                    pass
+                try:
+                    self._proc.stdout.close()
+                except Exception:
+                    pass
             self.status_changed.emit("Logcat stopped" if self._stop else "Logcat ended")
             self._proc = None
 
@@ -116,7 +147,7 @@ class LogcatHighlighter(QSyntaxHighlighter):
 class LiveLogcatDialog(QDialog):
     MAX_BUFFER = 8000
 
-    def __init__(self, parent, device_ip: str):
+    def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
         self.device_ip = device_ip
         self.worker = None
@@ -126,6 +157,7 @@ class LiveLogcatDialog(QDialog):
         self.setMinimumSize(980, 620)
         self.resize(1000, 650)
         self.setModal(False)
+        self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
 
@@ -135,7 +167,8 @@ class LiveLogcatDialog(QDialog):
         layout.setContentsMargins(6, 6, 6, 6)
 
         # Filter bar — single row: Level | Package | Tag
-        f1 = QHBoxLayout(); f1.setSpacing(6)
+        f1 = QHBoxLayout()
+        f1.setSpacing(6)
         f1.addWidget(QLabel("Level:"))
         self.level_combo = QComboBox()
         self.level_combo.addItem("All", None)
@@ -145,7 +178,8 @@ class LiveLogcatDialog(QDialog):
         self.level_combo.setFixedWidth(120)
         f1.addWidget(self.level_combo)
         f1.addWidget(QLabel("Package:"))
-        self.pkg_input = QLineEdit(); self.pkg_input.setPlaceholderText("com.example.app")
+        self.pkg_input = QLineEdit()
+        self.pkg_input.setPlaceholderText("com.example.app")
         self.pkg_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.pkg_input, 1)
         self.btn_get_pkg = QPushButton("Get Pkg")
@@ -154,7 +188,8 @@ class LiveLogcatDialog(QDialog):
         self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
         f1.addWidget(self.btn_get_pkg)
         f1.addWidget(QLabel("Tag:"))
-        self.tag_input = QLineEdit(); self.tag_input.setPlaceholderText("ActivityManager")
+        self.tag_input = QLineEdit()
+        self.tag_input.setPlaceholderText("ActivityManager")
         self.tag_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.tag_input, 1)
         layout.addLayout(f1)
@@ -194,22 +229,29 @@ class LiveLogcatDialog(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         from gui.styles.base_styles import BaseStyles as BS
+
         self.setStyleSheet(BS.PANEL_BASE_STYLE())
-        bg = BS.color('INPUT_BG')
-        fg = BS.color('TEXT_PRIMARY')
-        border = BS.color('BORDER_COLOR')
+        fg = BS.color("TEXT_PRIMARY")
+        border = BS.color("BORDER_COLOR")
         self.output.setStyleSheet(
             f"background-color: {BS.color('LOG_BACKGROUND')}; "
             f"color: {BS.color('LOG_TEXT_COLOR')}; "
-            f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;")
+            f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;"
+        )
         self.status_bar.setStyleSheet(
-            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}")
+            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}"
+        )
 
         # Logcat level colors - theme-aware
         hl_colors = {
-            "V": "#8899aa", "D": "#6db3d8", "I": "#6cc76c",
-            "W": "#e0a040", "E": "#e05555", "F": "#ee55aa",
-            "S": BS.color('TEXT_SECONDARY'), "U": fg,
+            "V": "#8899aa",
+            "D": "#6db3d8",
+            "I": "#6cc76c",
+            "W": "#e0a040",
+            "E": "#e05555",
+            "F": "#ee55aa",
+            "S": BS.color("TEXT_SECONDARY"),
+            "U": fg,
         }
         self.highlighter.set_theme(hl_colors)
         BS.theme_changed.connect(self._apply_theme)
@@ -231,7 +273,7 @@ class LiveLogcatDialog(QDialog):
 
     def _rebuild(self):
         self.output.clear()
-        visible = [t for t, l, tg, _ in self.entries if self._passes(l, tg)]
+        visible = [t for t, lv, tg, _ in self.entries if self._passes(lv, tg)]
         if visible:
             self.output.setPlainText("\n".join(visible) + "\n")
 
@@ -239,10 +281,16 @@ class LiveLogcatDialog(QDialog):
 
     def _fetch_current_pkg(self):
         import re
+
         try:
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            r = subprocess.run(["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
-                               capture_output=True, text=True, creationflags=cf, timeout=5)
+            r = subprocess.run(
+                ["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
+                capture_output=True,
+                text=True,
+                creationflags=cf,
+                timeout=5,
+            )
             for line in r.stdout.splitlines():
                 if "mCurrentFocus" in line:
                     m = re.search(r"Window\{.*?\s(\S+?)/", line)
@@ -257,16 +305,20 @@ class LiveLogcatDialog(QDialog):
     def _start(self):
         if self.worker and self.worker.isRunning():
             return
-        self.entries.clear(); self.output.clear()
+        self.entries.clear()
+        self.output.clear()
         pkg = self.pkg_input.text().strip()
         tag = self.tag_input.text().strip()
         self.worker = LogcatWorker(self.device_ip, package=pkg, tag=tag)
         self.worker.line_ready.connect(self._on_line)
         self.worker.status_changed.connect(self._on_status)
-        self.worker.finished.connect(lambda: (
-            self.start_btn.setEnabled(True),
-            self.stop_btn.setEnabled(False),
-            setattr(self, 'worker', None)))
+        self.worker.finished.connect(
+            lambda: (
+                self.start_btn.setEnabled(True),
+                self.stop_btn.setEnabled(False),
+                setattr(self, "worker", None),
+            )
+        )
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.worker.start()
@@ -283,11 +335,12 @@ class LiveLogcatDialog(QDialog):
 
     def _export(self):
         name = f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        fp, _ = QFileDialog.getSaveFileName(self, "Export", name,
-                                            "Text Files (*.txt);;All Files (*)")
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "Export", name, "Text Files (*.txt);;All Files (*)"
+        )
         if fp:
             try:
-                with open(fp, 'w', encoding='utf-8') as f:
+                with open(fp, "w", encoding="utf-8") as f:
                     f.write(self.output.toPlainText())
                 self.status_bar.showMessage(f"Exported to {fp}")
             except OSError as e:
@@ -309,7 +362,7 @@ class LiveLogcatDialog(QDialog):
         tag_part = self._extract_tag(text)
         self.entries.append((text, level, tag_part, pid))
         if len(self.entries) > self.MAX_BUFFER:
-            self.entries = self.entries[-self.MAX_BUFFER:]
+            self.entries = self.entries[-self.MAX_BUFFER :]
         if self._passes(level, tag_part):
             self.output.appendPlainText(text)
             self.output.moveCursor(QTextCursor.MoveOperation.End)

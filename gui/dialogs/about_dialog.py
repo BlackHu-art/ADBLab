@@ -1,9 +1,15 @@
 """About dialog with theme-aware styling and fade animation."""
 
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QFrame,
-                               QPushButton, QGraphicsDropShadowEffect)
-from PySide6.QtCore import Qt, QPropertyAnimation
+from PySide6.QtCore import QPropertyAnimation, Qt
 from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
+    QDialog,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+)
 
 from gui.styles.base_styles import BaseStyles
 
@@ -23,11 +29,11 @@ class AboutDialog(QDialog):
         BaseStyles.theme_changed.connect(self._apply_theme)
 
     def _apply_theme(self, _name: str = ""):
-        bg = BaseStyles.color('PANEL_BG')
-        fg = BaseStyles.color('TEXT_PRIMARY')
-        sec = BaseStyles.color('TEXT_SECONDARY')
-        accent = BaseStyles.color('BUTTON_ACCENT')
-        border = BaseStyles.color('BORDER_COLOR')
+        bg = BaseStyles.color("PANEL_BG")
+        fg = BaseStyles.color("TEXT_PRIMARY")
+        sec = BaseStyles.color("TEXT_SECONDARY")
+        accent = BaseStyles.color("BUTTON_ACCENT")
+        border = BaseStyles.color("BORDER_COLOR")
 
         self.setStyleSheet("")
         self._bg_frame.setStyleSheet(f"""
@@ -164,13 +170,13 @@ class AboutDialog(QDialog):
             event.accept()
 
     def mouseMoveEvent(self, event):
-        if hasattr(self, '_drag_pos') and event.buttons() & Qt.LeftButton:
+        if hasattr(self, "_drag_pos") and event.buttons() & Qt.LeftButton:
             delta = event.globalPosition().toPoint() - self._drag_pos
             self.move(self.pos() + delta)
             self._drag_pos = event.globalPosition().toPoint()
             event.accept()
 
     def mouseReleaseEvent(self, event):
-        if hasattr(self, '_drag_pos'):
+        if hasattr(self, "_drag_pos"):
             del self._drag_pos
         super().mouseReleaseEvent(event)

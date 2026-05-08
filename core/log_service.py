@@ -1,7 +1,11 @@
 import logging
-from typing import Optional, Dict, Callable
-from PySide6.QtCore import QObject, Signal, QTimer, QMutex, QThread
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Optional
+
+from PySide6.QtCore import QMutex, QObject, QThread, QTimer, Signal
+
+from utils.resource_path import resource_path
 
 
 @dataclass(frozen=True)
@@ -16,9 +20,9 @@ class LogLevel:
 
 class LogService(QObject):
     """线程安全的日志服务，支持缓冲写入和多种输出方式"""
-    
+
     log_received = Signal(str, str)  # level, message
-    _instance: Optional['LogService'] = None
+    _instance: Optional["LogService"] = None
     _lock = QMutex()  # 类级别的线程锁
 
     def __new__(cls):
@@ -43,13 +47,13 @@ class LogService(QObject):
     def _setup_logging(self) -> None:
         """配置日志记录器"""
         self._enable_file_log = False
-        self._log_path = "resources/app.log"
+        self._log_path = resource_path("resources/app.log")
         self._flush_interval = 200  # ms
-        
+
         self._timer = QTimer()
         self._timer.setInterval(self._flush_interval)
         self._timer.timeout.connect(self._flush_buffer)
-        
+
         logging.getLogger().handlers.clear()
         logging.getLogger().propagate = False
         self.logger = logging.getLogger("app")
@@ -61,14 +65,9 @@ class LogService(QObject):
 
     def _add_file_handler(self) -> None:
         """添加文件日志处理器"""
-        file_handler = logging.FileHandler(
-            self._log_path, 
-            encoding="utf-8",
-            delay=True
-        )
+        file_handler = logging.FileHandler(self._log_path, encoding="utf-8", delay=True)
         formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
+            "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         )
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
@@ -110,19 +109,19 @@ class LogService(QObject):
         if not self._enable_file_log:
             return
 
-        log_funcs: Dict[str, Callable[[str], None]] = {
+        log_funcs: dict[str, Callable[[str], None]] = {
             LogLevel.DEBUG: self.logger.debug,
             LogLevel.INFO: self.logger.info,
             LogLevel.WARNING: self.logger.warning,
             LogLevel.ERROR: self.logger.error,
             LogLevel.CRITICAL: self.logger.critical,
-            LogLevel.SUCCESS: self.logger.info
+            LogLevel.SUCCESS: self.logger.info,
         }
-        
+
         log_func = log_funcs.get(level, self.logger.info)
         try:
             log_func(message)
-        except (IOError, PermissionError) as e:
+        except (OSError, PermissionError) as e:
             print(f"Failed to write log: {e}")
 
     def enable_file_logging(self, enabled: bool) -> None:
