@@ -22,19 +22,19 @@ def resolve_adb_path() -> str | None:
         return _adb_path
 
     from utils.log_utils import get_logger
-    log = get_logger("adb")
+    # log = get_logger("adb")
 
     bundled = resource_path(os.path.join("scrcpy-win64-v3.3.1", "adb.exe"))
     if os.path.isfile(bundled):
         _adb_path = bundled
-        log.info(f"using bundled ADB: {_adb_path}")
+        # log.info(f"using bundled ADB: {_adb_path}")
     else:
         system_adb = shutil.which("adb")
         if system_adb:
             _adb_path = system_adb
-            log.info(f"using system ADB: {_adb_path}")
+            # log.info(f"using system ADB: {_adb_path}")
         else:
-            log.warning("ADB not found — install Android SDK Platform Tools")
+            # log.warning("ADB not found — install Android SDK Platform Tools")
             _adb_path = None
 
     _resolved = True

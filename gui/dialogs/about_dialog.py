@@ -1,182 +1,152 @@
-"""About dialog with theme-aware styling and fade animation."""
+"""About dialog -- header, QR code, footer."""
 
-from PySide6.QtCore import QPropertyAnimation, Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QGraphicsDropShadowEffect,
     QLabel,
     QPushButton,
     QVBoxLayout,
 )
 
 from gui.styles.base_styles import BaseStyles
+from utils.resource_path import resource_path
+
+VERSION = "2.8.0"
 
 
 class AboutDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
-        self.setFixedSize(480, 350)
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle("About ADBLab")
+        self.setFixedSize(340, 380)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
-        self._setup_ui()
-        self._setup_animations()
-        self._setup_shadow()
+        self._build_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
 
-    def _apply_theme(self, _name: str = ""):
-        bg = BaseStyles.color("PANEL_BG")
-        fg = BaseStyles.color("TEXT_PRIMARY")
-        sec = BaseStyles.color("TEXT_SECONDARY")
-        accent = BaseStyles.color("BUTTON_ACCENT")
-        border = BaseStyles.color("BORDER_COLOR")
+    def _build_ui(self):
+        lo = QVBoxLayout(self)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
 
-        self.setStyleSheet("")
-        self._bg_frame.setStyleSheet(f"""
-            QFrame#aboutBg {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-radius: {BaseStyles.RADIUS_LG}px;
-            }}
-            QLabel#title {{
-                font-size: 20px;
-                font-weight: bold;
-                color: {fg};
-                padding-top: 24px;
-                background: transparent;
-            }}
-            QLabel#version {{
-                font-size: 12px;
-                color: {accent};
-                padding-bottom: 12px;
-                background: transparent;
-            }}
-            QLabel#content {{
-                font-size: 12px;
-                color: {fg};
-                background-color: {BaseStyles.color('INPUT_BG')};
-                border-radius: {BaseStyles.RADIUS_MD}px;
-                padding: 14px 18px;
-                margin: 0 32px;
-            }}
-            QLabel#footer {{
-                font-size: 11px;
-                color: {sec};
-                padding: 14px 0 6px 0;
-                background: transparent;
-            }}
-            QPushButton#close_btn {{
-                background-color: {accent};
-                color: #fff;
-                border: none;
-                border-radius: {BaseStyles.RADIUS_MD}px;
-                padding: 8px 32px;
-                font-size: 13px;
-                font-weight: bold;
-                margin: 10px 0 20px 0;
-            }}
-            QPushButton#close_btn:hover {{
-                background-color: {BaseStyles.color('BUTTON_ACCENT_HOVER')};
-            }}
-        """)
-
-        is_dark = BaseStyles.current_theme() == "Dark"
-        self._shadow.setColor(QColor(0, 0, 0, 200 if is_dark else 100))
-
-    def _setup_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        self._bg_frame = QFrame()
-        self._bg_frame.setObjectName("aboutBg")
-        layout = QVBoxLayout(self._bg_frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        # ── Header ──
+        self._header = QFrame()
+        self._header.setObjectName("aboutHeader")
+        self._header.setFixedHeight(56)
+        hl = QVBoxLayout(self._header)
+        hl.setContentsMargins(0, 8, 0, 0)
+        hl.setSpacing(0)
 
         title = QLabel("ADBLab")
-        title.setObjectName("title")
+        title.setObjectName("aboutTitle")
         title.setAlignment(Qt.AlignCenter)
-        title.setFont(QFont(BaseStyles.DEFAULT_FONT_FAMILY, 20, QFont.Bold))
+        title.setFont(QFont(BaseStyles.DEFAULT_FONT_FAMILY, 24, QFont.Bold))
+        hl.addWidget(title)
 
-        version = QLabel("Version 2.6.0")
-        version.setObjectName("version")
-        version.setAlignment(Qt.AlignCenter)
+        ver = QLabel(f"Version {VERSION}")
+        ver.setObjectName("aboutVer")
+        ver.setAlignment(Qt.AlignCenter)
+        hl.addWidget(ver)
 
-        content = QLabel()
-        content.setObjectName("content")
-        content.setAlignment(Qt.AlignCenter)
-        content.setTextFormat(Qt.RichText)
-        content.setText(
-            "<p style='margin:0;'>Android Debug Bridge GUI Toolkit</p>"
-            "<p style='margin:8px 0 0 0;'>"
-            "Batch device management &middot; Automated testing<br>"
-            "Performance diagnostics &middot; File Explorer<br>"
-            "App Manager &middot; Live Logcat</p>"
-        )
+        lo.addWidget(self._header)
 
-        footer = QLabel("Copyright © 2025 Frankie Hu. All rights reserved.")
-        footer.setObjectName("footer")
+        # ── QR Code ──
+        body = QVBoxLayout()
+        body.setAlignment(Qt.AlignCenter)
+        body.setSpacing(6)
+
+        self._qr = QLabel()
+        self._qr.setObjectName("aboutQR")
+        self._qr.setAlignment(Qt.AlignCenter)
+        self._qr.setFixedSize(220, 220)
+        self._qr.setScaledContents(True)
+        pix = QPixmap(resource_path("resources/ZFB.jpg"))
+        if not pix.isNull():
+            self._qr.setPixmap(pix)
+        body.addWidget(self._qr)
+
+        hint = QLabel("Scan to support the author")
+        hint.setObjectName("aboutHint")
+        hint.setAlignment(Qt.AlignCenter)
+        body.addWidget(hint)
+
+        lo.addLayout(body)
+
+        # ── Footer ──
+        ft = QVBoxLayout()
+        ft.setSpacing(2)
+        ft.setContentsMargins(0, 0, 0, 12)
+
+        footer = QLabel("Copyright © 2026 Frankie Hu")
+        footer.setObjectName("aboutFooter")
         footer.setAlignment(Qt.AlignCenter)
+        ft.addWidget(footer)
 
         close_btn = QPushButton("Close")
-        close_btn.setObjectName("close_btn")
-        close_btn.clicked.connect(self._fade_out)
+        close_btn.setObjectName("aboutCloseBtn")
+        close_btn.setFixedSize(100, 30)
+        close_btn.clicked.connect(self.close)
+        btn_row = QVBoxLayout()
+        btn_row.setAlignment(Qt.AlignCenter)
+        btn_row.addWidget(close_btn)
+        ft.addLayout(btn_row)
 
-        layout.addWidget(title, 0, Qt.AlignCenter)
-        layout.addWidget(version, 0, Qt.AlignCenter)
-        layout.addWidget(content, 0, Qt.AlignCenter)
-        layout.addStretch()
-        layout.addWidget(footer, 0, Qt.AlignCenter)
-        layout.addWidget(close_btn, 0, Qt.AlignCenter)
+        lo.addLayout(ft)
 
-        outer.addWidget(self._bg_frame)
+    def _apply_theme(self, _name: str = ""):
+        c = lambda k: BaseStyles.color(k)
+        accent = c("BUTTON_ACCENT")
+        r = BaseStyles.RADIUS_MD
 
-    def _setup_animations(self):
-        self.fade_animation = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_animation.setDuration(180)
-
-    def _setup_shadow(self):
-        self._shadow = QGraphicsDropShadowEffect(self)
-        self._shadow.setBlurRadius(20)
-        self._shadow.setXOffset(0)
-        self._shadow.setYOffset(4)
-        self.setGraphicsEffect(self._shadow)
-
-    def _fade_out(self):
-        self.fade_animation.setStartValue(1.0)
-        self.fade_animation.setEndValue(0.0)
-        self.fade_animation.finished.connect(self.close)
-        self.fade_animation.start()
-
-    def showEvent(self, event):
-        self.setWindowOpacity(1.0)
-        self._apply_theme()
-        super().showEvent(event)
-
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Escape:
-            self._fade_out()
-        else:
-            super().keyPressEvent(event)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_pos = event.globalPosition().toPoint()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        if hasattr(self, "_drag_pos") and event.buttons() & Qt.LeftButton:
-            delta = event.globalPosition().toPoint() - self._drag_pos
-            self.move(self.pos() + delta)
-            self._drag_pos = event.globalPosition().toPoint()
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        if hasattr(self, "_drag_pos"):
-            del self._drag_pos
-        super().mouseReleaseEvent(event)
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {c('PANEL_BG')};
+                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+            }}
+            QFrame#aboutHeader {{
+                background-color: transparent;
+                border: none;
+            }}
+            QLabel#aboutTitle {{
+                color: {c('TITLE_COLOR')};
+                background: transparent;
+            }}
+            QLabel#aboutVer {{
+                font-size: 11px;
+                color: {c('TEXT_SECONDARY')};
+                background: transparent;
+            }}
+            QLabel#aboutQR {{
+                border: 1px solid {c('BORDER_COLOR')};
+                border-radius: {r}px;
+                background-color: #ffffff;
+            }}
+            QLabel#aboutHint {{
+                font-size: 12px;
+                color: {c('BUTTON_ACCENT')};
+                background: transparent;
+            }}
+            QLabel#aboutFooter {{
+                font-size: 10px;
+                color: {c('TEXT_DISABLED')};
+                background: transparent;
+            }}
+            QPushButton#aboutCloseBtn {{
+                background-color: {accent};
+                color: #ffffff;
+                border: none;
+                border-radius: {r}px;
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton#aboutCloseBtn:hover {{
+                background-color: {c('BUTTON_ACCENT_HOVER')};
+            }}
+            QPushButton#aboutCloseBtn:pressed {{
+                background-color: {c('BUTTON_ACCENT_PRESSED')};
+            }}
+        """)

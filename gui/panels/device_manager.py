@@ -155,11 +155,7 @@ QListWidget::indicator:checked {{
             model = str(info.get("Model", ""))
             version = str(info.get("Aversion", ""))
             ip_addr = str(info.get("ip", ""))
-            parts = [brand, model]
-            if version and version not in ("Unknown", "N/A", ""):
-                parts.append(version)
-            parts.append(ip_addr)
-            txt = "  |  ".join(parts)
+            txt = f"{brand}  |  {model}  |  {version}  |  {ip_addr}"
             item = QListWidgetItem(txt)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked if ip_addr in prev else Qt.Unchecked)
@@ -215,7 +211,7 @@ QListWidget::indicator:checked {{
         self.ip_entry.setCompleter(comp)
         self.ip_entry.setCurrentIndex(-1)
         self.ip_entry.lineEdit().clear()
-        self.ip_entry.lineEdit().setPlaceholderText("Select or type IP:Port")
+        self.ip_entry.lineEdit().setPlaceholderText("Select or type IP : Port")
 
     def _on_ip_selected(self, i):
         if 0 <= i < self._device_model.rowCount():

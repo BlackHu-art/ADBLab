@@ -103,14 +103,13 @@ class RemotePanel(BasePanel):
         r3.addStretch()
         gl.addLayout(r3)
 
-        # row 4: start / stop
+        # row 4: start / stop (full-width, 2 buttons)
         r4 = QHBoxLayout()
         r4.setSpacing(4)
         self.btn_start = self._b("Start", "Restart.svg")
         self.btn_stop = self._b("Stop", "Kill_monkey.svg")
-        r4.addWidget(self.btn_start)
-        r4.addWidget(self.btn_stop)
-        r4.addStretch()
+        r4.addWidget(self.btn_start, 1)
+        r4.addWidget(self.btn_stop, 1)
         gl.addLayout(r4)
 
         return g
