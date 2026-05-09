@@ -2,7 +2,7 @@ import json
 import os
 import subprocess
 
-from PySide6.QtCore import QPoint, QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -200,7 +200,7 @@ class MainFrame(QMainWindow):
         self._tb_save_btn.setFlat(True)
         self._tb_save_btn.setCursor(Qt.PointingHandCursor)
         self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
-        
+
         # Save path indicator + change button
         self._save_path_label = QLabel()
         self._save_path_label.setObjectName("savePathLabel")

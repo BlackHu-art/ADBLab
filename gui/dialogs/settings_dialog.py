@@ -1,6 +1,6 @@
 """Settings dialog -- immediate-apply, theme-aware."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -285,7 +285,8 @@ class SettingsDialog(QDialog):
     # ── Theme ───────────────────────────────────────────────────────────
 
     def _apply_theme(self, _name: str = ""):
-        c = lambda k: BaseStyles.color(k)
+        def c(k):
+            return BaseStyles.color(k)
         r = BaseStyles.RADIUS_MD
 
         self.setStyleSheet(f"""

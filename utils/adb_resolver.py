@@ -21,7 +21,7 @@ def resolve_adb_path() -> str | None:
     if _resolved:
         return _adb_path
 
-    from utils.log_utils import get_logger
+    # from utils.log_utils import get_logger
     # log = get_logger("adb")
 
     bundled = resource_path(os.path.join("scrcpy-win64-v3.3.1", "adb.exe"))
