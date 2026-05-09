@@ -395,9 +395,9 @@ class ADBAppMixin(_ADBControllerBase):
 
     def capture_bugreport(self, devices: list):
         if not devices:
-            self._emit_operation("bugreport", False, "⚠️ No devices selected.")
+            self._emit_operation("bugreport", False, "No devices selected.")
             return
-        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
+        save_dir = self._get_screenshot_dir()
         log = self.log_service.log
         for idx, device in enumerate(devices, 1):
             self.executor.submit(
@@ -423,12 +423,9 @@ class ADBAppMixin(_ADBControllerBase):
 
     def pull_anr_files(self, devices: list[str]):
         if not devices:
-            self._emit_operation("pull_anr", False, "⚠️ No devices selected")
+            self._emit_operation("pull_anr", False, "No devices selected")
             return
-        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save ANR files")
-        if not save_dir:
-            self._emit_operation("pull_anr", False, "⚠️ No target directory selected")
-            return
+        save_dir = self._get_screenshot_dir()
         timestamp = datetime.now().strftime("%H%M%S")
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
@@ -465,9 +462,7 @@ class ADBAppMixin(_ADBControllerBase):
             return self._emit_operation("monkey", False, "⚠️ No package name provided")
         if not count:
             return self._emit_operation("monkey", False, "⚠️ No monkey count provided")
-        save_dir = QFileDialog.getExistingDirectory(None, "Select directory to save Monkey logs")
-        if not save_dir:
-            return self._emit_operation("monkey", False, "⚠️ No target directory selected")
+        save_dir = self._get_screenshot_dir()
         log = self.log_service.log
         log(LogLevel.INFO, f"📦 Starting Monkey tests on {len(devices)} devices...")
         log(LogLevel.INFO, f"📁 Log save directory: {save_dir}")

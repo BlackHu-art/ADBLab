@@ -48,7 +48,7 @@ jobs:
         shell: powershell
         run: |
           Write-Host "🧹 Cleaning build environment..."
-          Remove-Item -Recurse -Force build, dist, *.spec -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
 
       # 5. 安装依赖
       - name: Install dependencies
@@ -69,13 +69,13 @@ jobs:
       
           Write-Host "🚀 Building for ${{ matrix.arch }}..."
       
-          # 根据图标文件存在与否构建不同的命令
+          $data = "--add-data `"resources;resources`" --add-data `"icon.ico;.`" --add-data `"scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1`""
           if (Test-Path "icon.ico") {
             Write-Host "Using icon.ico"
-            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed --icon icon.ico main.py"
+            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed --icon icon.ico $data main.py"
           } else {
             Write-Host "Building without icon"
-            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed main.py"
+            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed $data main.py"
           }
       
           # 执行构建命令

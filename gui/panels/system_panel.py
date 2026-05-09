@@ -1,4 +1,4 @@
-"""高级功能标签页 — Shell 命令、文件操作、端口转发、服务开关、系统设置、系统工具等。"""
+"""System tab -- shell, broadcast, port forward, service toggles, settings, tools, battery, IME, emulator."""
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -12,7 +12,7 @@ from gui.panels.base_panel import BasePanel
 
 
 class SystemPanel(BasePanel):
-    """高级功能标签页。"""
+    """System tools tab."""
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -20,7 +20,7 @@ class SystemPanel(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
-        # ── Shell Command ──
+        # Shell
         g1 = self._g("Shell Command")
         gl1 = QHBoxLayout(g1)
         gl1.setSpacing(4)
@@ -30,66 +30,79 @@ class SystemPanel(BasePanel):
         gl1.addWidget(self.btn_shell_run, 1)
         lo.addWidget(g1)
 
-        # ── Port Forwarding ──
+        # Broadcast & Intents
+        gb = self._g("Broadcast & Intents")
+        glb = QVBoxLayout(gb)
+        glb.setSpacing(2)
+        rb1 = QHBoxLayout()
+        rb1.setSpacing(4)
+        self.broadcast_action = self._in("Broadcast action")
+        self.btn_broadcast = self._b("Send Broadcast", "Input.svg")
+        rb1.addWidget(self.broadcast_action, 2)
+        rb1.addWidget(self.btn_broadcast, 1)
+        glb.addLayout(rb1)
+        rb2 = QHBoxLayout()
+        rb2.setSpacing(4)
+        self.activity_spec = self._in("Component (pkg/.Activity) or action")
+        self.btn_start_activity = self._b("Start Activity", "Select_activity.svg")
+        rb2.addWidget(self.activity_spec, 2)
+        rb2.addWidget(self.btn_start_activity, 1)
+        glb.addLayout(rb2)
+        rb3 = QHBoxLayout()
+        rb3.setSpacing(4)
+        self.deep_link_uri = self._in("Deep link URL")
+        self.btn_deep_link = self._b("Open Link", "Connect.svg")
+        rb3.addWidget(self.deep_link_uri, 2)
+        rb3.addWidget(self.btn_deep_link, 1)
+        glb.addLayout(rb3)
+        lo.addWidget(gb)
+
+        # Port Forwarding
         g3 = self._g("Port Forwarding")
         gl3 = QVBoxLayout(g3)
         gl3.setSpacing(2)
         r3a = QHBoxLayout()
         r3a.setSpacing(4)
-        self.fwd_local = self._in("Local port", 90)
-        self.fwd_remote = self._in("Remote port", 90)
+        self.fwd_local = self._in("Local port", 80)
+        self.fwd_remote = self._in("Remote port", 80)
         self.btn_forward = self._b("Forward", "Connect.svg")
-        self.btn_list_fwd = self._b("List", "format_list_bulleted.svg")
-        self.btn_remove_fwd = self._b("Remove", "Cleaning_services.svg")
+        self.btn_reverse = self._b("Reverse", "Connect.svg")
         r3a.addWidget(self.fwd_local, 1)
         r3a.addWidget(self.fwd_remote, 1)
         r3a.addWidget(self.btn_forward, 1)
-        r3a.addWidget(self.btn_list_fwd, 1)
-        r3a.addWidget(self.btn_remove_fwd, 1)
+        r3a.addWidget(self.btn_reverse, 1)
         gl3.addLayout(r3a)
         r3b = QHBoxLayout()
         r3b.setSpacing(4)
-        self.btn_reverse = self._b("Reverse", "Connect.svg")
+        self.btn_list_fwd = self._b("List", "format_list_bulleted.svg")
+        self.btn_remove_fwd = self._b("Remove", "Cleaning_services.svg")
         self.btn_list_rev = self._b("List Rev", "format_list_bulleted.svg")
         self.btn_remove_rev = self._b("Remove Rev", "Cleaning_services.svg")
-        r3b.addWidget(self.btn_reverse)
-        r3b.addWidget(self.btn_list_rev)
-        r3b.addWidget(self.btn_remove_rev)
-        r3b.addStretch(2)
+        for b in (self.btn_list_fwd, self.btn_remove_fwd, self.btn_list_rev, self.btn_remove_rev):
+            r3b.addWidget(b, 1)
         gl3.addLayout(r3b)
         lo.addWidget(g3)
 
-        # ── Service Toggles (svc) ──
+        # Service Toggles
         gs = self._g("Service Toggles (svc)")
         gsl = QVBoxLayout(gs)
         gsl.setSpacing(2)
-        rs1 = QHBoxLayout()
-        rs1.setSpacing(4)
-        for n, cmd in [
-            ("WiFi ON", "svc wifi enable"),
-            ("WiFi OFF", "svc wifi disable"),
-            ("Data ON", "svc data enable"),
-            ("Data OFF", "svc data disable"),
+        for row_cmds in [
+            [("WiFi ON", "svc wifi enable"), ("WiFi OFF", "svc wifi disable"),
+             ("Data ON", "svc data enable"), ("Data OFF", "svc data disable")],
+            [("BT ON", "svc bluetooth enable"), ("BT OFF", "svc bluetooth disable"),
+             ("NFC ON", "svc nfc enable"), ("NFC OFF", "svc nfc disable")],
         ]:
-            b = self._qb(n)
-            b.clicked.connect(lambda _, c=cmd: self._sh(c))
-            rs1.addWidget(b, 1)
-        gsl.addLayout(rs1)
-        rs2 = QHBoxLayout()
-        rs2.setSpacing(4)
-        for n, cmd in [
-            ("BT ON", "svc bluetooth enable"),
-            ("BT OFF", "svc bluetooth disable"),
-            ("NFC ON", "svc nfc enable"),
-            ("NFC OFF", "svc nfc disable"),
-        ]:
-            b = self._qb(n)
-            b.clicked.connect(lambda _, c=cmd: self._sh(c))
-            rs2.addWidget(b, 1)
-        gsl.addLayout(rs2)
+            rh = QHBoxLayout()
+            rh.setSpacing(4)
+            for n, cmd in row_cmds:
+                b = self._qb(n)
+                b.clicked.connect(lambda _, c=cmd: self._sh(c))
+                rh.addWidget(b, 1)
+            gsl.addLayout(rh)
         lo.addWidget(gs)
 
-        # ── Android Settings ──
+        # Android Settings
         g4 = self._g("Android Settings")
         gl4 = QVBoxLayout(g4)
         gl4.setSpacing(2)
@@ -114,7 +127,7 @@ class SystemPanel(BasePanel):
         gl4.addLayout(r4b)
         lo.addWidget(g4)
 
-        # ── System Tools ──
+        # System Tools
         g5 = self._g("System Tools")
         gl5 = QVBoxLayout(g5)
         gl5.setSpacing(2)
@@ -141,27 +154,11 @@ class SystemPanel(BasePanel):
         self.dumpsys_combo = QComboBox()
         self.dumpsys_combo.setEditable(True)
         self.dumpsys_combo.setFont(self._font_sm)
-        self.dumpsys_combo.addItems(
-            [
-                "",
-                "package",
-                "activity",
-                "window",
-                "wifi",
-                "battery",
-                "power",
-                "alarm",
-                "usb",
-                "input",
-                "notification",
-                "connectivity",
-                "audio",
-                "display",
-                "meminfo",
-                "cpuinfo",
-                "netstats",
-            ]
-        )
+        self.dumpsys_combo.addItems([
+            "", "package", "activity", "window", "wifi", "battery", "power", "alarm",
+            "usb", "input", "notification", "connectivity", "audio", "display",
+            "meminfo", "cpuinfo", "netstats",
+        ])
         self.btn_dumpsys = self._qb("Dumpsys")
         self.btn_kernel = self._qb("Kernel")
         self.btn_kernel.setToolTip("cat /proc/version")
@@ -174,7 +171,7 @@ class SystemPanel(BasePanel):
         gl5.addLayout(rs3)
         lo.addWidget(g5)
 
-        # ── Battery & Quick Settings ──
+        # Battery & Quick Settings
         g6 = self._g("Battery & Quick Settings")
         gl6 = QVBoxLayout(g6)
         gl6.setSpacing(2)
@@ -205,7 +202,7 @@ class SystemPanel(BasePanel):
         gl6.addLayout(rq)
         lo.addWidget(g6)
 
-        # ── IME & Emulator Control ──
+        # IME & Emulator
         g7 = self._g("IME & Emulator Control")
         gl7 = QVBoxLayout(g7)
         gl7.setSpacing(2)
@@ -249,122 +246,33 @@ class SystemPanel(BasePanel):
         self.signals.shell_command_requested.emit(self.selected_devices, c)
 
     def connect_signals(self):
-        """Wire local widgets to SidePanelSignals."""
         LP = self.signals
-        self.btn_shell_run.clicked.connect(
-            lambda: LP.shell_command_requested.emit(
-                self.selected_devices, self.shell_cmd_input.text()
-            )
-        )
-        self.shell_cmd_input.returnPressed.connect(
-            lambda: LP.shell_command_requested.emit(
-                self.selected_devices, self.shell_cmd_input.text()
-            )
-        )
-        self.btn_forward.clicked.connect(
-            lambda: LP.forward_port_requested.emit(
-                self.selected_devices, self.fwd_local.text().strip(), self.fwd_remote.text().strip()
-            )
-        )
-        self.btn_list_fwd.clicked.connect(
-            lambda: LP.list_forwards_requested.emit(self.selected_devices)
-        )
-        self.btn_remove_fwd.clicked.connect(
-            lambda: LP.remove_forwards_requested.emit(self.selected_devices)
-        )
-        self.btn_reverse.clicked.connect(
-            lambda: LP.reverse_port_requested.emit(
-                self.selected_devices, self.fwd_remote.text().strip(), self.fwd_local.text().strip()
-            )
-        )
-        self.btn_list_rev.clicked.connect(
-            lambda: LP.list_reverse_requested.emit(self.selected_devices)
-        )
-        self.btn_remove_rev.clicked.connect(
-            lambda: LP.remove_reverse_requested.emit(self.selected_devices)
-        )
-        self.btn_settings_list.clicked.connect(
-            lambda: LP.settings_list_requested.emit(
-                self.selected_devices, self.settings_ns.currentText()
-            )
-        )
-        self.btn_settings_get.clicked.connect(
-            lambda: LP.settings_get_requested.emit(
-                self.selected_devices,
-                self.settings_ns.currentText(),
-                self.settings_key.text().strip(),
-            )
-        )
-        self.btn_settings_put.clicked.connect(
-            lambda: LP.settings_put_requested.emit(
-                self.selected_devices,
-                self.settings_ns.currentText(),
-                self.settings_key.text().strip(),
-                self.settings_val.text().strip(),
-            )
-        )
-        self.btn_content_query.clicked.connect(
-            lambda: LP.content_query_requested.emit(
-                self.selected_devices, self.content_uri.text().strip()
-            )
-        )
-        self.btn_ps_list.clicked.connect(
-            lambda: LP.list_processes_requested.emit(self.selected_devices)
-        )
-        self.btn_kill_pid.clicked.connect(
-            lambda: LP.kill_process_requested.emit(
-                self.selected_devices, self.kill_pid_input.text().strip()
-            )
-        )
-        self.btn_battery_set.clicked.connect(
-            lambda: LP.battery_set_requested.emit(
-                self.selected_devices,
-                self.battery_param.currentText(),
-                self.battery_val.text().strip(),
-            )
-        )
-        self.btn_battery_reset.clicked.connect(
-            lambda: LP.battery_reset_requested.emit(self.selected_devices)
-        )
-        self.btn_quick_setting.clicked.connect(
-            lambda: LP.quick_setting_requested.emit(
-                self.selected_devices, self.quick_setting_combo.currentData()
-            )
-        )
+        self.btn_shell_run.clicked.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
+        self.shell_cmd_input.returnPressed.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
+        self.btn_broadcast.clicked.connect(lambda: LP.send_broadcast_requested.emit(self.selected_devices, self.broadcast_action.text().strip()))
+        self.btn_start_activity.clicked.connect(lambda: LP.start_activity_requested.emit(self.selected_devices, self.activity_spec.text().strip()))
+        self.btn_deep_link.clicked.connect(lambda: LP.open_deep_link_requested.emit(self.selected_devices, self.deep_link_uri.text().strip()))
+        self.btn_forward.clicked.connect(lambda: LP.forward_port_requested.emit(self.selected_devices, self.fwd_local.text().strip(), self.fwd_remote.text().strip()))
+        self.btn_list_fwd.clicked.connect(lambda: LP.list_forwards_requested.emit(self.selected_devices))
+        self.btn_remove_fwd.clicked.connect(lambda: LP.remove_forwards_requested.emit(self.selected_devices))
+        self.btn_reverse.clicked.connect(lambda: LP.reverse_port_requested.emit(self.selected_devices, self.fwd_remote.text().strip(), self.fwd_local.text().strip()))
+        self.btn_list_rev.clicked.connect(lambda: LP.list_reverse_requested.emit(self.selected_devices))
+        self.btn_remove_rev.clicked.connect(lambda: LP.remove_reverse_requested.emit(self.selected_devices))
+        self.btn_settings_list.clicked.connect(lambda: LP.settings_list_requested.emit(self.selected_devices, self.settings_ns.currentText()))
+        self.btn_settings_get.clicked.connect(lambda: LP.settings_get_requested.emit(self.selected_devices, self.settings_ns.currentText(), self.settings_key.text().strip()))
+        self.btn_settings_put.clicked.connect(lambda: LP.settings_put_requested.emit(self.selected_devices, self.settings_ns.currentText(), self.settings_key.text().strip(), self.settings_val.text().strip()))
+        self.btn_content_query.clicked.connect(lambda: LP.content_query_requested.emit(self.selected_devices, self.content_uri.text().strip()))
+        self.btn_ps_list.clicked.connect(lambda: LP.list_processes_requested.emit(self.selected_devices))
+        self.btn_kill_pid.clicked.connect(lambda: LP.kill_process_requested.emit(self.selected_devices, self.kill_pid_input.text().strip()))
+        self.btn_battery_set.clicked.connect(lambda: LP.battery_set_requested.emit(self.selected_devices, self.battery_param.currentText(), self.battery_val.text().strip()))
+        self.btn_battery_reset.clicked.connect(lambda: LP.battery_reset_requested.emit(self.selected_devices))
+        self.btn_quick_setting.clicked.connect(lambda: LP.quick_setting_requested.emit(self.selected_devices, self.quick_setting_combo.currentData()))
         self.btn_ime_list.clicked.connect(lambda: LP.ime_list_requested.emit(self.selected_devices))
-        self.btn_ime_set.clicked.connect(
-            lambda: LP.ime_set_requested.emit(
-                self.selected_devices, self.ime_id_input.text().strip()
-            )
-        )
-        self.btn_pm_features.clicked.connect(
-            lambda: LP.pm_features_requested.emit(self.selected_devices)
-        )
-        self.btn_emu_sms.clicked.connect(
-            lambda: LP.emu_sms_requested.emit(
-                self.selected_devices,
-                self.emu_sms_sender.text().strip(),
-                self.emu_sms_text.text().strip(),
-            )
-        )
-        self.btn_emu_call.clicked.connect(
-            lambda: LP.emu_call_requested.emit(
-                self.selected_devices, self.emu_call_num.text().strip()
-            )
-        )
-        self.btn_emu_geo.clicked.connect(
-            lambda: LP.emu_geo_requested.emit(
-                self.selected_devices,
-                self.emu_geo_lon.text().strip(),
-                self.emu_geo_lat.text().strip(),
-            )
-        )
-        self.btn_dumpsys.clicked.connect(
-            lambda: self._sh(
-                f"dumpsys {self.dumpsys_combo.currentText().strip()} | head -80"
-                if self.dumpsys_combo.currentText().strip()
-                else "service list"
-            )
-        )
+        self.btn_ime_set.clicked.connect(lambda: LP.ime_set_requested.emit(self.selected_devices, self.ime_id_input.text().strip()))
+        self.btn_pm_features.clicked.connect(lambda: LP.pm_features_requested.emit(self.selected_devices))
+        self.btn_emu_sms.clicked.connect(lambda: LP.emu_sms_requested.emit(self.selected_devices, self.emu_sms_sender.text().strip(), self.emu_sms_text.text().strip()))
+        self.btn_emu_call.clicked.connect(lambda: LP.emu_call_requested.emit(self.selected_devices, self.emu_call_num.text().strip()))
+        self.btn_emu_geo.clicked.connect(lambda: LP.emu_geo_requested.emit(self.selected_devices, self.emu_geo_lon.text().strip(), self.emu_geo_lat.text().strip()))
+        self.btn_dumpsys.clicked.connect(lambda: self._sh(f"dumpsys {self.dumpsys_combo.currentText().strip()} | head -80" if self.dumpsys_combo.currentText().strip() else "service list"))
         self.btn_kernel.clicked.connect(lambda: self._sh("cat /proc/version"))
         self.btn_cpuinfo_dev.clicked.connect(lambda: self._sh("cat /proc/cpuinfo | head -40"))

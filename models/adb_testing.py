@@ -151,7 +151,7 @@ class ADBTesting(ADBModelCore):
             )
 
             log("Starting Monkey Test monitoring loop...")
-            last_switch_time = 0
+            last_switch_time = 0.0
             cooldown, interval = 30, 15
 
             while monkey_proc.poll() is None:

@@ -20,7 +20,6 @@ from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
-from gui.panels.testing_panel import TestingPanel
 from gui.styles.base_styles import BaseStyles
 
 
@@ -50,11 +49,12 @@ class SidePanel(QWidget):
 
     def _create_fonts(self):
         F = BaseStyles.DEFAULT_FONT_FAMILY
-        self._font_sm = QFont(F, BaseStyles.SMALL_FONT_SIZE)
-        self._font_mono = QFont("Courier New", BaseStyles.MONO_FONT_SIZE)
+        ui_size = BaseStyles.DEFAULT_FONT_SIZE
+        self._font_sm = QFont(F, ui_size)
+        self._font_mono = QFont("Courier New", max(8, ui_size - 2))
         self._font_mono.setStyleHint(QFont.Monospace)
-        self._font_base = QFont(F, BaseStyles.DEFAULT_FONT_SIZE)
-        self._font_tab = QFont(F, BaseStyles.TAB_FONT_SIZE)
+        self._font_base = QFont(F, ui_size)
+        self._font_tab = QFont(F, ui_size)
 
     # ── UI 构建 ───────────────────────────────────────────────────────────
 
@@ -73,13 +73,11 @@ class SidePanel(QWidget):
         self._apply_tab_style()
 
         self._apps_tab = AppPanel(self)
-        self._input_diag_tab = TestingPanel(self)
         self._advanced_tab = SystemPanel(self)
         self._scrcpy_tab = RemotePanel(self)
 
         tab_specs = [
             (self._apps_tab, "Apps"),
-            (self._input_diag_tab, "Testing"),
             (self._advanced_tab, "System"),
             (self._scrcpy_tab, "Remote"),
         ]
@@ -127,7 +125,7 @@ class SidePanel(QWidget):
     def _apply_tab_style(self):
         bs = BaseStyles
         self.tabs.setStyleSheet(
-            f"""QTabWidget::pane{{border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;background:{bs.color('WINDOW_BG')};}}QTabBar::tab{{background:{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;font-size:{bs.TAB_FONT_SIZE}px;border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px;}}QTabBar::tab:selected{{background:{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')};}}QTabBar::tab:hover{{background:{bs.color('BUTTON_HOVER')};}}"""
+            f"""QTabWidget::pane{{border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;background:{bs.color('WINDOW_BG')};}}QTabBar::tab{{background:{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;font-size:{bs.DEFAULT_FONT_SIZE}px;border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px;}}QTabBar::tab:selected{{background:{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')};}}QTabBar::tab:hover{{background:{bs.color('BUTTON_HOVER')};}}"""
         )
 
     def _apply_completer_style(self, c):
@@ -178,6 +176,5 @@ class SidePanel(QWidget):
         """委托各标签页连接各自的信号。"""
         self._devices_tab.connect_signals()
         self._apps_tab.connect_signals()
-        self._input_diag_tab.connect_signals()
         self._advanced_tab.connect_signals()
         self._scrcpy_tab.connect_signals()
