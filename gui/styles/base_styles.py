@@ -4,6 +4,8 @@
 ThemeSignal 的运行时主题切换机制。
 """
 
+from typing import ClassVar
+
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QColor, QFont
 
@@ -83,36 +85,39 @@ THEMES = {
 
 _current_theme: str = "Light"
 
-# ── 字体 ───────────────────────────────────────────────────────────────────────
-DEFAULT_FONT_FAMILY: str = "Segoe UI"
-DEFAULT_FONT_SIZE: int = 12
-SMALL_FONT_SIZE: int = 12
-TAB_FONT_SIZE: int = 12
-LOG_FONT: str = "Consolas"
-LOG_FONT_SIZE: int = 9
-MONO_FONT_SIZE: int = 9
+# ── Fonts ──────────────────────────────────────────────────────────────
+DEFAULT_FONT_FAMILY = "Segoe UI"
+LOG_FONT = "Consolas"
+LOG_FONT_SIZE = 9
 
-# ── 图标尺寸 ──────────────────────────────────────────────────────────────────
-ICON_SIZE: int = 18
-TOOLBAR_ICON_SIZE: int = 16
+# ── Mutable settings (updated by reload_from_settings) ────────────────
+_font = {
+    "FAMILY": "Segoe UI",
+    "UI": 12,
+    "LOG": 9,
+}
 
-# ── 日志等级颜色（主题无关）────────────────────────────────────────────────────
-DEBUG_COLOR: str = "#6C757D"
-INFO_COLOR: str = "#17A2B8"
-SUCCESS_COLOR: str = "#28A745"
-WARNING_COLOR: str = "#FFC107"
-ERROR_COLOR: str = "#DC3545"
-CRITICAL_COLOR: str = "#FF4081"
-TIMESTAMP_COLOR: str = "#6C757D"
+# ── Icon sizes ─────────────────────────────────────────────────────────
+ICON_SIZE = 18
+TOOLBAR_ICON_SIZE = 16
 
-# ── 圆角半径 ──────────────────────────────────────────────────────────────────
-RADIUS_SM: int = 4
-RADIUS_MD: int = 6
-RADIUS_LG: int = 8
-RADIUS_XL: int = 12
+# ── Log level colors (theme-independent) ───────────────────────────────
+DEBUG_COLOR = "#6C757D"
+INFO_COLOR = "#17A2B8"
+SUCCESS_COLOR = "#28A745"
+WARNING_COLOR = "#FFC107"
+ERROR_COLOR = "#DC3545"
+CRITICAL_COLOR = "#FF4081"
+TIMESTAMP_COLOR = "#6C757D"
 
-# ── 遗留兼容 ──────────────────────────────────────────────────────────────────
-WINDOW_BACKGROUND: str = "#f0f0f0"
+# ── Border radius ──────────────────────────────────────────────────────
+RADIUS_SM = 4
+RADIUS_MD = 6
+RADIUS_LG = 8
+RADIUS_XL = 12
+
+# ── Legacy ─────────────────────────────────────────────────────────────
+WINDOW_BACKGROUND = "#f0f0f0"
 
 
 def _tc(key: str) -> str:
@@ -122,45 +127,44 @@ def _tc(key: str) -> str:
 
 class BaseStyles:
 
-    # 重新导出模块级常量
-    DEBUG_COLOR = DEBUG_COLOR
-    INFO_COLOR = INFO_COLOR
-    SUCCESS_COLOR = SUCCESS_COLOR
-    WARNING_COLOR = WARNING_COLOR
-    ERROR_COLOR = ERROR_COLOR
-    CRITICAL_COLOR = CRITICAL_COLOR
-    TIMESTAMP_COLOR = TIMESTAMP_COLOR
-    RADIUS_SM = RADIUS_SM
-    RADIUS_MD = RADIUS_MD
-    RADIUS_LG = RADIUS_LG
-    RADIUS_XL = RADIUS_XL
-    LOG_FONT = LOG_FONT
-    LOG_FONT_SIZE = LOG_FONT_SIZE
-    SMALL_FONT_SIZE = SMALL_FONT_SIZE
-    TAB_FONT_SIZE = TAB_FONT_SIZE
-    MONO_FONT_SIZE = MONO_FONT_SIZE
-    DEFAULT_FONT_FAMILY = DEFAULT_FONT_FAMILY
-    DEFAULT_FONT_SIZE = DEFAULT_FONT_SIZE
-    ICON_SIZE = ICON_SIZE
-    TOOLBAR_ICON_SIZE = TOOLBAR_ICON_SIZE
-    WINDOW_BACKGROUND = WINDOW_BACKGROUND
+    # Static exports (values never change at runtime)
+    DEBUG_COLOR: ClassVar[str] = "#6C757D"
+    INFO_COLOR: ClassVar[str] = "#17A2B8"
+    SUCCESS_COLOR: ClassVar[str] = "#28A745"
+    WARNING_COLOR: ClassVar[str] = "#FFC107"
+    ERROR_COLOR: ClassVar[str] = "#DC3545"
+    CRITICAL_COLOR: ClassVar[str] = "#FF4081"
+    TIMESTAMP_COLOR: ClassVar[str] = "#6C757D"
+    RADIUS_SM: ClassVar[int] = 4
+    RADIUS_MD: ClassVar[int] = 6
+    RADIUS_LG: ClassVar[int] = 8
+    RADIUS_XL: ClassVar[int] = 12
+    LOG_FONT: ClassVar[str] = "Consolas"
+    LOG_FONT_SIZE: ClassVar[int] = 9
+    DEFAULT_FONT_FAMILY: ClassVar[str] = "Segoe UI"
+    ICON_SIZE: ClassVar[int] = 18
+    TOOLBAR_ICON_SIZE: ClassVar[int] = 16
+    WINDOW_BACKGROUND: ClassVar[str] = "#f0f0f0"
+
+    # Font sizes (mutable, backed by _font dict)
+    DEFAULT_FONT_SIZE: ClassVar[int] = _font["UI"]
+    LOG_FONT_SIZE_VAR: ClassVar[int] = _font["LOG"]
 
     theme_changed = _theme_signal.changed
-    settings_changed = _theme_signal.changed  # 复用同一信号触发字体更新
-
-    # ── 设置重载 ───────────────────────────────────────────────────────
+    settings_changed = _theme_signal.changed
 
     @classmethod
     def reload_from_settings(cls):
-        """从 AppSettings 重新加载字体大小并发射变更信号。"""
-        global DEFAULT_FONT_SIZE, SMALL_FONT_SIZE, TAB_FONT_SIZE, MONO_FONT_SIZE
+        """Reload font sizes from AppSettings and emit change signal."""
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
-        DEFAULT_FONT_SIZE = cls.DEFAULT_FONT_SIZE = s.get("font_base_size", 12)
-        SMALL_FONT_SIZE = cls.SMALL_FONT_SIZE = s.get("font_small_size", 12)
-        TAB_FONT_SIZE = cls.TAB_FONT_SIZE = s.get("font_tab_size", 12)
-        MONO_FONT_SIZE = cls.MONO_FONT_SIZE = s.get("font_mono_size", 10)
+        _font["FAMILY"] = s.get("font_family", "Segoe UI")
+        _font["UI"] = s.get("ui_font_size", 12)
+        _font["LOG"] = s.get("log_font_size", 9)
+        cls.DEFAULT_FONT_FAMILY = _font["FAMILY"]
+        cls.DEFAULT_FONT_SIZE = _font["UI"]
+        cls.LOG_FONT_SIZE_VAR = _font["LOG"]
         _theme_signal.changed.emit(_current_theme)
 
     # ── 主题管理 ────────────────────────────────────────────────────────
@@ -236,17 +240,27 @@ class BaseStyles:
         }}
         """
 
+    # -- Unified button styles -------------------------------------------
+
+    @classmethod
+    def BUTTON_BASE(cls) -> str:
+        """Shared button properties -- all button variants include this."""
+        return f"""
+            font-family: '{_font['FAMILY']}';
+            font-size: {_font['UI']}px;
+            border-radius: {RADIUS_MD}px;
+            padding: 3px 8px;
+        """
+
     @classmethod
     def BUTTON_STYLE(cls) -> str:
+        """Default button: neutral background, visible border."""
         return f"""
         QPushButton {{
+            {cls.BUTTON_BASE()}
             background-color: {_tc('BUTTON_BG')};
             color: {_tc('TEXT_PRIMARY')};
             border: 1px solid {_tc('BORDER_COLOR')};
-            border-radius: {RADIUS_MD}px;
-            padding: 3px 6px;
-            font-family: '{DEFAULT_FONT_FAMILY}';
-            font-size: {DEFAULT_FONT_SIZE}px;
         }}
         QPushButton:hover {{
             background-color: {_tc('BUTTON_HOVER')};
@@ -263,6 +277,57 @@ class BaseStyles:
         """
 
     @classmethod
+    def ACCENT_BUTTON_STYLE(cls) -> str:
+        """Primary action button: accent background, white text."""
+        return f"""
+        QPushButton#accent {{
+            {cls.BUTTON_BASE()}
+            background-color: {_tc('BUTTON_ACCENT')};
+            color: #ffffff;
+            border: 1px solid {_tc('BUTTON_ACCENT')};
+        }}
+        QPushButton#accent:hover {{
+            background-color: {_tc('BUTTON_ACCENT_HOVER')};
+        }}
+        QPushButton#accent:pressed {{
+            background-color: {_tc('BUTTON_ACCENT_PRESSED')};
+        }}
+        QPushButton#accent:disabled {{
+            background-color: {_tc('INPUT_BG')};
+            color: {_tc('TEXT_DISABLED')};
+            border-color: {_tc('BORDER_COLOR')};
+        }}
+        """
+
+    @classmethod
+    def DANGER_BUTTON_STYLE(cls) -> str:
+        """Destructive action button: red."""
+        return f"""
+        QPushButton#danger {{
+            {cls.BUTTON_BASE()}
+            background-color: {_tc('BUTTON_DANGER')};
+            color: #ffffff;
+            border: 1px solid {_tc('BUTTON_DANGER')};
+        }}
+        QPushButton#danger:hover {{
+            background-color: {_tc('BUTTON_DANGER_HOVER')};
+        }}
+        QPushButton#danger:pressed {{
+            background-color: {_tc('BUTTON_DANGER')};
+        }}
+        QPushButton#danger:disabled {{
+            background-color: {_tc('INPUT_BG')};
+            color: {_tc('TEXT_DISABLED')};
+            border-color: {_tc('BORDER_COLOR')};
+        }}
+        """
+
+    @classmethod
+    def BUTTON_QSS(cls) -> str:
+        """Complete button QSS bundle for PANEL_BASE_STYLE."""
+        return cls.BUTTON_STYLE() + cls.ACCENT_BUTTON_STYLE() + cls.DANGER_BUTTON_STYLE()
+
+    @classmethod
     def INPUT_STYLE(cls) -> str:
         return f"""
         QLineEdit, QComboBox {{
@@ -271,8 +336,8 @@ class BaseStyles:
             border: 1px solid {_tc('BORDER_COLOR')};
             border-radius: {RADIUS_MD}px;
             padding: 3px 6px;
-            font-family: '{DEFAULT_FONT_FAMILY}';
-            font-size: {DEFAULT_FONT_SIZE}px;
+            font-family: '{_font['FAMILY']}';
+            font-size: {_font['UI']}px;
             selection-background-color: {_tc('SELECTION_BG')};
         }}
         QLineEdit:focus, QComboBox:focus {{
@@ -333,8 +398,8 @@ class BaseStyles:
             border-radius: {RADIUS_LG}px;
             margin-top: 4px;
             padding: 2px 4px 1px 4px;
-            font-family: '{DEFAULT_FONT_FAMILY}';
-            font-size: {DEFAULT_FONT_SIZE}px;
+            font-family: '{_font['FAMILY']}';
+            font-size: {_font['UI']}px;
             font-weight: bold;
             color: {_tc('TEXT_PRIMARY')};
         }}
@@ -357,7 +422,7 @@ class BaseStyles:
             border-radius: {RADIUS_MD}px;
             padding: 2px;
             font-family: 'Courier New';
-            font-size: {DEFAULT_FONT_SIZE}px;
+            font-size: {_font['UI']}px;
             outline: none;
         }}
         QListWidget::item {{
@@ -388,8 +453,8 @@ class BaseStyles:
             border: none;
             border-radius: {RADIUS_SM}px;
             padding: 2px 6px;
-            font-family: '{DEFAULT_FONT_FAMILY}';
-            font-size: {DEFAULT_FONT_SIZE}px;
+            font-family: '{_font['FAMILY']}';
+            font-size: {_font['UI']}px;
         }}
         QFrame#toolbar QPushButton:hover {{
             background-color: {_tc('BUTTON_HOVER')};
@@ -400,8 +465,8 @@ class BaseStyles:
         }}
         QFrame#toolbar QLabel {{
             color: {_tc('TEXT_PRIMARY')};
-            font-family: '{DEFAULT_FONT_FAMILY}';
-            font-size: {DEFAULT_FONT_SIZE}px;
+            font-family: '{_font['FAMILY']}';
+            font-size: {_font['UI']}px;
             font-weight: bold;
         }}
         """
@@ -413,7 +478,7 @@ class BaseStyles:
             background-color: {_tc('PANEL_BG')};
             border: 1px solid {_tc('BORDER_COLOR')};
             border-radius: {RADIUS_LG}px;
-            font-family: '{DEFAULT_FONT_FAMILY}';
+            font-family: '{_font['FAMILY']}';
         }}
         QLabel#title {{
             font-size: 18px;
@@ -460,7 +525,7 @@ class BaseStyles:
     @classmethod
     def PANEL_BASE_STYLE(cls) -> str:
         return (
-            cls.BUTTON_STYLE()
+            cls.BUTTON_QSS()
             + cls.INPUT_STYLE()
             + cls.LIST_WIDGET_STYLE()
             + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }}"
@@ -476,8 +541,8 @@ class BaseStyles:
     # ── 字体工厂 ────────────────────────────────────────────────────────
 
     @classmethod
-    def get_default_font(cls, size: int = None) -> QFont:
-        font = QFont(cls.DEFAULT_FONT_FAMILY, size or cls.DEFAULT_FONT_SIZE)
+    def get_default_font(cls, size: int | None = None) -> QFont:
+        font = QFont(cls.DEFAULT_FONT_FAMILY, size if size is not None else cls.DEFAULT_FONT_SIZE)
         font.setStyleHint(QFont.SansSerif)
         font.setHintingPreference(QFont.PreferFullHinting)
         return font

@@ -70,10 +70,15 @@ class ADBModelCore(QObject):
 
     @staticmethod
     def _execute_command(command: list, timeout: int = 30) -> str:
-        """Execute an ADB command synchronously, return stdout or error string."""
+        """Execute a command synchronously, return stdout or error string."""
+        from utils.adb_resolver import adb_path
+
+        cmd = list(command)
+        if cmd and cmd[0] == "adb":
+            cmd[0] = adb_path()
         try:
             result = subprocess.run(
-                command,
+                cmd,
                 capture_output=True,
                 text=True,
                 check=True,

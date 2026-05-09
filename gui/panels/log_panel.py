@@ -43,7 +43,12 @@ class LogPanel(QWidget):
         """)
 
     def _on_theme_changed(self, _name: str):
-        """Re-render all entries so text colors match the new theme."""
+        """Re-render all entries + re-apply font size on theme/settings change."""
+        from core.settings_manager import AppSettings
+        log_size = AppSettings.instance().get("log_font_size", 9)
+        log_font = QFont(BaseStyles.LOG_FONT, log_size)
+        log_font.setStyleHint(QFont.Monospace)
+        self.text_output.setFont(log_font)
         self._apply_style()
         self._rerender_all()
 
@@ -52,7 +57,9 @@ class LogPanel(QWidget):
         self.text_output.setReadOnly(True)
         self.text_output.setUndoRedoEnabled(False)
 
-        log_font = QFont(BaseStyles.LOG_FONT, BaseStyles.LOG_FONT_SIZE)
+        from core.settings_manager import AppSettings
+        log_size = AppSettings.instance().get("log_font_size", 9)
+        log_font = QFont(BaseStyles.LOG_FONT, log_size)
         log_font.setStyleHint(QFont.Monospace)
         self.text_output.setFont(log_font)
 

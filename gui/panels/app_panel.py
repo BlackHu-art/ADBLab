@@ -175,6 +175,89 @@ class AppPanel(BasePanel):
         rd_.addWidget(self.btn_deep_link, 1)
         gl4.addLayout(rd_)
         lo.addWidget(g4)
+
+        # ── Reboot & Modes ──
+        g_rb = self._g("Reboot & Modes")
+        gl_rb = QHBoxLayout(g_rb)
+        gl_rb.setSpacing(4)
+        self.reboot_mode_combo = QComboBox()
+        self.reboot_mode_combo.addItems(["System", "Bootloader", "Recovery", "Fastboot"])
+        self.reboot_mode_combo.setFont(self._font_sm)
+        self.reboot_mode_combo.setFixedHeight(28)
+        self.btn_reboot_mode = self._b("Reboot", "Restart.svg")
+        self.tcpip_port_input = self._in("5555", 45)
+        self.tcpip_port_input.setFixedHeight(28)
+        self.btn_tcpip_mode = self._b("TCP/IP", "Connect.svg")
+        gl_rb.addWidget(self.reboot_mode_combo, 1)
+        gl_rb.addWidget(self.btn_reboot_mode, 1)
+        gl_rb.addWidget(self.tcpip_port_input, 1)
+        gl_rb.addWidget(self.btn_tcpip_mode, 1)
+        lo.addWidget(g_rb)
+
+        # ── Monkey & Reports ──
+        g_mr = self._g("Monkey & Reports")
+        gl_mr = QVBoxLayout(g_mr)
+        gl_mr.setSpacing(2)
+
+        r_m1 = QHBoxLayout()
+        r_m1.setSpacing(4)
+        self.device_type = QComboBox()
+        self.device_type.addItems(["STB", "Mobile"])
+        self.device_type.setFont(self._font_sm)
+        self.select_times = QComboBox()
+        self.select_times.addItems(["100", "10000", "100000", "500000"])
+        self.select_times.setFont(self._font_sm)
+        self.start_monkey_btn = self._b("Start Monkey", "Monkey.svg")
+        self.kill_monkey_btn = self._b("Kill Monkey", "Kill_monkey.svg")
+        r_m1.addWidget(self.device_type, 1)
+        r_m1.addWidget(self.select_times, 1)
+        r_m1.addWidget(self.start_monkey_btn, 1)
+        r_m1.addWidget(self.kill_monkey_btn, 1)
+        gl_mr.addLayout(r_m1)
+
+        r_m2 = QHBoxLayout()
+        r_m2.setSpacing(4)
+        self.get_bugreport_btn = self._b("Bugreport", "Bugreport.svg")
+        self.get_anr_file_btn = self._b("ANR Files", "Get_ANR.svg")
+        self.btn_retrieve_devices_logs = self._b("Retrieve Logs", "Save_alt.svg")
+        self.btn_cleanup_logs = self._b("Cleanup Logs", "Cleaning_services.svg")
+        r_m2.addWidget(self.get_bugreport_btn, 1)
+        r_m2.addWidget(self.get_anr_file_btn, 1)
+        r_m2.addWidget(self.btn_retrieve_devices_logs, 1)
+        r_m2.addWidget(self.btn_cleanup_logs, 1)
+        gl_mr.addLayout(r_m2)
+        lo.addWidget(g_mr)
+
+        # ── Performance ──
+        g_perf = self._g("Performance Diagnostics")
+        gl_perf = QVBoxLayout(g_perf)
+        gl_perf.setSpacing(2)
+
+        r_p1 = QHBoxLayout()
+        r_p1.setSpacing(4)
+        self.btn_meminfo = self._b("Memory", "Info.svg")
+        self.btn_cpuinfo = self._b("CPU Load", "Info.svg")
+        self.btn_battery_info = self._b("Battery", "Info.svg")
+        self.btn_uptime = self._b("Uptime", "Info.svg")
+        r_p1.addWidget(self.btn_meminfo, 1)
+        r_p1.addWidget(self.btn_cpuinfo, 1)
+        r_p1.addWidget(self.btn_battery_info, 1)
+        r_p1.addWidget(self.btn_uptime, 1)
+        gl_perf.addLayout(r_p1)
+
+        r_p2 = QHBoxLayout()
+        r_p2.setSpacing(4)
+        self.btn_top = self._qb("Top Snapshot")
+        self.btn_gfx = self._qb("GFX Info")
+        self.btn_wakelock = self._qb("Wakelocks")
+        self.btn_netstats = self._qb("Net Stats")
+        r_p2.addWidget(self.btn_top, 1)
+        r_p2.addWidget(self.btn_gfx, 1)
+        r_p2.addWidget(self.btn_wakelock, 1)
+        r_p2.addWidget(self.btn_netstats, 1)
+        gl_perf.addLayout(r_p2)
+        lo.addWidget(g_perf)
+
         lo.addStretch()
         return w
 
@@ -257,6 +340,29 @@ class AppPanel(BasePanel):
         self.btn_disable_user.clicked.connect(
             lambda: LP.disable_app_requested.emit(self.selected_devices, self.package_text)
         )
+        # Reboot
+        self.btn_reboot_mode.clicked.connect(
+            lambda: LP.reboot_mode_requested.emit(self.selected_devices, self.reboot_mode_combo.currentText().lower()))
+        self.btn_tcpip_mode.clicked.connect(
+            lambda: LP.tcpip_mode_requested.emit(self.selected_devices, self.tcpip_port_input.text().strip() or "5555"))
+        # Monkey
+        self.start_monkey_btn.clicked.connect(
+            lambda: LP.start_monkey_requested.emit(self.selected_devices, self.device_type.currentText(), self.package_text, self.select_times.currentText()))
+        self.kill_monkey_btn.clicked.connect(lambda: LP.kill_monkey_requested.emit(self.selected_devices))
+        # Reports
+        self.get_bugreport_btn.clicked.connect(lambda: LP.capture_bugreport_requested.emit(self.selected_devices))
+        self.get_anr_file_btn.clicked.connect(lambda: LP.pull_anr_file_requested.emit(self.selected_devices))
+        self.btn_retrieve_devices_logs.clicked.connect(lambda: LP.retrieve_logs_requested.emit(self.selected_devices))
+        self.btn_cleanup_logs.clicked.connect(lambda: LP.cleanup_logs_requested.emit(self.selected_devices))
+        # Performance
+        self.btn_meminfo.clicked.connect(lambda: LP.dumpsys_meminfo_requested.emit(self.selected_devices, self.package_text))
+        self.btn_cpuinfo.clicked.connect(lambda: LP.dumpsys_cpuinfo_requested.emit(self.selected_devices))
+        self.btn_battery_info.clicked.connect(lambda: LP.dumpsys_battery_requested.emit(self.selected_devices))
+        self.btn_uptime.clicked.connect(lambda: LP.device_uptime_requested.emit(self.selected_devices))
+        self.btn_top.clicked.connect(lambda: self._sh("top -b -n 1 -m 20"))
+        self.btn_gfx.clicked.connect(lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60"))
+        self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
+        self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
         # 文本与邮箱
         self.btn_screenshot.clicked.connect(
             lambda: LP.screenshot_requested.emit(self.selected_devices)

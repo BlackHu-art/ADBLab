@@ -66,22 +66,36 @@ class BasePanel(QWidget):
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         return g
 
-    def _b(self, t, i, dc=False):
-        """创建带图标的按钮。"""
-        b = DoubleClickButton(t) if dc else QPushButton(t)
+    def _b(self, t, i, variant=""):
+        """Create icon button. variant: '' (default), 'accent', 'danger'."""
+        b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setMinimumHeight(28)
+        b.setFixedHeight(28)
+        b.setIcon(QIcon(resource_path(f"resources/icons/{i}")))
+        b.setIconSize(QSize(14, 14))
+        if variant:
+            b.setObjectName(variant)
+        return b
+
+    def _db(self, t, i):
+        """Create double-click icon button."""
+        b = DoubleClickButton(t)
+        b.setFont(self._font_sm)
+        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setFixedHeight(28)
         b.setIcon(QIcon(resource_path(f"resources/icons/{i}")))
         b.setIconSize(QSize(14, 14))
         return b
 
-    def _qb(self, t):
-        """创建纯文本按钮（无图标）。"""
+    def _qb(self, t, variant=""):
+        """Create text-only button. variant: '' (default), 'accent', 'danger'."""
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setMinimumHeight(28)
+        b.setFixedHeight(28)
+        if variant:
+            b.setObjectName(variant)
         return b
 
     def _in(self, p, w=0):

@@ -45,6 +45,9 @@ class MainFrame(QMainWindow):
         self._setup_window()
         self._init_panels()
 
+        from utils.adb_resolver import resolve_adb_path
+
+        QTimer.singleShot(200, lambda: resolve_adb_path())
         QTimer.singleShot(100, self._initial_refresh)
 
     def _setup_window(self):
@@ -143,8 +146,9 @@ class MainFrame(QMainWindow):
 
         try:
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            from utils.adb_resolver import adb_path
             r = subprocess.run(
-                ["adb", "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
+                [adb_path(), "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
             )
             devices = [
                 line.split("\t")[0]
@@ -378,8 +382,9 @@ class MainFrame(QMainWindow):
             import sys
 
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            from utils.adb_resolver import adb_path
             r = subprocess.run(
-                ["adb", "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
+                [adb_path(), "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
             )
             self._known_device_count = len(
                 [

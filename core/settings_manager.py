@@ -16,10 +16,9 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SETTINGS_FILE = os.path.join(_BASE_DIR, "resources", "app_settings.json")
 
 DEFAULTS = {
-    "font_base_size": 12,
-    "font_small_size": 12,
-    "font_mono_size": 10,
-    "font_tab_size": 12,
+    "font_family": "Segoe UI",
+    "ui_font_size": 12,
+    "log_font_size": 9,
     "save_directory": "",
     "log_max_lines": 2000,
     "monkey_default_count": "10000",
@@ -118,17 +117,9 @@ class AppSettings:
         return os.path.join(os.path.expanduser("~"), "ADBLab")
 
     @property
-    def font_base_size(self) -> int:
-        return self.get("font_base_size", 12)
+    def ui_font_size(self) -> int:
+        return self.get("ui_font_size", 12)
 
     @property
-    def font_small_size(self) -> int:
-        return self.get("font_small_size", 12)
-
-    @property
-    def font_mono_size(self) -> int:
-        return self.get("font_mono_size", 10)
-
-    @property
-    def font_tab_size(self) -> int:
-        return self.get("font_tab_size", 12)
+    def log_font_size(self) -> int:
+        return self.get("log_font_size", 9)

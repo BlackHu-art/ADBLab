@@ -47,29 +47,47 @@ class SettingsDialog(QDialog):
         # ── Appearance ──
         g1 = QGroupBox("Appearance")
         g1l = QVBoxLayout(g1)
-        g1l.setSpacing(8)
+        g1l.setSpacing(6)
+
         r1 = QHBoxLayout()
-        r1.setSpacing(10)
+        r1.setSpacing(8)
         r1.addWidget(QLabel("Theme"))
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(BaseStyles.theme_names())
         self.theme_combo.setCurrentText(BaseStyles.current_theme())
         self.theme_combo.currentTextChanged.connect(self._on_theme_changed)
-        self.theme_combo.setFixedWidth(110)
+        self.theme_combo.setFixedWidth(100)
         r1.addWidget(self.theme_combo)
+        r1.addSpacing(16)
+        r1.addWidget(QLabel("Font"))
+        self.font_family_combo = QComboBox()
+        self.font_family_combo.addItems(["Segoe UI", "Microsoft YaHei", "Arial", "Consolas", "Tahoma", "Verdana"])
+        self.font_family_combo.setCurrentText(self.s.get("font_family", "Segoe UI"))
+        self.font_family_combo.currentTextChanged.connect(self._on_font_family_changed)
+        self.font_family_combo.setFixedWidth(140)
+        r1.addWidget(self.font_family_combo)
         r1.addStretch()
         g1l.addLayout(r1)
 
         r2 = QHBoxLayout()
-        r2.setSpacing(10)
-        r2.addWidget(QLabel("Font Size"))
+        r2.setSpacing(8)
+        r2.addWidget(QLabel("UI Size"))
         self.spin_font = QSpinBox()
         self.spin_font.setRange(8, 22)
-        self.spin_font.setValue(self.s.get("font_base_size", 12))
+        self.spin_font.setValue(self.s.get("ui_font_size", 12))
         self.spin_font.setSuffix(" px")
-        self.spin_font.setFixedWidth(90)
+        self.spin_font.setFixedWidth(80)
         self.spin_font.valueChanged.connect(self._on_font_changed)
         r2.addWidget(self.spin_font)
+        r2.addSpacing(16)
+        r2.addWidget(QLabel("Log Size"))
+        self.spin_log_font = QSpinBox()
+        self.spin_log_font.setRange(7, 16)
+        self.spin_log_font.setValue(self.s.get("log_font_size", 9))
+        self.spin_log_font.setSuffix(" px")
+        self.spin_log_font.setFixedWidth(80)
+        self.spin_log_font.valueChanged.connect(self._on_log_font_changed)
+        r2.addWidget(self.spin_log_font)
         r2.addStretch()
         g1l.addLayout(r2)
         outer.addWidget(g1)
@@ -196,11 +214,16 @@ class SettingsDialog(QDialog):
         BaseStyles.switch_theme(t)
         self.s.set("theme", t)
 
+    def _on_font_family_changed(self, f: str):
+        self.s.set("font_family", f)
+        BaseStyles.reload_from_settings()
+
     def _on_font_changed(self, v: int):
-        self.s.set("font_base_size", v)
-        self.s.set("font_small_size", v)
-        self.s.set("font_tab_size", v)
-        self.s.set("font_mono_size", max(8, v - 2))
+        self.s.set("ui_font_size", v)
+        BaseStyles.reload_from_settings()
+
+    def _on_log_font_changed(self, v: int):
+        self.s.set("log_font_size", v)
         BaseStyles.reload_from_settings()
 
     def _update_right_label(self):
@@ -293,12 +316,13 @@ class SettingsDialog(QDialog):
             QCheckBox::indicator:unchecked {{ image: none; }}
             QLineEdit              {{ background: {ibg}; color: {fg}; border: 1px solid {border}; border-radius: {r}px; padding: 4px 8px; }}
             QLineEdit:focus        {{ border-color: {accent}; }}
-            QSpinBox               {{ background: {ibg}; color: {fg}; border: 1px solid {border}; border-radius: {r}px; padding: 3px 6px; padding-right: 20px; }}
-            QSpinBox:focus         {{ border-color: {accent}; }}
-            QSpinBox::up-button    {{ subcontrol-origin: border; subcontrol-position: top right; width: 18px; border: none; border-left: 1px solid {border}; border-bottom: 1px solid {border}; border-top-right-radius: {r-1}px; background: {btn}; }}
-            QSpinBox::up-button:hover {{ background: {hov}; }}
-            QSpinBox::down-button  {{ subcontrol-origin: border; subcontrol-position: bottom right; width: 18px; border: none; border-left: 1px solid {border}; border-bottom-right-radius: {r-1}px; background: {btn}; }}
-            QSpinBox::down-button:hover {{ background: {hov}; }}
+            QSpinBox               {{ background: {ibg}; color: {fg}; border: 1px solid {border}; border-radius: {r}px; padding: 3px 20px 3px 6px; }}
+            QSpinBox:hover         {{ border: 1px solid {accent}; }}
+            QSpinBox:focus         {{ border: 1px solid {accent}; }}
+            QSpinBox::up-button    {{ subcontrol-origin: margin; subcontrol-position: top right; width: 16px; border: none; border-left: 1px solid {border}; border-bottom: 1px solid {border}; border-top-right-radius: {r-1}px; background: transparent; margin: 1px; }}
+            QSpinBox::up-button:hover {{ background: {hov}; border-left: 1px solid {accent}; border-bottom: 1px solid {accent}; border-top-right-radius: {r-1}px; }}
+            QSpinBox::down-button  {{ subcontrol-origin: margin; subcontrol-position: bottom right; width: 16px; border: none; border-left: 1px solid {border}; border-bottom-right-radius: {r-1}px; background: transparent; margin: 1px; }}
+            QSpinBox::down-button:hover {{ background: {hov}; border-left: 1px solid {accent}; border-bottom-right-radius: {r-1}px; }}
             QComboBox              {{ background: {ibg}; color: {fg}; border: 1px solid {border}; border-radius: {r}px; padding: 3px 6px; }}
             QComboBox:focus        {{ border-color: {accent}; }}
             QComboBox::drop-down   {{ subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid {border}; border-top-right-radius: {r}px; border-bottom-right-radius: {r}px; background: {btn}; }}
