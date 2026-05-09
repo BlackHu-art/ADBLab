@@ -5,6 +5,7 @@ import subprocess
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -175,9 +176,11 @@ class MainFrame(QMainWindow):
         layout.setContentsMargins(10, 0, 6, 0)
         layout.setSpacing(4)
 
-        # App title + function buttons
+        # App title
         title = QLabel("ADBLab")
         layout.addWidget(title)
+
+        # Function buttons
         self.tb_app_mgr = self._create_toolbar_btn("App Manager", "resources/icons/Install_app.svg")
         self.tb_app_mgr.setFixedSize(28, 24)
         self.tb_file_explorer = self._create_toolbar_btn(
@@ -190,11 +193,26 @@ class MainFrame(QMainWindow):
         self.tb_settings.setFixedSize(28, 24)
         self.tb_cmd = self._create_toolbar_btn("CMD", "resources/icons/Input.svg")
         self.tb_cmd.setFixedSize(28, 24)
+
+        # Save path indicator + change button
+        self._tb_save_btn = QPushButton("GlobalSavePath")
+        self._tb_save_btn.setObjectName("savePathBtn")
+        self._tb_save_btn.setFlat(True)
+        self._tb_save_btn.setCursor(Qt.PointingHandCursor)
+        self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
+        
+        # Save path indicator + change button
+        self._save_path_label = QLabel()
+        self._save_path_label.setObjectName("savePathLabel")
+        self._refresh_save_path()
+
         layout.addWidget(self.tb_app_mgr)
         layout.addWidget(self.tb_file_explorer)
         layout.addWidget(self.tb_logcat)
         layout.addWidget(self.tb_settings)
         layout.addWidget(self.tb_cmd)
+        layout.addWidget(self._tb_save_btn)
+        layout.addWidget(self._save_path_label)
         layout.addStretch()
 
         # Right-side tool buttons
@@ -256,6 +274,7 @@ class MainFrame(QMainWindow):
         """)
         for bar in self.findChildren(QFrame, "toolbar"):
             bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
+        self._refresh_save_path()
         # Splitter handle theme
         self._panel_splitter.setStyleSheet(
             f"QSplitter::handle {{ background-color: {BaseStyles.color('BORDER_COLOR')}; }}"
@@ -472,6 +491,31 @@ class MainFrame(QMainWindow):
             s = AppSettings.instance()
             s.set("left_panel_width", sizes[0])
             s.set("right_panel_width", sizes[1])
+
+    # ── Save path (toolbar top-left) ──────────────────────────────────
+
+    def _refresh_save_path(self):
+        from core.settings_manager import AppSettings
+        path = AppSettings.instance().save_directory
+        if path and os.path.isdir(path):
+            short = path if len(path) <= 36 else "..." + path[-33:]
+            self._save_path_label.setText(short)
+            self._save_path_label.setToolTip(path)
+        else:
+            self._save_path_label.setText("")
+        self._save_path_label.setStyleSheet(
+            f"color: {BaseStyles.color('TEXT_SECONDARY')}; font-size: 10px; padding: 0 2px;"
+        )
+
+    def _on_save_path_clicked(self):
+        from core.settings_manager import AppSettings
+        s = AppSettings.instance()
+        current = s.save_directory
+        d = QFileDialog.getExistingDirectory(self, "Select Default Save Directory",
+            current if os.path.isdir(current) else "")
+        if d:
+            s.set("save_directory", d)
+            self._refresh_save_path()
 
     # ── Toolbar drag-to-move window ──────────────────────────────────
 
