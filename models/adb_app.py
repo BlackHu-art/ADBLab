@@ -6,8 +6,11 @@ Imports only from adb_model (core) — no circular dependencies.
 
 import re
 import subprocess
+import sys
 
 from .adb_model import ADBModelCore, async_command
+
+_CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class ADBApp(ADBModelCore):
@@ -54,7 +57,7 @@ class ADBApp(ADBModelCore):
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=120,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_CF,
             )
             return {
                 "success": True,
@@ -78,7 +81,7 @@ class ADBApp(ADBModelCore):
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_CF,
             )
             return {
                 "success": True,
@@ -111,7 +114,7 @@ class ADBApp(ADBModelCore):
                 stderr=subprocess.STDOUT,
                 text=True,
                 timeout=30,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_CF,
             )
             return {
                 "success": True,
@@ -227,7 +230,7 @@ class ADBApp(ADBModelCore):
         try:
             cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "packages"]
             output = subprocess.check_output(
-                cmd, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW
+                cmd, stderr=subprocess.STDOUT, text=True, creationflags=_CF
             )
             packages = [
                 line.replace("package:", "").strip()

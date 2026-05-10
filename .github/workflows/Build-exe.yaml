@@ -1,4 +1,4 @@
-name: Build EXE
+name: Build
 
 on:
   workflow_dispatch:
@@ -8,105 +8,100 @@ on:
 permissions: write-all
 
 env:
-  FIRMWARE_WIN: ADBLab
   VERSION: v2.9.${{ github.run_number }}
 
 jobs:
   build:
-    name: Build Windows Executable
-    runs-on: windows-latest
-
+    name: Build ${{ matrix.os }}
     strategy:
       matrix:
         include:
-#          - arch: x86
-          - arch: x64
+          - os: windows-latest
+            artifact: ADBLab-win-x64
+            onefile: --windowed
+            icon: --icon icon.ico
+            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1"
+            pip_cache: ~\AppData\Local\pip\Cache
+            shell: powershell
+            clean: Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+            ext: .exe
+
+          - os: macos-latest
+            artifact: ADBLab-macos-x64
+            onefile: --windowed
+            icon: ""
+            datas: --add-data "resources;resources" --add-data "icon.ico;."
+            pip_cache: ~/Library/Caches/pip
+            shell: bash
+            clean: rm -rf build dist
+            ext: ""
+
+          - os: ubuntu-latest
+            artifact: ADBLab-linux-x64
+            onefile: ""
+            icon: ""
+            datas: --add-data "resources;resources" --add-data "icon.ico;."
+            pip_cache: ~/.cache/pip
+            shell: bash
+            clean: rm -rf build dist
+            ext: ""
+
+    runs-on: ${{ matrix.os }}
 
     steps:
-      # 1. 拉取代码
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. Python 环境
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          architecture: ${{ matrix.arch }}
 
-      # 3. 缓存 pip
-      - name: Cache pip packages
+      - name: Cache pip
         uses: actions/cache@v4
         with:
-          path: C:\Users\runneradmin\AppData\Local\pip\Cache
+          path: ${{ matrix.pip_cache }}
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          restore-keys: ${{ runner.os }}-pip-
 
-      # 4. 清理旧构建文件
-      - name: Clean environment
-        shell: powershell
-        run: |
-          Write-Host "🧹 Cleaning build environment..."
-          Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
+      - name: Clean
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.clean }}
 
-      # 5. 安装依赖
       - name: Install dependencies
-        shell: powershell
+        shell: ${{ matrix.shell }}
+        run: pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        shell: ${{ matrix.shell }}
         run: |
-          Write-Host "Installing dependencies..."
-          pip install -r requirements.txt
+          python -m PyInstaller \
+            --name "ADBLab-${{ matrix.artifact }}-${{ env.VERSION }}" \
+            --onefile ${{ matrix.onefile }} \
+            ${{ matrix.icon }} \
+            ${{ matrix.datas }} \
+            main.py
 
-      # 6. 使用 PyInstaller 打包
-      - name: Build EXE with PyInstaller
-        shell: powershell
-        run: |
-          # 检查必要文件是否存在
-          if (!(Test-Path "main.py")) {
-            Write-Error "main.py not found in current directory"
-            exit 1
-          }
-      
-          Write-Host "🚀 Building for ${{ matrix.arch }}..."
-      
-          $data = "--add-data `"resources;resources`" --add-data `"icon.ico;.`" --add-data `"scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1`""
-          if (Test-Path "icon.ico") {
-            Write-Host "Using icon.ico"
-            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed --icon icon.ico $data main.py"
-          } else {
-            Write-Host "Building without icon"
-            $command = "python -m PyInstaller --name ADBLab-${{ matrix.arch }}-${{ env.VERSION }} --onefile --windowed $data main.py"
-          }
-      
-          # 执行构建命令
-          Invoke-Expression $command
-
-
-      # 7. 上传构建产物
-      - name: Upload Windows artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ADBLab-${{ matrix.arch }}-exe
-          path: |
-            dist/*.exe
+          name: ${{ matrix.artifact }}
+          path: dist/*
           if-no-files-found: error
 
-  # Release Job
   release:
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # 下载所有 artifacts
-      - name: Download build artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release_artifacts
 
-      # 创建 Release
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -115,4 +110,3 @@ jobs:
           draft: false
           prerelease: false
           files: release_artifacts/**/*
-
