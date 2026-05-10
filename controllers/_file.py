@@ -30,7 +30,7 @@ class ADBFileMixin(_ADBControllerBase):
         "pm_list_features": "_process_pm_list_features_result",
     }
 
-    # ── 文件管理 ──
+    # -- File Management --
 
     def file_list(self, devices: list, path: str = "/sdcard"):
         if not devices:
@@ -89,7 +89,7 @@ class ADBFileMixin(_ADBControllerBase):
         else:
             self._emit_operation("file_pull", False, f"Pull failed on {ip}: {result.get('error')}")
 
-    # ── 端口转发 ──
+    # -- Port Forwarding --
 
     def forward_port(self, devices: list, local_port: str, remote_port: str):
         if not devices:
@@ -221,7 +221,7 @@ class ADBFileMixin(_ADBControllerBase):
                 "content_query", False, f"Content query failed on {ip}: {result.get('error')}"
             )
 
-    # ── 快捷设置 ──
+    # -- Quick Settings --
 
     def quick_setting(self, devices: list, action: str):
         if not devices:

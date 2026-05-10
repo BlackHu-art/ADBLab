@@ -639,7 +639,7 @@ class FileExplorerDialog(QDialog):
             dst = os.path.join(dest, name)
             w = self._run_transfer("pull", src, dst)
             w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
-            w.finished.connect(lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"))
+            w.finished.connect(lambda o, e, d, n=name: self._on_transfer_done(o, e, f"Pulled {n}"))
             w.start()
 
     def _push_file(self):
@@ -650,8 +650,9 @@ class FileExplorerDialog(QDialog):
             dst = self._dpath(self.current_path, os.path.basename(fp))
             w = self._run_transfer("push", fp, dst)
             w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
+            bn = os.path.basename(fp)
             w.finished.connect(
-                lambda o, e, d: self._on_transfer_done(o, e, f"Pushed {os.path.basename(fp)}")
+                lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}")
             )
             w.start()
 

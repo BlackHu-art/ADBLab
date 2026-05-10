@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import zipfile
 
@@ -36,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
+from utils.adb_resolver import CF
 from utils.resource_path import resource_path
 
 # ── 后台工作线程 ──────────────────────────────────────────────────────────
@@ -55,6 +55,11 @@ class AppManagerWorker(QThread):
         self.device_ip = device_ip
         self.operation = operation
         self.kwargs = kwargs
+        self._aborted = False
+
+    def abort(self):
+        self._aborted = True
+        self.requestInterruption()
 
     def run(self):
         ops = {
@@ -83,20 +88,19 @@ class AppManagerWorker(QThread):
 
     def _adb(self, *args, timeout=30):
         cmd = ["adb", "-s", self.device_ip] + list(args)
-        cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         return subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            creationflags=cf,
-            timeout=timeout,
+            cmd, capture_output=True, text=True, creationflags=CF, timeout=timeout,
         )
 
     def _load_apps(self):
         self.log_message.emit("Fetching installed apps...")
         try:
             r = self._adb("shell", "pm", "list", "packages", "-f")
+            if self._aborted:
+                return
             dr = self._adb("shell", "pm", "list", "packages", "-d")
+            if self._aborted:
+                return
             disabled = {line.replace("package:", "").strip() for line in dr.stdout.splitlines()}
             apps = []
             for line in r.stdout.splitlines():
@@ -412,8 +416,12 @@ class AppDetailsDialog(QDialog):
 
     def closeEvent(self, event):
         for w in self._workers:
-            w.quit()
-            w.wait(1000)
+            w.abort()
+        for w in self._workers:
+            if not w.wait(3000):
+                w.terminate()
+                w.wait(1000)
+        self._workers.clear()
         super().closeEvent(event)
 
 
@@ -824,7 +832,7 @@ class AppManagerDialog(QDialog):
                 ["adb", "-s", self.device_ip, "shell", "am", "force-stop", pkg],
                 capture_output=True,
                 text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                creationflags=CF,
             )
             self.log(f"Force stopped: {pkg}")
         elif action == "clear":
@@ -991,6 +999,10 @@ class AppManagerDialog(QDialog):
 
     def closeEvent(self, event):
         for w in self._workers:
-            w.quit()
-            w.wait(1000)
+            w.abort()
+        for w in self._workers:
+            if not w.wait(3000):
+                w.terminate()
+                w.wait(1000)
+        self._workers.clear()
         super().closeEvent(event)

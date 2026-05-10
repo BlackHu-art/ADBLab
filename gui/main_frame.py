@@ -146,10 +146,9 @@ class MainFrame(QMainWindow):
         import sys
 
         try:
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            from utils.adb_resolver import adb_path
+            from utils.adb_resolver import CF, adb_path
             r = subprocess.run(
-                [adb_path(), "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
+                [adb_path(), "devices"], capture_output=True, text=True, creationflags=CF, timeout=5
             )
             devices = [
                 line.split("\t")[0]
@@ -318,7 +317,6 @@ class MainFrame(QMainWindow):
             (LP.restart_devices_requested, AC.restart_devices),
             (LP.restart_adb_requested, AC.restart_adb),
             (LP.reboot_mode_requested, AC.reboot_mode),
-            (LP.pair_device_requested, AC.pair_device),
             (LP.tcpip_mode_requested, AC.tcpip_mode),
             # Screenshot & screen recording
             (LP.screenshot_requested, AC.take_screenshot),
@@ -328,7 +326,6 @@ class MainFrame(QMainWindow):
             # Logging
             (LP.retrieve_logs_requested, AC.retrieve_device_logs),
             (LP.cleanup_logs_requested, AC.cleanup_device_logs),
-            (LP.logcat_filtered_requested, AC.logcat_filtered),
             # Input
             (LP.send_text_requested, AC.input_text),
             (LP.input_tap_requested, AC.input_tap),
@@ -338,14 +335,11 @@ class MainFrame(QMainWindow):
             (LP.generate_email_requested, AC.get_random_email_and_code),
             # App management
             (LP.get_program_requested, AC.get_current_package),
-            (LP.install_app_requested, AC.install_apk),
             (LP.uninstall_app_requested, AC.uninstall_apk),
             (LP.clear_app_data_requested, AC.clear_app_data),
             (LP.restart_app_requested, AC.restart_app),
             (LP.print_activity_requested, AC.get_current_activity),
             (LP.parse_apk_info_requested, AC.parse_apk_info),
-            (LP.grant_permission_requested, AC.grant_permission),
-            (LP.revoke_permission_requested, AC.revoke_permission),
             (LP.disable_app_requested, AC.disable_app),
             (LP.enable_app_requested, AC.enable_app),
             (LP.force_stop_requested, AC.force_stop),
@@ -355,7 +349,6 @@ class MainFrame(QMainWindow):
             # Testing
             (LP.start_monkey_requested, AC.run_monkey_test),
             (LP.kill_monkey_requested, AC.kill_monkey),
-            (LP.list_installed_packages_requested, AC.list_installed_packages),
             (LP.capture_bugreport_requested, AC.capture_bugreport),
             (LP.pull_anr_file_requested, AC.pull_anr_files),
             (LP.dumpsys_meminfo_requested, AC.dumpsys_meminfo),
@@ -363,9 +356,6 @@ class MainFrame(QMainWindow):
             (LP.dumpsys_battery_requested, AC.dumpsys_battery),
             # Shell & file
             (LP.shell_command_requested, AC.run_shell_command),
-            (LP.file_list_requested, AC.file_list),
-            (LP.file_push_requested, AC.file_push),
-            (LP.file_pull_requested, AC.file_pull),
             # Network & settings
             (LP.forward_port_requested, AC.forward_port),
             (LP.list_forwards_requested, AC.list_forwards),
@@ -397,13 +387,11 @@ class MainFrame(QMainWindow):
     def _initial_refresh(self):
         """Wake ADB server and trigger first device scan via controller."""
         import subprocess
-        import sys
-        from utils.adb_resolver import adb_path
+        from utils.adb_resolver import CF, adb_path
 
-        cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         try:
             subprocess.run(
-                [adb_path(), "start-server"], capture_output=True, creationflags=cf, timeout=10
+                [adb_path(), "start-server"], capture_output=True, creationflags=CF, timeout=10
             )
         except Exception:
             pass
@@ -539,4 +527,13 @@ class MainFrame(QMainWindow):
 
     def closeEvent(self, event):
         self.log_panel._append_log("INFO", "Application shutting down...")
+        self._usb_timer.stop()
+        for dlg in list(self._active_dialogs):
+            try:
+                dlg.close()
+            except Exception:
+                pass
+        self._active_dialogs.clear()
+        self.adb_controller.executor.shutdown(wait=True, cancel_futures=True)
+        self.log_service.shutdown()
         super().closeEvent(event)

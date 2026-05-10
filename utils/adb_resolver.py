@@ -2,11 +2,16 @@
 
 import os
 import shutil
+import subprocess
+import sys
 
 from utils.resource_path import resource_path
 
 _adb_path: str | None = None
 _resolved: bool = False
+
+# Reusable creation flags to suppress console windows on Windows
+CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def resolve_adb_path() -> str | None:

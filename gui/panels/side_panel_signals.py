@@ -27,7 +27,6 @@ class SidePanelSignals(QObject):
     restart_devices_requested = Signal(list)
     restart_adb_requested = Signal()
     reboot_mode_requested = Signal(list, str)  # (devices, mode)
-    pair_device_requested = Signal(str, str, str)  # (ip, port, pairing_code)
     tcpip_mode_requested = Signal(list, str)  # (devices, port)
 
     # ── Screenshot & Recording ──
@@ -39,10 +38,6 @@ class SidePanelSignals(QObject):
     # ── Logs ──
     retrieve_logs_requested = Signal(list)
     cleanup_logs_requested = Signal(list)
-    logcat_filtered_requested = Signal(
-        list, str, str, str, str
-    )  # (devices, buffer, priority, tag, regex)
-
     # ── Input ──
     send_text_requested = Signal(list, str)
     input_tap_requested = Signal(list, int, int)  # (devices, x, y)
@@ -53,14 +48,11 @@ class SidePanelSignals(QObject):
     generate_email_requested = Signal()
     get_program_requested = Signal(list)
     current_package_received = Signal(str, str)
-    install_app_requested = Signal(list)
     uninstall_app_requested = Signal(list, str)
     clear_app_data_requested = Signal(list, str)
     restart_app_requested = Signal(list, str)
     print_activity_requested = Signal(list)
     parse_apk_info_requested = Signal()
-    grant_permission_requested = Signal(list, str, str)  # (devices, package, permission)
-    revoke_permission_requested = Signal(list, str, str)  # (devices, package, permission)
     disable_app_requested = Signal(list, str)  # (devices, package)
     enable_app_requested = Signal(list, str)  # (devices, package)
     force_stop_requested = Signal(list, str)  # (devices, package)
@@ -80,15 +72,11 @@ class SidePanelSignals(QObject):
     # ── Monkey & Testing ──
     kill_monkey_requested = Signal(list)
     pull_anr_file_requested = Signal(list)
-    list_installed_packages_requested = Signal(list)
     capture_bugreport_requested = Signal(list)
     start_monkey_requested = Signal(list, str, str, str)
 
     # ── Shell & File ──
     shell_command_requested = Signal(list, str)  # (devices, command)
-    file_list_requested = Signal(list, str)  # (devices, path)
-    file_push_requested = Signal(list, str, str)  # (devices, local, remote)
-    file_pull_requested = Signal(list, str)  # (devices, remote_path)
 
     # ── Port Forwarding ──
     forward_port_requested = Signal(list, str, str)  # (devices, local, remote)

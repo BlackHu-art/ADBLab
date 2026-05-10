@@ -13,7 +13,7 @@ class ADBInputMixin(_ADBControllerBase):
     advanced_model: ADBAdvanced
     app_model: ADBApp
     signals: ADBControllerSignals
-    _pending_operations: dict
+    _pending_ops: dict
 
     _handlers = {
         "input_tap": "_process_input_tap_result",
@@ -26,7 +26,7 @@ class ADBInputMixin(_ADBControllerBase):
         "settings_put": "_process_settings_put_result",
     }
 
-    # ── 输入事件 ──
+    # -- Input Events --
 
     def input_tap(self, devices: list, x: int, y: int):
         if not devices:
@@ -92,7 +92,7 @@ class ADBInputMixin(_ADBControllerBase):
 
     def _send_text_to_device(self, device_ip: str, text: str):
         operation_id = self._generate_operation_id()
-        self._pending_operations[operation_id] = ("input_text", device_ip)
+        self._pending_ops[operation_id] = ("input_text", device_ip)
         self.app_model.input_text_async(device_ip, text)
 
     def _process_input_text_result(self, result: dict):
@@ -132,7 +132,7 @@ class ADBInputMixin(_ADBControllerBase):
                 "shell_command", False, f"Shell failed on {ip}: {result.get('error')}"
             )
 
-    # ── 系统设置 ──
+    # -- System Settings --
 
     def settings_list(self, devices: list, namespace: str = "system"):
         if not devices:

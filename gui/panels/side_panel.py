@@ -24,7 +24,7 @@ from gui.styles.base_styles import BaseStyles
 
 
 class SidePanel(QWidget):
-    """左侧面板 — 创建并管理 5 个功能标签页。"""
+    """左侧面板 — 创建并管理 5 个Function tabs。"""
 
     PANEL_WIDTH = 600
 
@@ -45,7 +45,7 @@ class SidePanel(QWidget):
         self._create_ui()
         self._connect_all_signals()
 
-    # ── 字体 ──────────────────────────────────────────────────────────────
+    # ── Font ──────────────────────────────────────────────────────────────
 
     def _create_fonts(self):
         F = BaseStyles.DEFAULT_FONT_FAMILY
@@ -56,18 +56,18 @@ class SidePanel(QWidget):
         self._font_base = QFont(F, ui_size)
         self._font_tab = QFont(F, ui_size)
 
-    # ── UI 构建 ───────────────────────────────────────────────────────────
+    # ── UI construction ───────────────────────────────────────────────────────────
 
     def _create_ui(self):
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
 
-        # 设备管理（UI 由 MainFrame 放入左列，先构建以便 connect_signals）
+        # Device manager (UI placed by MainFrame in left column，先构建以便 connect_signals）
         self._devices_tab = DeviceManager(self)
         self._device_widget = self._devices_tab.build_ui()
 
-        # 功能标签页
+        # Function tabs
         self.tabs = QTabWidget()
         self.tabs.setFont(self._font_tab)
         self._apply_tab_style()
@@ -93,7 +93,7 @@ class SidePanel(QWidget):
 
         lo.addWidget(self.tabs, stretch=1)
 
-    # ── 共享属性（委托给子标签页）──────────────────────────────────────────
+    # ── Shared properties（委托给子标签页）──────────────────────────────────────────
 
     @property
     def selected_devices(self) -> list[str]:
@@ -103,7 +103,7 @@ class SidePanel(QWidget):
     def ip_address(self) -> str:
         return self._devices_tab.ip_address
 
-    # ── 公共方法（MainFrame 调用）──────────────────────────────────────────
+    # ── Public methods（MainFrame 调用）──────────────────────────────────────────
 
     def update_device_list(self, devices: list[str] = None):
         self._devices_tab.update_device_list(devices)
@@ -120,7 +120,7 @@ class SidePanel(QWidget):
     def update_vercode(self, t: str):
         self._apps_tab.update_vercode(t)
 
-    # ── 主题 ──────────────────────────────────────────────────────────────
+    # ── Theme ──────────────────────────────────────────────────────────────
 
     def _apply_tab_style(self):
         bs = BaseStyles

@@ -5,13 +5,10 @@ Path resolution: delegates to utils.adb_resolver (bundled scrcpy ADB > system PA
 
 import logging
 import subprocess
-import sys
 
-from utils.adb_resolver import adb_path
+from utils.adb_resolver import CF, adb_path
 
 logger = logging.getLogger("adb_bridge")
-
-_CREATION_FLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class ADBBridge:
@@ -25,7 +22,7 @@ class ADBBridge:
     # -- core helpers ----------------------------------------------------
 
     def _open(self, cmd: list[str], **kw):
-        kw.setdefault("creationflags", _CREATION_FLAGS)
+        kw.setdefault("creationflags", CF)
         return subprocess.Popen(cmd, **kw)
 
     def _decode(self, proc: subprocess.Popen) -> str:

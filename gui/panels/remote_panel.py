@@ -3,7 +3,6 @@
 import os
 import re
 import subprocess
-import sys
 import threading
 
 from PySide6.QtCore import QTimer
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
+from utils.adb_resolver import CF
 from utils.resource_path import resource_path
 
 
@@ -293,7 +293,7 @@ class RemotePanel(BasePanel):
         try:
             r = subprocess.run(
                 [exe, "--version"], capture_output=True, text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                creationflags=CF,
                 timeout=3,
             )
             m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.stdout)
@@ -340,7 +340,7 @@ class RemotePanel(BasePanel):
 
     def _detect_encoder(self, device: str) -> str | None:
         from utils.adb_resolver import adb_path
-        cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        cf = CF
         try:
             r = subprocess.run(
                 [adb_path(), "-s", device, "shell", "dumpsys", "media.codec"],
@@ -438,7 +438,7 @@ class RemotePanel(BasePanel):
         self._log("INFO", f"Launching: scrcpy {' '.join(args[2:])}")
 
         try:
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            cf = CF
             self._process = subprocess.Popen(
                 args, stderr=subprocess.PIPE, text=True, creationflags=cf,
             )
@@ -520,7 +520,7 @@ class RemotePanel(BasePanel):
         subprocess.run(
             [adb_path(), "-s", devices[0], "shell", "input", "keyevent", code],
             capture_output=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            creationflags=CF,
         )
 
     # -- helpers ----------------------------------------------------------
