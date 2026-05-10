@@ -143,7 +143,6 @@ class MainFrame(QMainWindow):
     def _check_new_devices(self):
         """Poll for new USB devices and auto-refresh the device list on change."""
         import subprocess
-        import sys
 
         try:
             from utils.adb_resolver import CF, adb_path
