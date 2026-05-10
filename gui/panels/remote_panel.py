@@ -1,21 +1,25 @@
 """Screen Mirroring & Remote Control tab -- scrcpy launcher, D-Pad, quick keys."""
 
 import os
+import re
 import subprocess
 import sys
+import threading
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
 
+from core.adb_bridge import ADBBridge
+from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
 from utils.resource_path import resource_path
 
@@ -38,9 +42,31 @@ class RemotePanel(BasePanel):
         "CH_UP": "166", "CH_DOWN": "167",
     }
 
+    _PRESETS = {
+        0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "30"},
+        1: {"maxsize": "1280", "fps": "30", "bitrate": "8",  "codec": "h264", "buffer": "20"},
+        2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "codec": "h265", "buffer": "50"},
+        3: {"maxsize": "720",  "fps": "24", "bitrate": "2",  "codec": "h264", "buffer": "0"},
+    }
+
+    _PRESET_NAMES = ["Smooth", "Balanced", "Quality", "Low Latency"]
+
+    _SIZES = ["1024", "1280", "1920", "480p", "720p", "1080p", "Default"]
+    _FPS   = ["24", "30", "60", "120"]
+    _CODECS = ["h264", "h265", "av1"]
+    _BUFFERS = ["0", "10", "20", "30", "50", "100", "150", "200"]
+    _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
+    _ORIENTATIONS = ["0", "90", "180", "270"]
+    _AUDIO_SOURCES = ["playback", "mic"]
+
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
         self._process = None
+        self._running = False
+        self._watchdog = QTimer(self)
+        self._watchdog.timeout.connect(self._poll_process)
+        self._settings = AppSettings.instance()
+        self._adb = ADBBridge()
 
     # -- UI ----------------------------------------------------------------
 
@@ -57,60 +83,124 @@ class RemotePanel(BasePanel):
     def _build_mirroring(self) -> QWidget:
         g = self._g("Screen Mirroring")
         gl = QVBoxLayout(g)
-        gl.setSpacing(4)
+        gl.setSpacing(2)
 
-        # row 1: preset + start/stop
+        # Row 0: Preset + status (B8)
         r1 = QHBoxLayout()
         r1.setSpacing(6)
         r1.addWidget(QLabel("Preset"))
-        self.preset = self._combo(["Smooth", "Balanced", "High Quality", "Custom"])
+        self.preset = self._combo(self._PRESET_NAMES)
+        self.preset.setCurrentText(self._load("preset", "Smooth"))
+        self._status_label = QLabel("● Idle")
+        self._status_label.setFont(self._font_sm)
         r1.addWidget(self.preset, 1)
-        r1.addSpacing(12)
-        r1.addWidget(QLabel("Size"))
-        self.maxsize = self._combo(["Default", "480p", "720p", "1080p"])
-        r1.addWidget(self.maxsize, 1)
-        r1.addWidget(QLabel("FPS"))
-        self.fps = self._combo(["30", "60", "120"])
-        r1.addWidget(self.fps, 1)
+        r1.addWidget(self._status_label)
         gl.addLayout(r1)
 
-        # row 2: bitrate
+        # Row 2: Size | FPS
         r2 = QHBoxLayout()
         r2.setSpacing(6)
-        r2.addWidget(QLabel("Bitrate"))
-        self.bitrate = QSlider(Qt.Horizontal)
-        self.bitrate.setRange(1, 50)
-        self.bitrate.setValue(8)
-        self.bitrate_label = QLabel("8 Mbps")
-        self.bitrate_label.setFont(self._font_sm)
-        self.bitrate_label.setFixedWidth(52)
-        self.bitrate.valueChanged.connect(lambda v: self.bitrate_label.setText(f"{v} Mbps"))
-        r2.addWidget(self.bitrate, 3)
-        r2.addWidget(self.bitrate_label)
+        r2.addWidget(QLabel("Size"))
+        self.maxsize = self._combo(self._SIZES)
+        self.maxsize.setCurrentText(self._load("maxsize", "1024"))
+        r2.addWidget(self.maxsize, 1)
+        r2.addWidget(QLabel("FPS"))
+        self.fps = self._combo(self._FPS)
+        self.fps.setCurrentText(self._load("fps", "30"))
+        r2.addWidget(self.fps, 1)
         gl.addLayout(r2)
 
-        # row 3: checkboxes
+        # Row 3: Codec | Buffer
         r3 = QHBoxLayout()
-        r3.setSpacing(10)
+        r3.setSpacing(6)
+        r3.addWidget(QLabel("Codec"))
+        self.codec = self._combo(self._CODECS)
+        self.codec.setCurrentText(self._load("codec", "h264"))
+        r3.addWidget(self.codec, 1)
+        r3.addWidget(QLabel("Buffer"))
+        self.buffer = self._combo(self._BUFFERS)
+        self.buffer.setCurrentText(self._load("buffer", "30"))
+        r3.addWidget(self.buffer, 1)
+        gl.addLayout(r3)
+
+        # Row 4: Bitrate | Orientation (A5)
+        r4 = QHBoxLayout()
+        r4.setSpacing(6)
+        r4.addWidget(QLabel("Bitrate"))
+        self.bitrate = self._combo(self._BITRATES)
+        self.bitrate.setCurrentText(self._load("bitrate", "4"))
+        r4.addWidget(self.bitrate, 1)
+        r4.addWidget(QLabel("Orient"))
+        self.orientation = self._combo(self._ORIENTATIONS)
+        self.orientation.setToolTip("Lock video orientation (0=auto)")
+        r4.addWidget(self.orientation, 1)
+        gl.addLayout(r4)
+
+        # Row 5: Audio source (B10) + device info (B7)
+        r5 = QHBoxLayout()
+        r5.setSpacing(6)
+        r5.addWidget(QLabel("Audio"))
+        self.audio_source = self._combo(self._AUDIO_SOURCES)
+        self.audio_source.setToolTip("Audio capture source")
+        r5.addWidget(self.audio_source, 1)
+        self._device_info = QLabel("")
+        self._device_info.setFont(self._font_sm)
+        r5.addWidget(self._device_info, 3)
+        gl.addLayout(r5)
+
+        # Row 6: Record path (A3/A4)
+        r6 = QHBoxLayout()
+        r6.setSpacing(6)
+        self.chk_record = QCheckBox("Record")
+        self.chk_record.setFont(self._font_sm)
+        self.chk_record.setToolTip("Record mirroring to file")
+        self.chk_record.toggled.connect(self._on_record_toggled)
+        r6.addWidget(self.chk_record)
+        self.record_path = QLabel("")
+        self.record_path.setFont(self._font_sm)
+        r6.addWidget(self.record_path, 1)
+        self.chk_noplayback = QCheckBox("No Playback")
+        self.chk_noplayback.setFont(self._font_sm)
+        self.chk_noplayback.setToolTip("Record only, no display window")
+        r6.addWidget(self.chk_noplayback)
+        gl.addLayout(r6)
+
+        # Row 7: Checkboxes - distributed rows
+        r7a = QHBoxLayout()
+        r7a.setSpacing(16)
+        col1 = QVBoxLayout()
+        col1.setSpacing(4)
+        col2 = QVBoxLayout()
+        col2.setSpacing(4)
+        col3 = QVBoxLayout()
+        col3.setSpacing(4)
         self.chk_fullscreen = QCheckBox("Fullscreen")
         self.chk_aot = QCheckBox("Always on Top")
+        self.chk_stayawake = QCheckBox("Stay Awake")           # A1
+        self.chk_turnscreenoff = QCheckBox("Turn Screen Off")  # A2
         self.chk_noaudio = QCheckBox("No Audio")
         self.chk_noaudio.setChecked(True)
         self.chk_showtouches = QCheckBox("Show Touches")
-        for cb in (self.chk_fullscreen, self.chk_aot, self.chk_noaudio, self.chk_showtouches):
+        for cb, col in [(self.chk_fullscreen, col1), (self.chk_aot, col2),
+                        (self.chk_stayawake, col1), (self.chk_turnscreenoff, col2),
+                        (self.chk_noaudio, col3), (self.chk_showtouches, col3)]:
             cb.setFont(self._font_sm)
-            r3.addWidget(cb)
-        r3.addStretch()
-        gl.addLayout(r3)
+            col.addWidget(cb)
+        r7a.addLayout(col1)
+        r7a.addLayout(col2)
+        r7a.addLayout(col3)
+        r7a.addStretch()
+        gl.addLayout(r7a)
 
-        # row 4: start / stop (full-width, 2 buttons)
-        r4 = QHBoxLayout()
-        r4.setSpacing(4)
-        self.btn_start = self._b("Start", "Restart.svg")
-        self.btn_stop = self._b("Stop", "Kill_monkey.svg")
-        r4.addWidget(self.btn_start, 1)
-        r4.addWidget(self.btn_stop, 1)
-        gl.addLayout(r4)
+        # Row 8: Start / Stop
+        r8 = QHBoxLayout()
+        r8.setSpacing(4)
+        self.btn_start = self._b("Start (Ctrl+Enter)", "Restart.svg")
+        self.btn_stop = self._b("Stop (Ctrl+Q)", "Kill_monkey.svg")
+        self.btn_stop.setEnabled(False)
+        r8.addWidget(self.btn_start, 1)
+        r8.addWidget(self.btn_stop, 1)
+        gl.addLayout(r8)
 
         return g
 
@@ -160,26 +250,113 @@ class RemotePanel(BasePanel):
 
         return g
 
-    # -- signals ----------------------------------------------------------
+    # -- signals + shortcuts (B9) ----------------------------------------
 
     def connect_signals(self):
         self.btn_start.clicked.connect(self._start_scrcpy)
         self.btn_stop.clicked.connect(self._stop_scrcpy)
         self.preset.currentIndexChanged.connect(self._on_preset_changed)
+        # Save on any change (B6)
+        for combo, key in [(self.preset, "preset"), (self.maxsize, "maxsize"),
+                           (self.fps, "fps"), (self.codec, "codec"),
+                           (self.buffer, "buffer"), (self.bitrate, "bitrate")]:
+            combo.currentTextChanged.connect(lambda v, k=key: self._save(k, v))
+        # B9: Keyboard shortcuts
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
+        QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self._stop_scrcpy)
 
-    # -- scrcpy -----------------------------------------------------------
+    # -- B6: settings persistence ----------------------------------------
+
+    def _save(self, key: str, value: str):
+        self._settings.set(f"scrcpy_{key}", value)
+
+    def _load(self, key: str, default: str) -> str:
+        return self._settings.get(f"scrcpy_{key}", default)
+
+    # -- scrcpy presets ---------------------------------------------------
 
     def _on_preset_changed(self, idx: int):
-        presets = {
-            0: {"maxsize": "Default", "fps": "60", "bitrate": 4, "extra": "--max-fps 60"},
-            1: {"maxsize": "720p", "fps": "60", "bitrate": 8, "extra": ""},
-            2: {"maxsize": "1080p", "fps": "120", "bitrate": 16, "extra": ""},
-        }
-        if idx in presets:
-            p = presets[idx]
+        if idx in self._PRESETS:
+            p = self._PRESETS[idx]
             self.maxsize.setCurrentText(p["maxsize"])
             self.fps.setCurrentText(p["fps"])
-            self.bitrate.setValue(p["bitrate"])
+            self.bitrate.setCurrentText(p["bitrate"])
+            self.codec.setCurrentText(p["codec"])
+            self.buffer.setCurrentText(p["buffer"])
+
+    # -- C12: scrcpy version ----------------------------------------------
+
+    def _get_scrcpy_version(self) -> str:
+        exe = _bundled_scrcpy()
+        if not os.path.isfile(exe):
+            return "unknown"
+        try:
+            r = subprocess.run(
+                [exe, "--version"], capture_output=True, text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+                timeout=3,
+            )
+            m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.stdout)
+            return m.group(1) if m else "unknown"
+        except Exception:
+            return "unknown"
+
+    # -- B7: device screen info -------------------------------------------
+
+    def _fetch_device_info(self, device: str):
+        try:
+            dims = self._adb.get_dimensions(device_id=device)
+            if dims and len(dims) == 2:
+                self._device_info.setText(f"{dims[0]}x{dims[1]}")
+            else:
+                self._device_info.setText("")
+        except Exception:
+            self._device_info.setText("")
+
+    # -- A3: record toggle ------------------------------------------------
+
+    def _on_record_toggled(self, checked: bool):
+        if not checked:
+            self.record_path.setText("")
+            return
+        save_dir = self._settings.save_directory
+        os.makedirs(save_dir, exist_ok=True)
+        device = self.selected_devices[0] if self.selected_devices else "unknown"
+        device_tag = device.replace(":", "_").replace(".", "_")
+        from datetime import datetime
+        filename = f"scrcpy_{device_tag}_{datetime.now().strftime('%H%M%S')}.mp4"
+        self._record_path = os.path.join(save_dir, filename)
+        self.record_path.setText(self._record_path.replace("\\", "/"))
+
+    # -- pre-flight check -------------------------------------------------
+
+    def _preflight_check(self, device: str) -> bool:
+        try:
+            proc = self._adb.shell("echo ok", device_id=device)
+            return proc.stdout.read().decode().strip() == "ok"
+        except Exception as e:
+            self._log("WARNING", f"Pre-flight failed: {e}")
+            return False
+
+    def _detect_encoder(self, device: str) -> str | None:
+        from utils.adb_resolver import adb_path
+        cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        try:
+            r = subprocess.run(
+                [adb_path(), "-s", device, "shell", "dumpsys", "media.codec"],
+                capture_output=True, text=True, creationflags=cf, timeout=5,
+            )
+            for line in r.stdout.splitlines():
+                if "OMX" in line and "h264" in line.lower() and "encoder" in line.lower():
+                    return line.strip().split()[0]
+            for line in r.stdout.splitlines():
+                if "c2." in line and "h264" in line.lower() and "encoder" in line.lower():
+                    return line.strip().split()[0]
+        except Exception:
+            pass
+        return None
+
+    # -- scrcpy start / stop ----------------------------------------------
 
     def _start_scrcpy(self):
         exe = _bundled_scrcpy()
@@ -190,13 +367,52 @@ class RemotePanel(BasePanel):
         if not devices:
             self._log("WARNING", "No device selected")
             return
+        device = devices[0]
 
-        args = [exe, "-s", devices[0]]
+        # C12: log version
+        ver = self._get_scrcpy_version()
+        self._log("INFO", f"scrcpy v{ver}")
+
+        # B7: fetch device info
+        self._fetch_device_info(device)
+
+        if not self._preflight_check(device):
+            self._log("WARNING", "Pre-flight check failed — launching anyway...")
+
+        self._set_running(True)
+        self._update_status("Running", "#28A745")
+
+        args = [exe, "-s", device]
+
         size = self.maxsize.currentText()
         if size != "Default":
             args.extend(["-m", size.replace("p", "")])
+
         args.extend(["--max-fps", self.fps.currentText()])
-        args.append(f"--video-bit-rate={self.bitrate.value()}M")
+        args.append(f"--video-bit-rate={self.bitrate.currentText()}M")
+
+        codec = self.codec.currentText()
+        if codec != "h264":
+            args.extend(["--video-codec", codec])
+
+        buf = self.buffer.currentText()
+        if buf != "0":
+            args.append(f"--video-buffer={buf}")
+
+        # A5: Lock orientation
+        orient = self.orientation.currentText()
+        if orient != "0":
+            args.append(f"--lock-video-orientation={orient}")
+
+        # B10: Audio source
+        if not self.chk_noaudio.isChecked():
+            args.extend(["--audio-source", self.audio_source.currentText()])
+
+        encoder = self._detect_encoder(device)
+        if encoder:
+            args.extend(["--video-encoder", encoder])
+
+        # Checkbox flags
         if self.chk_fullscreen.isChecked():
             args.append("-f")
         if self.chk_aot.isChecked():
@@ -205,34 +421,97 @@ class RemotePanel(BasePanel):
             args.append("--no-audio")
         if self.chk_showtouches.isChecked():
             args.append("--show-touches")
+        if self.chk_stayawake.isChecked():                     # A1
+            args.append("--stay-awake")
+        if self.chk_turnscreenoff.isChecked():                 # A2
+            args.append("--turn-screen-off")
+
+        # A3/A4: Record / No Playback
+        if self.chk_record.isChecked() and hasattr(self, "_record_path"):
+            args.extend(["--record", self._record_path])
+        if self.chk_noplayback.isChecked():
+            args.append("--no-playback")
+
+        # C13: Print FPS
+        args.append("--print-fps")
+
+        self._log("INFO", f"Launching: scrcpy {' '.join(args[2:])}")
 
         try:
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            self._process = subprocess.Popen(args, creationflags=cf)
-            self._log("INFO", f"scrcpy started on {devices[0]}")
+            self._process = subprocess.Popen(
+                args, stderr=subprocess.PIPE, text=True, creationflags=cf,
+            )
+            threading.Thread(target=self._read_stderr, daemon=True).start()
+            self._watchdog.start(500)
         except Exception as e:
             self._log("ERROR", f"scrcpy start failed: {e}")
+            self._set_running(False)
+            self._update_status("Error", "#DC3545")
+
+    def _read_stderr(self):
+        if self._process and self._process.stderr:
+            for line in self._process.stderr:
+                line = line.strip()
+                if not line:
+                    continue
+                # C13: extract FPS from scrcpy stderr
+                m = re.search(r"\[(\d+\.?\d*)\s*fps\]", line)
+                if m:
+                    self._update_status(f"{m.group(1)} fps", None)
+                else:
+                    self._log("DEBUG", f"[scrcpy] {line}")
+
+    def _poll_process(self):
+        if not self._process:
+            self._watchdog.stop()
+            return
+        rc = self._process.poll()
+        if rc is not None:
+            self._watchdog.stop()
+            self._process = None
+            self._set_running(False)
+            self._update_status("Disconnected", "#FFC107")
+            if rc != 0:
+                self._log("WARNING", f"scrcpy exited with code {rc}")
 
     def _stop_scrcpy(self):
         if not self._process:
             return
+        self._watchdog.stop()
         try:
             self._process.terminate()
             try:
-                self._process.wait(timeout=3)
+                self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._process.kill()
-            self._process = None
             self._log("INFO", "scrcpy stopped")
         except Exception as e:
             self._log("ERROR", f"stop failed: {e}")
+        finally:
+            self._process = None
+            self._set_running(False)
+            self._update_status("Idle", None)
+
+    def _set_running(self, running: bool):
+        self._running = running
+        self.btn_start.setEnabled(not running)
+        self.btn_stop.setEnabled(running)
+
+    # -- B8: status indicator ---------------------------------------------
+
+    def _update_status(self, text: str, color: str | None):
+        if color:
+            self._status_label.setStyleSheet(
+                f"color: {color}; font-size: 10px; font-weight: bold;"
+            )
+        self._status_label.setText(f"● {text}")
 
     # -- key events -------------------------------------------------------
 
     def _send_keyevent(self, key_name: str):
         devices = self.selected_devices
         if not devices:
-            self._log("WARNING", "No device selected")
             return
         code = self._KEYCODE_MAP.get(key_name, "")
         if not code:
@@ -243,7 +522,6 @@ class RemotePanel(BasePanel):
             capture_output=True,
             creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         )
-        self._log("INFO", f"Key: {key_name}")
 
     # -- helpers ----------------------------------------------------------
 
