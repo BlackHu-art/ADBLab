@@ -28,9 +28,9 @@ from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
+from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
-from gui.styles.icon_loader import get_themed_icon
 from .styles.base_styles import BaseStyles, get_default_font
 
 
@@ -208,7 +208,7 @@ class MainFrame(QMainWindow):
         self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
 
         # Save path indicator + change button
-        self._save_path_label = QLabel("GlobalSavePath:")
+        self._save_path_label = QLabel()
         self._save_path_label.setObjectName("savePathLabel")
         self._refresh_save_path()
 
@@ -505,7 +505,7 @@ class MainFrame(QMainWindow):
         path = AppSettings.instance().save_directory
         if path and os.path.isdir(path):
             short = path if len(path) <= 36 else "..." + path[-33:]
-            self._save_path_label.setText(short)
+            self._save_path_label.setText("GlobalSavePath: " + short)
             self._save_path_label.setToolTip(path)
         else:
             self._save_path_label.setText("")
