@@ -11,7 +11,9 @@ import subprocess
 import sys
 import tempfile
 
-from PySide6.QtCore import Qt, QThread, Signal
+
+from PySide6.QtCore import QSize, Qt, QThread, Signal
+from gui.styles.icon_loader import get_themed_icon
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -168,6 +170,7 @@ class FileExplorerDialog(QDialog):
         self._sort_order = Qt.SortOrder.AscendingOrder
 
         self.setWindowTitle(f"File Explorer - {device_ip}")
+        self.setWindowIcon(get_themed_icon("folder-open.svg"))
         self.setMinimumSize(950, 620)
         self.resize(1000, 650)
         self.setModal(False)
@@ -201,27 +204,45 @@ class FileExplorerDialog(QDialog):
         tb = QHBoxLayout()
         tb.setSpacing(3)
         self.back_btn = QPushButton("<")
+        self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
+        self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.setToolTip("Back")
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
         self.fwd_btn = QPushButton(">")
+        self.fwd_btn.setIcon(get_themed_icon("arrow-right.svg"))
+        self.fwd_btn.setIconSize(QSize(14, 14))
         self.fwd_btn.setToolTip("Forward")
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
         self.up_btn = QPushButton("..")
+        self.up_btn.setIcon(get_themed_icon("arrow-up.svg"))
+        self.up_btn.setIconSize(QSize(14, 14))
         self.up_btn.setToolTip("Parent")
         self.up_btn.clicked.connect(self._go_parent)
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._refresh)
         self.mkdir_btn = QPushButton("New Folder")
+        self.mkdir_btn.setIcon(get_themed_icon("folder-plus.svg"))
+        self.mkdir_btn.setIconSize(QSize(14, 14))
         self.mkdir_btn.clicked.connect(self._mkdir)
         self.touch_btn = QPushButton("New File")
+        self.touch_btn.setIcon(get_themed_icon("file-plus.svg"))
+        self.touch_btn.setIconSize(QSize(14, 14))
         self.touch_btn.clicked.connect(self._touch)
         self.pull_btn = QPushButton("Pull")
+        self.pull_btn.setIcon(get_themed_icon("download-simple.svg"))
+        self.pull_btn.setIconSize(QSize(14, 14))
         self.pull_btn.clicked.connect(self._pull_selected)
         self.push_btn = QPushButton("Push")
+        self.push_btn.setIcon(get_themed_icon("upload-simple.svg"))
+        self.push_btn.setIconSize(QSize(14, 14))
         self.push_btn.clicked.connect(self._push_file)
         self.delete_btn = QPushButton("Delete")
+        self.delete_btn.setIcon(get_themed_icon("trash.svg"))
+        self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.clicked.connect(self._delete_selected)
         for b in (
             self.back_btn,
@@ -558,6 +579,8 @@ class FileExplorerDialog(QDialog):
         info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dlg.layout().addWidget(info)
         cb = QPushButton("Close")
+        cb.setIcon(get_themed_icon("x.svg"))
+        cb.setIconSize(QSize(14, 14))
         cb.clicked.connect(dlg.accept)
         dlg.layout().addWidget(cb, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -576,12 +599,18 @@ class FileExplorerDialog(QDialog):
         lo.addWidget(editor)
         btns = QHBoxLayout()
         save_as = QPushButton("Save As...")
+        save_as.setIcon(get_themed_icon("floppy-disk.svg"))
+        save_as.setIconSize(QSize(14, 14))
         save_as.clicked.connect(lambda: self._save_as(name, editor.toPlainText()))
         save_dev = QPushButton("Save to Device")
+        save_dev.setIcon(get_themed_icon("device-mobile.svg"))
+        save_dev.setIconSize(QSize(14, 14))
         save_dev.clicked.connect(
             lambda: self._save_to_device(name, editor.toPlainText(), full_path)
         )
         close = QPushButton("Close")
+        close.setIcon(get_themed_icon("x.svg"))
+        close.setIconSize(QSize(14, 14))
         close.clicked.connect(dlg.accept)
         for b in (save_as, save_dev, close):
             btns.addWidget(b)
@@ -803,8 +832,14 @@ class FileExplorerDialog(QDialog):
         lo.addWidget(preview)
         btn_row = QHBoxLayout()
         apply_btn = QPushButton("Apply")
+        apply_btn.setIcon(get_themed_icon("check-circle.svg"))
+        apply_btn.setIconSize(QSize(14, 14))
         revert_btn = QPushButton("Revert")
+        revert_btn.setIcon(get_themed_icon("arrow-u-up-left.svg"))
+        revert_btn.setIconSize(QSize(14, 14))
         close_btn = QPushButton("Close")
+        close_btn.setIcon(get_themed_icon("x.svg"))
+        close_btn.setIconSize(QSize(14, 14))
         btn_row.addStretch()
         for b in (revert_btn, apply_btn, close_btn):
             btn_row.addWidget(b)
@@ -938,6 +973,8 @@ class FileExplorerDialog(QDialog):
         v.setFont(QFont("Consolas", 9))
         lo.addWidget(v)
         cb = QPushButton("Close")
+        cb.setIcon(get_themed_icon("x.svg"))
+        cb.setIconSize(QSize(14, 14))
         cb.clicked.connect(dlg.accept)
         lo.addWidget(cb)
         dlg.show()

@@ -46,7 +46,7 @@ class DeviceManager(BasePanel):
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
         self.ip_entry.editTextChanged.connect(self._on_ip_edited)
-        self.btn_connect_devices = self._b("Connect", "Connect.svg")
+        self.btn_connect_devices = self._b("Connect", "plug.svg")
         rc.addWidget(self.ip_entry, 3)
         rc.addWidget(self.btn_connect_devices, 1)
         gd_l.addLayout(rc)
@@ -68,15 +68,15 @@ class DeviceManager(BasePanel):
         sl = QVBoxLayout(side)
         sl.setSpacing(2)
         sl.setContentsMargins(0, 0, 0, 0)
-        self.btn_refresh = self._b("Refresh", "Refresh.svg")
-        self.btn_info = self._b("Device Info", "Info.svg")
-        self.btn_disconnect = self._b("Disconnect", "Disconnect.svg")
-        self.btn_restart_dev = self._b("Restart", "Restart.svg")
-        self.btn_restart_adb = self._db("ADB Server", "Restore.svg")
+        self.btn_refresh = self._b("Refresh", "arrows-clockwise.svg")
+        self.btn_info = self._b("Device Info", "info.svg")
+        self.btn_disconnect = self._b("Disconnect", "link-break.svg")
+        self.btn_restart_dev = self._b("Restart", "arrow-counter-clockwise.svg")
+        self.btn_restart_adb = self._db("ADB Server", "arrow-u-up-left.svg")
         self.btn_restart_adb.setToolTip("Double-click to restart ADB server")
-        self.btn_batch = self._b("Batch Install", "Install_app.svg")
-        self.btn_all = self._qb("Select All")
-        self.btn_none = self._qb("Deselect All")
+        self.btn_batch = self._b("Batch Install", "stack-plus.svg")
+        self.btn_all = self._b("Select All", "check-square.svg")
+        self.btn_none = self._b("Deselect All", "square.svg")
         for b in (self.btn_refresh, self.btn_info, self.btn_disconnect,
                   self.btn_restart_dev, self.btn_restart_adb, self.btn_batch,
                   self.btn_all, self.btn_none):
@@ -135,7 +135,7 @@ QListWidget::indicator:unchecked {{
     background-color: {c('INPUT_BG')};
 }}
 QListWidget::indicator:checked {{
-    image: url(icons:Checkmark.svg);
+    image: url(icons:check.svg);
     border: none;
 }}""")
 
@@ -171,7 +171,10 @@ QListWidget::indicator:checked {{
         self._device_model = model
         tv = QTableView()
         tv.setModel(model)
-        tv.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        tv.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # Brand列 - 占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Model列 - 占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # IP列 - 适应内容
+        # tv.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         tv.verticalHeader().setVisible(False)
         tv.setSelectionBehavior(QAbstractItemView.SelectRows)
         tv.setSelectionMode(QAbstractItemView.SingleSelection)

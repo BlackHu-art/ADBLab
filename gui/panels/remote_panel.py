@@ -5,7 +5,7 @@ import re
 import subprocess
 import threading
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -64,8 +64,6 @@ class RemotePanel(BasePanel):
     _BUFFERS = ["0", "10", "20", "30", "50", "100", "150", "200"]
     _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
     _ORIENTATIONS = ["0", "90", "180", "270"]
-    _AUDIO_SOURCES = ["playback", "mic"]
-
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
         self._process = None
@@ -74,6 +72,7 @@ class RemotePanel(BasePanel):
         self._watchdog.timeout.connect(self._poll_process)
         self._settings = AppSettings.instance()
         self._adb = ADBBridge()
+        self._loading = True
 
     # -- UI ----------------------------------------------------------------
 
@@ -90,129 +89,126 @@ class RemotePanel(BasePanel):
     def _build_mirroring(self) -> QWidget:
         g = self._g("Screen Mirroring")
         gl = QVBoxLayout(g)
-        gl.setSpacing(2)
+        gl.setSpacing(4)
 
-        # Row 0: Preset + status (B8)
-        r1 = QHBoxLayout()
-        r1.setSpacing(6)
-        r1.addWidget(QLabel("Preset"))
+        # ── Preset + Status ──
+        r0 = QHBoxLayout()
+        r0.setSpacing(6)
+        r0.addWidget(QLabel("Preset:"))
+
         self.preset = self._combo(self._PRESET_NAMES)
-        self.preset.setCurrentText(self._load("preset", "Smooth"))
+        saved_preset = self._load("preset", "Smooth")
+        self.preset.setCurrentText(saved_preset)
+        if self.preset.currentText() != saved_preset:
+            self.preset.setCurrentIndex(-1)  # "Custom" etc. → no preset selected
+        r0.addWidget(self.preset, 1)  # 减少权重，让下拉框占用较少空间
+
+        # 创建右侧信息区域
+        right_widget = QWidget()
+        right_layout = QHBoxLayout(right_widget)
+        right_layout.setSpacing(6)
+        right_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
+
         self._status_label = QLabel("● Idle")
         self._status_label.setFont(self._font_sm)
-        r1.addWidget(self.preset, 1)
-        r1.addWidget(self._status_label)
-        gl.addLayout(r1)
+        right_layout.addWidget(self._status_label)
 
-        # Row 2: Size | FPS
-        r2 = QHBoxLayout()
-        r2.setSpacing(6)
-        r2.addWidget(QLabel("Size"))
-        self.maxsize = self._combo(self._SIZES)
-        self.maxsize.setCurrentText(self._load("maxsize", "1024"))
-        r2.addWidget(self.maxsize, 1)
-        r2.addWidget(QLabel("FPS"))
-        self.fps = self._combo(self._FPS)
-        self.fps.setCurrentText(self._load("fps", "30"))
-        r2.addWidget(self.fps, 1)
-        gl.addLayout(r2)
-
-        # Row 3: Codec | Buffer
-        r3 = QHBoxLayout()
-        r3.setSpacing(6)
-        r3.addWidget(QLabel("Codec"))
-        self.codec = self._combo(self._CODECS)
-        self.codec.setCurrentText(self._load("codec", "h264"))
-        r3.addWidget(self.codec, 1)
-        r3.addWidget(QLabel("Buffer"))
-        self.buffer = self._combo(self._BUFFERS)
-        self.buffer.setCurrentText(self._load("buffer", "30"))
-        r3.addWidget(self.buffer, 1)
-        gl.addLayout(r3)
-
-        # Row 4: Bitrate | Orientation (A5)
-        r4 = QHBoxLayout()
-        r4.setSpacing(6)
-        r4.addWidget(QLabel("Bitrate"))
-        self.bitrate = self._combo(self._BITRATES)
-        self.bitrate.setCurrentText(self._load("bitrate", "4"))
-        r4.addWidget(self.bitrate, 1)
-        r4.addWidget(QLabel("Orient"))
-        self.orientation = self._combo(self._ORIENTATIONS)
-        self.orientation.setToolTip("Lock video orientation (0=auto)")
-        r4.addWidget(self.orientation, 1)
-        gl.addLayout(r4)
-
-        # Row 5: Audio source (B10) + device info (B7)
-        r5 = QHBoxLayout()
-        r5.setSpacing(6)
-        r5.addWidget(QLabel("Audio"))
-        self.audio_source = self._combo(self._AUDIO_SOURCES)
-        self.audio_source.setToolTip("Audio capture source")
-        r5.addWidget(self.audio_source, 1)
         self._device_info = QLabel("")
         self._device_info.setFont(self._font_sm)
-        r5.addWidget(self._device_info, 3)
-        gl.addLayout(r5)
+        right_layout.addWidget(self._device_info)
 
-        # Row 6: Record path (A3/A4)
-        r6 = QHBoxLayout()
-        r6.setSpacing(6)
-        self.chk_record = QCheckBox("Record")
-        self.chk_record.setFont(self._font_sm)
+        # 将右侧信息区域作为一个整体添加到主布局
+        r0.addWidget(right_widget, 1)  # 给右侧信息区域相同权重
+
+        gl.addLayout(r0)
+
+        # ── Video ──
+        vg = QGridLayout()
+        vg.setHorizontalSpacing(10)
+        vg.setVerticalSpacing(5)
+        settings = [
+            ("Size:",   "maxsize",     self._SIZES,        "720"),
+            ("FPS:",    "fps",         self._FPS,          "60"),
+            ("Codec:",  "codec",       self._CODECS,       "h264"),
+            ("Buffer:", "buffer",      self._BUFFERS,      "50"),
+            ("Bitrate:","bitrate",     self._BITRATES,     "8"),
+            ("Orient:", "orientation", self._ORIENTATIONS, "0"),
+        ]
+        for i, (lbl, attr, items, default) in enumerate(settings):
+            row, col = divmod(i, 3)
+            label = QLabel(lbl)
+            label.setFixedWidth(45)
+            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            vg.addWidget(label, row, col * 2)
+            combo = self._combo(items)
+            combo.setCurrentText(self._load(attr, default))
+            vg.addWidget(combo, row, col * 2 + 1)
+            setattr(self, attr, combo)
+        self.orientation.setToolTip("Lock orientation (0=auto)")
+        gl.addLayout(vg)
+
+        # ── Record ──
+        rr = QHBoxLayout()
+        rr.setSpacing(8)
+        self.chk_record = self._mkchk("Record")  # 使用统一的工厂方法创建
         self.chk_record.setToolTip("Record mirroring to file")
         self.chk_record.toggled.connect(self._on_record_toggled)
-        r6.addWidget(self.chk_record)
+        rr.addWidget(self.chk_record, 1)  # 占1份空间
         self.record_path = QLabel("")
         self.record_path.setFont(self._font_sm)
-        r6.addWidget(self.record_path, 1)
-        self.chk_noplayback = QCheckBox("No Playback")
-        self.chk_noplayback.setFont(self._font_sm)
+        rr.addWidget(self.record_path, 3)  # 占3份空间
+        gl.addLayout(rr)
+
+        # ── Display ──
+        self.chk_fullscreen = self._mkchk("Fullscreen")
+        self.chk_fullscreen.setToolTip("Launch in fullscreen mode")
+        self.chk_aot = self._mkchk("Always on Top")
+        self.chk_aot.setToolTip("Keep window above all others")
+        self.chk_showtouches = self._mkchk("Show Touches")
+        self.chk_showtouches.setToolTip("Visualize touch points on screen")
+        self.chk_stayawake = self._mkchk("Stay Awake")
+        self.chk_stayawake.setToolTip("Keep device screen on while mirroring")
+        rd1 = QHBoxLayout()
+        rd1.setSpacing(8)
+        for cb in (self.chk_fullscreen, self.chk_aot, self.chk_showtouches, self.chk_stayawake):
+            rd1.addWidget(cb)  # 不设置权重，让它们平均分配空间
+        gl.addLayout(rd1)
+
+        self.chk_turnscreenoff = self._mkchk("Turn Screen Off")
+        self.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
+        self.chk_hw_encoder = self._mkchk("HW Encoder")
+        self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter)")
+        self.chk_noplayback = self._mkchk("No Window")
         self.chk_noplayback.setToolTip("Record only, no display window")
-        r6.addWidget(self.chk_noplayback)
-        gl.addLayout(r6)
+        self.chk_noaudio = self._mkchk("No Audio")  # 改为使用_mkchk方法创建
+        self.chk_noaudio.setChecked(True)  # 保留初始勾选状态
+        self.chk_noaudio.setToolTip("Disable audio forwarding")
+        rd2 = QHBoxLayout()
+        rd2.setSpacing(8)
+        for cb in (self.chk_turnscreenoff, self.chk_hw_encoder, self.chk_noplayback, self.chk_noaudio):
+            rd2.addWidget(cb)  # 不设置权重，让它们平均分配空间
+        gl.addLayout(rd2)
 
-        # Row 7: Checkboxes - distributed rows
-        r7a = QHBoxLayout()
-        r7a.setSpacing(16)
-        col1 = QVBoxLayout()
-        col1.setSpacing(4)
-        col2 = QVBoxLayout()
-        col2.setSpacing(4)
-        col3 = QVBoxLayout()
-        col3.setSpacing(4)
-        self.chk_fullscreen = QCheckBox("Fullscreen")
-        self.chk_aot = QCheckBox("Always on Top")
-        self.chk_stayawake = QCheckBox("Stay Awake")           # A1
-        self.chk_turnscreenoff = QCheckBox("Turn Screen Off")  # A2
-        self.chk_noaudio = QCheckBox("No Audio")
-        self.chk_noaudio.setChecked(True)
-        self.chk_showtouches = QCheckBox("Show Touches")
-        self.chk_hw_encoder = QCheckBox("HW Encoder")
-        self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter on some devices)")
-        for cb, col in [(self.chk_fullscreen, col1), (self.chk_aot, col2),
-                        (self.chk_stayawake, col1), (self.chk_turnscreenoff, col2),
-                        (self.chk_noaudio, col3), (self.chk_showtouches, col3),
-                        (self.chk_hw_encoder, col3)]:
-            cb.setFont(self._font_sm)
-            col.addWidget(cb)
-        r7a.addLayout(col1)
-        r7a.addLayout(col2)
-        r7a.addLayout(col3)
-        r7a.addStretch()
-        gl.addLayout(r7a)
-
-        # Row 8: Start / Stop
-        r8 = QHBoxLayout()
-        r8.setSpacing(4)
-        self.btn_start = self._b("Start (Ctrl+Enter)", "Restart.svg")
-        self.btn_stop = self._b("Stop (Ctrl+Q)", "Kill_monkey.svg")
+        # ── Start / Stop ──
+        rs = QHBoxLayout()
+        rs.setSpacing(6)
+        self.btn_start = self._b("Start (Ctrl+Enter)", "monitor-play.svg", "accent")
+        self.btn_start.setFixedHeight(32)
+        self.btn_start.setIconSize(QSize(16, 16))
+        self.btn_stop = self._b("Stop (Ctrl+Q)", "stop-circle.svg", "danger")
+        self.btn_stop.setFixedHeight(32)
+        self.btn_stop.setIconSize(QSize(16, 16))
         self.btn_stop.setEnabled(False)
-        r8.addWidget(self.btn_start, 1)
-        r8.addWidget(self.btn_stop, 1)
-        gl.addLayout(r8)
+        rs.addWidget(self.btn_start, 1)
+        rs.addWidget(self.btn_stop, 1)
+        gl.addLayout(rs)
 
         return g
+
+    def _mkchk(self, text: str) -> QCheckBox:
+        cb = QCheckBox(text)
+        cb.setFont(self._font_sm)
+        return cb
 
     def _build_control(self) -> QWidget:
         g = self._g("Remote Control")
@@ -266,19 +262,40 @@ class RemotePanel(BasePanel):
         self.btn_start.clicked.connect(self._start_scrcpy)
         self.btn_stop.clicked.connect(self._stop_scrcpy)
         self.preset.currentIndexChanged.connect(self._on_preset_changed)
-        # Save on any change (B6)
-        for combo, key in [(self.preset, "preset"), (self.maxsize, "maxsize"),
-                           (self.fps, "fps"), (self.codec, "codec"),
-                           (self.buffer, "buffer"), (self.bitrate, "bitrate")]:
-            combo.currentTextChanged.connect(lambda v, k=key: self._save(k, v))
+        # Track individual changes → auto-switch to Custom
+        for combo in (self.maxsize, self.fps, self.codec, self.buffer, self.bitrate,
+                      self.orientation):
+            combo.currentTextChanged.connect(self._on_custom_setting_changed)
         # B9: Keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self._stop_scrcpy)
+        # Apply loaded preset on startup (loading is still True → no re-save)
+        idx = self.preset.currentIndex()
+        if idx in self._PRESETS:
+            self._on_preset_changed(idx)
+        self._loading = False
 
     # -- B6: settings persistence ----------------------------------------
 
+    def _on_custom_setting_changed(self, _value):
+        """Any individual change switches preset to nothing (custom)."""
+        if getattr(self, "_loading", False):
+            return
+        self.preset.blockSignals(True)
+        self.preset.setCurrentIndex(-1)
+        self.preset.blockSignals(False)
+        self._save_all()
+
     def _save(self, key: str, value: str):
+        if getattr(self, "_loading", False):
+            return
         self._settings.set(f"scrcpy_{key}", value)
+
+    def _save_all(self):
+        p = self.preset.currentText()
+        self._settings.set("scrcpy_preset", p if p else "Custom")
+        for k in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
+            self._settings.set(f"scrcpy_{k}", getattr(self, k).currentText())
 
     def _load(self, key: str, default: str) -> str:
         return self._settings.get(f"scrcpy_{key}", default)
@@ -287,12 +304,17 @@ class RemotePanel(BasePanel):
 
     def _on_preset_changed(self, idx: int):
         if idx in self._PRESETS:
+            was_loading = getattr(self, "_loading", False)
+            self._loading = True
             p = self._PRESETS[idx]
             self.maxsize.setCurrentText(p["maxsize"])
             self.fps.setCurrentText(p["fps"])
             self.bitrate.setCurrentText(p["bitrate"])
             self.codec.setCurrentText(p["codec"])
             self.buffer.setCurrentText(p["buffer"])
+            self._loading = was_loading
+            if not was_loading:
+                self._save_all()
 
     # -- C12: scrcpy version ----------------------------------------------
 
@@ -426,9 +448,6 @@ class RemotePanel(BasePanel):
         if orient != "0":
             args.append(f"--lock-video-orientation={orient}")
 
-        # B10: Audio source
-        if not self.chk_noaudio.isChecked():
-            args.extend(["--audio-source", self.audio_source.currentText()])
 
         if self.chk_hw_encoder.isChecked():
             encoder = self._detect_encoder(device)

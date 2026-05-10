@@ -4,9 +4,8 @@ import os
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import (
-    QIcon,
     QKeySequence,
     QPixmap,
     QShortcut,
@@ -28,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
-from utils.resource_path import resource_path
+from gui.styles.icon_loader import get_themed_icon
 
 MIN_ZOOM = 0.10
 MAX_ZOOM = 5.00
@@ -60,7 +59,7 @@ class ScreenshotViewer(QDialog):
 
     def _init_window(self):
         self.setWindowTitle("Screenshot Viewer")
-        self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        self.setWindowIcon(get_themed_icon("camera.svg"))
         self.setMinimumSize(600, 400)
         self.resize(900, 650)
         self._apply_theme()
@@ -175,6 +174,8 @@ class ScreenshotViewer(QDialog):
         bar.setSpacing(4)
 
         self._prev_btn = QPushButton("◀")
+        self._prev_btn.setIcon(get_themed_icon("caret-left.svg"))
+        self._prev_btn.setIconSize(QSize(14, 14))
         self._prev_btn.setFixedSize(30, 28)
         self._prev_btn.clicked.connect(self.navigate_prev)
         bar.addWidget(self._prev_btn)
@@ -188,6 +189,8 @@ class ScreenshotViewer(QDialog):
         bar.addWidget(self._nav_label)
 
         self._next_btn = QPushButton("▶")
+        self._next_btn.setIcon(get_themed_icon("caret-right.svg"))
+        self._next_btn.setIconSize(QSize(14, 14))
         self._next_btn.setFixedSize(30, 28)
         self._next_btn.clicked.connect(self.navigate_next)
         bar.addWidget(self._next_btn)
@@ -195,17 +198,23 @@ class ScreenshotViewer(QDialog):
         bar.addSpacing(8)
 
         zoom_out_btn = QPushButton("−")
+        zoom_out_btn.setIcon(get_themed_icon("magnifying-glass-minus.svg"))
+        zoom_out_btn.setIconSize(QSize(14, 14))
         zoom_out_btn.setFixedSize(30, 28)
         zoom_out_btn.clicked.connect(self.zoom_out)
         bar.addWidget(zoom_out_btn)
 
         self._zoom_btn = QPushButton("Fit")
+        self._zoom_btn.setIcon(get_themed_icon("frame-corners.svg"))
+        self._zoom_btn.setIconSize(QSize(14, 14))
         self._zoom_btn.setFixedWidth(52)
         self._zoom_btn.setFixedHeight(28)
         self._zoom_btn.clicked.connect(self._reset_zoom)
         bar.addWidget(self._zoom_btn)
 
         zoom_in_btn = QPushButton("+")
+        zoom_in_btn.setIcon(get_themed_icon("magnifying-glass-plus.svg"))
+        zoom_in_btn.setIconSize(QSize(14, 14))
         zoom_in_btn.setFixedSize(30, 28)
         zoom_in_btn.clicked.connect(self.zoom_in)
         bar.addWidget(zoom_in_btn)
@@ -213,26 +222,36 @@ class ScreenshotViewer(QDialog):
         bar.addSpacing(8)
 
         self._copy_btn = QPushButton("Copy")
+        self._copy_btn.setIcon(get_themed_icon("copy.svg"))
+        self._copy_btn.setIconSize(QSize(14, 14))
         self._copy_btn.setFixedHeight(28)
         self._copy_btn.clicked.connect(self.copy_to_clipboard)
         bar.addWidget(self._copy_btn)
 
         self._save_btn = QPushButton("Save As")
+        self._save_btn.setIcon(get_themed_icon("floppy-disk.svg"))
+        self._save_btn.setIconSize(QSize(14, 14))
         self._save_btn.setFixedHeight(28)
         self._save_btn.clicked.connect(self.save_as)
         bar.addWidget(self._save_btn)
 
         self._folder_btn = QPushButton("Folder")
+        self._folder_btn.setIcon(get_themed_icon("folder-open.svg"))
+        self._folder_btn.setIconSize(QSize(14, 14))
         self._folder_btn.setFixedHeight(28)
         self._folder_btn.clicked.connect(self._open_file_location)
         bar.addWidget(self._folder_btn)
 
         self._delete_btn = QPushButton("Delete")
+        self._delete_btn.setIcon(get_themed_icon("trash.svg"))
+        self._delete_btn.setIconSize(QSize(14, 14))
         self._delete_btn.setFixedHeight(28)
         self._delete_btn.clicked.connect(self._delete_file)
         bar.addWidget(self._delete_btn)
 
         self._fit_btn = QPushButton("1:1")
+        self._fit_btn.setIcon(get_themed_icon("number-square-one.svg"))
+        self._fit_btn.setIconSize(QSize(14, 14))
         self._fit_btn.setFixedHeight(28)
         self._fit_btn.clicked.connect(self._toggle_fit)
         bar.addWidget(self._fit_btn)
@@ -240,6 +259,8 @@ class ScreenshotViewer(QDialog):
         bar.addStretch()
 
         self._close_btn = QPushButton("Close")
+        self._close_btn.setIcon(get_themed_icon("x.svg"))
+        self._close_btn.setIconSize(QSize(14, 14))
         self._close_btn.setFixedHeight(28)
         self._close_btn.clicked.connect(self.close)
         bar.addWidget(self._close_btn)

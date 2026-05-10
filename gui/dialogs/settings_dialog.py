@@ -1,6 +1,6 @@
 """Settings dialog -- immediate-apply, theme-aware."""
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from core.settings_manager import AppSettings
 from gui.styles.base_styles import BaseStyles
+from gui.styles.icon_loader import get_themed_icon
 
 
 class SettingsDialog(QDialog):
@@ -28,6 +29,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.s = AppSettings.instance()
         self.setWindowTitle("Settings")
+        self.setWindowIcon(get_themed_icon("gear.svg"))
         self.setFixedSize(440, 460)
         self.setModal(True)
 
@@ -159,10 +161,14 @@ class SettingsDialog(QDialog):
         row.setSpacing(8)
         row.addStretch()
         btn_reset = QPushButton("Restore Defaults")
+        btn_reset.setIcon(get_themed_icon("arrow-u-up-left.svg"))
+        btn_reset.setIconSize(QSize(14, 14))
         btn_reset.setObjectName("resetBtn")
         btn_reset.clicked.connect(self._reset_all)
         row.addWidget(btn_reset)
         btn_close = QPushButton("Close")
+        btn_close.setIcon(get_themed_icon("x.svg"))
+        btn_close.setIconSize(QSize(14, 14))
         btn_close.setObjectName("closeBtn")
         btn_close.clicked.connect(self.accept)
         row.addWidget(btn_close)
