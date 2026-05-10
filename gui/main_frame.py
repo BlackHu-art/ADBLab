@@ -526,7 +526,6 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def closeEvent(self, event):
-        self.log_panel._append_log("INFO", "Application shutting down...")
         self._usb_timer.stop()
         for dlg in list(self._active_dialogs):
             try:
@@ -534,6 +533,10 @@ class MainFrame(QMainWindow):
             except Exception:
                 pass
         self._active_dialogs.clear()
-        self.adb_controller.executor.shutdown(wait=True, cancel_futures=True)
-        self.log_service.shutdown()
-        super().closeEvent(event)
+        for viewer in list(getattr(self.adb_controller, "_active_viewers", [])):
+            try:
+                viewer.close()
+            except Exception:
+                pass
+        self.adb_controller.executor.shutdown(wait=False)
+        event.accept()

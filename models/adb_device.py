@@ -19,10 +19,10 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def get_connected_devices_async(self):
-        result = self._execute_command(["adb", "devices"])
-        if result.startswith(("Timeout:", "SystemError:")):
+        r = self._exec(["adb", "devices"])
+        if not r["ok"]:
             return []
-        return [line.split("\t")[0] for line in result.strip().splitlines()[1:] if "device" in line]
+        return [line.split("\t")[0] for line in r["data"].strip().splitlines()[1:] if "device" in line]
 
     @async_command
     def disconnect_device_async(self, device: str) -> dict:

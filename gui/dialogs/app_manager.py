@@ -417,10 +417,6 @@ class AppDetailsDialog(QDialog):
     def closeEvent(self, event):
         for w in self._workers:
             w.abort()
-        for w in self._workers:
-            if not w.wait(3000):
-                w.terminate()
-                w.wait(1000)
         self._workers.clear()
         super().closeEvent(event)
 
@@ -1000,9 +996,5 @@ class AppManagerDialog(QDialog):
     def closeEvent(self, event):
         for w in self._workers:
             w.abort()
-        for w in self._workers:
-            if not w.wait(3000):
-                w.terminate()
-                w.wait(1000)
         self._workers.clear()
         super().closeEvent(event)

@@ -70,7 +70,11 @@ class ADBModelCore(QObject):
 
     @staticmethod
     def _execute_command(command: list, timeout: int = 30) -> str:
-        """Execute a command synchronously, return stdout or error string."""
+        """Execute a command synchronously, return stdout or error string.
+
+        Prefer _exec() (returns dict) for new code; this method kept for
+        backward compatibility with existing callers.
+        """
         from utils.adb_resolver import adb_path
 
         cmd = list(command)
@@ -94,6 +98,22 @@ class ADBModelCore(QObject):
             return f"Timeout: Command execution exceeded {timeout} seconds"
         except Exception as e:
             return f"SystemError: {str(e)}"
+
+    @classmethod
+    def _exec(cls, command: list, timeout: int = 30) -> dict:
+        """Execute a command synchronously, return dict with ok/data/error.
+
+        Standardized error pattern: {'ok': True, 'data': str} or
+        {'ok': False, 'error': str, 'code': str}
+        """
+        raw = cls._execute_command(command, timeout=timeout)
+        if raw.startswith("Error:"):
+            return {"ok": False, "error": raw[7:], "code": "CALLED_PROCESS_ERROR"}
+        if raw.startswith("Timeout:"):
+            return {"ok": False, "error": raw[9:], "code": "TIMEOUT"}
+        if raw.startswith("SystemError:"):
+            return {"ok": False, "error": raw[13:], "code": "SYSTEM_ERROR"}
+        return {"ok": True, "data": raw}
 
     @staticmethod
     def _fetch_device_info(commands: dict[str, list[str]]) -> dict[str, str]:
