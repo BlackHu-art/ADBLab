@@ -103,7 +103,8 @@ class DeviceManager(BasePanel):
             if item:
                 item.setFont(font)
 
-        c = lambda k: bs.color(k)
+        def c(k):
+            return bs.color(k)
         self.listbox_devices.setStyleSheet(f"""
 QListWidget#deviceList {{
     background-color: {c('INPUT_BG')};

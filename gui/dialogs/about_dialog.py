@@ -98,7 +98,8 @@ class AboutDialog(QDialog):
         lo.addLayout(ft)
 
     def _apply_theme(self, _name: str = ""):
-        c = lambda k: BaseStyles.color(k)
+        def c(k):
+            return BaseStyles.color(k)
         accent = c("BUTTON_ACCENT")
         r = BaseStyles.RADIUS_MD
 

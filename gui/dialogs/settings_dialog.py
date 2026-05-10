@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -60,40 +61,34 @@ class SettingsDialog(QDialog):
         body.addWidget(self._section("Appearance"))
 
         card = self._card()
-        cl = QVBoxLayout(card)
-        cl.setSpacing(8)
+        g = QGridLayout(card)
+        g.setSpacing(8)
 
-        # Theme + Font family
-        r1 = QHBoxLayout()
-        r1.setSpacing(8)
-        r1.addWidget(self._lbl("Theme"))
+        # Row 0: Theme + Font
         self.theme_combo = self._combo(BaseStyles.theme_names(), BaseStyles.current_theme())
         self.theme_combo.currentTextChanged.connect(self._on_theme_changed)
-        r1.addWidget(self.theme_combo)
-        r1.addSpacing(12)
-        r1.addWidget(self._lbl("Font"))
         self.font_family_combo = self._combo(
             ["Segoe UI", "Microsoft YaHei", "Arial", "Consolas", "Tahoma", "Verdana"],
             self.s.get("font_family", "Segoe UI"),
         )
         self.font_family_combo.currentTextChanged.connect(self._on_font_family_changed)
-        r1.addWidget(self.font_family_combo)
-        cl.addLayout(r1)
+        g.addWidget(self._lbl("Theme"), 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.theme_combo, 0, 1)
+        g.addWidget(self._lbl("Font"), 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.font_family_combo, 0, 3)
 
-        # UI size + Log size
-        r2 = QHBoxLayout()
-        r2.setSpacing(8)
-        r2.addWidget(self._lbl("UI Size"))
+        # Row 1: UI size + Log size
         self.spin_font = self._spin(8, 22, self.s.get("ui_font_size", 12))
         self.spin_font.valueChanged.connect(self._on_font_changed)
-        r2.addWidget(self.spin_font)
-        r2.addSpacing(12)
-        r2.addWidget(self._lbl("Log Size"))
         self.spin_log_font = self._spin(7, 16, self.s.get("log_font_size", 9))
         self.spin_log_font.valueChanged.connect(self._on_log_font_changed)
-        r2.addWidget(self.spin_log_font)
-        r2.addStretch()
-        cl.addLayout(r2)
+        g.addWidget(self._lbl("UI Size"), 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.spin_font, 1, 1)
+        g.addWidget(self._lbl("Log Size"), 1, 2, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.spin_log_font, 1, 3)
+
+        g.setColumnStretch(1, 1)
+        g.setColumnStretch(3, 1)
 
         body.addWidget(card)
 
@@ -101,8 +96,8 @@ class SettingsDialog(QDialog):
         body.addWidget(self._section("Window"))
 
         card = self._card()
-        cl = QVBoxLayout(card)
-        cl.setSpacing(8)
+        g = QGridLayout(card)
+        g.setSpacing(8)
 
         pw = self.parent()
         cur_w = pw.width() if pw else self.s.get("window_width", 1200)
@@ -113,36 +108,29 @@ class SettingsDialog(QDialog):
         else:
             cur_left = self.s.get("left_panel_width", 595)
 
-        # Width + Height
-        r1 = QHBoxLayout()
-        r1.setSpacing(8)
-        r1.addWidget(self._lbl("Width"))
+        # Row 0: Width + Height
         self.spin_win_w = self._spin(860, 2560, cur_w, 20)
         self.spin_win_w.valueChanged.connect(self._on_window_size_changed)
-        r1.addWidget(self.spin_win_w)
-        r1.addSpacing(12)
-        r1.addWidget(self._lbl("Height"))
         self.spin_win_h = self._spin(500, 1800, cur_h, 20)
         self.spin_win_h.valueChanged.connect(self._on_window_height_changed)
-        r1.addWidget(self.spin_win_h)
-        r1.addStretch()
-        cl.addLayout(r1)
+        g.addWidget(self._lbl("Width"), 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.spin_win_w, 0, 1)
+        g.addWidget(self._lbl("Height"), 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.spin_win_h, 0, 3)
 
-        # Left + Right panel
-        r2 = QHBoxLayout()
-        r2.setSpacing(8)
-        r2.addWidget(self._lbl("Left"))
+        # Row 1: Left + Right panel
         self.spin_left_w = self._spin(200, max(200, cur_w - 311), cur_left, 10)
         self.spin_left_w.valueChanged.connect(self._apply_panels)
-        r2.addWidget(self.spin_left_w)
-        r2.addSpacing(12)
-        r2.addWidget(self._lbl("Right"))
         self.lbl_right_w = QLabel()
         self.lbl_right_w.setObjectName("rightLabel")
         self._update_right_label()
-        r2.addWidget(self.lbl_right_w)
-        r2.addStretch()
-        cl.addLayout(r2)
+        g.addWidget(self._lbl("Left"), 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.spin_left_w, 1, 1)
+        g.addWidget(self._lbl("Right"), 1, 2, Qt.AlignRight | Qt.AlignVCenter)
+        g.addWidget(self.lbl_right_w, 1, 3)
+
+        g.setColumnStretch(1, 1)
+        g.setColumnStretch(3, 1)
 
         body.addWidget(card)
 
@@ -285,10 +273,14 @@ class SettingsDialog(QDialog):
     # ── Theme ───────────────────────────────────────────────────────────
 
     def _apply_theme(self, _name: str = ""):
-        c = lambda k: BaseStyles.color(k)
+        def c(k):
+            return BaseStyles.color(k)
         r = BaseStyles.RADIUS_MD
 
-        self.setStyleSheet(f"""
+        self.setStyleSheet(
+            BaseStyles.INPUT_STYLE()
+            + BaseStyles.BUTTON_QSS()
+            + f"""
             QDialog {{
                 background-color: {c('PANEL_BG')};
                 font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
@@ -309,65 +301,40 @@ class SettingsDialog(QDialog):
             QLabel#fieldLabel {{
                 font-size: 11px;
                 color: {c('TEXT_PRIMARY')};
-                min-width: 42px;
+                min-width: 46px;
             }}
             QLabel#rightLabel {{
                 font-size: 11px;
                 color: {c('TEXT_SECONDARY')};
                 padding-left: 4px;
             }}
-            QComboBox {{
-                background: {c('PANEL_BG')};
-                color: {c('TEXT_PRIMARY')};
-                border: 1px solid {c('BORDER_COLOR')};
-                border-radius: 3px;
-                padding: 2px 6px;
-                font-size: 11px;
-            }}
-            QComboBox:focus {{ border-color: {c('BORDER_FOCUS')}; }}
-            QComboBox::drop-down {{
-                subcontrol-origin: padding;
-                subcontrol-position: top right;
-                width: 18px;
-                border-left: 1px solid {c('BORDER_COLOR')};
-                border-top-right-radius: 3px;
-                border-bottom-right-radius: 3px;
-            }}
-            QComboBox QAbstractItemView {{
-                background: {c('PANEL_BG')};
-                color: {c('TEXT_PRIMARY')};
-                selection-background-color: {c('SELECTION_BG')};
-                selection-color: {c('SELECTION_TEXT')};
-                border: 1px solid {c('BORDER_COLOR')};
-                outline: none;
-            }}
             QSpinBox {{
-                background: {c('PANEL_BG')};
+                background-color: {c('INPUT_BG')};
                 color: {c('TEXT_PRIMARY')};
                 border: 1px solid {c('BORDER_COLOR')};
-                border-radius: 3px;
-                padding: 2px 18px 2px 6px;
-                font-size: 11px;
-                max-width: 78px;
+                border-radius: {r}px;
+                padding: 3px 20px 3px 6px;
+                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QSpinBox:focus {{ border-color: {c('BORDER_FOCUS')}; }}
             QSpinBox::up-button {{
                 subcontrol-origin: margin;
                 subcontrol-position: top right;
-                width: 14px;
+                width: 18px;
                 border: none;
                 border-left: 1px solid {c('BORDER_COLOR')};
                 border-bottom: 1px solid {c('BORDER_COLOR')};
-                border-top-right-radius: 3px;
+                border-top-right-radius: {r}px;
                 margin: 1px;
             }}
             QSpinBox::down-button {{
                 subcontrol-origin: margin;
                 subcontrol-position: bottom right;
-                width: 14px;
+                width: 18px;
                 border: none;
                 border-left: 1px solid {c('BORDER_COLOR')};
-                border-bottom-right-radius: 3px;
+                border-bottom-right-radius: {r}px;
                 margin: 1px;
             }}
             QCheckBox {{
@@ -386,24 +353,14 @@ class SettingsDialog(QDialog):
                 background: {c('BUTTON_ACCENT')};
                 border-color: {c('BUTTON_ACCENT')};
             }}
-            QPushButton {{
-                background: {c('BUTTON_BG')};
-                color: {c('TEXT_PRIMARY')};
-                border: 1px solid {c('BORDER_COLOR')};
-                border-radius: {r}px;
-                padding: 4px 16px;
-                font-size: 11px;
-            }}
-            QPushButton:hover {{ background: {c('BUTTON_HOVER')}; border-color: {c('BORDER_FOCUS')}; }}
-            QPushButton:pressed {{ background: {c('BUTTON_PRESSED')}; }}
             QPushButton#closeBtn {{
-                background: {c('BUTTON_ACCENT')};
+                background-color: {c('BUTTON_ACCENT')};
                 color: #ffffff;
                 border: none;
                 font-weight: bold;
             }}
-            QPushButton#closeBtn:hover {{ background: {c('BUTTON_ACCENT_HOVER')}; }}
-            QPushButton#closeBtn:pressed {{ background: {c('BUTTON_ACCENT_PRESSED')}; }}
+            QPushButton#closeBtn:hover {{ background-color: {c('BUTTON_ACCENT_HOVER')}; }}
+            QPushButton#closeBtn:pressed {{ background-color: {c('BUTTON_ACCENT_PRESSED')}; }}
         """)
 
     # ── Reset ────────────────────────────────────────────────────────────
