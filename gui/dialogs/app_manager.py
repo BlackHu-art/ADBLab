@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 
 from gui.styles.base_styles import BaseStyles
 from utils.adb_resolver import CF
-from utils.resource_path import resource_path
+from gui.styles.icon_loader import get_themed_icon
 
 # ── 后台工作线程 ──────────────────────────────────────────────────────────
 
@@ -297,6 +297,7 @@ class AppDetailsDialog(QDialog):
         self.package_name = package_name
         self._workers = []
         self.setWindowTitle(f"Details: {package_name}")
+        self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
         self.setModal(False)
         self._init_ui()
@@ -321,7 +322,11 @@ class AppDetailsDialog(QDialog):
         self.runtime_list = self._ps(pl, "Runtime Permissions (Grant/Revoke)")
         pb = QHBoxLayout()
         self.grant_btn = QPushButton("Grant Selected")
+        self.grant_btn.setIcon(get_themed_icon("check-circle.svg"))
+        self.grant_btn.setIconSize(QSize(14, 14))
         self.revoke_btn = QPushButton("Revoke Selected")
+        self.revoke_btn.setIcon(get_themed_icon("x-circle.svg"))
+        self.revoke_btn.setIconSize(QSize(14, 14))
         self.grant_btn.clicked.connect(lambda: self._mp("grant"))
         self.revoke_btn.clicked.connect(lambda: self._mp("revoke"))
         pb.addWidget(self.grant_btn)
@@ -330,6 +335,8 @@ class AppDetailsDialog(QDialog):
         self.tabs.addTab(pw, "Permissions")
         layout.addWidget(self.tabs)
         close_btn = QPushButton("Close")
+        close_btn.setIcon(get_themed_icon("x.svg"))
+        close_btn.setIconSize(QSize(14, 14))
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
 
@@ -337,6 +344,8 @@ class AppDetailsDialog(QDialog):
         hl = QHBoxLayout()
         hl.addWidget(QLabel(title))
         sb = QPushButton("Select All/None")
+        sb.setIcon(get_themed_icon("check-square.svg"))
+        sb.setIconSize(QSize(14, 14))
         sb.setFixedSize(130, 28)
         hl.addWidget(sb)
         parent.addLayout(hl)
@@ -440,6 +449,7 @@ class AppManagerDialog(QDialog):
         self._workers = []
         self._apps_data = []
         self.setWindowTitle(f"App Manager - {device_ip}")
+        self.setWindowIcon(get_themed_icon("squares-four.svg"))
         self.setMinimumSize(960, 600)
         self.resize(1000, 660)
         self.setModal(False)
@@ -471,10 +481,12 @@ class AppManagerDialog(QDialog):
         self.view_toggle.setFixedSize(28, 28)
         self.view_toggle.setToolTip("Toggle Icon / List view")
         self.view_toggle.clicked.connect(self._toggle_view)
-        self.view_toggle.setIcon(QIcon(resource_path("resources/icons/format_list_bulleted.svg")))
+        self.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
         self.view_toggle.setIconSize(QSize(16, 16))
         top.addWidget(self.view_toggle)
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._load_apps)
         self.refresh_btn.setFixedHeight(28)
         top.addWidget(self.refresh_btn)
@@ -536,13 +548,15 @@ class AppManagerDialog(QDialog):
         a1 = QHBoxLayout()
         a1.setSpacing(4)
         labels_actions = [
-            ("Uninstall Selected", "uninstall"),
-            ("Disable Selected", "disable"),
-            ("Enable Selected", "enable"),
-            ("Deselect All", None),
+            ("Uninstall Selected", "uninstall", "trash.svg"),
+            ("Disable Selected", "disable", "prohibit.svg"),
+            ("Enable Selected", "enable", "check-circle.svg"),
+            ("Deselect All", None, "square.svg"),
         ]
-        for t, a in labels_actions:
+        for t, a, icon in labels_actions:
             b = QPushButton(t)
+            b.setIcon(get_themed_icon(icon))
+            b.setIconSize(QSize(14, 14))
             b.setFixedHeight(btn_h)
             if a:
                 b.clicked.connect(lambda _, act=a: self._modify_selected(act))
@@ -553,14 +567,16 @@ class AppManagerDialog(QDialog):
 
         a2 = QHBoxLayout()
         a2.setSpacing(4)
-        for t, fn in [
-            ("Create Preset", self._create_preset),
-            ("Load Preset", self._load_preset),
-            ("Backup Selected", self._backup_selected),
-            ("Restore Backup", self._restore_apps),
-            ("App Details", self._show_details),
+        for t, fn, icon in [
+            ("Create Preset", self._create_preset, "floppy-disk.svg"),
+            ("Load Preset", self._load_preset, "folder-open.svg"),
+            ("Backup Selected", self._backup_selected, "archive.svg"),
+            ("Restore Backup", self._restore_apps, "cloud-arrow-down.svg"),
+            ("App Details", self._show_details, "info.svg"),
         ]:
             b = QPushButton(t)
+            b.setIcon(get_themed_icon(icon))
+            b.setIconSize(QSize(14, 14))
             b.setFixedHeight(btn_h)
             b.clicked.connect(fn)
             a2.addWidget(b, 1)
@@ -699,12 +715,10 @@ class AppManagerDialog(QDialog):
         self._view_mode = not self._view_mode
         self.stack.setCurrentIndex(1 if self._view_mode else 0)
         self.view_toggle.setIcon(
-            QIcon(
-                resource_path(
-                    "resources/icons/format_list_bulleted.svg"
-                    if self._view_mode
-                    else "resources/icons/Install_app.svg"
-                )
+            get_themed_icon(
+                "list-bullets.svg"
+                if self._view_mode
+                else "squares-four.svg"
             )
         )
         self.view_toggle.setToolTip(

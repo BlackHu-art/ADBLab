@@ -1,7 +1,6 @@
 """Tab base class — shared UI factory methods and device/package accessors."""
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -12,8 +11,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
+from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
-from utils.resource_path import resource_path
 
 
 class BasePanel(QWidget):
@@ -76,7 +75,7 @@ class BasePanel(QWidget):
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         b.setFixedHeight(28)
-        b.setIcon(QIcon(resource_path(f"resources/icons/{i}")))
+        b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         if variant:
             b.setObjectName(variant)
@@ -88,7 +87,7 @@ class BasePanel(QWidget):
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         b.setFixedHeight(28)
-        b.setIcon(QIcon(resource_path(f"resources/icons/{i}")))
+        b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         return b
 

@@ -3,7 +3,7 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -28,12 +28,15 @@ from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
+from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
 from .styles.base_styles import BaseStyles, get_default_font
 
 
 class MainFrame(QMainWindow):
+
+    _trigger_refresh = Signal()
 
     def __init__(self):
         super().__init__()
@@ -182,21 +185,23 @@ class MainFrame(QMainWindow):
         layout.addWidget(title)
 
         # Function buttons
-        self.tb_app_mgr = self._create_toolbar_btn("App Manager", "resources/icons/Install_app.svg")
+        self.tb_app_mgr = self._create_toolbar_btn("App Manager", "resources/icons/squares-four.svg")
         self.tb_app_mgr.setFixedSize(28, 24)
         self.tb_file_explorer = self._create_toolbar_btn(
-            "File Explorer", "resources/icons/Save_alt.svg"
+            "File Explorer", "resources/icons/folder-open.svg"
         )
         self.tb_file_explorer.setFixedSize(28, 24)
-        self.tb_logcat = self._create_toolbar_btn("Live Logcat", "resources/icons/Print.svg")
+        self.tb_logcat = self._create_toolbar_btn("Live Logcat", "resources/icons/scroll.svg")
         self.tb_logcat.setFixedSize(28, 24)
-        self.tb_settings = self._create_toolbar_btn("Settings", "resources/icons/Settings.svg")
+        self.tb_settings = self._create_toolbar_btn("Settings", "resources/icons/gear.svg")
         self.tb_settings.setFixedSize(28, 24)
-        self.tb_cmd = self._create_toolbar_btn("CMD", "resources/icons/Input.svg")
+        self.tb_cmd = self._create_toolbar_btn("CMD", "resources/icons/terminal-window.svg")
         self.tb_cmd.setFixedSize(28, 24)
 
         # Save path indicator + change button
-        self._tb_save_btn = QPushButton("GlobalSavePath")
+        self._tb_save_btn = QPushButton()
+        self._tb_save_btn.setIcon(get_themed_icon("folder.svg"))
+        self._tb_save_btn.setIconSize(QSize(14, 14))
         self._tb_save_btn.setObjectName("savePathBtn")
         self._tb_save_btn.setFlat(True)
         self._tb_save_btn.setCursor(Qt.PointingHandCursor)
@@ -218,21 +223,21 @@ class MainFrame(QMainWindow):
 
         # Right-side tool buttons
         self.tb_clear = self._create_toolbar_btn(
-            "Clear Log", "resources/icons/Cleaning_services.svg"
+            "Clear Log", "resources/icons/broom.svg"
         )
-        self.tb_about = self._create_toolbar_btn("About", "resources/icons/Info.svg")
+        self.tb_about = self._create_toolbar_btn("About", "resources/icons/info.svg")
 
         # Theme toggle button
         self.theme_btn = QPushButton()
-        self.theme_btn.setIcon(QIcon(resource_path("resources/icons/theme.svg")))
+        self.theme_btn.setIcon(get_themed_icon("palette.svg"))
         self.theme_btn.setIconSize(QSize(16, 16))
         self.theme_btn.setToolTip("Toggle Light/Dark theme")
         self.theme_btn.setFixedSize(28, 24)
         self.theme_btn.setFlat(True)
         self.theme_btn.clicked.connect(lambda: BaseStyles.toggle_theme())
 
-        self.tb_minimize = self._create_toolbar_btn("Minimize", "resources/icons/minimize.svg")
-        self.tb_exit = self._create_toolbar_btn("Exit", "resources/icons/Close.svg")
+        self.tb_minimize = self._create_toolbar_btn("Minimize", "resources/icons/minus.svg")
+        self.tb_exit = self._create_toolbar_btn("Exit", "resources/icons/x.svg")
         self.tb_exit.setObjectName("exit_btn")
 
         # Connect toolbar button actions
@@ -255,7 +260,7 @@ class MainFrame(QMainWindow):
     def _create_toolbar_btn(self, tooltip: str, icon_path: str) -> QPushButton:
         """Create flat toolbar button (icon + tooltip)."""
         btn = QPushButton()
-        btn.setIcon(QIcon(resource_path(icon_path)))
+        btn.setIcon(get_themed_icon(icon_path.replace("resources/icons/", "")))
         btn.setIconSize(QSize(14, 14))
         btn.setToolTip(tooltip)
         btn.setFlat(True)
@@ -385,18 +390,28 @@ class MainFrame(QMainWindow):
             signal_.connect(handler)
 
     def _initial_refresh(self):
-        """Wake ADB server and trigger first device scan via controller."""
+        """Wake ADB server in background, then scan devices."""
         import subprocess
+        import threading
 
         from utils.adb_resolver import CF, adb_path
 
-        try:
-            subprocess.run(
-                [adb_path(), "start-server"], capture_output=True, creationflags=CF, timeout=10
-            )
-        except Exception:
-            pass
+        self._trigger_refresh.connect(self._do_refresh_devices)
 
+        def _wake_then_refresh():
+            try:
+                subprocess.run(
+                    [adb_path(), "start-server"],
+                    capture_output=True, creationflags=CF, timeout=10,
+                )
+            except Exception:
+                pass
+            # Signal crosses thread boundary safely (AutoConnection)
+            self._trigger_refresh.emit()
+
+        threading.Thread(target=_wake_then_refresh, daemon=True).start()
+
+    def _do_refresh_devices(self):
         self.adb_controller.refresh_devices()
 
     def clear_log(self):
@@ -490,7 +505,7 @@ class MainFrame(QMainWindow):
         path = AppSettings.instance().save_directory
         if path and os.path.isdir(path):
             short = path if len(path) <= 36 else "..." + path[-33:]
-            self._save_path_label.setText(short)
+            self._save_path_label.setText("GlobalSavePath: " + short)
             self._save_path_label.setToolTip(path)
         else:
             self._save_path_label.setText("")
@@ -535,6 +550,12 @@ class MainFrame(QMainWindow):
 
     def closeEvent(self, event):
         self._usb_timer.stop()
+        # Flush pending settings save before exit
+        from core.settings_manager import AppSettings
+        s = AppSettings.instance()
+        if s._save_timer:
+            s._save_timer.cancel()
+        s._save_atomic()
         for dlg in list(self._active_dialogs):
             try:
                 dlg.close()

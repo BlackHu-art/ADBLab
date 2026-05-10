@@ -1,6 +1,6 @@
 """About dialog -- header, QR code, footer."""
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
+from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
 VERSION = "2.8.0"
@@ -21,6 +22,7 @@ class AboutDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("About ADBLab")
+        self.setWindowIcon(get_themed_icon("info.svg"))
         self.setFixedSize(340, 380)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
@@ -87,6 +89,8 @@ class AboutDialog(QDialog):
         ft.addWidget(footer)
 
         close_btn = QPushButton("Close")
+        close_btn.setIcon(get_themed_icon("x.svg"))
+        close_btn.setIconSize(QSize(14, 14))
         close_btn.setObjectName("aboutCloseBtn")
         close_btn.setFixedSize(100, 30)
         close_btn.clicked.connect(self.close)

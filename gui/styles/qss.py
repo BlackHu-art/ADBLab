@@ -127,7 +127,7 @@ class QSSMixin:
         }}
         QComboBox::drop-down:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
         QComboBox::down-arrow {{
-            image: url(icons:dropdown_arrow.svg); width: 10px; height: 6px; margin-right: 4px;
+            image: url(icons:caret-down.svg); width: 10px; height: 6px; margin-right: 4px;
         }}
         QComboBox QAbstractItemView {{
             background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};

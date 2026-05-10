@@ -1,5 +1,5 @@
 {
-  "font_family": "Microsoft YaHei",
+  "font_family": "Segoe UI",
   "ui_font_size": 12,
   "log_font_size": 10,
   "save_directory": "E:/Download",
@@ -11,6 +11,6 @@
   "theme": "Light",
   "window_width": 1200,
   "window_height": 640,
-  "left_panel_width": 613,
-  "right_panel_width": 574
+  "left_panel_width": 558,
+  "right_panel_width": 631
 }

@@ -9,7 +9,9 @@ import subprocess
 import sys
 from datetime import datetime
 
-from PySide6.QtCore import Qt, QThread, Signal
+
+from PySide6.QtCore import QSize, Qt, QThread, Signal
+from gui.styles.icon_loader import get_themed_icon
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -154,6 +156,7 @@ class LiveLogcatDialog(QDialog):
         self.entries = []
 
         self.setWindowTitle(f"Live Logcat - {device_ip}")
+        self.setWindowIcon(get_themed_icon("scroll.svg"))
         self.setMinimumSize(980, 620)
         self.resize(1000, 650)
         self.setModal(False)
@@ -183,6 +186,8 @@ class LiveLogcatDialog(QDialog):
         self.pkg_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.pkg_input, 1)
         self.btn_get_pkg = QPushButton("Get Pkg")
+        self.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
+        self.btn_get_pkg.setIconSize(QSize(14, 14))
         self.btn_get_pkg.setToolTip("Fetch current foreground app package")
         self.btn_get_pkg.setFixedWidth(60)
         self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
@@ -198,10 +203,18 @@ class LiveLogcatDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         self.start_btn = QPushButton("Start")
+        self.start_btn.setIcon(get_themed_icon("play.svg"))
+        self.start_btn.setIconSize(QSize(14, 14))
         self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
+        self.stop_btn.setIconSize(QSize(14, 14))
         self.stop_btn.setEnabled(False)
         self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setIcon(get_themed_icon("broom.svg"))
+        self.clear_btn.setIconSize(QSize(14, 14))
         self.export_btn = QPushButton("Export")
+        self.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
+        self.export_btn.setIconSize(QSize(14, 14))
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.clear_btn.clicked.connect(self._clear)
