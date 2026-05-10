@@ -22,7 +22,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About ADBLab")
         self.setFixedSize(340, 380)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
         self._build_ui()
         self._apply_theme()

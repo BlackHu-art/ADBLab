@@ -1,4 +1,4 @@
-"""标签页基类 — 提供共享的 UI 工厂方法和设备/包名访问器。"""
+"""Tab base class — shared UI factory methods and device/package accessors."""
 
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon
@@ -23,7 +23,7 @@ class BasePanel(QWidget):
         super().__init__(parent)
         self.panel = panel
 
-    # ── 共享属性快捷访问 ──
+    # ── Shared properties快捷访问 ──
 
     @property
     def signals(self):
@@ -55,6 +55,10 @@ class BasePanel(QWidget):
     @property
     def _font_tab(self):
         return self.panel._font_tab
+
+    def _sh(self, cmd: str):
+        """Emit a shell command for the selected devices."""
+        self.signals.shell_command_requested.emit(self.selected_devices, cmd)
 
     # ── UI 工厂方法 ──
 

@@ -3,11 +3,13 @@ from threading import Lock
 
 import yaml
 
+from utils.resource_path import resource_path
+
 
 class DeviceStore:
     _lock = Lock()
     _devices = {}
-    _file_path = os.path.join("resources", "connected_devices.yaml")
+    _file_path = resource_path("resources/connected_devices.yaml")
 
     @classmethod
     def load(cls):
@@ -32,7 +34,8 @@ class DeviceStore:
     def add_device(
         cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: str = ""
     ):
-        cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(aversion)}
+        with cls._lock:
+            cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(aversion)}
         cls.save()
 
     @classmethod
@@ -42,16 +45,18 @@ class DeviceStore:
 
     @classmethod
     def get_basic_devices_info(cls):
-        return [
-            (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
-            for data in cls._devices.values()
-            if isinstance(data, dict)
-        ]
+        with cls._lock:
+            return [
+                (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
+                for data in cls._devices.values()
+                if isinstance(data, dict)
+            ]
 
     @classmethod
     def get_full_devices_info(cls, ip_list: list[str]) -> list[dict]:
-        return [
-            device
-            for device in cls._devices.values()
-            if isinstance(device, dict) and device.get("ip") in ip_list
-        ]
+        with cls._lock:
+            return [
+                device
+                for device in cls._devices.values()
+                if isinstance(device, dict) and device.get("ip") in ip_list
+            ]

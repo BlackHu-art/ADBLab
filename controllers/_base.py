@@ -1,4 +1,5 @@
 import os
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -29,7 +30,8 @@ class _ADBControllerBase:
         self.connected_devices_file = resource_path("resources/connected_devices.yaml")
         self.package_info = resource_path("resources/package_info.yaml")
         self.thread_pool = QThreadPool.globalInstance()
-        self._pending_operations = {}
+        self._pending_ops = {}
+        self._pending_lock = threading.Lock()
         self._connect_model_signals()
         self.last_save_dir = None
         self._active_viewers = []
@@ -42,9 +44,6 @@ class _ADBControllerBase:
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
             DeviceStore.initialize_empty()
-
-    def __del__(self):
-        self.executor.shutdown(wait=False)
 
     def _connect_model_signals(self):
         self.device_model.command_finished.connect(self._handle_async_response)

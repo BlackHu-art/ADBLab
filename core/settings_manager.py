@@ -1,12 +1,13 @@
-"""持久化应用设置（JSON 存储）。
+"""Persistent app settings (JSON storage).
 
-单例模式 — 全局通过 AppSettings.instance() 访问。
-采用原子写入 + 静默回退策略，避免高频写入导致文件损坏。
+Singleton — access via AppSettings.instance().
+Atomic write with silent fallback to prevent corruption.
 """
 
 import json
 import os
 import tempfile
+import threading
 from typing import Any
 
 from core.log_service import LogService
@@ -40,7 +41,7 @@ class AppSettings:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._data = dict(DEFAULTS)
-            cls._instance._dirty = False
+            cls._instance._save_timer = None
             cls._instance._load()
         return cls._instance
 
@@ -89,25 +90,29 @@ class AppSettings:
             except Exception:
                 pass
 
-    # ── 公共 API ──────────────────────────────────────────────────────
+    # ── Public API ──────────────────────────────────────────────────────
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, DEFAULTS.get(key, default))
 
     def set(self, key: str, value: Any):
-        """更新内存中的设置值并自动持久化。"""
+        """Update setting in memory, persist after 500ms debounce."""
         self._data[key] = value
-        self._save_atomic()
+        if self._save_timer:
+            self._save_timer.cancel()
+        self._save_timer = threading.Timer(0.5, self._save_atomic)
+        self._save_timer.daemon = True
+        self._save_timer.start()
 
     def reset(self, key: str = None):
-        """重置指定 key 或全部设置到默认值。"""
+        """Reset key or all settings to defaults。"""
         if key:
             self._data[key] = DEFAULTS.get(key, "")
         else:
             self._data = dict(DEFAULTS)
         self._save_atomic()
 
-    # ── 便捷属性 ───────────────────────────────────────────────────────
+    # ── Properties ───────────────────────────────────────────────────────
 
     @property
     def save_directory(self) -> str:

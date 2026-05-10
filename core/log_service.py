@@ -36,7 +36,7 @@ class LogService(QObject):
             cls._lock.unlock()  # 确保锁释放
 
     def __init__(self):
-        """初始化日志服务（单例模式）"""
+        """初始化日志服务（Singleton pattern）"""
         if not self._initialized:
             super().__init__()
             self._initialized = True

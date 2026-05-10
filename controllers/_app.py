@@ -27,7 +27,7 @@ class ADBAppMixin(_ADBControllerBase):
     log_service: LogService
     executor: ThreadPoolExecutor
     _batch_trackers: dict
-    _pending_operations: dict
+    _pending_ops: dict
 
     _handlers = {
         "get_current_package": "_process_get_package_result",
@@ -59,7 +59,7 @@ class ADBAppMixin(_ADBControllerBase):
         "emu_geo_fix": "_process_emu_geo_fix_result",
     }
 
-    # ── 获取包 / 安装 / 卸载 ──
+    # -- Package / Install / Uninstall --
 
     def get_current_package(self, devices: list):
         if not devices:
@@ -70,7 +70,7 @@ class ADBAppMixin(_ADBControllerBase):
 
     def _get_single_device_package(self, device_ip: str):
         operation_id = self._generate_operation_id()
-        self._pending_operations[operation_id] = ("get_package", device_ip)
+        self._pending_ops[operation_id] = ("get_package", device_ip)
         self.app_model.get_current_package_async(device_ip)
 
     def _process_get_package_result(self, result: dict):
@@ -508,7 +508,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
         return self._emit_operation("monkey", result.get("success"), message)
 
-    # ── 日志检索 ──
+    # -- Log Retrieval --
 
     def retrieve_device_logs(self, devices: list):
         if not devices:
@@ -526,7 +526,7 @@ class ADBAppMixin(_ADBControllerBase):
         sanitized_ip = re.sub(r"\W+", "_", device_ip)
         log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
         operation_id = self._generate_operation_id()
-        self._pending_operations[operation_id] = ("retrieve_device_logs", device_ip)
+        self._pending_ops[operation_id] = ("retrieve_device_logs", device_ip)
         self.testing_model.retrieve_device_logs_async(device_ip, log_path)
 
     def _process_retrieve_logs_result(self, result: dict):
@@ -550,7 +550,7 @@ class ADBAppMixin(_ADBControllerBase):
             return
         for device_ip in devices:
             operation_id = self._generate_operation_id()
-            self._pending_operations[operation_id] = ("cleanup_device_logs", device_ip)
+            self._pending_ops[operation_id] = ("cleanup_device_logs", device_ip)
             self.testing_model.cleanup_device_logs_async(device_ip)
 
     def _process_cleanup_logs_result(self, result: dict):
@@ -564,7 +564,7 @@ class ADBAppMixin(_ADBControllerBase):
                 "cleanup_device_logs", False, f"Failed to clear log for {device_ip}: {error_msg}"
             )
 
-    # ── 权限 ──
+    # -- Permissions --
 
     def grant_permission(self, devices: list, package: str, permission: str):
         if not devices:
@@ -606,7 +606,7 @@ class ADBAppMixin(_ADBControllerBase):
                 "revoke_permission", False, f"Revoke failed on {ip}: {result.get('error')}"
             )
 
-    # ── 禁用/启用/强停 ──
+    # -- Disable / Enable / Force Stop --
 
     def disable_app(self, devices: list, package: str):
         if not devices:
@@ -656,7 +656,7 @@ class ADBAppMixin(_ADBControllerBase):
                 "force_stop", False, f"Force stop failed on {ip}: {result.get('error')}"
             )
 
-    # ── 广播 / Activity / DeepLink ──
+    # -- Broadcast / Activity / DeepLink --
 
     def send_broadcast(self, devices: list, action: str):
         if not devices:
@@ -750,7 +750,7 @@ class ADBAppMixin(_ADBControllerBase):
         else:
             self._emit_operation("ime_set", False, f"IME set failed on {ip}: {result.get('error')}")
 
-    # ── 模拟器 ──
+    # -- Emulator --
 
     def emu_sms(self, devices: list, sender: str, text: str):
         if not devices:

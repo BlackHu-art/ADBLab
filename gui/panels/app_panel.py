@@ -13,7 +13,7 @@ from gui.panels.base_panel import BasePanel
 
 
 class AppPanel(BasePanel):
-    """应用管理标签页。"""
+    """App management tab."""
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -26,7 +26,7 @@ class AppPanel(BasePanel):
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
         # Row 1: Get Email | Email input | Send Text | Verification input
-        r1 = QHBoxLayout(g_ts)
+        r1 = QHBoxLayout()
         r1.setSpacing(4)
         self.btn_generate_email = self._b("Get Email", "Email.svg")
         self.email_text_sender = self._in("Email address")
@@ -38,7 +38,7 @@ class AppPanel(BasePanel):
         r1.addWidget(self.verfication_text_sender, 1)
         gts_l.addLayout(r1)
         # Row 2: Screenshot | Duration | Record Screen | Pull Video
-        r2 = QHBoxLayout(g_ts)
+        r2 = QHBoxLayout()
         r2.setSpacing(4)
         self.btn_screenshot = self._b("Screenshot", "Screenshot.svg")
         self.record_duration = self._combo(["30s", "60s", "120s", "180s", "300s"])
@@ -57,7 +57,7 @@ class AppPanel(BasePanel):
         gl_pm = QVBoxLayout(g_pm)
         gl_pm.setSpacing(2)
         # Row 0: package selector (combo = 2-btn width, button = 1-btn width)
-        r0 = QHBoxLayout(g_pm)
+        r0 = QHBoxLayout()
         r0.setSpacing(4)
         self.program_edit = QComboBox()
         self.program_edit.setEditable(True)
@@ -74,7 +74,7 @@ class AppPanel(BasePanel):
         r0.addWidget(self.btn_get_program, 1)
         gl_pm.addLayout(r0)
         # Row 1: uninstall / clear data / restart
-        r1 = QHBoxLayout(g_pm)
+        r1 = QHBoxLayout()
         r1.setSpacing(4)
         self.uninstall_btn = self._b("Uninstall App", "Uninstall_app.svg")
         self.clear_app_data_btn = self._b("Clear Data", "Clear_data.svg")
@@ -84,7 +84,7 @@ class AppPanel(BasePanel):
         r1.addWidget(self.restart_app_btn, 1)
         gl_pm.addLayout(r1)
         # Row 2: activity / parse / force stop
-        r2 = QHBoxLayout(g_pm)
+        r2 = QHBoxLayout()
         r2.setSpacing(4)
         self.print_activity_btn = self._b("Activity Info", "Print.svg")
         self.parse_apk_info_btn = self._b("Parse APK", "Parse_APK.svg")
@@ -94,7 +94,7 @@ class AppPanel(BasePanel):
         r2.addWidget(self.btn_force_stop, 1)
         gl_pm.addLayout(r2)
         # Row 3: disable / enable / disable for user
-        r3 = QHBoxLayout(g_pm)
+        r3 = QHBoxLayout()
         r3.setSpacing(4)
         self.btn_disable_app = self._b("Disable App", "Kill_monkey.svg")
         self.btn_enable_app = self._b("Enable App", "Restart_app.svg")
@@ -128,7 +128,7 @@ class AppPanel(BasePanel):
         gl_mr = QVBoxLayout(g_mr)
         gl_mr.setSpacing(2)
 
-        r_m1 = QHBoxLayout(g_mr)
+        r_m1 = QHBoxLayout()
         r_m1.setSpacing(4)
         self.device_type = QComboBox()
         self.device_type.addItems(["STB", "Mobile"])
@@ -144,7 +144,7 @@ class AppPanel(BasePanel):
         r_m1.addWidget(self.kill_monkey_btn, 1)
         gl_mr.addLayout(r_m1)
 
-        r_m2 = QHBoxLayout(g_mr)
+        r_m2 = QHBoxLayout()
         r_m2.setSpacing(4)
         self.get_bugreport_btn = self._b("Bugreport", "Bugreport.svg")
         self.get_anr_file_btn = self._b("ANR Files", "Get_ANR.svg")
@@ -162,7 +162,7 @@ class AppPanel(BasePanel):
         gl_perf = QVBoxLayout(g_perf)
         gl_perf.setSpacing(2)
 
-        r_p1 = QHBoxLayout(g_perf)
+        r_p1 = QHBoxLayout()
         r_p1.setSpacing(4)
         self.btn_meminfo = self._b("Memory", "Info.svg")
         self.btn_cpuinfo = self._b("CPU Load", "Info.svg")
@@ -174,7 +174,7 @@ class AppPanel(BasePanel):
         r_p1.addWidget(self.btn_uptime, 1)
         gl_perf.addLayout(r_p1)
 
-        r_p2 = QHBoxLayout(g_perf)
+        r_p2 = QHBoxLayout()
         r_p2.setSpacing(4)
         self.btn_top = self._qb("Top Snapshot")
         self.btn_gfx = self._qb("GFX Info")
@@ -252,7 +252,7 @@ class AppPanel(BasePanel):
         self.btn_gfx.clicked.connect(lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60"))
         self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
         self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
-        # 文本与邮箱
+        # Text & Email signals
         self.btn_screenshot.clicked.connect(
             lambda: LP.screenshot_requested.emit(self.selected_devices)
         )
@@ -280,9 +280,6 @@ class AppPanel(BasePanel):
                 self.selected_devices, self.verfication_text_sender.text()
             )
         )
-
-    def _sh(self, c):
-        self.signals.shell_command_requested.emit(self.selected_devices, c)
 
     def update_email(self, t):
         self.email_text_sender.setText(t)

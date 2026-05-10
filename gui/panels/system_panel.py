@@ -242,9 +242,6 @@ class SystemPanel(BasePanel):
         lo.addStretch()
         return w
 
-    def _sh(self, c):
-        self.signals.shell_command_requested.emit(self.selected_devices, c)
-
     def connect_signals(self):
         LP = self.signals
         self.btn_shell_run.clicked.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))

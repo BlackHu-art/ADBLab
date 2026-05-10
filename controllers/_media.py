@@ -24,7 +24,7 @@ class ADBMediaMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     log_service: LogService
     executor: ThreadPoolExecutor
-    _pending_operations: dict
+    _pending_ops: dict
     _active_viewers: list
     last_save_dir: str | None
 
@@ -44,7 +44,7 @@ class ADBMediaMixin(_ADBControllerBase):
         "get_device_uptime": "_process_get_device_uptime_result",
     }
 
-    # ── 截图 ──
+    # -- Screenshot --
 
     def take_screenshot(self, devices: list):
         valid = [d for d in devices if d]
@@ -63,7 +63,7 @@ class ADBMediaMixin(_ADBControllerBase):
         filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
         save_path = os.path.join(save_dir, filename)
         operation_id = self._generate_operation_id()
-        self._pending_operations[operation_id] = ("screenshot", device_ip)
+        self._pending_ops[operation_id] = ("screenshot", device_ip)
         self.testing_model.take_screenshot_async(device_ip, save_path)
 
     def _process_screenshot_result(self, result: dict):
@@ -93,7 +93,7 @@ class ADBMediaMixin(_ADBControllerBase):
         )
         viewer.show()
 
-    # ── 屏幕录制 ──
+    # -- Screen Recording --
 
     def start_screen_record(self, devices: list, duration: int = 180):
         if not devices:
@@ -146,7 +146,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 f"Failed to pull recording from {ip}: {result.get('error')}",
             )
 
-    # ── 性能诊断 ──
+    # -- Performance --
 
     def dumpsys_meminfo(self, devices: list, package: str = ""):
         if not devices:
@@ -206,7 +206,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "dumpsys_battery", False, f"Battery info failed on {ip}: {result.get('error')}"
             )
 
-    # ── 电池模拟 ──
+    # -- Battery --
 
     def battery_set(self, devices: list, param: str, value: str):
         if not devices:
@@ -291,7 +291,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "logcat_filtered", False, f"Logcat filter failed on {ip}: {result.get('error')}"
             )
 
-    # ── 进程管理 ──
+    # -- Process --
 
     def list_processes(self, devices: list):
         if not devices:

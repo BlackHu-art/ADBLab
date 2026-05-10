@@ -16,7 +16,8 @@ from pathlib import Path
 import requests
 from ruamel.yaml import YAML
 
-from core.logger.log_tool import logger
+import logging
+logger = logging.getLogger("email")
 
 _yaml = YAML()
 _yaml.preserve_quotes = True
