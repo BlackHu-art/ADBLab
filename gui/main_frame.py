@@ -138,7 +138,7 @@ class MainFrame(QMainWindow):
         self._usb_timer = QTimer(self)
         self._usb_timer.timeout.connect(self._check_new_devices)
         self._usb_timer.start(3000)
-        self._known_device_count = 0
+        self._known_device_count = None
 
     def _check_new_devices(self):
         """Poll for new USB devices and auto-refresh the device list on change."""
@@ -157,7 +157,9 @@ class MainFrame(QMainWindow):
                 if "device" in line and "offline" not in line
             ]
             count = len(devices)
-            if count != self._known_device_count:
+            if self._known_device_count is None:
+                self._known_device_count = count
+            elif count != self._known_device_count:
                 self._known_device_count = count
                 self.adb_controller.refresh_devices()
         except Exception:
@@ -393,27 +395,20 @@ class MainFrame(QMainWindow):
             signal_.connect(handler)
 
     def _initial_refresh(self):
-        """Perform initial device list refresh after UI is fully loaded."""
-        try:
-            self.adb_controller.refresh_devices()
-            # Sync USB poller device count
-            import subprocess
-            import sys
+        """Wake ADB server and trigger first device scan via controller."""
+        import subprocess
+        import sys
+        from utils.adb_resolver import adb_path
 
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            from utils.adb_resolver import adb_path
-            r = subprocess.run(
-                [adb_path(), "devices"], capture_output=True, text=True, creationflags=cf, timeout=5
+        cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        try:
+            subprocess.run(
+                [adb_path(), "start-server"], capture_output=True, creationflags=cf, timeout=10
             )
-            self._known_device_count = len(
-                [
-                    line
-                    for line in r.stdout.strip().splitlines()[1:]
-                    if "device" in line and "offline" not in line
-                ]
-            )
-        except Exception as e:
-            self.log_panel._append_log("ERROR", f"Initial refresh failed: {str(e)}")
+        except Exception:
+            pass
+
+        self.adb_controller.refresh_devices()
 
     def clear_log(self):
         """Clear log panel."""
