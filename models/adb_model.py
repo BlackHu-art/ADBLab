@@ -7,6 +7,7 @@ ADBModelCore and are used independently by the controller.
 """
 
 import subprocess
+import sys
 from functools import wraps
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -89,7 +90,7 @@ class ADBModelCore(QObject):
                 timeout=timeout,
                 encoding="utf-8",
                 errors="ignore",
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:

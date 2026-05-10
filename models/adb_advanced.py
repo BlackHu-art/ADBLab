@@ -9,9 +9,12 @@ Imports only from adb_model (core) — no circular dependencies.
 
 import os
 import subprocess
+import sys
 from datetime import datetime
 
 from .adb_model import ADBModelCore, async_command
+
+_CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 class ADBAdvanced(ADBModelCore):
@@ -51,7 +54,7 @@ class ADBAdvanced(ADBModelCore):
                 cmd,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_CF,
             )
             return {
                 "success": True,

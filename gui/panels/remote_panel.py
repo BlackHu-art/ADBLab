@@ -25,7 +25,14 @@ from utils.resource_path import resource_path
 
 
 def _bundled_scrcpy() -> str:
-    return resource_path(os.path.join("scrcpy-win64-v3.3.1", "scrcpy.exe"))
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        return resource_path(os.path.join("scrcpy-win64-v3.3.1", "scrcpy.exe"))
+    # macOS/Linux: use system scrcpy from PATH
+    import shutil
+    found = shutil.which("scrcpy")
+    return found if found else "scrcpy"
 
 
 class RemotePanel(BasePanel):

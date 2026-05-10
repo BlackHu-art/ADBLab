@@ -1,18 +1,32 @@
 """ADBLab font configuration and factory methods."""
 
+import platform
+
 from PySide6.QtGui import QFont
+
+# -- Platform-aware defaults ---------------------------------------------
+
+_DEFAULT_FONT = {
+    "Windows": "Segoe UI",
+    "Darwin": "SF Pro Display",
+}.get(platform.system(), "Noto Sans")
+
+_MONO_FONT = {
+    "Windows": "Consolas",
+    "Darwin": "SF Mono",
+}.get(platform.system(), "DejaVu Sans Mono")
 
 # -- Mutable font config ------------------------------------------------
 
 _font = {
-    "FAMILY": "Segoe UI",
+    "FAMILY": _DEFAULT_FONT,
     "UI": 12,
     "LOG": 9,
 }
 
 # -- Immutable ----------------------------------------------------------
-DEFAULT_FONT_FAMILY = "Segoe UI"
-LOG_FONT = "Consolas"
+DEFAULT_FONT_FAMILY = _DEFAULT_FONT
+LOG_FONT = _MONO_FONT
 LOG_FONT_SIZE = 9
 
 

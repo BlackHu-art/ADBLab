@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -447,12 +448,19 @@ class MainFrame(QMainWindow):
         dialog.exec_()
 
     def _open_cmd(self):
-        """Open local command window (cmd.exe) with working directory at project root."""
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        subprocess.Popen(
-            ["cmd.exe", "/K", f'cd /d "{project_root}"'],
-            creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
-        )
+        """Open system terminal at project root."""
+        import platform
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        system = platform.system()
+        if system == "Windows":
+            subprocess.Popen(["cmd.exe", "/K", f'cd /d "{root}"'], creationflags=subprocess.CREATE_NEW_CONSOLE)
+        elif system == "Darwin":
+            subprocess.Popen(["open", "-a", "Terminal", root])
+        else:
+            for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]:
+                if shutil.which(term):
+                    subprocess.Popen([term], cwd=root)
+                    return
 
 
     # ── 窗口与面板尺寸调整 ──────────────────────────────────────────
