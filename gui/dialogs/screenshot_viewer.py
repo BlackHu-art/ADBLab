@@ -54,6 +54,7 @@ class ScreenshotViewer(QDialog):
             self._navigate_to(0)
         else:
             self._show_placeholder("No screenshot available")
+        self._update_nav_visibility()
 
         BaseStyles.theme_changed.connect(self._apply_theme)
 
@@ -279,15 +280,32 @@ class ScreenshotViewer(QDialog):
         if not self._image_paths or index < 0 or index >= len(self._image_paths):
             return
         self._current_idx = index
-        self._original_pixmap = QPixmap(self._current_path())
+        path = self._current_path()
+        if not path or not os.path.exists(path):
+            self._image_paths.pop(index)
+            if self._image_paths:
+                new_idx = min(index, len(self._image_paths) - 1)
+                self._navigate_to(new_idx)
+            else:
+                self._show_placeholder("No valid screenshots")
+            self._update_nav_visibility()
+            return
+        self._original_pixmap = QPixmap(path)
         if self._original_pixmap.isNull():
-            self._show_placeholder("Failed to load image")
+            self._image_paths.pop(index)
+            if self._image_paths:
+                new_idx = min(index, len(self._image_paths) - 1)
+                self._navigate_to(new_idx)
+            else:
+                self._show_placeholder("Failed to load any screenshot")
+            self._update_nav_visibility()
             return
         self._fit_to_window = True
         self._zoom_factor = 1.0
         self._apply_fit()
         self._update_info()
         self._update_nav_label()
+        self._update_nav_visibility()
 
     def _apply_fit(self):
         if self._original_pixmap is None or self._original_pixmap.isNull():

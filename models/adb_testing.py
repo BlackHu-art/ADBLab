@@ -24,14 +24,20 @@ class ADBTesting(ADBModelCore):
 
     @async_command
     def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
-        try:
-            temp_path = "/sdcard/screenshot.png"
-            self._execute_command(["adb", "-s", device_ip, "shell", "screencap", "-p", temp_path])
-            self._execute_command(["adb", "-s", device_ip, "pull", temp_path, save_path])
-            self._execute_command(["adb", "-s", device_ip, "shell", "rm", temp_path])
-            return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
-        except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": str(e)}
+        temp_path = "/sdcard/screenshot.png"
+        r = self._exec(["adb", "-s", device_ip, "shell", "screencap", "-p", temp_path])
+        if not r["ok"]:
+            return {"success": False, "device_ip": device_ip, "error": f"screencap: {r['error']}"}
+        # Verify file exists before pulling
+        r = self._exec(["adb", "-s", device_ip, "shell", f"test -f {temp_path} && echo ok"])
+        if not r["ok"] or r.get("data", "").strip() != "ok":
+            return {"success": False, "device_ip": device_ip,
+                    "error": "screenshot file not found on device after screencap"}
+        r = self._exec(["adb", "-s", device_ip, "pull", temp_path, save_path])
+        if not r["ok"]:
+            return {"success": False, "device_ip": device_ip, "error": f"pull: {r['error']}"}
+        self._exec(["adb", "-s", device_ip, "shell", "rm", temp_path])
+        return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
 
     # ── Device logs ───────────────────────────────────────────────────
 

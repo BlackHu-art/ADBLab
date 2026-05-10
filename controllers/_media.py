@@ -54,6 +54,9 @@ class ADBMediaMixin(_ADBControllerBase):
         screenshot_dir = self._get_screenshot_dir()
         self._screenshot_paths = []
         self._screenshot_remaining = len(valid)
+        self._screenshot_devices = list(valid)
+        self._emit_operation("screenshot", True,
+            f"Capturing {len(valid)} device(s)...")
         for device_ip in valid:
             self._start_screenshot_process(device_ip, screenshot_dir)
 
@@ -61,7 +64,7 @@ class ADBMediaMixin(_ADBControllerBase):
         timestamp = datetime.now().strftime("%H%M%S")
         sanitized_ip = re.sub(r"\W+", "_", device_ip)
         filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
-        save_path = os.path.join(save_dir, filename)
+        save_path = os.path.normpath(os.path.join(save_dir, filename))
         operation_id = self._generate_operation_id()
         self._pending_ops[operation_id] = ("screenshot", device_ip)
         self.testing_model.take_screenshot_async(device_ip, save_path)
@@ -70,19 +73,30 @@ class ADBMediaMixin(_ADBControllerBase):
         device_ip = result.get("device_ip", "")
         if result.get("success"):
             path = result["screenshot_path"]
-            self.signals.screenshot_captured.emit(device_ip, path)
-            self._emit_operation("screenshot", True, f"Screenshot saved to {path}")
-            self._screenshot_paths.append(path)
+            if os.path.isfile(path):
+                self.signals.screenshot_captured.emit(device_ip, path)
+                self._screenshot_paths.append(path)
+            else:
+                self._emit_operation(
+                    "screenshot", False, f"Screenshot file missing for {device_ip}"
+                )
         else:
             error = result.get("error", "Unknown error")
             self._emit_operation(
-                "screenshot", False, f"Failed to capture screenshot on {device_ip}: {error}"
+                "screenshot", False, f"Failed on {device_ip}: {error}"
             )
         self._screenshot_remaining -= 1
-        if self._screenshot_remaining <= 0 and self._screenshot_paths:
+        if self._screenshot_remaining <= 0:
             paths = self._screenshot_paths
             self._screenshot_paths = []
-            QTimer.singleShot(0, lambda: self._show_screenshot_viewer(paths))
+            count = len(paths)
+            if count:
+                self._emit_operation("screenshot", True,
+                    f"All done — {count} screenshot(s) ready")
+                QTimer.singleShot(0, lambda: self._show_screenshot_viewer(paths))
+            else:
+                self._emit_operation("screenshot", False,
+                    "No screenshots captured — check device connections")
 
     def _show_screenshot_viewer(self, image_paths: list):
         viewer = ScreenshotViewer(image_paths)
