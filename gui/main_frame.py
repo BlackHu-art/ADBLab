@@ -387,6 +387,7 @@ class MainFrame(QMainWindow):
     def _initial_refresh(self):
         """Wake ADB server and trigger first device scan via controller."""
         import subprocess
+
         from utils.adb_resolver import CF, adb_path
 
         try:

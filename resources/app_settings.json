@@ -8,7 +8,7 @@
   "screen_record_duration": 180,
   "confirm_dangerous_ops": true,
   "auto_refresh_on_connect": true,
-  "theme": "Light",
+  "theme": "Dark",
   "window_width": 1200,
   "window_height": 640,
   "left_panel_width": 613,
