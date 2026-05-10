@@ -45,19 +45,27 @@ class ADBWorker(QThread):
         super().__init__()
         self.device_ip = device_ip
         self.args = args
+        self._aborted = False
+
+    def abort(self):
+        self._aborted = True
+        self.requestInterruption()
 
     def run(self):
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             output = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, creationflags=creationflags
+                cmd, text=True, stderr=subprocess.STDOUT, creationflags=cf, timeout=30,
             )
-            self.finished.emit(output, False)
+            if not self._aborted:
+                self.finished.emit(output, False)
         except subprocess.CalledProcessError as e:
-            self.finished.emit(e.output or str(e), True)
+            if not self._aborted:
+                self.finished.emit(e.output or str(e), True)
         except Exception as e:
-            self.finished.emit(str(e), True)
+            if not self._aborted:
+                self.finished.emit(str(e), True)
 
 
 class TransferWorker(QThread):
@@ -71,29 +79,42 @@ class TransferWorker(QThread):
         self.device_ip = device_ip
         self.args = args
         self.cwd = cwd or os.getcwd()
+        self._proc = None
+        self._aborted = False
+
+    def abort(self):
+        self._aborted = True
+        self.requestInterruption()
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
 
     def run(self):
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            proc = subprocess.Popen(
+            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=self.cwd,
                 universal_newlines=True,
                 bufsize=1,
-                creationflags=creationflags,
+                creationflags=cf,
             )
             last = ""
-            while True:
-                line = proc.stdout.readline()
-                if not line and proc.poll() is not None:
+            while not self._aborted:
+                line = self._proc.stdout.readline()
+                if not line and self._proc.poll() is not None:
                     break
                 if line:
                     last = line.rstrip("\n")
                     self.progress.emit(last)
-            ret = proc.wait()
+            if self._aborted:
+                return
+            ret = self._proc.wait()
             local = self.args[-1] if len(self.args) >= 2 else ""
             if ret == 0:
                 self.finished.emit(last or "OK", False, local)
@@ -978,8 +999,15 @@ class FileExplorerDialog(QDialog):
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        for w in self._workers:
+        workers = self._workers
+        self._workers = []
+        for w in workers:
             if w.isRunning():
-                w.quit()
-                w.wait(1000)
+                w.abort()
+                w.setParent(None)
+        import threading
+        threading.Thread(
+            target=lambda ws=workers: [w.wait(5000) for w in ws if w.isRunning()],
+            daemon=True,
+        ).start()
         super().closeEvent(event)

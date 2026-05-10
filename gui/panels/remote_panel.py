@@ -43,7 +43,7 @@ class RemotePanel(BasePanel):
     }
 
     _PRESETS = {
-        0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "30"},
+        0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "50"},
         1: {"maxsize": "1280", "fps": "30", "bitrate": "8",  "codec": "h264", "buffer": "20"},
         2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "codec": "h265", "buffer": "50"},
         3: {"maxsize": "720",  "fps": "24", "bitrate": "2",  "codec": "h264", "buffer": "0"},
@@ -181,9 +181,12 @@ class RemotePanel(BasePanel):
         self.chk_noaudio = QCheckBox("No Audio")
         self.chk_noaudio.setChecked(True)
         self.chk_showtouches = QCheckBox("Show Touches")
+        self.chk_hw_encoder = QCheckBox("HW Encoder")
+        self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter on some devices)")
         for cb, col in [(self.chk_fullscreen, col1), (self.chk_aot, col2),
                         (self.chk_stayawake, col1), (self.chk_turnscreenoff, col2),
-                        (self.chk_noaudio, col3), (self.chk_showtouches, col3)]:
+                        (self.chk_noaudio, col3), (self.chk_showtouches, col3),
+                        (self.chk_hw_encoder, col3)]:
             cb.setFont(self._font_sm)
             col.addWidget(cb)
         r7a.addLayout(col1)
@@ -331,25 +334,37 @@ class RemotePanel(BasePanel):
     # -- pre-flight check -------------------------------------------------
 
     def _preflight_check(self, device: str) -> bool:
+        import time
         try:
             proc = self._adb.shell("echo ok", device_id=device)
-            return proc.stdout.read().decode().strip() == "ok"
+            if proc.stdout.read().decode().strip() != "ok":
+                self._log("WARNING", f"Device {device} not responding")
+                return False
+            # USB speed test: push 1KB of zeros and measure time
+            t0 = time.monotonic()
+            _sp = subprocess.run(
+                [self._adb.path, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
+                capture_output=True, text=True, creationflags=CF, timeout=5,
+            )
+            elapsed = time.monotonic() - t0
+            if elapsed > 1.0:
+                self._log("WARNING",
+                    f"USB speed: {elapsed:.1f}s (slow). Try a different cable or USB 3.0 port")
+            else:
+                self._log("INFO", f"USB speed: {elapsed*1000:.0f}ms (OK)")
+            return True
         except Exception as e:
             self._log("WARNING", f"Pre-flight failed: {e}")
             return False
 
     def _detect_encoder(self, device: str) -> str | None:
-        from utils.adb_resolver import adb_path
-        cf = CF
         try:
-            r = subprocess.run(
-                [adb_path(), "-s", device, "shell", "dumpsys", "media.codec"],
-                capture_output=True, text=True, creationflags=cf, timeout=5,
-            )
-            for line in r.stdout.splitlines():
+            proc = self._adb.shell("dumpsys media.codec", device_id=device)
+            output = proc.stdout.read().decode(errors="ignore")
+            for line in output.splitlines():
                 if "OMX" in line and "h264" in line.lower() and "encoder" in line.lower():
                     return line.strip().split()[0]
-            for line in r.stdout.splitlines():
+            for line in output.splitlines():
                 if "c2." in line and "h264" in line.lower() and "encoder" in line.lower():
                     return line.strip().split()[0]
         except Exception:
@@ -408,9 +423,13 @@ class RemotePanel(BasePanel):
         if not self.chk_noaudio.isChecked():
             args.extend(["--audio-source", self.audio_source.currentText()])
 
-        encoder = self._detect_encoder(device)
-        if encoder:
-            args.extend(["--video-encoder", encoder])
+        if self.chk_hw_encoder.isChecked():
+            encoder = self._detect_encoder(device)
+            if encoder:
+                args.extend(["--video-encoder", encoder])
+                self._log("INFO", f"Using encoder: {encoder}")
+            else:
+                self._log("WARNING", "No hardware encoder found, using default")
 
         # Checkbox flags
         if self.chk_fullscreen.isChecked():
@@ -431,6 +450,7 @@ class RemotePanel(BasePanel):
             args.extend(["--record", self._record_path])
         if self.chk_noplayback.isChecked():
             args.append("--no-playback")
+            args.append("--no-window")
 
         # C13: Print FPS
         args.append("--print-fps")
@@ -479,19 +499,21 @@ class RemotePanel(BasePanel):
         if not self._process:
             return
         self._watchdog.stop()
-        try:
-            self._process.terminate()
+        proc = self._process
+        self._process = None
+        self._set_running(False)
+        self._update_status("Idle", None)
+        def _do_stop():
             try:
-                self._process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-            self._log("INFO", "scrcpy stopped")
-        except Exception as e:
-            self._log("ERROR", f"stop failed: {e}")
-        finally:
-            self._process = None
-            self._set_running(False)
-            self._update_status("Idle", None)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                self._log("INFO", "scrcpy stopped")
+            except Exception as e:
+                self._log("ERROR", f"stop failed: {e}")
+        threading.Thread(target=_do_stop, daemon=True).start()
 
     def _set_running(self, running: bool):
         self._running = running
@@ -516,12 +538,7 @@ class RemotePanel(BasePanel):
         code = self._KEYCODE_MAP.get(key_name, "")
         if not code:
             return
-        from utils.adb_resolver import adb_path
-        subprocess.run(
-            [adb_path(), "-s", devices[0], "shell", "input", "keyevent", code],
-            capture_output=True,
-            creationflags=CF,
-        )
+        self._adb.shell_input(f"keyevent {code}", device_id=devices[0])
 
     # -- helpers ----------------------------------------------------------
 

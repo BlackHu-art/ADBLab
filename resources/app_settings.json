@@ -12,5 +12,6 @@
   "window_width": 1200,
   "window_height": 640,
   "left_panel_width": 613,
-  "right_panel_width": 574
+  "right_panel_width": 574,
+  "test_key": "test_val"
 }

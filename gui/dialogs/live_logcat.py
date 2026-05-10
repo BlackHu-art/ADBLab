@@ -375,6 +375,10 @@ class LiveLogcatDialog(QDialog):
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
-            self.worker.stop()
-            self.worker.wait(2000)
+            w = self.worker
+            self.worker = None
+            w.stop()
+            w.setParent(None)
+            import threading
+            threading.Thread(target=lambda: w.wait(3000), daemon=True).start()
         super().closeEvent(event)

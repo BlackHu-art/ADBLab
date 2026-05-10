@@ -415,13 +415,17 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
-        for w in self._workers:
+        import threading
+        workers = self._workers
+        self._workers = []
+        for w in workers:
             w.abort()
-        for w in self._workers:
-            if not w.wait(3000):
-                w.terminate()
-                w.wait(1000)
-        self._workers.clear()
+            w.setParent(None)
+        # Background waiter keeps Python refs alive until threads finish
+        threading.Thread(
+            target=lambda ws=workers: [w.wait(5000) for w in ws],
+            daemon=True,
+        ).start()
         super().closeEvent(event)
 
 
@@ -998,11 +1002,15 @@ class AppManagerDialog(QDialog):
         self._workers.append(w)
 
     def closeEvent(self, event):
-        for w in self._workers:
+        import threading
+        workers = self._workers
+        self._workers = []
+        for w in workers:
             w.abort()
-        for w in self._workers:
-            if not w.wait(3000):
-                w.terminate()
-                w.wait(1000)
-        self._workers.clear()
+            w.setParent(None)
+        # Background waiter keeps Python refs alive until threads finish
+        threading.Thread(
+            target=lambda ws=workers: [w.wait(5000) for w in ws],
+            daemon=True,
+        ).start()
         super().closeEvent(event)

@@ -46,33 +46,22 @@ class GetRandomEmailTask(QRunnable):
 
             # 2. Email polling phase
             self.log("INFO", "🔍 Checking inbox (max 10 attempts)...")
-            for attempt in range(1, 11):
+            for attempt in range(1, 16):
                 self.log("DEBUG", f"Attempt #{attempt}: Requesting email list")
-
                 email_list_data = email_service.get_email_list()
                 if not email_list_data:
-                    self.log("WARNING", f"⚠️ Attempt {attempt}: Email list request failed")
+                    time.sleep(0.5)
                     continue
-
                 total_emails = email_list_data.get("data", {}).get("total", 0)
-                self.log("DEBUG", f"Server response: Found {total_emails} emails")
-
                 if total_emails >= 1:
                     if rows := email_list_data.get("data", {}).get("rows", []):
                         email_service.emailId = rows[0].get("id")
-                        self.log("SUCCESS", f"📨 Target email found (ID: {email_service.emailId})")
+                        self.log("SUCCESS", f"Email found (ID: {email_service.emailId})")
                         break
-
-                # Progress tracking
-                remaining = 10 - attempt
-                self.log("INFO", f"⏳ Waiting for email... (Remaining attempts: {remaining})")
-                for i in range(10, 0, -1):
-                    time.sleep(1)
-                    if i % 5 == 0:  # Update countdown every 5 seconds
-                        self.log("DEBUG", f"Countdown: {i}s")
+                time.sleep(1.0)
 
             else:
-                self.log("ERROR", "⌛ Email retrieval timeout (10 attempts failed)")
+                self.log("ERROR", "Email retrieval timeout (16 attempts failed)")
                 return
 
             # 3. Verification code extraction

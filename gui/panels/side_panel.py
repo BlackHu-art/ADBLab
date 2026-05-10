@@ -146,24 +146,29 @@ class SidePanel(QWidget):
         self.tabs.setFont(self._font_tab)
         self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         self._apply_tab_style()
-        for g in self.findChildren(QGroupBox):
-            g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
-            g.setFont(self._font_base)
-        for b in self.findChildren(QPushButton):
-            if not b.parent() or b.parent().objectName() != "toolbar":
-                b.setFont(self._font_sm)
-        for i in self.findChildren(QLineEdit):
-            i.setFont(self._font_sm)
-        for c in self.findChildren(QComboBox):
-            c.setFont(self._font_sm)
-        for cb in self.findChildren(QCheckBox):
-            cb.setFont(self._font_sm)
-        for sl in self.findChildren(QSlider):
-            sl.setFont(self._font_sm)
-        for s in self.findChildren(QScrollArea):
-            s.setStyleSheet(
-                f"QScrollArea {{ border: none; background: transparent; }}\n{BaseStyles.SCROLLBAR_STYLE()}"
-            )
+        scrollbar_qss = BaseStyles.SCROLLBAR_STYLE()
+        group_qss = BaseStyles.GROUP_BOX_STYLE()
+        # Single tree traversal instead of 8 separate findChildren calls
+        for child in self.findChildren(QWidget):
+            t = type(child)
+            if t is QGroupBox:
+                child.setStyleSheet(group_qss)
+                child.setFont(self._font_base)
+            elif t is QPushButton:
+                if not child.parent() or child.parent().objectName() != "toolbar":
+                    child.setFont(self._font_sm)
+            elif t is QLineEdit:
+                child.setFont(self._font_sm)
+            elif t is QComboBox:
+                child.setFont(self._font_sm)
+            elif t is QCheckBox:
+                child.setFont(self._font_sm)
+            elif t is QSlider:
+                child.setFont(self._font_sm)
+            elif t is QScrollArea:
+                child.setStyleSheet(
+                    f"QScrollArea {{ border: none; background: transparent; }}\n{scrollbar_qss}"
+                )
         self._devices_tab._apply_device_list_style()
         if hasattr(self._devices_tab, "ip_entry"):
             self._apply_completer_style(self._devices_tab.ip_entry.completer())
