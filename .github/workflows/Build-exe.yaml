@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           python -m PyInstaller \
-            --name "ADBLab-${{ matrix.artifact }}-${{ env.VERSION }}" \
+            --name "${{ matrix.artifact }}-${{ env.VERSION }}" \
             --onefile ${{ matrix.onefile }} \
             ${{ matrix.icon }} \
             ${{ matrix.datas }} \
