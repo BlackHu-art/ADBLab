@@ -104,3 +104,25 @@ jobs:
           draft: false
           prerelease: false
           files: release_artifacts/**/*
+
+      - name: Prune old workflow runs (keep 5)
+        shell: bash
+        run: |
+          RUNS=$(gh run list --repo ${{ github.repository }} --workflow ${{ github.workflow }} --limit 100 --json databaseId --jq '.[].databaseId' | tail -n +6)
+          for id in $RUNS; do
+            echo "Deleting run $id"
+            gh run delete "$id" --repo ${{ github.repository }}
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Prune old releases (keep 5)
+        shell: bash
+        run: |
+          RELEASES=$(gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | tail -n +6)
+          for tag in $RELEASES; do
+            echo "Deleting release $tag"
+            gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
