@@ -14,6 +14,7 @@ jobs:
   build:
     name: Build ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -27,14 +28,14 @@ jobs:
             artifact: ADBLab-macos-x64
             onefile: --windowed
             icon: ""
-            datas: --add-data "resources;resources" --add-data "icon.ico;."
+            datas: --add-data "resources:resources" --add-data "icon.ico:."
             pip_cache: ~/Library/Caches/pip
 
           - os: ubuntu-latest
             artifact: ADBLab-linux-x64
             onefile: ""
             icon: ""
-            datas: --add-data "resources;resources" --add-data "icon.ico;."
+            datas: --add-data "resources:resources" --add-data "icon.ico:."
             pip_cache: ~/.cache/pip
 
     runs-on: ${{ matrix.os }}
@@ -82,6 +83,7 @@ jobs:
 
   release:
     needs: build
+    if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-latest
 
     steps:
@@ -89,6 +91,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Download artifacts
+        continue-on-error: true
         uses: actions/download-artifact@v5
         with:
           path: release_artifacts
