@@ -22,9 +22,6 @@ jobs:
             icon: --icon icon.ico
             datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1"
             pip_cache: ~\AppData\Local\pip\Cache
-            shell: powershell
-            clean: Remove-Item -Recurse -Force build, dist -ErrorAction SilentlyContinue
-            ext: .exe
 
           - os: macos-latest
             artifact: ADBLab-macos-x64
@@ -32,9 +29,6 @@ jobs:
             icon: ""
             datas: --add-data "resources;resources" --add-data "icon.ico;."
             pip_cache: ~/Library/Caches/pip
-            shell: bash
-            clean: rm -rf build dist
-            ext: ""
 
           - os: ubuntu-latest
             artifact: ADBLab-linux-x64
@@ -42,9 +36,6 @@ jobs:
             icon: ""
             datas: --add-data "resources;resources" --add-data "icon.ico;."
             pip_cache: ~/.cache/pip
-            shell: bash
-            clean: rm -rf build dist
-            ext: ""
 
     runs-on: ${{ matrix.os }}
 
@@ -65,15 +56,15 @@ jobs:
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Clean
-        shell: ${{ matrix.shell }}
-        run: ${{ matrix.clean }}
+        shell: bash
+        run: rm -rf build dist || true
 
       - name: Install dependencies
-        shell: ${{ matrix.shell }}
+        shell: bash
         run: pip install -r requirements.txt
 
       - name: Build with PyInstaller
-        shell: ${{ matrix.shell }}
+        shell: bash
         run: |
           python -m PyInstaller \
             --name "ADBLab-${{ matrix.artifact }}-${{ env.VERSION }}" \
