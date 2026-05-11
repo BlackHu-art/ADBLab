@@ -53,9 +53,18 @@ class _ADBControllerBase:
 
     def _build_handler_map(self):
         self._handler_map = {}
+        _handler_names: dict[str, str] = {}
         for klass in reversed(type(self).__mro__):
             registered = klass.__dict__.get("_handlers", {})
             for op_key, handler_name in registered.items():
+                if op_key in _handler_names:
+                    prev_name = _handler_names[op_key]
+                    self.log_service.log(
+                        "WARNING",
+                        f"Handler collision: '{op_key}' — {klass.__name__}.{handler_name} "
+                        f"overrides {prev_name}",
+                    )
+                _handler_names[op_key] = handler_name
                 self._handler_map[op_key] = getattr(self, handler_name)
 
     def _generate_operation_id(self) -> str:
@@ -68,6 +77,13 @@ class _ADBControllerBase:
             return
         self.log_service.log(level, f"{message}")
         self.signals.operation_completed.emit(operation, success, message)
+
+    def _require_devices(self, devices: list, op_name: str) -> bool:
+        """Return True if devices is non-empty; emit warning and return False otherwise."""
+        if not devices:
+            self._emit_operation(op_name, False, "⚠️ No devices selected")
+            return False
+        return True
 
     def _handle_async_response(self, method_name: str, result):
         op_type = method_name.replace("_async", "")

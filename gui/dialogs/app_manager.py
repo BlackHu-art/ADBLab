@@ -199,6 +199,7 @@ class AppManagerWorker(QThread):
             "disable": ["shell", "pm", "disable-user", "--user", "0", pkg],
             "enable": ["shell", "pm", "enable", pkg],
             "uninstall": ["uninstall", "--user", "0", pkg],
+            "force_stop": ["shell", "am", "force-stop", pkg],
         }
         cmd = cmds.get(action)
         if not cmd:
@@ -425,6 +426,7 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
+        BaseStyles.theme_changed.disconnect(self._apply_theme)
         import threading
         workers = self._workers
         self._workers = []
@@ -843,18 +845,10 @@ class AppManagerDialog(QDialog):
 
     def _modify_one(self, action, pkg):
         if action == "force_stop":
-            w = AppManagerWorker(self.device_ip, "modify_app", action="disable", package_name=pkg)
+            w = AppManagerWorker(self.device_ip, "modify_app", action="force_stop", package_name=pkg)
             w.log_message.connect(self.log)
             self._track_worker(w)
             w.start()
-            # Actually force-stop
-            subprocess.run(
-                ["adb", "-s", self.device_ip, "shell", "am", "force-stop", pkg],
-                capture_output=True,
-                text=True,
-                creationflags=CF,
-            )
-            self.log(f"Force stopped: {pkg}")
         elif action == "clear":
             w = AppManagerWorker(self.device_ip, "clear_app", package_name=pkg)
             w.log_message.connect(self.log)
@@ -867,8 +861,14 @@ class AppManagerDialog(QDialog):
             self._track_worker(w)
             w.start()
 
+    @staticmethod
+    def _global_save_dir() -> str:
+        from core.settings_manager import AppSettings
+        return AppSettings.instance().save_directory
+
     def _backup_one(self, pkg):
-        sd = QFileDialog.getExistingDirectory(self, "Select Backup Directory")
+        sd = QFileDialog.getExistingDirectory(
+            self, "Select Backup Directory", self._global_save_dir())
         if not sd:
             return
         w = AppManagerWorker(self.device_ip, "backup_app", package_name=pkg, save_dir=sd)
@@ -912,7 +912,8 @@ class AppManagerDialog(QDialog):
         if not pkgs:
             QMessageBox.warning(self, "None", "No apps selected.")
             return
-        sd = QFileDialog.getExistingDirectory(self, "Backup Directory")
+        sd = QFileDialog.getExistingDirectory(
+            self, "Backup Directory", self._global_save_dir())
         if not sd:
             return
         for pkg in pkgs:
@@ -1015,7 +1016,12 @@ class AppManagerDialog(QDialog):
 
     def _track_worker(self, w):
         w.setParent(self)
+        w.finished.connect(lambda _w=w: self._prune_worker(_w))
         self._workers.append(w)
+
+    def _prune_worker(self, w):
+        if w in self._workers:
+            self._workers.remove(w)
 
     def closeEvent(self, event):
         import threading

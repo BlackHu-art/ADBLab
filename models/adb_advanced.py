@@ -8,6 +8,7 @@ Imports only from adb_model (core) — no circular dependencies.
 """
 
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -360,7 +361,7 @@ class ADBAdvanced(ADBModelCore):
     @async_command
     def run_shell_command_async(self, device_ip: str, command: str, timeout: int = 30) -> dict:
         try:
-            full_cmd = ["adb", "-s", device_ip, "shell"] + command.split()
+            full_cmd = ["adb", "-s", device_ip, "shell"] + shlex.split(command)
             result = self._execute_command(full_cmd, timeout=timeout)
             return {"success": True, "device_ip": device_ip, "output": result, "command": command}
         except Exception as e:
@@ -1043,47 +1044,3 @@ class ADBAdvanced(ADBModelCore):
             return {"success": False, "device_ip": device_ip, "error": f"Unknown action: {action}"}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": str(e)}
-
-    # ── Keycode dictionary for reference ─────────────────────────────────
-
-    KEYCODES = {
-        "HOME": "3",
-        "BACK": "4",
-        "CALL": "5",
-        "ENDCALL": "6",
-        "VOLUME_UP": "24",
-        "VOLUME_DOWN": "25",
-        "POWER": "26",
-        "CAMERA": "27",
-        "CLEAR": "28",
-        "ENTER": "66",
-        "DEL": "67",
-        "MENU": "82",
-        "SEARCH": "84",
-        "DPAD_UP": "19",
-        "DPAD_DOWN": "20",
-        "DPAD_LEFT": "21",
-        "DPAD_RIGHT": "22",
-        "DPAD_CENTER": "23",
-        "MEDIA_PLAY_PAUSE": "85",
-        "MEDIA_STOP": "86",
-        "MEDIA_NEXT": "87",
-        "MEDIA_PREVIOUS": "88",
-        "MEDIA_REWIND": "89",
-        "MEDIA_FAST_FORWARD": "90",
-        "MUTE": "91",
-        "PAGE_UP": "92",
-        "PAGE_DOWN": "93",
-        "NOTIFICATION": "83",
-        "SETTINGS": "176",
-        "APP_SWITCH": "187",
-        "ASSIST": "219",
-        "CHANNEL_UP": "166",
-        "CHANNEL_DOWN": "167",
-        "TV_INPUT": "178",
-        "TV_POWER": "177",
-        "SLEEP": "223",
-        "WAKEUP": "224",
-        "BRIGHTNESS_UP": "221",
-        "BRIGHTNESS_DOWN": "220",
-    }
