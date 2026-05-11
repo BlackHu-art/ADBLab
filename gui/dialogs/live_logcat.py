@@ -4,6 +4,7 @@ Live Logcat viewer - stream, filter, highlight and export device logs.
 Adapted to use ADBLab's BaseStyles theme system.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -216,11 +217,18 @@ class LiveLogcatDialog(QDialog):
         self.export_btn = QPushButton("Export")
         self.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
         self.export_btn.setIconSize(QSize(14, 14))
+        self.wrap_btn = QPushButton("Wrap")
+        self.wrap_btn.setIcon(get_themed_icon("arrows-left-right.svg"))
+        self.wrap_btn.setIconSize(QSize(14, 14))
+        self.wrap_btn.setCheckable(True)
+        self.wrap_btn.setChecked(True)
+        self.wrap_btn.setToolTip("Toggle line wrapping")
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.clear_btn.clicked.connect(self._clear)
         self.export_btn.clicked.connect(self._export)
-        for b in (self.start_btn, self.stop_btn, self.clear_btn, self.export_btn):
+        self.wrap_btn.clicked.connect(self._toggle_wrap)
+        for b in (self.start_btn, self.stop_btn, self.clear_btn, self.export_btn, self.wrap_btn):
             btn_row.addWidget(b)
         btn_row.addStretch()
         layout.addLayout(btn_row)
@@ -228,6 +236,7 @@ class LiveLogcatDialog(QDialog):
         # Output
         self.output = QPlainTextEdit()
         self.output.setReadOnly(True)
+        self.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self.output.setUndoRedoEnabled(False)
         self.output.document().setMaximumBlockCount(self.MAX_BUFFER)
         self.output.setFont(QFont("Consolas", 9))
@@ -348,10 +357,25 @@ class LiveLogcatDialog(QDialog):
         self.output.clear()
         self.status_bar.showMessage("Cleared")
 
+    def _toggle_wrap(self):
+        if self.wrap_btn.isChecked():
+            self.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+            self.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self.wrap_btn.setText("Wrap")
+            self.status_bar.showMessage("Line wrap: ON")
+        else:
+            self.output.setLineWrapMode(QPlainTextEdit.NoWrap)
+            self.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            self.wrap_btn.setText("No Wrap")
+            self.status_bar.showMessage("Line wrap: OFF — horizontal scroll enabled")
+
     def _export(self):
+        from core.settings_manager import AppSettings
+        save_dir = AppSettings.instance().save_directory
         name = f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         fp, _ = QFileDialog.getSaveFileName(
-            self, "Export", name, "Text Files (*.txt);;All Files (*)"
+            self, "Export", os.path.join(save_dir, name),
+            "Text Files (*.txt);;All Files (*)",
         )
         if fp:
             try:

@@ -630,8 +630,14 @@ class FileExplorerDialog(QDialog):
         lo.addLayout(btns)
         dlg.exec()
 
+    @staticmethod
+    def _global_save_dir() -> str:
+        from core.settings_manager import AppSettings
+        return AppSettings.instance().save_directory
+
     def _save_as(self, name, content):
-        fp, _ = QFileDialog.getSaveFileName(self, "Save As", name)
+        fp, _ = QFileDialog.getSaveFileName(
+            self, "Save As", os.path.join(self._global_save_dir(), name))
         if fp:
             with open(fp, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -659,7 +665,8 @@ class FileExplorerDialog(QDialog):
 
     def _pull_file(self, name: str):
         full = self._dpath(self.current_path, name)
-        save_path, _ = QFileDialog.getSaveFileName(self, "Save As", name)
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Save As", os.path.join(self._global_save_dir(), name))
         if not save_path:
             return
         if self.root_cb.isChecked():
@@ -691,7 +698,8 @@ class FileExplorerDialog(QDialog):
         rows = set(i.row() for i in self.table.selectedIndexes())
         if not rows:
             return
-        dest = QFileDialog.getExistingDirectory(self, "Destination")
+        dest = QFileDialog.getExistingDirectory(
+            self, "Destination", self._global_save_dir())
         if not dest:
             return
         for row in rows:

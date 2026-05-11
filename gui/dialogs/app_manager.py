@@ -861,8 +861,14 @@ class AppManagerDialog(QDialog):
             self._track_worker(w)
             w.start()
 
+    @staticmethod
+    def _global_save_dir() -> str:
+        from core.settings_manager import AppSettings
+        return AppSettings.instance().save_directory
+
     def _backup_one(self, pkg):
-        sd = QFileDialog.getExistingDirectory(self, "Select Backup Directory")
+        sd = QFileDialog.getExistingDirectory(
+            self, "Select Backup Directory", self._global_save_dir())
         if not sd:
             return
         w = AppManagerWorker(self.device_ip, "backup_app", package_name=pkg, save_dir=sd)
@@ -906,7 +912,8 @@ class AppManagerDialog(QDialog):
         if not pkgs:
             QMessageBox.warning(self, "None", "No apps selected.")
             return
-        sd = QFileDialog.getExistingDirectory(self, "Backup Directory")
+        sd = QFileDialog.getExistingDirectory(
+            self, "Backup Directory", self._global_save_dir())
         if not sd:
             return
         for pkg in pkgs:
