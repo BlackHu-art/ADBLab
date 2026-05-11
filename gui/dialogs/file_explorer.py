@@ -11,9 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-
 from PySide6.QtCore import QSize, Qt, QThread, Signal
-from gui.styles.icon_loader import get_themed_icon
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -34,6 +32,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
 )
+
+from gui.styles.icon_loader import get_themed_icon
 
 # ── Worker Threads ───────────────────────────────────────────────────────
 
@@ -203,19 +203,19 @@ class FileExplorerDialog(QDialog):
         # Toolbar row
         tb = QHBoxLayout()
         tb.setSpacing(3)
-        self.back_btn = QPushButton("<")
+        self.back_btn = QPushButton()
         self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.setToolTip("Back")
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
-        self.fwd_btn = QPushButton(">")
+        self.fwd_btn = QPushButton()
         self.fwd_btn.setIcon(get_themed_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
         self.fwd_btn.setToolTip("Forward")
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
-        self.up_btn = QPushButton("..")
+        self.up_btn = QPushButton()
         self.up_btn.setIcon(get_themed_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
         self.up_btn.setToolTip("Parent")
