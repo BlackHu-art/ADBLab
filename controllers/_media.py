@@ -66,7 +66,8 @@ class ADBMediaMixin(_ADBControllerBase):
         filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
         save_path = os.path.normpath(os.path.join(save_dir, filename))
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("screenshot", device_ip)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("screenshot", device_ip)
         self.testing_model.take_screenshot_async(device_ip, save_path)
 
     def _process_screenshot_result(self, result: dict):
@@ -110,8 +111,7 @@ class ADBMediaMixin(_ADBControllerBase):
     # -- Screen Recording --
 
     def start_screen_record(self, devices: list, duration: int = 180):
-        if not devices:
-            self._emit_operation("screen_record", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "screen_record"):
             return
         save_dir = self._get_screenshot_dir()
         self._record_info = {}
@@ -135,8 +135,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def pull_recordings(self, devices: list):
-        if not devices:
-            self._emit_operation("pull_recording", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "pull_recording"):
             return
         for ip in devices:
             info = self._record_info.get(ip, {})
@@ -163,8 +162,7 @@ class ADBMediaMixin(_ADBControllerBase):
     # -- Performance --
 
     def dumpsys_meminfo(self, devices: list, package: str = ""):
-        if not devices:
-            self._emit_operation("dumpsys_meminfo", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "dumpsys_meminfo"):
             return
         for ip in devices:
             self.advanced_model.dumpsys_meminfo_async(ip, package)
@@ -183,8 +181,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def dumpsys_cpuinfo(self, devices: list):
-        if not devices:
-            self._emit_operation("dumpsys_cpuinfo", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "dumpsys_cpuinfo"):
             return
         for ip in devices:
             self.advanced_model.dumpsys_cpuinfo_async(ip)
@@ -201,8 +198,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def dumpsys_battery(self, devices: list):
-        if not devices:
-            self._emit_operation("dumpsys_battery", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "dumpsys_battery"):
             return
         for ip in devices:
             self.advanced_model.dumpsys_battery_async(ip)
@@ -223,8 +219,7 @@ class ADBMediaMixin(_ADBControllerBase):
     # -- Battery --
 
     def battery_set(self, devices: list, param: str, value: str):
-        if not devices:
-            self._emit_operation("battery_set", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "battery_set"):
             return
         for ip in devices:
             if param == "level":
@@ -255,8 +250,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def battery_reset(self, devices: list):
-        if not devices:
-            self._emit_operation("battery_reset", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "battery_reset"):
             return
         for ip in devices:
             self.advanced_model.battery_reset_async(ip)
@@ -280,8 +274,7 @@ class ADBMediaMixin(_ADBControllerBase):
         tag_filter: str = "",
         regex: str = "",
     ):
-        if not devices:
-            self._emit_operation("logcat_filtered", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "logcat_filtered"):
             return
         save_dir = self._get_screenshot_dir()
         for ip in devices:
@@ -308,8 +301,7 @@ class ADBMediaMixin(_ADBControllerBase):
     # -- Process --
 
     def list_processes(self, devices: list):
-        if not devices:
-            self._emit_operation("list_processes", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "list_processes"):
             return
         for ip in devices:
             self.advanced_model.list_processes_async(ip)
@@ -326,8 +318,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def kill_process(self, devices: list, pid: str):
-        if not devices:
-            self._emit_operation("kill_process", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "kill_process"):
             return
         for ip in devices:
             self.advanced_model.kill_process_async(ip, pid)
@@ -344,8 +335,7 @@ class ADBMediaMixin(_ADBControllerBase):
     # ── Uptime ──
 
     def device_uptime(self, devices: list):
-        if not devices:
-            self._emit_operation("device_uptime", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "device_uptime"):
             return
         for ip in devices:
             self.advanced_model.get_device_uptime_async(ip)

@@ -329,17 +329,28 @@ class FileExplorerDialog(QDialog):
     def _root(self, cmd: str) -> str:
         return f'su -c "{cmd}"' if self.root_cb.isChecked() else cmd
 
+    _SHELL_DANGER = re.compile(r'[;&|`$(){}!<>"\'\n\r]')
+
+    def _safe_name(self, name: str) -> bool:
+        return not self._SHELL_DANGER.search(name)
+
     def _dpath(self, *parts) -> str:
         return os.path.join(*parts).replace("\\", "/")
 
+    def _prune_worker(self, w):
+        if w in self._workers:
+            self._workers.remove(w)
+
     def _run_adb(self, *args):
         worker = ADBWorker(self.device_ip, list(args))
+        worker.finished.connect(lambda _w=worker: self._prune_worker(_w))
         self._workers.append(worker)
         worker.setParent(self)
         return worker
 
     def _run_transfer(self, *args):
         worker = TransferWorker(self.device_ip, list(args))
+        worker.finished.connect(lambda _w=worker: self._prune_worker(_w))
         self._workers.append(worker)
         worker.setParent(self)
         return worker
@@ -720,6 +731,9 @@ class FileExplorerDialog(QDialog):
         name, ok = QInputDialog.getText(self, "New Folder", "Name:")
         if not ok or not name or "/" in name:
             return
+        if not self._safe_name(name):
+            QMessageBox.warning(self, "Invalid Name", "Folder name contains invalid characters")
+            return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(f'mkdir -p "{full}"'))
         w.finished.connect(
@@ -731,6 +745,9 @@ class FileExplorerDialog(QDialog):
         name, ok = QInputDialog.getText(self, "New File", "Name:")
         if not ok or not name or "/" in name:
             return
+        if not self._safe_name(name):
+            QMessageBox.warning(self, "Invalid Name", "Filename contains invalid characters")
+            return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(f'touch "{full}"'))
         w.finished.connect(
@@ -741,6 +758,9 @@ class FileExplorerDialog(QDialog):
     def _rename_item(self, name: str):
         new, ok = QInputDialog.getText(self, "Rename", "New name:", text=name)
         if not ok or not new or new == name:
+            return
+        if not self._safe_name(new):
+            QMessageBox.warning(self, "Invalid Name", "New name contains invalid characters")
             return
         old = self._dpath(self.current_path, name)
         new_p = self._dpath(self.current_path, new)
@@ -1038,6 +1058,11 @@ class FileExplorerDialog(QDialog):
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        from gui.styles.base_styles import BaseStyles
+        try:
+            BaseStyles.theme_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
         workers = self._workers
         self._workers = []
         for w in workers:

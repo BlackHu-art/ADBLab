@@ -389,6 +389,11 @@ class LiveLogcatDialog(QDialog):
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        from gui.styles.base_styles import BaseStyles as BS
+        try:
+            BS.theme_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
         if self.worker and self.worker.isRunning():
             w = self.worker
             self.worker = None

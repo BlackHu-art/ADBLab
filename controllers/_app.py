@@ -62,15 +62,15 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Package / Install / Uninstall --
 
     def get_current_package(self, devices: list):
-        if not devices:
-            self._emit_operation("get_package", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "get_package"):
             return
         for device_ip in devices:
             self.executor.submit(self._get_single_device_package, device_ip)
 
     def _get_single_device_package(self, device_ip: str):
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("get_package", device_ip)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("get_package", device_ip)
         self.app_model.get_current_package_async(device_ip)
 
     def _process_get_package_result(self, result: dict):
@@ -88,8 +88,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def install_apk(self, devices: list):
-        if not devices:
-            self._emit_operation("install", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "install"):
             return
         apk_path, _ = QFileDialog.getOpenFileName(
             None, "Select APK File", "", "APK Files (*.apk);;All Files (*)"
@@ -105,8 +104,7 @@ class ADBAppMixin(_ADBControllerBase):
             self.executor.submit(self._install_single_device, idx, device_ip, apk_path, apk_name)
 
     def batch_install_apk(self, devices: list):
-        if not devices:
-            self._emit_operation("batch_install", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "batch_install"):
             return
         apk_paths, _ = QFileDialog.getOpenFileNames(
             None, "Select APK files to install", "", "APK Files (*.apk);;All Files (*)"
@@ -131,7 +129,8 @@ class ADBAppMixin(_ADBControllerBase):
         )
 
     def _install_single_device(self, idx: int, device_ip: str, apk_path: str, apk_name: str):
-        tracker = self._batch_trackers.get("install")
+        with self._pending_lock:
+            tracker = self._batch_trackers.get("install")
         total = tracker.total if tracker else "?"
         self._emit_operation(
             "install", True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ..."
@@ -143,7 +142,8 @@ class ADBAppMixin(_ADBControllerBase):
         device_ip = result.get("device_ip")
         result.get("index", 1)
         success = result.get("success")
-        tracker = self._batch_trackers.get("install")
+        with self._pending_lock:
+            tracker = self._batch_trackers.get("install")
         progress = tracker.record(success) if tracker else ""
         if success:
             self._emit_operation(
@@ -158,8 +158,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def uninstall_apk(self, devices: list, package_name: str):
-        if not devices:
-            self._emit_operation("uninstall", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "uninstall"):
             return
         if not package_name:
             self._emit_operation("uninstall", False, "⚠️ No package name provided")
@@ -195,8 +194,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def clear_app_data(self, devices: list, package_name: str):
-        if not devices:
-            self._emit_operation("clear_data", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "clear_data"):
             return
         if not package_name:
             self._emit_operation("clear_data", False, "⚠️ No package name provided")
@@ -224,8 +222,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def restart_app(self, devices: list, package_name: str):
-        if not devices:
-            self._emit_operation("restart_app", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "restart_app"):
             return
         if not package_name:
             self._emit_operation("restart_app", False, "⚠️ No package name provided")
@@ -350,8 +347,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def kill_monkey(self, devices: list):
-        if not devices:
-            self._emit_operation("kill_monkey", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "kill_monkey"):
             return
         for idx, device_ip in enumerate(devices, 1):
             self.executor.submit(self.testing_model.kill_monkey_async, device_ip, idx)
@@ -371,8 +367,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def list_installed_packages(self, devices: list[str]):
-        if not devices:
-            self._emit_operation("installed_packages", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "installed_packages"):
             return
         for idx, device_ip in enumerate(devices, 1):
             self.executor.submit(self.app_model.list_installed_packages_async, device_ip, idx)
@@ -422,8 +417,7 @@ class ADBAppMixin(_ADBControllerBase):
             self._emit_operation("bugreport", False, f"❌ {idx}. Failed on {device_ip}:\n{message}")
 
     def pull_anr_files(self, devices: list[str]):
-        if not devices:
-            self._emit_operation("pull_anr", False, "No devices selected")
+        if not self._require_devices(devices, "pull_anr"):
             return
         save_dir = self._get_screenshot_dir()
         timestamp = datetime.now().strftime("%H%M%S")
@@ -511,8 +505,7 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Log Retrieval --
 
     def retrieve_device_logs(self, devices: list):
-        if not devices:
-            self._emit_operation("retrieve_device_logs", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "retrieve_device_logs"):
             return
         save_dir = self._get_screenshot_dir()
         if not save_dir:
@@ -526,7 +519,8 @@ class ADBAppMixin(_ADBControllerBase):
         sanitized_ip = re.sub(r"\W+", "_", device_ip)
         log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("retrieve_device_logs", device_ip)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("retrieve_device_logs", device_ip)
         self.testing_model.retrieve_device_logs_async(device_ip, log_path)
 
     def _process_retrieve_logs_result(self, result: dict):
@@ -545,11 +539,11 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def cleanup_device_logs(self, devices: list):
-        if not devices:
-            self._emit_operation("cleanup_device_logs", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "cleanup_device_logs"):
             return
         for device_ip in devices:
             operation_id = self._generate_operation_id()
+            with self._pending_lock:
             self._pending_ops[operation_id] = ("cleanup_device_logs", device_ip)
             self.testing_model.cleanup_device_logs_async(device_ip)
 
@@ -567,8 +561,7 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Permissions --
 
     def grant_permission(self, devices: list, package: str, permission: str):
-        if not devices:
-            self._emit_operation("grant_permission", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "grant_permission"):
             return
         for ip in devices:
             self.advanced_model.grant_permission_async(ip, package, permission)
@@ -587,8 +580,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def revoke_permission(self, devices: list, package: str, permission: str):
-        if not devices:
-            self._emit_operation("revoke_permission", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "revoke_permission"):
             return
         for ip in devices:
             self.advanced_model.revoke_permission_async(ip, package, permission)
@@ -609,8 +601,7 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Disable / Enable / Force Stop --
 
     def disable_app(self, devices: list, package: str):
-        if not devices:
-            self._emit_operation("disable_app", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "disable_app"):
             return
         for ip in devices:
             self.advanced_model.disable_package_async(ip, package)
@@ -625,8 +616,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def enable_app(self, devices: list, package: str):
-        if not devices:
-            self._emit_operation("enable_app", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "enable_app"):
             return
         for ip in devices:
             self.advanced_model.enable_package_async(ip, package)
@@ -641,8 +631,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def force_stop(self, devices: list, package: str):
-        if not devices:
-            self._emit_operation("force_stop", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "force_stop"):
             return
         for ip in devices:
             self.advanced_model.force_stop_async(ip, package)
@@ -659,8 +648,7 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Broadcast / Activity / DeepLink --
 
     def send_broadcast(self, devices: list, action: str):
-        if not devices:
-            self._emit_operation("send_broadcast", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "send_broadcast"):
             return
         for ip in devices:
             self.advanced_model.send_broadcast_async(ip, action)
@@ -677,8 +665,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def start_activity(self, devices: list, component_or_action: str):
-        if not devices:
-            self._emit_operation("start_activity", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "start_activity"):
             return
         spec = component_or_action.strip()
         for ip in devices:
@@ -701,8 +688,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def open_deep_link(self, devices: list, uri: str):
-        if not devices:
-            self._emit_operation("deep_link", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "deep_link"):
             return
         for ip in devices:
             self.advanced_model.open_deep_link_async(ip, uri)
@@ -721,8 +707,7 @@ class ADBAppMixin(_ADBControllerBase):
     # ── IME ──
 
     def ime_list(self, devices: list):
-        if not devices:
-            self._emit_operation("ime_list", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "ime_list"):
             return
         for ip in devices:
             self.advanced_model.ime_list_async(ip)
@@ -737,8 +722,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def ime_set(self, devices: list, ime_id: str):
-        if not devices:
-            self._emit_operation("ime_set", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "ime_set"):
             return
         for ip in devices:
             self.advanced_model.ime_set_async(ip, ime_id)
@@ -753,8 +737,7 @@ class ADBAppMixin(_ADBControllerBase):
     # -- Emulator --
 
     def emu_sms(self, devices: list, sender: str, text: str):
-        if not devices:
-            self._emit_operation("emu_sms", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "emu_sms"):
             return
         for ip in devices:
             self.advanced_model.emu_sms_send_async(ip, sender, text)
@@ -767,8 +750,7 @@ class ADBAppMixin(_ADBControllerBase):
             self._emit_operation("emu_sms", False, f"Emu SMS failed on {ip}: {result.get('error')}")
 
     def emu_call(self, devices: list, number: str):
-        if not devices:
-            self._emit_operation("emu_call", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "emu_call"):
             return
         for ip in devices:
             self.advanced_model.emu_call_async(ip, number)
@@ -783,8 +765,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
 
     def emu_geo(self, devices: list, longitude: str, latitude: str):
-        if not devices:
-            self._emit_operation("emu_geo", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "emu_geo"):
             return
         for ip in devices:
             self.advanced_model.emu_geo_fix_async(ip, longitude, latitude)

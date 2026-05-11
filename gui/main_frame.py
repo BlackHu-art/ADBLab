@@ -145,27 +145,38 @@ class MainFrame(QMainWindow):
         self._known_device_count = None
 
     def _check_new_devices(self):
-        """Poll for new USB devices and auto-refresh the device list on change."""
+        """Poll for new USB devices (async) and auto-refresh on change."""
         import subprocess
+        import threading
 
-        try:
-            from utils.adb_resolver import CF, adb_path
-            r = subprocess.run(
-                [adb_path(), "devices"], capture_output=True, text=True, creationflags=CF, timeout=5
-            )
-            devices = [
-                line.split("\t")[0]
-                for line in r.stdout.strip().splitlines()[1:]
-                if "device" in line and "offline" not in line
-            ]
-            count = len(devices)
-            if self._known_device_count is None:
-                self._known_device_count = count
-            elif count != self._known_device_count:
-                self._known_device_count = count
-                self.adb_controller.refresh_devices()
-        except Exception:
-            pass
+        def _poll():
+            try:
+                from utils.adb_resolver import CF, adb_path
+                r = subprocess.run(
+                    [adb_path(), "devices"], capture_output=True, text=True,
+                    creationflags=CF, timeout=5,
+                )
+                devices = [
+                    line.split("\t")[0]
+                    for line in r.stdout.strip().splitlines()[1:]
+                    if "device" in line and "offline" not in line
+                ]
+                count = len(devices)
+                # Marshal result back to main thread
+                QTimer.singleShot(0, lambda: self._on_device_poll_result(count))
+            except Exception:
+                QTimer.singleShot(0, lambda: self._on_device_poll_result(None))
+
+        threading.Thread(target=_poll, daemon=True).start()
+
+    def _on_device_poll_result(self, count: int | None):
+        if count is None:
+            return  # ADB unavailable — silently retry next cycle
+        if self._known_device_count is None:
+            self._known_device_count = count
+        elif count != self._known_device_count:
+            self._known_device_count = count
+            self.adb_controller.refresh_devices()
 
     # ── Top toolbar (full-width, replaces menu bar) ───────────────────
 

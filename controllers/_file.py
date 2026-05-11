@@ -33,8 +33,7 @@ class ADBFileMixin(_ADBControllerBase):
     # -- File Management --
 
     def file_list(self, devices: list, path: str = "/sdcard"):
-        if not devices:
-            self._emit_operation("file_list", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "file_list"):
             return
         for ip in devices:
             self.advanced_model.shell_ls_async(ip, path)
@@ -53,8 +52,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def file_push(self, devices: list, local_path: str, remote_path: str):
-        if not devices:
-            self._emit_operation("file_push", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "file_push"):
             return
         for ip in devices:
             self.advanced_model.push_file_async(ip, local_path, remote_path)
@@ -69,8 +67,7 @@ class ADBFileMixin(_ADBControllerBase):
             self._emit_operation("file_push", False, f"Push failed on {ip}: {result.get('error')}")
 
     def file_pull(self, devices: list, remote_path: str):
-        if not devices:
-            self._emit_operation("file_pull", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "file_pull"):
             return
         save_dir = self._get_screenshot_dir()
         for ip in devices:
@@ -92,8 +89,7 @@ class ADBFileMixin(_ADBControllerBase):
     # -- Port Forwarding --
 
     def forward_port(self, devices: list, local_port: str, remote_port: str):
-        if not devices:
-            self._emit_operation("forward_port", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "forward_port"):
             return
         for ip in devices:
             self.advanced_model.forward_port_async(ip, local_port, remote_port)
@@ -112,8 +108,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def list_forwards(self, devices: list):
-        if not devices:
-            self._emit_operation("list_forwards", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "list_forwards"):
             return
         for ip in devices:
             self.advanced_model.list_forwards_async(ip)
@@ -133,8 +128,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def remove_forwards(self, devices: list):
-        if not devices:
-            self._emit_operation("remove_forwards", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "remove_forwards"):
             return
         for ip in devices:
             self.advanced_model.remove_all_forwards_async(ip)
@@ -149,8 +143,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def reverse_port(self, devices: list, remote_port: str, local_port: str):
-        if not devices:
-            self._emit_operation("reverse_port", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "reverse_port"):
             return
         for ip in devices:
             self.advanced_model.reverse_port_async(ip, remote_port, local_port)
@@ -165,8 +158,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def list_reverse(self, devices: list):
-        if not devices:
-            self._emit_operation("list_reverse", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "list_reverse"):
             return
         for ip in devices:
             self.advanced_model.list_reverse_async(ip)
@@ -186,8 +178,7 @@ class ADBFileMixin(_ADBControllerBase):
             )
 
     def remove_reverse(self, devices: list):
-        if not devices:
-            self._emit_operation("remove_reverse", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "remove_reverse"):
             return
         for ip in devices:
             self.advanced_model.remove_all_reverse_async(ip)
@@ -204,8 +195,7 @@ class ADBFileMixin(_ADBControllerBase):
     # ── Content Provider ──
 
     def content_query(self, devices: list, uri: str):
-        if not devices:
-            self._emit_operation("content_query", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "content_query"):
             return
         for ip in devices:
             self.advanced_model.content_query_async(ip, uri)
@@ -224,8 +214,7 @@ class ADBFileMixin(_ADBControllerBase):
     # -- Quick Settings --
 
     def quick_setting(self, devices: list, action: str):
-        if not devices:
-            self._emit_operation("quick_setting", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "quick_setting"):
             return
         for ip in devices:
             self.advanced_model.quick_setting_async(ip, action)
@@ -244,8 +233,7 @@ class ADBFileMixin(_ADBControllerBase):
     # ── PM Features ──
 
     def pm_features(self, devices: list):
-        if not devices:
-            self._emit_operation("pm_features", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "pm_features"):
             return
         for ip in devices:
             self.advanced_model.pm_list_features_async(ip)

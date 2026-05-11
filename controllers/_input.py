@@ -29,8 +29,7 @@ class ADBInputMixin(_ADBControllerBase):
     # -- Input Events --
 
     def input_tap(self, devices: list, x: int, y: int):
-        if not devices:
-            self._emit_operation("input_tap", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "input_tap"):
             return
         for ip in devices:
             self.advanced_model.input_tap_async(ip, x, y)
@@ -47,8 +46,7 @@ class ADBInputMixin(_ADBControllerBase):
     def input_swipe(
         self, devices: list, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
     ):
-        if not devices:
-            self._emit_operation("input_swipe", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "input_swipe"):
             return
         for ip in devices:
             self.advanced_model.input_swipe_async(ip, x1, y1, x2, y2, duration_ms)
@@ -63,8 +61,7 @@ class ADBInputMixin(_ADBControllerBase):
             )
 
     def input_keyevent(self, devices: list, keycode: str):
-        if not devices:
-            self._emit_operation("input_keyevent", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "input_keyevent"):
             return
         for ip in devices:
             self.advanced_model.input_keyevent_async(ip, keycode)
@@ -81,8 +78,7 @@ class ADBInputMixin(_ADBControllerBase):
             )
 
     def input_text(self, devices: list, text: str):
-        if not devices:
-            self._emit_operation("input_text", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "input_text"):
             return
         if not text.strip():
             self._emit_operation("input_text", False, "⚠️ Input text cannot be empty")
@@ -92,7 +88,8 @@ class ADBInputMixin(_ADBControllerBase):
 
     def _send_text_to_device(self, device_ip: str, text: str):
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("input_text", device_ip)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("input_text", device_ip)
         self.app_model.input_text_async(device_ip, text)
 
     def _process_input_text_result(self, result: dict):
@@ -111,8 +108,7 @@ class ADBInputMixin(_ADBControllerBase):
     # ── Shell ──
 
     def run_shell_command(self, devices: list, command: str):
-        if not devices:
-            self._emit_operation("shell_command", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "shell_command"):
             return
         if not command.strip():
             self._emit_operation("shell_command", False, "⚠️ Command cannot be empty")
@@ -135,8 +131,7 @@ class ADBInputMixin(_ADBControllerBase):
     # -- System Settings --
 
     def settings_list(self, devices: list, namespace: str = "system"):
-        if not devices:
-            self._emit_operation("settings_list", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "settings_list"):
             return
         for ip in devices:
             self.advanced_model.settings_list_async(ip, namespace)
@@ -154,8 +149,7 @@ class ADBInputMixin(_ADBControllerBase):
             )
 
     def settings_get(self, devices: list, namespace: str, key: str):
-        if not devices:
-            self._emit_operation("settings_get", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "settings_get"):
             return
         for ip in devices:
             self.advanced_model.settings_get_async(ip, namespace, key)
@@ -174,8 +168,7 @@ class ADBInputMixin(_ADBControllerBase):
             )
 
     def settings_put(self, devices: list, namespace: str, key: str, value: str):
-        if not devices:
-            self._emit_operation("settings_put", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "settings_put"):
             return
         for ip in devices:
             self.advanced_model.settings_put_async(ip, namespace, key, value)

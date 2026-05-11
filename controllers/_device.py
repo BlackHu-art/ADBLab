@@ -110,7 +110,6 @@ class ADBDeviceMixin(_ADBControllerBase):
             )
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")
-            raise
 
     def get_device_info(self, devices: list):
         if not devices:
@@ -154,8 +153,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         log("INFO", "  ✅ complete\n")
 
     def disconnect_devices(self, devices: list):
-        if not devices:
-            self._emit_operation("disconnect", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "disconnect"):
             return
         for ip in devices:
             self.device_model.disconnect_device_async(ip)
@@ -171,8 +169,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             )
 
     def restart_devices(self, devices: list):
-        if not devices:
-            self._emit_operation("restart", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "restart"):
             return
         for ip in devices:
             self.device_model.restart_device_async(ip)
@@ -212,8 +209,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             )
 
     def reboot_mode(self, devices: list, mode: str):
-        if not devices:
-            self._emit_operation("reboot_mode", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "reboot_mode"):
             return
         for ip in devices:
             self.advanced_model.reboot_mode_async(ip, mode)
@@ -245,8 +241,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             self._emit_operation("pair_device", False, f"Pairing failed: {result.get('error')}")
 
     def tcpip_mode(self, devices: list, port: str = "5555"):
-        if not devices:
-            self._emit_operation("tcpip_mode", False, "⚠️ No devices selected")
+        if not self._require_devices(devices, "tcpip_mode"):
             return
         for ip in devices:
             self.advanced_model.tcpip_mode_async(ip, port)

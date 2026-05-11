@@ -279,6 +279,10 @@ class SettingsDialog(QDialog):
 
     # ── Theme ───────────────────────────────────────────────────────────
 
+    def closeEvent(self, event):
+        BaseStyles.theme_changed.disconnect(self._apply_theme)
+        super().closeEvent(event)
+
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
         def c(k):
