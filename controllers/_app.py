@@ -544,7 +544,7 @@ class ADBAppMixin(_ADBControllerBase):
         for device_ip in devices:
             operation_id = self._generate_operation_id()
             with self._pending_lock:
-            self._pending_ops[operation_id] = ("cleanup_device_logs", device_ip)
+                self._pending_ops[operation_id] = ("cleanup_device_logs", device_ip)
             self.testing_model.cleanup_device_logs_async(device_ip)
 
     def _process_cleanup_logs_result(self, result: dict):
