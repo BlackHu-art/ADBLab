@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
+from gui.styles.theme import apply_dark_title_bar
 from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
@@ -102,6 +103,7 @@ class AboutDialog(QDialog):
         lo.addLayout(ft)
 
     def _apply_theme(self, _name: str = ""):
+        apply_dark_title_bar(self)
         def c(k):
             return BaseStyles.color(k)
         accent = c("BUTTON_ACCENT")

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.base_styles import BaseStyles
+from gui.styles.theme import apply_dark_title_bar
 from utils.adb_resolver import CF
 from gui.styles.icon_loader import get_themed_icon
 
@@ -596,6 +597,7 @@ class AppManagerDialog(QDialog):
         layout.addWidget(self.status_bar)
 
     def _apply_theme(self, _name=""):
+        apply_dark_title_bar(self)
         bs = BaseStyles
         self.setStyleSheet(bs.PANEL_BASE_STYLE())
         bg = bs.color("INPUT_BG")

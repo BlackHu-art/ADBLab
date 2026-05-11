@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from core.settings_manager import AppSettings
 from gui.styles.base_styles import BaseStyles
+from gui.styles.theme import apply_dark_title_bar
 from gui.styles.icon_loader import get_themed_icon
 
 
@@ -279,6 +280,7 @@ class SettingsDialog(QDialog):
     # ── Theme ───────────────────────────────────────────────────────────
 
     def _apply_theme(self, _name: str = ""):
+        apply_dark_title_bar(self)
         def c(k):
             return BaseStyles.color(k)
         r = BaseStyles.RADIUS_MD
