@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles.icon_loader import get_themed_icon
+from gui.styles.theme import apply_dark_title_bar
 
 # ── Worker Threads ───────────────────────────────────────────────────────
 
@@ -291,6 +292,7 @@ class FileExplorerDialog(QDialog):
     # ── Theme ────────────────────────────────────────────────────────────
 
     def _apply_theme(self, _name: str = ""):
+        apply_dark_title_bar(self)
         from gui.styles.base_styles import BaseStyles
 
         bs = BaseStyles

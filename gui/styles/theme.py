@@ -1,12 +1,37 @@
 """ADBLab theme colors, signal, and theme switching."""
 
 from __future__ import annotations
+
+import ctypes
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
 
 if TYPE_CHECKING:
     from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QWidget
+
+
+def apply_dark_title_bar(window: QWidget) -> None:
+    """Set Windows title bar to match the current theme (dark / light).
+
+    Safe to call on any platform — no-op on non-Windows.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        hwnd = int(window.winId())
+        dark = 1 if _current_theme == "Dark" else 0
+        DWMA_USE_IMMERSIVE_DARK_MODE = 20
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.wintypes.HWND(hwnd),
+            ctypes.wintypes.DWORD(DWMA_USE_IMMERSIVE_DARK_MODE),
+            ctypes.byref(ctypes.c_int(dark)),
+            ctypes.sizeof(ctypes.c_int(dark)),
+        )
+    except Exception:
+        pass  # DWM unavailable (e.g. remote desktop, older Windows)
 
 # -- Theme color palettes ------------------------------------------------
 

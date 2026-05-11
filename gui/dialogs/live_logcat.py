@@ -9,9 +9,7 @@ import subprocess
 import sys
 from datetime import datetime
 
-
 from PySide6.QtCore import QSize, Qt, QThread, Signal
-from gui.styles.icon_loader import get_themed_icon
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -26,6 +24,9 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QVBoxLayout,
 )
+
+from gui.styles.icon_loader import get_themed_icon
+from gui.styles.theme import apply_dark_title_bar
 
 THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
 FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
@@ -241,6 +242,7 @@ class LiveLogcatDialog(QDialog):
         self.highlighter = LogcatHighlighter(self.output.document())
 
     def _apply_theme(self, _name: str = ""):
+        apply_dark_title_bar(self)
         from gui.styles.base_styles import BaseStyles as BS
 
         self.setStyleSheet(BS.PANEL_BASE_STYLE())
