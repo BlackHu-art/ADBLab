@@ -88,7 +88,7 @@ class ScreenshotViewer(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
-        C = self._c
+        C = self._theme_color
         R = BaseStyles
 
         self.setStyleSheet(f"""
@@ -498,7 +498,7 @@ class ScreenshotViewer(QDialog):
     def _on_context_menu(self, pos):
         path = self._current_path()
         menu = QMenu(self)
-        C = self._c
+        C = self._theme_color
         menu.setStyleSheet(
             f"QMenu {{ background: {C('PANEL_BG')}; border: 1px solid {C('BORDER_COLOR')}; "
             f"border-radius: {BaseStyles.RADIUS_SM}px; padding: 4px; color: {C('TEXT_PRIMARY')}; }}"

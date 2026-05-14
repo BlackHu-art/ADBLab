@@ -345,7 +345,7 @@ Managed by `AppSettings` singleton (`resources/app_settings.json`) with atomic w
 | `left_panel_width` | Auto-calc | Left panel width |
 | `save_directory` | `~/ADBLab` | Default save path |
 | `confirm_dangerous_ops` | true | Confirm before dangerous operations |
-| `auto_refresh_on_connect` | true | Auto-refresh device list |
+| `continuous_device_scan` | true | Continuously scan device list (every 3s) |
 
 ---
 

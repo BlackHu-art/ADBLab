@@ -5,7 +5,7 @@
   "save_directory": "E:/Download",
   "log_max_lines": 2000,
   "confirm_dangerous_ops": true,
-  "auto_refresh_on_connect": true,
+  "continuous_device_scan": true,
   "theme": "Light",
   "window_width": 1200,
   "window_height": 650,

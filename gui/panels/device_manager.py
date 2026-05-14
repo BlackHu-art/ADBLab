@@ -161,9 +161,6 @@ class DeviceManager(BasePanel):
             return
         devs = DeviceStore.get_basic_devices_info()
         self._device_model.removeRows(0, self._device_model.rowCount())
-        if not devs:
-            self.ip_entry.lineEdit().setPlaceholderText("No devices")
-            return
         ip_list = []
         for brand, model, ip in devs:
             ip_list.append(ip)
@@ -172,11 +169,12 @@ class DeviceManager(BasePanel):
                 QStandardItem(str(model)),
                 QStandardItem(str(ip)),
             ])
-        comp = QCompleter(ip_list, self)
-        comp.setCaseSensitivity(Qt.CaseInsensitive)
-        comp.setFilterMode(Qt.MatchContains)
-        self.panel._apply_completer_style(comp)
-        self.ip_entry.setCompleter(comp)
+        if ip_list:
+            comp = QCompleter(ip_list, self)
+            comp.setCaseSensitivity(Qt.CaseInsensitive)
+            comp.setFilterMode(Qt.MatchContains)
+            self.panel._apply_completer_style(comp)
+            self.ip_entry.setCompleter(comp)
         self.ip_entry.setCurrentIndex(-1)
         self.ip_entry.lineEdit().clear()
         self.ip_entry.lineEdit().setPlaceholderText("Select or type IP : Port")

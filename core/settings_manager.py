@@ -23,7 +23,7 @@ DEFAULTS = {
     "save_directory": "",
     "log_max_lines": 2000,
     "confirm_dangerous_ops": True,
-    "auto_refresh_on_connect": True,
+    "continuous_device_scan": True,
     "theme": "Light",
     "window_width": 1120,
     "window_height": 640,

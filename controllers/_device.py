@@ -60,8 +60,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             return
         if "connected" in result:
             self._save_device_info(ip)
-            if self._settings.get("auto_refresh_on_connect", True):
-                self.refresh_devices()
+            self.refresh_devices()
             self._emit_operation("connect", True, f"Successfully connected to {ip}")
         elif "already connected" in result:
             self._emit_operation("connect", True, f"{ip} is already connected")
@@ -70,6 +69,7 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def _process_device_list(self, devices: list):
         self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
+        self.signals.devices_updated.emit(devices)
         self._async_update_devices(devices)
 
     def refresh_devices(self):
@@ -94,9 +94,8 @@ class ADBDeviceMixin(_ADBControllerBase):
                         model=info.get("Model", "Unknown"),
                         android_version=info.get("Aversion", "Unknown"),
                     )
-                except Exception as e:
-                    self._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
-            self.signals.devices_updated.emit(devices)
+                except Exception:
+                    pass
 
         self.executor.submit(_update)
 

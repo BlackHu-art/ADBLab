@@ -25,7 +25,7 @@ from gui.styles.theme import apply_dark_title_bar
 
 class SettingsDialog(QDialog):
     settings_applied = Signal()
-    refresh_requested = Signal()
+    continuous_scan_toggled = Signal(bool)
 
     _OVERHEAD = 13
 
@@ -147,16 +147,16 @@ class SettingsDialog(QDialog):
         self._chk_confirm.setChecked(self.s.get("confirm_dangerous_ops", True))
         self._chk_confirm.toggled.connect(lambda v: self.s.set("confirm_dangerous_ops", v))
 
-        self._chk_auto_refresh = self._checkbox(
-            "Auto-refresh device list after successful connect"
+        self._chk_continuous_scan = self._checkbox(
+            "Continuously scan for new devices (every 3s)"
         )
-        self._chk_auto_refresh.setChecked(self.s.get("auto_refresh_on_connect", True))
-        self._chk_auto_refresh.toggled.connect(self._on_auto_refresh_toggled)
+        self._chk_continuous_scan.setChecked(self.s.get("continuous_device_scan", True))
+        self._chk_continuous_scan.toggled.connect(self._on_continuous_scan_toggled)
 
         vl = QVBoxLayout(g)
         vl.setSpacing(6)
         vl.addWidget(self._chk_confirm)
-        vl.addWidget(self._chk_auto_refresh)
+        vl.addWidget(self._chk_continuous_scan)
         body.addWidget(g)
 
     # ── General ─────────────────────────────────────────────────────────
@@ -296,10 +296,9 @@ class SettingsDialog(QDialog):
         self.s.set("log_font_size", int(t))
         BaseStyles.reload_from_settings()
 
-    def _on_auto_refresh_toggled(self, checked: bool):
-        self.s.set("auto_refresh_on_connect", checked)
-        if checked:
-            self.refresh_requested.emit()
+    def _on_continuous_scan_toggled(self, checked: bool):
+        self.s.set("continuous_device_scan", checked)
+        self.continuous_scan_toggled.emit(checked)
 
     def _on_pick_save_dir(self):
         d = QFileDialog.getExistingDirectory(self, "Select default save directory")
@@ -452,7 +451,7 @@ class SettingsDialog(QDialog):
             self._combo_log_font.setCurrentText("9")
             self._font_combo.setCurrentText("Segoe UI")
             self._chk_confirm.setChecked(True)
-            self._chk_auto_refresh.setChecked(True)
+            self._chk_continuous_scan.setChecked(True)
             self._combo_log_lines.setCurrentText("2000")
             self._lbl_save.setText("~/ADBLab (default)")
             BaseStyles.reload_from_settings()
