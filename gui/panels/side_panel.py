@@ -20,7 +20,7 @@ from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 
 
 class SidePanel(QWidget):

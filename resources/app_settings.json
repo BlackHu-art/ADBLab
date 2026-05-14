@@ -4,13 +4,11 @@
   "log_font_size": 10,
   "save_directory": "E:/Download",
   "log_max_lines": 2000,
-  "monkey_default_count": "10000",
-  "screen_record_duration": 180,
   "confirm_dangerous_ops": true,
   "auto_refresh_on_connect": true,
   "theme": "Light",
   "window_width": 1200,
-  "window_height": 640,
-  "left_panel_width": 558,
-  "right_panel_width": 631
+  "window_height": 650,
+  "left_panel_width": 590,
+  "right_panel_width": 597
 }

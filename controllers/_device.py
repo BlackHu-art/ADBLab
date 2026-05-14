@@ -60,7 +60,8 @@ class ADBDeviceMixin(_ADBControllerBase):
             return
         if "connected" in result:
             self._save_device_info(ip)
-            self.refresh_devices()
+            if self._settings.get("auto_refresh_on_connect", True):
+                self.refresh_devices()
             self._emit_operation("connect", True, f"Successfully connected to {ip}")
         elif "already connected" in result:
             self._emit_operation("connect", True, f"{ip} is already connected")
@@ -73,7 +74,8 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def refresh_devices(self):
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("refresh", None)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("refresh", None)
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:
@@ -90,7 +92,7 @@ class ADBDeviceMixin(_ADBControllerBase):
                         ip=ip,
                         brand=info.get("Brand", "Unknown"),
                         model=info.get("Model", "Unknown"),
-                        aversion=info.get("Aversion", "Unknown"),
+                        android_version=info.get("Aversion", "Unknown"),
                     )
                 except Exception as e:
                     self._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
@@ -106,7 +108,7 @@ class ADBDeviceMixin(_ADBControllerBase):
                 ip=ip,
                 brand=info.get("Brand", "Unknown"),
                 model=info.get("Model", "Unknown"),
-                aversion=info.get("Aversion", "Unknown"),
+                android_version=info.get("Aversion", "Unknown"),
             )
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")

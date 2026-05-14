@@ -31,7 +31,7 @@ from gui.panels.side_panel import SidePanel
 from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
-from .styles.base_styles import BaseStyles, get_default_font
+from .styles import BaseStyles, get_default_font
 
 
 class MainFrame(QMainWindow):
@@ -138,10 +138,8 @@ class MainFrame(QMainWindow):
         self._connect_all_signals()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
 
-        # USB device auto-detection poll (every 3s)
         self._usb_timer = QTimer(self)
         self._usb_timer.timeout.connect(self._check_new_devices)
-        self._usb_timer.start(3000)
         self._known_device_count = None
 
     def _check_new_devices(self):
@@ -348,7 +346,7 @@ class MainFrame(QMainWindow):
             (LP.input_swipe_requested, AC.input_swipe),
             (LP.input_keyevent_requested, AC.input_keyevent),
             # Email
-            (LP.generate_email_requested, AC.get_random_email_and_code),
+            (LP.generate_email_requested, AC.start_random_email_task),
             # App management
             (LP.get_program_requested, AC.get_current_package),
             (LP.uninstall_app_requested, AC.uninstall_apk),
@@ -424,6 +422,9 @@ class MainFrame(QMainWindow):
 
     def _do_refresh_devices(self):
         self.adb_controller.refresh_devices()
+        # Start USB polling after ADB is confirmed ready
+        if not self._usb_timer.isActive():
+            self._usb_timer.start(3000)
 
     def clear_log(self):
         """Clear log panel."""
@@ -471,6 +472,7 @@ class MainFrame(QMainWindow):
     def _show_settings(self):
         """Show settings dialog."""
         dialog = SettingsDialog(self)
+        dialog.refresh_requested.connect(self.adb_controller.refresh_devices)
         dialog.exec_()
 
     def _open_cmd(self):

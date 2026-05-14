@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from core.log_service import LogService
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 
 
 class LogPanel(QWidget):

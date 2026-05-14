@@ -204,6 +204,29 @@ class QSSMixin:
         }}
         """
 
+    # -- Device List (with check indicators) ------------------------------
+
+    @classmethod
+    def DEVICE_LIST_STYLE(cls) -> str:
+        return f"""
+        QListWidget#deviceList {{
+            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
+            border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
+            padding: 2px; outline: none;
+        }}
+        QListWidget#deviceList::item {{ padding: 3px 6px; color: {_tc('TEXT_PRIMARY')}; }}
+        QListWidget#deviceList::item:selected {{
+            background-color: {_tc('SELECTION_BG')}; color: {_tc('SELECTION_TEXT')};
+        }}
+        QListWidget#deviceList::item:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
+        QListWidget::indicator {{ width: 14px; height: 14px; }}
+        QListWidget::indicator:unchecked {{
+            image: none; border: 2px solid {_tc('BORDER_COLOR')};
+            border-radius: 3px; background-color: {_tc('INPUT_BG')};
+        }}
+        QListWidget::indicator:checked {{ image: url(icons:check.svg); border: none; }}
+        """
+
     # -- Composite: PANEL_BASE_STYLE -------------------------------------
 
     @classmethod

@@ -7,14 +7,12 @@ Imports only from adb_model (core) — no circular dependencies.
 import os
 import re
 import subprocess
-import sys
 import time
 import zipfile
 from datetime import datetime
 
 from .adb_model import ADBModelCore, async_command
-
-_CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+from utils.adb_resolver import CF
 
 
 class ADBTesting(ADBModelCore):
@@ -102,7 +100,7 @@ class ADBTesting(ADBModelCore):
                 ["adb", "-s", device_ip, "logcat", "-c"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                creationflags=_CF,
+                creationflags=CF,
             )
 
             log(f"Starting logcat collection -> {logcat_log_path}")
@@ -110,7 +108,7 @@ class ADBTesting(ADBModelCore):
                 ["adb", "-s", device_ip, "logcat", "-v", "time"],
                 stdout=open(logcat_log_path, "w", encoding="utf-8"),
                 stderr=subprocess.DEVNULL,
-                creationflags=_CF,
+                creationflags=CF,
             )
 
             log(f"Launching Monkey test on {device_type}...")
@@ -156,7 +154,7 @@ class ADBTesting(ADBModelCore):
                 monkey_cmd,
                 stdout=open(monkey_log_path, "w", encoding="utf-8"),
                 stderr=subprocess.PIPE,
-                creationflags=_CF,
+                creationflags=CF,
             )
 
             log("Starting Monkey Test monitoring loop...")
@@ -168,7 +166,7 @@ class ADBTesting(ADBModelCore):
                     output = subprocess.check_output(
                         ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
                         stderr=subprocess.DEVNULL,
-                        creationflags=_CF,
+                        creationflags=CF,
                         text=True,
                     )
                     current_app = ""
@@ -183,13 +181,13 @@ class ADBTesting(ADBModelCore):
                             ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
-                            creationflags=_CF,
+                            creationflags=CF,
                         )
                         subprocess.run(
                             ["adb", "-s", device_ip, "shell", "monkey", "-p", package_name, "1"],
                             stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL,
-                            creationflags=_CF,
+                            creationflags=CF,
                         )
                         last_switch_time = time.time()
                     time.sleep(interval)
@@ -226,7 +224,7 @@ class ADBTesting(ADBModelCore):
         try:
             cmd = ["adb", "-s", device_ip, "shell", "ps | grep monkey"]
             output = subprocess.check_output(
-                cmd, stderr=subprocess.STDOUT, text=True, creationflags=_CF
+                cmd, stderr=subprocess.STDOUT, text=True, creationflags=CF
             ).strip()
 
             if not output:
@@ -243,7 +241,7 @@ class ADBTesting(ADBModelCore):
                             kill_cmd,
                             stderr=subprocess.STDOUT,
                             text=True,
-                            creationflags=_CF,
+                            creationflags=CF,
                         )
                         result["success"] = True
                         result["message"] = f"Monkey process (PID: {pid}) successfully killed"
@@ -281,7 +279,7 @@ class ADBTesting(ADBModelCore):
             version_cmd,
             capture_output=True,
             text=True,
-            creationflags=_CF,
+            creationflags=CF,
         )
         version_str = version_proc.stdout.strip()
         log(f"Android version: {version_str or 'unknown'}")
@@ -309,7 +307,7 @@ class ADBTesting(ADBModelCore):
                 cmd,
                 capture_output=True,
                 text=True,
-                creationflags=_CF,
+                creationflags=CF,
             )
             log("Bugreport command completed")
         except Exception as e:
@@ -366,13 +364,13 @@ class ADBTesting(ADBModelCore):
                     txt_path = os.path.join(root, f)
                     log(f"Found bugreport text: {f}")
                     try:
-                        self.convert_bugreport_to_html(txt_path, log=log)
+                        self._convert_bugreport_to_html(txt_path, log=log)
                         found_html = True
                     except Exception:
                         continue
         return found_html
 
-    def convert_bugreport_to_html(self, bugreport_txt_path: str, log=None):
+    def _convert_bugreport_to_html(self, bugreport_txt_path: str, log=None):
         jar_path = os.path.abspath(
             os.path.join(os.path.dirname(__file__), "..", "resources", "chkbugreport-0.5-215.jar")
         )
@@ -416,7 +414,7 @@ class ADBTesting(ADBModelCore):
                 pull_command,
                 stderr=subprocess.STDOUT,
                 text=True,
-                creationflags=_CF,
+                creationflags=CF,
             )
             return {
                 "device_ip": device_ip,

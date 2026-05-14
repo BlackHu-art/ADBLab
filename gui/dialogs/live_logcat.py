@@ -252,7 +252,7 @@ class LiveLogcatDialog(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
-        from gui.styles.base_styles import BaseStyles as BS
+        from gui.styles import BaseStyles as BS
 
         self.setStyleSheet(BS.PANEL_BASE_STYLE())
         fg = BS.color("TEXT_PRIMARY")
@@ -413,7 +413,7 @@ class LiveLogcatDialog(QDialog):
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        from gui.styles.base_styles import BaseStyles as BS
+        from gui.styles import BaseStyles as BS
         try:
             BS.theme_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):

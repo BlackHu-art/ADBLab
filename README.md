@@ -35,19 +35,25 @@ ADBLab/
 │       └── email_task.py            # QRunnable async email + verification code fetch
 │
 ├── controllers/                     # Controller layer (mixins → ADBController)
-│   ├── __init__.py                  # Composed ADBController (5 mixins)
+│   ├── __init__.py                  # Composed ADBController (7 mixins)
 │   ├── _base.py                     # Shared infra: models, signals, handler dispatch
 │   ├── _device.py                   # Device connect, disconnect, restart, pairing
-│   ├── _app.py                      # App install, uninstall, clear, permissions
+│   ├── _app.py                      # Package mgmt, app info, monkey test, bugreport, logs
+│   ├── _system.py                   # Permissions, disable/enable, broadcast, activity, IME, emulator
 │   ├── _media.py                    # Screenshot, recording, performance, battery, processes
-│   └── _input.py                    # Text input, tap, swipe, keyevent, settings
+│   ├── _input.py                    # Text input, tap, swipe, keyevent, settings
+│   └── _file.py                     # File manager, port forwarding, content query
 │
 ├── models/                          # Model layer (ADB command execution)
 │   ├── adb_model.py                 # @async_command decorator + ADBModelCore base
 │   ├── adb_device.py                # Device connect, disconnect, restart, device info
 │   ├── adb_app.py                   # App install, uninstall, clear, package/activity queries
 │   ├── adb_testing.py               # Screenshot, monkey, bugreport, ANR, logs
-│   ├── adb_advanced.py              # 50+ advanced operations (~900 lines)
+│   ├── adb_advanced.py              # Core + advanced ops (~420 lines, inherits mixins)
+│   ├── adb_network.py               # Network ADB mixin (port forward, TCP/IP, ping)
+│   ├── adb_system.py                # System ADB mixin (permissions, emulator, IME, process)
+│   ├── app_manager_worker.py        # App manager QThread worker (list, backup, restore)
+│   ├── file_explorer_worker.py      # File explorer QThread workers (ADB shell, transfer)
 │   └── device_store.py              # YAML device info persistence
 │
 ├── gui/                             # View layer
@@ -72,16 +78,16 @@ ADBLab/
 │   ├── styles/
 │   │   ├── __init__.py              # BaseStyles (ThemeMixin + QSSMixin + FontMixin)
 │   │   ├── theme.py                 # Light/Dark palettes, theme switch, DWM title bar helper
-│   │   ├── qss.py                   # QSS templates (buttons, inputs, group boxes, scrollbars)
+│   │   ├── qss.py                   # QSS templates (buttons, inputs, group boxes, scrollbars, device list)
 │   │   ├── fonts.py                 # Font management
-│   │   ├── base_styles.py           # Backward-compat re-export
 │   │   └── icon_loader.py           # Theme-aware QIconEngine (SVG currentColor injection)
 │   └── widgets/
 │       └── double_click_button.py   # QPushButton with double-click safety guard
 │
 ├── utils/                           # Utilities
 │   ├── resource_path.py             # Resource path resolution (dev + PyInstaller)
-│   └── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
+│   ├── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
+│   └── batch_tracker.py             # Multi-device batch operation progress tracker
 │
 └── resources/                       # Static resources
     ├── connected_devices.yaml       # Device connection history
@@ -116,7 +122,8 @@ User clicks button (Panel)
 | **Observer** | Global | Qt signal/slot decoupling UI from business logic |
 | **Async Command** | `adb_model.async_command` | Decorator wrapping sync methods into QRunnable async execution |
 | **Handler Map** | `_ADBControllerBase._handle_async_response` | Dict dispatch for operation result types |
-| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 5 functional mixins |
+| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 7 functional mixins |
+| **Model Mixins** | `adb_advanced.py` | ADBAdvanced composed from ADBNetworkMixin + ADBSystemMixin |
 | **Custom QIconEngine** | `icon_loader.py` | Theme-color injection into SVG on every paint — no widget refresh |
 
 ### Thread Model

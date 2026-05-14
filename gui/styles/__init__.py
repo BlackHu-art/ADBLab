@@ -1,7 +1,7 @@
 """ADBLab styles package -- theme, QSS templates, fonts.
 
 Usage:
-    from gui.styles.base_styles import BaseStyles, get_default_font
+    from gui.styles import BaseStyles, get_default_font
 """
 
 from .theme import ThemeMixin

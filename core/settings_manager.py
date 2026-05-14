@@ -22,8 +22,6 @@ DEFAULTS = {
     "log_font_size": 9,
     "save_directory": "",
     "log_max_lines": 2000,
-    "monkey_default_count": "10000",
-    "screen_record_duration": 180,
     "confirm_dangerous_ops": True,
     "auto_refresh_on_connect": True,
     "theme": "Light",

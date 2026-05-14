@@ -31,11 +31,11 @@ class AppPanel(BasePanel):
         self.btn_generate_email = self._b("Get Email", "envelope.svg")
         self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
-        self.verfication_text_sender = self._in("Verification code or text...")
+        self.verification_text_sender = self._in("Verification code or text...")
         r1.addWidget(self.btn_generate_email, 1)
         r1.addWidget(self.email_text_sender, 1)
         r1.addWidget(self.btn_send_text, 1)
-        r1.addWidget(self.verfication_text_sender, 1)
+        r1.addWidget(self.verification_text_sender, 1)
         gts_l.addLayout(r1)
         # Row 2: Screenshot | Duration | Record Screen | Pull Video
         r2 = QHBoxLayout()
@@ -266,7 +266,7 @@ class AppPanel(BasePanel):
         )
         self.btn_send_text.clicked.connect(
             lambda: LP.send_text_requested.emit(
-                self.selected_devices, self.verfication_text_sender.text()
+                self.selected_devices, self.verification_text_sender.text()
             )
         )
         self.btn_generate_email.clicked.connect(lambda: LP.generate_email_requested.emit())
@@ -275,9 +275,9 @@ class AppPanel(BasePanel):
                 self.selected_devices, self.email_text_sender.text()
             )
         )
-        self.verfication_text_sender.returnPressed.connect(
+        self.verification_text_sender.returnPressed.connect(
             lambda: LP.send_text_requested.emit(
-                self.selected_devices, self.verfication_text_sender.text()
+                self.selected_devices, self.verification_text_sender.text()
             )
         )
 
@@ -285,4 +285,4 @@ class AppPanel(BasePanel):
         self.email_text_sender.setText(t)
 
     def update_vercode(self, t):
-        self.verfication_text_sender.setText(t)
+        self.verification_text_sender.setText(t)

@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 
 from gui.panels.base_panel import BasePanel
 from gui.panels.side_panel_signals import BlockSignals
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 from models.device_store import DeviceStore
 
 
@@ -91,7 +91,6 @@ class DeviceManager(BasePanel):
     # -- style ------------------------------------------------------------
 
     def _apply_device_list_style(self):
-        bs = BaseStyles
         from core.settings_manager import AppSettings
         ui_size = AppSettings.instance().get("ui_font_size", 12)
         mono_size = max(8, ui_size - 2)
@@ -102,42 +101,7 @@ class DeviceManager(BasePanel):
             item = self.listbox_devices.item(i)
             if item:
                 item.setFont(font)
-
-        def c(k):
-            return bs.color(k)
-        self.listbox_devices.setStyleSheet(f"""
-QListWidget#deviceList {{
-    background-color: {c('INPUT_BG')};
-    color: {c('TEXT_PRIMARY')};
-    border: 1px solid {c('BORDER_COLOR')};
-    border-radius: {bs.RADIUS_MD}px;
-    padding: 2px;
-    outline: none;
-}}
-QListWidget#deviceList::item {{
-    padding: 3px 6px;
-    color: {c('TEXT_PRIMARY')};
-}}
-QListWidget#deviceList::item:selected {{
-    background-color: {c('SELECTION_BG')};
-    color: {c('SELECTION_TEXT')};
-}}
-QListWidget#deviceList::item:hover {{
-    background-color: {c('BUTTON_HOVER')};
-}}
-QListWidget::indicator {{
-    width: 14px; height: 14px;
-}}
-QListWidget::indicator:unchecked {{
-    image: none;
-    border: 2px solid {c('BORDER_COLOR')};
-    border-radius: 3px;
-    background-color: {c('INPUT_BG')};
-}}
-QListWidget::indicator:checked {{
-    image: url(icons:check.svg);
-    border: none;
-}}""")
+        self.listbox_devices.setStyleSheet(BaseStyles.DEVICE_LIST_STYLE())
 
     # -- device list ------------------------------------------------------
 

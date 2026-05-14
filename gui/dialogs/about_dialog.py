@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
