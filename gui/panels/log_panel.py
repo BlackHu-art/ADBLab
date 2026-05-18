@@ -12,30 +12,22 @@ from gui.styles import BaseStyles
 
 class LogPanel(QWidget):
 
-    LEVEL_COLORS = {
-        "DEBUG": BaseStyles.DEBUG_COLOR,
-        "INFO": BaseStyles.INFO_COLOR,
-        "SUCCESS": BaseStyles.SUCCESS_COLOR,
-        "WARNING": BaseStyles.WARNING_COLOR,
-        "ERROR": BaseStyles.ERROR_COLOR,
-        "CRITICAL": BaseStyles.CRITICAL_COLOR,
-    }
-
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._max_lines = 1000
-        self._entries = []  # (timestamp_str, level, message) for re-render
+        from core.settings_manager import AppSettings
+        self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
+        self._entries = []
         self._init_ui()
         self._connect_services()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
 
     def _apply_style(self):
-        """Apply theme colors to the text area stylesheet."""
+        c = BaseStyles.color
         self.text_output.setStyleSheet(f"""
             QTextEdit {{
-                background-color: {BaseStyles.color('LOG_BACKGROUND')};
-                color: {BaseStyles.color('LOG_TEXT_COLOR')};
-                border: 1px solid {BaseStyles.color('BORDER_COLOR')};
+                background-color: {c('LOG_BACKGROUND')};
+                color: {c('LOG_TEXT_COLOR')};
+                border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {BaseStyles.RADIUS_LG}px;
                 padding: 4px;
             }}
@@ -43,12 +35,12 @@ class LogPanel(QWidget):
         """)
 
     def _on_theme_changed(self, _name: str):
-        """Re-render all entries + re-apply font size on theme/settings change."""
         from core.settings_manager import AppSettings
         log_size = AppSettings.instance().get("log_font_size", 9)
         log_font = QFont(BaseStyles.LOG_FONT, log_size)
         log_font.setStyleHint(QFont.Monospace)
         self.text_output.setFont(log_font)
+        self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._apply_style()
         self._rerender_all()
 
@@ -66,65 +58,80 @@ class LogPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.text_output)
-
         self._apply_style()
 
     def _connect_services(self):
-        LogService().log_received.connect(self._append_log, Qt.ConnectionType.QueuedConnection)
+        LogService().log_received.connect(self._append_log, Qt.ConnectionType.AutoConnection)
 
     def _append_log(self, level: str, message: str):
-        """Add a log entry and render it with theme-appropriate colors."""
+        sb = self.text_output.verticalScrollBar()
+        at_bottom = sb.value() >= sb.maximum() - 20
+
         timestamp = datetime.now().strftime("%H:%M:%S")
         self._entries.append((timestamp, level, message))
         self._render_entry(timestamp, level, message)
-        self._auto_scroll()
+
+        if at_bottom:
+            sb.setValue(sb.maximum())
         self._trim_excess_lines()
 
     def _render_entry(self, timestamp: str, level: str, message: str):
-        """Render a single log line with correct colors for the current theme."""
+        c = BaseStyles.color
         cursor = self.text_output.textCursor()
         cursor.movePosition(QTextCursor.End)
 
         ts_fmt = QTextCharFormat()
-        ts_fmt.setForeground(QColor(BaseStyles.TIMESTAMP_COLOR))
+        ts_fmt.setForeground(QColor(c("LOG_TIMESTAMP")))
         cursor.insertText(f"{timestamp} ", ts_fmt)
 
+        lv_key = f"LOG_{level}" if level in ("DEBUG","INFO","SUCCESS","WARNING","ERROR","CRITICAL") else "LOG_INFO"
         lv_fmt = QTextCharFormat()
-        lv_fmt.setForeground(QColor(self.LEVEL_COLORS.get(level, BaseStyles.INFO_COLOR)))
+        lv_fmt.setForeground(QColor(c(lv_key)))
         cursor.insertText(f"[{level}]", lv_fmt)
 
         msg_fmt = QTextCharFormat()
-        msg_fmt.setForeground(QColor(BaseStyles.color("LOG_TEXT_COLOR")))
+        msg_fmt.setForeground(QColor(c("LOG_TEXT_COLOR")))
         cursor.insertText(f" {message}\n", msg_fmt)
 
     def _rerender_all(self):
-        """Clear and re-render all stored entries (called on theme change)."""
-        self.text_output.clear()
+        """Batch re-render via setHtml for performance on theme change."""
+        c = BaseStyles.color
+        lines = []
         for ts, level, msg in self._entries:
-            self._render_entry(ts, level, msg)
-        self._auto_scroll()
-
-    def _auto_scroll(self):
+            lv_key = f"LOG_{level}" if level in ("DEBUG","INFO","SUCCESS","WARNING","ERROR","CRITICAL") else "LOG_INFO"
+            lv_color = c(lv_key)
+            ts_color = c("LOG_TIMESTAMP")
+            msg_color = c("LOG_TEXT_COLOR")
+            lines.append(
+                f'<span style="color:{ts_color}">{ts}</span> '
+                f'<span style="color:{lv_color}">[{level}]</span> '
+                f'<span style="color:{msg_color}">{msg}</span>'
+            )
+        self.text_output.setHtml("<br>".join(lines) + "<br>")
         self.text_output.ensureCursorVisible()
-        scrollbar = self.text_output.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        sb = self.text_output.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def _trim_excess_lines(self):
-        """Remove oldest lines when exceeding the max line count."""
+        """Trim oldest lines when exceeding max. Batched: check only every 50 lines."""
+        if not hasattr(self, '_line_count'):
+            self._line_count = 0
+        self._line_count += 1
+        if self._line_count % 50 != 0:
+            return
         block_count = self.text_output.document().blockCount()
         if block_count > self._max_lines:
-            excess = block_count - self._max_lines
+            excess = block_count - self._max_lines + 100
             cursor = self.text_output.textCursor()
             cursor.movePosition(QTextCursor.Start)
             cursor.movePosition(QTextCursor.Down, QTextCursor.KeepAnchor, excess)
             cursor.removeSelectedText()
-            # Trim stored entries as well
             self._entries = self._entries[excess:]
 
     def clear(self):
-        """Clear all log content."""
         self._entries.clear()
         self.text_output.clear()
+        self._line_count = 0
 
     def set_max_lines(self, max_lines: int):
         self._max_lines = max(max_lines, 100)

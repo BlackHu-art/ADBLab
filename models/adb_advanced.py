@@ -7,8 +7,11 @@ system-level ops to ADBSystemMixin via multiple inheritance.
 """
 
 import os
+import re
 import shlex
 import subprocess
+import threading
+import time
 from datetime import datetime
 
 from .adb_model import ADBModelCore, async_command
@@ -22,19 +25,20 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     # ── Screen Recording ─────────────────────────────────────────────────
 
+    def __init__(self):
+        super().__init__()
+        self._record_procs = {}   # device_ip → Popen
+        self._record_lock = threading.Lock()
+
     @async_command
     def start_screen_record_async(
-        self,
-        device_ip: str,
-        save_dir: str,
-        duration: int = 180,
-        width: str = "",
-        height: str = "",
-        bitrate: str = "8000000",
+        self, device_ip: str, save_dir: str, duration: int = 30,
+        width: str = "", height: str = "", bitrate: str = "8000000",
     ) -> dict:
         try:
+            sanitized = re.sub(r"\W+", "_", device_ip)
             timestamp = datetime.now().strftime("%H%M%S")
-            filename = f"record_{timestamp}.mp4"
+            filename = f"record_{sanitized}_{timestamp}.mp4"
             remote_path = f"/sdcard/{filename}"
             cmd = [
                 "adb", "-s", device_ip, "shell", "screenrecord",
@@ -44,13 +48,36 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 cmd.extend(["--size", f"{width}x{height}"])
             cmd.append(remote_path)
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CF,
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=CF,
             )
+            # Detect immediate failure (e.g. device doesn't support screenrecord)
+            time.sleep(0.3)
+            if proc.poll() is not None:
+                err = proc.stderr.read().decode(errors="ignore").strip()
+                return {"success": False, "device_ip": device_ip,
+                        "error": err or "screenrecord exited immediately"}
+            with self._record_lock:
+                self._record_procs[device_ip] = proc
             return {
                 "success": True, "device_ip": device_ip, "remote_path": remote_path,
                 "proc_pid": proc.pid, "filename": filename, "save_dir": save_dir,
-                "process": id(proc),
+                "duration": duration,
             }
+        except Exception as e:
+            return {"success": False, "device_ip": device_ip, "error": str(e)}
+
+    @async_command
+    def stop_screen_record_async(self, device_ip: str) -> dict:
+        try:
+            with self._record_lock:
+                proc = self._record_procs.pop(device_ip, None)
+            if proc and proc.poll() is None:
+                proc.terminate()
+                proc.wait(timeout=5)
+                return {"success": True, "device_ip": device_ip,
+                        "message": "Recording stopped"}
+            return {"success": True, "device_ip": device_ip,
+                    "message": "No active recording" if not proc else "Recording already finished"}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": str(e)}
 

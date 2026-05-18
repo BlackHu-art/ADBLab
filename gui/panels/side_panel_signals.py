@@ -32,7 +32,7 @@ class SidePanelSignals(QObject):
     # ── Screenshot & Recording ──
     screenshot_requested = Signal(list)
     screen_record_requested = Signal(list, int)  # (devices, duration)
-    pull_recording_requested = Signal(list)  # (devices)
+    stop_screen_record_requested = Signal(list)  # (devices)
     batch_install_requested = Signal(list)  # (devices)
 
     # ── Logs ──

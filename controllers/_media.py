@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -31,6 +32,7 @@ class ADBMediaMixin(_ADBControllerBase):
     _handlers = {
         "take_screenshot": "_process_screenshot_result",
         "start_screen_record": "_process_start_screen_record_result",
+        "stop_screen_record": "_process_stop_screen_record_result",
         "pull_recorded_video": "_process_pull_recorded_video_result",
         "dumpsys_meminfo": "_process_dumpsys_meminfo_result",
         "dumpsys_cpuinfo": "_process_dumpsys_cpuinfo_result",
@@ -110,54 +112,79 @@ class ADBMediaMixin(_ADBControllerBase):
 
     # -- Screen Recording --
 
-    def start_screen_record(self, devices: list, duration: int = 180):
+    def start_screen_record(self, devices: list, duration: int = 30):
         if not self._require_devices(devices, "screen_record"):
             return
         save_dir = self._get_screenshot_dir()
-        self._record_info = {}
+        now = time.time()
+        if not hasattr(self, '_record_info'):
+            self._record_info = {}
         for ip in devices:
+            self._record_info[ip] = {
+                "start_time": now, "duration": duration, "save_dir": save_dir,
+            }
             self.advanced_model.start_screen_record_async(ip, save_dir, duration)
 
     def _process_start_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
         if result.get("success"):
-            self._record_info[ip] = {
+            dur = result.get("duration", 30)
+            self._record_info[ip].update({
                 "remote_path": result["remote_path"],
-                "save_dir": result["save_dir"],
                 "filename": result["filename"],
-            }
+            })
             self._emit_operation(
-                "screen_record", True, f"Recording started on {ip} ({result['filename']})"
+                "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
             )
+            # Auto-pull after duration + 2s buffer
+            QTimer.singleShot((dur + 2) * 1000, lambda ip=ip: self._auto_pull(ip))
         else:
+            self._record_info.pop(ip, None)
             self._emit_operation(
                 "screen_record", False, f"Failed to start recording on {ip}: {result.get('error')}"
             )
+            self.signals.record_finished.emit()
 
-    def pull_recordings(self, devices: list):
-        if not self._require_devices(devices, "pull_recording"):
+    def _auto_pull(self, device_ip: str):
+        info = self._record_info.get(device_ip, {})
+        if info.get("remote_path"):
+            self._emit_operation("screen_record", True, f"Auto-pulling recording from {device_ip}...")
+            self.advanced_model.pull_recorded_video_async(
+                device_ip, info["remote_path"], info["save_dir"], info["filename"]
+            )
+
+    def stop_screen_record(self, devices: list):
+        if not self._require_devices(devices, "stop_recording"):
             return
         for ip in devices:
-            info = self._record_info.get(ip, {})
-            if info:
-                self.advanced_model.pull_recorded_video_async(
-                    ip, info["remote_path"], info["save_dir"], info["filename"]
-                )
-            else:
-                self._emit_operation("pull_recording", False, f"No recording info for {ip}")
+            self.advanced_model.stop_screen_record_async(ip)
+
+    def _process_stop_screen_record_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        self._emit_operation(
+            "stop_recording", result.get("success", False),
+            f"Recording on {ip}: {result.get('message', '')}"
+        )
+        # Auto-pull stopped recording
+        info = self._record_info.get(ip, {})
+        if info.get("remote_path"):
+            self.advanced_model.pull_recorded_video_async(
+                ip, info["remote_path"], info["save_dir"], info["filename"]
+            )
 
     def _process_pull_recorded_video_result(self, result: dict):
         ip = result.get("device_ip", "")
         if result.get("success"):
+            self._record_info.pop(ip, None)
             self._emit_operation(
-                "pull_recording", True, f"Recording pulled from {ip}: {result.get('local_path')}"
+                "pull_recording", True, f"Recording saved: {result.get('local_path')}"
             )
         else:
             self._emit_operation(
-                "pull_recording",
-                False,
+                "pull_recording", False,
                 f"Failed to pull recording from {ip}: {result.get('error')}",
             )
+        self.signals.record_finished.emit()
 
     # -- Performance --
 

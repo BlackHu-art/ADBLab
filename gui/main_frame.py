@@ -337,11 +337,11 @@ class MainFrame(QMainWindow):
         AC = self.adb_controller
 
         CTL.devices_updated.connect(self.left_panel.update_device_list)
-        CTL.operation_completed.connect(self.log_panel._append_log)
         CTL.operation_completed.connect(lambda *args: self.left_panel._refresh_device_combobox())
         LP.log_message.connect(self.log_panel._append_log)
         CTL.email_updated.connect(self.left_panel.update_email)
         CTL.vercode_updated.connect(self.left_panel.update_vercode)
+        CTL.record_finished.connect(self.left_panel._apps_tab.on_recording_finished)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
         CTL.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
@@ -363,7 +363,7 @@ class MainFrame(QMainWindow):
             # Screenshot & screen recording
             (LP.screenshot_requested, AC.take_screenshot),
             (LP.screen_record_requested, AC.start_screen_record),
-            (LP.pull_recording_requested, AC.pull_recordings),
+            (LP.stop_screen_record_requested, AC.stop_screen_record),
             (LP.batch_install_requested, AC.batch_install_apk),
             # Logging
             (LP.retrieve_logs_requested, AC.retrieve_device_logs),

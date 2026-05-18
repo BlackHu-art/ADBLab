@@ -41,18 +41,19 @@ class AppPanel(BasePanel):
         r1.addWidget(self.btn_send_text, 1)
         r1.addWidget(self.verification_text_sender, 1)
         gts_l.addLayout(r1)
-        # Row 2: Screenshot | Duration | Record Screen | Pull Video
+        # Row 2: Screenshot | Duration | Record | Stop
         r2 = QHBoxLayout()
         r2.setSpacing(4)
         self.btn_screenshot = self._b("Screenshot", "camera.svg")
-        self.record_duration = self._combo(["30s", "60s", "120s", "180s", "300s"])
+        self.record_duration = self._combo(["10s", "20s", "30s", "60s", "120s", "180s", "300s"])
         self.record_duration.setCurrentText("30s")
-        self.btn_screen_record = self._b("Record Screen", "video-camera.svg")
-        self.btn_pull_recording = self._b("Pull Video", "film-strip.svg")
+        self.btn_screen_record = self._b("Record", "video-camera.svg")
+        self.btn_stop_record = self._b("Stop Rec", "stop-circle.svg")
+        self.btn_stop_record.setEnabled(False)
         r2.addWidget(self.btn_screenshot, 1)
         r2.addWidget(self.record_duration, 1)
         r2.addWidget(self.btn_screen_record, 1)
-        r2.addWidget(self.btn_pull_recording, 1)
+        r2.addWidget(self.btn_stop_record, 1)
         gts_l.addLayout(r2)
         lo.addWidget(g_ts)
 
@@ -139,7 +140,7 @@ class AppPanel(BasePanel):
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
         lbl_ms = QLabel("ms")
         lbl_ms.setFont(self._font_sm)
-        self._pct_total_lbl = QLabel()
+        self._pct_total_lbl = QLabel("Total: --")
         self._pct_total_lbl.setFont(self._font_sm)
         g_pct.addWidget(lbl_ev, 0, 0)
         g_pct.addWidget(self.monkey_events, 0, 1)
@@ -263,9 +264,13 @@ class AppPanel(BasePanel):
                 return EVENTS_VALS.get(t, int(t))
             except ValueError:
                 return 10000
+        try:
+            throttle = int(self.monkey_throttle.currentText() or "300")
+        except ValueError:
+            throttle = 300
         p = {
             "events": _parse_int(self.monkey_events.currentText()),
-            "throttle": int(self.monkey_throttle.currentText() or "300"),
+            "throttle": throttle,
             "ignore_crashes": self.monkey_chk_crashes.isChecked(),
             "ignore_timeouts": self.monkey_chk_timeouts.isChecked(),
             "ignore_security": self.monkey_chk_security.isChecked(),
@@ -288,6 +293,22 @@ class AppPanel(BasePanel):
         self._pct_total_lbl.setText(
             f'Total: <span style="color:{color};font-weight:bold">{total}%</span>'
         )
+
+    def _on_record_start(self):
+        self.btn_screen_record.setEnabled(False)
+        self.btn_stop_record.setEnabled(True)
+        dur = int(self.record_duration.currentText().replace("s", ""))
+        self.signals.screen_record_requested.emit(self.selected_devices, dur)
+
+    def _on_record_stop(self):
+        self.btn_screen_record.setEnabled(True)
+        self.btn_stop_record.setEnabled(False)
+        self.signals.stop_screen_record_requested.emit(self.selected_devices)
+
+    # Exposed for controller to restore button state after recording ends
+    def on_recording_finished(self):
+        self.btn_screen_record.setEnabled(True)
+        self.btn_stop_record.setEnabled(False)
 
     def _on_start_monkey(self):
         params = self._collect_monkey_params()
@@ -369,12 +390,10 @@ class AppPanel(BasePanel):
             lambda: LP.screenshot_requested.emit(self.selected_devices)
         )
         self.btn_screen_record.clicked.connect(
-            lambda: LP.screen_record_requested.emit(
-                self.selected_devices, int(self.record_duration.currentText().replace("s", ""))
-            )
+            lambda: self._on_record_start()
         )
-        self.btn_pull_recording.clicked.connect(
-            lambda: LP.pull_recording_requested.emit(self.selected_devices)
+        self.btn_stop_record.clicked.connect(
+            lambda: self._on_record_stop()
         )
         self.btn_send_text.clicked.connect(
             lambda: LP.send_text_requested.emit(

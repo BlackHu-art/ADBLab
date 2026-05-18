@@ -36,6 +36,7 @@ class _ADBControllerBase:
         self._connect_model_signals()
         self.last_save_dir = None
         self._active_viewers = []
+        self._monkey_running = set()
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._batch_trackers = {}
         self._build_handler_map()

@@ -339,15 +339,15 @@ class ADBAppMixin(_ADBControllerBase):
     def _process_kill_monkey_result(self, result: dict):
         device_ip = result.get("device_ip")
         idx = result.get("index")
+        self._monkey_running.discard(device_ip)
         if result.get("success"):
             self._emit_operation(
                 "kill_monkey", True, f"✅ {idx}. Monkey process killed on {device_ip}"
             )
         else:
             self._emit_operation(
-                "kill_monkey",
-                False,
-                f"❌ {idx}. Failed to kill monkey on {device_ip}:\nError: {result['message']}",
+                "kill_monkey", False,
+                f"❌ {idx}. Failed to kill monkey on {device_ip}:\nError: {result.get('message', '')}",
             )
 
     def list_installed_packages(self, devices: list[str]):
@@ -430,6 +430,13 @@ class ADBAppMixin(_ADBControllerBase):
         package_name = params.get("package_name", "")
         if not package_name:
             return self._emit_operation("monkey", False, "No package name provided")
+        # Guard against duplicate starts
+        dupes = [d for d in devices if d in self._monkey_running]
+        if dupes:
+            self._emit_operation("monkey", False, f"Monkey already running on: {', '.join(dupes)}")
+            return
+        for d in devices:
+            self._monkey_running.add(d)
         save_dir = self._get_screenshot_dir()
         log = self.log_service.log
         log(LogLevel.INFO, f"Starting Monkey tests on {len(devices)} devices...")
@@ -445,6 +452,7 @@ class ADBAppMixin(_ADBControllerBase):
 
     def _process_run_monkey_test_result(self, result: dict):
         device_ip = result.get("device_ip", "unknown")
+        self._monkey_running.discard(device_ip)
         duration = result.get("duration", "N/A")
         monkey_log = result.get("monkey_log", "")
         logcat_log = result.get("logcat_log", "")

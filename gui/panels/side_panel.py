@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGroupBox,
+    QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
@@ -157,6 +158,8 @@ class SidePanel(QWidget):
             elif t is QPushButton:
                 if not child.parent() or child.parent().objectName() != "toolbar":
                     child.setFont(self._font_sm)
+            elif t is QLabel:
+                child.setFont(self._font_sm)
             elif t is QLineEdit:
                 child.setFont(self._font_sm)
             elif t is QComboBox:

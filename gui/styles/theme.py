@@ -46,6 +46,9 @@ THEMES = {
         "SELECTION_BG": "#cce5ff", "SELECTION_TEXT": "#1a1a1a", "SCROLLBAR_BG": "#f0f0f0",
         "SCROLLBAR_HANDLE": "#c1c1c1", "SCROLLBAR_HANDLE_HOVER": "#a1a1a1",
         "TOOLBAR_BG": "#e8e8e8", "LOG_BACKGROUND": "#ffffff", "LOG_TEXT_COLOR": "#1a1a1a",
+        "LOG_DEBUG": "#6C757D", "LOG_INFO": "#17A2B8", "LOG_SUCCESS": "#28A745",
+        "LOG_WARNING": "#D39E00", "LOG_ERROR": "#DC3545", "LOG_CRITICAL": "#C51162",
+        "LOG_TIMESTAMP": "#6C757D",
         "GROUP_TITLE_COLOR": "#0078d4", "TITLE_COLOR": "#1a1a1a",
     },
     "Dark": {
@@ -58,6 +61,9 @@ THEMES = {
         "SELECTION_BG": "#304060", "SELECTION_TEXT": "#ffffff", "SCROLLBAR_BG": "#1a1a24",
         "SCROLLBAR_HANDLE": "#454560", "SCROLLBAR_HANDLE_HOVER": "#5a5a78",
         "TOOLBAR_BG": "#252538", "LOG_BACKGROUND": "#1a1a24", "LOG_TEXT_COLOR": "#d8d8e0",
+        "LOG_DEBUG": "#8B949E", "LOG_INFO": "#58A6FF", "LOG_SUCCESS": "#3FB950",
+        "LOG_WARNING": "#E3B341", "LOG_ERROR": "#F85149", "LOG_CRITICAL": "#FF6B9D",
+        "LOG_TIMESTAMP": "#8B949E",
         "GROUP_TITLE_COLOR": "#4da6e8", "TITLE_COLOR": "#e0e0e8",
     },
 }
@@ -83,14 +89,6 @@ def _tc(key: str) -> str:
 class ThemeMixin:
     """Add to BaseStyles via inheritance for theme switching + color access."""
 
-    # static exports
-    DEBUG_COLOR: str = "#6C757D"
-    INFO_COLOR: str = "#17A2B8"
-    SUCCESS_COLOR: str = "#28A745"
-    WARNING_COLOR: str = "#FFC107"
-    ERROR_COLOR: str = "#DC3545"
-    CRITICAL_COLOR: str = "#FF4081"
-    TIMESTAMP_COLOR: str = "#6C757D"
     RADIUS_SM: int = 4
     RADIUS_MD: int = 6
     RADIUS_LG: int = 8
@@ -130,8 +128,5 @@ class ThemeMixin:
     @classmethod
     def get_color(cls, color_name: str) -> QColor:
         from PySide6.QtGui import QColor
-        color_hex = getattr(cls, color_name.upper(), None)
-        if color_hex:
-            return QColor(color_hex)
         theme_color = _tc(color_name.upper())
         return QColor(theme_color) if theme_color else QColor("#000000")

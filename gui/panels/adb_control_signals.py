@@ -12,5 +12,6 @@ class ADBControllerSignals(QObject):
     text_input = Signal(str, str)
     current_package_received = Signal(str, str)
 
+    record_finished = Signal()
     email_updated = Signal(str)
     vercode_updated = Signal(str)

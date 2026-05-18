@@ -5,18 +5,26 @@ Imports only from adb_model (core) — no circular dependencies.
 """
 
 import os
+import random
 import re
 import subprocess
+import threading
 import time
 import zipfile
 from datetime import datetime
 
-from .adb_model import ADBModelCore, async_command
 from utils.adb_resolver import CF
+
+from .adb_model import ADBModelCore, async_command
 
 
 class ADBTesting(ADBModelCore):
     """Testing tools: monkey, bugreport, screenshot, log retrieval, ANR pull."""
+
+    def __init__(self):
+        super().__init__()
+        self._aborted_devices = set()
+        self._abort_lock = threading.Lock()
 
     # ── Screenshot ────────────────────────────────────────────────────
 
@@ -87,7 +95,8 @@ class ADBTesting(ADBModelCore):
             "monkey_log": monkey_log_path, "logcat_log": logcat_log_path,
             "duration": "", "error": "", "index": index,
         }
-        self._aborted = False
+        with self._abort_lock:
+            self._aborted_devices.discard(device_ip)
         monkey_fh = None
         logcat_fh = None
         logcat_proc = None
@@ -119,7 +128,7 @@ class ADBTesting(ADBModelCore):
                 "--pct-appswitch", str(params.get("appswitch", 8)),
                 "--pct-anyevent", str(params.get("anyevent", 10)),
                 "--pct-pinchzoom", str(params.get("pinch", 2)),
-                "-s", "12345",
+                "-s", str(random.randint(1, 99999)),
             ]
             if params.get("ignore_crashes", True):
                 monkey_cmd.append("--ignore-crashes")
@@ -138,9 +147,10 @@ class ADBTesting(ADBModelCore):
             log("Starting Monkey Test monitoring loop...")
             last_switch_time = 0.0
             cooldown, interval = 30, 15
+            timeouts = 0
 
             while monkey_proc.poll() is None:
-                if self._aborted:
+                if device_ip in self._aborted_devices:
                     monkey_proc.terminate()
                     monkey_proc.wait(timeout=5)
                     log("Monkey test aborted by user.")
@@ -169,10 +179,14 @@ class ADBTesting(ADBModelCore):
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CF,
                         )
                         last_switch_time = time.time()
+                    timeouts = 0
                     time.sleep(interval)
                 except subprocess.TimeoutExpired:
-                    log("dumpsys window timed out — device may be disconnected")
-                    break
+                    timeouts += 1
+                    log(f"dumpsys window timed out ({timeouts}/3)")
+                    if timeouts >= 3:
+                        log("Device appears disconnected, stopping monitor")
+                        break
                 except Exception as e:
                     log(f"Polling exception: {str(e)}")
                     time.sleep(interval)
@@ -187,7 +201,8 @@ class ADBTesting(ADBModelCore):
             log(f"Monkey test failed: {e}")
 
         finally:
-            self._aborted = False
+            with self._abort_lock:
+                self._aborted_devices.discard(device_ip)
             try:
                 if logcat_proc:
                     logcat_proc.terminate()
@@ -207,8 +222,8 @@ class ADBTesting(ADBModelCore):
     def kill_monkey_async(self, device_ip: str, index: int) -> dict:
         result = {"device_ip": device_ip, "index": index, "success": False, "message": ""}
         try:
-            self._aborted = True
-            # Kill via Android process name (works on all devices, no grep needed)
+            with self._abort_lock:
+                self._aborted_devices.add(device_ip)
             kill_cmd = ["adb", "-s", device_ip, "shell",
                         "pkill -f com.android.commands.monkey || true"]
             subprocess.run(kill_cmd, creationflags=CF, timeout=10,
@@ -338,7 +353,7 @@ class ADBTesting(ADBModelCore):
         try:
             result = subprocess.run(
                 cmd, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120,
+                capture_output=True, text=True, timeout=120,
                 encoding="utf-8", errors="ignore",
             )
             if result.returncode == 0:

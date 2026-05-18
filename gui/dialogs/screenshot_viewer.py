@@ -491,7 +491,14 @@ class ScreenshotViewer(QDialog):
         except OSError as exc:
             QMessageBox.warning(self, "Delete Failed", str(exc))
             return
-        self.close()
+        # Remove from list and stay open for remaining images
+        del self._image_paths[self._current_idx]
+        if self._image_paths:
+            new_idx = min(self._current_idx, len(self._image_paths) - 1)
+            self._current_idx = new_idx
+            self._navigate_to(new_idx)
+        else:
+            self.close()
 
     # ── Context menu ────────────────────────────────────────────────────
 
