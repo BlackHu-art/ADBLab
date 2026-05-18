@@ -30,6 +30,22 @@ class SystemPanel(BasePanel):
         gl1.addWidget(self.btn_shell_run, 1)
         lo.addWidget(g1)
 
+        # ── Reboot & Modes ──
+        g_rb = self._g("Reboot & Modes")
+        gl_rb = QHBoxLayout(g_rb)
+        gl_rb.setSpacing(4)
+        self.reboot_mode_combo = QComboBox()
+        self.reboot_mode_combo.addItems(["System", "Bootloader", "Recovery", "Fastboot"])
+        self.reboot_mode_combo.setFont(self._font_sm)
+        self.btn_reboot_mode = self._b("Reboot", "power.svg")
+        self.tcpip_port_input = self._in("5555", 52)
+        self.btn_tcpip_mode = self._b("TCP/IP", "wifi-high.svg")
+        gl_rb.addWidget(self.reboot_mode_combo, 1)
+        gl_rb.addWidget(self.btn_reboot_mode, 1)
+        gl_rb.addWidget(self.tcpip_port_input, 1)
+        gl_rb.addWidget(self.btn_tcpip_mode, 1)
+        lo.addWidget(g_rb)
+
         # Broadcast & Intents
         gb = self._g("Broadcast & Intents")
         glb = QVBoxLayout(gb)
@@ -251,6 +267,8 @@ class SystemPanel(BasePanel):
         LP = self.signals
         self.btn_shell_run.clicked.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
         self.shell_cmd_input.returnPressed.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
+        self.btn_reboot_mode.clicked.connect(lambda: LP.reboot_mode_requested.emit(self.selected_devices, self.reboot_mode_combo.currentText().lower()))
+        self.btn_tcpip_mode.clicked.connect(lambda: LP.tcpip_mode_requested.emit(self.selected_devices, self.tcpip_port_input.text().strip() or "5555"))
         self.btn_broadcast.clicked.connect(lambda: LP.send_broadcast_requested.emit(self.selected_devices, self.broadcast_action.text().strip()))
         self.btn_start_activity.clicked.connect(lambda: LP.start_activity_requested.emit(self.selected_devices, self.activity_spec.text().strip()))
         self.btn_deep_link.clicked.connect(lambda: LP.open_deep_link_requested.emit(self.selected_devices, self.deep_link_uri.text().strip()))

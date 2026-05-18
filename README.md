@@ -9,7 +9,7 @@
 - **Language**: Python 3.11
 - **GUI Framework**: PySide6 (Qt 6)
 - **Author**: Frankie Hu (Copyright (c) 2026)
-- **Version**: 2.8.0
+- **Version**: 2.9.0
 
 ---
 
@@ -35,19 +35,25 @@ ADBLab/
 │       └── email_task.py            # QRunnable async email + verification code fetch
 │
 ├── controllers/                     # Controller layer (mixins → ADBController)
-│   ├── __init__.py                  # Composed ADBController (5 mixins)
+│   ├── __init__.py                  # Composed ADBController (7 mixins)
 │   ├── _base.py                     # Shared infra: models, signals, handler dispatch
 │   ├── _device.py                   # Device connect, disconnect, restart, pairing
-│   ├── _app.py                      # App install, uninstall, clear, permissions
-│   ├── _media.py                    # Screenshot, recording, performance, battery, processes
-│   └── _input.py                    # Text input, tap, swipe, keyevent, settings
+│   ├── _app.py                      # Package mgmt, app info, monkey test, bugreport, logs
+│   ├── _system.py                   # Permissions, disable/enable, broadcast, activity, IME, emulator, reboot
+│   ├── _media.py                    # Screenshot, recording(start/stop/auto-pull), performance, battery
+│   ├── _input.py                    # Text input, tap, swipe, keyevent, settings
+│   └── _file.py                     # File manager, port forwarding, content query
 │
 ├── models/                          # Model layer (ADB command execution)
 │   ├── adb_model.py                 # @async_command decorator + ADBModelCore base
 │   ├── adb_device.py                # Device connect, disconnect, restart, device info
 │   ├── adb_app.py                   # App install, uninstall, clear, package/activity queries
-│   ├── adb_testing.py               # Screenshot, monkey, bugreport, ANR, logs
-│   ├── adb_advanced.py              # 50+ advanced operations (~900 lines)
+│   ├── adb_testing.py               # Screenshot, monkey(per-device abort), bugreport, ANR, logs
+│   ├── adb_advanced.py              # Screen record(start/stop/pull), input, perf, logcat (~430 lines)
+│   ├── adb_network.py               # Network ADB mixin (port forward, TCP/IP, ping)
+│   ├── adb_system.py                # System ADB mixin (permissions, emulator, IME, process)
+│   ├── app_manager_worker.py        # App manager QThread worker (list, backup, restore)
+│   ├── file_explorer_worker.py      # File explorer QThread workers (ADB shell, transfer)
 │   └── device_store.py              # YAML device info persistence
 │
 ├── gui/                             # View layer
@@ -58,10 +64,10 @@ ADBLab/
 │   │   ├── adb_control_signals.py   # Controller → UI signals
 │   │   ├── base_panel.py            # Abstract panel base (UI factories, shared state)
 │   │   ├── device_manager.py        # Left-side device panel (connect, list, multiselect)
-│   │   ├── app_panel.py             # Tab 1 "Apps": package mgmt, monkey, testing, performance
-│   │   ├── system_panel.py          # Tab 2 "System": shell, forwarding, settings, IME, emulator
+│   │   ├── app_panel.py             # Tab 1 "Apps": package mgmt, monkey(configurable %), record, perf
+│   │   ├── system_panel.py          # Tab 2 "System": shell, forwarding, reboot, settings, IME, emulator
 │   │   ├── remote_panel.py          # Tab 3 "Remote": scrcpy mirroring, D-Pad, quick keys
-│   │   └── log_panel.py             # Left-side color-coded log panel
+│   │   └── log_panel.py             # Left-side theme-aware log, auto-scroll, batch re-render
 │   ├── dialogs/
 │   │   ├── about_dialog.py          # About dialog (version, QR code, copyright)
 │   │   ├── screenshot_viewer.py     # Multi-image viewer (zoom, nav, copy, save, delete)
@@ -72,16 +78,16 @@ ADBLab/
 │   ├── styles/
 │   │   ├── __init__.py              # BaseStyles (ThemeMixin + QSSMixin + FontMixin)
 │   │   ├── theme.py                 # Light/Dark palettes, theme switch, DWM title bar helper
-│   │   ├── qss.py                   # QSS templates (buttons, inputs, group boxes, scrollbars)
+│   │   ├── qss.py                   # QSS templates (buttons, inputs, group boxes, scrollbars, device list)
 │   │   ├── fonts.py                 # Font management
-│   │   ├── base_styles.py           # Backward-compat re-export
 │   │   └── icon_loader.py           # Theme-aware QIconEngine (SVG currentColor injection)
 │   └── widgets/
 │       └── double_click_button.py   # QPushButton with double-click safety guard
 │
 ├── utils/                           # Utilities
 │   ├── resource_path.py             # Resource path resolution (dev + PyInstaller)
-│   └── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
+│   ├── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
+│   └── batch_tracker.py             # Multi-device batch operation progress tracker
 │
 └── resources/                       # Static resources
     ├── connected_devices.yaml       # Device connection history
@@ -116,7 +122,8 @@ User clicks button (Panel)
 | **Observer** | Global | Qt signal/slot decoupling UI from business logic |
 | **Async Command** | `adb_model.async_command` | Decorator wrapping sync methods into QRunnable async execution |
 | **Handler Map** | `_ADBControllerBase._handle_async_response` | Dict dispatch for operation result types |
-| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 5 functional mixins |
+| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 7 functional mixins |
+| **Model Mixins** | `adb_advanced.py` | ADBAdvanced composed from ADBNetworkMixin + ADBSystemMixin |
 | **Custom QIconEngine** | `icon_loader.py` | Theme-color injection into SVG on every paint — no widget refresh |
 
 ### Thread Model
@@ -166,32 +173,30 @@ User clicks button (Panel)
 | Restart Device | `adb reboot` for checked devices |
 | Restart ADB Server | `adb kill-server` + `adb start-server` (double-click safety) |
 | Batch Install APK | Multi-file → all checked devices |
-| USB Auto-Detection | 3-second `adb devices` poll, auto-refresh on device count change |
+| USB Auto-Detection | `_ScanThread` long-running poll every 3s, count-change auto-refresh |
 | Device Persistence | YAML store for known devices, IP history with auto-complete |
 
 ### App Management (Apps Tab)
 
 | Feature | Description |
 |---------|-------------|
-| Get Foreground Package | `dumpsys window` — detect current focused app |
+| Get Package | `dumpsys window` — detect current foreground package; accumulates history |
 | Uninstall / Clear Data / Restart / Force Stop | Standard lifecycle operations |
 | Disable / Enable / Disable-User | `pm disable/enable/disable-user` |
 | Activity Info | Current focus and resumed activity |
 | Parse APK (local) | `aapt dump badging` — label, package, version, SDK, permissions, architectures |
 | Package History | Auto-complete from previously seen packages |
-| Reboot Modes | System / Bootloader / Recovery / Fastboot |
-| TCP/IP Mode | Enable ADB over TCP/IP on specified port |
 | Email | Fetch temp email from AMZ123 API, poll for verification code |
 | Input Text | `adb shell input text` to device |
-| Screenshot | `screencap -p` + pull, multi-device support, opens in ScreenshotViewer |
-| Screen Record | `screenrecord` with configurable duration, pull video |
+| Screenshot | `screencap -p` + pull, multi-device, opens in ScreenshotViewer |
+| Screen Record | Configurable duration, Record/Stop mutual exclusion, auto-pull after completion |
 
 ### Testing & Diagnostics (Apps Tab)
 
 | Feature | Description |
 |---------|-------------|
-| Monkey Test | Configurable device type (STB/Mobile), event count, throttle; auto foreground recovery; dual log capture |
-| Kill Monkey | Find and kill running monkey process by PID |
+| Monkey Test | 9 configurable event-mix %, Events/Throttle/Flags, random seed, per-device abort, auto-persist params |
+| Kill Monkey | Per-device `pkill -f monkey` + monitoring loop abort |
 | Bugreport | `adb bugreport` → extract ZIP → convert to HTML via chkbugreport |
 | Pull ANR Files | `pull /data/anr` from device |
 | Retrieve / Cleanup Logs | `logcat -d` to file / `logcat -c` clear buffer |
@@ -208,6 +213,7 @@ User clicks button (Panel)
 
 | Feature | Description |
 |---------|-------------|
+| Reboot & Modes | System / Bootloader / Recovery / Fastboot + TCP/IP mode |
 | Shell Command | Arbitrary `adb shell` command execution |
 | Broadcast / Activity / Deep Link | `am broadcast/start` intent operations |
 | Port Forward / Reverse | `adb forward/reverse` with list and remove-all |
@@ -294,12 +300,14 @@ User clicks button (Panel)
 |---------|---------|-------------|
 | Theme | Light | Light/Dark toggle (immediate apply) |
 | Font Family | Segoe UI | 6 font choices (immediate apply) |
-| UI Font Size | 12 | 8–22 px (immediate apply) |
-| Log Font Size | 9 | 7–16 px (immediate apply) |
-| Window Size | 1200×650 | Width/height spinners |
+| UI Font Size | 12 | Dropdown: 8–22 (immediate apply) |
+| Log Font Size | 9 | Dropdown: 7–16 (immediate apply) |
+| Window Size | 1200×650 | Width/height number inputs |
 | Panel Widths | Auto | Left/right splitter proportions |
+| Save Dir | ~/ADBLab | Folder picker for default save path |
+| Max Log Lines | 2000 | Log panel buffer size |
 | Confirm Dangerous Ops | On | Prompt before reboot, uninstall |
-| Auto-Refresh on Connect | On | Refresh device list after connection |
+| Continuous Scan | On | Poll new USB devices every 3s |
 | Restore Defaults | — | Reset all settings to factory defaults |
 
 ---
@@ -338,22 +346,26 @@ Managed by `AppSettings` singleton (`resources/app_settings.json`) with atomic w
 | `left_panel_width` | Auto-calc | Left panel width |
 | `save_directory` | `~/ADBLab` | Default save path |
 | `confirm_dangerous_ops` | true | Confirm before dangerous operations |
-| `auto_refresh_on_connect` | true | Auto-refresh device list |
+| `continuous_device_scan` | true | Continuously scan device list (every 3s) |
+| `monkey_params` | see defaults | Last-used monkey test parameters (auto-persisted) |
 
 ---
 
 ## Key Features
 
-- **USB Auto-Detection**: 3-second `adb devices` poll with automatic refresh
-- **Multi-Device Support**: All operations support multiple checked devices; multi-device screenshot in a single viewer
+- **Continuous Device Scan**: `_ScanThread` poll every 3s with count-change auto-refresh, toggleable in Settings
+- **Multi-Device Support**: All operations support multiple checked devices; per-device monkey isolation
+- **Configurable Monkey**: 9 event-mix %, Events/Throttle/Flags, random seed, auto-persist to settings
+- **Smart Screen Recording**: Record/Stop mutual exclusion, auto-pull video after completion
 - **1526 Icons**: Phosphor Regular SVG with theme-aware color engine
 - **Dark Title Bars**: Windows native title bars follow theme via DWM API
 - **scrcpy Integration**: Bundled v3.3.1 with preset profiles and FPS monitoring
 - **Batch Operations**: Install APKs, uninstall apps, disable/enable — all across multiple devices
 - **Live Logcat**: Combined Level+Package+Tag filter with syntax highlighting
+- **Theme-Aware Logs**: Log level colors adapt to Light/Dark; smart auto-scroll pauses on manual scroll-up
 - **App Manager**: Grid/table views, backup/restore, permission management, JSON presets
 - **File Explorer**: Full-featured device file browser with chmod, text/image viewing, root mode
-- **Settings Persistence**: All user preferences saved automatically with debounced writes
+- **Settings Persistence**: All user preferences + monkey params saved automatically with debounced writes
 
 ---
 
@@ -399,9 +411,10 @@ python main.py
 
 ### Code Conventions
 
-- All ADB operations run async — never block the main thread
-- New model methods use `@async_command` decorator + `handler_map` dispatch
-- Signal definitions centralized in `*_signals.py`
+- ADB operations run async via `@async_command` (QRunnable) — never block the main thread
+- Long-running polls (device scan) use dedicated `QThread` with `msleep`-breakable loops
+- Signal definitions centralized in `*_signals.py`; explicit `Qt.QueuedConnection` for cross-thread
 - All dialogs connect to `BaseStyles.theme_changed` for theme updates
+- All `subprocess.run` calls with `text=True` use `encoding="utf-8", errors="ignore"` (Chinese Windows compat)
 - Icons use `get_themed_icon("name.svg")` (theme-aware) not raw `QIcon`
-- User-facing strings in English only
+- Per-device state tracked with `set()` + `threading.Lock` (e.g. `_aborted_devices`, `_monkey_running`)

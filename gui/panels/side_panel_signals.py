@@ -32,7 +32,7 @@ class SidePanelSignals(QObject):
     # ── Screenshot & Recording ──
     screenshot_requested = Signal(list)
     screen_record_requested = Signal(list, int)  # (devices, duration)
-    pull_recording_requested = Signal(list)  # (devices)
+    stop_screen_record_requested = Signal(list)  # (devices)
     batch_install_requested = Signal(list)  # (devices)
 
     # ── Logs ──
@@ -73,7 +73,7 @@ class SidePanelSignals(QObject):
     kill_monkey_requested = Signal(list)
     pull_anr_file_requested = Signal(list)
     capture_bugreport_requested = Signal(list)
-    start_monkey_requested = Signal(list, str, str, str)
+    start_monkey_requested = Signal(list, dict)
 
     # ── Shell & File ──
     shell_command_requested = Signal(list, str)  # (devices, command)

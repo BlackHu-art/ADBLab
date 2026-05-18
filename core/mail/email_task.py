@@ -55,8 +55,8 @@ class GetRandomEmailTask(QRunnable):
                 total_emails = email_list_data.get("data", {}).get("total", 0)
                 if total_emails >= 1:
                     if rows := email_list_data.get("data", {}).get("rows", []):
-                        email_service.emailId = rows[0].get("id")
-                        self.log("SUCCESS", f"Email found (ID: {email_service.emailId})")
+                        email_service.email_id = rows[0].get("id")
+                        self.log("SUCCESS", f"Email found (ID: {email_service.email_id})")
                         break
                 time.sleep(1.0)
 

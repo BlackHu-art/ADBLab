@@ -58,3 +58,8 @@ device_emulator-5554:
   Brand: Redmi
   Model: 22127RK46C
   ip: emulator-5554
+device_emulator-5556:
+  Aversion: '9'
+  Brand: Meizu
+  Model: M973Q
+  ip: emulator-5556

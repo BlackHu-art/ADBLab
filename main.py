@@ -5,7 +5,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from gui.main_frame import MainFrame
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 from utils.resource_path import resource_path, setup_qt_search_paths
 
 if __name__ == "__main__":

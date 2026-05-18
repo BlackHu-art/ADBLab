@@ -26,9 +26,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.styles.base_styles import BaseStyles
-from gui.styles.theme import apply_dark_title_bar
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
+from gui.styles.theme import apply_dark_title_bar
 
 MIN_ZOOM = 0.10
 MAX_ZOOM = 5.00
@@ -79,7 +79,7 @@ class ScreenshotViewer(QDialog):
     # ── Styles ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _c(key: str) -> str:
+    def _theme_color(key: str) -> str:
         return BaseStyles.color(key)
 
     def closeEvent(self, event):
@@ -88,7 +88,7 @@ class ScreenshotViewer(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
-        C = self._c
+        C = self._theme_color
         R = BaseStyles
 
         self.setStyleSheet(f"""
@@ -148,7 +148,7 @@ class ScreenshotViewer(QDialog):
         # Info bar
         self._info_label = QLabel()
         self._info_label.setStyleSheet(
-            f"color: {self._c('TEXT_SECONDARY')}; font-size: 11px; padding: 2px 0;"
+            f"color: {self._theme_color('TEXT_SECONDARY')}; font-size: 11px; padding: 2px 0;"
         )
         root.addWidget(self._info_label)
 
@@ -158,7 +158,7 @@ class ScreenshotViewer(QDialog):
         self._scroll.setAlignment(Qt.AlignCenter)
         self._scroll.setFrameShape(QFrame.NoFrame)
         self._scroll.setStyleSheet(
-            f"QScrollArea {{ background-color: {self._c('INPUT_BG')}; "
+            f"QScrollArea {{ background-color: {self._theme_color('INPUT_BG')}; "
             f"border-radius: {BaseStyles.RADIUS_LG}px; border: none; }}"
         )
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -191,7 +191,7 @@ class ScreenshotViewer(QDialog):
         self._nav_label.setAlignment(Qt.AlignCenter)
         self._nav_label.setFixedWidth(44)
         self._nav_label.setStyleSheet(
-            f"color: {self._c('TEXT_SECONDARY')}; font-size: 11px; font-weight: bold;"
+            f"color: {self._theme_color('TEXT_SECONDARY')}; font-size: 11px; font-weight: bold;"
         )
         bar.addWidget(self._nav_label)
 
@@ -346,7 +346,7 @@ class ScreenshotViewer(QDialog):
     def _show_placeholder(self, text: str):
         self._image_label.setText(text)
         self._image_label.setStyleSheet(
-            f"color: {self._c('TEXT_DISABLED')}; font-size: 14px; padding: 60px;"
+            f"color: {self._theme_color('TEXT_DISABLED')}; font-size: 14px; padding: 60px;"
         )
 
     def navigate_prev(self):
@@ -491,14 +491,21 @@ class ScreenshotViewer(QDialog):
         except OSError as exc:
             QMessageBox.warning(self, "Delete Failed", str(exc))
             return
-        self.close()
+        # Remove from list and stay open for remaining images
+        del self._image_paths[self._current_idx]
+        if self._image_paths:
+            new_idx = min(self._current_idx, len(self._image_paths) - 1)
+            self._current_idx = new_idx
+            self._navigate_to(new_idx)
+        else:
+            self.close()
 
     # ── Context menu ────────────────────────────────────────────────────
 
     def _on_context_menu(self, pos):
         path = self._current_path()
         menu = QMenu(self)
-        C = self._c
+        C = self._theme_color
         menu.setStyleSheet(
             f"QMenu {{ background: {C('PANEL_BG')}; border: 1px solid {C('BORDER_COLOR')}; "
             f"border-radius: {BaseStyles.RADIUS_SM}px; padding: 4px; color: {C('TEXT_PRIMARY')}; }}"

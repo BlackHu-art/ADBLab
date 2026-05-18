@@ -150,7 +150,7 @@ class RemotePanel(BasePanel):
         # ── Record ──
         rr = QHBoxLayout()
         rr.setSpacing(8)
-        self.chk_record = self._mkchk("Record")  # 使用统一的工厂方法创建
+        self.chk_record = self._create_checkbox("Record")  # 使用统一的工厂方法创建
         self.chk_record.setToolTip("Record mirroring to file")
         self.chk_record.toggled.connect(self._on_record_toggled)
         rr.addWidget(self.chk_record, 1)  # 占1份空间
@@ -160,13 +160,13 @@ class RemotePanel(BasePanel):
         gl.addLayout(rr)
 
         # ── Display ──
-        self.chk_fullscreen = self._mkchk("Fullscreen")
+        self.chk_fullscreen = self._create_checkbox("Fullscreen")
         self.chk_fullscreen.setToolTip("Launch in fullscreen mode")
-        self.chk_aot = self._mkchk("Always on Top")
+        self.chk_aot = self._create_checkbox("Always on Top")
         self.chk_aot.setToolTip("Keep window above all others")
-        self.chk_showtouches = self._mkchk("Show Touches")
+        self.chk_showtouches = self._create_checkbox("Show Touches")
         self.chk_showtouches.setToolTip("Visualize touch points on screen")
-        self.chk_stayawake = self._mkchk("Stay Awake")
+        self.chk_stayawake = self._create_checkbox("Stay Awake")
         self.chk_stayawake.setToolTip("Keep device screen on while mirroring")
         rd1 = QHBoxLayout()
         rd1.setSpacing(8)
@@ -174,13 +174,13 @@ class RemotePanel(BasePanel):
             rd1.addWidget(cb)  # 不设置权重，让它们平均分配空间
         gl.addLayout(rd1)
 
-        self.chk_turnscreenoff = self._mkchk("Turn Screen Off")
+        self.chk_turnscreenoff = self._create_checkbox("Turn Screen Off")
         self.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
-        self.chk_hw_encoder = self._mkchk("HW Encoder")
+        self.chk_hw_encoder = self._create_checkbox("HW Encoder")
         self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter)")
-        self.chk_noplayback = self._mkchk("No Window")
+        self.chk_noplayback = self._create_checkbox("No Window")
         self.chk_noplayback.setToolTip("Record only, no display window")
-        self.chk_noaudio = self._mkchk("No Audio")  # 改为使用_mkchk方法创建
+        self.chk_noaudio = self._create_checkbox("No Audio")  # 改为使用_create_checkbox方法创建
         self.chk_noaudio.setChecked(True)  # 保留初始勾选状态
         self.chk_noaudio.setToolTip("Disable audio forwarding")
         rd2 = QHBoxLayout()
@@ -205,7 +205,7 @@ class RemotePanel(BasePanel):
 
         return g
 
-    def _mkchk(self, text: str) -> QCheckBox:
+    def _create_checkbox(self, text: str) -> QCheckBox:
         cb = QCheckBox(text)
         cb.setFont(self._font_sm)
         return cb
@@ -325,8 +325,8 @@ class RemotePanel(BasePanel):
         try:
             r = subprocess.run(
                 [exe, "--version"], capture_output=True, text=True,
-                creationflags=CF,
-                timeout=3,
+                creationflags=CF, timeout=3,
+                encoding="utf-8", errors="ignore",
             )
             m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.stdout)
             return m.group(1) if m else "unknown"
@@ -374,6 +374,7 @@ class RemotePanel(BasePanel):
             _sp = subprocess.run(
                 [self._adb.path, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
                 capture_output=True, text=True, creationflags=CF, timeout=5,
+                encoding="utf-8", errors="ignore",
             )
             elapsed = time.monotonic() - t0
             if elapsed > 1.0:
@@ -487,6 +488,7 @@ class RemotePanel(BasePanel):
             cf = CF
             self._process = subprocess.Popen(
                 args, stderr=subprocess.PIPE, text=True, creationflags=cf,
+                encoding="utf-8", errors="ignore",
             )
             threading.Thread(target=self._read_stderr, daemon=True).start()
             self._watchdog.start(500)

@@ -42,6 +42,7 @@ class LogService(QObject):
             self._initialized = True
             self._buffer = []
             self._buffer_lock = QMutex()
+            self._max_buffer = 5000
             self._setup_logging()
 
     def _setup_logging(self) -> None:
@@ -79,6 +80,9 @@ class LogService(QObject):
         self._buffer_lock.lock()
         try:
             self._buffer.append((level, str(message)))
+            # Drop oldest if buffer overflows
+            if len(self._buffer) > self._max_buffer:
+                self._buffer = self._buffer[-self._max_buffer:]
 
             if flush_immediately:
                 self._flush_buffer()

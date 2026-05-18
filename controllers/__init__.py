@@ -12,6 +12,7 @@ from controllers._device import ADBDeviceMixin
 from controllers._file import ADBFileMixin
 from controllers._input import ADBInputMixin
 from controllers._media import ADBMediaMixin
+from controllers._system import ADBSystemControllerMixin
 
 
 class ADBController(
@@ -20,6 +21,7 @@ class ADBController(
     ADBMediaMixin,
     ADBAppMixin,
     ADBFileMixin,
+    ADBSystemControllerMixin,
     _ADBControllerBase,
 ):
     """Fully decoupled ADB controller communicating via signals.

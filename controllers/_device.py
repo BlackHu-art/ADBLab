@@ -69,11 +69,13 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def _process_device_list(self, devices: list):
         self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
+        self.signals.devices_updated.emit(devices)
         self._async_update_devices(devices)
 
     def refresh_devices(self):
         operation_id = self._generate_operation_id()
-        self._pending_ops[operation_id] = ("refresh", None)
+        with self._pending_lock:
+            self._pending_ops[operation_id] = ("refresh", None)
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:
@@ -90,11 +92,10 @@ class ADBDeviceMixin(_ADBControllerBase):
                         ip=ip,
                         brand=info.get("Brand", "Unknown"),
                         model=info.get("Model", "Unknown"),
-                        aversion=info.get("Aversion", "Unknown"),
+                        android_version=info.get("Aversion", "Unknown"),
                     )
-                except Exception as e:
-                    self._emit_operation("refresh", False, f"Failed to get info for {ip}: {str(e)}")
-            self.signals.devices_updated.emit(devices)
+                except Exception:
+                    pass
 
         self.executor.submit(_update)
 
@@ -106,7 +107,7 @@ class ADBDeviceMixin(_ADBControllerBase):
                 ip=ip,
                 brand=info.get("Brand", "Unknown"),
                 model=info.get("Model", "Unknown"),
-                aversion=info.get("Aversion", "Unknown"),
+                android_version=info.get("Aversion", "Unknown"),
             )
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")

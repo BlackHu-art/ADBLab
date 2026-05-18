@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.styles.base_styles import BaseStyles
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
 
@@ -106,7 +106,7 @@ class BasePanel(QWidget):
         i = QLineEdit()
         i.setFont(self._font_sm)
         i.setPlaceholderText(p)
-        i.setMaximumHeight(28)
+        i.setMinimumHeight(26)
         i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if w:
             i.setMaximumWidth(w)

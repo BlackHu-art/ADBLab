@@ -99,7 +99,7 @@ class EmailService(HttpRequest):
             # "fingerprint": "4794d495216cb6f6f1c31bc4fcbfc770"
         }
         self.account = None
-        self.emailId = None
+        self.email_id = None
 
     def get_random_email(self):
         """
@@ -206,9 +206,9 @@ class EmailService(HttpRequest):
         :return: 提取到的验证码字符串，如果失败返回 None
         """
         url = f"{self.BASE_URL}/detail"
-        payload = {"id": self.emailId, "account": self.account}
+        payload = {"id": self.email_id, "account": self.account}
         try:
-            logger.info(f"Requesting email details for ID: {self.emailId}, Account: {self.account}")
+            logger.info(f"Requesting email details for ID: {self.email_id}, Account: {self.account}")
             response = self.session.post(url, headers=self.common_headers, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -259,13 +259,13 @@ class EmailService(HttpRequest):
             if email_list and email_list.get("data", {}).get("total") == 1:
                 rows = email_list.get("data", {}).get("rows", [])
                 if rows:
-                    self.emailId = rows[0].get("id")
-                    logger.info(f"Found email with ID: {self.emailId}")
+                    self.email_id = rows[0].get("id")
+                    logger.info(f"Found email with ID: {self.email_id}")
                     break
             logger.info(f"Attempt {attempt + 1}: No emails found yet. Retrying in 10 seconds...")
             time.sleep(10)
 
-        if not self.emailId:
+        if not self.email_id:
             logger.error("Failed to find any emails after 6 attempts.")
             return
 

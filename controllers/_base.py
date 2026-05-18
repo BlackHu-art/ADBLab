@@ -23,6 +23,7 @@ class _ADBControllerBase:
     def __init__(self, log_service: LogService):
         self.signals = ADBControllerSignals()
         self.log_service = log_service
+        self._settings = AppSettings.instance()
         self.device_model = ADBDevice()
         self.app_model = ADBApp()
         self.testing_model = ADBTesting()
@@ -35,6 +36,7 @@ class _ADBControllerBase:
         self._connect_model_signals()
         self.last_save_dir = None
         self._active_viewers = []
+        self._monkey_running = set()
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._batch_trackers = {}
         self._build_handler_map()
@@ -135,7 +137,7 @@ class _ADBControllerBase:
         self.last_save_dir = default_dir
         return default_dir
 
-    def get_random_email_and_code(self):
+    def start_random_email_task(self):
         task = GetRandomEmailTask()
         self._email_task = task
         task.signals.log_signal.connect(self.log_service.log)

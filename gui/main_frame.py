@@ -3,7 +3,7 @@ import os
 import shutil
 import subprocess
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -31,12 +31,50 @@ from gui.panels.side_panel import SidePanel
 from gui.styles.icon_loader import get_themed_icon
 from utils.resource_path import resource_path
 
-from .styles.base_styles import BaseStyles, get_default_font
+from .styles import BaseStyles, get_default_font
+
+
+class _ScanThread(QThread):
+    """Long-running thread: polls `adb devices` every 3 s, emits on count change."""
+
+    devices_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._stop_flag = False
+
+    def stop(self):
+        self._stop_flag = True
+
+    def run(self):
+        from utils.adb_resolver import CF, adb_path
+
+        last_count = None  # always emit on first poll
+        while not self._stop_flag:
+            try:
+                r = subprocess.run(
+                    [adb_path(), "devices"], capture_output=True, text=True,
+                    creationflags=CF, timeout=5, encoding="utf-8", errors="ignore",
+                )
+                devices = [
+                    line.split("\t")[0]
+                    for line in r.stdout.strip().splitlines()[1:]
+                    if "device" in line and "offline" not in line
+                ]
+                count = len(devices)
+                if count != last_count:
+                    last_count = count
+                    self.devices_changed.emit()
+            except Exception:
+                pass
+            # Sleep 3 s between polls (breakable for clean shutdown)
+            for _ in range(30):
+                if self._stop_flag:
+                    return
+                self.msleep(100)
 
 
 class MainFrame(QMainWindow):
-
-    _trigger_refresh = Signal()
 
     def __init__(self):
         super().__init__()
@@ -46,14 +84,42 @@ class MainFrame(QMainWindow):
         self.adb_controller = ADBController(self.log_service)
         self._drag_pos = None
         self._active_dialogs = []
+        self._scan_thread = None
 
         self._setup_window()
         self._init_panels()
 
+        # Resolve ADB path synchronously — needed before any adb call
         from utils.adb_resolver import resolve_adb_path
+        resolve_adb_path()
 
-        QTimer.singleShot(200, lambda: resolve_adb_path())
-        QTimer.singleShot(100, self._initial_refresh)
+        # Continuous scan (populates list immediately on first poll)
+        # or one-shot initial scan if continuous scan is disabled
+        from core.settings_manager import AppSettings
+        if AppSettings.instance().get("continuous_device_scan", True):
+            self._start_scan_thread()
+        else:
+            QTimer.singleShot(0, self.adb_controller.refresh_devices)
+
+    # ── continuous scan ───────────────────────────────────────────────
+
+    def _start_scan_thread(self):
+        if self._scan_thread and self._scan_thread.isRunning():
+            return
+        self._scan_thread = _ScanThread(self)
+        self._scan_thread.devices_changed.connect(self.adb_controller.refresh_devices)
+        self._scan_thread.start()
+
+    def _stop_scan_thread(self):
+        if self._scan_thread and self._scan_thread.isRunning():
+            self._scan_thread.stop()
+            self._scan_thread.wait(3000)
+
+    def set_continuous_scan(self, enabled: bool):
+        if enabled:
+            self._start_scan_thread()
+        else:
+            self._stop_scan_thread()
 
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
@@ -137,46 +203,6 @@ class MainFrame(QMainWindow):
 
         self._connect_all_signals()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
-
-        # USB device auto-detection poll (every 3s)
-        self._usb_timer = QTimer(self)
-        self._usb_timer.timeout.connect(self._check_new_devices)
-        self._usb_timer.start(3000)
-        self._known_device_count = None
-
-    def _check_new_devices(self):
-        """Poll for new USB devices (async) and auto-refresh on change."""
-        import subprocess
-        import threading
-
-        def _poll():
-            try:
-                from utils.adb_resolver import CF, adb_path
-                r = subprocess.run(
-                    [adb_path(), "devices"], capture_output=True, text=True,
-                    creationflags=CF, timeout=5,
-                )
-                devices = [
-                    line.split("\t")[0]
-                    for line in r.stdout.strip().splitlines()[1:]
-                    if "device" in line and "offline" not in line
-                ]
-                count = len(devices)
-                # Marshal result back to main thread
-                QTimer.singleShot(0, lambda: self._on_device_poll_result(count))
-            except Exception:
-                QTimer.singleShot(0, lambda: self._on_device_poll_result(None))
-
-        threading.Thread(target=_poll, daemon=True).start()
-
-    def _on_device_poll_result(self, count: int | None):
-        if count is None:
-            return  # ADB unavailable — silently retry next cycle
-        if self._known_device_count is None:
-            self._known_device_count = count
-        elif count != self._known_device_count:
-            self._known_device_count = count
-            self.adb_controller.refresh_devices()
 
     # ── Top toolbar (full-width, replaces menu bar) ───────────────────
 
@@ -311,11 +337,11 @@ class MainFrame(QMainWindow):
         AC = self.adb_controller
 
         CTL.devices_updated.connect(self.left_panel.update_device_list)
-        CTL.operation_completed.connect(self.log_panel._append_log)
         CTL.operation_completed.connect(lambda *args: self.left_panel._refresh_device_combobox())
         LP.log_message.connect(self.log_panel._append_log)
         CTL.email_updated.connect(self.left_panel.update_email)
         CTL.vercode_updated.connect(self.left_panel.update_vercode)
+        CTL.record_finished.connect(self.left_panel._apps_tab.on_recording_finished)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
         CTL.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
@@ -337,7 +363,7 @@ class MainFrame(QMainWindow):
             # Screenshot & screen recording
             (LP.screenshot_requested, AC.take_screenshot),
             (LP.screen_record_requested, AC.start_screen_record),
-            (LP.pull_recording_requested, AC.pull_recordings),
+            (LP.stop_screen_record_requested, AC.stop_screen_record),
             (LP.batch_install_requested, AC.batch_install_apk),
             # Logging
             (LP.retrieve_logs_requested, AC.retrieve_device_logs),
@@ -348,7 +374,7 @@ class MainFrame(QMainWindow):
             (LP.input_swipe_requested, AC.input_swipe),
             (LP.input_keyevent_requested, AC.input_keyevent),
             # Email
-            (LP.generate_email_requested, AC.get_random_email_and_code),
+            (LP.generate_email_requested, AC.start_random_email_task),
             # App management
             (LP.get_program_requested, AC.get_current_package),
             (LP.uninstall_app_requested, AC.uninstall_apk),
@@ -400,31 +426,6 @@ class MainFrame(QMainWindow):
         for signal_, handler in signal_map:
             signal_.connect(handler)
 
-    def _initial_refresh(self):
-        """Wake ADB server in background, then scan devices."""
-        import subprocess
-        import threading
-
-        from utils.adb_resolver import CF, adb_path
-
-        self._trigger_refresh.connect(self._do_refresh_devices)
-
-        def _wake_then_refresh():
-            try:
-                subprocess.run(
-                    [adb_path(), "start-server"],
-                    capture_output=True, creationflags=CF, timeout=10,
-                )
-            except Exception:
-                pass
-            # Signal crosses thread boundary safely (AutoConnection)
-            self._trigger_refresh.emit()
-
-        threading.Thread(target=_wake_then_refresh, daemon=True).start()
-
-    def _do_refresh_devices(self):
-        self.adb_controller.refresh_devices()
-
     def clear_log(self):
         """Clear log panel."""
         self.log_panel.clear()
@@ -471,6 +472,7 @@ class MainFrame(QMainWindow):
     def _show_settings(self):
         """Show settings dialog."""
         dialog = SettingsDialog(self)
+        dialog.continuous_scan_toggled.connect(self.set_continuous_scan)
         dialog.exec_()
 
     def _open_cmd(self):
@@ -560,7 +562,7 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def closeEvent(self, event):
-        self._usb_timer.stop()
+        self._stop_scan_thread()
         # Flush pending settings save before exit
         from core.settings_manager import AppSettings
         s = AppSettings.instance()

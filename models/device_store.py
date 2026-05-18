@@ -32,10 +32,10 @@ class DeviceStore:
 
     @classmethod
     def add_device(
-        cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", aversion: str = ""
+        cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", android_version: str = ""
     ):
         with cls._lock:
-            cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(aversion)}
+            cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(android_version)}
         cls.save()
 
     @classmethod
