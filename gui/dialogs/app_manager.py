@@ -4,20 +4,35 @@ import json
 import os
 import re
 
-from PySide6.QtCore import QSortFilterProxyModel, QSize, Qt
+from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFileDialog, QHBoxLayout, QHeaderView,
-    QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-    QPushButton, QStackedWidget, QStatusBar, QTabWidget, QTextEdit, QTreeView,
-    QVBoxLayout, QWidget,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QStackedWidget,
+    QStatusBar,
+    QTabWidget,
+    QTextEdit,
+    QTreeView,
+    QVBoxLayout,
+    QWidget,
 )
 
 from gui.styles import BaseStyles
-from gui.styles.theme import apply_dark_title_bar
 from gui.styles.icon_loader import get_themed_icon
+from gui.styles.theme import apply_dark_title_bar
 from models.app_manager_worker import AppManagerWorker
-
 
 # ── 排序代理模型 ──────────────────────────────────────────────────────────
 

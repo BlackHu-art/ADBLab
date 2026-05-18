@@ -73,7 +73,7 @@ class SidePanelSignals(QObject):
     kill_monkey_requested = Signal(list)
     pull_anr_file_requested = Signal(list)
     capture_bugreport_requested = Signal(list)
-    start_monkey_requested = Signal(list, str, str, str)
+    start_monkey_requested = Signal(list, dict)
 
     # ── Shell & File ──
     shell_command_requested = Signal(list, str)  # (devices, command)

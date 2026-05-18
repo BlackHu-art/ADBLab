@@ -325,8 +325,8 @@ class RemotePanel(BasePanel):
         try:
             r = subprocess.run(
                 [exe, "--version"], capture_output=True, text=True,
-                creationflags=CF,
-                timeout=3,
+                creationflags=CF, timeout=3,
+                encoding="utf-8", errors="ignore",
             )
             m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.stdout)
             return m.group(1) if m else "unknown"
@@ -374,6 +374,7 @@ class RemotePanel(BasePanel):
             _sp = subprocess.run(
                 [self._adb.path, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
                 capture_output=True, text=True, creationflags=CF, timeout=5,
+                encoding="utf-8", errors="ignore",
             )
             elapsed = time.monotonic() - t0
             if elapsed > 1.0:
@@ -487,6 +488,7 @@ class RemotePanel(BasePanel):
             cf = CF
             self._process = subprocess.Popen(
                 args, stderr=subprocess.PIPE, text=True, creationflags=cf,
+                encoding="utf-8", errors="ignore",
             )
             threading.Thread(target=self._read_stderr, daemon=True).start()
             self._watchdog.start(500)

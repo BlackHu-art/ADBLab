@@ -6,9 +6,26 @@
   "log_max_lines": 2000,
   "confirm_dangerous_ops": true,
   "continuous_device_scan": true,
+  "monkey_params": {
+    "events": 10000,
+    "throttle": 1000,
+    "ignore_crashes": true,
+    "ignore_timeouts": true,
+    "ignore_security": true,
+    "touch": 30,
+    "motion": 10,
+    "trackball": 5,
+    "nav": 10,
+    "majornav": 5,
+    "syskeys": 5,
+    "appswitch": 10,
+    "anyevent": 5,
+    "pinch": 20,
+    "package_name": "com.android.launcher3"
+  },
   "theme": "Light",
   "window_width": 1200,
-  "window_height": 650,
+  "window_height": 700,
   "left_panel_width": 590,
   "right_panel_width": 597
 }

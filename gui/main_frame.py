@@ -54,7 +54,7 @@ class _ScanThread(QThread):
             try:
                 r = subprocess.run(
                     [adb_path(), "devices"], capture_output=True, text=True,
-                    creationflags=CF, timeout=5,
+                    creationflags=CF, timeout=5, encoding="utf-8", errors="ignore",
                 )
                 devices = [
                     line.split("\t")[0]

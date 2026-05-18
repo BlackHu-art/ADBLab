@@ -73,10 +73,9 @@ class LogcatWorker(QThread):
                 cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
                 r = subprocess.run(
                     ["adb", "-s", self.device_ip, "shell", "pidof", self.package],
-                    capture_output=True,
-                    text=True,
-                    creationflags=cf,
-                    timeout=5,
+                    capture_output=True, text=True,
+                    creationflags=cf, timeout=5,
+                    encoding="utf-8", errors="ignore",
                 )
                 pid = r.stdout.strip().split()[0] if r.stdout.strip() else ""
                 if pid and pid.isdigit():
@@ -93,9 +92,8 @@ class LogcatWorker(QThread):
             self._proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
+                stderr=subprocess.STDOUT, text=True,
+                bufsize=1, encoding="utf-8", errors="ignore",
                 creationflags=creationflags,
             )
             self.status_changed.emit("Logcat running")
@@ -187,11 +185,11 @@ class LiveLogcatDialog(QDialog):
         self.pkg_input.setPlaceholderText("com.example.app")
         self.pkg_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.pkg_input, 1)
-        self.btn_get_pkg = QPushButton("Get Pkg")
+        self.btn_get_pkg = QPushButton("Current Package")
         self.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
         self.btn_get_pkg.setIconSize(QSize(14, 14))
         self.btn_get_pkg.setToolTip("Fetch current foreground app package")
-        self.btn_get_pkg.setFixedWidth(60)
+        self.btn_get_pkg.setFixedWidth(120)
         self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
         f1.addWidget(self.btn_get_pkg)
         f1.addWidget(QLabel("Tag:"))
@@ -310,10 +308,9 @@ class LiveLogcatDialog(QDialog):
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             r = subprocess.run(
                 ["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
-                capture_output=True,
-                text=True,
-                creationflags=cf,
-                timeout=5,
+                capture_output=True, text=True,
+                creationflags=cf, timeout=5,
+                encoding="utf-8", errors="ignore",
             )
             for line in r.stdout.splitlines():
                 if "mCurrentFocus" in line:

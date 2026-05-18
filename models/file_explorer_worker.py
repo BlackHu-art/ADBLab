@@ -28,6 +28,7 @@ class ADBWorker(QThread):
             cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             output = subprocess.check_output(
                 cmd, text=True, stderr=subprocess.STDOUT, creationflags=cf, timeout=30,
+                encoding="utf-8", errors="ignore",
             )
             if not self._aborted:
                 self.finished.emit(output, False)

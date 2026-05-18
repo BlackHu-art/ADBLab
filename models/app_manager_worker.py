@@ -62,7 +62,8 @@ class AppManagerWorker(QThread):
 
     def _adb(self, *args, timeout=30):
         cmd = ["adb", "-s", self.device_ip] + list(args)
-        return subprocess.run(cmd, capture_output=True, text=True, creationflags=CF, timeout=timeout)
+        return subprocess.run(cmd, capture_output=True, text=True, creationflags=CF, timeout=timeout,
+                              encoding="utf-8", errors="ignore")
 
     def _load_apps(self):
         self.log_message.emit("Fetching installed apps...")

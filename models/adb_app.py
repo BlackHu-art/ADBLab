@@ -7,8 +7,9 @@ Imports only from adb_model (core) — no circular dependencies.
 import re
 import subprocess
 
-from .adb_model import ADBModelCore, async_command
 from utils.adb_resolver import CF
+
+from .adb_model import ADBModelCore, async_command
 
 
 class ADBApp(ADBModelCore):
@@ -16,46 +17,33 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def get_current_package_async(self, device_ip: str) -> dict:
+        """Get the currently focused package name via dumpsys window."""
         try:
-            command = ["adb", "-s", device_ip, "shell", "dumpsys", "window"]
-            result = self._execute_command(command)
-
-            current_focus_line = ""
-            for line in result.splitlines():
+            r = subprocess.run(
+                ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
+                capture_output=True, text=True, creationflags=CF,
+                encoding="utf-8", errors="ignore",
+            )
+            for line in r.stdout.splitlines():
                 if "mCurrentFocus" in line:
-                    current_focus_line = line.strip()
-                    break
-
-            if not current_focus_line:
-                return {"success": False, "device_ip": device_ip, "error": "No mCurrentFocus found"}
-
-            match = re.search(r"mCurrentFocus=Window\{.*?\s(\S+?)/(\S+)\}", current_focus_line)
-            if match:
-                return {
-                    "success": True,
-                    "device_ip": device_ip,
-                    "package_name": match.group(1),
-                    "activity_name": match.group(2),
-                }
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "error": "Could not parse package name",
-            }
+                    m = re.search(r"Window\{.*?\s(\S+?)/", line)
+                    if m:
+                        return {"success": True, "device_ip": device_ip,
+                                "package_name": m.group(1)}
+            return {"success": False, "device_ip": device_ip,
+                    "error": "No focus info found"}
         except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
+            return {"success": False, "device_ip": device_ip,
+                    "error": str(e)}
 
     @async_command
     def install_apk_async(self, device_ip: str, apk_path: str, apk_name: str, idx: int):
         try:
             cmd = ["adb", "-s", device_ip, "install", "-r", apk_path]
             result = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=120,
-                creationflags=CF,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="ignore",
+                timeout=120, creationflags=CF,
             )
             return {
                 "success": True,
@@ -75,11 +63,9 @@ class ADBApp(ADBModelCore):
         try:
             result = subprocess.run(
                 ["adb", "-s", device_ip, "uninstall", package_name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=30,
-                creationflags=CF,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="ignore",
+                timeout=30, creationflags=CF,
             )
             return {
                 "success": True,
@@ -108,11 +94,9 @@ class ADBApp(ADBModelCore):
         try:
             result = subprocess.run(
                 ["adb", "-s", device_ip, "shell", "pm", "clear", package_name],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=30,
-                creationflags=CF,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="ignore",
+                timeout=30, creationflags=CF,
             )
             return {
                 "success": True,
@@ -228,7 +212,8 @@ class ADBApp(ADBModelCore):
         try:
             cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "packages"]
             output = subprocess.check_output(
-                cmd, stderr=subprocess.STDOUT, text=True, creationflags=CF
+                cmd, stderr=subprocess.STDOUT, text=True, creationflags=CF,
+                encoding="utf-8", errors="ignore",
             )
             packages = [
                 line.replace("package:", "").strip()

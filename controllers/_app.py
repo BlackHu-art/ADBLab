@@ -50,26 +50,25 @@ class ADBAppMixin(_ADBControllerBase):
         if not self._require_devices(devices, "get_package"):
             return
         for device_ip in devices:
-            self.executor.submit(self._get_single_device_package, device_ip)
-
-    def _get_single_device_package(self, device_ip: str):
-        operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("get_package", device_ip)
-        self.app_model.get_current_package_async(device_ip)
+            self.app_model.get_current_package_async(device_ip)
 
     def _process_get_package_result(self, result: dict):
-        device_ip = result.get("device_ip")
+        if not isinstance(result, dict):
+            return
+        device_ip = result.get("device_ip", "")
         if result.get("success"):
-            package_name = result["package_name"]
-            self._emit_operation(
-                "get_package", True, f"Current package on {device_ip}: {package_name}"
-            )
-            self.signals.current_package_received.emit(device_ip, package_name)
+            package_name = result.get("package_name", "")
+            if package_name:
+                self._emit_operation(
+                    "get_package", True,
+                    f"Current package on {device_ip}: {package_name}"
+                )
+                self.signals.current_package_received.emit(device_ip, package_name)
         else:
             error = result.get("error", "Unknown error")
             self._emit_operation(
-                "get_package", False, f"Failed to get package on {device_ip}: {error}"
+                "get_package", False,
+                f"Failed to get package on {device_ip}: {error}"
             )
 
     def install_apk(self, devices: list):
@@ -335,7 +334,7 @@ class ADBAppMixin(_ADBControllerBase):
         if not self._require_devices(devices, "kill_monkey"):
             return
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.testing_model.kill_monkey_async, device_ip, idx)
+            self.testing_model.kill_monkey_async(device_ip, idx)
 
     def _process_kill_monkey_result(self, result: dict):
         device_ip = result.get("device_ip")
@@ -355,7 +354,7 @@ class ADBAppMixin(_ADBControllerBase):
         if not self._require_devices(devices, "installed_packages"):
             return
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.app_model.list_installed_packages_async, device_ip, idx)
+            self.app_model.list_installed_packages_async(device_ip, idx)
 
     def _process_list_installed_packages_result(self, result: dict):
         device_ip = result.get("device_ip")
@@ -380,11 +379,8 @@ class ADBAppMixin(_ADBControllerBase):
         save_dir = self._get_screenshot_dir()
         log = self.log_service.log
         for idx, device in enumerate(devices, 1):
-            self.executor.submit(
-                self.testing_model.capture_bugreport_async,
-                device,
-                save_dir,
-                idx,
+            self.testing_model.capture_bugreport_async(
+                device, save_dir, idx,
                 callback=lambda msg: log(LogLevel.INFO, msg),
             )
 
@@ -408,12 +404,8 @@ class ADBAppMixin(_ADBControllerBase):
         timestamp = datetime.now().strftime("%H%M%S")
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
-            self.executor.submit(
-                self.testing_model.pull_anr_files_async,
-                device_ip,
-                f"{sanitized_name}_anr_{timestamp}",
-                save_dir,
-                idx,
+            self.testing_model.pull_anr_files_async(
+                device_ip, f"{sanitized_name}_anr_{timestamp}", save_dir, idx,
             )
 
     def _process_pull_anr_result(self, result: dict):
@@ -432,30 +424,22 @@ class ADBAppMixin(_ADBControllerBase):
                 f"❌ {idx}. Failed to pull ANR from {device_ip}:\n{result['message']}",
             )
 
-    def run_monkey_test(self, devices: list, device_type: str, package_name: str, count: str):
+    def run_monkey_test(self, devices: list, params: dict):
         if not devices:
-            return self._emit_operation("monkey", False, "⚠️ No devices selected")
-        if not device_type:
-            return self._emit_operation("monkey", False, "⚠️ No device type selected")
+            return self._emit_operation("monkey", False, "No devices selected")
+        package_name = params.get("package_name", "")
         if not package_name:
-            return self._emit_operation("monkey", False, "⚠️ No package name provided")
-        if not count:
-            return self._emit_operation("monkey", False, "⚠️ No monkey count provided")
+            return self._emit_operation("monkey", False, "No package name provided")
         save_dir = self._get_screenshot_dir()
         log = self.log_service.log
-        log(LogLevel.INFO, f"📦 Starting Monkey tests on {len(devices)} devices...")
-        log(LogLevel.INFO, f"📁 Log save directory: {save_dir}")
+        log(LogLevel.INFO, f"Starting Monkey tests on {len(devices)} devices...")
+        log(LogLevel.INFO, f"Log save directory: {save_dir}")
+        log(LogLevel.INFO, f"Params: events={params.get('events')} throttle={params.get('throttle')}ms")
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
-            self.executor.submit(
-                self.testing_model.run_monkey_test_async,
-                device_ip,
-                package_name,
-                count,
-                device_type,
-                sanitized_name,
-                save_dir,
-                idx,
+            self.testing_model.run_monkey_test_async(
+                device_ip, package_name, params,
+                sanitized_name, save_dir, idx,
                 callback=lambda msg: self.log_service.log(LogLevel.INFO, msg),
             )
 

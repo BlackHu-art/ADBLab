@@ -65,8 +65,7 @@ class ADBTesting(ADBModelCore):
         self,
         device_ip: str,
         package_name: str,
-        count: str,
-        device_type: str,
+        params: dict,
         sanitized_name: str,
         save_dir: str,
         index: int,
@@ -84,77 +83,56 @@ class ADBTesting(ADBModelCore):
 
         start_time = datetime.now()
         result = {
-            "device_ip": device_ip,
-            "success": False,
-            "monkey_log": monkey_log_path,
-            "logcat_log": logcat_log_path,
-            "duration": "",
-            "error": "",
-            "index": index,
+            "device_ip": device_ip, "success": False,
+            "monkey_log": monkey_log_path, "logcat_log": logcat_log_path,
+            "duration": "", "error": "", "index": index,
         }
+        self._aborted = False
+        monkey_fh = None
+        logcat_fh = None
         logcat_proc = None
 
         try:
             log("Clearing previous device logs...")
             subprocess.run(
                 ["adb", "-s", device_ip, "logcat", "-c"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=CF,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CF,
             )
 
             log(f"Starting logcat collection -> {logcat_log_path}")
+            logcat_fh = open(logcat_log_path, "w", encoding="utf-8")
             logcat_proc = subprocess.Popen(
                 ["adb", "-s", device_ip, "logcat", "-v", "time"],
-                stdout=open(logcat_log_path, "w", encoding="utf-8"),
-                stderr=subprocess.DEVNULL,
-                creationflags=CF,
+                stdout=logcat_fh, stderr=subprocess.DEVNULL, creationflags=CF,
             )
 
-            log(f"Launching Monkey test on {device_type}...")
-            throttle = "500" if device_type == "Mobile" else "1000"
             monkey_cmd = [
-                "adb",
-                "-s",
-                device_ip,
-                "shell",
-                "monkey",
-                "-p",
-                package_name,
-                "-v",
-                "-v",
-                "-v",
-                "--throttle",
-                throttle,
-                "--ignore-crashes",
-                "--ignore-timeouts",
-                "--ignore-security-exceptions",
-                "--pct-touch",
-                "35" if device_type == "Mobile" else "21",
-                "--pct-motion",
-                "15" if device_type == "Mobile" else "5",
-                "--pct-trackball",
-                "0",
-                "--pct-nav",
-                "25" if device_type == "Mobile" else "67",
-                "--pct-majornav",
-                "10" if device_type == "Mobile" else "5",
-                "--pct-syskeys",
-                "2" if device_type == "Mobile" else "1",
-                "--pct-appswitch",
-                "10" if device_type == "Mobile" else "0",
-                "--pct-anyevent",
-                "3" if device_type == "Mobile" else "1",
-                "-s",
-                "12345",
-                count,
+                "adb", "-s", device_ip, "shell", "monkey",
+                "-p", package_name, "-v",
+                "--throttle", str(params.get("throttle", 300)),
+                "--pct-touch", str(params.get("touch", 30)),
+                "--pct-motion", str(params.get("motion", 15)),
+                "--pct-trackball", str(params.get("trackball", 0)),
+                "--pct-nav", str(params.get("nav", 20)),
+                "--pct-majornav", str(params.get("majornav", 10)),
+                "--pct-syskeys", str(params.get("syskeys", 5)),
+                "--pct-appswitch", str(params.get("appswitch", 8)),
+                "--pct-anyevent", str(params.get("anyevent", 10)),
+                "--pct-pinchzoom", str(params.get("pinch", 2)),
+                "-s", "12345",
             ]
+            if params.get("ignore_crashes", True):
+                monkey_cmd.append("--ignore-crashes")
+            if params.get("ignore_timeouts", True):
+                monkey_cmd.append("--ignore-timeouts")
+            if params.get("ignore_security", True):
+                monkey_cmd.append("--ignore-security-exceptions")
+            monkey_cmd.append(str(params.get("events", 10000)))
 
+            monkey_fh = open(monkey_log_path, "w", encoding="utf-8")
             monkey_proc = subprocess.Popen(
                 monkey_cmd,
-                stdout=open(monkey_log_path, "w", encoding="utf-8"),
-                stderr=subprocess.PIPE,
-                creationflags=CF,
+                stdout=monkey_fh, stderr=subprocess.DEVNULL, creationflags=CF,
             )
 
             log("Starting Monkey Test monitoring loop...")
@@ -162,12 +140,17 @@ class ADBTesting(ADBModelCore):
             cooldown, interval = 30, 15
 
             while monkey_proc.poll() is None:
+                if self._aborted:
+                    monkey_proc.terminate()
+                    monkey_proc.wait(timeout=5)
+                    log("Monkey test aborted by user.")
+                    result["error"] = "Aborted by user"
+                    return result
                 try:
                     output = subprocess.check_output(
                         ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
-                        stderr=subprocess.DEVNULL,
-                        creationflags=CF,
-                        text=True,
+                        stderr=subprocess.DEVNULL, creationflags=CF, text=True, timeout=10,
+                        encoding="utf-8", errors="ignore",
                     )
                     current_app = ""
                     for line in output.splitlines():
@@ -179,25 +162,21 @@ class ADBTesting(ADBModelCore):
                         log("App in background, switching back...")
                         subprocess.run(
                             ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            creationflags=CF,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CF,
                         )
                         subprocess.run(
                             ["adb", "-s", device_ip, "shell", "monkey", "-p", package_name, "1"],
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            creationflags=CF,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CF,
                         )
                         last_switch_time = time.time()
                     time.sleep(interval)
+                except subprocess.TimeoutExpired:
+                    log("dumpsys window timed out — device may be disconnected")
+                    break
                 except Exception as e:
                     log(f"Polling exception: {str(e)}")
                     time.sleep(interval)
 
-            stderr = monkey_proc.stderr.read()
-            if stderr:
-                result["error"] = stderr.decode(errors="ignore")
             result["success"] = True
             result["duration"] = str(datetime.now() - start_time)
             log(f"Monkey test complete for {device_ip} / ({index})")
@@ -205,16 +184,22 @@ class ADBTesting(ADBModelCore):
         except Exception as e:
             result["error"] = str(e)
             result["duration"] = str(datetime.now() - start_time)
-            log(f"Monkey test failed: {e} | Time: {result['duration']}")
+            log(f"Monkey test failed: {e}")
 
         finally:
+            self._aborted = False
             try:
                 if logcat_proc:
                     logcat_proc.terminate()
-                    logcat_proc.wait()
-                    log("logcat process terminated.")
-            except Exception as e:
-                log(f"Failed to terminate logcat process: {e}")
+                    logcat_proc.wait(timeout=5)
+            except Exception:
+                pass
+            for fh in (monkey_fh, logcat_fh):
+                try:
+                    if fh:
+                        fh.close()
+                except Exception:
+                    pass
 
         return result
 
@@ -222,40 +207,17 @@ class ADBTesting(ADBModelCore):
     def kill_monkey_async(self, device_ip: str, index: int) -> dict:
         result = {"device_ip": device_ip, "index": index, "success": False, "message": ""}
         try:
-            cmd = ["adb", "-s", device_ip, "shell", "ps | grep monkey"]
-            output = subprocess.check_output(
-                cmd, stderr=subprocess.STDOUT, text=True, creationflags=CF
-            ).strip()
-
-            if not output:
-                result["message"] = "No monkey process is running on the device"
-                return result
-
-            for line in output.splitlines():
-                parts = line.split()
-                if len(parts) > 1:
-                    pid = parts[1]
-                    try:
-                        kill_cmd = ["adb", "-s", device_ip, "shell", "kill", pid]
-                        subprocess.check_output(
-                            kill_cmd,
-                            stderr=subprocess.STDOUT,
-                            text=True,
-                            creationflags=CF,
-                        )
-                        result["success"] = True
-                        result["message"] = f"Monkey process (PID: {pid}) successfully killed"
-                        return result
-                    except subprocess.CalledProcessError as e:
-                        result["message"] = (
-                            f"Failed to kill monkey process (PID: {pid}): " f"{e.output}"
-                        )
-                        return result
-            result["message"] = "Monkey PID not found"
-            return result
-        except subprocess.CalledProcessError as e:
-            result["message"] = f"Error executing 'ps | grep monkey': {e.output}"
-            return result
+            self._aborted = True
+            # Kill via Android process name (works on all devices, no grep needed)
+            kill_cmd = ["adb", "-s", device_ip, "shell",
+                        "pkill -f com.android.commands.monkey || true"]
+            subprocess.run(kill_cmd, creationflags=CF, timeout=10,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result["success"] = True
+            result["message"] = "Monkey process killed"
+        except Exception as e:
+            result["message"] = f"Failed to kill monkey: {str(e)}"
+        return result
 
     # ── Bugreport ─────────────────────────────────────────────────────
 
@@ -276,10 +238,8 @@ class ADBTesting(ADBModelCore):
         log("Getting Android version...")
         version_cmd = ["adb", "-s", device_ip, "shell", "getprop", "ro.build.version.release"]
         version_proc = subprocess.run(
-            version_cmd,
-            capture_output=True,
-            text=True,
-            creationflags=CF,
+            version_cmd, creationflags=CF,
+            capture_output=True, text=True, encoding="utf-8", errors="ignore",
         )
         version_str = version_proc.stdout.strip()
         log(f"Android version: {version_str or 'unknown'}")
@@ -304,10 +264,8 @@ class ADBTesting(ADBModelCore):
                 cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
             subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                creationflags=CF,
+                cmd, creationflags=CF,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
             log("Bugreport command completed")
         except Exception as e:
@@ -379,10 +337,9 @@ class ADBTesting(ADBModelCore):
             log(f"Converting to HTML: {os.path.basename(bugreport_txt_path)}")
         try:
             result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                cmd, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=120,
+                encoding="utf-8", errors="ignore",
             )
             if result.returncode == 0:
                 if log:
@@ -407,14 +364,12 @@ class ADBTesting(ADBModelCore):
         self, device_ip: str, sanitized_name: str, save_dir: str, index: int
     ) -> dict:
         try:
-            device_anr_dir = os.path.join(save_dir, f"{sanitized_name}_anr")
+            device_anr_dir = os.path.join(save_dir, sanitized_name)
             os.makedirs(device_anr_dir, exist_ok=True)
             pull_command = ["adb", "-s", device_ip, "pull", "/data/anr", device_anr_dir]
             subprocess.check_output(
-                pull_command,
-                stderr=subprocess.STDOUT,
-                text=True,
-                creationflags=CF,
+                pull_command, stderr=subprocess.STDOUT, text=True, creationflags=CF,
+                encoding="utf-8", errors="ignore",
             )
             return {
                 "device_ip": device_ip,

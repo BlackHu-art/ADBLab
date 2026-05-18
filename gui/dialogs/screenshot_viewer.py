@@ -27,8 +27,8 @@ from PySide6.QtWidgets import (
 )
 
 from gui.styles import BaseStyles
-from gui.styles.theme import apply_dark_title_bar
 from gui.styles.icon_loader import get_themed_icon
+from gui.styles.theme import apply_dark_title_bar
 
 MIN_ZOOM = 0.10
 MAX_ZOOM = 5.00
