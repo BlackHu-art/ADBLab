@@ -2,9 +2,12 @@
 
 import os
 import subprocess
-import sys
 
 from PySide6.QtCore import QThread, Signal
+
+from utils.adb_resolver import adb_path
+
+from .base.command_runner import CF, CommandRunner
 
 
 class ADBWorker(QThread):
@@ -23,21 +26,13 @@ class ADBWorker(QThread):
         self.requestInterruption()
 
     def run(self):
-        try:
-            cmd = ["adb", "-s", self.device_ip] + self.args
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            output = subprocess.check_output(
-                cmd, text=True, stderr=subprocess.STDOUT, creationflags=cf, timeout=30,
-                encoding="utf-8", errors="ignore",
-            )
-            if not self._aborted:
-                self.finished.emit(output, False)
-        except subprocess.CalledProcessError as e:
-            if not self._aborted:
-                self.finished.emit(e.output or str(e), True)
-        except Exception as e:
-            if not self._aborted:
-                self.finished.emit(str(e), True)
+        result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=30)
+        if self._aborted:
+            return
+        if result.success:
+            self.finished.emit(result.output, False)
+        else:
+            self.finished.emit(result.error, True)
 
 
 class TransferWorker(QThread):
@@ -65,11 +60,10 @@ class TransferWorker(QThread):
 
     def run(self):
         try:
-            cmd = ["adb", "-s", self.device_ip] + self.args
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            cmd = [adb_path(), "-s", self.device_ip] + self.args
             self._proc = subprocess.Popen(
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                cwd=self.cwd, universal_newlines=True, bufsize=1, creationflags=cf,
+                cwd=self.cwd, universal_newlines=True, bufsize=1, creationflags=CF,
             )
             last = ""
             while not self._aborted:

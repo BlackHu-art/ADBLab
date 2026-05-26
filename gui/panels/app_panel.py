@@ -74,7 +74,7 @@ class AppPanel(BasePanel):
         self.completer.setCaseSensitivity(Qt.CaseInsensitive)
         self.panel._apply_completer_style(self.completer)
         self.program_edit.setCompleter(self.completer)
-        self.btn_get_program = self._b("Get Package", "target.svg")
+        self.btn_get_program = self._b("Get Current Package", "target.svg")
         r0.addWidget(self.program_edit, 2)
         r0.addWidget(self.btn_get_program, 1)
         gl_pm.addLayout(r0)
@@ -249,8 +249,14 @@ class AppPanel(BasePanel):
         _events = int(p.get("events", 10000))
         self.monkey_events.setCurrentText(_EV_REV.get(_events, str(_events)))
         self.monkey_throttle.setCurrentText(str(p.get("throttle", 300)))
+        # 针对各事件类型的默认值优化，从源头减少跳出
+        _pct_defaults = {
+            "touch": 40, "motion": 18, "trackball": 0,
+            "nav": 10, "majornav": 10, "syskeys": 2,
+            "appswitch": 0, "anyevent": 15, "pinch": 5,
+        }
         for key, c in self._monkey_pct_combos.items():
-            c.setCurrentText(str(p.get(key, 20)))
+            c.setCurrentText(str(p.get(key, _pct_defaults.get(key, 20))))
         self.monkey_chk_crashes.setChecked(p.get("ignore_crashes", True))
         self.monkey_chk_timeouts.setChecked(p.get("ignore_timeouts", True))
         self.monkey_chk_security.setChecked(p.get("ignore_security", True))
@@ -261,11 +267,12 @@ class AppPanel(BasePanel):
                        "100K": 100000, "500K": 500000}
         def _parse_int(t):
             try:
-                return EVENTS_VALS.get(t, int(t))
-            except ValueError:
+                t = t.strip()
+                return EVENTS_VALS.get(t) or int(t)
+            except (ValueError, AttributeError):
                 return 10000
         try:
-            throttle = int(self.monkey_throttle.currentText() or "300")
+            throttle = int((self.monkey_throttle.currentText() or "300").strip())
         except ValueError:
             throttle = 300
         p = {
@@ -277,7 +284,7 @@ class AppPanel(BasePanel):
         }
         for key, c in self._monkey_pct_combos.items():
             try:
-                p[key] = int(c.currentText() or "20")
+                p[key] = int((c.currentText() or "20").strip())
             except ValueError:
                 p[key] = 20
         return p

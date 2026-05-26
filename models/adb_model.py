@@ -6,11 +6,11 @@ Functional modules (adb_device, adb_app, adb_testing) each inherit from
 ADBModelCore and are used independently by the controller.
 """
 
-import subprocess
-import sys
 from functools import wraps
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+
+from .base.command_runner import CommandRunner
 
 # ── Module-level async decorator ─────────────────────────────────────────
 
@@ -42,7 +42,8 @@ def async_command(method):
                     if shiboken6.isValid(self.model):
                         try:
                             self.model.command_finished.emit(
-                                self.method_ref.__name__, f"AsyncError: {str(e)}"
+                                self.method_ref.__name__,
+                                {"success": False, "error": str(e)},
                             )
                         except RuntimeError:
                             pass
@@ -69,60 +70,25 @@ class ADBModelCore(QObject):
         super().__init__()
         self.thread_pool = QThreadPool.globalInstance()
 
-    @staticmethod
-    def _execute_command(command: list, timeout: int = 30) -> str:
-        """Execute a command synchronously, return stdout or error string.
-
-        Prefer _exec() (returns dict) for new code; this method kept for
-        backward compatibility with existing callers.
-        """
-        from utils.adb_resolver import adb_path
-
-        cmd = list(command)
-        if cmd and cmd[0] == "adb":
-            cmd[0] = adb_path()
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=timeout,
-                encoding="utf-8",
-                errors="ignore",
-                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            return f"Error: {str(e)}"
-        except subprocess.TimeoutExpired:
-            return f"Timeout: Command execution exceeded {timeout} seconds"
-        except Exception as e:
-            return f"SystemError: {str(e)}"
+    # ── 公开统一 API ─────────────────────────────────────────────────────
 
     @classmethod
-    def _exec(cls, command: list, timeout: int = 30) -> dict:
-        """Execute a command synchronously, return dict with ok/data/error.
+    def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:
+        """执行命令，返回 {"success": True, "output": ..., ...} 或 {"success": False, "error": ..., ...}。
 
-        Standardized error pattern: {'ok': True, 'data': str} or
-        {'ok': False, 'error': str, 'code': str}
+        extra 关键字参数会合并到返回字典（如 device_ip、package 等）。
+        全项目 @async_command 方法的统一入口。
         """
-        raw = cls._execute_command(command, timeout=timeout)
-        if raw.startswith("Error:"):
-            return {"ok": False, "error": raw[7:], "code": "CALLED_PROCESS_ERROR"}
-        if raw.startswith("Timeout:"):
-            return {"ok": False, "error": raw[9:], "code": "TIMEOUT"}
-        if raw.startswith("SystemError:"):
-            return {"ok": False, "error": raw[13:], "code": "SYSTEM_ERROR"}
-        return {"ok": True, "data": raw}
+        r = CommandRunner.run(cmd, timeout=timeout, shell=shell)
+        if r.success:
+            return {"success": True, "output": r.output, **extra}
+        return {"success": False, "error": r.error, **extra}
 
     @staticmethod
     def _fetch_device_info(commands: dict[str, list[str]]) -> dict[str, str]:
         """Run a batch of shell commands on a device and collect results."""
         device_info = {}
         for key, cmd in commands.items():
-            output = ADBModelCore._execute_command(cmd)
-            device_info[key] = (
-                output if not output.startswith(("Error:", "Timeout:", "SystemError:")) else "N/A"
-            )
+            r = CommandRunner.run(cmd)
+            device_info[key] = r.output if r.success else "N/A"
         return device_info

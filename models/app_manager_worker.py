@@ -4,13 +4,12 @@ import concurrent.futures
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import zipfile
 
 from PySide6.QtCore import QThread, Signal
 
-from utils.adb_resolver import CF
+from .base.command_runner import CommandRunner
 
 
 class AppManagerWorker(QThread):
@@ -62,8 +61,7 @@ class AppManagerWorker(QThread):
 
     def _adb(self, *args, timeout=30):
         cmd = ["adb", "-s", self.device_ip] + list(args)
-        return subprocess.run(cmd, capture_output=True, text=True, creationflags=CF, timeout=timeout,
-                              encoding="utf-8", errors="ignore")
+        return CommandRunner.run(cmd, timeout=timeout)
 
     def _load_apps(self):
         self.log_message.emit("Fetching installed apps...")

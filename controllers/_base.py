@@ -90,12 +90,6 @@ class _ADBControllerBase:
     def _handle_async_response(self, method_name: str, result):
         op_type = method_name.replace("_async", "")
 
-        if isinstance(result, str) and result.startswith("AsyncError:"):
-            error_msg = result[11:]
-            self.log_service.log("ERROR", f"[{op_type}] {error_msg}")
-            self._emit_operation(op_type, False, error_msg)
-            return
-
         if op_type == "get_connected_devices":
             if isinstance(result, list):
                 self._process_device_list(result)
@@ -115,8 +109,12 @@ class _ADBControllerBase:
 
     def _default_async_handler(self, op_type: str, result):
         if isinstance(result, dict):
-            if "ip" in result:
-                self.signals.device_info_updated.emit(result["ip"], result)
+            # device_info_updated 仅对包含设备属性（Model/Brand等）的结果触发
+            # 避免每次 adb 操作都触发设备列表刷新
+            if "Model" in result or "ip" in result:
+                device = result.get("device_ip") or result.get("ip", "")
+                if device:
+                    self.signals.device_info_updated.emit(device, result)
             if result.get("success", False):
                 self._emit_operation(op_type, True, f"{op_type} completed")
             else:

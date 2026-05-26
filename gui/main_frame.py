@@ -47,6 +47,7 @@ class _ScanThread(QThread):
         self._stop_flag = True
 
     def run(self):
+        from models.adb_device import parse_connected_devices
         from utils.adb_resolver import CF, adb_path
 
         last_count = None  # always emit on first poll
@@ -56,11 +57,7 @@ class _ScanThread(QThread):
                     [adb_path(), "devices"], capture_output=True, text=True,
                     creationflags=CF, timeout=5, encoding="utf-8", errors="ignore",
                 )
-                devices = [
-                    line.split("\t")[0]
-                    for line in r.stdout.strip().splitlines()[1:]
-                    if "device" in line and "offline" not in line
-                ]
+                devices = parse_connected_devices(r.stdout)
                 count = len(devices)
                 if count != last_count:
                     last_count = count

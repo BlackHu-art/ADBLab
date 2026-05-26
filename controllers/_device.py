@@ -120,7 +120,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.device_model.get_device_info_async(ip)
 
     def _process_device_info_result(self, result: dict):
-        device_ip = result.get("ip", "Unknown")
+        device_ip = result.get("device_ip") or result.get("ip", "Unknown")
         log = self.log_service.log
         log("INFO", f"📱 Device Info - {device_ip}")
         log("INFO", f"  🧭 Model            : {result.get('Model', '-')}")
@@ -160,7 +160,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.device_model.disconnect_device_async(ip)
 
     def _process_disconnect_result(self, result: dict):
-        ip = result["ip"]
+        ip = result.get("device_ip") or result.get("ip", "unknown")
         if result.get("success"):
             self.refresh_devices()
             self._emit_operation("disconnect", True, f"Successfully disconnected {ip}")
@@ -176,7 +176,7 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.device_model.restart_device_async(ip)
 
     def _process_restart_devices_result(self, result: dict):
-        ip = result.get("ip", "unknown device")
+        ip = result.get("device_ip") or result.get("ip", "unknown device")
         if result.get("success"):
             QTimer.singleShot(
                 10_000,
