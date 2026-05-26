@@ -7,11 +7,28 @@ on:
 
 permissions: write-all
 
-env:
-  VERSION: v2.9.${{ github.run_number }}
-
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Read app version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python - <<'PY'
+          from utils.app_metadata import APP_RELEASE_TAG
+          print(APP_RELEASE_TAG)
+          PY
+          )
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: version
     name: Build ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -68,7 +85,7 @@ jobs:
         shell: bash
         run: |
           python -m PyInstaller \
-            --name "${{ matrix.artifact }}-${{ env.VERSION }}" \
+            --name "${{ matrix.artifact }}-${{ needs.version.outputs.version }}" \
             --onefile ${{ matrix.onefile }} \
             ${{ matrix.icon }} \
             ${{ matrix.datas }} \
@@ -82,7 +99,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [version, build]
     if: always() && needs.build.result != 'skipped'
     runs-on: ubuntu-latest
 
@@ -99,8 +116,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.VERSION }}
-          name: "Release ${{ env.VERSION }}"
+          tag_name: ${{ needs.version.outputs.version }}
+          name: "Release ${{ needs.version.outputs.version }}"
           draft: false
           prerelease: false
           files: release_artifacts/**/*

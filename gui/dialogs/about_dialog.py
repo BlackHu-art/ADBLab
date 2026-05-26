@@ -13,9 +13,8 @@ from PySide6.QtWidgets import (
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from utils.app_metadata import APP_VERSION
 from utils.resource_path import resource_path
-
-VERSION = "2.8.0"
 
 
 class AboutDialog(QDialog):
@@ -44,13 +43,14 @@ class AboutDialog(QDialog):
         hl.setContentsMargins(0, 8, 0, 0)
         hl.setSpacing(0)
 
-        title = QLabel("ADBLab")
+        title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
         title.setObjectName("aboutTitle")
         title.setAlignment(Qt.AlignCenter)
+        title.setOpenExternalLinks(True)  # 关键：允许打开网页
         title.setFont(QFont(BaseStyles.DEFAULT_FONT_FAMILY, 24, QFont.Bold))
         hl.addWidget(title)
 
-        ver = QLabel(f"Version {VERSION}")
+        ver = QLabel(f"Version {APP_VERSION}")
         ver.setObjectName("aboutVer")
         ver.setAlignment(Qt.AlignCenter)
         hl.addWidget(ver)

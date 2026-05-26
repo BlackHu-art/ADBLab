@@ -1,0 +1,7 @@
+APP_NAME = "ADBLab"
+APP_VERSION = "2.9.0"
+APP_RELEASE_TAG = f"v{APP_VERSION}"
+
+
+def app_major_minor_version() -> str:
+    return APP_VERSION.rsplit(".", 1)[0]

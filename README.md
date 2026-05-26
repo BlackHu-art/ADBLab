@@ -4,7 +4,7 @@
 
 **ADBLab** is a PySide6 desktop GUI tool for Android device management and automated testing. It wraps ADB commands into a graphical interface supporting device connection, app management, file browsing, live logcat, screen mirroring, Monkey stress testing, and performance diagnostics.
 
-![ADBLab UI Preview](./mge.png)
+![ADBLab UI Preview](resources/demo.gif)
 
 - **Language**: Python 3.11
 - **GUI Framework**: PySide6 (Qt 6)
@@ -46,6 +46,10 @@ ADBLab/
 │
 ├── models/                          # Model layer (ADB command execution)
 │   ├── adb_model.py                 # @async_command decorator + ADBModelCore base
+│   ├── base/
+│   │   ├── command_runner.py         # Unified subprocess.run entry + adb path cache
+│   │   ├── process_runner.py         # Managed long-running Popen processes (monkey/logcat/etc.)
+│   │   └── focus_detector.py         # Foreground package detection helper
 │   ├── adb_device.py                # Device connect, disconnect, restart, device info
 │   ├── adb_app.py                   # App install, uninstall, clear, package/activity queries
 │   ├── adb_testing.py               # Screenshot, monkey(per-device abort), bugreport, ANR, logs
@@ -85,15 +89,20 @@ ADBLab/
 │       └── double_click_button.py   # QPushButton with double-click safety guard
 │
 ├── utils/                           # Utilities
+│   ├── app_metadata.py              # Single app version source for UI + CI release tags
 │   ├── resource_path.py             # Resource path resolution (dev + PyInstaller)
 │   ├── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
 │   └── batch_tracker.py             # Multi-device batch operation progress tracker
+│
+├── tests/
+│   └── test_model_execution.py      # Execution-layer regression tests
 │
 └── resources/                       # Static resources
     ├── connected_devices.yaml       # Device connection history
     ├── package_info.yaml            # Package name history
     ├── chkbugreport-0.5-215.jar    # Bugreport txt → html converter
     ├── app_settings.json            # App settings persistence
+    ├── demo.gif                     # README UI preview
     ├── ZFB.jpg                      # About dialog QR code
     └── icons/                       # 1512 Phosphor Regular SVG icons
 ```
@@ -121,15 +130,20 @@ User clicks button (Panel)
 | **Singleton** | `LogService`, `AppSettings` | Thread-safe singletons |
 | **Observer** | Global | Qt signal/slot decoupling UI from business logic |
 | **Async Command** | `adb_model.async_command` | Decorator wrapping sync methods into QRunnable async execution |
+| **Command Runner** | `models/base/command_runner.py` | Single short-lived subprocess entry with adb path cache and normalized results |
+| **Process Runner** | `models/base/process_runner.py` | Managed lifecycle for long-running monkey/logcat/scrcpy-like subprocesses |
+| **Focus Detector** | `models/base/focus_detector.py` | Shared foreground package parser with focus-first fallback chain |
 | **Handler Map** | `_ADBControllerBase._handle_async_response` | Dict dispatch for operation result types |
 | **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 7 functional mixins |
 | **Model Mixins** | `adb_advanced.py` | ADBAdvanced composed from ADBNetworkMixin + ADBSystemMixin |
+| **Version Metadata** | `utils/app_metadata.py` | Single app version source for About dialog, Windows AppUserModelID, and CI release tags |
 | **Custom QIconEngine** | `icon_loader.py` | Theme-color injection into SVG on every paint — no widget refresh |
 
 ### Thread Model
 
 - **Main thread**: Qt event loop + UI rendering
 - **Worker threads**: `QThreadPool` (QRunnable) + `ThreadPoolExecutor(max_workers=4)`
+- **Long-running processes**: `ProcessRunner` owns named subprocesses and stops replaced/aborted tasks safely
 - **Thread communication**: Qt cross-thread signals/slots (auto-queued)
 - **Log buffering**: `LogService` uses QTimer at 200ms intervals to batch-flush
 
@@ -168,7 +182,7 @@ User clicks button (Panel)
 | Feature | Description |
 |---------|-------------|
 | Connect / Disconnect | ADB connect/disconnect by IP:Port, history dropdown with auto-complete |
-| Device List | Multi-select checklist (Brand, Model, Android version, IP); select all/none |
+| Device List | Multi-select checklist (Brand, Model, Android version, IP); robust parser ignores adb startup banners/offline devices |
 | Device Info | 17 properties: model, brand, Android version, SDK, CPU, resolution, density, memory, storage, MAC/IP, etc. |
 | Restart Device | `adb reboot` for checked devices |
 | Restart ADB Server | `adb kill-server` + `adb start-server` (double-click safety) |
@@ -180,7 +194,7 @@ User clicks button (Panel)
 
 | Feature | Description |
 |---------|-------------|
-| Get Package | `dumpsys window` — detect current foreground package; accumulates history |
+| Get Package | Focus-first detector (`mCurrentFocus` / `mFocusedApp`, then activity/window fallback); accumulates history |
 | Uninstall / Clear Data / Restart / Force Stop | Standard lifecycle operations |
 | Disable / Enable / Disable-User | `pm disable/enable/disable-user` |
 | Activity Info | Current focus and resumed activity |
@@ -195,8 +209,8 @@ User clicks button (Panel)
 
 | Feature | Description |
 |---------|-------------|
-| Monkey Test | 9 configurable event-mix %, Events/Throttle/Flags, random seed, per-device abort, auto-persist params |
-| Kill Monkey | Per-device `pkill -f monkey` + monitoring loop abort |
+| Monkey Test | 9 configurable event-mix %, Events/Throttle/Flags, random seed, per-device abort, tiered recovery, auto-persist params |
+| Kill Monkey | Stops local `ProcessRunner` monkey process and device-side monkey process with clear failure output |
 | Bugreport | `adb bugreport` → extract ZIP → convert to HTML via chkbugreport |
 | Pull ANR Files | `pull /data/anr` from device |
 | Retrieve / Cleanup Logs | `logcat -d` to file / `logcat -c` clear buffer |
@@ -395,8 +409,26 @@ Managed by `AppSettings` singleton (`resources/app_settings.json`) with atomic w
 
 | Workflow | Trigger | Action |
 |----------|---------|--------|
-| `Build-exe.yaml` | Push to main / manual | PyInstaller `--onefile --windowed` → GitHub Release |
+| `Build-exe.yaml` | Push to main / manual | Read `utils.app_metadata.APP_RELEASE_TAG` → PyInstaller builds → GitHub Release |
 | `Auto-Clean.yaml` | Monthly / manual | Prune old workflow runs, keep latest 8 releases |
+
+### Versioning
+
+`utils/app_metadata.py` is the single source of truth for application version metadata:
+
+```python
+APP_VERSION = "2.9.0"
+APP_RELEASE_TAG = f"v{APP_VERSION}"
+```
+
+The same version source is used by:
+
+- About dialog version label
+- Windows `AppUserModelID` in `main.py`
+- GitHub Actions artifact names
+- GitHub Release tag and release title
+
+To publish a new version, update `APP_VERSION` once, then build from `main` or run `Build-exe.yaml` manually.
 
 ---
 
@@ -412,9 +444,11 @@ python main.py
 ### Code Conventions
 
 - ADB operations run async via `@async_command` (QRunnable) — never block the main thread
+- Short-lived commands go through `CommandRunner.run()`; long-running processes go through `ProcessRunner`
 - Long-running polls (device scan) use dedicated `QThread` with `msleep`-breakable loops
 - Signal definitions centralized in `*_signals.py`; explicit `Qt.QueuedConnection` for cross-thread
 - All dialogs connect to `BaseStyles.theme_changed` for theme updates
 - All `subprocess.run` calls with `text=True` use `encoding="utf-8", errors="ignore"` (Chinese Windows compat)
+- Application version changes should only update `utils/app_metadata.py`
 - Icons use `get_themed_icon("name.svg")` (theme-aware) not raw `QIcon`
 - Per-device state tracked with `set()` + `threading.Lock` (e.g. `_aborted_devices`, `_monkey_running`)

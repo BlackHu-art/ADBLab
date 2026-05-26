@@ -1,6 +1,7 @@
 import threading
 from unittest.mock import Mock, patch
 
+from main import windows_app_user_model_id
 from models.adb_app import ADBApp
 from models.adb_device import parse_connected_devices
 from models.adb_testing import ADBTesting
@@ -8,6 +9,13 @@ from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 from models.base.process_runner import ProcessRunner
 from models.file_explorer_worker import ADBWorker
+from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
+
+
+def test_app_metadata_derives_release_tag_and_windows_app_id():
+    assert APP_RELEASE_TAG == f"v{APP_VERSION}"
+    major_minor = APP_VERSION.rsplit(".", 1)[0]
+    assert windows_app_user_model_id() == f"ADBLab.Frankie.{major_minor}"
 
 
 def test_process_runner_start_replaces_existing_process_without_deadlock():

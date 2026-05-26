@@ -6,11 +6,17 @@ from PySide6.QtWidgets import QApplication
 
 from gui.main_frame import MainFrame
 from gui.styles import BaseStyles
+from utils.app_metadata import app_major_minor_version
 from utils.resource_path import resource_path, setup_qt_search_paths
+
+
+def windows_app_user_model_id() -> str:
+    return f"ADBLab.Frankie.{app_major_minor_version()}"
+
 
 if __name__ == "__main__":
     if sys.platform == "win32":
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ADBLab.Frankie.2.8")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(windows_app_user_model_id())
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
