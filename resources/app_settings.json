@@ -7,8 +7,8 @@
   "confirm_dangerous_ops": true,
   "continuous_device_scan": true,
   "monkey_params": {
-    "events": 100,
-    "throttle": 1000,
+    "events": 5000,
+    "throttle": 500,
     "ignore_crashes": true,
     "ignore_timeouts": true,
     "ignore_security": true,

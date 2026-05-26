@@ -4,222 +4,120 @@ App management: install, uninstall, clear data, restart, query packages/activiti
 Imports only from adb_model (core) — no circular dependencies.
 """
 
-import re
-import subprocess
-
-from utils.adb_resolver import CF
-
 from .adb_model import ADBModelCore, async_command
+from .base.focus_detector import detect_current_package
 
 
 class ADBApp(ADBModelCore):
     """App lifecycle: install, uninstall, clear, restart, list, query."""
 
+    def get_current_package(self, device_ip: str) -> dict:
+        return detect_current_package(device_ip)
+
     @async_command
     def get_current_package_async(self, device_ip: str) -> dict:
-        """Get the currently focused package name via dumpsys window."""
-        try:
-            r = subprocess.run(
-                ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
-                capture_output=True, text=True, creationflags=CF,
-                encoding="utf-8", errors="ignore",
-            )
-            for line in r.stdout.splitlines():
-                if "mCurrentFocus" in line:
-                    m = re.search(r"Window\{.*?\s(\S+?)/", line)
-                    if m:
-                        return {"success": True, "device_ip": device_ip,
-                                "package_name": m.group(1)}
-            return {"success": False, "device_ip": device_ip,
-                    "error": "No focus info found"}
-        except Exception as e:
-            return {"success": False, "device_ip": device_ip,
-                    "error": str(e)}
+        return self.get_current_package(device_ip)
+
+    def install_apk(self, device_ip: str, apk_path: str, apk_name: str, idx: int) -> dict:
+        return self._run(
+            ["adb", "-s", device_ip, "install", "-r", apk_path],
+            timeout=120,
+            device_ip=device_ip,
+            apk_path=apk_path,
+            index=idx,
+            apk_name=apk_name,
+        )
 
     @async_command
     def install_apk_async(self, device_ip: str, apk_path: str, apk_name: str, idx: int):
-        try:
-            cmd = ["adb", "-s", device_ip, "install", "-r", apk_path]
-            result = subprocess.run(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="ignore",
-                timeout=120, creationflags=CF,
-            )
-            return {
-                "success": True,
-                "device_ip": device_ip,
-                "apk_path": apk_path,
-                "output": result.stdout.strip(),
-                "index": idx,
-                "apk_name": apk_name,
-            }
-        except subprocess.TimeoutExpired as e:
-            return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
-        except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": f"CommandError: {str(e)}"}
+        return self.install_apk(device_ip, apk_path, apk_name, idx)
+
+    def uninstall_app(self, device_ip: str, package_name: str, idx: int) -> dict:
+        return self._run(
+            ["adb", "-s", device_ip, "uninstall", package_name],
+            timeout=30,
+            device_ip=device_ip,
+            package_name=package_name,
+            index=idx,
+        )
 
     @async_command
     def uninstall_app_async(self, device_ip: str, package_name: str, idx: int) -> dict:
-        try:
-            result = subprocess.run(
-                ["adb", "-s", device_ip, "uninstall", package_name],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="ignore",
-                timeout=30, creationflags=CF,
-            )
-            return {
-                "success": True,
-                "output": result.stdout.strip(),
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "index": idx,
-            }
-        except subprocess.TimeoutExpired as e:
-            return {
-                "success": False,
-                "output": f"Timeout after 30 seconds: {str(e)}",
-                "device_ip": device_ip,
-                "package_name": package_name,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "output": f"Execution failed: {str(e)}",
-                "device_ip": device_ip,
-                "package_name": package_name,
-            }
+        return self.uninstall_app(device_ip, package_name, idx)
 
     @async_command
-    def clear_app_data_async(self, device_ip: str, package_name: str, idx: int):
-        try:
-            result = subprocess.run(
-                ["adb", "-s", device_ip, "shell", "pm", "clear", package_name],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding="utf-8", errors="ignore",
-                timeout=30, creationflags=CF,
-            )
-            return {
-                "success": True,
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "output": result.stdout.strip(),
-                "index": idx,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "output": str(e),
-                "index": idx,
-            }
+    def clear_app_data_async(self, device_ip: str, package_name: str, idx: int) -> dict:
+        return self._run(
+            ["adb", "-s", device_ip, "shell", "pm", "clear", package_name],
+            timeout=30, device_ip=device_ip, package_name=package_name, index=idx,
+        )
 
     @async_command
-    def restart_app_async(self, device_ip: str, package_name: str, index: int):
-        try:
-            stop_cmd = ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name]
-            stop_output = self._execute_command(stop_cmd)
-
-            start_cmd = [
-                "adb",
-                "-s",
-                device_ip,
-                "shell",
-                "monkey",
-                "-p",
-                package_name,
-                "-c",
-                "android.intent.category.LAUNCHER",
-                "1",
-            ]
-            start_output = self._execute_command(start_cmd)
-
-            return {
-                "success": True,
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "output": f"{stop_output}\n{start_output}",
-                "index": index,
-            }
-        except subprocess.CalledProcessError as e:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "output": e.output,
-                "index": index,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "package_name": package_name,
-                "output": str(e),
-                "index": index,
-            }
+    def restart_app_async(self, device_ip: str, package_name: str, index: int) -> dict:
+        r1 = self._run(
+            ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
+            device_ip=device_ip,
+        )
+        r2 = self._run(
+            ["adb", "-s", device_ip, "shell", "monkey", "-p", package_name,
+             "-c", "android.intent.category.LAUNCHER", "1"],
+            device_ip=device_ip,
+        )
+        return {
+            "success": r1["success"] and r2["success"],
+            "device_ip": device_ip, "package_name": package_name, "index": index,
+            "output": f"{r1.get('output', r1.get('error', ''))}\n{r2.get('output', r2.get('error', ''))}",
+        }
 
     @async_command
     def get_current_activity_async(self, device_ip: str, index: int = 0) -> dict:
-        try:
-            current_cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "window"]
-            resumed_cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "activities"]
-
-            current_output = self._execute_command(current_cmd)
-            resumed_output = self._execute_command(resumed_cmd)
-
-            current_focus = ""
-            resumed_activity = ""
-            for line in current_output.splitlines():
+        r1 = self._run(
+            ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
+            device_ip=device_ip,
+        )
+        r2 = self._run(
+            ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "activities"],
+            device_ip=device_ip,
+        )
+        current_focus = ""
+        resumed_activity = ""
+        if r1["success"]:
+            for line in r1["output"].splitlines():
                 if "mCurrentFocus" in line:
                     current_focus = line.strip()
                     break
-            for line in resumed_output.splitlines():
+        if r2["success"]:
+            for line in r2["output"].splitlines():
                 if "mResumedActivity" in line:
                     resumed_activity = line.strip()
                     break
-
-            return {
-                "success": True,
-                "device_ip": device_ip,
-                "index": index,
-                "current_focus": current_focus,
-                "resumed_activity": resumed_activity,
-            }
-        except Exception as e:
-            return {"success": False, "device_ip": device_ip, "index": index, "error": str(e)}
+        return {
+            "success": True, "device_ip": device_ip, "index": index,
+            "current_focus": current_focus, "resumed_activity": resumed_activity,
+        }
 
     @async_command
     def parse_apk_info_async(self, apk_path: str) -> dict:
-        try:
-            command = ["aapt", "dump", "badging", apk_path]
-            output = self._execute_command(command, timeout=15)
-            return {"success": True, "apk_path": apk_path, "output": output}
-        except Exception as e:
-            return {"success": False, "apk_path": apk_path, "error": str(e)}
+        return self._run(["aapt", "dump", "badging", apk_path], timeout=15, apk_path=apk_path)
 
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:
-        try:
-            result = self._execute_command(["adb", "-s", device_ip, "shell", "input", "text", text])
-            if result.startswith(("Error:", "Timeout:", "SystemError:")):
-                return {"success": False, "device_ip": device_ip, "error": result, "text": text}
-            return {"success": True, "device_ip": device_ip, "text": text, "output": result}
-        except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": str(e), "text": text}
+        return self._run(
+            ["adb", "-s", device_ip, "shell", "input", "text", text],
+            device_ip=device_ip, text=text,
+        )
+
+    def list_installed_packages(self, device_ip: str, index: int) -> dict:
+        r = self._run(["adb", "-s", device_ip, "shell", "pm", "list", "packages"], device_ip=device_ip)
+        if not r["success"]:
+            return {"device_ip": device_ip, "success": False, "message": r["error"], "index": index}
+        packages = [
+            line.replace("package:", "").strip()
+            for line in r["output"].splitlines()
+            if line.startswith("package:")
+        ]
+        return {"device_ip": device_ip, "success": True, "packages": packages, "index": index}
 
     @async_command
     def list_installed_packages_async(self, device_ip: str, index: int) -> dict:
-        try:
-            cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "packages"]
-            output = subprocess.check_output(
-                cmd, stderr=subprocess.STDOUT, text=True, creationflags=CF,
-                encoding="utf-8", errors="ignore",
-            )
-            packages = [
-                line.replace("package:", "").strip()
-                for line in output.splitlines()
-                if line.startswith("package:")
-            ]
-            return {"device_ip": device_ip, "success": True, "packages": packages, "index": index}
-        except subprocess.CalledProcessError as e:
-            return {"device_ip": device_ip, "success": False, "message": e.output, "index": index}
+        return self.list_installed_packages(device_ip, index)

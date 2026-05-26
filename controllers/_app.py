@@ -439,9 +439,16 @@ class ADBAppMixin(_ADBControllerBase):
             self._monkey_running.add(d)
         save_dir = self._get_screenshot_dir()
         log = self.log_service.log
-        log(LogLevel.INFO, f"Starting Monkey tests on {len(devices)} devices...")
-        log(LogLevel.INFO, f"Log save directory: {save_dir}")
-        log(LogLevel.INFO, f"Params: events={params.get('events')} throttle={params.get('throttle')}ms")
+        pct_keys = ["touch", "motion", "trackball", "nav", "majornav", "syskeys", "appswitch", "anyevent", "pinch"]
+        pct_str = " ".join(f"{k}={params.get(k, '?')}%" for k in pct_keys)
+        log(LogLevel.INFO,
+            f"Monkey start: {len(devices)} device(s) → {package_name} | "
+            f"events={params.get('events')} throttle={params.get('throttle')}ms | "
+            f"{pct_str} | "
+            f"crash_ignore={params.get('ignore_crashes')} "
+            f"timeout_ignore={params.get('ignore_timeouts')} "
+            f"security_ignore={params.get('ignore_security')} | "
+            f"save_dir={save_dir}")
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
             self.testing_model.run_monkey_test_async(
