@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from ctypes import wintypes
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QObject, Signal
@@ -25,8 +26,8 @@ def apply_dark_title_bar(window: QWidget) -> None:
         dark = 1 if _current_theme == "Dark" else 0
         DWMA_USE_IMMERSIVE_DARK_MODE = 20
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            ctypes.wintypes.HWND(hwnd),
-            ctypes.wintypes.DWORD(DWMA_USE_IMMERSIVE_DARK_MODE),
+            wintypes.HWND(hwnd),
+            wintypes.DWORD(DWMA_USE_IMMERSIVE_DARK_MODE),
             ctypes.byref(ctypes.c_int(dark)),
             ctypes.sizeof(ctypes.c_int(dark)),
         )

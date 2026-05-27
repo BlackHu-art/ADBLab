@@ -86,6 +86,8 @@ class FileExplorerDialog(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
+        from gui.styles import BaseStyles as BS
+        BS.theme_changed.connect(self._apply_theme)
         self._refresh()
 
     def _init_ui(self):
@@ -219,18 +221,13 @@ class FileExplorerDialog(QDialog):
             QHeaderView::section {{ background-color: {btn_bg}; color: {fg};
                 padding: 4px; border: 1px solid {border}; }}
         """)
-        self.status_bar.setStyleSheet(
-            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}"
-        )
+        self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
         self.path_field.setStyleSheet(
             f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
             f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;"
         )
         self.search_field.setStyleSheet(self.path_field.styleSheet())
 
-        from gui.styles import BaseStyles as BS
-
-        BS.theme_changed.connect(self._apply_theme)
 
     # ── ADB helpers ──────────────────────────────────────────────────────
 

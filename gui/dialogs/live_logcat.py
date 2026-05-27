@@ -154,6 +154,7 @@ class LiveLogcatDialog(QDialog):
         self.device_ip = device_ip
         self.worker = None
         self.entries = []
+        self._closing = False
 
         self.setWindowTitle(f"Live Logcat - {device_ip}")
         self.setWindowIcon(get_themed_icon("scroll.svg"))
@@ -163,6 +164,8 @@ class LiveLogcatDialog(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
+        from gui.styles import BaseStyles as BS
+        BS.theme_changed.connect(self._apply_theme)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -260,9 +263,7 @@ class LiveLogcatDialog(QDialog):
             f"color: {BS.color('LOG_TEXT_COLOR')}; "
             f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;"
         )
-        self.status_bar.setStyleSheet(
-            f"QStatusBar {{ color: {fg}; border-top: 1px solid {border}; }}"
-        )
+        self.status_bar.setStyleSheet(BS.STATUS_BAR_STYLE())
 
         # Logcat level colors - theme-aware
         hl_colors = {
@@ -276,7 +277,6 @@ class LiveLogcatDialog(QDialog):
             "U": fg,
         }
         self.highlighter.set_theme(hl_colors)
-        BS.theme_changed.connect(self._apply_theme)
 
     # ── Filter ───────────────────────────────────────────────────────────
 
@@ -333,13 +333,7 @@ class LiveLogcatDialog(QDialog):
         self.worker = LogcatWorker(self.device_ip, package=pkg, tag=tag)
         self.worker.line_ready.connect(self._on_line)
         self.worker.status_changed.connect(self._on_status)
-        self.worker.finished.connect(
-            lambda: (
-                self.start_btn.setEnabled(True),
-                self.stop_btn.setEnabled(False),
-                setattr(self, "worker", None),
-            )
-        )
+        self.worker.finished.connect(self._on_worker_finished)
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.worker.start()
@@ -395,6 +389,8 @@ class LiveLogcatDialog(QDialog):
         return ""
 
     def _on_line(self, text: str, level: str, pid: int = 0):
+        if self._closing:
+            return
         tag_part = self._extract_tag(text)
         self.entries.append((text, level, tag_part, pid))
         if len(self.entries) > self.MAX_BUFFER:
@@ -405,21 +401,36 @@ class LiveLogcatDialog(QDialog):
             self.output.ensureCursorVisible()
 
     def _on_status(self, msg: str):
+        if self._closing:
+            return
         self.status_bar.showMessage(msg)
+
+    def _on_worker_finished(self):
+        self.worker = None
+        if self._closing:
+            return
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
 
     # ── Cleanup ──────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        self._closing = True
         from gui.styles import BaseStyles as BS
         try:
             BS.theme_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):
             pass
-        if self.worker and self.worker.isRunning():
+        if self.worker:
             w = self.worker
             self.worker = None
-            w.stop()
-            w.setParent(None)
-            import threading
-            threading.Thread(target=lambda: w.wait(3000), daemon=True).start()
+            try:
+                w.finished.disconnect(self._on_worker_finished)
+            except (TypeError, RuntimeError):
+                pass
+            if w.isRunning():
+                w.stop()
+                w.setParent(None)
+                import threading
+                threading.Thread(target=lambda: w.wait(3000), daemon=True).start()
         super().closeEvent(event)

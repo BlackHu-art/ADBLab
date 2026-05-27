@@ -377,9 +377,7 @@ class AppManagerDialog(QDialog):
         self.icon_list.setStyleSheet(
             f"QListWidget {{ background-color:{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; }} QListWidget::item:selected {{ background-color:{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px; }}"
         )
-        self.status_bar.setStyleSheet(
-            f"QStatusBar {{ color:{fg}; border-top:1px solid {border}; }}"
-        )
+        self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
 
     def log(self, msg):
         self.log_output.append(msg)

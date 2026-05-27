@@ -204,6 +204,15 @@ class QSSMixin:
         }}
         """
 
+    # -- 状态栏 ------------------------------------------------------------
+
+    @classmethod
+    def STATUS_BAR_STYLE(cls) -> str:
+        return (
+            f"QStatusBar {{ background-color: {_tc('PANEL_BG')}; "
+            f"color: {_tc('TEXT_PRIMARY')}; border-top: 1px solid {_tc('BORDER_COLOR')}; }}"
+        )
+
     # -- Device List (with check indicators) ------------------------------
 
     @classmethod
@@ -239,7 +248,7 @@ class QSSMixin:
             + f"QFrame {{ background-color: transparent; border: none; color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
             + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"
-            + f"QStatusBar {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + cls.STATUS_BAR_STYLE()
             + f"QTableWidget {{ color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QHeaderView::section {{ color: {_tc('TEXT_PRIMARY')}; }}"
             + cls.SCROLLBAR_STYLE()
