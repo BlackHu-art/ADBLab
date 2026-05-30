@@ -17,7 +17,7 @@ select = [
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "gui", "models", "controllers", "utils", "guiscrcpy"]
+known-first-party = ["core", "gui", "models", "controllers", "utils"]
 
 [tool.ruff.format]
 quote-style = "double"

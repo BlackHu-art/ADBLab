@@ -1,0 +1,65 @@
+"""Typed values used by the Remote service layer."""
+
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class ScrcpyConfig:
+    exe: str
+    adb: str
+    device: str
+    maxsize: str
+    fps: str
+    bitrate: str
+    codec: str
+    buffer: str
+    orientation: str
+    hw_encoder: bool = False
+    fullscreen: bool = False
+    always_on_top: bool = False
+    no_audio: bool = True
+    show_touches: bool = False
+    stay_awake: bool = False
+    turn_screen_off: bool = False
+    record_path: str = ""
+    no_window: bool = False
+    extra_args: list[str] = field(default_factory=list)
+
+    @classmethod
+    def from_mapping(cls, values: dict) -> "ScrcpyConfig":
+        return cls(
+            exe=values["exe"],
+            adb=values.get("adb", "adb"),
+            device=values["device"],
+            maxsize=values["maxsize"],
+            fps=values["fps"],
+            bitrate=values["bitrate"],
+            codec=values["codec"],
+            buffer=values["buffer"],
+            orientation=values["orientation"],
+            hw_encoder=bool(values.get("hw_encoder", False)),
+            fullscreen=bool(values.get("fullscreen", False)),
+            always_on_top=bool(values.get("always_on_top", False)),
+            no_audio=bool(values.get("no_audio", True)),
+            show_touches=bool(values.get("show_touches", False)),
+            stay_awake=bool(values.get("stay_awake", False)),
+            turn_screen_off=bool(values.get("turn_screen_off", False)),
+            record_path=values.get("record_path", ""),
+            no_window=bool(values.get("no_window", False)),
+            extra_args=list(values.get("extra_args", [])),
+        )
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    success: bool
+    messages: list[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class ScrcpyLaunchPlan:
+    args: list[str]
+    device_info: str
+    version: str
+    encoder: str | None = None
+    messages: list[tuple[str, str]] = field(default_factory=list)

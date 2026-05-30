@@ -4,3 +4,4 @@ __pycache__/
 common/mail/mail.yaml
 .claude/
 .superpowers/
+guiscrcpy/

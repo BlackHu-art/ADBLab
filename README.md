@@ -56,6 +56,7 @@ ADBLab/
 │   ├── adb_advanced.py              # Screen record(start/stop/pull), input, perf, logcat (~430 lines)
 │   ├── adb_network.py               # Network ADB mixin (port forward, TCP/IP, ping)
 │   ├── adb_system.py                # System ADB mixin (permissions, emulator, IME, process)
+│   ├── remote/                      # Remote native services (scrcpy launch, gestures, key mapping)
 │   ├── app_manager_worker.py        # App manager QThread worker (list, backup, restore)
 │   ├── file_explorer_worker.py      # File explorer QThread workers (ADB shell, transfer)
 │   └── device_store.py              # YAML device info persistence
@@ -267,6 +268,12 @@ User clicks button (Panel)
 | Quick Keys | 16 system keys (HOME, BACK, POWER, RECENTS, etc.) |
 | Keyboard Shortcuts | Ctrl+Enter start, Ctrl+Q stop |
 | Settings Persistence | All video parameters saved across sessions |
+
+Remote keeps the ADBLab UI as the user-facing shell while the implementation lives in
+`models/remote/`: `ScrcpyService` owns scrcpy preflight/launch/stop behavior, and
+`RemoteControlService` owns key, swipe, notification, and rotation commands. Startup reuses
+the detected device dimensions for gestures, and repeated gesture taps use a short `wm size`
+cache to avoid UI-thread stalls. guiscrcpy is no longer embedded or kept as a source folder.
 
 ### File Explorer
 

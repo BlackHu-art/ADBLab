@@ -1,4 +1,4 @@
-"""Lightweight ADB shell wrapper — adapted from guiscrcpy extracted_core.
+"""Lightweight ADB shell wrapper for ADBLab.
 
 Path resolution: delegates to utils.adb_resolver (bundled scrcpy ADB > system PATH).
 """
