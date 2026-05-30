@@ -3,3 +3,4 @@ __pycache__/
 /resources/app.log
 common/mail/mail.yaml
 .claude/
+.superpowers/

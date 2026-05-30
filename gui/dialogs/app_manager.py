@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from gui.dialogs.lifecycle import safe_disconnect, wait_for_threads_later
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
@@ -189,18 +190,13 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
-        BaseStyles.theme_changed.disconnect(self._apply_theme)
-        import threading
+        safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
         for w in workers:
             w.abort()
             w.setParent(None)
-        # Background waiter keeps Python refs alive until threads finish
-        threading.Thread(
-            target=lambda ws=workers: [w.wait(5000) for w in ws],
-            daemon=True,
-        ).start()
+        wait_for_threads_later(workers, 5000)
         super().closeEvent(event)
 
 
@@ -785,15 +781,11 @@ class AppManagerDialog(QDialog):
             self._workers.remove(w)
 
     def closeEvent(self, event):
-        import threading
+        safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
         for w in workers:
             w.abort()
             w.setParent(None)
-        # Background waiter keeps Python refs alive until threads finish
-        threading.Thread(
-            target=lambda ws=workers: [w.wait(5000) for w in ws],
-            daemon=True,
-        ).start()
+        wait_for_threads_later(workers, 5000)
         super().closeEvent(event)

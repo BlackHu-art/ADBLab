@@ -76,6 +76,7 @@ class LogService(QObject):
     def log(self, level: str, message: str, *args, **kwargs) -> None:
         """线程安全的日志记录方法，支持立即刷新"""
         flush_immediately = kwargs.pop("flush_immediately", False)
+        start_timer = False
 
         self._buffer_lock.lock()
         try:
@@ -84,26 +85,35 @@ class LogService(QObject):
             if len(self._buffer) > self._max_buffer:
                 self._buffer = self._buffer[-self._max_buffer:]
 
-            if flush_immediately:
-                self._flush_buffer()
-            elif QThread.currentThread() == self.thread() and not self._timer.isActive():
-                self._timer.start()
+            if not flush_immediately:
+                start_timer = QThread.currentThread() == self.thread() and not self._timer.isActive()
         finally:
             self._buffer_lock.unlock()
+
+        if flush_immediately:
+            self._flush_buffer()
+        elif start_timer:
+            self._timer.start()
 
     def _flush_buffer(self) -> None:
         """刷新缓冲区到所有输出"""
         self._buffer_lock.lock()
         try:
-            if not self._buffer:
-                self._timer.stop()
-                return
-
-            current_batch = self._buffer.copy()
-            self._buffer.clear()
+            current_batch = self._drain_buffer_locked()
         finally:
             self._buffer_lock.unlock()
 
+        self._emit_batch(current_batch)
+
+    def _drain_buffer_locked(self) -> list[tuple[str, str]]:
+        if not self._buffer:
+            self._timer.stop()
+            return []
+        current_batch = self._buffer.copy()
+        self._buffer.clear()
+        return current_batch
+
+    def _emit_batch(self, current_batch: list[tuple[str, str]]) -> None:
         for level, message in current_batch:
             self._write_file_log(level, message)
             self.log_received.emit(level, message)
@@ -154,8 +164,11 @@ class LogService(QObject):
         self._buffer_lock.lock()
         try:
             self._timer.stop()
-            self._flush_buffer()
-            for handler in self.logger.handlers:
-                handler.close()
+            current_batch = self._drain_buffer_locked()
+            handlers = list(self.logger.handlers)
         finally:
             self._buffer_lock.unlock()
+
+        self._emit_batch(current_batch)
+        for handler in handlers:
+            handler.close()

@@ -22,9 +22,14 @@ class ADBDevice(ADBModelCore):
     """Device management: connect, disconnect, restart, and info queries."""
 
     @async_command
-    def connect_device_async(self, ip_address: str) -> str:
+    def connect_device_async(self, ip_address: str) -> dict:
         r = self._run(["adb", "connect", ip_address])
-        return r.get("output", r.get("error", ""))
+        return {
+            "success": r.get("success", False),
+            "device_ip": ip_address,
+            "output": r.get("output", ""),
+            "error": r.get("error", ""),
+        }
 
     @async_command
     def get_connected_devices_async(self):

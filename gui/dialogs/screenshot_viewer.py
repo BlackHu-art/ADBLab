@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from models.base.process_runner import ProcessRunner
 
 MIN_ZOOM = 0.10
 MAX_ZOOM = 5.00
@@ -476,11 +477,13 @@ class ScreenshotViewer(QDialog):
         if not path or not os.path.exists(path):
             return
         folder = os.path.dirname(os.path.abspath(path))
-        if sys.platform == "win32":
-            os.startfile(folder)
+        if os.name == "nt":
+            command = ["explorer", folder]
+        elif sys.platform == "darwin":
+            command = ["open", folder]
         else:
-            import subprocess
-            subprocess.Popen(["xdg-open", folder])
+            command = ["xdg-open", folder]
+        ProcessRunner().spawn(command)
 
     def _delete_file(self):
         path = self._current_path()

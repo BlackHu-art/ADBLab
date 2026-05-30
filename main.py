@@ -25,6 +25,7 @@ if __name__ == "__main__":
     # 在创建窗口前应用已保存的主题，避免 Dark 模式下启动白屏闪烁
     from core.settings_manager import AppSettings
 
+    BaseStyles.reload_from_settings()
     saved_theme = AppSettings.instance().get("theme", "Light")
     BaseStyles.switch_theme(saved_theme)
 

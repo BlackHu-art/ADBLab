@@ -85,7 +85,14 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Install App", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self._install_single_device, idx, device_ip, apk_path, apk_name)
+            self.executor.submit(
+                self._install_single_device,
+                idx,
+                device_ip,
+                apk_path,
+                apk_name,
+                "install",
+            )
 
     def batch_install_apk(self, devices: list):
         if not self._require_devices(devices, "batch_install"):
@@ -100,11 +107,18 @@ class ADBAppMixin(_ADBControllerBase):
         self._batch_trackers["batch_install"] = BatchOperationTracker(
             total_tasks, "Batch Install", self._emit_operation
         )
+        task_index = 0
         for apk_path in apk_paths:
             apk_name = os.path.basename(apk_path)
-            for idx, device_ip in enumerate(devices, 1):
+            for device_ip in devices:
+                task_index += 1
                 self.executor.submit(
-                    self._install_single_device, idx, device_ip, apk_path, apk_name
+                    self._install_single_device,
+                    task_index,
+                    device_ip,
+                    apk_path,
+                    apk_name,
+                    "batch_install",
                 )
         self._emit_operation(
             "batch_install",
@@ -112,30 +126,38 @@ class ADBAppMixin(_ADBControllerBase):
             f"Queued {len(apk_paths)} APKs → {len(devices)} devices ({total_tasks} tasks)",
         )
 
-    def _install_single_device(self, idx: int, device_ip: str, apk_path: str, apk_name: str):
+    def _install_single_device(
+        self,
+        idx: int,
+        device_ip: str,
+        apk_path: str,
+        apk_name: str,
+        operation: str,
+    ):
         with self._pending_lock:
-            tracker = self._batch_trackers.get("install")
+            tracker = self._batch_trackers.get(operation)
         total = tracker.total if tracker else "?"
         self._emit_operation(
-            "install", True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ..."
+            operation, True, f"Start install ({idx}/{total}) {apk_name} on {device_ip} ..."
         )
-        self.app_model.install_apk_async(device_ip, apk_path, apk_name, idx)
+        self.app_model.install_apk_async(device_ip, apk_path, apk_name, idx, operation)
 
     def _process_install_apk_result(self, result: dict):
         apk_name = result.get("apk_name")
         device_ip = result.get("device_ip")
         result.get("index", 1)
         success = result.get("success")
+        operation = result.get("operation", "install")
         with self._pending_lock:
-            tracker = self._batch_trackers.get("install")
+            tracker = self._batch_trackers.get(operation)
         progress = tracker.record(success) if tracker else ""
         if success:
             self._emit_operation(
-                "install", True, f"✅ install success {progress} {apk_name} on {device_ip}"
+                operation, True, f"✅ install success {progress} {apk_name} on {device_ip}"
             )
         else:
             self._emit_operation(
-                "install",
+                operation,
                 False,
                 f"❌ install failed {progress} {apk_name} on {device_ip}\n"
                 f"Error: {result.get('error', 'Unknown error')}",
@@ -340,6 +362,11 @@ class ADBAppMixin(_ADBControllerBase):
         device_ip = result.get("device_ip")
         idx = result.get("index")
         self._monkey_running.discard(device_ip)
+        if result.get("already_stopped"):
+            self._emit_operation(
+                "kill_monkey", True, f"ℹ️ {idx}. Monkey was not running on {device_ip}"
+            )
+            return
         if result.get("success"):
             self._emit_operation(
                 "kill_monkey", True, f"✅ {idx}. Monkey process killed on {device_ip}"

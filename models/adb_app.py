@@ -18,7 +18,14 @@ class ADBApp(ADBModelCore):
     def get_current_package_async(self, device_ip: str) -> dict:
         return self.get_current_package(device_ip)
 
-    def install_apk(self, device_ip: str, apk_path: str, apk_name: str, idx: int) -> dict:
+    def install_apk(
+        self,
+        device_ip: str,
+        apk_path: str,
+        apk_name: str,
+        idx: int,
+        operation: str = "install",
+    ) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "install", "-r", apk_path],
             timeout=120,
@@ -26,11 +33,19 @@ class ADBApp(ADBModelCore):
             apk_path=apk_path,
             index=idx,
             apk_name=apk_name,
+            operation=operation,
         )
 
     @async_command
-    def install_apk_async(self, device_ip: str, apk_path: str, apk_name: str, idx: int):
-        return self.install_apk(device_ip, apk_path, apk_name, idx)
+    def install_apk_async(
+        self,
+        device_ip: str,
+        apk_path: str,
+        apk_name: str,
+        idx: int,
+        operation: str = "install",
+    ):
+        return self.install_apk(device_ip, apk_path, apk_name, idx, operation=operation)
 
     def uninstall_app(self, device_ip: str, package_name: str, idx: int) -> dict:
         return self._run(

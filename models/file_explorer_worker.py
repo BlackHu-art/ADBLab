@@ -5,9 +5,8 @@ import subprocess
 
 from PySide6.QtCore import QThread, Signal
 
-from utils.adb_resolver import adb_path
-
-from .base.command_runner import CF, CommandRunner
+from .base.command_runner import CommandRunner
+from .base.process_runner import ProcessRunner
 
 
 class ADBWorker(QThread):
@@ -47,23 +46,28 @@ class TransferWorker(QThread):
         self.args = args
         self.cwd = cwd or os.getcwd()
         self._proc = None
+        self._process_key = f"transfer_{id(self)}"
+        self._process_runner = ProcessRunner()
         self._aborted = False
 
     def abort(self):
         self._aborted = True
         self.requestInterruption()
-        if self._proc and self._proc.poll() is None:
-            try:
-                self._proc.terminate()
-            except Exception:
-                pass
+        self._process_runner.stop(self._process_key, timeout=2)
 
     def run(self):
         try:
-            cmd = [adb_path(), "-s", self.device_ip] + self.args
-            self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                cwd=self.cwd, universal_newlines=True, bufsize=1, creationflags=CF,
+            cmd = ["adb", "-s", self.device_ip] + self.args
+            self._proc = self._process_runner.start(
+                self._process_key,
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=self.cwd,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                bufsize=1,
             )
             last = ""
             while not self._aborted:
@@ -83,3 +87,5 @@ class TransferWorker(QThread):
                 self.finished.emit(last or f"Exit {ret}", True, local)
         except Exception as e:
             self.finished.emit(str(e), True, "")
+        finally:
+            self._process_runner.stop(self._process_key, timeout=0)

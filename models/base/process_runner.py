@@ -11,6 +11,8 @@ from utils.adb_resolver import adb_path
 
 from .command_runner import CF
 
+CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+
 
 class ProcessRunner:
     """统一管理后台子进程，支持按 key 启动/停止/轮询。
@@ -26,16 +28,67 @@ class ProcessRunner:
         self._procs: dict[str, subprocess.Popen] = {}
         self._lock = threading.Lock()
 
-    def start(self, key: str, cmd: list[str], stdout=None, stderr=None) -> subprocess.Popen:
+    def start(
+        self,
+        key: str,
+        cmd: list[str],
+        stdout=None,
+        stderr=None,
+        *,
+        cwd: str | None = None,
+        text: bool = False,
+        encoding: str | None = None,
+        errors: str | None = None,
+        bufsize: int = -1,
+        creationflags: int | None = None,
+    ) -> subprocess.Popen:
         """启动子进程，同名 key 会先停止旧进程。"""
-        stdout = subprocess.DEVNULL if stdout is None else stdout
-        stderr = subprocess.DEVNULL if stderr is None else stderr
-        proc = subprocess.Popen(self._resolve_cmd(cmd), stdout=stdout, stderr=stderr, creationflags=CF)
+        proc = self.spawn(
+            cmd,
+            stdout=subprocess.DEVNULL if stdout is None else stdout,
+            stderr=subprocess.DEVNULL if stderr is None else stderr,
+            cwd=cwd,
+            text=text,
+            encoding=encoding,
+            errors=errors,
+            bufsize=bufsize,
+            creationflags=creationflags,
+        )
         with self._lock:
             old_proc = self._procs.pop(key, None)
             self._procs[key] = proc
         self._stop_proc(old_proc)
         return proc
+
+    def spawn(
+        self,
+        cmd: list[str],
+        stdout=None,
+        stderr=None,
+        *,
+        cwd: str | None = None,
+        text: bool = False,
+        encoding: str | None = None,
+        errors: str | None = None,
+        bufsize: int = -1,
+        creationflags: int | None = None,
+    ) -> subprocess.Popen:
+        """Launch a subprocess without tracking it in the active process map."""
+        popen_kwargs = {
+            "creationflags": CF if creationflags is None else creationflags,
+            "cwd": cwd,
+            "text": text,
+            "bufsize": bufsize,
+        }
+        if stdout is not None:
+            popen_kwargs["stdout"] = stdout
+        if stderr is not None:
+            popen_kwargs["stderr"] = stderr
+        if encoding is not None:
+            popen_kwargs["encoding"] = encoding
+        if errors is not None:
+            popen_kwargs["errors"] = errors
+        return subprocess.Popen(self._resolve_cmd(cmd), **popen_kwargs)
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""

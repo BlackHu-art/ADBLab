@@ -49,7 +49,7 @@ class FontMixin:
         cls.DEFAULT_FONT_FAMILY = _font["FAMILY"]
         cls.DEFAULT_FONT_SIZE = _font["UI"]
         cls.LOG_FONT_SIZE_VAR = _font["LOG"]
-        from .theme import _theme_signal, _current_theme
+        from .theme import _current_theme, _theme_signal
         _theme_signal.changed.emit(_current_theme)
 
     @classmethod
@@ -61,7 +61,7 @@ class FontMixin:
 
     @classmethod
     def get_log_font(cls) -> QFont:
-        font = QFont(cls.LOG_FONT, cls.LOG_FONT_SIZE)
+        font = QFont(cls.LOG_FONT, cls.LOG_FONT_SIZE_VAR)
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
         return font

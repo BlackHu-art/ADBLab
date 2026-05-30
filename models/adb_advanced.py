@@ -79,8 +79,22 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         self, device_ip: str, remote_path: str, save_dir: str, filename: str
     ) -> dict:
         local_path = os.path.join(save_dir, filename)
-        self._run(["adb", "-s", device_ip, "pull", remote_path, local_path], timeout=60)
-        self._run(["adb", "-s", device_ip, "shell", "rm", remote_path])
+        pull = self._run(["adb", "-s", device_ip, "pull", remote_path, local_path], timeout=60)
+        if not pull["success"]:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "local_path": local_path,
+                "error": f"pull failed: {pull.get('error', 'unknown error')}",
+            }
+        cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", remote_path])
+        if not cleanup["success"]:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "local_path": local_path,
+                "error": f"cleanup failed: {cleanup.get('error', 'unknown error')}",
+            }
         return {"success": True, "device_ip": device_ip, "local_path": local_path}
 
     # ── Input Events ─────────────────────────────────────────────────────

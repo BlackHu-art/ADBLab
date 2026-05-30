@@ -5,7 +5,7 @@ import re
 import subprocess
 import threading
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
-from utils.adb_resolver import CF
+from models.base.command_runner import CommandRunner
+from models.base.process_runner import ProcessRunner
 from utils.resource_path import resource_path
 
 
@@ -35,8 +36,153 @@ def _bundled_scrcpy() -> str:
     return found if found else "scrcpy"
 
 
+class ScrcpyLaunchWorker(QThread):
+    """Runs slow scrcpy launch checks away from the UI thread."""
+
+    launch_ready = Signal(list, str)
+    log_message = Signal(str, str)
+
+    def __init__(self, config: dict):
+        super().__init__()
+        self.config = config
+
+    def run(self):
+        cfg = self.config
+        device = cfg["device"]
+        exe = cfg["exe"]
+        adb = cfg["adb"]
+
+        ver = self._scrcpy_version(exe)
+        self.log_message.emit("INFO", f"scrcpy v{ver}")
+        if self.isInterruptionRequested():
+            return
+
+        device_info = self._device_info(adb, device)
+        if self.isInterruptionRequested():
+            return
+
+        if not self._preflight_check(adb, device):
+            self.log_message.emit("WARNING", "Pre-flight check failed - launching anyway...")
+        if self.isInterruptionRequested():
+            return
+
+        encoder = None
+        if cfg["hw_encoder"]:
+            encoder = self._detect_encoder(adb, device)
+            if encoder:
+                self.log_message.emit("INFO", f"Using encoder: {encoder}")
+            else:
+                self.log_message.emit("WARNING", "No hardware encoder found, using default")
+        if self.isInterruptionRequested():
+            return
+
+        self.launch_ready.emit(self._build_args(cfg, encoder), device_info)
+
+    @staticmethod
+    def _run(cmd: list[str], timeout: int = 5):
+        return CommandRunner.run(cmd, timeout=timeout)
+
+    def _scrcpy_version(self, exe: str) -> str:
+        try:
+            r = self._run([exe, "--version"], timeout=3)
+            m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.output)
+            return m.group(1) if m else "unknown"
+        except Exception:
+            return "unknown"
+
+    def _device_info(self, adb: str, device: str) -> str:
+        try:
+            r = self._run([adb, "-s", device, "shell", "wm size"], timeout=5)
+            raw = r.output or ""
+            for prefix in ("Physical size:", "Override size:"):
+                if prefix in raw:
+                    return raw[raw.find(prefix):].split(":")[1].strip()
+        except Exception:
+            pass
+        return ""
+
+    def _preflight_check(self, adb: str, device: str) -> bool:
+        import time
+
+        try:
+            r = self._run([adb, "-s", device, "shell", "echo ok"], timeout=5)
+            if (r.output or "").strip() != "ok":
+                self.log_message.emit("WARNING", f"Device {device} not responding")
+                return False
+
+            t0 = time.monotonic()
+            self._run(
+                [adb, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
+                timeout=5,
+            )
+            elapsed = time.monotonic() - t0
+            if elapsed > 1.0:
+                self.log_message.emit(
+                    "WARNING",
+                    f"USB speed: {elapsed:.1f}s (slow). Try a different cable or USB 3.0 port",
+                )
+            else:
+                self.log_message.emit("INFO", f"USB speed: {elapsed*1000:.0f}ms (OK)")
+            return True
+        except Exception as e:
+            self.log_message.emit("WARNING", f"Pre-flight failed: {e}")
+            return False
+
+    def _detect_encoder(self, adb: str, device: str) -> str | None:
+        try:
+            r = self._run([adb, "-s", device, "shell", "dumpsys media.codec"], timeout=8)
+            output = r.output or ""
+            for line in output.splitlines():
+                lowered = line.lower()
+                if "h264" in lowered and "encoder" in lowered:
+                    name = line.strip().split()[0]
+                    if "OMX" in name or name.startswith("c2."):
+                        return name
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _build_args(cfg: dict, encoder: str | None) -> list[str]:
+        args = [cfg["exe"], "-s", cfg["device"]]
+        size = cfg["maxsize"]
+        if size != "Default":
+            args.extend(["-m", size.replace("p", "")])
+        args.extend(["--max-fps", cfg["fps"]])
+        args.append(f"--video-bit-rate={cfg['bitrate']}M")
+        if cfg["codec"] != "h264":
+            args.extend(["--video-codec", cfg["codec"]])
+        if cfg["buffer"] != "0":
+            args.append(f"--video-buffer={cfg['buffer']}")
+        if cfg["orientation"] != "0":
+            args.append(f"--lock-video-orientation={cfg['orientation']}")
+        if encoder:
+            args.extend(["--video-encoder", encoder])
+        if cfg["fullscreen"]:
+            args.append("-f")
+        if cfg["always_on_top"]:
+            args.append("--always-on-top")
+        if cfg["no_audio"]:
+            args.append("--no-audio")
+        if cfg["show_touches"]:
+            args.append("--show-touches")
+        if cfg["stay_awake"]:
+            args.append("--stay-awake")
+        if cfg["turn_screen_off"]:
+            args.append("--turn-screen-off")
+        if cfg["record_path"]:
+            args.extend(["--record", cfg["record_path"]])
+        if cfg["no_window"]:
+            args.append("--no-playback")
+            args.append("--no-window")
+        args.append("--print-fps")
+        return args
+
+
 class RemotePanel(BasePanel):
     """Screen mirroring + remote key input."""
+
+    _status_update_requested = Signal(str, object)
 
     _KEYCODE_MAP: dict[str, str] = {
         "HOME": "3", "BACK": "4", "POWER": "26", "RECENTS": "187", "MENU": "82",
@@ -73,6 +219,10 @@ class RemotePanel(BasePanel):
         self._settings = AppSettings.instance()
         self._adb = ADBBridge()
         self._loading = True
+        self._launch_worker = None
+        self._process_key = f"scrcpy_{id(self)}"
+        self._process_runner = ProcessRunner()
+        self._status_update_requested.connect(self._update_status)
 
     # -- UI ----------------------------------------------------------------
 
@@ -109,7 +259,7 @@ class RemotePanel(BasePanel):
         right_layout.setSpacing(6)
         right_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
 
-        self._status_label = QLabel("● Idle")
+        self._status_label = QLabel("Status: Idle")
         self._status_label.setFont(self._font_sm)
         right_layout.addWidget(self._status_label)
 
@@ -227,11 +377,11 @@ class RemotePanel(BasePanel):
             b.clicked.connect(lambda _, c=code: self._send_keyevent(c))
             return b
 
-        dg.addWidget(_dk("▲", "DPAD_UP"), 0, 1)
-        dg.addWidget(_dk("◀", "DPAD_LEFT"), 1, 0)
-        dg.addWidget(_dk("●", "DPAD_CENTER"), 1, 1)
-        dg.addWidget(_dk("▶", "DPAD_RIGHT"), 1, 2)
-        dg.addWidget(_dk("▼", "DPAD_DOWN"), 2, 1)
+        dg.addWidget(_dk("^", "DPAD_UP"), 0, 1)
+        dg.addWidget(_dk("<", "DPAD_LEFT"), 1, 0)
+        dg.addWidget(_dk("OK", "DPAD_CENTER"), 1, 1)
+        dg.addWidget(_dk(">", "DPAD_RIGHT"), 1, 2)
+        dg.addWidget(_dk("v", "DPAD_DOWN"), 2, 1)
         gl.addWidget(dpad)
 
         # Quick keys
@@ -316,35 +466,6 @@ class RemotePanel(BasePanel):
             if not was_loading:
                 self._save_all()
 
-    # -- C12: scrcpy version ----------------------------------------------
-
-    def _get_scrcpy_version(self) -> str:
-        exe = _bundled_scrcpy()
-        if not os.path.isfile(exe):
-            return "unknown"
-        try:
-            r = subprocess.run(
-                [exe, "--version"], capture_output=True, text=True,
-                creationflags=CF, timeout=3,
-                encoding="utf-8", errors="ignore",
-            )
-            m = re.search(r"(\d+\.\d+(?:\.\d+)?)", r.stdout)
-            return m.group(1) if m else "unknown"
-        except Exception:
-            return "unknown"
-
-    # -- B7: device screen info -------------------------------------------
-
-    def _fetch_device_info(self, device: str):
-        try:
-            dims = self._adb.get_dimensions(device_id=device)
-            if dims and len(dims) == 2:
-                self._device_info.setText(f"{dims[0]}x{dims[1]}")
-            else:
-                self._device_info.setText("")
-        except Exception:
-            self._device_info.setText("")
-
     # -- A3: record toggle ------------------------------------------------
 
     def _on_record_toggled(self, checked: bool):
@@ -360,50 +481,11 @@ class RemotePanel(BasePanel):
         self._record_path = os.path.join(save_dir, filename)
         self.record_path.setText(self._record_path.replace("\\", "/"))
 
-    # -- pre-flight check -------------------------------------------------
-
-    def _preflight_check(self, device: str) -> bool:
-        import time
-        try:
-            proc = self._adb.shell("echo ok", device_id=device)
-            if proc.stdout.read().decode().strip() != "ok":
-                self._log("WARNING", f"Device {device} not responding")
-                return False
-            # USB speed test: push 1KB of zeros and measure time
-            t0 = time.monotonic()
-            _sp = subprocess.run(
-                [self._adb.path, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
-                capture_output=True, text=True, creationflags=CF, timeout=5,
-                encoding="utf-8", errors="ignore",
-            )
-            elapsed = time.monotonic() - t0
-            if elapsed > 1.0:
-                self._log("WARNING",
-                    f"USB speed: {elapsed:.1f}s (slow). Try a different cable or USB 3.0 port")
-            else:
-                self._log("INFO", f"USB speed: {elapsed*1000:.0f}ms (OK)")
-            return True
-        except Exception as e:
-            self._log("WARNING", f"Pre-flight failed: {e}")
-            return False
-
-    def _detect_encoder(self, device: str) -> str | None:
-        try:
-            proc = self._adb.shell("dumpsys media.codec", device_id=device)
-            output = proc.stdout.read().decode(errors="ignore")
-            for line in output.splitlines():
-                if "OMX" in line and "h264" in line.lower() and "encoder" in line.lower():
-                    return line.strip().split()[0]
-            for line in output.splitlines():
-                if "c2." in line and "h264" in line.lower() and "encoder" in line.lower():
-                    return line.strip().split()[0]
-        except Exception:
-            pass
-        return None
-
     # -- scrcpy start / stop ----------------------------------------------
 
     def _start_scrcpy(self):
+        if self._process or (self._launch_worker and self._launch_worker.isRunning()):
+            return
         exe = _bundled_scrcpy()
         if not os.path.isfile(exe):
             self._log("WARNING", f"scrcpy not found: {exe}")
@@ -412,83 +494,55 @@ class RemotePanel(BasePanel):
         if not devices:
             self._log("WARNING", "No device selected")
             return
-        device = devices[0]
-
-        # C12: log version
-        ver = self._get_scrcpy_version()
-        self._log("INFO", f"scrcpy v{ver}")
-
-        # B7: fetch device info
-        self._fetch_device_info(device)
-
-        if not self._preflight_check(device):
-            self._log("WARNING", "Pre-flight check failed — launching anyway...")
 
         self._set_running(True)
+        self._update_status("Checking...", "#FFC107")
+
+        config = {
+            "exe": exe,
+            "adb": self._adb.path,
+            "device": devices[0],
+            "maxsize": self.maxsize.currentText(),
+            "fps": self.fps.currentText(),
+            "bitrate": self.bitrate.currentText(),
+            "codec": self.codec.currentText(),
+            "buffer": self.buffer.currentText(),
+            "orientation": self.orientation.currentText(),
+            "hw_encoder": self.chk_hw_encoder.isChecked(),
+            "fullscreen": self.chk_fullscreen.isChecked(),
+            "always_on_top": self.chk_aot.isChecked(),
+            "no_audio": self.chk_noaudio.isChecked(),
+            "show_touches": self.chk_showtouches.isChecked(),
+            "stay_awake": self.chk_stayawake.isChecked(),
+            "turn_screen_off": self.chk_turnscreenoff.isChecked(),
+            "record_path": self._record_path
+            if self.chk_record.isChecked() and hasattr(self, "_record_path")
+            else "",
+            "no_window": self.chk_noplayback.isChecked(),
+        }
+
+        worker = ScrcpyLaunchWorker(config)
+        worker.log_message.connect(self._log)
+        worker.launch_ready.connect(self._on_launch_ready)
+        worker.finished.connect(lambda _w=worker: self._on_launch_finished(_w))
+        self._launch_worker = worker
+        worker.start()
+
+    def _on_launch_ready(self, args: list, device_info: str):
+        if self._launch_worker and self._launch_worker.isInterruptionRequested():
+            return
+        self._device_info.setText(device_info)
         self._update_status("Running", "#28A745")
-
-        args = [exe, "-s", device]
-
-        size = self.maxsize.currentText()
-        if size != "Default":
-            args.extend(["-m", size.replace("p", "")])
-
-        args.extend(["--max-fps", self.fps.currentText()])
-        args.append(f"--video-bit-rate={self.bitrate.currentText()}M")
-
-        codec = self.codec.currentText()
-        if codec != "h264":
-            args.extend(["--video-codec", codec])
-
-        buf = self.buffer.currentText()
-        if buf != "0":
-            args.append(f"--video-buffer={buf}")
-
-        # A5: Lock orientation
-        orient = self.orientation.currentText()
-        if orient != "0":
-            args.append(f"--lock-video-orientation={orient}")
-
-
-        if self.chk_hw_encoder.isChecked():
-            encoder = self._detect_encoder(device)
-            if encoder:
-                args.extend(["--video-encoder", encoder])
-                self._log("INFO", f"Using encoder: {encoder}")
-            else:
-                self._log("WARNING", "No hardware encoder found, using default")
-
-        # Checkbox flags
-        if self.chk_fullscreen.isChecked():
-            args.append("-f")
-        if self.chk_aot.isChecked():
-            args.append("--always-on-top")
-        if self.chk_noaudio.isChecked():
-            args.append("--no-audio")
-        if self.chk_showtouches.isChecked():
-            args.append("--show-touches")
-        if self.chk_stayawake.isChecked():                     # A1
-            args.append("--stay-awake")
-        if self.chk_turnscreenoff.isChecked():                 # A2
-            args.append("--turn-screen-off")
-
-        # A3/A4: Record / No Playback
-        if self.chk_record.isChecked() and hasattr(self, "_record_path"):
-            args.extend(["--record", self._record_path])
-        if self.chk_noplayback.isChecked():
-            args.append("--no-playback")
-            args.append("--no-window")
-
-        # C13: Print FPS
-        args.append("--print-fps")
-
         self._log("INFO", f"Launching: scrcpy {' '.join(args[2:])}")
 
         try:
-            cf = CF
-            self._process = subprocess.Popen(
-                args, stderr=subprocess.PIPE, text=True, creationflags=cf,
-                encoding="utf-8", errors="ignore",
+            self._process = self._process_runner.start(
+                self._process_key,
+                args,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
             )
             threading.Thread(target=self._read_stderr, daemon=True).start()
             self._watchdog.start(500)
@@ -496,6 +550,16 @@ class RemotePanel(BasePanel):
             self._log("ERROR", f"scrcpy start failed: {e}")
             self._set_running(False)
             self._update_status("Error", "#DC3545")
+
+    def _on_launch_finished(self, worker: ScrcpyLaunchWorker):
+        interrupted = worker.isInterruptionRequested()
+        if self._launch_worker is worker:
+            self._launch_worker = None
+        worker.deleteLater()
+        if not self._process:
+            self._set_running(False)
+            if interrupted:
+                self._update_status("Idle", None)
 
     def _read_stderr(self):
         if self._process and self._process.stderr:
@@ -506,7 +570,7 @@ class RemotePanel(BasePanel):
                 # C13: extract FPS from scrcpy stderr
                 m = re.search(r"\[(\d+\.?\d*)\s*fps\]", line)
                 if m:
-                    self._update_status(f"{m.group(1)} fps", None)
+                    self._status_update_requested.emit(f"{m.group(1)} fps", None)
                 else:
                     self._log("DEBUG", f"[scrcpy] {line}")
 
@@ -524,20 +588,19 @@ class RemotePanel(BasePanel):
                 self._log("WARNING", f"scrcpy exited with code {rc}")
 
     def _stop_scrcpy(self):
+        if self._launch_worker and self._launch_worker.isRunning():
+            self._launch_worker.requestInterruption()
+            self._update_status("Stopping...", "#FFC107")
+            return
         if not self._process:
             return
         self._watchdog.stop()
-        proc = self._process
         self._process = None
         self._set_running(False)
         self._update_status("Idle", None)
         def _do_stop():
             try:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                self._process_runner.stop(self._process_key, timeout=2)
                 self._log("INFO", "scrcpy stopped")
             except Exception as e:
                 self._log("ERROR", f"stop failed: {e}")
@@ -551,11 +614,11 @@ class RemotePanel(BasePanel):
     # -- B8: status indicator ---------------------------------------------
 
     def _update_status(self, text: str, color: str | None):
+        style = "font-size: 10px; font-weight: bold;"
         if color:
-            self._status_label.setStyleSheet(
-                f"color: {color}; font-size: 10px; font-weight: bold;"
-            )
-        self._status_label.setText(f"● {text}")
+            style = f"color: {color}; {style}"
+        self._status_label.setStyleSheet(style)
+        self._status_label.setText(f"Status: {text}")
 
     # -- key events -------------------------------------------------------
 

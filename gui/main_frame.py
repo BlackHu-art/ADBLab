@@ -1,7 +1,6 @@
 import json
 import os
 import shutil
-import subprocess
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent
@@ -29,6 +28,8 @@ from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.styles.icon_loader import get_themed_icon
+from models.base.command_runner import CommandRunner
+from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, get_default_font
@@ -48,16 +49,12 @@ class _ScanThread(QThread):
 
     def run(self):
         from models.adb_device import parse_connected_devices
-        from utils.adb_resolver import CF, adb_path
 
         last_count = None  # always emit on first poll
         while not self._stop_flag:
             try:
-                r = subprocess.run(
-                    [adb_path(), "devices"], capture_output=True, text=True,
-                    creationflags=CF, timeout=5, encoding="utf-8", errors="ignore",
-                )
-                devices = parse_connected_devices(r.stdout)
+                result = CommandRunner.run(["adb", "devices"], timeout=5)
+                devices = parse_connected_devices(result.output)
                 count = len(devices)
                 if count != last_count:
                     last_count = count
@@ -435,36 +432,63 @@ class MainFrame(QMainWindow):
 
     def _show_app_manager(self):
         """Open an App Manager window for each selected device."""
-        devices = self.left_panel.selected_devices
-        if not devices:
-            self.log_panel._append_log("WARNING", "No device selected")
-            return
-        for ip in devices:
-            dlg = AppManagerDialog(device_ip=ip)
-            dlg.show()
-            self._active_dialogs.append(dlg)
+        self._show_device_dialogs(AppManagerDialog)
 
     def _show_file_explorer(self):
         """Open a File Explorer window for each selected device."""
-        devices = self.left_panel.selected_devices
-        if not devices:
-            self.log_panel._append_log("WARNING", "No device selected")
-            return
-        for ip in devices:
-            dlg = FileExplorerDialog(device_ip=ip)
-            dlg.show()
-            self._active_dialogs.append(dlg)
+        self._show_device_dialogs(FileExplorerDialog)
 
     def _show_logcat(self):
         """Open a Live Logcat window for each selected device."""
+        self._show_device_dialogs(LiveLogcatDialog)
+
+    def _show_device_dialogs(self, dialog_cls):
         devices = self.left_panel.selected_devices
         if not devices:
             self.log_panel._append_log("WARNING", "No device selected")
             return
         for ip in devices:
-            dlg = LiveLogcatDialog(device_ip=ip)
+            dlg = self._find_active_dialog(dialog_cls, ip)
+            if dlg:
+                dlg.show()
+                dlg.raise_()
+                dlg.activateWindow()
+                continue
+            dlg = self._register_dialog(dialog_cls(device_ip=ip), dialog_cls, ip)
             dlg.show()
-            self._active_dialogs.append(dlg)
+
+    def _register_dialog(self, dialog, dialog_cls=None, device_ip=None):
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        if dialog_cls is not None:
+            dialog.setProperty("dialog_class", dialog_cls.__name__)
+        if device_ip is not None:
+            dialog.setProperty("device_ip", device_ip)
+        self._active_dialogs.append(dialog)
+        dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_dialog(dlg))
+        return dialog
+
+    def _find_active_dialog(self, dialog_cls, device_ip):
+        survivors = []
+        match = None
+        for dialog in self._active_dialogs:
+            try:
+                same_dialog = (
+                    dialog.property("dialog_class") == dialog_cls.__name__
+                    and dialog.property("device_ip") == device_ip
+                )
+            except RuntimeError:
+                continue
+            survivors.append(dialog)
+            if same_dialog and match is None:
+                match = dialog
+        self._active_dialogs = survivors
+        return match
+
+    def _forget_dialog(self, dialog):
+        try:
+            self._active_dialogs.remove(dialog)
+        except ValueError:
+            pass
 
     def _show_settings(self):
         """Show settings dialog."""
@@ -477,14 +501,15 @@ class MainFrame(QMainWindow):
         import platform
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         system = platform.system()
+        runner = ProcessRunner()
         if system == "Windows":
-            subprocess.Popen(["cmd.exe", "/K", f'cd /d "{root}"'], creationflags=subprocess.CREATE_NEW_CONSOLE)
+            runner.spawn(["cmd.exe", "/K", f'cd /d "{root}"'], creationflags=CREATE_NEW_CONSOLE)
         elif system == "Darwin":
-            subprocess.Popen(["open", "-a", "Terminal", root])
+            runner.spawn(["open", "-a", "Terminal", root])
         else:
             for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]:
                 if shutil.which(term):
-                    subprocess.Popen([term], cwd=root)
+                    runner.spawn([term], cwd=root)
                     return
 
 

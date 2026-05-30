@@ -7,7 +7,6 @@ Adapted to use ADBLab's BaseStyles theme system.
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QThread, Signal
@@ -28,6 +27,9 @@ from PySide6.QtWidgets import (
 
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.dialogs.lifecycle import safe_disconnect, wait_for_thread_later
+from models.base.command_runner import CommandRunner
+from models.base.process_runner import ProcessRunner
 
 THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
 FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
@@ -53,16 +55,14 @@ class LogcatWorker(QThread):
         self.device_ip = device_ip
         self.package = package.strip()
         self.tag = tag.strip()
+        self._process_key = f"logcat_{id(self)}"
+        self._process_runner = ProcessRunner()
         self._proc = None
         self._stop = False
 
     def stop(self):
         self._stop = True
-        if self._proc and self._proc.poll() is None:
-            try:
-                self._proc.terminate()
-            except Exception:
-                pass
+        self._process_runner.stop(self._process_key, timeout=2)
 
     def run(self):
         cmd = ["adb", "-s", self.device_ip, "logcat", "-T", "1", "-v", "threadtime"]
@@ -70,14 +70,11 @@ class LogcatWorker(QThread):
         filter_pid = None
         if self.package:
             try:
-                cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-                r = subprocess.run(
+                r = CommandRunner.run(
                     ["adb", "-s", self.device_ip, "shell", "pidof", self.package],
-                    capture_output=True, text=True,
-                    creationflags=cf, timeout=5,
-                    encoding="utf-8", errors="ignore",
+                    timeout=5,
                 )
-                pid = r.stdout.strip().split()[0] if r.stdout.strip() else ""
+                pid = r.output.strip().split()[0] if r.output.strip() else ""
                 if pid and pid.isdigit():
                     filter_pid = int(pid)
                     cmd.extend(["--pid", pid])
@@ -86,15 +83,17 @@ class LogcatWorker(QThread):
                     self.status_changed.emit(f"Package {self.package} not running, showing all")
             except Exception:
                 self.status_changed.emit(f"Could not find PID for {self.package}")
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         self.status_changed.emit("Starting logcat...")
         try:
-            self._proc = subprocess.Popen(
+            self._proc = self._process_runner.start(
+                self._process_key,
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT, text=True,
-                bufsize=1, encoding="utf-8", errors="ignore",
-                creationflags=creationflags,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                encoding="utf-8",
+                errors="ignore",
             )
             self.status_changed.emit("Logcat running")
             while not self._stop:
@@ -109,13 +108,8 @@ class LogcatWorker(QThread):
         except Exception as e:
             self.status_changed.emit(f"Error: {e}")
         finally:
-            if self._proc:
-                try:
-                    if self._proc.poll() is None:
-                        self._proc.terminate()
-                        self._proc.wait(2)
-                except Exception:
-                    pass
+            self._process_runner.stop(self._process_key, timeout=2)
+            if self._proc and self._proc.stdout:
                 try:
                     self._proc.stdout.close()
                 except Exception:
@@ -127,6 +121,34 @@ class LogcatWorker(QThread):
     def _parse_level(line: str) -> str:
         m = THREADTIME_RE.search(line) or FALLBACK_RE.search(line)
         return m.group(1) if m else "U"
+
+
+class CurrentPackageWorker(QThread):
+    package_ready = Signal(str)
+    status_changed = Signal(str)
+
+    def __init__(self, device_ip: str):
+        super().__init__()
+        self.device_ip = device_ip
+
+    def run(self):
+        try:
+            r = CommandRunner.run(
+                ["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
+                timeout=5,
+            )
+            if self.isInterruptionRequested():
+                return
+            for line in r.output.splitlines():
+                if "mCurrentFocus" in line:
+                    m = re.search(r"Window\{.*?\s(\S+?)/", line)
+                    if m:
+                        self.package_ready.emit(m.group(1))
+                        return
+            self.status_changed.emit("No foreground app found")
+        except Exception as e:
+            if not self.isInterruptionRequested():
+                self.status_changed.emit(f"Error: {e}")
 
 
 class LogcatHighlighter(QSyntaxHighlighter):
@@ -153,6 +175,7 @@ class LiveLogcatDialog(QDialog):
         super().__init__(parent, Qt.Window)
         self.device_ip = device_ip
         self.worker = None
+        self._pkg_worker = None
         self.entries = []
         self._closing = False
 
@@ -302,26 +325,16 @@ class LiveLogcatDialog(QDialog):
     # ── Actions ──────────────────────────────────────────────────────────
 
     def _fetch_current_pkg(self):
-        import re
-
-        try:
-            cf = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            r = subprocess.run(
-                ["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
-                capture_output=True, text=True,
-                creationflags=cf, timeout=5,
-                encoding="utf-8", errors="ignore",
-            )
-            for line in r.stdout.splitlines():
-                if "mCurrentFocus" in line:
-                    m = re.search(r"Window\{.*?\s(\S+?)/", line)
-                    if m:
-                        self.pkg_input.setText(m.group(1))
-                        self.status_bar.showMessage(f"Package: {m.group(1)}")
-                        return
-            self.status_bar.showMessage("No foreground app found")
-        except Exception as e:
-            self.status_bar.showMessage(f"Error: {e}")
+        if self._pkg_worker and self._pkg_worker.isRunning():
+            return
+        self.status_bar.showMessage("Fetching current package...")
+        self.btn_get_pkg.setEnabled(False)
+        worker = CurrentPackageWorker(self.device_ip)
+        worker.package_ready.connect(self._on_current_pkg)
+        worker.status_changed.connect(self._on_status)
+        worker.finished.connect(lambda _w=worker: self._on_pkg_worker_finished(_w))
+        self._pkg_worker = worker
+        worker.start()
 
     def _start(self):
         if self.worker and self.worker.isRunning():
@@ -358,7 +371,7 @@ class LiveLogcatDialog(QDialog):
             self.output.setLineWrapMode(QPlainTextEdit.NoWrap)
             self.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
             self.wrap_btn.setText("No Wrap")
-            self.status_bar.showMessage("Line wrap: OFF — horizontal scroll enabled")
+            self.status_bar.showMessage("Line wrap: OFF - horizontal scroll enabled")
 
     def _export(self):
         from core.settings_manager import AppSettings
@@ -405,8 +418,25 @@ class LiveLogcatDialog(QDialog):
             return
         self.status_bar.showMessage(msg)
 
+    def _on_current_pkg(self, package: str):
+        if self._closing:
+            return
+        self.pkg_input.setText(package)
+        self.status_bar.showMessage(f"Package: {package}")
+
+    def _on_pkg_worker_finished(self, worker: CurrentPackageWorker):
+        self._disconnect_pkg_worker(worker)
+        if self._pkg_worker is worker:
+            self._pkg_worker = None
+        worker.deleteLater()
+        if not self._closing:
+            self.btn_get_pkg.setEnabled(True)
+
     def _on_worker_finished(self):
-        self.worker = None
+        if self.worker:
+            self._disconnect_worker(self.worker)
+            self.worker.deleteLater()
+            self.worker = None
         if self._closing:
             return
         self.start_btn.setEnabled(True)
@@ -414,23 +444,46 @@ class LiveLogcatDialog(QDialog):
 
     # ── Cleanup ──────────────────────────────────────────────────────────
 
+    def _disconnect_worker(self, worker: LogcatWorker):
+        for signal_, handler in (
+            (worker.line_ready, self._on_line),
+            (worker.status_changed, self._on_status),
+            (worker.finished, self._on_worker_finished),
+        ):
+            safe_disconnect(signal_, handler)
+
+    def _disconnect_pkg_worker(self, worker: CurrentPackageWorker):
+        for signal_, handler in (
+            (worker.package_ready, self._on_current_pkg),
+            (worker.status_changed, self._on_status),
+            (worker.finished, self._on_pkg_worker_finished),
+        ):
+            safe_disconnect(signal_, handler)
+
     def closeEvent(self, event):
         self._closing = True
         from gui.styles import BaseStyles as BS
-        try:
-            BS.theme_changed.disconnect(self._apply_theme)
-        except (TypeError, RuntimeError):
-            pass
+        safe_disconnect(BS.theme_changed, self._apply_theme)
         if self.worker:
             w = self.worker
             self.worker = None
-            try:
-                w.finished.disconnect(self._on_worker_finished)
-            except (TypeError, RuntimeError):
-                pass
+            self._disconnect_worker(w)
             if w.isRunning():
+                w.finished.connect(w.deleteLater)
                 w.stop()
                 w.setParent(None)
-                import threading
-                threading.Thread(target=lambda: w.wait(3000), daemon=True).start()
+                wait_for_thread_later(w, 3000)
+            else:
+                w.deleteLater()
+        if self._pkg_worker:
+            w = self._pkg_worker
+            self._pkg_worker = None
+            self._disconnect_pkg_worker(w)
+            if w.isRunning():
+                w.finished.connect(w.deleteLater)
+                w.requestInterruption()
+                w.setParent(None)
+                wait_for_thread_later(w, 6000)
+            else:
+                w.deleteLater()
         super().closeEvent(event)

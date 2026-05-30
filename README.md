@@ -111,6 +111,14 @@ ADBLab/
 
 ## Architecture
 
+### 2026-05-30 Optimization Record
+
+The latest architecture and feature-logic optimization notes are documented in:
+
+- `docs/2026-05-30-architecture-logic-optimization.md`
+
+This pass centralized command/process execution, tightened dialog lifecycle cleanup, made Monkey stop idempotent, added VSCode project launch configuration, and expanded regression coverage to 42 tests.
+
 ### MVC + Signal/Slot Pattern
 
 ```
@@ -444,7 +452,9 @@ python main.py
 ### Code Conventions
 
 - ADB operations run async via `@async_command` (QRunnable) — never block the main thread
-- Short-lived commands go through `CommandRunner.run()`; long-running processes go through `ProcessRunner`
+- Short-lived commands go through `CommandRunner.run()`; long-running managed processes go through `ProcessRunner.start()`
+- Fire-and-forget external launches go through `ProcessRunner.spawn()`
+- UI code should not call `subprocess.run()`, `subprocess.Popen()`, or `os.startfile()` directly
 - Long-running polls (device scan) use dedicated `QThread` with `msleep`-breakable loops
 - Signal definitions centralized in `*_signals.py`; explicit `Qt.QueuedConnection` for cross-thread
 - All dialogs connect to `BaseStyles.theme_changed` for theme updates

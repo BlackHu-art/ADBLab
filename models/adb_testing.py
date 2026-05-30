@@ -290,15 +290,23 @@ class ADBTesting(ADBModelCore):
     def kill_monkey_async(self, device_ip: str, index: int) -> dict:
         with self._abort_lock:
             self._aborted_devices.add(device_ip)
-        self._procs.stop(f"{device_ip}_monkey")
+        local_code = self._procs.stop(f"{device_ip}_monkey")
         r = self._run(
             ["adb", "-s", device_ip, "shell", "pkill -f com.android.commands.monkey || true"],
             timeout=10, device_ip=device_ip,
         )
-        message = "Monkey process killed" if r["success"] else (r.get("error") or "Monkey stop command failed with no error output")
+        error = (r.get("error") or "").strip()
+        already_stopped = local_code is None and not error
+        success = r["success"] or already_stopped or (local_code is not None and not error)
+        if already_stopped:
+            message = "Monkey is not running"
+        elif success:
+            message = "Monkey process stopped"
+        else:
+            message = error or "Monkey stop command failed with no error output"
         return {
             "device_ip": device_ip, "index": index,
-            "success": r["success"], "message": message,
+            "success": success, "message": message, "already_stopped": already_stopped,
         }
 
     # ── Bugreport ─────────────────────────────────────────────────────
@@ -339,7 +347,14 @@ class ADBTesting(ADBModelCore):
                 output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
                 bugreport_cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
-            self._run(bugreport_cmd, timeout=180)
+            bugreport = self._run(bugreport_cmd, timeout=180)
+            if not bugreport["success"]:
+                return {
+                    "device_ip": device_ip,
+                    "index": index,
+                    "success": False,
+                    "message": f"Bugreport failed: {bugreport.get('error', 'unknown error')}",
+                }
             log("Bugreport command completed")
         except Exception as e:
             return {"device_ip": device_ip, "index": index,

@@ -39,33 +39,36 @@ class ADBDeviceMixin(_ADBControllerBase):
         if not ip:
             self._emit_operation("connect", False, "⚠️ IP address cannot be empty")
             return
-        operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("connect", ip)
         self.device_model.connect_device_async(ip)
 
-    def _process_connect_device_result(self, result: str):
-        ip = None
-        found_key = None
-        with self._pending_lock:
-            for key, (op_name, op_ip) in self._pending_ops.items():
-                if op_name == "connect":
-                    ip = op_ip
-                    found_key = key
-                    break
-            if found_key:
-                del self._pending_ops[found_key]
+    def _process_connect_device_result(self, result):
+        if isinstance(result, dict):
+            ip = result.get("device_ip", "")
+            raw = result.get("output") or result.get("error", "")
+        else:
+            ip = None
+            raw = str(result)
+            found_key = None
+            with self._pending_lock:
+                for key, (op_name, op_ip) in self._pending_ops.items():
+                    if op_name == "connect":
+                        ip = op_ip
+                        found_key = key
+                        break
+                if found_key:
+                    del self._pending_ops[found_key]
         if not ip:
             self._emit_operation("connect", False, "⚠️ Unknown device connection")
             return
-        if "connected" in result:
+        raw_lower = raw.lower()
+        if "already connected" in raw_lower:
+            self._emit_operation("connect", True, f"{ip} is already connected")
+        elif "connected" in raw_lower:
             self._save_device_info(ip)
             self.refresh_devices()
             self._emit_operation("connect", True, f"Successfully connected to {ip}")
-        elif "already connected" in result:
-            self._emit_operation("connect", True, f"{ip} is already connected")
         else:
-            self._emit_operation("connect", False, f"Connection failed: {result}")
+            self._emit_operation("connect", False, f"Connection failed: {raw}")
 
     def _process_device_list(self, devices: list):
         self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
