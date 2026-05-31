@@ -3,10 +3,17 @@ import re
 from .command_runner import CommandRunner
 
 _PACKAGE_RE = re.compile(r"([\w.]+(?:\.[\w.]+)+)/")
+_TOP_ACTIVITY_RE = re.compile(r"topActivity=ComponentInfo\{([\w.]+(?:\.[\w.]+)+)/")
 
 
 def extract_package_name(output: str) -> str:
     lines = output.splitlines()
+    for line in lines:
+        if "visible=true" not in line or "topActivity=ComponentInfo" not in line:
+            continue
+        match = _TOP_ACTIVITY_RE.search(line)
+        if match:
+            return match.group(1)
     focused_lines = [
         line for line in lines
         if any(token in line for token in ("mCurrentFocus", "mFocusedApp", "mResumedActivity", "topResumedActivity"))
@@ -22,9 +29,9 @@ def extract_package_name(output: str) -> str:
 
 def detect_current_package(device_ip: str, runner=CommandRunner) -> dict:
     commands = [
+        ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],
         ["adb", "-s", device_ip, "shell", "sh", "-c", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"],
         ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "top"],
-        ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
     ]
     for command in commands:
         result = runner.run(command, timeout=5)

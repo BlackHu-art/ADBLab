@@ -22,6 +22,10 @@ class LogService(QObject):
     """线程安全的日志服务，支持缓冲写入和多种输出方式"""
 
     log_received = Signal(str, str)  # level, message
+    logs_received = Signal(list)  # [(level, message), ...]
+    _flush_requested = Signal()
+    _flush_now_requested = Signal()
+    _stop_requested = Signal()
     _instance: Optional["LogService"] = None
     _lock = QMutex()  # 类级别的线程锁
 
@@ -54,6 +58,9 @@ class LogService(QObject):
         self._timer = QTimer()
         self._timer.setInterval(self._flush_interval)
         self._timer.timeout.connect(self._flush_buffer)
+        self._flush_requested.connect(self._ensure_flush_timer)
+        self._flush_now_requested.connect(self._flush_buffer)
+        self._stop_requested.connect(self._stop_flush_timer)
 
         logging.getLogger().handlers.clear()
         logging.getLogger().propagate = False
@@ -76,24 +83,42 @@ class LogService(QObject):
     def log(self, level: str, message: str, *args, **kwargs) -> None:
         """线程安全的日志记录方法，支持立即刷新"""
         flush_immediately = kwargs.pop("flush_immediately", False)
-        start_timer = False
-
         self._buffer_lock.lock()
         try:
             self._buffer.append((level, str(message)))
             # Drop oldest if buffer overflows
             if len(self._buffer) > self._max_buffer:
                 self._buffer = self._buffer[-self._max_buffer:]
-
-            if not flush_immediately:
-                start_timer = QThread.currentThread() == self.thread() and not self._timer.isActive()
         finally:
             self._buffer_lock.unlock()
 
+        is_owner_thread = QThread.currentThread() == self.thread()
         if flush_immediately:
-            self._flush_buffer()
-        elif start_timer:
+            if is_owner_thread:
+                self._flush_buffer()
+            else:
+                self._flush_now_requested.emit()
+        elif is_owner_thread:
+            self._ensure_flush_timer()
+        else:
+            self._flush_requested.emit()
+
+    def _ensure_flush_timer(self) -> None:
+        """确保刷新定时器只在 LogService 所在线程启动，避免跨线程操作 QTimer。"""
+        if not self._timer.isActive():
             self._timer.start()
+
+    def _stop_flush_timer(self) -> None:
+        """停止定时器也必须回到所属线程，后台线程只负责追加和搬运缓冲区。"""
+        if self._timer.isActive():
+            self._timer.stop()
+
+    def _request_stop_flush_timer(self) -> None:
+        """后台线程需要停止定时器时，通过 Qt 信号投递回所属线程。"""
+        if QThread.currentThread() == self.thread():
+            self._stop_flush_timer()
+        else:
+            self._stop_requested.emit()
 
     def _flush_buffer(self) -> None:
         """刷新缓冲区到所有输出"""
@@ -107,15 +132,20 @@ class LogService(QObject):
 
     def _drain_buffer_locked(self) -> list[tuple[str, str]]:
         if not self._buffer:
-            self._timer.stop()
+            self._request_stop_flush_timer()
             return []
         current_batch = self._buffer.copy()
         self._buffer.clear()
         return current_batch
 
     def _emit_batch(self, current_batch: list[tuple[str, str]]) -> None:
+        if not current_batch:
+            return
         for level, message in current_batch:
             self._write_file_log(level, message)
+        # UI 层优先走批量信号，避免大量日志逐条触发 QTextEdit 重绘。
+        self.logs_received.emit(current_batch)
+        for level, message in current_batch:
             self.log_received.emit(level, message)
 
     def _write_file_log(self, level: str, message: str) -> None:
@@ -163,7 +193,7 @@ class LogService(QObject):
         """安全关闭日志服务"""
         self._buffer_lock.lock()
         try:
-            self._timer.stop()
+            self._request_stop_flush_timer()
             current_batch = self._drain_buffer_locked()
             handlers = list(self.logger.handlers)
         finally:

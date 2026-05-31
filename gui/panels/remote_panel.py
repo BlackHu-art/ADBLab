@@ -2,6 +2,7 @@
 
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -10,7 +11,6 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -18,19 +18,8 @@ from PySide6.QtWidgets import (
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
+from gui.styles import BaseStyles
 from models.remote import RemoteControlService, ScrcpyConfig, ScrcpyService
-from utils.resource_path import resource_path
-
-
-def _bundled_scrcpy() -> str:
-    import platform
-    system = platform.system()
-    if system == "Windows":
-        return resource_path(os.path.join("scrcpy-win64-v3.3.1", "scrcpy.exe"))
-    # macOS/Linux: use system scrcpy from PATH
-    import shutil
-    found = shutil.which("scrcpy")
-    return found if found else "scrcpy"
 
 
 class ScrcpyLaunchWorker(QThread):
@@ -70,6 +59,7 @@ class RemotePanel(BasePanel):
     """Screen mirroring + remote key input."""
 
     _status_update_requested = Signal(str, object)
+    _remote_queue_status_requested = Signal(int, int, str)
 
     _PRESETS = {
         0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "50"},
@@ -87,18 +77,6 @@ class RemotePanel(BasePanel):
     _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
     _ORIENTATIONS = ["0", "90", "180", "270"]
 
-    # UI action 只映射到 service 方法，避免面板层继续拼 ADB 命令。
-    _REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
-        "swipe_up": ("directional_swipe", ("up",)),
-        "swipe_down": ("directional_swipe", ("down",)),
-        "swipe_left": ("directional_swipe", ("left",)),
-        "swipe_right": ("directional_swipe", ("right",)),
-        "notif_expand": ("expand_notifications", ()),
-        "notif_collapse": ("collapse_notifications", ()),
-        "rotate_portrait": ("rotate_portrait", ()),
-        "rotate_landscape": ("rotate_landscape", ()),
-    }
-
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
         self._process = None
@@ -113,7 +91,11 @@ class RemotePanel(BasePanel):
         self._launch_worker = None
         self._process_key = f"scrcpy_{id(self)}"
         self._active_device = None
+        self._remote_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="adblab-remote")
+        self._remote_submitted = 0
+        self._remote_completed = 0
         self._status_update_requested.connect(self._update_status)
+        self._remote_queue_status_requested.connect(self._update_remote_queue_status)
 
     # -- UI ----------------------------------------------------------------
 
@@ -253,7 +235,9 @@ class RemotePanel(BasePanel):
 
     def _build_control(self) -> QWidget:
         g = self._g("Remote Control")
-        gl = QHBoxLayout(g)
+        outer = QVBoxLayout(g)
+        outer.setSpacing(4)
+        gl = QHBoxLayout()
         gl.setSpacing(8)
 
         # D-Pad
@@ -262,7 +246,7 @@ class RemotePanel(BasePanel):
         dg.setSpacing(2)
 
         def _dk(label, code):
-            b = QPushButton(label)
+            b = self._qb(label, tooltip=f"Send keyevent {code}")
             b.setFont(self._font_base)
             b.setFixedSize(32, 32)
             b.clicked.connect(lambda _, c=code: self._send_keyevent(c))
@@ -287,7 +271,7 @@ class RemotePanel(BasePanel):
         ]
         for r, row in enumerate(keys):
             for c, (label, code) in enumerate(row):
-                b = QPushButton(label)
+                b = self._qb(label, tooltip=f"Send keyevent {code}")
                 b.setFont(self._font_sm)
                 b.setFixedHeight(28)
                 b.setMinimumWidth(56)
@@ -306,13 +290,19 @@ class RemotePanel(BasePanel):
         ]
         for r, row in enumerate(actions):
             for c, (label, action) in enumerate(row):
-                b = QPushButton(label)
+                b = self._qb(label, tooltip=f"Run remote action {action}")
                 b.setFont(self._font_sm)
                 b.setFixedHeight(28)
                 b.setMinimumWidth(66)
                 b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
                 gg.addWidget(b, r, c)
         gl.addWidget(gestures)
+        outer.addLayout(gl)
+
+        self._remote_status_label = QLabel("Input: Idle")
+        self._remote_status_label.setFont(self._font_sm)
+        self._remote_status_label.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
+        outer.addWidget(self._remote_status_label)
 
         return g
 
@@ -396,7 +386,7 @@ class RemotePanel(BasePanel):
     def _start_scrcpy(self):
         if self._process or (self._launch_worker and self._launch_worker.isRunning()):
             return
-        exe = _bundled_scrcpy()
+        exe = self._scrcpy_service.resolve_executable()
         if not os.path.isfile(exe):
             self._log("WARNING", f"scrcpy not found: {exe}")
             return
@@ -520,21 +510,104 @@ class RemotePanel(BasePanel):
         devices = self.selected_devices
         if not devices:
             return
-        self._remote_control.send_keyevent(devices[0], key_name)
+        self._submit_remote_input(
+            lambda: self._remote_control.send_keyevent(devices[0], key_name)
+        )
 
     def _send_remote_action(self, action: str):
         devices = self.selected_devices
         if not devices:
             return
         device = devices[0]
-        action_spec = self._REMOTE_ACTIONS.get(action)
-        if not action_spec:
+        def _run():
+            try:
+                self._remote_control.perform_action(device, action)
+            except Exception as exc:
+                self._log("ERROR", f"remote action failed: {exc}")
+
+        self._submit_remote_input(_run)
+
+    def _submit_remote_input(self, task):
+        """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
+        executor = getattr(self, "_remote_executor", None)
+        if executor is None:
+            self._mark_remote_submitted()
+            task()
+            self._mark_remote_completed("sent")
             return
-        method_name, args = action_spec
+        self._mark_remote_submitted()
+
+        def _wrapped():
+            try:
+                task()
+                result = "sent"
+            except Exception as exc:
+                result = "failed"
+                self._log("ERROR", f"remote input failed: {exc}")
+            self._mark_remote_completed(result)
+
         try:
-            getattr(self._remote_control, method_name)(device, *args)
-        except Exception as exc:
-            self._log("ERROR", f"remote action failed: {exc}")
+            executor.submit(_wrapped)
+        except RuntimeError as exc:
+            self._remote_submitted = max(
+                getattr(self, "_remote_completed", 0),
+                getattr(self, "_remote_submitted", 0) - 1,
+            )
+            self._emit_remote_queue_status(
+                self._remote_submitted,
+                getattr(self, "_remote_completed", 0),
+                "failed",
+            )
+            self._log("ERROR", f"remote executor stopped: {exc}")
+
+    def _mark_remote_submitted(self):
+        self._remote_submitted = getattr(self, "_remote_submitted", 0) + 1
+        self._emit_remote_queue_status(
+            self._remote_submitted,
+            getattr(self, "_remote_completed", 0),
+            "queued",
+        )
+
+    def _mark_remote_completed(self, result: str):
+        self._remote_completed = min(
+            getattr(self, "_remote_submitted", 0),
+            getattr(self, "_remote_completed", 0) + 1,
+        )
+        self._emit_remote_queue_status(
+            getattr(self, "_remote_submitted", 0),
+            self._remote_completed,
+            result,
+        )
+
+    def _emit_remote_queue_status(self, submitted: int, completed: int, result: str):
+        try:
+            self._remote_queue_status_requested.emit(submitted, completed, result)
+        except RuntimeError:
+            # Tests may exercise service wiring on __new__ objects without QObject init.
+            pass
+
+    def _update_remote_queue_status(self, submitted: int, completed: int, result: str):
+        label = getattr(self, "_remote_status_label", None)
+        if label is None:
+            return
+        pending = max(0, submitted - completed)
+        if pending > 1:
+            text = f"Input: Queued {pending}"
+            color = BaseStyles.color("TEXT_SECONDARY")
+        elif pending == 1:
+            text = "Input: Sending"
+            color = BaseStyles.color("TEXT_SECONDARY")
+        elif result == "failed":
+            text = "Input: Failed"
+            color = BaseStyles.color("LOG_ERROR")
+        elif result == "sent":
+            text = "Input: Sent"
+            color = BaseStyles.color("LOG_SUCCESS")
+        else:
+            text = "Input: Idle"
+            color = BaseStyles.color("TEXT_SECONDARY")
+        label.setText(text)
+        label.setStyleSheet(f"color: {color};")
 
     def _scrcpy_config(self, exe: str, device: str) -> ScrcpyConfig:
         return ScrcpyConfig(
@@ -564,3 +637,21 @@ class RemotePanel(BasePanel):
 
     def _log(self, level: str, msg: str):
         self.signals.log_message.emit(level, msg)
+
+    def closeEvent(self, event):
+        if self._process:
+            self._watchdog.stop()
+            self._process = None
+            try:
+                self._scrcpy_service.stop(self._process_key, timeout=2)
+            except Exception:
+                pass
+        if self._launch_worker and self._launch_worker.isRunning():
+            self._launch_worker.requestInterruption()
+        executor = getattr(self, "_remote_executor", None)
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
+        adb = getattr(self, "_adb", None)
+        if adb is not None and hasattr(adb, "close_input_sessions"):
+            adb.close_input_sessions()
+        super().closeEvent(event)

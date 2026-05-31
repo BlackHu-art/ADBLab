@@ -86,19 +86,29 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.signals.devices_updated.emit([])
 
     def _async_update_devices(self, devices: list):
+        if not devices:
+            return
+
         def _update():
+            records = []
             for ip in devices:
                 try:
                     info = ADBDevice.get_devices_basic_info(ip)
-                    DeviceStore.add_device(
-                        alias=f"device_{ip}",
-                        ip=ip,
-                        brand=info.get("Brand", "Unknown"),
-                        model=info.get("Model", "Unknown"),
-                        android_version=info.get("Aversion", "Unknown"),
+                    records.append(
+                        {
+                            "alias": f"device_{ip}",
+                            "ip": ip,
+                            "Brand": info.get("Brand", "Unknown"),
+                            "Model": info.get("Model", "Unknown"),
+                            "Aversion": info.get("Aversion", "Unknown"),
+                        }
                     )
                 except Exception:
                     pass
+            if records:
+                DeviceStore.upsert_devices(records)
+                # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
+                self.signals.devices_updated.emit(devices)
 
         self.executor.submit(_update)
 

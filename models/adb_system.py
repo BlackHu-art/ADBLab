@@ -356,10 +356,13 @@ class ADBSystemMixin:
         }
         if action not in actions:
             return {"success": False, "device_ip": device_ip, "error": f"Unknown action: {action}"}
-        for cmd_str in actions[action]:
-            shell_cmd = cmd_str.split()
-            self._run(
-                ["adb", "-s", device_ip, "shell"] + shell_cmd,
-                device_ip=device_ip,
-            )
-        return {"success": True, "device_ip": device_ip, "action": action}
+        # 多个 settings 写入合成一个 shell，减少动画开关等快捷操作的 ADB 进程往返。
+        shell_cmd = " && ".join(actions[action])
+        result = self._run(
+            ["adb", "-s", device_ip, "shell", shell_cmd],
+            device_ip=device_ip,
+            action=action,
+        )
+        if result.get("success"):
+            return {"success": True, "device_ip": device_ip, "action": action}
+        return result

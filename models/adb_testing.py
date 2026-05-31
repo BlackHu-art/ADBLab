@@ -28,6 +28,12 @@ class ADBTesting(ADBModelCore):
         self._abort_lock = threading.Lock()
         self._procs = ProcessRunner()
 
+    def shutdown(self):
+        """终止 Monkey/logcat 等测试诊断进程，供应用退出时统一调用。"""
+        with self._abort_lock:
+            self._aborted_devices.add("*")
+        self._procs.stop_all()
+
     def _get_current_package(self, device_ip: str) -> str:
         result = detect_current_package(device_ip)
         if result.get("success"):
@@ -38,6 +44,14 @@ class ADBTesting(ADBModelCore):
 
     @async_command
     def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
+        direct = CommandRunner.run_to_file(
+            ["adb", "-s", device_ip, "exec-out", "screencap", "-p"],
+            save_path,
+            timeout=30,
+        )
+        if direct.success and self._is_valid_png(save_path):
+            return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
+
         temp_path = "/sdcard/screenshot.png"
         r = self._run(["adb", "-s", device_ip, "shell", "screencap", "-p", temp_path])
         if not r["success"]:
@@ -51,6 +65,14 @@ class ADBTesting(ADBModelCore):
             return {"success": False, "device_ip": device_ip, "error": f"pull: {r['error']}"}
         self._run(["adb", "-s", device_ip, "shell", "rm", temp_path])
         return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
+
+    @staticmethod
+    def _is_valid_png(path: str) -> bool:
+        try:
+            with open(path, "rb") as image_file:
+                return image_file.read(8) == b"\x89PNG\r\n\x1a\n"
+        except OSError:
+            return False
 
     # ── Device logs ───────────────────────────────────────────────────
 

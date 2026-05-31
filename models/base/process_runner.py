@@ -24,6 +24,9 @@ class ProcessRunner:
         self._procs.stop("logcat_192.168.1.1")
     """
 
+    _global_procs: dict[tuple[int, str], subprocess.Popen] = {}
+    _global_lock = threading.Lock()
+
     def __init__(self):
         self._procs: dict[str, subprocess.Popen] = {}
         self._lock = threading.Lock()
@@ -57,6 +60,8 @@ class ProcessRunner:
         with self._lock:
             old_proc = self._procs.pop(key, None)
             self._procs[key] = proc
+        self._unregister_global(key, old_proc)
+        self._register_global(key, proc)
         self._stop_proc(old_proc)
         return proc
 
@@ -94,6 +99,7 @@ class ProcessRunner:
         """停止指定 key 的子进程，返回 exit code 或 None。"""
         with self._lock:
             proc = self._procs.pop(key, None)
+        self._unregister_global(key, proc)
         return self._stop_proc(proc, timeout=timeout)
 
     @staticmethod
@@ -136,3 +142,26 @@ class ProcessRunner:
             keys = list(self._procs.keys())
         for key in keys:
             self.stop(key)
+
+    @classmethod
+    def stop_all_tracked(cls):
+        """兜底停止所有被 ProcessRunner.start() 管理的进程；spawn() 外部启动不纳入。"""
+        with cls._global_lock:
+            items = list(cls._global_procs.items())
+            cls._global_procs.clear()
+        for (_owner, _key), proc in items:
+            cls._stop_proc(proc)
+
+    def _register_global(self, key: str, proc: subprocess.Popen | None):
+        if proc is None:
+            return
+        with self._global_lock:
+            self._global_procs[(id(self), key)] = proc
+
+    def _unregister_global(self, key: str, proc: subprocess.Popen | None):
+        if proc is None:
+            return
+        with self._global_lock:
+            stored = self._global_procs.get((id(self), key))
+            if stored is proc:
+                self._global_procs.pop((id(self), key), None)

@@ -3,12 +3,9 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QCompleter,
     QGridLayout,
-    QHBoxLayout,
     QLabel,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -30,31 +27,31 @@ class AppPanel(BasePanel):
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
         # Row 1: Get Email | Email input | Send Text | Verification input
-        r1 = QHBoxLayout()
-        r1.setSpacing(4)
         self.btn_generate_email = self._b("Get Email", "envelope.svg")
         self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
         self.verification_text_sender = self._in("Verification code or text...")
-        r1.addWidget(self.btn_generate_email, 1)
-        r1.addWidget(self.email_text_sender, 1)
-        r1.addWidget(self.btn_send_text, 1)
-        r1.addWidget(self.verification_text_sender, 1)
-        gts_l.addLayout(r1)
+        self._add_row(
+            gts_l,
+            (self.btn_generate_email, 1),
+            (self.email_text_sender, 1),
+            (self.btn_send_text, 1),
+            (self.verification_text_sender, 1),
+        )
         # Row 2: Screenshot | Duration | Record | Stop
-        r2 = QHBoxLayout()
-        r2.setSpacing(4)
         self.btn_screenshot = self._b("Screenshot", "camera.svg")
         self.record_duration = self._combo(["10s", "20s", "30s", "60s", "120s", "180s", "300s"])
         self.record_duration.setCurrentText("30s")
         self.btn_screen_record = self._b("Record", "video-camera.svg")
         self.btn_stop_record = self._b("Stop Rec", "stop-circle.svg")
         self.btn_stop_record.setEnabled(False)
-        r2.addWidget(self.btn_screenshot, 1)
-        r2.addWidget(self.record_duration, 1)
-        r2.addWidget(self.btn_screen_record, 1)
-        r2.addWidget(self.btn_stop_record, 1)
-        gts_l.addLayout(r2)
+        self._add_row(
+            gts_l,
+            (self.btn_screenshot, 1),
+            (self.record_duration, 1),
+            (self.btn_screen_record, 1),
+            (self.btn_stop_record, 1),
+        )
         lo.addWidget(g_ts)
 
         # ── Package Manager ──
@@ -62,11 +59,7 @@ class AppPanel(BasePanel):
         gl_pm = QVBoxLayout(g_pm)
         gl_pm.setSpacing(2)
         # Row 0: package selector (combo = 2-btn width, button = 1-btn width)
-        r0 = QHBoxLayout()
-        r0.setSpacing(4)
-        self.program_edit = QComboBox()
-        self.program_edit.setEditable(True)
-        self.program_edit.setFont(self._font_sm)
+        self.program_edit = self._combo_editable()
         self.program_edit.setFixedHeight(28)
         self.program_edit.lineEdit().setFont(self._font_sm)
         self.program_edit.lineEdit().setPlaceholderText("Package name")
@@ -75,39 +68,37 @@ class AppPanel(BasePanel):
         self.panel._apply_completer_style(self.completer)
         self.program_edit.setCompleter(self.completer)
         self.btn_get_program = self._b("Get Current Package", "target.svg")
-        r0.addWidget(self.program_edit, 2)
-        r0.addWidget(self.btn_get_program, 1)
-        gl_pm.addLayout(r0)
+        self._add_row(gl_pm, (self.program_edit, 2), (self.btn_get_program, 1))
         # Row 1: uninstall / clear data / restart
-        r1 = QHBoxLayout()
-        r1.setSpacing(4)
         self.uninstall_btn = self._b("Uninstall App", "trash.svg")
         self.clear_app_data_btn = self._b("Clear Data", "eraser.svg")
         self.restart_app_btn = self._b("Restart App", "repeat.svg")
-        r1.addWidget(self.uninstall_btn, 1)
-        r1.addWidget(self.clear_app_data_btn, 1)
-        r1.addWidget(self.restart_app_btn, 1)
-        gl_pm.addLayout(r1)
+        self._add_row(
+            gl_pm,
+            (self.uninstall_btn, 1),
+            (self.clear_app_data_btn, 1),
+            (self.restart_app_btn, 1),
+        )
         # Row 2: activity / parse / force stop
-        r2 = QHBoxLayout()
-        r2.setSpacing(4)
         self.print_activity_btn = self._b("Activity Info", "scroll.svg")
         self.parse_apk_info_btn = self._b("Parse APK", "magnifying-glass.svg")
         self.btn_force_stop = self._b("Force Stop App", "stop-circle.svg")
-        r2.addWidget(self.print_activity_btn, 1)
-        r2.addWidget(self.parse_apk_info_btn, 1)
-        r2.addWidget(self.btn_force_stop, 1)
-        gl_pm.addLayout(r2)
+        self._add_row(
+            gl_pm,
+            (self.print_activity_btn, 1),
+            (self.parse_apk_info_btn, 1),
+            (self.btn_force_stop, 1),
+        )
         # Row 3: disable / enable / disable for user
-        r3 = QHBoxLayout()
-        r3.setSpacing(4)
         self.btn_disable_app = self._b("Disable App", "prohibit.svg")
         self.btn_enable_app = self._b("Enable App", "check-circle.svg")
         self.btn_disable_user = self._b("Disable for User", "user-switch.svg")
-        r3.addWidget(self.btn_disable_app, 1)
-        r3.addWidget(self.btn_enable_app, 1)
-        r3.addWidget(self.btn_disable_user, 1)
-        gl_pm.addLayout(r3)
+        self._add_row(
+            gl_pm,
+            (self.btn_disable_app, 1),
+            (self.btn_enable_app, 1),
+            (self.btn_disable_user, 1),
+        )
         lo.addWidget(g_pm)
 
         # ── Monkey ──
@@ -120,12 +111,7 @@ class AppPanel(BasePanel):
         PCT_OPTS = ["0", "5", "10", "15", "20", "25", "30", "40", "50"]
 
         def _mk_combo(items):
-            c = QComboBox()
-            c.setEditable(True)
-            c.addItems(items)
-            c.setFont(self._font_sm)
-            c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            return c
+            return self._combo_editable(items)
 
         # ── Unified grid: Events/Throttle + Event mix + Total ──
         g_pct = QGridLayout()
@@ -168,38 +154,40 @@ class AppPanel(BasePanel):
         gm_l.addLayout(g_pct)
 
         # Flags row
-        r_flags = QHBoxLayout()
-        r_flags.setSpacing(8)
         self.monkey_chk_crashes = QCheckBox("Ignore crashes")
         self.monkey_chk_timeouts = QCheckBox("Ignore timeouts")
         self.monkey_chk_security = QCheckBox("Ignore security")
         for cb in (self.monkey_chk_crashes, self.monkey_chk_timeouts, self.monkey_chk_security):
             cb.setFont(self._font_sm)
-            r_flags.addWidget(cb)
-        gm_l.addLayout(r_flags)
+        self._add_row(
+            gm_l,
+            self.monkey_chk_crashes,
+            self.monkey_chk_timeouts,
+            self.monkey_chk_security,
+            spacing=8,
+        )
 
         # Action row
-        r_act = QHBoxLayout()
-        r_act.setSpacing(4)
         self.start_monkey_btn = self._b("Start", "robot.svg")
         self.kill_monkey_btn = self._b("Stop", "skull.svg")
-        r_act.addWidget(self.start_monkey_btn, 1)
-        r_act.addWidget(self.kill_monkey_btn, 1)
-        gm_l.addLayout(r_act)
+        self._add_row(gm_l, (self.start_monkey_btn, 1), (self.kill_monkey_btn, 1))
         lo.addWidget(g_m)
 
         # ── Reports ──
         g_r = self._g("Reports")
-        gr_l = QHBoxLayout(g_r)
-        gr_l.setSpacing(4)
+        gr_l = QVBoxLayout(g_r)
+        gr_l.setSpacing(2)
         self.get_bugreport_btn = self._b("Bugreport", "bug.svg")
         self.get_anr_file_btn = self._b("ANR Files", "warning.svg")
         self.btn_retrieve_devices_logs = self._b("Retrieve Logs", "file-arrow-down.svg")
         self.btn_cleanup_logs = self._b("Cleanup Logs", "broom.svg")
-        gr_l.addWidget(self.get_bugreport_btn, 1)
-        gr_l.addWidget(self.get_anr_file_btn, 1)
-        gr_l.addWidget(self.btn_retrieve_devices_logs, 1)
-        gr_l.addWidget(self.btn_cleanup_logs, 1)
+        self._add_row(
+            gr_l,
+            (self.get_bugreport_btn, 1),
+            (self.get_anr_file_btn, 1),
+            (self.btn_retrieve_devices_logs, 1),
+            (self.btn_cleanup_logs, 1),
+        )
         lo.addWidget(g_r)
 
         # ── Performance ──
@@ -207,29 +195,29 @@ class AppPanel(BasePanel):
         gl_perf = QVBoxLayout(g_perf)
         gl_perf.setSpacing(2)
 
-        r_p1 = QHBoxLayout()
-        r_p1.setSpacing(4)
         self.btn_meminfo = self._b("Memory", "memory.svg")
         self.btn_cpuinfo = self._b("CPU Load", "cpu.svg")
         self.btn_battery_info = self._b("Battery", "battery-full.svg")
         self.btn_uptime = self._b("Uptime", "clock.svg")
-        r_p1.addWidget(self.btn_meminfo, 1)
-        r_p1.addWidget(self.btn_cpuinfo, 1)
-        r_p1.addWidget(self.btn_battery_info, 1)
-        r_p1.addWidget(self.btn_uptime, 1)
-        gl_perf.addLayout(r_p1)
+        self._add_row(
+            gl_perf,
+            (self.btn_meminfo, 1),
+            (self.btn_cpuinfo, 1),
+            (self.btn_battery_info, 1),
+            (self.btn_uptime, 1),
+        )
 
-        r_p2 = QHBoxLayout()
-        r_p2.setSpacing(4)
         self.btn_top = self._b("Top Snapshot", "chart-bar.svg")
         self.btn_gfx = self._b("GFX Info", "image.svg")
         self.btn_wakelock = self._b("Wakelocks", "lock.svg")
         self.btn_netstats = self._b("Net Stats", "chart-line.svg")
-        r_p2.addWidget(self.btn_top, 1)
-        r_p2.addWidget(self.btn_gfx, 1)
-        r_p2.addWidget(self.btn_wakelock, 1)
-        r_p2.addWidget(self.btn_netstats, 1)
-        gl_perf.addLayout(r_p2)
+        self._add_row(
+            gl_perf,
+            (self.btn_top, 1),
+            (self.btn_gfx, 1),
+            (self.btn_wakelock, 1),
+            (self.btn_netstats, 1),
+        )
         lo.addWidget(g_perf)
 
         lo.addStretch()

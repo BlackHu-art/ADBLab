@@ -25,6 +25,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def __init__(self):
         super().__init__()
         self._rec_procs = ProcessRunner()
+        self._adb_bridge = None
 
     # ── Screen Recording ─────────────────────────────────────────────────
 
@@ -101,42 +102,68 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def input_tap_async(self, device_ip: str, x: int, y: int) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "tap", str(x), str(y)],
-            device_ip=device_ip, x=x, y=y,
-        )
+        sent = self._send_input(device_ip, f"tap {int(x)} {int(y)}")
+        return {"success": sent, "device_ip": device_ip, "x": x, "y": y}
 
     @async_command
     def input_swipe_async(self, device_ip: str, x1: int, y1: int,
                           x2: int, y2: int, duration_ms: int = 300) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "swipe",
-             str(x1), str(y1), str(x2), str(y2), str(duration_ms)],
-            device_ip=device_ip,
+        sent = self._send_input(
+            device_ip,
+            f"swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
         )
+        return {
+            "success": sent,
+            "device_ip": device_ip,
+            "x1": x1,
+            "y1": y1,
+            "x2": x2,
+            "y2": y2,
+            "duration_ms": duration_ms,
+        }
 
     @async_command
     def input_keyevent_async(self, device_ip: str, keycode: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "keyevent", keycode],
-            device_ip=device_ip, keycode=keycode,
-        )
+        sent = self._send_input(device_ip, f"keyevent {keycode}")
+        return {"success": sent, "device_ip": device_ip, "keycode": keycode}
 
     @async_command
     def input_longpress_async(self, device_ip: str, keycode: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "keyevent", "--longpress", keycode],
-            device_ip=device_ip,
-        )
+        sent = self._send_input(device_ip, f"keyevent --longpress {keycode}")
+        return {"success": sent, "device_ip": device_ip, "keycode": keycode}
 
     @async_command
     def input_drag_async(self, device_ip: str, x1: int, y1: int,
                          x2: int, y2: int, duration_ms: int = 300) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "draganddrop",
-             str(x1), str(y1), str(x2), str(y2), str(duration_ms)],
-            device_ip=device_ip,
+        sent = self._send_input(
+            device_ip,
+            f"draganddrop {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
         )
+        return {"success": sent, "device_ip": device_ip}
+
+    def _send_input(self, device_ip: str, input_args: str) -> bool:
+        """复用持久 adb shell input 通道；失败时 ADBBridge 内部会回退到独立进程。"""
+        try:
+            self._input_bridge().shell_input(input_args, device_id=device_ip)
+            return True
+        except Exception:
+            return False
+
+    def _input_bridge(self):
+        if self._adb_bridge is None:
+            from core.adb_bridge import ADBBridge
+
+            self._adb_bridge = ADBBridge()
+        return self._adb_bridge
+
+    def close_input_sessions(self, device_ip: str | None = None):
+        if self._adb_bridge is not None:
+            self._adb_bridge.close_input_sessions(device_ip)
+
+    def shutdown(self):
+        """关闭高级功能持有的长生命周期进程，防止主窗口退出后残留。"""
+        self._rec_procs.stop_all()
+        self.close_input_sessions()
 
     # ── Performance Diagnostics ──────────────────────────────────────────
 

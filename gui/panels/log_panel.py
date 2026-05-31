@@ -1,9 +1,10 @@
 """Theme-aware log panel with auto-scroll, line trimming, and re-render on theme change."""
 
 from datetime import datetime
+from html import escape
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from core.log_service import LogService
@@ -11,12 +12,21 @@ from gui.styles import BaseStyles
 
 
 class LogPanel(QWidget):
+    RENDER_DEBOUNCE_MS = 16
+    IMMEDIATE_BATCH_SIZE = 100
 
     def __init__(self, parent=None):
         super().__init__(parent)
         from core.settings_manager import AppSettings
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._entries = []
+        self._line_count = 0
+        self._pending_rows = []
+        self._pending_scroll_to_bottom = False
+        self._pending_trim_count = 0
+        self._render_pending_timer = QTimer(self)
+        self._render_pending_timer.setSingleShot(True)
+        self._render_pending_timer.timeout.connect(self._flush_pending_rows)
         self._init_ui()
         self._connect_services()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
@@ -42,6 +52,7 @@ class LogPanel(QWidget):
         self.text_output.setFont(log_font)
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._apply_style()
+        self._cancel_pending_render()
         self._rerender_all()
 
     def _init_ui(self):
@@ -61,78 +72,113 @@ class LogPanel(QWidget):
         self._apply_style()
 
     def _connect_services(self):
-        LogService().log_received.connect(self._append_log, Qt.ConnectionType.AutoConnection)
+        LogService().logs_received.connect(self._append_logs, Qt.ConnectionType.AutoConnection)
 
     def _append_log(self, level: str, message: str):
+        self._append_logs([(level, message)])
+
+    def _append_logs(self, records: list[tuple[str, str]]):
+        if not records:
+            return
         sb = self.text_output.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 20
 
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self._entries.append((timestamp, level, message))
-        self._render_entry(timestamp, level, message)
+        rows = [(timestamp, level, message) for level, message in records]
+        self._entries.extend(rows)
+        if len(rows) >= self.IMMEDIATE_BATCH_SIZE:
+            self._flush_pending_rows()
+            self._render_rows(rows, at_bottom, len(rows))
+            return
 
+        self._pending_rows.extend(rows)
+        self._pending_scroll_to_bottom = self._pending_scroll_to_bottom or at_bottom
+        self._pending_trim_count += len(rows)
+        if not self._render_pending_timer.isActive():
+            self._render_pending_timer.start(self.RENDER_DEBOUNCE_MS)
+
+    def _render_rows(self, rows: list[tuple[str, str, str]], at_bottom: bool, added_count: int):
+        self._render_entries(rows)
         if at_bottom:
+            sb = self.text_output.verticalScrollBar()
             sb.setValue(sb.maximum())
-        self._trim_excess_lines()
+        self._trim_excess_lines(added_count)
 
-    def _render_entry(self, timestamp: str, level: str, message: str):
+    def _flush_pending_rows(self):
+        if not self._pending_rows:
+            return
+        rows = self._pending_rows
+        at_bottom = self._pending_scroll_to_bottom
+        added_count = self._pending_trim_count
+        self._pending_rows = []
+        self._pending_scroll_to_bottom = False
+        self._pending_trim_count = 0
+        self._render_rows(rows, at_bottom, added_count)
+
+    def _cancel_pending_render(self):
+        if self._render_pending_timer.isActive():
+            self._render_pending_timer.stop()
+        self._pending_rows = []
+        self._pending_scroll_to_bottom = False
+        self._pending_trim_count = 0
+
+    def _render_entries(self, rows: list[tuple[str, str, str]]):
+        if not rows:
+            return
         c = BaseStyles.color
         cursor = self.text_output.textCursor()
         cursor.movePosition(QTextCursor.End)
+        cursor.beginEditBlock()
+        try:
+            cursor.insertHtml("".join(self._entry_html(ts, level, msg) for ts, level, msg in rows))
+        finally:
+            cursor.endEditBlock()
 
-        ts_fmt = QTextCharFormat()
-        ts_fmt.setForeground(QColor(c("LOG_TIMESTAMP")))
-        cursor.insertText(f"{timestamp} ", ts_fmt)
-
-        lv_key = f"LOG_{level}" if level in ("DEBUG","INFO","SUCCESS","WARNING","ERROR","CRITICAL") else "LOG_INFO"
-        lv_fmt = QTextCharFormat()
-        lv_fmt.setForeground(QColor(c(lv_key)))
-        cursor.insertText(f"[{level}]", lv_fmt)
-
-        msg_fmt = QTextCharFormat()
-        msg_fmt.setForeground(QColor(c("LOG_TEXT_COLOR")))
-        cursor.insertText(f" {message}\n", msg_fmt)
+    def _entry_html(self, timestamp: str, level: str, message: str) -> str:
+        c = BaseStyles.color
+        lv_key = (
+            f"LOG_{level}"
+            if level in ("DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
+            else "LOG_INFO"
+        )
+        msg = escape(str(message)).replace("\n", "<br>")
+        return (
+            f'<span style="color:{c("LOG_TIMESTAMP")}">{escape(timestamp)}</span> '
+            f'<span style="color:{c(lv_key)}">[{escape(str(level))}]</span> '
+            f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span><br>'
+        )
 
     def _rerender_all(self):
         """Batch re-render via setHtml for performance on theme change."""
-        c = BaseStyles.color
-        lines = []
-        for ts, level, msg in self._entries:
-            lv_key = f"LOG_{level}" if level in ("DEBUG","INFO","SUCCESS","WARNING","ERROR","CRITICAL") else "LOG_INFO"
-            lv_color = c(lv_key)
-            ts_color = c("LOG_TIMESTAMP")
-            msg_color = c("LOG_TEXT_COLOR")
-            lines.append(
-                f'<span style="color:{ts_color}">{ts}</span> '
-                f'<span style="color:{lv_color}">[{level}]</span> '
-                f'<span style="color:{msg_color}">{msg}</span>'
-            )
-        self.text_output.setHtml("<br>".join(lines) + "<br>")
+        self.text_output.setHtml("".join(self._entry_html(ts, level, msg) for ts, level, msg in self._entries))
         self.text_output.ensureCursorVisible()
         sb = self.text_output.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def _trim_excess_lines(self):
+    def _trim_excess_lines(self, added_count: int = 1):
         """Trim oldest lines when exceeding max. Batched: check only every 50 lines."""
-        if not hasattr(self, '_line_count'):
-            self._line_count = 0
-        self._line_count += 1
-        if self._line_count % 50 != 0:
+        force_trim = added_count <= 0
+        if not force_trim:
+            self._line_count += added_count
+        if (
+            not force_trim
+            and self._line_count % 50 != 0
+            and len(self._entries) <= self._max_lines + 100
+        ):
             return
-        block_count = self.text_output.document().blockCount()
-        if block_count > self._max_lines:
-            excess = block_count - self._max_lines + 100
-            cursor = self.text_output.textCursor()
-            cursor.movePosition(QTextCursor.Start)
-            cursor.movePosition(QTextCursor.Down, QTextCursor.KeepAnchor, excess)
-            cursor.removeSelectedText()
-            self._entries = self._entries[excess:]
+        if len(self._entries) <= self._max_lines:
+            return
+        excess = len(self._entries) - self._max_lines
+        self._entries = self._entries[excess:]
+        self._rerender_all()
 
     def clear(self):
+        self._cancel_pending_render()
         self._entries.clear()
         self.text_output.clear()
         self._line_count = 0
 
     def set_max_lines(self, max_lines: int):
         self._max_lines = max(max_lines, 100)
-        self._trim_excess_lines()
+        self._flush_pending_rows()
+        self._trim_excess_lines(0)

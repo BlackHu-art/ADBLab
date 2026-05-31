@@ -54,7 +54,7 @@ class _ThemedIconEngine(QIconEngine):
         return _ThemedIconEngine(self._name)
 
     def key(self) -> str:
-        return f"themed:{self._name}"
+        return f"themed:{self._name}:{_tc('TEXT_PRIMARY')}"
 
     def actualSize(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QSize:
         return size

@@ -24,6 +24,7 @@ DEFAULTS = {
     "log_max_lines": 2000,
     "confirm_dangerous_ops": True,
     "continuous_device_scan": True,
+    "performance_log_threshold_ms": 300,
     "monkey_params": {
         "events": 10000,
         "throttle": 300,

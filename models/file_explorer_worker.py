@@ -14,10 +14,11 @@ class ADBWorker(QThread):
 
     finished = Signal(str, bool)
 
-    def __init__(self, device_ip: str, args: list):
+    def __init__(self, device_ip: str, args: list, timeout: int = 30):
         super().__init__()
         self.device_ip = device_ip
         self.args = args
+        self.timeout = timeout
         self._aborted = False
 
     def abort(self):
@@ -25,7 +26,7 @@ class ADBWorker(QThread):
         self.requestInterruption()
 
     def run(self):
-        result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=30)
+        result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=self.timeout)
         if self._aborted:
             return
         if result.success:

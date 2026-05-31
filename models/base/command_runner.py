@@ -65,3 +65,33 @@ class CommandRunner:
             return CommandResult(success=False, error=f"Timeout({timeout}s)")
         except Exception as e:
             return CommandResult(success=False, error=str(e))
+
+    @staticmethod
+    def run_to_file(
+        cmd: list[str],
+        output_path: str,
+        timeout: int = 30,
+        shell: bool = False,
+    ) -> CommandResult:
+        """Run a command and stream binary stdout directly to a file."""
+        _cmd = list(cmd)
+        if _cmd and _cmd[0] == "adb":
+            _cmd[0] = _get_adb_path()
+        try:
+            with open(output_path, "wb") as output_file:
+                r = subprocess.run(
+                    _cmd,
+                    stdout=output_file,
+                    stderr=subprocess.PIPE,
+                    shell=shell,
+                    timeout=timeout,
+                    creationflags=CF,
+                )
+            if r.returncode != 0:
+                err = (r.stderr or b"").decode("utf-8", errors="ignore").strip()
+                return CommandResult(success=False, returncode=r.returncode, error=err)
+            return CommandResult(success=True, output=output_path, returncode=0)
+        except subprocess.TimeoutExpired:
+            return CommandResult(success=False, error=f"Timeout({timeout}s)")
+        except Exception as e:
+            return CommandResult(success=False, error=str(e))

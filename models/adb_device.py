@@ -1,12 +1,41 @@
 """
 Device connection, discovery, and info retrieval.
 
-Imports only from adb_model (core) — no circular dependencies.
+Imports only from adb_model (core) - no circular dependencies.
 """
 
+import re
 import time
 
 from .adb_model import ADBModelCore, async_command
+from .base.command_runner import CommandRunner
+
+
+BASIC_PROP_FIELDS = {
+    "Model": "ro.product.model",
+    "Brand": "ro.product.brand",
+    "Aversion": "ro.build.version.release",
+}
+
+FULL_PROP_FIELDS = {
+    "Model": "ro.product.model",
+    "Brand": "ro.product.brand",
+    "Android Version": "ro.build.version.release",
+    "Serial Number": "ro.serialno",
+    "SDK Version": "ro.build.version.sdk",
+    "CPU Architecture": "ro.product.cpu.abi",
+    "Hardware": "ro.hardware",
+    "Timezone": "persist.sys.timezone",
+}
+
+GETPROP_LINE_RE = re.compile(r"^\[([^\]]+)\]: \[(.*)\]$")
+INFO_MARKERS = {
+    "PROPS": "__ADBLAB_PROPS__",
+    "DF": "__ADBLAB_DF__",
+    "MEMINFO": "__ADBLAB_MEMINFO__",
+    "WM": "__ADBLAB_WM__",
+    "IP": "__ADBLAB_IP__",
+}
 
 
 def parse_connected_devices(output: str) -> list[str]:
@@ -16,6 +45,51 @@ def parse_connected_devices(output: str) -> list[str]:
         if len(parts) >= 2 and parts[1] == "device":
             devices.append(parts[0])
     return devices
+
+
+def parse_getprop_output(output: str) -> dict[str, str]:
+    """Parse `adb shell getprop` output into a property dictionary."""
+    props: dict[str, str] = {}
+    for raw_line in output.splitlines():
+        match = GETPROP_LINE_RE.match(raw_line.strip())
+        if match:
+            props[match.group(1)] = match.group(2)
+    return props
+
+
+def parse_labeled_sections(output: str, markers: dict[str, str]) -> dict[str, str]:
+    """Split a batched shell output by explicit section markers."""
+    sections = {key: "" for key in markers}
+    marker_to_key = {marker: key for key, marker in markers.items()}
+    current_key = ""
+    lines: dict[str, list[str]] = {key: [] for key in markers}
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line in marker_to_key:
+            current_key = marker_to_key[line]
+            continue
+        if current_key:
+            lines[current_key].append(raw_line)
+    for key, section_lines in lines.items():
+        sections[key] = "\n".join(section_lines).strip()
+    return sections
+
+
+def _meminfo_value(output: str, key: str) -> str:
+    prefix = f"{key}:"
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped
+    return "N/A"
+
+
+def _line_with_prefix(output: str, prefix: str) -> str:
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped
+    return "N/A"
 
 
 class ADBDevice(ADBModelCore):
@@ -42,7 +116,8 @@ class ADBDevice(ADBModelCore):
     def disconnect_device_async(self, device: str) -> dict:
         r = self._run(["adb", "disconnect", device], device=device)
         return {
-            "device_ip": device, "raw_result": r.get("output", r.get("error", "")),
+            "device_ip": device,
+            "raw_result": r.get("output", r.get("error", "")),
             "success": "disconnected" in r.get("output", "").lower(),
         }
 
@@ -50,18 +125,26 @@ class ADBDevice(ADBModelCore):
     def restart_device_async(self, device: str) -> dict:
         r = self._run(["adb", "-s", device, "get-state"])
         if not r["success"] or "device" not in r.get("output", ""):
-            return {"device_ip": device, "success": False,
-                    "error": f"Abnormal device status: {r.get('output', r.get('error', ''))}",
-                    "requires_refresh": False}
-        # reboot 超时 = 设备正在重启 = 成功（_run 内部捕获 TimeoutExpired 返回 success=False）
+            return {
+                "device_ip": device,
+                "success": False,
+                "error": f"Abnormal device status: {r.get('output', r.get('error', ''))}",
+                "requires_refresh": False,
+            }
         r = self._run(["adb", "-s", device, "reboot"], timeout=3)
         if not r["success"] and "Timeout" in r.get("error", ""):
-            return {"device_ip": device, "success": True,
-                    "requires_refresh": True,
-                    "raw_result": "The device is starting to restart"}
-        return {"device_ip": device, "success": False,
-                "error": r.get("error", r.get("output", "abnormal return")),
-                "requires_refresh": False}
+            return {
+                "device_ip": device,
+                "success": True,
+                "requires_refresh": True,
+                "raw_result": "The device is starting to restart",
+            }
+        return {
+            "device_ip": device,
+            "success": False,
+            "error": r.get("error", r.get("output", "abnormal return")),
+            "requires_refresh": False,
+        }
 
     @async_command
     def restart_adb_async(self) -> dict:
@@ -72,55 +155,118 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def get_device_info_async(self, device: str) -> dict[str, str]:
-        commands = {
-            "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
-            "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
-            "Android Version": [
-                "adb",
-                "-s",
-                device,
-                "shell",
-                "getprop",
-                "ro.build.version.release",
-            ],
-            "Serial Number": ["adb", "-s", device, "shell", "getprop", "ro.serialno"],
-            "SDK Version": ["adb", "-s", device, "shell", "getprop", "ro.build.version.sdk"],
-            "CPU Architecture": ["adb", "-s", device, "shell", "getprop", "ro.product.cpu.abi"],
-            "Hardware": ["adb", "-s", device, "shell", "getprop", "ro.hardware"],
-            "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"],
-            "Total Memory": ["adb", "-s", device, "shell", "cat /proc/meminfo | grep MemTotal"],
-            "Available Memory": [
-                "adb",
-                "-s",
-                device,
-                "shell",
-                "cat /proc/meminfo | grep MemAvailable",
-            ],
-            "Resolution": ["adb", "-s", device, "shell", "wm", "size"],
-            "Density": ["adb", "-s", device, "shell", "wm", "density"],
-            "Timezone": ["adb", "-s", device, "shell", "getprop", "persist.sys.timezone"],
-            "Mac": ["adb", "-s", device, "shell", "ip", "addr", "show", "wlan0"],
-        }
-        info = self._fetch_device_info(commands)
+        info = self._fetch_full_device_info(device)
         info["device_ip"] = device
-        info["ip"] = device  # 向后兼容旧 controller/UI 代码
+        info["ip"] = device
         return info
 
     @async_command
     def get_devices_basic_info_async(self, device: str) -> dict[str, str]:
-        commands = {
-            "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
-            "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
-            "Aversion": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
-        }
-        return self._fetch_device_info(commands)
+        return self._fetch_properties(device, BASIC_PROP_FIELDS)
 
     @staticmethod
     def get_devices_basic_info(device):
         """Synchronous wrapper used by DeviceStore for quick lookups."""
+        return ADBDevice._fetch_properties(device, BASIC_PROP_FIELDS)
+
+    @staticmethod
+    def _fetch_properties(device: str, field_map: dict[str, str]) -> dict[str, str]:
+        if field_map == BASIC_PROP_FIELDS:
+            return ADBDevice._fetch_basic_properties(device)
+        result = CommandRunner.run(
+            ["adb", "-s", device, "shell", "getprop"],
+            timeout=15,
+        )
+        if result.success:
+            props = parse_getprop_output(result.output)
+            return {label: props.get(prop, "") for label, prop in field_map.items()}
         commands = {
-            "Model": ["adb", "-s", device, "shell", "getprop", "ro.product.model"],
-            "Brand": ["adb", "-s", device, "shell", "getprop", "ro.product.brand"],
-            "Aversion": ["adb", "-s", device, "shell", "getprop", "ro.build.version.release"],
+            label: ["adb", "-s", device, "shell", "getprop", prop]
+            for label, prop in field_map.items()
         }
         return ADBModelCore._fetch_device_info(commands)
+
+    @staticmethod
+    def _fetch_basic_properties(device: str) -> dict[str, str]:
+        labels = list(BASIC_PROP_FIELDS.keys())
+        props = list(BASIC_PROP_FIELDS.values())
+        result = CommandRunner.run(
+            ["adb", "-s", device, "shell", "; ".join(f"getprop {prop}" for prop in props)],
+            timeout=15,
+        )
+        if result.success:
+            values = result.output.splitlines()
+            return {
+                label: values[index].strip() if index < len(values) else ""
+                for index, label in enumerate(labels)
+            }
+        commands = {
+            label: ["adb", "-s", device, "shell", "getprop", prop]
+            for label, prop in BASIC_PROP_FIELDS.items()
+        }
+        return ADBModelCore._fetch_device_info(commands)
+
+    @staticmethod
+    def _fetch_full_device_info(device: str) -> dict[str, str]:
+        command = " ; ".join(
+            [
+                f"echo {INFO_MARKERS['PROPS']}",
+                "getprop",
+                f"echo {INFO_MARKERS['DF']}",
+                "df -h /data",
+                f"echo {INFO_MARKERS['MEMINFO']}",
+                "cat /proc/meminfo",
+                f"echo {INFO_MARKERS['WM']}",
+                "wm size; wm density",
+                f"echo {INFO_MARKERS['IP']}",
+                "ip addr show wlan0",
+            ]
+        )
+        result = CommandRunner.run(
+            ["adb", "-s", device, "shell", command],
+            timeout=15,
+        )
+        if not result.success:
+            info = ADBDevice._fetch_properties(device, FULL_PROP_FIELDS)
+            info.update(ADBDevice._fetch_device_probe_info(device))
+            return info
+        sections = parse_labeled_sections(result.output, INFO_MARKERS)
+        props = parse_getprop_output(sections["PROPS"])
+        info = {label: props.get(prop, "") for label, prop in FULL_PROP_FIELDS.items()}
+        wm_output = sections["WM"]
+        info.update(
+            {
+                "Storage": sections["DF"] or "N/A",
+                "Total Memory": _meminfo_value(sections["MEMINFO"], "MemTotal"),
+                "Available Memory": _meminfo_value(sections["MEMINFO"], "MemAvailable"),
+                "Resolution": _line_with_prefix(wm_output, "Physical size:"),
+                "Density": _line_with_prefix(wm_output, "Physical density:"),
+                "Mac": sections["IP"] or "N/A",
+            }
+        )
+        return info
+
+    @staticmethod
+    def _fetch_device_probe_info(device: str) -> dict[str, str]:
+        probes = {
+            "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"],
+            "Meminfo": ["adb", "-s", device, "shell", "cat", "/proc/meminfo"],
+            "Wm": ["adb", "-s", device, "shell", "wm size; wm density"],
+            "Mac": ["adb", "-s", device, "shell", "ip", "addr", "show", "wlan0"],
+        }
+        raw = {
+            key: result.output if result.success else "N/A"
+            for key, result in (
+                (key, CommandRunner.run(command, timeout=15))
+                for key, command in probes.items()
+            )
+        }
+        wm_output = raw["Wm"]
+        return {
+            "Storage": raw["Storage"],
+            "Total Memory": _meminfo_value(raw["Meminfo"], "MemTotal"),
+            "Available Memory": _meminfo_value(raw["Meminfo"], "MemAvailable"),
+            "Resolution": _line_with_prefix(wm_output, "Physical size:"),
+            "Density": _line_with_prefix(wm_output, "Physical density:"),
+            "Mac": raw["Mac"],
+        }

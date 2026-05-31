@@ -10,6 +10,8 @@ from functools import wraps
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
+from core.perf_trace import attach_perf, build_async_perf, perf_counter
+
 from .base.command_runner import CommandRunner
 
 # ── Module-level async decorator ─────────────────────────────────────────
@@ -20,19 +22,31 @@ def async_command(method):
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
+        queued_at = perf_counter()
+
         class CommandTask(QRunnable):
-            def __init__(self, model, method_ref, *args, **kwargs):
+            def __init__(self, model, method_ref, queued_at, *args, **kwargs):
                 super().__init__()
                 self.model = model
                 self.method_ref = method_ref
+                self.queued_at = queued_at
                 self.args = args
                 self.kwargs = kwargs
 
             def run(self):
                 import shiboken6
 
+                started_at = perf_counter()
                 try:
                     result = self.method_ref(self.model, *self.args, **self.kwargs)
+                    finished_at = perf_counter()
+                    perf = build_async_perf(
+                        self.method_ref.__name__,
+                        self.queued_at,
+                        started_at,
+                        finished_at,
+                    )
+                    result = attach_perf(result, perf)
                     if not shiboken6.isValid(self.model):
                         return
                     self.model.command_finished.emit(self.method_ref.__name__, result)
@@ -41,14 +55,21 @@ def async_command(method):
                 except Exception as e:
                     if shiboken6.isValid(self.model):
                         try:
+                            finished_at = perf_counter()
+                            perf = build_async_perf(
+                                self.method_ref.__name__,
+                                self.queued_at,
+                                started_at,
+                                finished_at,
+                            )
                             self.model.command_finished.emit(
                                 self.method_ref.__name__,
-                                {"success": False, "error": str(e)},
+                                attach_perf({"success": False, "error": str(e)}, perf),
                             )
                         except RuntimeError:
                             pass
 
-        task = CommandTask(self, method, *args, **kwargs)
+        task = CommandTask(self, method, queued_at, *args, **kwargs)
         self.thread_pool.start(task)
 
     return wrapper

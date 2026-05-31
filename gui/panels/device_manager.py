@@ -109,23 +109,56 @@ class DeviceManager(BasePanel):
         if devices is None:
             from models.adb_device import ADBDevice
             devices = ADBDevice.get_connected_devices_async()
+        devices = list(dict.fromkeys(devices or []))
         prev = set(self.selected_devices)
-        self.listbox_devices.clear()
+        existing = self._device_items_by_ip()
+        device_set = set(devices)
+        for ip, item in list(existing.items()):
+            if ip not in device_set:
+                row = self.listbox_devices.row(item)
+                if row >= 0:
+                    self.listbox_devices.takeItem(row)
         if not devices:
+            self.panel._connected_device_cache = []
             return
         self.panel._connected_device_cache = devices
-        infos = DeviceStore.get_full_devices_info(devices)
-        for info in infos:
+        # 刷新刚发现的新设备时，DeviceStore 可能还在后台补全品牌/型号。
+        # 先显示可选的占位行，避免用户点 Refresh 后列表短暂为空。
+        infos = {
+            str(info.get("ip", "")): info
+            for info in DeviceStore.get_full_devices_info(devices)
+        }
+        for device in devices:
+            info = infos.get(device) or {
+                "Brand": "ADB",
+                "Model": "Detecting",
+                "Aversion": "",
+                "ip": device,
+            }
             brand = str(info.get("Brand", ""))
             model = str(info.get("Model", ""))
             version = str(info.get("Aversion", ""))
             ip_addr = str(info.get("ip", ""))
             txt = f"{brand}  |  {model}  |  {version}  |  {ip_addr}"
-            item = QListWidgetItem(txt)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item = existing.get(ip_addr)
+            if item is None:
+                item = QListWidgetItem()
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                self.listbox_devices.addItem(item)
+            item.setText(txt)
             item.setCheckState(Qt.Checked if ip_addr in prev else Qt.Unchecked)
             item.setData(Qt.UserRole, info)
-            self.listbox_devices.addItem(item)
+            item.setToolTip(txt)
+
+    def _device_items_by_ip(self) -> dict[str, QListWidgetItem]:
+        items = {}
+        for row in range(self.listbox_devices.count()):
+            item = self.listbox_devices.item(row)
+            info = item.data(Qt.UserRole) if item else None
+            ip = info.get("ip", "") if isinstance(info, dict) else ""
+            if ip:
+                items[str(ip)] = item
+        return items
 
     # -- combo dropdown ---------------------------------------------------
 
@@ -160,6 +193,10 @@ class DeviceManager(BasePanel):
         if not hasattr(self, "ip_entry"):
             return
         devs = DeviceStore.get_basic_devices_info()
+        cache_key = tuple((str(brand), str(model), str(ip)) for brand, model, ip in devs)
+        if cache_key == getattr(self, "_device_combo_cache", None):
+            return
+        self._device_combo_cache = cache_key
         self._device_model.removeRows(0, self._device_model.rowCount())
         ip_list = []
         for brand, model, ip in devs:

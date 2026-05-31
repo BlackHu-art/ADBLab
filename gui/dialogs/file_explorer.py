@@ -6,7 +6,6 @@ Adapted to use ADBLab's BaseStyles theme system.
 
 import base64
 import os
-import re
 import tempfile
 
 from PySide6.QtCore import QSize, Qt
@@ -33,6 +32,7 @@ from PySide6.QtWidgets import (
 
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from models import file_explorer_service as explorer_service
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
 # ── File Explorer Dialog ─────────────────────────────────────────────────
@@ -232,22 +232,20 @@ class FileExplorerDialog(QDialog):
     # ── ADB helpers ──────────────────────────────────────────────────────
 
     def _root(self, cmd: str) -> str:
-        return f'su -c "{cmd}"' if self.root_cb.isChecked() else cmd
-
-    _SHELL_DANGER = re.compile(r'[;&|`$(){}!<>"\'\n\r]')
+        return explorer_service.root_command(cmd, self.root_cb.isChecked())
 
     def _safe_name(self, name: str) -> bool:
-        return not self._SHELL_DANGER.search(name)
+        return explorer_service.safe_name(name)
 
     def _dpath(self, *parts) -> str:
-        return os.path.join(*parts).replace("\\", "/")
+        return explorer_service.device_path(*parts)
 
     def _prune_worker(self, w):
         if w in self._workers:
             self._workers.remove(w)
 
-    def _run_adb(self, *args):
-        worker = ADBWorker(self.device_ip, list(args))
+    def _run_adb(self, *args, timeout: int = 30):
+        worker = ADBWorker(self.device_ip, list(args), timeout=timeout)
         worker.finished.connect(lambda _w=worker: self._prune_worker(_w))
         self._workers.append(worker)
         worker.setParent(self)
@@ -299,7 +297,7 @@ class FileExplorerDialog(QDialog):
         self.table.setRowCount(0)
         self.symlink_targets.clear()
 
-        cmd = f'ls -la "{self.current_path}" 2>&1'
+        cmd = explorer_service.ls_command(self.current_path)
         shell_cmd = self._root(cmd)
         worker = self._run_adb("shell", shell_cmd)
         worker.finished.connect(self._on_ls_result)
@@ -309,88 +307,45 @@ class FileExplorerDialog(QDialog):
         if error and not output.strip():
             self.status_bar.showMessage("Error loading directory")
             return
-        self.table.setRowCount(0)
+        self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
-        rows = []
-        for line in output.splitlines():
-            if not line.strip() or line.startswith("total"):
-                continue
-            if "Permission denied" in line or line.startswith("ls:"):
-                continue
-            entry = self._parse_ls(line)
-            if not entry:
-                continue
-            name_part = entry["name"]
-            is_symlink = "->" in name_part
-            if is_symlink:
-                name, target = name_part.split("->", 1)
-                name = name.strip()
-                self.symlink_targets[name] = target.strip()
-            else:
-                name = name_part
-            if not name or name in (".", ".."):
-                continue
-            is_dir = entry["perms"].startswith(("d", "l"))
-            ftype = "Folder" if is_dir else self._ext(name)
-            size_str = "-" if is_dir else self._fmt_size(entry["size"])
-            rows.append(
-                (name, ftype, size_str, entry["modified"], self._safe_int(entry["size"]), is_dir)
-            )
+        try:
+            rows, self.symlink_targets = explorer_service.parse_ls_output(output)
+            parent_offset = 1 if self.current_path != "/" else 0
+            self.table.setRowCount(len(rows) + parent_offset)
 
-        rows.sort(key=lambda x: (not x[5], x[0].lower()))
-        for name, ftype, size_str, date_str, _, is_dir in rows:
-            r = self.table.rowCount()
-            self.table.insertRow(r)
-            self.table.setItem(r, 0, QTableWidgetItem(name))
-            self.table.setItem(r, 1, QTableWidgetItem(ftype))
-            self.table.setItem(r, 2, QTableWidgetItem(size_str))
-            self.table.setItem(r, 3, QTableWidgetItem(date_str))
+            if parent_offset:
+                self._set_file_row(0, "..", "Folder", "-", "-")
 
-        # Insert ".." row at top
-        if self.current_path != "/":
-            self.table.insertRow(0)
-            self.table.setItem(0, 0, QTableWidgetItem(".."))
-            self.table.setItem(0, 1, QTableWidgetItem("Folder"))
-            self.table.setItem(0, 2, QTableWidgetItem("-"))
-            self.table.setItem(0, 3, QTableWidgetItem("-"))
+            for index, entry in enumerate(rows, parent_offset):
+                self._set_file_row(
+                    index, entry.name, entry.file_type, entry.size_text, entry.modified
+                )
+        finally:
+            self.table.setSortingEnabled(True)
+            self.table.setUpdatesEnabled(True)
 
-        self.table.setSortingEnabled(True)
-        folders = sum(1 for r in rows if r[5])
+        folders = sum(1 for entry in rows if entry.is_dir)
         files = len(rows) - folders
         self.status_bar.showMessage(f"{self.current_path}  |  {folders} folders, {files} files")
 
+    def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
+        self.table.setItem(row, 0, QTableWidgetItem(name))
+        self.table.setItem(row, 1, QTableWidgetItem(file_type))
+        self.table.setItem(row, 2, QTableWidgetItem(size))
+        self.table.setItem(row, 3, QTableWidgetItem(modified))
+
     def _parse_ls(self, line: str) -> dict | None:
-        parts = line.strip().split(maxsplit=7)
-        if len(parts) < 8:
-            return None
-        return {
-            "perms": parts[0],
-            "owner": parts[2],
-            "group": parts[3],
-            "size": parts[4],
-            "modified": f"{parts[5]} {parts[6]}",
-            "name": parts[7],
-        }
+        return explorer_service.parse_ls_line(line)
 
     def _ext(self, name: str) -> str:
-        return name.rsplit(".", 1)[-1].upper() if "." in name else "File"
+        return explorer_service.extension_label(name)
 
     def _safe_int(self, s: str) -> int:
-        try:
-            return int(s.replace(",", ""))
-        except (ValueError, AttributeError):
-            return 0
+        return explorer_service.safe_int(s)
 
     def _fmt_size(self, s: str) -> str:
-        try:
-            size = int(s)
-            for u in ["B", "KB", "MB", "GB"]:
-                if size < 1024:
-                    return f"{size:.1f} {u}"
-                size /= 1024
-            return f"{size:.1f} TB"
-        except ValueError:
-            return "-"
+        return explorer_service.format_size(s)
 
     # ── Double click ─────────────────────────────────────────────────────
 
@@ -433,7 +388,7 @@ class FileExplorerDialog(QDialog):
         if is_image:
             self._view_image(name, full)
         else:
-            shell = self._root(f'cat "{full}"')
+            shell = self._root(explorer_service.cat_command(full))
             w = self._run_adb("shell", shell)
             w.finished.connect(lambda o, e: self._show_text_viewer(name, o, e, full))
             w.start()
@@ -452,7 +407,9 @@ class FileExplorerDialog(QDialog):
         if self.root_cb.isChecked():
             dev_tmp = f"/data/local/tmp/{name}"
             w1 = self._run_adb(
-                "shell", self._root(f'dd if="{full_path}" of="{dev_tmp}" && chmod 644 "{dev_tmp}"')
+                "shell",
+                self._root(explorer_service.copy_for_root_pull_command(full_path, dev_tmp)),
+                timeout=120,
             )
 
             def _on_copy(o, e):
@@ -554,7 +511,7 @@ class FileExplorerDialog(QDialog):
         ):
             return
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        cmd = self._root(f"echo '{b64}' | base64 -d > \"{full_path}\"")
+        cmd = self._root(explorer_service.save_text_command(b64, full_path))
         w = self._run_adb("shell", cmd)
         w.finished.connect(lambda o, e: self._on_save_result(o, e, name))
         w.start()
@@ -576,7 +533,11 @@ class FileExplorerDialog(QDialog):
             return
         if self.root_cb.isChecked():
             dt = f"/data/local/tmp/{name}"
-            w = self._run_adb("shell", self._root(f'dd if="{full}" of="{dt}" && chmod 644 "{dt}"'))
+            w = self._run_adb(
+                "shell",
+                self._root(explorer_service.copy_for_root_pull_command(full, dt)),
+                timeout=120,
+            )
             w.finished.connect(lambda o, e: self._finish_root_pull(o, e, name, dt, save_path))
             w.start()
         else:
@@ -648,7 +609,7 @@ class FileExplorerDialog(QDialog):
             QMessageBox.warning(self, "Invalid Name", "Folder name contains invalid characters")
             return
         full = self._dpath(self.current_path, name)
-        w = self._run_adb("shell", self._root(f'mkdir -p "{full}"'))
+        w = self._run_adb("shell", self._root(explorer_service.mkdir_command(full)))
         w.finished.connect(
             lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
         )
@@ -662,7 +623,7 @@ class FileExplorerDialog(QDialog):
             QMessageBox.warning(self, "Invalid Name", "Filename contains invalid characters")
             return
         full = self._dpath(self.current_path, name)
-        w = self._run_adb("shell", self._root(f'touch "{full}"'))
+        w = self._run_adb("shell", self._root(explorer_service.touch_command(full)))
         w.finished.connect(
             lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
         )
@@ -677,7 +638,7 @@ class FileExplorerDialog(QDialog):
             return
         old = self._dpath(self.current_path, name)
         new_p = self._dpath(self.current_path, new)
-        w = self._run_adb("shell", self._root(f'mv "{old}" "{new_p}"'))
+        w = self._run_adb("shell", self._root(explorer_service.move_command(old, new_p)))
         w.finished.connect(
             lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Renamed {name} -> {new}"))
         )
@@ -685,7 +646,7 @@ class FileExplorerDialog(QDialog):
 
     def _delete_item(self, name: str):
         full = self._dpath(self.current_path, name)
-        w = self._run_adb("shell", self._root(f'rm -rf "{full}"'))
+        w = self._run_adb("shell", self._root(explorer_service.delete_command(full)))
         w.finished.connect(
             lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Deleted {name}"))
         )
@@ -730,11 +691,19 @@ class FileExplorerDialog(QDialog):
             if src == dst:
                 continue
             if self.copy_mode:
-                w = self._run_adb("shell", self._root(f'cp -R "{src}" "{dst}"'))
+                w = self._run_adb(
+                    "shell",
+                    self._root(explorer_service.copy_command(src, dst)),
+                    timeout=120,
+                )
                 w.finished.connect(lambda o, e: None)
                 w.start()
             else:
-                w = self._run_adb("shell", self._root(f'mv "{src}" "{dst}"'))
+                w = self._run_adb(
+                    "shell",
+                    self._root(explorer_service.move_command(src, dst)),
+                    timeout=120,
+                )
                 w.finished.connect(lambda o, e: None)
                 w.start()
         self.status_bar.showMessage("Paste done")
@@ -782,22 +751,9 @@ class FileExplorerDialog(QDialog):
         close_btn.clicked.connect(dlg.reject)
 
         def to_mode():
-            o = (
-                (4 if cbs[("owner", "r")].isChecked() else 0)
-                + (2 if cbs[("owner", "w")].isChecked() else 0)
-                + (1 if cbs[("owner", "x")].isChecked() else 0)
+            return explorer_service.mode_from_permissions(
+                {key: cb.isChecked() for key, cb in cbs.items()}
             )
-            g = (
-                (4 if cbs[("group", "r")].isChecked() else 0)
-                + (2 if cbs[("group", "w")].isChecked() else 0)
-                + (1 if cbs[("group", "x")].isChecked() else 0)
-            )
-            ot = (
-                (4 if cbs[("other", "r")].isChecked() else 0)
-                + (2 if cbs[("other", "w")].isChecked() else 0)
-                + (1 if cbs[("other", "x")].isChecked() else 0)
-            )
-            return f"{o}{g}{ot}"
 
         def set_from_mode(m):
             try:
@@ -810,14 +766,10 @@ class FileExplorerDialog(QDialog):
                 pass
 
         orig = [""]
-        w = self._run_adb("shell", f'stat -c %a "{full}"')
+        w = self._run_adb("shell", explorer_service.stat_mode_command(full))
 
         def _on_stat(o, e):
-            m = (o or "").strip()
-            if re.match(r"^[0-7]{3,4}$", m):
-                orig[0] = m.lstrip("0")[-3:]
-            else:
-                orig[0] = "644" if not is_dir else "755"
+            orig[0] = explorer_service.normalize_mode(o, is_dir)
             set_from_mode(orig[0])
             preview.setText(f"chmod {to_mode()}  {full}")
 
@@ -831,7 +783,10 @@ class FileExplorerDialog(QDialog):
         )
         apply_btn.clicked.connect(
             lambda: (
-                self._run_adb("shell", self._root(f'chmod {to_mode()} "{full}"')).start(),
+                self._run_adb(
+                    "shell",
+                    self._root(explorer_service.chmod_command(to_mode(), full)),
+                ).start(),
                 dlg.accept(),
                 self._refresh(),
             )
@@ -878,7 +833,7 @@ class FileExplorerDialog(QDialog):
 
     def _install_apk(self, name: str):
         full = self._dpath(self.current_path, name)
-        cmd = self._root(f'pm install -r "{full}"')
+        cmd = self._root(explorer_service.install_apk_command(full))
         w = self._run_adb("shell", cmd)
         w.finished.connect(
             lambda o, e: self.status_bar.showMessage(
@@ -889,10 +844,8 @@ class FileExplorerDialog(QDialog):
 
     def _exec_script(self, name: str):
         full = self._dpath(self.current_path, name)
-        if self.root_cb.isChecked():
-            w = self._run_adb("shell", self._root(f'chmod +x "{full}" && sh "{full}"'))
-        else:
-            w = self._run_adb("shell", f'sh "{full}"')
+        cmd = explorer_service.script_command(full, self.root_cb.isChecked())
+        w = self._run_adb("shell", self._root(cmd) if self.root_cb.isChecked() else cmd)
         w.finished.connect(lambda o, e: self._show_script_output(name, o, e))
         w.start()
 
@@ -917,7 +870,7 @@ class FileExplorerDialog(QDialog):
     def _show_props(self, name: str, is_dir: bool):
         full = self._dpath(self.current_path, name)
         if is_dir:
-            w = self._run_adb("shell", f'du -sh "{full}"')
+            w = self._run_adb("shell", explorer_service.folder_size_command(full))
             w.finished.connect(
                 lambda o, e: self._show_props_done(
                     name, full, "Folder", o.strip().split()[0] if o.strip() else "?", e
@@ -925,7 +878,7 @@ class FileExplorerDialog(QDialog):
             )
             w.start()
         else:
-            w = self._run_adb("shell", f'ls -la "{full}"')
+            w = self._run_adb("shell", explorer_service.ls_command(full))
             w.finished.connect(lambda o, e: self._show_props_file(name, full, o, e))
             w.start()
 

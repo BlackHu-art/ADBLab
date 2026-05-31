@@ -72,6 +72,22 @@ def test_scrcpy_service_caches_version_per_executable():
     runner.run.assert_called_once_with(["scrcpy.exe", "--version"], timeout=3)
 
 
+def test_scrcpy_service_resolves_bundled_windows_executable():
+    service = ScrcpyService()
+
+    with patch("models.remote.scrcpy_service.platform.system", return_value="Windows"), \
+         patch("models.remote.scrcpy_service.resource_path", return_value="C:/ADBLab/scrcpy.exe"):
+        assert service.resolve_executable() == "C:/ADBLab/scrcpy.exe"
+
+
+def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
+    service = ScrcpyService()
+
+    with patch("models.remote.scrcpy_service.platform.system", return_value="Linux"), \
+         patch("models.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"):
+        assert service.resolve_executable() == "/usr/bin/scrcpy"
+
+
 def test_scrcpy_service_start_and_stop_delegate_to_process_runner():
     process_runner = Mock()
     proc = Mock()
@@ -130,6 +146,27 @@ def test_remote_control_service_uses_launch_plan_dimensions_without_adb_query():
 
     adb.get_dimensions.assert_not_called()
     adb.shell_input.assert_called_once_with("swipe 360 0 360 1279 300", device_id="device-1")
+
+
+def test_remote_control_service_perform_action_dispatches_known_actions():
+    adb = Mock()
+    adb.get_dimensions.return_value = ["1080", "2400"]
+    service = RemoteControlService(adb)
+
+    service.perform_action("device-1", "swipe_left")
+
+    adb.shell_input.assert_called_once_with("swipe 972 1200 108 1200 300", device_id="device-1")
+
+
+def test_remote_control_service_perform_action_rejects_unknown_action():
+    service = RemoteControlService(Mock())
+
+    try:
+        service.perform_action("device-1", "does_not_exist")
+    except ValueError as exc:
+        assert "Unknown remote action" in str(exc)
+    else:
+        raise AssertionError("unknown remote action should fail")
 
 
 def test_remote_control_service_rotation_clears_dimension_cache():
@@ -230,6 +267,95 @@ def test_remote_panel_stop_scrcpy_uses_scrcpy_service_stop():
     panel._set_running.assert_called_once_with(False)
     panel._update_status.assert_called_once_with("Idle", None)
     panel._scrcpy_service.stop.assert_called_once_with("scrcpy_test", timeout=2)
+
+
+def test_remote_panel_close_stops_running_scrcpy_before_shutdown():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._process = Mock()
+    panel._watchdog = Mock()
+    panel._scrcpy_service = Mock()
+    panel._process_key = "scrcpy_test"
+    panel._launch_worker = None
+    panel._remote_executor = Mock()
+    panel._adb = Mock()
+
+    with patch("gui.panels.remote_panel.QWidget.closeEvent"):
+        RemotePanel.closeEvent(panel, Mock())
+
+    panel._watchdog.stop.assert_called_once()
+    panel._scrcpy_service.stop.assert_called_once_with("scrcpy_test", timeout=2)
+    panel._remote_executor.shutdown.assert_called_once_with(
+        wait=False, cancel_futures=True
+    )
+    panel._adb.close_input_sessions.assert_called_once()
+
+
+def test_remote_panel_start_scrcpy_resolves_executable_via_service():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._process = None
+    panel._launch_worker = None
+    panel._scrcpy_service = Mock()
+    panel._scrcpy_service.resolve_executable.return_value = "C:/tools/scrcpy.exe"
+    panel._log = Mock()
+
+    with patch("gui.panels.remote_panel.os.path.isfile", return_value=False):
+        RemotePanel._start_scrcpy(panel)
+
+    panel._scrcpy_service.resolve_executable.assert_called_once_with()
+    panel._log.assert_called_once_with("WARNING", "scrcpy not found: C:/tools/scrcpy.exe")
+
+
+def test_remote_panel_remote_action_delegates_to_control_service():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
+    panel._remote_control = Mock()
+    panel._log = Mock()
+
+    RemotePanel._send_remote_action(panel, "swipe_up")
+
+    panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
+    panel._log.assert_not_called()
+
+
+def test_remote_panel_remote_action_uses_executor_when_available():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
+    panel._remote_control = Mock()
+    panel._log = Mock()
+    panel._remote_executor = Mock()
+    panel._emit_remote_queue_status = Mock()
+    panel._remote_submitted = 0
+    panel._remote_completed = 0
+
+    RemotePanel._send_remote_action(panel, "swipe_up")
+
+    panel._remote_executor.submit.assert_called_once()
+    panel._remote_control.perform_action.assert_not_called()
+    panel._emit_remote_queue_status.assert_called_once_with(1, 0, "queued")
+
+    queued_task = panel._remote_executor.submit.call_args.args[0]
+    queued_task()
+
+    panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
+    panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
+
+
+def test_remote_panel_remote_queue_status_formats_pending_and_result_states():
+    panel = RemotePanel.__new__(RemotePanel)
+    label = Mock()
+    panel._remote_status_label = label
+
+    RemotePanel._update_remote_queue_status(panel, 3, 1, "queued")
+    label.setText.assert_called_with("Input: Queued 2")
+
+    RemotePanel._update_remote_queue_status(panel, 3, 2, "queued")
+    label.setText.assert_called_with("Input: Sending")
+
+    RemotePanel._update_remote_queue_status(panel, 3, 3, "sent")
+    label.setText.assert_called_with("Input: Sent")
+
+    RemotePanel._update_remote_queue_status(panel, 3, 3, "failed")
+    label.setText.assert_called_with("Input: Failed")
 
 
 def test_remote_panel_launch_finished_clears_active_device_when_start_fails():

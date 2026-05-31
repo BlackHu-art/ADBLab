@@ -85,14 +85,7 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Install App", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(
-                self._install_single_device,
-                idx,
-                device_ip,
-                apk_path,
-                apk_name,
-                "install",
-            )
+            self._install_single_device(idx, device_ip, apk_path, apk_name, "install")
 
     def batch_install_apk(self, devices: list):
         if not self._require_devices(devices, "batch_install"):
@@ -112,13 +105,8 @@ class ADBAppMixin(_ADBControllerBase):
             apk_name = os.path.basename(apk_path)
             for device_ip in devices:
                 task_index += 1
-                self.executor.submit(
-                    self._install_single_device,
-                    task_index,
-                    device_ip,
-                    apk_path,
-                    apk_name,
-                    "batch_install",
+                self._install_single_device(
+                    task_index, device_ip, apk_path, apk_name, "batch_install"
                 )
         self._emit_operation(
             "batch_install",
@@ -173,7 +161,7 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Uninstall App", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self._execute_uninstall_task, idx, device_ip, package_name)
+            self._execute_uninstall_task(idx, device_ip, package_name)
 
     def _execute_uninstall_task(self, idx: int, device_ip: str, package_name: str):
         tracker = self._batch_trackers.get("uninstall")
@@ -209,7 +197,12 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Clear App Data", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.app_model.clear_app_data_async, device_ip, package_name, idx)
+            self._emit_operation(
+                "clear_data",
+                True,
+                f"Start clear data ({idx}/{len(devices)}) {package_name} on {device_ip} ...",
+            )
+            self.app_model.clear_app_data_async(device_ip, package_name, idx)
 
     def _process_clear_app_data_result(self, result: dict):
         result.get("index", 1)
@@ -237,7 +230,12 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Restart App", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.app_model.restart_app_async, device_ip, package_name, idx)
+            self._emit_operation(
+                "restart_app",
+                True,
+                f"Start restart ({idx}/{len(devices)}) {package_name} on {device_ip} ...",
+            )
+            self.app_model.restart_app_async(device_ip, package_name, idx)
 
     def _process_restart_app_result(self, result: dict):
         result.get("index", 1)
@@ -270,7 +268,12 @@ class ADBAppMixin(_ADBControllerBase):
             len(devices), "Activity Info", self._emit_operation
         )
         for idx, device_ip in enumerate(devices, 1):
-            self.executor.submit(self.app_model.get_current_activity_async, device_ip, idx)
+            self._emit_operation(
+                "current_activity",
+                True,
+                f"Start activity info ({idx}/{len(devices)}) on {device_ip} ...",
+            )
+            self.app_model.get_current_activity_async(device_ip, idx)
 
     def _process_get_current_activity_result(self, result: dict):
         device = result.get("device_ip", "unknown")
@@ -307,7 +310,7 @@ class ADBAppMixin(_ADBControllerBase):
             self._emit_operation("apk_info", False, f"❌ Invalid APK file selected: {apk_path}")
             return
         self._emit_operation("apk_info", True, f"📦 Selected APK: {apk_path}")
-        self.executor.submit(self.app_model.parse_apk_info_async, apk_path)
+        self.app_model.parse_apk_info_async(apk_path)
 
     def _process_parse_apk_info_result(self, result: dict):
         apk_path = result.get("apk_path", "unknown")

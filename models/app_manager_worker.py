@@ -99,6 +99,8 @@ class AppManagerWorker(QThread):
     def _load_detail_batch(self, packages):
         total = len(packages)
         for i, pkg in enumerate(packages):
+            if self._aborted or self.isInterruptionRequested():
+                return
             try:
                 r = self._adb("shell", f"dumpsys package {pkg}", timeout=5)
                 out = r.stdout
@@ -205,6 +207,8 @@ class AppManagerWorker(QThread):
         if not files:
             return
         for i, zp in enumerate(files):
+            if self._aborted or self.isInterruptionRequested():
+                return
             app = os.path.basename(zp).replace("backup_", "").replace(".zip", "")
             try:
                 with tempfile.TemporaryDirectory(prefix=f"rs_{app}_") as tmp:

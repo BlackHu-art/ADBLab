@@ -9,7 +9,7 @@ import re
 import subprocess
 from datetime import datetime
 
-from PySide6.QtCore import QSize, Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -177,7 +177,11 @@ class LiveLogcatDialog(QDialog):
         self.worker = None
         self._pkg_worker = None
         self.entries = []
+        self._pending_visible_lines = []
         self._closing = False
+        self._line_flush_timer = QTimer(self)
+        self._line_flush_timer.setSingleShot(True)
+        self._line_flush_timer.timeout.connect(self._flush_pending_lines)
 
         self.setWindowTitle(f"Live Logcat - {device_ip}")
         self.setWindowIcon(get_themed_icon("scroll.svg"))
@@ -317,6 +321,8 @@ class LiveLogcatDialog(QDialog):
         return True
 
     def _rebuild(self):
+        self._line_flush_timer.stop()
+        self._pending_visible_lines.clear()
         self.output.clear()
         visible = [t for t, lv, tg, _ in self.entries if self._passes(lv, tg)]
         if visible:
@@ -340,6 +346,8 @@ class LiveLogcatDialog(QDialog):
         if self.worker and self.worker.isRunning():
             return
         self.entries.clear()
+        self._pending_visible_lines.clear()
+        self._line_flush_timer.stop()
         self.output.clear()
         pkg = self.pkg_input.text().strip()
         tag = self.tag_input.text().strip()
@@ -358,6 +366,8 @@ class LiveLogcatDialog(QDialog):
 
     def _clear(self):
         self.entries.clear()
+        self._pending_visible_lines.clear()
+        self._line_flush_timer.stop()
         self.output.clear()
         self.status_bar.showMessage("Cleared")
 
@@ -409,9 +419,22 @@ class LiveLogcatDialog(QDialog):
         if len(self.entries) > self.MAX_BUFFER:
             self.entries = self.entries[-self.MAX_BUFFER :]
         if self._passes(level, tag_part):
-            self.output.appendPlainText(text)
-            self.output.moveCursor(QTextCursor.MoveOperation.End)
-            self.output.ensureCursorVisible()
+            self._pending_visible_lines.append(text)
+            self._schedule_line_flush()
+
+    def _schedule_line_flush(self):
+        if not self._line_flush_timer.isActive():
+            self._line_flush_timer.start(75)
+
+    def _flush_pending_lines(self):
+        if self._closing or not self._pending_visible_lines:
+            return
+        lines = self._pending_visible_lines
+        self._pending_visible_lines = []
+        # 高频 logcat 输出合并成一次 QTextDocument 更新，Stop/过滤按钮会更容易抢到事件循环。
+        self.output.appendPlainText("\n".join(lines))
+        self.output.moveCursor(QTextCursor.MoveOperation.End)
+        self.output.ensureCursorVisible()
 
     def _on_status(self, msg: str):
         if self._closing:
@@ -462,6 +485,8 @@ class LiveLogcatDialog(QDialog):
 
     def closeEvent(self, event):
         self._closing = True
+        self._line_flush_timer.stop()
+        self._pending_visible_lines.clear()
         from gui.styles import BaseStyles as BS
         safe_disconnect(BS.theme_changed, self._apply_theme)
         if self.worker:

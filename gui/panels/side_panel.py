@@ -22,6 +22,7 @@ from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles
+from gui.styles.icon_loader import get_themed_icon
 
 
 class SidePanel(QWidget):
@@ -37,6 +38,9 @@ class SidePanel(QWidget):
         self._connected_device_cache = []
         self._user_selected_ip = False
         self._current_ip = ""
+        self._tabs_connected = False
+        self._connected_lazy_tabs = set()
+        self._loaded_lazy_tabs = set()
 
         self.setMinimumWidth(300)
         self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
@@ -73,26 +77,56 @@ class SidePanel(QWidget):
         self.tabs.setFont(self._font_tab)
         self._apply_tab_style()
 
-        self._apps_tab = AppPanel(self)
-        self._advanced_tab = SystemPanel(self)
-        self._scrcpy_tab = RemotePanel(self)
-
-        tab_specs = [
-            (self._apps_tab, "Apps"),
-            (self._advanced_tab, "System"),
-            (self._scrcpy_tab, "Remote"),
+        self._apps_tab = None
+        self._advanced_tab = None
+        self._scrcpy_tab = None
+        self._tab_scroll_areas = {}
+        self._lazy_tab_specs = [
+            ("_apps_tab", AppPanel, "Apps"),
+            ("_advanced_tab", SystemPanel, "System"),
+            ("_scrcpy_tab", RemotePanel, "Remote"),
         ]
-        for tab, name in tab_specs:
-            s = QScrollArea()
-            s.setWidgetResizable(True)
-            s.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-            s.setStyleSheet(
-                f"QScrollArea {{ border: none; background: transparent; }}\n{BaseStyles.SCROLLBAR_STYLE()}"
-            )
-            s.setWidget(tab.build_ui())
-            self.tabs.addTab(s, name)
+        for index, (_attr, _cls, name) in enumerate(self._lazy_tab_specs):
+            scroll = self._create_tab_scroll_area()
+            self._tab_scroll_areas[index] = scroll
+            self.tabs.addTab(scroll, name)
+        self.tabs.currentChanged.connect(self._ensure_tab_loaded)
+        self._ensure_tab_loaded(0)
 
         lo.addWidget(self.tabs, stretch=1)
+
+    def _create_tab_scroll_area(self) -> QScrollArea:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ border: none; background: transparent; }}\n{BaseStyles.SCROLLBAR_STYLE()}"
+        )
+        return scroll
+
+    def _ensure_tab_loaded(self, index: int):
+        if index < 0 or index >= len(self._lazy_tab_specs):
+            return None
+        attr, cls, _name = self._lazy_tab_specs[index]
+        tab = getattr(self, attr, None)
+        if tab is not None:
+            return tab
+        tab = cls(self)
+        self._tab_scroll_areas[index].setWidget(tab.build_ui())
+        setattr(self, attr, tab)
+        self._loaded_lazy_tabs.add(index)
+        if self._tabs_connected:
+            self._connect_lazy_tab_signals(index, tab)
+        return tab
+
+    def _connect_lazy_tab_signals(self, index: int, tab=None):
+        if index in self._connected_lazy_tabs:
+            return
+        tab = tab or self._ensure_tab_loaded(index)
+        if tab is None:
+            return
+        tab.connect_signals()
+        self._connected_lazy_tabs.add(index)
 
     # ── Shared properties（委托给子标签页）──────────────────────────────────────────
 
@@ -116,10 +150,15 @@ class SidePanel(QWidget):
         self._devices_tab.update_current_package(device_ip, package_name)
 
     def update_email(self, t: str):
-        self._apps_tab.update_email(t)
+        self._ensure_tab_loaded(0).update_email(t)
 
     def update_vercode(self, t: str):
-        self._apps_tab.update_vercode(t)
+        self._ensure_tab_loaded(0).update_vercode(t)
+
+    def on_recording_finished(self):
+        apps_tab = self._ensure_tab_loaded(0)
+        if apps_tab:
+            apps_tab.on_recording_finished()
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
@@ -158,6 +197,9 @@ class SidePanel(QWidget):
             elif t is QPushButton:
                 if not child.parent() or child.parent().objectName() != "toolbar":
                     child.setFont(self._font_sm)
+                icon_name = child.property("iconName")
+                if icon_name:
+                    child.setIcon(get_themed_icon(icon_name))
             elif t is QLabel:
                 child.setFont(self._font_sm)
             elif t is QLineEdit:
@@ -175,7 +217,7 @@ class SidePanel(QWidget):
         self._devices_tab._apply_device_list_style()
         if hasattr(self._devices_tab, "ip_entry"):
             self._apply_completer_style(self._devices_tab.ip_entry.completer())
-        if hasattr(self._apps_tab, "completer"):
+        if self._apps_tab is not None and hasattr(self._apps_tab, "completer"):
             self._apply_completer_style(self._apps_tab.completer)
 
     # ── 信号连接 ──────────────────────────────────────────────────────────
@@ -183,6 +225,6 @@ class SidePanel(QWidget):
     def _connect_all_signals(self):
         """委托各标签页连接各自的信号。"""
         self._devices_tab.connect_signals()
-        self._apps_tab.connect_signals()
-        self._advanced_tab.connect_signals()
-        self._scrcpy_tab.connect_signals()
+        self._tabs_connected = True
+        for index in sorted(self._loaded_lazy_tabs):
+            self._connect_lazy_tab_signals(index)

@@ -2,7 +2,6 @@
 
 import os
 import sys
-from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import (
@@ -26,7 +25,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, get_default_font
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from models.base.process_runner import ProcessRunner
@@ -47,6 +46,8 @@ class ScreenshotViewer(QDialog):
         self._zoom_factor = 1.0
         self._fit_to_window = True
         self._original_pixmap = None
+        self._window_icon_name = "camera.svg"
+        self._icon_buttons: list[QPushButton] = []
 
         self._init_window()
         self._init_shortcuts()
@@ -62,9 +63,10 @@ class ScreenshotViewer(QDialog):
 
     def _init_window(self):
         self.setWindowTitle("Screenshot Viewer")
-        self.setWindowIcon(get_themed_icon("camera.svg"))
-        self.setMinimumSize(600, 400)
-        self.resize(900, 650)
+        self.setWindowIcon(get_themed_icon(self._window_icon_name))
+        self.setFont(get_default_font())
+        self.setMinimumSize(720, 460)
+        self.resize(1040, 720)
         self._apply_theme()
 
     def _init_shortcuts(self):
@@ -84,7 +86,10 @@ class ScreenshotViewer(QDialog):
         return BaseStyles.color(key)
 
     def closeEvent(self, event):
-        BaseStyles.theme_changed.disconnect(self._apply_theme)
+        try:
+            BaseStyles.theme_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
         super().closeEvent(event)
 
     def _apply_theme(self, _name: str = ""):
@@ -94,14 +99,24 @@ class ScreenshotViewer(QDialog):
 
         self.setStyleSheet(f"""
             QDialog {{
-                background-color: {C('PANEL_BG')};
+                background-color: {C('WINDOW_BG')};
+            }}
+            QFrame#bottomBar {{
+                background-color: {C('TOOLBAR_BG')};
+                border: 1px solid {C('BORDER_COLOR')};
+                border-radius: {R.RADIUS_MD}px;
+            }}
+            QFrame#canvasFrame {{
+                background-color: {C('INPUT_BG')};
+                border: 1px solid {C('BORDER_COLOR')};
+                border-radius: {R.RADIUS_LG}px;
             }}
             QPushButton {{
                 background-color: {C('BUTTON_BG')};
                 color: {C('TEXT_PRIMARY')};
                 border: 1px solid {C('BORDER_COLOR')};
                 border-radius: {R.RADIUS_SM}px;
-                padding: 4px 10px;
+                padding: 0;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -111,170 +126,185 @@ class ScreenshotViewer(QDialog):
             QPushButton:pressed {{
                 background-color: {C('BUTTON_PRESSED')};
             }}
+            QPushButton#danger:hover {{
+                background-color: {C('BUTTON_DANGER')};
+                border-color: {C('BUTTON_DANGER')};
+                color: #ffffff;
+            }}
+            QPushButton#danger:pressed {{
+                background-color: {C('BUTTON_DANGER_HOVER')};
+                border-color: {C('BUTTON_DANGER_HOVER')};
+                color: #ffffff;
+            }}
             QLabel {{
                 color: {C('TEXT_PRIMARY')};
+                background: transparent;
+            }}
+            QLabel#metaLabel, QLabel#pathLabel, QLabel#navLabel, QLabel#zoomLabel {{
+                color: {C('TEXT_SECONDARY')};
+                font-size: 11px;
+            }}
+            QLabel#imageLabel {{
                 background: transparent;
             }}
         """)
 
         if hasattr(self, '_info_label'):
             self._info_label.setStyleSheet(
-                f"color: {C('TEXT_SECONDARY')}; font-size: 11px; padding: 2px 0;"
+                f"color: {C('TEXT_SECONDARY')}; font-size: 11px;"
             )
         if hasattr(self, '_scroll'):
             self._scroll.setStyleSheet(
-                f"QScrollArea {{ background-color: {C('INPUT_BG')}; "
-                f"border-radius: {BaseStyles.RADIUS_LG}px; border: none; }}"
+                f"QScrollArea {{ background-color: transparent; border: none; }}"
+                f"{BaseStyles.SCROLLBAR_STYLE()}"
             )
         if hasattr(self, '_nav_label'):
             self._nav_label.setStyleSheet(
-                f"color: {C('TEXT_SECONDARY')}; font-size: 11px; font-weight: bold;"
+                f"color: {C('TEXT_SECONDARY')}; font-size: 11px;"
             )
-        if hasattr(self, '_close_btn'):
-            self._close_btn.setStyleSheet(
-                f"QPushButton {{ background-color: {C('BUTTON_ACCENT')}; color: white; "
-                f"border: none; border-radius: {BaseStyles.RADIUS_SM}px; "
-                f"padding: 5px 14px; font-size: 12px; font-weight: bold; }}"
-                f"QPushButton:hover {{ background-color: {C('BUTTON_ACCENT_HOVER')}; }}"
-                f"QPushButton:pressed {{ background-color: {C('BUTTON_ACCENT_PRESSED')}; }}"
-            )
+        self._refresh_button_icons()
 
     # ── UI ──────────────────────────────────────────────────────────────
 
     def _init_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 6, 8, 8)
-        root.setSpacing(4)
+        root.setContentsMargins(10, 8, 10, 10)
+        root.setSpacing(8)
 
-        # Info bar
-        self._info_label = QLabel()
-        self._info_label.setStyleSheet(
-            f"color: {self._theme_color('TEXT_SECONDARY')}; font-size: 11px; padding: 2px 0;"
-        )
-        root.addWidget(self._info_label)
+        root.addWidget(self._build_canvas(), stretch=1)
+        root.addWidget(self._build_bottom_bar())
 
-        # Image area
+    def _build_bottom_bar(self) -> QFrame:
+        bar = QFrame()
+        bar.setObjectName("bottomBar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setSpacing(6)
+
+        self._path_label = QLabel("")
+        self._path_label.setObjectName("pathLabel")
+        self._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._path_label.setMinimumWidth(160)
+        self._path_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._path_label.setToolTip("Screenshot file path")
+        layout.addWidget(self._path_label, stretch=1)
+
+        self._info_label = QLabel("")
+        self._info_label.setObjectName("metaLabel")
+        self._info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._info_label.setMinimumWidth(96)
+        self._info_label.setToolTip("Image size and file size")
+        layout.addWidget(self._info_label, stretch=0)
+
+        layout.addSpacing(6)
+
+        self._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
+        self._prev_btn.clicked.connect(self.navigate_prev)
+        layout.addWidget(self._prev_btn)
+
+        self._nav_label = QLabel("1 / 1")
+        self._nav_label.setObjectName("navLabel")
+        self._nav_label.setAlignment(Qt.AlignCenter)
+        self._nav_label.setFixedWidth(52)
+        self._nav_label.setToolTip("Current screenshot index")
+        layout.addWidget(self._nav_label)
+
+        self._next_btn = self._tool_button("caret-right.svg", "Next screenshot (Right)")
+        self._next_btn.clicked.connect(self.navigate_next)
+        layout.addWidget(self._next_btn)
+
+        layout.addSpacing(4)
+
+        self._zoom_out_btn = self._tool_button("magnifying-glass-minus.svg", "Zoom out (Ctrl+-)")
+        self._zoom_out_btn.clicked.connect(self.zoom_out)
+        layout.addWidget(self._zoom_out_btn)
+
+        self._zoom_label = QLabel("Fit")
+        self._zoom_label.setObjectName("zoomLabel")
+        self._zoom_label.setAlignment(Qt.AlignCenter)
+        self._zoom_label.setFixedWidth(48)
+        self._zoom_label.setToolTip("Current zoom")
+        layout.addWidget(self._zoom_label)
+
+        self._zoom_in_btn = self._tool_button("magnifying-glass-plus.svg", "Zoom in (Ctrl+=)")
+        self._zoom_in_btn.clicked.connect(self.zoom_in)
+        layout.addWidget(self._zoom_in_btn)
+
+        self._fit_btn = self._tool_button("frame-corners.svg", "Fit to window (Ctrl+0)")
+        self._fit_btn.clicked.connect(self._reset_zoom)
+        layout.addWidget(self._fit_btn)
+
+        self._actual_btn = self._tool_button("number-square-one.svg", "Actual size")
+        self._actual_btn.clicked.connect(self._actual_size)
+        layout.addWidget(self._actual_btn)
+
+        layout.addSpacing(4)
+
+        self._copy_btn = self._tool_button("copy.svg", "Copy to clipboard (Ctrl+C)")
+        self._copy_btn.clicked.connect(self.copy_to_clipboard)
+        layout.addWidget(self._copy_btn)
+
+        self._save_btn = self._tool_button("floppy-disk.svg", "Save as (Ctrl+S)")
+        self._save_btn.clicked.connect(self.save_as)
+        layout.addWidget(self._save_btn)
+
+        self._folder_btn = self._tool_button("folder-open.svg", "Open file location")
+        self._folder_btn.clicked.connect(self._open_file_location)
+        layout.addWidget(self._folder_btn)
+
+        self._delete_btn = self._tool_button("trash.svg", "Delete screenshot")
+        self._delete_btn.setObjectName("danger")
+        self._delete_btn.clicked.connect(self._delete_file)
+        layout.addWidget(self._delete_btn)
+
+        self._update_nav_visibility()
+        self._bottom_bar = bar
+        return bar
+
+    def _build_canvas(self) -> QFrame:
+        frame = QFrame()
+        frame.setObjectName("canvasFrame")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(0)
+
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(False)
         self._scroll.setAlignment(Qt.AlignCenter)
         self._scroll.setFrameShape(QFrame.NoFrame)
-        self._scroll.setStyleSheet(
-            f"QScrollArea {{ background-color: {self._theme_color('INPUT_BG')}; "
-            f"border-radius: {BaseStyles.RADIUS_LG}px; border: none; }}"
-        )
+        self._scroll.setStyleSheet(f"QScrollArea {{ background-color: transparent; border: none; }}")
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self._image_label = QLabel()
+        self._image_label.setObjectName("imageLabel")
         self._image_label.setAlignment(Qt.AlignCenter)
         self._image_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self._image_label.setContextMenuPolicy(Qt.CustomContextMenu)
         self._image_label.customContextMenuRequested.connect(self._on_context_menu)
 
         self._scroll.setWidget(self._image_label)
-        root.addWidget(self._scroll, stretch=1)
+        layout.addWidget(self._scroll)
+        return frame
 
-        # Bottom bar
-        root.addLayout(self._build_bottom_bar())
+    def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
+        button = QPushButton()
+        button.setIcon(get_themed_icon(icon_name))
+        button.setIconSize(QSize(15, 15))
+        button.setFixedSize(28, 26)
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.PointingHandCursor)
+        button.setProperty("iconName", icon_name)
+        self._icon_buttons.append(button)
+        return button
 
-    def _build_bottom_bar(self):
-        bar = QHBoxLayout()
-        bar.setSpacing(4)
-
-        self._prev_btn = QPushButton("◀")
-        self._prev_btn.setIcon(get_themed_icon("caret-left.svg"))
-        self._prev_btn.setIconSize(QSize(14, 14))
-        self._prev_btn.setFixedSize(30, 28)
-        self._prev_btn.clicked.connect(self.navigate_prev)
-        bar.addWidget(self._prev_btn)
-
-        self._nav_label = QLabel("1 / 1")
-        self._nav_label.setAlignment(Qt.AlignCenter)
-        self._nav_label.setFixedWidth(44)
-        self._nav_label.setStyleSheet(
-            f"color: {self._theme_color('TEXT_SECONDARY')}; font-size: 11px; font-weight: bold;"
-        )
-        bar.addWidget(self._nav_label)
-
-        self._next_btn = QPushButton("▶")
-        self._next_btn.setIcon(get_themed_icon("caret-right.svg"))
-        self._next_btn.setIconSize(QSize(14, 14))
-        self._next_btn.setFixedSize(30, 28)
-        self._next_btn.clicked.connect(self.navigate_next)
-        bar.addWidget(self._next_btn)
-
-        bar.addSpacing(8)
-
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.setIcon(get_themed_icon("magnifying-glass-minus.svg"))
-        zoom_out_btn.setIconSize(QSize(14, 14))
-        zoom_out_btn.setFixedSize(30, 28)
-        zoom_out_btn.clicked.connect(self.zoom_out)
-        bar.addWidget(zoom_out_btn)
-
-        self._zoom_btn = QPushButton("Fit")
-        self._zoom_btn.setIcon(get_themed_icon("frame-corners.svg"))
-        self._zoom_btn.setIconSize(QSize(14, 14))
-        self._zoom_btn.setFixedWidth(52)
-        self._zoom_btn.setFixedHeight(28)
-        self._zoom_btn.clicked.connect(self._reset_zoom)
-        bar.addWidget(self._zoom_btn)
-
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.setIcon(get_themed_icon("magnifying-glass-plus.svg"))
-        zoom_in_btn.setIconSize(QSize(14, 14))
-        zoom_in_btn.setFixedSize(30, 28)
-        zoom_in_btn.clicked.connect(self.zoom_in)
-        bar.addWidget(zoom_in_btn)
-
-        bar.addSpacing(8)
-
-        self._copy_btn = QPushButton("Copy")
-        self._copy_btn.setIcon(get_themed_icon("copy.svg"))
-        self._copy_btn.setIconSize(QSize(14, 14))
-        self._copy_btn.setFixedHeight(28)
-        self._copy_btn.clicked.connect(self.copy_to_clipboard)
-        bar.addWidget(self._copy_btn)
-
-        self._save_btn = QPushButton("Save As")
-        self._save_btn.setIcon(get_themed_icon("floppy-disk.svg"))
-        self._save_btn.setIconSize(QSize(14, 14))
-        self._save_btn.setFixedHeight(28)
-        self._save_btn.clicked.connect(self.save_as)
-        bar.addWidget(self._save_btn)
-
-        self._folder_btn = QPushButton("Folder")
-        self._folder_btn.setIcon(get_themed_icon("folder-open.svg"))
-        self._folder_btn.setIconSize(QSize(14, 14))
-        self._folder_btn.setFixedHeight(28)
-        self._folder_btn.clicked.connect(self._open_file_location)
-        bar.addWidget(self._folder_btn)
-
-        self._delete_btn = QPushButton("Delete")
-        self._delete_btn.setIcon(get_themed_icon("trash.svg"))
-        self._delete_btn.setIconSize(QSize(14, 14))
-        self._delete_btn.setFixedHeight(28)
-        self._delete_btn.clicked.connect(self._delete_file)
-        bar.addWidget(self._delete_btn)
-
-        self._fit_btn = QPushButton("1:1")
-        self._fit_btn.setIcon(get_themed_icon("number-square-one.svg"))
-        self._fit_btn.setIconSize(QSize(14, 14))
-        self._fit_btn.setFixedHeight(28)
-        self._fit_btn.clicked.connect(self._toggle_fit)
-        bar.addWidget(self._fit_btn)
-
-        bar.addStretch()
-
-        self._close_btn = QPushButton("Close")
-        self._close_btn.setIcon(get_themed_icon("x.svg"))
-        self._close_btn.setIconSize(QSize(14, 14))
-        self._close_btn.setFixedHeight(28)
-        self._close_btn.clicked.connect(self.close)
-        bar.addWidget(self._close_btn)
-
-        self._update_nav_visibility()
-        return bar
+    def _refresh_button_icons(self):
+        self.setWindowIcon(get_themed_icon(self._window_icon_name))
+        for button in getattr(self, "_icon_buttons", []):
+            icon_name = button.property("iconName")
+            if icon_name:
+                button.setIcon(get_themed_icon(icon_name))
 
     # ── Image loading ───────────────────────────────────────────────────
 
@@ -345,10 +375,15 @@ class ScreenshotViewer(QDialog):
         self._update_zoom_label()
 
     def _show_placeholder(self, text: str):
+        self._original_pixmap = None
+        self._info_label.setText(text)
+        self._path_label.setText("")
+        self._path_label.setToolTip("")
         self._image_label.setText(text)
         self._image_label.setStyleSheet(
             f"color: {self._theme_color('TEXT_DISABLED')}; font-size: 14px; padding: 60px;"
         )
+        self._image_label.adjustSize()
 
     def navigate_prev(self):
         if len(self._image_paths) <= 1:
@@ -384,24 +419,17 @@ class ScreenshotViewer(QDialog):
         self._fit_to_window = True
         self._apply_fit()
 
-    def _toggle_fit(self):
-        if self._fit_to_window:
-            self._fit_to_window = False
-            self._zoom_factor = 1.0
-            self._apply_custom_zoom()
-            self._fit_btn.setText("Fit")
-        else:
-            self._fit_to_window = True
-            self._apply_fit()
-            self._fit_btn.setText("1:1")
+    def _actual_size(self):
+        self._fit_to_window = False
+        self._zoom_factor = 1.0
+        self._apply_custom_zoom()
 
     def _update_zoom_label(self):
         if self._fit_to_window:
             pct = int(self._zoom_factor * 100)
-            self._zoom_btn.setText(f"{pct}%" if pct != 100 else "Fit")
+            self._zoom_label.setText(f"{pct}%" if pct != 100 else "Fit")
         else:
-            self._zoom_btn.setText(f"{int(self._zoom_factor * 100)}%")
-        self._fit_btn.setText("Fit" if not self._fit_to_window else "1:1")
+            self._zoom_label.setText(f"{int(self._zoom_factor * 100)}%")
 
     # ── Info ────────────────────────────────────────────────────────────
 
@@ -422,12 +450,11 @@ class ScreenshotViewer(QDialog):
                 size_str = f"{size_bytes} B"
         except OSError:
             size_str = "-"
-        try:
-            mtime = os.path.getmtime(path)
-            time_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-        except OSError:
-            time_str = "-"
-        self._info_label.setText(f"{pw}x{ph}  |  {size_str}  |  {time_str}")
+        self._info_label.setText(f"{pw} x {ph} | {size_str}")
+        full_path = os.path.abspath(path)
+        short_path = full_path if len(full_path) <= 76 else "..." + full_path[-73:]
+        self._path_label.setText(short_path)
+        self._path_label.setToolTip(full_path)
 
     # ── Navigation UI ───────────────────────────────────────────────────
 
@@ -450,8 +477,7 @@ class ScreenshotViewer(QDialog):
         pixmap = QPixmap(path)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
-            self._copy_btn.setText("Copied!")
-            QTimer.singleShot(2000, lambda: self._copy_btn.setText("Copy"))
+            self._flash_status("Copied")
 
     def save_as(self):
         path = self._current_path()
@@ -467,10 +493,14 @@ class ScreenshotViewer(QDialog):
         try:
             with open(path, "rb") as src, open(dest, "wb") as dst:
                 dst.write(src.read())
-            self._save_btn.setText("Saved!")
-            QTimer.singleShot(2000, lambda: self._save_btn.setText("Save As"))
+            self._flash_status("Saved")
         except OSError as exc:
             QMessageBox.warning(self, "Save Failed", str(exc))
+
+    def _flash_status(self, text: str):
+        previous = self._info_label.text()
+        self._info_label.setText(text)
+        QTimer.singleShot(1800, lambda: self._info_label.setText(previous))
 
     def _open_file_location(self):
         path = self._current_path()
@@ -555,3 +585,8 @@ class ScreenshotViewer(QDialog):
             event.accept()
         else:
             super().wheelEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._fit_to_window:
+            QTimer.singleShot(0, self._apply_fit)

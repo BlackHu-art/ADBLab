@@ -1,12 +1,6 @@
 """System tab -- shell, broadcast, port forward, service toggles, settings, tools, battery, IME, emulator."""
 
-from PySide6.QtWidgets import (
-    QComboBox,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from gui.panels.base_panel import BasePanel
 
@@ -22,81 +16,71 @@ class SystemPanel(BasePanel):
 
         # Shell
         g1 = self._g("Shell Command")
-        gl1 = QHBoxLayout(g1)
-        gl1.setSpacing(4)
+        gl1 = QVBoxLayout(g1)
+        gl1.setSpacing(2)
         self.shell_cmd_input = self._in("adb shell <command> ...")
         self.btn_shell_run = self._b("Run", "terminal-window.svg")
-        gl1.addWidget(self.shell_cmd_input, 3)
-        gl1.addWidget(self.btn_shell_run, 1)
+        self._add_row(gl1, (self.shell_cmd_input, 3), (self.btn_shell_run, 1))
         lo.addWidget(g1)
 
         # ── Reboot & Modes ──
         g_rb = self._g("Reboot & Modes")
-        gl_rb = QHBoxLayout(g_rb)
-        gl_rb.setSpacing(4)
-        self.reboot_mode_combo = QComboBox()
-        self.reboot_mode_combo.addItems(["System", "Bootloader", "Recovery", "Fastboot"])
-        self.reboot_mode_combo.setFont(self._font_sm)
+        gl_rb = QVBoxLayout(g_rb)
+        gl_rb.setSpacing(2)
+        self.reboot_mode_combo = self._combo(["System", "Bootloader", "Recovery", "Fastboot"])
         self.btn_reboot_mode = self._b("Reboot", "power.svg")
         self.tcpip_port_input = self._in("5555", 52)
         self.btn_tcpip_mode = self._b("TCP/IP", "wifi-high.svg")
-        gl_rb.addWidget(self.reboot_mode_combo, 1)
-        gl_rb.addWidget(self.btn_reboot_mode, 1)
-        gl_rb.addWidget(self.tcpip_port_input, 1)
-        gl_rb.addWidget(self.btn_tcpip_mode, 1)
+        self._add_row(
+            gl_rb,
+            (self.reboot_mode_combo, 1),
+            (self.btn_reboot_mode, 1),
+            (self.tcpip_port_input, 1),
+            (self.btn_tcpip_mode, 1),
+        )
         lo.addWidget(g_rb)
 
         # Broadcast & Intents
         gb = self._g("Broadcast & Intents")
         glb = QVBoxLayout(gb)
         glb.setSpacing(2)
-        rb1 = QHBoxLayout()
-        rb1.setSpacing(4)
         self.broadcast_action = self._in("Broadcast action")
         self.btn_broadcast = self._b("Send Broadcast", "broadcast.svg")
-        rb1.addWidget(self.broadcast_action, 2)
-        rb1.addWidget(self.btn_broadcast, 1)
-        glb.addLayout(rb1)
-        rb2 = QHBoxLayout()
-        rb2.setSpacing(4)
+        self._add_row(glb, (self.broadcast_action, 2), (self.btn_broadcast, 1))
         self.activity_spec = self._in("Component (pkg/.Activity) or action")
         self.btn_start_activity = self._b("Start Activity", "play.svg")
-        rb2.addWidget(self.activity_spec, 2)
-        rb2.addWidget(self.btn_start_activity, 1)
-        glb.addLayout(rb2)
-        rb3 = QHBoxLayout()
-        rb3.setSpacing(4)
+        self._add_row(glb, (self.activity_spec, 2), (self.btn_start_activity, 1))
         self.deep_link_uri = self._in("Deep link URL")
         self.btn_deep_link = self._b("Open Link", "link.svg")
-        rb3.addWidget(self.deep_link_uri, 2)
-        rb3.addWidget(self.btn_deep_link, 1)
-        glb.addLayout(rb3)
+        self._add_row(glb, (self.deep_link_uri, 2), (self.btn_deep_link, 1))
         lo.addWidget(gb)
 
         # Port Forwarding
         g3 = self._g("Port Forwarding")
         gl3 = QVBoxLayout(g3)
         gl3.setSpacing(2)
-        r3a = QHBoxLayout()
-        r3a.setSpacing(4)
         self.fwd_local = self._in("Local port", 80)
         self.fwd_remote = self._in("Remote port", 80)
         self.btn_forward = self._b("Forward", "arrow-square-out.svg")
         self.btn_reverse = self._b("Reverse", "arrow-square-in.svg")
-        r3a.addWidget(self.fwd_local, 1)
-        r3a.addWidget(self.fwd_remote, 1)
-        r3a.addWidget(self.btn_forward, 1)
-        r3a.addWidget(self.btn_reverse, 1)
-        gl3.addLayout(r3a)
-        r3b = QHBoxLayout()
-        r3b.setSpacing(4)
+        self._add_row(
+            gl3,
+            (self.fwd_local, 1),
+            (self.fwd_remote, 1),
+            (self.btn_forward, 1),
+            (self.btn_reverse, 1),
+        )
         self.btn_list_fwd = self._b("List", "list-bullets.svg")
         self.btn_remove_fwd = self._b("Remove", "x-circle.svg")
         self.btn_list_rev = self._b("List Rev", "list-bullets.svg")
         self.btn_remove_rev = self._b("Remove Rev", "x-circle.svg")
-        for b in (self.btn_list_fwd, self.btn_remove_fwd, self.btn_list_rev, self.btn_remove_rev):
-            r3b.addWidget(b, 1)
-        gl3.addLayout(r3b)
+        self._add_row(
+            gl3,
+            (self.btn_list_fwd, 1),
+            (self.btn_remove_fwd, 1),
+            (self.btn_list_rev, 1),
+            (self.btn_remove_rev, 1),
+        )
         lo.addWidget(g3)
 
         # Service Toggles
@@ -113,69 +97,42 @@ class SystemPanel(BasePanel):
             [("BT ON", "svc bluetooth enable"), ("BT OFF", "svc bluetooth disable"),
              ("NFC ON", "svc nfc enable"), ("NFC OFF", "svc nfc disable")],
         ]:
-            rh = QHBoxLayout()
-            rh.setSpacing(4)
+            row_buttons = []
             for n, cmd in row_cmds:
                 icon = _toggle_icons.get(n.split()[0], "info.svg")
                 b = self._b(n, icon)
                 b.clicked.connect(lambda _, c=cmd: self._sh(c))
-                rh.addWidget(b, 1)
-            gsl.addLayout(rh)
+                row_buttons.append((b, 1))
+            self._add_row(gsl, *row_buttons)
         lo.addWidget(gs)
 
         # Android Settings
         g4 = self._g("Android Settings")
         gl4 = QVBoxLayout(g4)
         gl4.setSpacing(2)
-        r4a = QHBoxLayout()
-        r4a.setSpacing(4)
-        self.settings_ns = QComboBox()
-        self.settings_ns.addItems(["system", "global", "secure"])
-        self.settings_ns.setFont(self._font_sm)
+        self.settings_ns = self._combo(["system", "global", "secure"])
         self.settings_key = self._in("Key", 70)
         self.settings_val = self._in("Value", 70)
-        r4a.addWidget(self.settings_ns, 1)
-        r4a.addWidget(self.settings_key, 1)
-        r4a.addWidget(self.settings_val, 1)
-        gl4.addLayout(r4a)
-        r4b = QHBoxLayout()
-        r4b.setSpacing(4)
+        self._add_row(gl4, (self.settings_ns, 1), (self.settings_key, 1), (self.settings_val, 1))
         self.btn_settings_list = self._b("List All", "list.svg")
         self.btn_settings_get = self._b("Get Value", "magnifying-glass.svg")
         self.btn_settings_put = self._b("Set Value", "pencil-simple.svg")
-        for b in (self.btn_settings_list, self.btn_settings_get, self.btn_settings_put):
-            r4b.addWidget(b)
-        gl4.addLayout(r4b)
+        self._add_row(gl4, self.btn_settings_list, self.btn_settings_get, self.btn_settings_put)
         lo.addWidget(g4)
 
         # System Tools
         g5 = self._g("System Tools")
         gl5 = QVBoxLayout(g5)
         gl5.setSpacing(2)
-        rc = QHBoxLayout()
-        rc.setSpacing(4)
         self.content_uri = self._in("Content URI")
         self.btn_content_query = self._b("Query", "database.svg")
-        rc.addWidget(self.content_uri, 2)
-        rc.addWidget(self.btn_content_query, 1)
-        gl5.addLayout(rc)
-        rp = QHBoxLayout()
-        rp.setSpacing(4)
+        self._add_row(gl5, (self.content_uri, 2), (self.btn_content_query, 1))
         self.btn_ps_list = self._b("Process List", "tree-structure.svg")
         self.kill_pid_input = self._in("PID", 55)
         self.btn_kill_pid = self._b("Kill PID", "skull.svg")
         self.btn_pm_features = self._b("Features", "star.svg")
-        rp.addWidget(self.btn_ps_list)
-        rp.addWidget(self.kill_pid_input, 1)
-        rp.addWidget(self.btn_kill_pid)
-        rp.addWidget(self.btn_pm_features)
-        gl5.addLayout(rp)
-        rs3 = QHBoxLayout()
-        rs3.setSpacing(4)
-        self.dumpsys_combo = QComboBox()
-        self.dumpsys_combo.setEditable(True)
-        self.dumpsys_combo.setFont(self._font_sm)
-        self.dumpsys_combo.addItems([
+        self._add_row(gl5, self.btn_ps_list, (self.kill_pid_input, 1), self.btn_kill_pid, self.btn_pm_features)
+        self.dumpsys_combo = self._combo_editable([
             "", "package", "activity", "window", "wifi", "battery", "power", "alarm",
             "usb", "input", "notification", "connectivity", "audio", "display",
             "meminfo", "cpuinfo", "netstats",
@@ -185,80 +142,76 @@ class SystemPanel(BasePanel):
         self.btn_kernel.setToolTip("cat /proc/version")
         self.btn_cpuinfo_dev = self._b("CPU Info", "cpu.svg")
         self.btn_cpuinfo_dev.setToolTip("cat /proc/cpuinfo")
-        rs3.addWidget(self.dumpsys_combo, 2)
-        rs3.addWidget(self.btn_dumpsys, 1)
-        rs3.addWidget(self.btn_kernel, 1)
-        rs3.addWidget(self.btn_cpuinfo_dev, 1)
-        gl5.addLayout(rs3)
+        self._add_row(
+            gl5,
+            (self.dumpsys_combo, 2),
+            (self.btn_dumpsys, 1),
+            (self.btn_kernel, 1),
+            (self.btn_cpuinfo_dev, 1),
+        )
         lo.addWidget(g5)
 
         # Battery & Quick Settings
         g6 = self._g("Battery & Quick Settings")
         gl6 = QVBoxLayout(g6)
         gl6.setSpacing(2)
-        rb = QHBoxLayout()
-        rb.setSpacing(4)
-        self.battery_param = QComboBox()
-        self.battery_param.addItems(["level", "status"])
-        self.battery_param.setFont(self._font_sm)
+        self.battery_param = self._combo(["level", "status"])
         self.battery_val = self._in("Value", 70)
         self.btn_battery_set = self._b("Set", "pencil-simple.svg")
         self.btn_battery_reset = self._b("Reset", "arrow-u-up-left.svg")
-        rb.addWidget(QLabel("Battery"))
-        rb.addWidget(self.battery_param, 1)
-        rb.addWidget(self.battery_val, 1)
-        rb.addWidget(self.btn_battery_set, 1)
-        rb.addWidget(self.btn_battery_reset, 1)
-        gl6.addLayout(rb)
-        rq = QHBoxLayout()
-        rq.setSpacing(4)
-        self.quick_setting_combo = QComboBox()
+        battery_label = QLabel("Battery")
+        battery_label.setFont(self._font_sm)
+        self._add_row(
+            gl6,
+            battery_label,
+            (self.battery_param, 1),
+            (self.battery_val, 1),
+            (self.btn_battery_set, 1),
+            (self.btn_battery_reset, 1),
+        )
+        self.quick_setting_combo = self._combo()
         self.quick_setting_combo.addItem("Disable Animations", "anim_off")
         self.quick_setting_combo.addItem("Enable Animations", "anim_on")
         self.quick_setting_combo.addItem("Stay Awake", "stay_awake")
-        self.quick_setting_combo.setFont(self._font_sm)
         self.btn_quick_setting = self._b("Apply", "check-circle.svg")
-        rq.addWidget(self.quick_setting_combo, 2)
-        rq.addWidget(self.btn_quick_setting, 1)
-        gl6.addLayout(rq)
+        self._add_row(gl6, (self.quick_setting_combo, 2), (self.btn_quick_setting, 1))
         lo.addWidget(g6)
 
         # IME & Emulator
         g7 = self._g("IME & Emulator Control")
         gl7 = QVBoxLayout(g7)
         gl7.setSpacing(2)
-        ri = QHBoxLayout()
-        ri.setSpacing(4)
         self.btn_ime_list = self._b("List IME", "keyboard.svg")
         self.ime_id_input = self._in("IME ID")
         self.btn_ime_set = self._b("Set IME", "pencil-simple.svg")
-        ri.addWidget(self.btn_ime_list)
-        ri.addWidget(self.ime_id_input, 2)
-        ri.addWidget(self.btn_ime_set)
-        gl7.addLayout(ri)
-        re1 = QHBoxLayout()
-        re1.setSpacing(3)
+        self._add_row(gl7, self.btn_ime_list, (self.ime_id_input, 2), self.btn_ime_set)
         self.emu_sms_sender = self._in("Sender", 65)
         self.emu_sms_text = self._in("SMS text", 70)
         self.btn_emu_sms = self._b("Send SMS", "chat-text.svg")
-        re1.addWidget(QLabel("Emu"))
-        re1.addWidget(self.emu_sms_sender, 1)
-        re1.addWidget(self.emu_sms_text, 1)
-        re1.addWidget(self.btn_emu_sms, 1)
-        gl7.addLayout(re1)
-        re2 = QHBoxLayout()
-        re2.setSpacing(3)
+        emu_label = QLabel("Emu")
+        emu_label.setFont(self._font_sm)
+        self._add_row(
+            gl7,
+            emu_label,
+            (self.emu_sms_sender, 1),
+            (self.emu_sms_text, 1),
+            (self.btn_emu_sms, 1),
+            spacing=3,
+        )
         self.emu_call_num = self._in("Phone number")
         self.btn_emu_call = self._b("Call", "phone-call.svg")
         self.emu_geo_lon = self._in("Lon", 55)
         self.emu_geo_lat = self._in("Lat", 55)
         self.btn_emu_geo = self._b("GPS", "map-pin.svg")
-        re2.addWidget(self.emu_call_num, 1)
-        re2.addWidget(self.btn_emu_call)
-        re2.addWidget(self.emu_geo_lon, 1)
-        re2.addWidget(self.emu_geo_lat, 1)
-        re2.addWidget(self.btn_emu_geo)
-        gl7.addLayout(re2)
+        self._add_row(
+            gl7,
+            (self.emu_call_num, 1),
+            self.btn_emu_call,
+            (self.emu_geo_lon, 1),
+            (self.emu_geo_lat, 1),
+            self.btn_emu_geo,
+            spacing=3,
+        )
         lo.addWidget(g7)
         lo.addStretch()
         return w

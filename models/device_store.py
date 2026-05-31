@@ -34,9 +34,35 @@ class DeviceStore:
     def add_device(
         cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", android_version: str = ""
     ):
+        cls.upsert_devices([
+            {
+                "alias": alias,
+                "ip": ip,
+                "Brand": brand,
+                "Model": model,
+                "Aversion": str(android_version),
+            }
+        ])
+
+    @classmethod
+    def upsert_devices(cls, devices: list[dict]):
+        """批量写入设备信息，一轮刷新只落盘一次，减少 YAML I/O 抖动。"""
         with cls._lock:
-            cls._devices[alias] = {"ip": ip, "Brand": brand, "Model": model, "Aversion": str(android_version)}
-        cls.save()
+            for device in devices:
+                if not isinstance(device, dict):
+                    continue
+                ip = str(device.get("ip", "")).strip()
+                if not ip:
+                    continue
+                alias = str(device.get("alias") or f"device_{ip}")
+                cls._devices[alias] = {
+                    "ip": ip,
+                    "Brand": device.get("Brand", "Unknown"),
+                    "Model": device.get("Model", "Unknown"),
+                    "Aversion": str(device.get("Aversion", "")),
+                }
+        if devices:
+            cls.save()
 
     @classmethod
     def get_all(cls):

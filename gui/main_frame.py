@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent
@@ -69,6 +70,9 @@ class _ScanThread(QThread):
 
 
 class MainFrame(QMainWindow):
+    DEVICE_SCAN_DEBOUNCE_MS = 300
+    SPLITTER_SAVE_DEBOUNCE_MS = 300
+    _adb_bootstrap_finished = Signal()
 
     def __init__(self):
         super().__init__()
@@ -79,35 +83,78 @@ class MainFrame(QMainWindow):
         self._drag_pos = None
         self._active_dialogs = []
         self._scan_thread = None
+        self._closing = False
+        self._scan_refresh_timer = QTimer(self)
+        self._scan_refresh_timer.setSingleShot(True)
+        self._scan_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
+        self._initial_refresh_timer = QTimer(self)
+        self._initial_refresh_timer.setSingleShot(True)
+        self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
+        self._pending_panel_sizes = None
+        self._panel_size_save_timer = QTimer(self)
+        self._panel_size_save_timer.setSingleShot(True)
+        self._panel_size_save_timer.timeout.connect(self._save_pending_panel_sizes)
+        self._adb_bootstrap_thread = None
+        self._adb_bootstrap_finished.connect(self._start_device_discovery)
 
         self._setup_window()
         self._init_panels()
+        self._bootstrap_adb_async()
 
-        # Resolve ADB path synchronously — needed before any adb call
+    # ── continuous scan ───────────────────────────────────────────────
+
+    def _bootstrap_adb_async(self):
+        """Resolve ADB after first paint so startup is not held by filesystem/PATH checks."""
         from utils.adb_resolver import resolve_adb_path
-        resolve_adb_path()
 
-        # Continuous scan (populates list immediately on first poll)
-        # or one-shot initial scan if continuous scan is disabled
+        def _bootstrap():
+            try:
+                resolve_adb_path()
+            finally:
+                try:
+                    self._adb_bootstrap_finished.emit()
+                except RuntimeError:
+                    pass
+
+        self._adb_bootstrap_thread = threading.Thread(
+            target=_bootstrap,
+            name="adblab-adb-bootstrap",
+            daemon=True,
+        )
+        self._adb_bootstrap_thread.start()
+
+    def _start_device_discovery(self):
+        if getattr(self, "_closing", False):
+            return
         from core.settings_manager import AppSettings
         if AppSettings.instance().get("continuous_device_scan", True):
             self._start_scan_thread()
         else:
-            QTimer.singleShot(0, self.adb_controller.refresh_devices)
-
-    # ── continuous scan ───────────────────────────────────────────────
+            self._initial_refresh_timer.start(0)
 
     def _start_scan_thread(self):
         if self._scan_thread and self._scan_thread.isRunning():
             return
         self._scan_thread = _ScanThread(self)
-        self._scan_thread.devices_changed.connect(self.adb_controller.refresh_devices)
+        self._scan_thread.devices_changed.connect(self._schedule_scan_refresh)
         self._scan_thread.start()
 
     def _stop_scan_thread(self):
+        initial_timer = getattr(self, "_initial_refresh_timer", None)
+        if initial_timer and initial_timer.isActive():
+            initial_timer.stop()
+        timer = getattr(self, "_scan_refresh_timer", None)
+        if timer and timer.isActive():
+            timer.stop()
         if self._scan_thread and self._scan_thread.isRunning():
             self._scan_thread.stop()
-            self._scan_thread.wait(3000)
+            if not self._scan_thread.wait(150):
+                thread = self._scan_thread
+                threading.Thread(target=lambda: thread.wait(3000), daemon=True).start()
+
+    def _schedule_scan_refresh(self):
+        """Debounce scan-thread device change notifications."""
+        self._scan_refresh_timer.start(self.DEVICE_SCAN_DEBOUNCE_MS)
 
     def set_continuous_scan(self, enabled: bool):
         if enabled:
@@ -234,6 +281,8 @@ class MainFrame(QMainWindow):
         self._tb_save_btn.setIcon(get_themed_icon("folder.svg"))
         self._tb_save_btn.setIconSize(QSize(14, 14))
         self._tb_save_btn.setObjectName("savePathBtn")
+        self._tb_save_btn.setToolTip("Change default save directory")
+        self._tb_save_btn.setProperty("iconName", "folder.svg")
         self._tb_save_btn.setFlat(True)
         self._tb_save_btn.setCursor(Qt.PointingHandCursor)
         self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
@@ -263,6 +312,7 @@ class MainFrame(QMainWindow):
         self.theme_btn.setIcon(get_themed_icon("palette.svg"))
         self.theme_btn.setIconSize(QSize(16, 16))
         self.theme_btn.setToolTip("Toggle Light/Dark theme")
+        self.theme_btn.setProperty("iconName", "palette.svg")
         self.theme_btn.setFixedSize(28, 24)
         self.theme_btn.setFlat(True)
         self.theme_btn.clicked.connect(lambda: BaseStyles.toggle_theme())
@@ -290,10 +340,12 @@ class MainFrame(QMainWindow):
 
     def _create_toolbar_btn(self, tooltip: str, icon_path: str) -> QPushButton:
         """Create flat toolbar button (icon + tooltip)."""
+        icon_name = icon_path.replace("resources/icons/", "")
         btn = QPushButton()
-        btn.setIcon(get_themed_icon(icon_path.replace("resources/icons/", "")))
+        btn.setIcon(get_themed_icon(icon_name))
         btn.setIconSize(QSize(14, 14))
         btn.setToolTip(tooltip)
+        btn.setProperty("iconName", icon_name)
         btn.setFlat(True)
         return btn
 
@@ -311,6 +363,7 @@ class MainFrame(QMainWindow):
         """)
         for bar in self.findChildren(QFrame, "toolbar"):
             bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
+        self._refresh_toolbar_icons()
         self._refresh_save_path()
         # Splitter handle theme
         self._panel_splitter.setStyleSheet(
@@ -324,18 +377,34 @@ class MainFrame(QMainWindow):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
             self.left_panel._devices_tab._apply_device_list_style()
 
+    def _refresh_toolbar_icons(self):
+        for button in self.findChildren(QPushButton):
+            icon_name = button.property("iconName")
+            if icon_name:
+                button.setIcon(get_themed_icon(icon_name))
+
     def _connect_all_signals(self):
         """Connect left panel signals to ADB controller signals."""
         LP = self.left_panel.signals
         CTL = self.adb_controller.signals
         AC = self.adb_controller
 
-        CTL.devices_updated.connect(self.left_panel.update_device_list)
-        CTL.operation_completed.connect(lambda *args: self.left_panel._refresh_device_combobox())
+        self._connect_controller_feedback(LP, CTL)
+        signal_map = (
+            self._device_signal_map(LP, AC)
+            + self._app_signal_map(LP, AC)
+            + self._testing_signal_map(LP, AC)
+            + self._system_signal_map(LP, AC)
+        )
+        for signal_, handler in signal_map:
+            signal_.connect(handler)
+
+    def _connect_controller_feedback(self, LP, CTL):
+        CTL.devices_updated.connect(self._on_devices_updated)
         LP.log_message.connect(self.log_panel._append_log)
         CTL.email_updated.connect(self.left_panel.update_email)
         CTL.vercode_updated.connect(self.left_panel.update_vercode)
-        CTL.record_finished.connect(self.left_panel._apps_tab.on_recording_finished)
+        CTL.record_finished.connect(self.left_panel.on_recording_finished)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
         CTL.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
@@ -343,9 +412,8 @@ class MainFrame(QMainWindow):
             )
         )
 
-        # Left panel → ADB controller signal mapping
-        signal_map = [
-            # Device management
+    def _device_signal_map(self, LP, AC):
+        return [
             (LP.connect_requested, AC.connect_device),
             (LP.refresh_devices_requested, AC.refresh_devices),
             (LP.device_info_requested, AC.get_device_info),
@@ -354,22 +422,21 @@ class MainFrame(QMainWindow):
             (LP.restart_adb_requested, AC.restart_adb),
             (LP.reboot_mode_requested, AC.reboot_mode),
             (LP.tcpip_mode_requested, AC.tcpip_mode),
-            # Screenshot & screen recording
             (LP.screenshot_requested, AC.take_screenshot),
             (LP.screen_record_requested, AC.start_screen_record),
             (LP.stop_screen_record_requested, AC.stop_screen_record),
             (LP.batch_install_requested, AC.batch_install_apk),
-            # Logging
             (LP.retrieve_logs_requested, AC.retrieve_device_logs),
             (LP.cleanup_logs_requested, AC.cleanup_device_logs),
-            # Input
             (LP.send_text_requested, AC.input_text),
             (LP.input_tap_requested, AC.input_tap),
             (LP.input_swipe_requested, AC.input_swipe),
             (LP.input_keyevent_requested, AC.input_keyevent),
-            # Email
             (LP.generate_email_requested, AC.start_random_email_task),
-            # App management
+        ]
+
+    def _app_signal_map(self, LP, AC):
+        return [
             (LP.get_program_requested, AC.get_current_package),
             (LP.uninstall_app_requested, AC.uninstall_apk),
             (LP.clear_app_data_requested, AC.clear_app_data),
@@ -382,7 +449,10 @@ class MainFrame(QMainWindow):
             (LP.send_broadcast_requested, AC.send_broadcast),
             (LP.start_activity_requested, AC.start_activity),
             (LP.open_deep_link_requested, AC.open_deep_link),
-            # Testing
+        ]
+
+    def _testing_signal_map(self, LP, AC):
+        return [
             (LP.start_monkey_requested, AC.run_monkey_test),
             (LP.kill_monkey_requested, AC.kill_monkey),
             (LP.capture_bugreport_requested, AC.capture_bugreport),
@@ -390,9 +460,11 @@ class MainFrame(QMainWindow):
             (LP.dumpsys_meminfo_requested, AC.dumpsys_meminfo),
             (LP.dumpsys_cpuinfo_requested, AC.dumpsys_cpuinfo),
             (LP.dumpsys_battery_requested, AC.dumpsys_battery),
-            # Shell & file
+        ]
+
+    def _system_signal_map(self, LP, AC):
+        return [
             (LP.shell_command_requested, AC.run_shell_command),
-            # Network & settings
             (LP.forward_port_requested, AC.forward_port),
             (LP.list_forwards_requested, AC.list_forwards),
             (LP.remove_forwards_requested, AC.remove_forwards),
@@ -403,7 +475,6 @@ class MainFrame(QMainWindow):
             (LP.settings_get_requested, AC.settings_get),
             (LP.settings_put_requested, AC.settings_put),
             (LP.content_query_requested, AC.content_query),
-            # Advanced
             (LP.list_processes_requested, AC.list_processes),
             (LP.kill_process_requested, AC.kill_process),
             (LP.battery_set_requested, AC.battery_set),
@@ -417,8 +488,11 @@ class MainFrame(QMainWindow):
             (LP.emu_call_requested, AC.emu_call),
             (LP.emu_geo_requested, AC.emu_geo),
         ]
-        for signal_, handler in signal_map:
-            signal_.connect(handler)
+
+    def _on_devices_updated(self, devices: list[str]):
+        """Refresh device UI only when the device list changes."""
+        self.left_panel.update_device_list(devices)
+        self.left_panel._refresh_device_combobox()
 
     def clear_log(self):
         """Clear log panel."""
@@ -513,7 +587,7 @@ class MainFrame(QMainWindow):
                     return
 
 
-    # ── 窗口与面板尺寸调整 ──────────────────────────────────────────
+    # -- Window and panel sizing ----------------------------------------
 
     def apply_window_size(self, w: int, h: int):
         self.resize(w, h)
@@ -528,10 +602,18 @@ class MainFrame(QMainWindow):
     def _on_splitter_moved(self, _pos, _index):
         sizes = self._panel_splitter.sizes()
         if len(sizes) == 2:
-            from core.settings_manager import AppSettings
-            s = AppSettings.instance()
-            s.set("left_panel_width", sizes[0])
-            s.set("right_panel_width", sizes[1])
+            self._pending_panel_sizes = (sizes[0], sizes[1])
+            self._panel_size_save_timer.start(self.SPLITTER_SAVE_DEBOUNCE_MS)
+
+    def _save_pending_panel_sizes(self):
+        if not self._pending_panel_sizes:
+            return
+        left_w, right_w = self._pending_panel_sizes
+        self._pending_panel_sizes = None
+        from core.settings_manager import AppSettings
+        s = AppSettings.instance()
+        s.set("left_panel_width", left_w)
+        s.set("right_panel_width", right_w)
 
     # ── Save path (toolbar top-left) ──────────────────────────────────
 
@@ -584,7 +666,11 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def closeEvent(self, event):
+        self._closing = True
         self._stop_scan_thread()
+        if self._panel_size_save_timer.isActive():
+            self._panel_size_save_timer.stop()
+            self._save_pending_panel_sizes()
         # Flush pending settings save before exit
         from core.settings_manager import AppSettings
         s = AppSettings.instance()
@@ -602,5 +688,5 @@ class MainFrame(QMainWindow):
                 viewer.close()
             except Exception:
                 pass
-        self.adb_controller.executor.shutdown(wait=False)
+        self.adb_controller.shutdown()
         event.accept()

@@ -121,3 +121,19 @@ pytest: 57 passed
 git diff --check: passed
 production guiscrcpy import scan: none found
 ```
+
+## 2026-05-31 P1/P2/P3 收口记录
+
+- P1：`ScrcpyService.resolve_executable()` 接管 scrcpy 可执行文件解析，RemotePanel 不再保存平台/打包目录解析逻辑。
+- P2：`RemoteControlService.perform_action()` 接管 UI 动作名到遥控能力的分发，面板层不再保存 service 方法映射。
+- P3：RemotePanel 启动路径只通过 `ScrcpyService`，遥控按钮只通过 `RemoteControlService.perform_action()`，面板层不直接依赖 `CommandRunner`、`ProcessRunner` 或 subprocess。
+- 新增测试覆盖 scrcpy 路径解析、遥控动作分发、RemotePanel 的 service 接线。
+
+验证结果：
+
+```text
+compileall: passed
+pytest: 70 passed
+git diff --check: passed
+production guiscrcpy import scan: none found
+```

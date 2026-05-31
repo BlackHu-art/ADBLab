@@ -8,6 +8,17 @@ from .control_mapping import KEYCODES, DimensionsInput, directional_swipe, notif
 
 
 DEFAULT_DIMENSION_TTL_SECONDS = 30.0
+REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "swipe_up": ("directional_swipe", ("up",)),
+    "swipe_down": ("directional_swipe", ("down",)),
+    "swipe_left": ("directional_swipe", ("left",)),
+    "swipe_right": ("directional_swipe", ("right",)),
+    "notif_expand": ("expand_notifications", ()),
+    "notif_collapse": ("collapse_notifications", ()),
+    "rotate_portrait": ("rotate_portrait", ()),
+    "rotate_landscape": ("rotate_landscape", ()),
+    "rotate_reset": ("reset_rotation", ()),
+}
 
 
 class RemoteControlService:
@@ -54,6 +65,14 @@ class RemoteControlService:
         if not code:
             return None
         return self.adb.shell_input(f"keyevent {code}", device_id=device_id)
+
+    def perform_action(self, device_id: str, action: str):
+        """按 UI 动作名分发到遥控能力，避免面板层保存底层方法映射。"""
+        action_spec = REMOTE_ACTIONS.get(action)
+        if not action_spec:
+            raise ValueError(f"Unknown remote action: {action}")
+        method_name, args = action_spec
+        return getattr(self, method_name)(device_id, *args)
 
     def swipe(
         self,

@@ -1,11 +1,15 @@
 """Headless scrcpy service for ADBLab's Remote tab."""
 
+import os
+import platform
 import re
+import shutil
 import subprocess
 import time
 
 from models.base.command_runner import CommandRunner
 from models.base.process_runner import ProcessRunner
+from utils.resource_path import resource_path
 
 from .scrcpy_args import build_scrcpy_args
 from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
@@ -27,6 +31,12 @@ class ScrcpyService:
 
     def run_command(self, cmd: list[str], timeout: int = 5):
         return self.command_runner.run(cmd, timeout=timeout)
+
+    def resolve_executable(self) -> str:
+        """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
+        if platform.system() == "Windows":
+            return resource_path(os.path.join("scrcpy-win64-v3.3.1", "scrcpy.exe"))
+        return shutil.which("scrcpy") or "scrcpy"
 
     def version(self, exe: str) -> str:
         cached = self._version_cache.get(exe)

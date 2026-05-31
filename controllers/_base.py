@@ -7,12 +7,21 @@ from PySide6.QtCore import QThreadPool, Slot
 
 from core.log_service import LogService
 from core.mail.email_task import GetRandomEmailTask
+from core.perf_trace import (
+    DEFAULT_SLOW_THRESHOLD_MS,
+    format_perf,
+    perf_counter,
+    should_log_perf,
+    split_perf,
+    summarize_perf,
+)
 from core.settings_manager import AppSettings
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 from models.adb_device import ADBDevice
 from models.adb_testing import ADBTesting
+from models.base.process_runner import ProcessRunner
 from models.device_store import DeviceStore
 from utils.resource_path import resource_path
 
@@ -77,7 +86,8 @@ class _ADBControllerBase:
         level = "INFO" if success else "ERROR"
         if not message.strip():
             return
-        self.log_service.log(level, f"{message}")
+        # 用户点击后的完成态日志要立即进入界面，避免再叠加 200ms 批量刷新延迟。
+        self.log_service.log(level, f"{message}", flush_immediately=True)
         self.signals.operation_completed.emit(operation, success, message)
 
     def _require_devices(self, devices: list, op_name: str) -> bool:
@@ -88,24 +98,41 @@ class _ADBControllerBase:
         return True
 
     def _handle_async_response(self, method_name: str, result):
+        result, perf = split_perf(result)
         op_type = method_name.replace("_async", "")
+        ui_started_at = perf_counter()
 
-        if op_type == "get_connected_devices":
-            if isinstance(result, list):
-                self._process_device_list(result)
+        try:
+            if op_type == "get_connected_devices":
+                if isinstance(result, list):
+                    self._process_device_list(result)
+                else:
+                    self._emit_operation(op_type, False, "Invalid device list format")
+                return
+
+            handler = self._handler_map.get(op_type)
+            if handler:
+                try:
+                    handler(result)
+                except Exception as e:
+                    self.log_service.log("ERROR", f"[{op_type}] Handler error: {str(e)}")
+                    self._emit_operation(op_type, False, f"Handler error: {str(e)}")
             else:
-                self._emit_operation(op_type, False, "Invalid device list format")
-            return
+                self._default_async_handler(op_type, result)
+        finally:
+            self._log_perf_if_slow(op_type, perf, ui_started_at, perf_counter())
 
-        handler = self._handler_map.get(op_type)
-        if handler:
-            try:
-                handler(result)
-            except Exception as e:
-                self.log_service.log("ERROR", f"[{op_type}] Handler error: {str(e)}")
-                self._emit_operation(op_type, False, f"Handler error: {str(e)}")
-        else:
-            self._default_async_handler(op_type, result)
+    def _log_perf_if_slow(self, op_type: str, perf, ui_started_at: float, ui_finished_at: float):
+        summary = summarize_perf(perf, ui_started_at, ui_finished_at)
+        threshold_ms = self._performance_log_threshold_ms()
+        if should_log_perf(summary, threshold_ms):
+            self.log_service.log("DEBUG", format_perf(op_type, summary))
+
+    def _performance_log_threshold_ms(self) -> float:
+        try:
+            return float(self._settings.get("performance_log_threshold_ms", DEFAULT_SLOW_THRESHOLD_MS))
+        except (AttributeError, TypeError, ValueError):
+            return DEFAULT_SLOW_THRESHOLD_MS
 
     def _default_async_handler(self, op_type: str, result):
         if isinstance(result, dict):
@@ -142,3 +169,12 @@ class _ADBControllerBase:
         task.signals.email_updated.connect(self.signals.email_updated)
         task.signals.vercode_updated.connect(self.signals.vercode_updated)
         self.thread_pool.start(task)
+
+    def shutdown(self):
+        """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""
+        for model in (self.testing_model, self.advanced_model):
+            shutdown = getattr(model, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+        ProcessRunner.stop_all_tracked()
+        self.executor.shutdown(wait=False, cancel_futures=True)

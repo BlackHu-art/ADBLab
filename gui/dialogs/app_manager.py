@@ -4,7 +4,7 @@ import json
 import os
 import re
 
-from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt
+from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
@@ -210,6 +210,14 @@ class AppManagerDialog(QDialog):
         self.selected_packages = set()
         self._workers = []
         self._apps_data = []
+        self._detail_cache = {}
+        self._pending_detail_packages = set()
+        self._detail_worker_running = False
+        self._detail_row_by_pkg = {}
+        self._detail_icon_by_pkg = {}
+        self._detail_timer = QTimer(self)
+        self._detail_timer.setSingleShot(True)
+        self._detail_timer.timeout.connect(self._load_visible_details)
         self.setWindowTitle(f"App Manager - {device_ip}")
         self.setWindowIcon(get_themed_icon("squares-four.svg"))
         self.setMinimumSize(960, 600)
@@ -285,6 +293,9 @@ class AppManagerDialog(QDialog):
         self.tree.setColumnWidth(3, 100)
         self.tree.setColumnWidth(4, 70)
         self.tree.setColumnWidth(5, 60)
+        self.tree.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._schedule_visible_detail_load()
+        )
         self.stack.addWidget(self.tree)
 
         # --- Icon view ---
@@ -300,6 +311,9 @@ class AppManagerDialog(QDialog):
         self.icon_list.customContextMenuRequested.connect(self._icon_context_menu)
         self.icon_list.itemDoubleClicked.connect(self._icon_double_click)
         self.icon_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self.icon_list.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._schedule_visible_detail_load()
+        )
         self.stack.addWidget(self.icon_list)
 
         self._view_mode = False  # False = table, True = icon
@@ -383,7 +397,14 @@ class AppManagerDialog(QDialog):
 
     def _load_apps(self):
         self.model.removeRows(0, self.model.rowCount())
+        self.icon_list.clear()
         self.selected_packages.clear()
+        self._detail_cache.clear()
+        self._pending_detail_packages.clear()
+        self._detail_worker_running = False
+        self._detail_row_by_pkg = {}
+        self._detail_icon_by_pkg = {}
+        self._detail_timer.stop()
         w = AppManagerWorker(self.device_ip, "load_apps")
         w.log_message.connect(self.log)
         w.apps_loaded.connect(self._populate)
@@ -394,10 +415,12 @@ class AppManagerDialog(QDialog):
         self._apps_data = apps
         self._app_labels = {}
         self._app_versions = {}
+        self._detail_row_by_pkg = {}
+        self._detail_icon_by_pkg = {}
         # Table view (no icons in list)
         self.tree.setSortingEnabled(False)
         self.model.removeRows(0, self.model.rowCount())
-        for name, pkg, st, at in apps:
+        for row, (name, pkg, st, at) in enumerate(apps):
             cb = QStandardItem()
             cb.setCheckable(True)
             self.model.appendRow(
@@ -410,6 +433,7 @@ class AppManagerDialog(QDialog):
                     QStandardItem(at),
                 ]
             )
+            self._detail_row_by_pkg[pkg] = row
         self.tree.setSortingEnabled(True)
         # Icon view
         self.icon_list.clear()
@@ -424,31 +448,124 @@ class AppManagerDialog(QDialog):
             if st == "Disabled":
                 item.setForeground(QColor("#999999"))
             self.icon_list.addItem(item)
+            self._detail_icon_by_pkg[pkg] = item
         self._filter()
         self.status_bar.showMessage(f"Loaded {len(apps)} apps — loading details...")
-        # Background detail loading
-        pkgs = [a[1] for a in apps]
-        w = AppManagerWorker(self.device_ip, "load_detail_batch", packages=pkgs)
-        w.app_detail_batch.connect(self._on_detail)
-        w.log_message.connect(self.log)
-        self._track_worker(w)
-        w.start()
+        self._schedule_visible_detail_load()
 
     def _on_detail(self, pkg, label, version, itime):
+        self._pending_detail_packages.discard(pkg)
         self._app_labels[pkg] = label
         self._app_versions[pkg] = version
-        for i in range(self.icon_list.count()):
-            item = self.icon_list.item(i)
-            if item.data(Qt.UserRole) == pkg:
-                item.setToolTip(f"{label}\n{pkg}\n{version}")
+        self._detail_cache[pkg] = (label, version, itime)
+        item = self._detail_icon_by_pkg.get(pkg)
+        if item:
+            item.setToolTip(f"{label}\n{pkg}\n{version}")
+        row = self._detail_row_by_pkg.get(pkg)
+        if row is not None:
+            name_item = self.model.item(row, 1)
+            version_item = self.model.item(row, 3)
+            if label and name_item:
+                name_item.setText(label)
+            if version and version_item:
+                version_item.setText(version)
+
+    def _on_detail_worker_finished(self, packages=None):
+        if packages:
+            self._pending_detail_packages.difference_update(packages)
+        self._detail_worker_running = False
+        if self._detail_timer.isActive():
+            return
+        if self._has_unloaded_details():
+            self._schedule_visible_detail_load(delay_ms=80)
+            return
+        self.status_bar.showMessage(f"Loaded {len(self._apps_data)} apps")
+
+    def _schedule_visible_detail_load(self, delay_ms: int = 120):
+        if self._detail_timer.isActive():
+            self._detail_timer.stop()
+        self._detail_timer.start(delay_ms)
+
+    def _has_unloaded_details(self) -> bool:
+        return any(
+            pkg
+            for _name, pkg, _status, _app_type in self._apps_data
+            if pkg not in self._detail_cache and pkg not in self._pending_detail_packages
+        )
+
+    def _next_unloaded_detail_packages(self, limit: int = 30) -> list[str]:
+        packages = []
+        for _name, pkg, _status, _app_type in self._apps_data:
+            if pkg in self._detail_cache or pkg in self._pending_detail_packages:
+                continue
+            packages.append(pkg)
+            if len(packages) >= limit:
                 break
-        for r in range(self.model.rowCount()):
-            if self.model.item(r, 2).text() == pkg:
-                if label:
-                    self.model.item(r, 1).setText(label)
-                if version:
-                    self.model.item(r, 3).setText(version)
-                break
+        return packages
+
+    def _visible_detail_packages(self, limit: int = 30) -> list[str]:
+        packages: list[str] = []
+        if self._view_mode:
+            for i in range(self.icon_list.count()):
+                item = self.icon_list.item(i)
+                pkg = item.data(Qt.UserRole) if item else ""
+                if item and not item.isHidden() and pkg and pkg not in self._detail_cache:
+                    packages.append(pkg)
+                    if len(packages) >= limit:
+                        break
+            return packages
+
+        root = self.tree.rootIndex()
+        viewport = self.tree.viewport().rect()
+        seen = set()
+        for row in range(self.proxy.rowCount(root)):
+            proxy_index = self.proxy.index(row, 2, root)
+            if not proxy_index.isValid():
+                continue
+            rect = self.tree.visualRect(proxy_index)
+            if rect.isValid() and not viewport.intersects(rect):
+                continue
+            source_index = self.proxy.mapToSource(proxy_index)
+            source_row = source_index.row()
+            item = self.model.item(source_row, 2)
+            pkg = item.text() if item else ""
+            if pkg and pkg not in seen and pkg not in self._detail_cache:
+                seen.add(pkg)
+                packages.append(pkg)
+                if len(packages) >= limit:
+                    break
+        if packages:
+            return packages
+
+        for row in range(min(self.model.rowCount(), limit)):
+            item = self.model.item(row, 2)
+            pkg = item.text() if item else ""
+            if pkg and pkg not in self._detail_cache:
+                packages.append(pkg)
+        return packages
+
+    def _load_visible_details(self):
+        if self._detail_worker_running:
+            return
+        packages = [
+            pkg for pkg in self._visible_detail_packages()
+            if pkg not in self._pending_detail_packages
+        ]
+        if not packages:
+            packages = self._next_unloaded_detail_packages()
+        if not packages:
+            return
+        self._pending_detail_packages.update(packages)
+        self._detail_worker_running = True
+        self.status_bar.showMessage(
+            f"Loading details {len(self._detail_cache)}/{len(self._apps_data)}"
+        )
+        w = AppManagerWorker(self.device_ip, "load_detail_batch", packages=packages)
+        w.app_detail_batch.connect(self._on_detail)
+        w.log_message.connect(self.log)
+        w.finished.connect(lambda pkgs=packages: self._on_detail_worker_finished(pkgs))
+        self._track_worker(w)
+        w.start()
 
     @staticmethod
     def _gen_icon(name, atype, size=48):
@@ -485,6 +602,7 @@ class AppManagerDialog(QDialog):
         self.view_toggle.setToolTip(
             "Switch to List view" if self._view_mode else "Switch to Icon view"
         )
+        self._schedule_visible_detail_load()
 
     def _icon_context_menu(self, pos):
         item = self.icon_list.itemAt(pos)
@@ -544,6 +662,7 @@ class AppManagerDialog(QDialog):
             )
             text_match = not text or text in name or text in pkg
             item.setHidden(not (type_match and text_match))
+        self._schedule_visible_detail_load()
 
     # ── 点击 / 右键菜单 ────────────────────────────────────────────────────
 

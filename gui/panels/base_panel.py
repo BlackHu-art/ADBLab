@@ -1,9 +1,10 @@
 """Tab base class — shared UI factory methods and device/package accessors."""
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
+    QHBoxLayout,
     QLineEdit,
     QPushButton,
     QSizePolicy,
@@ -69,7 +70,7 @@ class BasePanel(QWidget):
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         return g
 
-    def _b(self, t, i, variant=""):
+    def _b(self, t, i, variant="", tooltip=None):
         """Create icon button. variant: '' (default), 'accent', 'danger'."""
         b = QPushButton(t)
         b.setFont(self._font_sm)
@@ -77,11 +78,14 @@ class BasePanel(QWidget):
         b.setFixedHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
+        b.setToolTip(tooltip or t)
+        b.setProperty("iconName", i)
+        b.setCursor(Qt.PointingHandCursor)
         if variant:
             b.setObjectName(variant)
         return b
 
-    def _db(self, t, i):
+    def _db(self, t, i, tooltip=None):
         """Create double-click icon button."""
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
@@ -89,17 +93,44 @@ class BasePanel(QWidget):
         b.setFixedHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
+        b.setToolTip(tooltip or t)
+        b.setProperty("iconName", i)
+        b.setCursor(Qt.PointingHandCursor)
         return b
 
-    def _qb(self, t, variant=""):
+    def _qb(self, t, variant="", tooltip=None):
         """Create text-only button. variant: '' (default), 'accent', 'danger'."""
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         b.setFixedHeight(28)
+        b.setToolTip(tooltip or t)
+        b.setCursor(Qt.PointingHandCursor)
         if variant:
             b.setObjectName(variant)
         return b
+
+    def _row(self, *items, spacing=4):
+        """Create a compact horizontal row.
+
+        Each item can be a widget or ``(widget, stretch)`` to keep repeated
+        panel rows consistent without retyping QHBoxLayout setup everywhere.
+        """
+        row = QHBoxLayout()
+        row.setSpacing(spacing)
+        for item in items:
+            if isinstance(item, tuple):
+                widget, stretch = item
+            else:
+                widget, stretch = item, 0
+            row.addWidget(widget, stretch)
+        return row
+
+    def _add_row(self, layout, *items, spacing=4):
+        """Create a row and append it to an existing vertical/group layout."""
+        row = self._row(*items, spacing=spacing)
+        layout.addLayout(row)
+        return row
 
     def _in(self, p, w=0):
         """创建统一样式的输入框。"""
@@ -116,6 +147,15 @@ class BasePanel(QWidget):
         """创建统一样式的下拉框。"""
         c = QComboBox()
         c.setFont(font or self._font_sm)
+        c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if items:
             c.addItems(items)
+        return c
+
+    def _combo_editable(self, items=None, font=None):
+        """Create a consistently styled editable combo box."""
+        c = self._combo(items, font=font)
+        c.setEditable(True)
+        if c.lineEdit():
+            c.lineEdit().setFont(font or self._font_sm)
         return c
