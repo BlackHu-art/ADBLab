@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import warnings
+from pathlib import Path
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -815,6 +816,29 @@ def test_performance_monitor_layout_skips_side_panels_for_web_dashboard():
 
 def test_performance_web_timeline_is_disabled_in_offscreen_tests():
     assert is_web_timeline_available() is False
+
+
+def test_performance_web_timeline_disabled_by_default_in_frozen_build(monkeypatch):
+    from gui.performance_web import dashboard
+
+    monkeypatch.setattr(dashboard.sys, "frozen", True, raising=False)
+    monkeypatch.delenv("ADBLAB_ENABLE_WEB_DASHBOARD", raising=False)
+    monkeypatch.setenv("QT_QPA_PLATFORM", "")
+
+    assert dashboard.is_web_timeline_available() is False
+
+
+def test_pyinstaller_build_excludes_qt_webengine_modules():
+    spec = Path("ADBLab.spec").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+
+    for module in (
+        "PySide6.QtWebEngineCore",
+        "PySide6.QtWebEngineWidgets",
+        "PySide6.QtWebChannel",
+    ):
+        assert module in spec
+        assert f"--exclude-module {module}" in workflow
 
 
 def test_performance_web_timeline_payload_preserves_series_and_markers():

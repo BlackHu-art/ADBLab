@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
@@ -21,7 +22,11 @@ def is_web_timeline_available() -> bool:
 
     if QWebEngineView is None or QWebChannel is None:
         return False
-    return os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen"
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
+        return False
+    if getattr(sys, "frozen", False) and os.environ.get("ADBLAB_ENABLE_WEB_DASHBOARD") != "1":
+        return False
+    return all(path.exists() for path in DASHBOARD_ASSET_PATHS)
 
 
 def build_timeline_payload(
@@ -274,6 +279,7 @@ _ASSET_DIR = Path(__file__).with_name("assets")
 DASHBOARD_HTML_PATH = _ASSET_DIR / "index.html"
 DASHBOARD_CSS_PATH = _ASSET_DIR / "style.css"
 DASHBOARD_JS_PATH = _ASSET_DIR / "app.js"
+DASHBOARD_ASSET_PATHS = (DASHBOARD_HTML_PATH, DASHBOARD_CSS_PATH, DASHBOARD_JS_PATH)
 
 
 def load_dashboard_asset(path: Path) -> str:

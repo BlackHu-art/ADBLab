@@ -88,6 +88,9 @@ jobs:
             --name "${{ matrix.artifact }}-${{ needs.version.outputs.version }}" \
             --onefile ${{ matrix.onefile }} \
             ${{ matrix.icon }} \
+            --exclude-module PySide6.QtWebEngineCore \
+            --exclude-module PySide6.QtWebEngineWidgets \
+            --exclude-module PySide6.QtWebChannel \
             ${{ matrix.datas }} \
             main.py
 
