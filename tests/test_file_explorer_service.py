@@ -70,3 +70,21 @@ def test_parse_ls_output_only_splits_symlink_targets_for_symlink_entries():
     assert rows[0].name == "report -> draft.txt"
     assert rows[0].file_type == "TXT"
     assert links == {}
+
+
+def test_parse_ls_output_handles_android_time_and_context_variants():
+    output = """
+-rw-r--r-- 1 u0_a123 u0_a123 123456 2026-06-02 15:30 big video.mp4
+-rw-r--r-- u:object_r:sdcardfs:s0 u0_a123 media_rw 2,048 May 30 12:34 notes.txt
+drwxrwx--x 3 media_rw media_rw 4096 2025-12-01 08:00 Pictures
+"""
+
+    rows, _links = explorer_service.parse_ls_output(output)
+
+    assert [row.name for row in rows] == ["Pictures", "big video.mp4", "notes.txt"]
+    assert rows[1].size == 123456
+    assert rows[1].size_text == "120.6 KB"
+    assert rows[1].modified == "2026-06-02 15:30"
+    assert rows[2].size == 2048
+    assert rows[2].size_text == "2.0 KB"
+    assert rows[2].modified == "May 30 12:34"

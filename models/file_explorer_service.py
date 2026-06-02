@@ -51,16 +51,39 @@ def shell_quote(value: str) -> str:
 
 
 def parse_ls_line(line: str) -> dict[str, str] | None:
-    parts = line.strip().split(maxsplit=7)
-    if len(parts) < 8:
+    """Parse one `ls -la` row from toybox/busybox/coreutils variants."""
+    text = line.strip()
+    parts = text.split()
+    if len(parts) < 6:
+        return None
+    perms = parts[0]
+    index = 1
+    if index < len(parts) and _is_size_token(parts[index]):
+        index += 1
+    if index + 2 >= len(parts):
+        return None
+    owner = parts[index]
+    group = parts[index + 1]
+    index += 2
+
+    size_index = None
+    for cursor in range(index, len(parts)):
+        if _is_size_token(parts[cursor]):
+            size_index = cursor
+            break
+    if size_index is None or size_index + 1 >= len(parts):
+        return None
+
+    modified, name = _split_modified_name(" ".join(parts[size_index + 1:]))
+    if not name:
         return None
     return {
-        "perms": parts[0],
-        "owner": parts[2],
-        "group": parts[3],
-        "size": parts[4],
-        "modified": f"{parts[5]} {parts[6]}",
-        "name": parts[7],
+        "perms": perms,
+        "owner": owner,
+        "group": group,
+        "size": parts[size_index],
+        "modified": modified,
+        "name": name,
     }
 
 
@@ -68,23 +91,65 @@ def extension_label(name: str) -> str:
     return name.rsplit(".", 1)[-1].upper() if "." in name else "File"
 
 
-def safe_int(value: str) -> int:
+def safe_int(value: str | int) -> int:
     try:
-        return int(value.replace(",", ""))
+        return int(str(value).replace(",", ""))
     except (ValueError, AttributeError):
         return 0
 
 
-def format_size(value: str) -> str:
-    try:
-        size = int(value)
-        for unit in ("B", "KB", "MB", "GB"):
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
-    except ValueError:
+def format_size(value: str | int) -> str:
+    if not _is_size_token(str(value)):
         return "-"
+    size = float(safe_int(value))
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _is_size_token(value: str) -> bool:
+    return bool(re.fullmatch(r"\d[\d,]*", str(value)))
+
+
+def _split_modified_name(value: str) -> tuple[str, str]:
+    if not value:
+        return "", ""
+    month_parts = value.split(maxsplit=3)
+    if (
+        len(month_parts) >= 4
+        and _looks_month(month_parts[0])
+        and month_parts[1].isdigit()
+        and _looks_time_or_year(month_parts[2])
+    ):
+        return " ".join(month_parts[:3]), month_parts[3]
+
+    iso_parts = value.split(maxsplit=2)
+    if len(iso_parts) >= 3 and _looks_iso_date(iso_parts[0]) and _looks_time_or_year(iso_parts[1]):
+        return " ".join(iso_parts[:2]), iso_parts[2]
+
+    short_parts = value.split(maxsplit=2)
+    if len(short_parts) >= 3:
+        return " ".join(short_parts[:2]), short_parts[2]
+    if len(short_parts) == 2:
+        return short_parts[0], short_parts[1]
+    return "", value
+
+
+def _looks_month(value: str) -> bool:
+    return value.lower()[:3] in {
+        "jan", "feb", "mar", "apr", "may", "jun",
+        "jul", "aug", "sep", "oct", "nov", "dec",
+    }
+
+
+def _looks_time_or_year(value: str) -> bool:
+    return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?|\d{4}", value))
+
+
+def _looks_iso_date(value: str) -> bool:
+    return bool(re.fullmatch(r"\d{4}-\d{2}-\d{2}", value))
 
 
 def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:

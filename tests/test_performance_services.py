@@ -1,9 +1,13 @@
+from unittest.mock import Mock
+
 from models.performance.parsers import (
     build_cpu_sample,
     enrich_startup_from_logcat,
     parse_am_start_output,
     parse_gfxinfo_output,
     parse_meminfo_output,
+    parse_process_stat_cpu_ticks,
+    parse_process_thread_count,
     parse_proc_stat_total,
     parse_process_stat_ticks,
 )
@@ -13,6 +17,7 @@ from models.performance.dashboard import (
     chart_points,
     frame_chart_values,
     marker_payload,
+    metric_details,
     metric_summaries,
     monitor_control_state,
     refresh_metric_lane_colors,
@@ -25,7 +30,7 @@ from models.performance.service import _cpu_info, _gpu_type, _opengl_info, _prop
 from models.performance.report_service import PerformanceReportService
 from models.performance.session import PerformanceSession
 from models.performance.types import CpuSample, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
-from models.performance.workers import PerformanceAnalyzeWorker
+from models.performance.workers import PerformanceAnalyzeWorker, PerformanceSnapshotWorker
 
 
 def test_parse_am_start_and_logcat_startup_metrics():
@@ -84,9 +89,30 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
     assert metrics.jank_rate == 0.25
     assert metrics.p95_ms == 22
     assert metrics.slow_frames == 1
+    assert metrics.slow_frame_rate == 0.25
+    assert metrics.frozen_frame_rate == 0
+    assert metrics.avg_frame_time_ms == 15
+    assert metrics.max_frame_time_ms == 20
+    assert metrics.estimated_fps == 1.0
     assert metrics.missed_vsync == 2
     assert metrics.high_input_latency == 3
     assert metrics.slow_ui_thread == 4
+
+
+def test_parse_gfxinfo_estimates_fps_from_vsync_interval_not_completion_span():
+    output = """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,1016666667,1016666667,0,0,0,0,0,0,0,0,0,0,1026666667,0,0,
+0,1033333334,1033333334,0,0,0,0,0,0,0,0,0,0,1043333334,0,0,
+0,1050000001,1050000001,0,0,0,0,0,0,0,0,0,0,1060000001,0,0,
+---PROFILEDATA---
+"""
+
+    metrics = parse_gfxinfo_output(output)
+
+    assert metrics.estimated_fps == 60.0
 
 
 def test_parse_meminfo_extracts_summary_and_object_counts():
@@ -102,7 +128,12 @@ Applications Memory Usage (in Kilobytes):
            Java Heap:     6760
          Native Heap:    26508
             Graphics:     1200
+               Stack:      220
+                Code:     3300
+       Private Other:     4100
+              System:     5100
                TOTAL:    54132
+      TOTAL SWAP PSS:      256
 
  Objects
                Views:       98         ViewRootImpl:        1
@@ -116,10 +147,40 @@ Applications Memory Usage (in Kilobytes):
     assert sample.java_heap_kb == 6760
     assert sample.native_heap_kb == 26508
     assert sample.graphics_kb == 1200
+    assert sample.stack_kb == 220
+    assert sample.code_kb == 3300
+    assert sample.private_other_kb == 4100
+    assert sample.system_kb == 5100
+    assert sample.total_swap_pss_kb == 256
     assert sample.views == 98
     assert sample.view_roots == 1
     assert sample.app_contexts == 4
     assert sample.activities == 1
+
+
+def test_parse_meminfo_falls_back_to_graphics_rows_and_swap_pss_column():
+    output = """
+Applications Memory Usage (in Kilobytes):
+                   Pss  Private  Private  SwapPss
+                ------   ------   ------   ------
+       EGL mtrack    2048        0        0        0
+        GL mtrack    1024        0        0        0
+          Gfx dev     512        0        0        0
+            TOTAL    8192     4096     2048      512
+
+ App Summary
+                       Pss(KB)
+                        ------
+           Java Heap:     2048
+         Native Heap:     1024
+               TOTAL:     8192
+"""
+
+    sample = parse_meminfo_output(output, timestamp_ms=123)
+
+    assert sample.total_pss_kb == 8192
+    assert sample.graphics_kb == 3584
+    assert sample.total_swap_pss_kb == 512
 
 
 def test_cpu_sample_uses_proc_tick_delta():
@@ -127,6 +188,8 @@ def test_cpu_sample_uses_proc_tick_delta():
     total_stat = "cpu  100 20 30 850 0 0 0 0 0 0"
 
     process_ticks = parse_process_stat_ticks(process_stat)
+    process_cpu_ticks = parse_process_stat_cpu_ticks(process_stat)
+    thread_count = parse_process_thread_count(process_stat)
     total_ticks = parse_proc_stat_total(total_stat)
     sample = build_cpu_sample(
         timestamp_ms=1000,
@@ -136,11 +199,21 @@ def test_cpu_sample_uses_proc_tick_delta():
         previous_process_ticks=100,
         previous_total_ticks=900,
         is_foreground=True,
+        user_ticks=process_cpu_ticks[0],
+        system_ticks=process_cpu_ticks[1],
+        previous_user_ticks=80,
+        previous_system_ticks=20,
+        thread_count=thread_count,
     )
 
     assert process_ticks == 150
+    assert process_cpu_ticks == (120, 30)
+    assert thread_count == 1
     assert total_ticks == 1000
     assert sample.process_percent == 50.0
+    assert sample.process_user_percent == 40.0
+    assert sample.process_system_percent == 10.0
+    assert sample.thread_count == 1
     assert sample.is_foreground is True
 
 
@@ -223,26 +296,34 @@ def test_dashboard_metric_lanes_define_perfdog_series_and_theme_colors():
         "LOG_INFO": "#info",
         "LOG_ERROR": "#error",
         "LOG_SUCCESS": "#success",
+        "TEXT_SECONDARY": "#muted",
     }
     lanes = build_metric_lanes(roles.__getitem__)
 
     assert [lane["metric"] for lane in lanes] == ["fps", "cpu", "memory"]
-    assert [series["metric"] for series in lanes[0]["series"]] == ["fps", "jank", "stutter"]
-    assert [series["metric"] for series in lanes[1]["series"]] == ["cpu_fg", "cpu_bg"]
+    assert [series["metric"] for series in lanes[0]["series"]] == [
+        "fps",
+        "jank",
+        "stutter_rate",
+        "frame_time_p95",
+    ]
+    assert [series["metric"] for series in lanes[1]["series"]] == ["cpu_app", "cpu_user", "cpu_system"]
     assert [series["metric"] for series in lanes[2]["series"]] == [
+        "memory_pss",
         "memory_java",
         "memory_native",
-        "memory_pss",
+        "memory_graphics",
+        "memory_swap",
     ]
     assert lanes[0]["color"] == "#fps"
     assert lanes[1]["series"][0]["color"] == "#error"
-    assert lanes[2]["series"][2]["color"] == "#success"
+    assert lanes[2]["series"][0]["color"] == "#success"
 
     refreshed = refresh_metric_lane_colors(lanes, lambda role: f"new-{role}")
 
     assert refreshed is lanes
     assert lanes[0]["series"][1]["color"] == "new-LOG_WARNING"
-    assert lanes[2]["series"][0]["color"] == "new-LOG_INFO"
+    assert lanes[2]["series"][1]["color"] == "new-LOG_INFO"
 
 
 def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
@@ -252,6 +333,16 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
         estimated_fps=58.6,
         slow_frames=15,
         frozen_frames=2,
+        slow_frame_rate=0.125,
+        frozen_frame_rate=0.0167,
+        p50_ms=12.1,
+        p95_ms=24.2,
+        p99_ms=48.5,
+        avg_frame_time_ms=14.7,
+        max_frame_time_ms=55.0,
+        missed_vsync=3,
+        slow_ui_thread=4,
+        high_input_latency=5,
     )
     snapshot = PerformanceSnapshot(
         device_id="device-1",
@@ -262,11 +353,25 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
             total_pss_kb=2048,
             java_heap_kb=1024,
             native_heap_kb=512,
+            graphics_kb=256,
+            stack_kb=128,
+            code_kb=64,
+            private_other_kb=32,
+            system_kb=16,
+            total_swap_pss_kb=8,
             activities=1,
             views=20,
             view_roots=2,
+            app_contexts=3,
         ),
-        cpu=CpuSample(timestamp_ms=1000, process_percent=37.5, is_foreground=False),
+        cpu=CpuSample(
+            timestamp_ms=1000,
+            process_percent=37.5,
+            process_user_percent=28.0,
+            process_system_percent=9.5,
+            is_foreground=False,
+            thread_count=42,
+        ),
     )
     session = PerformanceSession(device_id="device-1")
     session.add_point(1000, {"fps": 55})
@@ -284,20 +389,57 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
         "fps": 58.6,
         "jank": 12.5,
         "stutter": 2,
+        "stutter_rate": 1.67,
         "frames": 120,
         "slow": 15,
         "frozen": 2,
+        "slow_rate": 12.5,
+        "frozen_rate": 1.67,
+        "frame_time_avg": 14.7,
+        "frame_time_p50": 12.1,
+        "frame_time_p95": 24.2,
+        "frame_time_p99": 48.5,
+        "frame_time_max": 55.0,
+        "missed_vsync": 3,
+        "slow_ui_thread": 4,
+        "high_input_latency": 5,
     }
     assert snapshot_values["online"] == 1
     assert snapshot_values["collecting"] == 1
     assert snapshot_values["cpu_fg"] == 0
     assert snapshot_values["cpu_bg"] == 37.5
+    assert snapshot_values["cpu_app"] == 37.5
+    assert snapshot_values["cpu_user"] == 28.0
+    assert snapshot_values["cpu_system"] == 9.5
+    assert snapshot_values["threads"] == 42
     assert snapshot_values["memory_pss"] == 2.0
     assert snapshot_values["memory_java"] == 1.0
     assert snapshot_values["memory_native"] == 0.5
+    assert snapshot_values["memory_graphics"] == 0.25
+    assert snapshot_values["memory_stack"] == 0.12
+    assert snapshot_values["memory_code"] == 0.06
+    assert snapshot_values["memory_private_other"] == 0.03
+    assert snapshot_values["memory_system"] == 0.02
+    assert snapshot_values["memory_swap"] == 0.01
     assert snapshot_values["fps"] == 58.6
     assert chart_points(session, 1) == [{"_ts": 2000, "memory_pss": 120}]
     assert marker_payload(session) == [{"timestamp_ms": 1500, "label": "Login"}]
+
+
+def test_frame_chart_values_uses_slow_rate_as_stutter_fallback():
+    frames = FrameMetrics(
+        total_frames=100,
+        slow_frames=8,
+        frozen_frames=0,
+        slow_frame_rate=0.08,
+        frozen_frame_rate=0,
+    )
+
+    values = frame_chart_values(frames)
+
+    assert values["stutter"] == 8
+    assert values["stutter_rate"] == 8.0
+    assert values["frozen_rate"] == 0
 
 
 def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
@@ -307,22 +449,46 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
         "LOG_INFO": "#info",
         "LOG_ERROR": "#error",
         "LOG_SUCCESS": "#success",
+        "TEXT_SECONDARY": "#muted",
     }
     session = PerformanceSession(device_id="device-1")
-    session.add_point(1000, {"fps": 58, "jank": 3, "cpu_fg": 20, "memory_pss": 120})
+    session.add_point(
+        1000,
+        {
+            "fps": 58,
+            "jank": 3,
+            "stutter_rate": 1,
+            "frame_time_p95": 20,
+            "cpu_app": 20,
+            "cpu_user": 15,
+            "cpu_system": 5,
+            "memory_pss": 120,
+            "memory_graphics": 10,
+        },
+    )
     session.add_point(
         2000,
         {
             "fps": 60,
             "jank": 1,
-            "cpu_fg": 30,
+            "stutter_rate": 0,
+            "frame_time_p95": 18,
+            "cpu_app": 30,
+            "cpu_user": 22,
+            "cpu_system": 8,
             "memory_pss": 140,
             "memory_java": 70,
             "memory_native": 45,
+            "memory_graphics": 12,
+            "memory_swap": 2,
+            "activities": 1,
+            "views": 10,
+            "roots": 1,
         },
     )
 
     summaries = metric_summaries(session, roles.__getitem__)
+    details = metric_details(session)
     policy = axis_policy()
 
     assert summaries[0] == {
@@ -338,8 +504,15 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
     }
     assert summaries[1]["metric"] == "jank"
     assert summaries[1]["color"] == "#warn"
-    assert summaries[3]["label"] == "PSS"
-    assert summaries[4]["now"] == 70.0
+    assert summaries[2]["metric"] == "stutter_rate"
+    assert summaries[4]["metric"] == "cpu_app"
+    assert summaries[7]["label"] == "PSS"
+    assert summaries[8]["now"] == 70.0
+    assert details[0]["group"] == "Frame"
+    assert {"label": "P95", "value": "18.0", "unit": "ms"} in details[0]["items"]
+    assert {"label": "User", "value": "22.0", "unit": "%"} in details[1]["items"]
+    assert {"label": "Graphics", "value": "12.0", "unit": "MB"} in details[2]["items"]
+    assert {"label": "Views", "value": "10", "unit": ""} in details[3]["items"]
     assert policy["fpsChart"] == {"min": 0, "max": 60, "padded": False}
     assert policy["cpuChart"] == {"min": 0, "max": 100, "padded": False}
     assert policy["memoryChart"] == {"min": 0, "max": 256, "padded": True}
@@ -405,6 +578,7 @@ def test_web_dashboard_context_normalizes_set_context_payload():
     font = {"uiSize": 12}
     device_info = [{"info": "Device Name", "value": "Pixel"}]
     summaries = [{"metric": "fps", "now": 60}]
+    details = [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}]
     policy = {"fpsChart": {"max": 60}}
 
     context = web_dashboard_context(
@@ -421,6 +595,7 @@ def test_web_dashboard_context_normalizes_set_context_payload():
         font=font,
         device_info=device_info,
         metric_summaries=summaries,
+        metric_details=details,
         axis_policy=policy,
     )
     events.append("mutated")
@@ -430,6 +605,7 @@ def test_web_dashboard_context_normalizes_set_context_payload():
     font["uiSize"] = 14
     device_info.append({"info": "OS", "value": "15"})
     summaries.append({"metric": "jank", "now": 5})
+    details.append({"group": "CPU", "items": []})
     policy["cpuChart"] = {"max": 100}
 
     assert context == {
@@ -446,6 +622,7 @@ def test_web_dashboard_context_normalizes_set_context_payload():
         "font": {"uiSize": 12},
         "device_info": [{"info": "Device Name", "value": "Pixel"}],
         "metric_summaries": [{"metric": "fps", "now": 60}],
+        "metric_details": [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}],
         "axis_policy": {"fpsChart": {"max": 60}},
     }
 
@@ -464,10 +641,28 @@ def test_performance_report_presentation_builds_summary_and_plain_text():
             total_frames=100,
             janky_frames=8,
             jank_rate=0.08,
+            frozen_frame_rate=0.01,
             estimated_fps=58.7,
             p95_ms=22.4,
         ),
-        "samples": [MemorySample(timestamp_ms=1, total_pss_kb=2048, native_heap_kb=512)],
+        "samples": [
+            MemorySample(
+                timestamp_ms=1,
+                total_pss_kb=2048,
+                native_heap_kb=512,
+                graphics_kb=256,
+                total_swap_pss_kb=128,
+            )
+        ],
+        "cpu_samples": [
+            CpuSample(
+                timestamp_ms=1,
+                process_percent=22.5,
+                process_user_percent=18.0,
+                process_system_percent=4.5,
+                thread_count=12,
+            )
+        ],
         "findings": ["Jank rate: 8.00%"],
     }
 
@@ -480,11 +675,45 @@ def test_performance_report_presentation_builds_summary_and_plain_text():
     assert summary["findings"] == ["Jank rate: 8.00%"]
     assert {"label": "Startup", "value": "1234 ms"} in summary["metrics"]
     assert {"label": "Jank", "value": "8.00%"} in summary["metrics"]
+    assert {"label": "Stutter", "value": "1.00%"} in summary["metrics"]
+    assert {"label": "CPU", "value": "22.5%"} in summary["metrics"]
     assert {"label": "PSS", "value": "2,048 KB"} in summary["metrics"]
+    assert {"label": "Graphics", "value": "256 KB"} in summary["metrics"]
     assert "Quick Check: WARN" in text
     assert "FPS: 58.7" in text
+    assert "CPU User: 18.0%" in text
     assert "Native Heap: 512 KB" in text
+    assert "Swap PSS: 128 KB" in text
     assert "- Jank rate: 8.00%" in text
+
+
+def test_performance_report_presentation_falls_back_to_slow_stutter_rate():
+    result = {
+        "status": "warn",
+        "frames": FrameMetrics(
+            total_frames=100,
+            slow_frames=8,
+            frozen_frames=0,
+            slow_frame_rate=0.08,
+            frozen_frame_rate=0.0,
+            estimated_fps=55.0,
+        ),
+        "samples": [
+            MemorySample(
+                timestamp_ms=1,
+                total_pss_kb=4096,
+                graphics_kb=3584,
+            )
+        ],
+    }
+
+    summary = build_report_summary(result, "Monitor")
+    text = render_report_text(result, "Monitor")
+
+    assert {"label": "Stutter", "value": "8.00%"} in summary["metrics"]
+    assert {"label": "Graphics", "value": "3,584 KB"} in summary["metrics"]
+    assert "Stutter: 8.00%" in text
+    assert "Graphics: 3,584 KB" in text
 
 
 def test_sampling_schedule_respects_frame_interval_and_force_refresh():
@@ -522,6 +751,7 @@ def test_analyze_worker_flags_memory_growth_and_writes_report():
             MemorySample(timestamp_ms=1, total_pss_kb=1000),
             MemorySample(timestamp_ms=2, total_pss_kb=13000),
         ],
+        [],
         started_at=0,
     )
     emitted = []
@@ -532,3 +762,52 @@ def test_analyze_worker_flags_memory_growth_and_writes_report():
     assert emitted
     assert emitted[0]["status"] == "warn"
     assert emitted[0]["findings"] == ["PSS grew by 12000 KB"]
+
+
+def test_snapshot_worker_skips_heavy_device_info_by_default():
+    service = Mock()
+    service.snapshot.return_value = PerformanceSnapshot(
+        device_id="device-1",
+        online=True,
+        target_package="com.example",
+        status="Ready",
+    )
+    worker = PerformanceSnapshotWorker(service, "com.example")
+    emitted = []
+    worker.snapshot_ready.connect(emitted.append)
+
+    worker.run()
+
+    service.device_info.assert_not_called()
+    service.snapshot.assert_called_once_with("com.example")
+    assert emitted == [service.snapshot.return_value]
+
+
+def test_snapshot_worker_collects_device_info_only_when_requested():
+    device_info = Mock()
+    device_info.rows.return_value = [{"info": "Model", "value": "Pixel"}]
+    service = Mock()
+    service.device_info.return_value = device_info
+    service.snapshot.return_value = PerformanceSnapshot(
+        device_id="device-1",
+        online=True,
+        target_package="com.example",
+        status="Ready",
+    )
+    worker = PerformanceSnapshotWorker(
+        service,
+        "com.example",
+        include_device_info=True,
+        refresh_device_info=True,
+    )
+    device_rows = []
+    snapshots = []
+    worker.device_info_ready.connect(device_rows.append)
+    worker.snapshot_ready.connect(snapshots.append)
+
+    worker.run()
+
+    service.device_info.assert_called_once_with(refresh=True)
+    service.snapshot.assert_called_once_with("com.example")
+    assert device_rows == [[{"info": "Model", "value": "Pixel"}]]
+    assert snapshots == [service.snapshot.return_value]

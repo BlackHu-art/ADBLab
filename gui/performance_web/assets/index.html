@@ -91,6 +91,7 @@
         <div class="inspector-header">
           <div class="inspector-tabs" aria-label="Inspector tabs">
             <button class="inspector-tab active" data-inspector-tab="events">Events</button>
+            <button class="inspector-tab" data-inspector-tab="metrics">Metrics</button>
             <button class="inspector-tab" data-inspector-tab="report">Report</button>
           </div>
           <button class="inspector-toggle" id="inspectorToggle" title="Collapse or expand inspector" aria-label="Collapse or expand inspector" aria-pressed="false">Collapse</button>
@@ -98,6 +99,9 @@
         <div class="inspector-content">
           <div class="inspector-body active" id="eventsInspector">
             <div class="event-list" id="eventList"></div>
+          </div>
+          <div class="inspector-body" id="metricsInspector">
+            <div class="metric-detail-list" id="metricDetailList"></div>
           </div>
           <div class="inspector-body" id="reportInspector">
             <div class="report-summary" id="reportSummary"></div>

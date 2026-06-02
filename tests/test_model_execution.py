@@ -1,4 +1,5 @@
 import ctypes
+import inspect
 import json
 import os
 import subprocess
@@ -476,15 +477,15 @@ def test_scan_thread_uses_command_runner_for_device_polling():
     _app = QApplication.instance() or QApplication([])
     thread = _ScanThread()
     emitted = []
-    thread.devices_changed.connect(lambda: emitted.append(True))
+    thread.devices_changed.connect(emitted.append)
 
     with patch("gui.main_frame.CommandRunner.run") as run, \
          patch.object(_ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)):
-        run.return_value = CommandResult(success=True, output="List of devices attached\n")
+        run.return_value = CommandResult(success=True, output="List of devices attached\ndevice-1\tdevice\n")
         thread.run()
 
     run.assert_called_once_with(["adb", "devices"], timeout=5)
-    assert emitted == [True]
+    assert emitted == [["device-1"]]
 
 
 def test_main_frame_starts_scan_thread_with_debounced_refresh():
@@ -639,6 +640,15 @@ def test_main_frame_does_not_import_performance_monitor_at_module_load():
     assert not hasattr(main_frame_module, "PerformanceMonitorDialog")
 
 
+def test_performance_monitor_keeps_web_dashboard_import_lazy():
+    import gui.dialogs.performance_monitor as performance_monitor_module
+
+    source = inspect.getsource(performance_monitor_module)
+
+    assert "from gui.performance_web import" not in source
+    assert "from gui.performance_web.dashboard import" in source
+
+
 def test_main_frame_performance_monitor_uses_device_dialog_registry():
     frame = MainFrame.__new__(MainFrame)
     frame._show_device_dialogs = Mock()
@@ -681,7 +691,7 @@ def test_performance_monitor_workers_share_dialog_service():
         snapshot_cls.return_value = snapshot_worker
         PerformanceMonitorDialog._refresh_snapshot(dialog)
 
-    snapshot_cls.assert_called_once_with(dialog._service, "com.example")
+    snapshot_cls.assert_called_once_with(dialog._service, "com.example", include_device_info=False)
     snapshot_worker.start.assert_called_once()
 
     dialog._monitoring = True
@@ -695,6 +705,31 @@ def test_performance_monitor_workers_share_dialog_service():
 
     frame_cls.assert_called_once_with(dialog._service, "com.example")
     frame_worker.start.assert_called_once()
+
+
+def test_performance_monitor_device_info_refresh_is_async_and_explicit():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._service = Mock()
+    dialog._closing = False
+    dialog._snapshot_worker = None
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = "com.example"
+
+    with patch("gui.dialogs.performance_monitor.PerformanceSnapshotWorker") as snapshot_cls:
+        snapshot_worker = Mock()
+        snapshot_worker.isRunning.return_value = False
+        snapshot_cls.return_value = snapshot_worker
+
+        PerformanceMonitorDialog._refresh_device_info(dialog, force=True)
+
+    snapshot_cls.assert_called_once_with(
+        dialog._service,
+        "com.example",
+        include_device_info=True,
+        refresh_device_info=True,
+    )
+    dialog._service.device_info.assert_not_called()
+    snapshot_worker.start.assert_called_once()
 
 
 def test_performance_monitor_action_workers_use_dialog_service():
@@ -747,8 +782,7 @@ def test_performance_monitor_uses_widget_timeline_when_web_unavailable():
     dialog._metric_lanes = [{"metric": "fps", "label": "FPS", "color": "#0078d4", "enabled": True}]
     dialog._use_web_dashboard = False
 
-    with patch("gui.dialogs.performance_monitor.is_web_timeline_available", return_value=False):
-        chart = PerformanceMonitorDialog._create_timeline_chart(dialog)
+    chart = PerformanceMonitorDialog._create_timeline_chart(dialog)
 
     try:
         assert isinstance(chart, PerfDogTimelineChart)
@@ -759,8 +793,8 @@ def test_performance_monitor_uses_widget_timeline_when_web_unavailable():
 def test_performance_monitor_layout_skips_side_panels_for_web_dashboard():
     _app = QApplication.instance() or QApplication([])
 
-    with patch("gui.dialogs.performance_monitor.is_web_timeline_available", return_value=True), \
-         patch("gui.dialogs.performance_monitor.WebPerformanceTimelineChart", return_value=QWidget()), \
+    with patch("gui.dialogs.performance_monitor._is_web_dashboard_available", return_value=True), \
+         patch("gui.dialogs.performance_monitor._create_web_timeline_chart", return_value=QWidget()), \
          patch("gui.dialogs.performance_monitor.PerformanceService"), \
          patch.object(PerformanceMonitorDialog, "_refresh_snapshot"):
         dialog = PerformanceMonitorDialog(device_ip="device-1")
@@ -800,6 +834,7 @@ def test_performance_web_timeline_payload_preserves_series_and_markers():
         theme="Dark",
         palette={"background": "#101217", "accent": "#4cc38a"},
         metric_summaries=[{"metric": "fps", "now": 60}],
+        metric_details=[{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}],
         axis_policy={"fpsChart": {"max": 60}},
     )
 
@@ -820,6 +855,7 @@ def test_performance_web_timeline_payload_preserves_series_and_markers():
         "font": {},
         "deviceInfo": [],
         "metricSummaries": [{"metric": "fps", "now": 60}],
+        "metricDetails": [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}],
         "axisPolicy": {"fpsChart": {"max": 60}},
     }
 
@@ -886,6 +922,7 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
           document.querySelector('[data-tab="setting"]').click();
           document.querySelector('[data-action="quickCheck"]').click();
           document.querySelector('#sideToggle').click();
+          document.querySelector('[data-inspector-tab="metrics"]').click();
           document.querySelector('[data-inspector-tab="report"]').click();
           document.querySelector('#inspectorToggle').click();
           return {
@@ -894,14 +931,20 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
             deviceRows: document.querySelectorAll('.info-row').length,
             summaryRows: document.querySelectorAll('.summary-row').length,
             eventRows: document.querySelectorAll('.event-row').length,
+            metricGroups: document.querySelectorAll('.metric-detail-group').length,
             reportMetrics: document.querySelectorAll('.report-metric').length,
+            reportRawExists: Boolean(document.querySelector('.report-raw')),
+            reportRawText: document.querySelector('.report-raw')?.textContent || '',
+            reportRawOverflow: getComputedStyle(document.querySelector('.report-raw')).overflowY,
             runState: document.querySelector('#runStateValue').textContent,
+            runStateTone: document.querySelector('#runStateValue').dataset.tone,
             sampleCount: document.querySelector('#sampleCountValue').textContent,
             reportStatus: document.querySelector('#reportStatusValue').textContent,
             inspectorCollapsed: document.querySelector('.workspace-panel').classList.contains('inspector-collapsed'),
             chartChildren: document.querySelector('.chart-panel').children.length,
             canvasIds: Array.from(document.querySelectorAll('.metric-chart')).map(canvas => canvas.id),
             sideCollapsed: document.querySelector('.dashboard-shell').classList.contains('side-collapsed'),
+            reportMode: document.querySelector('.workspace-panel').classList.contains('inspector-mode-report'),
             fontSize: getComputedStyle(document.documentElement).getPropertyValue('--font-size').trim(),
             status: document.querySelector('#statusText').textContent,
           };
@@ -913,6 +956,7 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
         result["loaded"] = ok
         chart.set_context(
             events=["Qt smoke started"],
+            report="Qt Smoke: PASS\nRendered report text",
             report_summary={
                 "title": "Qt Smoke",
                 "status": "pass",
@@ -929,6 +973,10 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
                 {"metric": "fps", "label": "FPS", "unit": "", "digits": 1, "color": "#4cc38a", "now": 60, "avg": 58.3, "max": 60, "count": 3},
                 {"metric": "jank", "label": "Jank", "unit": "%", "digits": 1, "color": "#f59e0b", "now": 4, "avg": 2.3, "max": 4, "count": 3},
             ],
+            metric_details=[
+                {"group": "Frame", "items": [{"label": "FPS", "value": "57.0", "unit": ""}]},
+                {"group": "CPU", "items": [{"label": "App", "value": "31.0", "unit": "%"}]},
+            ],
             axis_policy={
                 "fpsChart": {"min": 0, "max": 60, "padded": False},
                 "cpuChart": {"min": 0, "max": 100, "padded": False},
@@ -937,9 +985,9 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
         )
         chart.set_points(
             [
-                {"_ts": 1000, "fps": 58, "jank": 2, "stutter": 0, "cpu_fg": 24, "cpu_bg": 0, "memory_java": 92, "memory_native": 38, "memory_pss": 120},
-                {"_ts": 2000, "fps": 60, "jank": 1, "stutter": 0, "cpu_fg": 28, "cpu_bg": 0, "memory_java": 94, "memory_native": 39, "memory_pss": 122},
-                {"_ts": 3000, "fps": 57, "jank": 4, "stutter": 1, "cpu_fg": 31, "cpu_bg": 0, "memory_java": 96, "memory_native": 40, "memory_pss": 123},
+                {"_ts": 1000, "fps": 58, "jank": 2, "stutter_rate": 0, "frame_time_p95": 18, "cpu_app": 24, "cpu_user": 18, "cpu_system": 6, "cpu_fg": 24, "cpu_bg": 0, "memory_pss": 120, "memory_java": 92, "memory_native": 38, "memory_graphics": 20, "memory_swap": 1},
+                {"_ts": 2000, "fps": 60, "jank": 1, "stutter_rate": 0, "frame_time_p95": 16, "cpu_app": 28, "cpu_user": 21, "cpu_system": 7, "cpu_fg": 28, "cpu_bg": 0, "memory_pss": 122, "memory_java": 94, "memory_native": 39, "memory_graphics": 21, "memory_swap": 1},
+                {"_ts": 3000, "fps": 57, "jank": 4, "stutter_rate": 1, "frame_time_p95": 24, "cpu_app": 31, "cpu_user": 23, "cpu_system": 8, "cpu_fg": 31, "cpu_bg": 0, "memory_pss": 123, "memory_java": 96, "memory_native": 40, "memory_graphics": 22, "memory_swap": 2},
             ]
         )
         QTimer.singleShot(900, evaluate)
@@ -955,14 +1003,20 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
     assert result["eval"]["deviceRows"] == 1
     assert result["eval"]["summaryRows"] == 2
     assert result["eval"]["eventRows"] == 1
+    assert result["eval"]["metricGroups"] == 2
     assert result["eval"]["reportMetrics"] == 1
+    assert result["eval"]["reportRawExists"] is True
+    assert "Rendered report text" in result["eval"]["reportRawText"]
+    assert result["eval"]["reportRawOverflow"] == "visible"
     assert result["eval"]["runState"] == "Ready"
+    assert result["eval"]["runStateTone"] == "good"
     assert result["eval"]["sampleCount"] == "3"
     assert result["eval"]["reportStatus"] == "pass"
     assert result["eval"]["inspectorCollapsed"] is True
     assert result["eval"]["chartChildren"] == 3
     assert result["eval"]["canvasIds"] == ["fpsChart", "cpuChart", "memoryChart"]
     assert result["eval"]["sideCollapsed"] is True
+    assert result["eval"]["reportMode"] is True
     assert result["eval"]["fontSize"] == "14px"
     assert result["actions"] == [("quickCheck", {})]
 
@@ -1036,6 +1090,8 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert 'id="sideToggle"' in html
     assert 'class="inspector-tabs"' in html
     assert 'id="eventList"' in html
+    assert 'data-inspector-tab="metrics"' in html
+    assert 'id="metricDetailList"' in html
     assert 'id="reportSummary"' in html
     assert 'id="inspectorToggle"' in html
     assert "qrc:///qtwebchannel/qwebchannel.js" not in html
@@ -1049,7 +1105,15 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "grid-template-columns: 360px 20px minmax(0, 1fr)" in css
     assert ".dashboard-shell.side-collapsed" in css
     assert ".workspace-panel.inspector-collapsed" in css
+    assert ".workspace-panel.inspector-mode-metrics" in css
+    assert ".workspace-panel.inspector-mode-report" in css
+    assert "--chart-panel-height: 456px" in css
+    assert "grid-template-rows: 34px var(--chart-panel-height)" in css
+    assert "minmax(var(--inspector-report-height), 1fr)" in css
     assert ".side-toggle" in css
+    assert "--scrollbar-thumb" in css
+    assert "scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track)" in css
+    assert "*::-webkit-scrollbar-thumb" in css
     assert "--font-size: 12px" in css
     assert "font-size: var(--font-size)" in css
     assert ".tab-bar" in css
@@ -1061,14 +1125,30 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "--fps-color" in css
     assert "--jank-color" in css
     assert "--stutter-color" in css
+    assert "--frame-time-color" in css
     assert "--cpu-fg-color" in css
+    assert "--cpu-app-color" in css
+    assert "--cpu-user-color" in css
+    assert "--cpu-system-color" in css
     assert "--memory-pss-color" in css
+    assert "--memory-graphics-color" in css
+    assert "--memory-swap-color" in css
+    assert ".metric-detail-list" in css
+    assert "repeat(auto-fit, minmax(178px, 1fr))" in css
+    assert ".report-raw" in css
+    assert "overflow: visible" in css
+    assert "max-height: 180px" not in css
+    assert "overscroll-behavior: contain" in css
     assert "renderDeviceTable" in js
     assert "renderLiveSummary" in js
     assert "renderTopStatus" in js
+    assert "function statusTone" in js
+    assert "runStateValue.dataset.tone" in js
     assert "renderInspector" in js
+    assert "renderMetricDetails" in js
     assert "renderTabs" in js
     assert "renderInspectorTab" in js
+    assert "inspector-mode-" in js
     assert "renderMetricChart" in js
     assert "renderCharts" in js
     assert "drawCrosshair" in js
@@ -1077,22 +1157,37 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "function hoverRatioForCanvas" in js
     assert "sharedHover" in js
     assert "function yAxisMax" in js
+    assert "function stableAxisMax" in js
     assert "toggleSidePanel" in js
     assert "stutter" in js
+    assert "stutter_rate" in js
+    assert "frame_time_p95" in js
+    assert "cpu_app" in js
+    assert "cpu_user" in js
+    assert "cpu_system" in js
     assert "cpu_fg" in js
     assert "cpu_bg" in js
     assert "memory_java" in js
     assert "memory_native" in js
     assert "memory_pss" in js
+    assert "memory_graphics" in js
+    assert "memory_swap" in js
     assert "buildPreviewPayload" in js
     assert "connectQtBridge" in js
     assert "applyTheme" in js
     assert "root.style.setProperty(\"--font-size\"" in js
     assert "root.style.setProperty(\"--chart-bg\"" in js
+    assert "root.style.setProperty(\"--scrollbar-thumb\"" in js
     assert "commitTargetInput" in js
     assert "requestAction" in js
     assert "metricSummaries" in js
+    assert "metricDetails" in js
+    assert "rawReport" in js
+    assert "report-raw" in js
+    assert "title=\"${escapeHtml(value)}${escapeHtml(unit)}\"" in js
     assert "axisPolicy" in js
+    assert 'yLabel: "Memory"' in js
+    assert 'yLabel: "MB"' not in js
     assert "markers:" in js
     assert 'document.addEventListener("click"' in js
     assert "window.renderPerformanceTimeline(buildPreviewPayload())" in js
@@ -1122,6 +1217,8 @@ def test_performance_web_dashboard_keeps_sparse_samples_and_shared_hover_axis():
     assert "canvas.id !== sharedHover.sourceId" in js
     assert "function yAxisMax" in js
     assert "policy.padded === false" in js
+    assert "return stableAxisMax(definition.axisKey, floorMax, dataMax);" in js
+    assert "const stops = [60, 90, 120, 144, 165, 240]" in js
     assert "fpsChart: { min: 0, max: 60, padded: false }" in js
     assert "cpuChart: { min: 0, max: 100, padded: false }" in js
     assert "function drawTimelineMarkers" in js
@@ -1136,7 +1233,9 @@ def test_performance_web_dashboard_responsive_layout_prioritizes_chart_height():
 
     assert "@media (max-width: 760px)" in css
     assert "grid-template-rows: 238px 20px minmax(0, 1fr)" in css
-    assert "grid-template-rows: auto minmax(0, 1fr) 96px" in css
+    assert "grid-template-rows: auto var(--chart-panel-height) minmax(var(--inspector-default-height), 1fr)" in css
+    assert "@media (max-height: 680px)" in css
+    assert "--chart-panel-height: 360px" in css
     assert ".summary-row" in css
     assert "min-height: 30px" in css
     assert ".live-summary" in css
@@ -1196,101 +1295,42 @@ def test_performance_monitor_web_context_receives_events_report_and_state():
 
     PerformanceMonitorDialog._refresh_web_context(dialog)
 
-    dialog.timeline_chart.set_context.assert_called_once_with(
-        events=["12:00:00 Monitor started"],
-        report="Quick Check: PASS",
-        report_summary={"status": "pass"},
-        state="Ready",
-        current_package="com.example",
-        package_name="com.example.target",
-        activity=".MainActivity",
-        controls={
-            "current": True,
-            "quick": True,
-            "start": True,
-            "stop": False,
-            "mark": False,
-            "openReport": True,
-            "export": True,
-        },
-        theme=BaseStyles.current_theme(),
-        palette=build_web_palette(),
-        font=build_web_font(),
-        device_info=[{"info": "Device Name", "value": "Pixel"}],
-        metric_summaries=[
-            {
-                "metric": "fps",
-                "label": "FPS",
-                "unit": "",
-                "digits": 1,
-                "color": BaseStyles.color("BUTTON_ACCENT"),
-                "now": 60.0,
-                "avg": 60.0,
-                "max": 60.0,
-                "count": 1,
-            },
-            {
-                "metric": "jank",
-                "label": "Jank",
-                "unit": "%",
-                "digits": 1,
-                "color": BaseStyles.color("LOG_WARNING"),
-                "now": 2.0,
-                "avg": 2.0,
-                "max": 2.0,
-                "count": 1,
-            },
-            {
-                "metric": "cpu_fg",
-                "label": "CPU",
-                "unit": "%",
-                "digits": 1,
-                "color": BaseStyles.color("LOG_ERROR"),
-                "now": None,
-                "avg": None,
-                "max": None,
-                "count": 0,
-            },
-            {
-                "metric": "memory_pss",
-                "label": "PSS",
-                "unit": "MB",
-                "digits": 1,
-                "color": BaseStyles.color("LOG_SUCCESS"),
-                "now": 100.0,
-                "avg": 100.0,
-                "max": 100.0,
-                "count": 1,
-            },
-            {
-                "metric": "memory_java",
-                "label": "Java",
-                "unit": "MB",
-                "digits": 1,
-                "color": BaseStyles.color("LOG_INFO"),
-                "now": None,
-                "avg": None,
-                "max": None,
-                "count": 0,
-            },
-            {
-                "metric": "memory_native",
-                "label": "Native",
-                "unit": "MB",
-                "digits": 1,
-                "color": BaseStyles.color("LOG_WARNING"),
-                "now": None,
-                "avg": None,
-                "max": None,
-                "count": 0,
-            },
-        ],
-        axis_policy={
-            "fpsChart": {"min": 0, "max": 60, "padded": False},
-            "cpuChart": {"min": 0, "max": 100, "padded": False},
-            "memoryChart": {"min": 0, "max": 256, "padded": True},
-        },
-    )
+    dialog.timeline_chart.set_context.assert_called_once()
+    payload = dialog.timeline_chart.set_context.call_args.kwargs
+    assert payload["events"] == ["12:00:00 Monitor started"]
+    assert payload["report"] == "Quick Check: PASS"
+    assert payload["report_summary"] == {"status": "pass"}
+    assert payload["state"] == "Ready"
+    assert payload["current_package"] == "com.example"
+    assert payload["package_name"] == "com.example.target"
+    assert payload["activity"] == ".MainActivity"
+    assert payload["controls"] == {
+        "current": True,
+        "quick": True,
+        "start": True,
+        "stop": False,
+        "mark": False,
+        "openReport": True,
+        "export": True,
+    }
+    assert payload["theme"] == BaseStyles.current_theme()
+    assert payload["palette"] == build_web_palette()
+    assert payload["font"] == build_web_font()
+    assert payload["device_info"] == [{"info": "Device Name", "value": "Pixel"}]
+    summaries = {item["metric"]: item for item in payload["metric_summaries"]}
+    assert summaries["fps"]["now"] == 60.0
+    assert summaries["jank"]["now"] == 2.0
+    assert summaries["memory_pss"]["now"] == 100.0
+    assert summaries["cpu_app"]["count"] == 0
+    assert summaries["frame_time_p95"]["color"] == BaseStyles.color("TEXT_SECONDARY")
+    assert payload["metric_details"][0]["group"] == "Frame"
+    assert {"label": "FPS", "value": "60.0", "unit": ""} in payload["metric_details"][0]["items"]
+    assert payload["metric_details"][1]["group"] == "CPU"
+    assert payload["axis_policy"] == {
+        "fpsChart": {"min": 0, "max": 60, "padded": False},
+        "cpuChart": {"min": 0, "max": 100, "padded": False},
+        "memoryChart": {"min": 0, "max": 256, "padded": True},
+    }
 
 
 def test_performance_monitor_web_action_dispatches_existing_handlers():
@@ -1305,6 +1345,7 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     dialog._add_marker = Mock()
     dialog._open_report = Mock()
     dialog._export_report = Mock()
+    dialog._refresh_device_info = Mock()
 
     PerformanceMonitorDialog._on_web_action(dialog, "setPackage", {"value": "com.example"})
     PerformanceMonitorDialog._on_web_action(dialog, "setActivity", {"value": ".Main"})
@@ -1315,6 +1356,7 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     PerformanceMonitorDialog._on_web_action(dialog, "openReport", {})
     PerformanceMonitorDialog._on_web_action(dialog, "exportReport", {})
     PerformanceMonitorDialog._on_web_action(dialog, "currentPackage", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "refreshDeviceInfo", {})
 
     dialog.package_input.setText.assert_called_once_with("com.example")
     dialog.activity_input.setText.assert_called_once_with(".Main")
@@ -1326,6 +1368,7 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     dialog._open_report.assert_called_once()
     dialog._export_report.assert_called_once()
     dialog._use_current_package.assert_called_once()
+    dialog._refresh_device_info.assert_called_once_with(force=True)
 
 
 def test_performance_monitor_sync_controls_uses_lifecycle_state():
@@ -1436,6 +1479,16 @@ def test_performance_monitor_frame_sample_exposes_fps_chart_series():
         total_frames=200,
         slow_frames=24,
         frozen_frames=2,
+        slow_frame_rate=0.12,
+        frozen_frame_rate=0.01,
+        avg_frame_time_ms=14.2,
+        p50_ms=12.0,
+        p95_ms=28.4,
+        p99_ms=52.1,
+        max_frame_time_ms=80.0,
+        missed_vsync=3,
+        slow_ui_thread=4,
+        high_input_latency=5,
     )
 
     PerformanceMonitorDialog._append_frame_sample(dialog, frames)
@@ -1444,11 +1497,93 @@ def test_performance_monitor_frame_sample_exposes_fps_chart_series():
         "fps": 58.4,
         "jank": 12.0,
         "stutter": 2,
+        "stutter_rate": 1.0,
         "frames": 200,
         "slow": 24,
         "frozen": 2,
+        "slow_rate": 12.0,
+        "frozen_rate": 1.0,
+        "frame_time_avg": 14.2,
+        "frame_time_p50": 12.0,
+        "frame_time_p95": 28.4,
+        "frame_time_p99": 52.1,
+        "frame_time_max": 80.0,
+        "missed_vsync": 3,
+        "slow_ui_thread": 4,
+        "high_input_latency": 5,
     }
     dialog._session.update_latest_point.assert_called_once_with(dialog._latest_frame_values)
+    dialog._refresh_dashboard.assert_called_once()
+
+
+def test_performance_monitor_idle_frame_sample_updates_preview_without_history_append():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog.device_ip = "device-1"
+    dialog._latest_frame_values = {}
+    dialog._monitoring = False
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog._preview_session = PerformanceSession(device_id="device-1", status="Preview")
+    dialog._preview_session.add_point(1000, {"memory_pss": 128})
+    dialog._refresh_dashboard = Mock()
+    frames = Mock(
+        estimated_fps=60.0,
+        jank_rate=0,
+        total_frames=60,
+        slow_frames=0,
+        frozen_frames=0,
+        slow_frame_rate=0,
+        frozen_frame_rate=0,
+        avg_frame_time_ms=16.6,
+        p50_ms=16.6,
+        p95_ms=18.0,
+        p99_ms=20.0,
+        max_frame_time_ms=22.0,
+        missed_vsync=0,
+        slow_ui_thread=0,
+        high_input_latency=0,
+    )
+
+    PerformanceMonitorDialog._append_frame_sample(dialog, frames, append_when_idle=False)
+
+    assert dialog._session.points == []
+    assert len(dialog._preview_session.points) == 1
+    assert dialog._preview_session.points[0].values["memory_pss"] == 128
+    assert dialog._preview_session.points[0].values["fps"] == 60.0
+    dialog._refresh_dashboard.assert_called_once()
+
+
+def test_performance_monitor_analyze_frame_sample_updates_existing_session():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._latest_frame_values = {}
+    dialog._monitoring = False
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog._session.add_point(1000, {"memory_pss": 128})
+    dialog._preview_session = PerformanceSession(device_id="device-1", status="Preview")
+    dialog._refresh_dashboard = Mock()
+    frames = Mock(
+        estimated_fps=59.0,
+        jank_rate=0.02,
+        total_frames=100,
+        slow_frames=2,
+        frozen_frames=0,
+        slow_frame_rate=0.02,
+        frozen_frame_rate=0,
+        avg_frame_time_ms=16.8,
+        p50_ms=16.4,
+        p95_ms=20.0,
+        p99_ms=28.0,
+        max_frame_time_ms=35.0,
+        missed_vsync=1,
+        slow_ui_thread=1,
+        high_input_latency=0,
+    )
+
+    PerformanceMonitorDialog._append_frame_sample(dialog, frames)
+
+    assert len(dialog._session.points) == 1
+    assert dialog._session.points[0].values["memory_pss"] == 128
+    assert dialog._session.points[0].values["fps"] == 59.0
+    assert dialog._preview_session.points == []
     dialog._refresh_dashboard.assert_called_once()
 
 
@@ -1457,6 +1592,7 @@ def test_performance_monitor_snapshot_updates_charts_without_status_bar():
     dialog._closing = False
     dialog._monitoring = False
     dialog._session = PerformanceSession(device_id="device-1")
+    dialog._preview_session = PerformanceSession(device_id="device-1", status="Preview")
     dialog.package_input = Mock()
     dialog.package_input.text.return_value = ""
     dialog.package_input.setText = Mock()
@@ -1469,21 +1605,31 @@ def test_performance_monitor_snapshot_updates_charts_without_status_bar():
         total_pss_kb=2048,
         java_heap_kb=1024,
         native_heap_kb=512,
+        graphics_kb=None,
+        stack_kb=None,
+        code_kb=None,
+        private_other_kb=None,
+        system_kb=None,
+        total_swap_pss_kb=None,
         activities=1,
         views=20,
         view_roots=2,
+        app_contexts=None,
     )
     snapshot = Mock(
         online=True,
         current_package="com.example",
+        target_package="com.example",
         memory=memory,
+        cpu=None,
         status="Online",
     )
 
     PerformanceMonitorDialog._on_snapshot(dialog, snapshot)
 
     dialog.package_input.setText.assert_called_once_with("com.example")
-    latest = dialog._session.latest_values()
+    assert dialog._session.points == []
+    latest = dialog._preview_session.latest_values()
     assert latest["online"] == 1
     assert latest["memory_pss"] == 2.0
     assert latest["memory_java"] == 1.0
@@ -1491,6 +1637,8 @@ def test_performance_monitor_snapshot_updates_charts_without_status_bar():
     assert latest["activities"] == 1
     assert latest["views"] == 20
     dialog.timeline_chart.set_points.assert_called_once()
+    points = dialog.timeline_chart.set_points.call_args.args[0]
+    assert len(points) == 1
     assert not hasattr(dialog, "status_bar")
 
 
@@ -1537,24 +1685,26 @@ def test_main_frame_scan_refresh_debounce_collapses_bursts():
     frame.adb_controller = Mock()
     frame._scan_refresh_timer = QTimer()
     frame._scan_refresh_timer.setSingleShot(True)
-    frame._scan_refresh_timer.timeout.connect(frame.adb_controller.refresh_devices)
+    frame._scan_refresh_timer.timeout.connect(lambda: MainFrame._publish_scanned_devices(frame))
+    frame._pending_scanned_devices = []
 
     old_debounce = MainFrame.DEVICE_SCAN_DEBOUNCE_MS
     MainFrame.DEVICE_SCAN_DEBOUNCE_MS = 20
     try:
-        MainFrame._schedule_scan_refresh(frame)
-        MainFrame._schedule_scan_refresh(frame)
-        MainFrame._schedule_scan_refresh(frame)
+        MainFrame._schedule_scan_refresh(frame, ["device-1"])
+        MainFrame._schedule_scan_refresh(frame, ["device-1", "device-2"])
+        MainFrame._schedule_scan_refresh(frame, ["device-3"])
 
         deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline and not frame.adb_controller.refresh_devices.called:
+        while time.monotonic() < deadline and not frame.adb_controller._process_device_list.called:
             _app.processEvents()
             time.sleep(0.01)
     finally:
         MainFrame.DEVICE_SCAN_DEBOUNCE_MS = old_debounce
         frame._scan_refresh_timer.stop()
 
-    frame.adb_controller.refresh_devices.assert_called_once()
+    frame.adb_controller.refresh_devices.assert_not_called()
+    frame.adb_controller._process_device_list.assert_called_once_with(["device-3"])
 
 
 def test_main_frame_splitter_size_save_is_debounced():
@@ -2685,6 +2835,10 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     _app = QApplication.instance() or QApplication([])
     dialog = FileExplorerDialog.__new__(FileExplorerDialog)
     dialog.current_path = "/sdcard"
+    dialog.TYPE_COL = FileExplorerDialog.TYPE_COL
+    dialog.NAME_COL = FileExplorerDialog.NAME_COL
+    dialog.SIZE_COL = FileExplorerDialog.SIZE_COL
+    dialog.MODIFIED_COL = FileExplorerDialog.MODIFIED_COL
     dialog.table = Mock()
     dialog.status_bar = Mock()
     dialog.symlink_targets = {}
@@ -2703,9 +2857,36 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     dialog.table.setRowCount.assert_called_once_with(3)
     dialog.table.insertRow.assert_not_called()
     assert dialog.table.setItem.call_count == 12
+    first_row_calls = dialog.table.setItem.call_args_list[:4]
+    assert [call_.args[1] for call_ in first_row_calls] == [
+        FileExplorerDialog.TYPE_COL,
+        FileExplorerDialog.NAME_COL,
+        FileExplorerDialog.SIZE_COL,
+        FileExplorerDialog.MODIFIED_COL,
+    ]
+    assert first_row_calls[0].args[2].text() == "Folder"
+    assert first_row_calls[1].args[2].text() == ".."
     dialog.status_bar.showMessage.assert_called_once_with(
         "/sdcard  |  1 folders, 1 files"
     )
+
+
+def test_file_explorer_table_moves_type_first_and_hides_row_numbers():
+    _app = QApplication.instance() or QApplication([])
+    with patch.object(FileExplorerDialog, "_refresh"):
+        dialog = FileExplorerDialog(device_ip="device-1")
+
+    try:
+        assert dialog.table.horizontalHeaderItem(0).text() == "Type"
+        assert dialog.table.horizontalHeaderItem(1).text() == "Name"
+        assert dialog.table.verticalHeader().isVisible() is False
+        assert dialog.NAME_COL == 1
+        assert dialog._file_type_icon_name("demo.apk", "APK") == "android-logo.svg"
+        assert dialog._file_type_icon_name("photo.png", "PNG") == "file-png.svg"
+        assert dialog._file_type_icon_name("movie.mp4", "MP4") == "file-video.svg"
+        assert dialog._file_type_icon_name("notes.txt", "TXT") == "file-txt.svg"
+    finally:
+        dialog.close()
 
 
 def test_adb_bridge_shell_uses_command_runner():

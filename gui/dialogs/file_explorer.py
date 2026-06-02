@@ -39,6 +39,10 @@ from models.file_explorer_worker import ADBWorker, TransferWorker
 
 
 class FileExplorerDialog(QDialog):
+    TYPE_COL = 0
+    NAME_COL = 1
+    SIZE_COL = 2
+    MODIFIED_COL = 3
 
     TEXT_EXTS = {
         "txt",
@@ -64,6 +68,9 @@ class FileExplorerDialog(QDialog):
         "",
     }
     IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "bmp"}
+    ARCHIVE_EXTS = {"zip", "gz", "tar", "tgz", "xz", "7z", "rar"}
+    AUDIO_EXTS = {"mp3", "wav", "ogg", "m4a", "aac", "flac"}
+    VIDEO_EXTS = {"mp4", "mkv", "webm", "mov", "avi"}
 
     def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
@@ -177,9 +184,10 @@ class FileExplorerDialog(QDialog):
         # File table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Name", "Type", "Size", "Modified"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for i in range(1, 4):
+        self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(self.NAME_COL, QHeaderView.ResizeMode.Stretch)
+        for i in (self.TYPE_COL, self.SIZE_COL, self.MODIFIED_COL):
             self.table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.Interactive
             )
@@ -189,9 +197,9 @@ class FileExplorerDialog(QDialog):
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.cellDoubleClicked.connect(self._on_double_click)
         self.table.horizontalHeader().sectionClicked.connect(self._header_clicked)
-        self.table.setColumnWidth(1, 60)
-        self.table.setColumnWidth(2, 80)
-        self.table.setColumnWidth(3, 120)
+        self.table.setColumnWidth(self.TYPE_COL, 92)
+        self.table.setColumnWidth(self.SIZE_COL, 92)
+        self.table.setColumnWidth(self.MODIFIED_COL, 140)
         layout.addWidget(self.table, 1)
 
         # Status bar
@@ -330,10 +338,69 @@ class FileExplorerDialog(QDialog):
         self.status_bar.showMessage(f"{self.current_path}  |  {folders} folders, {files} files")
 
     def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
-        self.table.setItem(row, 0, QTableWidgetItem(name))
-        self.table.setItem(row, 1, QTableWidgetItem(file_type))
-        self.table.setItem(row, 2, QTableWidgetItem(size))
-        self.table.setItem(row, 3, QTableWidgetItem(modified))
+        type_item = QTableWidgetItem(file_type)
+        type_item.setIcon(self._file_type_icon(name, file_type))
+        type_item.setToolTip(file_type)
+        name_item = QTableWidgetItem(name)
+        name_item.setToolTip(name)
+        self.table.setItem(row, self.TYPE_COL, type_item)
+        self.table.setItem(row, self.NAME_COL, name_item)
+        self.table.setItem(row, self.SIZE_COL, QTableWidgetItem(size))
+        self.table.setItem(row, self.MODIFIED_COL, QTableWidgetItem(modified))
+
+    def _file_name_at(self, row: int) -> str:
+        item = self.table.item(row, self.NAME_COL)
+        return item.text() if item else ""
+
+    def _file_type_at(self, row: int) -> str:
+        item = self.table.item(row, self.TYPE_COL)
+        return item.text() if item else ""
+
+    def _file_type_icon(self, name: str, file_type: str):
+        return get_themed_icon(self._file_type_icon_name(name, file_type))
+
+    def _file_type_icon_name(self, name: str, file_type: str) -> str:
+        if name == "..":
+            return "arrow-u-up-left.svg"
+        if file_type == "Folder":
+            return "folder.svg"
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        explicit = {
+            "apk": "android-logo.svg",
+            "csv": "file-csv.svg",
+            "css": "file-css.svg",
+            "html": "file-html.svg",
+            "ini": "file-ini.svg",
+            "jpg": "file-jpg.svg",
+            "jpeg": "file-jpg.svg",
+            "js": "file-js.svg",
+            "json": "file-code.svg",
+            "md": "file-md.svg",
+            "pdf": "file-pdf.svg",
+            "png": "file-png.svg",
+            "py": "file-py.svg",
+            "sh": "terminal.svg",
+            "sql": "file-sql.svg",
+            "svg": "file-svg.svg",
+            "txt": "file-txt.svg",
+            "xml": "file-code.svg",
+            "xls": "file-xls.svg",
+            "xlsx": "file-xls.svg",
+            "zip": "file-zip.svg",
+        }
+        if ext in explicit:
+            return explicit[ext]
+        if ext in self.IMAGE_EXTS:
+            return "file-image.svg"
+        if ext in self.ARCHIVE_EXTS:
+            return "file-archive.svg"
+        if ext in self.AUDIO_EXTS:
+            return "file-audio.svg"
+        if ext in self.VIDEO_EXTS:
+            return "file-video.svg"
+        if ext in self.TEXT_EXTS:
+            return "file-text.svg"
+        return "file.svg"
 
     def _parse_ls(self, line: str) -> dict | None:
         return explorer_service.parse_ls_line(line)
@@ -350,8 +417,8 @@ class FileExplorerDialog(QDialog):
     # ── Double click ─────────────────────────────────────────────────────
 
     def _on_double_click(self, row, col):
-        name = self.table.item(row, 0).text()
-        ftype = self.table.item(row, 1).text()
+        name = self._file_name_at(row)
+        ftype = self._file_type_at(row)
         if name == "..":
             self._go_parent()
         elif ftype == "Folder":
@@ -373,7 +440,7 @@ class FileExplorerDialog(QDialog):
         view = menu.addAction("View") if viewable else None
         act = menu.exec(
             self.table.mapToGlobal(
-                self.table.visualItemRect(self.table.item(self.table.currentRow(), 0)).center()
+                self.table.visualItemRect(self.table.item(self.table.currentRow(), self.NAME_COL)).center()
             )
         )
         if act == pull:
@@ -569,7 +636,7 @@ class FileExplorerDialog(QDialog):
         if not dest:
             return
         for row in rows:
-            name = self.table.item(row, 0).text()
+            name = self._file_name_at(row)
             if name == "..":
                 continue
             src = self._dpath(self.current_path, name)
@@ -655,9 +722,9 @@ class FileExplorerDialog(QDialog):
     def _delete_selected(self):
         rows = set(i.row() for i in self.table.selectedIndexes())
         items = [
-            self.table.item(r, 0).text()
+            self._file_name_at(r)
             for r in rows
-            if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."
+            if self._file_name_at(r) != ".."
         ]
         if not items:
             return
@@ -674,9 +741,9 @@ class FileExplorerDialog(QDialog):
     def _copy_items(self, copy_mode: bool):
         rows = set(i.row() for i in self.table.selectedIndexes())
         self.clipboard = [
-            self._dpath(self.current_path, self.table.item(r, 0).text())
+            self._dpath(self.current_path, self._file_name_at(r))
             for r in rows
-            if self.table.item(r, 0) and self.table.item(r, 0).text() != ".."
+            if self._file_name_at(r) != ".."
         ]
         self.copy_mode = copy_mode
         self.status_bar.showMessage(
@@ -801,10 +868,10 @@ class FileExplorerDialog(QDialog):
         if not idx.isValid():
             return
         row = idx.row()
-        name = self.table.item(row, 0).text()
+        name = self._file_name_at(row)
         if name == "..":
             return
-        is_dir = self.table.item(row, 1).text() == "Folder"
+        is_dir = self._file_type_at(row) == "Folder"
         menu = QMenu()
         if is_dir:
             menu.addAction("Open", lambda: self._on_double_click(row, 0))
@@ -905,7 +972,7 @@ class FileExplorerDialog(QDialog):
     def _filter(self, text):
         t = text.strip().lower()
         for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
+            item = self.table.item(r, self.NAME_COL)
             if item and item.text() != "..":
                 self.table.setRowHidden(r, t not in item.text().lower())
 

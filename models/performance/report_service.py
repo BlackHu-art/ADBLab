@@ -10,7 +10,7 @@ from typing import Any
 
 from core.settings_manager import AppSettings
 
-from .types import FrameMetrics, MemorySample, StartupMetrics
+from .types import CpuSample, FrameMetrics, MemorySample, StartupMetrics
 
 
 def sanitize_name(value: str) -> str:
@@ -40,11 +40,13 @@ class PerformanceReportService:
         startup: StartupMetrics | None = None,
         frames: FrameMetrics | None = None,
         samples: list[MemorySample] | None = None,
+        cpu_samples: list[CpuSample] | None = None,
         raw_files: dict[str, str] | None = None,
         status: str = "pass",
         findings: list[str] | None = None,
     ) -> dict[str, str]:
         samples = samples or []
+        cpu_samples = cpu_samples or []
         findings = findings or []
         raw_files = raw_files or {}
         summary: dict[str, Any] = {
@@ -58,6 +60,11 @@ class PerformanceReportService:
                 "last": samples[-1].to_dict() if samples else None,
                 "count": len(samples),
             },
+            "cpu": {
+                "first": cpu_samples[0].to_dict() if cpu_samples else None,
+                "last": cpu_samples[-1].to_dict() if cpu_samples else None,
+                "count": len(cpu_samples),
+            },
             "findings": findings,
             "raw": raw_files,
         }
@@ -67,7 +74,7 @@ class PerformanceReportService:
             json.dump(summary, handle, ensure_ascii=False, indent=2)
 
         metrics_path = os.path.join(report_dir, "metrics.csv")
-        self._write_metrics_csv(metrics_path, samples)
+        self._write_metrics_csv(metrics_path, samples, cpu_samples)
 
         report_path = os.path.join(report_dir, "report.md")
         self._write_markdown_report(report_path, summary)
@@ -87,19 +94,34 @@ class PerformanceReportService:
         return path
 
     @staticmethod
-    def _write_metrics_csv(path: str, samples: list[MemorySample]) -> None:
-        fieldnames = list(asdict(MemorySample(timestamp_ms=0)).keys())
+    def _write_metrics_csv(path: str, samples: list[MemorySample], cpu_samples: list[CpuSample] | None = None) -> None:
+        memory_fields = list(asdict(MemorySample(timestamp_ms=0)).keys())
+        cpu_fields = [f"cpu_{key}" for key in asdict(CpuSample(timestamp_ms=0)).keys() if key != "timestamp_ms"]
+        fieldnames = [*memory_fields, *cpu_fields]
+        cpu_samples = cpu_samples or []
         with open(path, "w", encoding="utf-8", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fieldnames)
             writer.writeheader()
-            for sample in samples:
-                writer.writerow(sample.to_dict())
+            for index, sample in enumerate(samples):
+                row = sample.to_dict()
+                cpu = cpu_samples[index] if index < len(cpu_samples) else None
+                if cpu is not None:
+                    row.update({f"cpu_{key}": value for key, value in cpu.to_dict().items() if key != "timestamp_ms"})
+                writer.writerow(row)
+            for cpu in cpu_samples[len(samples):]:
+                writer.writerow(
+                    {
+                        "timestamp_ms": cpu.timestamp_ms,
+                        **{f"cpu_{key}": value for key, value in cpu.to_dict().items() if key != "timestamp_ms"},
+                    }
+                )
 
     @staticmethod
     def _write_markdown_report(path: str, summary: dict[str, Any]) -> None:
         startup = summary.get("startup") or {}
         frames = summary.get("frames") or {}
         memory = (summary.get("memory") or {}).get("last") or {}
+        cpu = (summary.get("cpu") or {}).get("last") or {}
         findings = summary.get("findings") or []
         lines = [
             "# ADBLab Performance Report",
@@ -121,11 +143,25 @@ class PerformanceReportService:
             f"- Jank rate: {frames.get('jank_rate', 0):.2%}" if frames else "- Jank rate: N/A",
             f"- P95: {frames.get('p95_ms', 'N/A')} ms",
             f"- Frozen frames: {frames.get('frozen_frames', 'N/A')}",
+            f"- Slow frame rate: {frames.get('slow_frame_rate', 0):.2%}" if frames else "- Slow frame rate: N/A",
+            f"- Frozen frame rate: {frames.get('frozen_frame_rate', 0):.2%}" if frames else "- Frozen frame rate: N/A",
+            f"- Avg frame time: {frames.get('avg_frame_time_ms', 'N/A')} ms",
+            "",
+            "## CPU",
+            f"- App CPU: {cpu.get('process_percent', 'N/A')} %",
+            f"- User CPU: {cpu.get('process_user_percent', 'N/A')} %",
+            f"- System CPU: {cpu.get('process_system_percent', 'N/A')} %",
+            f"- Threads: {cpu.get('thread_count', 'N/A')}",
             "",
             "## Memory",
             f"- Total PSS: {memory.get('total_pss_kb', 'N/A')} KB",
             f"- Java Heap: {memory.get('java_heap_kb', 'N/A')} KB",
             f"- Native Heap: {memory.get('native_heap_kb', 'N/A')} KB",
+            f"- Graphics: {memory.get('graphics_kb', 'N/A')} KB",
+            f"- Stack: {memory.get('stack_kb', 'N/A')} KB",
+            f"- Code: {memory.get('code_kb', 'N/A')} KB",
+            f"- System: {memory.get('system_kb', 'N/A')} KB",
+            f"- Swap PSS: {memory.get('total_swap_pss_kb', 'N/A')} KB",
             f"- Activities: {memory.get('activities', 'N/A')}",
             f"- Views: {memory.get('views', 'N/A')}",
             "",

@@ -14,6 +14,7 @@ const panels = Array.from(document.querySelectorAll(".tab-panel"));
 const deviceTable = document.getElementById("deviceTable");
 const summaryList = document.getElementById("summaryList");
 const eventList = document.getElementById("eventList");
+const metricDetailList = document.getElementById("metricDetailList");
 const reportSummary = document.getElementById("reportSummary");
 const runStateValue = document.getElementById("runStateValue");
 const packageValue = document.getElementById("packageValue");
@@ -42,6 +43,7 @@ let state = {
   reportSummary: {},
   deviceInfo: [],
   metricSummaries: [],
+  metricDetails: [],
   axisPolicy: {}
 };
 let bridge = null;
@@ -130,6 +132,15 @@ function applyTheme(payload = {}) {
     root.style.setProperty("--grid", rgbaFromHex(palette.border, 0.36));
     root.style.setProperty("--grid-soft", rgbaFromHex(palette.border, 0.16));
   }
+  if (palette.surfaceSoft || palette.field || palette.surface) {
+    root.style.setProperty("--scrollbar-track", palette.surfaceSoft || palette.field || palette.surface);
+  }
+  if (palette.borderStrong || palette.border || palette.muted) {
+    root.style.setProperty("--scrollbar-thumb", palette.borderStrong || palette.border || palette.muted);
+  }
+  if (palette.buttonHover || palette.accent) {
+    root.style.setProperty("--scrollbar-thumb-hover", palette.buttonHover || palette.accent);
+  }
   if (palette.surface) {
     root.style.setProperty("--chart-bg", palette.surface);
   }
@@ -151,17 +162,25 @@ function applyTheme(payload = {}) {
     const warning = palette.warning || palette.warn;
     root.style.setProperty("--jank-color", warning);
     root.style.setProperty("--cpu-bg-color", warning);
+    root.style.setProperty("--cpu-user-color", warning);
     root.style.setProperty("--memory-native-color", warning);
+    root.style.setProperty("--memory-swap-color", warning);
   }
   if (palette.danger || palette.error) {
-    root.style.setProperty("--cpu-fg-color", palette.danger || palette.error);
+    const danger = palette.danger || palette.error;
+    root.style.setProperty("--cpu-fg-color", danger);
+    root.style.setProperty("--cpu-app-color", danger);
   }
   if (palette.info) {
     root.style.setProperty("--stutter-color", palette.info);
+    root.style.setProperty("--cpu-system-color", palette.info);
     root.style.setProperty("--memory-java-color", palette.info);
   }
   if (palette.success) {
     root.style.setProperty("--memory-pss-color", palette.success);
+  }
+  if (palette.accent) {
+    root.style.setProperty("--memory-graphics-color", palette.accent);
   }
 
   if (font.family) {
@@ -234,13 +253,26 @@ function formatMetricValue(value, digits = 1, unit = "") {
   return `${rendered}${unit ? ` ${unit}` : ""}`;
 }
 
+function statusTone(value) {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("collecting") || text.includes("monitor") || text.includes("running")) return "running";
+  if (text.includes("analyzing") || text.includes("quick")) return "analyzing";
+  if (text.includes("warn")) return "warn";
+  if (text.includes("fail") || text.includes("error") || text.includes("offline")) return "bad";
+  if (text.includes("ready") || text.includes("pass") || text.includes("online")) return "good";
+  return "idle";
+}
+
 function renderTopStatus() {
   const points = Array.isArray(state.points) ? state.points : [];
   const report = state.reportSummary || {};
-  runStateValue.textContent = state.state || "Idle";
+  const runState = state.state || "Idle";
+  runStateValue.textContent = runState;
+  runStateValue.dataset.tone = statusTone(runState);
   packageValue.textContent = state.packageName || state.currentPackage || "--";
   sampleCountValue.textContent = String(points.length);
   reportStatusValue.textContent = report.status || "--";
+  reportStatusValue.dataset.tone = statusTone(report.status || "");
 }
 
 function renderLiveSummary() {
@@ -265,6 +297,7 @@ function renderLiveSummary() {
 
 function renderInspector() {
   renderEvents();
+  renderMetricDetails();
   renderReportSummary();
 }
 
@@ -289,12 +322,37 @@ function renderEvents() {
   }).join("");
 }
 
+function renderMetricDetails() {
+  if (!metricDetailList) return;
+  const groups = Array.isArray(state.metricDetails) ? state.metricDetails : [];
+  if (!groups.length) {
+    metricDetailList.innerHTML = '<div class="empty-text">Waiting for metric details</div>';
+    return;
+  }
+  metricDetailList.innerHTML = groups.map(group => `
+    <section class="metric-detail-group">
+      <div class="metric-detail-title">${escapeHtml(group.group || "Metrics")}</div>
+      ${(Array.isArray(group.items) ? group.items : []).map(item => {
+        const value = String(item.value ?? "--");
+        const unit = item.unit && value !== "--" ? ` ${item.unit}` : "";
+        return `
+          <div class="metric-detail-row">
+            <span title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+            <strong title="${escapeHtml(value)}${escapeHtml(unit)}">${escapeHtml(value)}${escapeHtml(unit)}</strong>
+          </div>
+        `;
+      }).join("")}
+    </section>
+  `).join("");
+}
+
 function renderReportSummary() {
   if (!reportSummary) return;
   const report = state.reportSummary || {};
   const metrics = Array.isArray(report.metrics) ? report.metrics : [];
   const findings = Array.isArray(report.findings) ? report.findings : [];
-  if (!report.title && !metrics.length && !findings.length && !state.report) {
+  const rawReport = String(state.report || "").trim();
+  if (!report.title && !metrics.length && !findings.length && !rawReport) {
     reportSummary.innerHTML = '<div class="empty-text">No report yet</div>';
     return;
   }
@@ -307,11 +365,12 @@ function renderReportSummary() {
       ${metrics.map(item => `
         <div class="report-metric">
           <span>${escapeHtml(item.label)}</span>
-          <strong>${escapeHtml(item.value)}</strong>
+          <strong title="${escapeHtml(item.value ?? "--")}">${escapeHtml(item.value ?? "--")}</strong>
         </div>
       `).join("")}
     </div>
     ${findings.map(item => `<div class="report-finding">${escapeHtml(item)}</div>`).join("")}
+    ${rawReport ? `<pre class="report-raw">${escapeHtml(rawReport)}</pre>` : ""}
   `;
 }
 
@@ -354,7 +413,8 @@ function chartDefinitions() {
       series: [
         { key: "fps", label: "FPS", color: cssColor("--fps-color", "#a855f7"), digits: 0 },
         { key: "jank", label: "Jank", color: cssColor("--jank-color", "#f59e0b"), digits: 0, unit: "%" },
-        { key: "stutter", label: "Stutter", color: cssColor("--stutter-color", "#38bdf8"), digits: 0 }
+        { key: "stutter_rate", label: "Stutter", color: cssColor("--stutter-color", "#38bdf8"), digits: 1, unit: "%" },
+        { key: "frame_time_p95", label: "P95", color: cssColor("--frame-time-color", "#9aa4b4"), digits: 1, unit: " ms" }
       ]
     },
     cpuChart: {
@@ -363,19 +423,22 @@ function chartDefinitions() {
       minMax: 100,
       unit: "%",
       series: [
-        { key: "cpu_fg", label: "Foreground", color: cssColor("--cpu-fg-color", "#ff6b6b"), digits: 1, unit: "%" },
-        { key: "cpu_bg", label: "Background", color: cssColor("--cpu-bg-color", "#f59e0b"), digits: 1, unit: "%" }
+        { key: "cpu_app", label: "App", color: cssColor("--cpu-app-color", "#ff6b6b"), digits: 1, unit: "%" },
+        { key: "cpu_user", label: "User", color: cssColor("--cpu-user-color", "#f59e0b"), digits: 1, unit: "%" },
+        { key: "cpu_system", label: "System", color: cssColor("--cpu-system-color", "#38bdf8"), digits: 1, unit: "%" }
       ]
     },
     memoryChart: {
       axisKey: "memoryChart",
-      yLabel: "MB",
+      yLabel: "Memory",
       minMax: 256,
       unit: " MB",
       series: [
+        { key: "memory_pss", label: "PSS", color: cssColor("--memory-pss-color", "#3fb950"), digits: 1, unit: " MB" },
         { key: "memory_java", label: "Java Heap", color: cssColor("--memory-java-color", "#58a6ff"), digits: 1, unit: " MB" },
         { key: "memory_native", label: "Native", color: cssColor("--memory-native-color", "#f59e0b"), digits: 1, unit: " MB" },
-        { key: "memory_pss", label: "PSS", color: cssColor("--memory-pss-color", "#3fb950"), digits: 1, unit: " MB" }
+        { key: "memory_graphics", label: "Graphics", color: cssColor("--memory-graphics-color", "#4cc38a"), digits: 1, unit: " MB" },
+        { key: "memory_swap", label: "Swap", color: cssColor("--memory-swap-color", "#f59e0b"), digits: 1, unit: " MB" }
       ]
     }
   };
@@ -470,11 +533,22 @@ function yAxisMax(definition, numeric) {
   const policies = state.axisPolicy || {};
   const policy = policies[definition.axisKey] || {};
   const floorMax = Number.isFinite(Number(policy.max)) ? Number(policy.max) : (definition.minMax || 10);
-  const dataMax = Math.max(floorMax, ...numeric, 0);
+  const dataMax = Math.max(...numeric, 0);
   if (policy.padded === false) {
-    return dataMax <= floorMax ? floorMax : roundUpTick(dataMax);
+    return stableAxisMax(definition.axisKey, floorMax, dataMax);
   }
-  return roundUpTick(dataMax * 1.08);
+  return roundUpTick(Math.max(floorMax, dataMax) * 1.08);
+}
+
+function stableAxisMax(axisKey, floorMax, dataMax) {
+  if (!Number.isFinite(dataMax) || dataMax <= floorMax) {
+    return floorMax;
+  }
+  if (axisKey === "fpsChart") {
+    const stops = [60, 90, 120, 144, 165, 240];
+    return stops.find(stop => dataMax <= stop) || roundUpTick(dataMax);
+  }
+  return roundUpTick(dataMax);
 }
 
 function drawLegendSample(ctx, x, y, series) {
@@ -744,12 +818,18 @@ function renderTabs(activeTab) {
 }
 
 function renderInspectorTab(activeTab) {
+  const tabName = ["events", "metrics", "report"].includes(activeTab) ? activeTab : "events";
   for (const tab of inspectorTabs) {
-    tab.classList.toggle("active", tab.dataset.inspectorTab === activeTab);
+    tab.classList.toggle("active", tab.dataset.inspectorTab === tabName);
   }
   for (const panel of inspectorBodies) {
-    panel.classList.toggle("active", panel.id === `${activeTab}Inspector`);
+    panel.classList.toggle("active", panel.id === `${tabName}Inspector`);
   }
+  if (workspacePanel) {
+    workspacePanel.classList.remove("inspector-mode-events", "inspector-mode-metrics", "inspector-mode-report");
+    workspacePanel.classList.add(`inspector-mode-${tabName}`);
+  }
+  requestAnimationFrame(renderCharts);
 }
 
 function toggleInspector() {
@@ -804,18 +884,20 @@ function buildPreviewPayload() {
       metrics: [
         { label: "FPS", value: "56.8" },
         { label: "Jank", value: "8.30%" },
+        { label: "Stutter", value: "1.60%" },
         { label: "P95", value: "24.6 ms" },
+        { label: "CPU", value: "26.0%" },
         { label: "PSS", value: "345 MB" }
       ],
       findings: ["Jank rose during the scroll segment."]
     },
     points: [
-      { _ts: now - 5000, fps: 58, jank: 2, stutter: 0, cpu_fg: 21, cpu_bg: 0, memory_java: 148, memory_native: 92, memory_pss: 326 },
-      { _ts: now - 4000, fps: 60, jank: 1, stutter: 0, cpu_fg: 24, cpu_bg: 0, memory_java: 151, memory_native: 94, memory_pss: 332 },
-      { _ts: now - 3000, fps: 55, jank: 5, stutter: 1, cpu_fg: 37, cpu_bg: 0, memory_java: 153, memory_native: 95, memory_pss: 337 },
-      { _ts: now - 2000, fps: 59, jank: 3, stutter: 0, cpu_fg: 29, cpu_bg: 0, memory_java: 154, memory_native: 96, memory_pss: 339 },
-      { _ts: now - 1000, fps: 57, jank: 4, stutter: 0, cpu_fg: 31, cpu_bg: 0, memory_java: 157, memory_native: 97, memory_pss: 342 },
-      { _ts: now, fps: 60, jank: 1, stutter: 0, cpu_fg: 26, cpu_bg: 0, memory_java: 158, memory_native: 98, memory_pss: 345 }
+      { _ts: now - 5000, fps: 58, jank: 2, stutter: 0, stutter_rate: 0, frame_time_p95: 18.4, cpu_app: 21, cpu_user: 16, cpu_system: 5, cpu_fg: 21, cpu_bg: 0, memory_pss: 326, memory_java: 148, memory_native: 92, memory_graphics: 42, memory_swap: 3 },
+      { _ts: now - 4000, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 16.8, cpu_app: 24, cpu_user: 18, cpu_system: 6, cpu_fg: 24, cpu_bg: 0, memory_pss: 332, memory_java: 151, memory_native: 94, memory_graphics: 43, memory_swap: 3 },
+      { _ts: now - 3000, fps: 55, jank: 5, stutter: 1, stutter_rate: 1.7, frame_time_p95: 27.4, cpu_app: 37, cpu_user: 28, cpu_system: 9, cpu_fg: 37, cpu_bg: 0, memory_pss: 337, memory_java: 153, memory_native: 95, memory_graphics: 45, memory_swap: 4 },
+      { _ts: now - 2000, fps: 59, jank: 3, stutter: 0, stutter_rate: 0, frame_time_p95: 21.1, cpu_app: 29, cpu_user: 22, cpu_system: 7, cpu_fg: 29, cpu_bg: 0, memory_pss: 339, memory_java: 154, memory_native: 96, memory_graphics: 45, memory_swap: 4 },
+      { _ts: now - 1000, fps: 57, jank: 4, stutter: 0, stutter_rate: 0, frame_time_p95: 24.6, cpu_app: 31, cpu_user: 24, cpu_system: 7, cpu_fg: 31, cpu_bg: 0, memory_pss: 342, memory_java: 157, memory_native: 97, memory_graphics: 46, memory_swap: 4 },
+      { _ts: now, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 17.2, cpu_app: 26, cpu_user: 20, cpu_system: 6, cpu_fg: 26, cpu_bg: 0, memory_pss: 345, memory_java: 158, memory_native: 98, memory_graphics: 47, memory_swap: 5 }
     ],
     markers: [
       { timestamp_ms: now - 3600, label: "Open page" },
@@ -825,10 +907,41 @@ function buildPreviewPayload() {
     metricSummaries: [
       { metric: "fps", label: "FPS", unit: "", digits: 1, color: "#4cc38a", now: 60, avg: 58.2, max: 60, count: 6 },
       { metric: "jank", label: "Jank", unit: "%", digits: 1, color: "#f59e0b", now: 1, avg: 2.8, max: 5, count: 6 },
-      { metric: "cpu_fg", label: "CPU", unit: "%", digits: 1, color: "#ff6b6b", now: 26, avg: 28.2, max: 37, count: 6 },
+      { metric: "stutter_rate", label: "Stutter", unit: "%", digits: 1, color: "#38bdf8", now: 0, avg: 0.3, max: 1.7, count: 6 },
+      { metric: "frame_time_p95", label: "P95", unit: "ms", digits: 1, color: "#9aa4b4", now: 17.2, avg: 20.9, max: 27.4, count: 6 },
+      { metric: "cpu_app", label: "CPU", unit: "%", digits: 1, color: "#ff6b6b", now: 26, avg: 28.2, max: 37, count: 6 },
+      { metric: "cpu_user", label: "User", unit: "%", digits: 1, color: "#f59e0b", now: 20, avg: 21.3, max: 28, count: 6 },
+      { metric: "cpu_system", label: "System", unit: "%", digits: 1, color: "#38bdf8", now: 6, avg: 6.7, max: 9, count: 6 },
       { metric: "memory_pss", label: "PSS", unit: "MB", digits: 1, color: "#3fb950", now: 345, avg: 336.8, max: 345, count: 6 },
       { metric: "memory_java", label: "Java", unit: "MB", digits: 1, color: "#58a6ff", now: 158, avg: 153.8, max: 158, count: 6 },
-      { metric: "memory_native", label: "Native", unit: "MB", digits: 1, color: "#f59e0b", now: 98, avg: 95.3, max: 98, count: 6 }
+      { metric: "memory_native", label: "Native", unit: "MB", digits: 1, color: "#f59e0b", now: 98, avg: 95.3, max: 98, count: 6 },
+      { metric: "memory_graphics", label: "Graphics", unit: "MB", digits: 1, color: "#4cc38a", now: 47, avg: 44.7, max: 47, count: 6 },
+      { metric: "memory_swap", label: "Swap", unit: "MB", digits: 1, color: "#f59e0b", now: 5, avg: 3.8, max: 5, count: 6 }
+    ],
+    metricDetails: [
+      { group: "Frame", items: [
+        { label: "FPS", value: "60.0", unit: "" },
+        { label: "Jank", value: "1.0", unit: "%" },
+        { label: "Stutter", value: "0.0", unit: "%" },
+        { label: "P95", value: "17.2", unit: "ms" }
+      ] },
+      { group: "CPU", items: [
+        { label: "App", value: "26.0", unit: "%" },
+        { label: "User", value: "20.0", unit: "%" },
+        { label: "System", value: "6.0", unit: "%" },
+        { label: "Threads", value: "42", unit: "" }
+      ] },
+      { group: "Memory", items: [
+        { label: "PSS", value: "345.0", unit: "MB" },
+        { label: "Java", value: "158.0", unit: "MB" },
+        { label: "Native", value: "98.0", unit: "MB" },
+        { label: "Graphics", value: "47.0", unit: "MB" },
+        { label: "Swap", value: "5.0", unit: "MB" }
+      ] },
+      { group: "Objects", items: [
+        { label: "Activities", value: "1", unit: "" },
+        { label: "Views", value: "98", unit: "" }
+      ] }
     ],
     axisPolicy: {
       fpsChart: { min: 0, max: 60, padded: false },
@@ -956,6 +1069,7 @@ window.__performanceDashboard = {
   renderLiveSummary,
   renderMetricChart,
   renderCharts,
+  stableAxisMax,
   yAxisMax,
   toggleSidePanel
 };

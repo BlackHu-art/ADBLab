@@ -26,10 +26,14 @@ class FrameMetrics:
     total_frames: int = 0
     janky_frames: int = 0
     jank_rate: float = 0.0
+    slow_frame_rate: float = 0.0
+    frozen_frame_rate: float = 0.0
     p50_ms: float | None = None
     p90_ms: float | None = None
     p95_ms: float | None = None
     p99_ms: float | None = None
+    avg_frame_time_ms: float | None = None
+    max_frame_time_ms: float | None = None
     slow_frames: int = 0
     frozen_frames: int = 0
     estimated_fps: float | None = None
@@ -48,6 +52,11 @@ class MemorySample:
     java_heap_kb: int | None = None
     native_heap_kb: int | None = None
     graphics_kb: int | None = None
+    stack_kb: int | None = None
+    code_kb: int | None = None
+    private_other_kb: int | None = None
+    system_kb: int | None = None
+    total_swap_pss_kb: int | None = None
     activities: int | None = None
     views: int | None = None
     view_roots: int | None = None
@@ -61,8 +70,11 @@ class MemorySample:
 class CpuSample:
     timestamp_ms: int
     process_percent: float | None = None
+    process_user_percent: float | None = None
+    process_system_percent: float | None = None
     is_foreground: bool = False
     pid: int | None = None
+    thread_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

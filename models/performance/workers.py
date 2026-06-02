@@ -12,16 +12,26 @@ class PerformanceSnapshotWorker(QThread):
     status_changed = Signal(str)
     device_info_ready = Signal(object)
 
-    def __init__(self, service: PerformanceService, package_name: str = ""):
+    def __init__(
+        self,
+        service: PerformanceService,
+        package_name: str = "",
+        *,
+        include_device_info: bool = False,
+        refresh_device_info: bool = False,
+    ):
         super().__init__()
         self.service = service
         self.package_name = package_name
+        self.include_device_info = include_device_info
+        self.refresh_device_info = refresh_device_info
 
     def run(self):
         try:
-            device_info = self.service.device_info()
-            if not self.isInterruptionRequested():
-                self.device_info_ready.emit(device_info.rows())
+            if self.include_device_info:
+                device_info = self.service.device_info(refresh=self.refresh_device_info)
+                if not self.isInterruptionRequested():
+                    self.device_info_ready.emit(device_info.rows())
             snapshot = self.service.snapshot(self.package_name)
             if not self.isInterruptionRequested():
                 self.snapshot_ready.emit(snapshot)
@@ -74,11 +84,19 @@ class PerformanceAnalyzeWorker(QThread):
     result_ready = Signal(object)
     status_changed = Signal(str)
 
-    def __init__(self, service: PerformanceService, package_name: str, samples: list, started_at: float):
+    def __init__(
+        self,
+        service: PerformanceService,
+        package_name: str,
+        samples: list,
+        cpu_samples: list | None,
+        started_at: float,
+    ):
         super().__init__()
         self.service = service
         self.package_name = package_name
         self.samples = samples
+        self.cpu_samples = list(cpu_samples or [])
         self.started_at = started_at
 
     def run(self):
@@ -102,6 +120,7 @@ class PerformanceAnalyzeWorker(QThread):
                 package_name=self.package_name,
                 frames=frames,
                 samples=self.samples,
+                cpu_samples=self.cpu_samples,
                 findings=findings,
                 status=status,
             )
@@ -111,6 +130,7 @@ class PerformanceAnalyzeWorker(QThread):
                 "artifacts": artifacts,
                 "frames": frames,
                 "samples": self.samples,
+                "cpu_samples": self.cpu_samples,
                 "findings": findings,
                 "status": status,
                 "duration": int(time.monotonic() - self.started_at),

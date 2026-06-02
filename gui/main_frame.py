@@ -39,7 +39,7 @@ from .styles import BaseStyles, get_default_font
 class _ScanThread(QThread):
     """Long-running thread: polls `adb devices` every 3 s, emits on count change."""
 
-    devices_changed = Signal()
+    devices_changed = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,7 +59,7 @@ class _ScanThread(QThread):
                 count = len(devices)
                 if count != last_count:
                     last_count = count
-                    self.devices_changed.emit()
+                    self.devices_changed.emit(devices)
             except Exception:
                 pass
             # Sleep 3 s between polls (breakable for clean shutdown)
@@ -86,7 +86,8 @@ class MainFrame(QMainWindow):
         self._closing = False
         self._scan_refresh_timer = QTimer(self)
         self._scan_refresh_timer.setSingleShot(True)
-        self._scan_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
+        self._scan_refresh_timer.timeout.connect(self._publish_scanned_devices)
+        self._pending_scanned_devices = []
         self._initial_refresh_timer = QTimer(self)
         self._initial_refresh_timer.setSingleShot(True)
         self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
@@ -152,9 +153,13 @@ class MainFrame(QMainWindow):
                 thread = self._scan_thread
                 threading.Thread(target=lambda: thread.wait(3000), daemon=True).start()
 
-    def _schedule_scan_refresh(self):
-        """Debounce scan-thread device change notifications."""
+    def _schedule_scan_refresh(self, devices: list[str]):
+        """Debounce scan-thread device list notifications without a second adb poll."""
+        self._pending_scanned_devices = list(devices)
         self._scan_refresh_timer.start(self.DEVICE_SCAN_DEBOUNCE_MS)
+
+    def _publish_scanned_devices(self):
+        self.adb_controller._process_device_list(list(self._pending_scanned_devices))
 
     def set_continuous_scan(self, enabled: bool):
         if enabled:

@@ -105,10 +105,15 @@ def parse_gfxinfo_output(
         metrics.p90_ms = metrics.p90_ms if metrics.p90_ms is not None else _percentile(frame_durations, 90)
         metrics.p95_ms = metrics.p95_ms if metrics.p95_ms is not None else _percentile(frame_durations, 95)
         metrics.p99_ms = metrics.p99_ms if metrics.p99_ms is not None else _percentile(frame_durations, 99)
+        metrics.avg_frame_time_ms = round(sum(frame_durations) / len(frame_durations), 2)
+        metrics.max_frame_time_ms = max(frame_durations)
         metrics.estimated_fps = _estimate_fps(output, len(frame_durations))
     else:
         metrics.slow_frames = metrics.janky_frames
         metrics.frozen_frames = _histogram_frozen_count(output, frozen_frame_ms)
+    if metrics.total_frames:
+        metrics.slow_frame_rate = metrics.slow_frames / metrics.total_frames
+        metrics.frozen_frame_rate = metrics.frozen_frames / metrics.total_frames
     return metrics
 
 
@@ -132,8 +137,12 @@ def parse_framestats_durations(output: str) -> list[float]:
 def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
     sample = MemorySample(timestamp_ms=timestamp_ms)
     in_app_summary = False
+    graphics_fallback_kb = 0
+    saw_swap_pss_column = False
     for line in output.splitlines():
         stripped = line.strip()
+        if "SwapPss" in stripped:
+            saw_swap_pss_column = True
         if stripped == "App Summary":
             in_app_summary = True
             continue
@@ -143,6 +152,16 @@ def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
 
         if re.match(r"^TOTAL\s+", stripped) and sample.total_pss_kb is None:
             sample.total_pss_kb = _first_int(stripped)
+        if stripped.startswith("TOTAL SWAP PSS:"):
+            sample.total_swap_pss_kb = _first_int(stripped)
+        elif saw_swap_pss_column and stripped.startswith("TOTAL "):
+            values = _all_ints(stripped)
+            if values:
+                sample.total_swap_pss_kb = values[-1]
+
+        graphics_row = _graphics_row_pss(stripped)
+        if graphics_row is not None:
+            graphics_fallback_kb += graphics_row
 
         if in_app_summary:
             if stripped.startswith("Java Heap:"):
@@ -151,6 +170,16 @@ def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
                 sample.native_heap_kb = _first_int(stripped)
             elif stripped.startswith("Graphics:"):
                 sample.graphics_kb = _first_int(stripped)
+            elif stripped.startswith("Stack:"):
+                sample.stack_kb = _first_int(stripped)
+            elif stripped.startswith("Code:"):
+                sample.code_kb = _first_int(stripped)
+            elif stripped.startswith("Private Other:"):
+                sample.private_other_kb = _first_int(stripped)
+            elif stripped.startswith("System:"):
+                sample.system_kb = _first_int(stripped)
+            elif stripped.startswith("TOTAL SWAP PSS:"):
+                sample.total_swap_pss_kb = _first_int(stripped)
             elif stripped.startswith("TOTAL:") and sample.total_pss_kb is None:
                 sample.total_pss_kb = _first_int(stripped)
 
@@ -163,6 +192,8 @@ def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
             value = _object_value(stripped, key)
             if value is not None:
                 setattr(sample, attr, value)
+    if sample.graphics_kb is None and graphics_fallback_kb:
+        sample.graphics_kb = graphics_fallback_kb
     return sample
 
 
@@ -180,6 +211,11 @@ def parse_proc_stat_total(output: str) -> int | None:
 
 
 def parse_process_stat_ticks(output: str) -> int | None:
+    ticks = parse_process_stat_cpu_ticks(output)
+    return None if ticks is None else ticks[0] + ticks[1]
+
+
+def parse_process_stat_cpu_ticks(output: str) -> tuple[int, int] | None:
     text = output.strip()
     if not text:
         return None
@@ -191,7 +227,23 @@ def parse_process_stat_ticks(output: str) -> int | None:
         return None
     try:
         # /proc/<pid>/stat fields after comm start at state, so utime/stime are indexes 11/12.
-        return int(fields[11]) + int(fields[12])
+        return int(fields[11]), int(fields[12])
+    except ValueError:
+        return None
+
+
+def parse_process_thread_count(output: str) -> int | None:
+    text = output.strip()
+    if not text:
+        return None
+    end = text.rfind(")")
+    if end < 0:
+        return None
+    fields = text[end + 1:].strip().split()
+    if len(fields) <= 17:
+        return None
+    try:
+        return int(fields[17])
     except ValueError:
         return None
 
@@ -205,8 +257,15 @@ def build_cpu_sample(
     previous_process_ticks: int | None,
     previous_total_ticks: int | None,
     is_foreground: bool,
+    user_ticks: int | None = None,
+    system_ticks: int | None = None,
+    previous_user_ticks: int | None = None,
+    previous_system_ticks: int | None = None,
+    thread_count: int | None = None,
 ) -> CpuSample:
     percent = None
+    user_percent = None
+    system_percent = None
     if (
         process_ticks is not None
         and total_ticks is not None
@@ -217,11 +276,25 @@ def build_cpu_sample(
         total_delta = total_ticks - previous_total_ticks
         if process_delta >= 0 and total_delta > 0:
             percent = round((process_delta / total_delta) * 100, 2)
+            if (
+                user_ticks is not None
+                and system_ticks is not None
+                and previous_user_ticks is not None
+                and previous_system_ticks is not None
+            ):
+                user_delta = user_ticks - previous_user_ticks
+                system_delta = system_ticks - previous_system_ticks
+                if user_delta >= 0 and system_delta >= 0:
+                    user_percent = round((user_delta / total_delta) * 100, 2)
+                    system_percent = round((system_delta / total_delta) * 100, 2)
     return CpuSample(
         timestamp_ms=timestamp_ms,
         process_percent=percent,
+        process_user_percent=user_percent,
+        process_system_percent=system_percent,
         is_foreground=is_foreground,
         pid=pid,
+        thread_count=thread_count,
     )
 
 
@@ -247,6 +320,19 @@ def _estimate_fps(output: str, frame_count: int) -> float | None:
     rows = _profile_rows(output)
     if len(rows) < 2 or frame_count < 2:
         return None
+    vsync_times: list[int] = []
+    for row in rows:
+        try:
+            intended = int(row.get("IntendedVsync", "0") or "0")
+            completed = int(row.get("FrameCompleted", "0") or "0")
+        except ValueError:
+            continue
+        if intended > 0 and completed > intended:
+            vsync_times.append(intended)
+    if len(vsync_times) >= 2:
+        elapsed_seconds = (vsync_times[-1] - vsync_times[0]) / 1_000_000_000
+        if elapsed_seconds > 0:
+            return round((len(vsync_times) - 1) / elapsed_seconds, 2)
     try:
         first = int(rows[0].get("IntendedVsync", "0") or "0")
         last = int(rows[-1].get("FrameCompleted", "0") or "0")
@@ -255,7 +341,7 @@ def _estimate_fps(output: str, frame_count: int) -> float | None:
     elapsed_seconds = (last - first) / 1_000_000_000
     if elapsed_seconds <= 0:
         return None
-    return frame_count / elapsed_seconds
+    return round(frame_count / elapsed_seconds, 2)
 
 
 def _first_int_after(output: str, pattern: str) -> int | None:
@@ -271,6 +357,16 @@ def _first_float_after(output: str, pattern: str) -> float | None:
 def _first_int(text: str) -> int | None:
     match = _INT_RE.search(text)
     return int(match.group(1)) if match else None
+
+
+def _all_ints(text: str) -> list[int]:
+    return [int(match) for match in _INT_RE.findall(text)]
+
+
+def _graphics_row_pss(text: str) -> int | None:
+    if not re.match(r"^(?:EGL\s+mtrack|GL\s+mtrack|Gfx\s+dev)\b", text):
+        return None
+    return _first_int(text)
 
 
 def _object_value(line: str, key: str) -> int | None:

@@ -29,14 +29,27 @@
   --chart-tooltip: rgba(17, 20, 26, 0.94);
   --chart-tooltip-text: #ffffff;
   --chart-crosshair: rgba(255, 255, 255, 0.88);
+  --scrollbar-track: #151922;
+  --scrollbar-thumb: #3f4654;
+  --scrollbar-thumb-hover: #596273;
   --fps-color: var(--accent);
   --jank-color: var(--warn);
   --stutter-color: #38bdf8;
+  --frame-time-color: #9aa4b4;
   --cpu-fg-color: var(--danger);
   --cpu-bg-color: var(--warn);
+  --cpu-app-color: var(--danger);
+  --cpu-user-color: var(--warn);
+  --cpu-system-color: #38bdf8;
   --memory-java-color: #58a6ff;
   --memory-native-color: var(--warn);
   --memory-pss-color: #3fb950;
+  --memory-graphics-color: var(--accent);
+  --memory-swap-color: var(--warn);
+  --chart-panel-height: 456px;
+  --inspector-default-height: 136px;
+  --inspector-metrics-height: 196px;
+  --inspector-report-height: 220px;
 }
 
 :root[data-theme="light"] {
@@ -69,9 +82,15 @@
   --chart-tooltip: rgba(255, 255, 255, 0.96);
   --chart-tooltip-text: #111827;
   --chart-crosshair: rgba(31, 41, 55, 0.78);
+  --scrollbar-track: #edf0f3;
+  --scrollbar-thumb: #b7c0cc;
+  --scrollbar-thumb-hover: #8d99a8;
   --stutter-color: #0078d4;
+  --frame-time-color: #64748b;
+  --cpu-system-color: #0f6cbd;
   --memory-java-color: #0f6cbd;
   --memory-pss-color: #16833a;
+  --memory-graphics-color: #0078d4;
 }
 
 html,
@@ -89,6 +108,31 @@ body {
 
 * {
   box-sizing: border-box;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track);
+  border-radius: 6px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border: 2px solid var(--scrollbar-track);
+  border-radius: 6px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
 }
 
 button,
@@ -156,15 +200,25 @@ input {
 
 .workspace-panel {
   display: grid;
-  grid-template-rows: 34px minmax(0, 1fr) 108px;
+  grid-template-rows: 34px var(--chart-panel-height) minmax(var(--inspector-default-height), 1fr);
   gap: 2px;
   padding: 2px;
   overflow: hidden;
   background: var(--bg);
 }
 
-.workspace-panel.inspector-collapsed {
-  grid-template-rows: 34px minmax(0, 1fr) 32px;
+.workspace-panel.inspector-mode-metrics {
+  grid-template-rows: 34px var(--chart-panel-height) minmax(var(--inspector-metrics-height), 1fr);
+}
+
+.workspace-panel.inspector-mode-report {
+  grid-template-rows: 34px var(--chart-panel-height) minmax(var(--inspector-report-height), 1fr);
+}
+
+.workspace-panel.inspector-collapsed,
+.workspace-panel.inspector-collapsed.inspector-mode-metrics,
+.workspace-panel.inspector-collapsed.inspector-mode-report {
+  grid-template-rows: 34px var(--chart-panel-height) 32px;
 }
 
 .status-strip {
@@ -200,6 +254,41 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#runStateValue,
+#reportStatusValue {
+  font-weight: 700;
+}
+
+#runStateValue[data-tone="running"],
+#reportStatusValue[data-tone="running"] {
+  color: var(--accent);
+}
+
+#runStateValue[data-tone="analyzing"],
+#reportStatusValue[data-tone="analyzing"] {
+  color: var(--info);
+}
+
+#runStateValue[data-tone="warn"],
+#reportStatusValue[data-tone="warn"] {
+  color: var(--warn);
+}
+
+#runStateValue[data-tone="bad"],
+#reportStatusValue[data-tone="bad"] {
+  color: var(--danger);
+}
+
+#runStateValue[data-tone="good"],
+#reportStatusValue[data-tone="good"] {
+  color: var(--success);
+}
+
+#runStateValue[data-tone="idle"],
+#reportStatusValue[data-tone="idle"] {
+  color: var(--title);
 }
 
 .target-group,
@@ -465,26 +554,36 @@ input {
   height: 100%;
   display: none;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .inspector-body.active {
-  display: block;
+  display: grid;
 }
 
 .event-list,
+.metric-detail-list,
 .report-summary {
+  min-height: 0;
   height: 100%;
   padding: 6px 8px;
   overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.event-list {
+  display: grid;
+  align-content: start;
+  gap: 1px;
 }
 
 .event-row {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
   gap: 8px;
-  min-height: 22px;
-  align-items: center;
+  min-height: 24px;
+  align-items: start;
+  padding: 3px 0;
   border-bottom: 1px solid var(--border);
 }
 
@@ -496,9 +595,9 @@ input {
 .event-text {
   min-width: 0;
   color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .report-title {
@@ -508,6 +607,13 @@ input {
   margin-bottom: 6px;
   color: var(--title);
   font-weight: 600;
+}
+
+.report-title span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .report-status {
@@ -522,7 +628,7 @@ input {
 
 .report-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
   gap: 4px;
 }
 
@@ -541,12 +647,94 @@ input {
 }
 
 .report-metric strong {
+  display: block;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .report-finding {
-  margin-top: 4px;
+  margin-top: 5px;
+  padding: 4px 7px;
+  border: 1px solid var(--warn);
+  border-radius: 5px;
+  background: var(--surface-soft);
   color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+.report-raw {
+  margin: 6px 0 0;
+  padding: 6px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--field);
+  color: var(--text);
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--label-size);
+  line-height: 1.4;
+  overflow: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.metric-detail-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+  gap: 4px;
+  align-content: start;
+  grid-auto-rows: min-content;
+}
+
+.metric-detail-group {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.metric-detail-title {
+  height: 24px;
+  display: flex;
+  align-items: center;
+  padding: 0 7px;
+  color: var(--title);
+  font-weight: 600;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.metric-detail-row {
+  min-height: 22px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 7px;
+  border-top: 1px solid var(--border);
+}
+
+.metric-detail-row:first-of-type {
+  border-top: 0;
+}
+
+.metric-detail-row span {
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric-detail-row strong {
+  min-width: 0;
+  color: var(--text);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .empty-text {
@@ -651,6 +839,13 @@ input {
 }
 
 @media (max-width: 760px) {
+  :root {
+    --chart-panel-height: 360px;
+    --inspector-default-height: 112px;
+    --inspector-metrics-height: 172px;
+    --inspector-report-height: 184px;
+  }
+
   .dashboard-shell {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: 238px 20px minmax(0, 1fr);
@@ -690,7 +885,21 @@ input {
   }
 
   .workspace-panel {
-    grid-template-rows: auto minmax(0, 1fr) 96px;
+    grid-template-rows: auto var(--chart-panel-height) minmax(var(--inspector-default-height), 1fr);
+  }
+
+  .workspace-panel.inspector-mode-metrics {
+    grid-template-rows: auto var(--chart-panel-height) minmax(var(--inspector-metrics-height), 1fr);
+  }
+
+  .workspace-panel.inspector-mode-report {
+    grid-template-rows: auto var(--chart-panel-height) minmax(var(--inspector-report-height), 1fr);
+  }
+
+  .workspace-panel.inspector-collapsed,
+  .workspace-panel.inspector-collapsed.inspector-mode-metrics,
+  .workspace-panel.inspector-collapsed.inspector-mode-report {
+    grid-template-rows: auto var(--chart-panel-height) 32px;
   }
 
   .status-strip {
@@ -699,5 +908,18 @@ input {
 
   .report-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .metric-detail-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-height: 680px) {
+  :root {
+    --chart-panel-height: 360px;
+    --inspector-default-height: 104px;
+    --inspector-metrics-height: 152px;
+    --inspector-report-height: 168px;
   }
 }

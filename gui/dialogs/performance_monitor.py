@@ -29,12 +29,6 @@ from gui.dialogs.lifecycle import (
     wait_for_thread_later,
 )
 from gui.dialogs.performance_timeline import PerfDogTimelineChart
-from gui.performance_web import (
-    WebPerformanceTimelineChart,
-    build_web_font,
-    build_web_palette,
-    is_web_timeline_available,
-)
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
@@ -44,6 +38,7 @@ from models.performance.dashboard import (
     chart_points,
     frame_chart_values,
     marker_payload,
+    metric_details,
     metric_summaries,
     monitor_control_state,
     refresh_metric_lane_colors,
@@ -67,6 +62,8 @@ class PerformanceMonitorDialog(QDialog):
 
     REFRESH_INTERVAL_MS = 1000
     FRAME_REFRESH_INTERVAL_MS = REFRESH_INTERVAL_MS
+    DEVICE_INFO_REFRESH_DELAY_MS = 1800
+    DEVICE_INFO_RETRY_DELAY_MS = 500
     TIMELINE_MAX_ENTRIES = 3600
 
     def __init__(self, parent=None, device_ip: str = ""):
@@ -87,17 +84,22 @@ class PerformanceMonitorDialog(QDialog):
         self._sampling = PerformanceSamplingSchedule(self.FRAME_REFRESH_INTERVAL_MS)
         self._latest_frame_values: dict[str, float | int | None] = {}
         self._monitor_samples = []
+        self._monitor_cpu_samples = []
         self._timeline_entries = []
         self._last_report_dir = ""
         self._last_report_summary = {}
         self._device_info_rows = []
         self._session = PerformanceSession(device_id=device_ip)
-        self._use_web_dashboard = is_web_timeline_available()
+        self._preview_session = PerformanceSession(device_id=device_ip, status="Preview")
+        self._use_web_dashboard = _is_web_dashboard_available()
         self._metric_lanes = build_metric_lanes(BaseStyles.color)
 
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(self.REFRESH_INTERVAL_MS)
         self._refresh_timer.timeout.connect(self._refresh_snapshot)
+        self._device_info_timer = QTimer(self)
+        self._device_info_timer.setSingleShot(True)
+        self._device_info_timer.timeout.connect(self._refresh_device_info)
 
         self.setWindowTitle(f"Performance Monitor - {device_ip}")
         self.setWindowIcon(get_themed_icon("speedometer.svg"))
@@ -110,6 +112,8 @@ class PerformanceMonitorDialog(QDialog):
         BaseStyles.theme_changed.connect(self._apply_theme)
         self._refresh_timer.start()
         self._refresh_snapshot()
+        if self._use_web_dashboard:
+            self._device_info_timer.start(self.DEVICE_INFO_REFRESH_DELAY_MS)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -248,7 +252,7 @@ class PerformanceMonitorDialog(QDialog):
 
     def _create_timeline_chart(self):
         if self._use_web_dashboard:
-            chart = WebPerformanceTimelineChart(self._metric_lanes)
+            chart = _create_web_timeline_chart(self._metric_lanes)
             bridge = getattr(chart, "bridge", None)
             action_signal = getattr(bridge, "action_requested", None)
             if action_signal is not None:
@@ -278,8 +282,7 @@ class PerformanceMonitorDialog(QDialog):
         elif action == "exportReport":
             self._export_report()
         elif action == "refreshDeviceInfo":
-            self._device_info_rows = self._service.device_info(refresh=True).rows()
-            self._refresh_web_context()
+            self._refresh_device_info(force=True)
 
     def _control_state(self) -> dict[str, bool]:
         return monitor_control_state(
@@ -324,7 +327,30 @@ class PerformanceMonitorDialog(QDialog):
     def _refresh_snapshot(self):
         if self._closing or _worker_running(self._snapshot_worker):
             return
-        worker = PerformanceSnapshotWorker(self._service, self.package_input.text().strip())
+        worker = PerformanceSnapshotWorker(
+            self._service,
+            self.package_input.text().strip(),
+            include_device_info=False,
+        )
+        self._start_snapshot_worker(worker)
+
+    def _refresh_device_info(self, force: bool = False):
+        if self._closing:
+            return
+        if _worker_running(self._snapshot_worker):
+            timer = getattr(self, "_device_info_timer", None)
+            if is_qobject_alive(timer):
+                timer.start(self.DEVICE_INFO_RETRY_DELAY_MS)
+            return
+        worker = PerformanceSnapshotWorker(
+            self._service,
+            self.package_input.text().strip(),
+            include_device_info=True,
+            refresh_device_info=force,
+        )
+        self._start_snapshot_worker(worker)
+
+    def _start_snapshot_worker(self, worker):
         self._start_worker(
             "_snapshot_worker",
             worker,
@@ -350,12 +376,18 @@ class PerformanceMonitorDialog(QDialog):
         if snapshot.memory:
             if self._monitoring:
                 self._monitor_samples.append(snapshot.memory)
+        if snapshot.cpu and self._monitoring:
+            self._monitor_cpu_samples.append(snapshot.cpu)
         if self._monitoring:
             self.device_state_value.setText(f"Collecting {_elapsed_text(self._monitor_started_at)}")
             self._maybe_refresh_frame_metrics()
         else:
             self.device_state_value.setText(snapshot.status)
-        self._append_session_values(values)
+        if self._monitoring:
+            self._append_session_values(values)
+        else:
+            package_name = _snapshot_package_name(snapshot)
+            self._replace_preview_values(values, package_name=package_name)
 
     def _on_device_info(self, rows):
         if self._closing:
@@ -405,7 +437,7 @@ class PerformanceMonitorDialog(QDialog):
         self._sync_controls()
         frames = result.get("frames")
         if frames:
-            self._append_frame_sample(frames)
+            self._append_frame_sample(frames, append_when_idle=False)
 
     def _on_quick_worker_finished(self, worker):
         self._finish_worker("_quick_worker", worker, sync_controls=True)
@@ -429,6 +461,7 @@ class PerformanceMonitorDialog(QDialog):
         self._sampling_schedule().reset()
         self._latest_frame_values = {}
         self._monitor_samples = []
+        self._monitor_cpu_samples = []
         self.device_state_value.setText("Collecting 00:00")
         self._sync_controls()
         self._append_timeline("Monitor started")
@@ -446,6 +479,7 @@ class PerformanceMonitorDialog(QDialog):
             self._service,
             package_name,
             list(self._monitor_samples),
+            list(self._monitor_cpu_samples),
             self._monitor_started_at,
         )
         self._start_worker(
@@ -515,21 +549,53 @@ class PerformanceMonitorDialog(QDialog):
         self._last_report_summary = build_report_summary(result, title)
         self._refresh_web_context()
 
-    def _append_frame_sample(self, frames):
+    def _append_frame_sample(self, frames, *, append_when_idle: bool = True):
         values = frame_chart_values(frames)
         self._latest_frame_values = values
-        if self._session.update_latest_point(values):
+        if self._monitoring:
+            if self._session.update_latest_point(values):
+                self._refresh_dashboard()
+            else:
+                self._append_session_values(values)
+            return
+        if append_when_idle and (self._session.points or self._session.markers):
+            if self._session.update_latest_point(values):
+                self._refresh_dashboard()
+            else:
+                self._append_session_values(values)
+            return
+        preview = getattr(self, "_preview_session", None)
+        if preview is not None and preview.update_latest_point(values):
             self._refresh_dashboard()
-        elif not self._monitoring:
-            self._append_session_values(values)
+        else:
+            self._replace_preview_values(values)
 
     def _append_session_values(self, values: dict[str, float | int | None]):
         self._session.add_point(_now_ms(), values)
         self._refresh_dashboard()
 
+    def _replace_preview_values(self, values: dict[str, float | int | None], *, package_name: str = ""):
+        preview = PerformanceSession(
+            device_id=getattr(self, "device_ip", ""),
+            package_name=package_name,
+            activity=_widget_text(getattr(self, "activity_input", None)),
+            started_at_ms=_now_ms(),
+            status="Preview",
+        )
+        preview.add_point(_now_ms(), values)
+        self._preview_session = preview
+        self._refresh_dashboard()
+
+    def _active_chart_session(self) -> PerformanceSession:
+        session = getattr(self, "_session", PerformanceSession(device_id=getattr(self, "device_ip", "")))
+        if getattr(self, "_monitoring", False) or session.points or session.markers:
+            return session
+        return getattr(self, "_preview_session", session)
+
     def _refresh_dashboard(self):
-        points = chart_points(self._session, self.timeline_chart.max_points)
-        self.timeline_chart.set_points(points, self._marker_positions())
+        session = self._active_chart_session()
+        points = chart_points(session, self.timeline_chart.max_points)
+        self.timeline_chart.set_points(points, marker_payload(session))
         self._refresh_web_context()
 
     def _refresh_web_context(self):
@@ -542,7 +608,8 @@ class PerformanceMonitorDialog(QDialog):
                 return ""
             return str(widget.text()).strip()
 
-        session = getattr(self, "_session", PerformanceSession(device_id=getattr(self, "device_ip", "")))
+        session = self._active_chart_session()
+        palette, font = _web_dashboard_style()
         context = web_dashboard_context(
             events=list(self._timeline_entries),
             report=self.report_output.toPlainText(),
@@ -553,10 +620,11 @@ class PerformanceMonitorDialog(QDialog):
             activity=_text_from("activity_input"),
             controls=self._control_state(),
             theme=BaseStyles.current_theme(),
-            palette=build_web_palette(),
-            font=build_web_font(),
+            palette=palette,
+            font=font,
             device_info=list(getattr(self, "_device_info_rows", [])),
             metric_summaries=metric_summaries(session, BaseStyles.color),
+            metric_details=metric_details(session),
             axis_policy=axis_policy(),
         )
         self.timeline_chart.set_context(**context)
@@ -676,6 +744,10 @@ class PerformanceMonitorDialog(QDialog):
         if is_qobject_alive(self._refresh_timer):
             self._refresh_timer.stop()
             safe_disconnect(self._refresh_timer.timeout, self._refresh_snapshot)
+        device_info_timer = getattr(self, "_device_info_timer", None)
+        if is_qobject_alive(device_info_timer):
+            device_info_timer.stop()
+            safe_disconnect(device_info_timer.timeout, self._refresh_device_info)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         for attr, key in (
             ("_snapshot_worker", "snapshot"),
@@ -697,6 +769,40 @@ class PerformanceMonitorDialog(QDialog):
                 worker.deleteLater()
         self._service.stop()
         super().closeEvent(event)
+
+
+def _is_web_dashboard_available() -> bool:
+    try:
+        from gui.performance_web.dashboard import is_web_timeline_available
+    except Exception:
+        return False
+    return is_web_timeline_available()
+
+
+def _create_web_timeline_chart(metric_lanes):
+    from gui.performance_web.dashboard import WebPerformanceTimelineChart
+
+    return WebPerformanceTimelineChart(metric_lanes)
+
+
+def _web_dashboard_style() -> tuple[dict, dict]:
+    from gui.performance_web.dashboard import build_web_font, build_web_palette
+
+    return build_web_palette(), build_web_font()
+
+
+def _snapshot_package_name(snapshot) -> str:
+    target = getattr(snapshot, "target_package", "")
+    if isinstance(target, str) and target:
+        return target
+    current = getattr(snapshot, "current_package", "")
+    return current if isinstance(current, str) else ""
+
+
+def _widget_text(widget) -> str:
+    if widget is None or not hasattr(widget, "text"):
+        return ""
+    return str(widget.text()).strip()
 
 
 def _elapsed_text(started_at: float) -> str:

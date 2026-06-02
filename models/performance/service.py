@@ -14,8 +14,10 @@ from .parsers import (
     parse_am_start_output,
     parse_gfxinfo_output,
     parse_meminfo_output,
+    parse_process_stat_cpu_ticks,
     parse_proc_stat_total,
     parse_process_stat_ticks,
+    parse_process_thread_count,
 )
 from .report_service import PerformanceReportService
 from .types import CpuSample, DeviceInfo, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
@@ -29,7 +31,7 @@ class PerformanceService:
         self.process_key_prefix = process_key_prefix or f"performance_{device_id}_{id(self)}"
         self.process_runner = ProcessRunner()
         self.report_service = PerformanceReportService()
-        self._cpu_baselines: dict[str, tuple[int, int]] = {}
+        self._cpu_baselines: dict[str, tuple[int, int, int, int]] = {}
         self._device_info_cache: DeviceInfo | None = None
 
     def stop(self) -> None:
@@ -187,13 +189,24 @@ class PerformanceService:
         )
         if not process_result.success or not total_result.success:
             return None
-        process_ticks = parse_process_stat_ticks(process_result.output)
+        process_cpu_ticks = parse_process_stat_cpu_ticks(process_result.output)
+        process_ticks = sum(process_cpu_ticks) if process_cpu_ticks is not None else parse_process_stat_ticks(process_result.output)
         total_ticks = parse_proc_stat_total(total_result.output)
+        thread_count = parse_process_thread_count(process_result.output)
         previous = self._cpu_baselines.get(package_name)
+        user_ticks = process_cpu_ticks[0] if process_cpu_ticks is not None else None
+        system_ticks = process_cpu_ticks[1] if process_cpu_ticks is not None else None
         if process_ticks is not None and total_ticks is not None:
-            self._cpu_baselines[package_name] = (process_ticks, total_ticks)
+            self._cpu_baselines[package_name] = (
+                process_ticks,
+                total_ticks,
+                user_ticks or 0,
+                system_ticks or 0,
+            )
         previous_process = previous[0] if previous else None
         previous_total = previous[1] if previous else None
+        previous_user = previous[2] if previous else None
+        previous_system = previous[3] if previous else None
         return build_cpu_sample(
             timestamp_ms=timestamp_ms or _now_ms(),
             pid=pid,
@@ -202,6 +215,11 @@ class PerformanceService:
             previous_process_ticks=previous_process,
             previous_total_ticks=previous_total,
             is_foreground=bool(current_package and current_package == package_name),
+            user_ticks=user_ticks,
+            system_ticks=system_ticks,
+            previous_user_ticks=previous_user,
+            previous_system_ticks=previous_system,
+            thread_count=thread_count,
         )
 
     def _package_pid(self, package_name: str) -> int | None:
@@ -294,6 +312,7 @@ class PerformanceService:
         report_dir = self.report_service.create_report_dir(self.device_id, package_name or "unknown")
         raw_files: dict[str, str] = {}
         samples: list[MemorySample] = []
+        cpu_samples: list[CpuSample] = []
         findings: list[str] = []
 
         startup = self.startup_metrics(package_name, activity) if package_name else None
@@ -331,6 +350,10 @@ class PerformanceService:
             if mem.success:
                 samples.append(parse_meminfo_output(mem.output, timestamp_ms=_now_ms()))
 
+        cpu = self.cpu_sample(package_name, current_package=self.current_package()) if package_name else None
+        if cpu:
+            cpu_samples.append(cpu)
+
         status = _status_for(startup, frames, samples, findings)
         artifacts = self.report_service.write_report(
             report_dir,
@@ -339,6 +362,7 @@ class PerformanceService:
             startup=startup,
             frames=frames,
             samples=samples,
+            cpu_samples=cpu_samples,
             raw_files=raw_files,
             status=status,
             findings=findings,
@@ -350,6 +374,7 @@ class PerformanceService:
             "startup": startup,
             "frames": frames,
             "samples": samples,
+            "cpu_samples": cpu_samples,
             "findings": findings,
             "status": status,
         }

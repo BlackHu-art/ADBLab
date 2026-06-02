@@ -41,6 +41,7 @@ def build_timeline_payload(
     font: dict | None = None,
     device_info: list[dict] | None = None,
     metric_summaries: list[dict] | None = None,
+    metric_details: list[dict] | None = None,
     axis_policy: dict | None = None,
 ) -> dict:
     return {
@@ -60,6 +61,7 @@ def build_timeline_payload(
         "font": font or {},
         "deviceInfo": device_info or [],
         "metricSummaries": metric_summaries or [],
+        "metricDetails": metric_details or [],
         "axisPolicy": axis_policy or {},
     }
 
@@ -139,6 +141,7 @@ class WebPerformanceTimelineChart(QWebEngineView if QWebEngineView is not None e
         self._font: dict = {}
         self._device_info: list[dict] = []
         self._metric_summaries: list[dict] = []
+        self._metric_details: list[dict] = []
         self._axis_policy: dict = {}
         self._max_points = 3600
         self._ready = False
@@ -178,6 +181,7 @@ class WebPerformanceTimelineChart(QWebEngineView if QWebEngineView is not None e
         font: dict | None = None,
         device_info: list[dict] | None = None,
         metric_summaries: list[dict] | None = None,
+        metric_details: list[dict] | None = None,
         axis_policy: dict | None = None,
     ):
         if events is not None:
@@ -206,6 +210,8 @@ class WebPerformanceTimelineChart(QWebEngineView if QWebEngineView is not None e
             self._device_info = device_info
         if metric_summaries is not None:
             self._metric_summaries = metric_summaries
+        if metric_details is not None:
+            self._metric_details = metric_details
         if axis_policy is not None:
             self._axis_policy = axis_policy
         self._schedule_render_current_payload()
@@ -259,6 +265,7 @@ class WebPerformanceTimelineChart(QWebEngineView if QWebEngineView is not None e
             font=self._font,
             device_info=self._device_info,
             metric_summaries=self._metric_summaries,
+            metric_details=self._metric_details,
             axis_policy=self._axis_policy,
         )
         self._render_payload(payload)
