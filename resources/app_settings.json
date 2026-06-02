@@ -6,8 +6,9 @@
   "log_max_lines": 2000,
   "confirm_dangerous_ops": true,
   "continuous_device_scan": true,
+  "performance_log_threshold_ms": 300,
   "monkey_params": {
-    "events": 5000,
+    "events": 100000,
     "throttle": 500,
     "ignore_crashes": true,
     "ignore_timeouts": true,
@@ -21,7 +22,7 @@
     "appswitch": 10,
     "anyevent": 5,
     "pinch": 5,
-    "package_name": "com.android.launcher3"
+    "package_name": "com.android.flysilkworm"
   },
   "theme": "Light",
   "window_width": 1200,

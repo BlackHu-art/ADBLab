@@ -1,471 +1,285 @@
 # ADBLab
 
-## Overview
+## 项目概览
 
-**ADBLab** is a PySide6 desktop GUI tool for Android device management and automated testing. It wraps ADB commands into a graphical interface supporting device connection, app management, file browsing, live logcat, screen mirroring, Monkey stress testing, and performance diagnostics.
+**ADBLab** 是一款基于 PySide6 的 Android 设备管理、自动化测试与性能诊断桌面工具。项目把常用 ADB、scrcpy、logcat、dumpsys、gfxinfo、meminfo 等能力封装为图形界面，适合日常设备调试、应用管理、投屏控制、Monkey 压测、文件操作和性能巡检。
 
-![ADBLab UI Preview](resources/demo.gif)
+![ADBLab UI 预览](resources/demo.gif)
 
-- **Language**: Python 3.11
-- **GUI Framework**: PySide6 (Qt 6)
-- **Author**: Frankie Hu (Copyright (c) 2026)
-- **Version**: 2.9.0
-
----
-
-## Directory Structure
-
-```
-ADBLab/
-├── main.py                          # Entry: QApplication → MainFrame → event loop
-├── requirements.txt
-├── README.md
-├── icon.ico
-├── .gitignore
-├── .github/workflows/
-│   ├── Build-exe.yaml
-│   └── Auto-Clean.yaml
-│
-├── core/                            # Core infrastructure
-│   ├── adb_bridge.py                # Lightweight ADB wrapper (shell, input, dimensions)
-│   ├── log_service.py               # Thread-safe singleton log service
-│   ├── settings_manager.py          # App settings persistence (JSON, atomic write)
-│   └── mail/
-│       ├── email_service.py          # AMZ123 temp email API client
-│       └── email_task.py            # QRunnable async email + verification code fetch
-│
-├── controllers/                     # Controller layer (mixins → ADBController)
-│   ├── __init__.py                  # Composed ADBController (7 mixins)
-│   ├── _base.py                     # Shared infra: models, signals, handler dispatch
-│   ├── _device.py                   # Device connect, disconnect, restart, pairing
-│   ├── _app.py                      # Package mgmt, app info, monkey test, bugreport, logs
-│   ├── _system.py                   # Permissions, disable/enable, broadcast, activity, IME, emulator, reboot
-│   ├── _media.py                    # Screenshot, recording(start/stop/auto-pull), performance, battery
-│   ├── _input.py                    # Text input, tap, swipe, keyevent, settings
-│   └── _file.py                     # File manager, port forwarding, content query
-│
-├── models/                          # Model layer (ADB command execution)
-│   ├── adb_model.py                 # @async_command decorator + ADBModelCore base
-│   ├── base/
-│   │   ├── command_runner.py         # Unified subprocess.run entry + adb path cache
-│   │   ├── process_runner.py         # Managed long-running Popen processes (monkey/logcat/etc.)
-│   │   └── focus_detector.py         # Foreground package detection helper
-│   ├── adb_device.py                # Device connect, disconnect, restart, device info
-│   ├── adb_app.py                   # App install, uninstall, clear, package/activity queries
-│   ├── adb_testing.py               # Screenshot, monkey(per-device abort), bugreport, ANR, logs
-│   ├── adb_advanced.py              # Screen record(start/stop/pull), input, perf, logcat (~430 lines)
-│   ├── adb_network.py               # Network ADB mixin (port forward, TCP/IP, ping)
-│   ├── adb_system.py                # System ADB mixin (permissions, emulator, IME, process)
-│   ├── remote/                      # Remote native services (scrcpy launch, gestures, key mapping)
-│   ├── app_manager_worker.py        # App manager QThread worker (list, backup, restore)
-│   ├── file_explorer_worker.py      # File explorer QThread workers (ADB shell, transfer)
-│   └── device_store.py              # YAML device info persistence
-│
-├── gui/                             # View layer
-│   ├── main_frame.py                # Frameless main window, toolbar, QSplitter, signal wiring
-│   ├── panels/
-│   │   ├── side_panel.py            # Right-side 3-tab container (Apps / System / Remote)
-│   │   ├── side_panel_signals.py    # Signal definitions for user actions
-│   │   ├── adb_control_signals.py   # Controller → UI signals
-│   │   ├── base_panel.py            # Abstract panel base (UI factories, shared state)
-│   │   ├── device_manager.py        # Left-side device panel (connect, list, multiselect)
-│   │   ├── app_panel.py             # Tab 1 "Apps": package mgmt, monkey(configurable %), record, perf
-│   │   ├── system_panel.py          # Tab 2 "System": shell, forwarding, reboot, settings, IME, emulator
-│   │   ├── remote_panel.py          # Tab 3 "Remote": scrcpy mirroring, D-Pad, quick keys
-│   │   └── log_panel.py             # Left-side theme-aware log, auto-scroll, batch re-render
-│   ├── dialogs/
-│   │   ├── about_dialog.py          # About dialog (version, QR code, copyright)
-│   │   ├── screenshot_viewer.py     # Multi-image viewer (zoom, nav, copy, save, delete)
-│   │   ├── app_manager.py           # App manager (list, backup, permissions, presets, batch ops)
-│   │   ├── file_explorer.py         # File explorer (browse, pull, push, edit, chmod)
-│   │   ├── live_logcat.py           # Live logcat (stream, filter, highlight, export)
-│   │   └── settings_dialog.py       # Settings (theme, font, window/panel size, behavior)
-│   ├── styles/
-│   │   ├── __init__.py              # BaseStyles (ThemeMixin + QSSMixin + FontMixin)
-│   │   ├── theme.py                 # Light/Dark palettes, theme switch, DWM title bar helper
-│   │   ├── qss.py                   # QSS templates (buttons, inputs, group boxes, scrollbars, device list)
-│   │   ├── fonts.py                 # Font management
-│   │   └── icon_loader.py           # Theme-aware QIconEngine (SVG currentColor injection)
-│   └── widgets/
-│       └── double_click_button.py   # QPushButton with double-click safety guard
-│
-├── utils/                           # Utilities
-│   ├── app_metadata.py              # Single app version source for UI + CI release tags
-│   ├── resource_path.py             # Resource path resolution (dev + PyInstaller)
-│   ├── adb_resolver.py              # ADB path resolution (bundled scrcpy/adb)
-│   └── batch_tracker.py             # Multi-device batch operation progress tracker
-│
-├── tests/
-│   └── test_model_execution.py      # Execution-layer regression tests
-│
-└── resources/                       # Static resources
-    ├── connected_devices.yaml       # Device connection history
-    ├── package_info.yaml            # Package name history
-    ├── chkbugreport-0.5-215.jar    # Bugreport txt → html converter
-    ├── app_settings.json            # App settings persistence
-    ├── demo.gif                     # README UI preview
-    ├── ZFB.jpg                      # About dialog QR code
-    └── icons/                       # 1512 Phosphor Regular SVG icons
-```
+| 项目 | 当前状态 |
+|------|----------|
+| 应用版本 | `3.0.0`，来源于 `utils/app_metadata.py` |
+| 开发语言 | Python，建议使用 Python 3.11 |
+| GUI 框架 | PySide6 / Qt 6 |
+| 主要平台 | Windows 10/11 |
+| 内置工具 | `scrcpy-win64-v3.3.1/`，包含 `adb.exe` 与 `scrcpy.exe` |
+| 作者 | Frankie Hu (Copyright (c) 2026) |
 
 ---
 
-## Architecture
-
-### 2026-05-30 Optimization Record
-
-The latest architecture and feature-logic optimization notes are documented in:
-
-- `docs/2026-05-30-architecture-logic-optimization.md`
-
-This pass centralized command/process execution, tightened dialog lifecycle cleanup, made Monkey stop idempotent, added VSCode project launch configuration, and expanded regression coverage to 42 tests.
-
-### MVC + Signal/Slot Pattern
-
-```
-User clicks button (Panel)
-  → Emits signal (e.g., screenshot_requested)
-  → ADBController receives, dispatches to model
-  → Model executes ADB command on background thread (QRunnable)
-  → Model emits command_finished signal
-  → Controller processes result via handler_map dispatch
-  → Emits UI signal → LogPanel / dialogs update
-```
-
-### Key Design Patterns
-
-| Pattern | Location | Description |
-|---------|----------|-------------|
-| **Singleton** | `LogService`, `AppSettings` | Thread-safe singletons |
-| **Observer** | Global | Qt signal/slot decoupling UI from business logic |
-| **Async Command** | `adb_model.async_command` | Decorator wrapping sync methods into QRunnable async execution |
-| **Command Runner** | `models/base/command_runner.py` | Single short-lived subprocess entry with adb path cache and normalized results |
-| **Process Runner** | `models/base/process_runner.py` | Managed lifecycle for long-running monkey/logcat/scrcpy-like subprocesses |
-| **Focus Detector** | `models/base/focus_detector.py` | Shared foreground package parser with focus-first fallback chain |
-| **Handler Map** | `_ADBControllerBase._handle_async_response` | Dict dispatch for operation result types |
-| **Mixin Controller** | `controllers/__init__.py` | ADBController assembled from 7 functional mixins |
-| **Model Mixins** | `adb_advanced.py` | ADBAdvanced composed from ADBNetworkMixin + ADBSystemMixin |
-| **Version Metadata** | `utils/app_metadata.py` | Single app version source for About dialog, Windows AppUserModelID, and CI release tags |
-| **Custom QIconEngine** | `icon_loader.py` | Theme-color injection into SVG on every paint — no widget refresh |
-
-### Thread Model
-
-- **Main thread**: Qt event loop + UI rendering
-- **Worker threads**: `QThreadPool` (QRunnable) + `ThreadPoolExecutor(max_workers=4)`
-- **Long-running processes**: `ProcessRunner` owns named subprocesses and stops replaced/aborted tasks safely
-- **Thread communication**: Qt cross-thread signals/slots (auto-queued)
-- **Log buffering**: `LogService` uses QTimer at 200ms intervals to batch-flush
-
----
-
-## GUI Layout
-
-```
-┌─ Toolbar ──────────────────────────────────────────────────┐
-│ ADBLab | AppMgr | FileExpl | Logcat | Settings | CMD       │
-│     [SavePath......... ] Clear | About | ☀ | ─ | ✕       │
-├─ Left Column ─────┬── Right Tabs ──────────────────────────┤
-│ ┌─ Devices Panel ┐│ ┌ Apps ────┬ System ───┬ Remote ─────┐ │
-│ │ IP Connect     │ │ │          │           │             │ │
-│ │ Device List    │ │ │          │           │             │ │
-│ │ Buttons        │ │ │          │           │             │ │
-│ └────────────────┘ │ └────────────────────────────────────┘ │
-│ ┌─ Log Panel ────┐ │                                        │
-│ │ Color-coded    │ │                                        │
-│ │ Auto-scroll    │ │                                        │
-│ └────────────────┘ │                                        │
-└────────────────────┴────────────────────────────────────────┘
-```
-
-- **Toolbar**: App Manager, File Explorer, Live Logcat, Settings, CMD, Save Path, Clear Log, About, Theme Toggle, Minimize, Exit
-- **Left column**: Device Manager (fixed height) + Log Panel (fills rest)
-- **Right tabs**: Apps / System / Remote (3 tabs with scroll areas)
-- **QSplitter**: Draggable divider between left and right panels
-
----
-
-## Feature Catalog
-
-### Device Management
-
-| Feature | Description |
-|---------|-------------|
-| Connect / Disconnect | ADB connect/disconnect by IP:Port, history dropdown with auto-complete |
-| Device List | Multi-select checklist (Brand, Model, Android version, IP); robust parser ignores adb startup banners/offline devices |
-| Device Info | 17 properties: model, brand, Android version, SDK, CPU, resolution, density, memory, storage, MAC/IP, etc. |
-| Restart Device | `adb reboot` for checked devices |
-| Restart ADB Server | `adb kill-server` + `adb start-server` (double-click safety) |
-| Batch Install APK | Multi-file → all checked devices |
-| USB Auto-Detection | `_ScanThread` long-running poll every 3s, count-change auto-refresh |
-| Device Persistence | YAML store for known devices, IP history with auto-complete |
-
-### App Management (Apps Tab)
-
-| Feature | Description |
-|---------|-------------|
-| Get Package | Focus-first detector (`mCurrentFocus` / `mFocusedApp`, then activity/window fallback); accumulates history |
-| Uninstall / Clear Data / Restart / Force Stop | Standard lifecycle operations |
-| Disable / Enable / Disable-User | `pm disable/enable/disable-user` |
-| Activity Info | Current focus and resumed activity |
-| Parse APK (local) | `aapt dump badging` — label, package, version, SDK, permissions, architectures |
-| Package History | Auto-complete from previously seen packages |
-| Email | Fetch temp email from AMZ123 API, poll for verification code |
-| Input Text | `adb shell input text` to device |
-| Screenshot | `screencap -p` + pull, multi-device, opens in ScreenshotViewer |
-| Screen Record | Configurable duration, Record/Stop mutual exclusion, auto-pull after completion |
-
-### Testing & Diagnostics (Apps Tab)
-
-| Feature | Description |
-|---------|-------------|
-| Monkey Test | 9 configurable event-mix %, Events/Throttle/Flags, random seed, per-device abort, tiered recovery, auto-persist params |
-| Kill Monkey | Stops local `ProcessRunner` monkey process and device-side monkey process with clear failure output |
-| Bugreport | `adb bugreport` → extract ZIP → convert to HTML via chkbugreport |
-| Pull ANR Files | `pull /data/anr` from device |
-| Retrieve / Cleanup Logs | `logcat -d` to file / `logcat -c` clear buffer |
-| Memory Info | `dumpsys meminfo [package]` |
-| CPU Load | `dumpsys cpuinfo` |
-| Battery Info | `dumpsys battery` |
-| Uptime | Device uptime display |
-| Top Snapshot | `top -b -n 1 -m 20` |
-| GFX Info | `dumpsys gfxinfo <package> framestats` |
-| Wakelocks | `cat /proc/wakelocks` |
-| Net Stats | `dumpsys netstats detail` |
-
-### System Management (System Tab)
-
-| Feature | Description |
-|---------|-------------|
-| Reboot & Modes | System / Bootloader / Recovery / Fastboot + TCP/IP mode |
-| Shell Command | Arbitrary `adb shell` command execution |
-| Broadcast / Activity / Deep Link | `am broadcast/start` intent operations |
-| Port Forward / Reverse | `adb forward/reverse` with list and remove-all |
-| Service Toggles | WiFi / Data / Bluetooth / NFC ON/OFF — 8 dedicated buttons |
-| Android Settings | `settings list/get/put` for system/global/secure namespaces |
-| Content Query | `content query --uri` |
-| Process List / Kill PID | `ps -A` / `kill <pid>` |
-| Dumpsys | 16 system services pre-listed + custom input |
-| Kernel / CPU Info | `cat /proc/version` / `cat /proc/cpuinfo` |
-| PM Features | `pm list features` |
-| Battery Simulation | Set level/status, reset to real values |
-| Quick Settings | Animation disable/enable, stay awake presets |
-| IME Management | List and set input methods |
-| Emulator Control | SMS, call, GPS for Android emulators |
-
-### Screen Mirroring (Remote Tab)
-
-| Feature | Description |
-|---------|-------------|
-| Screen Mirroring | Bundled scrcpy v3.3.1 with full configuration |
-| Video Presets | Smooth (1024@30), Balanced (1280@30), Quality (1920@60), Low Latency (720@24) |
-| Custom Tuning | Resolution, FPS, codec (h264/h265/av1), buffer, bitrate, orientation lock |
-| Display Options | Fullscreen, always-on-top, show touches, stay awake, turn screen off, HW encoder, no-window, no-audio |
-| Recording | Record session to MP4 with auto-generated filename |
-| Pre-Flight Check | USB speed test before launch |
-| HW Encoder Detection | Auto-detect OMX/C2 hardware encoder |
-| FPS Monitor | Live FPS from scrcpy stderr in status label |
-| D-Pad | 5-key directional pad (Up/Down/Left/Right/Center) |
-| Quick Keys | 16 system keys (HOME, BACK, POWER, RECENTS, etc.) |
-| Keyboard Shortcuts | Ctrl+Enter start, Ctrl+Q stop |
-| Settings Persistence | All video parameters saved across sessions |
-
-Remote keeps the ADBLab UI as the user-facing shell while the implementation lives in
-`models/remote/`: `ScrcpyService` owns scrcpy preflight/launch/stop behavior, and
-`RemoteControlService` owns key, swipe, notification, and rotation commands. Startup reuses
-the detected device dimensions for gestures, and repeated gesture taps use a short `wm size`
-cache to avoid UI-thread stalls. guiscrcpy is no longer embedded or kept as a source folder.
-
-### File Explorer
-
-| Feature | Description |
-|---------|-------------|
-| Browse Filesystem | Table view (Name, Type, Size, Modified); path bar, back/forward/up navigation |
-| Search / Filter | Filter files by name |
-| Pull / Push | Download/upload files with progress |
-| View / Edit | Text viewer (20+ formats), image viewer (png/jpg/gif/bmp) |
-| File Operations | New folder, new file, rename, delete, copy/cut/paste |
-| Permissions (chmod) | Interactive owner/group/other dialog with current permissions readback |
-| Install APK | Direct install from device filesystem |
-| Execute Script | Run shell script on device and show output |
-| Properties | File/folder metadata display |
-| Root Mode | Toggle `su -c` prefix for all operations |
-
-### App Manager Dialog
-
-| Feature | Description |
-|---------|-------------|
-| App List | Table view (name, package, version, status, type); grid icon view |
-| Search / Filter | By text + type (All/User/System) |
-| Batch Operations | Uninstall, disable, enable, backup, restore |
-| Backup / Restore | Export APKs to ZIP, restore from ZIP (split APK support) |
-| Presets | Save/load package selection as JSON presets |
-| App Details | Tabs: app info + permissions (grant/revoke individual runtime permissions) |
-| Context Menu | Launch, force stop, clear data, backup, details |
-
-### Live Logcat
-
-| Feature | Description |
-|---------|-------------|
-| Real-Time Stream | `adb logcat -v threadtime` streaming display |
-| Level Filter | Verbose through Fatal (7 levels) |
-| Package Filter | Auto PID lookup + `--pid` filter |
-| Tag Filter | Client-side substring filter |
-| Syntax Highlighting | Color-coded: V(gray) D(blue) I(green) W(orange) E(red) F(pink) |
-| Operations | Start, stop, clear, export to .txt; 8000-line buffer |
-
-### Screenshot Viewer
-
-| Feature | Description |
-|---------|-------------|
-| Multi-Image Navigation | Prev/Next buttons or arrow keys; "1 / N" indicator |
-| Zoom | 10%–500%, Ctrl+scroll/Ctrl+=/Ctrl+-; fit-to-window / 1:1 |
-| Actions | Copy to clipboard (Ctrl+C), Save As (Ctrl+S), open folder, delete |
-| Info Display | Resolution, file size, modification timestamp |
-| Context Menu | All actions accessible via right-click |
-
-### Settings Dialog
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Theme | Light | Light/Dark toggle (immediate apply) |
-| Font Family | Segoe UI | 6 font choices (immediate apply) |
-| UI Font Size | 12 | Dropdown: 8–22 (immediate apply) |
-| Log Font Size | 9 | Dropdown: 7–16 (immediate apply) |
-| Window Size | 1200×650 | Width/height number inputs |
-| Panel Widths | Auto | Left/right splitter proportions |
-| Save Dir | ~/ADBLab | Folder picker for default save path |
-| Max Log Lines | 2000 | Log panel buffer size |
-| Confirm Dangerous Ops | On | Prompt before reboot, uninstall |
-| Continuous Scan | On | Poll new USB devices every 3s |
-| Restore Defaults | — | Reset all settings to factory defaults |
-
----
-
-## Theme System
-
-### Light/Dark Dual Theme
-
-- 28 color keys per theme (background, input, button, text, border, selection, scrollbar, etc.)
-- One-click toggle via toolbar button
-- All panels, dialogs, and widgets respond to `BaseStyles.theme_changed` signal
-- **Windows title bar**: Dark/Light mode synced via `DwmSetWindowAttribute` (DWM API) — no restart needed
-- Font: Segoe UI (base) + Courier New (monospace)
-
-### Icon System
-
-- **1512 Phosphor Regular SVG icons** replacing legacy Material icons
-- **Custom QIconEngine** (`_ThemedIconEngine`): injects `currentColor` → theme `TEXT_PRIMARY` on every paint
-- Theme change is instant — no widget refresh, no icon cache invalidation
-- Every button and dialog window has a semantically-matched icon
-- QSS icons (dropdown arrow, checkbox) inherit color via CSS
-
----
-
-## Settings System
-
-Managed by `AppSettings` singleton (`resources/app_settings.json`) with atomic write (temp file + replace) and auto-save timer:
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `theme` | Light | Current theme name |
-| `font_family` | Segoe UI | UI font family |
-| `ui_font_size` | 12 | UI font size (px) |
-| `log_font_size` | 9 | Log panel font size (px) |
-| `window_width` / `window_height` | 1200 / 650 | Window dimensions |
-| `left_panel_width` | Auto-calc | Left panel width |
-| `save_directory` | `~/ADBLab` | Default save path |
-| `confirm_dangerous_ops` | true | Confirm before dangerous operations |
-| `continuous_device_scan` | true | Continuously scan device list (every 3s) |
-| `monkey_params` | see defaults | Last-used monkey test parameters (auto-persisted) |
-
----
-
-## Key Features
-
-- **Continuous Device Scan**: `_ScanThread` poll every 3s with count-change auto-refresh, toggleable in Settings
-- **Multi-Device Support**: All operations support multiple checked devices; per-device monkey isolation
-- **Configurable Monkey**: 9 event-mix %, Events/Throttle/Flags, random seed, auto-persist to settings
-- **Smart Screen Recording**: Record/Stop mutual exclusion, auto-pull video after completion
-- **1526 Icons**: Phosphor Regular SVG with theme-aware color engine
-- **Dark Title Bars**: Windows native title bars follow theme via DWM API
-- **scrcpy Integration**: Bundled v3.3.1 with preset profiles and FPS monitoring
-- **Batch Operations**: Install APKs, uninstall apps, disable/enable — all across multiple devices
-- **Live Logcat**: Combined Level+Package+Tag filter with syntax highlighting
-- **Theme-Aware Logs**: Log level colors adapt to Light/Dark; smart auto-scroll pauses on manual scroll-up
-- **App Manager**: Grid/table views, backup/restore, permission management, JSON presets
-- **File Explorer**: Full-featured device file browser with chmod, text/image viewing, root mode
-- **Settings Persistence**: All user preferences + monkey params saved automatically with debounced writes
-
----
-
-## Dependencies
-
-### Python (requirements.txt)
-
-| Package | Version | Purpose |
-|---------|---------|---------|
-| PySide6 / PySide6_Essentials / PySide6_Addons | 6.8+ | Qt 6 GUI |
-| PySide6_QtSvg | 6.8+ | SVG rendering (icon engine) |
-| PyYAML | 6.0+ | YAML parsing |
-| ruamel.yaml | latest | YAML read/write |
-| Requests | 2.32+ | HTTP client (email API) |
-| pyinstaller | latest | EXE packaging |
-
-### System Requirements
-
-- **Windows 10/11** (primary target)
-- **ADB** — bundled in `scrcpy-win64-v3.3.1/`
-- **aapt** — for APK parsing (external)
-- **Java JRE** — for `chkbugreport-0.5-215.jar`
-
----
-
-## CI/CD
-
-| Workflow | Trigger | Action |
-|----------|---------|--------|
-| `Build-exe.yaml` | Push to main / manual | Read `utils.app_metadata.APP_RELEASE_TAG` → PyInstaller builds → GitHub Release |
-| `Auto-Clean.yaml` | Monthly / manual | Prune old workflow runs, keep latest 8 releases |
-
-### Versioning
-
-`utils/app_metadata.py` is the single source of truth for application version metadata:
-
-```python
-APP_VERSION = "2.9.0"
-APP_RELEASE_TAG = f"v{APP_VERSION}"
-```
-
-The same version source is used by:
-
-- About dialog version label
-- Windows `AppUserModelID` in `main.py`
-- GitHub Actions artifact names
-- GitHub Release tag and release title
-
-To publish a new version, update `APP_VERSION` once, then build from `main` or run `Build-exe.yaml` manually.
-
----
-
-## Development
-
-### Quick Start
+## 快速启动
 
 ```bash
 pip install -r requirements.txt
 python main.py
 ```
 
-### Code Conventions
+---
 
-- ADB operations run async via `@async_command` (QRunnable) — never block the main thread
-- Short-lived commands go through `CommandRunner.run()`; long-running managed processes go through `ProcessRunner.start()`
-- Fire-and-forget external launches go through `ProcessRunner.spawn()`
-- UI code should not call `subprocess.run()`, `subprocess.Popen()`, or `os.startfile()` directly
-- Long-running polls (device scan) use dedicated `QThread` with `msleep`-breakable loops
-- Signal definitions centralized in `*_signals.py`; explicit `Qt.QueuedConnection` for cross-thread
-- All dialogs connect to `BaseStyles.theme_changed` for theme updates
-- All `subprocess.run` calls with `text=True` use `encoding="utf-8", errors="ignore"` (Chinese Windows compat)
-- Application version changes should only update `utils/app_metadata.py`
-- Icons use `get_themed_icon("name.svg")` (theme-aware) not raw `QIcon`
-- Per-device state tracked with `set()` + `threading.Lock` (e.g. `_aborted_devices`, `_monkey_running`)
+## 当前功能
+
+### 设备与基础操作
+
+- IP/USB 设备连接、断开、刷新、重启和多选批量操作。
+- 设备信息读取：品牌、型号、Android 版本、SDK、CPU、分辨率、内存、存储、网络信息等。
+- ADB Server 重启、TCP/IP 模式、端口 forward/reverse、系统 reboot 模式切换。
+- 左侧设备列表持续扫描 USB 设备，支持历史设备与连接记录。
+
+### 应用管理与测试
+
+- 获取当前前台包名，支持 focus 优先检测和 activity/window 回退。
+- 安装、卸载、清数据、强停、重启、禁用、启用、disable-user。
+- 本地 APK 解析，读取包名、版本、权限、架构等信息。
+- Monkey 压力测试：事件占比、事件数、throttle、flags、随机种子、按设备中止。
+- Bugreport、ANR 拉取、logcat 导出/清理、meminfo、cpuinfo、gfxinfo、top、wakelock、netstats 等诊断入口。
+- 临时邮箱能力：通过 `core/mail/` 调用 AMZ123 API 获取邮箱与验证码。
+
+### Remote 投屏控制
+
+- 内置 scrcpy v3.3.1，支持流畅/均衡/画质/低延迟预设。
+- 自定义分辨率、FPS、码率、codec、buffer、方向锁定、录制文件。
+- 支持全屏、置顶、显示触摸、保持唤醒、关闭设备屏幕、无窗口、无音频。
+- `models/remote/` 提供原生无界面服务层：
+  - `ScrcpyService`：scrcpy 路径解析、版本检测、预检、编码器检测、启动/停止、FPS 解析。
+  - `RemoteControlService`：按键、D-Pad、滑动、通知栏、旋转等 ADB 控制。
+  - `control_mapping.py`：keycode 和手势坐标计算。
+  - `scrcpy_args.py`：集中构建 scrcpy 参数。
+- Remote 保留 ADBLab 自有 PySide6 UI，不嵌入 guiscrcpy 的 Qt UI/launcher 栈。
+
+### 文件浏览器
+
+- 浏览设备文件系统，支持路径栏、后退/前进/上级导航、搜索过滤。
+- 拉取、推送、删除、重命名、新建文件/文件夹、复制/剪切/粘贴。
+- 文本和图片查看，脚本执行，APK 直接安装，文件属性查看。
+- chmod 权限弹窗与 root 模式。
+- `models/file_explorer_service.py` 是无 Qt 依赖的纯逻辑层，负责路径处理、shell quoting、`ls -la` 解析、权限模式和文件名安全校验。
+
+### 性能监控
+
+- 工具栏提供 `Performance Monitor` 入口，按当前选中设备打开独立性能监控窗口。
+- `gui/dialogs/performance_monitor.py` 提供单设备性能弹窗，`gui/dialogs/performance_timeline.py` 提供原生时间线图。
+- `gui/performance_web/` 提供可选 Web 仪表盘资源：`index.html`、`style.css`、`app.js`。
+- `models/performance/` 提供采集、解析、会话、报告和 worker 层：
+  - 启动耗时：`am start -S -W` 与 logcat `Displayed` / `Fully drawn` 解析。
+  - 帧率与卡顿：`dumpsys gfxinfo <package> framestats` 统计。
+  - 内存：`dumpsys meminfo` 的 PSS、Java Heap、Native Heap、Graphics、Views、Activities 等字段。
+  - CPU：读取 `/proc/<pid>/stat` 与 `/proc/stat` 做进程 CPU delta。
+  - 设备信息：getprop、cpuinfo、meminfo、SurfaceFlinger、root 状态等。
+  - 报告：生成 summary、metrics、文本报告和趋势分析所需数据。
+
+### 弹窗与工具
+
+- 应用管理器：表格/网格视图、搜索过滤、批量操作、备份/恢复、权限管理、JSON 预设。
+- 实时 Logcat：等级、包名、Tag 过滤，语法高亮，导出文本。
+- 截图查看器：多图导航、缩放、复制、另存为、打开目录、删除。
+- 设置弹窗：主题、字体、窗口尺寸、面板宽度、保存目录、日志行数、危险操作确认、持续扫描等。
+
+---
+
+## 项目结构
+
+```text
+ADBLab/
+├── main.py                         # 程序入口，设置 Windows AppUserModelID、主题和主窗口
+├── requirements.txt                # 运行与打包依赖
+├── pyproject.toml                  # black / ruff 配置，目标语法 py310
+├── ADBLab.spec                     # PyInstaller 打包配置
+├── README.md
+├── icon.ico
+├── .github/workflows/
+│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release
+│   └── Auto-Clean.yaml             # 清理旧 workflow runs / releases
+│
+├── core/                           # 核心基础设施
+│   ├── adb_bridge.py               # 轻量 ADB 桥接
+│   ├── log_service.py              # 线程安全日志服务，跨线程 flush 回到 owner thread
+│   ├── settings_manager.py         # 应用设置单例，JSON 原子写入
+│   └── mail/                       # 临时邮箱 API 与异步任务
+│
+├── controllers/                    # Controller 层，多个 mixin 组合成 ADBController
+│   ├── __init__.py
+│   ├── _base.py                    # model、signals、handler_map 分发
+│   ├── _device.py                  # 设备连接与设备信息
+│   ├── _app.py                     # 应用管理、Monkey、日志、Bugreport
+│   ├── _system.py                  # 系统命令、广播、Activity、输入法、模拟器
+│   ├── _media.py                   # 截图、录屏、性能基础项、电池
+│   ├── _input.py                   # 文本输入、点击、滑动、keyevent、settings
+│   └── _file.py                    # 文件、端口、content query
+│
+├── models/                         # Model 与服务层
+│   ├── adb_model.py                # @async_command 与 ADBModelCore
+│   ├── adb_device.py               # 设备操作
+│   ├── adb_app.py                  # 应用操作
+│   ├── adb_testing.py              # Monkey、Bugreport、ANR、日志
+│   ├── adb_advanced.py             # 录屏、输入、性能基础项、logcat
+│   ├── adb_network.py              # 网络 ADB mixin
+│   ├── adb_system.py               # 系统 ADB mixin
+│   ├── app_manager_worker.py       # 应用管理器 worker
+│   ├── file_explorer_worker.py     # 文件浏览器 QThread worker
+│   ├── file_explorer_service.py    # 文件浏览器纯逻辑服务
+│   ├── device_store.py             # YAML 设备信息持久化
+│   ├── base/
+│   │   ├── command_runner.py       # 短生命周期命令统一入口
+│   │   ├── process_runner.py       # 长生命周期进程统一管理
+│   │   └── focus_detector.py       # 前台包名检测
+│   ├── remote/                     # Remote / scrcpy 无界面服务层
+│   └── performance/                # 性能监控服务、解析、会话、报告、workers
+│
+├── gui/                            # PySide6 视图层
+│   ├── main_frame.py               # 主窗口、工具栏、QSplitter、信号接线
+│   ├── panels/                     # 右侧 Apps/System/Remote 面板与左侧设备/日志面板
+│   ├── dialogs/                    # About、App Manager、File Explorer、Logcat、Performance、Screenshot、Settings
+│   ├── performance_web/            # 性能监控 Web 仪表盘静态资源
+│   ├── styles/                     # 主题、QSS、字体、图标加载
+│   └── widgets/                    # 自定义控件
+│
+├── utils/
+│   ├── app_metadata.py             # 应用版本单一事实来源
+│   ├── resource_path.py            # 开发/打包资源路径解析
+│   ├── adb_resolver.py             # 内置 ADB 路径解析
+│   └── batch_tracker.py            # 多设备批量进度追踪
+│
+├── tests/
+│   ├── test_model_execution.py
+│   ├── test_remote_services.py
+│   ├── test_file_explorer_service.py
+│   └── test_performance_services.py
+│
+├── resources/                      # 设置、历史、预览图、二维码、图标、Bugreport 转换器
+└── scrcpy-win64-v3.3.1/            # Windows 版 adb/scrcpy 运行时
+```
+
+---
+
+## 架构说明
+
+### MVC + 信号/槽
+
+```text
+用户操作 Panel/Dialog
+  → 发出 Qt signal
+  → ADBController 或弹窗本地 worker 接收
+  → Model / Service 通过 CommandRunner 或 ProcessRunner 执行
+  → Worker / Model 发回结果
+  → Controller / Dialog 更新日志、状态和界面
+```
+
+核心原则：
+
+- UI 只负责交互、状态展示和信号连接。
+- 短命令统一走 `CommandRunner.run()`。
+- 长生命周期任务统一走 `ProcessRunner.start()` / `ProcessRunner.spawn()`。
+- UI 层不能直接调用 `subprocess.run()`、`subprocess.Popen()` 或 `os.startfile()`。
+- Remote、File Explorer、Performance 的复杂逻辑都放入无 Qt 或低 Qt 耦合的服务层，便于单测和复用。
+
+### 线程模型
+
+- 主线程：Qt 事件循环和 UI 渲染。
+- 普通异步 ADB 命令：`@async_command` 包装成 QRunnable，交给 `QThreadPool`。
+- 弹窗级任务：App Manager、File Explorer、Performance 使用专用 QThread/worker。
+- 长进程：Monkey、Logcat、scrcpy、性能采样等由 `ProcessRunner` 管理进程生命周期。
+- 日志：`LogService` 批量缓冲刷新，并通过 Qt 信号把跨线程 flush 调回 owner thread。
+
+### 当前服务拆分
+
+| 服务层 | 文件 | 说明 |
+|--------|------|------|
+| 命令执行 | `models/base/command_runner.py` | ADB 与短命令统一执行入口，规范输出与 timeout |
+| 进程执行 | `models/base/process_runner.py` | 管理长生命周期进程，支持 stop、spawn、stop_all |
+| Remote | `models/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
+| File Explorer | `models/file_explorer_service.py` | shell quoting、路径、权限、文件列表解析 |
+| Performance | `models/performance/` | 指标采集、解析、报告、会话、时间线数据 |
+| 设置 | `core/settings_manager.py` | 应用配置 JSON 原子写入和自动保存 |
+| 日志 | `core/log_service.py` | 线程安全日志缓冲与 UI 刷新 |
+
+---
+
+## 依赖
+
+`requirements.txt` 当前内容：
+
+| 包 | 版本 | 用途 |
+|----|------|------|
+| PySide6 / PySide6_Addons / PySide6_Essentials | 6.8.1.1 | Qt 6 GUI |
+| PyYAML | 6.0.2 | YAML 解析 |
+| ruamel.yaml / ruamel.yaml.clib / ruamel.base | latest / 1.0.0 | YAML 读写 |
+| Requests | 2.32.5 | HTTP 请求，临时邮箱 API |
+| Pillow | 未固定 | 图片相关处理 |
+| pyinstaller | 未固定 | Windows exe 打包 |
+
+系统侧依赖：
+
+- Windows 10/11。
+- ADB：已内置在 `scrcpy-win64-v3.3.1/`。
+- scrcpy：已内置 Windows 版 `scrcpy.exe`。
+- aapt：用于本地 APK 解析，需要外部提供。
+- Java JRE：用于运行 `resources/chkbugreport-0.5-215.jar`。
+
+---
+
+## 测试与验证
+
+当前测试目录覆盖：
+
+- `tests/test_model_execution.py`：命令/进程执行层与 ADB model 行为。
+- `tests/test_remote_services.py`：Remote scrcpy 参数、预检、按键/手势映射。
+- `tests/test_file_explorer_service.py`：文件浏览器路径、quoting、`ls` 解析、权限模式。
+- `tests/test_performance_services.py`：性能指标解析、采样、报告、dashboard 数据。
+
+建议改动后至少执行：
+
+```bash
+python -m pytest
+git diff --check
+```
+
+文档或中文内容改动后，建议使用 UTF-8 读回确认，避免 Windows 终端编码显示误判：
+
+```bash
+python -c "from pathlib import Path; print(Path('README.md').read_text(encoding='utf-8')[:120])"
+```
+
+---
+
+## CI/CD 与版本
+
+`utils/app_metadata.py` 是应用版本单一事实来源：
+
+```python
+APP_NAME = "ADBLab"
+APP_VERSION = "3.0.0"
+APP_RELEASE_TAG = f"v{APP_VERSION}"
+```
+
+该版本号用于：
+
+- About 弹窗版本显示。
+- Windows `AppUserModelID`。
+- GitHub Actions 构建产物名称。
+- GitHub Release tag 和 release title。
+
+发布新版本时，只更新 `APP_VERSION`，再从 `main` 构建或手动运行 `Build-exe.yaml`。
+
+---
+
+## 代码约定
+
+- 保持 PySide6 作为唯一应用 UI 栈，不把 PyQt5/PySide2 UI 代码引入主应用路径。
+- ADB 短命令走 `CommandRunner.run()`，长进程走 `ProcessRunner`。
+- UI 文件不要拼接复杂 shell 命令；优先放到 service 层集中处理和单测。
+- 涉及中文 Windows 的 subprocess 文本输出时，使用 `encoding="utf-8", errors="ignore"`。
+- 弹窗生命周期要显式停止后台 worker 或长进程。
+- 所有弹窗应响应 `BaseStyles.theme_changed`。
+- 图标使用 `get_themed_icon("name.svg")`，不要直接使用原始 `QIcon`。
+- 应用版本只改 `utils/app_metadata.py`。
+- 新增功能优先补充对应服务层测试，而不是只测 UI。
