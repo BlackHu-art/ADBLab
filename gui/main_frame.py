@@ -271,6 +271,10 @@ class MainFrame(QMainWindow):
         self.tb_file_explorer.setFixedSize(28, 24)
         self.tb_logcat = self._create_toolbar_btn("Live Logcat", "resources/icons/scroll.svg")
         self.tb_logcat.setFixedSize(28, 24)
+        self.tb_performance = self._create_toolbar_btn(
+            "Performance Monitor", "resources/icons/speedometer.svg"
+        )
+        self.tb_performance.setFixedSize(28, 24)
         self.tb_settings = self._create_toolbar_btn("Settings", "resources/icons/gear.svg")
         self.tb_settings.setFixedSize(28, 24)
         self.tb_cmd = self._create_toolbar_btn("CMD", "resources/icons/terminal-window.svg")
@@ -295,6 +299,7 @@ class MainFrame(QMainWindow):
         layout.addWidget(self.tb_app_mgr)
         layout.addWidget(self.tb_file_explorer)
         layout.addWidget(self.tb_logcat)
+        layout.addWidget(self.tb_performance)
         layout.addWidget(self.tb_settings)
         layout.addWidget(self.tb_cmd)
         layout.addWidget(self._tb_save_btn)
@@ -309,10 +314,10 @@ class MainFrame(QMainWindow):
 
         # Theme toggle button
         self.theme_btn = QPushButton()
-        self.theme_btn.setIcon(get_themed_icon("palette.svg"))
+        self.theme_btn.setIcon(get_themed_icon("circle-half-tilt.svg"))
         self.theme_btn.setIconSize(QSize(16, 16))
         self.theme_btn.setToolTip("Toggle Light/Dark theme")
-        self.theme_btn.setProperty("iconName", "palette.svg")
+        self.theme_btn.setProperty("iconName", "circle-half-tilt.svg")
         self.theme_btn.setFixedSize(28, 24)
         self.theme_btn.setFlat(True)
         self.theme_btn.clicked.connect(lambda: BaseStyles.toggle_theme())
@@ -327,6 +332,7 @@ class MainFrame(QMainWindow):
         self.tb_app_mgr.clicked.connect(self._show_app_manager)
         self.tb_file_explorer.clicked.connect(self._show_file_explorer)
         self.tb_logcat.clicked.connect(self._show_logcat)
+        self.tb_performance.clicked.connect(self._show_performance_monitor)
         self.tb_cmd.clicked.connect(self._open_cmd)
         self.tb_settings.clicked.connect(self._show_settings)
         self.tb_minimize.clicked.connect(self.showMinimized)
@@ -515,6 +521,12 @@ class MainFrame(QMainWindow):
     def _show_logcat(self):
         """Open a Live Logcat window for each selected device."""
         self._show_device_dialogs(LiveLogcatDialog)
+
+    def _show_performance_monitor(self):
+        """Open a Performance Monitor window for each selected device."""
+        from gui.dialogs.performance_monitor import PerformanceMonitorDialog
+
+        self._show_device_dialogs(PerformanceMonitorDialog)
 
     def _show_device_dialogs(self, dialog_cls):
         devices = self.left_panel.selected_devices

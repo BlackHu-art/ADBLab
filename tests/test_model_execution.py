@@ -1,8 +1,10 @@
 import ctypes
+import json
 import os
 import subprocess
 import threading
 import time
+import warnings
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -17,7 +19,7 @@ from controllers._device import ADBDeviceMixin
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.log_service import LogService
 from core.perf_trace import attach_perf, build_async_perf, split_perf
-from gui.dialogs.app_manager import AppManagerDialog
+from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.main_frame import MainFrame, _ScanThread
@@ -37,8 +39,24 @@ from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from models.file_explorer_worker import ADBWorker, TransferWorker
-from gui.dialogs.lifecycle import safe_disconnect
+from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
 from gui.dialogs.live_logcat import LiveLogcatDialog
+from gui.dialogs.performance_monitor import (
+    PerformanceMonitorDialog,
+)
+from gui.dialogs.performance_timeline import PerfDogTimelineChart
+from gui.performance_web import (
+    build_timeline_payload,
+    build_web_font,
+    build_web_palette,
+    is_web_timeline_available,
+    load_dashboard_css,
+    load_dashboard_html,
+    load_dashboard_js,
+)
+from gui.performance_web.dashboard import (
+    WebDashboardBridge,
+)
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.side_panel import SidePanel
@@ -47,6 +65,13 @@ from gui.styles import BaseStyles
 from gui.styles import theme
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 from utils.batch_tracker import BatchOperationTracker
+from models.performance.session import PerformanceSession
+from models.performance.sampling import PerformanceSamplingSchedule
+from models.performance.workers import (
+    PerformanceFrameWorker,
+    PerformanceQuickCheckWorker,
+    PerformanceSnapshotWorker,
+)
 
 
 def test_app_metadata_derives_release_tag_and_windows_app_id():
@@ -273,6 +298,54 @@ def test_safe_disconnect_ignores_already_disconnected_signals():
             raise RuntimeError("already disconnected")
 
     safe_disconnect(AlreadyDisconnectedSignal(), Mock())
+
+
+def test_safe_disconnect_suppresses_pyside_disconnect_warnings():
+    class WarningSignal:
+        def disconnect(self, _handler=None):
+            warnings.warn("Failed to disconnect from signal", RuntimeWarning)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        safe_disconnect(WarningSignal(), Mock())
+
+    assert caught == []
+
+
+def test_worker_signal_binding_connects_and_disconnects_handlers():
+    class FakeSignal:
+        def __init__(self):
+            self.connected = []
+            self.disconnected = []
+
+        def connect(self, handler):
+            self.connected.append(handler)
+
+        def disconnect(self, handler=None):
+            self.disconnected.append(handler)
+
+    class FakeWorker:
+        def __init__(self):
+            self.finished = FakeSignal()
+
+    worker = FakeWorker()
+    result_signal = FakeSignal()
+    result_handler = Mock()
+    finished_handler = Mock()
+    binding = WorkerSignalBinding(
+        worker=worker,
+        handlers=((result_signal, result_handler),),
+        finished_handler=finished_handler,
+    )
+
+    binding.connect()
+    binding.disconnect()
+    binding.disconnect()
+
+    assert result_signal.connected == [result_handler]
+    assert worker.finished.connected == [finished_handler]
+    assert result_signal.disconnected == [result_handler]
+    assert worker.finished.disconnected == [finished_handler]
 
 
 def test_process_runner_start_replaces_existing_process_without_deadlock():
@@ -551,13 +624,892 @@ def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
     _app = QApplication.instance() or QApplication([])
     frame = MainFrame.__new__(MainFrame)
     button = QPushButton()
-    button.setProperty("iconName", "palette.svg")
+    button.setProperty("iconName", "circle-half-tilt.svg")
     frame.findChildren = Mock(return_value=[button])
 
     with patch("gui.main_frame.get_themed_icon", return_value=QIcon()) as themed_icon:
         MainFrame._refresh_toolbar_icons(frame)
 
-    themed_icon.assert_called_once_with("palette.svg")
+    themed_icon.assert_called_once_with("circle-half-tilt.svg")
+
+
+def test_main_frame_does_not_import_performance_monitor_at_module_load():
+    import gui.main_frame as main_frame_module
+
+    assert not hasattr(main_frame_module, "PerformanceMonitorDialog")
+
+
+def test_main_frame_performance_monitor_uses_device_dialog_registry():
+    frame = MainFrame.__new__(MainFrame)
+    frame._show_device_dialogs = Mock()
+
+    MainFrame._show_performance_monitor(frame)
+
+    frame._show_device_dialogs.assert_called_once_with(PerformanceMonitorDialog)
+
+
+def test_main_frame_device_dialogs_reuses_existing_per_device_window():
+    frame = MainFrame.__new__(MainFrame)
+    frame.left_panel = Mock()
+    frame.left_panel.selected_devices = ["device-1"]
+    frame.log_panel = Mock()
+    existing = Mock()
+    frame._find_active_dialog = Mock(return_value=existing)
+    frame._register_dialog = Mock()
+
+    MainFrame._show_device_dialogs(frame, PerformanceMonitorDialog)
+
+    existing.show.assert_called_once()
+    existing.raise_.assert_called_once()
+    existing.activateWindow.assert_called_once()
+    frame._register_dialog.assert_not_called()
+
+
+def test_performance_monitor_workers_share_dialog_service():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog.device_ip = "device-1"
+    dialog._service = Mock()
+    dialog._closing = False
+    dialog._snapshot_worker = None
+    dialog._frame_worker = None
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = "com.example"
+
+    with patch("gui.dialogs.performance_monitor.PerformanceSnapshotWorker") as snapshot_cls:
+        snapshot_worker = Mock()
+        snapshot_worker.isRunning.return_value = False
+        snapshot_cls.return_value = snapshot_worker
+        PerformanceMonitorDialog._refresh_snapshot(dialog)
+
+    snapshot_cls.assert_called_once_with(dialog._service, "com.example")
+    snapshot_worker.start.assert_called_once()
+
+    dialog._monitoring = True
+    dialog._sampling = PerformanceSamplingSchedule(PerformanceMonitorDialog.FRAME_REFRESH_INTERVAL_MS)
+    with patch("gui.dialogs.performance_monitor.time.monotonic", return_value=10.0), \
+         patch("gui.dialogs.performance_monitor.PerformanceFrameWorker") as frame_cls:
+        frame_worker = Mock()
+        frame_worker.isRunning.return_value = False
+        frame_cls.return_value = frame_worker
+        PerformanceMonitorDialog._maybe_refresh_frame_metrics(dialog, force=True)
+
+    frame_cls.assert_called_once_with(dialog._service, "com.example")
+    frame_worker.start.assert_called_once()
+
+
+def test_performance_monitor_action_workers_use_dialog_service():
+    service = Mock()
+
+    quick_worker = PerformanceQuickCheckWorker(service, "com.example", "com.example/.Main")
+    assert quick_worker.service is service
+
+    snapshot_worker = PerformanceSnapshotWorker(service, "com.example")
+    assert snapshot_worker.service is service
+
+    frame_worker = PerformanceFrameWorker(service, "com.example")
+    assert frame_worker.service is service
+
+
+def test_perfdog_timeline_chart_keeps_long_display_window():
+    _app = QApplication.instance() or QApplication([])
+    lanes = [{"metric": "fps", "label": "FPS", "color": "#0078d4", "enabled": True}]
+    chart = PerfDogTimelineChart(lanes)
+    points = [{"_ts": index * 1000, "fps": index} for index in range(3700)]
+
+    chart.set_points(points)
+    chart.set_lane_enabled("fps", False)
+
+    assert chart.max_points == 3600
+    assert len(chart._points) == 3600
+    assert chart._points[0]["fps"] == 100
+    assert chart._points[-1]["fps"] == 3699
+    assert lanes[0]["enabled"] is False
+
+
+def test_perfdog_timeline_chart_holds_sparse_samples_between_updates():
+    _app = QApplication.instance() or QApplication([])
+    chart = PerfDogTimelineChart([{"metric": "fps", "label": "FPS", "color": "#0078d4", "enabled": True}])
+    chart.set_points(
+        [
+            {"_ts": 1000, "fps": 60},
+            {"_ts": 2000, "pss": 120},
+            {"_ts": 3000, "jank": 2},
+            {"_ts": 4000, "fps": 58},
+        ]
+    )
+
+    assert chart._sample_held_values("fps") == [60.0, 60.0, 60.0, 58.0]
+
+
+def test_performance_monitor_uses_widget_timeline_when_web_unavailable():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._metric_lanes = [{"metric": "fps", "label": "FPS", "color": "#0078d4", "enabled": True}]
+    dialog._use_web_dashboard = False
+
+    with patch("gui.dialogs.performance_monitor.is_web_timeline_available", return_value=False):
+        chart = PerformanceMonitorDialog._create_timeline_chart(dialog)
+
+    try:
+        assert isinstance(chart, PerfDogTimelineChart)
+    finally:
+        chart.close()
+
+
+def test_performance_monitor_layout_skips_side_panels_for_web_dashboard():
+    _app = QApplication.instance() or QApplication([])
+
+    with patch("gui.dialogs.performance_monitor.is_web_timeline_available", return_value=True), \
+         patch("gui.dialogs.performance_monitor.WebPerformanceTimelineChart", return_value=QWidget()), \
+         patch("gui.dialogs.performance_monitor.PerformanceService"), \
+         patch.object(PerformanceMonitorDialog, "_refresh_snapshot"):
+        dialog = PerformanceMonitorDialog(device_ip="device-1")
+
+    try:
+        assert dialog.metric_panel is None
+        assert dialog.summary_panel is None
+        assert dialog._use_web_dashboard is True
+        assert dialog.target_group.parent() is dialog
+        assert dialog.controls_frame.parent() is dialog
+        assert dialog.package_input.parent() is dialog.target_group
+        assert dialog.activity_input.parent() is dialog.target_group
+        assert dialog.quick_btn.parent() is dialog.controls_frame
+        assert dialog.package_input.text() == ""
+    finally:
+        dialog.close()
+
+
+def test_performance_web_timeline_is_disabled_in_offscreen_tests():
+    assert is_web_timeline_available() is False
+
+
+def test_performance_web_timeline_payload_preserves_series_and_markers():
+    lanes = [{"metric": "fps", "label": "FPS", "enabled": True}]
+    payload = build_timeline_payload(
+        [{"_ts": 1000, "fps": 60}],
+        [{"timestamp_ms": 1000, "label": "Mark 1"}],
+        lanes,
+        events=["12:00:00 Monitor started"],
+        report="Quick Check: PASS",
+        report_summary={"status": "pass", "metrics": [{"label": "FPS", "value": "60"}]},
+        state="Ready",
+        current_package="com.example",
+        package_name="com.example",
+        activity="com.example/.Main",
+        controls={"quick": True, "start": True, "stop": False},
+        theme="Dark",
+        palette={"background": "#101217", "accent": "#4cc38a"},
+        metric_summaries=[{"metric": "fps", "now": 60}],
+        axis_policy={"fpsChart": {"max": 60}},
+    )
+
+    assert payload == {
+        "points": [{"_ts": 1000, "fps": 60}],
+        "markers": [{"timestamp_ms": 1000, "label": "Mark 1"}],
+        "lanes": lanes,
+        "events": ["12:00:00 Monitor started"],
+        "report": "Quick Check: PASS",
+        "reportSummary": {"status": "pass", "metrics": [{"label": "FPS", "value": "60"}]},
+        "state": "Ready",
+        "currentPackage": "com.example",
+        "packageName": "com.example",
+        "activity": "com.example/.Main",
+        "controls": {"quick": True, "start": True, "stop": False},
+        "theme": "Dark",
+        "palette": {"background": "#101217", "accent": "#4cc38a"},
+        "font": {},
+        "deviceInfo": [],
+        "metricSummaries": [{"metric": "fps", "now": 60}],
+        "axisPolicy": {"fpsChart": {"max": 60}},
+    }
+
+
+def test_performance_web_timeline_buffers_payload_until_ready():
+    from gui.performance_web.dashboard import WebPerformanceTimelineChart
+
+    chart = WebPerformanceTimelineChart.__new__(WebPerformanceTimelineChart)
+    chart._ready = False
+    chart._pending_payload = None
+    chart.page = Mock()
+
+    WebPerformanceTimelineChart._render_payload(chart, {"points": [1]})
+
+    assert chart._pending_payload == {"points": [1]}
+    chart.page.assert_not_called()
+
+
+def test_performance_web_timeline_coalesces_realtime_payload_renders():
+    from gui.performance_web.dashboard import WebPerformanceTimelineChart
+
+    chart = WebPerformanceTimelineChart.__new__(WebPerformanceTimelineChart)
+    chart._render_queued = False
+    chart._max_points = 3600
+    chart._points = []
+    chart._markers = []
+    chart._render_current_payload = Mock()
+
+    with patch("gui.performance_web.dashboard.QTimer.singleShot") as single_shot:
+        WebPerformanceTimelineChart.set_points(chart, [{"_ts": 1, "fps": 60}])
+        WebPerformanceTimelineChart.set_context(chart, state="Ready", package_name="com.example")
+
+    single_shot.assert_called_once()
+    assert chart._render_queued is True
+
+    callback = single_shot.call_args.args[1]
+    callback()
+
+    assert chart._render_queued is False
+    chart._render_current_payload.assert_called_once()
+
+
+def test_performance_web_timeline_loads_external_assets_and_bridge_when_available():
+    if not is_web_timeline_available():
+        return
+
+    from PySide6.QtCore import QTimer
+    from gui.performance_web.dashboard import WebPerformanceTimelineChart
+
+    _app = QApplication.instance() or QApplication([])
+    chart = WebPerformanceTimelineChart(
+        [
+            {"metric": "fps", "label": "FPS", "color": "#4cc38a", "enabled": True},
+            {"metric": "jank", "label": "Jank %", "color": "#ff6b6b", "enabled": True},
+            {"metric": "pss", "label": "PSS MB", "color": "#51cf66", "enabled": True},
+        ]
+    )
+    result = {"loaded": False, "eval": None, "actions": []}
+    chart.bridge.action_requested.connect(lambda action, payload: result["actions"].append((action, payload)))
+
+    def evaluate():
+        script = """
+        JSON.stringify((() => {
+          document.querySelector('[data-tab="setting"]').click();
+          document.querySelector('[data-action="quickCheck"]').click();
+          document.querySelector('#sideToggle').click();
+          document.querySelector('[data-inspector-tab="report"]').click();
+          document.querySelector('#inspectorToggle').click();
+          return {
+            packageValue: document.querySelector('#packageInput').value,
+            activePanel: document.querySelector('.tab-panel.active').id,
+            deviceRows: document.querySelectorAll('.info-row').length,
+            summaryRows: document.querySelectorAll('.summary-row').length,
+            eventRows: document.querySelectorAll('.event-row').length,
+            reportMetrics: document.querySelectorAll('.report-metric').length,
+            runState: document.querySelector('#runStateValue').textContent,
+            sampleCount: document.querySelector('#sampleCountValue').textContent,
+            reportStatus: document.querySelector('#reportStatusValue').textContent,
+            inspectorCollapsed: document.querySelector('.workspace-panel').classList.contains('inspector-collapsed'),
+            chartChildren: document.querySelector('.chart-panel').children.length,
+            canvasIds: Array.from(document.querySelectorAll('.metric-chart')).map(canvas => canvas.id),
+            sideCollapsed: document.querySelector('.dashboard-shell').classList.contains('side-collapsed'),
+            fontSize: getComputedStyle(document.documentElement).getPropertyValue('--font-size').trim(),
+            status: document.querySelector('#statusText').textContent,
+          };
+        })())
+        """
+        chart.page().runJavaScript(script, lambda value: (result.update(eval=json.loads(value)), _app.quit()))
+
+    def on_loaded(ok):
+        result["loaded"] = ok
+        chart.set_context(
+            events=["Qt smoke started"],
+            report_summary={
+                "title": "Qt Smoke",
+                "status": "pass",
+                "metrics": [{"label": "FPS", "value": "60"}],
+            },
+            state="Ready",
+            current_package="com.example.qt",
+            package_name="com.example.qt",
+            activity=".MainActivity",
+            controls={"quick": True, "start": True, "stop": False, "openReport": True, "export": False},
+            font={"family": "Arial", "uiSize": 14},
+            device_info=[{"info": "Device Name", "value": "Qt Pixel"}],
+            metric_summaries=[
+                {"metric": "fps", "label": "FPS", "unit": "", "digits": 1, "color": "#4cc38a", "now": 60, "avg": 58.3, "max": 60, "count": 3},
+                {"metric": "jank", "label": "Jank", "unit": "%", "digits": 1, "color": "#f59e0b", "now": 4, "avg": 2.3, "max": 4, "count": 3},
+            ],
+            axis_policy={
+                "fpsChart": {"min": 0, "max": 60, "padded": False},
+                "cpuChart": {"min": 0, "max": 100, "padded": False},
+                "memoryChart": {"min": 0, "max": 256, "padded": True},
+            },
+        )
+        chart.set_points(
+            [
+                {"_ts": 1000, "fps": 58, "jank": 2, "stutter": 0, "cpu_fg": 24, "cpu_bg": 0, "memory_java": 92, "memory_native": 38, "memory_pss": 120},
+                {"_ts": 2000, "fps": 60, "jank": 1, "stutter": 0, "cpu_fg": 28, "cpu_bg": 0, "memory_java": 94, "memory_native": 39, "memory_pss": 122},
+                {"_ts": 3000, "fps": 57, "jank": 4, "stutter": 1, "cpu_fg": 31, "cpu_bg": 0, "memory_java": 96, "memory_native": 40, "memory_pss": 123},
+            ]
+        )
+        QTimer.singleShot(900, evaluate)
+
+    chart.loadFinished.connect(on_loaded)
+    QTimer.singleShot(8000, _app.quit)
+    _app.exec()
+    chart.deleteLater()
+
+    assert result["loaded"] is True
+    assert result["eval"]["packageValue"] == "com.example.qt"
+    assert result["eval"]["activePanel"] == "settingPanel"
+    assert result["eval"]["deviceRows"] == 1
+    assert result["eval"]["summaryRows"] == 2
+    assert result["eval"]["eventRows"] == 1
+    assert result["eval"]["reportMetrics"] == 1
+    assert result["eval"]["runState"] == "Ready"
+    assert result["eval"]["sampleCount"] == "3"
+    assert result["eval"]["reportStatus"] == "pass"
+    assert result["eval"]["inspectorCollapsed"] is True
+    assert result["eval"]["chartChildren"] == 3
+    assert result["eval"]["canvasIds"] == ["fpsChart", "cpuChart", "memoryChart"]
+    assert result["eval"]["sideCollapsed"] is True
+    assert result["eval"]["fontSize"] == "14px"
+    assert result["actions"] == [("quickCheck", {})]
+
+
+def test_performance_web_dashboard_uses_external_frontend_assets():
+    from gui.performance_web import dashboard
+
+    source = dashboard.__loader__.get_source(dashboard.__name__)
+
+    assert "DASHBOARD_HTML_PATH" in source
+    assert "QUrl.fromLocalFile" in source
+    assert "setHtml(" not in source
+    assert "dashboard-shell" not in source
+
+
+def test_performance_web_dashboard_builds_theme_payload_from_global_styles():
+    palette = build_web_palette()
+    font = build_web_font()
+
+    assert palette["background"] == BaseStyles.color("WINDOW_BG")
+    assert palette["accent"] == BaseStyles.color("BUTTON_ACCENT")
+    assert palette["danger"] == BaseStyles.color("LOG_ERROR")
+    assert font == {
+        "family": BaseStyles.DEFAULT_FONT_FAMILY,
+        "uiSize": BaseStyles.DEFAULT_FONT_SIZE,
+        "labelSize": max(8, BaseStyles.DEFAULT_FONT_SIZE - 1),
+        "headerSize": BaseStyles.DEFAULT_FONT_SIZE,
+    }
+
+
+def test_performance_web_bridge_emits_actions_with_json_payload():
+    bridge = WebDashboardBridge()
+    emitted = []
+    bridge.action_requested.connect(lambda action, payload: emitted.append((action, payload)))
+
+    bridge.requestAction("setPackage", '{"value":"com.example"}')
+    bridge.requestAction("mark", "not-json")
+
+    assert emitted == [
+        ("setPackage", {"value": "com.example"}),
+        ("mark", {}),
+    ]
+
+
+def test_performance_web_dashboard_contains_modern_interactions():
+    html = load_dashboard_html()
+    css = load_dashboard_css()
+    js = load_dashboard_js()
+
+    assert '<link rel="stylesheet" href="style.css">' in html
+    assert '<script src="app.js"></script>' in html
+    assert '<input id="packageInput"' in html
+    assert '<input id="activityInput"' in html
+    assert 'data-action="currentPackage"' in html
+    assert "title=\"Use current foreground package\"" in html
+    assert 'class="tab-button active" data-tab="setting"' in html
+    assert 'data-tab="device"' in html
+    assert 'data-tab="setting"' in html
+    assert 'data-tab="about"' not in html
+    assert 'id="summaryList"' in html
+    assert 'id="deviceTable"' in html
+    assert 'id="settingPanel"' in html
+    assert 'class="workspace-panel" aria-label="Performance workspace"' in html
+    assert 'class="status-strip" aria-label="Run status"' in html
+    assert 'id="runStateValue"' in html
+    assert 'id="sampleCountValue"' in html
+    assert 'class="chart-panel" aria-label="Chart workspace"' in html
+    assert '<canvas class="metric-chart" id="fpsChart"' in html
+    assert '<canvas class="metric-chart" id="cpuChart"' in html
+    assert '<canvas class="metric-chart" id="memoryChart"' in html
+    assert 'id="sideToggle"' in html
+    assert 'class="inspector-tabs"' in html
+    assert 'id="eventList"' in html
+    assert 'id="reportSummary"' in html
+    assert 'id="inspectorToggle"' in html
+    assert "qrc:///qtwebchannel/qwebchannel.js" not in html
+    assert ".dashboard-shell" in css
+    assert ".workspace-panel" in css
+    assert ".status-strip" in css
+    assert ".live-summary" in css
+    assert ".summary-row" in css
+    assert ".inspector-panel" in css
+    assert ":root[data-theme=\"light\"]" in css
+    assert "grid-template-columns: 360px 20px minmax(0, 1fr)" in css
+    assert ".dashboard-shell.side-collapsed" in css
+    assert ".workspace-panel.inspector-collapsed" in css
+    assert ".side-toggle" in css
+    assert "--font-size: 12px" in css
+    assert "font-size: var(--font-size)" in css
+    assert ".tab-bar" in css
+    assert ".setting-scroll" in css
+    assert ".chart-panel" in css
+    assert ".chart-lane" in css
+    assert ".metric-chart" in css
+    assert "repeat(3, minmax(0, 1fr))" in css
+    assert "--fps-color" in css
+    assert "--jank-color" in css
+    assert "--stutter-color" in css
+    assert "--cpu-fg-color" in css
+    assert "--memory-pss-color" in css
+    assert "renderDeviceTable" in js
+    assert "renderLiveSummary" in js
+    assert "renderTopStatus" in js
+    assert "renderInspector" in js
+    assert "renderTabs" in js
+    assert "renderInspectorTab" in js
+    assert "renderMetricChart" in js
+    assert "renderCharts" in js
+    assert "drawCrosshair" in js
+    assert "drawTimelineMarkers" in js
+    assert "function chartPlot" in js
+    assert "function hoverRatioForCanvas" in js
+    assert "sharedHover" in js
+    assert "function yAxisMax" in js
+    assert "toggleSidePanel" in js
+    assert "stutter" in js
+    assert "cpu_fg" in js
+    assert "cpu_bg" in js
+    assert "memory_java" in js
+    assert "memory_native" in js
+    assert "memory_pss" in js
+    assert "buildPreviewPayload" in js
+    assert "connectQtBridge" in js
+    assert "applyTheme" in js
+    assert "root.style.setProperty(\"--font-size\"" in js
+    assert "root.style.setProperty(\"--chart-bg\"" in js
+    assert "commitTargetInput" in js
+    assert "requestAction" in js
+    assert "metricSummaries" in js
+    assert "axisPolicy" in js
+    assert "markers:" in js
+    assert 'document.addEventListener("click"' in js
+    assert "window.renderPerformanceTimeline(buildPreviewPayload())" in js
+    assert 'script.src = "qrc:///qtwebchannel/qwebchannel.js"' in js
+    assert "script.onerror = () => window.renderPerformanceTimeline(buildPreviewPayload())" in js
+
+
+def test_performance_web_dashboard_draws_lines_without_point_markers():
+    js = load_dashboard_js()
+
+    assert "function drawSeries" in js
+    assert "function drawLegendSample" in js
+    assert "ctx.arc(" not in js
+    assert "ctx.rect(" not in js
+
+
+def test_performance_web_dashboard_keeps_sparse_samples_and_shared_hover_axis():
+    js = load_dashboard_js()
+
+    assert "function pointsForSeries" in js
+    assert "let lastValue = null" in js
+    assert "return lastValue" in js
+    assert "let sharedHover = null" in js
+    assert "sourceId: canvas.id" in js
+    assert "xRatio: hoverRatioForCanvas" in js
+    assert "(x - plot.left) / plot.width" in js
+    assert "canvas.id !== sharedHover.sourceId" in js
+    assert "function yAxisMax" in js
+    assert "policy.padded === false" in js
+    assert "fpsChart: { min: 0, max: 60, padded: false }" in js
+    assert "cpuChart: { min: 0, max: 100, padded: false }" in js
+    assert "function drawTimelineMarkers" in js
+    assert "Array.isArray(state.markers)" in js
+    assert "markers.slice(-12)" in js
+    assert "showLabels && plot.height >= 84" in js
+    assert 'definition.axisKey === "fpsChart"' in js
+
+
+def test_performance_web_dashboard_responsive_layout_prioritizes_chart_height():
+    css = load_dashboard_css()
+
+    assert "@media (max-width: 760px)" in css
+    assert "grid-template-rows: 238px 20px minmax(0, 1fr)" in css
+    assert "grid-template-rows: auto minmax(0, 1fr) 96px" in css
+    assert ".summary-row" in css
+    assert "min-height: 30px" in css
+    assert ".live-summary" in css
+    assert "display: none" in css
+
+
+def test_performance_monitor_timeline_keeps_longer_bounded_history():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog.TIMELINE_MAX_ENTRIES = 5
+    dialog._timeline_entries = []
+    dialog.timeline = Mock()
+
+    for index in range(8):
+        PerformanceMonitorDialog._append_timeline(dialog, f"event-{index}")
+
+    assert len(dialog._timeline_entries) == 5
+    assert dialog._timeline_entries[0].endswith("event-3")
+    assert dialog._timeline_entries[-1].endswith("event-7")
+    assert dialog.timeline.append.call_count == 8
+
+
+def test_performance_monitor_web_context_receives_events_report_and_state():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._use_web_dashboard = True
+    dialog._timeline_entries = ["12:00:00 Monitor started"]
+    dialog._last_report_summary = {"status": "pass"}
+    dialog._last_report_dir = "C:/reports/perf"
+    dialog._monitoring = False
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog._session.add_point(1000, {"fps": 60, "jank": 2, "memory_pss": 100})
+    dialog._quick_worker = None
+    dialog._analyze_worker = None
+    dialog.timeline_chart = Mock()
+    dialog.report_output = Mock()
+    dialog.report_output.toPlainText.return_value = "Quick Check: PASS"
+    dialog.device_state_value = Mock()
+    dialog.device_state_value.text.return_value = "Ready"
+    dialog.current_pkg_value = Mock()
+    dialog.current_pkg_value.text.return_value = "com.example"
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = " com.example.target "
+    dialog.activity_input = Mock()
+    dialog.activity_input.text.return_value = " .MainActivity "
+    dialog.current_pkg_btn = Mock()
+    dialog.current_pkg_btn.isEnabled.return_value = True
+    dialog._device_info_rows = [{"info": "Device Name", "value": "Pixel"}]
+    dialog.quick_btn = Mock()
+    dialog.quick_btn.isEnabled.return_value = True
+    dialog.start_btn = Mock()
+    dialog.start_btn.isEnabled.return_value = True
+    dialog.stop_btn = Mock()
+    dialog.stop_btn.isEnabled.return_value = False
+    dialog.open_report_btn = Mock()
+    dialog.open_report_btn.isEnabled.return_value = True
+    dialog.export_btn = Mock()
+    dialog.export_btn.isEnabled.return_value = False
+
+    PerformanceMonitorDialog._refresh_web_context(dialog)
+
+    dialog.timeline_chart.set_context.assert_called_once_with(
+        events=["12:00:00 Monitor started"],
+        report="Quick Check: PASS",
+        report_summary={"status": "pass"},
+        state="Ready",
+        current_package="com.example",
+        package_name="com.example.target",
+        activity=".MainActivity",
+        controls={
+            "current": True,
+            "quick": True,
+            "start": True,
+            "stop": False,
+            "mark": False,
+            "openReport": True,
+            "export": True,
+        },
+        theme=BaseStyles.current_theme(),
+        palette=build_web_palette(),
+        font=build_web_font(),
+        device_info=[{"info": "Device Name", "value": "Pixel"}],
+        metric_summaries=[
+            {
+                "metric": "fps",
+                "label": "FPS",
+                "unit": "",
+                "digits": 1,
+                "color": BaseStyles.color("BUTTON_ACCENT"),
+                "now": 60.0,
+                "avg": 60.0,
+                "max": 60.0,
+                "count": 1,
+            },
+            {
+                "metric": "jank",
+                "label": "Jank",
+                "unit": "%",
+                "digits": 1,
+                "color": BaseStyles.color("LOG_WARNING"),
+                "now": 2.0,
+                "avg": 2.0,
+                "max": 2.0,
+                "count": 1,
+            },
+            {
+                "metric": "cpu_fg",
+                "label": "CPU",
+                "unit": "%",
+                "digits": 1,
+                "color": BaseStyles.color("LOG_ERROR"),
+                "now": None,
+                "avg": None,
+                "max": None,
+                "count": 0,
+            },
+            {
+                "metric": "memory_pss",
+                "label": "PSS",
+                "unit": "MB",
+                "digits": 1,
+                "color": BaseStyles.color("LOG_SUCCESS"),
+                "now": 100.0,
+                "avg": 100.0,
+                "max": 100.0,
+                "count": 1,
+            },
+            {
+                "metric": "memory_java",
+                "label": "Java",
+                "unit": "MB",
+                "digits": 1,
+                "color": BaseStyles.color("LOG_INFO"),
+                "now": None,
+                "avg": None,
+                "max": None,
+                "count": 0,
+            },
+            {
+                "metric": "memory_native",
+                "label": "Native",
+                "unit": "MB",
+                "digits": 1,
+                "color": BaseStyles.color("LOG_WARNING"),
+                "now": None,
+                "avg": None,
+                "max": None,
+                "count": 0,
+            },
+        ],
+        axis_policy={
+            "fpsChart": {"min": 0, "max": 60, "padded": False},
+            "cpuChart": {"min": 0, "max": 100, "padded": False},
+            "memoryChart": {"min": 0, "max": 256, "padded": True},
+        },
+    )
+
+
+def test_performance_monitor_web_action_dispatches_existing_handlers():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog.package_input = Mock()
+    dialog.activity_input = Mock()
+    dialog._refresh_web_context = Mock()
+    dialog._use_current_package = Mock()
+    dialog._quick_check = Mock()
+    dialog._start_monitor = Mock()
+    dialog._stop_monitor = Mock()
+    dialog._add_marker = Mock()
+    dialog._open_report = Mock()
+    dialog._export_report = Mock()
+
+    PerformanceMonitorDialog._on_web_action(dialog, "setPackage", {"value": "com.example"})
+    PerformanceMonitorDialog._on_web_action(dialog, "setActivity", {"value": ".Main"})
+    PerformanceMonitorDialog._on_web_action(dialog, "quickCheck", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "startMonitor", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "stopMonitor", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "mark", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "openReport", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "exportReport", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "currentPackage", {})
+
+    dialog.package_input.setText.assert_called_once_with("com.example")
+    dialog.activity_input.setText.assert_called_once_with(".Main")
+    assert dialog._refresh_web_context.call_count == 2
+    dialog._quick_check.assert_called_once()
+    dialog._start_monitor.assert_called_once()
+    dialog._stop_monitor.assert_called_once()
+    dialog._add_marker.assert_called_once()
+    dialog._open_report.assert_called_once()
+    dialog._export_report.assert_called_once()
+    dialog._use_current_package.assert_called_once()
+
+
+def test_performance_monitor_sync_controls_uses_lifecycle_state():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._monitoring = True
+    dialog._quick_worker = None
+    dialog._analyze_worker = None
+    dialog._last_report_dir = "C:/reports/perf"
+    dialog._refresh_web_context = Mock()
+    for attr in (
+        "current_pkg_btn",
+        "quick_btn",
+        "start_btn",
+        "stop_btn",
+        "mark_btn",
+        "open_report_btn",
+        "export_btn",
+    ):
+        setattr(dialog, attr, Mock())
+
+    PerformanceMonitorDialog._sync_controls(dialog)
+
+    dialog.current_pkg_btn.setEnabled.assert_called_once_with(False)
+    dialog.quick_btn.setEnabled.assert_called_once_with(False)
+    dialog.start_btn.setEnabled.assert_called_once_with(False)
+    dialog.stop_btn.setEnabled.assert_called_once_with(True)
+    dialog.mark_btn.setEnabled.assert_called_once_with(True)
+    dialog.open_report_btn.setEnabled.assert_called_once_with(True)
+    dialog.export_btn.setEnabled.assert_called_once_with(True)
+    dialog._refresh_web_context.assert_called_once()
+
+
+def test_performance_monitor_worker_helpers_register_and_cleanup_signals():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._closing = False
+    dialog._worker_bindings = {}
+    dialog._sync_controls = Mock()
+
+    class FakeSignal:
+        def __init__(self):
+            self.connected = []
+            self.disconnected = []
+
+        def connect(self, handler):
+            self.connected.append(handler)
+
+        def disconnect(self, handler=None):
+            self.disconnected.append(handler)
+
+    class FakeWorker:
+        def __init__(self):
+            self.result_ready = FakeSignal()
+            self.status_changed = FakeSignal()
+            self.finished = FakeSignal()
+            self.started = False
+            self.deleted = False
+
+        def start(self):
+            self.started = True
+
+        def deleteLater(self):
+            self.deleted = True
+
+    worker = FakeWorker()
+    result_handler = Mock()
+    status_handler = Mock()
+
+    PerformanceMonitorDialog._start_worker(
+        dialog,
+        "_quick_worker",
+        worker,
+        "quick",
+        (
+            (worker.result_ready, result_handler),
+            (worker.status_changed, status_handler),
+        ),
+        sync_controls=True,
+    )
+
+    assert dialog._quick_worker is worker
+    assert worker.started is True
+    assert result_handler in worker.result_ready.connected
+    assert status_handler in worker.status_changed.connected
+    assert worker.finished.connected
+    assert dialog._sync_controls.call_count == 1
+
+    PerformanceMonitorDialog._finish_worker(dialog, "_quick_worker", worker, sync_controls=True)
+
+    assert dialog._quick_worker is None
+    assert worker.deleted is True
+    assert worker.result_ready.disconnected == [result_handler]
+    assert worker.status_changed.disconnected == [status_handler]
+    assert worker.finished.disconnected
+    assert dialog._worker_bindings == {}
+    assert dialog._sync_controls.call_count == 2
+
+
+def test_performance_monitor_frame_sample_exposes_fps_chart_series():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._latest_frame_values = {}
+    dialog._monitoring = True
+    dialog._session = Mock()
+    dialog._session.update_latest_point.return_value = True
+    dialog._refresh_dashboard = Mock()
+    frames = Mock(
+        estimated_fps=58.4,
+        jank_rate=0.12,
+        total_frames=200,
+        slow_frames=24,
+        frozen_frames=2,
+    )
+
+    PerformanceMonitorDialog._append_frame_sample(dialog, frames)
+
+    assert dialog._latest_frame_values == {
+        "fps": 58.4,
+        "jank": 12.0,
+        "stutter": 2,
+        "frames": 200,
+        "slow": 24,
+        "frozen": 2,
+    }
+    dialog._session.update_latest_point.assert_called_once_with(dialog._latest_frame_values)
+    dialog._refresh_dashboard.assert_called_once()
+
+
+def test_performance_monitor_snapshot_updates_charts_without_status_bar():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._closing = False
+    dialog._monitoring = False
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = ""
+    dialog.package_input.setText = Mock()
+    dialog.current_pkg_value = Mock()
+    dialog.device_state_value = Mock()
+    dialog._use_web_dashboard = False
+    dialog.timeline_chart = Mock()
+    dialog.timeline_chart.max_points = 3600
+    memory = Mock(
+        total_pss_kb=2048,
+        java_heap_kb=1024,
+        native_heap_kb=512,
+        activities=1,
+        views=20,
+        view_roots=2,
+    )
+    snapshot = Mock(
+        online=True,
+        current_package="com.example",
+        memory=memory,
+        status="Online",
+    )
+
+    PerformanceMonitorDialog._on_snapshot(dialog, snapshot)
+
+    dialog.package_input.setText.assert_called_once_with("com.example")
+    latest = dialog._session.latest_values()
+    assert latest["online"] == 1
+    assert latest["memory_pss"] == 2.0
+    assert latest["memory_java"] == 1.0
+    assert latest["memory_native"] == 0.5
+    assert latest["activities"] == 1
+    assert latest["views"] == 20
+    dialog.timeline_chart.set_points.assert_called_once()
+    assert not hasattr(dialog, "status_bar")
+
+
+def test_performance_monitor_marker_uses_session_timeline():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog._session.add_point(1000, {"fps": 58})
+    dialog.timeline_chart = Mock()
+    dialog.timeline_chart.max_points = 3600
+    dialog._use_web_dashboard = False
+    dialog._append_timeline = Mock()
+
+    with patch("gui.dialogs.performance_monitor._now_ms", return_value=2000):
+        PerformanceMonitorDialog._add_marker(dialog)
+
+    assert dialog._session.markers[0].label == "Mark 1"
+    dialog._append_timeline.assert_called_once_with("Mark 1")
+    marker_payload = dialog.timeline_chart.set_points.call_args.args[1][0]
+    assert marker_payload == {"timestamp_ms": 2000, "label": "Mark 1"}
 
 
 def test_main_frame_signal_maps_keep_expected_coverage():
@@ -1166,6 +2118,7 @@ def _app_manager_for_unit_tests():
     dialog._detail_row_by_pkg = {}
     dialog._detail_icon_by_pkg = {}
     dialog._view_mode = False
+    dialog._closing = False
     dialog.device_ip = "device-1"
     dialog.status_bar = Mock()
     dialog.log = Mock()
@@ -1275,6 +2228,21 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
         packages=["com.example.two"],
     )
     assert dialog._pending_detail_packages == {"com.example.two"}
+
+
+def test_app_details_dialog_close_disconnects_theme_handler():
+    _app = QApplication.instance() or QApplication([])
+    with patch.object(AppDetailsDialog, "_load_data"):
+        dialog = AppDetailsDialog(None, "device-1", "com.example.demo")
+
+    with patch("gui.dialogs.app_manager.safe_disconnect") as disconnect, \
+         patch("gui.dialogs.app_manager.wait_for_threads_later") as wait_threads:
+        dialog.close()
+
+    assert dialog._closing is True
+    disconnect.assert_called_once_with(BaseStyles.theme_changed, dialog._apply_theme)
+    wait_threads.assert_called_once_with([], 5000)
+    dialog.deleteLater()
 
 
 

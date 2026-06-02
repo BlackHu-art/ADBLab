@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="dashboard-shell">
+    <aside class="side-panel">
+      <nav class="tab-bar" aria-label="Information tabs">
+        <button class="tab-button active" data-tab="setting">Setting</button>
+        <button class="tab-button" data-tab="device">Device</button>
+      </nav>
+      <section class="tab-content">
+        <div class="tab-panel active" id="settingPanel">
+          <div class="setting-scroll">
+            <div class="target-group">
+              <label class="field" title="Target package name">
+                <span>Package</span>
+                <input id="packageInput" spellcheck="false" placeholder="com.example.app" title="Target package name">
+              </label>
+              <button class="action-button" data-action="currentPackage" title="Use current foreground package">Current</button>
+              <label class="field" title="Launch activity, optional">
+                <span>Activity</span>
+                <input id="activityInput" spellcheck="false" placeholder="optional: com.example/.MainActivity" title="Launch activity, optional">
+              </label>
+            </div>
+            <div class="action-grid" id="controlRow" aria-label="Performance actions">
+              <button class="action-button primary" data-action="quickCheck" title="Run startup, frame and memory quick check">Quick</button>
+              <button class="action-button" data-action="startMonitor" title="Start realtime sampling">Start</button>
+              <span class="timer-pill" id="statusText" title="Elapsed monitor time">00:00</span>
+              <button class="action-button" data-action="stopMonitor" title="Stop sampling and analyze">Stop</button>
+              <button class="action-button" data-action="mark" title="Add a timeline marker">Mark</button>
+              <button class="action-button" data-action="openReport" title="Open generated report folder">Open</button>
+              <button class="action-button" data-action="exportReport" title="Export the latest report">Export</button>
+              <button class="reset-button" data-action="refreshDeviceInfo" title="Refresh device information">Refresh</button>
+            </div>
+            <section class="live-summary" aria-label="Live metric summary">
+              <div class="section-title">Live Summary</div>
+              <div class="summary-list" id="summaryList"></div>
+            </section>
+          </div>
+        </div>
+        <div class="tab-panel" id="devicePanel">
+          <div class="table-wrap">
+            <div class="info-table">
+              <div class="info-header">
+                <span>Info</span>
+                <span>Value</span>
+              </div>
+              <div id="deviceTable"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </aside>
+    <button class="side-toggle" id="sideToggle" title="Show or hide left panel" aria-label="Show or hide left panel" aria-pressed="false">&lsaquo;</button>
+    <main class="workspace-panel" aria-label="Performance workspace">
+      <section class="status-strip" aria-label="Run status">
+        <div class="status-item">
+          <span>Status</span>
+          <strong id="runStateValue">Preview</strong>
+        </div>
+        <div class="status-item">
+          <span>Package</span>
+          <strong id="packageValue">--</strong>
+        </div>
+        <div class="status-item">
+          <span>Samples</span>
+          <strong id="sampleCountValue">0</strong>
+        </div>
+        <div class="status-item">
+          <span>Report</span>
+          <strong id="reportStatusValue">--</strong>
+        </div>
+      </section>
+      <section class="chart-panel" aria-label="Chart workspace">
+        <section class="chart-lane" aria-label="FPS chart">
+          <canvas class="metric-chart" id="fpsChart" aria-label="FPS chart"></canvas>
+        </section>
+        <section class="chart-lane" aria-label="CPU chart">
+          <canvas class="metric-chart" id="cpuChart" aria-label="CPU chart"></canvas>
+        </section>
+        <section class="chart-lane" aria-label="Memory chart">
+          <canvas class="metric-chart" id="memoryChart" aria-label="Memory chart"></canvas>
+        </section>
+      </section>
+      <section class="inspector-panel" id="inspectorPanel" aria-label="Inspector">
+        <div class="inspector-header">
+          <div class="inspector-tabs" aria-label="Inspector tabs">
+            <button class="inspector-tab active" data-inspector-tab="events">Events</button>
+            <button class="inspector-tab" data-inspector-tab="report">Report</button>
+          </div>
+          <button class="inspector-toggle" id="inspectorToggle" title="Collapse or expand inspector" aria-label="Collapse or expand inspector" aria-pressed="false">Collapse</button>
+        </div>
+        <div class="inspector-content">
+          <div class="inspector-body active" id="eventsInspector">
+            <div class="event-list" id="eventList"></div>
+          </div>
+          <div class="inspector-body" id="reportInspector">
+            <div class="report-summary" id="reportSummary"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

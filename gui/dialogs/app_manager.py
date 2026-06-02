@@ -29,7 +29,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.dialogs.lifecycle import safe_disconnect, wait_for_threads_later
+from gui.dialogs.lifecycle import (
+    alive_callback,
+    is_qobject_alive,
+    safe_disconnect,
+    wait_for_threads_later,
+)
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
@@ -62,15 +67,17 @@ class AppDetailsDialog(QDialog):
         self.device_ip = device_ip
         self.package_name = package_name
         self._workers = []
+        self._closing = False
         self.setWindowTitle(f"Details: {package_name}")
         self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
         self.setModal(False)
         self._init_ui()
+        self._apply_theme()
+        BaseStyles.theme_changed.connect(self._apply_theme)
         self._load_data()
 
     def _init_ui(self):
-        self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
         dw = QWidget()
@@ -105,6 +112,10 @@ class AppDetailsDialog(QDialog):
         close_btn.setIconSize(QSize(14, 14))
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
+
+    def _apply_theme(self, _name=""):
+        apply_dark_title_bar(self)
+        self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
 
     def _ps(self, parent, title):
         hl = QHBoxLayout()
@@ -190,6 +201,7 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
+        self._closing = True
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
@@ -213,6 +225,7 @@ class AppManagerDialog(QDialog):
         self._detail_cache = {}
         self._pending_detail_packages = set()
         self._detail_worker_running = False
+        self._closing = False
         self._detail_row_by_pkg = {}
         self._detail_icon_by_pkg = {}
         self._detail_timer = QTimer(self)
@@ -390,12 +403,16 @@ class AppManagerDialog(QDialog):
         self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
 
     def log(self, msg):
+        if self._closing or not is_qobject_alive(self.log_output):
+            return
         self.log_output.append(msg)
         self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
 
     # ── 加载 / 筛选 ────────────────────────────────────────────────────────
 
     def _load_apps(self):
+        if self._closing:
+            return
         self.model.removeRows(0, self.model.rowCount())
         self.icon_list.clear()
         self.selected_packages.clear()
@@ -404,7 +421,8 @@ class AppManagerDialog(QDialog):
         self._detail_worker_running = False
         self._detail_row_by_pkg = {}
         self._detail_icon_by_pkg = {}
-        self._detail_timer.stop()
+        if is_qobject_alive(self._detail_timer):
+            self._detail_timer.stop()
         w = AppManagerWorker(self.device_ip, "load_apps")
         w.log_message.connect(self.log)
         w.apps_loaded.connect(self._populate)
@@ -412,6 +430,8 @@ class AppManagerDialog(QDialog):
         w.start()
 
     def _populate(self, apps):
+        if self._closing:
+            return
         self._apps_data = apps
         self._app_labels = {}
         self._app_versions = {}
@@ -454,6 +474,8 @@ class AppManagerDialog(QDialog):
         self._schedule_visible_detail_load()
 
     def _on_detail(self, pkg, label, version, itime):
+        if self._closing:
+            return
         self._pending_detail_packages.discard(pkg)
         self._app_labels[pkg] = label
         self._app_versions[pkg] = version
@@ -474,6 +496,8 @@ class AppManagerDialog(QDialog):
         if packages:
             self._pending_detail_packages.difference_update(packages)
         self._detail_worker_running = False
+        if self._closing or not is_qobject_alive(self._detail_timer):
+            return
         if self._detail_timer.isActive():
             return
         if self._has_unloaded_details():
@@ -482,6 +506,8 @@ class AppManagerDialog(QDialog):
         self.status_bar.showMessage(f"Loaded {len(self._apps_data)} apps")
 
     def _schedule_visible_detail_load(self, delay_ms: int = 120):
+        if self._closing or not is_qobject_alive(self._detail_timer):
+            return
         if self._detail_timer.isActive():
             self._detail_timer.stop()
         self._detail_timer.start(delay_ms)
@@ -545,7 +571,7 @@ class AppManagerDialog(QDialog):
         return packages
 
     def _load_visible_details(self):
-        if self._detail_worker_running:
+        if self._closing or self._detail_worker_running:
             return
         packages = [
             pkg for pkg in self._visible_detail_packages()
@@ -563,7 +589,7 @@ class AppManagerDialog(QDialog):
         w = AppManagerWorker(self.device_ip, "load_detail_batch", packages=packages)
         w.app_detail_batch.connect(self._on_detail)
         w.log_message.connect(self.log)
-        w.finished.connect(lambda pkgs=packages: self._on_detail_worker_finished(pkgs))
+        w.finished.connect(alive_callback(self, "_on_detail_worker_finished", packages))
         self._track_worker(w)
         w.start()
 
@@ -892,14 +918,20 @@ class AppManagerDialog(QDialog):
 
     def _track_worker(self, w):
         w.setParent(self)
-        w.finished.connect(lambda _w=w: self._prune_worker(_w))
+        w.finished.connect(alive_callback(self, "_prune_worker", w))
         self._workers.append(w)
 
     def _prune_worker(self, w):
+        if self._closing:
+            return
         if w in self._workers:
             self._workers.remove(w)
 
     def closeEvent(self, event):
+        self._closing = True
+        if is_qobject_alive(self._detail_timer):
+            self._detail_timer.stop()
+            safe_disconnect(self._detail_timer.timeout, self._load_visible_details)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
