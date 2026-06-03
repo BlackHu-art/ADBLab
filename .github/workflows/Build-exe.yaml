@@ -38,21 +38,21 @@ jobs:
             artifact: ADBLab-win-x64
             onefile: --windowed
             icon: --icon icon.ico
-            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1"
+            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1" --add-data "gui/performance_web/assets;gui/performance_web/assets"
             pip_cache: ~\AppData\Local\pip\Cache
 
           - os: macos-latest
             artifact: ADBLab-macos-x64
             onefile: --windowed
             icon: ""
-            datas: --add-data "resources:resources" --add-data "icon.ico:."
+            datas: --add-data "resources:resources" --add-data "icon.ico:." --add-data "gui/performance_web/assets:gui/performance_web/assets"
             pip_cache: ~/Library/Caches/pip
 
           - os: ubuntu-latest
             artifact: ADBLab-linux-x64
             onefile: ""
             icon: ""
-            datas: --add-data "resources:resources" --add-data "icon.ico:."
+            datas: --add-data "resources:resources" --add-data "icon.ico:." --add-data "gui/performance_web/assets:gui/performance_web/assets"
             pip_cache: ~/.cache/pip
 
     runs-on: ${{ matrix.os }}
@@ -88,9 +88,6 @@ jobs:
             --name "${{ matrix.artifact }}-${{ needs.version.outputs.version }}" \
             --onefile ${{ matrix.onefile }} \
             ${{ matrix.icon }} \
-            --exclude-module PySide6.QtWebEngineCore \
-            --exclude-module PySide6.QtWebEngineWidgets \
-            --exclude-module PySide6.QtWebChannel \
             ${{ matrix.datas }} \
             main.py
 

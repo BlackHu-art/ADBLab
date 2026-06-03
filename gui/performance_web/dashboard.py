@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
 
 from gui.styles import BaseStyles
+from models.performance.dashboard import web_timeline_payload
 
 try:
     from PySide6.QtWebChannel import QWebChannel
@@ -24,7 +24,7 @@ def is_web_timeline_available() -> bool:
         return False
     if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
         return False
-    if getattr(sys, "frozen", False) and os.environ.get("ADBLAB_ENABLE_WEB_DASHBOARD") != "1":
+    if os.environ.get("ADBLAB_ENABLE_WEB_DASHBOARD") == "0":
         return False
     return all(path.exists() for path in DASHBOARD_ASSET_PATHS)
 
@@ -49,26 +49,26 @@ def build_timeline_payload(
     metric_details: list[dict] | None = None,
     axis_policy: dict | None = None,
 ) -> dict:
-    return {
-        "points": points,
-        "markers": markers,
-        "lanes": lanes,
-        "events": events or [],
-        "report": report,
-        "reportSummary": report_summary or {},
-        "state": state,
-        "currentPackage": current_package,
-        "packageName": package_name,
-        "activity": activity,
-        "controls": controls or {},
-        "theme": theme,
-        "palette": palette or {},
-        "font": font or {},
-        "deviceInfo": device_info or [],
-        "metricSummaries": metric_summaries or [],
-        "metricDetails": metric_details or [],
-        "axisPolicy": axis_policy or {},
-    }
+    return web_timeline_payload(
+        points,
+        markers,
+        lanes,
+        events=events,
+        report=report,
+        report_summary=report_summary,
+        state=state,
+        current_package=current_package,
+        package_name=package_name,
+        activity=activity,
+        controls=controls,
+        theme=theme,
+        palette=palette,
+        font=font,
+        device_info=device_info,
+        metric_summaries=metric_summaries,
+        metric_details=metric_details,
+        axis_policy=axis_policy,
+    )
 
 
 def build_web_palette() -> dict:

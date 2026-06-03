@@ -94,7 +94,10 @@
             <button class="inspector-tab" data-inspector-tab="metrics">Metrics</button>
             <button class="inspector-tab" data-inspector-tab="report">Report</button>
           </div>
-          <button class="inspector-toggle" id="inspectorToggle" title="Collapse or expand inspector" aria-label="Collapse or expand inspector" aria-pressed="false">Collapse</button>
+          <div class="inspector-actions">
+            <button class="inspector-action" data-action="openPerfetto" title="Open Perfetto recording target">Perfetto</button>
+            <button class="inspector-toggle" id="inspectorToggle" title="Collapse or expand inspector" aria-label="Collapse or expand inspector" aria-pressed="false">Collapse</button>
+          </div>
         </div>
         <div class="inspector-content">
           <div class="inspector-body active" id="eventsInspector">

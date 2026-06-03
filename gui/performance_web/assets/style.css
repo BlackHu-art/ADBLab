@@ -509,7 +509,15 @@ input {
   min-width: 0;
 }
 
+.inspector-actions {
+  justify-self: end;
+  display: flex;
+  gap: 2px;
+  min-width: 0;
+}
+
 .inspector-tab,
+.inspector-action,
 .inspector-toggle {
   height: 26px;
   border: 1px solid var(--border-strong);
@@ -524,12 +532,18 @@ input {
   min-width: 0;
 }
 
+.inspector-action {
+  width: 76px;
+  min-width: 0;
+}
+
 .inspector-toggle {
-  justify-self: end;
+  width: 76px;
   padding: 0 10px;
 }
 
 .inspector-tab:hover,
+.inspector-action:hover,
 .inspector-toggle:hover {
   background: var(--button-hover);
 }

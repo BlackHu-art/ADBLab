@@ -335,6 +335,68 @@ def web_dashboard_context(
     }
 
 
+def web_timeline_payload(
+    points: list[dict],
+    markers: list[dict],
+    lanes: list[dict],
+    *,
+    events: list[str] | None = None,
+    report: str = "",
+    report_summary: dict | None = None,
+    state: str = "",
+    current_package: str = "",
+    package_name: str = "",
+    activity: str = "",
+    controls: dict | None = None,
+    theme: str = "",
+    palette: dict | None = None,
+    font: dict | None = None,
+    device_info: list[dict] | None = None,
+    metric_summaries: list[dict] | None = None,
+    metric_details: list[dict] | None = None,
+    axis_policy: dict | None = None,
+) -> dict:
+    """Build the browser-facing WebEngine timeline payload."""
+
+    context = web_dashboard_context(
+        events=events,
+        report=report,
+        report_summary=report_summary,
+        state=state,
+        current_package=current_package,
+        package_name=package_name,
+        activity=activity,
+        controls=controls,
+        theme=theme,
+        palette=palette,
+        font=font,
+        device_info=device_info,
+        metric_summaries=metric_summaries,
+        metric_details=metric_details,
+        axis_policy=axis_policy,
+    )
+    return {
+        "points": list(points),
+        "markers": list(markers),
+        "lanes": list(lanes),
+        "events": context["events"],
+        "report": context["report"],
+        "reportSummary": context["report_summary"],
+        "state": context["state"],
+        "currentPackage": context["current_package"],
+        "packageName": context["package_name"],
+        "activity": context["activity"],
+        "controls": context["controls"],
+        "theme": context["theme"],
+        "palette": context["palette"],
+        "font": context["font"],
+        "deviceInfo": context["device_info"],
+        "metricSummaries": context["metric_summaries"],
+        "metricDetails": context["metric_details"],
+        "axisPolicy": context["axis_policy"],
+    }
+
+
 def _apply_metric_color(metric: dict, color_for: ColorGetter) -> None:
     role = _METRIC_COLOR_ROLES.get(str(metric.get("metric", "")))
     if role:

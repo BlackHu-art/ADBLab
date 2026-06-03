@@ -3,8 +3,8 @@ from __future__ import annotations
 import os
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -55,6 +55,9 @@ from models.performance.workers import (
     PerformanceQuickCheckWorker,
     PerformanceSnapshotWorker,
 )
+
+
+PERFETTO_RECORD_URL = "https://ui.perfetto.dev/#!/record/target"
 
 
 class PerformanceMonitorDialog(QDialog):
@@ -281,6 +284,8 @@ class PerformanceMonitorDialog(QDialog):
             self._open_report()
         elif action == "exportReport":
             self._export_report()
+        elif action == "openPerfetto":
+            self._open_perfetto()
         elif action == "refreshDeviceInfo":
             self._refresh_device_info(force=True)
 
@@ -646,6 +651,9 @@ class PerformanceMonitorDialog(QDialog):
         if not self._last_report_dir or not os.path.isdir(self._last_report_dir):
             return
         os.startfile(self._last_report_dir)
+
+    def _open_perfetto(self):
+        QDesktopServices.openUrl(QUrl(PERFETTO_RECORD_URL))
 
     def _export_report(self):
         if not self._last_report_dir:

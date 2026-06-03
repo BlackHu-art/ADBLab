@@ -1,12 +1,10 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec for ADBLab — ensures resource files are bundled."""
 
-import sys
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_data_files
-
-ROOT = Path(__file__).parent
+ROOT = Path(SPECPATH)
+WEB_DASHBOARD_ASSETS = ROOT / 'gui' / 'performance_web' / 'assets'
 
 a = Analysis(
     ['main.py'],
@@ -16,8 +14,13 @@ a = Analysis(
         ('resources', 'resources'),
         ('icon.ico', '.'),
         ('scrcpy-win64-v3.3.1', 'scrcpy-win64-v3.3.1'),
+        (str(WEB_DASHBOARD_ASSETS), 'gui/performance_web/assets'),
     ],
-    hiddenimports=[],
+    hiddenimports=[
+        'PySide6.QtWebChannel',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineWidgets',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -28,9 +31,6 @@ a = Analysis(
         'http',
         'xmlrpc',
         'pydoc',
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebEngineWidgets',
-        'PySide6.QtWebChannel',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

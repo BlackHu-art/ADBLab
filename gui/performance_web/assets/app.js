@@ -231,6 +231,7 @@ function renderControls() {
     if (action === "mark") enabled = controls.mark === true;
     if (action === "openReport") enabled = controls.openReport === true;
     if (action === "exportReport") enabled = controls.export === true;
+    if (action === "openPerfetto") enabled = true;
     if (action === "refreshDeviceInfo") enabled = true;
     button.disabled = !enabled;
   }

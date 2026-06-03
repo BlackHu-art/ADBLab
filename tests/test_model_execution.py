@@ -44,6 +44,7 @@ from models.file_explorer_worker import ADBWorker, TransferWorker
 from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.performance_monitor import (
+    PERFETTO_RECORD_URL,
     PerformanceMonitorDialog,
 )
 from gui.dialogs.performance_timeline import PerfDogTimelineChart
@@ -818,19 +819,22 @@ def test_performance_web_timeline_is_disabled_in_offscreen_tests():
     assert is_web_timeline_available() is False
 
 
-def test_performance_web_timeline_disabled_by_default_in_frozen_build(monkeypatch):
+def test_performance_web_timeline_can_be_disabled_by_env(monkeypatch):
     from gui.performance_web import dashboard
 
-    monkeypatch.setattr(dashboard.sys, "frozen", True, raising=False)
-    monkeypatch.delenv("ADBLAB_ENABLE_WEB_DASHBOARD", raising=False)
     monkeypatch.setenv("QT_QPA_PLATFORM", "")
+    monkeypatch.setenv("ADBLAB_ENABLE_WEB_DASHBOARD", "0")
 
     assert dashboard.is_web_timeline_available() is False
 
 
-def test_pyinstaller_build_excludes_qt_webengine_modules():
+def test_pyinstaller_build_bundles_web_performance_dashboard():
     spec = Path("ADBLab.spec").read_text(encoding="utf-8")
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+
+    assert "gui/performance_web/assets" in spec
+    assert "gui/performance_web/assets;gui/performance_web/assets" in workflow
+    assert "gui/performance_web/assets:gui/performance_web/assets" in workflow
 
     for module in (
         "PySide6.QtWebEngineCore",
@@ -838,7 +842,7 @@ def test_pyinstaller_build_excludes_qt_webengine_modules():
         "PySide6.QtWebChannel",
     ):
         assert module in spec
-        assert f"--exclude-module {module}" in workflow
+        assert f"--exclude-module {module}" not in workflow
 
 
 def test_performance_web_timeline_payload_preserves_series_and_markers():
@@ -1116,6 +1120,11 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert 'id="eventList"' in html
     assert 'data-inspector-tab="metrics"' in html
     assert 'id="metricDetailList"' in html
+    assert 'data-action="openPerfetto"' in html
+    assert "Open Perfetto recording target" in html
+    assert 'class="inspector-actions"' in html
+    assert html.index('data-inspector-tab="report"') < html.index('data-action="openPerfetto"')
+    assert html.index('data-action="openPerfetto"') < html.index('id="inspectorToggle"')
     assert 'id="reportSummary"' in html
     assert 'id="inspectorToggle"' in html
     assert "qrc:///qtwebchannel/qwebchannel.js" not in html
@@ -1125,6 +1134,8 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert ".live-summary" in css
     assert ".summary-row" in css
     assert ".inspector-panel" in css
+    assert ".inspector-actions" in css
+    assert ".inspector-action" in css
     assert ":root[data-theme=\"light\"]" in css
     assert "grid-template-columns: 360px 20px minmax(0, 1fr)" in css
     assert ".dashboard-shell.side-collapsed" in css
@@ -1204,6 +1215,7 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "root.style.setProperty(\"--scrollbar-thumb\"" in js
     assert "commitTargetInput" in js
     assert "requestAction" in js
+    assert "openPerfetto" in js
     assert "metricSummaries" in js
     assert "metricDetails" in js
     assert "rawReport" in js
@@ -1369,6 +1381,7 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     dialog._add_marker = Mock()
     dialog._open_report = Mock()
     dialog._export_report = Mock()
+    dialog._open_perfetto = Mock()
     dialog._refresh_device_info = Mock()
 
     PerformanceMonitorDialog._on_web_action(dialog, "setPackage", {"value": "com.example"})
@@ -1379,6 +1392,7 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     PerformanceMonitorDialog._on_web_action(dialog, "mark", {})
     PerformanceMonitorDialog._on_web_action(dialog, "openReport", {})
     PerformanceMonitorDialog._on_web_action(dialog, "exportReport", {})
+    PerformanceMonitorDialog._on_web_action(dialog, "openPerfetto", {})
     PerformanceMonitorDialog._on_web_action(dialog, "currentPackage", {})
     PerformanceMonitorDialog._on_web_action(dialog, "refreshDeviceInfo", {})
 
@@ -1391,8 +1405,19 @@ def test_performance_monitor_web_action_dispatches_existing_handlers():
     dialog._add_marker.assert_called_once()
     dialog._open_report.assert_called_once()
     dialog._export_report.assert_called_once()
+    dialog._open_perfetto.assert_called_once()
     dialog._use_current_package.assert_called_once()
     dialog._refresh_device_info.assert_called_once_with(force=True)
+
+
+def test_performance_monitor_opens_perfetto_record_target():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+
+    with patch("gui.dialogs.performance_monitor.QDesktopServices.openUrl") as open_url:
+        PerformanceMonitorDialog._open_perfetto(dialog)
+
+    open_url.assert_called_once()
+    assert open_url.call_args.args[0].toString() == PERFETTO_RECORD_URL
 
 
 def test_performance_monitor_sync_controls_uses_lifecycle_state():

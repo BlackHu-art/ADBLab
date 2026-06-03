@@ -23,6 +23,7 @@ from models.performance.dashboard import (
     refresh_metric_lane_colors,
     snapshot_chart_values,
     web_dashboard_context,
+    web_timeline_payload,
 )
 from models.performance.presentation import build_report_summary, render_report_text
 from models.performance.sampling import PerformanceSamplingSchedule
@@ -624,6 +625,73 @@ def test_web_dashboard_context_normalizes_set_context_payload():
         "metric_summaries": [{"metric": "fps", "now": 60}],
         "metric_details": [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}],
         "axis_policy": {"fpsChart": {"max": 60}},
+    }
+
+
+def test_web_timeline_payload_normalizes_browser_facing_keys():
+    points = [{"_ts": 1000, "fps": 60}]
+    markers = [{"timestamp_ms": 1000, "label": "Mark 1"}]
+    lanes = [{"metric": "fps", "label": "FPS", "enabled": True}]
+    report_summary = {"status": "pass"}
+    controls = {"quick": True}
+    palette = {"background": "#101217"}
+    font = {"uiSize": 12}
+    device_info = [{"info": "Model", "value": "Pixel"}]
+    summaries = [{"metric": "fps", "now": 60}]
+    details = [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}]
+    policy = {"fpsChart": {"max": 60}}
+
+    payload = web_timeline_payload(
+        points,
+        markers,
+        lanes,
+        events=["12:00:00 Monitor started"],
+        report="Quick Check: PASS",
+        report_summary=report_summary,
+        state="Ready",
+        current_package="com.example",
+        package_name="com.example.target",
+        activity=".MainActivity",
+        controls=controls,
+        theme="Dark",
+        palette=palette,
+        font=font,
+        device_info=device_info,
+        metric_summaries=summaries,
+        metric_details=details,
+        axis_policy=policy,
+    )
+    points.append({"_ts": 2000, "fps": 59})
+    markers.append({"timestamp_ms": 2000, "label": "Mark 2"})
+    lanes.append({"metric": "cpu", "label": "CPU", "enabled": True})
+    report_summary["status"] = "mutated"
+    controls["quick"] = False
+    palette["background"] = "#fff"
+    font["uiSize"] = 14
+    device_info.append({"info": "OS", "value": "15"})
+    summaries.append({"metric": "jank", "now": 5})
+    details.append({"group": "CPU", "items": []})
+    policy["cpuChart"] = {"max": 100}
+
+    assert payload == {
+        "points": [{"_ts": 1000, "fps": 60}],
+        "markers": [{"timestamp_ms": 1000, "label": "Mark 1"}],
+        "lanes": [{"metric": "fps", "label": "FPS", "enabled": True}],
+        "events": ["12:00:00 Monitor started"],
+        "report": "Quick Check: PASS",
+        "reportSummary": {"status": "pass"},
+        "state": "Ready",
+        "currentPackage": "com.example",
+        "packageName": "com.example.target",
+        "activity": ".MainActivity",
+        "controls": {"quick": True},
+        "theme": "Dark",
+        "palette": {"background": "#101217"},
+        "font": {"uiSize": 12},
+        "deviceInfo": [{"info": "Model", "value": "Pixel"}],
+        "metricSummaries": [{"metric": "fps", "now": 60}],
+        "metricDetails": [{"group": "Frame", "items": [{"label": "FPS", "value": "60"}]}],
+        "axisPolicy": {"fpsChart": {"max": 60}},
     }
 
 
