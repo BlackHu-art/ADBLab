@@ -47,7 +47,7 @@ from gui.dialogs.performance_monitor import (
     PERFETTO_RECORD_URL,
     PerformanceMonitorDialog,
 )
-from gui.dialogs.performance_timeline import PerfDogTimelineChart
+from gui.dialogs.performance_timeline import PerfDogTimelineChart, _axis_max, _series_label
 from gui.performance_web import (
     build_timeline_payload,
     build_web_font,
@@ -69,6 +69,7 @@ from gui.styles import theme
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 from utils.batch_tracker import BatchOperationTracker
 from models.performance.session import PerformanceSession
+from models.performance.types import FrameMetrics
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.workers import (
     PerformanceFrameWorker,
@@ -778,6 +779,14 @@ def test_perfdog_timeline_chart_holds_sparse_samples_between_updates():
     assert chart._sample_held_values("fps") == [60.0, 60.0, 60.0, 58.0]
 
 
+def test_perfdog_timeline_chart_marks_overlay_series_without_primary_axis_scaling():
+    assert _series_label({"label": "P95", "axis": "overlay"}) == "P95*"
+    assert _series_label({"label": "FPS"}) == "FPS"
+    assert _axis_max([]) is None
+    assert _axis_max([0.2, 0.8]) == 1
+    assert _axis_max([16, 4200]) == 4200
+
+
 def test_performance_monitor_uses_widget_timeline_when_web_unavailable():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
@@ -1007,8 +1016,8 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
             ],
             axis_policy={
                 "fpsChart": {"min": 0, "max": 60, "padded": False},
-                "cpuChart": {"min": 0, "max": 100, "padded": False},
-                "memoryChart": {"min": 0, "max": 256, "padded": True},
+                "cpuChart": {"min": 0, "max": 100, "padded": True, "dynamic": True},
+                "memoryChart": {"min": 0, "max": 256, "padded": True, "dynamic": True},
             },
         )
         chart.set_points(
@@ -1040,6 +1049,7 @@ def test_performance_web_timeline_loads_external_assets_and_bridge_when_availabl
     assert result["eval"]["runStateTone"] == "good"
     assert result["eval"]["sampleCount"] == "3"
     assert result["eval"]["reportStatus"] == "pass"
+    assert result["eval"]["status"] == "Updated"
     assert result["eval"]["inspectorCollapsed"] is True
     assert result["eval"]["chartChildren"] == 3
     assert result["eval"]["canvasIds"] == ["fpsChart", "cpuChart", "memoryChart"]
@@ -1138,6 +1148,7 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert ".inspector-action" in css
     assert ":root[data-theme=\"light\"]" in css
     assert "grid-template-columns: 360px 20px minmax(0, 1fr)" in css
+    assert "grid-template-columns: minmax(172px, 0.9fr)" in css
     assert ".dashboard-shell.side-collapsed" in css
     assert ".workspace-panel.inspector-collapsed" in css
     assert ".workspace-panel.inspector-mode-metrics" in css
@@ -1179,6 +1190,9 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "renderTopStatus" in js
     assert "function statusTone" in js
     assert "runStateValue.dataset.tone" in js
+    assert "runStateValue.title = runState" in js
+    assert "packageValue.title = packageText" in js
+    assert "reportStatusValue.title = reportStatus" in js
     assert "renderInspector" in js
     assert "renderMetricDetails" in js
     assert "renderTabs" in js
@@ -1251,12 +1265,21 @@ def test_performance_web_dashboard_keeps_sparse_samples_and_shared_hover_axis():
     assert "xRatio: hoverRatioForCanvas" in js
     assert "(x - plot.left) / plot.width" in js
     assert "canvas.id !== sharedHover.sourceId" in js
+    assert "const x = plot.left + xRatio * plot.width;" in js
+    assert "pointPosition(plot, points[nearestIndex]" not in js
     assert "function yAxisMax" in js
+    assert "policy.dynamic === true && numeric.length" in js
     assert "policy.padded === false" in js
-    assert "return stableAxisMax(definition.axisKey, floorMax, dataMax);" in js
+    assert "axis: \"overlay\"" in js
+    assert "function axisSeries" in js
+    assert "function overlayAxisMax" in js
+    assert "const primarySeries = axisSeries(seriesList);" in js
+    assert "const overlaySeries = axisSeries(seriesList, \"overlay\");" in js
+    assert "const numeric = seriesNumeric(primarySeries);" in js
     assert "const stops = [60, 90, 120, 144, 165, 240]" in js
     assert "fpsChart: { min: 0, max: 60, padded: false }" in js
-    assert "cpuChart: { min: 0, max: 100, padded: false }" in js
+    assert "cpuChart: { min: 0, max: 100, padded: true, dynamic: true }" in js
+    assert "memoryChart: { min: 0, max: 256, padded: true, dynamic: true }" in js
     assert "function drawTimelineMarkers" in js
     assert "Array.isArray(state.markers)" in js
     assert "markers.slice(-12)" in js
@@ -1270,6 +1293,8 @@ def test_performance_web_dashboard_responsive_layout_prioritizes_chart_height():
     assert "@media (max-width: 760px)" in css
     assert "grid-template-rows: 238px 20px minmax(0, 1fr)" in css
     assert "grid-template-rows: auto var(--chart-panel-height) minmax(var(--inspector-default-height), 1fr)" in css
+    assert "grid-template-rows: 34px minmax(0, 1fr) 32px" in css
+    assert "grid-template-rows: auto minmax(0, 1fr) 32px" in css
     assert "@media (max-height: 680px)" in css
     assert "--chart-panel-height: 360px" in css
     assert ".summary-row" in css
@@ -1364,8 +1389,8 @@ def test_performance_monitor_web_context_receives_events_report_and_state():
     assert payload["metric_details"][1]["group"] == "CPU"
     assert payload["axis_policy"] == {
         "fpsChart": {"min": 0, "max": 60, "padded": False},
-        "cpuChart": {"min": 0, "max": 100, "padded": False},
-        "memoryChart": {"min": 0, "max": 256, "padded": True},
+        "cpuChart": {"min": 0, "max": 100, "padded": True, "dynamic": True},
+        "memoryChart": {"min": 0, "max": 256, "padded": True, "dynamic": True},
     }
 
 
@@ -1562,6 +1587,21 @@ def test_performance_monitor_frame_sample_exposes_fps_chart_series():
         "high_input_latency": 5,
     }
     dialog._session.update_latest_point.assert_called_once_with(dialog._latest_frame_values)
+    dialog._refresh_dashboard.assert_called_once()
+
+
+def test_performance_monitor_empty_frame_sample_clears_stale_frame_values():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._latest_frame_values = {"frame_time_p95": 4950, "fps": 60}
+    dialog._monitoring = True
+    dialog._session = Mock()
+    dialog._refresh_dashboard = Mock()
+
+    PerformanceMonitorDialog._append_frame_sample(dialog, FrameMetrics())
+
+    assert dialog._latest_frame_values == {}
+    dialog._session.update_latest_point.assert_not_called()
+    dialog._session.add_point.assert_not_called()
     dialog._refresh_dashboard.assert_called_once()
 
 

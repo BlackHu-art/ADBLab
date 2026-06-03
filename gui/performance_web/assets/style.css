@@ -218,12 +218,12 @@ input {
 .workspace-panel.inspector-collapsed,
 .workspace-panel.inspector-collapsed.inspector-mode-metrics,
 .workspace-panel.inspector-collapsed.inspector-mode-report {
-  grid-template-rows: 34px var(--chart-panel-height) 32px;
+  grid-template-rows: 34px minmax(0, 1fr) 32px;
 }
 
 .status-strip {
   display: grid;
-  grid-template-columns: 132px minmax(140px, 1fr) 108px 116px;
+  grid-template-columns: minmax(172px, 0.9fr) minmax(180px, 1.4fr) minmax(96px, 0.5fr) minmax(116px, 0.6fr);
   gap: 2px;
   padding: 2px;
   background: var(--surface);
@@ -913,7 +913,7 @@ input {
   .workspace-panel.inspector-collapsed,
   .workspace-panel.inspector-collapsed.inspector-mode-metrics,
   .workspace-panel.inspector-collapsed.inspector-mode-report {
-    grid-template-rows: auto var(--chart-panel-height) 32px;
+    grid-template-rows: auto minmax(0, 1fr) 32px;
   }
 
   .status-strip {

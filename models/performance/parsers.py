@@ -76,6 +76,7 @@ def parse_gfxinfo_output(
     *,
     slow_frame_ms: float = 16.67,
     frozen_frame_ms: float = 700.0,
+    min_completed_ns: int | None = None,
 ) -> FrameMetrics:
     metrics = FrameMetrics()
     total = _first_int_after(output, r"Total frames rendered:\s*")
@@ -93,22 +94,23 @@ def parse_gfxinfo_output(
     metrics.high_input_latency = _first_int_after(output, r"Number High input latency:\s*") or 0
     metrics.slow_ui_thread = _first_int_after(output, r"Number Slow UI thread:\s*") or 0
 
-    frame_durations = parse_framestats_durations(output)
+    frame_durations = parse_framestats_durations(output, min_completed_ns=min_completed_ns)
     if frame_durations:
         metrics.slow_frames = sum(1 for value in frame_durations if value > slow_frame_ms)
         metrics.frozen_frames = sum(1 for value in frame_durations if value > frozen_frame_ms)
-        metrics.total_frames = metrics.total_frames or len(frame_durations)
-        if not metrics.janky_frames:
-            metrics.janky_frames = metrics.slow_frames
-            metrics.jank_rate = metrics.slow_frames / len(frame_durations)
-        metrics.p50_ms = metrics.p50_ms if metrics.p50_ms is not None else _percentile(frame_durations, 50)
-        metrics.p90_ms = metrics.p90_ms if metrics.p90_ms is not None else _percentile(frame_durations, 90)
-        metrics.p95_ms = metrics.p95_ms if metrics.p95_ms is not None else _percentile(frame_durations, 95)
-        metrics.p99_ms = metrics.p99_ms if metrics.p99_ms is not None else _percentile(frame_durations, 99)
+        metrics.total_frames = len(frame_durations)
+        metrics.janky_frames = metrics.slow_frames
+        metrics.jank_rate = metrics.slow_frames / len(frame_durations)
+        metrics.p50_ms = _percentile(frame_durations, 50)
+        metrics.p90_ms = _percentile(frame_durations, 90)
+        metrics.p95_ms = _percentile(frame_durations, 95)
+        metrics.p99_ms = _percentile(frame_durations, 99)
         metrics.avg_frame_time_ms = round(sum(frame_durations) / len(frame_durations), 2)
         metrics.max_frame_time_ms = max(frame_durations)
-        metrics.estimated_fps = _estimate_fps(output, len(frame_durations))
+        metrics.estimated_fps = _estimate_fps(output, len(frame_durations), min_completed_ns=min_completed_ns)
     else:
+        if min_completed_ns is not None:
+            return FrameMetrics()
         metrics.slow_frames = metrics.janky_frames
         metrics.frozen_frames = _histogram_frozen_count(output, frozen_frame_ms)
     if metrics.total_frames:
@@ -117,7 +119,7 @@ def parse_gfxinfo_output(
     return metrics
 
 
-def parse_framestats_durations(output: str) -> list[float]:
+def parse_framestats_durations(output: str, *, min_completed_ns: int | None = None) -> list[float]:
     rows = _profile_rows(output)
     if not rows:
         return []
@@ -130,6 +132,8 @@ def parse_framestats_durations(output: str) -> list[float]:
             continue
         if intended <= 0 or completed <= intended:
             continue
+        if min_completed_ns is not None and completed <= min_completed_ns:
+            continue
         durations.append((completed - intended) / 1_000_000)
     return durations
 
@@ -138,11 +142,12 @@ def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
     sample = MemorySample(timestamp_ms=timestamp_ms)
     in_app_summary = False
     graphics_fallback_kb = 0
-    saw_swap_pss_column = False
+    table_columns: list[str] = []
     for line in output.splitlines():
         stripped = line.strip()
-        if "SwapPss" in stripped:
-            saw_swap_pss_column = True
+        parsed_columns = _meminfo_columns(stripped)
+        if parsed_columns:
+            table_columns = parsed_columns
         if stripped == "App Summary":
             in_app_summary = True
             continue
@@ -154,10 +159,10 @@ def parse_meminfo_output(output: str, *, timestamp_ms: int = 0) -> MemorySample:
             sample.total_pss_kb = _first_int(stripped)
         if stripped.startswith("TOTAL SWAP PSS:"):
             sample.total_swap_pss_kb = _first_int(stripped)
-        elif saw_swap_pss_column and stripped.startswith("TOTAL "):
-            values = _all_ints(stripped)
-            if values:
-                sample.total_swap_pss_kb = values[-1]
+        elif table_columns and stripped.startswith("TOTAL "):
+            swap_pss_kb = _table_value_for_column(stripped, table_columns, "SwapPss")
+            if swap_pss_kb is not None:
+                sample.total_swap_pss_kb = swap_pss_kb
 
         graphics_row = _graphics_row_pss(stripped)
         if graphics_row is not None:
@@ -216,14 +221,8 @@ def parse_process_stat_ticks(output: str) -> int | None:
 
 
 def parse_process_stat_cpu_ticks(output: str) -> tuple[int, int] | None:
-    text = output.strip()
-    if not text:
-        return None
-    end = text.rfind(")")
-    if end < 0:
-        return None
-    fields = text[end + 1:].strip().split()
-    if len(fields) <= 12:
+    fields = _process_stat_fields(output)
+    if fields is None or len(fields) <= 12:
         return None
     try:
         # /proc/<pid>/stat fields after comm start at state, so utime/stime are indexes 11/12.
@@ -233,17 +232,21 @@ def parse_process_stat_cpu_ticks(output: str) -> tuple[int, int] | None:
 
 
 def parse_process_thread_count(output: str) -> int | None:
-    text = output.strip()
-    if not text:
-        return None
-    end = text.rfind(")")
-    if end < 0:
-        return None
-    fields = text[end + 1:].strip().split()
-    if len(fields) <= 17:
+    fields = _process_stat_fields(output)
+    if fields is None or len(fields) <= 17:
         return None
     try:
         return int(fields[17])
+    except ValueError:
+        return None
+
+
+def parse_process_start_time_ticks(output: str) -> int | None:
+    fields = _process_stat_fields(output)
+    if fields is None or len(fields) <= 19:
+        return None
+    try:
+        return int(fields[19])
     except ValueError:
         return None
 
@@ -262,10 +265,13 @@ def build_cpu_sample(
     previous_user_ticks: int | None = None,
     previous_system_ticks: int | None = None,
     thread_count: int | None = None,
+    cpu_count: int = 1,
+    process_count: int | None = None,
 ) -> CpuSample:
     percent = None
     user_percent = None
     system_percent = None
+    cpu_scale = max(1, cpu_count)
     if (
         process_ticks is not None
         and total_ticks is not None
@@ -275,7 +281,7 @@ def build_cpu_sample(
         process_delta = process_ticks - previous_process_ticks
         total_delta = total_ticks - previous_total_ticks
         if process_delta >= 0 and total_delta > 0:
-            percent = round((process_delta / total_delta) * 100, 2)
+            percent = round((process_delta / total_delta) * 100 * cpu_scale, 2)
             if (
                 user_ticks is not None
                 and system_ticks is not None
@@ -285,8 +291,8 @@ def build_cpu_sample(
                 user_delta = user_ticks - previous_user_ticks
                 system_delta = system_ticks - previous_system_ticks
                 if user_delta >= 0 and system_delta >= 0:
-                    user_percent = round((user_delta / total_delta) * 100, 2)
-                    system_percent = round((system_delta / total_delta) * 100, 2)
+                    user_percent = round((user_delta / total_delta) * 100 * cpu_scale, 2)
+                    system_percent = round((system_delta / total_delta) * 100 * cpu_scale, 2)
     return CpuSample(
         timestamp_ms=timestamp_ms,
         process_percent=percent,
@@ -295,6 +301,7 @@ def build_cpu_sample(
         is_foreground=is_foreground,
         pid=pid,
         thread_count=thread_count,
+        process_count=process_count,
     )
 
 
@@ -316,10 +323,11 @@ def _profile_rows(output: str) -> list[dict[str, str]]:
         return []
 
 
-def _estimate_fps(output: str, frame_count: int) -> float | None:
+def _estimate_fps(output: str, frame_count: int, *, min_completed_ns: int | None = None) -> float | None:
     rows = _profile_rows(output)
     if len(rows) < 2 or frame_count < 2:
         return None
+    sampled_rows: list[dict[str, str]] = []
     vsync_times: list[int] = []
     for row in rows:
         try:
@@ -327,15 +335,20 @@ def _estimate_fps(output: str, frame_count: int) -> float | None:
             completed = int(row.get("FrameCompleted", "0") or "0")
         except ValueError:
             continue
+        if min_completed_ns is not None and completed <= min_completed_ns:
+            continue
         if intended > 0 and completed > intended:
+            sampled_rows.append(row)
             vsync_times.append(intended)
     if len(vsync_times) >= 2:
         elapsed_seconds = (vsync_times[-1] - vsync_times[0]) / 1_000_000_000
         if elapsed_seconds > 0:
             return round((len(vsync_times) - 1) / elapsed_seconds, 2)
+    if len(sampled_rows) < 2:
+        return None
     try:
-        first = int(rows[0].get("IntendedVsync", "0") or "0")
-        last = int(rows[-1].get("FrameCompleted", "0") or "0")
+        first = int(sampled_rows[0].get("IntendedVsync", "0") or "0")
+        last = int(sampled_rows[-1].get("FrameCompleted", "0") or "0")
     except ValueError:
         return None
     elapsed_seconds = (last - first) / 1_000_000_000
@@ -364,9 +377,36 @@ def _all_ints(text: str) -> list[int]:
 
 
 def _graphics_row_pss(text: str) -> int | None:
-    if not re.match(r"^(?:EGL\s+mtrack|GL\s+mtrack|Gfx\s+dev)\b", text):
+    if not re.match(r"^(?:EGL\s+mtrack|GL\s+mtrack|Gfx\s+dev|GPU\s+\w+|Graphic\s+Buffer)\b", text, re.IGNORECASE):
         return None
     return _first_int(text)
+
+
+def _meminfo_columns(text: str) -> list[str]:
+    words = text.split()
+    if "Pss" not in words:
+        return []
+    start = words.index("Pss")
+    return words[start:]
+
+
+def _table_value_for_column(text: str, columns: list[str], column: str) -> int | None:
+    try:
+        column_index = columns.index(column)
+    except ValueError:
+        return None
+    values = _all_ints(text)
+    return values[column_index] if column_index < len(values) else None
+
+
+def _process_stat_fields(output: str) -> list[str] | None:
+    text = output.strip()
+    if not text:
+        return None
+    end = text.rfind(")")
+    if end < 0:
+        return None
+    return text[end + 1:].strip().split()
 
 
 def _object_value(line: str, key: str) -> int | None:

@@ -151,6 +151,7 @@ class PerformanceReportService:
             f"- App CPU: {cpu.get('process_percent', 'N/A')} %",
             f"- User CPU: {cpu.get('process_user_percent', 'N/A')} %",
             f"- System CPU: {cpu.get('process_system_percent', 'N/A')} %",
+            f"- Processes: {cpu.get('process_count', 'N/A')}",
             f"- Threads: {cpu.get('thread_count', 'N/A')}",
             "",
             "## Memory",

@@ -25,6 +25,8 @@ def render_report_text(result: Mapping[str, Any], title: str) -> str:
         lines.append(f"CPU App: {_percent_value(last_cpu.process_percent)}")
         lines.append(f"CPU User: {_percent_value(last_cpu.process_user_percent)}")
         lines.append(f"CPU System: {_percent_value(last_cpu.process_system_percent)}")
+        if last_cpu.process_count is not None:
+            lines.append(f"Processes: {last_cpu.process_count}")
         if last_cpu.thread_count is not None:
             lines.append(f"Threads: {last_cpu.thread_count}")
     if samples:
@@ -61,6 +63,8 @@ def build_report_summary(result: Mapping[str, Any], title: str) -> dict:
         metrics.append({"label": "CPU", "value": _percent_value(last_cpu.process_percent)})
         metrics.append({"label": "User", "value": _percent_value(last_cpu.process_user_percent)})
         metrics.append({"label": "System", "value": _percent_value(last_cpu.process_system_percent)})
+        if last_cpu.process_count is not None:
+            metrics.append({"label": "Processes", "value": str(last_cpu.process_count)})
     if samples:
         last = samples[-1]
         metrics.append({"label": "PSS", "value": kb(last.total_pss_kb)})

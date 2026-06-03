@@ -269,10 +269,15 @@ function renderTopStatus() {
   const report = state.reportSummary || {};
   const runState = state.state || "Idle";
   runStateValue.textContent = runState;
+  runStateValue.title = runState;
   runStateValue.dataset.tone = statusTone(runState);
-  packageValue.textContent = state.packageName || state.currentPackage || "--";
+  const packageText = state.packageName || state.currentPackage || "--";
+  packageValue.textContent = packageText;
+  packageValue.title = packageText;
   sampleCountValue.textContent = String(points.length);
-  reportStatusValue.textContent = report.status || "--";
+  const reportStatus = report.status || "--";
+  reportStatusValue.textContent = reportStatus;
+  reportStatusValue.title = reportStatus;
   reportStatusValue.dataset.tone = statusTone(report.status || "");
 }
 
@@ -415,7 +420,7 @@ function chartDefinitions() {
         { key: "fps", label: "FPS", color: cssColor("--fps-color", "#a855f7"), digits: 0 },
         { key: "jank", label: "Jank", color: cssColor("--jank-color", "#f59e0b"), digits: 0, unit: "%" },
         { key: "stutter_rate", label: "Stutter", color: cssColor("--stutter-color", "#38bdf8"), digits: 1, unit: "%" },
-        { key: "frame_time_p95", label: "P95", color: cssColor("--frame-time-color", "#9aa4b4"), digits: 1, unit: " ms" }
+        { key: "frame_time_p95", label: "P95", color: cssColor("--frame-time-color", "#9aa4b4"), digits: 1, unit: " ms", axis: "overlay" }
       ]
     },
     cpuChart: {
@@ -459,6 +464,14 @@ function pointsForSeries(points, series) {
       })
     };
   });
+}
+
+function axisSeries(seriesList, axis = "primary") {
+  return seriesList.filter(series => (series.axis || "primary") === axis);
+}
+
+function seriesNumeric(seriesList) {
+  return seriesList.flatMap(series => series.values.filter(value => value !== null));
 }
 
 function resizeCanvas(canvas) {
@@ -535,10 +548,19 @@ function yAxisMax(definition, numeric) {
   const policy = policies[definition.axisKey] || {};
   const floorMax = Number.isFinite(Number(policy.max)) ? Number(policy.max) : (definition.minMax || 10);
   const dataMax = Math.max(...numeric, 0);
+  if (policy.dynamic === true && numeric.length) {
+    return roundUpTick(Math.max(dataMax, 1) * 1.12);
+  }
   if (policy.padded === false) {
     return stableAxisMax(definition.axisKey, floorMax, dataMax);
   }
   return roundUpTick(Math.max(floorMax, dataMax) * 1.08);
+}
+
+function overlayAxisMax(seriesList) {
+  const numeric = seriesNumeric(axisSeries(seriesList, "overlay"));
+  if (!numeric.length) return null;
+  return roundUpTick(Math.max(...numeric, 0) * 1.08);
 }
 
 function stableAxisMax(axisKey, floorMax, dataMax) {
@@ -608,7 +630,8 @@ function drawLegend(ctx, plot, seriesList, fontSize) {
     drawLegendSample(ctx, left + 5, y, series);
     ctx.fillStyle = axis;
     ctx.textAlign = "left";
-    ctx.fillText(fitText(ctx, series.label, maxWidth - 20), left + 16, y);
+    const label = series.axis === "overlay" ? `${series.label}*` : series.label;
+    ctx.fillText(fitText(ctx, label, maxWidth - 20), left + 16, y);
     y += fontSize + 5;
   }
 }
@@ -628,7 +651,7 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function drawCrosshair(ctx, canvas, plot, points, seriesList, minTime, timeSpan, yMax, fontSize) {
+function drawCrosshair(ctx, canvas, plot, points, seriesList, minTime, timeSpan, fontSize) {
   if (!sharedHover || !sharedHover.inside || !points.length) return;
   const xRatio = Math.max(0, Math.min(1, sharedHover.xRatio));
   let nearestIndex = 0;
@@ -645,7 +668,7 @@ function drawCrosshair(ctx, canvas, plot, points, seriesList, minTime, timeSpan,
 
   const timestamp = numericValue(points[nearestIndex], "_ts");
   const sampleTime = timestamp === null ? minTime + xRatio * timeSpan : timestamp;
-  const x = pointPosition(plot, points[nearestIndex], nearestIndex, points.length, minTime, timeSpan, yMax, 0).x;
+  const x = plot.left + xRatio * plot.width;
 
   ctx.save();
   ctx.strokeStyle = cssColor("--chart-crosshair", "rgba(255,255,255,0.86)");
@@ -729,8 +752,11 @@ function renderMetricChart(canvas, definition) {
 
   const points = Array.isArray(state.points) ? state.points : [];
   const seriesList = pointsForSeries(points, definition.series);
-  const numeric = seriesList.flatMap(series => series.values.filter(value => value !== null));
+  const primarySeries = axisSeries(seriesList);
+  const overlaySeries = axisSeries(seriesList, "overlay");
+  const numeric = seriesNumeric(primarySeries);
   const yMax = yAxisMax(definition, numeric);
+  const overlayMax = overlayAxisMax(seriesList);
   const times = points.map(point => numericValue(point, "_ts")).filter(value => value !== null);
   const minTime = times.length ? Math.min(...times) : 0;
   const maxTime = times.length ? Math.max(...times) : Math.max(points.length - 1, 1) * 1000;
@@ -785,14 +811,19 @@ function renderMetricChart(canvas, definition) {
     ctx.fillText(formatTimeLabel(labelTime), x, plot.bottom + 8);
   }
 
-  for (const series of seriesList) {
+  for (const series of primarySeries) {
     drawSeries(ctx, plot, points, series, minTime, timeSpan, yMax);
+  }
+  if (overlayMax) {
+    for (const series of overlaySeries) {
+      drawSeries(ctx, plot, points, series, minTime, timeSpan, overlayMax);
+    }
   }
   drawTimelineMarkers(ctx, plot, minTime, timeSpan, fontSize, definition.axisKey === "fpsChart");
   if (height >= 92) {
     drawLegend(ctx, plot, seriesList, fontSize);
   }
-  drawCrosshair(ctx, canvas, plot, points, seriesList, minTime, timeSpan, yMax, fontSize);
+  drawCrosshair(ctx, canvas, plot, points, seriesList, minTime, timeSpan, fontSize);
 
   if (!numeric.length) {
     ctx.fillStyle = cssColor("--muted", "#9aa4b4");
@@ -946,8 +977,8 @@ function buildPreviewPayload() {
     ],
     axisPolicy: {
       fpsChart: { min: 0, max: 60, padded: false },
-      cpuChart: { min: 0, max: 100, padded: false },
-      memoryChart: { min: 0, max: 256, padded: true }
+      cpuChart: { min: 0, max: 100, padded: true, dynamic: true },
+      memoryChart: { min: 0, max: 256, padded: true, dynamic: true }
     },
     deviceInfo: [
       { info: "Device Name", value: "Pixel Preview" },

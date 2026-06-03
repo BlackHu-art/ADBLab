@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -219,8 +220,11 @@ class PerformanceMonitorDialog(QDialog):
     def _state_label(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         label.setMinimumHeight(24)
-        label.setMinimumWidth(96)
+        label.setMinimumWidth(132)
+        label.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        label.setWordWrap(False)
         return label
 
     def _create_metric_panel(self) -> QGroupBox:
@@ -470,6 +474,7 @@ class PerformanceMonitorDialog(QDialog):
         self.device_state_value.setText("Collecting 00:00")
         self._sync_controls()
         self._append_timeline("Monitor started")
+        self._service.cpu_sample(package_name, current_package=self._service.current_package())
         self._service.reset_frame_stats(package_name)
         self._maybe_refresh_frame_metrics(force=True)
 
@@ -556,6 +561,10 @@ class PerformanceMonitorDialog(QDialog):
 
     def _append_frame_sample(self, frames, *, append_when_idle: bool = True):
         values = frame_chart_values(frames)
+        if not _has_chart_values(values):
+            self._latest_frame_values = {}
+            self._refresh_dashboard()
+            return
         self._latest_frame_values = values
         if self._monitoring:
             if self._session.update_latest_point(values):
@@ -811,6 +820,10 @@ def _widget_text(widget) -> str:
     if widget is None or not hasattr(widget, "text"):
         return ""
     return str(widget.text()).strip()
+
+
+def _has_chart_values(values: dict[str, float | int | None]) -> bool:
+    return any(value is not None and value != 0 for value in values.values())
 
 
 def _elapsed_text(started_at: float) -> str:

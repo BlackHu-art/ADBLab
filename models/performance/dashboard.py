@@ -93,8 +93,8 @@ _SUMMARY_METRICS = [
 
 _AXIS_POLICY = {
     "fpsChart": {"min": 0, "max": 60, "padded": False},
-    "cpuChart": {"min": 0, "max": 100, "padded": False},
-    "memoryChart": {"min": 0, "max": 256, "padded": True},
+    "cpuChart": {"min": 0, "max": 100, "padded": True, "dynamic": True},
+    "memoryChart": {"min": 0, "max": 256, "padded": True, "dynamic": True},
 }
 
 
@@ -146,8 +146,6 @@ def snapshot_chart_values(
 ) -> dict[str, MetricValue]:
     values: dict[str, MetricValue] = {
         "online": 1 if snapshot.online else 0,
-        "cpu_fg": 0,
-        "cpu_bg": 0,
         "collecting": 1 if collecting else 0,
     }
     if snapshot.memory:
@@ -170,6 +168,8 @@ def snapshot_chart_values(
         )
     if snapshot.cpu and snapshot.cpu.process_percent is not None:
         metric = "cpu_fg" if snapshot.cpu.is_foreground else "cpu_bg"
+        values["cpu_fg"] = snapshot.cpu.process_percent if snapshot.cpu.is_foreground else 0
+        values["cpu_bg"] = 0 if snapshot.cpu.is_foreground else snapshot.cpu.process_percent
         values[metric] = snapshot.cpu.process_percent
         values["cpu_app"] = snapshot.cpu.process_percent
         if snapshot.cpu.process_user_percent is not None:
@@ -178,6 +178,8 @@ def snapshot_chart_values(
             values["cpu_system"] = snapshot.cpu.process_system_percent
         if snapshot.cpu.thread_count is not None:
             values["threads"] = snapshot.cpu.thread_count
+        if snapshot.cpu.process_count is not None:
+            values["processes"] = snapshot.cpu.process_count
     if latest_frame_values:
         values.update(latest_frame_values)
     return values
@@ -244,6 +246,7 @@ def metric_details(session: PerformanceSession) -> list[dict]:
                 _detail_item("System", latest.get("cpu_system"), "%", 1),
                 _detail_item("Foreground", latest.get("cpu_fg"), "%", 1),
                 _detail_item("Background", latest.get("cpu_bg"), "%", 1),
+                _detail_item("Processes", latest.get("processes"), "", 0),
                 _detail_item("Threads", latest.get("threads"), "", 0),
             ],
         },

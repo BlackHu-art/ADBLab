@@ -1,4 +1,4 @@
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from models.performance.parsers import (
     build_cpu_sample,
@@ -27,7 +27,18 @@ from models.performance.dashboard import (
 )
 from models.performance.presentation import build_report_summary, render_report_text
 from models.performance.sampling import PerformanceSamplingSchedule
-from models.performance.service import _cpu_info, _gpu_type, _opengl_info, _prop, _ram_size, _swap_size
+from models.performance.service import (
+    PerformanceService,
+    _cpu_info,
+    _cpu_snapshot_command,
+    _gpu_type,
+    _last_frame_completed_ns,
+    _opengl_info,
+    _parse_cpu_snapshot_output,
+    _prop,
+    _ram_size,
+    _swap_size,
+)
 from models.performance.report_service import PerformanceReportService
 from models.performance.session import PerformanceSession
 from models.performance.types import CpuSample, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
@@ -65,13 +76,13 @@ Complete
     assert metrics.fully_drawn_ms == 1250
 
 
-def test_parse_gfxinfo_summary_and_profile_rows():
+def test_parse_gfxinfo_prefers_profile_rows_over_cumulative_summary():
     output = """
 Total frames rendered: 4
 Janky frames: 1 (25.00%)
 50th percentile: 8ms
 90th percentile: 20ms
-95th percentile: 22ms
+95th percentile: 4950ms
 99th percentile: 30ms
 Number Missed Vsync: 2
 Number High input latency: 3
@@ -85,12 +96,12 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
 
     metrics = parse_gfxinfo_output(output)
 
-    assert metrics.total_frames == 4
+    assert metrics.total_frames == 2
     assert metrics.janky_frames == 1
-    assert metrics.jank_rate == 0.25
-    assert metrics.p95_ms == 22
+    assert metrics.jank_rate == 0.5
+    assert metrics.p95_ms == 19.5
     assert metrics.slow_frames == 1
-    assert metrics.slow_frame_rate == 0.25
+    assert metrics.slow_frame_rate == 0.5
     assert metrics.frozen_frame_rate == 0
     assert metrics.avg_frame_time_ms == 15
     assert metrics.max_frame_time_ms == 20
@@ -98,6 +109,30 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
     assert metrics.missed_vsync == 2
     assert metrics.high_input_latency == 3
     assert metrics.slow_ui_thread == 4
+
+
+def test_parse_gfxinfo_filters_old_framestats_by_completed_timestamp():
+    output = """
+Total frames rendered: 20
+Janky frames: 10 (50.00%)
+95th percentile: 4950ms
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,2000000000,2000000000,0,0,0,0,0,0,0,0,0,0,2020000000,0,0,
+0,3000000000,3000000000,0,0,0,0,0,0,0,0,0,0,3018000000,0,0,
+---PROFILEDATA---
+"""
+
+    metrics = parse_gfxinfo_output(output, min_completed_ns=2020000000)
+    empty = parse_gfxinfo_output(output, min_completed_ns=3018000000)
+
+    assert metrics.total_frames == 1
+    assert metrics.p95_ms == 18.0
+    assert metrics.estimated_fps is None
+    assert empty.total_frames == 0
+    assert empty.p95_ms is None
+    assert empty.slow_frames == 0
 
 
 def test_parse_gfxinfo_estimates_fps_from_vsync_interval_not_completion_span():
@@ -114,6 +149,65 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
     metrics = parse_gfxinfo_output(output)
 
     assert metrics.estimated_fps == 60.0
+
+
+def test_last_frame_completed_ns_returns_latest_profile_row():
+    output = """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,2000000000,2000000000,0,0,0,0,0,0,0,0,0,0,2020000000,0,0,
+---PROFILEDATA---
+"""
+
+    assert _last_frame_completed_ns(output) == 2020000000
+
+
+def test_performance_service_frame_metrics_only_reports_new_framestats_rows():
+    outputs = [
+        """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,2000000000,2000000000,0,0,0,0,0,0,0,0,0,0,2020000000,0,0,
+---PROFILEDATA---
+""",
+        """
+Total frames rendered: 20
+95th percentile: 4950ms
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,2000000000,2000000000,0,0,0,0,0,0,0,0,0,0,2020000000,0,0,
+0,3000000000,3000000000,0,0,0,0,0,0,0,0,0,0,3024000000,0,0,
+---PROFILEDATA---
+""",
+        """
+Total frames rendered: 20
+95th percentile: 4950ms
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1010000000,0,0,
+0,2000000000,2000000000,0,0,0,0,0,0,0,0,0,0,2020000000,0,0,
+0,3000000000,3000000000,0,0,0,0,0,0,0,0,0,0,3024000000,0,0,
+---PROFILEDATA---
+""",
+    ]
+    service = PerformanceService("device-1")
+
+    def fake_run(_cmd, timeout=30, shell=False):
+        return Mock(success=True, output=outputs.pop(0), returncode=0, error="")
+
+    with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
+        first = service.frame_metrics("com.example")
+        second = service.frame_metrics("com.example")
+        third = service.frame_metrics("com.example")
+
+    assert first.total_frames == 2
+    assert second.total_frames == 1
+    assert second.p95_ms == 24.0
+    assert third.total_frames == 0
+    assert third.p95_ms is None
 
 
 def test_parse_meminfo_extracts_summary_and_object_counts():
@@ -162,12 +256,12 @@ Applications Memory Usage (in Kilobytes):
 def test_parse_meminfo_falls_back_to_graphics_rows_and_swap_pss_column():
     output = """
 Applications Memory Usage (in Kilobytes):
-                   Pss  Private  Private  SwapPss
-                ------   ------   ------   ------
+                   Pss  Private  Private  SwapPss  HeapSize  HeapAlloc  HeapFree
+                ------   ------   ------   ------  --------  ---------  --------
        EGL mtrack    2048        0        0        0
         GL mtrack    1024        0        0        0
           Gfx dev     512        0        0        0
-            TOTAL    8192     4096     2048      512
+            TOTAL    8192     4096     2048      512     16384      12288      4096
 
  App Summary
                        Pss(KB)
@@ -182,6 +276,30 @@ Applications Memory Usage (in Kilobytes):
     assert sample.total_pss_kb == 8192
     assert sample.graphics_kb == 3584
     assert sample.total_swap_pss_kb == 512
+
+
+def test_parse_meminfo_handles_graphic_buffer_rows_and_heap_columns():
+    output = """
+Applications Memory Usage (in Kilobytes):
+                   Pss  Private  Private  SwapPss  HeapSize  HeapAlloc  HeapFree
+                ------   ------   ------   ------  --------  ---------  --------
+ Graphic Buffer     768        0        0        0
+    GPU private     256        0        0        0
+            TOTAL    4096     2048     1024       64     32768      24576      8192
+
+ App Summary
+                       Pss(KB)
+                        ------
+           Java Heap:     1024
+         Native Heap:      512
+               TOTAL:     4096
+"""
+
+    sample = parse_meminfo_output(output, timestamp_ms=123)
+
+    assert sample.total_pss_kb == 4096
+    assert sample.graphics_kb == 1024
+    assert sample.total_swap_pss_kb == 64
 
 
 def test_cpu_sample_uses_proc_tick_delta():
@@ -216,6 +334,159 @@ def test_cpu_sample_uses_proc_tick_delta():
     assert sample.process_system_percent == 10.0
     assert sample.thread_count == 1
     assert sample.is_foreground is True
+
+
+def test_cpu_sample_scales_proc_tick_delta_by_cpu_core_count():
+    sample = build_cpu_sample(
+        timestamp_ms=1000,
+        pid=1234,
+        process_ticks=150,
+        total_ticks=1000,
+        previous_process_ticks=100,
+        previous_total_ticks=900,
+        is_foreground=True,
+        user_ticks=120,
+        system_ticks=30,
+        previous_user_ticks=80,
+        previous_system_ticks=20,
+        cpu_count=8,
+    )
+
+    assert sample.process_percent == 400.0
+    assert sample.process_user_percent == 320.0
+    assert sample.process_system_percent == 80.0
+
+
+def _proc_stat(pid: int, name: str, user_ticks: int, system_ticks: int, thread_count: int, start_time: int) -> str:
+    fields = [
+        "S",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        str(user_ticks),
+        str(system_ticks),
+        "0",
+        "0",
+        "20",
+        "0",
+        str(thread_count),
+        "0",
+        str(start_time),
+    ]
+    return f"{pid} ({name}) {' '.join(fields)}"
+
+
+def test_cpu_snapshot_output_parses_all_matching_package_processes():
+    output = "\n".join(
+        [
+            "cpu  100 0 100 800 0 0 0 0 0 0",
+            "cpu0 50 0 50 400 0 0 0 0 0 0",
+            "cpu1 50 0 50 400 0 0 0 0 0 0",
+            f"ADBLAB_PROC\t1234\tcom.example\t{_proc_stat(1234, 'com.example', 120, 30, 8, 1000)}",
+            f"ADBLAB_PROC\t1235\tcom.example:remote\t{_proc_stat(1235, 'example:remote', 40, 20, 4, 1001)}",
+        ]
+    )
+
+    total_ticks, cpu_count, processes = _parse_cpu_snapshot_output(output)
+
+    assert total_ticks == 1000
+    assert cpu_count == 2
+    assert [process.pid for process in processes] == [1234, 1235]
+    assert [process.process_name for process in processes] == ["com.example", "com.example:remote"]
+    assert [process.process_ticks for process in processes] == [150, 60]
+    assert [process.thread_count for process in processes] == [8, 4]
+
+
+def test_cpu_snapshot_command_matches_package_and_child_processes():
+    command = _cpu_snapshot_command("com.example")
+
+    assert "ADBLAB_PROC" in command
+    assert "[ \"$cmd\" = 'com.example' ]" in command
+    assert "case \"$cmd\" in 'com.example':*)" in command
+
+
+def test_performance_service_cpu_sample_aggregates_stable_package_processes():
+    snapshots = [
+        "\n".join(
+            [
+                "cpu  100 0 100 800 0 0 0 0 0 0",
+                "cpu0 50 0 50 400 0 0 0 0 0 0",
+                "cpu1 50 0 50 400 0 0 0 0 0 0",
+                f"ADBLAB_PROC\t1234\tcom.example\t{_proc_stat(1234, 'com.example', 100, 20, 8, 1000)}",
+                f"ADBLAB_PROC\t1235\tcom.example:remote\t{_proc_stat(1235, 'example:remote', 40, 10, 4, 1001)}",
+            ]
+        ),
+        "\n".join(
+            [
+                "cpu  120 0 140 940 0 0 0 0 0 0",
+                "cpu0 60 0 70 470 0 0 0 0 0 0",
+                "cpu1 60 0 70 470 0 0 0 0 0 0",
+                f"ADBLAB_PROC\t1234\tcom.example\t{_proc_stat(1234, 'com.example', 130, 35, 9, 1000)}",
+                f"ADBLAB_PROC\t1235\tcom.example:remote\t{_proc_stat(1235, 'example:remote', 50, 15, 5, 1001)}",
+            ]
+        ),
+    ]
+    service = PerformanceService("device-1")
+
+    def fake_run(_cmd, timeout=30, shell=False):
+        return Mock(success=True, output=snapshots.pop(0), returncode=0, error="")
+
+    with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
+        first = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
+        second = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
+
+    assert first.process_percent is None
+    assert first.process_count == 2
+    assert first.thread_count == 12
+    assert second.pid == 1234
+    assert second.process_count == 2
+    assert second.thread_count == 14
+    assert second.process_percent == 60.0
+    assert second.process_user_percent == 40.0
+    assert second.process_system_percent == 20.0
+
+
+def test_performance_service_cpu_sample_ignores_new_or_restarted_process_delta_until_next_sample():
+    snapshots = [
+        "\n".join(
+            [
+                "cpu  100 0 100 800 0 0 0 0 0 0",
+                "cpu0 50 0 50 400 0 0 0 0 0 0",
+                "cpu1 50 0 50 400 0 0 0 0 0 0",
+                f"ADBLAB_PROC\t1234\tcom.example\t{_proc_stat(1234, 'com.example', 100, 20, 8, 1000)}",
+            ]
+        ),
+        "\n".join(
+            [
+                "cpu  120 0 140 940 0 0 0 0 0 0",
+                "cpu0 60 0 70 470 0 0 0 0 0 0",
+                "cpu1 60 0 70 470 0 0 0 0 0 0",
+                f"ADBLAB_PROC\t1234\tcom.example\t{_proc_stat(1234, 'com.example', 130, 35, 8, 1000)}",
+                f"ADBLAB_PROC\t2234\tcom.example:remote\t{_proc_stat(2234, 'example:remote', 500, 300, 3, 2000)}",
+            ]
+        ),
+    ]
+    service = PerformanceService("device-1")
+
+    def fake_run(_cmd, timeout=30, shell=False):
+        return Mock(success=True, output=snapshots.pop(0), returncode=0, error="")
+
+    with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
+        service.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
+        second = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
+
+    assert second.process_count == 2
+    assert second.thread_count == 11
+    assert second.process_percent == 45.0
+    assert second.process_user_percent == 30.0
+    assert second.process_system_percent == 15.0
 
 
 def test_device_info_helpers_parse_system_outputs():
@@ -427,6 +698,22 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
     assert marker_payload(session) == [{"timestamp_ms": 1500, "label": "Login"}]
 
 
+def test_snapshot_chart_values_does_not_emit_cpu_zero_without_delta():
+    snapshot = PerformanceSnapshot(
+        device_id="device-1",
+        online=True,
+        current_package="com.example",
+        cpu=CpuSample(timestamp_ms=1000, process_percent=None, is_foreground=True),
+    )
+
+    values = snapshot_chart_values(snapshot, collecting=True)
+
+    assert values == {
+        "online": 1,
+        "collecting": 1,
+    }
+
+
 def test_frame_chart_values_uses_slow_rate_as_stutter_fallback():
     frames = FrameMetrics(
         total_frames=100,
@@ -515,8 +802,8 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
     assert {"label": "Graphics", "value": "12.0", "unit": "MB"} in details[2]["items"]
     assert {"label": "Views", "value": "10", "unit": ""} in details[3]["items"]
     assert policy["fpsChart"] == {"min": 0, "max": 60, "padded": False}
-    assert policy["cpuChart"] == {"min": 0, "max": 100, "padded": False}
-    assert policy["memoryChart"] == {"min": 0, "max": 256, "padded": True}
+    assert policy["cpuChart"] == {"min": 0, "max": 100, "padded": True, "dynamic": True}
+    assert policy["memoryChart"] == {"min": 0, "max": 256, "padded": True, "dynamic": True}
     policy["fpsChart"]["max"] = 120
     assert axis_policy()["fpsChart"]["max"] == 60
 

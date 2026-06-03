@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from dataclasses import dataclass
 
 from models.base.command_runner import CommandRunner
 from models.base.focus_detector import detect_current_package
@@ -15,8 +16,8 @@ from .parsers import (
     parse_gfxinfo_output,
     parse_meminfo_output,
     parse_process_stat_cpu_ticks,
+    parse_process_start_time_ticks,
     parse_proc_stat_total,
-    parse_process_stat_ticks,
     parse_process_thread_count,
 )
 from .report_service import PerformanceReportService
@@ -31,8 +32,11 @@ class PerformanceService:
         self.process_key_prefix = process_key_prefix or f"performance_{device_id}_{id(self)}"
         self.process_runner = ProcessRunner()
         self.report_service = PerformanceReportService()
-        self._cpu_baselines: dict[str, tuple[int, int, int, int]] = {}
+        self._cpu_baselines: dict[str, dict[str, tuple[int, int, int, int]]] = {}
+        self._cpu_total_baselines: dict[str, int] = {}
         self._device_info_cache: DeviceInfo | None = None
+        self._cpu_core_count_cache: int | None = None
+        self._frame_completed_baselines: dict[str, int] = {}
 
     def stop(self) -> None:
         self.process_runner.stop_all()
@@ -92,8 +96,12 @@ class PerformanceService:
         return result.output if result.success else ""
 
     def _cpu_core_count(self) -> int:
+        if self._cpu_core_count_cache is not None:
+            return self._cpu_core_count_cache
         output = self._shell("ls /sys/devices/system/cpu | grep -E '^cpu[0-9]+$'", timeout=5)
-        return len([line for line in output.splitlines() if re.match(r"cpu\d+$", line.strip())])
+        count = len([line for line in output.splitlines() if re.match(r"cpu\d+$", line.strip())])
+        self._cpu_core_count_cache = count
+        return count
 
     def _cpu_freq(self) -> str:
         output = self._shell(
@@ -164,7 +172,11 @@ class PerformanceService:
         )
         if not result.success:
             return None
-        return parse_gfxinfo_output(result.output)
+        previous_completed = self._frame_completed_baselines.get(package_name)
+        latest_completed = _last_frame_completed_ns(result.output)
+        if latest_completed is not None:
+            self._frame_completed_baselines[package_name] = latest_completed
+        return parse_gfxinfo_output(result.output, min_completed_ns=previous_completed)
 
     def cpu_sample(
         self,
@@ -175,41 +187,63 @@ class PerformanceService:
     ) -> CpuSample | None:
         if not package_name:
             return None
-        pid = self._package_pid(package_name)
-        if pid is None:
-            self._cpu_baselines.pop(package_name, None)
-            return None
-        process_result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", "cat", f"/proc/{pid}/stat"],
-            timeout=5,
-        )
         total_result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", "cat", "/proc/stat"],
-            timeout=5,
+            ["adb", "-s", self.device_id, "shell", _cpu_snapshot_command(package_name)],
+            timeout=8,
         )
-        if not process_result.success or not total_result.success:
+        if not total_result.success:
             return None
-        process_cpu_ticks = parse_process_stat_cpu_ticks(process_result.output)
-        process_ticks = sum(process_cpu_ticks) if process_cpu_ticks is not None else parse_process_stat_ticks(process_result.output)
-        total_ticks = parse_proc_stat_total(total_result.output)
-        thread_count = parse_process_thread_count(process_result.output)
-        previous = self._cpu_baselines.get(package_name)
-        user_ticks = process_cpu_ticks[0] if process_cpu_ticks is not None else None
-        system_ticks = process_cpu_ticks[1] if process_cpu_ticks is not None else None
-        if process_ticks is not None and total_ticks is not None:
-            self._cpu_baselines[package_name] = (
-                process_ticks,
+        total_ticks, snapshot_cpu_count, process_stats = _parse_cpu_snapshot_output(total_result.output)
+        if total_ticks is None:
+            return None
+        if not process_stats:
+            self._cpu_baselines.pop(package_name, None)
+            self._cpu_total_baselines.pop(package_name, None)
+            return None
+        previous_processes = self._cpu_baselines.get(package_name, {})
+        previous_total = self._cpu_total_baselines.get(package_name)
+        process_delta = 0
+        user_delta = 0
+        system_delta = 0
+        has_process_delta = False
+        current_baselines: dict[str, tuple[int, int, int, int]] = {}
+        thread_count = 0
+        primary_pid: int | None = None
+        for stat in process_stats:
+            if stat.process_name == package_name:
+                primary_pid = stat.pid
+            elif primary_pid is None:
+                primary_pid = stat.pid
+            thread_count += stat.thread_count
+            key = stat.identity
+            current_baselines[key] = (
+                stat.process_ticks,
                 total_ticks,
-                user_ticks or 0,
-                system_ticks or 0,
+                stat.user_ticks,
+                stat.system_ticks,
             )
-        previous_process = previous[0] if previous else None
-        previous_total = previous[1] if previous else None
-        previous_user = previous[2] if previous else None
-        previous_system = previous[3] if previous else None
+            previous = previous_processes.get(key)
+            if not previous:
+                continue
+            delta = stat.process_ticks - previous[0]
+            delta_user = stat.user_ticks - previous[2]
+            delta_system = stat.system_ticks - previous[3]
+            if delta >= 0 and delta_user >= 0 and delta_system >= 0:
+                process_delta += delta
+                user_delta += delta_user
+                system_delta += delta_system
+                has_process_delta = True
+        self._cpu_baselines[package_name] = current_baselines
+        self._cpu_total_baselines[package_name] = total_ticks
+        process_ticks = process_delta if has_process_delta else None
+        user_ticks = user_delta if has_process_delta else None
+        system_ticks = system_delta if has_process_delta else None
+        previous_process = 0 if has_process_delta else None
+        previous_user = 0 if has_process_delta else None
+        previous_system = 0 if has_process_delta else None
         return build_cpu_sample(
             timestamp_ms=timestamp_ms or _now_ms(),
-            pid=pid,
+            pid=primary_pid,
             process_ticks=process_ticks,
             total_ticks=total_ticks,
             previous_process_ticks=previous_process,
@@ -220,23 +254,13 @@ class PerformanceService:
             previous_user_ticks=previous_user,
             previous_system_ticks=previous_system,
             thread_count=thread_count,
+            cpu_count=snapshot_cpu_count or self._cpu_core_count() or 1,
+            process_count=len(process_stats),
         )
-
-    def _package_pid(self, package_name: str) -> int | None:
-        result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", "pidof", package_name],
-            timeout=5,
-        )
-        if not result.success or not result.output.strip():
-            return None
-        first = result.output.strip().split()[0]
-        try:
-            return int(first)
-        except ValueError:
-            return None
 
     def reset_frame_stats(self, package_name: str) -> None:
         if package_name:
+            self._frame_completed_baselines.pop(package_name, None)
             CommandRunner.run(
                 ["adb", "-s", self.device_id, "shell", "dumpsys", "gfxinfo", package_name, "reset"],
                 timeout=8,
@@ -323,6 +347,8 @@ class PerformanceService:
                 _json_text(startup.to_dict()),
             )
 
+        if package_name:
+            self.cpu_sample(package_name, current_package=self.current_package())
         self.reset_frame_stats(package_name)
         time.sleep(1)
         gfx = CommandRunner.run(
@@ -411,6 +437,117 @@ def _json_text(data: dict) -> str:
     import json
 
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@dataclass(frozen=True)
+class _CpuProcessStat:
+    pid: int
+    process_name: str
+    start_time_ticks: int
+    user_ticks: int
+    system_ticks: int
+    thread_count: int
+
+    @property
+    def identity(self) -> str:
+        return f"{self.pid}:{self.start_time_ticks}"
+
+    @property
+    def process_ticks(self) -> int:
+        return self.user_ticks + self.system_ticks
+
+
+def _cpu_snapshot_command(package_name: str) -> str:
+    escaped_package = _shell_single_quote(package_name)
+    return (
+        "cat /proc/stat; "
+        f"for d in /proc/[0-9]*; do "
+        "pid=${d##*/}; "
+        "[ -r \"$d/cmdline\" ] || continue; "
+        "cmd=$(tr '\\0' ' ' < \"$d/cmdline\" | sed 's/[[:space:]]*$//'); "
+        f"[ \"$cmd\" = {escaped_package} ] || case \"$cmd\" in {escaped_package}:*) ;; *) continue ;; esac; "
+        "[ -r \"$d/stat\" ] || continue; "
+        "printf 'ADBLAB_PROC\t%s\t%s\t' \"$pid\" \"$cmd\"; "
+        "cat \"$d/stat\"; "
+        "done"
+    )
+
+
+def _parse_cpu_snapshot_output(output: str) -> tuple[int | None, int, list[_CpuProcessStat]]:
+    proc_stat_lines = []
+    process_stats: list[_CpuProcessStat] = []
+    for line in output.splitlines():
+        if line.startswith("ADBLAB_PROC\t"):
+            stat = _parse_cpu_process_snapshot_line(line)
+            if stat is not None:
+                process_stats.append(stat)
+        elif line.startswith("cpu"):
+            proc_stat_lines.append(line)
+    total_ticks = parse_proc_stat_total("\n".join(proc_stat_lines))
+    cpu_count = sum(1 for line in proc_stat_lines if re.match(r"cpu\d+\s", line))
+    return total_ticks, cpu_count, process_stats
+
+
+def _parse_cpu_process_snapshot_line(line: str) -> _CpuProcessStat | None:
+    prefix, sep, payload = line.partition("ADBLAB_PROC\t")
+    if prefix or not sep:
+        return None
+    pid_text, sep, rest = payload.partition("\t")
+    if not sep:
+        return None
+    process_name, sep, stat_text = rest.partition("\t")
+    if not sep:
+        return None
+    try:
+        pid = int(pid_text)
+    except ValueError:
+        return None
+    cpu_ticks = parse_process_stat_cpu_ticks(stat_text)
+    start_time = parse_process_start_time_ticks(stat_text)
+    thread_count = parse_process_thread_count(stat_text)
+    if cpu_ticks is None or start_time is None:
+        return None
+    return _CpuProcessStat(
+        pid=pid,
+        process_name=process_name,
+        start_time_ticks=start_time,
+        user_ticks=cpu_ticks[0],
+        system_ticks=cpu_ticks[1],
+        thread_count=thread_count or 0,
+    )
+
+
+def _shell_single_quote(value: str) -> str:
+    return "'" + value.replace("'", "'\"'\"'") + "'"
+
+
+def _last_frame_completed_ns(output: str) -> int | None:
+    latest = None
+    header_seen = False
+    completed_index = -1
+    for line in output.splitlines():
+        if line.startswith("Flags,"):
+            header = line.split(",")
+            try:
+                completed_index = header.index("FrameCompleted")
+            except ValueError:
+                completed_index = -1
+            header_seen = completed_index >= 0
+            continue
+        if not header_seen:
+            continue
+        if not line.strip() or line.startswith("---PROFILEDATA---"):
+            break
+        values = line.split(",")
+        if completed_index >= len(values):
+            continue
+        try:
+            completed = int(values[completed_index] or "0")
+        except ValueError:
+            continue
+        if completed > 0:
+            latest = completed if latest is None else max(latest, completed)
+    return latest
 
 
 def _first_available(*values: str) -> str:

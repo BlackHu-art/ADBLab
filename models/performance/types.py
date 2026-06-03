@@ -75,6 +75,7 @@ class CpuSample:
     is_foreground: bool = False
     pid: int | None = None
     thread_count: int | None = None
+    process_count: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -95,12 +95,19 @@ class PerfDogTimelineChart(QWidget):
             (series, self._sample_held_values(series["metric"]))
             for series in series_defs
         ]
-        numeric = [
-            float(value)
-            for _series, values in series_values
-            for value in values
-            if value is not None
+        primary_values = [
+            (series, values)
+            for series, values in series_values
+            if series.get("axis", "primary") != "overlay"
         ]
+        numeric = _numeric_values(primary_values or series_values)
+        overlay_axis_max = _axis_max(
+            _numeric_values(
+                (series, values)
+                for series, values in series_values
+                if series.get("axis") == "overlay"
+            )
+        )
         painter.setPen(text)
         label_rect = QRectF(lane_rect.left() - 122, lane_rect.top() + 4, 112, 20)
         painter.drawText(label_rect, Qt.AlignLeft | Qt.AlignVCenter, lane["label"])
@@ -131,12 +138,17 @@ class PerfDogTimelineChart(QWidget):
         lane_plot = lane_rect.adjusted(0, 8, 0, -8)
         for series, values in series_values:
             points = []
+            scale_min = min_value
+            scale_max = max_value
+            if series.get("axis") == "overlay" and overlay_axis_max:
+                scale_min = 0
+                scale_max = overlay_axis_max
             for index, value in enumerate(values):
                 if value is None:
                     points.append(None)
                     continue
                 x = lane_plot.left() + lane_plot.width() * index / max(1, sample_count - 1)
-                normalized = (float(value) - min_value) / (max_value - min_value)
+                normalized = (float(value) - scale_min) / (scale_max - scale_min)
                 y = lane_plot.bottom() - normalized * lane_plot.height()
                 points.append(QPointF(x, y))
 
@@ -216,7 +228,7 @@ def _draw_lane_value_rows(
         painter.drawText(
             QRectF(x + 11, y - 2, 70, 18),
             Qt.AlignLeft | Qt.AlignVCenter,
-            str(series.get("label", series.get("metric", ""))),
+            _series_label(series),
         )
         painter.drawText(
             QRectF(x + 78, y - 2, 42, 18),
@@ -224,6 +236,26 @@ def _draw_lane_value_rows(
             _value_with_unit(current, series.get("unit", lane.get("unit", ""))),
         )
         y += 14
+
+
+def _numeric_values(series_values) -> list[float]:
+    return [
+        float(value)
+        for _series, values in series_values
+        for value in values
+        if value is not None
+    ]
+
+
+def _axis_max(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return max(max(values), 1)
+
+
+def _series_label(series: dict) -> str:
+    label = str(series.get("label", series.get("metric", "")))
+    return f"{label}*" if series.get("axis") == "overlay" else label
 
 
 def _value_with_unit(value: float | None, unit: str = "") -> str:
