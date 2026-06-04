@@ -4,6 +4,5 @@ __pycache__/
 /.playwright-cli/
 /output/
 common/mail/mail.yaml
-.claude/
 .superpowers/
 guiscrcpy/
