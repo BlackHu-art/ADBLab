@@ -49,9 +49,11 @@ class FrameMetrics:
 class MemorySample:
     timestamp_ms: int
     total_pss_kb: int | None = None
+    rss_kb: int | None = None
     java_heap_kb: int | None = None
     native_heap_kb: int | None = None
     graphics_kb: int | None = None
+    gpu_kb: int | None = None
     stack_kb: int | None = None
     code_kb: int | None = None
     private_other_kb: int | None = None

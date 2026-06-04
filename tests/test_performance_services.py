@@ -26,7 +26,16 @@ from models.performance.dashboard import (
     web_timeline_payload,
 )
 from models.performance.presentation import build_report_summary, render_report_text
-from models.performance.providers import PsutilHostProvider, _parse_android_agent_batch, provider_capabilities
+from models.performance.providers import (
+    AndroidFrameSampler,
+    MemoryLeakDetector,
+    PsutilHostProvider,
+    _parse_android_agent_batch,
+    parse_frame_latency,
+    parse_smaps_memory,
+    parse_surfaceflinger_latency,
+    provider_capabilities,
+)
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.service import (
     PerformanceService,
@@ -546,6 +555,7 @@ def test_psutil_host_provider_samples_current_process():
     assert snapshot.cpu.process_count == 1
     assert snapshot.memory is not None
     assert snapshot.memory.total_pss_kb and snapshot.memory.total_pss_kb > 0
+    assert snapshot.memory.rss_kb == snapshot.memory.total_pss_kb
     provider.stop()
 
 
@@ -565,8 +575,11 @@ def test_android_agent_batch_parser_extracts_cpu_and_memory_processes():
         "ADBLAB_STAT\tcpu  100 0 100 800 0 0 0 0 0 0",
         "ADBLAB_STAT\tcpu0 50 0 50 400 0 0 0 0 0 0",
         "ADBLAB_STAT\tcpu1 50 0 50 400 0 0 0 0 0 0",
-        f"ADBLAB_PROC\t1234\tcom.example\t8\t2048\t1536\t{_proc_stat(1234, 'com.example', 100, 20, 8, 1000)}",
-        f"ADBLAB_PROC\t1235\tcom.example:remote\t4\t1024\t\t{_proc_stat(1235, 'example:remote', 40, 10, 4, 1001)}",
+        f"ADBLAB_PROC\t1234\tcom.example\t8\t2048\t{_proc_stat(1234, 'com.example', 100, 20, 8, 1000)}",
+        "ADBLAB_SMAP\t1234\t[anon:dalvik-main space]\t1024\t0",
+        "ADBLAB_SMAP\t1234\t[heap]\t512\t16",
+        f"ADBLAB_PROC\t1235\tcom.example:remote\t4\t1024\t{_proc_stat(1235, 'example:remote', 40, 10, 4, 1001)}",
+        "ADBLAB_SMAP\t1235\t/dev/kgsl-3d0\t256\t0",
     ]
 
     total_ticks, cpu_count, processes = _parse_android_agent_batch(lines)
@@ -574,9 +587,142 @@ def test_android_agent_batch_parser_extracts_cpu_and_memory_processes():
     assert total_ticks == 1000
     assert cpu_count == 2
     assert [process.pid for process in processes] == [1234, 1235]
-    assert processes[0].pss_kb == 1536
     assert processes[1].rss_kb == 1024
+    assert processes[0].memory.total_pss_kb == 1536
+    assert processes[0].memory.java_heap_kb == 1024
+    assert processes[0].memory.native_heap_kb == 512
+    assert processes[1].memory.gpu_kb == 256
     assert [process.thread_count for process in processes] == [8, 4]
+
+
+def test_parse_smaps_memory_classifies_pss_buckets_and_rss():
+    smaps = """
+7a00000000-7a00100000 rw-p 00000000 00:00 0 [anon:dalvik-main space]
+Pss:                 1024 kB
+SwapPss:               32 kB
+7b00000000-7b00100000 rw-p 00000000 00:00 0 [heap]
+Pss:                  512 kB
+7c00000000-7c00100000 rw-p 00000000 00:00 0 /dev/kgsl-3d0
+Pss:                  256 kB
+7d00000000-7d00100000 rw-p 00000000 00:00 0 Graphic Buffer
+Pss:                  128 kB
+7e00000000-7e00100000 r-xp 00000000 00:00 0 /data/app/base.apk
+Pss:                   64 kB
+"""
+
+    sample = parse_smaps_memory(smaps, timestamp_ms=123, rss_kb=4096)
+
+    assert sample.timestamp_ms == 123
+    assert sample.total_pss_kb == 1984
+    assert sample.rss_kb == 4096
+    assert sample.java_heap_kb == 1024
+    assert sample.native_heap_kb == 512
+    assert sample.gpu_kb == 256
+    assert sample.graphics_kb == 128
+    assert sample.code_kb == 64
+    assert sample.total_swap_pss_kb == 32
+
+
+def test_parse_frame_latency_returns_incremental_fps_without_reusing_empty_windows():
+    output = """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1016600000,0,0,
+0,1016666667,1016666667,0,0,0,0,0,0,0,0,0,0,1038000000,0,0,
+0,1033333334,1033333334,0,0,0,0,0,0,0,0,0,0,1050000000,0,0,
+---PROFILEDATA---
+"""
+
+    frames = parse_frame_latency(output)
+    empty = parse_frame_latency(output, min_completed_ns=1050000000)
+
+    assert frames.total_frames == 3
+    assert frames.estimated_fps == 60.0
+    assert frames.p95_ms and frames.p95_ms > 16
+    assert empty is None
+
+
+def test_parse_surfaceflinger_latency_returns_incremental_frames():
+    output = """
+16666667
+1000000000 1016666667 1017000000
+1016666667 1033333334 1034000000
+1033333334 1066666668 1067000000
+"""
+
+    frames = parse_surfaceflinger_latency(output)
+    empty = parse_surfaceflinger_latency(output, min_present_ns=1066666668)
+
+    assert frames.total_frames == 3
+    assert frames.estimated_fps == 60.0
+    assert frames.slow_frames == 3
+    assert frames.p95_ms and frames.p95_ms > 40
+    assert empty is None
+
+
+def test_android_frame_sampler_primes_history_before_first_realtime_window():
+    outputs = [
+        """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1016600000,0,0,
+---PROFILEDATA---
+""",
+        """
+---PROFILEDATA---
+Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,AnimationStart,PerformTraversalsStart,DrawStart,SyncQueued,SyncStart,IssueDrawCommandsStart,SwapBuffers,FrameCompleted,DequeueBufferDuration,QueueBufferDuration,
+0,1000000000,1000000000,0,0,0,0,0,0,0,0,0,0,1016600000,0,0,
+0,1016666667,1016666667,0,0,0,0,0,0,0,0,0,0,1038000000,0,0,
+---PROFILEDATA---
+""",
+    ]
+
+    sampler = AndroidFrameSampler("device-1")
+    with patch("models.performance.providers.CommandRunner.run") as run:
+        run.side_effect = [
+            type("Result", (), {"success": True, "output": ""})(),
+            type("Result", (), {"success": True, "output": outputs[0]})(),
+            type("Result", (), {"success": True, "output": outputs[1]})(),
+        ]
+
+        sampler.prime("com.example")
+        frames = sampler.sample("com.example")
+
+    assert frames.total_frames == 1
+    assert frames.p95_ms == 21.33
+
+
+def test_android_frame_sampler_prefers_surfaceflinger_latency():
+    layer_list = "com.example/com.example.Main#0\ncom.other/.Main#0\n"
+    surface_output = """
+16666667
+1000000000 1016666667 1017000000
+1016666667 1033333334 1034000000
+"""
+
+    sampler = AndroidFrameSampler("device-1")
+    with patch("models.performance.providers.CommandRunner.run") as run:
+        run.side_effect = [
+            type("Result", (), {"success": True, "output": layer_list})(),
+            type("Result", (), {"success": True, "output": surface_output})(),
+        ]
+
+        frames = sampler.sample("com.example")
+
+    assert frames.total_frames == 2
+    assert frames.estimated_fps == 60.0
+    assert run.call_count == 2
+    assert "SurfaceFlinger --latency" in run.call_args_list[1].args[0][-1]
+
+
+def test_memory_leak_detector_reports_sustained_pss_growth_only():
+    detector = MemoryLeakDetector(warmup_seconds=2, window_seconds=10, min_growth_kb=1000, min_growth_ratio=0.10)
+
+    assert detector.observe(MemorySample(timestamp_ms=1000, total_pss_kb=10000)) is None
+    assert detector.observe(MemorySample(timestamp_ms=2000, total_pss_kb=10100)) is None
+    warning = detector.observe(MemorySample(timestamp_ms=4000, total_pss_kb=11600))
+
+    assert warning == "Memory growth trend: PSS +1600 KB over rolling window"
 
 
 def test_report_service_writes_expected_artifacts(tmp_path):
@@ -594,7 +740,7 @@ def test_report_service_writes_expected_artifacts(tmp_path):
             total_time_ms=500,
         ),
         frames=FrameMetrics(total_frames=10, janky_frames=1, jank_rate=0.1),
-        samples=[MemorySample(timestamp_ms=1, total_pss_kb=1000)],
+        samples=[MemorySample(timestamp_ms=1, total_pss_kb=1000, rss_kb=1500, gpu_kb=64)],
         findings=["demo finding"],
         status="warn",
     )
@@ -648,6 +794,7 @@ def test_dashboard_metric_lanes_define_perfdog_series_and_theme_colors():
         "memory_java",
         "memory_native",
         "memory_graphics",
+        "memory_gpu",
         "memory_swap",
     ]
     assert lanes[0]["color"] == "#fps"
@@ -687,9 +834,11 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
         memory=MemorySample(
             timestamp_ms=1000,
             total_pss_kb=2048,
+            rss_kb=4096,
             java_heap_kb=1024,
             native_heap_kb=512,
             graphics_kb=256,
+            gpu_kb=384,
             stack_kb=128,
             code_kb=64,
             private_other_kb=32,
@@ -748,9 +897,11 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
     assert snapshot_values["cpu_system"] == 9.5
     assert snapshot_values["threads"] == 42
     assert snapshot_values["memory_pss"] == 2.0
+    assert snapshot_values["memory_rss"] == 4.0
     assert snapshot_values["memory_java"] == 1.0
     assert snapshot_values["memory_native"] == 0.5
     assert snapshot_values["memory_graphics"] == 0.25
+    assert snapshot_values["memory_gpu"] == 0.38
     assert snapshot_values["memory_stack"] == 0.12
     assert snapshot_values["memory_code"] == 0.06
     assert snapshot_values["memory_private_other"] == 0.03
@@ -830,6 +981,7 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
             "cpu_system": 5,
             "memory_pss": 120,
             "memory_graphics": 10,
+            "memory_gpu": 4,
         },
     )
     session.add_point(
@@ -846,6 +998,7 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
             "memory_java": 70,
             "memory_native": 45,
             "memory_graphics": 12,
+            "memory_gpu": 5,
             "memory_swap": 2,
             "activities": 1,
             "views": 10,
@@ -878,6 +1031,7 @@ def test_dashboard_metric_summaries_and_axis_policy_are_stable_payloads():
     assert {"label": "P95", "value": "18.0", "unit": "ms"} in details[0]["items"]
     assert {"label": "User", "value": "22.0", "unit": "%"} in details[1]["items"]
     assert {"label": "Graphics", "value": "12.0", "unit": "MB"} in details[2]["items"]
+    assert {"label": "GPU", "value": "5.0", "unit": "MB"} in details[2]["items"]
     assert {"label": "Views", "value": "10", "unit": ""} in details[3]["items"]
     assert policy["fpsChart"] == {"min": 0, "max": 60, "padded": False}
     assert policy["cpuChart"] == {"min": 0, "max": 100, "padded": True, "dynamic": True}
@@ -1082,8 +1236,10 @@ def test_performance_report_presentation_builds_summary_and_plain_text():
             MemorySample(
                 timestamp_ms=1,
                 total_pss_kb=2048,
+                rss_kb=4096,
                 native_heap_kb=512,
                 graphics_kb=256,
+                gpu_kb=128,
                 total_swap_pss_kb=128,
             )
         ],
@@ -1116,6 +1272,7 @@ def test_performance_report_presentation_builds_summary_and_plain_text():
     assert "FPS: 58.7" in text
     assert "CPU User: 18.0%" in text
     assert "Native Heap: 512 KB" in text
+    assert "GPU Memory: 128 KB" in text
     assert "Swap PSS: 128 KB" in text
     assert "- Jank rate: 8.00%" in text
 

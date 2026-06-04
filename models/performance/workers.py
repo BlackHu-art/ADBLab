@@ -17,7 +17,7 @@ class PerformanceProviderWorker(QThread):
         provider: PerformanceSampleProvider,
         target: str,
         *,
-        interval_ms: int = 500,
+        interval_ms: int = 1000,
         max_samples: int | None = None,
     ):
         super().__init__()
@@ -135,6 +135,7 @@ class PerformanceAnalyzeWorker(QThread):
         samples: list,
         cpu_samples: list | None,
         started_at: float,
+        findings: list[str] | None = None,
     ):
         super().__init__()
         self.service = service
@@ -142,6 +143,7 @@ class PerformanceAnalyzeWorker(QThread):
         self.samples = samples
         self.cpu_samples = list(cpu_samples or [])
         self.started_at = started_at
+        self.initial_findings = list(findings or [])
 
     def run(self):
         try:
@@ -149,7 +151,7 @@ class PerformanceAnalyzeWorker(QThread):
             frames = None
             report_service = self.service.report_service
             report_dir = report_service.create_report_dir(self.service.device_id, self.package_name or "unknown")
-            findings = []
+            findings = list(self.initial_findings)
             if frames and frames.jank_rate > 0.05:
                 findings.append(f"Jank rate: {frames.jank_rate:.2%}")
             if len(self.samples) >= 2:

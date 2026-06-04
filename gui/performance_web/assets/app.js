@@ -444,6 +444,7 @@ function chartDefinitions() {
         { key: "memory_java", label: "Java Heap", color: cssColor("--memory-java-color", "#58a6ff"), digits: 1, unit: " MB" },
         { key: "memory_native", label: "Native", color: cssColor("--memory-native-color", "#f59e0b"), digits: 1, unit: " MB" },
         { key: "memory_graphics", label: "Graphics", color: cssColor("--memory-graphics-color", "#4cc38a"), digits: 1, unit: " MB" },
+        { key: "memory_gpu", label: "GPU", color: cssColor("--danger", "#ff6b6b"), digits: 1, unit: " MB" },
         { key: "memory_swap", label: "Swap", color: cssColor("--memory-swap-color", "#f59e0b"), digits: 1, unit: " MB" }
       ]
     }
@@ -924,12 +925,12 @@ function buildPreviewPayload() {
       findings: ["Jank rose during the scroll segment."]
     },
     points: [
-      { _ts: now - 5000, fps: 58, jank: 2, stutter: 0, stutter_rate: 0, frame_time_p95: 18.4, cpu_app: 21, cpu_user: 16, cpu_system: 5, cpu_fg: 21, cpu_bg: 0, memory_pss: 326, memory_java: 148, memory_native: 92, memory_graphics: 42, memory_swap: 3 },
-      { _ts: now - 4000, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 16.8, cpu_app: 24, cpu_user: 18, cpu_system: 6, cpu_fg: 24, cpu_bg: 0, memory_pss: 332, memory_java: 151, memory_native: 94, memory_graphics: 43, memory_swap: 3 },
-      { _ts: now - 3000, fps: 55, jank: 5, stutter: 1, stutter_rate: 1.7, frame_time_p95: 27.4, cpu_app: 37, cpu_user: 28, cpu_system: 9, cpu_fg: 37, cpu_bg: 0, memory_pss: 337, memory_java: 153, memory_native: 95, memory_graphics: 45, memory_swap: 4 },
-      { _ts: now - 2000, fps: 59, jank: 3, stutter: 0, stutter_rate: 0, frame_time_p95: 21.1, cpu_app: 29, cpu_user: 22, cpu_system: 7, cpu_fg: 29, cpu_bg: 0, memory_pss: 339, memory_java: 154, memory_native: 96, memory_graphics: 45, memory_swap: 4 },
-      { _ts: now - 1000, fps: 57, jank: 4, stutter: 0, stutter_rate: 0, frame_time_p95: 24.6, cpu_app: 31, cpu_user: 24, cpu_system: 7, cpu_fg: 31, cpu_bg: 0, memory_pss: 342, memory_java: 157, memory_native: 97, memory_graphics: 46, memory_swap: 4 },
-      { _ts: now, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 17.2, cpu_app: 26, cpu_user: 20, cpu_system: 6, cpu_fg: 26, cpu_bg: 0, memory_pss: 345, memory_java: 158, memory_native: 98, memory_graphics: 47, memory_swap: 5 }
+      { _ts: now - 5000, fps: 58, jank: 2, stutter: 0, stutter_rate: 0, frame_time_p95: 18.4, cpu_app: 21, cpu_user: 16, cpu_system: 5, cpu_fg: 21, cpu_bg: 0, memory_pss: 326, memory_java: 148, memory_native: 92, memory_graphics: 42, memory_gpu: 18, memory_swap: 3 },
+      { _ts: now - 4000, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 16.8, cpu_app: 24, cpu_user: 18, cpu_system: 6, cpu_fg: 24, cpu_bg: 0, memory_pss: 332, memory_java: 151, memory_native: 94, memory_graphics: 43, memory_gpu: 19, memory_swap: 3 },
+      { _ts: now - 3000, fps: 55, jank: 5, stutter: 1, stutter_rate: 1.7, frame_time_p95: 27.4, cpu_app: 37, cpu_user: 28, cpu_system: 9, cpu_fg: 37, cpu_bg: 0, memory_pss: 337, memory_java: 153, memory_native: 95, memory_graphics: 45, memory_gpu: 21, memory_swap: 4 },
+      { _ts: now - 2000, fps: 59, jank: 3, stutter: 0, stutter_rate: 0, frame_time_p95: 21.1, cpu_app: 29, cpu_user: 22, cpu_system: 7, cpu_fg: 29, cpu_bg: 0, memory_pss: 339, memory_java: 154, memory_native: 96, memory_graphics: 45, memory_gpu: 21, memory_swap: 4 },
+      { _ts: now - 1000, fps: 57, jank: 4, stutter: 0, stutter_rate: 0, frame_time_p95: 24.6, cpu_app: 31, cpu_user: 24, cpu_system: 7, cpu_fg: 31, cpu_bg: 0, memory_pss: 342, memory_java: 157, memory_native: 97, memory_graphics: 46, memory_gpu: 22, memory_swap: 4 },
+      { _ts: now, fps: 60, jank: 1, stutter: 0, stutter_rate: 0, frame_time_p95: 17.2, cpu_app: 26, cpu_user: 20, cpu_system: 6, cpu_fg: 26, cpu_bg: 0, memory_pss: 345, memory_java: 158, memory_native: 98, memory_graphics: 47, memory_gpu: 22, memory_swap: 5 }
     ],
     markers: [
       { timestamp_ms: now - 3600, label: "Open page" },
@@ -948,6 +949,7 @@ function buildPreviewPayload() {
       { metric: "memory_java", label: "Java", unit: "MB", digits: 1, color: "#58a6ff", now: 158, avg: 153.8, max: 158, count: 6 },
       { metric: "memory_native", label: "Native", unit: "MB", digits: 1, color: "#f59e0b", now: 98, avg: 95.3, max: 98, count: 6 },
       { metric: "memory_graphics", label: "Graphics", unit: "MB", digits: 1, color: "#4cc38a", now: 47, avg: 44.7, max: 47, count: 6 },
+      { metric: "memory_gpu", label: "GPU", unit: "MB", digits: 1, color: "#ff6b6b", now: 22, avg: 20.5, max: 22, count: 6 },
       { metric: "memory_swap", label: "Swap", unit: "MB", digits: 1, color: "#f59e0b", now: 5, avg: 3.8, max: 5, count: 6 }
     ],
     metricDetails: [

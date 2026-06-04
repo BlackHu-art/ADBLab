@@ -32,9 +32,11 @@ def render_report_text(result: Mapping[str, Any], title: str) -> str:
     if samples:
         last = samples[-1]
         lines.append(f"PSS: {kb(last.total_pss_kb)}")
+        lines.append(f"RSS: {kb(getattr(last, 'rss_kb', None))}")
         lines.append(f"Java Heap: {kb(last.java_heap_kb)}")
         lines.append(f"Native Heap: {kb(last.native_heap_kb)}")
         lines.append(f"Graphics: {kb(last.graphics_kb)}")
+        lines.append(f"GPU Memory: {kb(getattr(last, 'gpu_kb', None))}")
         lines.append(f"Swap PSS: {kb(last.total_swap_pss_kb)}")
     findings = _findings(result)
     if findings:
@@ -68,8 +70,10 @@ def build_report_summary(result: Mapping[str, Any], title: str) -> dict:
     if samples:
         last = samples[-1]
         metrics.append({"label": "PSS", "value": kb(last.total_pss_kb)})
+        metrics.append({"label": "RSS", "value": kb(getattr(last, 'rss_kb', None))})
         metrics.append({"label": "Native", "value": kb(last.native_heap_kb)})
         metrics.append({"label": "Graphics", "value": kb(last.graphics_kb)})
+        metrics.append({"label": "GPU", "value": kb(getattr(last, 'gpu_kb', None))})
         metrics.append({"label": "Swap", "value": kb(last.total_swap_pss_kb)})
     return {
         "title": title,

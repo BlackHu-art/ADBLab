@@ -65,7 +65,7 @@ class PerformanceMonitorDialog(QDialog):
     """Per-device live performance monitor."""
 
     REFRESH_INTERVAL_MS = 1000
-    PROVIDER_INTERVAL_MS = 500
+    PROVIDER_INTERVAL_MS = 1000
     DEVICE_INFO_REFRESH_DELAY_MS = 1800
     DEVICE_INFO_RETRY_DELAY_MS = 500
     TIMELINE_MAX_ENTRIES = 3600
@@ -88,6 +88,7 @@ class PerformanceMonitorDialog(QDialog):
         self._monitor_started_at = 0.0
         self._monitor_samples = []
         self._monitor_cpu_samples = []
+        self._monitor_findings = []
         self._timeline_entries = []
         self._last_report_dir = ""
         self._last_report_summary = {}
@@ -376,6 +377,11 @@ class PerformanceMonitorDialog(QDialog):
                 self._monitor_samples.append(snapshot.memory)
         if snapshot.cpu and self._monitoring:
             self._monitor_cpu_samples.append(snapshot.cpu)
+        if self._monitoring and snapshot.warnings:
+            for warning in snapshot.warnings:
+                if warning not in self._monitor_findings:
+                    self._monitor_findings.append(warning)
+                self._session.add_marker(_now_ms(), warning, kind="warning")
         if self._monitoring:
             self.device_state_value.setText(f"Collecting {_elapsed_text(self._monitor_started_at)}")
         else:
@@ -471,6 +477,7 @@ class PerformanceMonitorDialog(QDialog):
         )
         self._monitor_samples = []
         self._monitor_cpu_samples = []
+        self._monitor_findings = []
         self.current_pkg_value.setText(package_name)
         self.device_state_value.setText("Collecting 00:00")
         self._sync_controls()
@@ -513,6 +520,7 @@ class PerformanceMonitorDialog(QDialog):
             list(self._monitor_samples),
             list(self._monitor_cpu_samples),
             self._monitor_started_at,
+            findings=list(self._monitor_findings),
         )
         self._start_worker(
             "_analyze_worker",

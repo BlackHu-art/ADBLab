@@ -69,7 +69,7 @@ from gui.styles import theme
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 from utils.batch_tracker import BatchOperationTracker
 from models.performance.session import PerformanceSession
-from models.performance.types import FrameMetrics
+from models.performance.types import FrameMetrics, MemorySample
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.workers import (
     PerformanceDeviceInfoWorker,
@@ -731,7 +731,7 @@ def test_performance_monitor_action_workers_use_dialog_service():
     assert device_info_worker.service is service
 
     provider = Mock()
-    provider_worker = PerformanceProviderWorker(provider, "com.example", interval_ms=500)
+    provider_worker = PerformanceProviderWorker(provider, "com.example", interval_ms=1000)
     assert provider_worker.provider is provider
     assert provider_worker.target == "com.example"
 
@@ -770,9 +770,9 @@ def test_performance_monitor_start_uses_provider_worker_not_adb_realtime_polling
         "device-1",
         process_runner=dialog._service.process_runner,
         process_key_prefix="perf_device",
-        sample_interval_seconds=0.5,
+        sample_interval_seconds=1.0,
     )
-    worker_cls.assert_called_once_with(provider, "com.example", interval_ms=500)
+    worker_cls.assert_called_once_with(provider, "com.example", interval_ms=1000)
     dialog._start_worker.assert_called_once()
     dialog._service.cpu_sample.assert_not_called()
     dialog._service.memory_sample.assert_not_called()
@@ -780,6 +780,39 @@ def test_performance_monitor_start_uses_provider_worker_not_adb_realtime_polling
     dialog._service.reset_frame_stats.assert_not_called()
     dialog._service.current_package.assert_not_called()
     assert dialog._monitoring is True
+
+
+def test_performance_monitor_snapshot_warnings_create_memory_growth_markers():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog._closing = False
+    dialog._monitoring = True
+    dialog._monitor_started_at = 1
+    dialog._monitor_samples = []
+    dialog._monitor_cpu_samples = []
+    dialog._monitor_findings = []
+    dialog._session = PerformanceSession(device_id="device-1")
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = "com.example"
+    dialog.current_pkg_value = Mock()
+    dialog.device_state_value = Mock()
+    dialog._append_session_values = Mock()
+    snapshot = Mock(
+        online=True,
+        current_package="com.example",
+        target_package="com.example",
+        memory=MemorySample(timestamp_ms=1000, total_pss_kb=2048),
+        cpu=None,
+        frames=None,
+        status="Collecting",
+        warnings=["Memory growth trend: PSS +12000 KB over rolling window"],
+    )
+
+    with patch("gui.dialogs.performance_monitor._now_ms", return_value=2000):
+        PerformanceMonitorDialog._on_snapshot(dialog, snapshot)
+
+    assert dialog._monitor_findings == ["Memory growth trend: PSS +12000 KB over rolling window"]
+    assert dialog._session.markers[0].kind == "warning"
+    assert dialog._session.markers[0].label.startswith("Memory growth trend")
 
 
 def test_perfdog_timeline_chart_keeps_long_display_window():
@@ -1254,6 +1287,7 @@ def test_performance_web_dashboard_contains_modern_interactions():
     assert "memory_native" in js
     assert "memory_pss" in js
     assert "memory_graphics" in js
+    assert "memory_gpu" in js
     assert "memory_swap" in js
     assert "buildPreviewPayload" in js
     assert "connectQtBridge" in js

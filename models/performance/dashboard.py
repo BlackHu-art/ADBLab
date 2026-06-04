@@ -47,6 +47,7 @@ _METRIC_LANE_TEMPLATES = [
             {"metric": "memory_java", "label": "Java Heap", "unit": "MB", "color": ""},
             {"metric": "memory_native", "label": "Native", "unit": "MB", "color": ""},
             {"metric": "memory_graphics", "label": "Graphics", "unit": "MB", "color": ""},
+            {"metric": "memory_gpu", "label": "GPU", "unit": "MB", "color": ""},
             {"metric": "memory_swap", "label": "Swap", "unit": "MB", "color": ""},
         ],
     },
@@ -69,6 +70,8 @@ _METRIC_COLOR_ROLES = {
     "memory_java": "LOG_INFO",
     "memory_native": "LOG_WARNING",
     "memory_graphics": "BUTTON_ACCENT",
+    "memory_gpu": "LOG_ERROR",
+    "memory_rss": "TEXT_SECONDARY",
     "memory_stack": "TEXT_SECONDARY",
     "memory_code": "LOG_INFO",
     "memory_private_other": "TEXT_SECONDARY",
@@ -88,6 +91,7 @@ _SUMMARY_METRICS = [
     {"metric": "memory_java", "label": "Java", "unit": "MB", "digits": 1, "role": "LOG_INFO"},
     {"metric": "memory_native", "label": "Native", "unit": "MB", "digits": 1, "role": "LOG_WARNING"},
     {"metric": "memory_graphics", "label": "Graphics", "unit": "MB", "digits": 1, "role": "BUTTON_ACCENT"},
+    {"metric": "memory_gpu", "label": "GPU", "unit": "MB", "digits": 1, "role": "LOG_ERROR"},
     {"metric": "memory_swap", "label": "Swap", "unit": "MB", "digits": 1, "role": "LOG_WARNING"},
 ]
 
@@ -151,9 +155,11 @@ def snapshot_chart_values(
         values.update(
             {
                 "memory_pss": _kb_to_mb(snapshot.memory.total_pss_kb) or 0,
+                "memory_rss": _kb_to_mb(snapshot.memory.rss_kb) or 0,
                 "memory_java": _kb_to_mb(snapshot.memory.java_heap_kb) or 0,
                 "memory_native": _kb_to_mb(snapshot.memory.native_heap_kb) or 0,
                 "memory_graphics": _kb_to_mb(snapshot.memory.graphics_kb) or 0,
+                "memory_gpu": _kb_to_mb(snapshot.memory.gpu_kb) or 0,
                 "memory_stack": _kb_to_mb(snapshot.memory.stack_kb) or 0,
                 "memory_code": _kb_to_mb(snapshot.memory.code_kb) or 0,
                 "memory_private_other": _kb_to_mb(snapshot.memory.private_other_kb) or 0,
@@ -256,6 +262,8 @@ def metric_details(session: PerformanceSession) -> list[dict]:
                 _detail_item("Java", latest.get("memory_java"), "MB", 1),
                 _detail_item("Native", latest.get("memory_native"), "MB", 1),
                 _detail_item("Graphics", latest.get("memory_graphics"), "MB", 1),
+                _detail_item("GPU", latest.get("memory_gpu"), "MB", 1),
+                _detail_item("RSS", latest.get("memory_rss"), "MB", 1),
                 _detail_item("Stack", latest.get("memory_stack"), "MB", 1),
                 _detail_item("Code", latest.get("memory_code"), "MB", 1),
                 _detail_item("System", latest.get("memory_system"), "MB", 1),
@@ -406,7 +414,12 @@ def _apply_metric_color(metric: dict, color_for: ColorGetter) -> None:
 
 
 def _kb_to_mb(value: int | None) -> float | None:
-    return None if value is None else round(value / 1024, 2)
+    if value is None:
+        return None
+    try:
+        return round(float(value) / 1024, 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _round_metric(value: float | int | None, digits: int) -> float | None:
