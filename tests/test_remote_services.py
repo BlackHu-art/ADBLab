@@ -1,9 +1,18 @@
 import subprocess
 from unittest.mock import Mock, patch
 
+from core.adb_bridge import ADBBridge, ADBInputSession
 from gui.panels.remote_panel import RemotePanel
 from models.base.command_runner import CommandResult
-from models.remote import RemoteControlService, ScrcpyConfig, ScrcpyService, build_scrcpy_args
+from models.remote import (
+    RemoteControlService,
+    RemoteInputEngine,
+    RemoteWindowManager,
+    ScrcpyConfig,
+    ScrcpyService,
+    TextInjectionEngine,
+    build_scrcpy_args,
+)
 from models.remote.control_mapping import directional_swipe, notification_swipe
 
 
@@ -126,6 +135,70 @@ def test_remote_control_service_sends_keyevent_and_directional_swipe():
     adb.shell_input.assert_any_call("swipe 540 2160 540 240 200", device_id="device-1")
 
 
+def test_text_injection_engine_sends_text_via_clipboard_and_paste():
+    adb = Mock()
+    adb.shell.return_value = CommandResult(success=True)
+    engine = TextInjectionEngine(adb)
+
+    engine.send_text("device-1", "hello world")
+
+    adb.shell.assert_called_once_with(
+        "cmd clipboard set text 'hello world'",
+        device_id="device-1",
+    )
+    adb.shell_input.assert_called_once_with("keyevent 279", device_id="device-1")
+
+
+def test_text_injection_engine_quotes_unicode_and_special_text():
+    adb = Mock()
+    adb.shell.return_value = CommandResult(success=True)
+    engine = TextInjectionEngine(adb)
+
+    engine.set_clipboard_text("device-1", "中文 O'Reilly $PATH")
+
+    adb.shell.assert_called_once_with(
+        "cmd clipboard set text '中文 O'\"'\"'Reilly $PATH'",
+        device_id="device-1",
+    )
+
+
+def test_text_injection_engine_empty_text_does_not_call_adb():
+    adb = Mock()
+    engine = TextInjectionEngine(adb)
+
+    assert engine.send_text("device-1", "") is None
+
+    adb.shell.assert_not_called()
+    adb.shell_input.assert_not_called()
+
+
+def test_adb_bridge_warm_input_session_prepares_persistent_session():
+    bridge = ADBBridge(path="adb.exe")
+    session = Mock()
+    session.warm.return_value = True
+
+    with patch.object(bridge, "_input_session", return_value=session) as input_session:
+        assert bridge.warm_input_session("device-1") is True
+
+    input_session.assert_called_once_with("device-1")
+    session.warm.assert_called_once_with()
+
+
+def test_adb_input_session_warm_opens_shell_without_writing_input():
+    proc = Mock()
+    proc.stdin = Mock()
+    proc.poll.return_value = None
+    session = ADBInputSession("adb.exe", "device-1")
+
+    with patch("core.adb_bridge.subprocess.Popen", return_value=proc) as popen:
+        assert session.warm() is True
+
+    popen.assert_called_once()
+    assert popen.call_args.args[0] == ["adb.exe", "-s", "device-1", "shell"]
+    proc.stdin.write.assert_not_called()
+    proc.stdin.flush.assert_not_called()
+
+
 def test_remote_control_service_reuses_cached_dimensions_for_fast_gestures():
     adb = Mock()
     adb.get_dimensions.return_value = ["1080", "2400"]
@@ -209,6 +282,63 @@ def test_build_scrcpy_args_appends_extra_args_before_print_fps():
     assert args[-3:] == ["--window-title", "ADBLab", "--print-fps"]
 
 
+def test_build_scrcpy_args_enables_prefer_text_and_window_title():
+    args = build_scrcpy_args(_scrcpy_config(window_title="ADBLab Remote - device-1"))
+
+    assert "--prefer-text" in args
+    title_index = args.index("--window-title")
+    assert args[title_index:title_index + 2] == [
+        "--window-title",
+        "ADBLab Remote - device-1",
+    ]
+    assert args[-1] == "--print-fps"
+
+
+def test_remote_input_engine_delegates_text_and_focus():
+    text_engine = Mock()
+    window_manager = Mock()
+    engine = RemoteInputEngine(
+        adb=Mock(),
+        text_engine=text_engine,
+        window_manager=window_manager,
+    )
+
+    assert engine.window_title("device-1") == "ADBLab Remote - device-1"
+    engine.focus_window("ADBLab Remote - device-1", timeout_seconds=0.5)
+    engine.send_text("device-1", "hello")
+    engine.paste_clipboard("device-1")
+
+    window_manager.focus.assert_called_once_with(
+        "ADBLab Remote - device-1",
+        timeout_seconds=0.5,
+    )
+    text_engine.send_text.assert_called_once_with("device-1", "hello")
+    text_engine.paste_clipboard.assert_called_once_with("device-1")
+
+
+def test_remote_window_manager_non_windows_focus_is_noop():
+    manager = RemoteWindowManager()
+
+    with patch("models.remote.window_manager.sys.platform", "linux"):
+        assert manager.focus("ADBLab Remote - device-1", timeout_seconds=0) is False
+
+
+def test_remote_window_manager_focus_accepts_already_foreground_window():
+    manager = RemoteWindowManager()
+    user32 = Mock()
+    user32.GetForegroundWindow.return_value = 123
+
+    with patch("models.remote.window_manager.sys.platform", "win32"), \
+         patch("models.remote.window_manager.ctypes.windll") as windll, \
+         patch.object(manager, "_find_window", return_value=123):
+        windll.user32 = user32
+
+        assert manager.focus("ADBLab Remote - device-1", timeout_seconds=0.01) is True
+
+    user32.ShowWindow.assert_called_once()
+    user32.SetForegroundWindow.assert_not_called()
+
+
 def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel = RemotePanel.__new__(RemotePanel)
     panel._launch_worker = None
@@ -218,6 +348,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._log = Mock()
     panel._scrcpy_service = Mock()
     panel._remote_control = Mock()
+    panel._focus_scrcpy_window = Mock()
     panel._process_key = "scrcpy_test"
     panel._watchdog = Mock()
     panel._process = None
@@ -235,7 +366,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
         ["scrcpy.exe", "-s", "device-1"],
     )
     assert panel._process is proc
-    thread_cls.return_value.start.assert_called_once()
+    assert thread_cls.return_value.start.call_count == 3
     panel._watchdog.start.assert_called_once_with(500)
 
 
@@ -338,6 +469,81 @@ def test_remote_panel_remote_action_uses_executor_when_available():
 
     panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
     panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
+
+
+def test_remote_panel_send_text_uses_executor_when_available():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
+    panel._input_engine = Mock()
+    panel._remote_executor = Mock()
+    panel._emit_remote_queue_status = Mock()
+    panel._remote_submitted = 0
+    panel._remote_completed = 0
+    panel.remote_text_input = Mock()
+    panel.remote_text_input.text.return_value = "hello world"
+    panel._log = Mock()
+
+    RemotePanel._send_remote_text(panel)
+
+    panel._remote_executor.submit.assert_called_once()
+    panel._input_engine.send_text.assert_not_called()
+
+    queued_task = panel._remote_executor.submit.call_args.args[0]
+    queued_task()
+
+    panel._input_engine.send_text.assert_called_once_with("device-1", "hello world")
+    panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
+
+
+def test_remote_panel_paste_clipboard_uses_executor_when_available():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
+    panel._input_engine = Mock()
+    panel._remote_executor = Mock()
+    panel._emit_remote_queue_status = Mock()
+    panel._remote_submitted = 0
+    panel._remote_completed = 0
+    panel._log = Mock()
+
+    RemotePanel._paste_remote_clipboard(panel)
+
+    queued_task = panel._remote_executor.submit.call_args.args[0]
+    queued_task()
+
+    panel._input_engine.paste_clipboard.assert_called_once_with("device-1")
+
+
+def test_remote_panel_text_input_skips_without_device_or_text():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=[])
+    panel._input_engine = Mock()
+    panel._remote_executor = Mock()
+    panel.remote_text_input = Mock()
+    panel.remote_text_input.text.return_value = "hello"
+
+    RemotePanel._send_remote_text(panel)
+    RemotePanel._paste_remote_clipboard(panel)
+
+    panel._remote_executor.submit.assert_not_called()
+    panel._input_engine.send_text.assert_not_called()
+    panel._input_engine.paste_clipboard.assert_not_called()
+
+    panel.panel = Mock(selected_devices=["device-1"])
+    panel.remote_text_input.text.return_value = ""
+    RemotePanel._send_remote_text(panel)
+
+    panel._remote_executor.submit.assert_not_called()
+    panel._input_engine.send_text.assert_not_called()
+
+
+def test_remote_panel_ignores_known_scrcpy_noise_lines():
+    assert RemotePanel._should_ignore_scrcpy_log_line(
+        "[server] WARN: Could not inject char u+4e2d"
+    ) is True
+    assert RemotePanel._should_ignore_scrcpy_log_line(
+        "libpng warning: iCCP: known incorrect sRGB profile"
+    ) is True
+    assert RemotePanel._should_ignore_scrcpy_log_line("[server] INFO: ready") is False
 
 
 def test_remote_panel_remote_queue_status_formats_pending_and_result_states():

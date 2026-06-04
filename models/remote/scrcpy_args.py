@@ -22,6 +22,10 @@ def build_scrcpy_args(config: ScrcpyConfig, encoder: str | None = None) -> list[
         args.append(f"--video-buffer={config.buffer}")
     if config.orientation != "0":
         args.append(f"--lock-video-orientation={config.orientation}")
+    if config.prefer_text:
+        args.append("--prefer-text")
+    if config.window_title:
+        args.extend(["--window-title", config.window_title])
     if encoder:
         args.extend(["--video-encoder", encoder])
 

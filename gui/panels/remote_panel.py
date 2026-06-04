@@ -19,7 +19,7 @@ from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles
-from models.remote import RemoteControlService, ScrcpyConfig, ScrcpyService
+from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
 class ScrcpyLaunchWorker(QThread):
@@ -60,6 +60,10 @@ class RemotePanel(BasePanel):
 
     _status_update_requested = Signal(str, object)
     _remote_queue_status_requested = Signal(int, int, str)
+    _IGNORED_SCRCPY_LOG_PATTERNS = (
+        "Could not inject char u+",
+        "libpng warning: iCCP: known incorrect sRGB profile",
+    )
 
     _PRESETS = {
         0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "50"},
@@ -87,6 +91,7 @@ class RemotePanel(BasePanel):
         self._adb = ADBBridge()
         self._scrcpy_service = ScrcpyService()
         self._remote_control = RemoteControlService(self._adb)
+        self._input_engine = RemoteInputEngine(self._adb)
         self._loading = True
         self._launch_worker = None
         self._process_key = f"scrcpy_{id(self)}"
@@ -299,6 +304,17 @@ class RemotePanel(BasePanel):
         gl.addWidget(gestures)
         outer.addLayout(gl)
 
+        text_row = QHBoxLayout()
+        text_row.setSpacing(6)
+        self.remote_text_input = self._in("Text to device")
+        self.remote_text_input.setToolTip("Set device clipboard and paste into the focused field")
+        self.btn_send_text = self._b("Send", "paper-plane-tilt.svg", "accent", "Send text to focused input")
+        self.btn_paste_text = self._b("Paste", "clipboard-text.svg", tooltip="Paste current device clipboard")
+        text_row.addWidget(self.remote_text_input, 1)
+        text_row.addWidget(self.btn_send_text)
+        text_row.addWidget(self.btn_paste_text)
+        outer.addLayout(text_row)
+
         self._remote_status_label = QLabel("Input: Idle")
         self._remote_status_label.setFont(self._font_sm)
         self._remote_status_label.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
@@ -316,6 +332,9 @@ class RemotePanel(BasePanel):
         for combo in (self.maxsize, self.fps, self.codec, self.buffer, self.bitrate,
                       self.orientation):
             combo.currentTextChanged.connect(self._on_custom_setting_changed)
+        self.btn_send_text.clicked.connect(self._send_remote_text)
+        self.btn_paste_text.clicked.connect(self._paste_remote_clipboard)
+        self.remote_text_input.returnPressed.connect(self._send_remote_text)
         # B9: Keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self._stop_scrcpy)
@@ -423,6 +442,8 @@ class RemotePanel(BasePanel):
                 self._process_key,
                 args,
             )
+            threading.Thread(target=self._focus_scrcpy_window, daemon=True).start()
+            threading.Thread(target=self._warm_remote_input_session, daemon=True).start()
             threading.Thread(target=self._read_stderr, daemon=True).start()
             self._watchdog.start(500)
         except Exception as e:
@@ -454,6 +475,8 @@ class RemotePanel(BasePanel):
                 fps = self._scrcpy_service.parse_fps(line)
                 if fps:
                     self._status_update_requested.emit(fps, None)
+                elif self._should_ignore_scrcpy_log_line(line):
+                    continue
                 else:
                     self._log("DEBUG", f"[scrcpy] {line}")
 
@@ -526,6 +549,36 @@ class RemotePanel(BasePanel):
                 self._log("ERROR", f"remote action failed: {exc}")
 
         self._submit_remote_input(_run)
+
+    def _send_remote_text(self):
+        devices = self.selected_devices
+        if not devices:
+            return
+        text = self.remote_text_input.text()
+        if text == "":
+            return
+        device = devices[0]
+
+        def _run():
+            result = self._input_engine.send_text(device, text)
+            if getattr(result, "success", True) is False:
+                error = getattr(result, "error", "") or getattr(result, "output", "")
+                raise RuntimeError(
+                    f"{error or 'device clipboard command failed'}; use Ctrl+V or MOD+v in the scrcpy window"
+                )
+
+        self._submit_remote_input(_run)
+
+    def _paste_remote_clipboard(self):
+        devices = self.selected_devices
+        if not devices:
+            return
+        device = devices[0]
+        self._submit_remote_input(lambda: self._input_engine.paste_clipboard(device))
+
+    @classmethod
+    def _should_ignore_scrcpy_log_line(cls, line: str) -> bool:
+        return any(pattern in line for pattern in cls._IGNORED_SCRCPY_LOG_PATTERNS)
 
     def _submit_remote_input(self, task):
         """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
@@ -620,6 +673,8 @@ class RemotePanel(BasePanel):
             codec=self.codec.currentText(),
             buffer=self.buffer.currentText(),
             orientation=self.orientation.currentText(),
+            prefer_text=True,
+            window_title=self._input_engine.window_title(device),
             hw_encoder=self.chk_hw_encoder.isChecked(),
             fullscreen=self.chk_fullscreen.isChecked(),
             always_on_top=self.chk_aot.isChecked(),
@@ -632,6 +687,26 @@ class RemotePanel(BasePanel):
             else "",
             no_window=self.chk_noplayback.isChecked(),
         )
+
+    def _focus_scrcpy_window(self):
+        active_device = getattr(self, "_active_device", None)
+        if not active_device:
+            return
+        title = self._input_engine.window_title(active_device)
+        if self._input_engine.focus_window(title):
+            self._log("INFO", "scrcpy window focused for keyboard input")
+        else:
+            self._log("DEBUG", f"scrcpy window not focused: {title}")
+
+    def _warm_remote_input_session(self):
+        active_device = getattr(self, "_active_device", None)
+        if not active_device:
+            return
+        try:
+            if self._adb.warm_input_session(active_device):
+                self._log("DEBUG", "remote input session warmed")
+        except Exception as exc:
+            self._log("DEBUG", f"remote input session warmup skipped: {exc}")
 
     # -- helpers ----------------------------------------------------------
 

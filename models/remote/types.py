@@ -14,6 +14,8 @@ class ScrcpyConfig:
     codec: str
     buffer: str
     orientation: str
+    prefer_text: bool = True
+    window_title: str = ""
     hw_encoder: bool = False
     fullscreen: bool = False
     always_on_top: bool = False
@@ -37,6 +39,8 @@ class ScrcpyConfig:
             codec=values["codec"],
             buffer=values["buffer"],
             orientation=values["orientation"],
+            prefer_text=bool(values.get("prefer_text", True)),
+            window_title=values.get("window_title", ""),
             hw_encoder=bool(values.get("hw_encoder", False)),
             fullscreen=bool(values.get("fullscreen", False)),
             always_on_top=bool(values.get("always_on_top", False)),

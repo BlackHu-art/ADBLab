@@ -41,6 +41,12 @@ class ADBInputSession:
         with self._lock:
             self._close_locked()
 
+    def warm(self) -> bool:
+        """Open the persistent shell before the first real input command."""
+        with self._lock:
+            proc = self._ensure_process()
+            return bool(proc and proc.stdin and proc.poll() is None)
+
     def _ensure_process(self) -> subprocess.Popen | None:
         if self._proc and self._proc.poll() is None:
             return self._proc
@@ -116,6 +122,10 @@ class ADBBridge:
             cmd.extend(["-s", device_id])
         cmd.extend(["shell", f"input {command}"])
         return self._process_runner.spawn(cmd)
+
+    def warm_input_session(self, device_id: str | None = None) -> bool:
+        """Prepare the persistent input shell so first real input is faster."""
+        return self._input_session(device_id).warm()
 
     def close_input_sessions(self, device_id: str | None = None):
         """Close persistent input shell sessions, used on panel/service shutdown."""
