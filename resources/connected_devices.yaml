@@ -54,9 +54,9 @@ device_ZT322KPNPX:
   Model: moto g24
   ip: ZT322KPNPX
 device_emulator-5554:
-  Aversion: '9'
-  Brand: Redmi
-  Model: 22127RK46C
+  Aversion: '13'
+  Brand: google
+  Model: sdk_gphone64_x86_64
   ip: emulator-5554
 device_emulator-5556:
   Aversion: '9'

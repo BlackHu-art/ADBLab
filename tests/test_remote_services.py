@@ -10,7 +10,6 @@ from models.remote import (
     RemoteWindowManager,
     ScrcpyConfig,
     ScrcpyService,
-    TextInjectionEngine,
     build_scrcpy_args,
 )
 from models.remote.control_mapping import directional_swipe, notification_swipe
@@ -135,43 +134,6 @@ def test_remote_control_service_sends_keyevent_and_directional_swipe():
     adb.shell_input.assert_any_call("swipe 540 2160 540 240 200", device_id="device-1")
 
 
-def test_text_injection_engine_sends_text_via_clipboard_and_paste():
-    adb = Mock()
-    adb.shell.return_value = CommandResult(success=True)
-    engine = TextInjectionEngine(adb)
-
-    engine.send_text("device-1", "hello world")
-
-    adb.shell.assert_called_once_with(
-        "cmd clipboard set text 'hello world'",
-        device_id="device-1",
-    )
-    adb.shell_input.assert_called_once_with("keyevent 279", device_id="device-1")
-
-
-def test_text_injection_engine_quotes_unicode_and_special_text():
-    adb = Mock()
-    adb.shell.return_value = CommandResult(success=True)
-    engine = TextInjectionEngine(adb)
-
-    engine.set_clipboard_text("device-1", "中文 O'Reilly $PATH")
-
-    adb.shell.assert_called_once_with(
-        "cmd clipboard set text '中文 O'\"'\"'Reilly $PATH'",
-        device_id="device-1",
-    )
-
-
-def test_text_injection_engine_empty_text_does_not_call_adb():
-    adb = Mock()
-    engine = TextInjectionEngine(adb)
-
-    assert engine.send_text("device-1", "") is None
-
-    adb.shell.assert_not_called()
-    adb.shell_input.assert_not_called()
-
-
 def test_adb_bridge_warm_input_session_prepares_persistent_session():
     bridge = ADBBridge(path="adb.exe")
     session = Mock()
@@ -294,26 +256,17 @@ def test_build_scrcpy_args_enables_prefer_text_and_window_title():
     assert args[-1] == "--print-fps"
 
 
-def test_remote_input_engine_delegates_text_and_focus():
-    text_engine = Mock()
+def test_remote_input_engine_delegates_window_focus():
     window_manager = Mock()
-    engine = RemoteInputEngine(
-        adb=Mock(),
-        text_engine=text_engine,
-        window_manager=window_manager,
-    )
+    engine = RemoteInputEngine(window_manager=window_manager)
 
     assert engine.window_title("device-1") == "ADBLab Remote - device-1"
     engine.focus_window("ADBLab Remote - device-1", timeout_seconds=0.5)
-    engine.send_text("device-1", "hello")
-    engine.paste_clipboard("device-1")
 
     window_manager.focus.assert_called_once_with(
         "ADBLab Remote - device-1",
         timeout_seconds=0.5,
     )
-    text_engine.send_text.assert_called_once_with("device-1", "hello")
-    text_engine.paste_clipboard.assert_called_once_with("device-1")
 
 
 def test_remote_window_manager_non_windows_focus_is_noop():
@@ -471,71 +424,6 @@ def test_remote_panel_remote_action_uses_executor_when_available():
     panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
 
 
-def test_remote_panel_send_text_uses_executor_when_available():
-    panel = RemotePanel.__new__(RemotePanel)
-    panel.panel = Mock(selected_devices=["device-1"])
-    panel._input_engine = Mock()
-    panel._remote_executor = Mock()
-    panel._emit_remote_queue_status = Mock()
-    panel._remote_submitted = 0
-    panel._remote_completed = 0
-    panel.remote_text_input = Mock()
-    panel.remote_text_input.text.return_value = "hello world"
-    panel._log = Mock()
-
-    RemotePanel._send_remote_text(panel)
-
-    panel._remote_executor.submit.assert_called_once()
-    panel._input_engine.send_text.assert_not_called()
-
-    queued_task = panel._remote_executor.submit.call_args.args[0]
-    queued_task()
-
-    panel._input_engine.send_text.assert_called_once_with("device-1", "hello world")
-    panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
-
-
-def test_remote_panel_paste_clipboard_uses_executor_when_available():
-    panel = RemotePanel.__new__(RemotePanel)
-    panel.panel = Mock(selected_devices=["device-1"])
-    panel._input_engine = Mock()
-    panel._remote_executor = Mock()
-    panel._emit_remote_queue_status = Mock()
-    panel._remote_submitted = 0
-    panel._remote_completed = 0
-    panel._log = Mock()
-
-    RemotePanel._paste_remote_clipboard(panel)
-
-    queued_task = panel._remote_executor.submit.call_args.args[0]
-    queued_task()
-
-    panel._input_engine.paste_clipboard.assert_called_once_with("device-1")
-
-
-def test_remote_panel_text_input_skips_without_device_or_text():
-    panel = RemotePanel.__new__(RemotePanel)
-    panel.panel = Mock(selected_devices=[])
-    panel._input_engine = Mock()
-    panel._remote_executor = Mock()
-    panel.remote_text_input = Mock()
-    panel.remote_text_input.text.return_value = "hello"
-
-    RemotePanel._send_remote_text(panel)
-    RemotePanel._paste_remote_clipboard(panel)
-
-    panel._remote_executor.submit.assert_not_called()
-    panel._input_engine.send_text.assert_not_called()
-    panel._input_engine.paste_clipboard.assert_not_called()
-
-    panel.panel = Mock(selected_devices=["device-1"])
-    panel.remote_text_input.text.return_value = ""
-    RemotePanel._send_remote_text(panel)
-
-    panel._remote_executor.submit.assert_not_called()
-    panel._input_engine.send_text.assert_not_called()
-
-
 def test_remote_panel_ignores_known_scrcpy_noise_lines():
     assert RemotePanel._should_ignore_scrcpy_log_line(
         "[server] WARN: Could not inject char u+4e2d"
@@ -544,24 +432,6 @@ def test_remote_panel_ignores_known_scrcpy_noise_lines():
         "libpng warning: iCCP: known incorrect sRGB profile"
     ) is True
     assert RemotePanel._should_ignore_scrcpy_log_line("[server] INFO: ready") is False
-
-
-def test_remote_panel_remote_queue_status_formats_pending_and_result_states():
-    panel = RemotePanel.__new__(RemotePanel)
-    label = Mock()
-    panel._remote_status_label = label
-
-    RemotePanel._update_remote_queue_status(panel, 3, 1, "queued")
-    label.setText.assert_called_with("Input: Queued 2")
-
-    RemotePanel._update_remote_queue_status(panel, 3, 2, "queued")
-    label.setText.assert_called_with("Input: Sending")
-
-    RemotePanel._update_remote_queue_status(panel, 3, 3, "sent")
-    label.setText.assert_called_with("Input: Sent")
-
-    RemotePanel._update_remote_queue_status(panel, 3, 3, "failed")
-    label.setText.assert_called_with("Input: Failed")
 
 
 def test_remote_panel_launch_finished_clears_active_device_when_start_fails():

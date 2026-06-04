@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
-from gui.styles import BaseStyles
 from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -91,7 +90,7 @@ class RemotePanel(BasePanel):
         self._adb = ADBBridge()
         self._scrcpy_service = ScrcpyService()
         self._remote_control = RemoteControlService(self._adb)
-        self._input_engine = RemoteInputEngine(self._adb)
+        self._input_engine = RemoteInputEngine()
         self._loading = True
         self._launch_worker = None
         self._process_key = f"scrcpy_{id(self)}"
@@ -304,22 +303,6 @@ class RemotePanel(BasePanel):
         gl.addWidget(gestures)
         outer.addLayout(gl)
 
-        text_row = QHBoxLayout()
-        text_row.setSpacing(6)
-        self.remote_text_input = self._in("Text to device")
-        self.remote_text_input.setToolTip("Set device clipboard and paste into the focused field")
-        self.btn_send_text = self._b("Send", "paper-plane-tilt.svg", "accent", "Send text to focused input")
-        self.btn_paste_text = self._b("Paste", "clipboard-text.svg", tooltip="Paste current device clipboard")
-        text_row.addWidget(self.remote_text_input, 1)
-        text_row.addWidget(self.btn_send_text)
-        text_row.addWidget(self.btn_paste_text)
-        outer.addLayout(text_row)
-
-        self._remote_status_label = QLabel("Input: Idle")
-        self._remote_status_label.setFont(self._font_sm)
-        self._remote_status_label.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
-        outer.addWidget(self._remote_status_label)
-
         return g
 
     # -- signals + shortcuts (B9) ----------------------------------------
@@ -332,9 +315,6 @@ class RemotePanel(BasePanel):
         for combo in (self.maxsize, self.fps, self.codec, self.buffer, self.bitrate,
                       self.orientation):
             combo.currentTextChanged.connect(self._on_custom_setting_changed)
-        self.btn_send_text.clicked.connect(self._send_remote_text)
-        self.btn_paste_text.clicked.connect(self._paste_remote_clipboard)
-        self.remote_text_input.returnPressed.connect(self._send_remote_text)
         # B9: Keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self._stop_scrcpy)
@@ -550,32 +530,6 @@ class RemotePanel(BasePanel):
 
         self._submit_remote_input(_run)
 
-    def _send_remote_text(self):
-        devices = self.selected_devices
-        if not devices:
-            return
-        text = self.remote_text_input.text()
-        if text == "":
-            return
-        device = devices[0]
-
-        def _run():
-            result = self._input_engine.send_text(device, text)
-            if getattr(result, "success", True) is False:
-                error = getattr(result, "error", "") or getattr(result, "output", "")
-                raise RuntimeError(
-                    f"{error or 'device clipboard command failed'}; use Ctrl+V or MOD+v in the scrcpy window"
-                )
-
-        self._submit_remote_input(_run)
-
-    def _paste_remote_clipboard(self):
-        devices = self.selected_devices
-        if not devices:
-            return
-        device = devices[0]
-        self._submit_remote_input(lambda: self._input_engine.paste_clipboard(device))
-
     @classmethod
     def _should_ignore_scrcpy_log_line(cls, line: str) -> bool:
         return any(pattern in line for pattern in cls._IGNORED_SCRCPY_LOG_PATTERNS)
@@ -640,27 +594,7 @@ class RemotePanel(BasePanel):
             pass
 
     def _update_remote_queue_status(self, submitted: int, completed: int, result: str):
-        label = getattr(self, "_remote_status_label", None)
-        if label is None:
-            return
-        pending = max(0, submitted - completed)
-        if pending > 1:
-            text = f"Input: Queued {pending}"
-            color = BaseStyles.color("TEXT_SECONDARY")
-        elif pending == 1:
-            text = "Input: Sending"
-            color = BaseStyles.color("TEXT_SECONDARY")
-        elif result == "failed":
-            text = "Input: Failed"
-            color = BaseStyles.color("LOG_ERROR")
-        elif result == "sent":
-            text = "Input: Sent"
-            color = BaseStyles.color("LOG_SUCCESS")
-        else:
-            text = "Input: Idle"
-            color = BaseStyles.color("TEXT_SECONDARY")
-        label.setText(text)
-        label.setStyleSheet(f"color: {color};")
+        return
 
     def _scrcpy_config(self, exe: str, device: str) -> ScrcpyConfig:
         return ScrcpyConfig(
