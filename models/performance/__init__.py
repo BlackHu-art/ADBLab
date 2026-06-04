@@ -2,6 +2,7 @@
 
 from .types import CpuSample, DeviceInfo, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
 from .presentation import build_report_summary, render_report_text
+from .providers import PsutilHostProvider, provider_capabilities
 from .sampling import PerformanceSamplingSchedule
 from .session import MetricSummary, PerformancePoint, PerformanceSession, TimelineMarker
 from .workers import (
@@ -17,6 +18,8 @@ __all__ = [
     "DeviceInfo",
     "build_report_summary",
     "render_report_text",
+    "PsutilHostProvider",
+    "provider_capabilities",
     "MetricSummary",
     "MemorySample",
     "PerformanceSamplingSchedule",

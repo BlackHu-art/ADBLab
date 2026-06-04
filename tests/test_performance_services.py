@@ -26,6 +26,7 @@ from models.performance.dashboard import (
     web_timeline_payload,
 )
 from models.performance.presentation import build_report_summary, render_report_text
+from models.performance.providers import PsutilHostProvider, provider_capabilities
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.service import (
     PerformanceService,
@@ -514,6 +515,45 @@ GLES: ARM, Mali-G715, OpenGL ES 3.2 build
     assert _opengl_info(surfaceflinger) == "GLES: ARM, Mali-G715, OpenGL ES 3.2 build"
     assert _ram_size(meminfo) == "12.0 GB"
     assert _swap_size(meminfo) == "2048 MB"
+
+
+def test_provider_capabilities_separate_host_and_android_backends():
+    capabilities = {capability.name: capability for capability in provider_capabilities()}
+
+    assert capabilities["psutil-host"].host is True
+    assert capabilities["psutil-host"].android is False
+    assert capabilities["android-agent"].realtime is True
+    assert capabilities["android-agent"].android is True
+    assert capabilities["perfetto-android"].android is True
+    assert capabilities["adb-compat"].realtime is False
+
+
+def test_psutil_host_provider_samples_current_process():
+    provider = PsutilHostProvider()
+
+    provider.start()
+    snapshot = provider.sample()
+
+    assert provider.available is True
+    assert snapshot.device_id == "host"
+    assert snapshot.online is True
+    assert snapshot.cpu is not None
+    assert snapshot.cpu.pid
+    assert snapshot.cpu.process_count == 1
+    assert snapshot.memory is not None
+    assert snapshot.memory.total_pss_kb and snapshot.memory.total_pss_kb > 0
+    provider.stop()
+
+
+def test_psutil_host_provider_rejects_non_pid_target():
+    provider = PsutilHostProvider()
+
+    try:
+        provider.start("com.example.android")
+    except ValueError as exc:
+        assert "local process id" in str(exc)
+    else:
+        raise AssertionError("non-pid psutil-host target should fail")
 
 
 def test_report_service_writes_expected_artifacts(tmp_path):

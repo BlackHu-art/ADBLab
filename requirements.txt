@@ -8,3 +8,4 @@ ruamel.yaml
 ruamel.yaml.clib
 pyinstaller
 Pillow
+psutil
