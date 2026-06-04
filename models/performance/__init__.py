@@ -2,14 +2,15 @@
 
 from .types import CpuSample, DeviceInfo, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
 from .presentation import build_report_summary, render_report_text
-from .providers import PsutilHostProvider, provider_capabilities
+from .providers import AndroidAgentProvider, PerformanceSampleProvider, PsutilHostProvider, provider_capabilities
 from .sampling import PerformanceSamplingSchedule
 from .session import MetricSummary, PerformancePoint, PerformanceSession, TimelineMarker
 from .workers import (
     PerformanceAnalyzeWorker,
-    PerformanceFrameWorker,
+    PerformanceCurrentPackageWorker,
+    PerformanceDeviceInfoWorker,
+    PerformanceProviderWorker,
     PerformanceQuickCheckWorker,
-    PerformanceSnapshotWorker,
 )
 
 __all__ = [
@@ -18,6 +19,8 @@ __all__ = [
     "DeviceInfo",
     "build_report_summary",
     "render_report_text",
+    "AndroidAgentProvider",
+    "PerformanceSampleProvider",
     "PsutilHostProvider",
     "provider_capabilities",
     "MetricSummary",
@@ -29,7 +32,8 @@ __all__ = [
     "StartupMetrics",
     "TimelineMarker",
     "PerformanceAnalyzeWorker",
-    "PerformanceFrameWorker",
+    "PerformanceCurrentPackageWorker",
+    "PerformanceDeviceInfoWorker",
+    "PerformanceProviderWorker",
     "PerformanceQuickCheckWorker",
-    "PerformanceSnapshotWorker",
 ]

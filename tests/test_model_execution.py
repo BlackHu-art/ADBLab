@@ -72,9 +72,9 @@ from models.performance.session import PerformanceSession
 from models.performance.types import FrameMetrics
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.workers import (
-    PerformanceFrameWorker,
+    PerformanceDeviceInfoWorker,
+    PerformanceProviderWorker,
     PerformanceQuickCheckWorker,
-    PerformanceSnapshotWorker,
 )
 
 
@@ -678,61 +678,47 @@ def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame._register_dialog.assert_not_called()
 
 
-def test_performance_monitor_workers_share_dialog_service():
+def test_performance_monitor_refresh_tick_does_not_start_realtime_adb_workers():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
     dialog.device_ip = "device-1"
     dialog._service = Mock()
     dialog._closing = False
-    dialog._snapshot_worker = None
-    dialog._frame_worker = None
+    dialog._monitoring = True
+    dialog._monitor_started_at = 0
+    dialog.device_state_value = Mock()
+    dialog._refresh_web_context = Mock()
     dialog.package_input = Mock()
     dialog.package_input.text.return_value = "com.example"
 
-    with patch("gui.dialogs.performance_monitor.PerformanceSnapshotWorker") as snapshot_cls:
-        snapshot_worker = Mock()
-        snapshot_worker.isRunning.return_value = False
-        snapshot_cls.return_value = snapshot_worker
-        PerformanceMonitorDialog._refresh_snapshot(dialog)
+    PerformanceMonitorDialog._refresh_snapshot(dialog)
 
-    snapshot_cls.assert_called_once_with(dialog._service, "com.example", include_device_info=False)
-    snapshot_worker.start.assert_called_once()
-
-    dialog._monitoring = True
-    dialog._sampling = PerformanceSamplingSchedule(PerformanceMonitorDialog.FRAME_REFRESH_INTERVAL_MS)
-    with patch("gui.dialogs.performance_monitor.time.monotonic", return_value=10.0), \
-         patch("gui.dialogs.performance_monitor.PerformanceFrameWorker") as frame_cls:
-        frame_worker = Mock()
-        frame_worker.isRunning.return_value = False
-        frame_cls.return_value = frame_worker
-        PerformanceMonitorDialog._maybe_refresh_frame_metrics(dialog, force=True)
-
-    frame_cls.assert_called_once_with(dialog._service, "com.example")
-    frame_worker.start.assert_called_once()
+    dialog._service.cpu_sample.assert_not_called()
+    dialog._service.memory_sample.assert_not_called()
+    dialog._service.frame_metrics.assert_not_called()
+    dialog._refresh_web_context.assert_called_once()
 
 
 def test_performance_monitor_device_info_refresh_is_async_and_explicit():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
     dialog._service = Mock()
     dialog._closing = False
-    dialog._snapshot_worker = None
+    dialog._device_info_worker = None
     dialog.package_input = Mock()
     dialog.package_input.text.return_value = "com.example"
 
-    with patch("gui.dialogs.performance_monitor.PerformanceSnapshotWorker") as snapshot_cls:
-        snapshot_worker = Mock()
-        snapshot_worker.isRunning.return_value = False
-        snapshot_cls.return_value = snapshot_worker
+    with patch("gui.dialogs.performance_monitor.PerformanceDeviceInfoWorker") as device_info_cls:
+        device_info_worker = Mock()
+        device_info_worker.isRunning.return_value = False
+        device_info_cls.return_value = device_info_worker
 
         PerformanceMonitorDialog._refresh_device_info(dialog, force=True)
 
-    snapshot_cls.assert_called_once_with(
+    device_info_cls.assert_called_once_with(
         dialog._service,
-        "com.example",
-        include_device_info=True,
         refresh_device_info=True,
     )
     dialog._service.device_info.assert_not_called()
-    snapshot_worker.start.assert_called_once()
+    device_info_worker.start.assert_called_once()
 
 
 def test_performance_monitor_action_workers_use_dialog_service():
@@ -741,11 +727,59 @@ def test_performance_monitor_action_workers_use_dialog_service():
     quick_worker = PerformanceQuickCheckWorker(service, "com.example", "com.example/.Main")
     assert quick_worker.service is service
 
-    snapshot_worker = PerformanceSnapshotWorker(service, "com.example")
-    assert snapshot_worker.service is service
+    device_info_worker = PerformanceDeviceInfoWorker(service, refresh_device_info=True)
+    assert device_info_worker.service is service
 
-    frame_worker = PerformanceFrameWorker(service, "com.example")
-    assert frame_worker.service is service
+    provider = Mock()
+    provider_worker = PerformanceProviderWorker(provider, "com.example", interval_ms=500)
+    assert provider_worker.provider is provider
+    assert provider_worker.target == "com.example"
+
+
+def test_performance_monitor_start_uses_provider_worker_not_adb_realtime_polling():
+    dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
+    dialog.device_ip = "device-1"
+    dialog._service = Mock()
+    dialog._service.process_runner = Mock()
+    dialog._service.process_key_prefix = "perf_device"
+    dialog._quick_worker = None
+    dialog._monitoring = False
+    dialog.package_input = Mock()
+    dialog.package_input.text.return_value = "com.example"
+    dialog.activity_input = Mock()
+    dialog.activity_input.text.return_value = ".Main"
+    dialog.current_pkg_value = Mock()
+    dialog.device_state_value = Mock()
+    dialog._sync_controls = Mock()
+    dialog._append_timeline = Mock()
+    dialog._start_worker = Mock()
+
+    with patch("gui.dialogs.performance_monitor.AndroidAgentProvider") as provider_cls, \
+         patch("gui.dialogs.performance_monitor.PerformanceProviderWorker") as worker_cls, \
+         patch("gui.dialogs.performance_monitor._now_ms", return_value=1000):
+        provider = Mock()
+        provider_cls.return_value = provider
+        worker = Mock()
+        worker.snapshot_ready = Mock()
+        worker.status_changed = Mock()
+        worker_cls.return_value = worker
+
+        PerformanceMonitorDialog._start_monitor(dialog)
+
+    provider_cls.assert_called_once_with(
+        "device-1",
+        process_runner=dialog._service.process_runner,
+        process_key_prefix="perf_device",
+        sample_interval_seconds=0.5,
+    )
+    worker_cls.assert_called_once_with(provider, "com.example", interval_ms=500)
+    dialog._start_worker.assert_called_once()
+    dialog._service.cpu_sample.assert_not_called()
+    dialog._service.memory_sample.assert_not_called()
+    dialog._service.frame_metrics.assert_not_called()
+    dialog._service.reset_frame_stats.assert_not_called()
+    dialog._service.current_package.assert_not_called()
+    assert dialog._monitoring is True
 
 
 def test_perfdog_timeline_chart_keeps_long_display_window():
@@ -1542,7 +1576,6 @@ def test_performance_monitor_worker_helpers_register_and_cleanup_signals():
 
 def test_performance_monitor_frame_sample_exposes_fps_chart_series():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
-    dialog._latest_frame_values = {}
     dialog._monitoring = True
     dialog._session = Mock()
     dialog._session.update_latest_point.return_value = True
@@ -1567,7 +1600,7 @@ def test_performance_monitor_frame_sample_exposes_fps_chart_series():
 
     PerformanceMonitorDialog._append_frame_sample(dialog, frames)
 
-    assert dialog._latest_frame_values == {
+    expected_values = {
         "fps": 58.4,
         "jank": 12.0,
         "stutter": 2,
@@ -1586,20 +1619,18 @@ def test_performance_monitor_frame_sample_exposes_fps_chart_series():
         "slow_ui_thread": 4,
         "high_input_latency": 5,
     }
-    dialog._session.update_latest_point.assert_called_once_with(dialog._latest_frame_values)
+    dialog._session.update_latest_point.assert_called_once_with(expected_values)
     dialog._refresh_dashboard.assert_called_once()
 
 
-def test_performance_monitor_empty_frame_sample_clears_stale_frame_values():
+def test_performance_monitor_empty_frame_sample_does_not_update_stale_frame_values():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
-    dialog._latest_frame_values = {"frame_time_p95": 4950, "fps": 60}
     dialog._monitoring = True
     dialog._session = Mock()
     dialog._refresh_dashboard = Mock()
 
     PerformanceMonitorDialog._append_frame_sample(dialog, FrameMetrics())
 
-    assert dialog._latest_frame_values == {}
     dialog._session.update_latest_point.assert_not_called()
     dialog._session.add_point.assert_not_called()
     dialog._refresh_dashboard.assert_called_once()
@@ -1608,7 +1639,6 @@ def test_performance_monitor_empty_frame_sample_clears_stale_frame_values():
 def test_performance_monitor_idle_frame_sample_updates_preview_without_history_append():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
     dialog.device_ip = "device-1"
-    dialog._latest_frame_values = {}
     dialog._monitoring = False
     dialog._session = PerformanceSession(device_id="device-1")
     dialog._preview_session = PerformanceSession(device_id="device-1", status="Preview")
@@ -1643,7 +1673,6 @@ def test_performance_monitor_idle_frame_sample_updates_preview_without_history_a
 
 def test_performance_monitor_analyze_frame_sample_updates_existing_session():
     dialog = PerformanceMonitorDialog.__new__(PerformanceMonitorDialog)
-    dialog._latest_frame_values = {}
     dialog._monitoring = False
     dialog._session = PerformanceSession(device_id="device-1")
     dialog._session.add_point(1000, {"memory_pss": 128})

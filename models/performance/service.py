@@ -32,11 +32,9 @@ class PerformanceService:
         self.process_key_prefix = process_key_prefix or f"performance_{device_id}_{id(self)}"
         self.process_runner = ProcessRunner()
         self.report_service = PerformanceReportService()
-        self._cpu_baselines: dict[str, dict[str, tuple[int, int, int, int]]] = {}
-        self._cpu_total_baselines: dict[str, int] = {}
+        self.compat_collector = AdbCompatCollector(self)
         self._device_info_cache: DeviceInfo | None = None
         self._cpu_core_count_cache: int | None = None
-        self._frame_completed_baselines: dict[str, int] = {}
 
     def stop(self) -> None:
         self.process_runner.stop_all()
@@ -151,121 +149,6 @@ class PerformanceService:
         output = self._shell("su -c id", timeout=3)
         return "uid=0" in output
 
-    def memory_sample(self, package_name: str = "", timestamp_ms: int | None = None) -> MemorySample | None:
-        package_name = package_name or self.current_package()
-        if not package_name:
-            return None
-        result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", "dumpsys", "meminfo", package_name],
-            timeout=10,
-        )
-        if not result.success:
-            return None
-        return parse_meminfo_output(result.output, timestamp_ms=timestamp_ms or _now_ms())
-
-    def frame_metrics(self, package_name: str) -> FrameMetrics | None:
-        if not package_name:
-            return None
-        result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", "dumpsys", "gfxinfo", package_name, "framestats"],
-            timeout=15,
-        )
-        if not result.success:
-            return None
-        previous_completed = self._frame_completed_baselines.get(package_name)
-        latest_completed = _last_frame_completed_ns(result.output)
-        if latest_completed is not None:
-            self._frame_completed_baselines[package_name] = latest_completed
-        return parse_gfxinfo_output(result.output, min_completed_ns=previous_completed)
-
-    def cpu_sample(
-        self,
-        package_name: str,
-        *,
-        current_package: str = "",
-        timestamp_ms: int | None = None,
-    ) -> CpuSample | None:
-        if not package_name:
-            return None
-        total_result = CommandRunner.run(
-            ["adb", "-s", self.device_id, "shell", _cpu_snapshot_command(package_name)],
-            timeout=8,
-        )
-        if not total_result.success:
-            return None
-        total_ticks, snapshot_cpu_count, process_stats = _parse_cpu_snapshot_output(total_result.output)
-        if total_ticks is None:
-            return None
-        if not process_stats:
-            self._cpu_baselines.pop(package_name, None)
-            self._cpu_total_baselines.pop(package_name, None)
-            return None
-        previous_processes = self._cpu_baselines.get(package_name, {})
-        previous_total = self._cpu_total_baselines.get(package_name)
-        process_delta = 0
-        user_delta = 0
-        system_delta = 0
-        has_process_delta = False
-        current_baselines: dict[str, tuple[int, int, int, int]] = {}
-        thread_count = 0
-        primary_pid: int | None = None
-        for stat in process_stats:
-            if stat.process_name == package_name:
-                primary_pid = stat.pid
-            elif primary_pid is None:
-                primary_pid = stat.pid
-            thread_count += stat.thread_count
-            key = stat.identity
-            current_baselines[key] = (
-                stat.process_ticks,
-                total_ticks,
-                stat.user_ticks,
-                stat.system_ticks,
-            )
-            previous = previous_processes.get(key)
-            if not previous:
-                continue
-            delta = stat.process_ticks - previous[0]
-            delta_user = stat.user_ticks - previous[2]
-            delta_system = stat.system_ticks - previous[3]
-            if delta >= 0 and delta_user >= 0 and delta_system >= 0:
-                process_delta += delta
-                user_delta += delta_user
-                system_delta += delta_system
-                has_process_delta = True
-        self._cpu_baselines[package_name] = current_baselines
-        self._cpu_total_baselines[package_name] = total_ticks
-        process_ticks = process_delta if has_process_delta else None
-        user_ticks = user_delta if has_process_delta else None
-        system_ticks = system_delta if has_process_delta else None
-        previous_process = 0 if has_process_delta else None
-        previous_user = 0 if has_process_delta else None
-        previous_system = 0 if has_process_delta else None
-        return build_cpu_sample(
-            timestamp_ms=timestamp_ms or _now_ms(),
-            pid=primary_pid,
-            process_ticks=process_ticks,
-            total_ticks=total_ticks,
-            previous_process_ticks=previous_process,
-            previous_total_ticks=previous_total,
-            is_foreground=bool(current_package and current_package == package_name),
-            user_ticks=user_ticks,
-            system_ticks=system_ticks,
-            previous_user_ticks=previous_user,
-            previous_system_ticks=previous_system,
-            thread_count=thread_count,
-            cpu_count=snapshot_cpu_count or self._cpu_core_count() or 1,
-            process_count=len(process_stats),
-        )
-
-    def reset_frame_stats(self, package_name: str) -> None:
-        if package_name:
-            self._frame_completed_baselines.pop(package_name, None)
-            CommandRunner.run(
-                ["adb", "-s", self.device_id, "shell", "dumpsys", "gfxinfo", package_name, "reset"],
-                timeout=8,
-            )
-
     def startup_metrics(self, package_name: str, activity: str = "") -> StartupMetrics:
         if not package_name:
             return StartupMetrics(
@@ -315,22 +198,6 @@ class PerformanceService:
             enrich_startup_from_logcat(metrics, logcat.output)
         return metrics
 
-    def snapshot(self, package_name: str = "") -> PerformanceSnapshot:
-        online = self.device_online()
-        current = self.current_package() if online else ""
-        target = package_name or current
-        memory = self.memory_sample(target) if online and target else None
-        cpu = self.cpu_sample(target, current_package=current) if online and target else None
-        return PerformanceSnapshot(
-            device_id=self.device_id,
-            online=online,
-            current_package=current,
-            target_package=target,
-            memory=memory,
-            cpu=cpu,
-            status="Online" if online else "Offline",
-        )
-
     def quick_check(self, package_name: str, activity: str = "") -> dict:
         package_name = package_name or self.current_package()
         report_dir = self.report_service.create_report_dir(self.device_id, package_name or "unknown")
@@ -348,8 +215,8 @@ class PerformanceService:
             )
 
         if package_name:
-            self.cpu_sample(package_name, current_package=self.current_package())
-        self.reset_frame_stats(package_name)
+            self.compat_collector.cpu_sample(package_name, current_package=self.current_package())
+        self.compat_collector.reset_frame_stats(package_name)
         time.sleep(1)
         gfx = CommandRunner.run(
             ["adb", "-s", self.device_id, "shell", "dumpsys", "gfxinfo", package_name, "framestats"],
@@ -376,7 +243,7 @@ class PerformanceService:
             if mem.success:
                 samples.append(parse_meminfo_output(mem.output, timestamp_ms=_now_ms()))
 
-        cpu = self.cpu_sample(package_name, current_package=self.current_package()) if package_name else None
+        cpu = self.compat_collector.cpu_sample(package_name, current_package=self.current_package()) if package_name else None
         if cpu:
             cpu_samples.append(cpu)
 
@@ -404,6 +271,125 @@ class PerformanceService:
             "findings": findings,
             "status": status,
         }
+
+
+class AdbCompatCollector:
+    """One-shot adb compatibility metrics reserved for Quick Check paths."""
+
+    def __init__(self, service: PerformanceService):
+        self.service = service
+        self._cpu_baselines: dict[str, dict[str, tuple[int, int, int, int]]] = {}
+        self._cpu_total_baselines: dict[str, int] = {}
+        self._frame_completed_baselines: dict[str, int] = {}
+
+    def memory_sample(self, package_name: str = "", timestamp_ms: int | None = None) -> MemorySample | None:
+        package_name = package_name or self.service.current_package()
+        if not package_name:
+            return None
+        result = CommandRunner.run(
+            ["adb", "-s", self.service.device_id, "shell", "dumpsys", "meminfo", package_name],
+            timeout=10,
+        )
+        if not result.success:
+            return None
+        return parse_meminfo_output(result.output, timestamp_ms=timestamp_ms or _now_ms())
+
+    def frame_metrics(self, package_name: str) -> FrameMetrics | None:
+        if not package_name:
+            return None
+        result = CommandRunner.run(
+            ["adb", "-s", self.service.device_id, "shell", "dumpsys", "gfxinfo", package_name, "framestats"],
+            timeout=15,
+        )
+        if not result.success:
+            return None
+        previous_completed = self._frame_completed_baselines.get(package_name)
+        latest_completed = _last_frame_completed_ns(result.output)
+        if latest_completed is not None:
+            self._frame_completed_baselines[package_name] = latest_completed
+        return parse_gfxinfo_output(result.output, min_completed_ns=previous_completed)
+
+    def cpu_sample(
+        self,
+        package_name: str,
+        *,
+        current_package: str = "",
+        timestamp_ms: int | None = None,
+    ) -> CpuSample | None:
+        if not package_name:
+            return None
+        total_result = CommandRunner.run(
+            ["adb", "-s", self.service.device_id, "shell", _cpu_snapshot_command(package_name)],
+            timeout=8,
+        )
+        if not total_result.success:
+            return None
+        total_ticks, snapshot_cpu_count, process_stats = _parse_cpu_snapshot_output(total_result.output)
+        if total_ticks is None:
+            return None
+        if not process_stats:
+            self._cpu_baselines.pop(package_name, None)
+            self._cpu_total_baselines.pop(package_name, None)
+            return None
+        previous_processes = self._cpu_baselines.get(package_name, {})
+        previous_total = self._cpu_total_baselines.get(package_name)
+        process_delta = 0
+        user_delta = 0
+        system_delta = 0
+        has_process_delta = False
+        current_baselines: dict[str, tuple[int, int, int, int]] = {}
+        thread_count = 0
+        primary_pid: int | None = None
+        for stat in process_stats:
+            if stat.process_name == package_name:
+                primary_pid = stat.pid
+            elif primary_pid is None:
+                primary_pid = stat.pid
+            thread_count += stat.thread_count
+            key = stat.identity
+            current_baselines[key] = (
+                stat.process_ticks,
+                total_ticks,
+                stat.user_ticks,
+                stat.system_ticks,
+            )
+            previous = previous_processes.get(key)
+            if not previous:
+                continue
+            delta = stat.process_ticks - previous[0]
+            delta_user = stat.user_ticks - previous[2]
+            delta_system = stat.system_ticks - previous[3]
+            if delta >= 0 and delta_user >= 0 and delta_system >= 0:
+                process_delta += delta
+                user_delta += delta_user
+                system_delta += delta_system
+                has_process_delta = True
+        self._cpu_baselines[package_name] = current_baselines
+        self._cpu_total_baselines[package_name] = total_ticks
+        return build_cpu_sample(
+            timestamp_ms=timestamp_ms or _now_ms(),
+            pid=primary_pid,
+            process_ticks=process_delta if has_process_delta else None,
+            total_ticks=total_ticks,
+            previous_process_ticks=0 if has_process_delta else None,
+            previous_total_ticks=previous_total,
+            is_foreground=bool(current_package and current_package == package_name),
+            user_ticks=user_delta if has_process_delta else None,
+            system_ticks=system_delta if has_process_delta else None,
+            previous_user_ticks=0 if has_process_delta else None,
+            previous_system_ticks=0 if has_process_delta else None,
+            thread_count=thread_count,
+            cpu_count=snapshot_cpu_count or self.service._cpu_core_count() or 1,
+            process_count=len(process_stats),
+        )
+
+    def reset_frame_stats(self, package_name: str) -> None:
+        if package_name:
+            self._frame_completed_baselines.pop(package_name, None)
+            CommandRunner.run(
+                ["adb", "-s", self.service.device_id, "shell", "dumpsys", "gfxinfo", package_name, "reset"],
+                timeout=8,
+            )
 
 
 def _status_for(

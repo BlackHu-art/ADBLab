@@ -4,59 +4,103 @@ import time
 
 from PySide6.QtCore import QThread, Signal
 
+from .providers import PerformanceSampleProvider
 from .service import PerformanceService
 
 
-class PerformanceSnapshotWorker(QThread):
+class PerformanceProviderWorker(QThread):
     snapshot_ready = Signal(object)
     status_changed = Signal(str)
+
+    def __init__(
+        self,
+        provider: PerformanceSampleProvider,
+        target: str,
+        *,
+        interval_ms: int = 500,
+        max_samples: int | None = None,
+    ):
+        super().__init__()
+        self.provider = provider
+        self.target = target
+        self.interval_ms = max(100, int(interval_ms))
+        self.max_samples = max_samples
+
+    def run(self):
+        sample_count = 0
+        try:
+            self.provider.start(self.target)
+            while not self.isInterruptionRequested():
+                snapshot = self.provider.sample(self.target)
+                if self.isInterruptionRequested():
+                    break
+                self.snapshot_ready.emit(snapshot)
+                sample_count += 1
+                if self.max_samples is not None and sample_count >= self.max_samples:
+                    break
+                if not bool(getattr(self.provider, "paced", False)):
+                    self.msleep(self.interval_ms)
+        except Exception as exc:
+            if not self.isInterruptionRequested():
+                self.status_changed.emit(f"Provider failed: {exc}")
+        finally:
+            try:
+                self.provider.stop()
+            except Exception as exc:
+                if not self.isInterruptionRequested():
+                    self.status_changed.emit(f"Provider stop failed: {exc}")
+
+    def stop_provider(self) -> None:
+        self.requestInterruption()
+        try:
+            self.provider.stop()
+        except Exception:
+            pass
+
+
+class PerformanceDeviceInfoWorker(QThread):
     device_info_ready = Signal(object)
+    status_changed = Signal(str)
 
     def __init__(
         self,
         service: PerformanceService,
-        package_name: str = "",
         *,
-        include_device_info: bool = False,
         refresh_device_info: bool = False,
     ):
         super().__init__()
         self.service = service
-        self.package_name = package_name
-        self.include_device_info = include_device_info
         self.refresh_device_info = refresh_device_info
 
     def run(self):
         try:
-            if self.include_device_info:
-                device_info = self.service.device_info(refresh=self.refresh_device_info)
-                if not self.isInterruptionRequested():
-                    self.device_info_ready.emit(device_info.rows())
-            snapshot = self.service.snapshot(self.package_name)
+            device_info = self.service.device_info(refresh=self.refresh_device_info)
             if not self.isInterruptionRequested():
-                self.snapshot_ready.emit(snapshot)
+                self.device_info_ready.emit(device_info.rows())
         except Exception as exc:
             if not self.isInterruptionRequested():
-                self.status_changed.emit(f"Snapshot failed: {exc}")
+                self.status_changed.emit(f"Device info failed: {exc}")
 
 
-class PerformanceFrameWorker(QThread):
-    result_ready = Signal(object)
+class PerformanceCurrentPackageWorker(QThread):
+    package_ready = Signal(str)
     status_changed = Signal(str)
 
-    def __init__(self, service: PerformanceService, package_name: str):
+    def __init__(self, service: PerformanceService):
         super().__init__()
         self.service = service
-        self.package_name = package_name
 
     def run(self):
         try:
-            frames = self.service.frame_metrics(self.package_name)
+            package_name = self.service.current_package()
             if not self.isInterruptionRequested():
-                self.result_ready.emit(frames)
+                if package_name:
+                    self.package_ready.emit(package_name)
+                else:
+                    self.status_changed.emit("Current package unavailable")
         except Exception as exc:
             if not self.isInterruptionRequested():
-                self.status_changed.emit(f"Frame refresh failed: {exc}")
+                self.status_changed.emit(f"Current package failed: {exc}")
 
 
 class PerformanceQuickCheckWorker(QThread):
@@ -102,7 +146,7 @@ class PerformanceAnalyzeWorker(QThread):
     def run(self):
         try:
             self.status_changed.emit("Analyzing monitor session...")
-            frames = self.service.frame_metrics(self.package_name)
+            frames = None
             report_service = self.service.report_service
             report_dir = report_service.create_report_dir(self.service.device_id, self.package_name or "unknown")
             findings = []

@@ -142,7 +142,6 @@ def snapshot_chart_values(
     snapshot: PerformanceSnapshot,
     *,
     collecting: bool,
-    latest_frame_values: Mapping[str, MetricValue] | None = None,
 ) -> dict[str, MetricValue]:
     values: dict[str, MetricValue] = {
         "online": 1 if snapshot.online else 0,
@@ -180,8 +179,8 @@ def snapshot_chart_values(
             values["threads"] = snapshot.cpu.thread_count
         if snapshot.cpu.process_count is not None:
             values["processes"] = snapshot.cpu.process_count
-    if latest_frame_values:
-        values.update(latest_frame_values)
+    if isinstance(snapshot.frames, FrameMetrics):
+        values.update(frame_chart_values(snapshot.frames))
     return values
 
 

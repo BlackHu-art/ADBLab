@@ -26,7 +26,7 @@ from models.performance.dashboard import (
     web_timeline_payload,
 )
 from models.performance.presentation import build_report_summary, render_report_text
-from models.performance.providers import PsutilHostProvider, provider_capabilities
+from models.performance.providers import PsutilHostProvider, _parse_android_agent_batch, provider_capabilities
 from models.performance.sampling import PerformanceSamplingSchedule
 from models.performance.service import (
     PerformanceService,
@@ -43,7 +43,11 @@ from models.performance.service import (
 from models.performance.report_service import PerformanceReportService
 from models.performance.session import PerformanceSession
 from models.performance.types import CpuSample, FrameMetrics, MemorySample, PerformanceSnapshot, StartupMetrics
-from models.performance.workers import PerformanceAnalyzeWorker, PerformanceSnapshotWorker
+from models.performance.workers import (
+    PerformanceAnalyzeWorker,
+    PerformanceDeviceInfoWorker,
+    PerformanceProviderWorker,
+)
 
 
 def test_parse_am_start_and_logcat_startup_metrics():
@@ -164,7 +168,7 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
     assert _last_frame_completed_ns(output) == 2020000000
 
 
-def test_performance_service_frame_metrics_only_reports_new_framestats_rows():
+def test_adb_compat_frame_metrics_only_reports_new_framestats_rows():
     outputs = [
         """
 ---PROFILEDATA---
@@ -200,9 +204,9 @@ Flags,IntendedVsync,Vsync,OldestInputEvent,NewestInputEvent,HandleInputStart,Ani
         return Mock(success=True, output=outputs.pop(0), returncode=0, error="")
 
     with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
-        first = service.frame_metrics("com.example")
-        second = service.frame_metrics("com.example")
-        third = service.frame_metrics("com.example")
+        first = service.compat_collector.frame_metrics("com.example")
+        second = service.compat_collector.frame_metrics("com.example")
+        third = service.compat_collector.frame_metrics("com.example")
 
     assert first.total_frames == 2
     assert second.total_frames == 1
@@ -413,7 +417,7 @@ def test_cpu_snapshot_command_matches_package_and_child_processes():
     assert "case \"$cmd\" in 'com.example':*)" in command
 
 
-def test_performance_service_cpu_sample_aggregates_stable_package_processes():
+def test_adb_compat_cpu_sample_aggregates_stable_package_processes():
     snapshots = [
         "\n".join(
             [
@@ -440,8 +444,8 @@ def test_performance_service_cpu_sample_aggregates_stable_package_processes():
         return Mock(success=True, output=snapshots.pop(0), returncode=0, error="")
 
     with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
-        first = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
-        second = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
+        first = service.compat_collector.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
+        second = service.compat_collector.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
 
     assert first.process_percent is None
     assert first.process_count == 2
@@ -454,7 +458,7 @@ def test_performance_service_cpu_sample_aggregates_stable_package_processes():
     assert second.process_system_percent == 20.0
 
 
-def test_performance_service_cpu_sample_ignores_new_or_restarted_process_delta_until_next_sample():
+def test_adb_compat_cpu_sample_ignores_new_or_restarted_process_delta_until_next_sample():
     snapshots = [
         "\n".join(
             [
@@ -480,8 +484,8 @@ def test_performance_service_cpu_sample_ignores_new_or_restarted_process_delta_u
         return Mock(success=True, output=snapshots.pop(0), returncode=0, error="")
 
     with patch("models.performance.service.CommandRunner.run", side_effect=fake_run):
-        service.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
-        second = service.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
+        service.compat_collector.cpu_sample("com.example", current_package="com.example", timestamp_ms=1000)
+        second = service.compat_collector.cpu_sample("com.example", current_package="com.example", timestamp_ms=2000)
 
     assert second.process_count == 2
     assert second.thread_count == 11
@@ -554,6 +558,25 @@ def test_psutil_host_provider_rejects_non_pid_target():
         assert "local process id" in str(exc)
     else:
         raise AssertionError("non-pid psutil-host target should fail")
+
+
+def test_android_agent_batch_parser_extracts_cpu_and_memory_processes():
+    lines = [
+        "ADBLAB_STAT\tcpu  100 0 100 800 0 0 0 0 0 0",
+        "ADBLAB_STAT\tcpu0 50 0 50 400 0 0 0 0 0 0",
+        "ADBLAB_STAT\tcpu1 50 0 50 400 0 0 0 0 0 0",
+        f"ADBLAB_PROC\t1234\tcom.example\t8\t2048\t1536\t{_proc_stat(1234, 'com.example', 100, 20, 8, 1000)}",
+        f"ADBLAB_PROC\t1235\tcom.example:remote\t4\t1024\t\t{_proc_stat(1235, 'example:remote', 40, 10, 4, 1001)}",
+    ]
+
+    total_ticks, cpu_count, processes = _parse_android_agent_batch(lines)
+
+    assert total_ticks == 1000
+    assert cpu_count == 2
+    assert [process.pid for process in processes] == [1234, 1235]
+    assert processes[0].pss_kb == 1536
+    assert processes[1].rss_kb == 1024
+    assert [process.thread_count for process in processes] == [8, 4]
 
 
 def test_report_service_writes_expected_artifacts(tmp_path):
@@ -660,6 +683,7 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
         device_id="device-1",
         online=True,
         current_package="com.example",
+        frames=frames,
         memory=MemorySample(
             timestamp_ms=1000,
             total_pss_kb=2048,
@@ -694,7 +718,6 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
     snapshot_values = snapshot_chart_values(
         snapshot,
         collecting=True,
-        latest_frame_values=frame_values,
     )
 
     assert frame_values == {
@@ -736,6 +759,21 @@ def test_dashboard_chart_value_helpers_normalize_snapshot_frame_and_session():
     assert snapshot_values["fps"] == 58.6
     assert chart_points(session, 1) == [{"_ts": 2000, "memory_pss": 120}]
     assert marker_payload(session) == [{"timestamp_ms": 1500, "label": "Login"}]
+
+
+def test_snapshot_chart_values_does_not_reuse_missing_frame_values():
+    snapshot = PerformanceSnapshot(
+        device_id="device-1",
+        online=True,
+        current_package="com.example",
+        memory=MemorySample(timestamp_ms=1000, total_pss_kb=2048),
+    )
+
+    values = snapshot_chart_values(snapshot, collecting=True)
+
+    assert "frame_time_p95" not in values
+    assert "fps" not in values
+    assert values["memory_pss"] == 2.0
 
 
 def test_snapshot_chart_values_does_not_emit_cpu_zero_without_delta():
@@ -1130,7 +1168,6 @@ def test_sampling_schedule_respects_frame_interval_and_force_refresh():
 def test_analyze_worker_flags_memory_growth_and_writes_report():
     service = type("FakeService", (), {})()
     service.device_id = "device-1"
-    service.frame_metrics = lambda package_name: FrameMetrics(total_frames=100, jank_rate=0.01)
     service.report_service = type(
         "FakeReportService",
         (),
@@ -1156,53 +1193,61 @@ def test_analyze_worker_flags_memory_growth_and_writes_report():
 
     assert emitted
     assert emitted[0]["status"] == "warn"
+    assert emitted[0]["frames"] is None
     assert emitted[0]["findings"] == ["PSS grew by 12000 KB"]
 
 
-def test_snapshot_worker_skips_heavy_device_info_by_default():
-    service = Mock()
-    service.snapshot.return_value = PerformanceSnapshot(
-        device_id="device-1",
-        online=True,
-        target_package="com.example",
-        status="Ready",
-    )
-    worker = PerformanceSnapshotWorker(service, "com.example")
+def test_provider_worker_starts_samples_and_stops_provider():
+    class FakeProvider:
+        name = "fake"
+        paced = False
+
+        def __init__(self):
+            self.started = []
+            self.stopped = 0
+            self.samples = 0
+
+        def start(self, target=""):
+            self.started.append(target)
+
+        def sample(self, target=""):
+            self.samples += 1
+            return PerformanceSnapshot(
+                device_id="device-1",
+                online=True,
+                target_package=target,
+                status=f"sample-{self.samples}",
+            )
+
+        def stop(self):
+            self.stopped += 1
+
+    provider = FakeProvider()
+    worker = PerformanceProviderWorker(provider, "com.example", interval_ms=100, max_samples=2)
     emitted = []
     worker.snapshot_ready.connect(emitted.append)
 
     worker.run()
 
-    service.device_info.assert_not_called()
-    service.snapshot.assert_called_once_with("com.example")
-    assert emitted == [service.snapshot.return_value]
+    assert provider.started == ["com.example"]
+    assert provider.samples == 2
+    assert provider.stopped == 1
+    assert [snapshot.status for snapshot in emitted] == ["sample-1", "sample-2"]
 
 
-def test_snapshot_worker_collects_device_info_only_when_requested():
+def test_device_info_worker_collects_device_info_only_when_requested():
     device_info = Mock()
     device_info.rows.return_value = [{"info": "Model", "value": "Pixel"}]
     service = Mock()
     service.device_info.return_value = device_info
-    service.snapshot.return_value = PerformanceSnapshot(
-        device_id="device-1",
-        online=True,
-        target_package="com.example",
-        status="Ready",
-    )
-    worker = PerformanceSnapshotWorker(
+    worker = PerformanceDeviceInfoWorker(
         service,
-        "com.example",
-        include_device_info=True,
         refresh_device_info=True,
     )
     device_rows = []
-    snapshots = []
     worker.device_info_ready.connect(device_rows.append)
-    worker.snapshot_ready.connect(snapshots.append)
 
     worker.run()
 
     service.device_info.assert_called_once_with(refresh=True)
-    service.snapshot.assert_called_once_with("com.example")
     assert device_rows == [[{"info": "Model", "value": "Pixel"}]]
-    assert snapshots == [service.snapshot.return_value]

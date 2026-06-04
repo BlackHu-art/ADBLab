@@ -37,7 +37,6 @@ from models.performance.dashboard import (
     axis_policy,
     build_metric_lanes,
     chart_points,
-    frame_chart_values,
     marker_payload,
     metric_details,
     metric_summaries,
@@ -47,14 +46,15 @@ from models.performance.dashboard import (
     web_dashboard_context,
 )
 from models.performance.presentation import build_report_summary, render_report_text
-from models.performance.sampling import PerformanceSamplingSchedule
+from models.performance.providers import AndroidAgentProvider
 from models.performance.service import PerformanceService
 from models.performance.session import PerformanceSession
 from models.performance.workers import (
     PerformanceAnalyzeWorker,
-    PerformanceFrameWorker,
+    PerformanceCurrentPackageWorker,
+    PerformanceDeviceInfoWorker,
+    PerformanceProviderWorker,
     PerformanceQuickCheckWorker,
-    PerformanceSnapshotWorker,
 )
 
 
@@ -65,7 +65,7 @@ class PerformanceMonitorDialog(QDialog):
     """Per-device live performance monitor."""
 
     REFRESH_INTERVAL_MS = 1000
-    FRAME_REFRESH_INTERVAL_MS = REFRESH_INTERVAL_MS
+    PROVIDER_INTERVAL_MS = 500
     DEVICE_INFO_REFRESH_DELAY_MS = 1800
     DEVICE_INFO_RETRY_DELAY_MS = 500
     TIMELINE_MAX_ENTRIES = 3600
@@ -78,15 +78,14 @@ class PerformanceMonitorDialog(QDialog):
             process_key_prefix=f"performance_{device_ip}_{id(self)}",
         )
         self._closing = False
-        self._snapshot_worker = None
-        self._frame_worker = None
+        self._provider_worker = None
+        self._current_package_worker = None
+        self._device_info_worker = None
         self._quick_worker = None
         self._analyze_worker = None
         self._worker_bindings: dict[str, WorkerSignalBinding] = {}
         self._monitoring = False
         self._monitor_started_at = 0.0
-        self._sampling = PerformanceSamplingSchedule(self.FRAME_REFRESH_INTERVAL_MS)
-        self._latest_frame_values: dict[str, float | int | None] = {}
         self._monitor_samples = []
         self._monitor_cpu_samples = []
         self._timeline_entries = []
@@ -334,38 +333,29 @@ class PerformanceMonitorDialog(QDialog):
         self._refresh_web_context()
 
     def _refresh_snapshot(self):
-        if self._closing or _worker_running(self._snapshot_worker):
+        if self._closing:
             return
-        worker = PerformanceSnapshotWorker(
-            self._service,
-            self.package_input.text().strip(),
-            include_device_info=False,
-        )
-        self._start_snapshot_worker(worker)
+        if self._monitoring:
+            self.device_state_value.setText(f"Collecting {_elapsed_text(self._monitor_started_at)}")
+        self._refresh_web_context()
 
     def _refresh_device_info(self, force: bool = False):
         if self._closing:
             return
-        if _worker_running(self._snapshot_worker):
+        if _worker_running(self._device_info_worker):
             timer = getattr(self, "_device_info_timer", None)
             if is_qobject_alive(timer):
                 timer.start(self.DEVICE_INFO_RETRY_DELAY_MS)
             return
-        worker = PerformanceSnapshotWorker(
+        worker = PerformanceDeviceInfoWorker(
             self._service,
-            self.package_input.text().strip(),
-            include_device_info=True,
             refresh_device_info=force,
         )
-        self._start_snapshot_worker(worker)
-
-    def _start_snapshot_worker(self, worker):
         self._start_worker(
-            "_snapshot_worker",
+            "_device_info_worker",
             worker,
-            "snapshot",
+            "device_info",
             (
-                (worker.snapshot_ready, self._on_snapshot),
                 (worker.device_info_ready, self._on_device_info),
                 (worker.status_changed, self._on_status),
             ),
@@ -380,7 +370,6 @@ class PerformanceMonitorDialog(QDialog):
         values = snapshot_chart_values(
             snapshot,
             collecting=self._monitoring,
-            latest_frame_values=getattr(self, "_latest_frame_values", {}),
         )
         if snapshot.memory:
             if self._monitoring:
@@ -389,7 +378,6 @@ class PerformanceMonitorDialog(QDialog):
             self._monitor_cpu_samples.append(snapshot.cpu)
         if self._monitoring:
             self.device_state_value.setText(f"Collecting {_elapsed_text(self._monitor_started_at)}")
-            self._maybe_refresh_frame_metrics()
         else:
             self.device_state_value.setText(snapshot.status)
         if self._monitoring:
@@ -404,12 +392,26 @@ class PerformanceMonitorDialog(QDialog):
         self._device_info_rows = list(rows or [])
         self._refresh_web_context()
 
-    def _on_snapshot_finished(self, worker):
-        self._finish_worker("_snapshot_worker", worker)
-
     def _use_current_package(self):
-        package_name = self.current_pkg_value.text().strip()
-        if package_name and package_name != "--":
+        if self._closing or _worker_running(self._current_package_worker):
+            return
+        worker = PerformanceCurrentPackageWorker(self._service)
+        self._start_worker(
+            "_current_package_worker",
+            worker,
+            "current_package",
+            (
+                (worker.package_ready, self._on_current_package),
+                (worker.status_changed, self._on_status),
+            ),
+        )
+
+    def _on_current_package(self, package_name: str):
+        if self._closing:
+            return
+        package_name = str(package_name or "").strip()
+        if package_name:
+            self.current_pkg_value.setText(package_name)
             self.package_input.setText(package_name)
             self._append_timeline(f"Target package set to {package_name}")
 
@@ -467,16 +469,33 @@ class PerformanceMonitorDialog(QDialog):
             started_at_ms=_now_ms(),
             status="Collecting",
         )
-        self._sampling_schedule().reset()
-        self._latest_frame_values = {}
         self._monitor_samples = []
         self._monitor_cpu_samples = []
+        self.current_pkg_value.setText(package_name)
         self.device_state_value.setText("Collecting 00:00")
         self._sync_controls()
         self._append_timeline("Monitor started")
-        self._service.cpu_sample(package_name, current_package=self._service.current_package())
-        self._service.reset_frame_stats(package_name)
-        self._maybe_refresh_frame_metrics(force=True)
+        provider = AndroidAgentProvider(
+            self.device_ip,
+            process_runner=self._service.process_runner,
+            process_key_prefix=self._service.process_key_prefix,
+            sample_interval_seconds=self.PROVIDER_INTERVAL_MS / 1000,
+        )
+        worker = PerformanceProviderWorker(
+            provider,
+            package_name,
+            interval_ms=self.PROVIDER_INTERVAL_MS,
+        )
+        self._start_worker(
+            "_provider_worker",
+            worker,
+            "provider",
+            (
+                (worker.snapshot_ready, self._on_snapshot),
+                (worker.status_changed, self._on_status),
+            ),
+            sync_controls=True,
+        )
 
     def _stop_monitor(self):
         if not self._monitoring:
@@ -484,6 +503,9 @@ class PerformanceMonitorDialog(QDialog):
         self._monitoring = False
         self._session.status = "Analyzing"
         self.device_state_value.setText("Analyzing")
+        provider_worker = getattr(self, "_provider_worker", None)
+        if provider_worker and is_qobject_alive(provider_worker):
+            provider_worker.stop_provider()
         package_name = self.package_input.text().strip()
         worker = PerformanceAnalyzeWorker(
             self._service,
@@ -520,52 +542,18 @@ class PerformanceMonitorDialog(QDialog):
     def _on_analyze_worker_finished(self, worker):
         self._finish_worker("_analyze_worker", worker, sync_controls=True)
 
-    def _maybe_refresh_frame_metrics(self, force: bool = False):
-        if self._closing or not self._monitoring:
-            return
-        package_name = self.package_input.text().strip()
-        if not package_name:
-            return
-        if _worker_running(self._frame_worker):
-            return
-        now = time.monotonic()
-        schedule = self._sampling_schedule()
-        if not schedule.should_refresh_frame(now, force=force):
-            return
-        worker = PerformanceFrameWorker(self._service, package_name)
-        self._start_worker(
-            "_frame_worker",
-            worker,
-            "frame",
-            (
-                (worker.result_ready, self._on_frame_metrics_result),
-                (worker.status_changed, self._on_status),
-            ),
-            auto_start=False,
-        )
-        schedule.mark_frame_refresh(now)
-        worker.start()
-
-    def _on_frame_metrics_result(self, frames):
-        if self._closing or not frames:
-            return
-        self._append_frame_sample(frames)
-
-    def _on_frame_worker_finished(self, worker):
-        self._finish_worker("_frame_worker", worker)
-
     def _render_result(self, result: dict, title: str):
         self.report_output.setPlainText(render_report_text(result, title))
         self._last_report_summary = build_report_summary(result, title)
         self._refresh_web_context()
 
     def _append_frame_sample(self, frames, *, append_when_idle: bool = True):
+        from models.performance.dashboard import frame_chart_values
+
         values = frame_chart_values(frames)
         if not _has_chart_values(values):
-            self._latest_frame_values = {}
             self._refresh_dashboard()
             return
-        self._latest_frame_values = values
         if self._monitoring:
             if self._session.update_latest_point(values):
                 self._refresh_dashboard()
@@ -741,13 +729,6 @@ class PerformanceMonitorDialog(QDialog):
         if sync_controls and not self._closing:
             self._sync_controls()
 
-    def _sampling_schedule(self) -> PerformanceSamplingSchedule:
-        schedule = getattr(self, "_sampling", None)
-        if schedule is None:
-            schedule = PerformanceSamplingSchedule(self.FRAME_REFRESH_INTERVAL_MS)
-            self._sampling = schedule
-        return schedule
-
     def _disconnect_worker(self, worker_key: str, worker):
         if not is_qobject_alive(worker):
             return
@@ -767,8 +748,9 @@ class PerformanceMonitorDialog(QDialog):
             safe_disconnect(device_info_timer.timeout, self._refresh_device_info)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         for attr, key in (
-            ("_snapshot_worker", "snapshot"),
-            ("_frame_worker", "frame"),
+            ("_provider_worker", "provider"),
+            ("_current_package_worker", "current_package"),
+            ("_device_info_worker", "device_info"),
             ("_quick_worker", "quick"),
             ("_analyze_worker", "analyze"),
         ):
@@ -778,7 +760,10 @@ class PerformanceMonitorDialog(QDialog):
             setattr(self, attr, None)
             self._disconnect_worker(key, worker)
             if _worker_running(worker):
-                worker.requestInterruption()
+                if hasattr(worker, "stop_provider"):
+                    worker.stop_provider()
+                else:
+                    worker.requestInterruption()
                 worker.setParent(None)
                 worker.finished.connect(worker.deleteLater)
                 wait_for_thread_later(worker, 5000)
