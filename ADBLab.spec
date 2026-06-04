@@ -4,7 +4,6 @@
 from pathlib import Path
 
 ROOT = Path(SPECPATH)
-WEB_DASHBOARD_ASSETS = ROOT / 'gui' / 'performance_web' / 'assets'
 
 a = Analysis(
     ['main.py'],
@@ -14,13 +13,8 @@ a = Analysis(
         ('resources', 'resources'),
         ('icon.ico', '.'),
         ('scrcpy-win64-v3.3.1', 'scrcpy-win64-v3.3.1'),
-        (str(WEB_DASHBOARD_ASSETS), 'gui/performance_web/assets'),
     ],
-    hiddenimports=[
-        'PySide6.QtWebChannel',
-        'PySide6.QtWebEngineCore',
-        'PySide6.QtWebEngineWidgets',
-    ],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

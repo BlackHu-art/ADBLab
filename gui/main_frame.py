@@ -3,8 +3,8 @@ import os
 import shutil
 import threading
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QMouseEvent
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -277,7 +277,7 @@ class MainFrame(QMainWindow):
         self.tb_logcat = self._create_toolbar_btn("Live Logcat", "resources/icons/scroll.svg")
         self.tb_logcat.setFixedSize(28, 24)
         self.tb_performance = self._create_toolbar_btn(
-            "Performance Monitor", "resources/icons/speedometer.svg"
+            "Open Perfetto", "resources/icons/speedometer.svg"
         )
         self.tb_performance.setFixedSize(28, 24)
         self.tb_settings = self._create_toolbar_btn("Settings", "resources/icons/gear.svg")
@@ -528,10 +528,8 @@ class MainFrame(QMainWindow):
         self._show_device_dialogs(LiveLogcatDialog)
 
     def _show_performance_monitor(self):
-        """Open a Performance Monitor window for each selected device."""
-        from gui.dialogs.performance_monitor import PerformanceMonitorDialog
-
-        self._show_device_dialogs(PerformanceMonitorDialog)
+        """Open Perfetto in the system browser."""
+        QDesktopServices.openUrl(QUrl("https://ui.perfetto.dev/"))
 
     def _show_device_dialogs(self, dialog_cls):
         devices = self.left_panel.selected_devices

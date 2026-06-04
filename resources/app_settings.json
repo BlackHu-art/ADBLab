@@ -9,7 +9,7 @@
   "performance_log_threshold_ms": 300,
   "monkey_params": {
     "events": 100000,
-    "throttle": 500,
+    "throttle": 2000,
     "ignore_crashes": true,
     "ignore_timeouts": true,
     "ignore_security": true,
@@ -22,7 +22,7 @@
     "appswitch": 10,
     "anyevent": 5,
     "pinch": 5,
-    "package_name": "com.android.flysilkworm"
+    "package_name": "com.android.settings"
   },
   "theme": "Light",
   "window_width": 1200,
