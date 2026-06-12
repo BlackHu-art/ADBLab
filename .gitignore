@@ -2,7 +2,11 @@
 __pycache__/
 /resources/app.log
 /.playwright-cli/
-/output/
 common/mail/mail.yaml
 .superpowers/
-guiscrcpy/
+.pytest_cache/
+.mypycache__/
+.remember/
+.mypy-cache/
+.ruff-cache/
+logs/

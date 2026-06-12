@@ -1,7 +1,7 @@
 """ADBLab QSS stylesheet templates."""
 
-from .theme import _tc
 from .fonts import _font
+from .theme import _tc
 
 RADIUS_SM = 4
 RADIUS_MD = 6
