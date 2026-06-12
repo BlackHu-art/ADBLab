@@ -44,6 +44,7 @@ class ProcessRunner:
         errors: str | None = None,
         bufsize: int = -1,
         creationflags: int | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.Popen:
         """启动子进程，同名 key 会先停止旧进程。"""
         proc = self.spawn(
@@ -56,6 +57,7 @@ class ProcessRunner:
             errors=errors,
             bufsize=bufsize,
             creationflags=creationflags,
+            env=env,
         )
         with self._lock:
             old_proc = self._procs.pop(key, None)
@@ -77,6 +79,7 @@ class ProcessRunner:
         errors: str | None = None,
         bufsize: int = -1,
         creationflags: int | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.Popen:
         """Launch a subprocess without tracking it in the active process map."""
         popen_kwargs = {
@@ -93,6 +96,8 @@ class ProcessRunner:
             popen_kwargs["encoding"] = encoding
         if errors is not None:
             popen_kwargs["errors"] = errors
+        if env is not None:
+            popen_kwargs["env"] = env
         return subprocess.Popen(self._resolve_cmd(cmd), **popen_kwargs)
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:

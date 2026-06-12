@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QListWidget, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QPushButton, QWidget
 
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
@@ -21,6 +21,7 @@ from core.log_service import LogService
 from core.perf_trace import attach_perf, build_async_perf, split_perf
 from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
+from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.main_frame import MainFrame, _ScanThread
 from gui.panels.log_panel import LogPanel
@@ -39,12 +40,14 @@ from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from models.file_explorer_worker import ADBWorker, TransferWorker
+from models.mobileperf import MobilePerfRunConfig, MobilePerfRunner
 from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
 from gui.dialogs.live_logcat import LiveLogcatDialog
+from gui.panels.app_panel import AppPanel
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.side_panel import SidePanel
-from gui.panels.remote_panel import ScrcpyLaunchWorker
+from gui.panels.remote_panel import RemotePanel, ScrcpyLaunchWorker
 from gui.styles import BaseStyles
 from gui.styles import theme
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
@@ -387,6 +390,7 @@ def test_process_runner_start_forwards_stream_kwargs():
             encoding="utf-8",
             errors="ignore",
             bufsize=1,
+            env={"ADB_PATH": "adb-test"},
         )
 
     assert started is proc
@@ -395,6 +399,7 @@ def test_process_runner_start_forwards_stream_kwargs():
     assert popen.call_args.kwargs["encoding"] == "utf-8"
     assert popen.call_args.kwargs["errors"] == "ignore"
     assert popen.call_args.kwargs["bufsize"] == 1
+    assert popen.call_args.kwargs["env"] == {"ADB_PATH": "adb-test"}
 
 
 def test_process_runner_spawn_supports_untracked_external_launches():
@@ -512,6 +517,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.update_email = Mock()
     fake_side_panel.update_vercode = Mock()
     fake_side_panel.on_recording_finished = Mock()
+    fake_side_panel.on_operation_completed = Mock()
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.selected_devices = []
 
@@ -616,14 +622,324 @@ def test_main_frame_does_not_import_performance_monitor_at_module_load():
     assert not hasattr(main_frame_module, "PerformanceMonitorDialog")
 
 
-def test_main_frame_performance_button_opens_perfetto_home():
+def test_main_frame_performance_button_opens_launcher_dialog():
+    _app = QApplication.instance() or QApplication([])
     frame = MainFrame.__new__(MainFrame)
+    frame.left_panel = Mock()
+    frame.left_panel.selected_devices = ["device-1"]
+    frame.left_panel._apps_tab = Mock()
+    frame.left_panel._apps_tab.package_text = "com.example.app"
+    frame._find_active_dialog = Mock(return_value=None)
+    frame._register_dialog = Mock(side_effect=lambda dialog, *_args: dialog)
 
-    with patch("gui.main_frame.QDesktopServices.openUrl") as open_url:
+    with patch("gui.dialogs.performance_launcher.PerformanceLauncherDialog.show") as show:
         MainFrame._show_performance_monitor(frame)
+
+    frame._register_dialog.assert_called_once()
+    dialog = frame._register_dialog.call_args.args[0]
+    assert isinstance(dialog, PerformanceLauncherDialog)
+    assert dialog.windowTitle() == "Performance - device-1"
+    assert not hasattr(dialog, "device_edit")
+    assert dialog.package_edit.text() == "com.example.app"
+    assert dialog.save_path_edit.text().replace("\\", "/").endswith("/mobileperf/device-1")
+    show.assert_called_once()
+
+
+def test_main_frame_performance_button_requires_selected_device():
+    frame = MainFrame.__new__(MainFrame)
+    frame.left_panel = Mock()
+    frame.left_panel.selected_devices = []
+    frame.log_panel = Mock()
+    frame._find_active_dialog = Mock()
+    frame._register_dialog = Mock()
+
+    MainFrame._show_performance_monitor(frame)
+
+    frame.log_panel._append_log.assert_called_once_with("WARNING", "No device selected")
+    frame._register_dialog.assert_not_called()
+
+
+def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails():
+    _app = QApplication.instance() or QApplication([])
+    frame = MainFrame.__new__(MainFrame)
+    frame._always_on_top = False
+    frame._set_always_on_top_native = Mock(return_value=False)
+    frame._apply_window_flags = Mock()
+    frame.setWindowFlags = Mock()
+    frame.show = Mock()
+    button = QPushButton()
+    button.setCheckable(True)
+    frame.tb_always_on_top = button
+
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings = settings_cls.instance.return_value
+        MainFrame.set_always_on_top(frame, True)
+
+    assert frame._always_on_top is True
+    frame._set_always_on_top_native.assert_called_once_with(True)
+    frame._apply_window_flags.assert_not_called()
+    frame.setWindowFlags.assert_not_called()
+    frame.show.assert_not_called()
+    settings.set.assert_called_once_with("always_on_top", True)
+    assert button.toolTip() == "Unpin from top"
+    assert button.isChecked() is True
+    assert button.property("iconName") == "push-pin-slash.svg"
+
+
+def test_main_frame_always_on_top_native_path_does_not_recreate_window():
+    _app = QApplication.instance() or QApplication([])
+    frame = MainFrame.__new__(MainFrame)
+    frame._always_on_top = False
+    frame._set_always_on_top_native = Mock(return_value=True)
+    frame._apply_window_flags = Mock()
+    frame.show = Mock()
+    button = QPushButton()
+    button.setCheckable(True)
+    frame.tb_always_on_top = button
+
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings = settings_cls.instance.return_value
+        MainFrame.set_always_on_top(frame, True)
+
+    frame._set_always_on_top_native.assert_called_once_with(True)
+    frame._apply_window_flags.assert_not_called()
+    frame.show.assert_not_called()
+    settings.set.assert_called_once_with("always_on_top", True)
+    assert button.property("iconName") == "push-pin-slash.svg"
+
+
+def test_performance_launcher_perfetto_button_opens_perfetto_home():
+    _app = QApplication.instance() or QApplication([])
+    with patch("gui.dialogs.performance_launcher.QDesktopServices.openUrl") as open_url:
+        PerformanceLauncherDialog.open_perfetto()
 
     open_url.assert_called_once()
     assert open_url.call_args.args[0].toString() == "https://ui.perfetto.dev/"
+
+
+def test_performance_launcher_get_current_package_updates_package_field():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+
+    with patch("gui.dialogs.performance_launcher.detect_current_package") as detect:
+        detect.return_value = {
+            "success": True,
+            "device_ip": "device-1",
+            "package_name": "com.example.app",
+        }
+        dialog.fetch_current_package()
+        dialog._package_worker.run()
+        dialog._package_worker.finished.emit()
+
+    assert dialog.package_edit.text() == "com.example.app"
+    assert dialog.get_package_btn.isEnabled() is True
+    dialog.close()
+
+
+def test_performance_launcher_build_config_uses_title_device_and_device_save_dir(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="127.0.0.1:5555", package_name="com.example.app")
+    dialog.save_path_edit.setText(str(tmp_path / "mobileperf"))
+    dialog.mailbox_edit.setText("qa@example.com")
+
+    cfg = dialog.build_config()
+
+    assert cfg.device_id == "127.0.0.1:5555"
+    assert cfg.package == "com.example.app"
+    assert cfg.mailbox == "qa@example.com"
+    assert Path(cfg.save_path).name == "127.0.0.1_5555"
+    dialog.close()
+
+
+def test_performance_launcher_normalizes_mixed_separator_save_path():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="emulator-5554", package_name="com.example.app")
+    dialog.save_path_edit.setText("E:/Download")
+
+    try:
+        cfg = dialog.build_config()
+
+        assert cfg.save_path == os.path.normpath(r"E:\Download\emulator-5554")
+        assert "E:/Download\\" not in cfg.save_path
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_batches_logs_and_uses_log_font_size():
+    _app = QApplication.instance() or QApplication([])
+    old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
+    old_log_size = BaseStyles.LOG_FONT_SIZE_VAR
+    BaseStyles.DEFAULT_FONT_SIZE = 17
+    BaseStyles.LOG_FONT_SIZE_VAR = 11
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._apply_theme()
+
+        dialog._append_log("INFO", "first")
+        dialog._append_log("ERROR", "second")
+
+        font = dialog.log_view.font()
+        assert font.pointSize() == 11 or font.pixelSize() == 11
+        assert "first" not in dialog.log_view.toPlainText()
+
+        dialog._flush_pending_logs()
+
+        text = dialog.log_view.toPlainText()
+        assert "first" in text
+        assert "second" in text
+        assert "[INFO] first" in text
+    finally:
+        BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
+        BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
+        dialog.close()
+
+
+def test_performance_launcher_config_follows_global_font_while_log_uses_log_font():
+    def effective_size(widget):
+        font = widget.font()
+        return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
+
+    _app = QApplication.instance() or QApplication([])
+    old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
+    old_log_size = BaseStyles.LOG_FONT_SIZE_VAR
+    BaseStyles.DEFAULT_FONT_SIZE = 18
+    BaseStyles.LOG_FONT_SIZE_VAR = 10
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._apply_theme()
+
+        assert effective_size(dialog.package_edit) == 18
+        assert effective_size(dialog.frequency_combo) == 18
+        assert effective_size(dialog.monkey_check) == 18
+        assert effective_size(dialog.log_view) == 10
+        hints = [w for w in dialog.findChildren(QLabel) if w.objectName() == "configHint"]
+        assert hints
+        assert all(effective_size(hint) == 18 for hint in hints)
+    finally:
+        BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
+        BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
+        dialog.close()
+
+
+def test_performance_launcher_raw_mobileperf_logs_are_not_reprefixed():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        raw_line = "[2026-06-13 10:00:00,000]INFO:mobileperf:startup:time is up"
+
+        dialog._append_log("RAW", raw_line)
+        dialog._flush_pending_logs()
+
+        text = dialog.log_view.toPlainText().strip()
+        assert text == raw_line
+        assert "[RAW]" not in text
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_runner_finished_restores_buttons_once():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._set_running(True)
+        dialog._runner_finished_handled = False
+        dialog._poll_timer.start()
+
+        dialog._on_runner_finished()
+        dialog._on_runner_finished()
+
+        assert dialog.start_btn.isEnabled() is True
+        assert dialog.stop_btn.isEnabled() is False
+        assert dialog.status_label.text() == "Idle"
+        assert dialog._poll_timer.isActive() is False
+        assert dialog.log_view.toPlainText().count("MobilePerf ended") == 1
+    finally:
+        dialog.close()
+
+
+def test_mobileperf_config_generation_does_not_touch_default_config(tmp_path):
+    default_config = Path("mobileperf/config.conf")
+    before = default_config.read_text(encoding="utf-8")
+    cfg = MobilePerfRunConfig(
+        device_id="device-1",
+        package="com.example.app",
+        frequency_seconds=2,
+        timeout_minutes=3,
+        dumpheap_minutes=4,
+        monkey_enabled=True,
+        exception_keywords=["fatal exception", "has died"],
+        phone_log_paths=["/data/anr", "/sdcard/logs"],
+        save_path=str(tmp_path / "out"),
+        mailbox="qa@example.com",
+    )
+
+    generated = Path(cfg.write_config(tmp_path))
+
+    assert generated.name == "mobileperf_run.conf"
+    text = generated.read_text(encoding="utf-8")
+    assert "package = com.example.app" in text
+    assert "monkey = true" in text
+    assert "mailbox = qa@example.com" in text
+    assert "phone_log_path = /data/anr;/sdcard/logs" in text
+    assert default_config.read_text(encoding="utf-8") == before
+
+
+def test_mobileperf_config_normalizes_save_path_before_write(tmp_path):
+    cfg = MobilePerfRunConfig(
+        device_id="emulator-5554",
+        package="com.example.app",
+        save_path="E:/Download\\mobileperf\\emulator-5554",
+    )
+
+    generated = Path(cfg.write_config(tmp_path))
+    text = generated.read_text(encoding="utf-8")
+    expected_save_path = os.path.normpath(r"E:\Download\mobileperf\emulator-5554")
+
+    assert f"save_path = {expected_save_path}" in text
+
+
+def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
+    runner_process = Mock(spec=ProcessRunner)
+    proc = Mock()
+    proc.stdout = []
+    proc.poll.return_value = None
+    runner_process.start.return_value = proc
+    runner = MobilePerfRunner(
+        process_runner=runner_process,
+        project_root=tmp_path,
+        python_executable="python-test",
+    )
+    cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
+
+    with patch.object(MobilePerfRunner, "_resolve_adb_path", return_value="adb-test"):
+        runner.start(cfg)
+
+    args = runner_process.start.call_args.args
+    kwargs = runner_process.start.call_args.kwargs
+    assert args[1][:3] == ["python-test", "-m", "mobileperf.android.startup"]
+    assert "--config" in args[1]
+    assert kwargs["cwd"] == str(tmp_path)
+    assert kwargs["env"]["ADB_PATH"] == "adb-test"
+    assert Path(args[1][-1]).name == "mobileperf_run.conf"
+    runner.stop()
+
+
+def test_mobileperf_runner_batches_subprocess_log_lines_and_notifies_finish():
+    runner = MobilePerfRunner(process_runner=Mock(spec=ProcessRunner))
+    runner.LOG_BATCH_SIZE = 3
+    runner.LOG_BATCH_INTERVAL_SECONDS = 60
+    proc = Mock()
+    proc.stdout = iter(["one\n", "two\n", "three\n", "four\n"])
+    proc.poll.return_value = 0
+    runner._proc = proc
+    received = []
+    runner._on_log = received.append
+    runner._on_finished = Mock()
+
+    runner._read_logs()
+
+    assert received == ["one\ntwo\nthree", "four"]
+    runner._on_finished.assert_called_once()
 
 
 def test_performance_monitor_page_code_is_not_bundled():
@@ -1144,6 +1460,22 @@ def test_base_panel_button_factory_adds_tooltip_and_icon_name():
     assert button.cursor().shape() == Qt.PointingHandCursor
 
 
+def test_base_panel_text_factories_apply_panel_fonts():
+    _app = QApplication.instance() or QApplication([])
+    panel = Mock()
+    panel._font_sm = QFont("Arial", 13)
+    panel._font_base = QFont("Arial", 15)
+    base = BasePanel(panel)
+
+    label = base._label("Events:")
+    status = base._status_text("Total")
+    checkbox = base._checkbox("Ignore crashes")
+
+    assert label.font().pointSize() == 15
+    assert status.objectName() == "statusLabel"
+    assert checkbox.font().pointSize() == 15
+
+
 def test_base_panel_row_helper_adds_weighted_widgets():
     _app = QApplication.instance() or QApplication([])
     panel = Mock()
@@ -1227,6 +1559,86 @@ def test_side_panel_lazy_loads_and_connects_later_tabs():
         assert 2 in panel._connected_lazy_tabs
     finally:
         panel.close()
+
+
+def test_remote_status_font_size_uses_base_styles_default():
+    remote = RemotePanel.__new__(RemotePanel)
+    remote._status_label = Mock()
+    old_size = BaseStyles.DEFAULT_FONT_SIZE
+    BaseStyles.DEFAULT_FONT_SIZE = 16
+    try:
+        RemotePanel._update_status(remote, "Running", None)
+    finally:
+        BaseStyles.DEFAULT_FONT_SIZE = old_size
+
+    style = remote._status_label.setStyleSheet.call_args.args[0]
+    assert "font-size: 16px" in style
+
+
+def test_remote_start_stop_buttons_follow_running_state():
+    _app = QApplication.instance() or QApplication([])
+    remote = RemotePanel.__new__(RemotePanel)
+    remote.btn_start = QPushButton("Start")
+    remote.btn_stop = QPushButton("Stop")
+
+    RemotePanel._set_running(remote, True)
+
+    assert remote.btn_start.isEnabled() is False
+    assert remote.btn_stop.isEnabled() is True
+
+    RemotePanel._set_running(remote, False)
+
+    assert remote.btn_start.isEnabled() is True
+    assert remote.btn_stop.isEnabled() is False
+
+
+def test_app_panel_monkey_buttons_follow_start_stop_state():
+    _app = QApplication.instance() or QApplication([])
+    side_panel = Mock()
+    side_panel._font_sm = QFont("Arial", 12)
+    side_panel._font_base = QFont("Arial", 12)
+    side_panel._font_mono = QFont("Courier New", 10)
+    side_panel._font_tab = QFont("Arial", 12)
+    side_panel._package_history = []
+    side_panel._apply_completer_style = Mock()
+    side_panel.selected_devices = ["device-1"]
+    side_panel.signals = Mock()
+    panel = AppPanel(side_panel)
+
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings = settings_cls.instance.return_value
+        settings.get.return_value = {}
+        widget = panel.build_ui()
+        try:
+            panel.program_edit.setCurrentText("com.example.app")
+
+            assert panel.start_monkey_btn.isEnabled() is True
+            assert panel.kill_monkey_btn.isEnabled() is False
+
+            panel._on_start_monkey()
+
+            assert panel.start_monkey_btn.isEnabled() is False
+            assert panel.kill_monkey_btn.isEnabled() is True
+            side_panel.signals.start_monkey_requested.emit.assert_called_once()
+
+            panel.on_operation_completed("monkey", True, "done")
+
+            assert panel.start_monkey_btn.isEnabled() is True
+            assert panel.kill_monkey_btn.isEnabled() is False
+
+            panel._set_monkey_running(True)
+            panel.on_operation_completed("install", True, "done")
+
+            assert panel.start_monkey_btn.isEnabled() is False
+            assert panel.kill_monkey_btn.isEnabled() is True
+
+            panel._on_kill_monkey()
+
+            assert panel.start_monkey_btn.isEnabled() is True
+            assert panel.kill_monkey_btn.isEnabled() is False
+            side_panel.signals.kill_monkey_requested.emit.assert_called_once_with(["device-1"])
+        finally:
+            widget.deleteLater()
 
 
 def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():

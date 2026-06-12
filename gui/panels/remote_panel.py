@@ -6,18 +6,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QCheckBox, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
+from gui.styles import BaseStyles
 from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -121,7 +115,7 @@ class RemotePanel(BasePanel):
         # ── Preset + Status ──
         r0 = QHBoxLayout()
         r0.setSpacing(6)
-        r0.addWidget(QLabel("Preset:"))
+        r0.addWidget(self._label("Preset:"))
 
         self.preset = self._combo(self._PRESET_NAMES)
         saved_preset = self._load("preset", "Smooth")
@@ -136,12 +130,10 @@ class RemotePanel(BasePanel):
         right_layout.setSpacing(6)
         right_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
 
-        self._status_label = QLabel("Status: Idle")
-        self._status_label.setFont(self._font_sm)
+        self._status_label = self._status_text("Status: Idle")
         right_layout.addWidget(self._status_label)
 
-        self._device_info = QLabel("")
-        self._device_info.setFont(self._font_sm)
+        self._device_info = self._status_text("")
         right_layout.addWidget(self._device_info)
 
         # 将右侧信息区域作为一个整体添加到主布局
@@ -163,8 +155,9 @@ class RemotePanel(BasePanel):
         ]
         for i, (lbl, attr, items, default) in enumerate(settings):
             row, col = divmod(i, 3)
-            label = QLabel(lbl)
-            label.setFixedWidth(45)
+            label = self._label(lbl)
+            label.setMinimumWidth(56)
+            label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             vg.addWidget(label, row, col * 2)
             combo = self._combo(items)
@@ -181,19 +174,18 @@ class RemotePanel(BasePanel):
         self.chk_record.setToolTip("Record mirroring to file")
         self.chk_record.toggled.connect(self._on_record_toggled)
         rr.addWidget(self.chk_record, 1)  # 占1份空间
-        self.record_path = QLabel("")
-        self.record_path.setFont(self._font_sm)
+        self.record_path = self._status_text("")
         rr.addWidget(self.record_path, 3)  # 占3份空间
         gl.addLayout(rr)
 
         # ── Display ──
         self.chk_fullscreen = self._create_checkbox("Fullscreen")
         self.chk_fullscreen.setToolTip("Launch in fullscreen mode")
-        self.chk_aot = self._create_checkbox("Always on Top")
+        self.chk_aot = self._create_checkbox("Pin Top")
         self.chk_aot.setToolTip("Keep window above all others")
-        self.chk_showtouches = self._create_checkbox("Show Touches")
+        self.chk_showtouches = self._create_checkbox("Touches")
         self.chk_showtouches.setToolTip("Visualize touch points on screen")
-        self.chk_stayawake = self._create_checkbox("Stay Awake")
+        self.chk_stayawake = self._create_checkbox("Awake")
         self.chk_stayawake.setToolTip("Keep device screen on while mirroring")
         rd1 = QHBoxLayout()
         rd1.setSpacing(8)
@@ -201,9 +193,9 @@ class RemotePanel(BasePanel):
             rd1.addWidget(cb)  # 不设置权重，让它们平均分配空间
         gl.addLayout(rd1)
 
-        self.chk_turnscreenoff = self._create_checkbox("Turn Screen Off")
+        self.chk_turnscreenoff = self._create_checkbox("Screen Off")
         self.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
-        self.chk_hw_encoder = self._create_checkbox("HW Encoder")
+        self.chk_hw_encoder = self._create_checkbox("HW Enc")
         self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter)")
         self.chk_noplayback = self._create_checkbox("No Window")
         self.chk_noplayback.setToolTip("Record only, no display window")
@@ -219,10 +211,10 @@ class RemotePanel(BasePanel):
         # ── Start / Stop ──
         rs = QHBoxLayout()
         rs.setSpacing(6)
-        self.btn_start = self._b("Start (Ctrl+Enter)", "monitor-play.svg", "accent")
+        self.btn_start = self._b("Start", "monitor-play.svg", "accent", tooltip="Start mirroring (Ctrl+Enter)")
         self.btn_start.setFixedHeight(32)
         self.btn_start.setIconSize(QSize(16, 16))
-        self.btn_stop = self._b("Stop (Ctrl+Q)", "stop-circle.svg", "danger")
+        self.btn_stop = self._b("Stop", "stop-circle.svg", "danger", tooltip="Stop mirroring (Ctrl+Q)")
         self.btn_stop.setFixedHeight(32)
         self.btn_stop.setIconSize(QSize(16, 16))
         self.btn_stop.setEnabled(False)
@@ -233,9 +225,7 @@ class RemotePanel(BasePanel):
         return g
 
     def _create_checkbox(self, text: str) -> QCheckBox:
-        cb = QCheckBox(text)
-        cb.setFont(self._font_sm)
-        return cb
+        return self._checkbox(text)
 
     def _build_control(self) -> QWidget:
         g = self._g("Remote Control")
@@ -268,17 +258,18 @@ class RemotePanel(BasePanel):
         kg = QGridLayout(qk)
         kg.setSpacing(2)
         keys = [
-            [("HOME", "HOME"), ("BACK", "BACK"), ("POWER", "POWER"), ("RECENTS", "RECENTS")],
+            [("HOME", "HOME"), ("BACK", "BACK"), ("PWR", "POWER"), ("REC", "RECENTS")],
             [("MENU", "MENU"), ("VOL+", "VOL_UP"), ("VOL-", "VOL_DOWN"), ("NOTIF", "NOTIFICATION")],
-            [("SETTINGS", "SETTINGS"), ("APPS", "APP_SWITCH"), ("CAMERA", "CAMERA"), ("SEARCH", "SEARCH")],
-            [("PLAY", "MEDIA_PLAY"), ("NEXT", "MEDIA_NEXT"), ("PREV", "MEDIA_PREV"), ("ENTER", "ENTER")],
+            [("SET", "SETTINGS"), ("APPS", "APP_SWITCH"), ("CAM", "CAMERA"), ("SRCH", "SEARCH")],
+            [("PLAY", "MEDIA_PLAY"), ("NEXT", "MEDIA_NEXT"), ("PREV", "MEDIA_PREV"), ("ENT", "ENTER")],
         ]
         for r, row in enumerate(keys):
             for c, (label, code) in enumerate(row):
                 b = self._qb(label, tooltip=f"Send keyevent {code}")
                 b.setFont(self._font_sm)
                 b.setFixedHeight(28)
-                b.setMinimumWidth(56)
+                b.setMinimumWidth(44)
+                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 b.clicked.connect(lambda _, cd=code: self._send_keyevent(cd))
                 kg.addWidget(b, r, c)
         gl.addWidget(qk, 1)
@@ -287,17 +278,18 @@ class RemotePanel(BasePanel):
         gg = QGridLayout(gestures)
         gg.setSpacing(2)
         actions = [
-            [("Swipe ↑", "swipe_up"), ("Swipe ↓", "swipe_down")],
-            [("Swipe ←", "swipe_left"), ("Swipe →", "swipe_right")],
-            [("Notif ↓", "notif_expand"), ("Notif ↑", "notif_collapse")],
-            [("Portrait", "rotate_portrait"), ("Landscape", "rotate_landscape")],
+            [("Up", "swipe_up", "Swipe up"), ("Down", "swipe_down", "Swipe down")],
+            [("Left", "swipe_left", "Swipe left"), ("Right", "swipe_right", "Swipe right")],
+            [("Notif+", "notif_expand", "Expand notifications"), ("Notif-", "notif_collapse", "Collapse notifications")],
+            [("Portrait", "rotate_portrait", "Rotate portrait"), ("Land", "rotate_landscape", "Rotate landscape")],
         ]
         for r, row in enumerate(actions):
-            for c, (label, action) in enumerate(row):
-                b = self._qb(label, tooltip=f"Run remote action {action}")
+            for c, (label, action, tooltip) in enumerate(row):
+                b = self._qb(label, tooltip=tooltip)
                 b.setFont(self._font_sm)
                 b.setFixedHeight(28)
-                b.setMinimumWidth(66)
+                b.setMinimumWidth(50)
+                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
                 gg.addWidget(b, r, c)
         gl.addWidget(gestures)
@@ -414,6 +406,7 @@ class RemotePanel(BasePanel):
         active_device = getattr(self, "_active_device", None)
         if active_device and device_info:
             self._remote_control.remember_dimensions(active_device, device_info.split("x"))
+        self._set_running(True)
         self._update_status("Running", "#28A745")
         self._log("INFO", f"Launching: scrcpy {' '.join(args[2:])}")
 
@@ -495,13 +488,17 @@ class RemotePanel(BasePanel):
 
     def _set_running(self, running: bool):
         self._running = running
-        self.btn_start.setEnabled(not running)
-        self.btn_stop.setEnabled(running)
+        btn_start = getattr(self, "btn_start", None)
+        btn_stop = getattr(self, "btn_stop", None)
+        if btn_start is not None:
+            btn_start.setEnabled(not running)
+        if btn_stop is not None:
+            btn_stop.setEnabled(running)
 
     # -- B8: status indicator ---------------------------------------------
 
     def _update_status(self, text: str, color: str | None):
-        style = "font-size: 10px; font-weight: bold;"
+        style = f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px; font-weight: bold;"
         if color:
             style = f"color: {color}; {style}"
         self._status_label.setStyleSheet(style)

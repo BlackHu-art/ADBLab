@@ -2,9 +2,11 @@
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QPushButton,
     QSizePolicy,
@@ -69,6 +71,26 @@ class BasePanel(QWidget):
         g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         return g
+
+    def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
+        label = QLabel(text)
+        label.setFont(self._font_sm if small else self._font_base)
+        label.setWordWrap(False)
+        if align is not None:
+            label.setAlignment(align)
+        return label
+
+    def _status_text(self, text: str = "") -> QLabel:
+        label = self._label(text)
+        label.setObjectName("statusLabel")
+        return label
+
+    def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
+        cb = QCheckBox(text)
+        cb.setFont(self._font_base)
+        if tooltip:
+            cb.setToolTip(tooltip)
+        return cb
 
     def _b(self, t, i, variant="", tooltip=None):
         """Create icon button. variant: '' (default), 'accent', 'danger'."""

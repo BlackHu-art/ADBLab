@@ -3,8 +3,8 @@ import os
 import shutil
 import threading
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon, QMouseEvent
+from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -97,6 +97,7 @@ class MainFrame(QMainWindow):
         self._panel_size_save_timer.timeout.connect(self._save_pending_panel_sizes)
         self._adb_bootstrap_thread = None
         self._adb_bootstrap_finished.connect(self._start_device_discovery)
+        self._always_on_top = False
 
         self._setup_window()
         self._init_panels()
@@ -170,12 +171,13 @@ class MainFrame(QMainWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setMinimumSize(860, 500)
 
         from core.settings_manager import AppSettings
         s = AppSettings.instance()
+        self._always_on_top = bool(s.get("always_on_top", False))
+        self._apply_window_flags()
         w = s.get("window_width", 1200)
         h = s.get("window_height", 650)
         self.resize(w, h)
@@ -277,7 +279,7 @@ class MainFrame(QMainWindow):
         self.tb_logcat = self._create_toolbar_btn("Live Logcat", "resources/icons/scroll.svg")
         self.tb_logcat.setFixedSize(28, 24)
         self.tb_performance = self._create_toolbar_btn(
-            "Open Perfetto", "resources/icons/speedometer.svg"
+            "Performance", "resources/icons/speedometer.svg"
         )
         self.tb_performance.setFixedSize(28, 24)
         self.tb_settings = self._create_toolbar_btn("Settings", "resources/icons/gear.svg")
@@ -328,6 +330,10 @@ class MainFrame(QMainWindow):
         self.theme_btn.clicked.connect(lambda: BaseStyles.toggle_theme())
 
         self.tb_minimize = self._create_toolbar_btn("Minimize", "resources/icons/minus.svg")
+        self.tb_always_on_top = self._create_toolbar_btn("Pin on top", "resources/icons/push-pin.svg")
+        self.tb_always_on_top.setCheckable(True)
+        self.tb_always_on_top.setChecked(self._always_on_top)
+        self._refresh_always_on_top_button()
         self.tb_exit = self._create_toolbar_btn("Exit", "resources/icons/x.svg")
         self.tb_exit.setObjectName("exit_btn")
 
@@ -341,9 +347,17 @@ class MainFrame(QMainWindow):
         self.tb_cmd.clicked.connect(self._open_cmd)
         self.tb_settings.clicked.connect(self._show_settings)
         self.tb_minimize.clicked.connect(self.showMinimized)
+        self.tb_always_on_top.clicked.connect(self.set_always_on_top)
         self.tb_exit.clicked.connect(self.close)
 
-        for btn in (self.tb_clear, self.tb_about, self.theme_btn, self.tb_minimize, self.tb_exit):
+        for btn in (
+            self.tb_clear,
+            self.tb_about,
+            self.theme_btn,
+            self.tb_minimize,
+            self.tb_always_on_top,
+            self.tb_exit,
+        ):
             btn.setFixedSize(28, 24)
             layout.addWidget(btn)
 
@@ -393,6 +407,7 @@ class MainFrame(QMainWindow):
             icon_name = button.property("iconName")
             if icon_name:
                 button.setIcon(get_themed_icon(icon_name))
+        self._refresh_always_on_top_button()
 
     def _connect_all_signals(self):
         """Connect left panel signals to ADB controller signals."""
@@ -416,6 +431,7 @@ class MainFrame(QMainWindow):
         CTL.email_updated.connect(self.left_panel.update_email)
         CTL.vercode_updated.connect(self.left_panel.update_vercode)
         CTL.record_finished.connect(self.left_panel.on_recording_finished)
+        CTL.operation_completed.connect(self.left_panel.on_operation_completed)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
         CTL.device_info_updated.connect(
             lambda ip, info: self.log_panel._append_log(
@@ -528,8 +544,31 @@ class MainFrame(QMainWindow):
         self._show_device_dialogs(LiveLogcatDialog)
 
     def _show_performance_monitor(self):
-        """Open Perfetto in the system browser."""
-        QDesktopServices.openUrl(QUrl("https://ui.perfetto.dev/"))
+        """Open the native Performance launcher dialog."""
+        from gui.dialogs.performance_launcher import PerformanceLauncherDialog
+
+        devices = self.left_panel.selected_devices
+        if not devices:
+            self.log_panel._append_log("WARNING", "No device selected")
+            return
+        device_ip = devices[0]
+        package_name = ""
+        try:
+            package_name = self.left_panel._apps_tab.package_text if self.left_panel._apps_tab else ""
+        except RuntimeError:
+            package_name = ""
+        dlg = self._find_active_dialog(PerformanceLauncherDialog, device_ip or "default")
+        if dlg:
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
+            return
+        dlg = self._register_dialog(
+            PerformanceLauncherDialog(device_ip=device_ip, package_name=package_name),
+            PerformanceLauncherDialog,
+            device_ip or "default",
+        )
+        dlg.show()
 
     def _show_device_dialogs(self, dialog_cls):
         devices = self.left_panel.selected_devices
@@ -606,6 +645,69 @@ class MainFrame(QMainWindow):
 
     def apply_window_size(self, w: int, h: int):
         self.resize(w, h)
+
+    def _apply_window_flags(self):
+        flags = Qt.FramelessWindowHint | Qt.Window
+        if self._always_on_top:
+            flags |= Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+
+    def _set_always_on_top_native(self, enabled: bool) -> bool:
+        if os.name != "nt" or not self.isVisible():
+            return False
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            hwnd = int(self.winId())
+            pointer_bits = ctypes.sizeof(ctypes.c_void_p) * 8
+            hwnd_topmost = ctypes.c_void_p((1 << pointer_bits) - 1)
+            hwnd_notopmost = ctypes.c_void_p((1 << pointer_bits) - 2)
+            swp_nosize = 0x0001
+            swp_nomove = 0x0002
+            swp_noactivate = 0x0010
+            flags = swp_nosize | swp_nomove | swp_noactivate
+            set_window_pos = ctypes.windll.user32.SetWindowPos
+            set_window_pos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_uint,
+            ]
+            set_window_pos.restype = wintypes.BOOL
+            return bool(
+                set_window_pos(
+                    ctypes.c_void_p(hwnd),
+                    hwnd_topmost if enabled else hwnd_notopmost,
+                    0,
+                    0,
+                    0,
+                    0,
+                    flags,
+                )
+            )
+        except Exception:
+            return False
+
+    def set_always_on_top(self, enabled: bool):
+        self._always_on_top = bool(enabled)
+        self._set_always_on_top_native(self._always_on_top)
+        self._refresh_always_on_top_button()
+        from core.settings_manager import AppSettings
+        AppSettings.instance().set("always_on_top", self._always_on_top)
+
+    def _refresh_always_on_top_button(self):
+        button = getattr(self, "tb_always_on_top", None)
+        if not button:
+            return
+        icon_name = "push-pin-slash.svg" if self._always_on_top else "push-pin.svg"
+        button.setProperty("iconName", icon_name)
+        button.setIcon(get_themed_icon(icon_name))
+        button.setChecked(self._always_on_top)
+        button.setToolTip("Unpin from top" if self._always_on_top else "Pin on top")
 
     def panel_sizes(self) -> list[int]:
         return self._panel_splitter.sizes() if self._panel_splitter else [400, 600]

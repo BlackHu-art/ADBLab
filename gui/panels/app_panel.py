@@ -118,16 +118,12 @@ class AppPanel(BasePanel):
         g_pct.setSpacing(3)
 
         # Row 0: Events | Throttle | Total
-        lbl_ev = QLabel("Events:")
-        lbl_ev.setFont(self._font_sm)
+        lbl_ev = self._label("Events:")
         self.monkey_events = _mk_combo(EVENTS_OPTS)
-        lbl_th = QLabel("Throttle:")
-        lbl_th.setFont(self._font_sm)
+        lbl_th = self._label("Throttle:")
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
-        lbl_ms = QLabel("ms")
-        lbl_ms.setFont(self._font_sm)
-        self._pct_total_lbl = QLabel("Total: --")
-        self._pct_total_lbl.setFont(self._font_sm)
+        lbl_ms = self._label("ms")
+        self._pct_total_lbl = self._status_text("Total: --")
         g_pct.addWidget(lbl_ev, 0, 0)
         g_pct.addWidget(self.monkey_events, 0, 1)
         g_pct.addWidget(lbl_th, 0, 2)
@@ -143,8 +139,7 @@ class AppPanel(BasePanel):
         ]
         self._monkey_pct_combos = {}
         for i, (label, key) in enumerate(pct_configs):
-            lbl = QLabel(f"{label}:")
-            lbl.setFont(self._font_sm)
+            lbl = self._label(f"{label}:")
             c = _mk_combo(PCT_OPTS)
             c.currentTextChanged.connect(self._update_pct_total)
             self._monkey_pct_combos[key] = c
@@ -154,11 +149,9 @@ class AppPanel(BasePanel):
         gm_l.addLayout(g_pct)
 
         # Flags row
-        self.monkey_chk_crashes = QCheckBox("Ignore crashes")
-        self.monkey_chk_timeouts = QCheckBox("Ignore timeouts")
-        self.monkey_chk_security = QCheckBox("Ignore security")
-        for cb in (self.monkey_chk_crashes, self.monkey_chk_timeouts, self.monkey_chk_security):
-            cb.setFont(self._font_sm)
+        self.monkey_chk_crashes = self._checkbox("Ignore crashes")
+        self.monkey_chk_timeouts = self._checkbox("Ignore timeouts")
+        self.monkey_chk_security = self._checkbox("Ignore security")
         self._add_row(
             gm_l,
             self.monkey_chk_crashes,
@@ -170,6 +163,7 @@ class AppPanel(BasePanel):
         # Action row
         self.start_monkey_btn = self._b("Start", "robot.svg")
         self.kill_monkey_btn = self._b("Stop", "skull.svg")
+        self._set_monkey_running(False)
         self._add_row(gm_l, (self.start_monkey_btn, 1), (self.kill_monkey_btn, 1))
         lo.addWidget(g_m)
 
@@ -305,6 +299,10 @@ class AppPanel(BasePanel):
         self.btn_screen_record.setEnabled(True)
         self.btn_stop_record.setEnabled(False)
 
+    def on_operation_completed(self, operation: str, _success: bool, _message: str):
+        if operation in {"monkey", "kill_monkey"}:
+            self._set_monkey_running(False)
+
     def _on_start_monkey(self):
         params = self._collect_monkey_params()
         # Validate total = 100%
@@ -320,7 +318,17 @@ class AppPanel(BasePanel):
         params["package_name"] = self.package_text
         from core.settings_manager import AppSettings
         AppSettings.instance().set("monkey_params", params)
+        if self.selected_devices:
+            self._set_monkey_running(True)
         self.signals.start_monkey_requested.emit(self.selected_devices, params)
+
+    def _on_kill_monkey(self):
+        self._set_monkey_running(False)
+        self.signals.kill_monkey_requested.emit(self.selected_devices)
+
+    def _set_monkey_running(self, running: bool):
+        self.start_monkey_btn.setEnabled(not running)
+        self.kill_monkey_btn.setEnabled(running)
 
     @property
     def package_text(self) -> str:
@@ -365,7 +373,7 @@ class AppPanel(BasePanel):
         # Monkey
         self.start_monkey_btn.clicked.connect(
             lambda: self._on_start_monkey())
-        self.kill_monkey_btn.clicked.connect(lambda: LP.kill_monkey_requested.emit(self.selected_devices))
+        self.kill_monkey_btn.clicked.connect(self._on_kill_monkey)
         # Reports
         self.get_bugreport_btn.clicked.connect(lambda: LP.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: LP.pull_anr_file_requested.emit(self.selected_devices))

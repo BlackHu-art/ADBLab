@@ -66,7 +66,12 @@ python main.py
 
 ### 性能监控
 
-- 工具栏提供 `Performance Monitor` 入口，按当前选中设备打开独立性能监控窗口。
+- 工具栏提供 `Performance` 入口，必须先选中设备；弹窗标题会带上当前设备名称。
+- `gui/dialogs/performance_launcher.py` 提供 MobilePerf 启动弹窗，支持获取当前前台包名、配置采样频率/时长/Monkey/dumpheap/异常关键字、启动/停止采集、打开结果目录和跳转 Perfetto。
+- MobilePerf 结果目录会追加设备名称，方便区分多设备保存文件。
+- MobilePerf 日志使用纯文本批量追加，保留工具原始输出，不再额外叠加 ADBLab 时间和等级前缀，避免长时间运行导致主界面卡顿。
+- `mobileperf/` 保持独立移植目录；ADBLab 通过 `models/mobileperf/runner.py` 生成临时配置并启动子进程，不直接修改 `mobileperf/config.conf`。
+- 原 Perfetto 跳转已移动到 Performance 弹窗内的 `Open Perfetto` 按钮。
 - `gui/dialogs/performance_monitor.py` 提供单设备性能弹窗，`gui/dialogs/performance_timeline.py` 提供原生时间线图。
 - `gui/performance_web/` 提供可选 Web 仪表盘资源：`index.html`、`style.css`、`app.js`。
 - `models/performance/` 提供采集、解析、会话、报告和 worker 层：
@@ -79,9 +84,11 @@ python main.py
 
 ### 弹窗与工具
 
+- 主窗口工具栏提供置顶按钮，状态保存到 `AppSettings["always_on_top"]`；Windows 运行时切换使用原生窗口置顶，不重建主界面。
 - 应用管理器：表格/网格视图、搜索过滤、批量操作、备份/恢复、权限管理、JSON 预设。
 - 实时 Logcat：等级、包名、Tag 过滤，语法高亮，导出文本。
 - 截图查看器：多图导航、缩放、复制、另存为、打开目录、删除。
+- Monkey、Remote、MobilePerf 弹窗和面板响应全局主题、字体、图标刷新和深浅色切换。
 - 设置弹窗：主题、字体、窗口尺寸、面板宽度、保存目录、日志行数、危险操作确认、持续扫描等。
 
 ---
@@ -96,6 +103,7 @@ ADBLab/
 ├── ADBLab.spec                     # PyInstaller 打包配置
 ├── README.md
 ├── icon.ico
+├── mobileperf/                     # MobilePerf 移植内核，保持独立目录
 ├── .github/workflows/
 │   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release
 │   └── Auto-Clean.yaml             # 清理旧 workflow runs / releases
@@ -133,6 +141,7 @@ ADBLab/
 │   │   ├── process_runner.py       # 长生命周期进程统一管理
 │   │   └── focus_detector.py       # 前台包名检测
 │   ├── remote/                     # Remote / scrcpy 无界面服务层
+│   ├── mobileperf/                 # MobilePerf runner、临时配置与日志/结果管理
 │   └── performance/                # 性能监控服务、解析、会话、报告、workers
 │
 ├── gui/                            # PySide6 视图层
@@ -198,6 +207,7 @@ ADBLab/
 | 进程执行 | `models/base/process_runner.py` | 管理长生命周期进程，支持 stop、spawn、stop_all |
 | Remote | `models/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
 | File Explorer | `models/file_explorer_service.py` | shell quoting、路径、权限、文件列表解析 |
+| MobilePerf | `models/mobileperf/` + `mobileperf/` | 临时 config、子进程启动/停止、日志批量回传、结果目录定位 |
 | Performance | `models/performance/` | 指标采集、解析、报告、会话、时间线数据 |
 | 设置 | `core/settings_manager.py` | 应用配置 JSON 原子写入和自动保存 |
 | 日志 | `core/log_service.py` | 线程安全日志缓冲与 UI 刷新 |
@@ -235,11 +245,13 @@ ADBLab/
 - `tests/test_remote_services.py`：Remote scrcpy 参数、预检、按键/手势映射。
 - `tests/test_file_explorer_service.py`：文件浏览器路径、quoting、`ls` 解析、权限模式。
 - `tests/test_performance_services.py`：性能指标解析、采样、报告、dashboard 数据。
+- MobilePerf/Performance 入口、置顶切换、Monkey/Remote 字体主题刷新等 UI 行为集中在 `tests/test_model_execution.py` 中做轻量回归。
 
 建议改动后至少执行：
 
 ```bash
-python -m pytest
+py -3.11 -m compileall mobileperf models gui tests
+py -3.11 -m pytest tests -q
 git diff --check
 ```
 

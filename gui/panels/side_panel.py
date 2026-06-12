@@ -160,6 +160,11 @@ class SidePanel(QWidget):
         if apps_tab:
             apps_tab.on_recording_finished()
 
+    def on_operation_completed(self, operation: str, success: bool, message: str):
+        apps_tab = self._ensure_tab_loaded(0)
+        if apps_tab:
+            apps_tab.on_operation_completed(operation, success, message)
+
     # ── Theme ──────────────────────────────────────────────────────────────
 
     def _apply_tab_style(self):
@@ -201,13 +206,17 @@ class SidePanel(QWidget):
                 if icon_name:
                     child.setIcon(get_themed_icon(icon_name))
             elif t is QLabel:
-                child.setFont(self._font_sm)
+                child.setFont(self._font_base)
+                if child.objectName() == "statusLabel":
+                    child.setStyleSheet(f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;")
             elif t is QLineEdit:
                 child.setFont(self._font_sm)
             elif t is QComboBox:
                 child.setFont(self._font_sm)
+                if child.lineEdit():
+                    child.lineEdit().setFont(self._font_sm)
             elif t is QCheckBox:
-                child.setFont(self._font_sm)
+                child.setFont(self._font_base)
             elif t is QSlider:
                 child.setFont(self._font_sm)
             elif t is QScrollArea:
