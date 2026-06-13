@@ -659,6 +659,19 @@ def test_main_frame_performance_button_requires_selected_device():
     frame._register_dialog.assert_not_called()
 
 
+def test_main_frame_theme_change_forces_running_performance_dialog_refresh():
+    frame = MainFrame.__new__(MainFrame)
+    dialog = Mock()
+    stale_dialog = Mock()
+    stale_dialog._sync_theme_state.side_effect = RuntimeError("deleted")
+    frame._active_dialogs = [dialog, stale_dialog]
+
+    MainFrame._refresh_active_dialog_themes(frame)
+
+    dialog._sync_theme_state.assert_called_once_with(force=True)
+    assert frame._active_dialogs == [dialog]
+
+
 def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails():
     _app = QApplication.instance() or QApplication([])
     frame = MainFrame.__new__(MainFrame)
@@ -749,6 +762,9 @@ def test_performance_launcher_build_config_uses_title_device_and_device_save_dir
     assert not hasattr(dialog, "mailbox_edit")
     assert "mailbox" not in [label.text() for label in dialog.findChildren(QLabel)]
     assert Path(cfg.save_path).name == "127.0.0.1_5555"
+    assert dialog.serialnum_label.text() == "127.0.0.1:5555"
+    assert dialog.serialnum_label.objectName() == "onlineDeviceLabel"
+    assert BaseStyles.color("LOG_SUCCESS") in dialog.styleSheet()
     dialog.close()
 
 
@@ -939,6 +955,60 @@ def test_performance_launcher_log_ignores_log_font_size_and_uses_ui_document_fon
     finally:
         BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
         BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
+        dialog.close()
+
+
+def test_performance_launcher_syncs_theme_when_signal_was_missed():
+    _app = QApplication.instance() or QApplication([])
+    old_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme("Light")
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    dialog._theme_sync_timer.stop()
+    try:
+        light_style = dialog.styleSheet()
+
+        theme._current_theme = "Dark"
+        dialog._sync_theme_state()
+
+        assert dialog._applied_theme_signature[0] == "Dark"
+        assert BaseStyles.color("PANEL_BG") in dialog.styleSheet()
+        assert dialog.styleSheet() != light_style
+    finally:
+        theme._current_theme = old_theme
+        BaseStyles.switch_theme(old_theme)
+        dialog.close()
+
+
+def test_performance_launcher_monkey_parameter_text_follows_dark_theme_colors():
+    _app = QApplication.instance() or QApplication([])
+    old_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme("Dark")
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    dialog._theme_sync_timer.stop()
+    try:
+        dialog.monkey_check.setChecked(True)
+        style = dialog.styleSheet()
+
+        assert "QLabel#inlineLabel" in style
+        assert "QWidget#inlineRow QComboBox QLineEdit" in style
+        assert BaseStyles.color("TEXT_PRIMARY") in style
+        assert BaseStyles.color("INPUT_BG") in style
+        assert "color: #000" not in style
+        assert "color: black" not in style.lower()
+        assert "monkeyOptionCheck" not in style
+        assert "monkeyOption" not in style
+        assert "QCheckBox::indicator" not in style
+        assert dialog.monkey_check.property("monkeyOption") is None
+        for checkbox in (
+            dialog.monkey_ignore_crashes,
+            dialog.monkey_ignore_timeouts,
+            dialog.monkey_ignore_security,
+            dialog.monkey_kill_after_error,
+        ):
+            assert checkbox.property("monkeyOption") is None
+            assert checkbox.objectName() == ""
+    finally:
+        BaseStyles.switch_theme(old_theme)
         dialog.close()
 
 

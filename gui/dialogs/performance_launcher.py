@@ -126,9 +126,13 @@ class PerformanceLauncherDialog(QDialog):
         self._max_log_lines = self._configured_log_max_lines()
         self._pending_log_rows: list[str] = []
         self._pending_log_scroll_to_bottom = False
+        self._applied_theme_signature: tuple[str, str, int, int] | None = None
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.setSingleShot(True)
         self._log_flush_timer.timeout.connect(self._flush_pending_logs)
+        self._theme_sync_timer = QTimer(self)
+        self._theme_sync_timer.setInterval(750)
+        self._theme_sync_timer.timeout.connect(self._sync_theme_state)
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(1000)
         self._poll_timer.timeout.connect(self._poll_runner)
@@ -143,6 +147,7 @@ class PerformanceLauncherDialog(QDialog):
         self._build_ui(package_name)
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        self._theme_sync_timer.start()
 
     def _build_ui(self, package_name: str):
         root = QVBoxLayout(self)
@@ -191,7 +196,10 @@ class PerformanceLauncherDialog(QDialog):
 
         row = 0
         row = self._add_config_row(grid, row, "package", package_row, CONFIG_HINTS["package"])
-        row = self._add_config_row(grid, row, "serialnum", QLabel(self.device_ip or "-"), CONFIG_HINTS["serialnum"])
+        self.serialnum_label = QLabel(self.device_ip or "-")
+        self.serialnum_label.setObjectName("onlineDeviceLabel")
+        self.serialnum_label.setToolTip("Selected online device")
+        row = self._add_config_row(grid, row, "serialnum", self.serialnum_label, CONFIG_HINTS["serialnum"])
         row = self._add_config_row(grid, row, "frequency", self.frequency_combo, CONFIG_HINTS["frequency"])
         row = self._add_config_row(grid, row, "timeout", self.timeout_combo, CONFIG_HINTS["timeout"])
         row = self._add_config_row(grid, row, "dumpheap_freq", self.dumpheap_combo, CONFIG_HINTS["dumpheap_freq"])
@@ -329,6 +337,7 @@ class PerformanceLauncherDialog(QDialog):
 
     def _row_widget(self, *widgets: QWidget) -> QWidget:
         container = QWidget()
+        container.setObjectName("inlineRow")
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -766,6 +775,15 @@ class PerformanceLauncherDialog(QDialog):
                 font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
                 font-weight: bold;
             }}
+            QLabel#onlineDeviceLabel {{
+                color: {c('LOG_SUCCESS')};
+                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
+                font-weight: bold;
+            }}
+            QLabel#inlineLabel {{
+                color: {c('TEXT_PRIMARY')};
+                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
+            }}
             QLabel#configHint {{
                 color: {c('TEXT_SECONDARY')};
                 font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
@@ -801,6 +819,33 @@ class PerformanceLauncherDialog(QDialog):
                 font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
                 font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
+            QWidget#inlineRow,
+            QWidget#inlineRow QLabel,
+            QWidget#inlineRow QCheckBox {{
+                color: {c('TEXT_PRIMARY')};
+                background-color: transparent;
+                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
+            }}
+            QWidget#inlineRow QLineEdit,
+            QWidget#inlineRow QComboBox,
+            QWidget#inlineRow QComboBox QLineEdit {{
+                background-color: {c('INPUT_BG')};
+                color: {c('TEXT_PRIMARY')};
+                border: 1px solid {c('BORDER_COLOR')};
+                border-radius: {BaseStyles.RADIUS_MD}px;
+                selection-background-color: {c('SELECTION_BG')};
+                selection-color: {c('SELECTION_TEXT')};
+                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
+            }}
+            QWidget#inlineRow QLineEdit:disabled,
+            QWidget#inlineRow QComboBox:disabled,
+            QWidget#inlineRow QComboBox QLineEdit:disabled,
+            QWidget#inlineRow QCheckBox:disabled {{
+                color: {c('TEXT_DISABLED')};
+                background-color: {c('PANEL_BG')};
+            }}
             """
         )
         self._apply_widget_fonts()
@@ -812,6 +857,7 @@ class PerformanceLauncherDialog(QDialog):
             icon_name = button.property("iconName")
             if icon_name:
                 button.setIcon(get_themed_icon(icon_name))
+        self._applied_theme_signature = self._theme_signature()
 
     def _apply_widget_fonts(self):
         ui_font = BaseStyles.get_default_font()
@@ -821,10 +867,28 @@ class PerformanceLauncherDialog(QDialog):
         for widget in self.findChildren(QWidget):
             widget.setFont(ui_font)
 
+    @staticmethod
+    def _theme_signature() -> tuple[str, str, int, int]:
+        return (
+            BaseStyles.current_theme(),
+            BaseStyles.DEFAULT_FONT_FAMILY,
+            int(BaseStyles.DEFAULT_FONT_SIZE),
+            int(BaseStyles.LOG_FONT_SIZE_VAR),
+        )
+
+    def _sync_theme_state(self, force: bool = False):
+        if self._closing:
+            return
+        current_signature = self._theme_signature()
+        if force or current_signature != self._applied_theme_signature:
+            self._apply_theme(BaseStyles.current_theme())
+
     def closeEvent(self, event):
         self._closing = True
         if self._log_flush_timer.isActive():
             self._log_flush_timer.stop()
+        if self._theme_sync_timer.isActive():
+            self._theme_sync_timer.stop()
         self._pending_log_rows = []
         self._poll_timer.stop()
         if self._runner.is_running():

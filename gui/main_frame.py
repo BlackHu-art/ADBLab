@@ -401,6 +401,20 @@ class MainFrame(QMainWindow):
             for g in lw.findChildren(QGroupBox):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
             self.left_panel._devices_tab._apply_device_list_style()
+        self._refresh_active_dialog_themes()
+
+    def _refresh_active_dialog_themes(self):
+        survivors = []
+        for dialog in list(getattr(self, "_active_dialogs", [])):
+            try:
+                if hasattr(dialog, "_sync_theme_state"):
+                    dialog._sync_theme_state(force=True)
+                elif hasattr(dialog, "_apply_theme"):
+                    dialog._apply_theme(BaseStyles.current_theme())
+                survivors.append(dialog)
+            except RuntimeError:
+                continue
+        self._active_dialogs = survivors
 
     def _refresh_toolbar_icons(self):
         for button in self.findChildren(QPushButton):
