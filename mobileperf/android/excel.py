@@ -6,6 +6,7 @@
 """
 import csv
 import os
+import re
 import sys
 
 BaseDir = os.path.dirname(__file__)
@@ -14,15 +15,39 @@ from mobileperf.extlib import xlsxwriter
 from mobileperf.common.log import logger
 
 
+_INVALID_WORKSHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
+_WORKSHEET_NAME_LIMIT = 31
+
+
 class Excel(object):
 
     def __init__(self, excel_file):
         self.excel_file = excel_file
         self.workbook = xlsxwriter.Workbook(excel_file)
         self.color_list = ["blue", "green", "red", "yellow", "purple"]
+        self._worksheet_names = set()
+
+    def _safe_sheet_name(self, sheet_name):
+        raw_name = str(sheet_name or "Sheet")
+        clean_name = _INVALID_WORKSHEET_CHARS.sub("_", raw_name).strip("'").strip()
+        base_name = (clean_name or "Sheet")[:_WORKSHEET_NAME_LIMIT]
+        candidate = base_name
+        suffix_index = 1
+
+        while candidate.lower() in self._worksheet_names:
+            suffix = "_%s" % suffix_index
+            keep = _WORKSHEET_NAME_LIMIT - len(suffix)
+            candidate = "%s%s" % (base_name[:keep], suffix) if keep > 0 else suffix[-_WORKSHEET_NAME_LIMIT:]
+            suffix_index += 1
+
+        self._worksheet_names.add(candidate.lower())
+        if candidate != raw_name:
+            logger.debug("worksheet name normalized: %s -> %s" % (raw_name, candidate))
+        return candidate
 
     def add_sheet(self, sheet_name, x_axis, y_axis, headings, lines):
-        worksheet = self.workbook.add_worksheet(sheet_name)
+        worksheet_name = self._safe_sheet_name(sheet_name)
+        worksheet = self.workbook.add_worksheet(worksheet_name)
         worksheet.write_row('A1', headings)
         for i, line in enumerate(lines, 2):
             worksheet.write_row('A%d' % i, line)
@@ -31,9 +56,9 @@ class Excel(object):
         if columns > 1 and rows > 1:
             chart = self.workbook.add_chart({'type': 'line'})
             for j in range(1, columns):
-                chart.add_series({'name': [sheet_name, 0, j],
-                                  'categories': [sheet_name, 1, 0, rows, 0],
-                                  'values': [sheet_name, 1, j, rows, j]})
+                chart.add_series({'name': [worksheet_name, 0, j],
+                                  'categories': [worksheet_name, 1, 0, rows, 0],
+                                  'values': [worksheet_name, 1, j, rows, j]})
             chart.set_title({'name': sheet_name.replace('.', ' ').title()})
             chart.set_x_axis({'name': x_axis})
             chart.set_y_axis({'name': y_axis})
@@ -53,7 +78,8 @@ class Excel(object):
         '''
         filename = os.path.splitext(os.path.basename(csv_file))[0]
         logger.debug("filename:" + filename)
-        worksheet = self.workbook.add_worksheet(filename)  # 创建一个sheet表格
+        worksheet_name = self._safe_sheet_name(filename)
+        worksheet = self.workbook.add_worksheet(worksheet_name)  # 创建一个sheet表格
         with open(csv_file, 'r') as f:
             read = csv.reader(f)
             # 行数
@@ -92,17 +118,17 @@ class Excel(object):
                 if "pid_cpu%" == headings[index] or "pid_pss(MB)" == headings[index]:
                     chart.add_series({
                         # 这个是series 系列名 包名
-                        'name': [filename, 1, series_index[i]],
-                        'categories': [filename, 1, 0, l - 1, 0],
-                        'values': [filename, 1, index, l - 1, index],
+                        'name': [worksheet_name, 1, series_index[i]],
+                        'categories': [worksheet_name, 1, 0, l - 1, 0],
+                        'values': [worksheet_name, 1, index, l - 1, index],
                         'line': {'color': self.color_list[index % len(self.color_list)]}
                     })
                     i = i + 1
                 else:
                     chart.add_series({
-                        'name': [filename, 0, index],
-                        'categories': [filename, 1, 0, l - 1, 0],
-                        'values': [filename, 1, index, l - 1, index],
+                        'name': [worksheet_name, 0, index],
+                        'categories': [worksheet_name, 1, 0, l - 1, 0],
+                        'values': [worksheet_name, 1, index, l - 1, index],
                         'line': {'color': self.color_list[index % len(self.color_list)]}
                     })
             # 图表名

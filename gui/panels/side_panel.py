@@ -202,6 +202,12 @@ class SidePanel(QWidget):
             elif t is QPushButton:
                 if not child.parent() or child.parent().objectName() != "toolbar":
                     child.setFont(self._font_sm)
+                variant = child.property("buttonVariant")
+                if variant:
+                    child.setObjectName(str(variant))
+                    child.setStyleSheet(BaseStyles.BUTTON_QSS())
+                    child.style().unpolish(child)
+                    child.style().polish(child)
                 icon_name = child.property("iconName")
                 if icon_name:
                     child.setIcon(get_themed_icon(icon_name))

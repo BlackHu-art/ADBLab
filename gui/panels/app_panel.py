@@ -327,8 +327,8 @@ class AppPanel(BasePanel):
         self.signals.kill_monkey_requested.emit(self.selected_devices)
 
     def _set_monkey_running(self, running: bool):
-        self.start_monkey_btn.setEnabled(not running)
-        self.kill_monkey_btn.setEnabled(running)
+        self._set_button_enabled(self.start_monkey_btn, not running)
+        self._set_button_enabled(self.kill_monkey_btn, running)
 
     @property
     def package_text(self) -> str:

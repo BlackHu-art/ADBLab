@@ -1,5 +1,5 @@
 """ADBLab adapter layer for the vendored mobileperf tool."""
 
-from .runner import MobilePerfRunConfig, MobilePerfRunner
+from .runner import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
-__all__ = ["MobilePerfRunConfig", "MobilePerfRunner"]
+__all__ = ["MobilePerfMonkeyConfig", "MobilePerfRunConfig", "MobilePerfRunner"]

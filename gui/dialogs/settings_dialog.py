@@ -34,7 +34,7 @@ class SettingsDialog(QDialog):
         self.s = AppSettings.instance()
         self.setWindowTitle("Settings")
         self.setWindowIcon(get_themed_icon("gear.svg"))
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(520)
         self.setModal(True)
 
         self._build_ui()
@@ -50,8 +50,8 @@ class SettingsDialog(QDialog):
         root.setSpacing(0)
 
         content = QVBoxLayout()
-        content.setContentsMargins(24, 20, 24, 12)
-        content.setSpacing(16)
+        content.setContentsMargins(2, 2, 2, 2)
+        content.setSpacing(6)
 
         self._build_appearance(content)
         self._build_window(content)
@@ -86,7 +86,9 @@ class SettingsDialog(QDialog):
         self._combo_log_font.currentTextChanged.connect(self._on_log_font_changed)
 
         gg = QGridLayout(g)
-        gg.setSpacing(8)
+        gg.setContentsMargins(8, 12, 8, 8)
+        gg.setHorizontalSpacing(8)
+        gg.setVerticalSpacing(6)
         gg.addWidget(self._label("Theme"), 0, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addWidget(self._theme_combo, 0, 1)
         gg.addWidget(self._label("Font"), 0, 2, Qt.AlignRight | Qt.AlignVCenter)
@@ -123,7 +125,9 @@ class SettingsDialog(QDialog):
         self._update_right_label()
 
         gg = QGridLayout(g)
-        gg.setSpacing(8)
+        gg.setContentsMargins(8, 12, 8, 8)
+        gg.setHorizontalSpacing(8)
+        gg.setVerticalSpacing(6)
         gg.addWidget(self._label("Width"), 0, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addLayout(self._with_unit(self._inp_win_w, "px"), 0, 1)
         gg.addWidget(self._label("Height"), 0, 2, Qt.AlignRight | Qt.AlignVCenter)
@@ -154,7 +158,8 @@ class SettingsDialog(QDialog):
         self._chk_continuous_scan.toggled.connect(self._on_continuous_scan_toggled)
 
         vl = QVBoxLayout(g)
-        vl.setSpacing(6)
+        vl.setContentsMargins(8, 12, 8, 8)
+        vl.setSpacing(4)
         vl.addWidget(self._chk_confirm)
         vl.addWidget(self._chk_continuous_scan)
         body.addWidget(g)
@@ -164,7 +169,9 @@ class SettingsDialog(QDialog):
     def _build_general(self, body):
         g = self._section("General")
         gg = QGridLayout(g)
-        gg.setSpacing(8)
+        gg.setContentsMargins(8, 12, 8, 8)
+        gg.setHorizontalSpacing(8)
+        gg.setVerticalSpacing(6)
 
         save_dir = self.s.get("save_directory", "")
         self._lbl_save = QLabel(save_dir if save_dir else "~/ADBLab (default)")
@@ -193,9 +200,10 @@ class SettingsDialog(QDialog):
     # ── Footer ──────────────────────────────────────────────────────────
 
     def _build_footer(self, body):
-        body.addSpacing(8)
+        body.addSpacing(2)
         row = QHBoxLayout()
-        row.setSpacing(10)
+        row.setSpacing(6)
+        row.setContentsMargins(2, 0, 2, 0)
         row.addStretch()
         btn_reset = QPushButton("Restore Defaults")
         btn_reset.setIcon(get_themed_icon("arrow-u-up-left.svg"))
@@ -372,65 +380,87 @@ class SettingsDialog(QDialog):
         apply_dark_title_bar(self)
         c = BaseStyles.color
         r = BaseStyles.RADIUS_MD
+        ui_size = BaseStyles.DEFAULT_FONT_SIZE
+        label_size = max(10, ui_size - 1)
+        hint_size = max(9, ui_size - 2)
 
+        self.setFont(BaseStyles.get_default_font())
         self.setStyleSheet(
             BaseStyles.INPUT_STYLE()
             + BaseStyles.BUTTON_QSS()
             + BaseStyles.SCROLLBAR_STYLE()
             + f"""
             QDialog {{
-                background-color: {c('PANEL_BG')};
+                background-color: {c('WINDOW_BG')};
+                color: {c('TEXT_PRIMARY')};
                 font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+                font-size: {ui_size}px;
+            }}
+            QDialog QLabel,
+            QDialog QLineEdit,
+            QDialog QComboBox,
+            QDialog QComboBox QAbstractItemView,
+            QDialog QCheckBox,
+            QDialog QPushButton {{
+                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
+                font-size: {ui_size}px;
             }}
             QGroupBox#settingsSection {{
-                background-color: {c('INPUT_BG')};
+                background-color: {c('PANEL_BG')};
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {r}px;
-                margin-top: 6px;
-                padding: 12px 14px 10px 14px;
+                margin-top: 5px;
                 font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE - 1}px;
+                font-size: {ui_size}px;
                 font-weight: bold;
                 color: {c('TEXT_PRIMARY')};
             }}
-            QGroupBox#settingsSection::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 8px;
-                left: 10px;
-                color: {c('GROUP_TITLE_COLOR')};
-            }}
             QLabel#settingsLabel {{
-                font-size: 12px;
+                font-size: {label_size}px;
+                font-weight: bold;
                 color: {c('TEXT_PRIMARY')};
-                min-width: 54px;
+                min-width: 64px;
             }}
             QLabel#hintLabel {{
-                font-size: 11px;
+                font-size: {hint_size}px;
                 color: {c('TEXT_SECONDARY')};
-                padding-left: 4px;
+                padding: 3px 4px;
             }}
             QLabel#unitLabel {{
-                font-size: 12px;
+                font-size: {label_size}px;
                 color: {c('TEXT_SECONDARY')};
-                min-width: 36px;
+                min-width: 34px;
+            }}
+            QComboBox {{
+                min-height: 26px;
             }}
             QLineEdit#numInput {{
-                background-color: {c('PANEL_BG')};
+                background-color: {c('INPUT_BG')};
                 color: {c('TEXT_PRIMARY')};
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {r}px;
-                padding: 4px 8px;
+                min-height: 24px;
+                padding: 3px 8px;
                 font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
+                font-size: {ui_size}px;
             }}
             QLineEdit#numInput:focus {{ border-color: {c('BORDER_FOCUS')}; }}
+            QCheckBox#settingsCheck {{
+                color: {c('TEXT_PRIMARY')};
+                spacing: 8px;
+                padding: 2px 0;
+            }}
+            QPushButton {{
+                min-height: 26px;
+                padding: 4px 12px;
+            }}
             QPushButton#accentBtn {{
                 background-color: {c('BUTTON_ACCENT')};
                 color: #ffffff;
                 border: none;
                 border-radius: {r}px;
-                padding: 5px 16px;
+                min-height: 26px;
+                padding: 4px 18px;
                 font-weight: bold;
             }}
             QPushButton#accentBtn:hover {{ background-color: {c('BUTTON_ACCENT_HOVER')}; }}

@@ -104,7 +104,7 @@ class BasePanel(QWidget):
         b.setProperty("iconName", i)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
-            b.setObjectName(variant)
+            self._apply_button_variant(b, variant)
         return b
 
     def _db(self, t, i, tooltip=None):
@@ -129,8 +129,25 @@ class BasePanel(QWidget):
         b.setToolTip(tooltip or t)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
-            b.setObjectName(variant)
+            self._apply_button_variant(b, variant)
         return b
+
+    def _apply_button_variant(self, button: QPushButton, variant: str):
+        button.setObjectName(variant)
+        button.setProperty("buttonVariant", variant)
+        button.setStyleSheet(BaseStyles.BUTTON_QSS())
+        self._refresh_button_style(button)
+
+    def _refresh_button_style(self, button: QPushButton):
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.update()
+
+    def _set_button_enabled(self, button: QPushButton | None, enabled: bool):
+        if button is None:
+            return
+        button.setEnabled(enabled)
+        self._refresh_button_style(button)
 
     def _row(self, *items, spacing=4):
         """Create a compact horizontal row.

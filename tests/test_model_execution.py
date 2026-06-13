@@ -11,7 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QMessageBox, QPushButton, QWidget
 
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
@@ -40,7 +40,7 @@ from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from models.file_explorer_worker import ADBWorker, TransferWorker
-from models.mobileperf import MobilePerfRunConfig, MobilePerfRunner
+from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.panels.app_panel import AppPanel
@@ -740,15 +740,108 @@ def test_performance_launcher_build_config_uses_title_device_and_device_save_dir
     _app = QApplication.instance() or QApplication([])
     dialog = PerformanceLauncherDialog(device_ip="127.0.0.1:5555", package_name="com.example.app")
     dialog.save_path_edit.setText(str(tmp_path / "mobileperf"))
-    dialog.mailbox_edit.setText("qa@example.com")
 
     cfg = dialog.build_config()
 
     assert cfg.device_id == "127.0.0.1:5555"
     assert cfg.package == "com.example.app"
-    assert cfg.mailbox == "qa@example.com"
+    assert cfg.mailbox == ""
+    assert not hasattr(dialog, "mailbox_edit")
+    assert "mailbox" not in [label.text() for label in dialog.findChildren(QLabel)]
     assert Path(cfg.save_path).name == "127.0.0.1_5555"
     dialog.close()
+
+
+def test_performance_launcher_collects_monkey_config_from_controls():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1", package_name="com.example.app")
+    try:
+        dialog.monkey_check.setChecked(True)
+        dialog.monkey_throttle_combo.setCurrentText("1000")
+        dialog.monkey_seed_edit.setText("42")
+        dialog.monkey_ignore_crashes.setChecked(False)
+        dialog.monkey_ignore_timeouts.setChecked(True)
+        dialog.monkey_ignore_security.setChecked(False)
+        dialog.monkey_kill_after_error.setChecked(True)
+        dialog.monkey_pct_combos["pct_touch"].setCurrentText("40")
+        dialog.monkey_pct_combos["pct_motion"].setCurrentText("20")
+        dialog.monkey_pct_combos["pct_nav"].setCurrentText("30")
+        dialog.monkey_pct_combos["pct_anyevent"].setCurrentText("10")
+        for key in [
+            "pct_trackball",
+            "pct_majornav",
+            "pct_syskeys",
+            "pct_appswitch",
+            "pct_flip",
+            "pct_pinchzoom",
+        ]:
+            dialog.monkey_pct_combos[key].setCurrentText("0")
+
+        cfg = dialog.build_config()
+
+        assert cfg.monkey_enabled is True
+        assert cfg.monkey_config.throttle_ms == 1000
+        assert cfg.monkey_config.seed == 42
+        assert cfg.monkey_config.ignore_crashes is False
+        assert cfg.monkey_config.ignore_timeouts is True
+        assert cfg.monkey_config.ignore_security is False
+        assert cfg.monkey_config.kill_after_error is True
+        assert cfg.monkey_config.total_percentage == 100
+        assert dialog.monkey_total_label.text() == "Total: 100%"
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_monkey_total_uses_uncommitted_edit_text_and_full_labels():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1", package_name="com.example.app")
+    try:
+        dialog.monkey_check.setChecked(True)
+        values = {
+            "pct_touch": "35",
+            "pct_motion": "15",
+            "pct_trackball": "0",
+            "pct_nav": "20",
+            "pct_majornav": "10",
+            "pct_syskeys": "5",
+            "pct_appswitch": "5",
+            "pct_anyevent": "10",
+            "pct_flip": "0",
+            "pct_pinchzoom": "0",
+        }
+        for key, value in values.items():
+            combo = dialog.monkey_pct_combos[key]
+            combo.lineEdit().setText(value)
+
+        cfg = dialog.build_config()
+        label_texts = {label.text() for label in dialog.findChildren(QLabel)}
+
+        assert dialog.monkey_total_label.text() == "Total: 100%"
+        assert cfg.monkey_config.total_percentage == 100
+        assert cfg.monkey_config.pct_touch == 35
+        assert cfg.monkey_config.pct_appswitch == 5
+        assert "Major navigation events" in label_texts
+        assert "App switch events" in label_texts
+        assert "Keyboard flip events" in label_texts
+        assert "Pinch/zoom events" in label_texts
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_monkey_throttle_width_fits_largest_value_after_font_change():
+    _app = QApplication.instance() or QApplication([])
+    old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
+    BaseStyles.DEFAULT_FONT_SIZE = 20
+    dialog = PerformanceLauncherDialog(device_ip="device-1", package_name="com.example.app")
+    try:
+        dialog._apply_theme()
+        metrics = dialog.fontMetrics()
+
+        assert dialog.monkey_throttle_combo.minimumWidth() >= metrics.horizontalAdvance("2000") + 54
+        assert dialog.monkey_seed_edit.minimumWidth() >= metrics.horizontalAdvance("1000000") + 28
+    finally:
+        BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
+        dialog.close()
 
 
 def test_performance_launcher_normalizes_mixed_separator_save_path():
@@ -765,7 +858,7 @@ def test_performance_launcher_normalizes_mixed_separator_save_path():
         dialog.close()
 
 
-def test_performance_launcher_batches_logs_and_uses_log_font_size():
+def test_performance_launcher_batches_logs_and_uses_ui_font_size():
     _app = QApplication.instance() or QApplication([])
     old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
     old_log_size = BaseStyles.LOG_FONT_SIZE_VAR
@@ -779,7 +872,7 @@ def test_performance_launcher_batches_logs_and_uses_log_font_size():
         dialog._append_log("ERROR", "second")
 
         font = dialog.log_view.font()
-        assert font.pointSize() == 11 or font.pixelSize() == 11
+        assert font.pointSize() == 17 or font.pixelSize() == 17
         assert "first" not in dialog.log_view.toPlainText()
 
         dialog._flush_pending_logs()
@@ -794,7 +887,7 @@ def test_performance_launcher_batches_logs_and_uses_log_font_size():
         dialog.close()
 
 
-def test_performance_launcher_config_follows_global_font_while_log_uses_log_font():
+def test_performance_launcher_config_and_log_follow_global_ui_font():
     def effective_size(widget):
         font = widget.font()
         return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
@@ -811,10 +904,38 @@ def test_performance_launcher_config_follows_global_font_while_log_uses_log_font
         assert effective_size(dialog.package_edit) == 18
         assert effective_size(dialog.frequency_combo) == 18
         assert effective_size(dialog.monkey_check) == 18
-        assert effective_size(dialog.log_view) == 10
+        assert effective_size(dialog.log_view) == 18
         hints = [w for w in dialog.findChildren(QLabel) if w.objectName() == "configHint"]
         assert hints
         assert all(effective_size(hint) == 18 for hint in hints)
+    finally:
+        BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
+        BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
+        dialog.close()
+
+
+def test_performance_launcher_log_ignores_log_font_size_and_uses_ui_document_font():
+    def effective_font_size(font):
+        return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
+
+    _app = QApplication.instance() or QApplication([])
+    old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
+    old_log_size = BaseStyles.LOG_FONT_SIZE_VAR
+    BaseStyles.DEFAULT_FONT_SIZE = 18
+    BaseStyles.LOG_FONT_SIZE_VAR = 10
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._append_log("INFO", "before")
+        dialog._flush_pending_logs()
+
+        BaseStyles.LOG_FONT_SIZE_VAR = 14
+        BaseStyles.DEFAULT_FONT_SIZE = 16
+        dialog._apply_theme()
+
+        assert effective_font_size(dialog.log_view.font()) == 16
+        assert effective_font_size(dialog.log_view.document().defaultFont()) == 16
+        assert effective_font_size(dialog.log_view.viewport().font()) == 16
+        assert dialog.log_view.toPlainText().strip()
     finally:
         BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
         BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
@@ -833,6 +954,61 @@ def test_performance_launcher_raw_mobileperf_logs_are_not_reprefixed():
         text = dialog.log_view.toPlainText().strip()
         assert text == raw_line
         assert "[RAW]" not in text
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_running_status_is_green_and_progress_updates():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._set_running(True)
+        dialog._run_duration_seconds = 100
+        dialog._run_started_at = time.monotonic() - 25
+        dialog._runner.is_running = Mock(return_value=True)
+
+        dialog._update_progress()
+
+        assert dialog.status_label.text() == "Running"
+        assert BaseStyles.color("LOG_SUCCESS") in dialog.status_label.styleSheet()
+        assert 20 <= dialog.progress_bar.value() <= 30
+        assert dialog.progress_bar.format() == f"{dialog.progress_bar.value()}%"
+
+        dialog._run_started_at = time.monotonic() - 500
+        dialog._update_progress()
+
+        assert dialog.progress_bar.value() == 99
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_finished_sets_progress_to_complete():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._runner_finished_handled = False
+        dialog._run_started_at = time.monotonic()
+        dialog._run_duration_seconds = 100
+        dialog._runner.latest_result_dir = Mock(return_value="")
+        dialog._runner.latest_report_file = Mock(return_value="")
+
+        dialog._mark_runner_finished()
+
+        assert dialog.progress_bar.value() == 100
+        assert dialog.progress_bar.format() == "100%"
+        assert dialog.status_label.text() == "Idle"
+    finally:
+        dialog.close()
+
+
+def test_performance_launcher_stopping_status_is_warning_color():
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    try:
+        dialog._set_status("Stopping", "stopping")
+
+        assert dialog.status_label.text() == "Stopping"
+        assert BaseStyles.color("LOG_WARNING") in dialog.status_label.styleSheet()
     finally:
         dialog.close()
 
@@ -871,6 +1047,24 @@ def test_mobileperf_config_generation_does_not_touch_default_config(tmp_path):
         phone_log_paths=["/data/anr", "/sdcard/logs"],
         save_path=str(tmp_path / "out"),
         mailbox="qa@example.com",
+        monkey_config=MobilePerfMonkeyConfig(
+            throttle_ms=1000,
+            seed=42,
+            ignore_crashes=False,
+            ignore_timeouts=True,
+            ignore_security=False,
+            kill_after_error=True,
+            pct_touch=40,
+            pct_motion=20,
+            pct_nav=30,
+            pct_anyevent=10,
+            pct_trackball=0,
+            pct_majornav=0,
+            pct_syskeys=0,
+            pct_appswitch=0,
+            pct_flip=0,
+            pct_pinchzoom=0,
+        ),
     )
 
     generated = Path(cfg.write_config(tmp_path))
@@ -879,6 +1073,11 @@ def test_mobileperf_config_generation_does_not_touch_default_config(tmp_path):
     text = generated.read_text(encoding="utf-8")
     assert "package = com.example.app" in text
     assert "monkey = true" in text
+    assert "monkey_throttle = 1000" in text
+    assert "monkey_seed = 42" in text
+    assert "monkey_ignore_crashes = false" in text
+    assert "monkey_pct_touch = 40" in text
+    assert "monkey_pct_nav = 30" in text
     assert "mailbox = qa@example.com" in text
     assert "phone_log_path = /data/anr;/sdcard/logs" in text
     assert default_config.read_text(encoding="utf-8") == before
@@ -896,6 +1095,49 @@ def test_mobileperf_config_normalizes_save_path_before_write(tmp_path):
     expected_save_path = os.path.normpath(r"E:\Download\mobileperf\emulator-5554")
 
     assert f"save_path = {expected_save_path}" in text
+
+
+def test_mobileperf_excel_truncates_long_csv_sheet_names_for_report(tmp_path):
+    from mobileperf.android.excel import Excel
+
+    csv_file = tmp_path / "pss_com.google.android.apps.nexuslauncher.csv"
+    csv_file.write_text(
+        "datatime,package,pss,java_heap,native_heap,system\n"
+        "2026-06-13 20:51:00,com.google.android.apps.nexuslauncher,1,2,3,4\n"
+        "2026-06-13 20:51:01,com.google.android.apps.nexuslauncher,2,3,4,5\n",
+        encoding="utf-8",
+    )
+    excel = Excel(str(tmp_path / "summary.xlsx"))
+
+    excel.csv_to_xlsx(
+        str(csv_file),
+        "pss_detail",
+        "datatime",
+        "mem(MB)",
+        ["pss", "java_heap", "native_heap", "system"],
+    )
+    excel.save()
+
+    assert (tmp_path / "summary.xlsx").exists()
+    assert "pss_com.google.android.apps.nex" in excel._worksheet_names
+    assert all(len(name) <= 31 for name in excel._worksheet_names)
+
+
+def test_mobileperf_excel_generates_unique_valid_sheet_names(tmp_path):
+    from mobileperf.android.excel import Excel
+
+    excel = Excel(str(tmp_path / "summary.xlsx"))
+    sheet_name = "bad:name?with/slash\\andaverylongworksheetname"
+
+    excel.add_sheet(sheet_name, "time", "value", ["time", "value"], [["1", "2"], ["2", "3"]])
+    excel.add_sheet(sheet_name, "time", "value", ["time", "value"], [["1", "2"], ["2", "3"]])
+    excel.save()
+
+    names = sorted(excel._worksheet_names)
+    assert len(names) == 2
+    assert names[0] != names[1]
+    assert all(len(name) <= 31 for name in names)
+    assert all(not any(char in name for char in "[]:*?/\\") for name in names)
 
 
 def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
@@ -920,8 +1162,273 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
     assert "--config" in args[1]
     assert kwargs["cwd"] == str(tmp_path)
     assert kwargs["env"]["ADB_PATH"] == "adb-test"
+    assert "MOBILEPERF_STOP_FILE" in kwargs["env"]
     assert Path(args[1][-1]).name == "mobileperf_run.conf"
     runner.stop()
+
+
+def test_mobileperf_runner_stop_requests_mobileperf_report_shutdown(tmp_path):
+    runner_process = Mock(spec=ProcessRunner)
+    proc = Mock()
+    proc.stdout = []
+    proc.poll.return_value = None
+    proc.wait.return_value = None
+    proc.returncode = 0
+    runner_process.start.return_value = proc
+    runner = MobilePerfRunner(
+        process_runner=runner_process,
+        project_root=tmp_path,
+        python_executable="python-test",
+    )
+    cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
+
+    runner.start(cfg)
+    with patch.object(runner, "request_stop", wraps=runner.request_stop) as request_stop:
+        code = runner.stop(timeout=7)
+
+    assert code == 0
+    request_stop.assert_called_once()
+    proc.wait.assert_called_once_with(timeout=7)
+    runner_process.stop.assert_called_once()
+    assert runner_process.stop.call_args.kwargs["timeout"] == 0
+
+
+def test_mobileperf_runner_request_stop_writes_stop_file(tmp_path):
+    runner = MobilePerfRunner(project_root=tmp_path)
+    runner._stop_path = str(tmp_path / "mobileperf.stop")
+
+    runner.request_stop()
+
+    assert Path(runner._stop_path).read_text(encoding="utf-8") == "stop"
+
+
+def test_mobileperf_runner_stop_force_stops_after_report_timeout(tmp_path):
+    runner_process = Mock(spec=ProcessRunner)
+    proc = Mock()
+    proc.stdout = []
+    proc.poll.return_value = None
+    proc.wait.side_effect = subprocess.TimeoutExpired(cmd="mobileperf", timeout=7)
+    runner_process.start.return_value = proc
+    runner_process.stop.return_value = -9
+    runner = MobilePerfRunner(
+        process_runner=runner_process,
+        project_root=tmp_path,
+        python_executable="python-test",
+    )
+    cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
+
+    runner.start(cfg)
+    code = runner.stop(timeout=7)
+
+    assert code == -9
+    runner_process.stop.assert_called_once()
+
+
+def test_mobileperf_runner_finds_latest_result_and_report(tmp_path):
+    root = tmp_path / "mobileperf" / "com.example.app"
+    old_dir = root / "2026_06_13_10_00_00"
+    new_dir = root / "2026_06_13_10_05_00"
+    old_dir.mkdir(parents=True)
+    new_dir.mkdir(parents=True)
+    old_report = old_dir / "summary_old.xlsx"
+    new_report = new_dir / "summary_new.xlsx"
+    old_report.write_text("old", encoding="utf-8")
+    new_report.write_text("new", encoding="utf-8")
+    os.utime(old_dir, (1, 1))
+    os.utime(new_dir, (2, 2))
+    os.utime(old_report, (1, 1))
+    os.utime(new_report, (2, 2))
+    runner = MobilePerfRunner(project_root=tmp_path)
+    cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "mobileperf"))
+    runner._last_config = cfg
+
+    assert runner.latest_result_dir() == str(new_dir)
+    assert runner.latest_report_file() == str(new_report)
+
+
+def test_mobileperf_startup_detects_adblab_stop_file(tmp_path):
+    from mobileperf.android.startup import StartUp
+
+    startup = StartUp.__new__(StartUp)
+    startup.stop_file = str(tmp_path / "mobileperf.stop")
+
+    assert startup.check_stop_file_quit() is False
+    Path(startup.stop_file).write_text("stop", encoding="utf-8")
+    assert startup.check_stop_file_quit() is True
+
+
+def test_mobileperf_monkey_derives_event_count_from_collection_timeout():
+    from mobileperf.android.monkey import Monkey
+
+    monkey = Monkey.__new__(Monkey)
+    monkey.throttle_ms = 500
+
+    assert Monkey._event_count_for_timeout(monkey, 600) == 1201
+    assert Monkey._event_count_for_timeout(monkey, 1) == 3
+
+
+def test_mobileperf_monkey_keeps_legacy_large_timeout_as_event_count():
+    from mobileperf.android.monkey import Monkey
+
+    with patch("mobileperf.android.monkey.AndroidDevice") as android_device:
+        monkey = Monkey("device-1", "com.example.app")
+
+    android_device.assert_called_once_with("device-1")
+    assert monkey.timeout is None
+    assert monkey.event_count == Monkey.DEFAULT_EVENT_COUNT
+
+
+def test_mobileperf_monkey_builds_command_from_configurable_options():
+    from mobileperf.android.monkey import Monkey
+
+    with patch("mobileperf.android.monkey.AndroidDevice"):
+        monkey = Monkey(
+            "device-1",
+            "com.example.app",
+            timeout=10,
+            throttle_ms=1000,
+            seed=42,
+            ignore_crashes=False,
+            ignore_timeouts=True,
+            ignore_security=False,
+            kill_after_error=False,
+            pct_touch=40,
+            pct_motion=20,
+            pct_nav=30,
+            pct_anyevent=10,
+            pct_trackball=0,
+            pct_majornav=0,
+            pct_syskeys=0,
+            pct_appswitch=0,
+            pct_flip=0,
+            pct_pinchzoom=0,
+        )
+
+    cmd = monkey._build_monkey_cmd("com.example.app", 11)
+
+    assert "-s 42" in cmd
+    assert "--throttle 1000 11" in cmd
+    assert "--pct-touch 40" in cmd
+    assert "--pct-motion 20" in cmd
+    assert "--pct-nav 30" in cmd
+    assert "--pct-anyevent 10" in cmd
+    assert "--ignore-timeouts" in cmd
+    assert "--ignore-crashes" not in cmd
+    assert "--ignore-security-exceptions" not in cmd
+    assert "--kill-process-after-error" not in cmd
+    assert monkey._event_percentage_total() == 100
+
+
+def test_mobileperf_startup_passes_collection_timeout_to_monkey():
+    from mobileperf.android.startup import StartUp
+    from mobileperf.android import startup as startup_module
+
+    startup = StartUp.__new__(StartUp)
+    startup.serialnum = "device-1"
+    startup.packages = ["com.example.app"]
+    startup.frequency = 5
+    startup.timeout = 600
+    startup.config_dic = {
+        "monkey": "true",
+        "main_activity": "",
+        "activity_list": "",
+        "save_path": "",
+        "monkey_throttle": 1000,
+        "monkey_seed": 42,
+        "monkey_ignore_crashes": "false",
+        "monkey_ignore_timeouts": "true",
+        "monkey_ignore_security": "false",
+        "monkey_kill_after_error": "true",
+        "monkey_pct_touch": 40,
+        "monkey_pct_motion": 20,
+        "monkey_pct_trackball": 0,
+        "monkey_pct_nav": 30,
+        "monkey_pct_majornav": 0,
+        "monkey_pct_syskeys": 0,
+        "monkey_pct_appswitch": 0,
+        "monkey_pct_anyevent": 10,
+        "monkey_pct_flip": 0,
+        "monkey_pct_pinchzoom": 0,
+    }
+    startup.exceptionlog_list = []
+    startup.monitors = []
+    startup.device = Mock()
+    startup.device.adb.is_connected.return_value = True
+    startup.device.adb.is_app_installed.return_value = False
+
+    with patch.object(startup_module, "CpuMonitor"), \
+         patch.object(startup_module, "MemMonitor"), \
+         patch.object(startup_module, "TrafficMonitor"), \
+         patch.object(startup_module, "FPSMonitor"), \
+         patch.object(startup_module, "FdMonitor"), \
+         patch.object(startup_module, "ThreadNumMonitor"), \
+         patch.object(startup_module, "Monkey") as monkey_cls:
+        startup.add_monitor = Mock()
+        startup.clear_heapdump = Mock()
+        startup.run()
+
+    monkey_cls.assert_not_called()
+
+    startup.device.adb.is_app_installed.return_value = True
+    with patch.object(startup_module, "CpuMonitor"), \
+         patch.object(startup_module, "MemMonitor"), \
+         patch.object(startup_module, "TrafficMonitor"), \
+         patch.object(startup_module, "FPSMonitor"), \
+         patch.object(startup_module, "FdMonitor"), \
+         patch.object(startup_module, "ThreadNumMonitor"), \
+         patch.object(startup_module, "Monkey") as monkey_cls, \
+         patch.object(startup_module, "LogcatMonitor"), \
+         patch.object(startup_module.FileUtils, "makedir"), \
+         patch.object(startup_module.TimeUtils, "getCurrentTimeUnderline", return_value="2026_06_13_10_00_00"):
+        startup.monitors = []
+        startup.add_monitor = Mock(side_effect=lambda monitor: startup.monitors.append(monitor))
+        startup.save_device_info = Mock()
+        startup.stop = Mock(side_effect=SystemExit)
+        monkey_cls.return_value = Mock()
+
+        try:
+            startup.run(time_out=0)
+        except SystemExit:
+            pass
+
+    monkey_cls.assert_called_once_with(
+        "device-1",
+        "com.example.app",
+        timeout=600,
+        throttle_ms=1000,
+        seed=42,
+        ignore_crashes=False,
+        ignore_timeouts=True,
+        ignore_security=False,
+        kill_after_error=True,
+        pct_touch=40,
+        pct_motion=20,
+        pct_trackball=0,
+        pct_nav=30,
+        pct_majornav=0,
+        pct_syskeys=0,
+        pct_appswitch=0,
+        pct_anyevent=10,
+        pct_flip=0,
+        pct_pinchzoom=0,
+    )
+
+
+def test_mobileperf_startup_uses_default_monkey_options_for_legacy_config():
+    from mobileperf.android.startup import StartUp
+
+    startup = StartUp.__new__(StartUp)
+    startup.config_dic = {}
+
+    defaults = startup._optional_config_defaults()
+    options = startup._monkey_options()
+
+    assert defaults["monkey_throttle"] == 500
+    assert options["throttle_ms"] == 500
+    assert options["seed"] == 1000000
+    assert options["ignore_crashes"] is True
+    assert options["pct_touch"] == 15
+    assert options["pct_nav"] == 40
 
 
 def test_mobileperf_runner_batches_subprocess_log_lines_and_notifies_finish():
@@ -1190,6 +1697,8 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
         assert viewer._copy_btn.text() == ""
         assert viewer._save_btn.text() == ""
         assert viewer._bottom_bar.objectName() == "bottomBar"
+        assert viewer._bottom_dock.objectName() == "bottomDock"
+        assert viewer._thumb_list.isHidden()
         assert not hasattr(viewer, "_close_btn")
         expected_tips = {
             viewer._prev_btn: "Previous screenshot (Left)",
@@ -1197,13 +1706,52 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
             viewer._zoom_out_btn: "Zoom out (Ctrl+-)",
             viewer._zoom_in_btn: "Zoom in (Ctrl+=)",
             viewer._fit_btn: "Fit to window (Ctrl+0)",
-            viewer._actual_btn: "Actual size",
-            viewer._copy_btn: "Copy to clipboard (Ctrl+C)",
+            viewer._actual_btn: "Actual size (Ctrl+1)",
+            viewer._copy_btn: "Copy image to clipboard (Ctrl+C)",
+            viewer._copy_path_btn: "Copy file path (Ctrl+Shift+C)",
             viewer._save_btn: "Save as (Ctrl+S)",
             viewer._folder_btn: "Open file location",
             viewer._delete_btn: "Delete screenshot",
         }
         assert all(button.toolTip() == tooltip for button, tooltip in expected_tips.items())
+    finally:
+        viewer.close()
+
+
+def test_screenshot_viewer_thumbnail_and_navigation_update_current_image(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    paths = []
+    for name, color in (
+        ("first.png", Qt.GlobalColor.red),
+        ("second.png", Qt.GlobalColor.green),
+        ("third.png", Qt.GlobalColor.blue),
+    ):
+        path = tmp_path / name
+        pixmap = QPixmap(80, 60)
+        pixmap.fill(color)
+        assert pixmap.save(str(path))
+        paths.append(str(path))
+
+    viewer = ScreenshotViewer(paths)
+    try:
+        assert not viewer._thumb_list.isHidden()
+        assert viewer._thumb_list.count() == 3
+        assert viewer._nav_label.text() == "1 / 3"
+
+        viewer.navigate_next()
+        assert viewer._current_idx == 1
+        assert viewer._path_label.text() == "second.png"
+        assert viewer._nav_label.text() == "2 / 3"
+        assert viewer._thumb_list.currentRow() == 1
+
+        viewer._on_thumbnail_clicked(viewer._thumb_list.item(2))
+        assert viewer._current_idx == 2
+        assert viewer._path_label.text() == "third.png"
+        assert viewer._nav_label.text() == "3 / 3"
+
+        viewer.navigate_prev()
+        assert viewer._current_idx == 1
+        assert viewer._path_label.text() == "second.png"
     finally:
         viewer.close()
 
@@ -1240,6 +1788,57 @@ def test_screenshot_viewer_actual_size_updates_zoom_label(tmp_path):
 
         assert viewer._fit_to_window is False
         assert viewer._zoom_label.text() == "100%"
+    finally:
+        viewer.close()
+
+
+def test_screenshot_viewer_copy_path_shortcut_target(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    image_path = tmp_path / "shot.png"
+    pixmap = QPixmap(120, 80)
+    pixmap.fill(Qt.GlobalColor.cyan)
+    assert pixmap.save(str(image_path))
+
+    viewer = ScreenshotViewer([str(image_path)])
+    try:
+        viewer.copy_path_to_clipboard()
+
+        assert QApplication.clipboard().text() == os.path.abspath(str(image_path))
+    finally:
+        viewer.close()
+
+
+def test_screenshot_viewer_delete_requires_confirmation_and_enters_empty_state(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    image_path = tmp_path / "shot.png"
+    pixmap = QPixmap(120, 80)
+    pixmap.fill(Qt.GlobalColor.magenta)
+    assert pixmap.save(str(image_path))
+
+    viewer = ScreenshotViewer([str(image_path)])
+    try:
+        with patch(
+            "gui.dialogs.screenshot_viewer.QMessageBox.question",
+            return_value=QMessageBox.No,
+        ) as question:
+            viewer._delete_file()
+
+        question.assert_called_once()
+        assert image_path.exists()
+        assert viewer._image_paths == [str(image_path)]
+
+        with patch(
+            "gui.dialogs.screenshot_viewer.QMessageBox.question",
+            return_value=QMessageBox.Yes,
+        ):
+            viewer._delete_file()
+
+        assert not image_path.exists()
+        assert viewer._image_paths == []
+        assert viewer._nav_label.text() == "0 / 0"
+        assert viewer._info_label.text() == "No screenshots remaining"
+        assert not viewer._copy_btn.isEnabled()
+        assert not viewer._delete_btn.isEnabled()
     finally:
         viewer.close()
 
@@ -1577,19 +2176,93 @@ def test_remote_status_font_size_uses_base_styles_default():
 
 def test_remote_start_stop_buttons_follow_running_state():
     _app = QApplication.instance() or QApplication([])
+    side_panel = SidePanel()
+    try:
+        remote = side_panel._ensure_tab_loaded(2)
+
+        assert remote.btn_start.objectName() == "accent"
+        assert remote.btn_start.property("buttonVariant") == "accent"
+        assert remote.btn_stop.objectName() == "danger"
+        assert remote.btn_stop.property("buttonVariant") == "danger"
+        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
+
+        RemotePanel._set_running(remote, True)
+        _app.processEvents()
+
+        assert remote.btn_start.isEnabled() is False
+        assert remote.btn_stop.isEnabled() is True
+        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("INPUT_BG").lower()
+        assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("BUTTON_DANGER").lower()
+
+        RemotePanel._set_running(remote, False)
+        _app.processEvents()
+
+        assert remote.btn_start.isEnabled() is True
+        assert remote.btn_stop.isEnabled() is False
+        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
+        assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("INPUT_BG").lower()
+    finally:
+        side_panel.close()
+
+
+def test_side_panel_theme_refresh_preserves_remote_button_variants():
+    _app = QApplication.instance() or QApplication([])
+    side_panel = SidePanel()
+    current_theme = BaseStyles.current_theme()
+    try:
+        remote = side_panel._ensure_tab_loaded(2)
+        BaseStyles.switch_theme("Dark" if current_theme == "Light" else "Light")
+        _app.processEvents()
+
+        assert remote.btn_start.objectName() == "accent"
+        assert remote.btn_start.property("buttonVariant") == "accent"
+        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
+        assert remote.btn_stop.objectName() == "danger"
+        assert remote.btn_stop.property("buttonVariant") == "danger"
+    finally:
+        BaseStyles.switch_theme(current_theme)
+        side_panel.close()
+
+
+def test_remote_control_buttons_are_grouped_without_duplicate_shortcuts():
+    _app = QApplication.instance() or QApplication([])
+    side_panel = SidePanel()
+    try:
+        remote = side_panel._ensure_tab_loaded(2)
+
+        key_codes = [button.property("remoteKey") for button in remote._remote_key_buttons]
+        actions = [button.property("remoteAction") for button in remote._remote_action_buttons]
+
+        assert "RECENTS" in key_codes
+        assert "APP_SWITCH" not in key_codes
+        assert "NOTIFICATION" not in key_codes
+        assert not any(str(code).startswith("DPAD_") for code in key_codes)
+        assert len(key_codes) == len(set(key_codes))
+        assert {"notif_expand", "notif_collapse", "rotate_portrait", "rotate_landscape"}.issubset(actions)
+        assert {"swipe_up", "swipe_down", "swipe_left", "swipe_right"}.issubset(actions)
+        assert len(remote._remote_control_buttons) == len(remote._remote_key_buttons) + len(remote._remote_action_buttons)
+        assert all(button.property("iconName") for button in remote._remote_control_buttons)
+    finally:
+        side_panel.close()
+
+
+def test_remote_control_clicks_warn_when_no_device_selected():
     remote = RemotePanel.__new__(RemotePanel)
-    remote.btn_start = QPushButton("Start")
-    remote.btn_stop = QPushButton("Stop")
+    remote.panel = Mock(selected_devices=[])
+    remote._remote_control = Mock()
+    remote._submit_remote_input = Mock()
+    remote._log = Mock()
 
-    RemotePanel._set_running(remote, True)
+    RemotePanel._send_keyevent(remote, "HOME")
+    RemotePanel._send_remote_action(remote, "swipe_up")
 
-    assert remote.btn_start.isEnabled() is False
-    assert remote.btn_stop.isEnabled() is True
-
-    RemotePanel._set_running(remote, False)
-
-    assert remote.btn_start.isEnabled() is True
-    assert remote.btn_stop.isEnabled() is False
+    assert remote._log.call_args_list == [
+        call("WARNING", "No device selected"),
+        call("WARNING", "No device selected"),
+    ]
+    remote._submit_remote_input.assert_not_called()
+    remote._remote_control.send_keyevent.assert_not_called()
+    remote._remote_control.perform_action.assert_not_called()
 
 
 def test_app_panel_monkey_buttons_follow_start_stop_state():

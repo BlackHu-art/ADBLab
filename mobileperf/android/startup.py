@@ -1,14 +1,13 @@
-# -*- coding: utf-8 -*-
 """
  @author      :  Frankie
  @time        :  $DATA  $TIME
 """
-import re
-import time
-import os
-import sys
-import queue
 import argparse
+import os
+import queue
+import re
+import sys
+import time
 from configparser import ConfigParser
 
 BaseDir = os.path.dirname(__file__)
@@ -46,6 +45,7 @@ class StartUp(object):
         self.timeout = self.config_dic['timeout']
         self.exceptionlog_list = self.config_dic["exceptionlog"]
         self.device = AndroidDevice(self.serialnum)
+        self.stop_file = os.environ.get("MOBILEPERF_STOP_FILE", "")
         # 如果config文件中 packagename为空，就获取前台进程，匹配图兰朵，测的app太多，支持配置文件不传package
         if not self.packages:
             # 进程名不会有#，转化为list
@@ -124,6 +124,8 @@ class StartUp(object):
 
         # 读取monkey配置
         config_dic = self.check_config_option(config_dic, paser, "Common", "monkey")
+        for option in self._monkey_config_options():
+            config_dic = self.check_config_option(config_dic, paser, "Common", option)
         config_dic = self.check_config_option(config_dic, paser, "Common", "main_activity")
         config_dic = self.check_config_option(config_dic, paser, "Common", "activity_list")
 
@@ -135,7 +137,7 @@ class StartUp(object):
 
             try:
                 config_dic[option] = parse.get(section, option)
-                if option == 'frequency':
+                if option == 'frequency' or option in self._monkey_int_options():
                     config_dic[option] = (int)(parse.get(section, option))
                 if option == 'dumpheap_freq':  #dumpheap 的单位是分钟
                     config_dic[option] = (int)(parse.get(section, option)) * 60
@@ -154,12 +156,96 @@ class StartUp(object):
                 else:
                     config_dic[option] = ''
         else:  #配置项没有配置
-            if option not in ['serialnum', "main_activity", "activity_list", "pid_change_focus_package", "shell_file"]:
+            if option in self._optional_config_defaults():
+                config_dic[option] = self._optional_config_defaults()[option]
+            elif option not in ['serialnum', "main_activity", "activity_list", "pid_change_focus_package", "shell_file"]:
                 logger.debug("config option error:" + option)
                 self._config_error()
             else:
                 config_dic[option] = ''
         return config_dic
+
+    @staticmethod
+    def _monkey_config_options():
+        return [
+            "monkey_throttle",
+            "monkey_seed",
+            "monkey_ignore_crashes",
+            "monkey_ignore_timeouts",
+            "monkey_ignore_security",
+            "monkey_kill_after_error",
+            "monkey_pct_touch",
+            "monkey_pct_motion",
+            "monkey_pct_trackball",
+            "monkey_pct_nav",
+            "monkey_pct_majornav",
+            "monkey_pct_syskeys",
+            "monkey_pct_appswitch",
+            "monkey_pct_anyevent",
+            "monkey_pct_flip",
+            "monkey_pct_pinchzoom",
+        ]
+
+    @staticmethod
+    def _monkey_int_options():
+        return {
+            "monkey_throttle",
+            "monkey_seed",
+            "monkey_pct_touch",
+            "monkey_pct_motion",
+            "monkey_pct_trackball",
+            "monkey_pct_nav",
+            "monkey_pct_majornav",
+            "monkey_pct_syskeys",
+            "monkey_pct_appswitch",
+            "monkey_pct_anyevent",
+            "monkey_pct_flip",
+            "monkey_pct_pinchzoom",
+        }
+
+    @staticmethod
+    def _optional_config_defaults():
+        return {
+            "monkey_throttle": 500,
+            "monkey_seed": 1000000,
+            "monkey_ignore_crashes": "true",
+            "monkey_ignore_timeouts": "true",
+            "monkey_ignore_security": "true",
+            "monkey_kill_after_error": "true",
+            "monkey_pct_touch": 15,
+            "monkey_pct_motion": 5,
+            "monkey_pct_trackball": 0,
+            "monkey_pct_nav": 40,
+            "monkey_pct_majornav": 30,
+            "monkey_pct_syskeys": 5,
+            "monkey_pct_appswitch": 0,
+            "monkey_pct_anyevent": 5,
+            "monkey_pct_flip": 0,
+            "monkey_pct_pinchzoom": 0,
+        }
+
+    def _monkey_options(self):
+        def _enabled(key):
+            return str(self.config_dic.get(key, "true")).lower() == "true"
+
+        return {
+            "throttle_ms": self.config_dic.get("monkey_throttle", 500),
+            "seed": self.config_dic.get("monkey_seed", 1000000),
+            "ignore_crashes": _enabled("monkey_ignore_crashes"),
+            "ignore_timeouts": _enabled("monkey_ignore_timeouts"),
+            "ignore_security": _enabled("monkey_ignore_security"),
+            "kill_after_error": _enabled("monkey_kill_after_error"),
+            "pct_touch": self.config_dic.get("monkey_pct_touch", 15),
+            "pct_motion": self.config_dic.get("monkey_pct_motion", 5),
+            "pct_trackball": self.config_dic.get("monkey_pct_trackball", 0),
+            "pct_nav": self.config_dic.get("monkey_pct_nav", 40),
+            "pct_majornav": self.config_dic.get("monkey_pct_majornav", 30),
+            "pct_syskeys": self.config_dic.get("monkey_pct_syskeys", 5),
+            "pct_appswitch": self.config_dic.get("monkey_pct_appswitch", 0),
+            "pct_anyevent": self.config_dic.get("monkey_pct_anyevent", 5),
+            "pct_flip": self.config_dic.get("monkey_pct_flip", 0),
+            "pct_pinchzoom": self.config_dic.get("monkey_pct_pinchzoom", 0),
+        }
 
     def _config_error(self):
         logger.error("config error, please config it correctly")
@@ -203,7 +289,7 @@ class StartUp(object):
             self.add_monitor(FdMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
             self.add_monitor(ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
             if self.config_dic["monkey"] == "true":
-                self.add_monitor(Monkey(self.serialnum, self.packages[0]))
+                self.add_monitor(Monkey(self.serialnum, self.packages[0], timeout=self.timeout, **self._monkey_options()))
             if self.config_dic["main_activity"] and self.config_dic["activity_list"]:
                 self.add_monitor(DeviceMonitor(self.serialnum, self.packages[0], self.frequency, self.config_dic["main_activity"],
                                                self.config_dic["activity_list"], RuntimeData.exit_event))
@@ -241,6 +327,9 @@ class StartUp(object):
                     # 时间到或测试过程中检测到异常
                     if self.check_exit_signal_quit():
                         logger.error("app " + str(self.packages[0]) + " exit signal, quit!")
+                        break
+                    if self.check_stop_file_quit():
+                        logger.info("stop file detected, finish mobileperf and create report")
                         break
                     time.sleep(self.frequency)
                 logger.debug("time is up,finish!!!")
@@ -289,13 +378,29 @@ class StartUp(object):
             logger.error(e)
         if self.config_dic["monkey"] == "true":
             self.device.adb.kill_process("com.android.commands.monkey")
-        # 统计测试时长
-        cost_time = round((float)(time.time() - TimeUtils.getTimeStamp(RuntimeData.start_time, TimeUtils.UnderLineFormatter)) / 3600, 2)
-        self.add_device_info("test cost time:", str(cost_time) + "h")
-        # 根据csv生成excel汇总文件
-        Report(RuntimeData.package_save_path, self.packages)
-        self.pull_heapdump()
-        self.pull_log_files()
+        try:
+            # 统计测试时长
+            cost_time = round((float)(time.time() - TimeUtils.getTimeStamp(RuntimeData.start_time, TimeUtils.UnderLineFormatter)) / 3600, 2)
+            self.add_device_info("test cost time:", str(cost_time) + "h")
+        except Exception as e:
+            logger.error("add test cost time failed")
+            logger.error(e)
+        try:
+            # 根据csv生成excel汇总文件
+            Report(RuntimeData.package_save_path, self.packages)
+        except Exception as e:
+            logger.error("create report failed")
+            logger.error(e)
+        try:
+            self.pull_heapdump()
+        except Exception as e:
+            logger.error("pull heapdump failed")
+            logger.error(e)
+        try:
+            self.pull_log_files()
+        except Exception as e:
+            logger.error("pull log files failed")
+            logger.error(e)
         # self.memory_analyse()
         # self.device.adb.bugreport(RuntimeData.package_save_path)
         os._exit(0)
@@ -349,6 +454,9 @@ class StartUp(object):
             return True
         else:
             return False
+
+    def check_stop_file_quit(self):
+        return bool(self.stop_file and os.path.exists(self.stop_file))
 
 
 class App():

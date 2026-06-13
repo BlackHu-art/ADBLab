@@ -73,6 +73,33 @@ class RemotePanel(BasePanel):
     _BUFFERS = ["0", "10", "20", "30", "50", "100", "150", "200"]
     _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
     _ORIENTATIONS = ["0", "90", "180", "270"]
+    _KEY_ICONS = {
+        "HOME": "house.svg",
+        "BACK": "arrow-u-left-up.svg",
+        "RECENTS": "squares-four.svg",
+        "MENU": "list.svg",
+        "POWER": "power.svg",
+        "SETTINGS": "gear.svg",
+        "CAMERA": "camera.svg",
+        "SEARCH": "magnifying-glass.svg",
+        "ENTER": "keyboard.svg",
+        "DEL": "backspace.svg",
+        "VOL_DOWN": "speaker-low.svg",
+        "VOL_UP": "speaker-high.svg",
+        "MEDIA_PLAY": "play.svg",
+        "MEDIA_PREV": "skip-back.svg",
+        "MEDIA_NEXT": "skip-forward.svg",
+    }
+    _ACTION_ICONS = {
+        "swipe_up": "arrow-up.svg",
+        "swipe_down": "arrow-down.svg",
+        "swipe_left": "arrow-left.svg",
+        "swipe_right": "arrow-right.svg",
+        "notif_expand": "tray-arrow-down.svg",
+        "notif_collapse": "tray-arrow-up.svg",
+        "rotate_portrait": "device-rotate.svg",
+        "rotate_landscape": "device-rotate.svg",
+    }
 
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
@@ -230,72 +257,79 @@ class RemotePanel(BasePanel):
     def _build_control(self) -> QWidget:
         g = self._g("Remote Control")
         outer = QVBoxLayout(g)
-        outer.setSpacing(4)
-        gl = QHBoxLayout()
-        gl.setSpacing(8)
+        outer.setSpacing(6)
+        self._remote_control_buttons = []
+        self._remote_key_buttons = []
+        self._remote_action_buttons = []
 
-        # D-Pad
-        dpad = QWidget()
-        dg = QGridLayout(dpad)
-        dg.setSpacing(2)
-
-        def _dk(label, code):
-            b = self._qb(label, tooltip=f"Send keyevent {code}")
-            b.setFont(self._font_base)
-            b.setFixedSize(32, 32)
-            b.clicked.connect(lambda _, c=code: self._send_keyevent(c))
-            return b
-
-        dg.addWidget(_dk("^", "DPAD_UP"), 0, 1)
-        dg.addWidget(_dk("<", "DPAD_LEFT"), 1, 0)
-        dg.addWidget(_dk("OK", "DPAD_CENTER"), 1, 1)
-        dg.addWidget(_dk(">", "DPAD_RIGHT"), 1, 2)
-        dg.addWidget(_dk("v", "DPAD_DOWN"), 2, 1)
-        gl.addWidget(dpad)
-
-        # Quick keys
-        qk = QWidget()
-        kg = QGridLayout(qk)
+        # Common keys. RECENTS already covers APP_SWITCH; notification uses gestures below.
+        keys = QWidget()
+        kg = QGridLayout(keys)
         kg.setSpacing(2)
-        keys = [
-            [("HOME", "HOME"), ("BACK", "BACK"), ("PWR", "POWER"), ("REC", "RECENTS")],
-            [("MENU", "MENU"), ("VOL+", "VOL_UP"), ("VOL-", "VOL_DOWN"), ("NOTIF", "NOTIFICATION")],
-            [("SET", "SETTINGS"), ("APPS", "APP_SWITCH"), ("CAM", "CAMERA"), ("SRCH", "SEARCH")],
-            [("PLAY", "MEDIA_PLAY"), ("NEXT", "MEDIA_NEXT"), ("PREV", "MEDIA_PREV"), ("ENT", "ENTER")],
+        kg.setContentsMargins(0, 0, 0, 0)
+        key_rows = [
+            [("HOME", "HOME"), ("BACK", "BACK"), ("RECENT", "RECENTS"), ("MENU", "MENU"), ("PWR", "POWER")],
+            [("SET", "SETTINGS"), ("CAM", "CAMERA"), ("SRCH", "SEARCH"), ("ENTER", "ENTER"), ("DEL", "DEL")],
         ]
-        for r, row in enumerate(keys):
+        for r, row in enumerate(key_rows):
             for c, (label, code) in enumerate(row):
-                b = self._qb(label, tooltip=f"Send keyevent {code}")
-                b.setFont(self._font_sm)
-                b.setFixedHeight(28)
-                b.setMinimumWidth(44)
-                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                b.clicked.connect(lambda _, cd=code: self._send_keyevent(cd))
-                kg.addWidget(b, r, c)
-        gl.addWidget(qk, 1)
+                kg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        outer.addWidget(keys)
 
-        gestures = QWidget()
-        gg = QGridLayout(gestures)
-        gg.setSpacing(2)
-        actions = [
-            [("Up", "swipe_up", "Swipe up"), ("Down", "swipe_down", "Swipe down")],
-            [("Left", "swipe_left", "Swipe left"), ("Right", "swipe_right", "Swipe right")],
-            [("Notif+", "notif_expand", "Expand notifications"), ("Notif-", "notif_collapse", "Collapse notifications")],
-            [("Portrait", "rotate_portrait", "Rotate portrait"), ("Land", "rotate_landscape", "Rotate landscape")],
+        media = QWidget()
+        mg = QGridLayout(media)
+        mg.setSpacing(2)
+        mg.setContentsMargins(0, 0, 0, 0)
+        media_rows = [
+            [("VOL-", "VOL_DOWN"), ("VOL+", "VOL_UP"), ("PLAY", "MEDIA_PLAY"), ("PREV", "MEDIA_PREV"), ("NEXT", "MEDIA_NEXT")],
         ]
-        for r, row in enumerate(actions):
+        for r, row in enumerate(media_rows):
+            for c, (label, code) in enumerate(row):
+                mg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        outer.addWidget(media)
+
+        actions = QWidget()
+        gg = QGridLayout(actions)
+        gg.setSpacing(2)
+        gg.setContentsMargins(0, 0, 0, 0)
+        action_rows = [
+            [("Swipe Up", "swipe_up", "Swipe up"), ("Swipe Down", "swipe_down", "Swipe down"),
+             ("Swipe Left", "swipe_left", "Swipe left"), ("Swipe Right", "swipe_right", "Swipe right")],
+            [("Notif+", "notif_expand", "Expand notifications"), ("Notif-", "notif_collapse", "Collapse notifications"),
+             ("Portrait", "rotate_portrait", "Rotate portrait"), ("Land", "rotate_landscape", "Rotate landscape")],
+        ]
+        for r, row in enumerate(action_rows):
             for c, (label, action, tooltip) in enumerate(row):
-                b = self._qb(label, tooltip=tooltip)
-                b.setFont(self._font_sm)
-                b.setFixedHeight(28)
-                b.setMinimumWidth(50)
-                b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
-                gg.addWidget(b, r, c)
-        gl.addWidget(gestures)
-        outer.addLayout(gl)
+                gg.addWidget(self._remote_action_button(label, action, tooltip), r, c)
+        outer.addWidget(actions)
 
         return g
+
+    def _remote_key_button(self, label: str, code: str, tooltip: str):
+        b = self._b(label, self._KEY_ICONS.get(code, "keyboard.svg"), tooltip=tooltip)
+        b.setProperty("remoteKey", code)
+        b.setFont(self._font_sm)
+        b.setIconSize(QSize(13, 13))
+        b.setFixedHeight(28)
+        b.setMinimumWidth(56)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        b.clicked.connect(lambda _, cd=code: self._send_keyevent(cd))
+        self._remote_control_buttons.append(b)
+        self._remote_key_buttons.append(b)
+        return b
+
+    def _remote_action_button(self, label: str, action: str, tooltip: str):
+        b = self._b(label, self._ACTION_ICONS.get(action, "keyboard.svg"), tooltip=tooltip)
+        b.setProperty("remoteAction", action)
+        b.setFont(self._font_sm)
+        b.setIconSize(QSize(13, 13))
+        b.setFixedHeight(28)
+        b.setMinimumWidth(76)
+        b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
+        self._remote_control_buttons.append(b)
+        self._remote_action_buttons.append(b)
+        return b
 
     # -- signals + shortcuts (B9) ----------------------------------------
 
@@ -490,10 +524,8 @@ class RemotePanel(BasePanel):
         self._running = running
         btn_start = getattr(self, "btn_start", None)
         btn_stop = getattr(self, "btn_stop", None)
-        if btn_start is not None:
-            btn_start.setEnabled(not running)
-        if btn_stop is not None:
-            btn_stop.setEnabled(running)
+        self._set_button_enabled(btn_start, not running)
+        self._set_button_enabled(btn_stop, running)
 
     # -- B8: status indicator ---------------------------------------------
 
@@ -506,19 +538,25 @@ class RemotePanel(BasePanel):
 
     # -- key events -------------------------------------------------------
 
-    def _send_keyevent(self, key_name: str):
+    def _selected_remote_device(self) -> str | None:
         devices = self.selected_devices
         if not devices:
+            self._log("WARNING", "No device selected")
+            return None
+        return devices[0]
+
+    def _send_keyevent(self, key_name: str):
+        device = self._selected_remote_device()
+        if not device:
             return
         self._submit_remote_input(
-            lambda: self._remote_control.send_keyevent(devices[0], key_name)
+            lambda: self._remote_control.send_keyevent(device, key_name)
         )
 
     def _send_remote_action(self, action: str):
-        devices = self.selected_devices
-        if not devices:
+        device = self._selected_remote_device()
+        if not device:
             return
-        device = devices[0]
         def _run():
             try:
                 self._remote_control.perform_action(device, action)
