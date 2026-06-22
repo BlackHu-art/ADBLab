@@ -1,6 +1,5 @@
 """Headless scrcpy service for ADBLab's Remote tab."""
 
-import os
 import platform
 import re
 import shutil
@@ -9,7 +8,7 @@ import time
 
 from models.base.command_runner import CommandRunner
 from models.base.process_runner import ProcessRunner
-from utils.resource_path import resource_path
+from utils.runtime_tools import bundled_tool_path
 
 from .scrcpy_args import build_scrcpy_args
 from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
@@ -35,7 +34,7 @@ class ScrcpyService:
     def resolve_executable(self) -> str:
         """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
         if platform.system() == "Windows":
-            return resource_path(os.path.join("scrcpy-win64-v3.3.1", "scrcpy.exe"))
+            return bundled_tool_path("scrcpy-win64-v3.3.1", "scrcpy.exe")
         return shutil.which("scrcpy") or "scrcpy"
 
     def version(self, exe: str) -> str:

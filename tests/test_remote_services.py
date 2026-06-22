@@ -84,7 +84,10 @@ def test_scrcpy_service_resolves_bundled_windows_executable():
     service = ScrcpyService()
 
     with patch("models.remote.scrcpy_service.platform.system", return_value="Windows"), \
-         patch("models.remote.scrcpy_service.resource_path", return_value="C:/ADBLab/scrcpy.exe"):
+         patch(
+             "models.remote.scrcpy_service.bundled_tool_path",
+             return_value="C:/ADBLab/scrcpy.exe",
+         ):
         assert service.resolve_executable() == "C:/ADBLab/scrcpy.exe"
 
 

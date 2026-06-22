@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-from utils.resource_path import resource_path
+from utils.runtime_tools import bundled_tool_path
 
 _adb_path: str | None = None
 _resolved: bool = False
@@ -29,7 +29,7 @@ def resolve_adb_path() -> str | None:
     # from utils.log_utils import get_logger
     # log = get_logger("adb")
 
-    bundled = resource_path(os.path.join("scrcpy-win64-v3.3.1", "adb.exe"))
+    bundled = bundled_tool_path("scrcpy-win64-v3.3.1", "adb.exe")
     if os.path.isfile(bundled):
         _adb_path = bundled
         # log.info(f"using bundled ADB: {_adb_path}")
