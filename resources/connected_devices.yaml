@@ -3,61 +3,16 @@ device_10.0.0.111:5188:
   Brand: BTV
   Model: B13
   ip: 10.0.0.111:5188
-device_10.0.0.132:5188:
-  Aversion: '9'
-  Brand: BTV
-  Model: B11
-  ip: 10.0.0.132:5188
-device_10.0.0.136:5188:
-  Aversion: N/A
-  Brand: N/A
-  Model: N/A
-  ip: 10.0.0.136:5188
 device_10.0.0.195:5555:
   Aversion: '12'
   Brand: Xiaomi
   Model: MIBOX4
   ip: 10.0.0.195:5555
-device_10.0.0.212:5555:
-  Aversion: '10'
-  Brand: MECOOL
-  Model: KM9PRO
-  ip: 10.0.0.212:5555
-device_10.0.0.229:5555:
-  Aversion: '9'
-  Brand: Redmi
-  Model: 22127RK46C
-  ip: 10.0.0.229:5555
-device_10.0.0.233:5555:
-  Aversion: '9'
-  Brand: BTV
-  Model: E10
-  ip: 10.0.0.233:5555
-device_10630373C3002140:
-  Aversion: '14'
-  Brand: TECNO
-  Model: TECNO LH7n
-  ip: 10630373C3002140
-device_4f5ddfa30000:
-  Aversion: '14'
-  Brand: POCO
-  Model: 22111317PG
-  ip: 4f5ddfa30000
 device_RFCW71D91SP:
   Aversion: '15'
   Brand: samsung
   Model: SM-S911U
   ip: RFCW71D91SP
-device_ZT322KPNPX:
-  Aversion: '14'
-  Brand: motorola
-  Model: moto g24
-  ip: ZT322KPNPX
-device_emulator-5554:
-  Aversion: '13'
-  Brand: google
-  Model: sdk_gphone64_x86_64
-  ip: emulator-5554
 device_emulator-5556:
   Aversion: '9'
   Brand: Meizu
