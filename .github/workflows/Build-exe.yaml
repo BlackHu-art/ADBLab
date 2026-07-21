@@ -136,6 +136,7 @@ jobs:
           if [ -d "dist/$name.app" ]; then
             ditto -c -k --sequesterRsrc --keepParent "dist/$name.app" "dist/$name.zip"
             rm -rf "dist/$name.app"
+            rm -f "dist/$name"
           elif [ -f "dist/$name" ]; then
             (cd dist && zip -q "$name.zip" "$name")
             rm -f "dist/$name"

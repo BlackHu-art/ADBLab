@@ -1670,6 +1670,7 @@ def test_cross_platform_release_assets_are_single_archives():
 
     assert "name: Zip macOS app artifact" in workflow
     assert "ditto -c -k --sequesterRsrc --keepParent" in workflow
+    assert "rm -f \"dist/$name\"" in workflow
     assert "name: Archive Linux artifact" in workflow
     assert "tar -C dist -czf" in workflow
 
