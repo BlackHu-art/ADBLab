@@ -1649,6 +1649,14 @@ def test_performance_monitor_page_code_is_not_bundled():
     assert "Compress-Archive" in workflow
 
 
+def test_cross_platform_builds_do_not_run_full_gui_test_suite():
+    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+
+    assert "name: Install test dependencies\n        if: runner.os == 'Windows'" in workflow
+    assert "name: Run tests\n        if: runner.os == 'Windows'" in workflow
+    assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
+
+
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame = MainFrame.__new__(MainFrame)
     frame.left_panel = Mock()
