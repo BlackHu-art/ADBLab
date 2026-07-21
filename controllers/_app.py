@@ -306,7 +306,7 @@ class ADBAppMixin(_ADBControllerBase):
         if not apk_path:
             self._emit_operation("apk_info", False, "⚠️ APK file selection cancelled")
             return
-        if not apk_path.endswith(".apk"):
+        if not apk_path.lower().endswith(".apk") or not os.path.isfile(apk_path):
             self._emit_operation("apk_info", False, f"❌ Invalid APK file selected: {apk_path}")
             return
         self._emit_operation("apk_info", True, f"📦 Selected APK: {apk_path}")

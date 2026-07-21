@@ -4,6 +4,9 @@ App management: install, uninstall, clear data, restart, query packages/activiti
 Imports only from adb_model (core) — no circular dependencies.
 """
 
+import os
+import shutil
+
 from .adb_model import ADBModelCore, async_command
 from .base.focus_detector import detect_current_package
 
@@ -113,7 +116,12 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def parse_apk_info_async(self, apk_path: str) -> dict:
-        return self._run(["aapt", "dump", "badging", apk_path], timeout=15, apk_path=apk_path)
+        if not os.path.isfile(apk_path):
+            return {"success": False, "error": f"APK file not found: {apk_path}", "apk_path": apk_path}
+        aapt = shutil.which("aapt")
+        if not aapt:
+            return {"success": False, "error": "aapt executable not found in PATH", "apk_path": apk_path}
+        return self._run([aapt, "dump", "badging", apk_path], timeout=15, apk_path=apk_path)
 
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:

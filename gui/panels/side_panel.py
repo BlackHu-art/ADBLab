@@ -138,13 +138,28 @@ class SidePanel(QWidget):
     def ip_address(self) -> str:
         return self._devices_tab.ip_address
 
+    @property
+    def device_widget(self) -> QWidget:
+        return self._device_widget
+
     # ── Public methods（MainFrame 调用）──────────────────────────────────────────
 
     def update_device_list(self, devices: list[str] = None):
         self._devices_tab.update_device_list(devices)
 
-    def _refresh_device_combobox(self):
+    def refresh_device_choices(self):
         self._devices_tab._refresh_device_combobox()
+
+    def apply_device_theme(self):
+        self._devices_tab._apply_device_list_style()
+        if hasattr(self._devices_tab, "ip_entry"):
+            self._apply_completer_style(self._devices_tab.ip_entry.completer())
+
+    def current_package_text(self) -> str:
+        apps_tab = self._apps_tab
+        if apps_tab is None:
+            return ""
+        return apps_tab.package_text
 
     def update_current_package(self, device_ip: str, package_name: str):
         self._devices_tab.update_current_package(device_ip, package_name)
@@ -164,6 +179,14 @@ class SidePanel(QWidget):
         apps_tab = self._ensure_tab_loaded(0)
         if apps_tab:
             apps_tab.on_operation_completed(operation, success, message)
+
+    def shutdown(self):
+        for index in sorted(self._loaded_lazy_tabs):
+            attr, _cls, _name = self._lazy_tab_specs[index]
+            tab = getattr(self, attr, None)
+            shutdown = getattr(tab, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
 
     # ── Theme ──────────────────────────────────────────────────────────────
 
@@ -229,9 +252,7 @@ class SidePanel(QWidget):
                 child.setStyleSheet(
                     f"QScrollArea {{ border: none; background: transparent; }}\n{scrollbar_qss}"
                 )
-        self._devices_tab._apply_device_list_style()
-        if hasattr(self._devices_tab, "ip_entry"):
-            self._apply_completer_style(self._devices_tab.ip_entry.completer())
+        self.apply_device_theme()
         if self._apps_tab is not None and hasattr(self._apps_tab, "completer"):
             self._apply_completer_style(self._apps_tab.completer)
 

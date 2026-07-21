@@ -1,9 +1,11 @@
 import ctypes
 import os
 import subprocess
+import sys
 import threading
 import time
 import warnings
+import zipfile
 from pathlib import Path
 from unittest.mock import Mock, call, patch
 
@@ -11,7 +13,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
-from PySide6.QtWidgets import QApplication, QLabel, QListWidget, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
 
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
@@ -47,10 +57,12 @@ from gui.panels.app_panel import AppPanel
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.side_panel import SidePanel
+from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.remote_panel import RemotePanel, ScrcpyLaunchWorker
 from gui.styles import BaseStyles
 from gui.styles import theme
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
+from utils.adb_targets import normalize_adb_connect_target
 from utils.batch_tracker import BatchOperationTracker
 
 
@@ -436,6 +448,28 @@ def test_command_runner_run_to_file_streams_binary_stdout(tmp_path):
     assert run.call_args.kwargs["stderr"] == subprocess.PIPE
 
 
+def test_command_runner_logs_slow_sanitized_command():
+    from models.base.command_runner import CommandRunner
+
+    proc_result = Mock(returncode=0, stdout="ok", stderr="")
+
+    with patch("models.base.command_runner._get_adb_path", return_value="adb.exe"), \
+         patch("models.base.command_runner.subprocess.run", return_value=proc_result), \
+         patch("models.base.command_runner.perf_counter", side_effect=[1.0, 1.5]), \
+         patch("models.base.command_runner._slow_threshold_ms", return_value=100), \
+         patch("core.log_service.LogService") as log_service_cls:
+        result = CommandRunner.run(
+            ["adb", "-s", "device-1", "shell", "input", "text", "secret text"],
+            timeout=5,
+        )
+
+    assert result.success is True
+    log_service_cls.return_value.log.assert_called_once()
+    message = log_service_cls.return_value.log.call_args.args[1]
+    assert "adb shell input text" in message
+    assert "secret text" not in message
+
+
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():
     frame = MainFrame.__new__(MainFrame)
     runner = Mock()
@@ -469,6 +503,42 @@ def test_scan_thread_uses_command_runner_for_device_polling():
     assert emitted == [["device-1"]]
 
 
+def test_scan_thread_skips_polling_while_command_runner_is_busy():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+
+    with patch("gui.main_frame.CommandRunner.active_count", return_value=1), \
+         patch("gui.main_frame.CommandRunner.run") as run, \
+         patch.object(_ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)):
+        thread.run()
+
+    run.assert_not_called()
+
+
+def test_scan_thread_emits_when_device_set_changes_with_same_count():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+    emitted = []
+    sleeps = {"count": 0}
+    thread.devices_changed.connect(emitted.append)
+
+    def stop_after_two_polls(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] >= 60:
+            thread._stop_flag = True
+
+    with patch("gui.main_frame.CommandRunner.active_count", return_value=0), \
+         patch("gui.main_frame.CommandRunner.run") as run, \
+         patch.object(_ScanThread, "msleep", side_effect=stop_after_two_polls):
+        run.side_effect = [
+            CommandResult(success=True, output="List of devices attached\ndevice-a\tdevice\n"),
+            CommandResult(success=True, output="List of devices attached\ndevice-b\tdevice\n"),
+        ]
+        thread.run()
+
+    assert emitted == [["device-a"], ["device-b"]]
+
+
 def test_main_frame_starts_scan_thread_with_debounced_refresh():
     frame = MainFrame.__new__(MainFrame)
     frame._scan_thread = None
@@ -476,8 +546,8 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
     frame._schedule_scan_refresh = Mock()
 
     class FakeScanThread:
-        def __init__(self, parent):
-            self.parent = parent
+        def __init__(self, interval_ms=15000):
+            self.interval_ms = interval_ms
             self.devices_changed = Mock()
             self.started = False
 
@@ -487,13 +557,16 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
         def start(self):
             self.started = True
 
-    with patch("gui.main_frame._ScanThread", FakeScanThread):
+    with patch("gui.main_frame._ScanThread", FakeScanThread), \
+         patch("core.settings_manager.AppSettings") as settings_cls:
+        settings_cls.instance.return_value.get.return_value = 12000
         MainFrame._start_scan_thread(frame)
 
     frame._scan_thread.devices_changed.connect.assert_called_once_with(
         frame._schedule_scan_refresh
     )
     frame.adb_controller.refresh_devices.assert_not_called()
+    assert frame._scan_thread.interval_ms == 12000
     assert frame._scan_thread.started is True
 
 
@@ -508,17 +581,17 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_log_panel = QWidget()
     fake_log_panel._append_log = Mock()
     fake_side_panel = QWidget()
-    fake_side_panel._device_widget = QWidget()
+    fake_side_panel.device_widget = QWidget()
     fake_side_panel.signals = Mock()
-    fake_side_panel._devices_tab = Mock()
-    fake_side_panel._devices_tab._apply_device_list_style = Mock()
+    fake_side_panel.apply_device_theme = Mock()
     fake_side_panel.update_device_list = Mock()
-    fake_side_panel._refresh_device_combobox = Mock()
+    fake_side_panel.refresh_device_choices = Mock()
     fake_side_panel.update_email = Mock()
     fake_side_panel.update_vercode = Mock()
     fake_side_panel.on_recording_finished = Mock()
     fake_side_panel.on_operation_completed = Mock()
     fake_side_panel.update_current_package = Mock()
+    fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
 
     with patch("gui.main_frame.LogService"), \
@@ -594,13 +667,32 @@ def test_main_frame_stop_scan_thread_uses_short_ui_wait():
     frame._scan_thread = Mock()
     frame._scan_thread.isRunning.return_value = True
     frame._scan_thread.wait.return_value = True
+    scan_thread = frame._scan_thread
 
     MainFrame._stop_scan_thread(frame)
 
     frame._initial_refresh_timer.stop.assert_called_once()
     frame._scan_refresh_timer.stop.assert_called_once()
-    frame._scan_thread.stop.assert_called_once()
-    frame._scan_thread.wait.assert_called_once_with(150)
+    scan_thread.stop.assert_called_once()
+    scan_thread.wait.assert_called_once_with(150)
+
+
+def test_main_frame_stop_scan_thread_uses_blocking_wait_on_close():
+    frame = MainFrame.__new__(MainFrame)
+    frame._initial_refresh_timer = Mock()
+    frame._initial_refresh_timer.isActive.return_value = False
+    frame._scan_refresh_timer = Mock()
+    frame._scan_refresh_timer.isActive.return_value = False
+    frame._scan_thread = Mock()
+    frame._scan_thread.isRunning.return_value = True
+    frame._scan_thread.wait.return_value = True
+    scan_thread = frame._scan_thread
+
+    MainFrame._stop_scan_thread(frame, blocking=True)
+
+    scan_thread.stop.assert_called_once()
+    scan_thread.wait.assert_called_once_with(6000)
+    assert frame._scan_thread is None
 
 
 def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
@@ -627,8 +719,7 @@ def test_main_frame_performance_button_opens_launcher_dialog():
     frame = MainFrame.__new__(MainFrame)
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = ["device-1"]
-    frame.left_panel._apps_tab = Mock()
-    frame.left_panel._apps_tab.package_text = "com.example.app"
+    frame.left_panel.current_package_text.return_value = "com.example.app"
     frame._find_active_dialog = Mock(return_value=None)
     frame._register_dialog = Mock(side_effect=lambda dialog, *_args: dialog)
 
@@ -1237,6 +1328,32 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
     runner.stop()
 
 
+def test_mobileperf_runner_uses_worker_entry_when_frozen(tmp_path, monkeypatch):
+    runner_process = Mock(spec=ProcessRunner)
+    proc = Mock()
+    proc.stdout = []
+    proc.poll.return_value = None
+    runner_process.start.return_value = proc
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    runner = MobilePerfRunner(
+        process_runner=runner_process,
+        project_root=tmp_path,
+        python_executable="ADBLab.exe",
+    )
+    cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
+
+    with patch.object(MobilePerfRunner, "_resolve_adb_path", return_value="adb-test"):
+        runner.start(cfg)
+
+    args = runner_process.start.call_args.args
+    kwargs = runner_process.start.call_args.kwargs
+    assert args[1][:2] == ["ADBLab.exe", "--mobileperf-worker"]
+    assert "-m" not in args[1]
+    assert "--config" in args[1]
+    assert kwargs["env"]["MOBILEPERF_LOG_DIR"].endswith(os.path.join("ADBLab", "logs"))
+    runner.stop()
+
+
 def test_mobileperf_runner_stop_requests_mobileperf_report_shutdown(tmp_path):
     runner_process = Mock(spec=ProcessRunner)
     proc = Mock()
@@ -1527,6 +1644,9 @@ def test_performance_monitor_page_code_is_not_bundled():
     assert "gui/performance_web/assets" not in workflow
     assert "PySide6.QtWebEngine" not in spec
     assert "PySide6.QtWebChannel" not in spec
+    assert "COLLECT(" in spec
+    assert "package_mode: --onedir" in workflow
+    assert "Compress-Archive" in workflow
 
 
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
@@ -1582,7 +1702,7 @@ def test_main_frame_scan_refresh_debounce_collapses_bursts():
         MainFrame._schedule_scan_refresh(frame, ["device-3"])
 
         deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline and not frame.adb_controller._process_device_list.called:
+        while time.monotonic() < deadline and not frame.adb_controller.publish_detected_devices.called:
             _app.processEvents()
             time.sleep(0.01)
     finally:
@@ -1590,7 +1710,8 @@ def test_main_frame_scan_refresh_debounce_collapses_bursts():
         frame._scan_refresh_timer.stop()
 
     frame.adb_controller.refresh_devices.assert_not_called()
-    frame.adb_controller._process_device_list.assert_called_once_with(["device-3"])
+    frame.adb_controller.publish_detected_devices.assert_called_once_with(["device-3"])
+    frame.adb_controller._process_device_list.assert_not_called()
 
 
 def test_main_frame_splitter_size_save_is_debounced():
@@ -1967,6 +2088,57 @@ def test_parse_connected_devices_ignores_adb_banner_and_header():
     assert parse_connected_devices(output) == ["emulator-5554", "emulator-5556"]
 
 
+def test_device_store_load_migrates_legacy_file(tmp_path):
+    from models.device_store import DeviceStore
+
+    legacy_file = tmp_path / "legacy.yaml"
+    user_file = tmp_path / "config" / "connected_devices.yaml"
+    legacy_file.write_text(
+        "device_1:\n  ip: device-1\n  Brand: Demo\n  Model: Phone\n  Aversion: '14'\n",
+        encoding="utf-8",
+    )
+    old_file_path = DeviceStore._file_path
+    old_legacy_path = DeviceStore._legacy_file_path
+    old_devices = dict(DeviceStore._devices)
+    try:
+        DeviceStore._file_path = str(user_file)
+        DeviceStore._legacy_file_path = str(legacy_file)
+        DeviceStore.load()
+
+        assert user_file.exists()
+        assert DeviceStore.get_basic_devices_info() == [("Demo", "Phone", "device-1")]
+    finally:
+        DeviceStore._file_path = old_file_path
+        DeviceStore._legacy_file_path = old_legacy_path
+        DeviceStore._devices = old_devices
+
+
+def test_app_settings_load_migrates_legacy_settings_file(tmp_path):
+    from core import settings_manager
+
+    legacy_file = tmp_path / "resources" / "app_settings.json"
+    user_file = tmp_path / "config" / "app_settings.json"
+    legacy_file.parent.mkdir()
+    legacy_file.write_text('{"theme": "Dark", "continuous_device_scan": false}', encoding="utf-8")
+    old_settings_file = settings_manager.SETTINGS_FILE
+    old_legacy_file = settings_manager.LEGACY_SETTINGS_FILE
+    old_instance = settings_manager.AppSettings._instance
+    try:
+        settings_manager.SETTINGS_FILE = str(user_file)
+        settings_manager.LEGACY_SETTINGS_FILE = str(legacy_file)
+        settings_manager.AppSettings._instance = None
+
+        settings = settings_manager.AppSettings.instance()
+
+        assert settings.get("theme") == "Dark"
+        assert settings.get("continuous_device_scan") is False
+        assert user_file.exists()
+    finally:
+        settings_manager.SETTINGS_FILE = old_settings_file
+        settings_manager.LEGACY_SETTINGS_FILE = old_legacy_file
+        settings_manager.AppSettings._instance = old_instance
+
+
 def test_parse_getprop_output_extracts_bracketed_properties():
     output = (
         "[ro.product.model]: [Pixel 9]\n"
@@ -1988,6 +2160,25 @@ def test_parse_labeled_sections_splits_batched_device_info_output():
     assert parse_labeled_sections(output, {"A": "MARK_A", "B": "MARK_B"}) == {
         "A": "one",
         "B": "two\nthree",
+    }
+
+
+def test_restart_device_treats_reboot_returncode_zero_as_success():
+    model = ADBDevice()
+
+    with patch.object(model, "_run") as run:
+        run.side_effect = [
+            {"success": True, "output": "device"},
+            {"success": True, "output": ""},
+        ]
+
+        result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
+
+    assert result == {
+        "device_ip": "device-1",
+        "success": True,
+        "requires_refresh": True,
+        "raw_result": "The device is starting to restart",
     }
 
 
@@ -2117,6 +2308,90 @@ def test_device_manager_updates_device_list_incrementally():
     assert "Detecting" in manager.listbox_devices.item(1).text()
 
 
+def test_device_manager_none_device_list_clears_without_model_lookup():
+    _app = QApplication.instance() or QApplication([])
+    panel = Mock(selected_devices=[])
+    manager = DeviceManager.__new__(DeviceManager)
+    manager.panel = panel
+    manager.listbox_devices = QListWidget()
+    item = QListWidgetItem("device-1")
+    item.setData(Qt.UserRole, {"ip": "device-1"})
+    item.setCheckState(Qt.Checked)
+    manager.listbox_devices.addItem(item)
+
+    with patch("models.adb_device.ADBDevice.get_connected_devices_async") as get_devices:
+        DeviceManager.update_device_list(manager, None)
+
+    get_devices.assert_not_called()
+    assert manager.listbox_devices.count() == 0
+    assert panel._connected_device_cache == []
+
+
+def _build_connect_device_manager():
+    panel = Mock()
+    panel.signals = SidePanelSignals()
+    panel._font_sm = QFont()
+    panel._font_mono = QFont()
+    panel._font_base = QFont()
+    panel._user_selected_ip = False
+    panel._current_ip = ""
+    panel._apply_completer_style = Mock()
+    panel.selected_devices = []
+    manager = DeviceManager(panel)
+    with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
+        widget = manager.build_ui()
+    manager.connect_signals()
+    return manager, widget, panel
+
+
+def test_adb_connect_target_validation_requires_complete_ip_and_port():
+    assert normalize_adb_connect_target(" 10.0.0.195 : 5555 ") == (
+        "10.0.0.195:5555",
+        "",
+    )
+    assert normalize_adb_connect_target("[::1]:5555") == ("[::1]:5555", "")
+    assert "IP and port" in normalize_adb_connect_target("10.0.0.195")[1]
+    assert "valid IP" in normalize_adb_connect_target("10.0.0.999:5555")[1]
+    assert "65535" in normalize_adb_connect_target("10.0.0.195:70000")[1]
+
+
+def test_device_manager_return_pressed_requests_connect_with_normalized_target():
+    _app = QApplication.instance() or QApplication([])
+    manager, widget, panel = _build_connect_device_manager()
+    emitted = []
+    panel.signals.connect_requested.connect(emitted.append)
+
+    try:
+        manager.ip_entry.setCurrentText(" 10.0.0.195 : 5555 ")
+        manager.ip_entry.lineEdit().returnPressed.emit()
+    finally:
+        widget.close()
+        manager.close()
+
+    assert emitted == ["10.0.0.195:5555"]
+
+
+def test_device_manager_rejects_incomplete_connect_target_before_signal_emit():
+    _app = QApplication.instance() or QApplication([])
+    manager, widget, panel = _build_connect_device_manager()
+    emitted = []
+    logs = []
+    panel.signals.connect_requested.connect(emitted.append)
+    panel.signals.log_message.connect(lambda level, message: logs.append((level, message)))
+
+    try:
+        manager.ip_entry.setCurrentText("10.0.0.195")
+        manager.btn_connect_devices.click()
+    finally:
+        widget.close()
+        manager.close()
+
+    assert emitted == []
+    assert logs
+    assert logs[-1][0] == "WARNING"
+    assert "IP and port" in logs[-1][1]
+
+
 def test_base_panel_button_factory_adds_tooltip_and_icon_name():
     panel = Mock()
     panel._font_sm = QFont()
@@ -2204,6 +2479,25 @@ def test_side_panel_theme_refresh_updates_button_icons():
     themed_icon.assert_called_once_with("arrows-clockwise.svg")
 
 
+def test_side_panel_public_helpers_wrap_internal_tabs():
+    device_widget = QWidget()
+    panel = SidePanel.__new__(SidePanel)
+    panel._device_widget = device_widget
+    panel._devices_tab = Mock()
+    panel._devices_tab.ip_entry.completer.return_value = None
+    panel._apps_tab = Mock(package_text="com.example.app")
+    panel._apply_completer_style = Mock()
+
+    assert panel.device_widget is device_widget
+    assert panel.current_package_text() == "com.example.app"
+
+    SidePanel.refresh_device_choices(panel)
+    SidePanel.apply_device_theme(panel)
+
+    panel._devices_tab._refresh_device_combobox.assert_called_once()
+    panel._devices_tab._apply_device_list_style.assert_called_once()
+
+
 def test_side_panel_initializes_only_default_function_tab():
     _app = QApplication.instance() or QApplication([])
     panel = SidePanel()
@@ -2228,6 +2522,25 @@ def test_side_panel_lazy_loads_and_connects_later_tabs():
         assert 2 in panel._connected_lazy_tabs
     finally:
         panel.close()
+
+
+def test_side_panel_shutdown_forwards_to_loaded_tabs():
+    panel = SidePanel.__new__(SidePanel)
+    apps_tab = object()
+    remote_tab = Mock()
+    panel._loaded_lazy_tabs = {0, 2}
+    panel._lazy_tab_specs = [
+        ("_apps_tab", AppPanel, "Apps"),
+        ("_advanced_tab", object, "System"),
+        ("_scrcpy_tab", RemotePanel, "Remote"),
+    ]
+    panel._apps_tab = apps_tab
+    panel._advanced_tab = None
+    panel._scrcpy_tab = remote_tab
+
+    SidePanel.shutdown(panel)
+
+    remote_tab.shutdown.assert_called_once()
 
 
 def test_remote_status_font_size_uses_base_styles_default():
@@ -2493,6 +2806,37 @@ def test_app_manager_load_visible_details_starts_small_worker_batch():
     worker.start.assert_called_once()
 
 
+def test_app_manager_worker_load_detail_batch_uses_single_batched_shell():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "load_detail_batch", packages=[])
+    emitted = []
+    worker.app_detail_batch.connect(lambda *args: emitted.append(args))
+    output = (
+        "__ADBLAB_PKG_BEGIN_0__\n"
+        "nonLocalizedLabel=One App\n"
+        "versionName=1.2\n"
+        "versionCode=12\n"
+        "firstInstallTime=2026-01-02\n"
+        "__ADBLAB_PKG_END_0__\n"
+        "__ADBLAB_PKG_BEGIN_1__\n"
+        "versionName=2.0\n"
+        "versionCode=20\n"
+        "__ADBLAB_PKG_END_1__\n"
+    )
+
+    with patch.object(worker, "_adb", return_value=CommandResult(success=True, output=output)) as adb:
+        worker._load_detail_batch(["com.example.one", "com.example.two"])
+
+    adb.assert_called_once()
+    assert adb.call_args.args[0] == "shell"
+    assert "dumpsys package com.example.one" in adb.call_args.args[1]
+    assert emitted == [
+        ("com.example.one", "One App", "1.2 (12)", "2026-01-02"),
+        ("com.example.two", "two", "2.0 (20)", ""),
+    ]
+
+
 def test_app_manager_detail_worker_continues_after_first_visible_page():
     dialog = _app_manager_for_unit_tests()
     dialog._apps_data = [
@@ -2621,6 +2965,60 @@ def test_adb_testing_shutdown_stops_managed_processes():
     assert "*" in model._aborted_devices
 
 
+def test_run_monkey_test_reports_nonzero_exit_as_failure(tmp_path):
+    model = ADBTesting()
+    model._procs = Mock()
+    logcat_proc = Mock()
+    monkey_proc = Mock(pid=1234)
+    monkey_proc.poll.side_effect = [None, 1, 1]
+    model._procs.start.side_effect = [logcat_proc, monkey_proc]
+    model._procs.stop.return_value = None
+
+    with patch.object(model, "_run", return_value={"success": True, "output": ""}), \
+         patch.object(model, "_get_current_package", return_value="com.example.app"), \
+         patch("models.adb_testing.time.sleep"):
+        result = ADBTesting.run_monkey_test_async.__wrapped__(
+            model,
+            "device-1",
+            "com.example.app",
+            {"events": 10},
+            "com_example_app",
+            str(tmp_path),
+            1,
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "Monkey exited with code 1"
+    assert result["duration"]
+
+
+def test_run_monkey_test_reports_repeated_timeouts_as_failure(tmp_path):
+    model = ADBTesting()
+    model._procs = Mock()
+    logcat_proc = Mock()
+    monkey_proc = Mock(pid=1234)
+    monkey_proc.poll.return_value = None
+    model._procs.start.side_effect = [logcat_proc, monkey_proc]
+    model._procs.stop.return_value = None
+
+    timeout = subprocess.TimeoutExpired(cmd="dumpsys", timeout=5)
+    with patch.object(model, "_run", return_value={"success": True, "output": ""}), \
+         patch.object(model, "_get_current_package", side_effect=[timeout, timeout, timeout]), \
+         patch("models.adb_testing.time.sleep"):
+        result = ADBTesting.run_monkey_test_async.__wrapped__(
+            model,
+            "device-1",
+            "com.example.app",
+            {"events": 10},
+            "com_example_app",
+            str(tmp_path),
+            1,
+        )
+
+    assert result["success"] is False
+    assert result["error"] == "Device appears disconnected"
+
+
 
 def test_get_current_package_uses_shared_detector():
     model = ADBApp()
@@ -2662,6 +3060,31 @@ def test_install_apk_uses_run_helper_and_preserves_result_fields():
         apk_name="demo.apk",
         operation="install",
     )
+
+
+def test_parse_apk_info_accepts_existing_apk_case_insensitively():
+    controller = Mock()
+    controller.app_model = Mock()
+
+    with patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/DEMO.APK", "")), \
+         patch("controllers._app.os.path.isfile", return_value=True):
+        ADBAppMixin.parse_apk_info(controller)
+
+    controller.app_model.parse_apk_info_async.assert_called_once_with("C:/tmp/DEMO.APK")
+    assert controller._emit_operation.call_args.args[1] is True
+
+
+def test_parse_apk_info_rejects_missing_file():
+    controller = Mock()
+    controller.app_model = Mock()
+
+    with patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/demo.apk", "")), \
+         patch("controllers._app.os.path.isfile", return_value=False):
+        ADBAppMixin.parse_apk_info(controller)
+
+    controller.app_model.parse_apk_info_async.assert_not_called()
+    controller._emit_operation.assert_called_once()
+    assert controller._emit_operation.call_args.args[1] is False
 
 
 def test_batch_install_result_uses_batch_tracker_key():
@@ -2756,7 +3179,10 @@ def test_controller_shutdown_stops_model_processes_and_executor():
 
 
 def test_connect_device_result_uses_returned_device_ip():
-    controller = Mock()
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller._save_device_info = Mock()
+    controller.refresh_devices = Mock()
+    controller._emit_operation = Mock()
 
     ADBDeviceMixin._process_connect_device_result(
         controller,
@@ -2768,6 +3194,51 @@ def test_connect_device_result_uses_returned_device_ip():
     controller._emit_operation.assert_called_once_with(
         "connect", True, "Successfully connected to device-2"
     )
+
+
+def test_connect_device_result_refreshes_when_already_connected():
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller._save_device_info = Mock()
+    controller.refresh_devices = Mock()
+    controller._emit_operation = Mock()
+
+    ADBDeviceMixin._process_connect_device_result(
+        controller,
+        {"success": True, "device_ip": "device-2", "output": "already connected to device-2"},
+    )
+
+    controller._save_device_info.assert_called_once_with("device-2")
+    controller.refresh_devices.assert_called_once()
+    controller._emit_operation.assert_called_once_with(
+        "connect", True, "device-2 is already connected"
+    )
+
+
+def test_publish_detected_devices_uses_device_list_processing():
+    controller = Mock()
+
+    ADBDeviceMixin.publish_detected_devices(controller, ("device-1", "device-2"))
+
+    controller._process_device_list.assert_called_once_with(["device-1", "device-2"])
+
+
+def test_connect_device_validates_and_normalizes_target_before_adb_call():
+    controller = Mock()
+
+    ADBDeviceMixin.connect_device(controller, " 10.0.0.195 : 5555 ")
+
+    controller.device_model.connect_device_async.assert_called_once_with("10.0.0.195:5555")
+    controller._emit_operation.assert_not_called()
+
+
+def test_connect_device_rejects_incomplete_target_before_adb_call():
+    controller = Mock()
+
+    ADBDeviceMixin.connect_device(controller, "10.0.0.195")
+
+    controller.device_model.connect_device_async.assert_not_called()
+    controller._emit_operation.assert_called_once()
+    assert "IP and port" in controller._emit_operation.call_args.args[2]
 
 
 def test_kill_monkey_result_logs_not_running_as_success():
@@ -2811,6 +3282,32 @@ def test_pull_recorded_video_reports_pull_failure():
     run.assert_called_once()
 
 
+def test_settings_get_async_returns_value_alias():
+    model = ADBAdvanced()
+
+    with patch.object(model, "_run") as run:
+        run.return_value = {
+            "success": True,
+            "output": "1",
+            "device_ip": "device-1",
+            "key": "show_touches",
+        }
+
+        result = ADBAdvanced.settings_get_async.__wrapped__(
+            model,
+            "device-1",
+            "system",
+            "show_touches",
+        )
+
+    assert result["value"] == "1"
+    run.assert_called_once_with(
+        ["adb", "-s", "device-1", "shell", "settings", "get", "system", "show_touches"],
+        device_ip="device-1",
+        key="show_touches",
+    )
+
+
 def test_capture_bugreport_reports_command_failure(tmp_path):
     model = ADBTesting()
 
@@ -2833,6 +3330,26 @@ def test_capture_bugreport_reports_command_failure(tmp_path):
         "success": False,
         "message": "Bugreport failed: bugreport crashed",
     }
+
+
+def test_safe_extract_zip_rejects_paths_outside_target(tmp_path):
+    from utils.archive import safe_extract_zip
+
+    zip_path = tmp_path / "bad.zip"
+    target = tmp_path / "target"
+    target.mkdir()
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../evil.txt", "bad")
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        try:
+            safe_extract_zip(zf, target)
+            rejected = False
+        except ValueError:
+            rejected = True
+
+    assert rejected is True
+    assert not (tmp_path / "evil.txt").exists()
 
 
 def test_take_screenshot_prefers_exec_out_direct_path(tmp_path):
@@ -2938,6 +3455,32 @@ def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
         ["adb", "-s", "device-1", "shell", "du", "-sh", "/sdcard"],
         timeout=120,
     )
+
+
+def test_file_explorer_transfer_failure_does_not_refresh():
+    dialog = FileExplorerDialog.__new__(FileExplorerDialog)
+    dialog.status_bar = Mock()
+    dialog._refresh = Mock()
+
+    with patch("gui.dialogs.file_explorer.QMessageBox.critical") as critical:
+        FileExplorerDialog._on_transfer_done(dialog, "failed to copy", True, "Pulled demo.txt")
+
+    critical.assert_called_once()
+    dialog.status_bar.showMessage.assert_called_once_with("Failed: failed to copy")
+    dialog._refresh.assert_not_called()
+
+
+def test_file_explorer_file_operation_failure_does_not_show_success():
+    dialog = FileExplorerDialog.__new__(FileExplorerDialog)
+    dialog.status_bar = Mock()
+    dialog._refresh = Mock()
+
+    with patch("gui.dialogs.file_explorer.QMessageBox.critical") as critical:
+        FileExplorerDialog._on_file_op_done(dialog, "Permission denied", True, "Deleted demo.txt")
+
+    critical.assert_called_once()
+    dialog.status_bar.showMessage.assert_called_once_with("Failed: Permission denied")
+    dialog._refresh.assert_not_called()
 
 
 def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):

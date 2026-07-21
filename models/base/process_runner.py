@@ -5,6 +5,7 @@
 """
 
 import subprocess
+import sys
 import threading
 
 from utils.adb_resolver import adb_path
@@ -12,6 +13,7 @@ from utils.adb_resolver import adb_path
 from .command_runner import CF
 
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class ProcessRunner:
@@ -47,6 +49,11 @@ class ProcessRunner:
         env: dict[str, str] | None = None,
     ) -> subprocess.Popen:
         """启动子进程，同名 key 会先停止旧进程。"""
+        with self._lock:
+            old_proc = self._procs.pop(key, None)
+        self._unregister_global(key, old_proc)
+        self._stop_proc(old_proc)
+
         proc = self.spawn(
             cmd,
             stdout=subprocess.DEVNULL if stdout is None else stdout,
@@ -63,8 +70,8 @@ class ProcessRunner:
             old_proc = self._procs.pop(key, None)
             self._procs[key] = proc
         self._unregister_global(key, old_proc)
-        self._register_global(key, proc)
         self._stop_proc(old_proc)
+        self._register_global(key, proc)
         return proc
 
     def spawn(
@@ -111,16 +118,52 @@ class ProcessRunner:
     def _stop_proc(proc: subprocess.Popen | None, timeout: float = 5.0) -> int | None:
         if proc is None:
             return None
-        if proc.poll() is not None:
-            return proc.returncode
-        proc.terminate()
+        try:
+            if proc.poll() is not None:
+                return proc.returncode
+            proc.terminate()
+        except OSError:
+            return getattr(proc, "returncode", None)
         try:
             proc.wait(timeout=timeout)
             return proc.returncode
         except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            if not ProcessRunner._kill_process_tree(proc):
+                try:
+                    proc.kill()
+                except OSError:
+                    return getattr(proc, "returncode", None)
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                    proc.wait(timeout=2.0)
+                except (OSError, subprocess.TimeoutExpired):
+                    return getattr(proc, "returncode", None)
             return proc.returncode
+        except OSError:
+            return getattr(proc, "returncode", None)
+
+    @staticmethod
+    def _kill_process_tree(proc: subprocess.Popen) -> bool:
+        if sys.platform != "win32":
+            return False
+        pid = getattr(proc, "pid", None)
+        if not pid:
+            return False
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                creationflags=CREATE_NO_WINDOW,
+                check=False,
+            )
+            return True
+        except Exception:
+            return False
 
     def poll(self, key: str) -> int | None:
         """检查指定 key 的进程是否仍在运行。"""
@@ -153,9 +196,19 @@ class ProcessRunner:
         """兜底停止所有被 ProcessRunner.start() 管理的进程；spawn() 外部启动不纳入。"""
         with cls._global_lock:
             items = list(cls._global_procs.items())
-            cls._global_procs.clear()
-        for (_owner, _key), proc in items:
-            cls._stop_proc(proc)
+        for proc_key, proc in items:
+            try:
+                code = cls._stop_proc(proc)
+            except Exception:
+                code = None
+            try:
+                stopped = proc.poll() is not None or code is not None
+            except Exception:
+                stopped = code is not None
+            if stopped:
+                with cls._global_lock:
+                    if cls._global_procs.get(proc_key) is proc:
+                        cls._global_procs.pop(proc_key, None)
 
     def _register_global(self, key: str, proc: subprocess.Popen | None):
         if proc is None:

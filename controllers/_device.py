@@ -10,6 +10,7 @@ from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_device import ADBDevice
 from models.device_store import DeviceStore
+from utils.adb_targets import normalize_adb_connect_target
 
 
 class ADBDeviceMixin(_ADBControllerBase):
@@ -36,10 +37,11 @@ class ADBDeviceMixin(_ADBControllerBase):
     }
 
     def connect_device(self, ip: str):
-        if not ip:
-            self._emit_operation("connect", False, "⚠️ IP address cannot be empty")
+        target, error = normalize_adb_connect_target(ip)
+        if error:
+            self._emit_operation("connect", False, error)
             return
-        self.device_model.connect_device_async(ip)
+        self.device_model.connect_device_async(target)
 
     def _process_connect_device_result(self, result):
         if isinstance(result, dict):
@@ -62,18 +64,24 @@ class ADBDeviceMixin(_ADBControllerBase):
             return
         raw_lower = raw.lower()
         if "already connected" in raw_lower:
-            self._emit_operation("connect", True, f"{ip} is already connected")
+            self._finalize_connected_device(ip, f"{ip} is already connected")
         elif "connected" in raw_lower:
-            self._save_device_info(ip)
-            self.refresh_devices()
-            self._emit_operation("connect", True, f"Successfully connected to {ip}")
+            self._finalize_connected_device(ip, f"Successfully connected to {ip}")
         else:
             self._emit_operation("connect", False, f"Connection failed: {raw}")
+
+    def _finalize_connected_device(self, ip: str, message: str):
+        self._save_device_info(ip)
+        self.refresh_devices()
+        self._emit_operation("connect", True, message)
 
     def _process_device_list(self, devices: list):
         self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
         self.signals.devices_updated.emit(devices)
         self._async_update_devices(devices)
+
+    def publish_detected_devices(self, devices: list[str]):
+        self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
         operation_id = self._generate_operation_id()

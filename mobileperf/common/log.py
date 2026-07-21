@@ -9,6 +9,7 @@ import sys
 import re
 import logging
 import logging.handlers
+import tempfile
 from logging.handlers import TimedRotatingFileHandler
 
 BaseDir=os.path.dirname(__file__)
@@ -22,8 +23,12 @@ streamhandler=logging.StreamHandler(sys.stdout)
 streamhandler.setFormatter(fmt)
 # 调试时改为DEBUG 发布改为 INFO
 streamhandler.setLevel(logging.DEBUG)
-dir = os.path.join(FileUtils.get_top_dir(), 'logs')
-FileUtils.makedir(dir)
+dir = os.environ.get("MOBILEPERF_LOG_DIR") or os.path.join(FileUtils.get_top_dir(), 'logs')
+try:
+    FileUtils.makedir(dir)
+except OSError:
+    dir = os.path.join(tempfile.gettempdir(), "ADBLab", "logs")
+    FileUtils.makedir(dir)
 log_file = os.path.join(dir,"mobileperf_log")
 log_file_handler = TimedRotatingFileHandler(filename=log_file, when="D", interval=1, backupCount=3)
 log_file_handler.suffix = "%Y-%m-%d_%H-%M-%S.log"

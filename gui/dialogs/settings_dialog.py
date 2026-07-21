@@ -152,7 +152,7 @@ class SettingsDialog(QDialog):
         self._chk_confirm.toggled.connect(lambda v: self.s.set("confirm_dangerous_ops", v))
 
         self._chk_continuous_scan = self._checkbox(
-            "Continuously scan for new devices (every 3s)"
+            "Continuously scan for new devices (low priority)"
         )
         self._chk_continuous_scan.setChecked(self.s.get("continuous_device_scan", True))
         self._chk_continuous_scan.toggled.connect(self._on_continuous_scan_toggled)

@@ -1,17 +1,18 @@
-"""
-全项目唯一 subprocess.run 入口。
+"""Shared subprocess.run entry point for short-lived commands."""
 
-所有命令执行统一经过 CommandRunner.run()，返回标准化的 CommandResult。
-"""
+from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
+from time import perf_counter
 
 CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-# 模块级缓存 adb 路径，避免每次 subprocess 触发 Windows PATH 搜索
 _adb_path: str | None = None
+_active_commands = 0
+_active_lock = threading.Lock()
 
 
 def _get_adb_path() -> str:
@@ -25,7 +26,8 @@ def _get_adb_path() -> str:
 
 @dataclass
 class CommandResult:
-    """统一命令执行结果。"""
+    """Standard command execution result."""
+
     success: bool
     output: str = ""
     error: str = ""
@@ -33,22 +35,26 @@ class CommandResult:
 
     @property
     def stdout(self) -> str:
-        """兼容旧代码的 stdout 别名。"""
+        """Compatibility alias for older code."""
         return self.output
 
 
 class CommandRunner:
-    """唯一 subprocess.run 入口 —— 全项目所有同步命令执行经由此处。"""
+    """Single subprocess.run boundary for synchronous short commands."""
+
+    @staticmethod
+    def active_count() -> int:
+        with _active_lock:
+            return _active_commands
 
     @staticmethod
     def run(cmd: list[str], timeout: int = 30, shell: bool = False) -> CommandResult:
-        # 解析 adb 路径，消除 Windows CreateProcess 的 PATH 搜索开销
-        _cmd = list(cmd)
-        if _cmd and _cmd[0] == "adb":
-            _cmd[0] = _get_adb_path()
+        resolved_cmd = _resolve_cmd(cmd)
+        started_at = _mark_started()
+        result: CommandResult
         try:
-            r = subprocess.run(
-                _cmd,
+            proc = subprocess.run(
+                resolved_cmd,
                 capture_output=True,
                 text=True,
                 shell=shell,
@@ -57,14 +63,19 @@ class CommandRunner:
                 errors="ignore",
                 creationflags=CF,
             )
-            if r.returncode != 0:
-                err = (r.stderr or r.stdout).strip()
-                return CommandResult(success=False, returncode=r.returncode, error=err)
-            return CommandResult(success=True, output=r.stdout.strip(), returncode=0)
+            if proc.returncode != 0:
+                err = (proc.stderr or proc.stdout).strip()
+                result = CommandResult(success=False, returncode=proc.returncode, error=err)
+            else:
+                result = CommandResult(success=True, output=proc.stdout.strip(), returncode=0)
         except subprocess.TimeoutExpired:
-            return CommandResult(success=False, error=f"Timeout({timeout}s)")
-        except Exception as e:
-            return CommandResult(success=False, error=str(e))
+            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+        except Exception as exc:
+            result = CommandResult(success=False, error=str(exc))
+        finally:
+            _mark_finished()
+        _log_if_slow(cmd, started_at, result, timeout)
+        return result
 
     @staticmethod
     def run_to_file(
@@ -74,24 +85,120 @@ class CommandRunner:
         shell: bool = False,
     ) -> CommandResult:
         """Run a command and stream binary stdout directly to a file."""
-        _cmd = list(cmd)
-        if _cmd and _cmd[0] == "adb":
-            _cmd[0] = _get_adb_path()
+        resolved_cmd = _resolve_cmd(cmd)
+        started_at = _mark_started()
+        result: CommandResult
         try:
             with open(output_path, "wb") as output_file:
-                r = subprocess.run(
-                    _cmd,
+                proc = subprocess.run(
+                    resolved_cmd,
                     stdout=output_file,
                     stderr=subprocess.PIPE,
                     shell=shell,
                     timeout=timeout,
                     creationflags=CF,
                 )
-            if r.returncode != 0:
-                err = (r.stderr or b"").decode("utf-8", errors="ignore").strip()
-                return CommandResult(success=False, returncode=r.returncode, error=err)
-            return CommandResult(success=True, output=output_path, returncode=0)
+            if proc.returncode != 0:
+                err = (proc.stderr or b"").decode("utf-8", errors="ignore").strip()
+                result = CommandResult(success=False, returncode=proc.returncode, error=err)
+            else:
+                result = CommandResult(success=True, output=output_path, returncode=0)
         except subprocess.TimeoutExpired:
-            return CommandResult(success=False, error=f"Timeout({timeout}s)")
-        except Exception as e:
-            return CommandResult(success=False, error=str(e))
+            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+        except Exception as exc:
+            result = CommandResult(success=False, error=str(exc))
+        finally:
+            _mark_finished()
+        _log_if_slow(cmd, started_at, result, timeout)
+        return result
+
+
+def _resolve_cmd(cmd: list[str]) -> list[str]:
+    resolved = list(cmd)
+    if resolved and resolved[0] == "adb":
+        resolved[0] = _get_adb_path()
+    return resolved
+
+
+def _mark_started() -> float:
+    global _active_commands
+    with _active_lock:
+        _active_commands += 1
+    return perf_counter()
+
+
+def _mark_finished() -> None:
+    global _active_commands
+    with _active_lock:
+        _active_commands = max(0, _active_commands - 1)
+
+
+def _log_if_slow(cmd: list[str], started_at: float, result: CommandResult, timeout: int) -> None:
+    elapsed_ms = (perf_counter() - started_at) * 1000.0
+    threshold = _slow_threshold_ms()
+    if elapsed_ms < threshold:
+        return
+    try:
+        from core.log_service import LogService
+
+        output_len = len(result.output or "")
+        error_len = len(result.error or "")
+        LogService().log(
+            "DEBUG",
+            (
+                f"[CMD] {_command_summary(cmd)} elapsed={elapsed_ms:.1f}ms "
+                f"rc={result.returncode} timeout={timeout}s "
+                f"out={output_len}B err={error_len}B"
+            ),
+        )
+    except Exception:
+        pass
+
+
+def _slow_threshold_ms() -> float:
+    try:
+        from core.perf_trace import DEFAULT_SLOW_THRESHOLD_MS
+        from core.settings_manager import AppSettings
+
+        value = AppSettings.instance().get("performance_log_threshold_ms", DEFAULT_SLOW_THRESHOLD_MS)
+        return max(0.0, float(value))
+    except Exception:
+        return 300.0
+
+
+def _command_summary(cmd: list[str]) -> str:
+    if not cmd:
+        return "empty"
+    parts = [str(part) for part in cmd]
+    if _is_adb(parts[0]):
+        return _adb_summary(parts)
+    return _program_name(parts[0])
+
+
+def _is_adb(program: str) -> bool:
+    return _program_name(program).lower() in {"adb", "adb.exe"}
+
+
+def _program_name(program: str) -> str:
+    return program.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _adb_summary(parts: list[str]) -> str:
+    index = 1
+    if len(parts) > 2 and parts[1] == "-s":
+        index = 3
+    if index >= len(parts):
+        return "adb"
+    command = parts[index]
+    if command != "shell":
+        return f"adb {command}"
+    shell_parts = parts[index + 1:]
+    if not shell_parts:
+        return "adb shell"
+    first = shell_parts[0]
+    if first == "sh":
+        return "adb shell sh"
+    if first in {"cmd", "dumpsys", "pm", "am", "input", "getprop", "settings", "monkey"}:
+        second = shell_parts[1] if len(shell_parts) > 1 else ""
+        return f"adb shell {first}{(' ' + second) if second else ''}"
+    return f"adb shell {first}"

@@ -23,3 +23,6 @@ known-first-party = ["core", "gui", "models", "controllers", "utils"]
 quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

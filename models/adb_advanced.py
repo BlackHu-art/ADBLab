@@ -227,10 +227,13 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def settings_get_async(self, device_ip: str, namespace: str, key: str) -> dict:
-        return self._run(
+        result = self._run(
             ["adb", "-s", device_ip, "shell", "settings", "get", namespace, key],
             device_ip=device_ip, key=key,
         )
+        if result.get("success"):
+            result["value"] = result.get("output", "")
+        return result
 
     @async_command
     def settings_put_async(self, device_ip: str, namespace: str,

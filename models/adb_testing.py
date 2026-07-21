@@ -7,6 +7,7 @@ Imports only from adb_model (core) — no circular dependencies.
 import os
 import random
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -17,6 +18,8 @@ from .adb_model import ADBModelCore, async_command
 from .base.command_runner import CommandRunner
 from .base.focus_detector import detect_current_package
 from .base.process_runner import ProcessRunner
+from utils.archive import safe_extract_zip
+from utils.resource_path import resource_path
 
 
 class ADBTesting(ADBModelCore):
@@ -268,14 +271,24 @@ class ADBTesting(ADBModelCore):
                     log(f"dumpsys window timed out ({timeouts}/3)")
                     if timeouts >= 3:
                         log("Device appears disconnected, stopping monitor")
+                        result["error"] = "Device appears disconnected"
                         break
                 except Exception as e:
                     log(f"Polling exception: {str(e)}")
                     time.sleep(interval)
 
-            result["success"] = True
             result["duration"] = str(datetime.now() - start_time)
-            log(f"Monkey test complete for {device_ip} / ({index})")
+            return_code = monkey_proc.poll()
+            if result["error"]:
+                result["success"] = False
+                log(f"Monkey test failed for {device_ip}: {result['error']}")
+            elif return_code not in (0, None):
+                result["success"] = False
+                result["error"] = f"Monkey exited with code {return_code}"
+                log(result["error"])
+            else:
+                result["success"] = True
+                log(f"Monkey test complete for {device_ip} / ({index})")
 
         except Exception as e:
             result["error"] = str(e)
@@ -404,7 +417,7 @@ class ADBTesting(ADBModelCore):
                 zip_path = os.path.join(target_dir, zip_file)
                 log(f"Extracting ZIP: {zip_file}")
                 with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                    zip_ref.extractall(target_dir)
+                    safe_extract_zip(zip_ref, target_dir)
             log("Extracted ZIP successfully")
             return True
         except Exception as e:
@@ -427,9 +440,11 @@ class ADBTesting(ADBModelCore):
         return found_html
 
     def _convert_bugreport_to_html(self, bugreport_txt_path: str, log=None):
-        jar_path = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "resources", "chkbugreport-0.5-215.jar")
-        )
+        jar_path = resource_path("resources/chkbugreport-0.5-215.jar")
+        if not os.path.isfile(jar_path):
+            raise RuntimeError(f"chkbugreport jar not found: {jar_path}")
+        if not shutil.which("java"):
+            raise RuntimeError("java executable not found in PATH")
         cmd = ["java", "-jar", jar_path, bugreport_txt_path]
         if log:
             log(f"Converting to HTML: {os.path.basename(bugreport_txt_path)}")

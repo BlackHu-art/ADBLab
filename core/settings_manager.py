@@ -11,10 +11,12 @@ import threading
 from typing import Any
 
 from core.log_service import LogService
+from utils.resource_path import resource_path
+from utils.user_data import user_config_path
 
 # 模块级路径常量 — 与 SETTINGS_FILE 同目录
-_BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SETTINGS_FILE = os.path.join(_BASE_DIR, "resources", "app_settings.json")
+SETTINGS_FILE = user_config_path("app_settings.json")
+LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
 
 DEFAULTS = {
     "font_family": "Segoe UI",
@@ -24,6 +26,7 @@ DEFAULTS = {
     "log_max_lines": 2000,
     "confirm_dangerous_ops": True,
     "continuous_device_scan": True,
+    "device_scan_interval_ms": 15000,
     "always_on_top": False,
     "performance_log_threshold_ms": 300,
     "monkey_params": {
@@ -61,21 +64,29 @@ class AppSettings:
 
     def _load(self):
         """从 JSON 文件加载设置，失败时保留默认值并记录错误。"""
-        if not os.path.exists(SETTINGS_FILE):
+        paths = [SETTINGS_FILE]
+        if os.path.normcase(os.path.abspath(LEGACY_SETTINGS_FILE)) != os.path.normcase(os.path.abspath(SETTINGS_FILE)):
+            paths.append(LEGACY_SETTINGS_FILE)
+        settings_path = next((path for path in paths if os.path.exists(path)), "")
+        if not settings_path:
             return
+        loaded_from = ""
         try:
-            with open(SETTINGS_FILE, encoding="utf-8") as f:
+            with open(settings_path, encoding="utf-8") as f:
                 stored = json.load(f)
             if not isinstance(stored, dict):
                 raise ValueError("settings file is not a JSON object")
             for k in DEFAULTS:
                 if k in stored:
                     self._data[k] = stored[k]
+            loaded_from = settings_path
         except (json.JSONDecodeError, ValueError, OSError) as e:
             try:
                 LogService().log("WARNING", f"Failed to load settings ({e}), using defaults")
             except Exception:
                 pass
+        if loaded_from and loaded_from != SETTINGS_FILE and not os.path.exists(SETTINGS_FILE):
+            self._save_atomic()
 
     def _save_atomic(self):
         """原子写入：先写临时文件，再原子替换，避免写入中途崩溃损坏文件。"""

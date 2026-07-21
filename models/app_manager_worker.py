@@ -9,7 +9,33 @@ import zipfile
 
 from PySide6.QtCore import QThread, Signal
 
+from utils.archive import safe_extract_zip
+
 from .base.command_runner import CommandRunner
+
+_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+_DETAIL_BEGIN = "__ADBLAB_PKG_BEGIN_{}__"
+_DETAIL_END = "__ADBLAB_PKG_END_{}__"
+
+
+def _split_package_detail_sections(output: str, count: int) -> dict[int, str]:
+    sections: dict[int, list[str]] = {}
+    current: int | None = None
+    begin_markers = {_DETAIL_BEGIN.format(i): i for i in range(count)}
+    end_markers = {_DETAIL_END.format(i): i for i in range(count)}
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped in begin_markers:
+            current = begin_markers[stripped]
+            sections[current] = []
+            continue
+        if stripped in end_markers:
+            if current == end_markers[stripped]:
+                current = None
+            continue
+        if current is not None:
+            sections.setdefault(current, []).append(line)
+    return {index: "\n".join(lines) for index, lines in sections.items()}
 
 
 class AppManagerWorker(QThread):
@@ -98,27 +124,58 @@ class AppManagerWorker(QThread):
 
     def _load_detail_batch(self, packages):
         total = len(packages)
+        if not packages:
+            return
+        if self._load_detail_batch_once(packages):
+            return
         for i, pkg in enumerate(packages):
             if self._aborted or self.isInterruptionRequested():
                 return
             try:
                 r = self._adb("shell", f"dumpsys package {pkg}", timeout=5)
-                out = r.stdout
-                m_label = re.search(r"nonLocalizedLabel[=:]\s*(\S.+)", out)
-                label = m_label.group(1).strip() if m_label else ""
-                m_vn = re.search(r"versionName=([\S]+)", out)
-                m_vc = re.search(r"versionCode=(\d+)", out)
-                vn = m_vn.group(1) if m_vn else ""
-                vc = m_vc.group(1) if m_vc else ""
-                m_it = re.search(r"firstInstallTime=(\d{4}-\d{2}-\d{2})", out)
-                itime = m_it.group(1) if m_it else ""
-                self.app_detail_batch.emit(
-                    pkg, label or pkg.split(".")[-1], f"{vn} ({vc})" if vn else "", itime
-                )
+                self._emit_package_detail(pkg, r.stdout)
             except Exception:
                 self.app_detail_batch.emit(pkg, "", "", "")
             if i % 10 == 0:
                 self.log_message.emit(f"Details: {i+1}/{total}")
+
+    def _load_detail_batch_once(self, packages) -> bool:
+        safe_packages = [pkg for pkg in packages if _PACKAGE_NAME_RE.match(str(pkg or ""))]
+        if len(safe_packages) != len(packages):
+            return False
+        script_parts = []
+        for i, pkg in enumerate(packages):
+            script_parts.extend([
+                f"echo {_DETAIL_BEGIN.format(i)}",
+                f"dumpsys package {pkg}",
+                f"echo {_DETAIL_END.format(i)}",
+            ])
+        result = self._adb("shell", " ; ".join(script_parts), timeout=max(5, len(packages) * 2))
+        if not result.success:
+            return False
+        sections = _split_package_detail_sections(result.stdout, len(packages))
+        if len(sections) != len(packages):
+            return False
+        for i, pkg in enumerate(packages):
+            if self._aborted or self.isInterruptionRequested():
+                return True
+            self._emit_package_detail(pkg, sections.get(i, ""))
+            if i % 10 == 0:
+                self.log_message.emit(f"Details: {i+1}/{len(packages)}")
+        return True
+
+    def _emit_package_detail(self, pkg: str, out: str):
+        m_label = re.search(r"nonLocalizedLabel[=:]\s*(\S.+)", out)
+        label = m_label.group(1).strip() if m_label else ""
+        m_vn = re.search(r"versionName=([\S]+)", out)
+        m_vc = re.search(r"versionCode=(\d+)", out)
+        vn = m_vn.group(1) if m_vn else ""
+        vc = m_vc.group(1) if m_vc else ""
+        m_it = re.search(r"firstInstallTime=(\d{4}-\d{2}-\d{2})", out)
+        itime = m_it.group(1) if m_it else ""
+        self.app_detail_batch.emit(
+            pkg, label or pkg.split(".")[-1], f"{vn} ({vc})" if vn else "", itime
+        )
 
     def _fetch_app_details(self, pkg):
         r = self._adb("shell", f"dumpsys package {pkg}")
@@ -213,7 +270,7 @@ class AppManagerWorker(QThread):
             try:
                 with tempfile.TemporaryDirectory(prefix=f"rs_{app}_") as tmp:
                     with zipfile.ZipFile(zp, "r") as zf:
-                        zf.extractall(tmp)
+                        safe_extract_zip(zf, tmp)
                     apks = [
                         os.path.join(r, f) for r, _, fs in os.walk(tmp)
                         for f in fs if f.endswith(".apk")

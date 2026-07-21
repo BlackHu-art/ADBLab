@@ -10,6 +10,8 @@
 
 import re
 import os
+import shlex
+import shutil
 import time
 import threading
 import subprocess
@@ -60,6 +62,22 @@ class ADB(object):
         ADB.adb_path = os.environ.get('ADB_PATH')
         if ADB.adb_path:
             return ADB.adb_path
+        system_adb = shutil.which("adb")
+        if system_adb:
+            ADB.adb_path = system_adb
+            logger.debug("system have adb")
+            return ADB.adb_path
+        logger.debug("system have no adb")
+        cur_path = os.path.dirname(os.path.abspath(__file__))
+        ADB.os_name = platform.system()
+        logger.debug("platform :" + ADB.os_name)
+        if ADB.os_name == "Windows":
+            ADB.adb_path = os.path.join(cur_path, u'adb.exe')
+        elif ADB.os_name == "Darwin":
+            ADB.adb_path = os.path.join(cur_path, "platform-tools-latest-darwin", "platform-tools", "adb")
+        else:
+            ADB.adb_path = os.path.join(cur_path, "platform-tools-latest-linux", "platform-tools", "adb")
+        return ADB.adb_path
         # 判断系统默认adb是否可用，如果系统有配，默认优先用系统的，避免5037端口冲突
         proc = subprocess.Popen('adb devices', stdout=subprocess.PIPE, shell=True)
         result = proc.stdout.read()
@@ -107,10 +125,17 @@ class ADB(object):
         :return: 返回设备列表
         :rtype: list
         """
-        proc = subprocess.Popen("adb devices", stdout=subprocess.PIPE, shell=True)
-        result = proc.stdout.read()
-        if not isinstance(result, str):
-            result = result.decode('utf-8')
+        proc = subprocess.run(
+            [ADB.get_adb_path(), "devices"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        result = proc.stdout or proc.stderr or ""
         result = result.replace('\r', '').splitlines()
         logger.debug("adb devices:")
         logger.debug(result)
@@ -134,9 +159,17 @@ class ADB(object):
 
     @staticmethod
     def checkAdbNormal():
-        sub = subprocess.Popen("adb devices", stdout=subprocess.PIPE, shell=True)
-        adbRet = str(sub.stdout.read(), "utf-8")
-        sub.wait()
+        sub = subprocess.run(
+            [ADB.get_adb_path(), "devices"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        adbRet = sub.stdout or sub.stderr or ""
         logger.debug("adb device ret:%s" % adbRet)
         if not adbRet:
             logger.debug("devices list maybe is empty")
@@ -154,13 +187,27 @@ class ADB(object):
     @staticmethod
     def kill_server():
         logger.warning("kill-server")
-        os.system("adb kill-server")
+        subprocess.run(
+            [ADB.get_adb_path(), "kill-server"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
 
     @staticmethod
     def start_server():
         ADB.killOccupy5037Process()
         logger.warning("fork-server")
-        os.system("adb fork-server server -a")
+        subprocess.run(
+            [ADB.get_adb_path(), "fork-server", "server", "-a"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
 
     @staticmethod
     def killOccupy5037Process():
@@ -213,14 +260,17 @@ class ADB(object):
         """
         import locale
         import codecs
+        cmd_parts = shlex.split(cmd, posix=False) if isinstance(cmd, str) else [cmd]
         if self._device_id:
-            cmdlet = [self._adb_path, '-s', self._device_id, cmd]
+            cmdlet = [self._adb_path, '-s', self._device_id] + cmd_parts
         else:
-            cmdlet = [self._adb_path, cmd]
+            cmdlet = [self._adb_path] + cmd_parts
         for i in range(len(argv)):
             arg = argv[i]
             if not isinstance(argv[i], str):
                 arg = arg.decode('utf8')
+            if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in {"'", '"'}:
+                arg = arg[1:-1]
             cmdlet.append(arg)
         #        logger.debug('ADB cmd:' + " ".join(cmdlet))
         #         logger.debug(cmdlet)
@@ -233,8 +283,14 @@ class ADB(object):
         # #       mac上传list会报错:Android Debug Bridge version
         #         else:
         #         windows ["adb devices"] 提示没有命令 ，改为str执行
-        process = subprocess.Popen(cmdStr, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   shell=True)
+        process = subprocess.Popen(
+            cmdlet,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
         if "sync" in kwds and kwds['sync'] == False:
             # 异步执行命令，不等待结果，返回该子进程对象
             return process
@@ -244,8 +300,20 @@ class ADB(object):
             timeout = kwds['timeout']
         if timeout != None and timeout > 0:
             # timeout = None 或者小于等于0时，一直等待执行结果
-            threading.Thread(None, self._timer, (process, timeout))
-        (out, error) = process.communicate()
+            communicate_timeout = timeout
+        else:
+            communicate_timeout = None
+        try:
+            (out, error) = process.communicate(timeout=communicate_timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning("%d process timeout,force close" % process.pid)
+            process.terminate()
+            try:
+                (out, error) = process.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                (out, error) = process.communicate()
+            return ""
         # 执行错误 mac  out无输出 error有输出 返回值非0
         # 执行错误 windows out有输出 error没有输出，返回值0
         if process.poll() != 0:  # 返回码为非0，表示命令未执行成功返回

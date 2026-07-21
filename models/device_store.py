@@ -4,25 +4,33 @@ from threading import Lock
 import yaml
 
 from utils.resource_path import resource_path
+from utils.user_data import user_config_path
 
 
 class DeviceStore:
     _lock = Lock()
     _devices = {}
-    _file_path = resource_path("resources/connected_devices.yaml")
+    _file_path = user_config_path("connected_devices.yaml")
+    _legacy_file_path = resource_path("resources/connected_devices.yaml")
 
     @classmethod
     def load(cls):
         cls._devices.clear()
-        if os.path.exists(cls._file_path):
-            try:
-                with open(cls._file_path, encoding="utf-8") as f:
-                    content = yaml.safe_load(f) or {}
-                    for device_id, info in content.items():
-                        if isinstance(info, dict):
-                            cls._devices[device_id] = info
-            except Exception as e:
-                print(f"[DeviceStore] Failed to load devices: {e}")
+        source_path = cls._file_path
+        if not os.path.exists(source_path) and os.path.exists(cls._legacy_file_path):
+            source_path = cls._legacy_file_path
+        if not os.path.exists(source_path):
+            return
+        try:
+            with open(source_path, encoding="utf-8") as f:
+                content = yaml.safe_load(f) or {}
+                for device_id, info in content.items():
+                    if isinstance(info, dict):
+                        cls._devices[device_id] = info
+            if source_path != cls._file_path and cls._devices:
+                cls.save()
+        except Exception as e:
+            print(f"[DeviceStore] Failed to load devices: {e}")
 
     @classmethod
     def save(cls):
