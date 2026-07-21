@@ -84,11 +84,22 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: pip install -r requirements.txt pytest
+        run: pip install -r requirements.txt
+
+      - name: Install test dependencies
+        if: runner.os == 'Windows'
+        shell: bash
+        run: pip install pytest
 
       - name: Run tests
+        if: runner.os == 'Windows'
         shell: bash
         run: python -m pytest -q
+
+      - name: Source self-check
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python main.py --self-check packaging
 
       - name: Build with PyInstaller
         shell: bash
