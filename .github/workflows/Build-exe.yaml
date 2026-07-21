@@ -150,13 +150,29 @@ jobs:
           path: release_artifacts
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.version }}
-          name: "Release ${{ needs.version.outputs.version }}"
-          draft: false
-          prerelease: false
-          files: release_artifacts/**/*
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.version.outputs.version }}"
+          TITLE="Release $TAG"
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          fi
+
+          mapfile -d '' FILES < <(find release_artifacts -type f -print0)
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "No release artifacts found"
+            exit 1
+          fi
+
+          gh release create "$TAG" "${FILES[@]}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TITLE" \
+            --notes "Automated release $TAG"
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Prune old workflow runs (keep 5)
         shell: bash

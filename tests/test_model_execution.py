@@ -1657,6 +1657,14 @@ def test_cross_platform_builds_do_not_run_full_gui_test_suite():
     assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
 
 
+def test_release_job_recreates_existing_version_release():
+    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+
+    assert "gh release delete \"$TAG\"" in workflow
+    assert "gh release create \"$TAG\"" in workflow
+    assert "softprops/action-gh-release" not in workflow
+
+
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame = MainFrame.__new__(MainFrame)
     frame.left_panel = Mock()
