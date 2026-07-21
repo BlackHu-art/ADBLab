@@ -127,6 +127,33 @@ jobs:
           Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip" -Force
           Remove-Item -Recurse -Force "dist/$name"
 
+      - name: Zip macOS app artifact
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          if [ -d "dist/$name.app" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "dist/$name.app" "dist/$name.zip"
+            rm -rf "dist/$name.app"
+          elif [ -f "dist/$name" ]; then
+            (cd dist && zip -q "$name.zip" "$name")
+            rm -f "dist/$name"
+          else
+            ls -la dist
+            exit 1
+          fi
+
+      - name: Archive Linux artifact
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          chmod +x "dist/$name"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -f "dist/$name"
+
       - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
