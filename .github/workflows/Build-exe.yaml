@@ -5,7 +5,9 @@ on:
   push:
     branches: ["main"]
 
-permissions: write-all
+permissions:
+  contents: write
+  actions: write
 
 jobs:
   version:
@@ -36,23 +38,26 @@ jobs:
         include:
           - os: windows-latest
             artifact: ADBLab-win-x64
-            onefile: --windowed
+            package_mode: --onedir
+            windowed: --windowed
             icon: --icon icon.ico
-            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1"
+            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1" --add-data "mobileperf;mobileperf"
             pip_cache: ~\AppData\Local\pip\Cache
 
           - os: macos-latest
             artifact: ADBLab-macos-x64
-            onefile: --windowed
+            package_mode: --onefile
+            windowed: --windowed
             icon: ""
-            datas: --add-data "resources:resources" --add-data "icon.ico:."
+            datas: --add-data "resources:resources" --add-data "icon.ico:." --add-data "mobileperf:mobileperf"
             pip_cache: ~/Library/Caches/pip
 
           - os: ubuntu-latest
             artifact: ADBLab-linux-x64
-            onefile: ""
+            package_mode: --onefile
+            windowed: ""
             icon: ""
-            datas: --add-data "resources:resources" --add-data "icon.ico:."
+            datas: --add-data "resources:resources" --add-data "icon.ico:." --add-data "mobileperf:mobileperf"
             pip_cache: ~/.cache/pip
 
     runs-on: ${{ matrix.os }}
@@ -79,17 +84,37 @@ jobs:
 
       - name: Install dependencies
         shell: bash
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt pytest
+
+      - name: Run tests
+        shell: bash
+        run: python -m pytest -q
 
       - name: Build with PyInstaller
         shell: bash
         run: |
           python -m PyInstaller \
             --name "${{ matrix.artifact }}-${{ needs.version.outputs.version }}" \
-            --onefile ${{ matrix.onefile }} \
+            ${{ matrix.package_mode }} ${{ matrix.windowed }} \
             ${{ matrix.icon }} \
+            --collect-submodules mobileperf \
             ${{ matrix.datas }} \
             main.py
+
+      - name: Smoke test Windows package
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          & "dist/$name/$name.exe" --self-check packaging
+
+      - name: Zip Windows onedir artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $name = "${{ matrix.artifact }}-${{ needs.version.outputs.version }}"
+          Compress-Archive -Path "dist/$name/*" -DestinationPath "dist/$name.zip" -Force
+          Remove-Item -Recurse -Force "dist/$name"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
@@ -100,7 +125,7 @@ jobs:
 
   release:
     needs: [version, build]
-    if: always() && needs.build.result != 'skipped'
+    if: needs.build.result == 'success'
     runs-on: ubuntu-latest
 
     steps:

@@ -2,6 +2,7 @@
 """PyInstaller spec for ADBLab — ensures resource files are bundled."""
 
 from pathlib import Path
+from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH)
 
@@ -13,16 +14,15 @@ a = Analysis(
         ('resources', 'resources'),
         ('icon.ico', '.'),
         ('scrcpy-win64-v3.3.1', 'scrcpy-win64-v3.3.1'),
+        ('mobileperf', 'mobileperf'),
     ],
-    hiddenimports=[],
+    hiddenimports=collect_submodules('mobileperf'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
         'tkinter',
         'unittest',
-        'email',
-        'http',
         'xmlrpc',
         'pydoc',
     ],
@@ -37,10 +37,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='ADBLab',
     debug=False,
     bootloader_ignore_signals=False,
@@ -55,4 +53,15 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='icon.ico',
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='ADBLab',
 )

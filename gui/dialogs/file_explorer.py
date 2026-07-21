@@ -621,7 +621,7 @@ class FileExplorerDialog(QDialog):
         w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
         w.finished.connect(
             lambda o2, e2, d: (
-                self._run_adb("shell", f'rm "{dev_tmp}"').start(),
+                self._run_adb("shell", self._root(explorer_service.delete_command(dev_tmp))).start(),
                 self._on_transfer_done(o2, e2, f"Pulled {name}"),
             )
         )
@@ -663,7 +663,17 @@ class FileExplorerDialog(QDialog):
     def _on_transfer_done(self, o, e, msg):
         if e:
             QMessageBox.critical(self, "Error", o)
+            self.status_bar.showMessage(f"Failed: {o}")
+            return
         self.status_bar.showMessage(msg)
+        self._refresh()
+
+    def _on_file_op_done(self, output: str, error: bool, success_msg: str):
+        if error:
+            QMessageBox.critical(self, "Error", output)
+            self.status_bar.showMessage(f"Failed: {output}")
+            return
+        self.status_bar.showMessage(success_msg)
         self._refresh()
 
     # ── File operations ──────────────────────────────────────────────────
@@ -678,7 +688,7 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.mkdir_command(full)))
         w.finished.connect(
-            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}")
         )
         w.start()
 
@@ -692,7 +702,7 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.touch_command(full)))
         w.finished.connect(
-            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Created {name}"))
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}")
         )
         w.start()
 
@@ -707,7 +717,9 @@ class FileExplorerDialog(QDialog):
         new_p = self._dpath(self.current_path, new)
         w = self._run_adb("shell", self._root(explorer_service.move_command(old, new_p)))
         w.finished.connect(
-            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Renamed {name} -> {new}"))
+            lambda o, e, old_name=name, new_name=new: self._on_file_op_done(
+                o, e, f"Renamed {old_name} -> {new_name}"
+            )
         )
         w.start()
 
@@ -715,7 +727,7 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.delete_command(full)))
         w.finished.connect(
-            lambda o, e: (self._refresh(), self.status_bar.showMessage(f"Deleted {name}"))
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}")
         )
         w.start()
 
@@ -763,7 +775,9 @@ class FileExplorerDialog(QDialog):
                     self._root(explorer_service.copy_command(src, dst)),
                     timeout=120,
                 )
-                w.finished.connect(lambda o, e: None)
+                w.finished.connect(
+                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Pasted {n}")
+                )
                 w.start()
             else:
                 w = self._run_adb(
@@ -771,10 +785,11 @@ class FileExplorerDialog(QDialog):
                     self._root(explorer_service.move_command(src, dst)),
                     timeout=120,
                 )
-                w.finished.connect(lambda o, e: None)
+                w.finished.connect(
+                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Moved {n}")
+                )
                 w.start()
-        self.status_bar.showMessage("Paste done")
-        self._refresh()
+        self.status_bar.showMessage(f"Paste submitted: {len(self.clipboard)} item(s)")
         self.clipboard = []
 
     # ── chmod ────────────────────────────────────────────────────────────

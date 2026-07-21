@@ -8,7 +8,7 @@
 
 | 项目 | 当前状态 |
 |------|----------|
-| 应用版本 | `3.0.0`，来源于 `utils/app_metadata.py` |
+| 应用版本 | `3.1.2`，来源于 `utils/app_metadata.py` |
 | 开发语言 | Python，建议使用 Python 3.11 |
 | GUI 框架 | PySide6 / Qt 6 |
 | 主要平台 | Windows 10/11 |
@@ -20,8 +20,15 @@
 ## 快速启动
 
 ```bash
-pip install -r requirements.txt
-python main.py
+py -3.11 -m pip install -r requirements.txt
+py -3.11 main.py
+```
+
+常用验证命令：
+
+```bash
+py -3.11 -m pytest -q
+py -3.11 main.py --self-check packaging
 ```
 
 ---
@@ -31,17 +38,18 @@ python main.py
 ### 设备与基础操作
 
 - IP/USB 设备连接、断开、刷新、重启和多选批量操作。
+- IP 连接输入框支持 Enter 触发连接，并在执行前校验 `ip:port` 完整性。
 - 设备信息读取：品牌、型号、Android 版本、SDK、CPU、分辨率、内存、存储、网络信息等。
 - ADB Server 重启、TCP/IP 模式、端口 forward/reverse、系统 reboot 模式切换。
-- 左侧设备列表持续扫描 USB 设备，支持历史设备与连接记录。
+- 左侧设备列表支持持续扫描 USB 设备；扫描会避让正在执行的 ADB 命令，并在退出时做阻塞清理，降低 exe 关闭时的线程残留风险。
 
 ### 应用管理与测试
 
 - 获取当前前台包名，支持 focus 优先检测和 activity/window 回退。
 - 安装、卸载、清数据、强停、重启、禁用、启用、disable-user。
-- 本地 APK 解析，读取包名、版本、权限、架构等信息。
-- Monkey 压力测试：事件占比、事件数、throttle、flags、随机种子、按设备中止。
-- Bugreport、ANR 拉取、logcat 导出/清理、meminfo、cpuinfo、gfxinfo、top、wakelock、netstats 等诊断入口。
+- 本地 APK 解析，读取包名、版本、权限、架构等信息；会校验 APK 路径和 `aapt` 可用性。
+- Monkey 压力测试：事件占比、事件数、throttle、flags、随机种子、按设备中止；非 0 退出、设备连续超时和恢复失败会返回失败状态。
+- Bugreport、ANR 拉取、logcat 导出/清理、meminfo、cpuinfo、gfxinfo、top、wakelock、netstats 等诊断入口；Bugreport ZIP 使用安全解压并通过 `resource_path()` 定位转换器。
 - 临时邮箱能力：通过 `core/mail/` 调用 AMZ123 API 获取邮箱与验证码。
 
 ### Remote 投屏控制
@@ -60,6 +68,7 @@ python main.py
 
 - 浏览设备文件系统，支持路径栏、后退/前进/上级导航、搜索过滤。
 - 拉取、推送、删除、重命名、新建文件/文件夹、复制/剪切/粘贴。
+- 文件操作失败时不会再显示成功文案或无条件刷新；粘贴按每个任务的实际结果反馈。
 - 文本和图片查看，脚本执行，APK 直接安装，文件属性查看。
 - chmod 权限弹窗与 root 模式。
 - `models/file_explorer_service.py` 是无 Qt 依赖的纯逻辑层，负责路径处理、shell quoting、`ls -la` 解析、权限模式和文件名安全校验。
@@ -71,6 +80,8 @@ python main.py
 - MobilePerf 结果目录会追加设备名称，方便区分多设备保存文件。
 - MobilePerf 日志使用纯文本批量追加，保留工具原始输出，不再额外叠加 ADBLab 时间和等级前缀，避免长时间运行导致主界面卡顿。
 - `mobileperf/` 保持独立移植目录；ADBLab 通过 `models/mobileperf/runner.py` 生成临时配置并启动子进程，不直接修改 `mobileperf/config.conf`。
+- 打包后 MobilePerf 通过 `ADBLab.exe --mobileperf-worker` 进入采集子进程，不再依赖 `python -m mobileperf.android.startup`。
+- MobilePerf 子进程通过 `ADB_PATH` 使用 ADBLab 解析出的内置 ADB，并把日志写入用户可写目录，避免安装目录或 PyInstaller 临时目录写入失败。
 - 原 Perfetto 跳转已移动到 Performance 弹窗内的 `Open Perfetto` 按钮。
 - `gui/dialogs/performance_monitor.py` 提供单设备性能弹窗，`gui/dialogs/performance_timeline.py` 提供原生时间线图。
 - `gui/performance_web/` 提供可选 Web 仪表盘资源：`index.html`、`style.css`、`app.js`。
@@ -97,9 +108,9 @@ python main.py
 
 ```text
 ADBLab/
-├── main.py                         # 程序入口，设置 Windows AppUserModelID、主题和主窗口
+├── main.py                         # 程序入口，支持 GUI、--self-check、--mobileperf-worker
 ├── requirements.txt                # 运行与打包依赖
-├── pyproject.toml                  # black / ruff 配置，目标语法 py310
+├── pyproject.toml                  # black / ruff / pytest 配置，目标语法 py310
 ├── ADBLab.spec                     # PyInstaller 打包配置
 ├── README.md
 ├── icon.ico
@@ -156,6 +167,10 @@ ADBLab/
 │   ├── app_metadata.py             # 应用版本单一事实来源
 │   ├── resource_path.py            # 开发/打包资源路径解析
 │   ├── adb_resolver.py             # 内置 ADB 路径解析
+│   ├── adb_targets.py              # ADB 连接目标 ip:port 规范化与校验
+│   ├── archive.py                  # ZIP 安全解压工具
+│   ├── runtime_tools.py            # 打包后外部工具路径与运行时缓存
+│   ├── user_data.py                # 用户可写配置/运行时目录
 │   └── batch_tracker.py            # 多设备批量进度追踪
 │
 ├── tests/
@@ -197,6 +212,7 @@ ADBLab/
 - 普通异步 ADB 命令：`@async_command` 包装成 QRunnable，交给 `QThreadPool`。
 - 弹窗级任务：App Manager、File Explorer、Performance 使用专用 QThread/worker。
 - 长进程：Monkey、Logcat、scrcpy、性能采样等由 `ProcessRunner` 管理进程生命周期。
+- 主窗口关闭时会统一停止扫描线程、Remote tab、controller model、线程池和被追踪的长进程。
 - 日志：`LogService` 批量缓冲刷新，并通过 Qt 信号把跨线程 flush 调回 owner thread。
 
 ### 当前服务拆分
@@ -211,6 +227,8 @@ ADBLab/
 | Performance | `models/performance/` | 指标采集、解析、报告、会话、时间线数据 |
 | 设置 | `core/settings_manager.py` | 应用配置 JSON 原子写入和自动保存 |
 | 日志 | `core/log_service.py` | 线程安全日志缓冲与 UI 刷新 |
+| 运行时工具 | `utils/runtime_tools.py` / `utils/user_data.py` | 打包后工具路径、用户可写目录和运行时缓存 |
+| 安全解压 | `utils/archive.py` | 防止 ZIP 条目写出目标目录 |
 
 ---
 
@@ -250,10 +268,20 @@ ADBLab/
 建议改动后至少执行：
 
 ```bash
-py -3.11 -m compileall mobileperf models gui tests
-py -3.11 -m pytest tests -q
+py -3.11 -m compileall -q main.py utils models mobileperf gui controllers core
+py -3.11 -m pytest -q
+py -3.11 main.py --self-check packaging
 git diff --check
 ```
+
+打包验证：
+
+```bash
+py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
+.\dist\ADBLab\ADBLab.exe --self-check packaging
+```
+
+`--self-check packaging` 会检查 PySide6、Requests、MobilePerf 子入口、图标/resources、Windows 内置 adb/scrcpy 和用户可写目录。该命令不会启动主界面。
 
 文档或中文内容改动后，建议使用 UTF-8 读回确认，避免 Windows 终端编码显示误判：
 
@@ -269,7 +297,7 @@ python -c "from pathlib import Path; print(Path('README.md').read_text(encoding=
 
 ```python
 APP_NAME = "ADBLab"
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.1.2"
 APP_RELEASE_TAG = f"v{APP_VERSION}"
 ```
 
@@ -282,6 +310,14 @@ APP_RELEASE_TAG = f"v{APP_VERSION}"
 
 发布新版本时，只更新 `APP_VERSION`，再从 `main` 构建或手动运行 `Build-exe.yaml`。
 
+GitHub Actions 构建流程：
+
+- 安装依赖后先运行 `python -m pytest -q`。
+- Windows 使用 onedir 产物并打包成 zip，避免 onefile 临时目录被 adb/scrcpy 长进程锁住。
+- PyInstaller 显式收集 `mobileperf` 子模块和资源。
+- Windows 产物上传前执行 `--self-check packaging`。
+- Release 只在 build job 成功后创建。
+
 ---
 
 ## 代码约定
@@ -291,6 +327,9 @@ APP_RELEASE_TAG = f"v{APP_VERSION}"
 - UI 文件不要拼接复杂 shell 命令；优先放到 service 层集中处理和单测。
 - 涉及中文 Windows 的 subprocess 文本输出时，使用 `encoding="utf-8", errors="ignore"`。
 - 弹窗生命周期要显式停止后台 worker 或长进程。
+- 打包后不能假设当前目录可写；配置、日志、缓存等运行时数据应写入 `utils/user_data.py` 提供的用户目录。
+- 解压外部 ZIP 必须使用 `utils/archive.py::safe_extract_zip()`，不要直接调用 `ZipFile.extractall()`。
+- Windows exe 内的长生命周期外部工具优先使用 onedir 资源路径；onefile 场景需先复制到稳定运行时缓存。
 - 所有弹窗应响应 `BaseStyles.theme_changed`。
 - 图标使用 `get_themed_icon("name.svg")`，不要直接使用原始 `QIcon`。
 - 应用版本只改 `utils/app_metadata.py`。

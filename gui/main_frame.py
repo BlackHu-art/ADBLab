@@ -37,13 +37,14 @@ from .styles import BaseStyles, get_default_font
 
 
 class _ScanThread(QThread):
-    """Long-running thread: polls `adb devices` every 3 s, emits on count change."""
+    """Long-running thread: polls `adb devices` at low priority."""
 
     devices_changed = Signal(list)
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, interval_ms: int = 15000):
         super().__init__(parent)
         self._stop_flag = False
+        self._interval_ms = max(3000, int(interval_ms))
 
     def stop(self):
         self._stop_flag = True
@@ -51,19 +52,20 @@ class _ScanThread(QThread):
     def run(self):
         from models.adb_device import parse_connected_devices
 
-        last_count = None  # always emit on first poll
+        last_devices = None  # always emit on first poll
         while not self._stop_flag:
             try:
-                result = CommandRunner.run(["adb", "devices"], timeout=5)
-                devices = parse_connected_devices(result.output)
-                count = len(devices)
-                if count != last_count:
-                    last_count = count
-                    self.devices_changed.emit(devices)
+                if CommandRunner.active_count() == 0:
+                    result = CommandRunner.run(["adb", "devices"], timeout=5)
+                    devices = parse_connected_devices(result.output)
+                    device_set = tuple(sorted(devices))
+                    if device_set != last_devices:
+                        last_devices = device_set
+                        self.devices_changed.emit(devices)
             except Exception:
                 pass
-            # Sleep 3 s between polls (breakable for clean shutdown)
-            for _ in range(30):
+            # Sleep between polls, breakable for clean shutdown.
+            for _ in range(max(1, self._interval_ms // 100)):
                 if self._stop_flag:
                     return
                 self.msleep(100)
@@ -137,22 +139,29 @@ class MainFrame(QMainWindow):
     def _start_scan_thread(self):
         if self._scan_thread and self._scan_thread.isRunning():
             return
-        self._scan_thread = _ScanThread(self)
+        from core.settings_manager import AppSettings
+        interval_ms = AppSettings.instance().get("device_scan_interval_ms", 15000)
+        self._scan_thread = _ScanThread(interval_ms=interval_ms)
         self._scan_thread.devices_changed.connect(self._schedule_scan_refresh)
         self._scan_thread.start()
 
-    def _stop_scan_thread(self):
+    def _stop_scan_thread(self, *, blocking: bool = False):
         initial_timer = getattr(self, "_initial_refresh_timer", None)
         if initial_timer and initial_timer.isActive():
             initial_timer.stop()
         timer = getattr(self, "_scan_refresh_timer", None)
         if timer and timer.isActive():
             timer.stop()
-        if self._scan_thread and self._scan_thread.isRunning():
-            self._scan_thread.stop()
-            if not self._scan_thread.wait(150):
-                thread = self._scan_thread
+        thread = self._scan_thread
+        if thread and thread.isRunning():
+            thread.stop()
+            wait_ms = 6000 if blocking else 150
+            if thread.wait(wait_ms):
+                self._scan_thread = None
+            elif not blocking:
                 threading.Thread(target=lambda: thread.wait(3000), daemon=True).start()
+        elif thread:
+            self._scan_thread = None
 
     def _schedule_scan_refresh(self, devices: list[str]):
         """Debounce scan-thread device list notifications without a second adb poll."""
@@ -160,7 +169,7 @@ class MainFrame(QMainWindow):
         self._scan_refresh_timer.start(self.DEVICE_SCAN_DEBOUNCE_MS)
 
     def _publish_scanned_devices(self):
-        self.adb_controller._process_device_list(list(self._pending_scanned_devices))
+        self.adb_controller.publish_detected_devices(list(self._pending_scanned_devices))
 
     def set_continuous_scan(self, enabled: bool):
         if enabled:
@@ -213,7 +222,7 @@ class MainFrame(QMainWindow):
         left_col = QVBoxLayout()
         left_col.setContentsMargins(0, 0, 0, 0)
         left_col.setSpacing(1)
-        dw = self.left_panel._device_widget
+        dw = self.left_panel.device_widget
         dw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         left_col.addWidget(dw)
         left_col.addWidget(self.log_panel, stretch=1)
@@ -400,7 +409,7 @@ class MainFrame(QMainWindow):
             lw.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
             for g in lw.findChildren(QGroupBox):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
-            self.left_panel._devices_tab._apply_device_list_style()
+            self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
 
     def _refresh_active_dialog_themes(self):
@@ -533,7 +542,7 @@ class MainFrame(QMainWindow):
     def _on_devices_updated(self, devices: list[str]):
         """Refresh device UI only when the device list changes."""
         self.left_panel.update_device_list(devices)
-        self.left_panel._refresh_device_combobox()
+        self.left_panel.refresh_device_choices()
 
     def clear_log(self):
         """Clear log panel."""
@@ -566,9 +575,8 @@ class MainFrame(QMainWindow):
             self.log_panel._append_log("WARNING", "No device selected")
             return
         device_ip = devices[0]
-        package_name = ""
         try:
-            package_name = self.left_panel._apps_tab.package_text if self.left_panel._apps_tab else ""
+            package_name = self.left_panel.current_package_text()
         except RuntimeError:
             package_name = ""
         dlg = self._find_active_dialog(PerformanceLauncherDialog, device_ip or "default")
@@ -798,7 +806,7 @@ class MainFrame(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
-        self._stop_scan_thread()
+        self._stop_scan_thread(blocking=True)
         if self._panel_size_save_timer.isActive():
             self._panel_size_save_timer.stop()
             self._save_pending_panel_sizes()
@@ -819,5 +827,8 @@ class MainFrame(QMainWindow):
                 viewer.close()
             except Exception:
                 pass
+        shutdown_left_panel = getattr(self.left_panel, "shutdown", None)
+        if callable(shutdown_left_panel):
+            shutdown_left_panel()
         self.adb_controller.shutdown()
         event.accept()

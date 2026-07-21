@@ -27,6 +27,8 @@ def bundled_tool_path(bundle_dir: str, *relative_parts: str) -> str:
     source_path = source_dir.joinpath(*relative_parts)
     if not getattr(sys, "frozen", False) or not source_dir.is_dir():
         return str(source_path)
+    if not _is_onefile_extraction():
+        return str(source_path)
 
     target_dir = _runtime_root() / bundle_dir
     target_path = target_dir.joinpath(*relative_parts)
@@ -58,3 +60,17 @@ def _runtime_root() -> Path:
     if base:
         return Path(base) / APP_NAME / "runtime" / APP_VERSION
     return Path.home() / ".cache" / APP_NAME / "runtime" / APP_VERSION
+
+
+def _is_onefile_extraction() -> bool:
+    """Return True when PyInstaller is running from a temp extraction dir."""
+    meipass = getattr(sys, "_MEIPASS", "")
+    if not meipass:
+        return False
+    try:
+        Path(meipass).resolve().relative_to(Path(sys.executable).resolve().parent)
+        return False
+    except ValueError:
+        return True
+    except OSError:
+        return True

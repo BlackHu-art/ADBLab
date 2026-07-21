@@ -5,6 +5,7 @@ from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCompleter,
+    QComboBox,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -20,6 +21,7 @@ from gui.panels.base_panel import BasePanel
 from gui.panels.side_panel_signals import BlockSignals
 from gui.styles import BaseStyles
 from models.device_store import DeviceStore
+from utils.adb_targets import normalize_adb_connect_target
 
 
 class DeviceManager(BasePanel):
@@ -42,6 +44,7 @@ class DeviceManager(BasePanel):
         rc.setSpacing(4)
         self.ip_entry = self._combo()
         self.ip_entry.setEditable(True)
+        self.ip_entry.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._build_combo_view()
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
@@ -107,8 +110,7 @@ class DeviceManager(BasePanel):
 
     def update_device_list(self, devices: list[str] = None):
         if devices is None:
-            from models.adb_device import ADBDevice
-            devices = ADBDevice.get_connected_devices_async()
+            devices = []
         devices = list(dict.fromkeys(devices or []))
         prev = set(self.selected_devices)
         existing = self._device_items_by_ip()
@@ -263,9 +265,23 @@ class DeviceManager(BasePanel):
 
     # -- signals ----------------------------------------------------------
 
+    def _request_connect(self):
+        target, error = normalize_adb_connect_target(self.ip_address)
+        if error:
+            self.signals.log_message.emit("WARNING", error)
+            line_edit = self.ip_entry.lineEdit()
+            if line_edit:
+                line_edit.setFocus()
+                line_edit.selectAll()
+            return
+        self.signals.connect_requested.emit(target)
+
     def connect_signals(self):
         LP = self.signals
-        self.btn_connect_devices.clicked.connect(lambda: LP.connect_requested.emit(self.ip_address))
+        self.btn_connect_devices.clicked.connect(self._request_connect)
+        line_edit = self.ip_entry.lineEdit()
+        if line_edit:
+            line_edit.returnPressed.connect(self._request_connect)
         self.btn_refresh.clicked.connect(lambda: LP.refresh_devices_requested.emit())
         self.btn_info.clicked.connect(lambda: LP.device_info_requested.emit(self.selected_devices))
         self.btn_disconnect.clicked.connect(lambda: LP.disconnect_requested.emit(self.selected_devices))

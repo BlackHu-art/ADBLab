@@ -51,6 +51,7 @@ class ScrcpyLaunchWorker(QThread):
 class RemotePanel(BasePanel):
     """Screen mirroring + remote key input."""
 
+    _orphaned_launch_workers: list[ScrcpyLaunchWorker] = []
     _status_update_requested = Signal(str, object)
     _remote_queue_status_requested = Signal(int, int, str)
     _IGNORED_SCRCPY_LOG_PATTERNS = (
@@ -113,6 +114,7 @@ class RemotePanel(BasePanel):
         self._remote_control = RemoteControlService(self._adb)
         self._input_engine = RemoteInputEngine()
         self._loading = True
+        self._closing = False
         self._launch_worker = None
         self._process_key = f"scrcpy_{id(self)}"
         self._active_device = None
@@ -434,6 +436,8 @@ class RemotePanel(BasePanel):
         worker.start()
 
     def _on_launch_ready(self, args: list, device_info: str):
+        if getattr(self, "_closing", False):
+            return
         if self._launch_worker and self._launch_worker.isInterruptionRequested():
             return
         self._device_info.setText(device_info)
@@ -463,6 +467,8 @@ class RemotePanel(BasePanel):
         if self._launch_worker is worker:
             self._launch_worker = None
         worker.deleteLater()
+        if getattr(self, "_closing", False):
+            return
         if not self._process:
             self._active_device = None
             self._set_running(False)
@@ -475,6 +481,8 @@ class RemotePanel(BasePanel):
         proc = self._process
         if proc and proc.stderr:
             for line in proc.stderr:
+                if getattr(self, "_closing", False):
+                    return
                 line = line.strip()
                 if not line:
                     continue
@@ -680,9 +688,12 @@ class RemotePanel(BasePanel):
     # -- helpers ----------------------------------------------------------
 
     def _log(self, level: str, msg: str):
+        if getattr(self, "_closing", False):
+            return
         self.signals.log_message.emit(level, msg)
 
-    def closeEvent(self, event):
+    def shutdown(self):
+        self._closing = True
         if self._process:
             self._watchdog.stop()
             self._process = None
@@ -690,12 +701,59 @@ class RemotePanel(BasePanel):
                 self._scrcpy_service.stop(self._process_key, timeout=2)
             except Exception:
                 pass
-        if self._launch_worker and self._launch_worker.isRunning():
-            self._launch_worker.requestInterruption()
+        self._stop_launch_worker()
         executor = getattr(self, "_remote_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
+            self._remote_executor = None
         adb = getattr(self, "_adb", None)
         if adb is not None and hasattr(adb, "close_input_sessions"):
             adb.close_input_sessions()
+
+    def _stop_launch_worker(self, wait_ms: int = 3000):
+        worker = getattr(self, "_launch_worker", None)
+        if worker is None:
+            return
+        self._launch_worker = None
+        self._disconnect_launch_worker(worker)
+        if worker.isRunning():
+            worker.requestInterruption()
+            if not worker.wait(wait_ms):
+                self._defer_launch_worker_delete(worker)
+                return
+        worker.deleteLater()
+
+    def _disconnect_launch_worker(self, worker: ScrcpyLaunchWorker):
+        for disconnect in (
+            lambda: worker.log_message.disconnect(self._log),
+            lambda: worker.launch_ready.disconnect(self._on_launch_ready),
+            lambda: worker.finished.disconnect(),
+        ):
+            try:
+                disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
+    @classmethod
+    def _defer_launch_worker_delete(cls, worker: ScrcpyLaunchWorker):
+        try:
+            worker.setParent(None)
+        except RuntimeError:
+            pass
+        cls._orphaned_launch_workers.append(worker)
+
+        def release():
+            try:
+                cls._orphaned_launch_workers.remove(worker)
+            except ValueError:
+                pass
+            worker.deleteLater()
+
+        try:
+            worker.finished.connect(release)
+        except RuntimeError:
+            release()
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)

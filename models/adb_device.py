@@ -132,7 +132,7 @@ class ADBDevice(ADBModelCore):
                 "requires_refresh": False,
             }
         r = self._run(["adb", "-s", device, "reboot"], timeout=3)
-        if not r["success"] and "Timeout" in r.get("error", ""):
+        if r["success"] or (not r["success"] and "Timeout" in r.get("error", "")):
             return {
                 "device_ip": device,
                 "success": True,

@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from models.base.process_runner import ProcessRunner
+from utils.resource_path import resource_path
+from utils.user_data import user_data_root
 
 
 def _split_semicolon(value: str | list[str]) -> list[str]:
@@ -170,7 +172,7 @@ class MobilePerfRunner:
         python_executable: str | None = None,
     ):
         self._process_runner = process_runner or ProcessRunner()
-        self._project_root = Path(project_root or Path(__file__).resolve().parents[2])
+        self._project_root = Path(project_root or self._default_project_root())
         self._python_executable = python_executable or sys.executable
         self._process_key = f"mobileperf_{id(self)}"
         self._proc: subprocess.Popen | None = None
@@ -210,18 +212,13 @@ class MobilePerfRunner:
         self._config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
         self._config_path = config.write_config(self._config_dir.name)
         self._stop_path = os.path.join(self._config_dir.name, "mobileperf.stop")
-        cmd = [
-            self._python_executable,
-            "-m",
-            "mobileperf.android.startup",
-            "--config",
-            self._config_path,
-        ]
+        cmd = self._build_command()
         env = os.environ.copy()
         adb_path = self._resolve_adb_path()
         if adb_path:
             env["ADB_PATH"] = adb_path
         env["MOBILEPERF_STOP_FILE"] = self._stop_path
+        env["MOBILEPERF_LOG_DIR"] = str(user_data_root() / "logs")
         try:
             self._proc = self._process_runner.start(
                 self._process_key,
@@ -361,3 +358,29 @@ class MobilePerfRunner:
             return adb_path()
         except Exception:
             return ""
+
+    def _build_command(self) -> list[str]:
+        if self._is_frozen():
+            return [
+                self._python_executable,
+                "--mobileperf-worker",
+                "--config",
+                self._config_path,
+            ]
+        return [
+            self._python_executable,
+            "-m",
+            "mobileperf.android.startup",
+            "--config",
+            self._config_path,
+        ]
+
+    @staticmethod
+    def _default_project_root() -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(resource_path("."))
+        return Path(__file__).resolve().parents[2]
+
+    @staticmethod
+    def _is_frozen() -> bool:
+        return bool(getattr(sys, "frozen", False))

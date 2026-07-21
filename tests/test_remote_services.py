@@ -365,13 +365,41 @@ def test_remote_panel_close_stops_running_scrcpy_before_shutdown():
     panel._launch_worker = None
     panel._remote_executor = Mock()
     panel._adb = Mock()
+    executor = panel._remote_executor
 
     with patch("gui.panels.remote_panel.QWidget.closeEvent"):
         RemotePanel.closeEvent(panel, Mock())
 
     panel._watchdog.stop.assert_called_once()
     panel._scrcpy_service.stop.assert_called_once_with("scrcpy_test", timeout=2)
-    panel._remote_executor.shutdown.assert_called_once_with(
+    executor.shutdown.assert_called_once_with(
+        wait=False, cancel_futures=True
+    )
+    panel._adb.close_input_sessions.assert_called_once()
+
+
+def test_remote_panel_shutdown_waits_for_launch_worker():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._process = None
+    panel._watchdog = Mock()
+    panel._scrcpy_service = Mock()
+    panel._process_key = "scrcpy_test"
+    panel._remote_executor = Mock()
+    panel._adb = Mock()
+    panel._log = Mock()
+    panel._on_launch_ready = Mock()
+    worker = Mock()
+    worker.isRunning.return_value = True
+    worker.wait.return_value = True
+    panel._launch_worker = worker
+    executor = panel._remote_executor
+
+    RemotePanel.shutdown(panel)
+
+    worker.requestInterruption.assert_called_once()
+    worker.wait.assert_called_once_with(3000)
+    worker.deleteLater.assert_called_once()
+    executor.shutdown.assert_called_once_with(
         wait=False, cancel_futures=True
     )
     panel._adb.close_input_sessions.assert_called_once()
