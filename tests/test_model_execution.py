@@ -1665,6 +1665,15 @@ def test_release_job_recreates_existing_version_release():
     assert "softprops/action-gh-release" not in workflow
 
 
+def test_cross_platform_release_assets_are_single_archives():
+    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
+
+    assert "name: Zip macOS app artifact" in workflow
+    assert "ditto -c -k --sequesterRsrc --keepParent" in workflow
+    assert "name: Archive Linux artifact" in workflow
+    assert "tar -C dist -czf" in workflow
+
+
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame = MainFrame.__new__(MainFrame)
     frame.left_panel = Mock()
