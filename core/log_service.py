@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional
 
-from PySide6.QtCore import QMutex, QObject, QThread, QTimer, Signal
+from PySide6.QtCore import QMutex, QObject, QThread, QTimer, Qt, Signal, Slot
 
 from utils.resource_path import resource_path
 
@@ -58,9 +58,15 @@ class LogService(QObject):
         self._timer = QTimer()
         self._timer.setInterval(self._flush_interval)
         self._timer.timeout.connect(self._flush_buffer)
-        self._flush_requested.connect(self._ensure_flush_timer)
-        self._flush_now_requested.connect(self._flush_buffer)
-        self._stop_requested.connect(self._stop_flush_timer)
+        self._flush_requested.connect(
+            self._ensure_flush_timer, Qt.ConnectionType.QueuedConnection
+        )
+        self._flush_now_requested.connect(
+            self._flush_buffer, Qt.ConnectionType.QueuedConnection
+        )
+        self._stop_requested.connect(
+            self._stop_flush_timer, Qt.ConnectionType.QueuedConnection
+        )
 
         logging.getLogger().handlers.clear()
         logging.getLogger().propagate = False
@@ -103,11 +109,13 @@ class LogService(QObject):
         else:
             self._flush_requested.emit()
 
+    @Slot()
     def _ensure_flush_timer(self) -> None:
         """确保刷新定时器只在 LogService 所在线程启动，避免跨线程操作 QTimer。"""
         if not self._timer.isActive():
             self._timer.start()
 
+    @Slot()
     def _stop_flush_timer(self) -> None:
         """停止定时器也必须回到所属线程，后台线程只负责追加和搬运缓冲区。"""
         if self._timer.isActive():
@@ -120,6 +128,7 @@ class LogService(QObject):
         else:
             self._stop_requested.emit()
 
+    @Slot()
     def _flush_buffer(self) -> None:
         """刷新缓冲区到所有输出"""
         self._buffer_lock.lock()
@@ -202,3 +211,12 @@ class LogService(QObject):
         self._emit_batch(current_batch)
         for handler in handlers:
             handler.close()
+        self._release_singleton()
+
+    def _release_singleton(self) -> None:
+        LogService._lock.lock()
+        try:
+            if LogService._instance is self:
+                LogService._instance = None
+        finally:
+            LogService._lock.unlock()
