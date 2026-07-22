@@ -7,7 +7,6 @@ __pycache__/
 .mypy_cache/
 .playwright-cli/
 .pytest_cache/
-.remember/
 .ruff_cache/
 .superpowers/
 
