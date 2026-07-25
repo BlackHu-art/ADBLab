@@ -20,6 +20,7 @@ from adblab.application.operations import (
 )
 from controllers._base import _ADBControllerBase
 from core.log_service import LogService
+from gui.dialogs.lifecycle import configure_independent_secondary_window
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
@@ -318,10 +319,11 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def _show_screenshot_viewer(self, image_paths: list):
-        viewer = ScreenshotViewer(image_paths, parent=self.window_parent)
+        viewer = ScreenshotViewer(image_paths)
+        configure_independent_secondary_window(viewer)
         viewer.setAttribute(Qt.WA_DeleteOnClose)
-        if self.window_parent is not None:
-            viewer.installEventFilter(self.window_parent)
+        if self.window_owner is not None:
+            viewer.installEventFilter(self.window_owner)
         self._active_viewers.append(viewer)
         log_service = getattr(self, "log_service", None)
         if log_service is not None:

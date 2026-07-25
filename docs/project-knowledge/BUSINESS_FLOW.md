@@ -220,7 +220,9 @@ sequenceDiagram
 ## 10. 应用关闭
 
 MainFrame 打开的设备对话框、Performance Launcher 以及 Controller 打开的 ScreenshotViewer
-都以 MainFrame 为 parent。用户关闭任一二级窗口只清理该窗口资源，不进入 MainFrame
+都作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，并由 MainFrame/Controller
+持有强引用、安装事件过滤器和执行显式关闭清理，因此可以与主界面自由切换。About 与 Settings
+继续使用模态交互。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
 应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
 DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
 

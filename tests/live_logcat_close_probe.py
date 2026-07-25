@@ -169,7 +169,6 @@ def run_probe() -> int:
         current["deadline"] = time.monotonic() + TRAFFIC_TIMEOUT_SECONDS
         dialog = frame._register_dialog(
             LiveLogcatDialog(
-                parent=frame,
                 device_ip="target",
                 task_supervisor=frame.task_supervisor,
                 log_service=frame.log_service,

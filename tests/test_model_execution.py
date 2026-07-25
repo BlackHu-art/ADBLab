@@ -18,6 +18,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -1728,7 +1729,7 @@ def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame._register_dialog.assert_not_called()
 
 
-def test_main_frame_device_dialogs_assigns_main_window_as_parent():
+def test_main_frame_device_dialogs_create_independent_window():
     frame = SimpleNamespace()
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = ["device-1"]
@@ -1756,12 +1757,12 @@ def test_main_frame_device_dialogs_assigns_main_window_as_parent():
     MainFrame._show_device_dialogs(frame, DeviceDialog)
 
     assert len(created) == 1
-    assert created[0].parent is frame
+    assert created[0].parent is None
     assert created[0].device_ip == "device-1"
     created[0].close()
 
 
-def test_performance_dialog_creation_assigns_main_window_as_parent():
+def test_performance_dialog_creation_uses_no_qt_parent():
     frame = QMainWindow()
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = ["device-1"]
@@ -1777,9 +1778,28 @@ def test_performance_dialog_creation_assigns_main_window_as_parent():
     dialog_cls.assert_called_once_with(
         device_ip="device-1",
         package_name="com.example",
-        parent=frame,
     )
     created.show.assert_called_once_with()
+
+
+def test_main_frame_registers_independent_non_modal_secondary_window():
+    frame = QMainWindow()
+    frame._active_dialogs = []
+    frame.log_service = Mock()
+    frame._on_dialog_destroyed = Mock()
+    dialog = QDialog(frame, Qt.Window | Qt.WindowStaysOnTopHint)
+
+    registered = MainFrame._register_dialog(frame, dialog, QDialog, "device-1")
+
+    assert registered is dialog
+    assert dialog.parentWidget() is None
+    assert dialog.windowModality() == Qt.NonModal
+    assert not dialog.windowFlags() & Qt.WindowStaysOnTopHint
+    assert dialog.windowFlags() & Qt.WindowCloseButtonHint
+    assert not dialog.testAttribute(Qt.WA_QuitOnClose)
+    dialog.setAttribute(Qt.WA_DeleteOnClose, False)
+    dialog.close()
+    frame.close()
 
 
 def test_main_frame_signal_maps_keep_expected_coverage():

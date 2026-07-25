@@ -50,8 +50,8 @@ class _ADBControllerBase:
         self.operation_manager = OperationManager()
         self._operation_handler_map = {}
         self._connect_model_signals()
-        # 由界面组装根注入，用于托管 Controller 创建的非模态窗口。
-        self.window_parent = None
+        # 由界面组装根注入，只负责生命周期托管，不建立 Qt 原生父子关系。
+        self.window_owner = None
         self.last_save_dir = None
         self._active_viewers = []
         self._monkey_running = set()

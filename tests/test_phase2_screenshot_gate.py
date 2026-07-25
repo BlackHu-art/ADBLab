@@ -332,19 +332,23 @@ def test_screenshot_metadata_mismatch_fails_closed_and_emits_compat_terminal(tmp
     assert controller.signals.operation_completed.emit.call_args.args[1] is False
 
 
-def test_screenshot_viewer_is_owned_by_injected_main_window():
+def test_screenshot_viewer_is_independent_but_managed_by_injected_window_owner():
     controller = ADBMediaMixin.__new__(ADBMediaMixin)
-    controller.window_parent = Mock()
+    controller.window_owner = Mock()
     controller.log_service = Mock()
     controller._active_viewers = []
     viewer = Mock()
 
-    with patch("controllers._media.ScreenshotViewer", return_value=viewer) as viewer_cls:
+    with (
+        patch("controllers._media.ScreenshotViewer", return_value=viewer) as viewer_cls,
+        patch("controllers._media.configure_independent_secondary_window") as configure_window,
+    ):
         controller._show_screenshot_viewer(["shot.png"])
 
-    viewer_cls.assert_called_once_with(["shot.png"], parent=controller.window_parent)
+    viewer_cls.assert_called_once_with(["shot.png"])
+    configure_window.assert_called_once_with(viewer)
     viewer.setAttribute.assert_called_once_with(Qt.WA_DeleteOnClose)
-    viewer.installEventFilter.assert_called_once_with(controller.window_parent)
+    viewer.installEventFilter.assert_called_once_with(controller.window_owner)
     viewer.show.assert_called_once_with()
     created_message = controller.log_service.log.call_args.args[1]
     assert "dialog=ScreenshotViewer" in created_message

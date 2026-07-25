@@ -40,7 +40,8 @@
 - **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`AppSettings`。
 - **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸/分栏、主题、保存目录；通过 ADB 扫描设备。
 - **测试/风险/待确认**：MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
-  同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一窗口 parent；
+  同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一生命周期 owner；
+  这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
   主窗口整体 close 仍包含同步 shutdown，Gate B2 未通过；真实多设备 UI 压测待确认。
 
 ### 对话框

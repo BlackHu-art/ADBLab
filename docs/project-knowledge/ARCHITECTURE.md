@@ -36,9 +36,10 @@ flowchart LR
 
 - `MainFrame` 是组合根：创建 `LogService`、`SidePanel`、`ADBController` 和应用自有
   `QtTaskSupervisor`，连接全部 GUI 信号并管理对话框。
-- `MainFrame` 是所有二级窗口的生命周期根：设备类对话框和 Performance Launcher 直接以
-  MainFrame 为 parent；Controller 通过注入的 `window_parent` 托管 ScreenshotViewer。
-  关闭二级窗口不得触发 MainFrame 的关闭状态机。
+- `MainFrame` 是所有二级窗口的生命周期根：设备类对话框、Performance Launcher 和
+  ScreenshotViewer 作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，由
+  MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 与 Settings
+  保持有意的模态交互。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
 - `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载。
 - `gui/panels/` 负责普通操作表单；`gui/dialogs/` 负责需要独立生命周期的复杂任务。
 - 视图通常不直接阻塞执行命令，但 App Manager、File Explorer、Live Logcat、Performance Launcher 各自持有 QThread/worker 或 runner。

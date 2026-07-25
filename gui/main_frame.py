@@ -31,6 +31,7 @@ from core.settings_manager import AppSettings
 from gui.dialogs.about_dialog import AboutDialog
 from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
+from gui.dialogs.lifecycle import configure_independent_secondary_window
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.log_panel import LogPanel
@@ -101,7 +102,7 @@ class MainFrame(QMainWindow):
         self.log_panel = LogPanel()
         self.left_panel = SidePanel()
         self.adb_controller = ADBController(self.log_service)
-        self.adb_controller.window_parent = self
+        self.adb_controller.window_owner = self
         self.task_supervisor = QtTaskSupervisor()
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
@@ -718,7 +719,6 @@ class MainFrame(QMainWindow):
             PerformanceLauncherDialog(
                 device_ip=device_ip,
                 package_name=package_name,
-                parent=self if isinstance(self, QWidget) else None,
             ),
             PerformanceLauncherDialog,
             device_ip or "default",
@@ -738,7 +738,6 @@ class MainFrame(QMainWindow):
             )
             self.log_service.log("WARNING", "No device selected")
             return
-        dialog_kwargs.setdefault("parent", self)
         for ip in devices:
             dlg = self._find_active_dialog(dialog_cls, ip)
             if dlg:
@@ -760,6 +759,7 @@ class MainFrame(QMainWindow):
             dlg.show()
 
     def _register_dialog(self, dialog, dialog_cls=None, device_ip=None):
+        configure_independent_secondary_window(dialog)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         dialog.installEventFilter(self)
         dialog_name = dialog_cls.__name__ if dialog_cls is not None else type(dialog).__name__
@@ -1170,7 +1170,7 @@ class MainFrame(QMainWindow):
                 dlg.close()
             except Exception:
                 pass
-        self._active_dialogs.clear()
+        # 独立窗口可能在后台资源停止前忽略关闭事件；保留强引用直到 destroyed 回调移除。
         for viewer in list(getattr(self.adb_controller, "_active_viewers", [])):
             try:
                 viewer.close()

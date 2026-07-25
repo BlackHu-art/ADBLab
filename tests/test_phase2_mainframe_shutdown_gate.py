@@ -453,7 +453,8 @@ def test_active_dialog_tasks_are_registered_before_dialog_close():
             events.append("close")
 
     frame = _frame(lambda: None, deadline=0.06)
-    frame._active_dialogs = [Dialog()]
+    dialog = Dialog()
+    frame._active_dialogs = [dialog]
     settings = Mock()
     settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
@@ -463,6 +464,7 @@ def test_active_dialog_tasks_are_registered_before_dialog_close():
 
     assert events.index("register") < events.index("close")
     assert events.index("close") < events.index("request")
+    assert frame._active_dialogs == [dialog]
     assert any(item.kind == "dialog_worker" for item in frame._shutdown_residual)
     blocker.set()
 
