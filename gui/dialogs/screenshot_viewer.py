@@ -677,28 +677,18 @@ class ScreenshotViewer(QDialog):
         path = self._current_path()
         if not path or not os.path.exists(path):
             return
-        answer = QMessageBox.question(
-            self,
-            "Delete Screenshot",
-            f"Delete this screenshot?\n\n{os.path.basename(path)}",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
         try:
             os.remove(path)
         except OSError as exc:
             QMessageBox.warning(self, "Delete Failed", str(exc))
             return
         del self._image_paths[self._current_idx]
+        if not self._image_paths:
+            self.close()
+            return
         self._rebuild_thumbnails()
-        if self._image_paths:
-            self._current_idx = min(self._current_idx, len(self._image_paths) - 1)
-            self._navigate_to(self._current_idx)
-        else:
-            self._current_idx = 0
-            self._show_placeholder("No screenshots remaining")
+        self._current_idx = min(self._current_idx, len(self._image_paths) - 1)
+        self._navigate_to(self._current_idx)
 
     def _on_context_menu(self, pos):
         path = self._current_path()

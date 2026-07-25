@@ -2093,7 +2093,7 @@ def test_screenshot_viewer_copy_path_shortcut_target(tmp_path):
         viewer.close()
 
 
-def test_screenshot_viewer_delete_requires_confirmation_and_enters_empty_state(tmp_path):
+def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_image_removed(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
@@ -2102,28 +2102,12 @@ def test_screenshot_viewer_delete_requires_confirmation_and_enters_empty_state(t
 
     viewer = ScreenshotViewer([str(image_path)])
     try:
-        with patch(
-            "gui.dialogs.screenshot_viewer.QMessageBox.question",
-            return_value=QMessageBox.No,
-        ) as question:
-            viewer._delete_file()
-
-        question.assert_called_once()
-        assert image_path.exists()
-        assert viewer._image_paths == [str(image_path)]
-
-        with patch(
-            "gui.dialogs.screenshot_viewer.QMessageBox.question",
-            return_value=QMessageBox.Yes,
-        ):
-            viewer._delete_file()
+        viewer._delete_file()
 
         assert not image_path.exists()
         assert viewer._image_paths == []
-        assert viewer._nav_label.text() == "0 / 0"
-        assert viewer._info_label.text() == "No screenshots remaining"
-        assert not viewer._copy_btn.isEnabled()
-        assert not viewer._delete_btn.isEnabled()
+        QApplication.processEvents()
+        assert not viewer.isVisible()
     finally:
         viewer.close()
 
@@ -2822,6 +2806,53 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
             assert panel.start_monkey_btn.isEnabled() is True
             assert panel.kill_monkey_btn.isEnabled() is False
             side_panel.signals.kill_monkey_requested.emit.assert_called_once_with(["device-1"])
+        finally:
+            widget.deleteLater()
+
+
+def test_app_panel_screenshot_button_disables_during_operation_then_recovers():
+    _app = QApplication.instance() or QApplication([])
+    side_panel = Mock()
+    side_panel._font_sm = QFont("Arial", 12)
+    side_panel._font_base = QFont("Arial", 12)
+    side_panel._font_mono = QFont("Courier New", 10)
+    side_panel._font_tab = QFont("Arial", 12)
+    side_panel._package_history = []
+    side_panel._apply_completer_style = Mock()
+    side_panel.selected_devices = ["device-1"]
+    side_panel.signals = Mock()
+    panel = AppPanel(side_panel)
+
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings = settings_cls.instance.return_value
+        settings.get.return_value = {}
+        widget = panel.build_ui()
+        try:
+            assert panel.btn_screenshot.isEnabled() is True
+            assert panel._screenshot_status.text() == "截图空闲"
+
+            panel._on_screenshot()
+
+            assert panel.btn_screenshot.isEnabled() is False
+            assert panel._screenshot_status.text() == "截图中..."
+            side_panel.signals.screenshot_requested.emit.assert_called_once_with(["device-1"])
+
+            panel.on_operation_completed("screenshot", True, "Screenshot captured")
+            assert panel.btn_screenshot.isEnabled() is False
+            assert panel._screenshot_status.text() == "截图中..."
+
+            panel.on_operation_completed("screenshot", True, "Screenshot completed: 1/1 succeeded")
+            assert panel.btn_screenshot.isEnabled() is True
+            assert panel._screenshot_status.text() == "截图空闲"
+
+            panel._on_screenshot()
+            panel.on_operation_completed(
+                "screenshot",
+                False,
+                "Unable to prepare screenshot directory",
+            )
+            assert panel.btn_screenshot.isEnabled() is True
+            assert panel._screenshot_status.text() == "截图空闲"
         finally:
             widget.deleteLater()
 

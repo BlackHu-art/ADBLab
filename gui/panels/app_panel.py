@@ -29,6 +29,8 @@ class AppPanel(BasePanel):
         self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
         self.verification_text_sender = self._in("Verification code or text...")
+        self._screenshot_status = self._status_text("截图空闲")
+        self._screenshot_running = False
         self._add_row(
             gts_l,
             (self.btn_generate_email, 1),
@@ -49,6 +51,7 @@ class AppPanel(BasePanel):
             (self.btn_screen_record, 1),
             (self.btn_stop_record, 1),
         )
+        self._add_row(gts_l, (self._screenshot_status, 1))
         lo.addWidget(g_ts)
 
         g_pm = self._g("Package Manager")
@@ -286,6 +289,22 @@ class AppPanel(BasePanel):
     def on_operation_completed(self, operation: str, _success: bool, _message: str):
         if operation in {"monkey", "kill_monkey"}:
             self._set_monkey_running(False)
+        if operation == "screenshot":
+            if _message.startswith("Screenshot completed:"):
+                self._set_screenshot_running(False)
+            elif _message in {"⚠️ No devices selected", "Unable to prepare screenshot directory"}:
+                self._set_screenshot_running(False)
+
+    def _on_screenshot(self):
+        if self._screenshot_running:
+            return
+        self._set_screenshot_running(True)
+        self.signals.screenshot_requested.emit(self.selected_devices)
+
+    def _set_screenshot_running(self, running: bool):
+        self._set_button_enabled(self.btn_screenshot, not running)
+        self._screenshot_running = running
+        self._screenshot_status.setText("截图中..." if running else "截图空闲")
 
     def _on_start_monkey(self):
         params = self._collect_monkey_params()
@@ -373,9 +392,7 @@ class AppPanel(BasePanel):
         self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
         self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
         # 文本、邮箱和媒体操作
-        self.btn_screenshot.clicked.connect(
-            lambda: LP.screenshot_requested.emit(self.selected_devices)
-        )
+        self.btn_screenshot.clicked.connect(self._on_screenshot)
         self.btn_screen_record.clicked.connect(
             lambda: self._on_record_start()
         )
