@@ -1,4 +1,4 @@
-"""Tab base class — shared UI factory methods and device/package accessors."""
+"""提供标签页共享的控件工厂和设备、包名访问接口。"""
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
@@ -25,7 +25,7 @@ class BasePanel(QWidget):
         super().__init__(parent)
         self.panel = panel
 
-    # ── Shared properties快捷访问 ──
+    # ── 共享属性快捷访问 ────────────────────────────────────────────────
 
     @property
     def signals(self):
@@ -59,10 +59,10 @@ class BasePanel(QWidget):
         return self.panel._font_tab
 
     def _sh(self, cmd: str):
-        """Emit a shell command for the selected devices."""
+        """为当前选中设备发出 Shell 命令请求。"""
         self.signals.shell_command_requested.emit(self.selected_devices, cmd)
 
-    # ── UI 工厂方法 ──
+    # ── 界面控件工厂 ────────────────────────────────────────────────────
 
     def _g(self, t):
         """创建统一样式的 QGroupBox。"""
@@ -93,7 +93,7 @@ class BasePanel(QWidget):
         return cb
 
     def _b(self, t, i, variant="", tooltip=None):
-        """Create icon button. variant: '' (default), 'accent', 'danger'."""
+        """创建图标按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -108,7 +108,7 @@ class BasePanel(QWidget):
         return b
 
     def _db(self, t, i, tooltip=None):
-        """Create double-click icon button."""
+        """创建只在双击时触发的图标按钮。"""
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -121,7 +121,7 @@ class BasePanel(QWidget):
         return b
 
     def _qb(self, t, variant="", tooltip=None):
-        """Create text-only button. variant: '' (default), 'accent', 'danger'."""
+        """创建纯文本按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -150,10 +150,9 @@ class BasePanel(QWidget):
         self._refresh_button_style(button)
 
     def _row(self, *items, spacing=4):
-        """Create a compact horizontal row.
+        """创建紧凑的水平控件行。
 
-        Each item can be a widget or ``(widget, stretch)`` to keep repeated
-        panel rows consistent without retyping QHBoxLayout setup everywhere.
+        每个参数可以是控件或 ``(widget, stretch)``，用于统一重复面板行的布局规则。
         """
         row = QHBoxLayout()
         row.setSpacing(spacing)
@@ -166,7 +165,7 @@ class BasePanel(QWidget):
         return row
 
     def _add_row(self, layout, *items, spacing=4):
-        """Create a row and append it to an existing vertical/group layout."""
+        """创建水平控件行并追加到已有的垂直或分组布局。"""
         row = self._row(*items, spacing=spacing)
         layout.addLayout(row)
         return row
@@ -192,7 +191,7 @@ class BasePanel(QWidget):
         return c
 
     def _combo_editable(self, items=None, font=None):
-        """Create a consistently styled editable combo box."""
+        """创建样式一致的可编辑下拉框。"""
         c = self._combo(items, font=font)
         c.setEditable(True)
         if c.lineEdit():

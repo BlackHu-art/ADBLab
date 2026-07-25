@@ -36,7 +36,10 @@ py -3.11 -m pip install pytest
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
 - ADB 解析优先级为 Windows 内置 `scrcpy-win64-v3.3.1/adb.exe`，再到 PATH 中的 adb。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
-- 不要把真实凭据写入仓库配置。`core/mail/mail.yaml` 当前存在敏感风险，不应复制或扩散其内容。
+- 临时邮箱只读取用户配置目录的 `mail.yaml`，也可通过 `ADBLAB_MAIL_CONFIG` 指定用户受控文件；
+  签名材料可由进程环境注入。不要把真实凭据写入仓库配置或日志。
+- 历史跟踪的 `core/mail/mail.yaml` 仍需仓库所有者轮换材料、停止跟踪并审查 Git 历史；
+  不应复制或扩散其内容。
 
 ## 启动
 
@@ -93,7 +96,7 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 - 收集 `resources/`、`icon.ico`、`scrcpy-win64-v3.3.1/`、`mobileperf/`。
 - 收集全部 `mobileperf` 子模块。
 - 生成 windowed、onedir 的 `ADBLab`。
-- 未收集 `core/mail/mail.yaml`。
+- 不收集 `core/mail/mail.yaml`；临时邮箱按设计从用户域配置或显式环境注入读取。
 
 本次未实际执行完整 PyInstaller 构建；源码模式 packaging self-check 已通过。完整构建会创建 `build/` 和 `dist/`，不符合本次只创建文档的范围。
 
@@ -109,14 +112,24 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。
 6. 压缩并上传三平台制品。
-7. 删除已存在的同版本 Release/tag 后重新创建 Release。
-8. 清理旧 workflow runs 和 releases。
+7. Release job 单独使用 `contents: write`；若同版本 Release 或远端 tag 已存在则失败，保持发布不可变。
 
+工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
 CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需要同时维护。
+
+### 提交版本规则
+
+- `utils/app_metadata.py` 是版本号唯一事实来源。
+- 每个 Git 提交必须包含一次 `APP_VERSION` 更新，并使用未出现过的新版本号。
+- 未指定发布级别时递增补丁版本；主版本和次版本只按明确的发布计划调整。
+- 不允许把多个提交共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
+- 创建提交前应先比较 `HEAD` 中的版本，确认本次版本已递增，再执行测试、打包自检和差异检查。
 
 ### Auto-Clean 工作流
 
-`.github/workflows/Auto-Clean.yaml` 每月、手动或被调用时删除旧 runs/releases/tags。它使用 `permissions: write-all` 和浮动分支第三方 actions，属于高风险发布配置；修改前先阅读 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
+`.github/workflows/Auto-Clean.yaml` 已改为手动只读的 **Retention Audit**：只列出 workflow runs
+和 releases，不带 schedule、不删除 run/release/tag，权限为 `actions: read` 和 `contents: read`。
+真正的保留期删除若未来需要，必须另行设计审批和保护环境。
 
 ## 调试方法
 
@@ -135,5 +148,5 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
 | Remote 设置重启后恢复默认 | `scrcpy_*` 不在 AppSettings DEFAULTS 白名单，当前很可能无法载入，待修复验证 |
-| 打包后临时邮箱不可用 | spec/workflow 未收集 mail YAML，且其位置不符合用户目录策略；待打包实测 |
+| 打包后临时邮箱未配置 | 在用户配置目录创建受控 `mail.yaml` 或使用显式环境注入；源码树配置不会被读取 |
 | README 中找不到 Performance 旧目录 | README 仍引用已删除的旧性能模块；当前实现是 `performance_launcher.py` + `models/mobileperf/` + `mobileperf/` |

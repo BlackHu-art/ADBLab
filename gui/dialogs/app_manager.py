@@ -29,7 +29,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.dangerous_ops import DangerousOperationPolicy
+from core.settings_manager import AppSettings
 from gui.dialogs.lifecycle import (
+    QThreadGroupShutdownTask,
     alive_callback,
     is_qobject_alive,
     safe_disconnect,
@@ -68,6 +71,7 @@ class AppDetailsDialog(QDialog):
         self.package_name = package_name
         self._workers = []
         self._closing = False
+        self._dangerous_policy = DangerousOperationPolicy()
         self.setWindowTitle(f"Details: {package_name}")
         self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
@@ -201,6 +205,7 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
+        """中止详情 worker，并把等待操作移交后台，避免阻塞关闭事件。"""
         self._closing = True
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         workers = self._workers
@@ -247,7 +252,6 @@ class AppManagerDialog(QDialog):
         layout.setSpacing(4)
         layout.setContentsMargins(8, 8, 8, 6)
 
-        # Search + filter + view toggle
         top = QHBoxLayout()
         top.setSpacing(6)
         top.addWidget(QLabel("Search:"))
@@ -275,10 +279,8 @@ class AppManagerDialog(QDialog):
         top.addWidget(self.refresh_btn)
         layout.addLayout(top)
 
-        # Stacked: table view + icon view
         self.stack = QStackedWidget()
 
-        # --- Table view ---
         self.model = QStandardItemModel(0, 6)
         self.model.setHorizontalHeaderLabels(
             ["", "App Name", "Package Name", "Version", "Status", "Type"]
@@ -311,7 +313,6 @@ class AppManagerDialog(QDialog):
         )
         self.stack.addWidget(self.tree)
 
-        # --- Icon view ---
         self.icon_list = QListWidget()
         self.icon_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.icon_list.setResizeMode(QListWidget.ResizeMode.Adjust)
@@ -329,10 +330,9 @@ class AppManagerDialog(QDialog):
         )
         self.stack.addWidget(self.icon_list)
 
-        self._view_mode = False  # False = table, True = icon
+        self._view_mode = False  # False 表示表格视图，True 表示图标视图
         layout.addWidget(self.stack, 1)
 
-        # Action buttons — uniform size
         btn_h = 30
         a1 = QHBoxLayout()
         a1.setSpacing(4)
@@ -371,7 +371,6 @@ class AppManagerDialog(QDialog):
             a2.addWidget(b, 1)
         layout.addLayout(a2)
 
-        # Log (no label)
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumHeight(100)
@@ -379,7 +378,6 @@ class AppManagerDialog(QDialog):
         self.log_output.setPlaceholderText("Operation log...")
         layout.addWidget(self.log_output)
 
-        # Status
         self.status_bar = QStatusBar()
         self.status_bar.showMessage("Ready")
         layout.addWidget(self.status_bar)
@@ -437,7 +435,6 @@ class AppManagerDialog(QDialog):
         self._app_versions = {}
         self._detail_row_by_pkg = {}
         self._detail_icon_by_pkg = {}
-        # Table view (no icons in list)
         self.tree.setSortingEnabled(False)
         self.model.removeRows(0, self.model.rowCount())
         for row, (name, pkg, st, at) in enumerate(apps):
@@ -455,7 +452,6 @@ class AppManagerDialog(QDialog):
             )
             self._detail_row_by_pkg[pkg] = row
         self.tree.setSortingEnabled(True)
-        # Icon view
         self.icon_list.clear()
         sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
         for name, pkg, st, at in sorted_apps:
@@ -676,7 +672,7 @@ class AppManagerDialog(QDialog):
             else:
                 self.proxy.setFilterRegularExpression("")
             self.proxy.setFilterKeyColumn(-1)
-        # Also filter icon view
+        # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。
         for i in range(self.icon_list.count()):
             item = self.icon_list.item(i)
             pkg = (item.data(Qt.UserRole) or "").lower()
@@ -746,6 +742,8 @@ class AppManagerDialog(QDialog):
         w.start()
 
     def _modify_one(self, action, pkg):
+        if not self._confirm_dangerous_action(action, 1):
+            return
         if action == "force_stop":
             w = AppManagerWorker(self.device_ip, "modify_app", action="force_stop", package_name=pkg)
             w.log_message.connect(self.log)
@@ -802,12 +800,36 @@ class AppManagerDialog(QDialog):
         if not pkgs:
             QMessageBox.warning(self, "None", "No apps selected.")
             return
+        if not self._confirm_dangerous_action(action, len(pkgs)):
+            return
         for pkg in pkgs:
             w = AppManagerWorker(self.device_ip, "modify_app", action=action, package_name=pkg)
             w.log_message.connect(self.log)
             self._track_worker(w)
             w.start()
         self._load_apps()
+
+    def _confirm_dangerous_action(self, action: str, target_count: int) -> bool:
+        decision = self._dangerous_policy.evaluate(
+            action,
+            confirmation_enabled=bool(
+                AppSettings.instance().get("confirm_dangerous_ops", True)
+            ),
+            target_count=target_count,
+        )
+        if not decision.requires_confirmation:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Confirm dangerous operation",
+            decision.message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.log(f"Cancelled dangerous operation: {action}")
+            return False
+        return True
 
     def _backup_selected(self):
         pkgs = self._get_selected_pkgs()
@@ -927,7 +949,29 @@ class AppManagerDialog(QDialog):
         if w in self._workers:
             self._workers.remove(w)
 
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """将仍在运行的应用管理 worker 作为一组资源注册到监督器。"""
+        workers = [
+            worker
+            for worker in self._workers
+            if QThreadGroupShutdownTask._running(worker)
+        ]
+        if not workers:
+            return ()
+        handle = QThreadGroupShutdownTask(workers)
+        supervisor.register(
+            f"{task_prefix}-workers",
+            owner_id=owner_id,
+            kind="app_manager_workers",
+            request_stop=handle.request_stop,
+            wait=handle.wait,
+            is_running=handle.is_running,
+        )
+        self._shutdown_registered = True
+        return (f"{task_prefix}-workers",)
+
     def closeEvent(self, event):
+        """断开晚到信号并中止 worker；已注册时由统一监督器负责等待。"""
         self._closing = True
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()
@@ -938,5 +982,6 @@ class AppManagerDialog(QDialog):
         for w in workers:
             w.abort()
             w.setParent(None)
-        wait_for_threads_later(workers, 5000)
+        if not getattr(self, "_shutdown_registered", False):
+            wait_for_threads_later(workers, 5000)
         super().closeEvent(event)

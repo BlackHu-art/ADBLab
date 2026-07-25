@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
- @author      :  Frankie
- @time        :  $DATA  $TIME
+采集 SurfaceFlinger 或 gfxinfo 帧时间并计算 FPS 与卡顿次数。
 """
 
 import queue
@@ -26,32 +25,30 @@ from mobileperf.android.globaldata import RuntimeData
 
 
 class SurfaceStatsCollector(object):
-    '''Collects surface stats for a SurfaceView from the output of SurfaceFlinger
-    '''
+    """从 SurfaceFlinger 输出中采集当前 Surface 的帧统计数据。"""
 
     def __init__(self, device, frequency, package_name, fps_queue, jank_threshold, use_legacy=False):
         self.device = device
         self.frequency = frequency
         self.package_name = package_name
-        self.jank_threshold = jank_threshold / 1000.0  # 内部的时间戳是秒为单位
+        self.jank_threshold = jank_threshold / 1000.0  # 内部时间戳以秒为单位。
         self.use_legacy_method = use_legacy
         self.surface_before = 0
         self.last_timestamp = 0
         self.data_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.focus_window = None
-        #       queue 上报线程用
+        # 该队列用于向上层采集线程报告结果。
         self.fps_queue = fps_queue
 
     def start(self, start_time):
-        '''打开SurfaceStatsCollector
-        '''
+        """启动 Surface 统计数据采集和计算线程。"""
         if not self.use_legacy_method and self._clear_surfaceflinger_latency_data():
             try:
                 self.focus_window = self.get_focus_activity()
-                # 如果self.focus_window里包含字符'$'，必须将其转义
+                # Shell 会解释窗口名中的美元符号，因此发送命令前需要转义。
                 if (self.focus_window.find('$') != -1):
-                    self.focus_window = self.focus_window.replace('$', '\$')
+                    self.focus_window = self.focus_window.replace("$", r"\$")
             except:
                 logger.warn(u'无法动态获取当前Activity名称，使用page_flip统计全屏帧率！')
                 self.use_legacy_method = True
@@ -66,8 +63,7 @@ class SurfaceStatsCollector(object):
         self.calculator_thread.start()
 
     def stop(self):
-        '''结束SurfaceStatsCollector
-        '''
+        """停止 Surface 统计数据采集线程。"""
         if self.collector_thread:
             self.stop_event.set()
             self.collector_thread.join()
@@ -76,13 +72,13 @@ class SurfaceStatsCollector(object):
                 self.fps_queue.task_done()
 
     def get_focus_activity(self):
-        '''通过dumpsys window windows获取activity名称  window名?
-        '''
+        """通过 dumpsys window windows 获取当前焦点 Activity 的窗口名。"""
         return self.device.adb.get_focus_activity()
 
     def _calculate_results(self, refresh_period, timestamps):
-        """Returns a list of SurfaceStatsCollector.Result.
-        不少手机第一列  第三列 数字完全相同
+        """根据帧时间戳计算 FPS 和卡顿次数。
+
+        部分设备返回的第一列和第三列时间戳完全相同，因此使用第二列计算。
         """
 
         frame_count = len(timestamps)
@@ -103,9 +99,7 @@ class SurfaceStatsCollector(object):
         return fps, jank
 
     def _calculate_results_new(self, refresh_period, timestamps):
-        """Returns a list of SurfaceStatsCollector.Result.
-        不少手机第一列  第三列 数字完全相同
-        """
+        """根据帧数量选择对应算法计算 FPS 和卡顿次数。"""
 
         frame_count = len(timestamps)
         if frame_count == 0:
@@ -134,24 +128,25 @@ class SurfaceStatsCollector(object):
 
     def _calculate_jankey_new(self, timestamps):
 
-        '''同时满足两个条件计算为一次卡顿：
-            ①Display FrameTime>前三帧平均耗时2倍。
-            ②Display FrameTime>两帧电影帧耗时 (1000ms/24*2≈83.33ms)。
-            '''
+        """同时满足以下条件时计为一次卡顿。
+
+        1. Display FrameTime 大于前三帧平均耗时的两倍。
+        2. Display FrameTime 大于两帧电影帧耗时，约 83.33 毫秒。
+        """
 
         twofilmstamp = 83.3 / 1000.0
         tempstamp = 0
-        # 统计丢帧卡顿
+        # 统计丢帧引起的卡顿。
         jank = 0
         for index, timestamp in enumerate(timestamps):
-            #前面四帧按超过166ms计算为卡顿
+            # 前四帧缺少完整历史窗口，按固定阈值判断卡顿。
             if (index == 0) or (index == 1) or (index == 2) or (index == 3):
                 if tempstamp == 0:
                     tempstamp = timestamp[1]
                     continue
-                # 绘制帧耗时
+                # 当前绘制帧耗时。
                 costtime = timestamp[1] - tempstamp
-                # 耗时大于阈值10个时钟周期,用户能感受到卡顿感
+                # 超过配置阈值时记为一次可感知卡顿。
                 if costtime > self.jank_threshold:
                     jank = jank + 1
                 tempstamp = timestamp[1]
@@ -170,23 +165,22 @@ class SurfaceStatsCollector(object):
 
     def _calculate_janky(self, timestamps):
         tempstamp = 0
-        #统计丢帧卡顿
+        # 统计丢帧引起的卡顿。
         jank = 0
         for timestamp in timestamps:
             if tempstamp == 0:
                 tempstamp = timestamp[1]
                 continue
-            #绘制帧耗时
+            # 当前绘制帧耗时。
             costtime = timestamp[1] - tempstamp
-            #耗时大于阈值10个时钟周期,用户能感受到卡顿感
+            # 超过配置阈值时记为一次可感知卡顿。
             if costtime > self.jank_threshold:
                 jank = jank + 1
             tempstamp = timestamp[1]
         return jank
 
     def _calculator_thread(self, start_time):
-        '''处理surfaceflinger数据
-        '''
+        """消费 SurfaceFlinger 数据并将 FPS 结果写入文件或上报队列。"""
         fps_file = os.path.join(RuntimeData.package_save_path, 'fps.csv')
         if self.use_legacy_method:
             fps_title = ['datetime', 'fps']
@@ -220,7 +214,6 @@ class SurfaceStatsCollector(object):
                     tmp_list = [TimeUtils.getCurrentTimeUnderline(), fps]
                     try:
                         with open(fps_file, 'a+', encoding="utf-8") as f:
-                            # tmp_list[0] = TimeUtils.formatTimeStamp(tmp_list[0])
                             csv.writer(f, lineterminator='\n').writerow(tmp_list)
                     except RuntimeError as e:
                         logger.exception(e)
@@ -228,13 +221,12 @@ class SurfaceStatsCollector(object):
                     refresh_period = data[0]
                     timestamps = data[1]
                     collect_time = data[2]
-                    # fps,jank = self._calculate_results(refresh_period, timestamps)
                     fps, jank = self._calculate_results_new(refresh_period, timestamps)
                     logger.debug('FPS:%2s Jank:%s' % (fps, jank))
                     fps_list = [collect_time, self.focus_window, fps, jank]
                     if self.fps_queue:
                         self.fps_queue.put(fps_list)
-                    if not self.fps_queue:  #为了让单个脚本运行时保存数据
+                    if not self.fps_queue:  # 未提供上报队列时直接保存本地结果。
                         try:
                             with open(fps_file, 'a+', encoding="utf-8") as f:
                                 tmp_list = copy.deepcopy(fps_list)
@@ -254,13 +246,12 @@ class SurfaceStatsCollector(object):
                     self.fps_queue.task_done()
 
     def _collector_thread(self):
-        '''收集surfaceflinger数据
-                             用了两种方式:use_legacy_method 为ture时，需要root权限:
-                             service call SurfaceFlinger 1013 得到帧数
-                为false,dumpsys SurfaceFlinger --latency
-        Android 8.0 dumpsys SurfaceFlinger 没有内容
-                则用dumpsys gfxinfo package_name framestats
-        '''
+        """循环采集帧数据。
+
+        兼容模式通过 ``service call SurfaceFlinger 1013`` 获取帧数，可能需要 root；
+        常规模式使用 ``dumpsys SurfaceFlinger --latency``。Android 8.0 及以上版本
+        改用 ``dumpsys gfxinfo <package> framestats`` 补充帧时间数据。
+        """
         is_first = True
         while not self.stop_event.is_set():
             try:
@@ -273,11 +264,11 @@ class SurfaceStatsCollector(object):
                     timestamps = []
                     refresh_period, new_timestamps = self._get_surfaceflinger_frame_data()
                     if refresh_period is None or new_timestamps is None:
-                        # activity发生变化，旧的activity不存时，取的时间戳为空，
+                        # Activity 切换且旧窗口消失时，刷新焦点窗口后重新采集。
                         self.focus_window = self.get_focus_activity()
                         logger.debug("refresh_period is None or timestamps is None")
                         continue
-                    #                计算不重复的帧
+                    # 只保留晚于上次采样点的新帧。
                     timestamps += [timestamp for timestamp in new_timestamps
                                    if timestamp[1] > self.last_timestamp]
                     if len(timestamps):
@@ -287,8 +278,7 @@ class SurfaceStatsCollector(object):
                         self.last_timestamp = timestamps[-1][1]
                         is_first = False
                     else:
-                        # 两种情况：1）activity发生变化，但旧的activity仍然存时，取的时间戳不为空，但时间全部小于等于last_timestamp
-                        #        2）activity没有发生变化，也没有任何刷新
+                        # 无新帧可能是窗口切换后仍返回旧数据，也可能是界面没有刷新。
                         is_first = True
                         cur_focus_window = self.get_focus_activity()
                         if self.focus_window != cur_focus_window:
@@ -309,14 +299,10 @@ class SurfaceStatsCollector(object):
         self.data_queue.put(u'Stop')
 
     def _clear_surfaceflinger_latency_data(self):
-        """Clears the SurfaceFlinger latency data.
+        """清空 SurfaceFlinger 延迟数据，并返回设备是否支持该命令。
 
-        Returns:
-            True if SurfaceFlinger latency is supported by the device, otherwise
-            False.
+        支持时命令不返回内容；不支持时通常返回与 dumpsys SurfaceFlinger 相似的文本。
         """
-        # The command returns nothing if it is supported, otherwise returns many
-        # lines of result just like 'dumpsys SurfaceFlinger'.
         if self.focus_window == None:
             results = self.device.adb.run_shell_cmd(
                 'dumpsys SurfaceFlinger --latency-clear')
@@ -326,57 +312,21 @@ class SurfaceStatsCollector(object):
         return not len(results)
 
     def _get_surfaceflinger_frame_data(self):
-        """Returns collected SurfaceFlinger frame timing data.
-        return:(16.6,[[t1,t2,t3],[t4,t5,t6]])
-        Returns:
-            A tuple containing:
-            - The display's nominal refresh period in seconds.
-            - A list of timestamps signifying frame presentation times in seconds.
-            The return value may be (None, None) if there was no data collected (for
-            example, if the app was closed before the collector thread has finished).
+        """返回屏幕刷新周期和已完成帧的时间戳列表。
+
+        返回结构为 ``(refresh_period, [[t1, t2, t3], ...])``；应用提前退出或没有
+        可用数据时返回 ``(None, None)``。
         """
-        # shell dumpsys SurfaceFlinger --latency <window name>
-        # prints some information about the last 128 frames displayed in
-        # that window.
-        # The data returned looks like this:
+        # 命令格式：adb -s <DEVICE_SERIAL> shell dumpsys SurfaceFlinger --latency <WINDOW_NAME>
+        # 第一行是刷新周期，后续每行是同一帧的三个纳秒时间戳，示例：
         # 16954612
         # 7657467895508     7657482691352     7657493499756
         # 7657484466553     7657499645964     7657511077881
         # 7657500793457     7657516600576     7657527404785
-        # (...)
-        #
-        # The first line is the refresh period (here 16.95 ms), it is followed
-        # by 128 lines w/ 3 timestamps in nanosecond each:
-        # A) when the app started to draw
-        # B) the vsync immediately preceding SF submitting the frame to the h/w
-        # C) timestamp immediately after SF submitted that frame to the h/w
-        #
-        # The difference between the 1st and 3rd timestamp is the frame-latency.
-        # An interesting data is when the frame latency crosses a refresh period
-        # boundary, this can be calculated this way:
-        #
-        # ceil((C - A) / refresh-period)
-        #
-        # (each time the number above changes, we have a "jank").
-        # If this happens a lot during an animation, the animation appears
-        # janky, even if it runs at 60 fps in average.
-        #
-
-        # Google Pixel 2 android8.0 dumpsys SurfaceFlinger --latency结果
-        # 16666666
-        # 0       0       0
-        # 0       0       0
-        # 0       0       0
-        # 0       0       0
-        # 但华为 荣耀9 android8.0 dumpsys SurfaceFlinger --latency结果是正常的 但数据更新很慢  也不能用来计算fps
-        # 16666666
-        # 9223372036854775807     3618832932780   9223372036854775807
-        # 9223372036854775807     3618849592155   9223372036854775807
-        # 9223372036854775807     3618866251530   9223372036854775807
-
-        # Google Pixel 2 Android8.0 dumpsys SurfaceFlinger --latency window 结果
-        # C:\Users\luke01>adb -s HT7B81A05143 shell dumpsys SurfaceFlinger --latency window_name
-        # 16666666
+        # 三列依次表示应用开始绘制、SurfaceFlinger 提交前的垂直同步，以及提交完成时间。
+        # 第一列与第三列之差是帧延迟；跨越刷新周期的数量可按以下公式计算：
+        # 计算公式：ceil((C - A) / refresh-period)
+        # 该值持续增大时表示连续发生卡顿，即使平均 FPS 较高也可能不流畅。
         refresh_period = None
         timestamps = []
         nanoseconds_per_second = 1e9
@@ -387,9 +337,7 @@ class SurfaceStatsCollector(object):
             results = results.replace("\r\n", "\n").splitlines()
             refresh_period = int(results[0]) / nanoseconds_per_second
             results = self.device.adb.run_shell_cmd('dumpsys gfxinfo %s framestats' % self.package_name)
-            #             logger.debug(results)
-            #        把dumpsys gfxinfo package_name framestats的结果封装成   dumpsys SurfaceFlinger --latency的结果
-            # 方便后面计算fps jank统一处理
+            # 将 gfxinfo framestats 结果转换为统一的三时间戳结构。
             results = results.replace("\r\n", "\n").splitlines()
             if not len(results):
                 return (None, None)
@@ -399,7 +347,6 @@ class SurfaceStatsCollector(object):
                 if not isHaveFoundWindow:
                     if "Window" in line and self.focus_window in line:
                         isHaveFoundWindow = True
-                #                         logger.debug("Window line:"+line)
                 if not isHaveFoundWindow:
                     continue
                 if "PROFILEDATA" in line:
@@ -407,14 +354,13 @@ class SurfaceStatsCollector(object):
                 fields = []
                 fields = line.split(",")
                 if fields and '0' == fields[0]:
-                    #                     logger.debug(line)
-                    # 获取INTENDED_VSYNC VSYNC FRAME_COMPLETED时间 利用VSYNC计算fps jank
+                    # 提取 INTENDED_VSYNC、VSYNC 和 FRAME_COMPLETED 计算 FPS 与卡顿。
                     timestamp = [int(fields[1]), int(fields[2]), int(fields[13])]
                     if timestamp[1] == pending_fence_timestamp:
                         continue
                     timestamp = [_timestamp / nanoseconds_per_second for _timestamp in timestamp]
                     timestamps.append(timestamp)
-                #               如果到了下一个窗口，退出
+                # 到达下一个窗口的数据段时结束当前窗口解析。
                 if 2 == PROFILEDATA_line:
                     break
         else:
@@ -432,10 +378,7 @@ class SurfaceStatsCollector(object):
             except Exception as e:
                 logger.exception(e)
                 return (None, None)
-            # If a fence associated with a frame is still pending when we query the
-            # latency data, SurfaceFlinger gives the frame a timestamp of INT64_MAX.
-            # Since we only care about completed frames, we will ignore any timestamps
-            # with this value.
+            # 未完成帧的 fence 会被 SurfaceFlinger 标记为 INT64_MAX，此处只保留已完成帧。
 
             for line in results[1:]:
                 fields = line.split()
@@ -449,22 +392,17 @@ class SurfaceStatsCollector(object):
         return (refresh_period, timestamps)
 
     def _get_surface_stats_legacy(self):
-        """Legacy method (before JellyBean), returns the current Surface index
-             and timestamp.
+        """返回 JellyBean 之前兼容路径的 Surface 索引和时间戳。
 
-        Calculate FPS by measuring the difference of Surface index returned by
-        SurfaceFlinger in a period of time.
-
-        Returns:
-            Dict of {page_flip_count (or 0 if there was an error), timestamp}.
+        该路径通过一段时间内 SurfaceFlinger 返回的索引差计算 FPS。
         """
         cur_surface = None
         timestamp = datetime.datetime.now()
-        # 这个命令可能需要root
+        # 该命令可能需要 root 权限。
         ret = self.device.adb.run_shell_cmd("service call SurfaceFlinger 1013")
         if not ret:
             return None
-        match = re.search('^Result: Parcel\((\w+)', ret)
+        match = re.search(r"^Result: Parcel\((\w+)", ret)
         if match:
             cur_surface = int(match.group(1), 16)
             return {'page_flip_count': cur_surface, 'timestamp': timestamp}
@@ -472,19 +410,19 @@ class SurfaceStatsCollector(object):
 
 
 class FPSMonitor(Monitor):
-    '''FPS监控器'''
+    """管理 FPS 采集器及其结果目录。"""
 
     def __init__(self, device_id, package_name=None, frequency=1.0, timeout=24 * 60 * 60, fps_queue=None, jank_threshold=166, use_legacy=False):
-        '''构造器
+        """初始化 FPS 监控器。
 
-        :param str device_id: 设备id
-        :param float frequency: 帧率统计频率，默认1秒
-        :param int jank_threshold: 计算jank值的阈值，单位毫秒，默认10个时钟周期，166ms
-        :param bool use_legacy: 当指定该参数为True时总是使用page_flip统计帧率，此时反映的是全屏内容的刷新帧率。
-                    当不指定该参数时，对4.1以上的系统将统计当前获得焦点的Activity的刷新帧率
-        '''
+        :param str device_id: 设备标识。
+        :param float frequency: 帧率统计间隔，默认一秒。
+        :param int jank_threshold: 卡顿阈值，单位为毫秒。
+        :param bool use_legacy: 为 True 时使用 page_flip 统计全屏刷新帧率；否则统计
+            当前焦点 Activity 的刷新帧率。
+        """
         self.use_legacy = use_legacy
-        self.frequency = frequency  # 取样频率
+        self.frequency = frequency  # 采样频率
         self.jank_threshold = jank_threshold
         self.device = AndroidDevice(device_id)
         self.timeout = timeout
@@ -494,8 +432,7 @@ class FPSMonitor(Monitor):
         self.fpscollector = SurfaceStatsCollector(self.device, self.frequency, package_name, fps_queue, self.jank_threshold, self.use_legacy)
 
     def start(self, start_time):
-        '''启动FPSMonitor日志监控器
-        '''
+        """启动 FPS 监控器。"""
         if not RuntimeData.package_save_path:
             RuntimeData.package_save_path = os.path.join(os.path.abspath(os.path.join(os.getcwd(), "../..")), 'results', self.package, start_time)
             if not os.path.exists(RuntimeData.package_save_path):
@@ -505,8 +442,7 @@ class FPSMonitor(Monitor):
         logger.debug('FPS monitor has start!')
 
     def stop(self):
-        '''结束FPSMonitor日志监控器
-        '''
+        """停止 FPS 监控器。"""
         self.fpscollector.stop()
         logger.debug('FPS monitor has stop!')
 
@@ -514,27 +450,9 @@ class FPSMonitor(Monitor):
         pass
 
     def parse(self, file_path):
-        '''解析
-        :param str file_path: 要解析数据文件的路径
-        '''
+        """解析指定的 FPS 数据文件。"""
         pass
 
     def get_fps_collector(self):
-        '''获得fps收集器，收集器里保存着time fps jank的列表
-
-        :return: fps收集器
-        :rtype: SurfaceStatsCollector
-        '''
+        """返回保存时间、FPS 和卡顿数据的采集器。"""
         return self.fpscollector
-
-
-if __name__ == '__main__':
-    #    tulanduo android8.0 api level 27
-    monitor = FPSMonitor('TC79SSDMO7HEY5Z9', "com.alibaba.ailabs.genie.smartapp", 1)
-    #  mate 9 android8.0
-    #     monitor  = FPSMonitor('MKJNW18226007860',"com.sankuai.meituan",2)
-    # android8.0 Google Pixel 2
-    #     monitor  = FPSMonitor('HT7B81A05143',package_name = "com.alibaba.ailibs.genie.contacts",1)
-    monitor.start(TimeUtils.getCurrentTimeUnderline())
-    time.sleep(600)
-    monitor.stop()

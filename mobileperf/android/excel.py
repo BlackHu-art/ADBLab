@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""将性能采集 CSV 数据写入 Excel 工作簿并生成趋势图。"""
 import csv
 import os
 import re
@@ -20,6 +17,7 @@ _WORKSHEET_NAME_LIMIT = 31
 
 
 class Excel(object):
+    """封装工作簿、工作表名称归一化和趋势图生成。"""
 
     def __init__(self, excel_file):
         self.excel_file = excel_file
@@ -28,6 +26,7 @@ class Excel(object):
         self._worksheet_names = set()
 
     def _safe_sheet_name(self, sheet_name):
+        """返回符合 Excel 限制且在当前工作簿内唯一的工作表名称。"""
         raw_name = str(sheet_name or "Sheet")
         clean_name = _INVALID_WORKSHEET_CHARS.sub("_", raw_name).strip("'").strip()
         base_name = (clean_name or "Sheet")[:_WORKSHEET_NAME_LIMIT]
@@ -46,6 +45,7 @@ class Excel(object):
         return candidate
 
     def add_sheet(self, sheet_name, x_axis, y_axis, headings, lines):
+        """写入二维数据，并在数据量足够时插入折线图。"""
         worksheet_name = self._safe_sheet_name(sheet_name)
         worksheet = self.workbook.add_worksheet(worksheet_name)
         worksheet.write_row('A1', headings)
@@ -65,45 +65,37 @@ class Excel(object):
             worksheet.insert_chart('B3', chart, {'x_scale': 2, 'y_scale': 2})
 
     def save(self):
+        """关闭工作簿并将内容保存到目标文件。"""
         self.workbook.close()
 
     def csv_to_xlsx(self, csv_file, sheet_name, x_axis, y_axis, y_fields=[]):
-        '''
-        把csv的数据存到excel中，并画曲线
-        csv_file csv 文件路径 表格名
-        sheet_name 图表名
-        x_axis 横轴名 和 表中做横轴字段名
-        y_axis 纵轴名
-        y_fields 纵轴表中数据字段名 ，可以多个
-        '''
+        """将 CSV 数据写入工作表，并为指定纵轴字段生成趋势图。
+
+        ``csv_file`` 是 CSV 文件路径，``sheet_name`` 是图表名称，
+        ``x_axis`` 和 ``y_axis`` 分别是坐标轴名称，``y_fields`` 是需要展示的字段列表。
+        """
         filename = os.path.splitext(os.path.basename(csv_file))[0]
         logger.debug("filename:" + filename)
         worksheet_name = self._safe_sheet_name(filename)
-        worksheet = self.workbook.add_worksheet(worksheet_name)  # 创建一个sheet表格
+        worksheet = self.workbook.add_worksheet(worksheet_name)
         with open(csv_file, 'r') as f:
             read = csv.reader(f)
-            # 行数
             l = 0
-            # 表头
             headings = []
             for line in read:
-                # print(line)
                 r = 0
                 for i in line:
-                    # print(i)
                     if self.is_number(i):
-                        worksheet.write(l, r, float(i))  # 一个一个将单元格数据写入
+                        worksheet.write(l, r, float(i))
                     else:
                         worksheet.write(l, r, i)
                     r = r + 1
                 if l == 0:
                     headings = line
                 l = l + 1
-                # 列数
             columns = len(headings)
-        # 求出展示数据索引
+        # 根据表头定位需要绘制的字段及系列名称。
         indexs = []
-        # 求出系列名所在索引
         series_index = []
         for columu_name in y_fields:
             indexs.extend([i for i, v in enumerate(headings) if v == columu_name])
@@ -112,12 +104,11 @@ class Excel(object):
         logger.debug(series_index)
         if columns > 1 and l > 2:
             chart = self.workbook.add_chart({'type': 'line'})
-            # 画图
             i = 0
             for index in indexs:
                 if "pid_cpu%" == headings[index] or "pid_pss(MB)" == headings[index]:
                     chart.add_series({
-                        # 这个是series 系列名 包名
+                        # 进程指标以包名列作为系列名称。
                         'name': [worksheet_name, 1, series_index[i]],
                         'categories': [worksheet_name, 1, 0, l - 1, 0],
                         'values': [worksheet_name, 1, index, l - 1, index],
@@ -131,13 +122,13 @@ class Excel(object):
                         'values': [worksheet_name, 1, index, l - 1, index],
                         'line': {'color': self.color_list[index % len(self.color_list)]}
                     })
-            # 图表名
             chart.set_title({'name': sheet_name})
             chart.set_x_axis({'name': x_axis})
             chart.set_y_axis({'name': y_axis})
             worksheet.insert_chart('L3', chart, {'x_scale': 2, 'y_scale': 2})
 
     def is_number(self, s):
+        """判断字符串是否可作为数值写入工作表。"""
         try:
             float(s)
             return True
@@ -152,12 +143,3 @@ class Excel(object):
             pass
 
         return False
-
-
-if __name__ == '__main__':
-    book_name = 'summary.xlsx'
-    excel = Excel(book_name)
-    # excel.csv_to_xlsx("mem_infos_10-42-38.csv","meminfo","datetime","mem(MB)",["pid_pss(MB)","pid_alloc_heap(MB)"])
-    excel.csv_to_xlsx("/Users/look/Desktop/project/mobileperf-mac/results/com.alibaba.ailabs.genie.launcher/2019_03_05_23_55_28/cpuinfo.csv",
-                      "pid_cpu", "datetime", "%", ["pid_cpu%", "total_pid_cpu%"])
-    excel.save()

@@ -1,6 +1,6 @@
-"""ADBLab styles package -- theme, QSS templates, fonts.
+"""统一导出 ADBLab 主题、QSS 模板和字体能力。
 
-Usage:
+用法：
     from gui.styles import BaseStyles, get_default_font
 """
 
@@ -10,7 +10,7 @@ from .fonts import FontMixin, get_default_font
 
 
 class BaseStyles(ThemeMixin, QSSMixin, FontMixin):
-    """Unified styles: theme colors + QSS templates + font management."""
+    """组合主题颜色、QSS 模板和字体管理能力。"""
     pass
 
 

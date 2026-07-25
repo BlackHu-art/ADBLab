@@ -1,10 +1,15 @@
+"""提供 ADBController 的模型装配、结果分派和任务生命周期基础能力。"""
+
 import os
 import threading
 import uuid
+from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QThreadPool, Slot
 
+from adblab.application.envelope import OperationMetadata, split_operation_metadata
+from adblab.application.operations import OperationManager, OperationState
 from core.log_service import LogService
 from core.mail.email_task import GetRandomEmailTask
 from core.perf_trace import (
@@ -27,7 +32,7 @@ from utils.resource_path import resource_path
 
 
 class _ADBControllerBase:
-    """Shared infrastructure for ADBController — models, signals, handler dispatch."""
+    """封装 ADBController 共用的模型、信号和处理器分派基础设施。"""
 
     def __init__(self, log_service: LogService):
         self.signals = ADBControllerSignals()
@@ -42,7 +47,11 @@ class _ADBControllerBase:
         self.thread_pool = QThreadPool.globalInstance()
         self._pending_ops = {}
         self._pending_lock = threading.Lock()
+        self.operation_manager = OperationManager()
+        self._operation_handler_map = {}
         self._connect_model_signals()
+        # 由界面组装根注入，用于托管 Controller 创建的非模态窗口。
+        self.window_parent = None
         self.last_save_dir = None
         self._active_viewers = []
         self._monkey_running = set()
@@ -64,7 +73,9 @@ class _ADBControllerBase:
 
     def _build_handler_map(self):
         self._handler_map = {}
+        self._operation_handler_map = {}
         _handler_names: dict[str, str] = {}
+        _operation_handler_names: dict[str, str] = {}
         for klass in reversed(type(self).__mro__):
             registered = klass.__dict__.get("_handlers", {})
             for op_key, handler_name in registered.items():
@@ -77,9 +88,28 @@ class _ADBControllerBase:
                     )
                 _handler_names[op_key] = handler_name
                 self._handler_map[op_key] = getattr(self, handler_name)
+            operation_handlers = klass.__dict__.get("_operation_handlers", {})
+            for op_key, handler_name in operation_handlers.items():
+                if op_key in _operation_handler_names:
+                    previous = _operation_handler_names[op_key]
+                    self.log_service.log(
+                        "WARNING",
+                        f"Operation handler collision: '{op_key}' — "
+                        f"{klass.__name__}.{handler_name} overrides {previous}",
+                    )
+                _operation_handler_names[op_key] = handler_name
+                self._operation_handler_map[op_key] = getattr(self, handler_name)
 
     def _generate_operation_id(self) -> str:
         return str(uuid.uuid4())
+
+    def _register_operation_handler(self, op_type: str, handler):
+        """注册 vNext 处理器，同时保持旧处理器签名不变。"""
+        if not isinstance(op_type, str) or not op_type.strip():
+            raise ValueError("op_type must be a non-empty string")
+        if not callable(handler):
+            raise TypeError("handler must be callable")
+        self._operation_handler_map[op_type.strip()] = handler
 
     @Slot(str, bool, str)
     def _emit_operation(self, operation: str, success: bool, message: str):
@@ -91,18 +121,23 @@ class _ADBControllerBase:
         self.signals.operation_completed.emit(operation, success, message)
 
     def _require_devices(self, devices: list, op_name: str) -> bool:
-        """Return True if devices is non-empty; emit warning and return False otherwise."""
+        """校验设备列表；为空时发出失败结果并返回 False。"""
         if not devices:
             self._emit_operation(op_name, False, "⚠️ No devices selected")
             return False
         return True
 
     def _handle_async_response(self, method_name: str, result):
+        result, operation_metadata = split_operation_metadata(result)
         result, perf = split_perf(result)
         op_type = method_name.replace("_async", "")
         ui_started_at = perf_counter()
 
         try:
+            if operation_metadata is not None:
+                self._route_operation_response(op_type, result, operation_metadata)
+                return
+
             if op_type == "get_connected_devices":
                 if isinstance(result, list):
                     self._process_device_list(result)
@@ -122,6 +157,83 @@ class _ADBControllerBase:
         finally:
             self._log_perf_if_slow(op_type, perf, ui_started_at, perf_counter())
 
+    def _route_operation_response(
+        self,
+        op_type: str,
+        result,
+        metadata: OperationMetadata,
+    ):
+        snapshot = self.operation_manager.get(metadata.operation_id)
+        if snapshot is None:
+            self.log_service.log(
+                "DEBUG",
+                f"[{op_type}] Ignored stale operation result",
+            )
+            return
+        if metadata.method_name != op_type or metadata.operation_kind != snapshot.kind:
+            self.log_service.log(
+                "ERROR",
+                f"[{op_type}] Operation metadata mismatch",
+            )
+            self._fail_operation_protocol(
+                snapshot,
+                "Operation metadata mismatch",
+            )
+            return
+        operation_handler = self._operation_handler_map.get(op_type)
+        if operation_handler is None:
+            self.log_service.log(
+                "ERROR",
+                f"[{op_type}] No vNext operation handler registered",
+            )
+            self._fail_operation_protocol(
+                snapshot,
+                "Operation handler missing",
+            )
+            return
+        self._dispatch_operation_handler(
+            operation_handler,
+            op_type,
+            result,
+            metadata,
+        )
+
+    def _dispatch_operation_handler(
+        self,
+        handler,
+        op_type: str,
+        result,
+        metadata: OperationMetadata,
+    ):
+        try:
+            handler(result, metadata)
+        except Exception as exc:
+            self.log_service.log(
+                "ERROR",
+                f"[{op_type}] Operation handler error: {type(exc).__name__}",
+            )
+            snapshot = self.operation_manager.get(metadata.operation_id)
+            terminal = (
+                self._fail_operation_protocol(
+                    snapshot,
+                    "Operation handler failed",
+                )
+                if snapshot is not None
+                else None
+            )
+            if terminal is None:
+                self.log_service.log(
+                    "DEBUG",
+                    f"[{op_type}] Operation already terminal after handler error",
+                )
+
+    def _fail_operation_protocol(self, snapshot, message: str):
+        return self.operation_manager.finish(
+            snapshot.operation_id,
+            OperationState.FAILED,
+            message=message,
+        )
+
     def _log_perf_if_slow(self, op_type: str, perf, ui_started_at: float, ui_finished_at: float):
         summary = summarize_perf(perf, ui_started_at, ui_finished_at)
         threshold_ms = self._performance_log_threshold_ms()
@@ -130,7 +242,12 @@ class _ADBControllerBase:
 
     def _performance_log_threshold_ms(self) -> float:
         try:
-            return float(self._settings.get("performance_log_threshold_ms", DEFAULT_SLOW_THRESHOLD_MS))
+            return float(
+                self._settings.get(
+                    "performance_log_threshold_ms",
+                    DEFAULT_SLOW_THRESHOLD_MS,
+                )
+            )
         except (AttributeError, TypeError, ValueError):
             return DEFAULT_SLOW_THRESHOLD_MS
 
@@ -172,9 +289,11 @@ class _ADBControllerBase:
 
     def shutdown(self):
         """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""
+        self.log_service.log("DEBUG", "controller shutdown started")
         for model in (self.testing_model, self.advanced_model):
             shutdown = getattr(model, "shutdown", None)
             if callable(shutdown):
                 shutdown()
         ProcessRunner.stop_all_tracked()
         self.executor.shutdown(wait=False, cancel_futures=True)
+        self.log_service.log("DEBUG", "controller shutdown completed")

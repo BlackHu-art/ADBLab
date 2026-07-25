@@ -1,31 +1,40 @@
-name: Auto-Clean
+name: Retention Audit
 
 on:
-  workflow_call:
-  #自动清理：每月1日凌晨18:00 (UTC时间)
-  schedule:
-    - cron: 0 18 1 * *
-  #手动清理
   workflow_dispatch:
 
-permissions: write-all
+permissions:
+  actions: read
+  contents: read
 
 jobs:
-  Cleaning:
+  audit:
+    name: Report retention candidates
     runs-on: ubuntu-latest
 
     steps:
-    - name: Delete Old Workflows
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        retain_days: 2
-        keep_minimum_runs: 0
+      - name: Report workflow runs outside the retention window
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Workflow runs after the newest 5 (audit only):"
+          gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 100 \
+            --json databaseId,displayTitle,createdAt,status,url \
+            --jq '.[5:]'
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-    - name: Delete Old Releases
-      uses: dev-drprasad/delete-older-releases@master
-      with:
-        keep_latest: 8
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Report releases outside the retention window
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Releases after the newest 8 (audit only):"
+          gh release list \
+            --repo "$GITHUB_REPOSITORY" \
+            --limit 100 \
+            --json tagName,name,createdAt,isImmutable \
+            --jq '.[8:]'
+        env:
+          GH_TOKEN: ${{ github.token }}

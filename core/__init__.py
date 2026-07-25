@@ -1,4 +1,4 @@
-"""Core services — ADB bridge, logging, settings, and email."""
+"""导出 ADB 桥接、日志、设置和邮件等核心服务。"""
 
 from core.adb_bridge import ADBBridge
 from core.log_service import LogLevel, LogService

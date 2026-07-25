@@ -1,4 +1,4 @@
-"""App Manager background worker — QThread for listing, managing, backing up apps."""
+"""在 QThread 中执行应用列表、管理、备份和恢复操作。"""
 
 import concurrent.futures
 import os
@@ -39,7 +39,11 @@ def _split_package_detail_sections(output: str, count: int) -> dict[int, str]:
 
 
 class AppManagerWorker(QThread):
-    """Runs app management ADB operations off the UI thread."""
+    """在界面线程外执行应用管理 ADB 操作，并通过信号返回结果。
+
+    abort() 只设置中断意图；各阶段需主动检查该状态。命令失败通过已有日志或完成信号
+    传播，禁止后台线程直接访问界面对象。
+    """
 
     log_message = Signal(str)
     apps_loaded = Signal(list)
@@ -57,10 +61,12 @@ class AppManagerWorker(QThread):
         self._aborted = False
 
     def abort(self):
+        """请求协作式中止，正在执行的短命令完成后由任务检查状态。"""
         self._aborted = True
         self.requestInterruption()
 
     def run(self):
+        """按 operation 分派后台操作；未知操作不执行任何任务。"""
         ops = {
             "load_apps": self._load_apps,
             "load_detail_batch": lambda: self._load_detail_batch(self.kwargs.get("packages", [])),
@@ -88,6 +94,14 @@ class AppManagerWorker(QThread):
     def _adb(self, *args, timeout=30):
         cmd = ["adb", "-s", self.device_ip] + list(args)
         return CommandRunner.run(cmd, timeout=timeout)
+
+    @staticmethod
+    def _command_error(result, fallback: str) -> str:
+        error = str(getattr(result, "error", "") or "").strip()
+        if error:
+            return error
+        output = str(getattr(result, "output", "") or "").strip()
+        return output or fallback
 
     def _load_apps(self):
         self.log_message.emit("Fetching installed apps...")
@@ -229,21 +243,55 @@ class AppManagerWorker(QThread):
             self.operation_done.emit(action)
 
     def _launch_app(self, pkg):
-        self._adb("shell", "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1")
+        result = self._adb(
+            "shell",
+            "monkey",
+            "-p",
+            pkg,
+            "-c",
+            "android.intent.category.LAUNCHER",
+            "1",
+        )
+        if not result.success:
+            self.log_message.emit(
+                f"Failed to launch {pkg}: "
+                f"{self._command_error(result, 'launch command failed')}"
+            )
+            return
         self.log_message.emit(f"Launched {pkg}")
+        self.operation_done.emit("launch")
 
     def _clear_app(self, pkg):
         r = self._adb("shell", "pm", "clear", pkg)
+        if not r.success:
+            self.log_message.emit(
+                f"Failed to clear data for {pkg}: "
+                f"{self._command_error(r, 'clear command failed')}"
+            )
+            return
         self.log_message.emit(f"Cleared data: {pkg} — {r.stdout.strip()}")
+        self.operation_done.emit("clear")
 
     def _modify_permission(self, pkg, perm, action):
         r = self._adb("shell", "pm", action, pkg, perm)
+        if not r.success:
+            self.log_message.emit(
+                f"Failed to {action} permission {perm}: "
+                f"{self._command_error(r, 'permission command failed')}"
+            )
+            return
         self.log_message.emit(f"Permission {action}: {perm} — {r.stdout.strip() or 'OK'}")
         self.operation_done.emit("permissions_changed")
 
     def _backup_app(self, pkg, save_dir):
         self.backup_progress.emit(pkg, "Fetching APK paths")
         r = self._adb("shell", f"pm path {pkg}")
+        if not r.success:
+            self.log_message.emit(
+                f"Backup failed for {pkg}: "
+                f"{self._command_error(r, 'failed to fetch APK paths')}"
+            )
+            return
         paths = [
             line.replace("package:", "").strip()
             for line in r.stdout.strip().splitlines()
@@ -255,14 +303,55 @@ class AppManagerWorker(QThread):
         with tempfile.TemporaryDirectory(prefix=f"bk_{pkg}_") as tmp:
             self.backup_progress.emit(pkg, f"Pulling {len(paths)} APKs")
             with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(paths), 5)) as ex:
-                ex.map(lambda p: self._adb("pull", p, tmp), paths)
-            zp = os.path.join(save_dir, f"backup_{pkg}.zip")
-            shutil.make_archive(zp.replace(".zip", ""), "zip", tmp)
-            self.log_message.emit(f"Backup: {zp}")
+                pull_results = list(ex.map(lambda p: self._adb("pull", p, tmp), paths))
+            failed_pulls = [
+                self._command_error(result, f"pull failed for {path}")
+                for path, result in zip(paths, pull_results)
+                if not result.success
+            ]
+            if failed_pulls:
+                self.log_message.emit(
+                    f"Backup failed for {pkg}: {len(failed_pulls)}/{len(paths)} "
+                    f"APK pulls failed; {failed_pulls[0]}"
+                )
+                return
+            if self._aborted or self.isInterruptionRequested():
+                self.log_message.emit(f"Backup aborted for {pkg}")
+                return
+
+            pulled_apks = [
+                os.path.join(root, name)
+                for root, _, files in os.walk(tmp)
+                for name in files
+                if name.lower().endswith(".apk")
+            ]
+            if len(pulled_apks) != len(paths):
+                self.log_message.emit(
+                    f"Backup failed for {pkg}: expected {len(paths)} APKs, "
+                    f"found {len(pulled_apks)} after pull"
+                )
+                return
+
+            try:
+                os.makedirs(save_dir, exist_ok=True)
+                final_path = os.path.join(save_dir, f"backup_{pkg}.zip")
+                with tempfile.TemporaryDirectory(
+                    prefix=".adblab_backup_", dir=save_dir
+                ) as archive_tmp:
+                    archive_base = os.path.join(archive_tmp, f"backup_{pkg}")
+                    staged_path = shutil.make_archive(archive_base, "zip", tmp)
+                    os.replace(staged_path, final_path)
+            except Exception as exc:
+                self.log_message.emit(f"Backup failed for {pkg}: {exc}")
+                return
+            self.log_message.emit(f"Backup: {final_path}")
+            self.operation_done.emit("backup")
 
     def _restore_apps(self, files):
         if not files:
             return
+        succeeded = 0
+        failed = 0
         for i, zp in enumerate(files):
             if self._aborted or self.isInterruptionRequested():
                 return
@@ -276,14 +365,36 @@ class AppManagerWorker(QThread):
                         for f in fs if f.endswith(".apk")
                     ]
                     if not apks:
-                        continue
+                        raise RuntimeError("backup contains no APK files")
                     is_split = len(apks) > 1 and any("base.apk" in a.lower() for a in apks)
                     if is_split:
-                        self._adb("install-multiple", "-r", *apks, timeout=120)
+                        install_result = self._adb(
+                            "install-multiple", "-r", *apks, timeout=120
+                        )
+                        if not install_result.success:
+                            raise RuntimeError(
+                                self._command_error(
+                                    install_result, "install-multiple failed"
+                                )
+                            )
                     else:
                         for a in apks:
-                            self._adb("install", "-r", a, timeout=120)
+                            install_result = self._adb("install", "-r", a, timeout=120)
+                            if not install_result.success:
+                                raise RuntimeError(
+                                    self._command_error(install_result, "install failed")
+                                )
+                succeeded += 1
                 self.log_message.emit(f"Restored ({i+1}/{len(files)}): {os.path.basename(zp)}")
             except Exception as e:
-                self.log_message.emit(f"Error: {e}")
+                failed += 1
+                self.log_message.emit(
+                    f"Restore failed ({i+1}/{len(files)}) for {os.path.basename(zp)}: {e}"
+                )
+        if failed:
+            self.log_message.emit(
+                f"Restore incomplete: {succeeded} succeeded, {failed} failed"
+            )
+            return
+        self.log_message.emit(f"Restore complete: {succeeded}/{len(files)} succeeded")
         self.operation_done.emit("restore")

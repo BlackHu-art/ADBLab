@@ -1,7 +1,6 @@
-"""ADB Controller package.
+"""组装并导出完整的 ADBController。
 
-The fully-composed ADBController class is assembled here from mixins.
-Import it directly::
+控制器由多个职责明确的 mixin 组合而成，可按以下方式直接导入：
 
     from controllers import ADBController
 """
@@ -24,9 +23,9 @@ class ADBController(
     ADBSystemControllerMixin,
     _ADBControllerBase,
 ):
-    """Fully decoupled ADB controller communicating via signals.
+    """通过 Qt 信号与界面通信的完整 ADB 控制器。
 
-    Instantiation::
+    实例化方式：
 
         controller = ADBController(log_service)
     """

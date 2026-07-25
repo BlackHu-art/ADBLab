@@ -1,4 +1,4 @@
-"""ADBLab theme colors, signal, and theme switching."""
+"""提供 ADBLab 主题颜色、变化信号和主题切换能力。"""
 
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ if TYPE_CHECKING:
 
 
 def apply_dark_title_bar(window: QWidget) -> None:
-    """Set Windows title bar to match the current theme (dark / light).
+    """使 Windows 标题栏与当前深色或浅色主题一致。
 
-    Safe to call on any platform — no-op on non-Windows.
+    允许在任意平台调用；非 Windows 平台不执行操作。
     """
     if sys.platform != "win32":
         return
@@ -32,9 +32,9 @@ def apply_dark_title_bar(window: QWidget) -> None:
             ctypes.sizeof(ctypes.c_int(dark)),
         )
     except Exception:
-        pass  # DWM unavailable (e.g. remote desktop, older Windows)
+        pass  # 远程桌面或旧版 Windows 可能不提供 DWM，此时保留默认标题栏行为。
 
-# -- Theme color palettes ------------------------------------------------
+# ── 主题调色板 ──────────────────────────────────────────────────────────
 
 THEMES = {
     "Light": {
@@ -73,7 +73,7 @@ _current_theme: str = "Light"
 
 
 class ThemeSignal(QObject):
-    """Theme change signal emitter."""
+    """发布主题变化信号。"""
     changed = Signal(str)
 
 
@@ -81,14 +81,14 @@ _theme_signal = ThemeSignal()
 
 
 def _tc(key: str) -> str:
-    """Get color from current theme; fallback to Light then #000."""
+    """读取当前主题颜色，缺失时依次回退到浅色主题和黑色。"""
     return THEMES[_current_theme].get(key, THEMES["Light"].get(key, "#000000"))
 
 
-# -- Theme management mixin ----------------------------------------------
+# ── 主题管理混入类 ──────────────────────────────────────────────────────
 
 class ThemeMixin:
-    """Add to BaseStyles via inheritance for theme switching + color access."""
+    """通过 BaseStyles 提供主题切换和颜色访问能力。"""
 
     RADIUS_SM: int = 4
     RADIUS_MD: int = 6

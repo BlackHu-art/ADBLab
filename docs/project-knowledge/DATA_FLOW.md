@@ -114,15 +114,15 @@ sequenceDiagram
     participant UI as "Controller/UI"
     participant Task as "GetRandomEmailTask"
     participant Service as "EmailService"
-    participant YAML as "core/mail/mail.yaml"
+    participant Config as "用户目录 mail.yaml / 环境注入"
     participant API as "外部临时邮箱 API"
 
     UI->>Task: 启动任务
     Task->>Service: 创建服务/读取配置
-    Service->>YAML: 读取请求材料与账号状态
+    Service->>Config: 只读签名材料
     Service->>API: 请求随机账号
     API-->>Service: 账号 JSON
-    Service->>YAML: 更新本地状态/指纹类数据
+    Service->>Service: 账号/指纹只保留在内存
     loop 轮询收件箱
         Service->>API: list
         API-->>Service: 邮件列表
@@ -134,7 +134,8 @@ sequenceDiagram
     Task-->>UI: Qt signals
 ```
 
-本知识库故意不记录配置值、账号、邮件正文和验证码。当前实现会把这些信息的一部分写入日志，属于 Critical 风险。
+本知识库故意不记录配置值、账号、邮件正文和验证码。当前实现仅记录端点与异常类型，
+账号和验证码经 Qt signals 返回 UI，不写配置或日志；历史源码配置仍属于需要所有者处理的风险。
 
 ## 数据保留与删除
 
@@ -142,5 +143,5 @@ sequenceDiagram
 - AppSettings 和 DeviceStore 没有 schema 版本或保留期。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 启动时会清理设备 `/data/local/tmp` 中符合包名且超过约 3 天的 heapdump；这一行为在 `StartUp.clear_heapdump()`。
-- GitHub Actions 会清理旧 workflow runs、Release 和 tag；它影响交付数据而非应用运行数据。
+- GitHub Actions 仅保留手动只读 Retention Audit，不自动清理 workflow runs、Release 或 tag。
 - 数据分类、隐私声明、默认保留期和安全删除要求均为待确认。

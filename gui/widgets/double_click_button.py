@@ -1,14 +1,16 @@
+"""提供能够区分双击操作的按钮控件。"""
+
 from PySide6.QtCore import QEvent, Signal
 from PySide6.QtWidgets import QPushButton
 
 
 class DoubleClickButton(QPushButton):
-    """支持双击事件的自定义按钮"""
+    """在标准按钮行为之外发布双击信号。"""
 
-    doubleClicked = Signal()  # 新增双击信号
+    doubleClicked = Signal()
 
     def mouseDoubleClickEvent(self, event: QEvent):
-        """重写双击事件处理"""
-        self.doubleClicked.emit()  # 发射双击信号
+        """发布双击信号，并由当前控件消费该事件。"""
+        self.doubleClicked.emit()
         super().mouseDoubleClickEvent(event)
-        event.accept()  # 阻止事件继续传播
+        event.accept()

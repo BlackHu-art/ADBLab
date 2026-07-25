@@ -1,7 +1,6 @@
-"""
-Device connection, discovery, and info retrieval.
+"""提供设备连接、发现和基础信息查询。
 
-Imports only from adb_model (core) - no circular dependencies.
+本模块只依赖核心 adb_model，避免模型之间形成循环依赖。
 """
 
 import re
@@ -48,7 +47,7 @@ def parse_connected_devices(output: str) -> list[str]:
 
 
 def parse_getprop_output(output: str) -> dict[str, str]:
-    """Parse `adb shell getprop` output into a property dictionary."""
+    """将 adb shell getprop 输出解析为属性字典。"""
     props: dict[str, str] = {}
     for raw_line in output.splitlines():
         match = GETPROP_LINE_RE.match(raw_line.strip())
@@ -58,7 +57,7 @@ def parse_getprop_output(output: str) -> dict[str, str]:
 
 
 def parse_labeled_sections(output: str, markers: dict[str, str]) -> dict[str, str]:
-    """Split a batched shell output by explicit section markers."""
+    """按显式分段标记拆分批量 Shell 输出。"""
     sections = {key: "" for key in markers}
     marker_to_key = {marker: key for key, marker in markers.items()}
     current_key = ""
@@ -93,7 +92,7 @@ def _line_with_prefix(output: str, prefix: str) -> str:
 
 
 class ADBDevice(ADBModelCore):
-    """Device management: connect, disconnect, restart, and info queries."""
+    """封装设备连接、断开、重启和信息查询。"""
 
     @async_command
     def connect_device_async(self, ip_address: str) -> dict:
@@ -166,7 +165,7 @@ class ADBDevice(ADBModelCore):
 
     @staticmethod
     def get_devices_basic_info(device):
-        """Synchronous wrapper used by DeviceStore for quick lookups."""
+        """供 DeviceStore 快速查询使用的同步封装。"""
         return ADBDevice._fetch_properties(device, BASIC_PROP_FIELDS)
 
     @staticmethod

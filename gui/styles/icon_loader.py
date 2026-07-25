@@ -1,12 +1,12 @@
-"""Theme-aware icon loader — injects theme color into SVG currentColor on every paint.
+"""提供跟随主题变化的 SVG 图标加载器。
 
-Usage:
+每次绘制都会把当前主题色注入 SVG 的 currentColor。用法：
     from gui.styles.icon_loader import get_themed_icon
 
     btn.setIcon(get_themed_icon("gear.svg"))
     dlg.setWindowIcon(get_themed_icon("gear.svg"))
 
-Icon colours update automatically on theme change — no widget refresh needed.
+主题变化后图标颜色自动更新，不需要逐个刷新控件。
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from PySide6.QtSvg import QSvgRenderer
 from gui.styles.theme import _tc
 from utils.resource_path import resource_path
 
-# Raw SVG content cache (doesn't depend on theme)
+# 原始 SVG 内容与主题无关，可跨主题复用缓存。
 _SVG: dict[str, str] = {}
 
 
@@ -36,7 +36,7 @@ def _load_svg(name: str) -> str:
 
 
 class _ThemedIconEngine(QIconEngine):
-    """Renders an SVG on every paint(), injecting the *current* theme colour."""
+    """每次 paint() 时渲染 SVG，并注入当前主题颜色。"""
 
     def __init__(self, name: str):
         super().__init__()
@@ -69,10 +69,10 @@ class _ThemedIconEngine(QIconEngine):
 
 
 def get_themed_icon(name: str) -> QIcon:
-    """Return a QIcon that always paints with the current theme colour."""
+    """返回始终使用当前主题颜色绘制的 QIcon。"""
     return QIcon(_ThemedIconEngine(name))
 
 
 def clear_svg_cache() -> None:
-    """Drop cached SVG files (call if icons are updated on disk)."""
+    """清空 SVG 文件缓存，供磁盘图标更新后调用。"""
     _SVG.clear()

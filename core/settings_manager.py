@@ -1,7 +1,6 @@
-"""Persistent app settings (JSON storage).
+"""通过 JSON 文件持久化应用设置。
 
-Singleton — access via AppSettings.instance().
-Atomic write with silent fallback to prevent corruption.
+使用 AppSettings.instance() 访问单例，并通过原子写入降低配置损坏风险。
 """
 
 import json
@@ -34,7 +33,7 @@ DEFAULTS = {
         "throttle": 300,
         "touch": 30, "motion": 15, "trackball": 0, "nav": 20,
         "majornav": 10, "syskeys": 5, "appswitch": 8, "anyevent": 10, "pinch": 2,
-        # Total must sum to 100%; validated on Start
+        # 事件比例必须合计为 100%，开始 Monkey 前会统一校验。
         "ignore_crashes": True, "ignore_timeouts": True, "ignore_security": True,
     },
     "theme": "Light",
@@ -59,8 +58,6 @@ class AppSettings:
     @classmethod
     def instance(cls):
         return cls()
-
-    # ── File I/O ──
 
     def _load(self):
         """从 JSON 文件加载设置，失败时保留默认值并记录错误。"""
@@ -109,13 +106,11 @@ class AppSettings:
             except Exception:
                 pass
 
-    # ── Public API ──────────────────────────────────────────────────────
-
     def get(self, key: str, default: Any = None) -> Any:
         return self._data.get(key, DEFAULTS.get(key, default))
 
     def set(self, key: str, value: Any):
-        """Update setting in memory, persist after 500ms debounce."""
+        """更新内存设置，并在 500 毫秒防抖后持久化。"""
         self._data[key] = value
         if self._save_timer:
             self._save_timer.cancel()
@@ -124,14 +119,12 @@ class AppSettings:
         self._save_timer.start()
 
     def reset(self, key: str = None):
-        """Reset key or all settings to defaults。"""
+        """将指定设置或全部设置恢复为默认值。"""
         if key:
             self._data[key] = DEFAULTS.get(key, "")
         else:
             self._data = dict(DEFAULTS)
         self._save_atomic()
-
-    # ── Properties ───────────────────────────────────────────────────────
 
     @property
     def save_directory(self) -> str:

@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""把 MobilePerf 生成的 CSV 指标文件汇总为 Excel 报告。"""
 import os
 from datetime import datetime
 
@@ -13,9 +10,11 @@ from mobileperf.common.utils import TimeUtils
 
 
 class Report(object):
+    """筛选可汇总的指标文件，并生成带曲线的 Excel 工作簿。"""
+
     def __init__(self, csv_dir, packages=[]):
         os.chdir(csv_dir)
-        # 需要画曲线的csv文件名
+        # 仅下列 CSV 指标需要生成汇总曲线。
         self.summary_csf_file = {"cpuinfo.csv": {"table_name": "pid_cpu",
                                                  "x_axis": "datatime",
                                                  "y_axis": "%",
@@ -42,7 +41,7 @@ class Report(object):
                                   "values": ["pss", "java_heap", "native_heap", "system"]
                                   }
                 if ":" in package:
-                    #        子进程太长会导致写excel失败
+                    # 子进程包名过长会导致 Excel 工作表写入失败，使用末段缩短名称。
                     self.summary_csf_file["pss_%s.csv" % package.split(":")[-1].split(".")[-1]] = pss_detail_dic
                 else:
                     self.summary_csf_file["pss_%s.csv" % package] = pss_detail_dic
@@ -61,8 +60,8 @@ class Report(object):
             logger.info('wait to save %s' % book_name)
             excel.save()
 
-    #
     def filter_file_names(self, device):
+        """返回目录中存在且已配置汇总规则的 CSV 文件名。"""
         csv_files = []
         logger.debug(device)
         for f in os.listdir(device):
@@ -70,11 +69,10 @@ class Report(object):
                 logger.debug(os.path.join(device, f))
                 csv_files.append(f)
         return csv_files
-        #return [f for f in os.listdir(device) if os.path.isfile(os.path.join(device, f)) and os.path.basename(f) in self.summary_csf_file.keys()]
 
 
 if __name__ == '__main__':
-    # 根据csv生成excel汇总文件
+    # 根据 CSV 生成 Excel 汇总文件。
     from mobileperf.android.globaldata import RuntimeData
 
     RuntimeData.packages = ["com.alibaba.ailabs.genie.smartapp", "com.alibaba.ailabs.genie.smartapp:core", "com.alibaba.ailabs.genie.smartapp:business"]

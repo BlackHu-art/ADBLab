@@ -1,4 +1,4 @@
-"""Headless key and gesture mappings for ADBLab Remote."""
+"""提供不依赖界面的 Remote 按键与手势坐标映射。"""
 
 from collections.abc import Sequence
 
@@ -35,6 +35,7 @@ KEYCODES: dict[str, str] = {
 
 
 def parse_dimensions(dimensions: DimensionsInput) -> tuple[int, int] | None:
+    """把设备尺寸转换为整数宽高，无效输入返回 None。"""
     if not dimensions or len(dimensions) < 2:
         return None
     try:
@@ -49,6 +50,7 @@ def _dimensions_or_default(dimensions: DimensionsInput) -> tuple[int, int]:
 
 
 def notification_swipe(dimensions: DimensionsInput, expand: bool) -> tuple[int, int, int, int]:
+    """根据屏幕尺寸生成展开或收起通知栏的滑动坐标。"""
     width, height = _dimensions_or_default(dimensions)
     x = max(1, width // 2)
     if expand:
@@ -60,6 +62,7 @@ def directional_swipe(
     dimensions: DimensionsInput,
     direction: str,
 ) -> tuple[int, int, int, int]:
+    """根据屏幕尺寸和方向生成位于安全边距内的滑动坐标。"""
     width, height = _dimensions_or_default(dimensions)
     center_x = max(1, width // 2)
     center_y = max(1, height // 2)

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
- @author      :  Frankie
- @time        :  $DATA  $TIME
+采集 Android 目标进程的线程数量。
 """
 import csv
 import os
@@ -21,6 +20,8 @@ from mobileperf.android.globaldata import RuntimeData
 
 
 class ThreadNumPackageCollector(object):
+    """按固定间隔采集目标进程的 Threads 指标。"""
+
     def __init__(self, device, pacakgename, interval=1.0, timeout=24 * 60 * 60, thread_queue=None):
         self.device = device
         self.packagename = pacakgename
@@ -40,18 +41,16 @@ class ThreadNumPackageCollector(object):
             self._stop_event.set()
             self.collect_thread_num_thread.join(timeout=1)
             self.collect_thread_num_thread = None
-            #缁撴潫鐨勬椂鍊欙紝鍙戦€佷竴涓换鍔″畬鎴愮殑淇″彿锛屼互缁撴潫闃熷垪
+            # 采集线程结束后通知上报队列当前任务已经完成。
             if self.thread_queue:
                 self.thread_queue.task_done()
 
     def get_process_thread_num(self, process):
         pid = self.device.adb.get_pid_from_pck(self.packagename)
-        # out = self.device.adb.run_shell_cmd('ls -lt /proc/%s/task' % pid)
         out = self.device.adb.run_shell_cmd('cat /proc/%s/status' % pid)
         collection_time = time.time()
         logger.debug("collection time in thread_num info is : " + str(collection_time))
         if out:
-            # logger.debug("thread num out:"+out)
             threads_match = re.search(r'Threads:\s+(\d+)', out)
             if threads_match:
                 thread_num = int(threads_match.group(1))
@@ -77,7 +76,7 @@ class ThreadNumPackageCollector(object):
                 before = time.time()
                 logger.debug("-----------into _collect_thread_num_thread loop, thread is : " + str(threading.current_thread().name))
 
-                # 鑾峰彇pakagename鐨則hread num淇℃伅
+                # 从目标进程状态中获取线程数量。
                 thread_pck_info = self.get_process_thread_num(self.packagename)
                 logger.debug(thread_pck_info)
                 current_time = TimeUtils.getCurrentTime()
@@ -89,7 +88,7 @@ class ThreadNumPackageCollector(object):
                         " thread num: " + str(thread_pck_info[3]))
                 if self.thread_queue:
                     self.thread_queue.put(thread_pck_info)
-                if not self.thread_queue:  #涓轰簡鏈湴鍗曚釜鏂囦欢杩愯
+                if not self.thread_queue:  # 未提供上报队列时直接保存本地结果。
                     try:
                         with open(thread_num_file, 'a+', encoding="utf-8") as thread_writer:
                             writer_p = csv.writer(thread_writer, lineterminator='\n')
@@ -113,6 +112,8 @@ class ThreadNumPackageCollector(object):
 
 
 class ThreadNumMonitor(object):
+    """管理目标进程线程数量采集器。"""
+
     def __init__(self, device_id, packagename, interval=1.0, timeout=24 * 60 * 60, thread_queue=None):
         self.device = AndroidDevice(device_id)
         if not packagename:
@@ -128,12 +129,3 @@ class ThreadNumMonitor(object):
 
     def save(self):
         pass
-
-
-if __name__ == "__main__":
-    RuntimeData.package_save_path = '/Users/look/Documents/code/mobileperf-master/results/com.eg.android.AlipayGphone'
-    monitor = ThreadNumMonitor("7e048cbb", "com.eg.android.AlipayGphone", 3)
-    monitor.start(TimeUtils.getCurrentTime())
-    time.sleep(20)
-    monitor.stop()
-#     monitor.save()

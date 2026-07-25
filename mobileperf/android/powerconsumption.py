@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 """
- @author      :  Frankie
- @time        :  $DATA  $TIME
- 杩欎釜绫绘悳闆嗙殑鏄墜鏈烘暣鏈虹殑鐢垫睜鏂归潰鐨勪俊鎭紝鍖呮嫭鐢垫祦锛岀數閲忥紝鐢靛帇锛岀數姹犳俯搴︼紝鍏呯數鎯呭喌绛?
-
+采集 Android 设备的电量、电压、温度和电流等电池指标。
 """
 import csv
 import os
@@ -30,31 +27,25 @@ class DevicePowerInfo(object):
     RE_CURRENT = re.compile(r'current now: (\S?\d+)')
 
     def __init__(self, source=None):
-        '''
-        :param source: dumpsys batteryproperties
-        :param device:
-        '''
+        """使用 dumpsys batteryproperties 输出初始化电池信息。"""
         self.source = source
-        self.level = 0  #鐢垫睜鐨勭數閲忎竴鑸互100涓烘€诲埢搴?
-        self.voltage = 0  #鐢靛帇
-        self.temp = 0  #娓╁害
-        self.current = 0  #鐢垫祦,杩欎釜鐢垫祦鍊兼潵鑷簬璁惧鐨勫簳灞備笂鎶ワ紝鍑嗙‘鎬у彇鍐充簬鍏蜂綋鐨勮澶囷紝鍙互浣滀负鍙傝€?
+        self.level = 0  # 电量通常以 100 为满量程。
+        self.voltage = 0  # 电压
+        self.temp = 0  # 温度
+        self.current = 0  # 电流由设备底层上报，精度取决于具体设备。
         self._parse()
 
     def _parse(self):
-        # logger.debug("into _parse")
         if self.source:
             match = self.RE_BATTERY.search(self.source)
             if (match):
                 self.level = match.group(1)
                 self.voltage = match.group(2)
                 self.temp = match.group(3)
-                # logger.debug("into parse level锛?"+str(self.level) + ", voltage: " + str(self.voltage) + ", temp: " + str(self.temp))
 
             match = self.RE_CURRENT.search(self.source)
             if (match):
                 self.current = match.group(1)
-                # logger.debug("into parse current: " + str(self.current))
 
     def __repr__(self):
         return "DevicePowerInfo, " + "level:" + str(self.level) + ", voltage:" + str(self.voltage) + ", temperature:" + str(self.temp) + ", current:" + str(self.current)
@@ -74,15 +65,13 @@ class PowerCollector(object):
         self.collect_power_thread.start()
 
     def _get_battaryproperties(self):
-        '''
-        :return: 杩斿洖鐢垫睜鐨勭浉鍏冲睘鎬э紝鐢甸噺锛屾俯搴︼紝鐢靛帇锛岀數娴佺瓑
-        '''
-        # android 5.0鍙婁互涓婄殑鐗堟湰浣跨敤璇ュ懡浠よ幏鍙栫數姹犵殑淇℃伅
+        """返回设备电量、温度、电压和电流等电池属性。"""
+        # Android 5.0 及以上版本优先通过 batteryproperties 获取信息。
         out = self.device.adb.run_shell_cmd("dumpsys batteryproperties")
         out.replace('\r', '')
         power_info = None
         if not out or (isinstance(out, str) and ("Can't find service") in out):
-            #4.0鍒?.4浣跨敤璇ュ懡浠よ幏鍙栫數姹犵殑淇℃伅
+            # Android 4.x 使用 dumpsys battery 兼容路径。
             logger.debug("get battery info from dumpsys battery")
             reg = self.device.adb.run_shell_cmd("dumpsys battery")
             reg.replace('\r', '')
@@ -93,13 +82,13 @@ class PowerCollector(object):
             power_info.voltage = power_dic['voltage']
             current_flag = power_dic['current_flag']
             if current_flag == -1:
-                #鍦?.0鐨勬煇浜涚増鏈笂閫氳繃dumpsys battery娌℃湁鐢垫祦鐨勪俊鎭紝閫氳繃璇ュ懡浠よ幏鍙?
+                # 部分版本不在 dumpsys battery 中提供电流，需要读取内核节点。
                 power_info.current = self._cat_current()
             else:
                 power_info.current = power_dic['current']
         else:
             power_info = DevicePowerInfo(out)
-            if power_info.voltage == '0':  #涓夋槦鐨勬満鍨嬩笂娴嬭瘯浼氬彂鐜拌繖涓猟ump鍑烘潵鐨勭數鍘嬶紝鐢甸噺锛岀瓑涓? 锛屼笉姝ｇ‘,閲嶆柊鑾峰彇涓?
+            if power_info.voltage == '0':  # 部分设备会返回无效零值，此时改用兼容命令。
                 logger.debug(" power info from dumpsys properties is 0, trim it")
                 reg = self.device.adb.run_shell_cmd("dumpsys battery")
                 reg.replace('\r', '')
@@ -112,7 +101,7 @@ class PowerCollector(object):
 
     def _cat_current(self):
         current = 0
-        # cat /sys/class/power_supply/Battery/current_now Android9 涓婃病鏉冮檺
+        # Android 9 及以上版本可能无权读取该电流节点。
         reg = self.device.adb.run_shell_cmd('cat /sys/class/power_supply/battery/current_now')
         if isinstance(reg, str) and "No such file or directory" == reg:
             logger.debug("can't get current from file /sys/class/power_supply/battery/current_now")
@@ -121,17 +110,14 @@ class PowerCollector(object):
         return current
 
     def _get_powerinfo_dic(self, out):
-        '''
-        :param out: 鐢垫睜鐨刣ump淇℃伅
-        :return: 杩斿洖鐢垫睜淇℃伅锛屼互瀛楀吀鐨勬柟寮忚繑鍥?
-        '''
+        """将 dumpsys battery 输出解析为电池信息字典。"""
         dic = {}
         if out:
-            level_l = re.findall(u'level:\s?(\d+)', out)
-            temp_l = re.findall(u'temperature:\s?(\d+)', out)
-            current_l = re.findall(u'current now:\s?(\d+)', out)
-            vol_l = re.findall(u'  voltage:\s?(\d+)', out)
-            vol_ll = re.findall(u'  voltage:\s?(\d+)', out)
+            level_l = re.findall(r"level:\s?(\d+)", out)
+            temp_l = re.findall(r"temperature:\s?(\d+)", out)
+            current_l = re.findall(r"current now:\s?(\d+)", out)
+            vol_l = re.findall(r"  voltage:\s?(\d+)", out)
+            vol_ll = re.findall(r"  voltage:\s?(\d+)", out)
             logger.debug(vol_ll)
             dic['level'] = level_l[0] if len(level_l) else 0
             dic['temperature'] = temp_l[0] if len(temp_l) else 0
@@ -146,10 +132,7 @@ class PowerCollector(object):
         return dic
 
     def _collect_power_thread(self, start_time):
-        '''
-        鎼滈泦鐢垫睜淇℃伅鐨勭嚎绋?
-        :return:
-        '''
+        """循环采集电池信息并写入文件或上报队列。"""
         end_time = time.time() + self._timeout
         power_list_titile = ("datetime", "level", "voltage(V)", "tempreture(C)", "current(mA)")
         power_device_file = os.path.join(RuntimeData.package_save_path, 'powerinfo.csv')
@@ -170,7 +153,7 @@ class PowerCollector(object):
                 if device_power_info.source == '':
                     logger.debug("can't get power info , break!")
                     break
-                device_power_info = self.trim_data(device_power_info)  #debug
+                device_power_info = self.trim_data(device_power_info)
                 collection_time = time.time()
                 logger.debug(" collection time in powerconsumption is : " + str(collection_time))
                 power_tmp_list = [collection_time, device_power_info.level, device_power_info.voltage,
@@ -179,7 +162,7 @@ class PowerCollector(object):
                 if self.power_queue:
                     self.power_queue.put(power_tmp_list)
 
-                if not self.power_queue:  #涓轰簡鏈湴鍗曚釜鑴氭湰杩愯
+                if not self.power_queue:  # 未提供上报队列时直接保存本地结果。
                     power_tmp_list[0] = TimeUtils.formatTimeStamp(power_tmp_list[0])
                     try:
                         with open(power_device_file, 'a+', encoding="utf-8") as writer:
@@ -207,16 +190,13 @@ class PowerCollector(object):
         return power_info
 
     def stop(self):
-        '''
-        缁堟power妯″潡鐨勬暟鎹噰闆嗗伐浣?
-        :return:
-        '''
+        """停止电池信息采集线程。"""
         logger.debug("INFO: PowerCollector  stop...")
         if (self.collect_power_thread.is_alive()):
             self._stop_event.set()
             self.collect_power_thread.join(timeout=1)
             self.collect_power_thread = None
-            #绾跨▼缁撴潫鏃讹紝闇€瑕侀€氱煡闃熷垪缁撴潫鑷繁
+            # 采集线程结束后通知上报队列当前任务已经完成。
             if self.power_queue:
                 self.power_queue.task_done()
 
@@ -244,11 +224,3 @@ class PowerMonitor(object):
 
     def save(self):
         pass
-
-
-if __name__ == "__main__":
-    monitor = PowerMonitor("DWT7N19306001517", 5)
-    monitor.start(TimeUtils.getCurrentTimeUnderline())
-    time.sleep(10)
-    monitor.stop()
-#     monitor.save()

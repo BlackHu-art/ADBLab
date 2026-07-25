@@ -1,7 +1,4 @@
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""编排 MobilePerf 配置解析、监控器生命周期和采集结果收尾。"""
 import argparse
 import os
 import queue
@@ -30,6 +27,7 @@ from mobileperf.android.report import Report
 
 
 class StartUp(object):
+    """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
 
     def __init__(self, device_id=None, package=None, interval=None, config_path=None):
         RuntimeData.top_dir = os.getcwd()
@@ -39,20 +37,21 @@ class StartUp(object):
         self.config_path = config_path
         self.config_dic = self.parse_data_from_config()
         RuntimeData.config_dic = self.config_dic
-        self.serialnum = device_id if device_id != None else self.config_dic['serialnum']  #代码中重新传入device_id 则会覆盖原来配置文件config.conf的值，主要为了debug方便
-        self.packages = package if package != None else self.config_dic['package']  #代码中重新传入package 则会覆盖原来配置文件config.conf的值，为了debug方便
-        self.frequency = interval if interval != None else self.config_dic['frequency']  #代码中重新传入interval 则会覆盖原来配置文件config.conf的值，为了debug方便
+        # 显式参数优先于配置文件，便于上层按采集会话覆盖设备、包名和采样频率。
+        self.serialnum = device_id if device_id != None else self.config_dic['serialnum']
+        self.packages = package if package != None else self.config_dic['package']
+        self.frequency = interval if interval != None else self.config_dic['frequency']
         self.timeout = self.config_dic['timeout']
         self.exceptionlog_list = self.config_dic["exceptionlog"]
         self.device = AndroidDevice(self.serialnum)
         self.stop_file = os.environ.get("MOBILEPERF_STOP_FILE", "")
-        # 如果config文件中 packagename为空，就获取前台进程，匹配图兰朵，测的app太多，支持配置文件不传package
+        # 未配置包名时，将设备当前的前台进程作为采集目标。
         if not self.packages:
-            # 进程名不会有#，转化为list
+            # ADB 适配层使用井号分隔多个前台进程名称。
             self.packages = self.device.adb.get_foreground_process().split("#")
         RuntimeData.packages = self.packages
 
-        #与终端交互有关
+        # 保留命令行交互状态。
         self.keycode = ''
         self.pid = 0
 
@@ -61,6 +60,7 @@ class StartUp(object):
         self.logcat_monitor = None
 
     def _init_queue(self):
+        """创建各类性能指标的进程内消息队列。"""
         self.cpu_queue = queue.Queue()
         self.mem_queue = queue.Queue()
         self.power_queue = queue.Queue()
@@ -71,6 +71,7 @@ class StartUp(object):
         self.thread_queue = queue.Queue()
 
     def get_queue_dic(self):
+        """返回监控器与数据处理器约定的队列映射。"""
         queue_dic = {}
         queue_dic['cpu_queue'] = self.cpu_queue
         queue_dic['mem_queue'] = self.mem_queue
@@ -89,22 +90,17 @@ class StartUp(object):
         self.monitors.remove(monitor)
 
     def parse_data_from_config(self):
-        """
-        从配置文件中解析出需要的信息，包名，时间间隔，设备的序列号等
-        :return:配置文件中读出来的数值的字典
-        """
+        """读取并校验包名、采样频率、设备序列号等采集配置。"""
         config_dic = {}
         configpath = self.config_path or os.path.join(RuntimeData.top_dir, "mobileperf", "config.conf")
         logger.debug("configpath:%s" % configpath)
         if not os.path.isfile(configpath):
             logger.error("the config file didn't exist: " + configpath)
             raise RuntimeError("the config file didn't exist: " + configpath)
-        # 避免windows会用系统默认的gbk打开
+        # 显式使用 UTF-8，避免 Windows 默认编码导致配置解析失败。
         with open(configpath, encoding="utf-8") as f:
             content = f.read()
-            # Window下用记事本打开配置文件并修改保存后，编码为UNICODE或UTF-8的文件的文件头
-            # 会被相应的加上\xff\xfe（\xff\xfe）或\xef\xbb\xbf，然后再传递给ConfigParser解析的时候会出错
-            # ，因此解析之前，先替换掉
+            # 清理部分编辑器写入的字节序标记，避免 ConfigParser 将其识别为配置内容。
             content = re.sub(r"\xfe\xff", "", content)
             content = re.sub(r"\xff\xfe", "", content)
             content = re.sub(r"\xef\xbb\xbf", "", content)
@@ -122,7 +118,7 @@ class StartUp(object):
         config_dic = self.check_config_option(config_dic, paser, "Common", "save_path")
         config_dic = self.check_config_option(config_dic, paser, "Common", "phone_log_path")
 
-        # 读取monkey配置
+        # 读取 Monkey 压力测试配置。
         config_dic = self.check_config_option(config_dic, paser, "Common", "monkey")
         for option in self._monkey_config_options():
             config_dic = self.check_config_option(config_dic, paser, "Common", option)
@@ -139,9 +135,9 @@ class StartUp(object):
                 config_dic[option] = parse.get(section, option)
                 if option == 'frequency' or option in self._monkey_int_options():
                     config_dic[option] = (int)(parse.get(section, option))
-                if option == 'dumpheap_freq':  #dumpheap 的单位是分钟
+                if option == 'dumpheap_freq':  # 配置值使用分钟，运行时统一转换为秒。
                     config_dic[option] = (int)(parse.get(section, option)) * 60
-                if option == 'timeout':  #timeout 的单位是分钟
+                if option == 'timeout':  # 配置值使用分钟，运行时统一转换为秒。
                     config_dic[option] = (int)(parse.get(section, option)) * 60
                 if option in ["exceptionlog", "phone_log_path", "space_size_check_path", "package", "pid_change_focus_package",
                               "watcher_users", "main_activity", "activity_list"]:
@@ -149,13 +145,13 @@ class StartUp(object):
                         config_dic[option] = parse.get(section, option).strip().replace("\n", "").split(";")
                     else:
                         config_dic[option] = parse.get(section, option).split(";")
-            except:  #配置项中数值发生错误
+            except:  # 配置值格式错误时沿用既有失败处理。
                 if option != 'serialnum':
                     logger.debug("config option error:" + option)
                     self._config_error()
                 else:
                     config_dic[option] = ''
-        else:  #配置项没有配置
+        else:  # 未配置的可选项使用默认值，必填项进入错误处理。
             if option in self._optional_config_defaults():
                 config_dic[option] = self._optional_config_defaults()[option]
             elif option not in ['serialnum', "main_activity", "activity_list", "pid_change_focus_package", "shell_file"]:
@@ -251,13 +247,12 @@ class StartUp(object):
         logger.error("config error, please config it correctly")
         sys.exit(1)
 
-    # @profile
     def run(self, time_out=None):
+        """启动所有采集器并等待超时、停止文件或异常退出信号。"""
         self.clear_heapdump()
-        # objgraph.show_growth()
-        #       对设备连接情况的检查
+        # 启动采集前检查目标设备是否可用。
         if not self.serialnum:
-            #           androiddevice 没传  serialnum，默认执行adb shell
+            # 未指定设备序列号时，由 ADB 使用当前连接设备。
             logger.info("serialnum in config file is null,default get connected phone")
         is_device_connect = False
         for i in range(0, 5):
@@ -270,22 +265,17 @@ class StartUp(object):
         if not is_device_connect:
             logger.error("after 5 times check,device not found:" + self.serialnum)
             return
-        # 对是否安装被测app的检查 只在最开始检查一次
+        # 应用安装状态仅在会话启动时检查一次。
         if not self.device.adb.is_app_installed(self.packages[0]):
             logger.error("test app not installed:" + self.packages[0])
             return
         try:
-            #初始化数据处理的类,将没有消息队列传递过去，以便获取数据，并处理
-            # datahandle = DataWorker(self.get_queue_dic())
-            # 将queue传进去，与datahandle那个线程交互
             self.add_monitor(CpuMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
             self.add_monitor(MemMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
             self.add_monitor(TrafficMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
-            # 软件方式 获取电量不准，已用硬件方案测试功耗
-            # self.add_monitor(PowerMonitor(self.serialnum, self.frequency,self.timeout))
+            # 软件电量估算误差较大，当前采集流程不启用该监控器。
             self.add_monitor(FPSMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
-            # 6.0以下能采集到fd数据，7.0以上没权限
-            # if self.device.adb.get_sdk_version() <= 23:
+            # 高版本 Android 可能限制文件描述符读取权限，监控器自行处理采集失败。
             self.add_monitor(FdMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
             self.add_monitor(ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
             if self.config_dic["monkey"] == "true":
@@ -304,15 +294,15 @@ class StartUp(object):
                 FileUtils.makedir(RuntimeData.package_save_path)
                 self.save_device_info()
                 for monitor in self.monitors:
-                    #启动所有的monitors
+                    # 单个监控器启动失败不阻止其他指标继续采集。
                     try:
                         monitor.start(start_time)
                     except Exception as e:
                         logger.error(e)
-                # logcat的代码可能会引起死锁，拎出来单独处理logcat
+                # Logcat 具有独立的阻塞读取生命周期，因此与其他监控器分开管理。
                 try:
                     self.logcat_monitor = LogcatMonitor(self.serialnum, self.packages[0])
-                    # 如果有异常日志标志，才启动这个模块
+                    # 仅在配置异常关键字后注册异常日志处理器。
                     if self.exceptionlog_list:
                         self.logcat_monitor.set_exception_list(self.exceptionlog_list)
                         self.logcat_monitor.add_log_handle(self.logcat_monitor.handle_exception)
@@ -323,8 +313,8 @@ class StartUp(object):
 
                 timeout = time_out if time_out != None else self.config_dic['timeout']
                 endtime = time.time() + timeout
-                while (time.time() < endtime):  #吊着主线程防止线程中断
-                    # 时间到或测试过程中检测到异常
+                while (time.time() < endtime):  # 保持主线程存活，直至达到任一退出条件。
+                    # 测试过程中优先响应应用异常或外部停止信号。
                     if self.check_exit_signal_quit():
                         logger.error("app " + str(self.packages[0]) + " exit signal, quit!")
                         break
@@ -334,29 +324,16 @@ class StartUp(object):
                     time.sleep(self.frequency)
                 logger.debug("time is up,finish!!!")
                 self.stop()
-
-                # try:
-                #     datahandle.stop()
-                #     time.sleep(self.frequency*2)
-                #     #               延迟一点时间结束上报，已让数据上报完
-                #     # report.stop()
-                # except:
-                #     logger.debug("report or datahandle stop exception")
-                # finally:
-                #     logger.info("time is up, end")
-                #     os._exit(0)
-
-        except KeyboardInterrupt:  #捕获键盘异常的事件，例如ctrl c
+        except KeyboardInterrupt:  # 捕获命令行中断并执行统一收尾。
             logger.debug(" catch keyboardInterrupt, goodbye!!!")
-            # 收尾工作
             self.stop()
             os._exit(0)
         except Exception as e:
             logger.error("Exception in run")
             logger.error(e)
 
-    #     测试前清空 tmp 目录下dump文件 清理超过一周的文件，避免同时测试会有冲突
     def clear_heapdump(self):
+        """删除目标应用超过三天的历史堆转储，避免与本次采集混淆。"""
         filelist = self.device.adb.list_dir("/data/local/tmp")
         if filelist:
             for file in filelist:
@@ -364,10 +341,11 @@ class StartUp(object):
                     self.device.adb.delete_file("/data/local/tmp/%s" % file)
 
     def stop(self):
+        """停止监控器、生成报告并回收本次采集产生的设备侧文件。"""
         for monitor in self.monitors:
             try:
                 monitor.stop()
-            except Exception as e:  # 捕获所有的异常，防止其中一个monitor的stop操作发生异常退出时，影响其他的monitor的stop操作
+            except Exception as e:  # 单个监控器停止失败不得阻断其余监控器的清理。
                 logger.error(e)
 
         try:
@@ -379,14 +357,14 @@ class StartUp(object):
         if self.config_dic["monkey"] == "true":
             self.device.adb.kill_process("com.android.commands.monkey")
         try:
-            # 统计测试时长
+            # 将测试时长追加到设备信息文件。
             cost_time = round((float)(time.time() - TimeUtils.getTimeStamp(RuntimeData.start_time, TimeUtils.UnderLineFormatter)) / 3600, 2)
             self.add_device_info("test cost time:", str(cost_time) + "h")
         except Exception as e:
             logger.error("add test cost time failed")
             logger.error(e)
         try:
-            # 根据csv生成excel汇总文件
+            # 根据 CSV 采集结果生成 Excel 汇总文件。
             Report(RuntimeData.package_save_path, self.packages)
         except Exception as e:
             logger.error("create report failed")
@@ -401,26 +379,14 @@ class StartUp(object):
         except Exception as e:
             logger.error("pull log files failed")
             logger.error(e)
-        # self.memory_analyse()
-        # self.device.adb.bugreport(RuntimeData.package_save_path)
         os._exit(0)
 
-    # windows可能没装 自测用
     def memory_analyse(self):
+        """保留内存分析兼容入口，当前未启用具体实现。"""
         pass
-        # 增加内存分析
-        # logger.debug("show_growth")
-        # objgraph.show_growth()
-        # objgraph.show_most_common_types(limit=10)
-        # logger.debug("gc.garbage")
-        # logger.debug(gc.garbage)
-        # logger.debug("collect()")
-        # logger.debug(gc.collect())
-        # logger.debug("gc.garbage")
-        # logger.debug(gc.garbage)
 
     def pull_heapdump(self):
-        # 把dumpheap文件拷贝出来
+        """将目标应用的设备侧堆转储拉取到本次结果目录。"""
         filelist = self.device.adb.list_dir("/data/local/tmp")
         if filelist:
             for file in filelist:
@@ -428,14 +394,13 @@ class StartUp(object):
                     self.device.adb.pull_file("/data/local/tmp/%s" % file, RuntimeData.package_save_path)
 
     def pull_log_files(self):
+        """将配置的设备日志目录拉取到本次结果目录。"""
         if self.config_dic["phone_log_path"]:
             for src_path in self.config_dic["phone_log_path"]:
                 self.device.adb.pull_file(src_path, RuntimeData.package_save_path)
-                # self.device.adb.pull_file_between_time(src_path,RuntimeData.package_save_path,
-                #             TimeUtils.getTimeStamp(RuntimeData.start_time,TimeUtils.UnderLineFormatter),time.time())
-        #         release系统pull  /sdcard/mtklog/可以  没有权限/sdcard/mtklog/mobilelog
 
     def save_device_info(self):
+        """记录本次采集使用的设备和应用版本信息。"""
         device_file = os.path.join(RuntimeData.package_save_path, "device_test_info.txt")
         with open(device_file, "w+", encoding="utf-8") as writer:
             writer.write("device serialnum:" + self.serialnum + "\n")
@@ -460,6 +425,8 @@ class StartUp(object):
 
 
 class App():
+    """保存应用包名、名称和版本信息的轻量数据对象。"""
+
     def __init__(self, package, name="", version=""):
         self.package = package
         self.name = name
@@ -467,16 +434,8 @@ class App():
 
 
 if __name__ == "__main__":
-    # 来自于pyintaller的官网，多进程在windows系统下需要添加这句，否则会创建多个重复的进程，在mac和linux下不会有影响
-    # multiprocessing.freeze_support()
     parser = argparse.ArgumentParser(description="Run mobileperf collection")
     parser.add_argument("--config", default=None, help="Path to mobileperf config file")
     args = parser.parse_args()
-    #startup = StartUp("351BBJN3DJC8","com.taobao.taobao",2)
     startup = StartUp(config_path=args.config)
     startup.run()
-    # RuntimeData.start_time = "2019_03_07_10_57_58"
-    # RuntimeData.package_save_path = "/Users/look/Desktop/project/mobileperf-mac/results/com.alibaba.ailabs.genie.contacts/2019_03_07_10_57_58"
-    # RuntimeData.start_time = "2019_03_07_10_54_59"
-    # RuntimeData.package_save_path = "/Users/look/Desktop/project/mobileperf-mac/results/com.alibaba.ailabs.ar.fireeye2/2019_03_07_10_54_59"
-    # startup.deal_error()

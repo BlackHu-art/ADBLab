@@ -7,7 +7,10 @@ import time
 import warnings
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
+
+import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -18,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMainWindow,
     QMessageBox,
     QPushButton,
     QWidget,
@@ -471,7 +475,7 @@ def test_command_runner_logs_slow_sanitized_command():
 
 
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     runner = Mock()
 
     with patch("gui.main_frame.ProcessRunner", return_value=runner), \
@@ -540,7 +544,7 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
 
 
 def test_main_frame_starts_scan_thread_with_debounced_refresh():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._scan_thread = None
     frame.adb_controller = Mock()
     frame._schedule_scan_refresh = Mock()
@@ -609,11 +613,13 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         assert created == {"central_widget_ready": True, "scan_thread": None}
         resolve.assert_not_called()
     finally:
+        # 本用例只验证初始化顺序，避免在 teardown 启动异步应用级关机。
+        frame._close_ready = True
         frame.close()
 
 
 def test_main_frame_start_device_discovery_respects_scan_setting():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._closing = False
     frame._start_scan_thread = Mock()
     frame._initial_refresh_timer = Mock()
@@ -630,7 +636,7 @@ def test_main_frame_start_device_discovery_respects_scan_setting():
 
 
 def test_main_frame_start_device_discovery_uses_cancelable_initial_refresh_timer():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._closing = False
     frame._start_scan_thread = Mock()
     frame._initial_refresh_timer = Mock()
@@ -645,7 +651,7 @@ def test_main_frame_start_device_discovery_uses_cancelable_initial_refresh_timer
 
 
 def test_main_frame_start_device_discovery_skips_after_close():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._closing = True
     frame._start_scan_thread = Mock()
     frame._initial_refresh_timer = Mock()
@@ -659,7 +665,7 @@ def test_main_frame_start_device_discovery_skips_after_close():
 
 
 def test_main_frame_stop_scan_thread_uses_short_ui_wait():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._initial_refresh_timer = Mock()
     frame._initial_refresh_timer.isActive.return_value = True
     frame._scan_refresh_timer = Mock()
@@ -678,7 +684,7 @@ def test_main_frame_stop_scan_thread_uses_short_ui_wait():
 
 
 def test_main_frame_stop_scan_thread_uses_blocking_wait_on_close():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._initial_refresh_timer = Mock()
     frame._initial_refresh_timer.isActive.return_value = False
     frame._scan_refresh_timer = Mock()
@@ -697,10 +703,13 @@ def test_main_frame_stop_scan_thread_uses_blocking_wait_on_close():
 
 def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
     _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     button = QPushButton()
     button.setProperty("iconName", "circle-half-tilt.svg")
     frame.findChildren = Mock(return_value=[button])
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
+        frame
+    )
 
     with patch("gui.main_frame.get_themed_icon", return_value=QIcon()) as themed_icon:
         MainFrame._refresh_toolbar_icons(frame)
@@ -716,7 +725,7 @@ def test_main_frame_does_not_import_performance_monitor_at_module_load():
 
 def test_main_frame_performance_button_opens_launcher_dialog():
     _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = ["device-1"]
     frame.left_panel.current_package_text.return_value = "com.example.app"
@@ -734,24 +743,34 @@ def test_main_frame_performance_button_opens_launcher_dialog():
     assert dialog.package_edit.text() == "com.example.app"
     assert dialog.save_path_edit.text().replace("\\", "/").endswith("/mobileperf/device-1")
     show.assert_called_once()
+    dialog.close()
 
 
 def test_main_frame_performance_button_requires_selected_device():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = []
     frame.log_panel = Mock()
+    frame.log_service = Mock()
     frame._find_active_dialog = Mock()
     frame._register_dialog = Mock()
 
     MainFrame._show_performance_monitor(frame)
 
-    frame.log_panel._append_log.assert_called_once_with("WARNING", "No device selected")
+    assert frame.log_service.log.call_args_list[-1].args == (
+        "WARNING",
+        "No device selected",
+    )
+    assert [call.args[0] for call in frame.log_service.log.call_args_list[:-1]] == [
+        "DEBUG",
+        "DEBUG",
+    ]
+    frame.log_panel._append_log.assert_not_called()
     frame._register_dialog.assert_not_called()
 
 
 def test_main_frame_theme_change_forces_running_performance_dialog_refresh():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     dialog = Mock()
     stale_dialog = Mock()
     stale_dialog._sync_theme_state.side_effect = RuntimeError("deleted")
@@ -765,7 +784,7 @@ def test_main_frame_theme_change_forces_running_performance_dialog_refresh():
 
 def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails():
     _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._always_on_top = False
     frame._set_always_on_top_native = Mock(return_value=False)
     frame._apply_window_flags = Mock()
@@ -774,6 +793,9 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     button = QPushButton()
     button.setCheckable(True)
     frame.tb_always_on_top = button
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
+        frame
+    )
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
         settings = settings_cls.instance.return_value
@@ -792,7 +814,7 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
 
 def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._always_on_top = False
     frame._set_always_on_top_native = Mock(return_value=True)
     frame._apply_window_flags = Mock()
@@ -800,6 +822,9 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     button = QPushButton()
     button.setCheckable(True)
     frame.tb_always_on_top = button
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
+        frame
+    )
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
         settings = settings_cls.instance.return_value
@@ -825,13 +850,16 @@ def test_performance_launcher_get_current_package_updates_package_field():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformanceLauncherDialog(device_ip="device-1")
 
-    with patch("gui.dialogs.performance_launcher.detect_current_package") as detect:
+    with patch("gui.dialogs.performance_launcher.detect_current_package") as detect, patch(
+        "gui.dialogs.performance_launcher.CurrentPackageWorker.start"
+    ) as start_worker:
         detect.return_value = {
             "success": True,
             "device_ip": "device-1",
             "package_name": "com.example.app",
         }
         dialog.fetch_current_package()
+        start_worker.assert_called_once_with()
         dialog._package_worker.run()
         dialog._package_worker.finished.emit()
 
@@ -1370,11 +1398,16 @@ def test_mobileperf_runner_stop_requests_mobileperf_report_shutdown(tmp_path):
     cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
 
     runner.start(cfg)
-    with patch.object(runner, "request_stop", wraps=runner.request_stop) as request_stop:
+    with patch.object(
+        runner,
+        "_request_stop_context",
+        wraps=runner._request_stop_context,
+    ) as request_stop:
         code = runner.stop(timeout=7)
 
     assert code == 0
     request_stop.assert_called_once()
+    assert request_stop.call_args.args[0] is not None
     proc.wait.assert_called_once_with(timeout=7)
     runner_process.stop.assert_called_once()
     assert runner_process.stop.call_args.kwargs["timeout"] == 0
@@ -1657,10 +1690,13 @@ def test_cross_platform_builds_do_not_run_full_gui_test_suite():
     assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
 
 
-def test_release_job_recreates_existing_version_release():
+def test_release_job_keeps_existing_versions_immutable():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 
-    assert "gh release delete \"$TAG\"" in workflow
+    assert "gh release delete" not in workflow
+    assert "gh release view \"$TAG\"" in workflow
+    assert "git ls-remote --exit-code --tags origin" in workflow
+    assert "exit 1" in workflow
     assert "gh release create \"$TAG\"" in workflow
     assert "softprops/action-gh-release" not in workflow
 
@@ -1676,7 +1712,7 @@ def test_cross_platform_release_assets_are_single_archives():
 
 
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame.left_panel = Mock()
     frame.left_panel.selected_devices = ["device-1"]
     frame.log_panel = Mock()
@@ -1692,8 +1728,62 @@ def test_main_frame_device_dialogs_reuses_existing_per_device_window():
     frame._register_dialog.assert_not_called()
 
 
+def test_main_frame_device_dialogs_assigns_main_window_as_parent():
+    frame = SimpleNamespace()
+    frame.left_panel = Mock()
+    frame.left_panel.selected_devices = ["device-1"]
+    frame.log_service = Mock()
+    frame._find_active_dialog = Mock(return_value=None)
+    created = []
+
+    class DeviceDialog:
+        def __init__(self, parent=None, device_ip=""):
+            self.parent = parent
+            self.device_ip = device_ip
+
+        def show(self):
+            return None
+
+        def close(self):
+            return None
+
+    def register(dialog, *_args):
+        created.append(dialog)
+        return dialog
+
+    frame._register_dialog = register
+
+    MainFrame._show_device_dialogs(frame, DeviceDialog)
+
+    assert len(created) == 1
+    assert created[0].parent is frame
+    assert created[0].device_ip == "device-1"
+    created[0].close()
+
+
+def test_performance_dialog_creation_assigns_main_window_as_parent():
+    frame = QMainWindow()
+    frame.left_panel = Mock()
+    frame.left_panel.selected_devices = ["device-1"]
+    frame.left_panel.current_package_text.return_value = "com.example"
+    frame.log_service = Mock()
+    frame._find_active_dialog = Mock(return_value=None)
+    created = Mock()
+    frame._register_dialog = Mock(return_value=created)
+
+    with patch("gui.dialogs.performance_launcher.PerformanceLauncherDialog") as dialog_cls:
+        MainFrame._show_performance_monitor(frame)
+
+    dialog_cls.assert_called_once_with(
+        device_ip="device-1",
+        package_name="com.example",
+        parent=frame,
+    )
+    created.show.assert_called_once_with()
+
+
 def test_main_frame_signal_maps_keep_expected_coverage():
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     lp = Mock()
     ac = Mock()
 
@@ -1712,62 +1802,40 @@ def test_main_frame_signal_maps_keep_expected_coverage():
 
 
 def test_main_frame_scan_refresh_debounce_collapses_bursts():
-    _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame.adb_controller = Mock()
-    frame._scan_refresh_timer = QTimer()
-    frame._scan_refresh_timer.setSingleShot(True)
-    frame._scan_refresh_timer.timeout.connect(lambda: MainFrame._publish_scanned_devices(frame))
+    frame._scan_refresh_timer = Mock()
     frame._pending_scanned_devices = []
+    frame.DEVICE_SCAN_DEBOUNCE_MS = 20
 
-    old_debounce = MainFrame.DEVICE_SCAN_DEBOUNCE_MS
-    MainFrame.DEVICE_SCAN_DEBOUNCE_MS = 20
-    try:
-        MainFrame._schedule_scan_refresh(frame, ["device-1"])
-        MainFrame._schedule_scan_refresh(frame, ["device-1", "device-2"])
-        MainFrame._schedule_scan_refresh(frame, ["device-3"])
+    MainFrame._schedule_scan_refresh(frame, ["device-1"])
+    MainFrame._schedule_scan_refresh(frame, ["device-1", "device-2"])
+    MainFrame._schedule_scan_refresh(frame, ["device-3"])
+    MainFrame._publish_scanned_devices(frame)
 
-        deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline and not frame.adb_controller.publish_detected_devices.called:
-            _app.processEvents()
-            time.sleep(0.01)
-    finally:
-        MainFrame.DEVICE_SCAN_DEBOUNCE_MS = old_debounce
-        frame._scan_refresh_timer.stop()
-
+    assert frame._scan_refresh_timer.start.call_args_list == [call(20), call(20), call(20)]
     frame.adb_controller.refresh_devices.assert_not_called()
     frame.adb_controller.publish_detected_devices.assert_called_once_with(["device-3"])
     frame.adb_controller._process_device_list.assert_not_called()
 
 
 def test_main_frame_splitter_size_save_is_debounced():
-    _app = QApplication.instance() or QApplication([])
-    frame = MainFrame.__new__(MainFrame)
+    frame = SimpleNamespace()
     frame._panel_splitter = Mock()
     frame._panel_splitter.sizes.side_effect = [[300, 700], [320, 680]]
     frame._pending_panel_sizes = None
-    frame._panel_size_save_timer = QTimer()
-    frame._panel_size_save_timer.setSingleShot(True)
-    frame._panel_size_save_timer.timeout.connect(lambda: MainFrame._save_pending_panel_sizes(frame))
+    frame._panel_size_save_timer = Mock()
+    frame.SPLITTER_SAVE_DEBOUNCE_MS = 20
 
-    old_debounce = MainFrame.SPLITTER_SAVE_DEBOUNCE_MS
-    MainFrame.SPLITTER_SAVE_DEBOUNCE_MS = 20
-    try:
-        with patch("core.settings_manager.AppSettings") as settings_cls:
-            settings = Mock()
-            settings_cls.instance.return_value = settings
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings = Mock()
+        settings_cls.instance.return_value = settings
 
-            MainFrame._on_splitter_moved(frame, 0, 0)
-            MainFrame._on_splitter_moved(frame, 0, 0)
+        MainFrame._on_splitter_moved(frame, 0, 0)
+        MainFrame._on_splitter_moved(frame, 0, 0)
+        MainFrame._save_pending_panel_sizes(frame)
 
-            deadline = time.monotonic() + 0.5
-            while time.monotonic() < deadline and settings.set.call_count < 2:
-                _app.processEvents()
-                time.sleep(0.01)
-    finally:
-        MainFrame.SPLITTER_SAVE_DEBOUNCE_MS = old_debounce
-        frame._panel_size_save_timer.stop()
-
+    assert frame._panel_size_save_timer.start.call_args_list == [call(20), call(20)]
     assert settings.set.call_args_list == [
         call("left_panel_width", 320),
         call("right_panel_width", 680),
@@ -1885,7 +1953,7 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
 
 def test_screenshot_viewer_opens_folder_via_process_runner():
     path = os.path.abspath(__file__)
-    viewer = ScreenshotViewer.__new__(ScreenshotViewer)
+    viewer = SimpleNamespace()
     viewer._current_path = lambda: path
     runner = Mock()
 
@@ -2290,9 +2358,10 @@ def test_get_device_info_batches_properties_and_probe_commands():
 def test_device_manager_shows_placeholder_for_new_unstored_device():
     _app = QApplication.instance() or QApplication([])
     panel = Mock(selected_devices=[])
-    manager = DeviceManager.__new__(DeviceManager)
+    manager = SimpleNamespace(selected_devices=[])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     with patch("gui.panels.device_manager.DeviceStore.get_full_devices_info", return_value=[]):
         DeviceManager.update_device_list(manager, ["emulator-5554"])
@@ -2306,9 +2375,10 @@ def test_device_manager_shows_placeholder_for_new_unstored_device():
 def test_device_manager_updates_device_list_incrementally():
     _app = QApplication.instance() or QApplication([])
     panel = Mock(selected_devices=[])
-    manager = DeviceManager.__new__(DeviceManager)
+    manager = SimpleNamespace(selected_devices=[])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     first_infos = [
         {"Brand": "Google", "Model": "Pixel", "Aversion": "15", "ip": "device-1"},
@@ -2324,6 +2394,7 @@ def test_device_manager_updates_device_list_incrementally():
         DeviceManager.update_device_list(manager, ["device-1", "device-2"])
         first_item = manager.listbox_devices.item(0)
         first_item.setCheckState(Qt.Checked)
+        manager.selected_devices = ["device-1"]
 
         DeviceManager.update_device_list(manager, ["device-1", "device-3"])
 
@@ -2337,9 +2408,10 @@ def test_device_manager_updates_device_list_incrementally():
 def test_device_manager_none_device_list_clears_without_model_lookup():
     _app = QApplication.instance() or QApplication([])
     panel = Mock(selected_devices=[])
-    manager = DeviceManager.__new__(DeviceManager)
+    manager = SimpleNamespace(selected_devices=["device-1"])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
     item = QListWidgetItem("device-1")
     item.setData(Qt.UserRole, {"ip": "device-1"})
     item.setCheckState(Qt.Checked)
@@ -2465,7 +2537,7 @@ def test_base_panel_row_helper_adds_weighted_widgets():
 def test_device_manager_skips_unchanged_device_combo_refresh():
     _app = QApplication.instance() or QApplication([])
     panel = Mock()
-    manager = DeviceManager.__new__(DeviceManager)
+    manager = SimpleNamespace()
     manager.panel = panel
     manager._device_model = Mock()
     manager.ip_entry = Mock()
@@ -2482,10 +2554,12 @@ def test_device_manager_skips_unchanged_device_combo_refresh():
 
 def test_side_panel_theme_refresh_updates_button_icons():
     _app = QApplication.instance() or QApplication([])
-    panel = SidePanel.__new__(SidePanel)
+    panel = SimpleNamespace()
     panel._font_sm = QFont()
     panel._font_base = QFont()
+    panel._font_mono = QFont()
     panel._font_tab = QFont()
+    panel._create_fonts = Mock()
     panel.tabs = Mock()
     panel._apply_tab_style = Mock()
     panel._devices_tab = Mock()
@@ -2498,6 +2572,7 @@ def test_side_panel_theme_refresh_updates_button_icons():
     panel.findChildren = Mock(return_value=[button])
     panel.setStyleSheet = Mock()
     panel._apply_completer_style = Mock()
+    panel.apply_device_theme = Mock()
 
     with patch("gui.panels.side_panel.get_themed_icon", return_value=QIcon()) as themed_icon:
         SidePanel._on_theme_changed(panel, "Dark")
@@ -2507,15 +2582,15 @@ def test_side_panel_theme_refresh_updates_button_icons():
 
 def test_side_panel_public_helpers_wrap_internal_tabs():
     device_widget = QWidget()
-    panel = SidePanel.__new__(SidePanel)
+    panel = SimpleNamespace()
     panel._device_widget = device_widget
     panel._devices_tab = Mock()
     panel._devices_tab.ip_entry.completer.return_value = None
     panel._apps_tab = Mock(package_text="com.example.app")
     panel._apply_completer_style = Mock()
 
-    assert panel.device_widget is device_widget
-    assert panel.current_package_text() == "com.example.app"
+    assert SidePanel.device_widget.fget(panel) is device_widget
+    assert SidePanel.current_package_text(panel) == "com.example.app"
 
     SidePanel.refresh_device_choices(panel)
     SidePanel.apply_device_theme(panel)
@@ -2551,7 +2626,7 @@ def test_side_panel_lazy_loads_and_connects_later_tabs():
 
 
 def test_side_panel_shutdown_forwards_to_loaded_tabs():
-    panel = SidePanel.__new__(SidePanel)
+    panel = SimpleNamespace()
     apps_tab = object()
     remote_tab = Mock()
     panel._loaded_lazy_tabs = {0, 2}
@@ -2570,7 +2645,7 @@ def test_side_panel_shutdown_forwards_to_loaded_tabs():
 
 
 def test_remote_status_font_size_uses_base_styles_default():
-    remote = RemotePanel.__new__(RemotePanel)
+    remote = SimpleNamespace()
     remote._status_label = Mock()
     old_size = BaseStyles.DEFAULT_FONT_SIZE
     BaseStyles.DEFAULT_FONT_SIZE = 16
@@ -2585,9 +2660,21 @@ def test_remote_status_font_size_uses_base_styles_default():
 
 def test_remote_start_stop_buttons_follow_running_state():
     _app = QApplication.instance() or QApplication([])
-    side_panel = SidePanel()
+    owner = QWidget()
+    remote = SimpleNamespace(
+        btn_start=QPushButton(owner),
+        btn_stop=QPushButton(owner),
+    )
+    remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(
+        remote, button
+    )
+    remote._set_button_enabled = lambda button, enabled: BasePanel._set_button_enabled(
+        remote, button, enabled
+    )
     try:
-        remote = side_panel._ensure_tab_loaded(2)
+        BasePanel._apply_button_variant(remote, remote.btn_start, "accent")
+        BasePanel._apply_button_variant(remote, remote.btn_stop, "danger")
+        RemotePanel._set_running(remote, False)
 
         assert remote.btn_start.objectName() == "accent"
         assert remote.btn_start.property("buttonVariant") == "accent"
@@ -2596,7 +2683,6 @@ def test_remote_start_stop_buttons_follow_running_state():
         assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
 
         RemotePanel._set_running(remote, True)
-        _app.processEvents()
 
         assert remote.btn_start.isEnabled() is False
         assert remote.btn_stop.isEnabled() is True
@@ -2604,33 +2690,49 @@ def test_remote_start_stop_buttons_follow_running_state():
         assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("BUTTON_DANGER").lower()
 
         RemotePanel._set_running(remote, False)
-        _app.processEvents()
 
         assert remote.btn_start.isEnabled() is True
         assert remote.btn_stop.isEnabled() is False
         assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
         assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("INPUT_BG").lower()
     finally:
-        side_panel.close()
+        owner.close()
 
 
 def test_side_panel_theme_refresh_preserves_remote_button_variants():
     _app = QApplication.instance() or QApplication([])
-    side_panel = SidePanel()
-    current_theme = BaseStyles.current_theme()
+    owner = QWidget()
+    start_button = QPushButton(owner)
+    stop_button = QPushButton(owner)
+    panel = SimpleNamespace(
+        _font_tab=QFont(),
+        _font_base=QFont(),
+        _font_sm=QFont(),
+        tabs=Mock(),
+        _apps_tab=None,
+    )
+    panel._create_fonts = Mock()
+    panel.setStyleSheet = Mock()
+    panel._apply_tab_style = Mock()
+    panel.findChildren = Mock(return_value=[start_button, stop_button])
+    panel.apply_device_theme = Mock()
+    panel._refresh_button_style = lambda button: BasePanel._refresh_button_style(
+        panel, button
+    )
+    BasePanel._apply_button_variant(panel, start_button, "accent")
+    BasePanel._apply_button_variant(panel, stop_button, "danger")
     try:
-        remote = side_panel._ensure_tab_loaded(2)
-        BaseStyles.switch_theme("Dark" if current_theme == "Light" else "Light")
-        _app.processEvents()
+        SidePanel._on_theme_changed(panel, BaseStyles.current_theme())
 
-        assert remote.btn_start.objectName() == "accent"
-        assert remote.btn_start.property("buttonVariant") == "accent"
-        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
-        assert remote.btn_stop.objectName() == "danger"
-        assert remote.btn_stop.property("buttonVariant") == "danger"
+        assert start_button.objectName() == "accent"
+        assert start_button.property("buttonVariant") == "accent"
+        assert start_button.palette().button().color().name() == BaseStyles.color(
+            "BUTTON_ACCENT"
+        ).lower()
+        assert stop_button.objectName() == "danger"
+        assert stop_button.property("buttonVariant") == "danger"
     finally:
-        BaseStyles.switch_theme(current_theme)
-        side_panel.close()
+        owner.close()
 
 
 def test_remote_control_buttons_are_grouped_without_duplicate_shortcuts():
@@ -2656,11 +2758,12 @@ def test_remote_control_buttons_are_grouped_without_duplicate_shortcuts():
 
 
 def test_remote_control_clicks_warn_when_no_device_selected():
-    remote = RemotePanel.__new__(RemotePanel)
-    remote.panel = Mock(selected_devices=[])
+    remote = SimpleNamespace()
+    remote.selected_devices = []
     remote._remote_control = Mock()
     remote._submit_remote_input = Mock()
     remote._log = Mock()
+    remote._selected_remote_device = lambda: RemotePanel._selected_remote_device(remote)
 
     RemotePanel._send_keyevent(remote, "HOME")
     RemotePanel._send_remote_action(remote, "swipe_up")
@@ -2744,8 +2847,11 @@ def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
 
 
 def _app_manager_for_unit_tests():
+    class UnitDialog:
+        pass
+
     _app = QApplication.instance() or QApplication([])
-    dialog = AppManagerDialog.__new__(AppManagerDialog)
+    dialog = UnitDialog()
     dialog._apps_data = []
     dialog._app_labels = {}
     dialog._app_versions = {}
@@ -2776,6 +2882,18 @@ def _app_manager_for_unit_tests():
     dialog.icon_list = Mock()
     dialog.icon_list.clear = Mock()
     dialog.icon_list.addItem = Mock()
+    dialog._gen_icon = AppManagerDialog._gen_icon
+    dialog._on_detail = lambda *args: AppManagerDialog._on_detail(dialog, *args)
+    dialog._on_detail_worker_finished = lambda packages=None: (
+        AppManagerDialog._on_detail_worker_finished(dialog, packages)
+    )
+    dialog._has_unloaded_details = lambda: AppManagerDialog._has_unloaded_details(dialog)
+    dialog._next_unloaded_detail_packages = lambda limit=30: (
+        AppManagerDialog._next_unloaded_detail_packages(dialog, limit)
+    )
+    dialog._schedule_visible_detail_load = lambda delay_ms=120: (
+        AppManagerDialog._schedule_visible_detail_load(dialog, delay_ms)
+    )
     return dialog
 
 
@@ -3484,7 +3602,7 @@ def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
 
 
 def test_file_explorer_transfer_failure_does_not_refresh():
-    dialog = FileExplorerDialog.__new__(FileExplorerDialog)
+    dialog = SimpleNamespace()
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
@@ -3497,7 +3615,7 @@ def test_file_explorer_transfer_failure_does_not_refresh():
 
 
 def test_file_explorer_file_operation_failure_does_not_show_success():
-    dialog = FileExplorerDialog.__new__(FileExplorerDialog)
+    dialog = SimpleNamespace()
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
@@ -3550,7 +3668,7 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
 
 def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     _app = QApplication.instance() or QApplication([])
-    dialog = FileExplorerDialog.__new__(FileExplorerDialog)
+    dialog = SimpleNamespace()
     dialog.current_path = "/sdcard"
     dialog.TYPE_COL = FileExplorerDialog.TYPE_COL
     dialog.NAME_COL = FileExplorerDialog.NAME_COL
@@ -3559,6 +3677,10 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     dialog.table = Mock()
     dialog.status_bar = Mock()
     dialog.symlink_targets = {}
+    dialog._file_type_icon = Mock(return_value=QIcon())
+    dialog._set_file_row = lambda row, name, file_type, size, modified: (
+        FileExplorerDialog._set_file_row(dialog, row, name, file_type, size, modified)
+    )
     output = """
 total 8
 drwxr-xr-x 2 shell shell 4096 May 30 DCIM
@@ -3832,46 +3954,68 @@ def test_kill_monkey_reports_real_device_stop_error_without_local_process():
     }
 
 
-def test_log_service_shutdown_flushes_without_deadlock():
-    _app = QApplication.instance() or QApplication([])
+@pytest.fixture
+def isolated_log_service():
+    """隔离日志服务的进程级单例，避免停止状态在测试用例之间传播。"""
+    previous_instance = LogService._instance
+    LogService._instance = None
     service = LogService()
-    service.log("INFO", "shutdown sentinel")
+    try:
+        yield service
+    finally:
+        if service._state == service._STATE_ACCEPTING:
+            service.shutdown()
+        LogService._instance = previous_instance
 
-    thread = threading.Thread(target=service.shutdown, daemon=True)
+
+def test_log_service_shutdown_rejects_background_thread_without_deadlock(isolated_log_service):
+    _app = QApplication.instance() or QApplication([])
+    service = isolated_log_service
+    service.log("INFO", "shutdown sentinel")
+    errors = []
+
+    def shutdown_from_worker():
+        try:
+            service.shutdown()
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=shutdown_from_worker, daemon=True)
     thread.start()
     thread.join(timeout=0.5)
 
     assert not thread.is_alive()
+    assert len(errors) == 1
+    assert isinstance(errors[0], RuntimeError)
     service._buffer_lock.lock()
     try:
-        assert service._buffer == []
+        assert service._buffer == [("INFO", "shutdown sentinel")]
     finally:
         service._buffer_lock.unlock()
 
 
-def test_log_service_worker_thread_log_flushes_on_owner_thread():
-    app = QApplication.instance() or QApplication([])
-    service = LogService()
+def test_log_service_worker_thread_log_flushes_on_owner_thread(isolated_log_service):
+    _app = QApplication.instance() or QApplication([])
+    service = isolated_log_service
     service._flush_buffer()
     sentinel = "worker-thread-flush-sentinel"
     emitted = []
-    service.log_received.connect(lambda level, message: emitted.append((level, message)))
+    owner_thread_id = threading.get_ident()
+    service.log_received.connect(
+        lambda level, message: emitted.append((level, message, threading.get_ident()))
+    )
 
     thread = threading.Thread(target=lambda: service.log("INFO", sentinel), daemon=True)
     thread.start()
     thread.join(timeout=0.5)
+    service._flush_buffer()
 
-    deadline = time.monotonic() + 1
-    while time.monotonic() < deadline and ("INFO", sentinel) not in emitted:
-        app.processEvents()
-        time.sleep(0.01)
-
-    assert ("INFO", sentinel) in emitted
+    assert ("INFO", sentinel, owner_thread_id) in emitted
 
 
-def test_log_service_emits_batch_before_compat_single_signals():
+def test_log_service_emits_batch_before_compat_single_signals(isolated_log_service):
     _app = QApplication.instance() or QApplication([])
-    service = LogService()
+    service = isolated_log_service
     service._flush_buffer()
     batch_emitted = []
     singles = []
@@ -3886,8 +4030,9 @@ def test_log_service_emits_batch_before_compat_single_signals():
     assert singles[-2:] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
 
 
-def test_log_panel_appends_large_batch_in_one_render_pass():
+def test_log_panel_appends_large_batch_in_one_render_pass(isolated_log_service):
     _app = QApplication.instance() or QApplication([])
+    assert LogService() is isolated_log_service
     panel = LogPanel()
     try:
         calls = []
@@ -3909,8 +4054,9 @@ def test_log_panel_appends_large_batch_in_one_render_pass():
         panel.close()
 
 
-def test_log_panel_coalesces_small_log_batches_before_rendering():
+def test_log_panel_coalesces_small_log_batches_before_rendering(isolated_log_service):
     _app = QApplication.instance() or QApplication([])
+    assert LogService() is isolated_log_service
     panel = LogPanel()
     old_debounce = LogPanel.RENDER_DEBOUNCE_MS
     LogPanel.RENDER_DEBOUNCE_MS = 20
@@ -3928,11 +4074,7 @@ def test_log_panel_coalesces_small_log_batches_before_rendering():
         panel._append_logs([("INFO", "small-2")])
 
         assert calls == []
-
-        deadline = time.monotonic() + 0.5
-        while time.monotonic() < deadline and not calls:
-            _app.processEvents()
-            time.sleep(0.01)
+        panel._flush_pending_rows()
 
         assert calls == [2]
         assert "small-2" in panel.text_output.toPlainText()

@@ -1,9 +1,11 @@
-import json
+"""组装主窗口、功能面板、设备扫描和应用级关闭流程。"""
+
 import os
 import shutil
 import threading
+import time
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSplitter,
@@ -19,8 +22,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from adblab.application.supervision import StopDisposition, ThreadedShutdownTask
+from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
+from core.dangerous_ops import DangerousOperationPolicy
 from core.log_service import LogService
+from core.settings_manager import AppSettings
 from gui.dialogs.about_dialog import AboutDialog
 from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
@@ -36,8 +43,18 @@ from utils.resource_path import resource_path
 from .styles import BaseStyles, get_default_font
 
 
+def _debug_log(owner, event: str, **fields) -> None:
+    """输出不含敏感业务值的结构化开发诊断。"""
+    log_service = getattr(owner, "log_service", None)
+    if log_service is None:
+        return
+    details = " ".join(f"{name}={value}" for name, value in sorted(fields.items()))
+    message = event if not details else f"{event} {details}"
+    log_service.log("DEBUG", message)
+
+
 class _ScanThread(QThread):
-    """Long-running thread: polls `adb devices` at low priority."""
+    """以低频率轮询 ``adb devices`` 的长生命周期线程。"""
 
     devices_changed = Signal(list)
 
@@ -52,7 +69,7 @@ class _ScanThread(QThread):
     def run(self):
         from models.adb_device import parse_connected_devices
 
-        last_devices = None  # always emit on first poll
+        last_devices = None  # 首次轮询必须发布设备列表。
         while not self._stop_flag:
             try:
                 if CommandRunner.active_count() == 0:
@@ -64,7 +81,7 @@ class _ScanThread(QThread):
                         self.devices_changed.emit(devices)
             except Exception:
                 pass
-            # Sleep between polls, breakable for clean shutdown.
+            # 将轮询间隔拆成短等待，使关闭请求能够及时中断线程。
             for _ in range(max(1, self._interval_ms // 100)):
                 if self._stop_flag:
                     return
@@ -72,6 +89,8 @@ class _ScanThread(QThread):
 
 
 class MainFrame(QMainWindow):
+    SHUTDOWN_DEADLINE_SECONDS = 6.0
+    SHUTDOWN_FINALIZER_RESERVE_SECONDS = 1.0
     DEVICE_SCAN_DEBOUNCE_MS = 300
     SPLITTER_SAVE_DEBOUNCE_MS = 300
     _adb_bootstrap_finished = Signal()
@@ -82,6 +101,20 @@ class MainFrame(QMainWindow):
         self.log_panel = LogPanel()
         self.left_panel = SidePanel()
         self.adb_controller = ADBController(self.log_service)
+        self.adb_controller.window_parent = self
+        self.task_supervisor = QtTaskSupervisor()
+        self.task_supervisor.application_stopped.connect(self._on_application_stopped)
+        self.task_supervisor.application_finalized.connect(self._on_application_finalized)
+        self._shutdown_owner_id = f"application-{id(self)}"
+        self._shutdown_handles = []
+        self._shutdown_results = ()
+        self._shutdown_residual = ()
+        self._shutdown_deadline_at = 0.0
+        self._shutdown_finalizer_started = False
+        self._close_started = False
+        self._close_ready = False
+        self._dangerous_policy = DangerousOperationPolicy()
+        self._guarded_signal_handlers = []
         self._drag_pos = None
         self._active_dialogs = []
         self._scan_thread = None
@@ -105,10 +138,10 @@ class MainFrame(QMainWindow):
         self._init_panels()
         self._bootstrap_adb_async()
 
-    # ── continuous scan ───────────────────────────────────────────────
+    # ── 持续设备扫描 ────────────────────────────────────────────────────
 
     def _bootstrap_adb_async(self):
-        """Resolve ADB after first paint so startup is not held by filesystem/PATH checks."""
+        """首帧绘制后再解析 ADB，避免文件系统和 PATH 检查阻塞启动界面。"""
         from utils.adb_resolver import resolve_adb_path
 
         def _bootstrap():
@@ -131,6 +164,7 @@ class MainFrame(QMainWindow):
         if getattr(self, "_closing", False):
             return
         from core.settings_manager import AppSettings
+
         if AppSettings.instance().get("continuous_device_scan", True):
             self._start_scan_thread()
         else:
@@ -140,6 +174,7 @@ class MainFrame(QMainWindow):
         if self._scan_thread and self._scan_thread.isRunning():
             return
         from core.settings_manager import AppSettings
+
         interval_ms = AppSettings.instance().get("device_scan_interval_ms", 15000)
         self._scan_thread = _ScanThread(interval_ms=interval_ms)
         self._scan_thread.devices_changed.connect(self._schedule_scan_refresh)
@@ -164,11 +199,15 @@ class MainFrame(QMainWindow):
             self._scan_thread = None
 
     def _schedule_scan_refresh(self, devices: list[str]):
-        """Debounce scan-thread device list notifications without a second adb poll."""
+        """合并扫描线程通知，更新界面时不再发起第二次 ADB 轮询。"""
+        if getattr(self, "_closing", False):
+            return
         self._pending_scanned_devices = list(devices)
         self._scan_refresh_timer.start(self.DEVICE_SCAN_DEBOUNCE_MS)
 
     def _publish_scanned_devices(self):
+        if getattr(self, "_closing", False):
+            return
         self.adb_controller.publish_detected_devices(list(self._pending_scanned_devices))
 
     def set_continuous_scan(self, enabled: bool):
@@ -184,6 +223,7 @@ class MainFrame(QMainWindow):
         self.setMinimumSize(860, 500)
 
         from core.settings_manager import AppSettings
+
         s = AppSettings.instance()
         self._always_on_top = bool(s.get("always_on_top", False))
         self._apply_window_flags()
@@ -199,7 +239,7 @@ class MainFrame(QMainWindow):
         """)
 
     def _init_panels(self):
-        """Build central widget: toolbar + panel area."""
+        """构建工具栏和左右功能面板。"""
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
         central_widget.setStyleSheet(f"""
@@ -210,15 +250,12 @@ class MainFrame(QMainWindow):
             }}
         """)
 
-        # Vertical layout: full-width toolbar + horizontal panel area
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
         main_layout.addWidget(self._create_toolbar())
 
-        # Left column: device manager + log
-        # Right column: function tabs
         left_col = QVBoxLayout()
         left_col.setContentsMargins(0, 0, 0, 0)
         left_col.setSpacing(1)
@@ -238,6 +275,7 @@ class MainFrame(QMainWindow):
         panel_row.setSpacing(1)
 
         from core.settings_manager import AppSettings
+
         s2 = AppSettings.instance()
         lw = s2.get("left_panel_width", 595)
         rw = s2.get("right_panel_width", 592)
@@ -261,10 +299,10 @@ class MainFrame(QMainWindow):
         self._connect_all_signals()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
 
-    # ── Top toolbar (full-width, replaces menu bar) ───────────────────
+    # ── 顶部工具栏 ──────────────────────────────────────────────────────
 
     def _create_toolbar(self) -> QFrame:
-        """Create full-width top toolbar with title, function buttons, theme toggle and window controls."""
+        """创建包含功能入口、主题切换和窗口控制的顶部工具栏。"""
         bar = QFrame()
         bar.setObjectName("toolbar")
         bar.setFixedHeight(32)
@@ -274,12 +312,12 @@ class MainFrame(QMainWindow):
         layout.setContentsMargins(10, 0, 6, 0)
         layout.setSpacing(4)
 
-        # App title
         title = QLabel("ADBLab")
         layout.addWidget(title)
 
-        # Function buttons
-        self.tb_app_mgr = self._create_toolbar_btn("App Manager", "resources/icons/squares-four.svg")
+        self.tb_app_mgr = self._create_toolbar_btn(
+            "App Manager", "resources/icons/squares-four.svg"
+        )
         self.tb_app_mgr.setFixedSize(28, 24)
         self.tb_file_explorer = self._create_toolbar_btn(
             "File Explorer", "resources/icons/folder-open.svg"
@@ -296,7 +334,6 @@ class MainFrame(QMainWindow):
         self.tb_cmd = self._create_toolbar_btn("CMD", "resources/icons/terminal-window.svg")
         self.tb_cmd.setFixedSize(28, 24)
 
-        # Save path indicator + change button
         self._tb_save_btn = QPushButton()
         self._tb_save_btn.setIcon(get_themed_icon("folder.svg"))
         self._tb_save_btn.setIconSize(QSize(14, 14))
@@ -307,7 +344,6 @@ class MainFrame(QMainWindow):
         self._tb_save_btn.setCursor(Qt.PointingHandCursor)
         self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
 
-        # Save path indicator + change button
         self._save_path_label = QLabel()
         self._save_path_label.setObjectName("savePathLabel")
         self._refresh_save_path()
@@ -322,13 +358,9 @@ class MainFrame(QMainWindow):
         layout.addWidget(self._save_path_label)
         layout.addStretch()
 
-        # Right-side tool buttons
-        self.tb_clear = self._create_toolbar_btn(
-            "Clear Log", "resources/icons/broom.svg"
-        )
+        self.tb_clear = self._create_toolbar_btn("Clear Log", "resources/icons/broom.svg")
         self.tb_about = self._create_toolbar_btn("About", "resources/icons/info.svg")
 
-        # Theme toggle button
         self.theme_btn = QPushButton()
         self.theme_btn.setIcon(get_themed_icon("circle-half-tilt.svg"))
         self.theme_btn.setIconSize(QSize(16, 16))
@@ -336,17 +368,18 @@ class MainFrame(QMainWindow):
         self.theme_btn.setProperty("iconName", "circle-half-tilt.svg")
         self.theme_btn.setFixedSize(28, 24)
         self.theme_btn.setFlat(True)
-        self.theme_btn.clicked.connect(lambda: BaseStyles.toggle_theme())
+        self.theme_btn.clicked.connect(self._toggle_theme)
 
         self.tb_minimize = self._create_toolbar_btn("Minimize", "resources/icons/minus.svg")
-        self.tb_always_on_top = self._create_toolbar_btn("Pin on top", "resources/icons/push-pin.svg")
+        self.tb_always_on_top = self._create_toolbar_btn(
+            "Pin on top", "resources/icons/push-pin.svg"
+        )
         self.tb_always_on_top.setCheckable(True)
         self.tb_always_on_top.setChecked(self._always_on_top)
         self._refresh_always_on_top_button()
         self.tb_exit = self._create_toolbar_btn("Exit", "resources/icons/x.svg")
         self.tb_exit.setObjectName("exit_btn")
 
-        # Connect toolbar button actions
         self.tb_clear.clicked.connect(self.clear_log)
         self.tb_about.clicked.connect(self._show_about_dialog)
         self.tb_app_mgr.clicked.connect(self._show_app_manager)
@@ -355,9 +388,9 @@ class MainFrame(QMainWindow):
         self.tb_performance.clicked.connect(self._show_performance_monitor)
         self.tb_cmd.clicked.connect(self._open_cmd)
         self.tb_settings.clicked.connect(self._show_settings)
-        self.tb_minimize.clicked.connect(self.showMinimized)
+        self.tb_minimize.clicked.connect(self._minimize_window)
         self.tb_always_on_top.clicked.connect(self.set_always_on_top)
-        self.tb_exit.clicked.connect(self.close)
+        self.tb_exit.clicked.connect(self._request_application_close)
 
         for btn in (
             self.tb_clear,
@@ -373,7 +406,7 @@ class MainFrame(QMainWindow):
         return bar
 
     def _create_toolbar_btn(self, tooltip: str, icon_path: str) -> QPushButton:
-        """Create flat toolbar button (icon + tooltip)."""
+        """创建带图标和提示文本的扁平工具栏按钮。"""
         icon_name = icon_path.replace("resources/icons/", "")
         btn = QPushButton()
         btn.setIcon(get_themed_icon(icon_name))
@@ -384,8 +417,10 @@ class MainFrame(QMainWindow):
         return btn
 
     def _on_theme_changed(self, _name: str):
-        """Re-apply central widget and toolbar styles on theme change, and persist theme."""
+        """主题变化后刷新窗口样式和图标，并持久化主题选择。"""
+        _debug_log(self, "ui.toolbar", action="theme", phase="applied", theme=_name)
         from core.settings_manager import AppSettings
+
         AppSettings.instance().set("theme", _name)
 
         self.centralWidget().setStyleSheet(f"""
@@ -399,11 +434,10 @@ class MainFrame(QMainWindow):
             bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
         self._refresh_toolbar_icons()
         self._refresh_save_path()
-        # Splitter handle theme
         self._panel_splitter.setStyleSheet(
             f"QSplitter::handle {{ background-color: {BaseStyles.color('BORDER_COLOR')}; }}"
         )
-        # Left panel theme update (including inner GroupBoxes and device list)
+        # 左侧容器不属于 SidePanel 控件树，需要在此单独刷新分组框和设备列表。
         lw = self.findChild(QWidget, "leftPanelWrapper")
         if lw:
             lw.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
@@ -411,6 +445,27 @@ class MainFrame(QMainWindow):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
             self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
+
+    def _toggle_theme(self):
+        """记录工具栏主题切换请求并交给主题服务执行。"""
+        _debug_log(
+            self,
+            "ui.toolbar",
+            action="theme",
+            phase="requested",
+            current_theme=BaseStyles.current_theme(),
+        )
+        BaseStyles.toggle_theme()
+
+    def _minimize_window(self):
+        """记录工具栏最小化动作。"""
+        _debug_log(self, "ui.toolbar", action="minimize", phase="requested")
+        self.showMinimized()
+
+    def _request_application_close(self):
+        """记录工具栏退出动作，实际资源清理由 closeEvent 接管。"""
+        _debug_log(self, "ui.toolbar", action="exit", phase="requested")
+        self.close()
 
     def _refresh_active_dialog_themes(self):
         survivors = []
@@ -433,7 +488,7 @@ class MainFrame(QMainWindow):
         self._refresh_always_on_top_button()
 
     def _connect_all_signals(self):
-        """Connect left panel signals to ADB controller signals."""
+        """将左侧面板信号连接到 ADB Controller，并包装危险操作校验。"""
         LP = self.left_panel.signals
         CTL = self.adb_controller.signals
         AC = self.adb_controller
@@ -446,19 +501,61 @@ class MainFrame(QMainWindow):
             + self._system_signal_map(LP, AC)
         )
         for signal_, handler in signal_map:
-            signal_.connect(handler)
+            guarded_handler = self._guard_dangerous_handler(handler)
+            self._guarded_signal_handlers.append(guarded_handler)
+            signal_.connect(guarded_handler)
+
+    def _guard_dangerous_handler(self, handler):
+        operation_key = getattr(handler, "__name__", "")
+
+        def guarded(*args):
+            target_count = len(args[0]) if args and isinstance(args[0], (list, tuple, set)) else 1
+            decision = self._dangerous_policy.evaluate(
+                operation_key,
+                confirmation_enabled=bool(
+                    AppSettings.instance().get("confirm_dangerous_ops", True)
+                ),
+                target_count=target_count,
+            )
+            if decision.requires_confirmation:
+                answer = QMessageBox.question(
+                    self,
+                    "Confirm dangerous operation",
+                    decision.message,
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    self.log_service.log(
+                        "WARNING",
+                        f"Dangerous operation cancelled: {operation_key}",
+                        flush_immediately=True,
+                    )
+                    return None
+            return handler(*args)
+
+        if (
+            self._dangerous_policy.evaluate(
+                operation_key,
+                confirmation_enabled=True,
+            ).operation
+            is None
+        ):
+            return handler
+        return guarded
 
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)
-        LP.log_message.connect(self.log_panel._append_log)
+        LP.log_message.connect(self.log_service.log)
         CTL.email_updated.connect(self.left_panel.update_email)
         CTL.vercode_updated.connect(self.left_panel.update_vercode)
         CTL.record_finished.connect(self.left_panel.on_recording_finished)
         CTL.operation_completed.connect(self.left_panel.on_operation_completed)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
         CTL.device_info_updated.connect(
-            lambda ip, info: self.log_panel._append_log(
-                "INFO", f"Device {ip} info:\n{json.dumps(info, indent=2)}"
+            lambda _ip, info: self.log_service.log(
+                "INFO",
+                f"Device information updated: field_count={len(info)}",
             )
         )
 
@@ -540,39 +637,65 @@ class MainFrame(QMainWindow):
         ]
 
     def _on_devices_updated(self, devices: list[str]):
-        """Refresh device UI only when the device list changes."""
+        """仅在设备列表变化后刷新设备界面。"""
         self.left_panel.update_device_list(devices)
         self.left_panel.refresh_device_choices()
 
     def clear_log(self):
-        """Clear log panel."""
+        """清空用户日志面板并记录操作结果。"""
+        _debug_log(self, "ui.toolbar", action="clear_log", phase="requested")
         self.log_panel.clear()
-        self.log_panel._append_log("INFO", "Log cleared")
+        self.log_service.log("INFO", "Log cleared")
 
     def _show_about_dialog(self):
-        """Show about dialog."""
+        """显示关于对话框。"""
+        _debug_log(self, "ui.toolbar", action="about", phase="requested")
         dialog = AboutDialog(self)
-        dialog.exec_()
+        dialog.installEventFilter(self)
+        _debug_log(self, "ui.secondary_window", dialog="AboutDialog", phase="opened")
+        result = dialog.exec_()
+        _debug_log(
+            self,
+            "ui.secondary_window",
+            dialog="AboutDialog",
+            phase="closed",
+            result=result,
+        )
 
     def _show_app_manager(self):
-        """Open an App Manager window for each selected device."""
+        """为每个已选设备打开应用管理窗口。"""
+        _debug_log(self, "ui.toolbar", action="app_manager", phase="requested")
         self._show_device_dialogs(AppManagerDialog)
 
     def _show_file_explorer(self):
-        """Open a File Explorer window for each selected device."""
+        """为每个已选设备打开文件浏览窗口。"""
+        _debug_log(self, "ui.toolbar", action="file_explorer", phase="requested")
         self._show_device_dialogs(FileExplorerDialog)
 
     def _show_logcat(self):
-        """Open a Live Logcat window for each selected device."""
-        self._show_device_dialogs(LiveLogcatDialog)
+        """为每个已选设备打开实时 Logcat 窗口。"""
+        _debug_log(self, "ui.toolbar", action="live_logcat", phase="requested")
+        self._show_device_dialogs(
+            LiveLogcatDialog,
+            task_supervisor=self.task_supervisor,
+            log_service=getattr(self, "log_service", None),
+        )
 
     def _show_performance_monitor(self):
-        """Open the native Performance launcher dialog."""
+        """打开原生性能采集启动对话框。"""
         from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 
+        _debug_log(self, "ui.toolbar", action="performance", phase="requested")
         devices = self.left_panel.selected_devices
         if not devices:
-            self.log_panel._append_log("WARNING", "No device selected")
+            _debug_log(
+                self,
+                "ui.secondary_window",
+                dialog="PerformanceLauncherDialog",
+                phase="blocked",
+                reason="no_device",
+            )
+            self.log_service.log("WARNING", "No device selected")
             return
         device_ip = devices[0]
         try:
@@ -581,40 +704,83 @@ class MainFrame(QMainWindow):
             package_name = ""
         dlg = self._find_active_dialog(PerformanceLauncherDialog, device_ip or "default")
         if dlg:
+            _debug_log(
+                self,
+                "ui.secondary_window",
+                dialog="PerformanceLauncherDialog",
+                phase="reused",
+            )
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
             return
         dlg = self._register_dialog(
-            PerformanceLauncherDialog(device_ip=device_ip, package_name=package_name),
+            PerformanceLauncherDialog(
+                device_ip=device_ip,
+                package_name=package_name,
+                parent=self if isinstance(self, QWidget) else None,
+            ),
             PerformanceLauncherDialog,
             device_ip or "default",
         )
         dlg.show()
 
-    def _show_device_dialogs(self, dialog_cls):
+    def _show_device_dialogs(self, dialog_cls, **dialog_kwargs):
+        """为选中设备创建由主窗口托管的非模态窗口。"""
         devices = self.left_panel.selected_devices
         if not devices:
-            self.log_panel._append_log("WARNING", "No device selected")
+            _debug_log(
+                self,
+                "ui.secondary_window",
+                dialog=dialog_cls.__name__,
+                phase="blocked",
+                reason="no_device",
+            )
+            self.log_service.log("WARNING", "No device selected")
             return
+        dialog_kwargs.setdefault("parent", self)
         for ip in devices:
             dlg = self._find_active_dialog(dialog_cls, ip)
             if dlg:
+                _debug_log(
+                    self,
+                    "ui.secondary_window",
+                    dialog=dialog_cls.__name__,
+                    phase="reused",
+                )
                 dlg.show()
                 dlg.raise_()
                 dlg.activateWindow()
                 continue
-            dlg = self._register_dialog(dialog_cls(device_ip=ip), dialog_cls, ip)
+            dlg = self._register_dialog(
+                dialog_cls(device_ip=ip, **dialog_kwargs),
+                dialog_cls,
+                ip,
+            )
             dlg.show()
 
     def _register_dialog(self, dialog, dialog_cls=None, device_ip=None):
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.installEventFilter(self)
+        dialog_name = dialog_cls.__name__ if dialog_cls is not None else type(dialog).__name__
         if dialog_cls is not None:
-            dialog.setProperty("dialog_class", dialog_cls.__name__)
+            dialog.setProperty("dialog_class", dialog_name)
         if device_ip is not None:
             dialog.setProperty("device_ip", device_ip)
         self._active_dialogs.append(dialog)
-        dialog.destroyed.connect(lambda _obj=None, dlg=dialog: self._forget_dialog(dlg))
+        _debug_log(
+            self,
+            "ui.secondary_window",
+            active_count=len(self._active_dialogs),
+            dialog=dialog_name,
+            phase="created",
+        )
+        dialog.destroyed.connect(
+            lambda _obj=None, dlg=dialog, name=dialog_name: self._on_dialog_destroyed(
+                dlg,
+                name,
+            )
+        )
         return dialog
 
     def _find_active_dialog(self, dialog_cls, device_ip):
@@ -622,6 +788,9 @@ class MainFrame(QMainWindow):
         match = None
         for dialog in self._active_dialogs:
             try:
+                if getattr(dialog, "_closing", False):
+                    survivors.append(dialog)
+                    continue
                 same_dialog = (
                     dialog.property("dialog_class") == dialog_cls.__name__
                     and dialog.property("device_ip") == device_ip
@@ -640,30 +809,84 @@ class MainFrame(QMainWindow):
         except ValueError:
             pass
 
+    def _on_dialog_destroyed(self, dialog, dialog_name: str):
+        """移除已销毁窗口并记录二级窗口关闭完成。"""
+        self._forget_dialog(dialog)
+        _debug_log(
+            self,
+            "ui.secondary_window",
+            active_count=len(self._active_dialogs),
+            dialog=dialog_name,
+            phase="closed",
+        )
+
+    def eventFilter(self, watched, event):
+        """记录受主窗口托管的二级窗口关闭请求。"""
+        if event.type() == QEvent.Type.Close:
+            try:
+                dialog_name = watched.property("dialog_class") or type(watched).__name__
+            except RuntimeError:
+                dialog_name = type(watched).__name__
+            _debug_log(
+                self,
+                "ui.secondary_window",
+                dialog=dialog_name,
+                phase="close_requested",
+            )
+            return False
+        return super().eventFilter(watched, event)
+
     def _show_settings(self):
-        """Show settings dialog."""
+        """显示设置对话框。"""
+        _debug_log(self, "ui.toolbar", action="settings", phase="requested")
         dialog = SettingsDialog(self)
+        dialog.installEventFilter(self)
         dialog.continuous_scan_toggled.connect(self.set_continuous_scan)
-        dialog.exec_()
+        _debug_log(self, "ui.secondary_window", dialog="SettingsDialog", phase="opened")
+        result = dialog.exec_()
+        _debug_log(
+            self,
+            "ui.secondary_window",
+            dialog="SettingsDialog",
+            phase="closed",
+            result=result,
+        )
 
     def _open_cmd(self):
-        """Open system terminal at project root."""
+        """在项目根目录打开系统终端。"""
         import platform
+
+        _debug_log(self, "ui.toolbar", action="cmd", phase="requested")
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         system = platform.system()
         runner = ProcessRunner()
         if system == "Windows":
             runner.spawn(["cmd.exe", "/K", f'cd /d "{root}"'], creationflags=CREATE_NEW_CONSOLE)
+            _debug_log(self, "ui.toolbar", action="cmd", backend="windows", phase="launched")
         elif system == "Darwin":
             runner.spawn(["open", "-a", "Terminal", root])
+            _debug_log(self, "ui.toolbar", action="cmd", backend="macos", phase="launched")
         else:
             for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]:
                 if shutil.which(term):
                     runner.spawn([term], cwd=root)
+                    _debug_log(
+                        self,
+                        "ui.toolbar",
+                        action="cmd",
+                        backend="linux",
+                        phase="launched",
+                    )
                     return
+            _debug_log(
+                self,
+                "ui.toolbar",
+                action="cmd",
+                phase="blocked",
+                reason="terminal_unavailable",
+            )
 
-
-    # -- Window and panel sizing ----------------------------------------
+    # ── 窗口和面板尺寸 ──────────────────────────────────────────────────
 
     def apply_window_size(self, w: int, h: int):
         self.resize(w, h)
@@ -716,9 +939,18 @@ class MainFrame(QMainWindow):
 
     def set_always_on_top(self, enabled: bool):
         self._always_on_top = bool(enabled)
-        self._set_always_on_top_native(self._always_on_top)
+        native_applied = self._set_always_on_top_native(self._always_on_top)
+        _debug_log(
+            self,
+            "ui.toolbar",
+            action="always_on_top",
+            enabled=self._always_on_top,
+            native_applied=native_applied,
+            phase="applied",
+        )
         self._refresh_always_on_top_button()
         from core.settings_manager import AppSettings
+
         AppSettings.instance().set("always_on_top", self._always_on_top)
 
     def _refresh_always_on_top_button(self):
@@ -750,14 +982,16 @@ class MainFrame(QMainWindow):
         left_w, right_w = self._pending_panel_sizes
         self._pending_panel_sizes = None
         from core.settings_manager import AppSettings
+
         s = AppSettings.instance()
         s.set("left_panel_width", left_w)
         s.set("right_panel_width", right_w)
 
-    # ── Save path (toolbar top-left) ──────────────────────────────────
+    # ── 全局保存路径 ────────────────────────────────────────────────────
 
     def _refresh_save_path(self):
         from core.settings_manager import AppSettings
+
         path = AppSettings.instance().save_directory
         if path and os.path.isdir(path):
             short = path if len(path) <= 36 else "..." + path[-33:]
@@ -771,15 +1005,21 @@ class MainFrame(QMainWindow):
 
     def _on_save_path_clicked(self):
         from core.settings_manager import AppSettings
+
+        _debug_log(self, "ui.toolbar", action="save_path", phase="requested")
         s = AppSettings.instance()
         current = s.save_directory
-        d = QFileDialog.getExistingDirectory(self, "Select Default Save Directory",
-            current if os.path.isdir(current) else "")
+        d = QFileDialog.getExistingDirectory(
+            self, "Select Default Save Directory", current if os.path.isdir(current) else ""
+        )
         if d:
             s.set("save_directory", d)
             self._refresh_save_path()
+            _debug_log(self, "ui.toolbar", action="save_path", phase="updated")
+        else:
+            _debug_log(self, "ui.toolbar", action="save_path", phase="cancelled")
 
-    # ── Toolbar drag-to-move window ──────────────────────────────────
+    # ── 拖动工具栏移动窗口 ──────────────────────────────────────────────
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -805,17 +1045,126 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def closeEvent(self, event):
+        """启动异步关闭，只在资源停止和最终状态落盘完成后接受事件。"""
+        if getattr(self, "_close_ready", False):
+            event.accept()
+            return
+        event.ignore()
+        if getattr(self, "_close_started", False):
+            return
+        self._close_started = True
         self._closing = True
-        self._stop_scan_thread(blocking=True)
-        if self._panel_size_save_timer.isActive():
-            self._panel_size_save_timer.stop()
-            self._save_pending_panel_sizes()
-        # Flush pending settings save before exit
-        from core.settings_manager import AppSettings
-        s = AppSettings.instance()
-        if s._save_timer:
-            s._save_timer.cancel()
-        s._save_atomic()
+        self._shutdown_deadline_at = time.monotonic() + max(
+            0.0,
+            float(self.SHUTDOWN_DEADLINE_SECONDS),
+        )
+        self.log_service.log(
+            "DEBUG",
+            (
+                "application shutdown requested: "
+                f"deadline_seconds={float(self.SHUTDOWN_DEADLINE_SECONDS):.1f}"
+            ),
+        )
+        self.setWindowTitle("ADBLab - Closing...")
+        self.setEnabled(False)
+        self.task_supervisor.begin_application_shutdown()
+        self._register_application_shutdown_tasks()
+        self._prepare_ui_for_shutdown()
+        remaining = max(0.0, self._shutdown_deadline_at - time.monotonic())
+        reserve = min(
+            max(0.0, float(self.SHUTDOWN_FINALIZER_RESERVE_SECONDS)),
+            remaining * 0.25,
+        )
+        self.task_supervisor.stop_all_async(deadline=max(0.0, remaining - reserve))
+
+    def _register_application_shutdown_tasks(self):
+        """按扫描、面板、对话框和 Controller 顺序注册应用级关闭资源。"""
+        supervisor = self.task_supervisor.supervisor
+        thread = self._scan_thread
+        if thread is not None:
+
+            def scan_running():
+                try:
+                    return thread.isRunning()
+                except RuntimeError:
+                    return False
+
+            if scan_running():
+                supervisor.register(
+                    f"{self._shutdown_owner_id}-scan",
+                    owner_id=self._shutdown_owner_id,
+                    kind="device_scan",
+                    request_stop=thread.stop,
+                    wait=lambda timeout: thread.wait(max(0, int(timeout * 1000))),
+                    is_running=scan_running,
+                )
+
+        register_panel_tasks = getattr(self.left_panel, "register_shutdown_tasks", None)
+        if callable(register_panel_tasks):
+            register_panel_tasks(
+                supervisor,
+                owner_id=self._shutdown_owner_id,
+            )
+
+        for index, dialog in enumerate(list(self._active_dialogs)):
+            register_dialog_tasks = getattr(dialog, "register_shutdown_tasks", None)
+            if not callable(register_dialog_tasks):
+                continue
+            try:
+                register_dialog_tasks(
+                    supervisor,
+                    owner_id=self._shutdown_owner_id,
+                    task_prefix=f"{self._shutdown_owner_id}-dialog-{index}",
+                )
+            except Exception as exc:
+                self.log_service.log(
+                    "ERROR",
+                    f"Shutdown task registration failed: {type(exc).__name__}",
+                    flush_immediately=True,
+                )
+
+        controller_shutdown = ThreadedShutdownTask(
+            self.adb_controller.shutdown,
+            name="adblab-controller-shutdown",
+        )
+        self._shutdown_handles.append(controller_shutdown)
+
+        def controller_running():
+            return (
+                controller_shutdown.is_running()
+                or ProcessRunner.tracked_active_count() > 0
+            )
+
+        def wait_for_controller(timeout: float):
+            if not controller_shutdown.wait(timeout):
+                return False
+            return ProcessRunner.tracked_active_count() == 0
+
+        supervisor.register(
+            f"{self._shutdown_owner_id}-controller",
+            owner_id=self._shutdown_owner_id,
+            kind="controller_shutdown",
+            request_stop=controller_shutdown.request_stop,
+            wait=wait_for_controller,
+            is_running=controller_running,
+            force_stop=ProcessRunner.force_all_tracked,
+            error_type=controller_shutdown.get_error_type,
+        )
+
+    def _prepare_ui_for_shutdown(self):
+        """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        if self._initial_refresh_timer.isActive():
+            self._initial_refresh_timer.stop()
+        if self._scan_refresh_timer.isActive():
+            self._scan_refresh_timer.stop()
+        if self._scan_thread is not None:
+            self._scan_thread.stop()
+            devices_changed = getattr(self._scan_thread, "devices_changed", None)
+            try:
+                if devices_changed is not None:
+                    devices_changed.disconnect(self._schedule_scan_refresh)
+            except (TypeError, RuntimeError, AttributeError):
+                pass
         for dlg in list(self._active_dialogs):
             try:
                 dlg.close()
@@ -830,5 +1179,108 @@ class MainFrame(QMainWindow):
         shutdown_left_panel = getattr(self.left_panel, "shutdown", None)
         if callable(shutdown_left_panel):
             shutdown_left_panel()
-        self.adb_controller.shutdown()
-        event.accept()
+
+    def _on_application_stopped(self, results, residual):
+        """汇总资源停止结果，再启动配置和日志收尾任务。"""
+        if (
+            not self._close_started
+            or self._close_ready
+            or getattr(self, "_shutdown_finalizer_started", False)
+        ):
+            return
+        self._shutdown_finalizer_started = True
+        self._shutdown_results = tuple(results)
+        self._shutdown_residual = tuple(residual)
+        self.log_service.log(
+            "DEBUG",
+            (
+                "application producers stopped: "
+                f"result_count={len(self._shutdown_results)} "
+                f"residual_count={len(self._shutdown_residual)}"
+            ),
+        )
+        failed = [
+            result
+            for result in self._shutdown_results
+            if getattr(result, "disposition", None) == StopDisposition.FAILED
+        ]
+        if failed:
+            error_types = sorted({result.error_type or "UnknownError" for result in failed})
+            self.log_service.log(
+                "ERROR",
+                f"Shutdown task failures count={len(failed)} types={','.join(error_types)}",
+                flush_immediately=True,
+            )
+        if self._shutdown_residual:
+            kinds = sorted({item.kind for item in self._shutdown_residual})
+            self.setWindowTitle(
+                f"ADBLab - Closing ({len(self._shutdown_residual)} residual resources)"
+            )
+            self.log_service.log(
+                "WARNING",
+                (
+                    f"Shutdown residual resources count={len(self._shutdown_residual)} "
+                    f"kinds={','.join(kinds)}"
+                ),
+                flush_immediately=True,
+            )
+        if self._panel_size_save_timer.isActive():
+            self._panel_size_save_timer.stop()
+            self._save_pending_panel_sizes()
+
+        # 最终用户日志必须在 GUI 线程刷新并冻结；后台 finalizer 只负责配置落盘。
+        self.log_service.shutdown()
+        finalizer = ThreadedShutdownTask(
+            self._flush_shutdown_state,
+            name="adblab-shutdown-finalizer",
+        )
+        self._shutdown_handles.append(finalizer)
+        finalizer_task_id = f"{self._shutdown_owner_id}-finalizer"
+        self.task_supervisor.supervisor.register(
+            finalizer_task_id,
+            owner_id=self._shutdown_owner_id,
+            kind="shutdown_finalizer",
+            request_stop=finalizer.request_stop,
+            wait=finalizer.wait,
+            is_running=finalizer.is_running,
+            error_type=finalizer.get_error_type,
+        )
+        remaining = max(0.0, self._shutdown_deadline_at - time.monotonic())
+        self.task_supervisor.stop_finalizer_async(
+            finalizer_task_id,
+            deadline=remaining,
+        )
+
+    def _flush_shutdown_state(self):
+        """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""
+        from core.settings_manager import AppSettings
+
+        s = AppSettings.instance()
+        if s._save_timer:
+            s._save_timer.cancel()
+        s._save_atomic()
+
+    def _on_application_finalized(self, result, residual):
+        """记录收尾结果并重新触发关闭事件，使 Qt 最终销毁窗口。"""
+        if not self._close_started or self._close_ready:
+            return
+        if result is not None:
+            self._shutdown_results = (*self._shutdown_results, result)
+        self._shutdown_residual = tuple(residual)
+        finalizer_failed = (
+            result is not None
+            and result.disposition
+            in {StopDisposition.FAILED, StopDisposition.TIMED_OUT}
+        )
+        if finalizer_failed:
+            self.setWindowTitle(
+                "ADBLab - Closing "
+                f"(finalizer {result.disposition.value}, "
+                f"{len(self._shutdown_residual)} residual resources)"
+            )
+        if self._shutdown_residual:
+            self.setWindowTitle(
+                f"ADBLab - Closing ({len(self._shutdown_residual)} residual resources)"
+            )
+        self._close_ready = True
+        QTimer.singleShot(0, self.close)

@@ -1,4 +1,4 @@
-"""File Explorer background workers — QThread for ADB shell and file transfer."""
+"""提供在 QThread 中执行 ADB Shell 和文件传输的后台任务。"""
 
 import os
 import subprocess
@@ -10,7 +10,7 @@ from .base.process_runner import ProcessRunner
 
 
 class ADBWorker(QThread):
-    """Run a simple adb shell command and return output."""
+    """执行短 ADB Shell 命令，并通过完成信号返回输出或错误。"""
 
     finished = Signal(str, bool)
 
@@ -22,10 +22,12 @@ class ADBWorker(QThread):
         self._aborted = False
 
     def abort(self):
+        """设置中止意图，命令返回后不再发送完成结果。"""
         self._aborted = True
         self.requestInterruption()
 
     def run(self):
+        """执行一次短命令，并将失败状态作为信号参数传播。"""
         result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=self.timeout)
         if self._aborted:
             return
@@ -36,7 +38,7 @@ class ADBWorker(QThread):
 
 
 class TransferWorker(QThread):
-    """Run pull/push operations with progress lines."""
+    """执行 pull 或 push 长进程，并逐行发送进度。"""
 
     progress = Signal(str)
     finished = Signal(str, bool, str)
@@ -52,11 +54,13 @@ class TransferWorker(QThread):
         self._aborted = False
 
     def abort(self):
+        """请求中止并停止当前传输进程。"""
         self._aborted = True
         self.requestInterruption()
         self._process_runner.stop(self._process_key, timeout=2)
 
     def run(self):
+        """启动传输进程；无论成功、失败或异常都取消进程注册。"""
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
             self._proc = self._process_runner.start(

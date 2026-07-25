@@ -1,8 +1,9 @@
-"""Small helpers for dialog signal and worker cleanup."""
+"""提供对话框信号断开、对象存活检查和 worker 清理辅助能力。"""
 
 from __future__ import annotations
 
 import threading
+import time
 import warnings
 import weakref
 from collections.abc import Callable
@@ -83,3 +84,44 @@ def wait_for_threads_later(threads: list[QThread], timeout_ms: int) -> None:
         target=lambda: [thread.wait(timeout_ms) for thread in threads],
         daemon=True,
     ).start()
+
+
+class QThreadGroupShutdownTask:
+    """将一组已捕获的 QThread 适配为应用资源监督协议。"""
+
+    def __init__(self, threads: list[QThread]) -> None:
+        self.threads = list(threads)
+
+    @staticmethod
+    def _running(thread: QThread) -> bool:
+        try:
+            return bool(thread.isRunning())
+        except RuntimeError:
+            return False
+
+    def request_stop(self) -> None:
+        for thread in self.threads:
+            if not self._running(thread):
+                continue
+            try:
+                abort = getattr(thread, "abort", None)
+                if callable(abort):
+                    abort()
+                else:
+                    thread.requestInterruption()
+            except RuntimeError:
+                continue
+
+    def wait(self, timeout: float) -> bool:
+        final_end = time.monotonic() + max(0.0, float(timeout))
+        for thread in self.threads:
+            if self._running(thread):
+                remaining_ms = max(0, int((final_end - time.monotonic()) * 1000))
+                try:
+                    thread.wait(remaining_ms)
+                except RuntimeError:
+                    continue
+        return not self.is_running()
+
+    def is_running(self) -> bool:
+        return any(self._running(thread) for thread in self.threads)

@@ -3,8 +3,10 @@
 ## 测试框架与现状
 
 - 框架：pytest；`pyproject.toml` 把项目根加入 `pythonpath`。
-- 测试目录：`tests/`，当前 4 个文件、229 个测试。
-- 2026-07-23 使用 Python 3.11 实际运行：229 项全部通过，耗时 2.83 秒。
+- 测试目录：`tests/`；Phase 0 新增邮件、CI、危险操作、DeviceStore 并发、
+  失败语义及 Remote/MobilePerf 契约测试。
+- 2026-07-25 使用 Python 3.11 的 Phase 0 基线为 268 项；Gate B1 完成后的最新全量回归
+  为 320 项通过，详见 `docs/architecture/PHASE2_GATE_B_LEDGER.md`。
 - 测试主要使用 monkeypatch、临时目录、轻量 fake/stub 和通过 `__new__` 构造的最小 Qt 对象；不要求真实 Android 设备。
 - 没有覆盖率工具配置或覆盖率基线，不能由“229 项通过”推导语句/分支覆盖率。
 
@@ -16,6 +18,21 @@
 | `tests/test_remote_services.py` | Remote launch plan、scrcpy 参数/版本/预检、输入映射、面板启动停止和关闭 | service 单元 + 轻量 UI |
 | `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
 | `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
+| `tests/test_email_service.py` | 用户域配置、强制 timeout、HTTP mock、信号输出与日志脱敏 | 安全边界测试 |
+| `tests/test_logging_contract.py` | DEBUG 源码 stderr 分流、界面/文件隔离、root handler、停止态 | 日志基础契约 |
+| `tests/test_logging_routing_mobileperf.py` | MainFrame 工具栏/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
+| `tests/test_mobileperf_runner_concurrency.py` | 双管道压力、回调异常排空和连续运行代次隔离 | 进程/线程并发契约 |
+| `tests/test_comment_language.py` | 中文注释识别、豁免规则、模块说明和渐进受控范围 | 静态规范门禁 |
+| `tests/test_device_store_concurrency.py` | 并发 upsert、原子替换故障、损坏备份恢复 | 并发/故障注入 |
+| `tests/test_dangerous_ops.py` | 统一策略、设置开关、主窗口和 App Manager 拒绝路径 | 策略/UI 契约 |
+| `tests/test_phase0_failure_semantics.py` | 批次汇总、Monkey fail-closed、AppManager 错误传播 | 失败语义 |
+| `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
+| `tests/test_ci_contracts.py` | 最小权限、固定 SHA、不可变 Release、只读保留审计 | CI 安全契约 |
+| `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope 与 Controller 路由 | 架构契约 |
+| `tests/test_phase2_screenshot_gate.py` | 重叠截图、乱序/部分失败、artifact、提交异常、取消、重复/晚到和兼容 signal | 架构 Gate A |
+| `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、超时保活和独立进程关闭压力 | 架构 Gate B1 |
+| `tests/live_logcat_close_probe.py` | 真实延迟删除下连续关闭输出中的 LiveLogcat，并区分主窗口 Close、Qt 正常退出和原生崩溃 | Gate B1 子进程探针 |
+| `tests/test_window_lifecycle.py` | 七类二级窗口的 parent 约束和关闭隔离 | 轻量 UI 生命周期契约 |
 
 README 引用的 `tests/test_performance_services.py` 当前不存在；旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `test_model_execution.py`。
 
@@ -46,11 +63,13 @@ py -3.11 -m pytest -q
 - Controller signal map、handler、批次更新、shutdown 和异步分派。
 - DeviceStore/AppSettings 旧文件迁移。
 - ScrcpyService 与 RemotePanel 的 service 边界。
-- MainFrame 的延后启动、扫描 debounce、对话框复用和关闭路径。
+- MainFrame 的延后启动、扫描 debounce、对话框复用、parent 注入和关闭路径。
 
 ### UI 测试
 
-当前是轻量 Qt 行为测试，不是端到端自动化：主题切换、字体/图标、按钮状态、对话框 close cleanup、截图导航、App Manager 可见详情批次、Performance Launcher 表单/日志/状态等。
+当前是轻量 Qt 行为测试，不是端到端自动化：主题切换、字体/图标、按钮状态、对话框
+close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批次、Performance Launcher
+表单/日志/状态等。
 
 没有 Playwright/Selenium/Appium/QtBot 的完整用户路径测试，也没有截图对比。
 
@@ -76,33 +95,31 @@ py -3.11 -m pytest -q
 
 ## 当前覆盖缺口
 
-1. 临时邮箱没有专门测试：timeout、重试、脱敏、配置缺失和打包路径均无覆盖。
-2. DeviceStore 并发保存/崩溃原子性无测试。
-3. AppSettings 动态 `scrcpy_*` 重启加载无测试；按当前实现预计失败。
-4. Monkey 的 CommandRunner timeout 结果与外层异常处理不匹配，现有“重复超时失败”测试使用的 fake 语义没有覆盖真实 CommandRunner 行为。
-5. AppManagerWorker 未覆盖 backup pull、restore install、permission command 失败后的 UI/operation result。
-6. Controller 的重叠同名批次、并发截图/录屏和 `_pending_ops` 清理无压力测试。
-7. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
-8. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连和 `os._exit` 前落盘无集成测试。
-9. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
-10. CI 权限、第三方 action 固定和 Release 删除策略没有安全策略测试。
-11. MainFrame 未显式 LogService shutdown、全局 QRunnable 未等待的关机边界无长任务测试。
-12. 邮件、设备日志、bugreport、heapdump 的敏感信息处理无安全测试。
+1. AppSettings 动态 `scrcpy_*` 重启加载无测试；按当前实现预计失败。
+2. Controller 的重叠安装批次、并发录屏和剩余 `_pending_ops` 清理尚无 operation-id 压力测试；
+   Screenshot Gate A 已覆盖重叠与晚到结果。
+3. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
+4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连和 `os._exit` 前落盘无集成测试。
+5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
+6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
+7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
+8. 邮件服务真实授权/可用性、用户配置 UI 和打包产物中的可选功能路径未做联网集成测试。
 
 ## 推荐新增测试
 
 按优先级：
 
-1. `test_email_service.py`：全 HTTP mock、固定 timeout、日志脱敏、缺配置、损坏 YAML、不可写用户目录。
-2. `test_settings_persistence.py`：进程重建后保留 `scrcpy_*`，并验证未知键/schema 迁移策略。
-3. `test_device_store_concurrency.py`：并发 upsert/save、故障注入、原子替换和 YAML 可恢复性。
-4. Monkey 真实语义测试：让 CommandRunner 返回 `timed_out=True`，验证连续超时终止而不是捕获异常。
-5. AppManagerWorker 错误传播表驱动测试：每个 ADB 步骤失败都不能发成功状态。
-6. Controller operation-id 测试：两次并发截图、两批安装、两台设备录屏互不覆盖。
-7. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
-8. PyInstaller Windows 打包测试加入 mail feature capability check；macOS/Linux 加 scrcpy 缺失的明确降级测试。
+1. `test_settings_persistence.py`：进程重建后保留 `scrcpy_*`，并验证未知键/schema 迁移策略。
+2. MainFrame 异步关闭集成测试：首次关闭不阻塞事件循环，所有 owner 广播停止，
+   最终资源归零或保留 residual snapshot。
+3. Install batch 测试：两个重叠批次、部分失败、取消与最终汇总互不串台。
+4. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
+5. PyInstaller Windows 打包测试加入 mail feature capability check；macOS/Linux 加 scrcpy 缺失的明确降级测试。
 
 ## 提交前门禁
+
+每次创建提交前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对 `HEAD` 已递增；
+默认递增补丁版本，并确保没有复用历史版本。
 
 最低门禁：
 

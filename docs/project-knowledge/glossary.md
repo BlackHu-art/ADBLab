@@ -1,5 +1,9 @@
 # 术语表
 
+本页集中定义项目专有概念和高频缩写。新增文档或功能时，若引入新的模块名、外部工具、数据格式或缩写，应同步补充本页。
+
+## 项目专有概念
+
 | 术语 | 含义 | 对应代码 |
 | --- | --- | --- |
 | ADBLab | 本项目，Android 设备管理、测试与性能诊断桌面工具 | `main.py`、`utils/app_metadata.py` |
@@ -43,3 +47,35 @@
 | resource path | 开发目录或 PyInstaller `_MEIPASS` 的只读资源定位 | `utils/resource_path.py` |
 | runtime tool cache | onefile 场景复制长进程工具的稳定用户目录 | `utils/runtime_tools.py` |
 | 待确认 | 仓库代码不能独立证明，需要产品、运维、服务方或实机验证 | 本知识库统一标记 |
+
+## 外部工具与文件格式
+
+| 术语 | 含义 | 对应位置 |
+| --- | --- | --- |
+| aapt | Android Asset Packaging Tool，用于解析本地 APK 元数据 | `models/adb_app.py` |
+| chkbugreport JAR | 可选 bugreport 转换工具 | `resources/chkbugreport-0.5-215.jar`、`models/adb_testing.py` |
+| PyInstaller | 桌面应用打包工具 | `ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
+| YAML | 人类可读配置格式；项目用于设备元数据和邮件配置 | `models/device_store.py`、`core/mail/email_service.py` |
+| JSON | 轻量数据交换/配置格式；项目用于应用设置和 App Manager 预设 | `core/settings_manager.py`、`gui/dialogs/app_manager.py` |
+| CSV | 逗号分隔表格文件；MobilePerf 各指标先落 CSV | `mobileperf/android/` |
+| XLSX | Excel 工作簿格式；MobilePerf 汇总报告输出格式 | `mobileperf/android/report.py` |
+| ZIP | 压缩归档格式；项目用于备份、bugreport 和安全解压场景 | `utils/archive.py`、`models/app_manager_worker.py` |
+| APK | Android 应用安装包 | `models/adb_app.py`、App Manager |
+| PNG | 截图输出格式 | `models/adb_testing.py`、`gui/dialogs/screenshot_viewer.py` |
+| MP4 | 录屏输出格式 | `models/adb_advanced.py` |
+
+## 通用缩写
+
+| 缩写 | 含义 | 本项目语境 |
+| --- | --- | --- |
+| API | Application Programming Interface；外部接口或命令边界 | 本项目没有入站 Web API；主要是 ADB、HTTP 和进程接口 |
+| CLI | Command Line Interface；命令行入口 | `main.py --self-check packaging`、`--mobileperf-worker` |
+| CI | Continuous Integration；持续集成 | `.github/workflows/Build-exe.yaml` |
+| GUI | Graphical User Interface；图形界面 | PySide6 主应用 |
+| UI | User Interface；用户界面 | panels、dialogs、日志和状态栏 |
+| HTTP | Hypertext Transfer Protocol；外部服务调用协议 | 临时邮箱 API |
+| HTTPS | HTTP over TLS；加密 HTTP | 临时邮箱 API 基址 |
+| FPS | Frames Per Second；每秒帧数 | Remote stderr 解析、MobilePerf FPS monitor |
+| PATH | 操作系统可执行文件搜索路径 | 非 Windows 解析 adb/scrcpy/aapt/Java |
+| JAR | Java Archive；Java 归档文件 | chkbugreport 工具 |
+| README | 仓库首页文档 | 当前存在性能旧路径漂移，不能单独作为架构事实来源 |

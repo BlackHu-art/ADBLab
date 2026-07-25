@@ -1,4 +1,4 @@
-"""Theme-aware log panel with auto-scroll, line trimming, and re-render on theme change."""
+"""提供支持主题切换、自动滚动和批量渲染的用户日志面板。"""
 
 from datetime import datetime
 from html import escape
@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
-from core.log_service import LogService
+from core.log_service import LogLevel, LogService
 from gui.styles import BaseStyles
 
 
@@ -18,6 +18,7 @@ class LogPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         from core.settings_manager import AppSettings
+
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._entries = []
         self._line_count = 0
@@ -46,6 +47,7 @@ class LogPanel(QWidget):
 
     def _on_theme_changed(self, _name: str):
         from core.settings_manager import AppSettings
+
         log_size = AppSettings.instance().get("log_font_size", 9)
         log_font = QFont(BaseStyles.LOG_FONT, log_size)
         log_font.setStyleHint(QFont.Monospace)
@@ -61,6 +63,7 @@ class LogPanel(QWidget):
         self.text_output.setUndoRedoEnabled(False)
 
         from core.settings_manager import AppSettings
+
         log_size = AppSettings.instance().get("log_font_size", 9)
         log_font = QFont(BaseStyles.LOG_FONT, log_size)
         log_font.setStyleHint(QFont.Monospace)
@@ -78,13 +81,17 @@ class LogPanel(QWidget):
         self._append_logs([(level, message)])
 
     def _append_logs(self, records: list[tuple[str, str]]):
-        if not records:
+        # 面板边界再次过滤 DEBUG，防止尚未迁移的直连信号绕过日志服务。
+        visible_records = [
+            (level, message) for level, message in records if str(level).upper() != LogLevel.DEBUG
+        ]
+        if not visible_records:
             return
         sb = self.text_output.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 20
 
         timestamp = datetime.now().strftime("%H:%M:%S")
-        rows = [(timestamp, level, message) for level, message in records]
+        rows = [(timestamp, level, message) for level, message in visible_records]
         self._entries.extend(rows)
         if len(rows) >= self.IMMEDIATE_BATCH_SIZE:
             self._flush_pending_rows()
@@ -149,14 +156,16 @@ class LogPanel(QWidget):
         )
 
     def _rerender_all(self):
-        """Batch re-render via setHtml for performance on theme change."""
-        self.text_output.setHtml("".join(self._entry_html(ts, level, msg) for ts, level, msg in self._entries))
+        """主题变化时通过单次 setHtml 批量重绘。"""
+        self.text_output.setHtml(
+            "".join(self._entry_html(ts, level, msg) for ts, level, msg in self._entries)
+        )
         self.text_output.ensureCursorVisible()
         sb = self.text_output.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     def _trim_excess_lines(self, added_count: int = 1):
-        """Trim oldest lines when exceeding max. Batched: check only every 50 lines."""
+        """超过上限时批量删除旧日志，常规情况下每五十行检查一次。"""
         force_trim = added_count <= 0
         if not force_trim:
             self._line_count += added_count

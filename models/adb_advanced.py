@@ -1,9 +1,7 @@
-"""
-Advanced ADB operations: screen recording, input events, performance diagnostics,
-logcat filtering, shell commands, settings, reboot modes, file manager, system info.
+"""提供录屏、输入、性能诊断、Logcat 和文件管理等高级 ADB 操作。
 
-Composes core operations directly; delegates networking to ADBNetworkMixin and
-system-level ops to ADBSystemMixin via multiple inheritance.
+本类直接实现通用高级操作，并通过多重继承复用 ADBNetworkMixin 和 ADBSystemMixin
+中的网络及系统能力。
 """
 
 import os
@@ -20,14 +18,14 @@ from .base.process_runner import ProcessRunner
 
 
 class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
-    """Core + Networking + System ADB operations."""
+    """组合核心、网络和系统级 ADB 操作。"""
 
     def __init__(self):
         super().__init__()
         self._rec_procs = ProcessRunner()
         self._adb_bridge = None
 
-    # ── Screen Recording ─────────────────────────────────────────────────
+    # 屏幕录制
 
     @async_command
     def start_screen_record_async(
@@ -98,7 +96,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             }
         return {"success": True, "device_ip": device_ip, "local_path": local_path}
 
-    # ── Input Events ─────────────────────────────────────────────────────
+    # 输入事件
 
     @async_command
     def input_tap_async(self, device_ip: str, x: int, y: int) -> dict:
@@ -165,7 +163,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         self._rec_procs.stop_all()
         self.close_input_sessions()
 
-    # ── Performance Diagnostics ──────────────────────────────────────────
+    # 性能诊断
 
     @async_command
     def dumpsys_meminfo_async(self, device_ip: str, package: str = "") -> dict:
@@ -188,7 +186,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             timeout=15, device_ip=device_ip,
         )
 
-    # ── Logcat Filtering ─────────────────────────────────────────────────
+    # Logcat 过滤
 
     @async_command
     def logcat_filtered_async(
@@ -216,7 +214,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def logcat_buffer_sizes_async(self, device_ip: str) -> dict:
         return self._run(["adb", "-s", device_ip, "logcat", "-g"], device_ip=device_ip)
 
-    # ── Settings ─────────────────────────────────────────────────────────
+    # 系统设置
 
     @async_command
     def settings_list_async(self, device_ip: str, namespace: str = "system") -> dict:
@@ -243,7 +241,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             device_ip=device_ip, key=key, value=value,
         )
 
-    # ── Custom Shell Command ─────────────────────────────────────────────
+    # 自定义 Shell 命令
 
     @async_command
     def run_shell_command_async(self, device_ip: str, command: str,
@@ -251,7 +249,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         full_cmd = ["adb", "-s", device_ip, "shell"] + shlex.split(command)
         return self._run(full_cmd, timeout=timeout, device_ip=device_ip, command=command)
 
-    # ── Reboot Modes ─────────────────────────────────────────────────────
+    # 重启模式
 
     @async_command
     def reboot_mode_async(self, device_ip: str, mode: str) -> dict:
@@ -265,7 +263,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                     "output": f"Device rebooting to {mode}..."}
         return r
 
-    # ── File Manager ─────────────────────────────────────────────────────
+    # 文件管理
 
     @async_command
     def shell_ls_async(self, device_ip: str, path: str = "/sdcard") -> dict:
@@ -310,7 +308,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             device_ip=device_ip,
         )
 
-    # ── System Info Extended ────────────────────────────────────────────
+    # 扩展系统信息
 
     @async_command
     def get_device_date_async(self, device_ip: str) -> dict:
@@ -347,7 +345,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             timeout=15, device_ip=device_ip,
         )
 
-    # ── Backup ──────────────────────────────────────────────────────────
+    # 应用备份
 
     @async_command
     def backup_app_async(self, device_ip: str, package: str, save_path: str) -> dict:

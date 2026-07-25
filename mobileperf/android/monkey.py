@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""构造、运行并停止 Android Monkey 稳定性测试。"""
 import csv
 import math
 import os
@@ -24,9 +21,7 @@ from mobileperf.android.globaldata import RuntimeData
 
 
 class Monkey(object):
-    '''
-    monkey执行器
-    '''
+    """管理 Monkey 命令、输出线程和停止清理。"""
 
     DEFAULT_THROTTLE_MS = 500
     DEFAULT_EVENT_COUNT = 1200000000
@@ -53,16 +48,16 @@ class Monkey(object):
             pct_anyevent=5,
             pct_flip=0,
             pct_pinchzoom=0):
-        '''构造器
+        """初始化 Monkey 目标、事件分布和运行时限。
 
-        :param str device_id: 设备id
-        :param str process : monkey测试的包名
-        :param timeout : monkey运行时长，单位秒。旧调用未传或传超大事件数时保持兼容。
-        :param throttle_ms : monkey事件间隔，单位毫秒
-        '''
+        :param str device_id: 设备标识
+        :param str package: Monkey 测试的包名
+        :param timeout: Monkey 运行时长，单位秒；超大值按旧事件数语义兼容
+        :param throttle_ms: Monkey 事件间隔，单位毫秒
+        """
         self.package = package
-        self.device = AndroidDevice(device_id)  # 设备
-        self.running = False  # monkey监控器的启动状态(启动/结束)
+        self.device = AndroidDevice(device_id)
+        self.running = False  # 标记 Monkey 是否已经启动。
         self.throttle_ms = max(1, int(throttle_ms))
         self.seed = max(0, int(seed))
         self.ignore_crashes = bool(ignore_crashes)
@@ -91,22 +86,18 @@ class Monkey(object):
         self._stop_event = threading.Event()
 
     def start(self,start_time):
-        '''启动monkey
-        '''
+        """记录开始时间并启动 Monkey。"""
         self.start_time = start_time
         if not self.running:
             self.running = True
-            # time.sleep(1)
             self.start_monkey(self.package, self.event_count, self.timeout)
 
     def stop(self):
-        '''结束monkey
-        '''
+        """停止 Monkey 进程和日志读取线程。"""
         self.stop_monkey()
 
     def start_monkey(self, package, event_count=None, timeout_seconds=None):
-        '''运行monkey进程
-        '''
+        """构造命令并启动 Monkey 进程及日志读取线程。"""
         if hasattr(self, '_monkey_running') and self.running == True:
             logger.warn(u'monkey process have started,not need start')
             return
@@ -127,7 +118,6 @@ class Monkey(object):
             ))
         self._log_pipe = self.device.adb.run_shell_cmd(self.monkey_cmd, sync=False)
         self._monkey_thread = threading.Thread(target=self._monkey_thread_func, args=[RuntimeData.package_save_path])
-        # self._monkey_thread.setDaemon(True)
         self._monkey_thread.start()
 
     def _build_monkey_cmd(self, package, event_count):
@@ -180,8 +170,8 @@ class Monkey(object):
         ])
 
     def _event_count_for_timeout(self, timeout_seconds):
-        # monkey没有原生按时长运行参数，只能用事件数约束；事件数按throttle换算，
-        # 结束时仍由StartUp.stop()主动kill，保证和性能采集窗口一致收尾。
+        # Monkey 没有原生按时长运行参数，只能按 throttle 换算事件数。
+        # 结束时仍由 StartUp.stop() 主动终止，保证与性能采集窗口一致收尾。
         return max(1, int(math.ceil((max(1, int(timeout_seconds)) * 1000) / self.throttle_ms)) + 1)
 
     def stop_monkey(self):
@@ -189,7 +179,7 @@ class Monkey(object):
         self._stop_event.set()
         logger.debug("stop monkey")
         if hasattr(self, '_log_pipe'):
-            if self._log_pipe.poll() == None: #判断logcat进程是否存在
+            if self._log_pipe.poll() == None:  # 判断 Monkey 进程是否存在。
                 self._log_pipe.terminate()
         try:
             self.device.adb.kill_process("com.android.commands.monkey")
@@ -199,8 +189,7 @@ class Monkey(object):
             self._monkey_thread.join(timeout=2)
 
     def _monkey_thread_func(self,save_dir):
-        '''获取monkey线程，保存monkey日志，monkey Crash日志暂不处理，后续有需要再处理
-        '''
+        """持续读取并分片保存 Monkey 日志，异常关键字由其他监控器处理。"""
         self.append_log_line_num = 0
         self.file_log_line_num = 0
         self.log_file_create_time = None
@@ -213,7 +202,7 @@ class Monkey(object):
             try:
                 log = self._log_pipe.stdout.readline().strip()
                 if not isinstance(log, str):
-                    # 先编码为unicode
+                    # 兼容旧 ADB 接口返回的字节串。
                     try:
                         log = str(log, "utf8")
                     except Exception as e:
@@ -224,20 +213,18 @@ class Monkey(object):
                     logs.append(log)
                     self.append_log_line_num = self.append_log_line_num + 1
                     self.file_log_line_num = self.file_log_line_num + 1
-                    # if self.append_log_line_num > 1000:
                     if self.append_log_line_num > 100:
                         if not self.log_file_create_time:
                             self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         log_file = os.path.join(save_dir,
                                                 'monkey_%s.log' % self.log_file_create_time)
                         self.append_log_line_num = 0
-                        # 降低音量，避免音量过大，导致语音指令失败
+                        # 降低音量，避免音量过大导致语音指令失败。
                         self.device.adb.run_shell_cmd("input keyevent 25")
                         self.save(log_file, logs)
                         logs = []
-                    # 新建文件
+                    # 单个日志文件达到行数上限后切换到新的时间戳文件。
                     if self.file_log_line_num > 600000:
-                        # if self.file_log_line_num > 200:
                         self.file_log_line_num = 0
                         self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         log_file = os.path.join(save_dir, 'monkey_%s.log' % self.log_file_create_time)
@@ -266,13 +253,6 @@ if __name__ == "__main__":
     test_pacakge_list = ["com.alibaba.ailabs.genie.musicplayer","com.alibaba.ailabs.genie.contacts","com.alibaba.ailabs.genie.launcher",
             "com.alibaba.ailabs.genie.shopping","com.youku.iot"]
     device = AndroidDevice()
-    # device.adb.kill_process("monkey")
-    # for i in range(0, 10):
-    #     for package in test_pacakge_list:
-    #         monkey = Monkey("",package,1200000000)
-    #         monkey.start(TimeUtils.getCurrentTimeUnderline())
-    #         time.sleep(60*60*2)
-    #         monkey.stop()
     start_time = TimeUtils.getCurrentTimeUnderline()
     logger.debug(start_time)
     RuntimeData.top_dir = FileUtils.get_top_dir()

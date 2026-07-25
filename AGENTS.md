@@ -16,6 +16,8 @@ ADBLab 是基于 PySide6 的 Android 设备管理、测试、Remote 和 MobilePe
 - 运行时可写数据使用 `utils/user_data.py`，不要写 PyInstaller 资源/安装目录。
 - 解压外部 ZIP 必须使用 `utils.archive.safe_extract_zip()`。
 - 应用版本只在 `utils/app_metadata.py` 修改。
+- 每次创建 Git 提交都必须同步更新一次 `APP_VERSION`，一个提交对应一个未使用过的新版本号。
+  未明确指定版本策略时递增补丁版本；主版本或次版本仅按用户要求或发布计划调整。
 
 常用门禁：
 
@@ -35,5 +37,6 @@ git diff --check
 ## 文档与提交前检查
 
 - 修改架构、接口、数据模型/存储、配置键、外部依赖或主要业务流程后，必须同步更新 `docs/project-knowledge/`。
+- 提交前确认 `utils/app_metadata.py` 中的 `APP_VERSION` 已相对上一个提交递增，且本次提交没有复用历史版本。
 - 提交前确认测试通过、打包自检通过、`git diff --check` 无错误、没有意外生成文件和敏感数据。
 - 修改构建/资源收集时，额外验证 PyInstaller 产物；修改 ADB/Remote/MobilePerf 时补对应单测并在授权设备上做最小实机验证。

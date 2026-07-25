@@ -8,7 +8,7 @@
 
 | 项目 | 当前状态 |
 |------|----------|
-| 应用版本 | `3.1.2`，来源于 `utils/app_metadata.py` |
+| 应用版本 | 以 `utils/app_metadata.py` 中的 `APP_VERSION` 为准 |
 | 开发语言 | Python，建议使用 Python 3.11 |
 | GUI 框架 | PySide6 / Qt 6 |
 | 主要平台 | Windows 10/11 |
@@ -297,7 +297,7 @@ python -c "from pathlib import Path; print(Path('README.md').read_text(encoding=
 
 ```python
 APP_NAME = "ADBLab"
-APP_VERSION = "3.1.2"
+APP_VERSION = "<major.minor.patch>"
 APP_RELEASE_TAG = f"v{APP_VERSION}"
 ```
 
@@ -308,7 +308,9 @@ APP_RELEASE_TAG = f"v{APP_VERSION}"
 - GitHub Actions 构建产物名称。
 - GitHub Release tag 和 release title。
 
-发布新版本时，只更新 `APP_VERSION`，再从 `main` 构建或手动运行 `Build-exe.yaml`。
+每次创建 Git 提交都必须在同一提交中更新一次 `APP_VERSION`，并且不得复用历史版本。
+默认只递增补丁版本；主版本或次版本由明确的发布计划决定。发布时再从 `main` 构建或手动
+运行 `Build-exe.yaml`。
 
 GitHub Actions 构建流程：
 
@@ -333,4 +335,5 @@ GitHub Actions 构建流程：
 - 所有弹窗应响应 `BaseStyles.theme_changed`。
 - 图标使用 `get_themed_icon("name.svg")`，不要直接使用原始 `QIcon`。
 - 应用版本只改 `utils/app_metadata.py`。
+- 每个 Git 提交必须包含一次 `APP_VERSION` 递增，默认递增补丁版本。
 - 新增功能优先补充对应服务层测试，而不是只测 UI。

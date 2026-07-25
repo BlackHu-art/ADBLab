@@ -1,4 +1,4 @@
-"""Performance launcher dialog with MobilePerf controls and Perfetto link."""
+"""提供 MobilePerf 启停控制、状态展示和 Perfetto 入口。"""
 
 from __future__ import annotations
 
@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.settings_manager import AppSettings
-from gui.dialogs.lifecycle import safe_disconnect, wait_for_thread_later
+from adblab.application.supervision import ThreadedShutdownTask
+from gui.dialogs.lifecycle import QThreadGroupShutdownTask, safe_disconnect, wait_for_thread_later
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
@@ -101,7 +102,7 @@ class CurrentPackageWorker(QThread):
 
 
 class PerformanceLauncherDialog(QDialog):
-    """Launch mobileperf collection for one selected device."""
+    """针对一个已选设备启动和管理 MobilePerf 采集。"""
 
     LOG_RENDER_DEBOUNCE_MS = 50
     IMMEDIATE_LOG_BATCH_SIZE = 100
@@ -116,6 +117,7 @@ class PerformanceLauncherDialog(QDialog):
         self._runner = MobilePerfRunner()
         self._package_worker: CurrentPackageWorker | None = None
         self._stop_thread: threading.Thread | None = None
+        self._shutdown_registered = False
         self._last_result_root = ""
         self._closing = False
         self._runner_finished_handled = True
@@ -199,14 +201,26 @@ class PerformanceLauncherDialog(QDialog):
         self.serialnum_label = QLabel(self.device_ip or "-")
         self.serialnum_label.setObjectName("onlineDeviceLabel")
         self.serialnum_label.setToolTip("Selected online device")
-        row = self._add_config_row(grid, row, "serialnum", self.serialnum_label, CONFIG_HINTS["serialnum"])
-        row = self._add_config_row(grid, row, "frequency", self.frequency_combo, CONFIG_HINTS["frequency"])
-        row = self._add_config_row(grid, row, "timeout", self.timeout_combo, CONFIG_HINTS["timeout"])
-        row = self._add_config_row(grid, row, "dumpheap_freq", self.dumpheap_combo, CONFIG_HINTS["dumpheap_freq"])
-        row = self._add_config_row(grid, row, "exceptionlog", self.exception_edit, CONFIG_HINTS["exceptionlog"])
+        row = self._add_config_row(
+            grid, row, "serialnum", self.serialnum_label, CONFIG_HINTS["serialnum"]
+        )
+        row = self._add_config_row(
+            grid, row, "frequency", self.frequency_combo, CONFIG_HINTS["frequency"]
+        )
+        row = self._add_config_row(
+            grid, row, "timeout", self.timeout_combo, CONFIG_HINTS["timeout"]
+        )
+        row = self._add_config_row(
+            grid, row, "dumpheap_freq", self.dumpheap_combo, CONFIG_HINTS["dumpheap_freq"]
+        )
+        row = self._add_config_row(
+            grid, row, "exceptionlog", self.exception_edit, CONFIG_HINTS["exceptionlog"]
+        )
         row = self._add_config_row(grid, row, "monkey", monkey_row, CONFIG_HINTS["monkey"])
         row = self._add_config_row(grid, row, "save_path", save_row, CONFIG_HINTS["save_path"])
-        self._add_config_row(grid, row, "phone_log_path", self.phone_log_edit, CONFIG_HINTS["phone_log_path"])
+        self._add_config_row(
+            grid, row, "phone_log_path", self.phone_log_edit, CONFIG_HINTS["phone_log_path"]
+        )
         self._on_monkey_enabled_changed(self.monkey_check.isChecked())
         return g
 
@@ -217,7 +231,9 @@ class PerformanceLauncherDialog(QDialog):
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(4)
 
-        self.monkey_throttle_combo = self._combo(["100", "200", "300", "500", "1000", "2000"], "500")
+        self.monkey_throttle_combo = self._combo(
+            ["100", "200", "300", "500", "1000", "2000"], "500"
+        )
         self.monkey_seed_edit = QLineEdit("1000000")
         self.monkey_seed_edit.setPlaceholderText("Seed")
         self.monkey_total_label = QLabel("Total: 100%")
@@ -225,7 +241,9 @@ class PerformanceLauncherDialog(QDialog):
         self.monkey_total_label.setMinimumWidth(92)
 
         layout.addWidget(self.monkey_check, 0, 0)
-        layout.addWidget(self._inline_label("Throttle (ms)", "Monkey --throttle interval in milliseconds."), 0, 1)
+        layout.addWidget(
+            self._inline_label("Throttle (ms)", "Monkey --throttle interval in milliseconds."), 0, 1
+        )
         layout.addWidget(self.monkey_throttle_combo, 0, 2)
         layout.addWidget(self._inline_label("Seed", "Monkey -s random seed."), 0, 3)
         layout.addWidget(self.monkey_seed_edit, 0, 4)
@@ -235,7 +253,10 @@ class PerformanceLauncherDialog(QDialog):
         percent_defaults = MobilePerfMonkeyConfig()
         for index, (label, attr, option_name) in enumerate(MONKEY_PERCENT_FIELDS):
             row, col = divmod(index, 2)
-            combo = self._combo(["0", "5", "10", "15", "20", "25", "30", "40", "50", "100"], str(getattr(percent_defaults, attr)))
+            combo = self._combo(
+                ["0", "5", "10", "15", "20", "25", "30", "40", "50", "100"],
+                str(getattr(percent_defaults, attr)),
+            )
             combo.setMinimumWidth(64)
             combo.setToolTip(f"{option_name}: {label} percentage")
             combo.currentTextChanged.connect(self._update_monkey_total)
@@ -310,11 +331,15 @@ class PerformanceLauncherDialog(QDialog):
     def _collect_monkey_config(self) -> MobilePerfMonkeyConfig:
         defaults = MobilePerfMonkeyConfig()
         values = {
-            attr: self._int_text(self._combo_text(combo), getattr(defaults, attr), minimum=0, maximum=100)
+            attr: self._int_text(
+                self._combo_text(combo), getattr(defaults, attr), minimum=0, maximum=100
+            )
             for attr, combo in self.monkey_pct_combos.items()
         }
         return MobilePerfMonkeyConfig(
-            throttle_ms=self._int_text(self._combo_text(self.monkey_throttle_combo), defaults.throttle_ms, minimum=1),
+            throttle_ms=self._int_text(
+                self._combo_text(self.monkey_throttle_combo), defaults.throttle_ms, minimum=1
+            ),
             seed=self._int_text(self.monkey_seed_edit.text(), defaults.seed, minimum=0),
             ignore_crashes=self.monkey_ignore_crashes.isChecked(),
             ignore_timeouts=self.monkey_ignore_timeouts.isChecked(),
@@ -323,7 +348,9 @@ class PerformanceLauncherDialog(QDialog):
             **values,
         )
 
-    def _add_config_row(self, grid: QGridLayout, row: int, key: str, field: QWidget, hint: str) -> int:
+    def _add_config_row(
+        self, grid: QGridLayout, row: int, key: str, field: QWidget, hint: str
+    ) -> int:
         label = QLabel(key)
         label.setObjectName("fieldLabel")
         label.setAlignment(Qt.AlignRight | Qt.AlignTop)
@@ -518,6 +545,7 @@ class PerformanceLauncherDialog(QDialog):
         self._poll_timer.start()
 
     def stop_mobileperf(self):
+        """在后台请求 MobilePerf 停止，避免等待子进程时阻塞 GUI。"""
         if self._stopping:
             return
         if not self._runner.is_running():
@@ -560,19 +588,63 @@ class PerformanceLauncherDialog(QDialog):
         self._runner_finished_handled = True
         self._stopping = False
         self._poll_timer.stop()
-        self._set_progress(100)
         self._run_started_at = None
         result_dir = self._runner.latest_result_dir()
         if result_dir:
             self._last_result_root = result_dir
         report_file = self._runner.latest_report_file()
-        if report_file:
+        last_config = getattr(self._runner, "last_config", None)
+        exit_code = getattr(self._runner, "last_exit_code", None)
+
+        # 保留既有调用方依赖的轻量启动前界面契约；真实采集总会记录 last_config。
+        if last_config is None:
+            self._set_progress(100)
+            if report_file:
+                self.log_received.emit(
+                    "SUCCESS",
+                    f"MobilePerf ended, report generated: {report_file}",
+                )
+            elif result_dir:
+                self.log_received.emit(
+                    "WARNING",
+                    f"MobilePerf ended, report not found in: {result_dir}",
+                )
+            else:
+                self.log_received.emit("WARNING", "MobilePerf ended, result directory not found")
+            self._set_running(False)
+            return
+
+        successful_exit = exit_code == 0
+        if report_file and successful_exit:
             self.log_received.emit("SUCCESS", f"MobilePerf ended, report generated: {report_file}")
+            self._set_running(False)
+            self._set_progress(100)
+            self._set_status("Completed", "completed")
+            return
+
+        self._set_running(False)
+        self._set_progress(min(99, self.progress_bar.value()))
+        if report_file:
+            self.log_received.emit(
+                "WARNING",
+                f"MobilePerf exited with code {exit_code}; report may be incomplete: {report_file}",
+            )
+            self._set_status("Warning", "warning")
+        elif exit_code not in (None, 0):
+            self.log_received.emit(
+                "ERROR",
+                f"MobilePerf failed with exit code {exit_code}; no report was generated",
+            )
+            self._set_status("Failed", "failed")
         elif result_dir:
-            self.log_received.emit("WARNING", f"MobilePerf ended, report not found in: {result_dir}")
+            self.log_received.emit(
+                "WARNING",
+                f"MobilePerf ended, report not found in: {result_dir}",
+            )
+            self._set_status("Warning", "warning")
         else:
             self.log_received.emit("WARNING", "MobilePerf ended, result directory not found")
-        self._set_running(False)
+            self._set_status("Warning", "warning")
 
     def open_result(self):
         path = self._last_result_root or self._with_device_suffix(self.save_path_edit.text())
@@ -656,9 +728,16 @@ class PerformanceLauncherDialog(QDialog):
         color_key = {
             "running": "LOG_SUCCESS",
             "stopping": "LOG_WARNING",
+            "completed": "LOG_SUCCESS",
+            "warning": "LOG_WARNING",
+            "failed": "LOG_ERROR",
             "idle": "TEXT_SECONDARY",
         }.get(self._status_state, "TEXT_SECONDARY")
-        weight = "bold" if self._status_state in {"running", "stopping"} else "normal"
+        weight = (
+            "bold"
+            if self._status_state in {"running", "stopping", "completed", "warning", "failed"}
+            else "normal"
+        )
         self.status_label.setStyleSheet(
             f"color: {BaseStyles.color(color_key)}; "
             f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px; "
@@ -692,7 +771,9 @@ class PerformanceLauncherDialog(QDialog):
             return default
 
     @staticmethod
-    def _int_text(text: str, default: int, *, minimum: int | None = None, maximum: int | None = None) -> int:
+    def _int_text(
+        text: str, default: int, *, minimum: int | None = None, maximum: int | None = None
+    ) -> int:
         try:
             value = int(str(text).strip())
         except (TypeError, ValueError):
@@ -730,10 +811,7 @@ class PerformanceLauncherDialog(QDialog):
         self.setFont(BaseStyles.get_default_font())
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
-            BaseStyles.INPUT_STYLE()
-            + BaseStyles.BUTTON_QSS()
-            + BaseStyles.SCROLLBAR_STYLE()
-            + f"""
+            BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
             QDialog {{
                 background-color: {c('PANEL_BG')};
                 color: {c('TEXT_PRIMARY')};
@@ -883,7 +961,70 @@ class PerformanceLauncherDialog(QDialog):
         if force or current_signature != self._applied_theme_signature:
             self._apply_theme(BaseStyles.current_theme())
 
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """分别注册包名查询线程和 MobilePerf 进程的有限时关闭任务。"""
+        task_ids = []
+        package_worker = self._package_worker
+        if package_worker is not None and package_worker.isRunning():
+            package_handle = QThreadGroupShutdownTask([package_worker])
+            package_task_id = f"{task_prefix}-package-worker"
+            supervisor.register(
+                package_task_id,
+                owner_id=owner_id,
+                kind="performance_package_worker",
+                request_stop=package_handle.request_stop,
+                wait=package_handle.wait,
+                is_running=package_handle.is_running,
+            )
+            task_ids.append(package_task_id)
+
+        stop_thread = self._stop_thread
+        runner_active = self._runner.is_running()
+        if runner_active or (stop_thread is not None and stop_thread.is_alive()):
+            runner_task_id = f"{task_prefix}-mobileperf"
+            if stop_thread is not None and stop_thread.is_alive():
+
+                def request_runner_stop():
+                    self._runner.request_stop()
+
+                def wait_runner(timeout: float) -> bool:
+                    stop_thread.join(max(0.0, float(timeout)))
+                    return not stop_thread.is_alive() and not self._runner.is_running()
+
+                def runner_running() -> bool:
+                    return stop_thread.is_alive() or self._runner.is_running()
+
+                supervisor.register(
+                    runner_task_id,
+                    owner_id=owner_id,
+                    kind="mobileperf_runner",
+                    request_stop=request_runner_stop,
+                    wait=wait_runner,
+                    is_running=runner_running,
+                    force_stop=self._runner.force_stop,
+                )
+            else:
+                runner_handle = ThreadedShutdownTask(
+                    self._runner.stop,
+                    name="adblab-mobileperf-stop",
+                )
+                supervisor.register(
+                    runner_task_id,
+                    owner_id=owner_id,
+                    kind="mobileperf_runner",
+                    request_stop=runner_handle.request_stop,
+                    wait=runner_handle.wait,
+                    is_running=runner_handle.is_running,
+                    force_stop=self._runner.force_stop,
+                    error_type=runner_handle.get_error_type,
+                )
+            task_ids.append(runner_task_id)
+
+        self._shutdown_registered = bool(task_ids)
+        return tuple(task_ids)
+
     def closeEvent(self, event):
+        """停止界面定时器并断开信号，资源等待由已注册的关闭任务接管。"""
         self._closing = True
         if self._log_flush_timer.isActive():
             self._log_flush_timer.stop()
@@ -891,15 +1032,17 @@ class PerformanceLauncherDialog(QDialog):
             self._theme_sync_timer.stop()
         self._pending_log_rows = []
         self._poll_timer.stop()
-        if self._runner.is_running():
-            self._runner.stop(timeout=10)
+        if self._runner.is_running() is True and not self._shutdown_registered:
+            self.stop_mobileperf()
         if self._package_worker and self._package_worker.isRunning():
             worker = self._package_worker
             self._package_worker = None
             worker.requestInterruption()
             safe_disconnect(worker.package_ready, self._on_current_package)
             safe_disconnect(worker.log_ready, self.log_received.emit)
-            wait_for_thread_later(worker, 2000)
+            worker.setParent(None)
+            if not self._shutdown_registered:
+                wait_for_thread_later(worker, 2000)
         safe_disconnect(self.log_received, self._append_log)
         safe_disconnect(self.runner_finished, self._on_runner_finished)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)

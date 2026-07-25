@@ -1,4 +1,4 @@
-"""左侧控制面板 — 五标签页容器，协调 Devices / Apps / Input & Diag / Advanced / Scrcpy。"""
+"""协调设备、应用、系统和 Remote 子面板的延迟加载与信号连接。"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
@@ -26,7 +26,7 @@ from gui.styles.icon_loader import get_themed_icon
 
 
 class SidePanel(QWidget):
-    """左侧面板 — 创建并管理 5 个Function tabs。"""
+    """创建并管理功能标签页，同时保持 MainFrame 使用的兼容接口。"""
 
     PANEL_WIDTH = 600
 
@@ -50,7 +50,7 @@ class SidePanel(QWidget):
         self._create_ui()
         self._connect_all_signals()
 
-    # ── Font ──────────────────────────────────────────────────────────────
+    # ── 字体 ─────────────────────────────────────────────────────────────
 
     def _create_fonts(self):
         F = BaseStyles.DEFAULT_FONT_FAMILY
@@ -61,18 +61,17 @@ class SidePanel(QWidget):
         self._font_base = QFont(F, ui_size)
         self._font_tab = QFont(F, ui_size)
 
-    # ── UI construction ───────────────────────────────────────────────────────────
+    # ── 界面构建 ─────────────────────────────────────────────────────────
 
     def _create_ui(self):
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
 
-        # Device manager (UI placed by MainFrame in left column，先构建以便 connect_signals）
+        # 设备面板由 MainFrame 放入左栏；这里提前构建，确保初始化时可以连接信号。
         self._devices_tab = DeviceManager(self)
         self._device_widget = self._devices_tab.build_ui()
 
-        # Function tabs
         self.tabs = QTabWidget()
         self.tabs.setFont(self._font_tab)
         self._apply_tab_style()
@@ -128,7 +127,7 @@ class SidePanel(QWidget):
         tab.connect_signals()
         self._connected_lazy_tabs.add(index)
 
-    # ── Shared properties（委托给子标签页）──────────────────────────────────────────
+    # ── 委托给子标签页的共享属性 ─────────────────────────────────────────
 
     @property
     def selected_devices(self) -> list[str]:
@@ -142,7 +141,7 @@ class SidePanel(QWidget):
     def device_widget(self) -> QWidget:
         return self._device_widget
 
-    # ── Public methods（MainFrame 调用）──────────────────────────────────────────
+    # ── MainFrame 使用的公共接口 ─────────────────────────────────────────
 
     def update_device_list(self, devices: list[str] = None):
         self._devices_tab.update_device_list(devices)
@@ -181,6 +180,7 @@ class SidePanel(QWidget):
             apps_tab.on_operation_completed(operation, success, message)
 
     def shutdown(self):
+        """依次关闭已加载标签页拥有的后台资源。"""
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)
@@ -188,7 +188,21 @@ class SidePanel(QWidget):
             if callable(shutdown):
                 shutdown()
 
-    # ── Theme ──────────────────────────────────────────────────────────────
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str) -> tuple[str, ...]:
+        """将已加载标签页的异步关闭任务注册到统一监督器。"""
+        registered = []
+        for index in sorted(self._loaded_lazy_tabs):
+            attr, _cls, _name = self._lazy_tab_specs[index]
+            tab = getattr(self, attr, None)
+            register = getattr(tab, "register_shutdown_task", None)
+            if not callable(register):
+                continue
+            task_id = f"{owner_id}-panel-{index}"
+            if register(supervisor, owner_id=owner_id, task_id=task_id):
+                registered.append(task_id)
+        return tuple(registered)
+
+    # ── 主题 ─────────────────────────────────────────────────────────────
 
     def _apply_tab_style(self):
         bs = BaseStyles
@@ -216,7 +230,7 @@ class SidePanel(QWidget):
         self._apply_tab_style()
         scrollbar_qss = BaseStyles.SCROLLBAR_STYLE()
         group_qss = BaseStyles.GROUP_BOX_STYLE()
-        # Single tree traversal instead of 8 separate findChildren calls
+        # 单次遍历控件树，避免为每种控件分别调用 findChildren。
         for child in self.findChildren(QWidget):
             t = type(child)
             if t is QGroupBox:

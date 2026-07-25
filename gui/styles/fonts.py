@@ -1,10 +1,10 @@
-"""ADBLab font configuration and factory methods."""
+"""提供跨平台字体配置和字体对象工厂。"""
 
 import platform
 
 from PySide6.QtGui import QFont
 
-# -- Platform-aware defaults ---------------------------------------------
+# ── 平台默认字体 ────────────────────────────────────────────────────────
 
 _DEFAULT_FONT = {
     "Windows": "Segoe UI",
@@ -16,7 +16,7 @@ _MONO_FONT = {
     "Darwin": "SF Mono",
 }.get(platform.system(), "DejaVu Sans Mono")
 
-# -- Mutable font config ------------------------------------------------
+# ── 可变字体配置 ────────────────────────────────────────────────────────
 
 _font = {
     "FAMILY": _DEFAULT_FONT,
@@ -24,14 +24,14 @@ _font = {
     "LOG": 9,
 }
 
-# -- Immutable ----------------------------------------------------------
+# ── 固定默认值 ──────────────────────────────────────────────────────────
 DEFAULT_FONT_FAMILY = _DEFAULT_FONT
 LOG_FONT = _MONO_FONT
 LOG_FONT_SIZE = 9
 
 
 class FontMixin:
-    """Add to BaseStyles via inheritance for font access and reload."""
+    """通过 BaseStyles 提供字体访问和配置重载能力。"""
 
     DEFAULT_FONT_FAMILY: str = _font["FAMILY"]
     LOG_FONT: str = LOG_FONT

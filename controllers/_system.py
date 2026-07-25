@@ -1,4 +1,4 @@
-"""ADB System controller mixin — permissions, disable/enable, broadcast, activity, IME, emulator."""
+"""提供权限、应用控制、广播、Activity、输入法和模拟器控制能力。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from models.adb_advanced import ADBAdvanced
 
 
 class ADBSystemControllerMixin(_ADBControllerBase):
-    """System-level operations: permissions, app control, broadcast, activity, IME, emulator."""
+    """协调权限、应用状态、广播、Activity、输入法和模拟器操作。"""
 
     advanced_model: ADBAdvanced
     signals: ADBControllerSignals
@@ -31,7 +31,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         "emu_geo_fix": "_process_emu_geo_fix_result",
     }
 
-    # -- Permissions --
+    # 权限管理
 
     def grant_permission(self, devices: list, package: str, permission: str):
         if not self._require_devices(devices, "grant_permission"):
@@ -69,7 +69,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
                 "revoke_permission", False, f"Revoke failed on {ip}: {result.get('error')}"
             )
 
-    # -- Disable / Enable / Force Stop --
+    # 应用启用、停用和强制停止
 
     def disable_app(self, devices: list, package: str):
         if not self._require_devices(devices, "disable_app"):
@@ -116,7 +116,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
                 "force_stop", False, f"Force stop failed on {ip}: {result.get('error')}"
             )
 
-    # -- Broadcast / Activity / DeepLink --
+    # 广播、Activity 和 Deep Link
 
     def send_broadcast(self, devices: list, action: str):
         if not self._require_devices(devices, "send_broadcast"):
@@ -175,7 +175,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
                 "deep_link", False, f"Deep link failed on {ip}: {result.get('error')}"
             )
 
-    # -- IME --
+    # 输入法
 
     def ime_list(self, devices: list):
         if not self._require_devices(devices, "ime_list"):
@@ -205,7 +205,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         else:
             self._emit_operation("ime_set", False, f"IME set failed on {ip}: {result.get('error')}")
 
-    # -- Emulator --
+    # 模拟器
 
     def emu_sms(self, devices: list, sender: str, text: str):
         if not self._require_devices(devices, "emu_sms"):

@@ -1,12 +1,9 @@
-"""
-File Explorer dialog - browse, pull, push, edit, and manage files on a device.
-
-Adapted to use ADBLab's BaseStyles theme system.
-"""
+"""提供设备文件浏览、传输、编辑和管理对话框。"""
 
 import base64
 import os
 import tempfile
+import threading
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont, QPixmap
@@ -32,10 +29,11 @@ from PySide6.QtWidgets import (
 
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from models import file_explorer_service as explorer_service
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
-# ── File Explorer Dialog ─────────────────────────────────────────────────
+# ── 文件浏览器对话框 ────────────────────────────────────────────────────
 
 
 class FileExplorerDialog(QDialog):
@@ -102,7 +100,6 @@ class FileExplorerDialog(QDialog):
         layout.setSpacing(4)
         layout.setContentsMargins(6, 6, 6, 6)
 
-        # Path bar
         self.path_layout = QHBoxLayout()
         self.path_layout.setSpacing(4)
         self.path_layout.addWidget(QLabel("Path:"))
@@ -118,7 +115,6 @@ class FileExplorerDialog(QDialog):
         self.path_layout.addWidget(self.search_field)
         layout.addLayout(self.path_layout)
 
-        # Toolbar row
         tb = QHBoxLayout()
         tb.setSpacing(3)
         self.back_btn = QPushButton()
@@ -181,7 +177,6 @@ class FileExplorerDialog(QDialog):
         tb.addWidget(self.root_cb)
         layout.addLayout(tb)
 
-        # File table
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
@@ -202,12 +197,11 @@ class FileExplorerDialog(QDialog):
         self.table.setColumnWidth(self.MODIFIED_COL, 140)
         layout.addWidget(self.table, 1)
 
-        # Status bar
         self.status_bar = QStatusBar()
         self.status_bar.showMessage("Ready")
         layout.addWidget(self.status_bar)
 
-    # ── Theme ────────────────────────────────────────────────────────────
+    # ── 主题 ────────────────────────────────────────────────────────────
 
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
@@ -237,7 +231,7 @@ class FileExplorerDialog(QDialog):
         self.search_field.setStyleSheet(self.path_field.styleSheet())
 
 
-    # ── ADB helpers ──────────────────────────────────────────────────────
+    # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
     def _root(self, cmd: str) -> str:
         return explorer_service.root_command(cmd, self.root_cb.isChecked())
@@ -266,7 +260,7 @@ class FileExplorerDialog(QDialog):
         worker.setParent(self)
         return worker
 
-    # ── Navigation ───────────────────────────────────────────────────────
+    # ── 路径导航 ────────────────────────────────────────────────────────
 
     def _navigate(self, path: str, push: bool = True):
         if not path or path == self.current_path:
@@ -297,7 +291,7 @@ class FileExplorerDialog(QDialog):
     def _go_parent(self):
         self._navigate(os.path.dirname(self.current_path))
 
-    # ── Directory listing ────────────────────────────────────────────────
+    # ── 目录列表 ────────────────────────────────────────────────────────
 
     def _refresh(self):
         self.search_field.clear()
@@ -414,7 +408,7 @@ class FileExplorerDialog(QDialog):
     def _fmt_size(self, s: str) -> str:
         return explorer_service.format_size(s)
 
-    # ── Double click ─────────────────────────────────────────────────────
+    # ── 双击操作 ────────────────────────────────────────────────────────
 
     def _on_double_click(self, row, col):
         name = self._file_name_at(row)
@@ -448,7 +442,7 @@ class FileExplorerDialog(QDialog):
         elif view and act == view:
             self._view_file(name, ext in self.IMAGE_EXTS)
 
-    # ── View / Edit file ─────────────────────────────────────────────────
+    # ── 查看与编辑文件 ──────────────────────────────────────────────────
 
     def _view_file(self, name: str, is_image: bool = False):
         full = self._dpath(self.current_path, name)
@@ -590,7 +584,7 @@ class FileExplorerDialog(QDialog):
             self.status_bar.showMessage(f"Saved {name}")
             self._refresh()
 
-    # ── Pull / Push ──────────────────────────────────────────────────────
+    # ── 拉取与推送 ──────────────────────────────────────────────────────
 
     def _pull_file(self, name: str):
         full = self._dpath(self.current_path, name)
@@ -676,7 +670,7 @@ class FileExplorerDialog(QDialog):
         self.status_bar.showMessage(success_msg)
         self._refresh()
 
-    # ── File operations ──────────────────────────────────────────────────
+    # ── 文件操作 ────────────────────────────────────────────────────────
 
     def _mkdir(self):
         name, ok = QInputDialog.getText(self, "New Folder", "Name:")
@@ -748,7 +742,7 @@ class FileExplorerDialog(QDialog):
         for name in items:
             self._delete_item(name)
 
-    # ── Copy / Cut / Paste ───────────────────────────────────────────────
+    # ── 复制、剪切与粘贴 ────────────────────────────────────────────────
 
     def _copy_items(self, copy_mode: bool):
         rows = set(i.row() for i in self.table.selectedIndexes())
@@ -792,7 +786,7 @@ class FileExplorerDialog(QDialog):
         self.status_bar.showMessage(f"Paste submitted: {len(self.clipboard)} item(s)")
         self.clipboard = []
 
-    # ── chmod ────────────────────────────────────────────────────────────
+    # ── 文件权限（chmod）────────────────────────────────────────────────
 
     def _show_chmod(self, name: str, is_dir: bool):
         full = self._dpath(self.current_path, name)
@@ -876,7 +870,7 @@ class FileExplorerDialog(QDialog):
         dlg.resize(420, 240)
         dlg.exec()
 
-    # ── Context menu ─────────────────────────────────────────────────────
+    # ── 右键菜单 ────────────────────────────────────────────────────────
 
     def _context_menu(self, pos):
         idx = self.table.indexAt(pos)
@@ -982,7 +976,7 @@ class FileExplorerDialog(QDialog):
         info = f"Name: {name}\nType: {ftype}\nSize: {size}\nPath: {full}"
         QMessageBox.information(self, f"Properties: {name}", info)
 
-    # ── Sorting / Filtering ──────────────────────────────────────────────
+    # ── 排序与筛选 ──────────────────────────────────────────────────────
 
     def _filter(self, text):
         t = text.strip().lower()
@@ -990,6 +984,27 @@ class FileExplorerDialog(QDialog):
             item = self.table.item(r, self.NAME_COL)
             if item and item.text() != "..":
                 self.table.setRowHidden(r, t not in item.text().lower())
+
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """将仍在运行的文件 worker 作为一组资源注册到监督器。"""
+        workers = [
+            worker
+            for worker in self._workers
+            if QThreadGroupShutdownTask._running(worker)
+        ]
+        if not workers:
+            return ()
+        handle = QThreadGroupShutdownTask(workers)
+        supervisor.register(
+            f"{task_prefix}-workers",
+            owner_id=owner_id,
+            kind="file_explorer_workers",
+            request_stop=handle.request_stop,
+            wait=handle.wait,
+            is_running=handle.is_running,
+        )
+        self._shutdown_registered = True
+        return (f"{task_prefix}-workers",)
 
     def _header_clicked(self, col):
         if col == self._sort_col:
@@ -1003,9 +1018,10 @@ class FileExplorerDialog(QDialog):
             self._sort_order = Qt.SortOrder.AscendingOrder
         self.table.sortByColumn(col, self._sort_order)
 
-    # ── Cleanup ──────────────────────────────────────────────────────────
+    # ── 资源清理 ────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
+        """中止文件 worker；未接入统一监督器时在后台完成有限等待。"""
         from gui.styles import BaseStyles
         try:
             BaseStyles.theme_changed.disconnect(self._apply_theme)
@@ -1017,9 +1033,9 @@ class FileExplorerDialog(QDialog):
             if w.isRunning():
                 w.abort()
                 w.setParent(None)
-        import threading
-        threading.Thread(
-            target=lambda ws=workers: [w.wait(5000) for w in ws if w.isRunning()],
-            daemon=True,
-        ).start()
+        if not getattr(self, "_shutdown_registered", False):
+            threading.Thread(
+                target=lambda ws=workers: [w.wait(5000) for w in ws if w.isRunning()],
+                daemon=True,
+            ).start()
         super().closeEvent(event)

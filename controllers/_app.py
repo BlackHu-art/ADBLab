@@ -1,3 +1,5 @@
+"""提供应用管理、Monkey 测试、Bugreport 和设备日志控制能力。"""
+
 from __future__ import annotations
 
 import os
@@ -16,9 +18,9 @@ from utils.batch_tracker import BatchOperationTracker
 
 
 class ADBAppMixin(_ADBControllerBase):
-    """App management: install, uninstall, package queries, monkey test, bugreport, logs."""
+    """协调应用安装、卸载、包查询、Monkey 测试、Bugreport 和日志操作。"""
 
-    # ── Provided by _ADBControllerBase ──
+    # 以下属性由 _ADBControllerBase 提供。
     app_model: ADBApp
     testing_model: ADBTesting
     signals: ADBControllerSignals
@@ -44,7 +46,7 @@ class ADBAppMixin(_ADBControllerBase):
         "cleanup_device_logs": "_process_cleanup_logs_result",
     }
 
-    # -- Package / Install / Uninstall --
+    # 应用包查询、安装与卸载
 
     def get_current_package(self, devices: list):
         if not self._require_devices(devices, "get_package"):
@@ -460,7 +462,7 @@ class ADBAppMixin(_ADBControllerBase):
         package_name = params.get("package_name", "")
         if not package_name:
             return self._emit_operation("monkey", False, "No package name provided")
-        # Guard against duplicate starts
+        # 同一设备只允许一个 Monkey 会话，避免重复启动后无法准确停止。
         dupes = [d for d in devices if d in self._monkey_running]
         if dupes:
             self._emit_operation("monkey", False, f"Monkey already running on: {', '.join(dupes)}")
@@ -516,7 +518,7 @@ class ADBAppMixin(_ADBControllerBase):
             )
         return self._emit_operation("monkey", result.get("success"), message)
 
-    # -- Log Retrieval --
+    # 设备日志获取与清理
 
     def retrieve_device_logs(self, devices: list):
         if not self._require_devices(devices, "retrieve_device_logs"):

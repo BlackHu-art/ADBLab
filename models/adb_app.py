@@ -1,7 +1,6 @@
-"""
-App management: install, uninstall, clear data, restart, query packages/activities.
+"""提供应用安装、卸载、数据清理、重启和包信息查询。
 
-Imports only from adb_model (core) — no circular dependencies.
+本模块只依赖核心 adb_model，避免模型之间形成循环依赖。
 """
 
 import os
@@ -12,7 +11,7 @@ from .base.focus_detector import detect_current_package
 
 
 class ADBApp(ADBModelCore):
-    """App lifecycle: install, uninstall, clear, restart, list, query."""
+    """封装应用安装、卸载、清理、重启、列表和查询等生命周期操作。"""
 
     def get_current_package(self, device_ip: str) -> dict:
         return detect_current_package(device_ip)

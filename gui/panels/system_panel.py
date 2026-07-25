@@ -1,4 +1,4 @@
-"""System tab -- shell, broadcast, port forward, service toggles, settings, tools, battery, IME, emulator."""
+"""提供 Shell、系统设置、端口转发、电池和模拟器操作面板。"""
 
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
@@ -6,7 +6,7 @@ from gui.panels.base_panel import BasePanel
 
 
 class SystemPanel(BasePanel):
-    """System tools tab."""
+    """构建系统工具控件，并向统一信号层转发用户操作。"""
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -14,7 +14,6 @@ class SystemPanel(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
-        # Shell
         g1 = self._g("Shell Command")
         gl1 = QVBoxLayout(g1)
         gl1.setSpacing(2)
@@ -23,7 +22,6 @@ class SystemPanel(BasePanel):
         self._add_row(gl1, (self.shell_cmd_input, 3), (self.btn_shell_run, 1))
         lo.addWidget(g1)
 
-        # ── Reboot & Modes ──
         g_rb = self._g("Reboot & Modes")
         gl_rb = QVBoxLayout(g_rb)
         gl_rb.setSpacing(2)
@@ -40,7 +38,6 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g_rb)
 
-        # Broadcast & Intents
         gb = self._g("Broadcast & Intents")
         glb = QVBoxLayout(gb)
         glb.setSpacing(2)
@@ -55,7 +52,6 @@ class SystemPanel(BasePanel):
         self._add_row(glb, (self.deep_link_uri, 2), (self.btn_deep_link, 1))
         lo.addWidget(gb)
 
-        # Port Forwarding
         g3 = self._g("Port Forwarding")
         gl3 = QVBoxLayout(g3)
         gl3.setSpacing(2)
@@ -83,7 +79,6 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g3)
 
-        # Service Toggles
         gs = self._g("Service Toggles (svc)")
         gsl = QVBoxLayout(gs)
         gsl.setSpacing(2)
@@ -106,7 +101,6 @@ class SystemPanel(BasePanel):
             self._add_row(gsl, *row_buttons)
         lo.addWidget(gs)
 
-        # Android Settings
         g4 = self._g("Android Settings")
         gl4 = QVBoxLayout(g4)
         gl4.setSpacing(2)
@@ -120,7 +114,6 @@ class SystemPanel(BasePanel):
         self._add_row(gl4, self.btn_settings_list, self.btn_settings_get, self.btn_settings_put)
         lo.addWidget(g4)
 
-        # System Tools
         g5 = self._g("System Tools")
         gl5 = QVBoxLayout(g5)
         gl5.setSpacing(2)
@@ -151,7 +144,6 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g5)
 
-        # Battery & Quick Settings
         g6 = self._g("Battery & Quick Settings")
         gl6 = QVBoxLayout(g6)
         gl6.setSpacing(2)
@@ -177,7 +169,6 @@ class SystemPanel(BasePanel):
         self._add_row(gl6, (self.quick_setting_combo, 2), (self.btn_quick_setting, 1))
         lo.addWidget(g6)
 
-        # IME & Emulator
         g7 = self._g("IME & Emulator Control")
         gl7 = QVBoxLayout(g7)
         gl7.setSpacing(2)

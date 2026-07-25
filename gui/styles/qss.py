@@ -1,4 +1,4 @@
-"""ADBLab QSS stylesheet templates."""
+"""提供 ADBLab 控件使用的 QSS 样式模板。"""
 
 from .fonts import _font
 from .theme import _tc
@@ -10,9 +10,9 @@ RADIUS_XL = 12
 
 
 class QSSMixin:
-    """Add to BaseStyles via inheritance for all QSS template methods."""
+    """通过 BaseStyles 提供全部 QSS 模板方法。"""
 
-    # -- Scrollbar -------------------------------------------------------
+    # ── 滚动条 ──────────────────────────────────────────────────────────
 
     @classmethod
     def SCROLLBAR_STYLE(cls) -> str:
@@ -41,7 +41,7 @@ class QSSMixin:
         QScrollBar::corner {{ background: transparent; }}
         """
 
-    # -- Buttons ---------------------------------------------------------
+    # ── 按钮 ────────────────────────────────────────────────────────────
 
     @classmethod
     def BUTTON_BASE(cls) -> str:
@@ -104,7 +104,7 @@ class QSSMixin:
     def BUTTON_QSS(cls) -> str:
         return cls.BUTTON_STYLE() + cls.ACCENT_BUTTON_STYLE() + cls.DANGER_BUTTON_STYLE()
 
-    # -- Input -----------------------------------------------------------
+    # ── 输入控件 ────────────────────────────────────────────────────────
 
     @classmethod
     def INPUT_STYLE(cls) -> str:
@@ -145,7 +145,7 @@ class QSSMixin:
         }}
         """
 
-    # -- Group Box -------------------------------------------------------
+    # ── 分组框 ──────────────────────────────────────────────────────────
 
     @classmethod
     def GROUP_BOX_STYLE(cls) -> str:
@@ -162,7 +162,7 @@ class QSSMixin:
         }}
         """
 
-    # -- List Widget -----------------------------------------------------
+    # ── 列表控件 ────────────────────────────────────────────────────────
 
     @classmethod
     def LIST_WIDGET_STYLE(cls) -> str:
@@ -180,7 +180,7 @@ class QSSMixin:
         QListWidget::item:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
         """
 
-    # -- Toolbar ---------------------------------------------------------
+    # ── 工具栏 ──────────────────────────────────────────────────────────
 
     @classmethod
     def TOOLBAR_STYLE(cls) -> str:
@@ -204,7 +204,7 @@ class QSSMixin:
         }}
         """
 
-    # -- 状态栏 ------------------------------------------------------------
+    # ── 状态栏 ──────────────────────────────────────────────────────────
 
     @classmethod
     def STATUS_BAR_STYLE(cls) -> str:
@@ -213,7 +213,7 @@ class QSSMixin:
             f"color: {_tc('TEXT_PRIMARY')}; border-top: 1px solid {_tc('BORDER_COLOR')}; }}"
         )
 
-    # -- Device List (with check indicators) ------------------------------
+    # ── 带勾选标记的设备列表 ────────────────────────────────────────────
 
     @classmethod
     def DEVICE_LIST_STYLE(cls) -> str:
@@ -236,7 +236,7 @@ class QSSMixin:
         QListWidget::indicator:checked {{ image: url(icons:check.svg); border: none; }}
         """
 
-    # -- Composite: PANEL_BASE_STYLE -------------------------------------
+    # ── PANEL_BASE_STYLE 组合样式 ───────────────────────────────────────
 
     @classmethod
     def PANEL_BASE_STYLE(cls) -> str:

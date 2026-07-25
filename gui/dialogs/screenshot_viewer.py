@@ -1,4 +1,4 @@
-"""Screenshot viewer and lightweight screenshot manager."""
+"""提供截图浏览、缩放、复制和文件管理对话框。"""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ ZOOM_STEP = 0.10
 
 
 class ScreenshotGraphicsView(QGraphicsView):
-    """Graphics view with viewer-owned zoom shortcuts."""
+    """把滚轮和双击缩放操作委托给所属截图查看器。"""
 
     def __init__(self, owner: "ScreenshotViewer"):
         super().__init__()
@@ -77,7 +77,7 @@ class ScreenshotGraphicsView(QGraphicsView):
 
 
 class ScreenshotViewer(QDialog):
-    """View screenshots, browse captured batches, and manage the current file."""
+    """浏览截图批次，并管理当前图片的显示和文件操作。"""
 
     def __init__(self, image_paths: list, current_index: int = 0, parent=None):
         super().__init__(parent)

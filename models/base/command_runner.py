@@ -1,4 +1,4 @@
-"""Shared subprocess.run entry point for short-lived commands."""
+"""提供短生命周期命令统一的 subprocess.run 执行入口。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ _active_lock = threading.Lock()
 
 
 def _get_adb_path() -> str:
-    """Return resolved adb path, with module-level cache."""
+    """解析并缓存 ADB 可执行文件路径。"""
     global _adb_path
     if _adb_path is None:
         from utils.adb_resolver import adb_path
@@ -26,7 +26,7 @@ def _get_adb_path() -> str:
 
 @dataclass
 class CommandResult:
-    """Standard command execution result."""
+    """统一的命令执行结果。"""
 
     success: bool
     output: str = ""
@@ -35,20 +35,22 @@ class CommandResult:
 
     @property
     def stdout(self) -> str:
-        """Compatibility alias for older code."""
+        """为旧调用方保留 stdout 兼容属性。"""
         return self.output
 
 
 class CommandRunner:
-    """Single subprocess.run boundary for synchronous short commands."""
+    """同步短命令的统一 subprocess.run 边界。"""
 
     @staticmethod
     def active_count() -> int:
+        """返回当前仍在执行的同步命令数量。"""
         with _active_lock:
             return _active_commands
 
     @staticmethod
     def run(cmd: list[str], timeout: int = 30, shell: bool = False) -> CommandResult:
+        """执行有超时上限的短命令，并将退出码和输出归一为 ``CommandResult``。"""
         resolved_cmd = _resolve_cmd(cmd)
         started_at = _mark_started()
         result: CommandResult
@@ -84,7 +86,7 @@ class CommandRunner:
         timeout: int = 30,
         shell: bool = False,
     ) -> CommandResult:
-        """Run a command and stream binary stdout directly to a file."""
+        """执行命令并将二进制标准输出直接写入文件。"""
         resolved_cmd = _resolve_cmd(cmd)
         started_at = _mark_started()
         result: CommandResult

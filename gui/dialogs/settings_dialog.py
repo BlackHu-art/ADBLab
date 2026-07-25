@@ -1,4 +1,4 @@
-"""Settings dialog — immediate-apply, theme-aware, with full settings coverage."""
+"""提供即时生效、支持主题切换的完整设置对话框。"""
 
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtGui import QIntValidator
@@ -61,7 +61,7 @@ class SettingsDialog(QDialog):
         self._build_footer(content)
         root.addLayout(content)
 
-    # ── Appearance ──────────────────────────────────────────────────────
+    # ── 外观 ────────────────────────────────────────────────────────────
 
     def _build_appearance(self, body):
         g = self._section("Appearance")
@@ -101,7 +101,7 @@ class SettingsDialog(QDialog):
         gg.setColumnStretch(3, 1)
         body.addWidget(g)
 
-    # ── Window ──────────────────────────────────────────────────────────
+    # ── 窗口 ────────────────────────────────────────────────────────────
 
     def _build_window(self, body):
         g = self._section("Window")
@@ -140,7 +140,7 @@ class SettingsDialog(QDialog):
         gg.setColumnStretch(3, 1)
         body.addWidget(g)
 
-    # ── Behavior ────────────────────────────────────────────────────────
+    # ── 行为 ────────────────────────────────────────────────────────────
 
     def _build_behavior(self, body):
         g = self._section("Behavior")
@@ -164,7 +164,7 @@ class SettingsDialog(QDialog):
         vl.addWidget(self._chk_continuous_scan)
         body.addWidget(g)
 
-    # ── General ─────────────────────────────────────────────────────────
+    # ── 常规 ────────────────────────────────────────────────────────────
 
     def _build_general(self, body):
         g = self._section("General")
@@ -182,7 +182,6 @@ class SettingsDialog(QDialog):
         gg.addWidget(self._label("Save Dir"), 0, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addWidget(self._lbl_save, 0, 1,)
 
-        # Log max lines
         self._combo_log_lines = self._combo(
             ["1000", "2000", "3000", "5000", "10000"],
             str(self.s.get("log_max_lines", 2000)),
@@ -197,7 +196,7 @@ class SettingsDialog(QDialog):
         gg.setColumnStretch(1, 2)
         body.addWidget(g)
 
-    # ── Footer ──────────────────────────────────────────────────────────
+    # ── 底部操作 ────────────────────────────────────────────────────────
 
     def _build_footer(self, body):
         body.addSpacing(2)
@@ -222,7 +221,7 @@ class SettingsDialog(QDialog):
         row.addWidget(btn_close)
         body.addLayout(row)
 
-    # ── Widget helpers ──────────────────────────────────────────────────
+    # ── 控件辅助方法 ────────────────────────────────────────────────────
 
     def _section(self, title: str) -> QGroupBox:
         g = QGroupBox(title)
@@ -278,7 +277,7 @@ class SettingsDialog(QDialog):
         except ValueError:
             return 0
 
-    # ── Callback helpers ────────────────────────────────────────────────
+    # ── 回调辅助方法 ────────────────────────────────────────────────────
 
     def _on_int_changed(self, inp: QLineEdit, setting_key: str | None, after=None):
         if setting_key:
@@ -286,7 +285,7 @@ class SettingsDialog(QDialog):
         if after:
             after()
 
-    # ── Callbacks ───────────────────────────────────────────────────────
+    # ── 回调 ────────────────────────────────────────────────────────────
 
     def _on_theme_changed(self, t: str):
         BaseStyles.switch_theme(t)
@@ -370,7 +369,7 @@ class SettingsDialog(QDialog):
             pw.apply_panel_sizes(left_w, right_w)
         self._update_right_label()
 
-    # ── Theme ───────────────────────────────────────────────────────────
+    # ── 主题 ────────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
         BaseStyles.theme_changed.disconnect(self._apply_theme)
@@ -467,7 +466,7 @@ class SettingsDialog(QDialog):
             QPushButton#accentBtn:pressed {{ background-color: {c('BUTTON_ACCENT_PRESSED')}; }}
         """)
 
-    # ── Reset ───────────────────────────────────────────────────────────
+    # ── 重置 ────────────────────────────────────────────────────────────
 
     def _reset_all(self):
         if (

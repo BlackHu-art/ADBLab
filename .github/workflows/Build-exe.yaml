@@ -6,8 +6,7 @@ on:
     branches: ["main"]
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   version:
@@ -16,7 +15,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Read app version
         id: version
@@ -64,15 +63,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.11"
 
       - name: Cache pip
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ matrix.pip_cache }}
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
@@ -156,7 +155,7 @@ jobs:
           rm -f "dist/$name"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: ${{ matrix.artifact }}
           path: dist/*
@@ -166,14 +165,16 @@ jobs:
     needs: [version, build]
     if: needs.build.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Download artifacts
         continue-on-error: true
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: release_artifacts
 
@@ -185,7 +186,13 @@ jobs:
           TITLE="Release $TAG"
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+            echo "Release $TAG already exists; published versions are immutable."
+            exit 1
+          fi
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; published versions are immutable."
+            exit 1
           fi
 
           mapfile -d '' FILES < <(find release_artifacts -type f -print0)
@@ -199,27 +206,5 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$TITLE" \
             --notes "Automated release $TAG"
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Prune old workflow runs (keep 5)
-        shell: bash
-        run: |
-          RUNS=$(gh run list --repo ${{ github.repository }} --workflow ${{ github.workflow }} --limit 100 --json databaseId --jq '.[].databaseId' | tail -n +6)
-          for id in $RUNS; do
-            echo "Deleting run $id"
-            gh run delete "$id" --repo ${{ github.repository }}
-          done
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Prune old releases (keep 5)
-        shell: bash
-        run: |
-          RELEASES=$(gh release list --repo ${{ github.repository }} --limit 100 --json tagName --jq '.[].tagName' | tail -n +6)
-          for tag in $RELEASES; do
-            echo "Deleting release $tag"
-            gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag
-          done
         env:
           GH_TOKEN: ${{ github.token }}

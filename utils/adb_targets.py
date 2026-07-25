@@ -1,4 +1,4 @@
-"""Helpers for validating ADB device targets."""
+"""校验并规范化 ADB 设备连接目标。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ CONNECT_TARGET_EXAMPLE = "192.168.1.10:5555"
 
 
 def normalize_adb_connect_target(value: str) -> tuple[str, str]:
-    """Return ``(normalized_target, error_message)`` for ``adb connect``."""
+    """为 ``adb connect`` 返回规范化目标和错误消息二元组。"""
     target = (value or "").strip()
     if not target:
         return "", f"Please enter IP and port, e.g. {CONNECT_TARGET_EXAMPLE}"

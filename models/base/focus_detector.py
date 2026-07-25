@@ -1,3 +1,5 @@
+"""通过多种 Android 系统输出尽力识别设备当前前台应用。"""
+
 import re
 
 from .command_runner import CommandRunner
@@ -7,6 +9,7 @@ _TOP_ACTIVITY_RE = re.compile(r"topActivity=ComponentInfo\{([\w.]+(?:\.[\w.]+)+)
 
 
 def extract_package_name(output: str) -> str:
+    """从 activity/window 输出中提取首个可信的前台包名。"""
     lines = output.splitlines()
     for line in lines:
         if "visible=true" not in line or "topActivity=ComponentInfo" not in line:
@@ -28,6 +31,7 @@ def extract_package_name(output: str) -> str:
 
 
 def detect_current_package(device_ip: str, runner=CommandRunner) -> dict:
+    """依次执行兼容性探测命令，任一命令识别成功即返回前台包名。"""
     commands = [
         ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],
         ["adb", "-s", device_ip, "shell", "sh", "-c", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"],

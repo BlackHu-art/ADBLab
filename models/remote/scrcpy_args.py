@@ -1,4 +1,4 @@
-"""Pure scrcpy argument construction."""
+"""根据 Remote 配置纯函数式构造 scrcpy 启动参数。"""
 
 from .types import ScrcpyConfig
 
@@ -8,6 +8,7 @@ def _size_value(size: str) -> str:
 
 
 def build_scrcpy_args(config: ScrcpyConfig, encoder: str | None = None) -> list[str]:
+    """按显式配置构造 scrcpy 参数列表，不执行外部命令。"""
     args = [config.exe, "-s", config.device]
 
     if config.maxsize != "Default":

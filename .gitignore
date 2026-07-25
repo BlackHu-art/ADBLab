@@ -4,6 +4,7 @@ __pycache__/
 .codex/
 .vscode/
 .idea/
+core/mail/mail.yaml
 .mypy_cache/
 .playwright-cli/
 .pytest_cache/

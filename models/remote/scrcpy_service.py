@@ -1,4 +1,4 @@
-"""Headless scrcpy service for ADBLab's Remote tab."""
+"""提供 ADBLab Remote 页签使用的无界面 scrcpy 服务。"""
 
 import platform
 import re
@@ -15,7 +15,7 @@ from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
 
 
 class ScrcpyService:
-    """Prepare and manage scrcpy without coupling to Qt widgets."""
+    """在不依赖 Qt 控件的前提下准备并管理 scrcpy 进程。"""
 
     FPS_PATTERN = re.compile(r"\[(\d+\.?\d*)\s*fps\]")
 
@@ -29,6 +29,7 @@ class ScrcpyService:
         self._version_cache: dict[str, str] = {}
 
     def run_command(self, cmd: list[str], timeout: int = 5):
+        """通过统一短命令边界执行 scrcpy 或 ADB 预检命令。"""
         return self.command_runner.run(cmd, timeout=timeout)
 
     def resolve_executable(self) -> str:
@@ -56,12 +57,13 @@ class ScrcpyService:
             raw = result.output or ""
             for prefix in ("Physical size:", "Override size:"):
                 if prefix in raw:
-                    return raw[raw.find(prefix):].split(":")[1].strip()
+                    return raw[raw.find(prefix) :].split(":")[1].strip()
         except Exception:
             pass
         return ""
 
     def preflight_check(self, adb: str, device: str) -> PreflightResult:
+        """检查设备响应和基础传输速度，但不因速度警告阻止启动。"""
         messages: list[tuple[str, str]] = []
         try:
             result = self.run_command([adb, "-s", device, "shell", "echo ok"], timeout=5)
@@ -91,7 +93,9 @@ class ScrcpyService:
 
     def detect_encoder(self, adb: str, device: str) -> str | None:
         try:
-            result = self.run_command([adb, "-s", device, "shell", "dumpsys media.codec"], timeout=8)
+            result = self.run_command(
+                [adb, "-s", device, "shell", "dumpsys media.codec"], timeout=8
+            )
             for line in (result.output or "").splitlines():
                 lowered = line.lower()
                 if "h264" in lowered and "encoder" in lowered:
@@ -103,6 +107,7 @@ class ScrcpyService:
         return None
 
     def build_launch_plan(self, config: ScrcpyConfig) -> ScrcpyLaunchPlan:
+        """完成版本、设备和编码器预检，并生成不含运行状态的启动计划。"""
         messages: list[tuple[str, str]] = []
         version = self.version(config.exe)
         messages.append(("INFO", f"scrcpy v{version}"))
@@ -133,6 +138,7 @@ class ScrcpyService:
         )
 
     def start(self, key: str, args: list[str]):
+        """启动由 ``ProcessRunner`` 跟踪的 scrcpy 长进程。"""
         return self.process_runner.start(
             key,
             args,
@@ -144,7 +150,19 @@ class ScrcpyService:
         )
 
     def stop(self, key: str, timeout: float = 2.0) -> int | None:
+        """等待 scrcpy 在时限内退出，必要时由 ``ProcessRunner`` 强制清理。"""
         return self.process_runner.stop(key, timeout=timeout)
+
+    def request_stop(self, key: str) -> bool:
+        """只发送停止请求，不等待进程退出。"""
+        return self.process_runner.request_stop(key)
+
+    def force_stop(self, key: str, timeout: float) -> bool:
+        """在总时限内强制停止 scrcpy 进程。"""
+        return self.process_runner.force_stop(key, timeout)
+
+    def is_active(self, key: str) -> bool:
+        return key in self.process_runner.active_keys
 
     @classmethod
     def parse_fps(cls, line: str) -> str | None:

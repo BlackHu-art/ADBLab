@@ -1,16 +1,15 @@
-"""
-ADB Network Mixin — port forwarding, reverse, TCP/IP, wireless pairing, ping, netstat.
+"""提供端口映射、无线调试、Ping 和网络状态等 ADB 网络操作。
 
-Compose with ADBModelCore subclass (e.g. ADBAdvanced). All methods are @async_command.
+该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
 from .adb_model import async_command
 
 
 class ADBNetworkMixin:
-    """Mixin providing network-related ADB operations."""
+    """封装网络相关的 ADB 操作。"""
 
-    # ── Port Forwarding ──────────────────────────────────────────────────
+    # 端口正向与反向映射
 
     @async_command
     def forward_port_async(self, device_ip: str, local_port: str,
@@ -64,7 +63,7 @@ class ADBNetworkMixin:
             device_ip=device_ip,
         )
 
-    # ── Wireless Debugging ──────────────────────────────────────────────
+    # 无线调试
 
     @async_command
     def tcpip_mode_async(self, device_ip: str, port: str = "5555") -> dict:
@@ -80,7 +79,7 @@ class ADBNetworkMixin:
             timeout=15, ip=ip_address,
         )
 
-    # ── Network ─────────────────────────────────────────────────────────
+    # 网络诊断
 
     @async_command
     def shell_ping_async(self, device_ip: str, host: str, count: str = "4") -> dict:

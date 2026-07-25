@@ -1,4 +1,4 @@
-"""User-writable application data paths."""
+"""提供应用运行时可写的用户数据目录。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from utils.app_metadata import APP_NAME
 
 
 def user_data_root() -> Path:
-    """Return the per-user writable root for ADBLab runtime data."""
+    """返回当前用户可写的 ADBLab 运行时数据根目录。"""
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA")
         if not base:
@@ -24,5 +24,5 @@ def user_data_root() -> Path:
 
 
 def user_config_path(filename: str) -> str:
-    """Return a path under the writable config directory."""
+    """返回用户配置目录下指定文件的路径。"""
     return str(user_data_root() / "config" / filename)

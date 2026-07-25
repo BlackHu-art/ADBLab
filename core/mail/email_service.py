@@ -1,282 +1,223 @@
-#!/usr/bin/env python
+"""提供注重隐私保护的可选临时邮箱服务适配器。"""
 
-"""
-@author      :  Frankie
-@description :
-@time        :    10:18
-"""
+from __future__ import annotations
 
 import datetime
-import random
+import logging
+import os
 import re
-import string
+import secrets
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
 
-import logging
-logger = logging.getLogger("email")
+from utils.user_data import user_config_path
 
-_yaml = YAML()
-_yaml.preserve_quotes = True
-_MAIL_YAML = Path(__file__).parent / "mail.yaml"
+logger = logging.getLogger("adblab.mail")
 
-
-def _load_mail_yaml():
-    if _MAIL_YAML.exists():
-        with open(_MAIL_YAML, encoding="utf-8") as f:
-            data = _yaml.load(f)
-            return data if data is not None else {}
-    return {}
+_yaml = YAML(typ="safe")
+_DEFAULT_TIMEOUT = (5.0, 15.0)
+_MAIL_CONFIG_ENV = "ADBLAB_MAIL_CONFIG"
+_MAIL_SIGN_ENV = "ADBLAB_MAIL_SIGN"
 
 
-def _save_mail_yaml(data):
-    with open(_MAIL_YAML, "w", encoding="utf-8") as f:
-        _yaml.dump(data, f)
+class MailConfigurationError(RuntimeError):
+    """表示可选邮件集成尚未完成安全配置。"""
 
 
-def _get_nested(parent_key, child_key):
-    data = _load_mail_yaml()
-    parent = data.get(parent_key)
-    if isinstance(parent, dict):
-        return parent.get(child_key)
-    return None
+def mail_config_path() -> Path:
+    """返回显式覆盖路径或当前用户的配置路径。"""
+    override = os.environ.get(_MAIL_CONFIG_ENV, "").strip()
+    return Path(override).expanduser() if override else Path(user_config_path("mail.yaml"))
 
 
-def _update_nested(parent_key, child_key, value):
-    data = _load_mail_yaml()
-    if parent_key in data and isinstance(data[parent_key], dict):
-        data[parent_key][child_key] = str(value)
-        _save_mail_yaml(data)
+def _load_mail_config(path: Path | None = None) -> dict[str, Any]:
+    """只加载用户范围配置，禁止读取源码目录中的 mail.yaml。"""
+    sign_override = os.environ.get(_MAIL_SIGN_ENV, "").strip()
+    if sign_override:
+        return {"enabled": True, "service": {"sign": sign_override}}
+
+    config_path = path or mail_config_path()
+    if not config_path.is_file():
+        raise MailConfigurationError(
+            "Temporary mail is not configured. Configure it in the per-user settings directory."
+        )
+    try:
+        with config_path.open(encoding="utf-8") as f:
+            data = _yaml.load(f) or {}
+    except (OSError, TypeError, ValueError, YAMLError) as exc:
+        raise MailConfigurationError("Temporary mail configuration could not be loaded.") from exc
+    if not isinstance(data, dict):
+        raise MailConfigurationError("Temporary mail configuration must be a YAML mapping.")
+    if data.get("enabled") is not True:
+        raise MailConfigurationError("Temporary mail integration is disabled.")
+    service = data.get("service")
+    sign = service.get("sign") if isinstance(service, dict) else None
+    if not isinstance(sign, str) or not sign.strip():
+        raise MailConfigurationError("Temporary mail request signing material is missing.")
+    return data
 
 
 class HttpRequest:
-    """通用 HTTP 请求封装类"""
+    """封装带强制连接和读取超时的 HTTP 请求边界。"""
 
-    def __init__(self, base_url):
-        self.session = requests.Session()
-        self.base_url = base_url
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        session: requests.Session | None = None,
+        timeout: tuple[float, float] = _DEFAULT_TIMEOUT,
+    ):
+        self.session = session or requests.Session()
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
 
-    def post(self, endpoint, headers=None, payload=None):
-        """
-        发送 POST 请求
-        :param endpoint: 接口路径
-        :param headers: 请求头
-        :param payload: 请求体数据
-        :return: 响应 JSON 数据或 None
-        """
+    def post(self, endpoint: str, *, headers=None, payload=None):
+        endpoint = endpoint.lstrip("/")
         url = f"{self.base_url}/{endpoint}"
         try:
-            logger.info(f"Sending POST request to {url} with payload: {payload}")
-            response = self.session.post(url, headers=headers, json=payload, timeout=10)
+            logger.info("Temporary-mail request started: %s", endpoint)
+            response = self.session.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=self.timeout,
+            )
             response.raise_for_status()
-            logger.info(f"Response: {response.json()}")
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"HTTP POST request failed: {e}")
+            data = response.json()
+            logger.info("Temporary-mail request completed: %s", endpoint)
+            return data if isinstance(data, dict) else None
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            logger.error(
+                "Temporary-mail request failed for %s: %s",
+                endpoint,
+                type(exc).__name__,
+            )
             return None
 
 
 class EmailService(HttpRequest):
-    """服务类，继承 HttpRequest 封装 AMZ123 接口请求"""
+    """使用用户范围配置和脱敏日志的可选临时邮箱服务。"""
 
     BASE_URL = "https://api.amz123.com/toolbox/v1/temp_email"
 
-    def __init__(self):
-        super().__init__(self.BASE_URL)
+    def __init__(
+        self,
+        *,
+        config: dict[str, Any] | None = None,
+        config_path: Path | None = None,
+        session: requests.Session | None = None,
+        timeout: tuple[float, float] = _DEFAULT_TIMEOUT,
+    ):
+        loaded = config if config is not None else _load_mail_config(config_path)
+        if not isinstance(loaded, dict) or loaded.get("enabled") is not True:
+            raise MailConfigurationError("Temporary mail integration is disabled.")
+        service = loaded.get("service")
+        sign = service.get("sign") if isinstance(service, dict) else None
+        if not isinstance(sign, str) or not sign.strip():
+            raise MailConfigurationError("Temporary mail request signing material is missing.")
+
+        super().__init__(self.BASE_URL, session=session, timeout=timeout)
+        self._sign = sign.strip()
+        self._fingerprint = secrets.token_hex(18)
         self.common_headers = {
             "accept": "application/json",
             "content-type": "application/json",
             "origin": "https://www.amz123.com",
             "referer": "https://www.amz123.com/",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"Windows"',
-            # "fingerprint": "4794d495216cb6f6f1c31bc4fcbfc770"
         }
-        self.account = None
-        self.email_id = None
+        self.account: str | None = None
+        self.email_id: str | None = None
 
-    def get_random_email(self):
-        """
-        获取随机邮箱账号
-        """
-        url = f"{self.BASE_URL}/rand_account"
-        retry = False
-
-        while True:
-            try:
-                headers = {
-                    **self.common_headers,
-                    "fingerprint": str(_get_nested("userRegisterInfoPro", "fingerprint")),
-                }
-
-                logger.info(f"Requesting random email from {url}")
-                response = self.session.post(url, headers=headers, json={})
-                response.raise_for_status()
-
-                data = response.json()
-                logger.info(f"Response: {data}")
-
-                # 判断响应结果，按需处理
-                if data.get("status") == 0:  # 假设 0 表示成功
-                    account = data.get("data", {}).get("account")
-                    if account:
-                        logger.info(f"Random Email Account: {account}")
-                        self.account = account
-                        _update_nested("userRegisterInfoPro", "account", self.account)
-                    else:
-                        logger.error("Account not found in response data")
-                    return data
-                elif data.get("status") == 104 and not retry:  # 请求频繁，请稍后重试
-                    logger.warning(f"Status 104: {data.get('info', 'Unknown error')}. Retrying...")
-                    self.update_fingerprint()
-                    retry = True
-                else:
-                    logger.error(f"API Error: {data.get('info', 'Unknown error')}")
-                    return None
-
-            except requests.RequestException as e:
-                logger.error(f"Failed to get random email: {e}")
-                return None
-
-    def update_fingerprint(self):
-        """
-        随机生成 fingerprint 并更新
-        """
-        # 生成一个固定长度的 fingerprint（与原始示例一致，长度为36）
-        new_fingerprint = "".join(random.choices(string.ascii_lowercase + string.digits, k=36))
-
-        # 更新 YAML 中的 fingerprint 值
-        _update_nested("userRegisterInfoPro", "fingerprint", new_fingerprint)
-        logger.info(f"Fingerprint updated to: {new_fingerprint}")
-
-    def get_email_list(self):
-        """获取邮箱列表"""
-        url = f"{self.BASE_URL}/list"
-        headers = {
+    def _signed_headers(self) -> dict[str, str]:
+        return {
             **self.common_headers,
             "app-id": "3",
             "project-id": "toolbox",
-            "sign": "41a562316ccfe7f9e0e8ff7ed5f574e8",
+            "sign": self._sign,
             "timestamp": str(int(datetime.datetime.now().timestamp())),
         }
-        data = {"account": self.account, "page": {"sorts": [{"condition": "date", "order": -1}]}}
-        try:
-            logger.info(f"Requesting email list for account: {self.account}")
-            response = self.session.post(url, headers=headers, json=data)
-            response.raise_for_status()
-            logger.info(f"Response: {response.json()}")
-            return response.json()
-        except requests.RequestException as e:
-            logger.error(f"Failed to get email list: {e}")
+
+    def get_random_email(self):
+        for attempt in range(2):
+            data = self.post(
+                "rand_account",
+                headers={**self.common_headers, "fingerprint": self._fingerprint},
+                payload={},
+            )
+            if not data:
+                return None
+            if data.get("status") == 0:
+                account = data.get("data", {}).get("account")
+                if isinstance(account, str) and account:
+                    self.account = account
+                    return data
+                logger.error("Temporary-mail response did not include an account.")
+                return None
+            if data.get("status") == 104 and attempt == 0:
+                self.update_fingerprint()
+                continue
+            logger.error("Temporary-mail service returned a non-success status.")
             return None
+        return None
 
-    def extract_verification_code(self, text_body):
-        """
-        从邮件正文中提取四位数字验证码，优先匹配“验证码”或“code”等上下文关键词周围的数字。
-        """
-        # 优先匹配关键词前后有数字的情况
+    def update_fingerprint(self):
+        """轮换内存中的请求指纹，不持久化也不写入日志。"""
+        self._fingerprint = secrets.token_hex(18)
+
+    def get_email_list(self):
+        if not self.account:
+            return None
+        payload = {
+            "account": self.account,
+            "page": {"sorts": [{"condition": "date", "order": -1}]},
+        }
+        return self.post("list", headers=self._signed_headers(), payload=payload)
+
+    @staticmethod
+    def extract_verification_code(text_body: str):
         keyword_patterns = [
-            r"(?:验证码|verification\s*code|code)[^\d]{0,10}(\d{4,6})",  # 中文验证码、英文 verification code
-            r"(\d{4,6})[^\d]{0,10}(?:验证码|verification\s*code|code)",  # 数字在前的情况
+            r"(?:验证码|verification\s*code|code)[^\d]{0,10}(\d{4,6})",
+            r"(\d{4,6})[^\d]{0,10}(?:验证码|verification\s*code|code)",
         ]
-
         for pattern in keyword_patterns:
             match = re.search(pattern, text_body, re.IGNORECASE)
             if match:
                 return match.group(1)
-
-        # 如果没有关键词相关匹配，退而求其次抓第一个 4~6 位纯数字
         match = re.search(r"\b\d{4,6}\b", text_body)
-        if match:
-            return match.group(0)
+        return match.group(0) if match else None
 
-        return None
-
-    def get_email_detail(
-        self,
-    ):
-        """
-        获取邮箱详情，并提取验证码
-        :return: 提取到的验证码字符串，如果失败返回 None
-        """
-        url = f"{self.BASE_URL}/detail"
-        payload = {"id": self.email_id, "account": self.account}
-        try:
-            logger.info(f"Requesting email details for ID: {self.email_id}, Account: {self.account}")
-            response = self.session.post(url, headers=self.common_headers, json=payload)
-            response.raise_for_status()
-            data = response.json()
-            logger.info("Response received successfully.")
-
-            # 校验响应状态
-            if data.get("status") != 0:
-                logger.error(f"Error in response: {data.get('info')}")
-                return None
-
-            # 提取 text_body 并解析验证码
-            text_body = data.get("data", {}).get("text_body", "")
-            if text_body:
-                logger.info(f"Text Body:\n{text_body}")
-                code = self.extract_verification_code(text_body)
-                if code:
-                    logger.info(f"Verification Code Extracted: {code}")
-                    _update_nested("userRegisterInfoPro", "verifyCode", code)
-                    return code
-                else:
-                    logger.warning("No verification code found in the email body.")
-                    return None
-            else:
-                logger.warning("No text body found in the email data.")
-                return None
-
-        except requests.RequestException as e:
-            logger.error(f"Failed to get email details: {e}")
+    def get_email_detail(self):
+        if not self.account or not self.email_id:
             return None
+        data = self.post(
+            "detail",
+            headers=self._signed_headers(),
+            payload={"id": self.email_id, "account": self.account},
+        )
+        if not data or data.get("status") != 0:
+            return None
+        text_body = data.get("data", {}).get("text_body", "")
+        if not isinstance(text_body, str) or not text_body:
+            return None
+        return self.extract_verification_code(text_body)
 
     def fetch_and_process_email(self):
-        """
-        执行以下步骤：
-        1. 调用 get_random_email 获取随机邮箱账号。
-        2. 循环调用 get_email_list，最多6次，每次间隔10秒，直到响应数据中的 "total": 1。
-        3. 解析响应数据获取邮件ID。
-        4. 使用获取到的邮件ID调用 get_email_detail。
-        """
-        # Step 1: 获取随机邮箱账号
         result = self.get_random_email()
-        if not result or result.get("status") != 0:
-            logger.error("Failed to get random email account.")
-            return
-
-        # Step 2: 循环调用 get_email_list
+        if not result:
+            return None
         for attempt in range(6):
             email_list = self.get_email_list()
-            if email_list and email_list.get("data", {}).get("total") == 1:
-                rows = email_list.get("data", {}).get("rows", [])
-                if rows:
-                    self.email_id = rows[0].get("id")
-                    logger.info(f"Found email with ID: {self.email_id}")
-                    break
-            logger.info(f"Attempt {attempt + 1}: No emails found yet. Retrying in 10 seconds...")
-            time.sleep(10)
-
+            rows = email_list.get("data", {}).get("rows", []) if email_list else []
+            if rows:
+                self.email_id = rows[0].get("id")
+                break
+            if attempt < 5:
+                time.sleep(10)
         if not self.email_id:
-            logger.error("Failed to find any emails after 6 attempts.")
-            return
-
-        # Step 3: 获取邮件验证码
-        detail = self.get_email_detail()
-        if detail:
-            logger.info(f"Email detail fetched successfully: {detail}")
-        else:
-            logger.error("Failed to fetch email detail.")
-
-
-if __name__ == "__main__":
-    email_service = EmailService()
-    email_service.fetch_and_process_email()
+            return None
+        return self.get_email_detail()

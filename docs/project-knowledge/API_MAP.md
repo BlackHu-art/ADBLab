@@ -18,11 +18,13 @@
 
 | 方法 | 路径 | 入口代码 | 请求参数 | 响应 | 鉴权/请求材料 | 核心调用链 | 测试 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/rand_account` | `EmailService.get_random_email()` | 本地配置中的请求载荷 | 随机临时邮箱账号对象 | 自定义 headers/签名/指纹类材料，具体协议待确认 | task → get_random_email → 更新本地状态 | 无 |
-| POST | `/list` | `EmailService.get_email_list()` | 当前账号与分页/查询类载荷 | 邮件摘要列表 | 同上 | fetch_and_process_email → list | 无 |
-| POST | `/detail` | `EmailService.get_email_detail()` | 邮件标识与账号上下文 | 邮件详情/正文 | 同上 | fetch_and_process_email → detail → extract code | 无 |
+| POST | `/rand_account` | `EmailService.get_random_email()` | 空 JSON | 随机临时邮箱账号对象 | 用户域签名配置；内存指纹 | task → get_random_email → 内存状态 | `test_email_service.py` |
+| POST | `/list` | `EmailService.get_email_list()` | 当前账号与分页/查询类载荷 | 邮件摘要列表 | 用户域签名配置 | fetch_and_process_email → list | `test_email_service.py` |
+| POST | `/detail` | `EmailService.get_email_detail()` | 邮件标识与账号上下文 | 邮件详情/正文 | 用户域签名配置 | fetch_and_process_email → detail → extract code | `test_email_service.py` |
 
-风险：部分直接 `requests.post` 调用没有显式 timeout；请求和响应被详细记录；mail YAML 跟踪在仓库且疑似包含敏感材料；远端协议、服务方、数据处理条款和限流策略均待确认。
+边界约束：运行时不读取源码树 `mail.yaml`，配置来自用户目录或显式环境注入；所有 POST 强制
+connect/read timeout；日志不记录 payload、response、账号、正文、验证码、指纹或签名。仓库历史
+跟踪配置的轮换/清理，以及服务方协议、授权、数据处理条款和限流策略仍待所有者确认。
 
 ## ADB 命令接口地图
 
@@ -39,7 +41,7 @@ ADB 是项目实际最重要的外部操作 API。参数通常以数组传给 su
 | 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/tag/path | 流、文件、目录 | ZIP 安全解压 | 有 |
 | 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord` | device/path/time | PNG/MP4 | PNG 签名检查和回退 | 有 |
 | 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 移植内核校验较弱、命令实现独立 | 部分 |
-| 任意 shell/intent | SystemPanel/ADBSystemMixin | `adb shell ...`、`am start/broadcast` | 用户文本 | CommandResult | 无应用级权限；危险确认设置未接入 | 不充分 |
+| 任意 shell/intent | SystemPanel/ADBSystemMixin | `adb shell ...`、`am start/broadcast` | 用户文本 | CommandResult | 已知高影响入口接入统一危险确认；参数校验仍不完整 | 部分 |
 
 ## scrcpy 进程接口
 
@@ -50,5 +52,6 @@ ADB 是项目实际最重要的外部操作 API。参数通常以数组传给 su
 - 主应用短命令优先使用参数数组，不启用宿主 shell。
 - 设备 shell 复合命令必须在 service/model 层集中构造并对动态路径使用 quote。
 - 外部 ZIP 必须用 `utils.archive.safe_extract_zip()`，防止目录穿越。
-- 长进程应注册到 ProcessRunner，确保关闭时可停止。
+- 长进程应注册到 ProcessRunner；带 UI 生命周期的复合 worker/process task 还应注册到
+  TaskSupervisor。只有确认退出后才能移除 tracking，timeout 必须保留 residual snapshot。
 - MobilePerf 内核仍存在 `shell=True` 和直接 Popen 的遗留例外，详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。

@@ -1,4 +1,4 @@
-"""Device manager tab -- connect, device list, action buttons."""
+"""提供设备连接、发现、选择和基础操作面板。"""
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
@@ -25,7 +25,7 @@ from utils.adb_targets import normalize_adb_connect_target
 
 
 class DeviceManager(BasePanel):
-    """Device management tab."""
+    """维护设备列表展示，并向统一信号层转发设备操作。"""
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -39,7 +39,6 @@ class DeviceManager(BasePanel):
         gd_l = QVBoxLayout(g_dev)
         gd_l.setSpacing(2)
 
-        # connect row
         rc = QHBoxLayout()
         rc.setSpacing(4)
         self.ip_entry = self._combo()
@@ -54,7 +53,6 @@ class DeviceManager(BasePanel):
         rc.addWidget(self.btn_connect_devices, 1)
         gd_l.addLayout(rc)
 
-        # list + buttons
         body = QHBoxLayout()
         body.setSpacing(4)
 
@@ -91,7 +89,7 @@ class DeviceManager(BasePanel):
         lo.addWidget(g_dev)
         return w
 
-    # -- style ------------------------------------------------------------
+    # ── 样式 ────────────────────────────────────────────────────────────
 
     def _apply_device_list_style(self):
         from core.settings_manager import AppSettings
@@ -106,7 +104,7 @@ class DeviceManager(BasePanel):
                 item.setFont(font)
         self.listbox_devices.setStyleSheet(BaseStyles.DEVICE_LIST_STYLE())
 
-    # -- device list ------------------------------------------------------
+    # ── 设备列表 ────────────────────────────────────────────────────────
 
     def update_device_list(self, devices: list[str] = None):
         if devices is None:
@@ -124,8 +122,7 @@ class DeviceManager(BasePanel):
             self.panel._connected_device_cache = []
             return
         self.panel._connected_device_cache = devices
-        # 刷新刚发现的新设备时，DeviceStore 可能还在后台补全品牌/型号。
-        # 先显示可选的占位行，避免用户点 Refresh 后列表短暂为空。
+        # DeviceStore 可能仍在后台补全新设备信息，先显示占位行，避免刷新后列表短暂为空。
         infos = {
             str(info.get("ip", "")): info
             for info in DeviceStore.get_full_devices_info(devices)
@@ -162,7 +159,7 @@ class DeviceManager(BasePanel):
                 items[str(ip)] = item
         return items
 
-    # -- combo dropdown ---------------------------------------------------
+    # ── 下拉设备列表 ────────────────────────────────────────────────────
 
     def _build_combo_view(self):
         model = QStandardItemModel(0, 3)
@@ -170,10 +167,9 @@ class DeviceManager(BasePanel):
         self._device_model = model
         tv = QTableView()
         tv.setModel(model)
-        tv.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # Brand列 - 占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Model列 - 占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # IP列 - 适应内容
-        # tv.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        tv.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # 品牌列占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 型号列占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # IP 列适应内容
         tv.verticalHeader().setVisible(False)
         tv.setSelectionBehavior(QAbstractItemView.SelectRows)
         tv.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -235,7 +231,7 @@ class DeviceManager(BasePanel):
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
 
-    # -- selection --------------------------------------------------------
+    # ── 选择状态 ────────────────────────────────────────────────────────
 
     @property
     def selected_devices(self) -> list[str]:
@@ -263,7 +259,7 @@ class DeviceManager(BasePanel):
                     break
         QTimer.singleShot(0, _up)
 
-    # -- signals ----------------------------------------------------------
+    # ── 信号连接 ────────────────────────────────────────────────────────
 
     def _request_connect(self):
         target, error = normalize_adb_connect_target(self.ip_address)

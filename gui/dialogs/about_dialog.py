@@ -1,4 +1,4 @@
-"""About dialog -- header, QR code, footer."""
+"""提供应用版本、项目链接和二维码信息对话框。"""
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont, QPixmap
@@ -35,7 +35,6 @@ class AboutDialog(QDialog):
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
 
-        # ── Header ──
         self._header = QFrame()
         self._header.setObjectName("aboutHeader")
         self._header.setFixedHeight(56)
@@ -57,7 +56,6 @@ class AboutDialog(QDialog):
 
         lo.addWidget(self._header)
 
-        # ── QR Code ──
         body = QVBoxLayout()
         body.setAlignment(Qt.AlignCenter)
         body.setSpacing(6)
@@ -79,7 +77,6 @@ class AboutDialog(QDialog):
 
         lo.addLayout(body)
 
-        # ── Footer ──
         ft = QVBoxLayout()
         ft.setSpacing(2)
         ft.setContentsMargins(0, 0, 0, 12)
