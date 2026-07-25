@@ -6,6 +6,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMainWindow
 
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -73,5 +74,27 @@ def test_closing_owned_secondary_window_keeps_main_window_visible(
         dialog.close()
 
         assert main_window.isVisible()
+
+    main_window.close()
+
+
+def test_deleting_last_screenshot_keeps_main_window_visible(qt_application, tmp_path):
+    main_window = QMainWindow()
+    main_window.show()
+
+    image_path = tmp_path / "last.png"
+    image = QPixmap(120, 80)
+    image.fill(Qt.GlobalColor.cyan)
+    assert image.save(str(image_path))
+
+    viewer = ScreenshotViewer([str(image_path)], parent=main_window)
+    viewer.setAttribute(Qt.WA_DeleteOnClose, False)
+    viewer.show()
+
+    viewer._delete_file()
+
+    assert not viewer.isVisible()
+    assert main_window.isVisible()
+    assert not image_path.exists()
 
     main_window.close()

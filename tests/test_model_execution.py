@@ -2106,10 +2106,10 @@ def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_ima
 
         assert not image_path.exists()
         assert viewer._image_paths == []
-        QApplication.processEvents()
         assert not viewer.isVisible()
     finally:
-        viewer.close()
+        if viewer.isVisible():
+            viewer.close()
 
 
 
