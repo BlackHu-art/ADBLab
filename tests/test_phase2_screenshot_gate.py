@@ -58,6 +58,18 @@ def _write_png(call):
     return path
 
 
+def test_screenshot_filename_starts_with_device_and_uses_short_collision_suffix(tmp_path):
+    controller = _controller(tmp_path)
+    with patch("controllers._media.datetime") as datetime_mock:
+        datetime_mock.now.return_value.strftime.return_value = "20260728_143205"
+
+        first = controller._screenshot_path(str(tmp_path), "192.168.1.20:5555")
+        second = controller._screenshot_path(str(tmp_path), "192.168.1.20:5555")
+
+    assert Path(first).name == "192_168_1_20_5555_20260728_143205.png"
+    assert Path(second).name == "192_168_1_20_5555_20260728_143205_2.png"
+
+
 def test_two_overlapping_screenshot_batches_are_isolated_when_callbacks_interleave(tmp_path):
     controller = _controller(tmp_path)
     with patch(

@@ -82,7 +82,7 @@ class ADBMediaMixin(_ADBControllerBase):
             (
                 self._generate_operation_id(),
                 device,
-                self._screenshot_path(screenshot_dir, operation_id, device),
+                self._screenshot_path(screenshot_dir, device),
             )
             for device in valid
         ]
@@ -125,11 +125,28 @@ class ADBMediaMixin(_ADBControllerBase):
         self._finish_screenshot_if_complete(operation.operation_id)
         return operation.operation_id
 
-    def _screenshot_path(self, save_dir: str, operation_id: str, device_ip: str) -> str:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        sanitized_ip = re.sub(r"\W+", "_", device_ip)
-        filename = f"screenshot_{timestamp}_{operation_id[:12]}_{sanitized_ip}.png"
-        return os.path.normpath(os.path.join(save_dir, filename))
+    def _screenshot_path(self, save_dir: str, device_ip: str) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        device_name = re.sub(r"\W+", "_", device_ip).strip("_") or "device"
+        filename_stem = f"{device_name}_{timestamp}"
+
+        # 同一秒内连续截图时追加简短序号，避免覆盖已有或尚未落盘的截图。
+        if getattr(self, "_screenshot_name_timestamp", None) != timestamp:
+            self._screenshot_name_timestamp = timestamp
+            self._allocated_screenshot_paths = set()
+        allocated_paths = self._allocated_screenshot_paths
+
+        sequence = 1
+        while True:
+            suffix = "" if sequence == 1 else f"_{sequence}"
+            path = os.path.normpath(
+                os.path.join(save_dir, f"{filename_stem}{suffix}.png")
+            )
+            path_key = os.path.normcase(os.path.abspath(path))
+            if path_key not in allocated_paths and not os.path.exists(path):
+                allocated_paths.add(path_key)
+                return path
+            sequence += 1
 
     def _start_screenshot_process(
         self,

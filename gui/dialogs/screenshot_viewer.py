@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QDialog,
-    QFileDialog,
     QFrame,
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -116,8 +115,6 @@ class ScreenshotViewer(QDialog):
     def _init_shortcuts(self):
         QShortcut(QKeySequence("Esc"), self, self.close)
         QShortcut(QKeySequence("Ctrl+C"), self, self.copy_to_clipboard)
-        QShortcut(QKeySequence("Ctrl+Shift+C"), self, self.copy_path_to_clipboard)
-        QShortcut(QKeySequence("Ctrl+S"), self, self.save_as)
         QShortcut(QKeySequence("Ctrl+="), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
@@ -350,14 +347,6 @@ class ScreenshotViewer(QDialog):
         self._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
         self._copy_btn.clicked.connect(self.copy_to_clipboard)
         layout.addWidget(self._copy_btn)
-
-        self._copy_path_btn = self._tool_button("link.svg", "Copy file path (Ctrl+Shift+C)")
-        self._copy_path_btn.clicked.connect(self.copy_path_to_clipboard)
-        layout.addWidget(self._copy_path_btn)
-
-        self._save_btn = self._tool_button("floppy-disk.svg", "Save as (Ctrl+S)")
-        self._save_btn.clicked.connect(self.save_as)
-        layout.addWidget(self._save_btn)
 
         self._folder_btn = self._tool_button("folder-open.svg", "Open file location")
         self._folder_btn.clicked.connect(self._open_file_location)
@@ -614,8 +603,6 @@ class ScreenshotViewer(QDialog):
             self._fit_btn,
             self._actual_btn,
             self._copy_btn,
-            self._copy_path_btn,
-            self._save_btn,
             self._folder_btn,
             self._delete_btn,
         ):
@@ -629,31 +616,6 @@ class ScreenshotViewer(QDialog):
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
             self._flash_status("Image copied")
-
-    def copy_path_to_clipboard(self):
-        path = self._current_path()
-        if not path:
-            return
-        QApplication.clipboard().setText(os.path.abspath(path))
-        self._flash_status("Path copied")
-
-    def save_as(self):
-        path = self._current_path()
-        if not path:
-            return
-        default_name = os.path.basename(path)
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "Save Screenshot As", default_name,
-            "PNG Images (*.png);;All Files (*)",
-        )
-        if not dest:
-            return
-        try:
-            with open(path, "rb") as src, open(dest, "wb") as dst:
-                dst.write(src.read())
-            self._flash_status("Saved")
-        except OSError as exc:
-            QMessageBox.warning(self, "Save Failed", str(exc))
 
     def _flash_status(self, text: str):
         previous = self._info_label.text()
@@ -706,14 +668,6 @@ class ScreenshotViewer(QDialog):
         copy_action = menu.addAction("Copy Image\tCtrl+C")
         copy_action.triggered.connect(self.copy_to_clipboard)
         copy_action.setEnabled(has_file)
-
-        copy_path_action = menu.addAction("Copy File Path\tCtrl+Shift+C")
-        copy_path_action.triggered.connect(self.copy_path_to_clipboard)
-        copy_path_action.setEnabled(has_file)
-
-        save_action = menu.addAction("Save As...\tCtrl+S")
-        save_action.triggered.connect(self.save_as)
-        save_action.setEnabled(has_file)
 
         menu.addSeparator()
 

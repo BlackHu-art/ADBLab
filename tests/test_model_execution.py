@@ -2000,11 +2000,14 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
         assert viewer._path_label.text().endswith("shot.png")
         assert viewer._path_label.toolTip() == str(image_path)
         assert viewer._copy_btn.text() == ""
-        assert viewer._save_btn.text() == ""
         assert viewer._bottom_bar.objectName() == "bottomBar"
         assert viewer._bottom_dock.objectName() == "bottomDock"
         assert viewer._thumb_list.isHidden()
         assert not hasattr(viewer, "_close_btn")
+        assert not hasattr(viewer, "_copy_path_btn")
+        assert not hasattr(viewer, "_save_btn")
+        assert not hasattr(viewer, "copy_path_to_clipboard")
+        assert not hasattr(viewer, "save_as")
         expected_tips = {
             viewer._prev_btn: "Previous screenshot (Left)",
             viewer._next_btn: "Next screenshot (Right)",
@@ -2013,8 +2016,6 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
             viewer._fit_btn: "Fit to window (Ctrl+0)",
             viewer._actual_btn: "Actual size (Ctrl+1)",
             viewer._copy_btn: "Copy image to clipboard (Ctrl+C)",
-            viewer._copy_path_btn: "Copy file path (Ctrl+Shift+C)",
-            viewer._save_btn: "Save as (Ctrl+S)",
             viewer._folder_btn: "Open file location",
             viewer._delete_btn: "Delete screenshot",
         }
@@ -2093,22 +2094,6 @@ def test_screenshot_viewer_actual_size_updates_zoom_label(tmp_path):
 
         assert viewer._fit_to_window is False
         assert viewer._zoom_label.text() == "100%"
-    finally:
-        viewer.close()
-
-
-def test_screenshot_viewer_copy_path_shortcut_target(tmp_path):
-    _app = QApplication.instance() or QApplication([])
-    image_path = tmp_path / "shot.png"
-    pixmap = QPixmap(120, 80)
-    pixmap.fill(Qt.GlobalColor.cyan)
-    assert pixmap.save(str(image_path))
-
-    viewer = ScreenshotViewer([str(image_path)])
-    try:
-        viewer.copy_path_to_clipboard()
-
-        assert QApplication.clipboard().text() == os.path.abspath(str(image_path))
     finally:
         viewer.close()
 
