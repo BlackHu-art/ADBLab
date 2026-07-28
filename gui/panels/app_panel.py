@@ -29,7 +29,6 @@ class AppPanel(BasePanel):
         self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
         self.verification_text_sender = self._in("Verification code or text...")
-        self._screenshot_status = self._status_text("截图空闲")
         self._screenshot_running = False
         self._add_row(
             gts_l,
@@ -51,7 +50,6 @@ class AppPanel(BasePanel):
             (self.btn_screen_record, 1),
             (self.btn_stop_record, 1),
         )
-        self._add_row(gts_l, (self._screenshot_status, 1))
         lo.addWidget(g_ts)
 
         g_pm = self._g("Package Manager")
@@ -304,7 +302,6 @@ class AppPanel(BasePanel):
     def _set_screenshot_running(self, running: bool):
         self._set_button_enabled(self.btn_screenshot, not running)
         self._screenshot_running = running
-        self._screenshot_status.setText("截图中..." if running else "截图空闲")
 
     def _on_start_monkey(self):
         params = self._collect_monkey_params()

@@ -2849,21 +2849,17 @@ def test_app_panel_screenshot_button_disables_during_operation_then_recovers():
         widget = panel.build_ui()
         try:
             assert panel.btn_screenshot.isEnabled() is True
-            assert panel._screenshot_status.text() == "截图空闲"
 
             panel._on_screenshot()
 
             assert panel.btn_screenshot.isEnabled() is False
-            assert panel._screenshot_status.text() == "截图中..."
             side_panel.signals.screenshot_requested.emit.assert_called_once_with(["device-1"])
 
             panel.on_operation_completed("screenshot", True, "Screenshot captured")
             assert panel.btn_screenshot.isEnabled() is False
-            assert panel._screenshot_status.text() == "截图中..."
 
             panel.on_operation_completed("screenshot", True, "Screenshot completed: 1/1 succeeded")
             assert panel.btn_screenshot.isEnabled() is True
-            assert panel._screenshot_status.text() == "截图空闲"
 
             panel._on_screenshot()
             panel.on_operation_completed(
@@ -2872,7 +2868,6 @@ def test_app_panel_screenshot_button_disables_during_operation_then_recovers():
                 "Unable to prepare screenshot directory",
             )
             assert panel.btn_screenshot.isEnabled() is True
-            assert panel._screenshot_status.text() == "截图空闲"
         finally:
             widget.deleteLater()
 
