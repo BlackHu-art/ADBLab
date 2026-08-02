@@ -1,4 +1,4 @@
-"""Remote control and scrcpy service layer."""
+"""提供 Remote 控制和 scrcpy 进程服务的无界面实现。"""
 
 from .control_service import RemoteControlService
 from .input_engine import RemoteInputEngine

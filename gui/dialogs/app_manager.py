@@ -5,7 +5,15 @@ import os
 import re
 
 from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem, QStandardItemModel
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPixmap,
+    QStandardItem,
+    QStandardItemModel,
+)
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -29,7 +37,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from core.dangerous_ops import DangerousOperationPolicy
+from core.settings_manager import AppSettings
 from gui.dialogs.lifecycle import (
+    QThreadGroupShutdownTask,
     alive_callback,
     is_qobject_alive,
     safe_disconnect,
@@ -38,7 +49,20 @@ from gui.dialogs.lifecycle import (
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.styles.typography import FontRole
 from models.app_manager_worker import AppManagerWorker
+
+
+def _apply_adaptive_text_heights(widget: QWidget) -> None:
+    """按当前界面字体更新曾使用固定高度的文字按钮。"""
+    for button in widget.findChildren(QPushButton):
+        baseline = button.property("adaptiveBaseHeight")
+        if baseline is None:
+            continue
+        button.setMinimumHeight(int(baseline))
+        metrics_height = QFontMetrics(button.font()).height() + 10
+        button.setMinimumHeight(max(int(baseline), button.sizeHint().height(), metrics_height))
+
 
 # ── 排序代理模型 ──────────────────────────────────────────────────────────
 
@@ -68,6 +92,7 @@ class AppDetailsDialog(QDialog):
         self.package_name = package_name
         self._workers = []
         self._closing = False
+        self._dangerous_policy = DangerousOperationPolicy()
         self.setWindowTitle(f"Details: {package_name}")
         self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
@@ -75,6 +100,7 @@ class AppDetailsDialog(QDialog):
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
         self._load_data()
 
     def _init_ui(self):
@@ -84,7 +110,6 @@ class AppDetailsDialog(QDialog):
         dl = QVBoxLayout(dw)
         self.detail_text = QTextEdit()
         self.detail_text.setReadOnly(True)
-        self.detail_text.setFont(QFont("Consolas", 9))
         dl.addWidget(self.detail_text)
         self.tabs.addTab(dw, "App Details")
 
@@ -113,9 +138,14 @@ class AppDetailsDialog(QDialog):
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
 
-    def _apply_theme(self, _name=""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
         self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
+        mono_font = BaseStyles.font_for_role(FontRole.MONO)
+        self.detail_text.setFont(mono_font)
+        self.detail_text.document().setDefaultFont(mono_font)
+        _apply_adaptive_text_heights(self)
 
     def _ps(self, parent, title):
         hl = QHBoxLayout()
@@ -123,7 +153,8 @@ class AppDetailsDialog(QDialog):
         sb = QPushButton("Select All/None")
         sb.setIcon(get_themed_icon("check-square.svg"))
         sb.setIconSize(QSize(14, 14))
-        sb.setFixedSize(130, 28)
+        sb.setMinimumWidth(130)
+        sb.setProperty("adaptiveBaseHeight", 28)
         hl.addWidget(sb)
         parent.addLayout(hl)
         lw = QListWidget()
@@ -201,8 +232,10 @@ class AppDetailsDialog(QDialog):
         w.start()
 
     def closeEvent(self, event):
+        """中止详情 worker，并把等待操作移交后台，避免阻塞关闭事件。"""
         self._closing = True
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
         for w in workers:
@@ -240,6 +273,7 @@ class AppManagerDialog(QDialog):
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
         self._load_apps()
 
     def _init_ui(self):
@@ -247,7 +281,6 @@ class AppManagerDialog(QDialog):
         layout.setSpacing(4)
         layout.setContentsMargins(8, 8, 8, 6)
 
-        # Search + filter + view toggle
         top = QHBoxLayout()
         top.setSpacing(6)
         top.addWidget(QLabel("Search:"))
@@ -271,14 +304,12 @@ class AppManagerDialog(QDialog):
         self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._load_apps)
-        self.refresh_btn.setFixedHeight(28)
+        self.refresh_btn.setProperty("adaptiveBaseHeight", 28)
         top.addWidget(self.refresh_btn)
         layout.addLayout(top)
 
-        # Stacked: table view + icon view
         self.stack = QStackedWidget()
 
-        # --- Table view ---
         self.model = QStandardItemModel(0, 6)
         self.model.setHorizontalHeaderLabels(
             ["", "App Name", "Package Name", "Version", "Status", "Type"]
@@ -311,7 +342,6 @@ class AppManagerDialog(QDialog):
         )
         self.stack.addWidget(self.tree)
 
-        # --- Icon view ---
         self.icon_list = QListWidget()
         self.icon_list.setViewMode(QListWidget.ViewMode.IconMode)
         self.icon_list.setResizeMode(QListWidget.ResizeMode.Adjust)
@@ -329,10 +359,9 @@ class AppManagerDialog(QDialog):
         )
         self.stack.addWidget(self.icon_list)
 
-        self._view_mode = False  # False = table, True = icon
+        self._view_mode = False  # False 表示表格视图，True 表示图标视图
         layout.addWidget(self.stack, 1)
 
-        # Action buttons — uniform size
         btn_h = 30
         a1 = QHBoxLayout()
         a1.setSpacing(4)
@@ -346,7 +375,7 @@ class AppManagerDialog(QDialog):
             b = QPushButton(t)
             b.setIcon(get_themed_icon(icon))
             b.setIconSize(QSize(14, 14))
-            b.setFixedHeight(btn_h)
+            b.setProperty("adaptiveBaseHeight", btn_h)
             if a:
                 b.clicked.connect(lambda _, act=a: self._modify_selected(act))
             else:
@@ -366,34 +395,38 @@ class AppManagerDialog(QDialog):
             b = QPushButton(t)
             b.setIcon(get_themed_icon(icon))
             b.setIconSize(QSize(14, 14))
-            b.setFixedHeight(btn_h)
+            b.setProperty("adaptiveBaseHeight", btn_h)
             b.clicked.connect(fn)
             a2.addWidget(b, 1)
         layout.addLayout(a2)
 
-        # Log (no label)
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumHeight(100)
-        self.log_output.setFont(QFont("Consolas", 9))
         self.log_output.setPlaceholderText("Operation log...")
         layout.addWidget(self.log_output)
 
-        # Status
         self.status_bar = QStatusBar()
         self.status_bar.showMessage("Ready")
         layout.addWidget(self.status_bar)
 
-    def _apply_theme(self, _name=""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
         bs = BaseStyles
+        ui_font = bs.font_for_role(FontRole.UI)
+        log_font = bs.font_for_role(FontRole.LOG)
         self.setStyleSheet(bs.PANEL_BASE_STYLE())
+        self.setFont(ui_font)
         bg = bs.color("INPUT_BG")
         fg = bs.color("TEXT_PRIMARY")
         border = bs.color("BORDER_COLOR")
         self.log_output.setStyleSheet(
-            f"background-color:{bs.color('LOG_BACKGROUND')}; color:{bs.color('LOG_TEXT_COLOR')}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px;"
+            f"background-color:{bs.color('LOG_BACKGROUND')}; "
+            f"color:{bs.color('LOG_TEXT_COLOR')}; border:1px solid {border}; "
+            f"border-radius:{bs.RADIUS_MD}px;"
         )
+        self.log_output.setFont(log_font)
+        self.log_output.document().setDefaultFont(log_font)
         self.tree.setStyleSheet(
             f"QTreeView {{ background-color:{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; alternate-background-color:{bs.color('INPUT_BG_HOVER')}; }} QTreeView::item:selected {{ background-color:{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; }} QHeaderView::section {{ background-color:{bs.color('BUTTON_BG')}; color:{fg}; padding:4px; border:1px solid {border}; }}"
         )
@@ -401,6 +434,7 @@ class AppManagerDialog(QDialog):
             f"QListWidget {{ background-color:{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; }} QListWidget::item:selected {{ background-color:{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px; }}"
         )
         self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
+        _apply_adaptive_text_heights(self)
 
     def log(self, msg):
         if self._closing or not is_qobject_alive(self.log_output):
@@ -437,7 +471,6 @@ class AppManagerDialog(QDialog):
         self._app_versions = {}
         self._detail_row_by_pkg = {}
         self._detail_icon_by_pkg = {}
-        # Table view (no icons in list)
         self.tree.setSortingEnabled(False)
         self.model.removeRows(0, self.model.rowCount())
         for row, (name, pkg, st, at) in enumerate(apps):
@@ -455,7 +488,6 @@ class AppManagerDialog(QDialog):
             )
             self._detail_row_by_pkg[pkg] = row
         self.tree.setSortingEnabled(True)
-        # Icon view
         self.icon_list.clear()
         sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
         for name, pkg, st, at in sorted_apps:
@@ -609,7 +641,8 @@ class AppManagerDialog(QDialog):
         p.drawRoundedRect(margin, margin, rsize, rsize, radius, radius)
         p.setPen(QColor("#ffffff"))
         abbreviation = name[:2].upper() if len(name) >= 2 else name.upper()
-        font = QFont("Segoe UI", size // 3 + 1, QFont.Bold)
+        font = BaseStyles.font_for_role(FontRole.UI, size=size // 3 + 1)
+        font.setBold(True)
         p.setFont(font)
         p.drawText(margin, margin, rsize, rsize, Qt.AlignmentFlag.AlignCenter, abbreviation)
         p.end()
@@ -676,7 +709,7 @@ class AppManagerDialog(QDialog):
             else:
                 self.proxy.setFilterRegularExpression("")
             self.proxy.setFilterKeyColumn(-1)
-        # Also filter icon view
+        # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。
         for i in range(self.icon_list.count()):
             item = self.icon_list.item(i)
             pkg = (item.data(Qt.UserRole) or "").lower()
@@ -746,6 +779,8 @@ class AppManagerDialog(QDialog):
         w.start()
 
     def _modify_one(self, action, pkg):
+        if not self._confirm_dangerous_action(action, 1):
+            return
         if action == "force_stop":
             w = AppManagerWorker(self.device_ip, "modify_app", action="force_stop", package_name=pkg)
             w.log_message.connect(self.log)
@@ -802,12 +837,36 @@ class AppManagerDialog(QDialog):
         if not pkgs:
             QMessageBox.warning(self, "None", "No apps selected.")
             return
+        if not self._confirm_dangerous_action(action, len(pkgs)):
+            return
         for pkg in pkgs:
             w = AppManagerWorker(self.device_ip, "modify_app", action=action, package_name=pkg)
             w.log_message.connect(self.log)
             self._track_worker(w)
             w.start()
         self._load_apps()
+
+    def _confirm_dangerous_action(self, action: str, target_count: int) -> bool:
+        decision = self._dangerous_policy.evaluate(
+            action,
+            confirmation_enabled=bool(
+                AppSettings.instance().get("confirm_dangerous_ops", True)
+            ),
+            target_count=target_count,
+        )
+        if not decision.requires_confirmation:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Confirm dangerous operation",
+            decision.message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            self.log(f"Cancelled dangerous operation: {action}")
+            return False
+        return True
 
     def _backup_selected(self):
         pkgs = self._get_selected_pkgs()
@@ -863,7 +922,9 @@ class AppManagerDialog(QDialog):
             return
         dlg = QDialog(self)
         dlg.setWindowTitle("Create Preset")
-        dlg.setFixedSize(380, 280)
+        dlg.setMinimumSize(380, 280)
+        dlg.resize(380, 280)
+        dlg.setFont(BaseStyles.font_for_role(FontRole.UI))
         lo = QVBoxLayout(dlg)
         lo.addWidget(QLabel("Preset Name:"))
         ni = QLineEdit()
@@ -927,16 +988,40 @@ class AppManagerDialog(QDialog):
         if w in self._workers:
             self._workers.remove(w)
 
+    def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
+        """将仍在运行的应用管理 worker 作为一组资源注册到监督器。"""
+        workers = [
+            worker
+            for worker in self._workers
+            if QThreadGroupShutdownTask._running(worker)
+        ]
+        if not workers:
+            return ()
+        handle = QThreadGroupShutdownTask(workers)
+        supervisor.register(
+            f"{task_prefix}-workers",
+            owner_id=owner_id,
+            kind="app_manager_workers",
+            request_stop=handle.request_stop,
+            wait=handle.wait,
+            is_running=handle.is_running,
+        )
+        self._shutdown_registered = True
+        return (f"{task_prefix}-workers",)
+
     def closeEvent(self, event):
+        """断开晚到信号并中止 worker；已注册时由统一监督器负责等待。"""
         self._closing = True
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()
             safe_disconnect(self._detail_timer.timeout, self._load_visible_details)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         workers = self._workers
         self._workers = []
         for w in workers:
             w.abort()
             w.setParent(None)
-        wait_for_threads_later(workers, 5000)
+        if not getattr(self, "_shutdown_registered", False):
+            wait_for_threads_later(workers, 5000)
         super().closeEvent(event)

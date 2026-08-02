@@ -1,1 +1,1 @@
-"""Base layer: unified command execution, ADB helpers, process management."""
+"""提供统一命令执行、ADB 辅助能力和进程生命周期管理。"""

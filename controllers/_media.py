@@ -1,15 +1,26 @@
+"""提供截图、录屏和设备诊断信息采集的控制能力。"""
+
 from __future__ import annotations
 
 import os
 import re
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
 
+from adblab.application.envelope import OperationMetadata
+from adblab.application.operations import (
+    OperationArtifact,
+    OperationSnapshot,
+    OperationState,
+    OperationUnitResult,
+)
 from controllers._base import _ADBControllerBase
 from core.log_service import LogService
+from gui.dialogs.lifecycle import configure_independent_secondary_window
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
@@ -17,9 +28,9 @@ from models.adb_testing import ADBTesting
 
 
 class ADBMediaMixin(_ADBControllerBase):
-    """Screenshot, screen recording, diagnostics (dumpsys, battery, logcat, processes, uptime)."""
+    """协调截图、录屏、dumpsys、电池、Logcat、进程和运行时长操作。"""
 
-    # ── Provided by _ADBControllerBase ──
+    # 以下属性由 _ADBControllerBase 提供。
     testing_model: ADBTesting
     advanced_model: ADBAdvanced
     signals: ADBControllerSignals
@@ -45,72 +56,323 @@ class ADBMediaMixin(_ADBControllerBase):
         "kill_process": "_process_kill_process_result",
         "get_device_uptime": "_process_get_device_uptime_result",
     }
+    _operation_handlers = {
+        "take_screenshot": "_process_screenshot_operation_result",
+    }
 
-    # -- Screenshot --
+    # 截图
 
-    def take_screenshot(self, devices: list):
-        valid = [d for d in devices if d]
+    def take_screenshot(self, devices: list) -> str | None:
+        valid = tuple(dict.fromkeys(device for device in devices if device))
         if not valid:
             self._emit_operation("screenshot", False, "⚠️ No devices selected")
-            return
-        screenshot_dir = self._get_screenshot_dir()
-        self._screenshot_paths = []
-        self._screenshot_remaining = len(valid)
-        self._screenshot_devices = list(valid)
-        self._emit_operation("screenshot", True,
-            f"Capturing {len(valid)} device(s)...")
-        for device_ip in valid:
-            self._start_screenshot_process(device_ip, screenshot_dir)
+            return None
+        try:
+            screenshot_dir = self._get_screenshot_dir()
+        except Exception:
+            self._emit_operation(
+                "screenshot",
+                False,
+                "Unable to prepare screenshot directory",
+            )
+            return None
 
-    def _start_screenshot_process(self, device_ip: str, save_dir: str):
-        timestamp = datetime.now().strftime("%H%M%S")
-        sanitized_ip = re.sub(r"\W+", "_", device_ip)
-        filename = f"screenshot_{timestamp}_{sanitized_ip}.png"
-        save_path = os.path.normpath(os.path.join(save_dir, filename))
         operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("screenshot", device_ip)
-        self.testing_model.take_screenshot_async(device_ip, save_path)
+        tasks = [
+            (
+                self._generate_operation_id(),
+                device,
+                self._screenshot_path(screenshot_dir, device),
+            )
+            for device in valid
+        ]
+        operation = self.operation_manager.begin(
+            "screenshot",
+            operation_id=operation_id,
+            unit_ids=(task_id for task_id, _device, _path in tasks),
+        )
+        self.operation_manager.mark_running(operation.operation_id)
+        self.log_service.log(
+            "DEBUG",
+            f"[screenshot] operation started: target_count={len(tasks)}",
+        )
+        self.log_service.log(
+            "INFO",
+            f"Capturing screenshots for {len(tasks)} selected target(s)",
+            flush_immediately=True,
+        )
+        for task_id, device, save_path in tasks:
+            try:
+                self._start_screenshot_process(
+                    device,
+                    save_path,
+                    operation.operation_id,
+                    task_id,
+                )
+            except Exception:
+                self.log_service.log(
+                    "ERROR",
+                    "[screenshot] Failed to queue one capture task",
+                )
+                self.operation_manager.record_unit_result(
+                    operation.operation_id,
+                    OperationUnitResult(
+                        task_id,
+                        OperationState.FAILED,
+                        "Screenshot task submission failed",
+                    ),
+                )
+        self._finish_screenshot_if_complete(operation.operation_id)
+        return operation.operation_id
+
+    def _screenshot_path(self, save_dir: str, device_ip: str) -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        device_name = re.sub(r"\W+", "_", device_ip).strip("_") or "device"
+        filename_stem = f"{device_name}_{timestamp}"
+
+        # 同一秒内连续截图时追加简短序号，避免覆盖已有或尚未落盘的截图。
+        if getattr(self, "_screenshot_name_timestamp", None) != timestamp:
+            self._screenshot_name_timestamp = timestamp
+            self._allocated_screenshot_paths = set()
+        allocated_paths = self._allocated_screenshot_paths
+
+        sequence = 1
+        while True:
+            suffix = "" if sequence == 1 else f"_{sequence}"
+            path = os.path.normpath(
+                os.path.join(save_dir, f"{filename_stem}{suffix}.png")
+            )
+            path_key = os.path.normcase(os.path.abspath(path))
+            if path_key not in allocated_paths and not os.path.exists(path):
+                allocated_paths.add(path_key)
+                return path
+            sequence += 1
+
+    def _start_screenshot_process(
+        self,
+        device_ip: str,
+        save_path: str,
+        operation_id: str,
+        task_id: str,
+    ):
+        self.testing_model.take_screenshot_async(
+            device_ip,
+            save_path,
+            _operation_id=operation_id,
+            _operation_kind="screenshot",
+            _operation_task_id=task_id,
+            _operation_unit_id=task_id,
+            _operation_target_id=device_ip,
+            _operation_expected_artifact_path=save_path,
+        )
 
     def _process_screenshot_result(self, result: dict):
+        """处理未携带 operation envelope 的旧版兼容结果。"""
         device_ip = result.get("device_ip", "")
-        if result.get("success"):
-            path = result["screenshot_path"]
-            if os.path.isfile(path):
-                self.signals.screenshot_captured.emit(device_ip, path)
-                self._screenshot_paths.append(path)
-            else:
-                self._emit_operation(
-                    "screenshot", False, f"Screenshot file missing for {device_ip}"
-                )
+        path = result.get("screenshot_path", "")
+        if result.get("success") and ADBTesting._is_valid_png(path):
+            self.signals.screenshot_captured.emit(device_ip, path)
+            self._emit_operation("screenshot", True, "Screenshot captured")
         else:
-            error = result.get("error", "Unknown error")
             self._emit_operation(
-                "screenshot", False, f"Failed on {device_ip}: {error}"
+                "screenshot",
+                False,
+                "Screenshot capture failed",
             )
-        self._screenshot_remaining -= 1
-        if self._screenshot_remaining <= 0:
-            paths = self._screenshot_paths
-            self._screenshot_paths = []
-            count = len(paths)
-            if count:
-                self._emit_operation("screenshot", True,
-                    f"All done — {count} screenshot(s) ready")
-                QTimer.singleShot(0, lambda: self._show_screenshot_viewer(paths))
-            else:
-                self._emit_operation("screenshot", False,
-                    "No screenshots captured — check device connections")
+
+    def _process_screenshot_operation_result(
+        self,
+        result,
+        metadata: OperationMetadata,
+    ) -> OperationSnapshot | None:
+        operation_id = metadata.operation_id
+        snapshot = self.operation_manager.get(operation_id)
+        if snapshot is None:
+            return None
+        task_id = metadata.unit_id
+        if not task_id or task_id != metadata.task_id:
+            return self._fail_screenshot_operation(
+                operation_id,
+                "Screenshot task identity mismatch",
+            )
+        if any(item.unit_id == task_id for item in snapshot.unit_results):
+            self.log_service.log("DEBUG", "[screenshot] Duplicate result ignored")
+            return None
+
+        valid, message, path = self._classify_screenshot_result(result, metadata)
+        unit_state = OperationState.SUCCEEDED if valid else OperationState.FAILED
+        if valid and path:
+            if any(artifact.path == path for artifact in snapshot.artifacts):
+                return self._fail_screenshot_operation(
+                    operation_id,
+                    "Screenshot artifact identity conflict",
+                )
+            self.operation_manager.add_artifact(
+                operation_id,
+                OperationArtifact(path, "screenshot", task_id),
+            )
+        self.operation_manager.record_unit_result(
+            operation_id,
+            OperationUnitResult(task_id, unit_state, message),
+        )
+        if valid and path:
+            self.signals.screenshot_captured.emit(metadata.target_id, path)
+        return self._finish_screenshot_if_complete(operation_id)
+
+    @staticmethod
+    def _classify_screenshot_result(
+        result,
+        metadata: OperationMetadata,
+    ) -> tuple[bool, str, str]:
+        if not isinstance(result, dict):
+            return False, "Screenshot returned an invalid result", ""
+        if not metadata.target_id or result.get("device_ip") != metadata.target_id:
+            return False, "Screenshot target identity mismatch", ""
+        if not result.get("success"):
+            return False, "Screenshot command failed", ""
+        path = result.get("screenshot_path")
+        expected = metadata.expected_artifact_path
+        if not isinstance(path, str) or not path or not expected:
+            return False, "Screenshot artifact path missing", ""
+        actual_path = os.path.normcase(os.path.abspath(path))
+        expected_path = os.path.normcase(os.path.abspath(expected))
+        if actual_path != expected_path:
+            return False, "Screenshot artifact path mismatch", ""
+        if not ADBTesting._is_valid_png(path):
+            return False, "Screenshot artifact missing or invalid", ""
+        return True, "Screenshot captured", path
+
+    def _finish_screenshot_if_complete(
+        self,
+        operation_id: str,
+    ) -> OperationSnapshot | None:
+        snapshot = self.operation_manager.get(operation_id)
+        if snapshot is None or len(snapshot.unit_results) != len(snapshot.unit_ids):
+            return None
+        terminal = self.operation_manager.finish_from_unit_results(operation_id)
+        if terminal is not None:
+            self._emit_screenshot_terminal(terminal)
+        return terminal
+
+    def _fail_screenshot_operation(
+        self,
+        operation_id: str,
+        message: str,
+    ) -> OperationSnapshot | None:
+        terminal = self.operation_manager.finish(
+            operation_id,
+            OperationState.FAILED,
+            message=message,
+        )
+        if terminal is not None:
+            self._emit_screenshot_terminal(terminal)
+        return terminal
+
+    def _fail_operation_protocol(self, snapshot, message: str):
+        if snapshot.kind == "screenshot":
+            return self._fail_screenshot_operation(snapshot.operation_id, message)
+        return super()._fail_operation_protocol(snapshot, message)
+
+    def cancel_screenshot(self, operation_id: str) -> bool:
+        if not self.operation_manager.request_cancel(operation_id):
+            return False
+        snapshot = self.operation_manager.get(operation_id)
+        if snapshot is None:
+            return False
+        completed_units = {result.unit_id for result in snapshot.unit_results}
+        for unit_id in snapshot.unit_ids:
+            if unit_id not in completed_units:
+                self.operation_manager.record_unit_result(
+                    operation_id,
+                    OperationUnitResult(
+                        unit_id,
+                        OperationState.CANCELLED,
+                        "Screenshot cancelled",
+                    ),
+                )
+        self._finish_screenshot_if_complete(operation_id)
+        return True
+
+    def _emit_screenshot_terminal(self, terminal: OperationSnapshot):
+        counts = Counter(result.state for result in terminal.unit_results)
+        total = len(terminal.unit_ids)
+        succeeded = counts[OperationState.SUCCEEDED]
+        failed = max(
+            counts[OperationState.FAILED],
+            total - succeeded - counts[OperationState.CANCELLED],
+        )
+        cancelled = counts[OperationState.CANCELLED]
+        self.log_service.log(
+            "DEBUG",
+            (
+                "[screenshot] operation finished: "
+                f"state={terminal.state.value} total={total} "
+                f"succeeded={succeeded} failed={failed} cancelled={cancelled}"
+            ),
+        )
+        message = (
+            f"Screenshot completed: {succeeded}/{total} succeeded, "
+            f"{failed} failed, {cancelled} cancelled"
+        )
+        self._emit_operation(
+            "screenshot",
+            terminal.state is OperationState.SUCCEEDED,
+            message,
+        )
+        paths_by_unit = {
+            artifact.unit_id: artifact.path
+            for artifact in terminal.artifacts
+            if artifact.kind == "screenshot"
+        }
+        paths = [
+            paths_by_unit[unit_id]
+            for unit_id in terminal.unit_ids
+            if unit_id in paths_by_unit
+        ]
+        if paths:
+            QTimer.singleShot(
+                0,
+                lambda captured=tuple(paths): self._show_screenshot_viewer(list(captured)),
+            )
 
     def _show_screenshot_viewer(self, image_paths: list):
         viewer = ScreenshotViewer(image_paths)
+        configure_independent_secondary_window(viewer)
         viewer.setAttribute(Qt.WA_DeleteOnClose)
+        if self.window_owner is not None:
+            viewer.installEventFilter(self.window_owner)
         self._active_viewers.append(viewer)
+        log_service = getattr(self, "log_service", None)
+        if log_service is not None:
+            log_service.log(
+                "DEBUG",
+                (
+                    "ui.secondary_window "
+                    f"active_count={len(self._active_viewers)} "
+                    "dialog=ScreenshotViewer phase=created"
+                ),
+            )
         viewer.destroyed.connect(
-            lambda v=viewer: self._active_viewers.remove(v) if v in self._active_viewers else None
+            lambda _obj=None, v=viewer: self._on_screenshot_viewer_destroyed(v)
         )
         viewer.show()
 
-    # -- Screen Recording --
+    def _on_screenshot_viewer_destroyed(self, viewer):
+        """移除已销毁截图窗口并记录关闭完成。"""
+        if viewer in self._active_viewers:
+            self._active_viewers.remove(viewer)
+        log_service = getattr(self, "log_service", None)
+        if log_service is not None:
+            log_service.log(
+                "DEBUG",
+                (
+                    "ui.secondary_window "
+                    f"active_count={len(self._active_viewers)} "
+                    "dialog=ScreenshotViewer phase=closed"
+                ),
+            )
+
+    # 屏幕录制
 
     def start_screen_record(self, devices: list, duration: int = 30):
         if not self._require_devices(devices, "screen_record"):
@@ -136,7 +398,7 @@ class ADBMediaMixin(_ADBControllerBase):
             self._emit_operation(
                 "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
             )
-            # Auto-pull after duration + 2s buffer
+            # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
             QTimer.singleShot((dur + 2) * 1000, lambda ip=ip: self._auto_pull(ip))
         else:
             self._record_info.pop(ip, None)
@@ -165,7 +427,7 @@ class ADBMediaMixin(_ADBControllerBase):
             "stop_recording", result.get("success", False),
             f"Recording on {ip}: {result.get('message', '')}"
         )
-        # Auto-pull stopped recording
+        # 主动停止录制后也要拉取已经生成的文件。
         info = self._record_info.get(ip, {})
         if info.get("remote_path"):
             self.advanced_model.pull_recorded_video_async(
@@ -186,7 +448,7 @@ class ADBMediaMixin(_ADBControllerBase):
             )
         self.signals.record_finished.emit()
 
-    # -- Performance --
+    # 性能诊断
 
     def dumpsys_meminfo(self, devices: list, package: str = ""):
         if not self._require_devices(devices, "dumpsys_meminfo"):
@@ -243,7 +505,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "dumpsys_battery", False, f"Battery info failed on {ip}: {result.get('error')}"
             )
 
-    # -- Battery --
+    # 电池状态
 
     def battery_set(self, devices: list, param: str, value: str):
         if not self._require_devices(devices, "battery_set"):
@@ -291,7 +553,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "battery_reset", False, f"Battery reset failed on {ip}: {result.get('error')}"
             )
 
-    # ── Logcat ──
+    # Logcat 日志
 
     def logcat_filtered(
         self,
@@ -325,7 +587,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "logcat_filtered", False, f"Logcat filter failed on {ip}: {result.get('error')}"
             )
 
-    # -- Process --
+    # 设备进程
 
     def list_processes(self, devices: list):
         if not self._require_devices(devices, "list_processes"):
@@ -359,7 +621,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 "kill_process", False, f"Kill failed on {ip}: {result.get('error')}"
             )
 
-    # ── Uptime ──
+    # 设备运行时长
 
     def device_uptime(self, devices: list):
         if not self._require_devices(devices, "device_uptime"):

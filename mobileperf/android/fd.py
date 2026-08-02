@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
- @author      :  Frankie
- @time        :  $DATA  $TIME
+采集 Android 目标进程的文件描述符数量。
 """
 import csv
 import os
@@ -21,6 +20,8 @@ from mobileperf.android.globaldata import RuntimeData
 
 
 class FdInfoPackageCollector(object):
+    """按固定间隔采集目标进程的 FDSize 指标。"""
+
     def __init__(self, device, pacakgename, interval=1.0, timeout=24 * 60 * 60, fd_queue=None):
         self.device = device
         self.packagename = pacakgename
@@ -40,17 +41,16 @@ class FdInfoPackageCollector(object):
             self._stop_event.set()
             self.collect_fd_thread.join(timeout=1)
             self.collect_fd_thread = None
-            #缁撴潫鐨勬椂鍊欙紝鍙戦€佷竴涓换鍔″畬鎴愮殑淇″彿锛屼互缁撴潫闃熷垪
+            # 采集线程结束后通知上报队列当前任务已经完成。
             if self.fd_queue:
                 self.fd_queue.task_done()
 
     def get_process_fd(self, process):
         pid = self.device.adb.get_pid_from_pck(self.packagename)
         global old_pid
-        # pid鍙戠敓鍙樺寲 锛屾洿鏂皁ld_pid,杩欎釜鏃堕棿闂撮殧闀?
+        # 进程重启导致 PID 变化时更新全局快照。
         if None == RuntimeData.old_pid or RuntimeData.old_pid != pid:
             RuntimeData.old_pid = pid
-        # out = self.device.adb.run_shell_cmd('ls -lt /proc/%s/fd' % pid)
         out = self.device.adb.run_shell_cmd('cat /proc/%s/status' % pid)
         collection_time = time.time()
         logger.debug("collection time in fd info is : " + str(collection_time))
@@ -80,7 +80,7 @@ class FdInfoPackageCollector(object):
                 before = time.time()
                 logger.debug("-----------into _collect_fd_thread loop, thread is : " + str(threading.current_thread().name))
 
-                # 鑾峰彇pakagename鐨刦d淇℃伅
+                # 从目标进程状态中获取文件描述符容量。
                 fd_pck_info = self.get_process_fd(self.packagename)
                 current_time = TimeUtils.getCurrentTime()
                 if not fd_pck_info:
@@ -91,7 +91,7 @@ class FdInfoPackageCollector(object):
                         " fd num: " + str(fd_pck_info[3]))
                 if self.fd_queue:
                     self.fd_queue.put(fd_pck_info)
-                if not self.fd_queue:  #涓轰簡鏈湴鍗曚釜鏂囦欢杩愯
+                if not self.fd_queue:  # 未提供上报队列时直接保存本地结果。
                     try:
                         with open(fd_file, 'a+', encoding="utf-8") as fd_writer:
                             writer_p = csv.writer(fd_writer, lineterminator='\n')
@@ -115,6 +115,8 @@ class FdInfoPackageCollector(object):
 
 
 class FdMonitor(object):
+    """管理目标进程文件描述符采集器。"""
+
     def __init__(self, device_id, packagename, interval=1.0, timeout=24 * 60 * 60, fd_queue=None):
         self.device = AndroidDevice(device_id)
         if not packagename:
@@ -130,12 +132,3 @@ class FdMonitor(object):
 
     def save(self):
         pass
-
-
-if __name__ == "__main__":
-    RuntimeData.package_save_path = '/Users/look/Documents/github/mobileperf/results/com.eg.android.AlipayGphone'
-    monitor = FdMonitor("7e048cbb", "com.eg.android.AlipayGphone", 3)
-    monitor.start(TimeUtils.getCurrentTime())
-    time.sleep(20)
-    monitor.stop()
-#     monitor.save()

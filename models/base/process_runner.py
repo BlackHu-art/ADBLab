@@ -1,12 +1,13 @@
-"""
-统一管理长生命周期子进程：monkey / logcat / 录屏 / scrcpy 等。
+"""统一管理 monkey、logcat、录屏和 scrcpy 等长生命周期子进程。
 
-全项目所有 subprocess.Popen 入口集中在此。
+``start`` 创建的进程会进入实例和全局跟踪表，``spawn`` 则把清理责任交给调用方。
+隔离运行的 MobilePerf 子进程仍通过其适配器调用本模块，不要求采集内核直接依赖此处。
 """
 
 import subprocess
 import sys
 import threading
+import time
 
 from utils.adb_resolver import adb_path
 
@@ -88,7 +89,7 @@ class ProcessRunner:
         creationflags: int | None = None,
         env: dict[str, str] | None = None,
     ) -> subprocess.Popen:
-        """Launch a subprocess without tracking it in the active process map."""
+        """启动不进入活动进程表的子进程，调用方必须自行管理其生命周期。"""
         popen_kwargs = {
             "creationflags": CF if creationflags is None else creationflags,
             "cwd": cwd,
@@ -110,12 +111,100 @@ class ProcessRunner:
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""
         with self._lock:
-            proc = self._procs.pop(key, None)
-        self._unregister_global(key, proc)
-        return self._stop_proc(proc, timeout=timeout)
+            proc = self._procs.get(key)
+        code = self._stop_proc(proc, timeout=timeout)
+        if proc is None:
+            return code
+        try:
+            stopped = proc.poll() is not None or code is not None
+        except Exception:
+            stopped = code is not None
+        if stopped:
+            with self._lock:
+                if self._procs.get(key) is proc:
+                    self._procs.pop(key, None)
+            self._unregister_global(key, proc)
+        return code
+
+    def request_stop(self, key: str) -> bool:
+        """请求进程正常终止，但不等待退出，也不提前移除跟踪记录。"""
+        with self._lock:
+            proc = self._procs.get(key)
+        if proc is None:
+            return False
+        try:
+            if proc.poll() is not None:
+                return False
+            proc.terminate()
+            return True
+        except OSError:
+            return False
+
+    def force_stop(self, key: str, timeout: float = 2.0) -> bool:
+        """在调用方给定的总时限内强制停止一个被跟踪进程。"""
+        with self._lock:
+            proc = self._procs.get(key)
+        if proc is None:
+            return False
+        try:
+            if proc.poll() is not None:
+                self.stop(key, timeout=0)
+                return False
+        except OSError:
+            return False
+
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        attempted = self._kill_process_tree_bounded(proc, deadline)
+        if not attempted:
+            try:
+                proc.kill()
+                attempted = True
+            except OSError:
+                pass
+        remaining = max(0.0, deadline - time.monotonic())
+        if remaining:
+            try:
+                proc.wait(timeout=remaining)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        try:
+            stopped = proc.poll() is not None
+        except OSError:
+            stopped = False
+        if stopped:
+            with self._lock:
+                if self._procs.get(key) is proc:
+                    self._procs.pop(key, None)
+            self._unregister_global(key, proc)
+        return attempted
+
+    @staticmethod
+    def _kill_process_tree_bounded(proc: subprocess.Popen, deadline: float) -> bool:
+        """在 Windows 上按绝对截止时间调用 taskkill 终止进程树。"""
+        if sys.platform != "win32":
+            return False
+        pid = getattr(proc, "pid", None)
+        if not pid:
+            return False
+        remaining = max(0.0, deadline - time.monotonic())
+        if remaining <= 0:
+            return False
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=remaining,
+                creationflags=CREATE_NO_WINDOW,
+                check=False,
+            )
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _stop_proc(proc: subprocess.Popen | None, timeout: float = 5.0) -> int | None:
+        """先请求正常退出，超时后终止进程树并返回可确认的退出码。"""
         if proc is None:
             return None
         try:
@@ -147,6 +236,7 @@ class ProcessRunner:
 
     @staticmethod
     def _kill_process_tree(proc: subprocess.Popen) -> bool:
+        """在 Windows 上终止目标进程及其子进程，其他平台返回 False。"""
         if sys.platform != "win32":
             return False
         pid = getattr(proc, "pid", None)
@@ -186,6 +276,7 @@ class ProcessRunner:
             return [k for k, p in self._procs.items() if p.poll() is None]
 
     def stop_all(self):
+        """停止当前实例跟踪的所有进程。"""
         with self._lock:
             keys = list(self._procs.keys())
         for key in keys:
@@ -193,7 +284,7 @@ class ProcessRunner:
 
     @classmethod
     def stop_all_tracked(cls):
-        """兜底停止所有被 ProcessRunner.start() 管理的进程；spawn() 外部启动不纳入。"""
+        """兜底停止所有由 ``start`` 管理的进程；``spawn`` 创建的进程不纳入。"""
         with cls._global_lock:
             items = list(cls._global_procs.items())
         for proc_key, proc in items:
@@ -209,6 +300,59 @@ class ProcessRunner:
                 with cls._global_lock:
                     if cls._global_procs.get(proc_key) is proc:
                         cls._global_procs.pop(proc_key, None)
+
+    @classmethod
+    def tracked_active_count(cls) -> int:
+        """返回全局跟踪表中仍存活的进程数量，并清理已退出记录。"""
+        with cls._global_lock:
+            items = list(cls._global_procs.items())
+        active = 0
+        stopped_items = []
+        for proc_key, proc in items:
+            try:
+                if proc.poll() is None:
+                    active += 1
+                else:
+                    stopped_items.append((proc_key, proc))
+            except OSError:
+                active += 1
+        if stopped_items:
+            with cls._global_lock:
+                for proc_key, proc in stopped_items:
+                    if cls._global_procs.get(proc_key) is proc:
+                        cls._global_procs.pop(proc_key, None)
+        return active
+
+    @classmethod
+    def force_all_tracked(cls, timeout: float) -> bool:
+        """在共享截止时间内强制停止所有全局跟踪进程。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with cls._global_lock:
+            items = list(cls._global_procs.items())
+        attempted = False
+        for proc_key, proc in items:
+            try:
+                if proc.poll() is not None:
+                    stopped = True
+                else:
+                    tree_killed = cls._kill_process_tree_bounded(proc, deadline)
+                    if not tree_killed:
+                        proc.kill()
+                    attempted = True
+                    remaining = max(0.0, deadline - time.monotonic())
+                    if remaining:
+                        try:
+                            proc.wait(timeout=remaining)
+                        except (OSError, subprocess.TimeoutExpired):
+                            pass
+                    stopped = proc.poll() is not None
+            except OSError:
+                stopped = False
+            if stopped:
+                with cls._global_lock:
+                    if cls._global_procs.get(proc_key) is proc:
+                        cls._global_procs.pop(proc_key, None)
+        return attempted
 
     def _register_global(self, key: str, proc: subprocess.Popen | None):
         if proc is None:

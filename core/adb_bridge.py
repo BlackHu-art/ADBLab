@@ -1,6 +1,6 @@
-"""Lightweight ADB shell wrapper for ADBLab.
+"""为 ADBLab 提供轻量的 ADB Shell 调用封装。
 
-Path resolution: delegates to utils.adb_resolver (bundled scrcpy ADB > system PATH).
+ADB 路径由 utils.adb_resolver 解析，内置 scrcpy ADB 的优先级高于系统 PATH。
 """
 
 import logging
@@ -15,7 +15,7 @@ logger = logging.getLogger("adb_bridge")
 
 
 class ADBInputSession:
-    """Persistent `adb shell` session for low-latency input commands."""
+    """维护持久化的 adb shell 会话，降低输入命令延迟。"""
 
     def __init__(self, adb: str, device_id: str | None = None):
         self.adb = adb
@@ -24,7 +24,7 @@ class ADBInputSession:
         self._lock = threading.Lock()
 
     def send(self, command: str) -> bool:
-        """Write an input command through stdin; False lets caller fall back."""
+        """通过标准输入发送命令；返回 False 时由调用方执行降级路径。"""
         with self._lock:
             proc = self._ensure_process()
             if not proc or not proc.stdin:
@@ -42,7 +42,7 @@ class ADBInputSession:
             self._close_locked()
 
     def warm(self) -> bool:
-        """Open the persistent shell before the first real input command."""
+        """在第一条真实输入命令前预先打开持久 Shell。"""
         with self._lock:
             proc = self._ensure_process()
             return bool(proc and proc.stdin and proc.poll() is None)
@@ -92,7 +92,7 @@ class ADBInputSession:
 
 
 class ADBBridge:
-    """Thin wrapper around ADB shell/input/dimensions commands."""
+    """封装 ADB Shell、输入、屏幕尺寸和设备列表命令。"""
 
     def __init__(self, path: str | None = None):
         self.path = path or adb_path()
@@ -102,10 +102,8 @@ class ADBBridge:
         if not self.path:
             raise FileNotFoundError("ADB not found — install Android SDK Platform Tools")
 
-    # -- public API ------------------------------------------------------
-
     def shell(self, command: str, device_id: str | None = None) -> CommandResult:
-        """Run an ADB shell command and return a standardized result."""
+        """执行 ADB Shell 命令并返回标准化结果。"""
         cmd = [self.path]
         if device_id:
             cmd.extend(["-s", device_id])
@@ -113,7 +111,7 @@ class ADBBridge:
         return CommandRunner.run(cmd, timeout=15)
 
     def shell_input(self, command: str, device_id: str | None = None):
-        """Send an 'input' command to the device shell (keyevent, swipe, etc.)."""
+        """向设备 Shell 发送 input 命令，例如 keyevent 或 swipe。"""
         session = self._input_session(device_id)
         if session.send(command):
             return session
@@ -124,11 +122,11 @@ class ADBBridge:
         return self._process_runner.spawn(cmd)
 
     def warm_input_session(self, device_id: str | None = None) -> bool:
-        """Prepare the persistent input shell so first real input is faster."""
+        """预热持久输入 Shell，缩短首条真实输入命令的等待时间。"""
         return self._input_session(device_id).warm()
 
     def close_input_sessions(self, device_id: str | None = None):
-        """Close persistent input shell sessions, used on panel/service shutdown."""
+        """关闭持久输入 Shell 会话，供面板或服务停止时清理资源。"""
         with self._input_sessions_lock:
             if device_id is None:
                 sessions = list(self._input_sessions.values())
@@ -153,7 +151,7 @@ class ADBBridge:
         return device_id or "__default__"
 
     def get_dimensions(self, device_id: str | None = None):
-        """Get device screen [width, height] via 'wm size'. Returns list or None."""
+        """通过 wm size 获取设备屏幕尺寸，返回宽高列表或 None。"""
         try:
             result = self.shell("wm size", device_id=device_id)
             raw = result.output if result.success else result.error
@@ -165,7 +163,7 @@ class ADBBridge:
             return None
 
     def devices(self) -> list[list[str]]:
-        """List connected devices as [[serial, status], ...]."""
+        """返回由设备序列号和连接状态组成的设备列表。"""
         result = CommandRunner.run([self.path, "devices"], timeout=15)
         out = result.output if result.success else result.error
         return [line.split("\t") for line in out.strip().splitlines()[1:] if line.strip()]

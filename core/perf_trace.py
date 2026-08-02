@@ -1,4 +1,4 @@
-"""Small helpers for slow-path performance tracing."""
+"""提供慢路径性能追踪所需的轻量辅助函数。"""
 
 from time import perf_counter
 from typing import Any
@@ -10,7 +10,7 @@ DEFAULT_SLOW_THRESHOLD_MS = 300.0
 
 
 def elapsed_ms(start: float, end: float | None = None) -> float:
-    """Return elapsed milliseconds from monotonic timestamps."""
+    """根据单调时钟时间戳计算非负毫秒耗时。"""
     return max(0.0, ((perf_counter() if end is None else end) - start) * 1000.0)
 
 
@@ -20,7 +20,7 @@ def build_async_perf(
     started_at: float,
     finished_at: float,
 ) -> dict[str, float | str]:
-    """Build timing data for one async model task."""
+    """构建单个异步模型任务的阶段耗时数据。"""
     return {
         "method": method_name,
         "queued_at": queued_at,
@@ -32,7 +32,7 @@ def build_async_perf(
 
 
 def attach_perf(result: Any, perf: dict[str, float | str]) -> Any:
-    """Attach performance data while preserving payload after split_perf()."""
+    """附加性能数据，并保证 split_perf() 后仍可恢复原始载荷。"""
     if not isinstance(result, dict):
         return {PAYLOAD_KEY: result, PERF_KEY: perf}
     enriched = dict(result)
@@ -41,7 +41,7 @@ def attach_perf(result: Any, perf: dict[str, float | str]) -> Any:
 
 
 def split_perf(result: Any) -> tuple[Any, dict[str, float | str] | None]:
-    """Remove internal performance data before business handlers see the result."""
+    """在业务处理器消费结果前剥离内部性能数据。"""
     if not isinstance(result, dict) or PERF_KEY not in result:
         return result, None
     clean = dict(result)
@@ -57,7 +57,7 @@ def summarize_perf(
     ui_started_at: float,
     ui_finished_at: float,
 ) -> dict[str, float]:
-    """Combine worker queue/model timings with controller-side UI handling time."""
+    """合并工作线程排队、模型执行和控制器界面处理耗时。"""
     ui_ms = elapsed_ms(ui_started_at, ui_finished_at)
     if not perf:
         return {"ui_ms": ui_ms, "total_ms": ui_ms}
@@ -74,13 +74,13 @@ def summarize_perf(
 
 
 def should_log_perf(summary: dict[str, float], threshold_ms: float) -> bool:
-    """Only log when at least one stage or the whole operation crosses threshold."""
+    """仅在任一阶段或总耗时达到阈值时记录性能日志。"""
     threshold = max(0.0, threshold_ms)
     return any(value >= threshold for value in summary.values())
 
 
 def format_perf(op_type: str, summary: dict[str, float]) -> str:
-    """Format a compact single-line performance trace."""
+    """将性能追踪数据格式化为紧凑的单行文本。"""
     ordered_keys = ("total_ms", "queue_ms", "model_ms", "signal_ms", "ui_ms")
     parts = [f"[PERF] {op_type}"]
     for key in ordered_keys:

@@ -1,35 +1,60 @@
-"""
-Core ADB infrastructure: async command decorator and base model class.
+"""提供异步命令装饰器和 ADB 模型基类。
 
-This module is independent — it does not import from any sibling model files.
-Functional modules (adb_device, adb_app, adb_testing) each inherit from
-ADBModelCore and are used independently by the controller.
+本模块不导入同级功能模型。adb_device、adb_app 和 adb_testing 等模块分别继承
+ADBModelCore，再由控制器独立组合使用，从而避免循环依赖。
 """
 
+import uuid
 from functools import wraps
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
+from adblab.application.envelope import OperationMetadata, attach_operation_metadata
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
 
 from .base.command_runner import CommandRunner
 
-# ── Module-level async decorator ─────────────────────────────────────────
-
-
 def async_command(method):
-    """Decorator: run a synchronous method on QThreadPool, emit result via Signal."""
+    """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。"""
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
         queued_at = perf_counter()
+        operation_id = kwargs.pop("_operation_id", None)
+        operation_kind = kwargs.pop("_operation_kind", None)
+        operation_unit_id = kwargs.pop("_operation_unit_id", None)
+        operation_task_id = kwargs.pop("_operation_task_id", None)
+        operation_target_id = kwargs.pop("_operation_target_id", None)
+        expected_artifact_path = kwargs.pop("_operation_expected_artifact_path", None)
+        metadata = None
+        if operation_id is not None:
+            method_name = method.__name__.removesuffix("_async")
+            metadata = OperationMetadata(
+                version=1,
+                operation_id=operation_id,
+                operation_kind=operation_kind or method_name,
+                method_name=method_name,
+                task_id=operation_task_id or str(uuid.uuid4()),
+                unit_id=operation_unit_id,
+                target_id=operation_target_id,
+                expected_artifact_path=expected_artifact_path,
+            )
 
         class CommandTask(QRunnable):
-            def __init__(self, model, method_ref, queued_at, *args, **kwargs):
+            def __init__(
+                self,
+                model,
+                method_ref,
+                queued_at,
+                metadata,
+                *args,
+                **kwargs,
+            ):
                 super().__init__()
                 self.model = model
                 self.method_ref = method_ref
                 self.queued_at = queued_at
+                self.metadata = metadata
                 self.args = args
                 self.kwargs = kwargs
 
@@ -39,59 +64,51 @@ def async_command(method):
                 started_at = perf_counter()
                 try:
                     result = self.method_ref(self.model, *self.args, **self.kwargs)
-                    finished_at = perf_counter()
-                    perf = build_async_perf(
-                        self.method_ref.__name__,
-                        self.queued_at,
-                        started_at,
-                        finished_at,
-                    )
-                    result = attach_perf(result, perf)
+                except Exception as e:
+                    result = {"success": False, "error": str(e)}
+
+                finished_at = perf_counter()
+                perf = build_async_perf(
+                    self.method_ref.__name__,
+                    self.queued_at,
+                    started_at,
+                    finished_at,
+                )
+                result = attach_operation_metadata(
+                    attach_perf(result, perf),
+                    self.metadata,
+                )
+                try:
                     if not shiboken6.isValid(self.model):
                         return
                     self.model.command_finished.emit(self.method_ref.__name__, result)
                 except RuntimeError:
-                    pass  # C++ object already deleted
-                except Exception as e:
-                    if shiboken6.isValid(self.model):
-                        try:
-                            finished_at = perf_counter()
-                            perf = build_async_perf(
-                                self.method_ref.__name__,
-                                self.queued_at,
-                                started_at,
-                                finished_at,
-                            )
-                            self.model.command_finished.emit(
-                                self.method_ref.__name__,
-                                attach_perf({"success": False, "error": str(e)}, perf),
-                            )
-                        except RuntimeError:
-                            pass
+                    pass  # 结果投递期间 Qt 对象可能已经由 C++ 侧删除。
 
-        task = CommandTask(self, method, queued_at, *args, **kwargs)
+        task = CommandTask(
+            self,
+            method,
+            queued_at,
+            metadata,
+            *args,
+            **kwargs,
+        )
         self.thread_pool.start(task)
 
     return wrapper
 
 
-# ── Core model base (shared infrastructure) ──────────────────────────────
-
-
 class ADBModelCore(QObject):
-    """Shared infrastructure: signal, thread pool, command execution.
+    """提供信号、线程池和命令执行等共享基础设施。
 
-    Each functional module (ADBDevice, ADBApp, ADBTesting) inherits from
-    this class and gets its own command_finished signal + thread pool access.
+    每个功能模型均独立继承该类，并拥有自己的 command_finished 信号及线程池入口。
     """
 
-    command_finished = Signal(str, object)  # (method_name, result)
+    command_finished = Signal(str, object)  # 参数依次为方法名和执行结果。
 
     def __init__(self):
         super().__init__()
         self.thread_pool = QThreadPool.globalInstance()
-
-    # ── 公开统一 API ─────────────────────────────────────────────────────
 
     @classmethod
     def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:
@@ -107,7 +124,7 @@ class ADBModelCore(QObject):
 
     @staticmethod
     def _fetch_device_info(commands: dict[str, list[str]]) -> dict[str, str]:
-        """Run a batch of shell commands on a device and collect results."""
+        """在指定设备上批量执行 Shell 命令并收集结果。"""
         device_info = {}
         for key, cmd in commands.items():
             r = CommandRunner.run(cmd)

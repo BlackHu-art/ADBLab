@@ -83,19 +83,23 @@ def test_scrcpy_service_caches_version_per_executable():
 def test_scrcpy_service_resolves_bundled_windows_executable():
     service = ScrcpyService()
 
-    with patch("models.remote.scrcpy_service.platform.system", return_value="Windows"), \
-         patch(
-             "models.remote.scrcpy_service.bundled_tool_path",
-             return_value="C:/ADBLab/scrcpy.exe",
-         ):
+    with (
+        patch("models.remote.scrcpy_service.platform.system", return_value="Windows"),
+        patch(
+            "models.remote.scrcpy_service.bundled_tool_path",
+            return_value="C:/ADBLab/scrcpy.exe",
+        ),
+    ):
         assert service.resolve_executable() == "C:/ADBLab/scrcpy.exe"
 
 
 def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
     service = ScrcpyService()
 
-    with patch("models.remote.scrcpy_service.platform.system", return_value="Linux"), \
-         patch("models.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"):
+    with (
+        patch("models.remote.scrcpy_service.platform.system", return_value="Linux"),
+        patch("models.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"),
+    ):
         assert service.resolve_executable() == "/usr/bin/scrcpy"
 
 
@@ -252,7 +256,7 @@ def test_build_scrcpy_args_enables_prefer_text_and_window_title():
 
     assert "--prefer-text" in args
     title_index = args.index("--window-title")
-    assert args[title_index:title_index + 2] == [
+    assert args[title_index : title_index + 2] == [
         "--window-title",
         "ADBLab Remote - device-1",
     ]
@@ -284,9 +288,11 @@ def test_remote_window_manager_focus_accepts_already_foreground_window():
     user32 = Mock()
     user32.GetForegroundWindow.return_value = 123
 
-    with patch("models.remote.window_manager.sys.platform", "win32"), \
-         patch("models.remote.window_manager.ctypes.windll") as windll, \
-         patch.object(manager, "_find_window", return_value=123):
+    with (
+        patch("models.remote.window_manager.sys.platform", "win32"),
+        patch("models.remote.window_manager.ctypes.windll") as windll,
+        patch.object(manager, "_find_window", return_value=123),
+    ):
         windll.user32 = user32
 
         assert manager.focus("ADBLab Remote - device-1", timeout_seconds=0.01) is True
@@ -356,7 +362,7 @@ def test_remote_panel_stop_scrcpy_uses_scrcpy_service_stop():
     panel._scrcpy_service.stop.assert_called_once_with("scrcpy_test", timeout=2)
 
 
-def test_remote_panel_close_stops_running_scrcpy_before_shutdown():
+def test_remote_panel_close_requests_scrcpy_stop_without_waiting():
     panel = RemotePanel.__new__(RemotePanel)
     panel._process = Mock()
     panel._watchdog = Mock()
@@ -371,14 +377,13 @@ def test_remote_panel_close_stops_running_scrcpy_before_shutdown():
         RemotePanel.closeEvent(panel, Mock())
 
     panel._watchdog.stop.assert_called_once()
-    panel._scrcpy_service.stop.assert_called_once_with("scrcpy_test", timeout=2)
-    executor.shutdown.assert_called_once_with(
-        wait=False, cancel_futures=True
-    )
+    panel._scrcpy_service.request_stop.assert_called_once_with("scrcpy_test")
+    panel._scrcpy_service.stop.assert_not_called()
+    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
     panel._adb.close_input_sessions.assert_called_once()
 
 
-def test_remote_panel_shutdown_waits_for_launch_worker():
+def test_remote_panel_shutdown_detaches_launch_worker_without_blocking():
     panel = RemotePanel.__new__(RemotePanel)
     panel._process = None
     panel._watchdog = Mock()
@@ -397,11 +402,9 @@ def test_remote_panel_shutdown_waits_for_launch_worker():
     RemotePanel.shutdown(panel)
 
     worker.requestInterruption.assert_called_once()
-    worker.wait.assert_called_once_with(3000)
+    worker.wait.assert_called_once_with(0)
     worker.deleteLater.assert_called_once()
-    executor.shutdown.assert_called_once_with(
-        wait=False, cancel_futures=True
-    )
+    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
     panel._adb.close_input_sessions.assert_called_once()
 
 
@@ -456,12 +459,16 @@ def test_remote_panel_remote_action_uses_executor_when_available():
 
 
 def test_remote_panel_ignores_known_scrcpy_noise_lines():
-    assert RemotePanel._should_ignore_scrcpy_log_line(
-        "[server] WARN: Could not inject char u+4e2d"
-    ) is True
-    assert RemotePanel._should_ignore_scrcpy_log_line(
-        "libpng warning: iCCP: known incorrect sRGB profile"
-    ) is True
+    assert (
+        RemotePanel._should_ignore_scrcpy_log_line("[server] WARN: Could not inject char u+4e2d")
+        is True
+    )
+    assert (
+        RemotePanel._should_ignore_scrcpy_log_line(
+            "libpng warning: iCCP: known incorrect sRGB profile"
+        )
+        is True
+    )
     assert RemotePanel._should_ignore_scrcpy_log_line("[server] INFO: ready") is False
 
 

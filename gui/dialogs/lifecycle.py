@@ -1,16 +1,29 @@
-"""Small helpers for dialog signal and worker cleanup."""
+"""提供对话框信号断开、对象存活检查和 worker 清理辅助能力。"""
 
 from __future__ import annotations
 
 import threading
+import time
 import warnings
 import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Qt
+from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
+
+
+def configure_independent_secondary_window(dialog: QWidget) -> None:
+    """将受代码托管的二级窗口配置为可独立切换的非模态顶层窗口。"""
+    if dialog.parentWidget() is not None:
+        # 保留窗口类型和装饰，只解除操作系统层面的 transient owner 关系。
+        dialog.setParent(None, dialog.windowFlags())
+    # 通过 Qt API 单独清除置顶位，避免枚举取反截断高位的关闭按钮标志。
+    dialog.setWindowFlag(Qt.WindowStaysOnTopHint, False)
+    dialog.setWindowModality(Qt.NonModal)
+    dialog.setAttribute(Qt.WA_QuitOnClose, False)
 
 
 def is_qobject_alive(obj: Any) -> bool:
@@ -83,3 +96,44 @@ def wait_for_threads_later(threads: list[QThread], timeout_ms: int) -> None:
         target=lambda: [thread.wait(timeout_ms) for thread in threads],
         daemon=True,
     ).start()
+
+
+class QThreadGroupShutdownTask:
+    """将一组已捕获的 QThread 适配为应用资源监督协议。"""
+
+    def __init__(self, threads: list[QThread]) -> None:
+        self.threads = list(threads)
+
+    @staticmethod
+    def _running(thread: QThread) -> bool:
+        try:
+            return bool(thread.isRunning())
+        except RuntimeError:
+            return False
+
+    def request_stop(self) -> None:
+        for thread in self.threads:
+            if not self._running(thread):
+                continue
+            try:
+                abort = getattr(thread, "abort", None)
+                if callable(abort):
+                    abort()
+                else:
+                    thread.requestInterruption()
+            except RuntimeError:
+                continue
+
+    def wait(self, timeout: float) -> bool:
+        final_end = time.monotonic() + max(0.0, float(timeout))
+        for thread in self.threads:
+            if self._running(thread):
+                remaining_ms = max(0, int((final_end - time.monotonic()) * 1000))
+                try:
+                    thread.wait(remaining_ms)
+                except RuntimeError:
+                    continue
+        return not self.is_running()
+
+    def is_running(self) -> bool:
+        return any(self._running(thread) for thread in self.threads)

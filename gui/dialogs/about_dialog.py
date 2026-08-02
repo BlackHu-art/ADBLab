@@ -1,7 +1,7 @@
-"""About dialog -- header, QR code, footer."""
+"""提供应用版本、项目链接和二维码信息对话框。"""
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QFont, QFontMetrics, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.styles.typography import FontRole
 from utils.app_metadata import APP_VERSION
 from utils.resource_path import resource_path
 
@@ -23,41 +24,40 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About ADBLab")
         self.setWindowIcon(get_themed_icon("info.svg"))
-        self.setFixedSize(340, 380)
+        self.setMinimumSize(340, 380)
+        self.resize(340, 380)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
 
         self._build_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
 
     def _build_ui(self):
         lo = QVBoxLayout(self)
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(0)
 
-        # ── Header ──
         self._header = QFrame()
         self._header.setObjectName("aboutHeader")
-        self._header.setFixedHeight(56)
+        self._header.setMinimumHeight(56)
         hl = QVBoxLayout(self._header)
         hl.setContentsMargins(0, 8, 0, 0)
         hl.setSpacing(0)
 
-        title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
-        title.setObjectName("aboutTitle")
-        title.setAlignment(Qt.AlignCenter)
-        title.setOpenExternalLinks(True)  # 关键：允许打开网页
-        title.setFont(QFont(BaseStyles.DEFAULT_FONT_FAMILY, 24, QFont.Bold))
-        hl.addWidget(title)
+        self._title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
+        self._title.setObjectName("aboutTitle")
+        self._title.setAlignment(Qt.AlignCenter)
+        self._title.setOpenExternalLinks(True)
+        hl.addWidget(self._title)
 
-        ver = QLabel(f"Version {APP_VERSION}")
-        ver.setObjectName("aboutVer")
-        ver.setAlignment(Qt.AlignCenter)
-        hl.addWidget(ver)
+        self._version = QLabel(f"Version {APP_VERSION}")
+        self._version.setObjectName("aboutVer")
+        self._version.setAlignment(Qt.AlignCenter)
+        hl.addWidget(self._version)
 
         lo.addWidget(self._header)
 
-        # ── QR Code ──
         body = QVBoxLayout()
         body.setAlignment(Qt.AlignCenter)
         body.setSpacing(6)
@@ -72,42 +72,65 @@ class AboutDialog(QDialog):
             self._qr.setPixmap(pix)
         body.addWidget(self._qr)
 
-        hint = QLabel("Scan to support the author")
-        hint.setObjectName("aboutHint")
-        hint.setAlignment(Qt.AlignCenter)
-        body.addWidget(hint)
+        self._hint = QLabel("Scan to support the author")
+        self._hint.setObjectName("aboutHint")
+        self._hint.setAlignment(Qt.AlignCenter)
+        body.addWidget(self._hint)
 
         lo.addLayout(body)
 
-        # ── Footer ──
         ft = QVBoxLayout()
         ft.setSpacing(2)
         ft.setContentsMargins(0, 0, 0, 12)
 
-        footer = QLabel("Copyright © 2026 Frankie Hu")
-        footer.setObjectName("aboutFooter")
-        footer.setAlignment(Qt.AlignCenter)
-        ft.addWidget(footer)
+        self._footer = QLabel("Copyright © 2026 Frankie Hu")
+        self._footer.setObjectName("aboutFooter")
+        self._footer.setAlignment(Qt.AlignCenter)
+        ft.addWidget(self._footer)
 
-        close_btn = QPushButton("Close")
-        close_btn.setIcon(get_themed_icon("x.svg"))
-        close_btn.setIconSize(QSize(14, 14))
-        close_btn.setObjectName("aboutCloseBtn")
-        close_btn.setFixedSize(100, 30)
-        close_btn.clicked.connect(self.close)
+        self._close_btn = QPushButton("Close")
+        self._close_btn.setIcon(get_themed_icon("x.svg"))
+        self._close_btn.setIconSize(QSize(14, 14))
+        self._close_btn.setObjectName("aboutCloseBtn")
+        self._close_btn.setMinimumWidth(100)
+        self._close_btn.clicked.connect(self.close)
         btn_row = QVBoxLayout()
         btn_row.setAlignment(Qt.AlignCenter)
-        btn_row.addWidget(close_btn)
+        btn_row.addWidget(self._close_btn)
         ft.addLayout(btn_row)
 
         lo.addLayout(ft)
 
     def closeEvent(self, event):
-        BaseStyles.theme_changed.disconnect(self._apply_theme)
+        for signal in (BaseStyles.theme_changed, BaseStyles.fonts_changed):
+            try:
+                signal.disconnect(self._apply_theme)
+            except (TypeError, RuntimeError):
+                pass
         super().closeEvent(event)
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        title_font = BaseStyles.font_for_role(
+            FontRole.TITLE, size=max(24, BaseStyles.DEFAULT_FONT_SIZE + 12)
+        )
+        version_font = BaseStyles.font_for_role(
+            FontRole.UI_SMALL, size=max(8, BaseStyles.DEFAULT_FONT_SIZE - 1)
+        )
+        footer_font = BaseStyles.font_for_role(
+            FontRole.UI_SMALL, size=max(8, BaseStyles.DEFAULT_FONT_SIZE - 2)
+        )
+        close_font = QFont(ui_font)
+        close_font.setBold(True)
+
+        self.setFont(ui_font)
+        self._title.setFont(title_font)
+        self._version.setFont(version_font)
+        self._hint.setFont(ui_font)
+        self._footer.setFont(footer_font)
+        self._close_btn.setFont(close_font)
+
         def c(k):
             return BaseStyles.color(k)
         accent = c("BUTTON_ACCENT")
@@ -116,7 +139,6 @@ class AboutDialog(QDialog):
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {c('PANEL_BG')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
             }}
             QFrame#aboutHeader {{
                 background-color: transparent;
@@ -127,7 +149,6 @@ class AboutDialog(QDialog):
                 background: transparent;
             }}
             QLabel#aboutVer {{
-                font-size: 11px;
                 color: {c('TEXT_SECONDARY')};
                 background: transparent;
             }}
@@ -137,12 +158,10 @@ class AboutDialog(QDialog):
                 background-color: #ffffff;
             }}
             QLabel#aboutHint {{
-                font-size: 12px;
                 color: {c('BUTTON_ACCENT')};
                 background: transparent;
             }}
             QLabel#aboutFooter {{
-                font-size: 10px;
                 color: {c('TEXT_DISABLED')};
                 background: transparent;
             }}
@@ -151,8 +170,6 @@ class AboutDialog(QDialog):
                 color: #ffffff;
                 border: none;
                 border-radius: {r}px;
-                font-size: 12px;
-                font-weight: bold;
             }}
             QPushButton#aboutCloseBtn:hover {{
                 background-color: {c('BUTTON_ACCENT_HOVER')};
@@ -161,3 +178,8 @@ class AboutDialog(QDialog):
                 background-color: {c('BUTTON_ACCENT_PRESSED')};
             }}
         """)
+        self._close_btn.setMinimumHeight(30)
+        text_height = QFontMetrics(close_font).height() + 10
+        self._close_btn.setMinimumHeight(max(30, self._close_btn.sizeHint().height(), text_height))
+        self._header.setMinimumHeight(56)
+        self._header.setMinimumHeight(max(56, self._header.sizeHint().height()))

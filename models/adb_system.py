@@ -1,17 +1,15 @@
-"""
-ADB System Mixin — permissions, broadcast, activity, process, content provider,
-battery simulation, cmd/service toggles, emulator, IME, package info, quick settings.
+"""提供权限、广播、Activity、进程、电池模拟和输入法等 ADB 系统操作。
 
-Compose with ADBModelCore subclass (e.g. ADBAdvanced). All methods are @async_command.
+该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
 from .adb_model import async_command
 
 
 class ADBSystemMixin:
-    """Mixin providing system-level ADB operations."""
+    """封装系统级 ADB 操作。"""
 
-    # ── App Permissions ─────────────────────────────────────────────────
+    # 应用权限
 
     @async_command
     def grant_permission_async(self, device_ip: str, package: str, permission: str) -> dict:
@@ -42,7 +40,7 @@ class ADBSystemMixin:
             cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "permissions"]
         return self._run(cmd, timeout=15, device_ip=device_ip, package=package)
 
-    # ── App Disable/Enable ──────────────────────────────────────────────
+    # 应用启用与停用
 
     @async_command
     def disable_package_async(self, device_ip: str, package: str) -> dict:
@@ -65,7 +63,7 @@ class ADBSystemMixin:
             device_ip=device_ip, package=package,
         )
 
-    # ── Broadcast Intents ───────────────────────────────────────────────
+    # 广播 Intent
 
     @async_command
     def send_broadcast_async(self, device_ip: str, action: str, extras: dict = None) -> dict:
@@ -82,7 +80,7 @@ class ADBSystemMixin:
                     cmd.extend(["--es", k, str(v)])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
-    # ── Activity Start ──────────────────────────────────────────────────
+    # Activity 启动
 
     @async_command
     def start_activity_async(self, device_ip: str, component: str = "",
@@ -105,7 +103,7 @@ class ADBSystemMixin:
             timeout=15, device_ip=device_ip, uri=uri,
         )
 
-    # ── Process Management ──────────────────────────────────────────────
+    # 进程管理
 
     @async_command
     def list_processes_async(self, device_ip: str) -> dict:
@@ -128,7 +126,7 @@ class ADBSystemMixin:
             device_ip=device_ip, pid=pid,
         )
 
-    # ── Content Provider ────────────────────────────────────────────────
+    # 内容提供器（Content Provider）
 
     @async_command
     def content_query_async(self, device_ip: str, uri: str,
@@ -154,7 +152,7 @@ class ADBSystemMixin:
             cmd.extend(["--where", where])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
-    # ── Battery Simulation ──────────────────────────────────────────────
+    # 电池状态模拟
 
     @async_command
     def battery_set_level_async(self, device_ip: str, level: int) -> dict:
@@ -177,7 +175,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── Service Toggles (svc) ───────────────────────────────────────────
+    # svc 系统服务开关
 
     @async_command
     def cmd_wifi_enable_async(self, device_ip: str, enable: bool) -> dict:
@@ -243,7 +241,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── Emulator Control ────────────────────────────────────────────────
+    # 模拟器控制
 
     @async_command
     def emu_sms_send_async(self, device_ip: str, sender: str, text: str) -> dict:
@@ -274,7 +272,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── IME Management ──────────────────────────────────────────────────
+    # 输入法管理
 
     @async_command
     def ime_list_async(self, device_ip: str) -> dict:
@@ -290,7 +288,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── Package Info Extended ───────────────────────────────────────────
+    # 扩展包信息
 
     @async_command
     def pm_path_async(self, device_ip: str, package: str) -> dict:
@@ -320,7 +318,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── App Standby / Force Stop ────────────────────────────────────────
+    # 应用待机与强制停止
 
     @async_command
     def set_inactive_async(self, device_ip: str, package: str, inactive: bool) -> dict:
@@ -337,7 +335,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    # ── Quick Settings ──────────────────────────────────────────────────
+    # 快捷设置
 
     @async_command
     def quick_setting_async(self, device_ip: str, action: str) -> dict:

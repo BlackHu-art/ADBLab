@@ -1,7 +1,9 @@
-"""ADBLab QSS stylesheet templates."""
+"""提供 ADBLab 控件使用的 QSS 样式模板。"""
 
-from .fonts import _font
+from PySide6.QtGui import QFontMetrics
+
 from .theme import _tc
+from .typography import FontRole
 
 RADIUS_SM = 4
 RADIUS_MD = 6
@@ -10,9 +12,9 @@ RADIUS_XL = 12
 
 
 class QSSMixin:
-    """Add to BaseStyles via inheritance for all QSS template methods."""
+    """通过 BaseStyles 提供全部 QSS 模板方法。"""
 
-    # -- Scrollbar -------------------------------------------------------
+    # ── 滚动条 ──────────────────────────────────────────────────────────
 
     @classmethod
     def SCROLLBAR_STYLE(cls) -> str:
@@ -41,12 +43,11 @@ class QSSMixin:
         QScrollBar::corner {{ background: transparent; }}
         """
 
-    # -- Buttons ---------------------------------------------------------
+    # ── 按钮 ────────────────────────────────────────────────────────────
 
     @classmethod
     def BUTTON_BASE(cls) -> str:
         return f"""
-            font-family: '{_font['FAMILY']}'; font-size: {_font['UI']}px;
             border-radius: {RADIUS_MD}px; padding: 3px 8px;
         """
 
@@ -104,37 +105,41 @@ class QSSMixin:
     def BUTTON_QSS(cls) -> str:
         return cls.BUTTON_STYLE() + cls.ACCENT_BUTTON_STYLE() + cls.DANGER_BUTTON_STYLE()
 
-    # -- Input -----------------------------------------------------------
+    # ── 输入控件 ────────────────────────────────────────────────────────
 
     @classmethod
     def INPUT_STYLE(cls) -> str:
+        # QSS 加载 SVG 时不会继承控件的前景色，因此使用按主题固化描边色的资源。
+        arrow_icon = (
+            "caret-down-qss-dark.svg"
+            if cls.current_theme() == "Dark"
+            else "caret-down-qss-light.svg"
+        )
         return f"""
         QLineEdit, QComboBox {{
             background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
             border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
-            padding: 3px 6px; font-family: '{_font['FAMILY']}';
-            font-size: {_font['UI']}px; selection-background-color: {_tc('SELECTION_BG')};
+            padding: 3px 6px; selection-background-color: {_tc('SELECTION_BG')};
         }}
         QLineEdit:focus, QComboBox:focus {{ border-color: {_tc('BORDER_FOCUS')}; }}
         QLineEdit:disabled, QComboBox:disabled {{
             background-color: {_tc('PANEL_BG')}; color: {_tc('TEXT_DISABLED')};
         }}
         QComboBox::drop-down {{
-            subcontrol-origin: padding; subcontrol-position: top right; width: 20px;
+            subcontrol-origin: padding; subcontrol-position: top right; width: 24px;
             border-left: 1px solid {_tc('BORDER_COLOR')};
             border-top-right-radius: {RADIUS_MD}px; border-bottom-right-radius: {RADIUS_MD}px;
             background-color: {_tc('BUTTON_BG')};
         }}
         QComboBox::drop-down:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
         QComboBox::down-arrow {{
-            image: url(icons:caret-down.svg); width: 10px; height: 6px; margin-right: 4px;
+            image: url(icons:{arrow_icon}); width: 12px; height: 8px; margin-right: 3px;
         }}
         QComboBox QAbstractItemView {{
             background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
             border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_SM}px;
             selection-background-color: {_tc('SELECTION_BG')};
             selection-color: {_tc('SELECTION_TEXT')}; outline: none;
-            font-family: 'Courier New', monospace;
         }}
         QComboBox QAbstractItemView::item {{ color: {_tc('TEXT_PRIMARY')}; padding: 4px 8px; }}
         QComboBox QAbstractItemView::item:selected {{
@@ -145,15 +150,25 @@ class QSSMixin:
         }}
         """
 
-    # -- Group Box -------------------------------------------------------
+    # ── 分组框 ──────────────────────────────────────────────────────────
+
+    @classmethod
+    def group_box_title_margin(cls) -> int:
+        """返回能为当前界面字体保留标题净空的分组框上边距。"""
+
+        title_height = QFontMetrics(cls.font_for_role(FontRole.UI)).height()
+        # 项目内分组布局至少还会提供 12px 的内容起始距离。这里按标题实际高度
+        # 动态补足剩余空间，使常规字号和最大字号下都保留至少 4px 的净空。
+        return max(8, title_height - 8)
 
     @classmethod
     def GROUP_BOX_STYLE(cls) -> str:
+        title_margin = cls.group_box_title_margin()
         return f"""
         QGroupBox {{
             background-color: {_tc('PANEL_BG')}; border: 1px solid {_tc('BORDER_COLOR')};
-            border-radius: {RADIUS_LG}px; margin-top: 4px; padding: 2px 4px 1px 4px;
-            font-family: '{_font['FAMILY']}'; font-size: {_font['UI']}px;
+            border-radius: {RADIUS_LG}px; margin-top: {title_margin}px;
+            padding: 2px 4px 1px 4px;
             font-weight: bold; color: {_tc('TEXT_PRIMARY')};
         }}
         QGroupBox::title {{
@@ -162,7 +177,7 @@ class QSSMixin:
         }}
         """
 
-    # -- List Widget -----------------------------------------------------
+    # ── 列表控件 ────────────────────────────────────────────────────────
 
     @classmethod
     def LIST_WIDGET_STYLE(cls) -> str:
@@ -170,7 +185,7 @@ class QSSMixin:
         QListWidget {{
             background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
             border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
-            padding: 2px; font-family: 'Courier New'; font-size: {_font['UI']}px;
+            padding: 2px;
             outline: none;
         }}
         QListWidget::item {{ padding: 3px 6px; border-radius: {RADIUS_SM}px; color: {_tc('TEXT_PRIMARY')}; }}
@@ -180,7 +195,7 @@ class QSSMixin:
         QListWidget::item:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
         """
 
-    # -- Toolbar ---------------------------------------------------------
+    # ── 工具栏 ──────────────────────────────────────────────────────────
 
     @classmethod
     def TOOLBAR_STYLE(cls) -> str:
@@ -192,19 +207,18 @@ class QSSMixin:
         QFrame#toolbar QPushButton {{
             background-color: transparent; color: {_tc('TEXT_PRIMARY')};
             border: none; border-radius: {RADIUS_SM}px; padding: 2px 6px;
-            font-family: '{_font['FAMILY']}'; font-size: {_font['UI']}px;
         }}
         QFrame#toolbar QPushButton:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
         QFrame#toolbar QPushButton#exit_btn:hover {{
             background-color: {_tc('BUTTON_DANGER')}; color: #ffffff;
         }}
         QFrame#toolbar QLabel {{
-            color: {_tc('TEXT_PRIMARY')}; font-family: '{_font['FAMILY']}';
-            font-size: {_font['UI']}px; font-weight: bold;
+            color: {_tc('TEXT_PRIMARY')};
         }}
+        QFrame#toolbar QLabel#toolbarTitle {{ font-weight: bold; }}
         """
 
-    # -- 状态栏 ------------------------------------------------------------
+    # ── 状态栏 ──────────────────────────────────────────────────────────
 
     @classmethod
     def STATUS_BAR_STYLE(cls) -> str:
@@ -213,7 +227,7 @@ class QSSMixin:
             f"color: {_tc('TEXT_PRIMARY')}; border-top: 1px solid {_tc('BORDER_COLOR')}; }}"
         )
 
-    # -- Device List (with check indicators) ------------------------------
+    # ── 带勾选标记的设备列表 ────────────────────────────────────────────
 
     @classmethod
     def DEVICE_LIST_STYLE(cls) -> str:
@@ -236,7 +250,7 @@ class QSSMixin:
         QListWidget::indicator:checked {{ image: url(icons:check.svg); border: none; }}
         """
 
-    # -- Composite: PANEL_BASE_STYLE -------------------------------------
+    # ── PANEL_BASE_STYLE 组合样式 ───────────────────────────────────────
 
     @classmethod
     def PANEL_BASE_STYLE(cls) -> str:

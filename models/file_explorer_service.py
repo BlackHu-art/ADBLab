@@ -51,7 +51,7 @@ def shell_quote(value: str) -> str:
 
 
 def parse_ls_line(line: str) -> dict[str, str] | None:
-    """Parse one `ls -la` row from toybox/busybox/coreutils variants."""
+    """解析 toybox、busybox 或 coreutils 产生的一行 ls -la 输出。"""
     text = line.strip()
     parts = text.split()
     if len(parts) < 6:

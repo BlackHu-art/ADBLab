@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""监控目标应用的前台 Activity 和安装状态。"""
 import os
 import re
 
@@ -21,15 +18,10 @@ from mobileperf.common.utils import TimeUtils
 
 
 class DeviceMonitor(object):
-    '''
-    涓€涓洃鎺х被锛岀洃鎺ф墜鏈轰腑鐨勪竴浜涚姸鎬佸彉鍖栵紝鐩墠鐩戞帶搴旂敤鏄惁鍗歌浇锛岃幏鍙栧墠鍙版鍦ㄦ椿鍔ㄧ殑activity
-    '''
+    """轮询目标应用的前台 Activity，并提供卸载状态检查能力。"""
 
     def __init__(self, device_id, packagename, interval=1.0, main_activity=[], activity_list=[], event=None, activity_queue=None):
-        ''''
-        :param list main_activity 鎸囧畾妯″潡鐨勪富鍏ュ彛
-        :param list activity_list : 闄愬埗榛樿鑼冨洿鐨刟ctivity鍒楄〃锛岄粯璁や负绌猴紝鍒欎笉闄愬埗
-        '''
+        """初始化监控目标、轮询间隔、允许的 Activity 列表和结果队列。"""
         self.uninstall_flag = event
         self.device = AndroidDevice(device_id)
         self.packagename = packagename
@@ -44,10 +36,6 @@ class DeviceMonitor(object):
         self.activity_monitor_thread = threading.Thread(target=self._activity_monitor_thread)
         self.activity_monitor_thread.start()
         logger.debug("DeviceMonitor activitymonitor has started...")
-
-        # self.uninstaller_checker_thread = threading.Thread(target=self._uninstaller_checker_thread)
-        # self.uninstaller_checker_thread.start()
-        # logger.debug("DeviceMonitor uninstaller checker has started...")
 
     def stop(self):
         if self.activity_monitor_thread.is_alive():
@@ -85,7 +73,7 @@ class DeviceMonitor(object):
                             logger.debug("start_activity:" + start_activity)
                             self.device.adb.start_activity(start_activity)
                     activity_tuple = (TimeUtils.getCurrentTime(), self.current_activity)
-                    # 鍐欐枃浠?
+                    # 前台 Activity 同时写入 CSV，便于与其他性能指标按时间对齐。
                     try:
                         with open(self.activity_file, 'a+', encoding="utf-8") as writer:
                             writer_p = csv.writer(writer, lineterminator='\n')
@@ -99,16 +87,13 @@ class DeviceMonitor(object):
                     time.sleep(delta_inter)
             except Exception as e:
                 s = traceback.format_exc()
-                logger.debug(s)  # 灏嗗爢鏍堜俊鎭墦鍗板埌log涓?
+                logger.debug(s)  # 堆栈仅进入开发诊断通道。
                 if self.activity_queue:
                     self.activity_queue.task_done()
 
-    # 杩欎釜妫€鏌ラ鐜囦笉鐢ㄩ偅涔堥珮
+    # 安装状态变化频率较低，使用十倍采样间隔减少 ADB 查询。
     def _uninstaller_checker_thread(self):
-        '''
-        杩欎釜鏂规硶鐢ㄨ疆璇㈢殑鏂瑰紡鏌ヨ鎸囧畾鐨勫簲鐢ㄦ槸鍚﹁鍗歌浇锛屼竴鏃﹀嵏杞戒細寰€涓荤嚎绋嬪彂閫佷竴涓嵏杞界殑淇″彿锛岀粓姝㈢▼搴?
-        :return:
-        '''
+        """轮询目标应用是否已卸载，并通过事件通知上层结束采集。"""
         while not self.stop_event.is_set():
             before = time.time()
             is_installed = self.device.adb.is_app_installed(self.packagename)

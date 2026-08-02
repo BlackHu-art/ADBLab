@@ -1,11 +1,8 @@
-"""App Manager tab -- package selector, lifecycle, package info, monkey, performance."""
+"""提供应用管理、Monkey 测试、诊断和录屏操作面板。"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QCompleter,
-    QGridLayout,
-    QLabel,
     QVBoxLayout,
     QWidget,
 )
@@ -14,7 +11,7 @@ from gui.panels.base_panel import BasePanel
 
 
 class AppPanel(BasePanel):
-    """App management tab."""
+    """集中构建应用管理控件，并通过 SidePanelSignals 转发用户操作。"""
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -22,45 +19,47 @@ class AppPanel(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
-        # ── Text, Email & Screen Capture ──
         g_ts = self._g("Text, Email & Screen Capture")
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
-        # Row 1: Get Email | Email input | Send Text | Verification input
         self.btn_generate_email = self._b("Get Email", "envelope.svg")
         self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
         self.verification_text_sender = self._in("Verification code or text...")
-        self._add_row(
+        self._screenshot_running = False
+        self._add_responsive_row(
             gts_l,
             (self.btn_generate_email, 1),
             (self.email_text_sender, 1),
             (self.btn_send_text, 1),
             (self.verification_text_sender, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
         )
-        # Row 2: Screenshot | Duration | Record | Stop
         self.btn_screenshot = self._b("Screenshot", "camera.svg")
         self.record_duration = self._combo(["10s", "20s", "30s", "60s", "120s", "180s", "300s"])
         self.record_duration.setCurrentText("30s")
         self.btn_screen_record = self._b("Record", "video-camera.svg")
         self.btn_stop_record = self._b("Stop Rec", "stop-circle.svg")
         self.btn_stop_record.setEnabled(False)
-        self._add_row(
+        self._add_responsive_row(
             gts_l,
             (self.btn_screenshot, 1),
             (self.record_duration, 1),
             (self.btn_screen_record, 1),
             (self.btn_stop_record, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
         )
         lo.addWidget(g_ts)
 
-        # ── Package Manager ──
         g_pm = self._g("Package Manager")
         gl_pm = QVBoxLayout(g_pm)
         gl_pm.setSpacing(2)
-        # Row 0: package selector (combo = 2-btn width, button = 1-btn width)
         self.program_edit = self._combo_editable()
-        self.program_edit.setFixedHeight(28)
+        self.program_edit.setMinimumHeight(28)
         self.program_edit.lineEdit().setFont(self._font_sm)
         self.program_edit.lineEdit().setPlaceholderText("Package name")
         self.completer = QCompleter(self.panel._package_history)
@@ -68,40 +67,52 @@ class AppPanel(BasePanel):
         self.panel._apply_completer_style(self.completer)
         self.program_edit.setCompleter(self.completer)
         self.btn_get_program = self._b("Get Current Package", "target.svg")
-        self._add_row(gl_pm, (self.program_edit, 2), (self.btn_get_program, 1))
-        # Row 1: uninstall / clear data / restart
+        self._add_responsive_row(
+            gl_pm,
+            (self.program_edit, 2),
+            (self.btn_get_program, 1),
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=2,
+        )
         self.uninstall_btn = self._b("Uninstall App", "trash.svg")
         self.clear_app_data_btn = self._b("Clear Data", "eraser.svg")
         self.restart_app_btn = self._b("Restart App", "repeat.svg")
-        self._add_row(
+        self._add_responsive_row(
             gl_pm,
             (self.uninstall_btn, 1),
             (self.clear_app_data_btn, 1),
             (self.restart_app_btn, 1),
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
         )
-        # Row 2: activity / parse / force stop
         self.print_activity_btn = self._b("Activity Info", "scroll.svg")
         self.parse_apk_info_btn = self._b("Parse APK", "magnifying-glass.svg")
         self.btn_force_stop = self._b("Force Stop App", "stop-circle.svg")
-        self._add_row(
+        self._add_responsive_row(
             gl_pm,
             (self.print_activity_btn, 1),
             (self.parse_apk_info_btn, 1),
             (self.btn_force_stop, 1),
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
         )
-        # Row 3: disable / enable / disable for user
         self.btn_disable_app = self._b("Disable App", "prohibit.svg")
         self.btn_enable_app = self._b("Enable App", "check-circle.svg")
         self.btn_disable_user = self._b("Disable for User", "user-switch.svg")
-        self._add_row(
+        self._add_responsive_row(
             gl_pm,
             (self.btn_disable_app, 1),
             (self.btn_enable_app, 1),
             (self.btn_disable_user, 1),
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
         )
         lo.addWidget(g_pm)
 
-        # ── Monkey ──
         g_m = self._g("Monkey")
         gm_l = QVBoxLayout(g_m)
         gm_l.setSpacing(3)
@@ -113,61 +124,75 @@ class AppPanel(BasePanel):
         def _mk_combo(items):
             return self._combo_editable(items)
 
-        # ── Unified grid: Events/Throttle + Event mix + Total ──
-        g_pct = QGridLayout()
-        g_pct.setSpacing(3)
-
-        # Row 0: Events | Throttle | Total
         lbl_ev = self._label("Events:")
         self.monkey_events = _mk_combo(EVENTS_OPTS)
         lbl_th = self._label("Throttle:")
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
         lbl_ms = self._label("ms")
         self._pct_total_lbl = self._status_text("Total: --")
-        g_pct.addWidget(lbl_ev, 0, 0)
-        g_pct.addWidget(self.monkey_events, 0, 1)
-        g_pct.addWidget(lbl_th, 0, 2)
-        g_pct.addWidget(self.monkey_throttle, 0, 3)
-        g_pct.addWidget(lbl_ms, 0, 4)
-        g_pct.addWidget(self._pct_total_lbl, 0, 5)
+        self._add_responsive_row(
+            gm_l,
+            lbl_ev,
+            self.monkey_events,
+            lbl_th,
+            self.monkey_throttle,
+            lbl_ms,
+            self._pct_total_lbl,
+            spacing=3,
+            compact_columns=2,
+            medium_columns=4,
+            wide_columns=6,
+        )
 
-        # Row 1-3: Event mix — 3 per row
         pct_configs = [
             ("Touch", "touch"),   ("Motion", "motion"),  ("Trackball", "trackball"),
             ("Nav", "nav"),       ("MjNav", "majornav"), ("Syskey", "syskeys"),
             ("AppSw", "appswitch"), ("Any", "anyevent"),  ("Pinch", "pinch"),
         ]
         self._monkey_pct_combos = {}
-        for i, (label, key) in enumerate(pct_configs):
+        pct_widgets = []
+        for label, key in pct_configs:
             lbl = self._label(f"{label}:")
             c = _mk_combo(PCT_OPTS)
             c.currentTextChanged.connect(self._update_pct_total)
             self._monkey_pct_combos[key] = c
-            row, col = divmod(i, 3)
-            g_pct.addWidget(lbl, row + 1, col * 2)
-            g_pct.addWidget(c, row + 1, col * 2 + 1)
-        gm_l.addLayout(g_pct)
+            pct_widgets.extend((lbl, c))
+        self._add_responsive_row(
+            gm_l,
+            *pct_widgets,
+            spacing=3,
+            compact_columns=2,
+            medium_columns=4,
+            wide_columns=6,
+        )
 
-        # Flags row
         self.monkey_chk_crashes = self._checkbox("Ignore crashes")
         self.monkey_chk_timeouts = self._checkbox("Ignore timeouts")
         self.monkey_chk_security = self._checkbox("Ignore security")
-        self._add_row(
+        self._add_responsive_row(
             gm_l,
             self.monkey_chk_crashes,
             self.monkey_chk_timeouts,
             self.monkey_chk_security,
             spacing=8,
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
         )
 
-        # Action row
         self.start_monkey_btn = self._b("Start", "robot.svg")
         self.kill_monkey_btn = self._b("Stop", "skull.svg")
         self._set_monkey_running(False)
-        self._add_row(gm_l, (self.start_monkey_btn, 1), (self.kill_monkey_btn, 1))
+        self._add_responsive_row(
+            gm_l,
+            (self.start_monkey_btn, 1),
+            (self.kill_monkey_btn, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=2,
+        )
         lo.addWidget(g_m)
 
-        # ── Reports ──
         g_r = self._g("Reports")
         gr_l = QVBoxLayout(g_r)
         gr_l.setSpacing(2)
@@ -175,16 +200,18 @@ class AppPanel(BasePanel):
         self.get_anr_file_btn = self._b("ANR Files", "warning.svg")
         self.btn_retrieve_devices_logs = self._b("Retrieve Logs", "file-arrow-down.svg")
         self.btn_cleanup_logs = self._b("Cleanup Logs", "broom.svg")
-        self._add_row(
+        self._add_responsive_row(
             gr_l,
             (self.get_bugreport_btn, 1),
             (self.get_anr_file_btn, 1),
             (self.btn_retrieve_devices_logs, 1),
             (self.btn_cleanup_logs, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
         )
         lo.addWidget(g_r)
 
-        # ── Performance ──
         g_perf = self._g("Performance Diagnostics")
         gl_perf = QVBoxLayout(g_perf)
         gl_perf.setSpacing(2)
@@ -193,34 +220,40 @@ class AppPanel(BasePanel):
         self.btn_cpuinfo = self._b("CPU Load", "cpu.svg")
         self.btn_battery_info = self._b("Battery", "battery-full.svg")
         self.btn_uptime = self._b("Uptime", "clock.svg")
-        self._add_row(
+        self._add_responsive_row(
             gl_perf,
             (self.btn_meminfo, 1),
             (self.btn_cpuinfo, 1),
             (self.btn_battery_info, 1),
             (self.btn_uptime, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
         )
 
         self.btn_top = self._b("Top Snapshot", "chart-bar.svg")
         self.btn_gfx = self._b("GFX Info", "image.svg")
         self.btn_wakelock = self._b("Wakelocks", "lock.svg")
         self.btn_netstats = self._b("Net Stats", "chart-line.svg")
-        self._add_row(
+        self._add_responsive_row(
             gl_perf,
             (self.btn_top, 1),
             (self.btn_gfx, 1),
             (self.btn_wakelock, 1),
             (self.btn_netstats, 1),
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
         )
         lo.addWidget(g_perf)
 
         lo.addStretch()
 
-        # Load last-used monkey params from settings
+        # 恢复上次使用的 Monkey 参数，避免切换页签后丢失测试配置。
         self._load_monkey_params()
         return w
 
-    # ── Monkey params persistence ───────────────────────────────────────
+    # ── Monkey 参数持久化 ───────────────────────────────────────────────
 
     def _load_monkey_params(self):
         from core.settings_manager import AppSettings
@@ -294,7 +327,7 @@ class AppPanel(BasePanel):
         self.btn_stop_record.setEnabled(False)
         self.signals.stop_screen_record_requested.emit(self.selected_devices)
 
-    # Exposed for controller to restore button state after recording ends
+    # 保留公共入口，供 Controller 在录屏结束后恢复按钮状态。
     def on_recording_finished(self):
         self.btn_screen_record.setEnabled(True)
         self.btn_stop_record.setEnabled(False)
@@ -302,10 +335,25 @@ class AppPanel(BasePanel):
     def on_operation_completed(self, operation: str, _success: bool, _message: str):
         if operation in {"monkey", "kill_monkey"}:
             self._set_monkey_running(False)
+        if operation == "screenshot":
+            if _message.startswith("Screenshot completed:"):
+                self._set_screenshot_running(False)
+            elif _message in {"⚠️ No devices selected", "Unable to prepare screenshot directory"}:
+                self._set_screenshot_running(False)
+
+    def _on_screenshot(self):
+        if self._screenshot_running:
+            return
+        self._set_screenshot_running(True)
+        self.signals.screenshot_requested.emit(self.selected_devices)
+
+    def _set_screenshot_running(self, running: bool):
+        self._set_button_enabled(self.btn_screenshot, not running)
+        self._screenshot_running = running
 
     def _on_start_monkey(self):
         params = self._collect_monkey_params()
-        # Validate total = 100%
+        # Monkey 允许非 100% 的事件比例，但必须提示分布不可预测。
         total = sum(int(c.currentText() or "0") for c in self._monkey_pct_combos.values())
         if total != 100:
             from PySide6.QtWidgets import QMessageBox
@@ -340,7 +388,7 @@ class AppPanel(BasePanel):
         self.program_edit.setCurrentText(pkg)
 
     def connect_signals(self):
-        """Wire local widgets to SidePanelSignals."""
+        """将本页控件连接到统一的 SidePanelSignals。"""
         LP = self.signals
         self.btn_get_program.clicked.connect(
             lambda: LP.get_program_requested.emit(self.selected_devices)
@@ -370,16 +418,16 @@ class AppPanel(BasePanel):
         self.btn_disable_user.clicked.connect(
             lambda: LP.disable_app_requested.emit(self.selected_devices, self.package_text)
         )
-        # Monkey
+        # Monkey 测试
         self.start_monkey_btn.clicked.connect(
             lambda: self._on_start_monkey())
         self.kill_monkey_btn.clicked.connect(self._on_kill_monkey)
-        # Reports
+        # 诊断报告
         self.get_bugreport_btn.clicked.connect(lambda: LP.capture_bugreport_requested.emit(self.selected_devices))
         self.get_anr_file_btn.clicked.connect(lambda: LP.pull_anr_file_requested.emit(self.selected_devices))
         self.btn_retrieve_devices_logs.clicked.connect(lambda: LP.retrieve_logs_requested.emit(self.selected_devices))
         self.btn_cleanup_logs.clicked.connect(lambda: LP.cleanup_logs_requested.emit(self.selected_devices))
-        # Performance
+        # 性能诊断
         self.btn_meminfo.clicked.connect(lambda: LP.dumpsys_meminfo_requested.emit(self.selected_devices, self.package_text))
         self.btn_cpuinfo.clicked.connect(lambda: LP.dumpsys_cpuinfo_requested.emit(self.selected_devices))
         self.btn_battery_info.clicked.connect(lambda: LP.dumpsys_battery_requested.emit(self.selected_devices))
@@ -388,10 +436,8 @@ class AppPanel(BasePanel):
         self.btn_gfx.clicked.connect(lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60"))
         self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
         self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
-        # Text & Email signals
-        self.btn_screenshot.clicked.connect(
-            lambda: LP.screenshot_requested.emit(self.selected_devices)
-        )
+        # 文本、邮箱和媒体操作
+        self.btn_screenshot.clicked.connect(self._on_screenshot)
         self.btn_screen_record.clicked.connect(
             lambda: self._on_record_start()
         )

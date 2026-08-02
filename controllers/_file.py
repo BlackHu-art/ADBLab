@@ -1,3 +1,5 @@
+"""提供设备文件、端口映射和系统内容查询的控制能力。"""
+
 from __future__ import annotations
 
 import os
@@ -9,9 +11,9 @@ from models.adb_advanced import ADBAdvanced
 
 
 class ADBFileMixin(_ADBControllerBase):
-    """File push/pull/list, port forward/reverse, content query, quick settings, PM features."""
+    """协调文件传输、端口映射、内容查询、快捷设置和 PM 特性查询。"""
 
-    # ── Provided by _ADBControllerBase ──
+    # 以下属性由 _ADBControllerBase 提供。
     advanced_model: ADBAdvanced
     signals: ADBControllerSignals
 
@@ -30,7 +32,7 @@ class ADBFileMixin(_ADBControllerBase):
         "pm_list_features": "_process_pm_list_features_result",
     }
 
-    # -- File Management --
+    # 文件管理
 
     def file_list(self, devices: list, path: str = "/sdcard"):
         if not self._require_devices(devices, "file_list"):
@@ -86,7 +88,7 @@ class ADBFileMixin(_ADBControllerBase):
         else:
             self._emit_operation("file_pull", False, f"Pull failed on {ip}: {result.get('error')}")
 
-    # -- Port Forwarding --
+    # 端口正向与反向映射
 
     def forward_port(self, devices: list, local_port: str, remote_port: str):
         if not self._require_devices(devices, "forward_port"):
@@ -192,7 +194,7 @@ class ADBFileMixin(_ADBControllerBase):
                 "remove_reverse", False, f"Remove reverse failed on {ip}: {result.get('error')}"
             )
 
-    # ── Content Provider ──
+    # Content Provider 查询
 
     def content_query(self, devices: list, uri: str):
         if not self._require_devices(devices, "content_query"):
@@ -211,7 +213,7 @@ class ADBFileMixin(_ADBControllerBase):
                 "content_query", False, f"Content query failed on {ip}: {result.get('error')}"
             )
 
-    # -- Quick Settings --
+    # 快捷设置
 
     def quick_setting(self, devices: list, action: str):
         if not self._require_devices(devices, "quick_setting"):
@@ -230,7 +232,7 @@ class ADBFileMixin(_ADBControllerBase):
                 "quick_setting", False, f"Quick setting failed on {ip}: {result.get('error')}"
             )
 
-    # ── PM Features ──
+    # Package Manager 特性查询
 
     def pm_features(self, devices: list):
         if not self._require_devices(devices, "pm_features"):

@@ -1,3 +1,5 @@
+"""提供设备输入事件、Shell 命令和系统设置控制能力。"""
+
 from __future__ import annotations
 
 from controllers._base import _ADBControllerBase
@@ -7,9 +9,9 @@ from models.adb_app import ADBApp
 
 
 class ADBInputMixin(_ADBControllerBase):
-    """Input events, shell commands, system settings."""
+    """协调设备输入事件、Shell 命令和 Android 系统设置操作。"""
 
-    # ── Provided by _ADBControllerBase ──
+    # 以下属性由 _ADBControllerBase 提供。
     advanced_model: ADBAdvanced
     app_model: ADBApp
     signals: ADBControllerSignals
@@ -26,7 +28,7 @@ class ADBInputMixin(_ADBControllerBase):
         "settings_put": "_process_settings_put_result",
     }
 
-    # -- Input Events --
+    # 输入事件
 
     def input_tap(self, devices: list, x: int, y: int):
         if not self._require_devices(devices, "input_tap"):
@@ -105,7 +107,7 @@ class ADBInputMixin(_ADBControllerBase):
                 "input_text", False, f"Failed to input text on {device_ip}: {error_msg}"
             )
 
-    # ── Shell ──
+    # Shell 命令
 
     def run_shell_command(self, devices: list, command: str):
         if not self._require_devices(devices, "shell_command"):
@@ -128,7 +130,7 @@ class ADBInputMixin(_ADBControllerBase):
                 "shell_command", False, f"Shell failed on {ip}: {result.get('error')}"
             )
 
-    # -- System Settings --
+    # 系统设置
 
     def settings_list(self, devices: list, namespace: str = "system"):
         if not self._require_devices(devices, "settings_list"):

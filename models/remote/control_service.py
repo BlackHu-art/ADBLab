@@ -1,4 +1,4 @@
-"""Headless remote-control operations for ADBLab."""
+"""封装不依赖界面的 Remote 设备控制操作。"""
 
 from time import monotonic
 
@@ -22,7 +22,7 @@ REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 class RemoteControlService:
-    """Device control primitives independent from the RemotePanel UI."""
+    """提供与 RemotePanel 解耦的设备控制原语。"""
 
     def __init__(
         self,
@@ -61,6 +61,7 @@ class RemoteControlService:
         return cached[0] if cached else None
 
     def send_keyevent(self, device_id: str, key_name: str):
+        """把逻辑按键名转换为 Android keyevent 并发送到指定设备。"""
         code = KEYCODES.get(key_name, key_name)
         if not code:
             return None
@@ -83,6 +84,7 @@ class RemoteControlService:
         y2: int | float,
         duration_ms: int | None = None,
     ):
+        """构造并发送 Android input swipe 命令。"""
         parts = [int(x1), int(y1), int(x2), int(y2)]
         if duration_ms is not None:
             parts.append(int(duration_ms))
@@ -114,6 +116,7 @@ class RemoteControlService:
         return self.adb.shell("settings put system accelerometer_rotation 1", device_id=device_id)
 
     def _set_rotation(self, device_id: str, rotation: int):
+        """关闭自动旋转并写入方向；主键失败时回退兼容设置键。"""
         self.clear_dimensions(device_id)
         self.adb.shell("settings put system accelerometer_rotation 0", device_id=device_id)
         result = self.adb.shell(

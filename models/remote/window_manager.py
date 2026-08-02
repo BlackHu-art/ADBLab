@@ -1,4 +1,4 @@
-"""Best-effort scrcpy window focusing helpers."""
+"""提供尽力而为的 scrcpy 外部窗口聚焦能力。"""
 
 from __future__ import annotations
 
@@ -11,12 +11,13 @@ SW_RESTORE = 9
 
 
 class RemoteWindowManager:
-    """Find and focus the external scrcpy window by title."""
+    """按窗口标题查找并聚焦外部 scrcpy 窗口。"""
 
     def __init__(self, poll_interval_seconds: float = 0.1):
         self.poll_interval_seconds = poll_interval_seconds
 
     def focus(self, title: str, timeout_seconds: float = 2.5) -> bool:
+        """在 Windows 上轮询标题并尝试聚焦，其他平台安全返回 False。"""
         if not title or sys.platform != "win32":
             return False
         deadline = time.monotonic() + timeout_seconds

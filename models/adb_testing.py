@@ -1,7 +1,6 @@
-"""
-Testing and diagnostics: monkey test, bugreport, screenshot, logs, ANR pull.
+"""提供 Monkey、Bugreport、截图、设备日志和 ANR 拉取等测试诊断能力。
 
-Imports only from adb_model (core) — no circular dependencies.
+本模块只依赖核心 adb_model，避免模型之间形成循环依赖。
 """
 
 import os
@@ -23,7 +22,7 @@ from utils.resource_path import resource_path
 
 
 class ADBTesting(ADBModelCore):
-    """Testing tools: monkey, bugreport, screenshot, log retrieval, ANR pull."""
+    """封装 Monkey、Bugreport、截图、日志获取和 ANR 拉取操作。"""
 
     def __init__(self):
         super().__init__()
@@ -43,7 +42,60 @@ class ADBTesting(ADBModelCore):
             return result.get("package_name", "")
         return ""
 
-    # ── Screenshot ────────────────────────────────────────────────────
+    @staticmethod
+    def _command_timed_out(command_result) -> bool:
+        if bool(getattr(command_result, "timed_out", False)):
+            return True
+        error = str(getattr(command_result, "error", "") or "").strip().lower()
+        return error.startswith("timeout(") or "timed out" in error
+
+    def _probe_current_package(self, device_ip: str) -> dict:
+        """探测前台包名；超时、断连或解析失败时按失败关闭策略返回。"""
+        try:
+            package_name = self._get_current_package(device_ip)
+        except subprocess.TimeoutExpired as exc:
+            return {
+                "success": False,
+                "package_name": "",
+                "timed_out": True,
+                "error": str(exc),
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "package_name": "",
+                "timed_out": False,
+                "error": str(exc),
+            }
+
+        if package_name:
+            return {
+                "success": True,
+                "package_name": package_name,
+                "timed_out": False,
+                "error": "",
+            }
+
+        # 当前前台包名接口只返回解析后的字典；额外探测一次连接，确保监控决策仍包含
+        # CommandRunner 的真实成功或超时状态。
+        connectivity = CommandRunner.run(
+            ["adb", "-s", device_ip, "shell", "echo", "ok"],
+            timeout=5,
+        )
+        timed_out = self._command_timed_out(connectivity)
+        error = str(getattr(connectivity, "error", "") or "").strip()
+        if getattr(connectivity, "success", False):
+            error = "No foreground package detected"
+        elif not error:
+            error = "Foreground package probe failed"
+        return {
+            "success": False,
+            "package_name": "",
+            "timed_out": timed_out,
+            "error": error,
+        }
+
+    # 截图
 
     @async_command
     def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
@@ -77,7 +129,7 @@ class ADBTesting(ADBModelCore):
         except OSError:
             return False
 
-    # ── Device logs ───────────────────────────────────────────────────
+    # 设备日志
 
     @async_command
     def retrieve_device_logs_async(self, device_ip: str, log_path: str) -> dict:
@@ -98,7 +150,7 @@ class ADBTesting(ADBModelCore):
             return {"success": False, "device_ip": device_ip, "error": r["error"]}
         return {"success": True, "device_ip": device_ip, "output": r["output"]}
 
-    # ── Monkey test ───────────────────────────────────────────────────
+    # Monkey 测试
 
     @async_command
     def run_monkey_test_async(
@@ -180,7 +232,7 @@ class ADBTesting(ADBModelCore):
             consecutive_off = 0
             recovery_count = 0
             interval = 60
-            timeouts = 0
+            probe_failures = 0
 
             while monkey_proc.poll() is None:
                 if device_ip in self._aborted_devices:
@@ -188,9 +240,29 @@ class ADBTesting(ADBModelCore):
                     log("Monkey test aborted by user.")
                     result["error"] = "Aborted by user"
                     return result
-                try:
-                    current_app = self._get_current_package(device_ip)
+                probe = self._probe_current_package(device_ip)
+                if not probe["success"]:
+                    probe_failures += 1
+                    failure_kind = "timed out" if probe["timed_out"] else "failed"
+                    log(
+                        f"Foreground app probe {failure_kind} "
+                        f"({probe_failures}/3): {probe['error']}"
+                    )
+                    if probe_failures >= 3:
+                        if probe["timed_out"]:
+                            result["error"] = "Device appears disconnected"
+                        else:
+                            result["error"] = (
+                                "Foreground app probe failed 3 consecutive times: "
+                                f"{probe['error']}"
+                            )
+                        break
+                    time.sleep(interval)
+                    continue
 
+                probe_failures = 0
+                current_app = probe["package_name"]
+                try:
                     if current_app and current_app != package_name:
                         consecutive_off += 1
                         log(f"App off-target (current={current_app}, streak={consecutive_off})")
@@ -199,7 +271,7 @@ class ADBTesting(ADBModelCore):
                             log(f"App back on target ({package_name})")
                         consecutive_off = 0
 
-                    # ── 分层恢复：连续离靶 2 次触发 ──
+    # 分层恢复策略在连续两次偏离目标包时触发。
                     if consecutive_off >= 2:
                         recovery_count += 1
                         if recovery_count > 5:
@@ -264,12 +336,11 @@ class ADBTesting(ADBModelCore):
 
                         consecutive_off = 0
 
-                    timeouts = 0
                     time.sleep(interval)
                 except subprocess.TimeoutExpired:
-                    timeouts += 1
-                    log(f"dumpsys window timed out ({timeouts}/3)")
-                    if timeouts >= 3:
+                    probe_failures += 1
+                    log(f"dumpsys window timed out ({probe_failures}/3)")
+                    if probe_failures >= 3:
                         log("Device appears disconnected, stopping monitor")
                         result["error"] = "Device appears disconnected"
                         break
@@ -344,7 +415,7 @@ class ADBTesting(ADBModelCore):
             "success": success, "message": message, "already_stopped": already_stopped,
         }
 
-    # ── Bugreport ─────────────────────────────────────────────────────
+    # Bugreport
 
     @async_command
     def capture_bugreport_async(
@@ -457,7 +528,7 @@ class ADBTesting(ADBModelCore):
                 log(f"Conversion failed: {r.error}")
             raise RuntimeError(r.error)
 
-    # ── ANR pull ──────────────────────────────────────────────────────
+    # ANR 文件拉取
 
     @async_command
     def pull_anr_files_async(

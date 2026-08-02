@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
- @author      :  Frankie
- @time        :  $DATA  $TIME
-"""
+"""消费各性能采集队列，并把统一时间轴的数据写入 CSV。"""
 import csv
 import os
 import threading
@@ -22,6 +19,8 @@ from mobileperf.android.globaldata import RuntimeData
 
 
 class DataWorker(object):
+    """汇总各采集器数据，并负责性能数据的内存聚合与文件落盘。"""
+
     def __init__(self, queuedic):
         self.queuedic = queuedic
         self.fps_queue = self.get_fps_queue()
@@ -92,15 +91,12 @@ class DataWorker(object):
             raise RuntimeError('no %s queue exist,please creat' % key)
 
     def _handle_data_thread(self):
-        '''
-        璇ユ柟娉曞湪鐙珛绾跨▼涓繍琛岋紝鏄竴涓秷璐硅€咃紝璐熻矗澶勭悊鎵€鏈夌殑鐢熶骇鑰呮悳闆嗙殑鏁版嵁
-        :return:
-        '''
+        """在独立线程中消费所有采集器队列，并按同一时间戳聚合数据。"""
         time.sleep(1)
         while not self._stop_event.is_set():
             try:
-                # 娑堟伅闃熷垪浼氫竴鐩撮樆濉炵洿鍒?鍙栧埌鏁版嵁涓烘锛屽鏋滅敓浜ц€呯殑绾跨▼鍙戠敓浜嗗紓甯革紝鍒欓渶瑕佺敓浜ц€呯嚎绋嬩細寰€瀵瑰簲鐨剄ueue鍙戝嚭涓€涓猼ask_done浠ョ粨鏉熼槦鍒?
-                # power 鏁版嵁澶勭悊
+                # 电量队列作为每轮聚合的同步起点，其他队列使用超时避免永久等待。
+                # 处理电量数据。
                 self.perf_data = {"task_id": "", "activity": [], 'launch_time': [], 'cpu': [], "mem": [],
                                   'traffic': [], "fluency": [], 'power': [], "fd": [], "thread": []}
                 try:
@@ -113,49 +109,42 @@ class DataWorker(object):
                 except queue.Empty:
                     logger.debug("dataworker power queue Empty")
 
-                # traffic鏁版嵁鐨勫鐞?
+                # 处理流量数据。
                 try:
                     traffic_data = self.traffic_queue.get(timeout=2)
-                    #                     logger.debug(traffic_data)
                     self._get_traffic_save(traffic_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker traffic queue Empty")
 
-                #fps鏁版嵁鐨勫鐞?
+                # 处理帧率数据。
                 try:
                     fps_data = self.fps_queue.get(timeout=2)
                     self._get_fps_save(fps_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker fps queue Empty")
 
-                #cpu鏁版嵁澶勭悊
+                # 处理 CPU 数据。
                 try:
                     cpu_data = self.cpu_queue.get(timeout=2)
-                    #                     logger.debug(cpu_data)
                     self._get_cpu_save(cpu_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker cpu queue Empty")
 
-                #mem 鏁版嵁澶勭悊
+                # 处理内存数据。
                 try:
                     mem_data = self.mem_queue.get(timeout=2)
-                    #                     logger.debug(mem_data)
                     self._get_mem_save(mem_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker mem queue Empty")
 
                 try:
                     fd_data = self.fd_queue.get(timeout=2)
-                    # logger.debug("fd_data")
-                    # logger.debug(fd_data)
                     self._get_fd_save(fd_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker fd_data queue Empty")
 
                 try:
                     thread_data = self.thread_queue.get(timeout=2)
-                    # logger.debug("thread_data")
-                    # logger.debug(thread_data)
                     self._get_thread_save(thread_data, self.timestamp)
                 except queue.Empty:
                     logger.debug("dataworker thread queue Empty")
@@ -169,12 +158,8 @@ class DataWorker(object):
             except Exception as e:
                 logger.error(e)
                 s = traceback.format_exc()
-                logger.debug(s)  # 灏嗗爢鏍堜俊鎭墦鍗板埌log涓?
-            #logger.info("dataworker interval: " + str(self.interval))
-            #               灏佽鍚庢渶鍚庣粺涓€鏀惧叆 perf_queue涓?
+                logger.debug(s)  # 堆栈仅进入开发诊断通道。
             logger.debug("perf_str put in queue:" + json.dumps(self.perf_data))
-            # 娌℃湁鍚姩涓婃姤绾跨▼锛岄伩鍏嶆棤闄愬闀?
-            # perf_queue.put(self.perf_data)
             time.sleep(self.interval)
 
     def _get_fps_save(self, fps_data, timestamp):
@@ -183,10 +168,7 @@ class DataWorker(object):
             logger.debug("fps_filename: " + str(self.fps_filename))
         else:
             try:
-                '''0            1           2    3
-                fps_data: ("datetime", "activity","fps", "jank")
-                瀵瑰簲鐨勫€兼槸:[formatter(collection_time), activity,fps,jank],
-              '''
+                # 列表字段依次为采集时间、Activity、FPS 和卡顿数。
                 fps_data[0] = timestamp
                 dic = {"time": fps_data[0] * 1000, "activity": fps_data[1], "fps": fps_data[2], "jank": fps_data[3]}
                 self.perf_data['fluency'].append(dic)
@@ -201,7 +183,7 @@ class DataWorker(object):
 
             except Exception as e:
                 s = traceback.format_exc()
-                logger.error(s)  # 灏嗗爢鏍堜俊鎭墦鍗板埌log涓?
+                logger.error(s)  # 记录落盘失败时的完整堆栈。
                 logger.error("fps save error")
 
     def _get_cpu_save(self, cpu_data, timestamp):
@@ -210,12 +192,7 @@ class DataWorker(object):
             logger.debug("cpu_filename: " + str(self.cpu_filename))
         else:
             try:
-                '''              0            1           2          3          4                5        6       7        8            9
-                cpu_data: ("datetime", " cpu_rate%", "user%", "system%", "all_jiffies","packagename", "pid", "uid", "pck_jiffies", "pid_cpu%")
-                瀵瑰簲鐨勫€兼槸:[collection_time, cpu_info.cpu_rate, cpu_info.user_rate, cpu_info.system_rate, cpu_info.cpu_jiffs, cpu_pck_info.pckagename,
-                               cpu_pck_info.pid, cpu_pck_info.uid,cpu_pck_info.p_cpu_jiffs, cpu_pck_info.p_cpu_rate],
-
-              '''
+                # CPU 列表包含总占用、系统占用、进程标识及进程占用等固定字段。
                 cpu_data[0] = timestamp
                 dic = {"time": cpu_data[0] * 1000, "total": cpu_data[1], "cpu_jiffies": cpu_data[4],
                        "user": cpu_data[2], "sys": cpu_data[3],
@@ -230,7 +207,6 @@ class DataWorker(object):
                     tmp_dic["time"] = cpu_data[0]
                     logger.debug(tmp_dic)
                     writer_p = csv.writer(writer, lineterminator='\n')
-                    # logger.debug("------------------ dataworker          cpudate: " + str(cpu_data))
                     writer_p.writerow(cpu_data)
 
             except Exception as e:
@@ -244,11 +220,7 @@ class DataWorker(object):
             logger.debug("mem_filename: " + str(self.mem_filename))
         else:
             try:
-                '''              0           1                     2              3           4        5               6
-               mem_data: ("datatime", "total_ram(KB)", "free_ram(KB)", "pckagename", "pid", "pid_pss(KB)", "pid_alloc_heap(KB)")
-               瀵瑰簲鐨勫€兼槸锛歔formatTimeStamp(collection_time), cpu_info.cpu_rate, cpu_info.user_rate, cpu_info.system_rate, cpu_info.cpu_jiffs, cpu_pck_info.pckagename,
-                               cpu_pck_info.pid, cpu_pck_info.uid,cpu_pck_info.p_cpu_jiffs, cpu_pck_info.p_cpu_rate]
-                '''
+                # 内存列表包含总量、空闲量、进程标识、PSS 和堆内存等固定字段。
                 mem_data[0] = timestamp
                 dic = {"time": mem_data[0] * 1000, "total": mem_data[1],
                        "free": mem_data[2],
@@ -265,7 +237,6 @@ class DataWorker(object):
                         tmp_dic["time"] = mem_data[0]
                         logger.debug(tmp_dic)
                     writer_p = csv.writer(writer, lineterminator='\n')
-                    # logger.debug("------------------ dataworker          memdata: " + str(mem_data))
                     writer_p.writerow(mem_data)
 
             except Exception as e:
@@ -279,10 +250,7 @@ class DataWorker(object):
             logger.debug("fd_file: " + str(self.fd_file))
         else:
             try:
-                '''              0           1        2        3
-               fd_data: ("datatime", "pckagename", "pid", "fd num")
-               瀵瑰簲鐨勫€兼槸锛歔formatTimeStamp(collection_time), packagename, pid,fd_num]
-                '''
+                # 文件描述符列表依次包含采集时间、包名、PID 和数量。
                 fd_data[0] = timestamp
                 dic = {"time": fd_data[0] * 1000, "package": fd_data[1],
                        "pid": fd_data[2],
@@ -311,10 +279,7 @@ class DataWorker(object):
             logger.debug("thread_file: " + str(self.thread_file))
         else:
             try:
-                '''              0           1        2        3
-               thread_data: ("datatime", "pckagename", "pid", "thread num")
-               瀵瑰簲鐨勫€兼槸锛歔formatTimeStamp(collection_time), packagename, pid,thread_num]
-                '''
+                # 线程列表依次包含采集时间、包名、PID 和线程数。
                 thread_data[0] = timestamp
                 dic = {"time": thread_data[0] * 1000, "package": thread_data[1],
                        "pid": thread_data[2],
@@ -343,11 +308,7 @@ class DataWorker(object):
             logger.debug("dataworker power_filename: " + str(self.power_filename))
         else:
             try:
-                '''                 0         1      2             3              4
-                power_data: ("datetime","level","voltage(V)","tempreture(C)","current(mA)")
-                example: [collection_time, device_power_info.level, device_power_info.voltage,
-                                       device_power_info.temp, device_power_info.current]
-                '''
+                # 电量列表依次包含采集时间、电量、电压、温度和电流。
                 power_data[0] = timestamp
                 dic = {"time": power_data[0] * 1000, "level": power_data[1],
                        "vol": power_data[2], "temp": power_data[3], "current": power_data[4]}
@@ -361,7 +322,6 @@ class DataWorker(object):
                         tmp_dic["time"] = power_data[0]
                         logger.debug(tmp_dic)
                     writer_p = csv.writer(writer, lineterminator='\n')
-                    # logger.debug("------------------ dataworker          power data: " + str(power_data))
                     writer_p.writerow(power_data)
             except Exception as e:
                 logger.error('power save error')
@@ -374,13 +334,7 @@ class DataWorker(object):
             logger.debug("dataworker traffic_filename: " + str(self.traffic_filename))
         else:
             try:
-                '''                    0        1            2       3                   4                5          6           7        8           9         10      11
-                traffic_data: ("datetime","packagename","uid","uid_total(KB)", "uid_total_packets", "rx(KB)", "rx_packets","tx(KB)","tx_packets","fg(KB)","bg(KB)","lo(KB)")
-                example锛?[collection_time, traffic_snapshot.packagename, traffic_snapshot.uid,TrafficUtils.byte2kb(traffic_snapshot.total_uid_bytes), traffic_snapshot.total_uid_packets,
-                                      TrafficUtils.byte2kb(traffic_snapshot.rx_uid_bytes),traffic_snapshot.rx_uid_packets, TrafficUtils.byte2kb(traffic_snapshot.tx_uid_bytes),
-                                          traffic_snapshot.tx_uid_packets, TrafficUtils.byte2kb(traffic_snapshot.fg_bytes), TrafficUtils.byte2kb(traffic_snapshot.bg_bytes),
-                                           TrafficUtils.byte2kb(traffic_snapshot.lo_uid_bytes)]
-                '''
+                # 流量列表包含 UID 总量、收发包、前后台和回环流量等固定字段。
                 traffic_data[0] = timestamp
                 dic = {"time": traffic_data[0] * 1000,
                        "total": traffic_data[3],
@@ -402,7 +356,6 @@ class DataWorker(object):
                         tmp_dic["time"] = traffic_data[0]
                         logger.debug(tmp_dic)
                     writer_p = csv.writer(writer, lineterminator='\n')
-                    # logger.debug("------------------ dataworker          trafficdata: " + str(traffic_data))
                     writer_p.writerow(traffic_data)
             except Exception as e:
                 logger.error("traffic save error")

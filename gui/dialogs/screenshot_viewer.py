@@ -1,4 +1,4 @@
-"""Screenshot viewer and lightweight screenshot manager."""
+"""提供截图浏览、缩放、复制和文件管理对话框。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QDialog,
-    QFileDialog,
     QFrame,
     QGraphicsPixmapItem,
     QGraphicsScene,
@@ -38,9 +37,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.styles import BaseStyles, get_default_font
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.styles.typography import FontRole
 from models.base.process_runner import ProcessRunner
 
 MIN_ZOOM = 0.10
@@ -49,7 +49,7 @@ ZOOM_STEP = 0.10
 
 
 class ScreenshotGraphicsView(QGraphicsView):
-    """Graphics view with viewer-owned zoom shortcuts."""
+    """把滚轮和双击缩放操作委托给所属截图查看器。"""
 
     def __init__(self, owner: "ScreenshotViewer"):
         super().__init__()
@@ -77,7 +77,7 @@ class ScreenshotGraphicsView(QGraphicsView):
 
 
 class ScreenshotViewer(QDialog):
-    """View screenshots, browse captured batches, and manage the current file."""
+    """浏览截图批次，并管理当前图片的显示和文件操作。"""
 
     def __init__(self, image_paths: list, current_index: int = 0, parent=None):
         super().__init__(parent)
@@ -105,19 +105,18 @@ class ScreenshotViewer(QDialog):
         self._update_nav_visibility()
 
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
 
     def _init_window(self):
         self.setWindowTitle("Screenshot Viewer")
         self.setWindowIcon(get_themed_icon(self._window_icon_name))
-        self.setFont(get_default_font())
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.setMinimumSize(760, 520)
         self.resize(1100, 760)
 
     def _init_shortcuts(self):
         QShortcut(QKeySequence("Esc"), self, self.close)
         QShortcut(QKeySequence("Ctrl+C"), self, self.copy_to_clipboard)
-        QShortcut(QKeySequence("Ctrl+Shift+C"), self, self.copy_path_to_clipboard)
-        QShortcut(QKeySequence("Ctrl+S"), self, self.save_as)
         QShortcut(QKeySequence("Ctrl+="), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
@@ -135,14 +134,20 @@ class ScreenshotViewer(QDialog):
             BaseStyles.theme_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):
             pass
+        try:
+            BaseStyles.fonts_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
         super().closeEvent(event)
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
-        self.setFont(get_default_font())
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        small_font = BaseStyles.font_for_role(FontRole.UI_SMALL)
+        mono_font = BaseStyles.font_for_role(FontRole.MONO)
+        self.setFont(ui_font)
         c = self._theme_color
         r = BaseStyles
-        small_size = max(10, BaseStyles.DEFAULT_FONT_SIZE - 1)
 
         self.setStyleSheet(
             BaseStyles.SCROLLBAR_STYLE()
@@ -150,8 +155,6 @@ class ScreenshotViewer(QDialog):
             QDialog {{
                 background-color: {c('WINDOW_BG')};
                 color: {c('TEXT_PRIMARY')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QFrame#canvasFrame {{
                 background-color: {c('INPUT_BG')};
@@ -195,11 +198,12 @@ class ScreenshotViewer(QDialog):
                 background: transparent;
             }}
             QLabel#metaLabel,
-            QLabel#pathLabel,
             QLabel#navLabel,
             QLabel#zoomLabel {{
                 color: {c('TEXT_SECONDARY')};
-                font-size: {small_size}px;
+            }}
+            QLabel#pathLabel {{
+                color: {c('TEXT_SECONDARY')};
             }}
             QPushButton {{
                 background-color: {c('BUTTON_BG')};
@@ -207,7 +211,6 @@ class ScreenshotViewer(QDialog):
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {r.RADIUS_SM}px;
                 padding: 0;
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QPushButton:hover {{
                 background-color: {c('BUTTON_HOVER')};
@@ -233,8 +236,21 @@ class ScreenshotViewer(QDialog):
             }}
             """
         )
+        self._path_label.setFont(mono_font)
+        for label in (self._info_label, self._nav_label, self._zoom_label):
+            label.setFont(small_font)
+        self._nav_label.setMinimumWidth(52)
+        self._nav_label.setMinimumWidth(max(52, self._nav_label.sizeHint().width()))
+        self._zoom_label.setMinimumWidth(56)
+        self._zoom_label.setMinimumWidth(max(56, self._zoom_label.sizeHint().width()))
         self._refresh_button_icons()
         if hasattr(self, "_placeholder_text"):
+            if self._placeholder_text is not None:
+                self._placeholder_text.setFont(
+                    BaseStyles.font_for_role(
+                        FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
+                    )
+                )
             self._refresh_placeholder_color()
 
     def _init_ui(self):
@@ -316,7 +332,7 @@ class ScreenshotViewer(QDialog):
         self._nav_label = QLabel("0 / 0")
         self._nav_label.setObjectName("navLabel")
         self._nav_label.setAlignment(Qt.AlignCenter)
-        self._nav_label.setFixedWidth(52)
+        self._nav_label.setMinimumWidth(52)
         self._nav_label.setToolTip("Current screenshot index")
         layout.addWidget(self._nav_label)
 
@@ -331,7 +347,7 @@ class ScreenshotViewer(QDialog):
         self._zoom_label = QLabel("Fit")
         self._zoom_label.setObjectName("zoomLabel")
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setFixedWidth(56)
+        self._zoom_label.setMinimumWidth(56)
         self._zoom_label.setToolTip("Current zoom")
         layout.addWidget(self._zoom_label)
 
@@ -350,14 +366,6 @@ class ScreenshotViewer(QDialog):
         self._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
         self._copy_btn.clicked.connect(self.copy_to_clipboard)
         layout.addWidget(self._copy_btn)
-
-        self._copy_path_btn = self._tool_button("link.svg", "Copy file path (Ctrl+Shift+C)")
-        self._copy_path_btn.clicked.connect(self.copy_path_to_clipboard)
-        layout.addWidget(self._copy_path_btn)
-
-        self._save_btn = self._tool_button("floppy-disk.svg", "Save as (Ctrl+S)")
-        self._save_btn.clicked.connect(self.save_as)
-        layout.addWidget(self._save_btn)
 
         self._folder_btn = self._tool_button("folder-open.svg", "Open file location")
         self._folder_btn.clicked.connect(self._open_file_location)
@@ -435,7 +443,11 @@ class ScreenshotViewer(QDialog):
         self._original_pixmap = None
         self._pixmap_item = None
         self._placeholder_text = self._scene.addText(text)
-        self._placeholder_text.setFont(BaseStyles.get_default_font(max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)))
+        self._placeholder_text.setFont(
+            BaseStyles.font_for_role(
+                FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
+            )
+        )
         self._scene.setSceneRect(QRectF(0, 0, 420, 240))
         bounds = self._placeholder_text.boundingRect()
         self._placeholder_text.setPos((420 - bounds.width()) / 2, (240 - bounds.height()) / 2)
@@ -614,8 +626,6 @@ class ScreenshotViewer(QDialog):
             self._fit_btn,
             self._actual_btn,
             self._copy_btn,
-            self._copy_path_btn,
-            self._save_btn,
             self._folder_btn,
             self._delete_btn,
         ):
@@ -629,31 +639,6 @@ class ScreenshotViewer(QDialog):
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
             self._flash_status("Image copied")
-
-    def copy_path_to_clipboard(self):
-        path = self._current_path()
-        if not path:
-            return
-        QApplication.clipboard().setText(os.path.abspath(path))
-        self._flash_status("Path copied")
-
-    def save_as(self):
-        path = self._current_path()
-        if not path:
-            return
-        default_name = os.path.basename(path)
-        dest, _ = QFileDialog.getSaveFileName(
-            self, "Save Screenshot As", default_name,
-            "PNG Images (*.png);;All Files (*)",
-        )
-        if not dest:
-            return
-        try:
-            with open(path, "rb") as src, open(dest, "wb") as dst:
-                dst.write(src.read())
-            self._flash_status("Saved")
-        except OSError as exc:
-            QMessageBox.warning(self, "Save Failed", str(exc))
 
     def _flash_status(self, text: str):
         previous = self._info_label.text()
@@ -677,28 +662,18 @@ class ScreenshotViewer(QDialog):
         path = self._current_path()
         if not path or not os.path.exists(path):
             return
-        answer = QMessageBox.question(
-            self,
-            "Delete Screenshot",
-            f"Delete this screenshot?\n\n{os.path.basename(path)}",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if answer != QMessageBox.Yes:
-            return
         try:
             os.remove(path)
         except OSError as exc:
             QMessageBox.warning(self, "Delete Failed", str(exc))
             return
         del self._image_paths[self._current_idx]
+        if not self._image_paths:
+            self.close()
+            return
         self._rebuild_thumbnails()
-        if self._image_paths:
-            self._current_idx = min(self._current_idx, len(self._image_paths) - 1)
-            self._navigate_to(self._current_idx)
-        else:
-            self._current_idx = 0
-            self._show_placeholder("No screenshots remaining")
+        self._current_idx = min(self._current_idx, len(self._image_paths) - 1)
+        self._navigate_to(self._current_idx)
 
     def _on_context_menu(self, pos):
         path = self._current_path()
@@ -716,14 +691,6 @@ class ScreenshotViewer(QDialog):
         copy_action = menu.addAction("Copy Image\tCtrl+C")
         copy_action.triggered.connect(self.copy_to_clipboard)
         copy_action.setEnabled(has_file)
-
-        copy_path_action = menu.addAction("Copy File Path\tCtrl+Shift+C")
-        copy_path_action.triggered.connect(self.copy_path_to_clipboard)
-        copy_path_action.setEnabled(has_file)
-
-        save_action = menu.addAction("Save As...\tCtrl+S")
-        save_action.triggered.connect(self.save_as)
-        save_action.setEnabled(has_file)
 
         menu.addSeparator()
 

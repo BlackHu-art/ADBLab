@@ -1,9 +1,10 @@
-"""Tab base class — shared UI factory methods and device/package accessors."""
+"""提供标签页共享的控件工厂和设备、包名访问接口。"""
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -13,9 +14,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
+from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
 
 
 class BasePanel(QWidget):
@@ -24,8 +26,9 @@ class BasePanel(QWidget):
     def __init__(self, panel, parent=None):
         super().__init__(parent)
         self.panel = panel
+        self._responsive_rows = []
 
-    # ── Shared properties快捷访问 ──
+    # ── 共享属性快捷访问 ────────────────────────────────────────────────
 
     @property
     def signals(self):
@@ -59,22 +62,27 @@ class BasePanel(QWidget):
         return self.panel._font_tab
 
     def _sh(self, cmd: str):
-        """Emit a shell command for the selected devices."""
+        """为当前选中设备发出 Shell 命令请求。"""
         self.signals.shell_command_requested.emit(self.selected_devices, cmd)
 
-    # ── UI 工厂方法 ──
+    # ── 界面控件工厂 ────────────────────────────────────────────────────
 
     def _g(self, t):
         """创建统一样式的 QGroupBox。"""
         g = QGroupBox(t)
         g.setFont(self._font_base)
+        g.setProperty("fontRole", FontRole.UI.value)
         g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         return g
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
+        role = FontRole.UI_SMALL if small else FontRole.UI
         label = QLabel(text)
-        label.setFont(self._font_sm if small else self._font_base)
+        label.setFont(
+            BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base
+        )
+        label.setProperty("fontRole", role.value)
         label.setWordWrap(False)
         if align is not None:
             label.setAlignment(align)
@@ -88,16 +96,18 @@ class BasePanel(QWidget):
     def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
         cb = QCheckBox(text)
         cb.setFont(self._font_base)
+        cb.setProperty("fontRole", FontRole.UI.value)
         if tooltip:
             cb.setToolTip(tooltip)
         return cb
 
     def _b(self, t, i, variant="", tooltip=None):
-        """Create icon button. variant: '' (default), 'accent', 'danger'."""
+        """创建图标按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setToolTip(tooltip or t)
@@ -108,11 +118,12 @@ class BasePanel(QWidget):
         return b
 
     def _db(self, t, i, tooltip=None):
-        """Create double-click icon button."""
+        """创建只在双击时触发的图标按钮。"""
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setToolTip(tooltip or t)
@@ -121,11 +132,12 @@ class BasePanel(QWidget):
         return b
 
     def _qb(self, t, variant="", tooltip=None):
-        """Create text-only button. variant: '' (default), 'accent', 'danger'."""
+        """创建纯文本按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setToolTip(tooltip or t)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
@@ -150,10 +162,9 @@ class BasePanel(QWidget):
         self._refresh_button_style(button)
 
     def _row(self, *items, spacing=4):
-        """Create a compact horizontal row.
+        """创建紧凑的水平控件行。
 
-        Each item can be a widget or ``(widget, stretch)`` to keep repeated
-        panel rows consistent without retyping QHBoxLayout setup everywhere.
+        每个参数可以是控件或 ``(widget, stretch)``，用于统一重复面板行的布局规则。
         """
         row = QHBoxLayout()
         row.setSpacing(spacing)
@@ -166,15 +177,72 @@ class BasePanel(QWidget):
         return row
 
     def _add_row(self, layout, *items, spacing=4):
-        """Create a row and append it to an existing vertical/group layout."""
+        """创建水平控件行并追加到已有的垂直或分组布局。"""
         row = self._row(*items, spacing=spacing)
         layout.addLayout(row)
         return row
+
+    def _add_responsive_row(
+        self,
+        layout,
+        *items,
+        spacing=4,
+        compact_columns=2,
+        medium_columns=2,
+        wide_columns=None,
+    ):
+        """创建只重排既有控件的响应式网格行。"""
+
+        widgets = tuple(item[0] if isinstance(item, tuple) else item for item in items)
+        stretches = tuple(item[1] if isinstance(item, tuple) else 0 for item in items)
+        row = QGridLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setHorizontalSpacing(spacing)
+        row.setVerticalSpacing(spacing)
+        spec = {
+            "layout": row,
+            "widgets": widgets,
+            "stretches": stretches,
+            "compact_columns": compact_columns,
+            "medium_columns": medium_columns,
+            "wide_columns": wide_columns or len(widgets),
+            "mode": None,
+        }
+        self._responsive_rows.append(spec)
+        layout.addLayout(row)
+        self._reflow_responsive_row(spec, 10_000)
+        return row
+
+    @staticmethod
+    def _reflow_responsive_row(spec, width: int):
+        columns = responsive_column_count(
+            width,
+            compact_columns=spec["compact_columns"],
+            medium_columns=spec["medium_columns"],
+            wide_columns=spec["wide_columns"],
+        )
+        columns = min(columns, max(1, len(spec["widgets"])))
+        if spec["mode"] == columns:
+            return
+        spec["mode"] = columns
+        reflow_widgets(
+            spec["layout"],
+            spec["widgets"],
+            columns,
+            widget_stretches=spec["stretches"],
+        )
+
+    def apply_responsive_width(self, width: int) -> None:
+        """仅在跨越布局断点时重排本面板登记的响应式行。"""
+
+        for spec in self._responsive_rows:
+            self._reflow_responsive_row(spec, width)
 
     def _in(self, p, w=0):
         """创建统一样式的输入框。"""
         i = QLineEdit()
         i.setFont(self._font_sm)
+        i.setProperty("fontRole", FontRole.UI.value)
         i.setPlaceholderText(p)
         i.setMinimumHeight(26)
         i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -182,19 +250,26 @@ class BasePanel(QWidget):
             i.setMaximumWidth(w)
         return i
 
-    def _combo(self, items=None, font=None):
+    def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建统一样式的下拉框。"""
+        role = FontRole(font_role)
+        role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
         c = QComboBox()
-        c.setFont(font or self._font_sm)
+        c.setFont(font or role_font)
+        c.setProperty("fontRole", role.value)
         c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if items:
             c.addItems(items)
         return c
 
-    def _combo_editable(self, items=None, font=None):
-        """Create a consistently styled editable combo box."""
-        c = self._combo(items, font=font)
+    def _combo_editable(self, items=None, font=None, *, font_role=FontRole.UI):
+        """创建样式一致的可编辑下拉框。"""
+        role = FontRole(font_role)
+        role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
+        resolved_font = font or role_font
+        c = self._combo(items, font=resolved_font, font_role=role)
         c.setEditable(True)
         if c.lineEdit():
-            c.lineEdit().setFont(font or self._font_sm)
+            c.lineEdit().setFont(resolved_font)
+            c.lineEdit().setProperty("fontRole", role.value)
         return c

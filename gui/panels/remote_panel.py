@@ -1,7 +1,8 @@
-"""Screen Mirroring & Remote Control tab -- scrcpy launcher, D-Pad, quick keys."""
+"""提供 scrcpy 投屏启动、快捷按键和 Remote 输入控制面板。"""
 
 import os
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal
@@ -12,11 +13,12 @@ from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles
+from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
 from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
 class ScrcpyLaunchWorker(QThread):
-    """Runs slow scrcpy launch checks away from the UI thread."""
+    """在 GUI 线程之外执行可能阻塞的 scrcpy 启动检查。"""
 
     launch_ready = Signal(list, str)
     log_message = Signal(str, str)
@@ -49,7 +51,7 @@ class ScrcpyLaunchWorker(QThread):
 
 
 class RemotePanel(BasePanel):
-    """Screen mirroring + remote key input."""
+    """管理 scrcpy 会话、串行 Remote 输入队列和相关界面状态。"""
 
     _orphaned_launch_workers: list[ScrcpyLaunchWorker] = []
     _status_update_requested = Signal(str, object)
@@ -60,16 +62,16 @@ class RemotePanel(BasePanel):
     )
 
     _PRESETS = {
-        0: {"maxsize": "1024", "fps": "30", "bitrate": "4",  "codec": "h264", "buffer": "50"},
-        1: {"maxsize": "1280", "fps": "30", "bitrate": "8",  "codec": "h264", "buffer": "20"},
+        0: {"maxsize": "1024", "fps": "30", "bitrate": "4", "codec": "h264", "buffer": "50"},
+        1: {"maxsize": "1280", "fps": "30", "bitrate": "8", "codec": "h264", "buffer": "20"},
         2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "codec": "h265", "buffer": "50"},
-        3: {"maxsize": "720",  "fps": "24", "bitrate": "2",  "codec": "h264", "buffer": "0"},
+        3: {"maxsize": "720", "fps": "24", "bitrate": "2", "codec": "h264", "buffer": "0"},
     }
 
     _PRESET_NAMES = ["Smooth", "Balanced", "Quality", "Low Latency"]
 
     _SIZES = ["1024", "1280", "1920", "480p", "720p", "1080p", "Default"]
-    _FPS   = ["24", "30", "60", "120"]
+    _FPS = ["24", "30", "60", "120"]
     _CODECS = ["h264", "h265", "av1"]
     _BUFFERS = ["0", "10", "20", "30", "50", "100", "150", "200"]
     _BITRATES = ["2", "4", "6", "8", "12", "16", "24", "32"]
@@ -118,13 +120,15 @@ class RemotePanel(BasePanel):
         self._launch_worker = None
         self._process_key = f"scrcpy_{id(self)}"
         self._active_device = None
-        self._remote_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="adblab-remote")
+        self._remote_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="adblab-remote"
+        )
         self._remote_submitted = 0
         self._remote_completed = 0
         self._status_update_requested.connect(self._update_status)
         self._remote_queue_status_requested.connect(self._update_remote_queue_status)
 
-    # -- UI ----------------------------------------------------------------
+    # ── 界面构建 ─────────────────────────────────────────────────────────
 
     def build_ui(self) -> QWidget:
         w = QWidget()
@@ -141,23 +145,18 @@ class RemotePanel(BasePanel):
         gl = QVBoxLayout(g)
         gl.setSpacing(4)
 
-        # ── Preset + Status ──
-        r0 = QHBoxLayout()
-        r0.setSpacing(6)
-        r0.addWidget(self._label("Preset:"))
+        preset_label = self._label("Preset:")
 
         self.preset = self._combo(self._PRESET_NAMES)
         saved_preset = self._load("preset", "Smooth")
         self.preset.setCurrentText(saved_preset)
         if self.preset.currentText() != saved_preset:
-            self.preset.setCurrentIndex(-1)  # "Custom" etc. → no preset selected
-        r0.addWidget(self.preset, 1)  # 减少权重，让下拉框占用较少空间
+            self.preset.setCurrentIndex(-1)  # 自定义值不对应任何预设。
 
-        # 创建右侧信息区域
         right_widget = QWidget()
         right_layout = QHBoxLayout(right_widget)
         right_layout.setSpacing(6)
-        right_layout.setContentsMargins(0, 0, 0, 0)  # 移除边距
+        right_layout.setContentsMargins(0, 0, 0, 0)
 
         self._status_label = self._status_text("Status: Idle")
         right_layout.addWidget(self._status_label)
@@ -165,49 +164,59 @@ class RemotePanel(BasePanel):
         self._device_info = self._status_text("")
         right_layout.addWidget(self._device_info)
 
-        # 将右侧信息区域作为一个整体添加到主布局
-        r0.addWidget(right_widget, 1)  # 给右侧信息区域相同权重
+        self._add_responsive_row(
+            gl,
+            preset_label,
+            self.preset,
+            right_widget,
+            spacing=6,
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
+        )
 
-        gl.addLayout(r0)
-
-        # ── Video ──
-        vg = QGridLayout()
-        vg.setHorizontalSpacing(10)
-        vg.setVerticalSpacing(5)
         settings = [
-            ("Size:",   "maxsize",     self._SIZES,        "720"),
-            ("FPS:",    "fps",         self._FPS,          "60"),
-            ("Codec:",  "codec",       self._CODECS,       "h264"),
-            ("Buffer:", "buffer",      self._BUFFERS,      "50"),
-            ("Bitrate:","bitrate",     self._BITRATES,     "8"),
+            ("Size:", "maxsize", self._SIZES, "720"),
+            ("FPS:", "fps", self._FPS, "60"),
+            ("Codec:", "codec", self._CODECS, "h264"),
+            ("Buffer:", "buffer", self._BUFFERS, "50"),
+            ("Bitrate:", "bitrate", self._BITRATES, "8"),
             ("Orient:", "orientation", self._ORIENTATIONS, "0"),
         ]
-        for i, (lbl, attr, items, default) in enumerate(settings):
-            row, col = divmod(i, 3)
+        setting_widgets = []
+        for lbl, attr, items, default in settings:
             label = self._label(lbl)
             label.setMinimumWidth(56)
             label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            vg.addWidget(label, row, col * 2)
             combo = self._combo(items)
             combo.setCurrentText(self._load(attr, default))
-            vg.addWidget(combo, row, col * 2 + 1)
             setattr(self, attr, combo)
+            setting_widgets.extend((label, combo))
+        self._add_responsive_row(
+            gl,
+            *setting_widgets,
+            spacing=5,
+            compact_columns=2,
+            medium_columns=4,
+            wide_columns=6,
+        )
         self.orientation.setToolTip("Lock orientation (0=auto)")
-        gl.addLayout(vg)
 
-        # ── Record ──
-        rr = QHBoxLayout()
-        rr.setSpacing(8)
-        self.chk_record = self._create_checkbox("Record")  # 使用统一的工厂方法创建
+        self.chk_record = self._create_checkbox("Record")
         self.chk_record.setToolTip("Record mirroring to file")
         self.chk_record.toggled.connect(self._on_record_toggled)
-        rr.addWidget(self.chk_record, 1)  # 占1份空间
         self.record_path = self._status_text("")
-        rr.addWidget(self.record_path, 3)  # 占3份空间
-        gl.addLayout(rr)
+        self._add_responsive_row(
+            gl,
+            self.chk_record,
+            self.record_path,
+            spacing=8,
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=2,
+        )
 
-        # ── Display ──
         self.chk_fullscreen = self._create_checkbox("Fullscreen")
         self.chk_fullscreen.setToolTip("Launch in fullscreen mode")
         self.chk_aot = self._create_checkbox("Pin Top")
@@ -216,11 +225,17 @@ class RemotePanel(BasePanel):
         self.chk_showtouches.setToolTip("Visualize touch points on screen")
         self.chk_stayawake = self._create_checkbox("Awake")
         self.chk_stayawake.setToolTip("Keep device screen on while mirroring")
-        rd1 = QHBoxLayout()
-        rd1.setSpacing(8)
-        for cb in (self.chk_fullscreen, self.chk_aot, self.chk_showtouches, self.chk_stayawake):
-            rd1.addWidget(cb)  # 不设置权重，让它们平均分配空间
-        gl.addLayout(rd1)
+        self._add_responsive_row(
+            gl,
+            self.chk_fullscreen,
+            self.chk_aot,
+            self.chk_showtouches,
+            self.chk_stayawake,
+            spacing=8,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
 
         self.chk_turnscreenoff = self._create_checkbox("Screen Off")
         self.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
@@ -228,28 +243,41 @@ class RemotePanel(BasePanel):
         self.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter)")
         self.chk_noplayback = self._create_checkbox("No Window")
         self.chk_noplayback.setToolTip("Record only, no display window")
-        self.chk_noaudio = self._create_checkbox("No Audio")  # 改为使用_create_checkbox方法创建
-        self.chk_noaudio.setChecked(True)  # 保留初始勾选状态
+        self.chk_noaudio = self._create_checkbox("No Audio")
+        self.chk_noaudio.setChecked(True)
         self.chk_noaudio.setToolTip("Disable audio forwarding")
-        rd2 = QHBoxLayout()
-        rd2.setSpacing(8)
-        for cb in (self.chk_turnscreenoff, self.chk_hw_encoder, self.chk_noplayback, self.chk_noaudio):
-            rd2.addWidget(cb)  # 不设置权重，让它们平均分配空间
-        gl.addLayout(rd2)
+        self._add_responsive_row(
+            gl,
+            self.chk_turnscreenoff,
+            self.chk_hw_encoder,
+            self.chk_noplayback,
+            self.chk_noaudio,
+            spacing=8,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
 
-        # ── Start / Stop ──
-        rs = QHBoxLayout()
-        rs.setSpacing(6)
-        self.btn_start = self._b("Start", "monitor-play.svg", "accent", tooltip="Start mirroring (Ctrl+Enter)")
-        self.btn_start.setFixedHeight(32)
+        self.btn_start = self._b(
+            "Start", "monitor-play.svg", "accent", tooltip="Start mirroring (Ctrl+Enter)"
+        )
+        self.btn_start.setMinimumHeight(32)
         self.btn_start.setIconSize(QSize(16, 16))
-        self.btn_stop = self._b("Stop", "stop-circle.svg", "danger", tooltip="Stop mirroring (Ctrl+Q)")
-        self.btn_stop.setFixedHeight(32)
+        self.btn_stop = self._b(
+            "Stop", "stop-circle.svg", "danger", tooltip="Stop mirroring (Ctrl+Q)"
+        )
+        self.btn_stop.setMinimumHeight(32)
         self.btn_stop.setIconSize(QSize(16, 16))
         self.btn_stop.setEnabled(False)
-        rs.addWidget(self.btn_start, 1)
-        rs.addWidget(self.btn_stop, 1)
-        gl.addLayout(rs)
+        self._add_responsive_row(
+            gl,
+            self.btn_start,
+            self.btn_stop,
+            spacing=6,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=2,
+        )
 
         return g
 
@@ -264,18 +292,32 @@ class RemotePanel(BasePanel):
         self._remote_key_buttons = []
         self._remote_action_buttons = []
 
-        # Common keys. RECENTS already covers APP_SWITCH; notification uses gestures below.
+        # RECENTS 已覆盖 APP_SWITCH；通知栏操作由下方手势处理。
         keys = QWidget()
         kg = QGridLayout(keys)
         kg.setSpacing(2)
         kg.setContentsMargins(0, 0, 0, 0)
         key_rows = [
-            [("HOME", "HOME"), ("BACK", "BACK"), ("RECENT", "RECENTS"), ("MENU", "MENU"), ("PWR", "POWER")],
-            [("SET", "SETTINGS"), ("CAM", "CAMERA"), ("SRCH", "SEARCH"), ("ENTER", "ENTER"), ("DEL", "DEL")],
+            [
+                ("HOME", "HOME"),
+                ("BACK", "BACK"),
+                ("RECENT", "RECENTS"),
+                ("MENU", "MENU"),
+                ("PWR", "POWER"),
+            ],
+            [
+                ("SET", "SETTINGS"),
+                ("CAM", "CAMERA"),
+                ("SRCH", "SEARCH"),
+                ("ENTER", "ENTER"),
+                ("DEL", "DEL"),
+            ],
         ]
         for r, row in enumerate(key_rows):
             for c, (label, code) in enumerate(row):
                 kg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        self._remote_key_layout = kg
+        self._remote_primary_key_buttons = tuple(self._remote_key_buttons)
         outer.addWidget(keys)
 
         media = QWidget()
@@ -283,11 +325,21 @@ class RemotePanel(BasePanel):
         mg.setSpacing(2)
         mg.setContentsMargins(0, 0, 0, 0)
         media_rows = [
-            [("VOL-", "VOL_DOWN"), ("VOL+", "VOL_UP"), ("PLAY", "MEDIA_PLAY"), ("PREV", "MEDIA_PREV"), ("NEXT", "MEDIA_NEXT")],
+            [
+                ("VOL-", "VOL_DOWN"),
+                ("VOL+", "VOL_UP"),
+                ("PLAY", "MEDIA_PLAY"),
+                ("PREV", "MEDIA_PREV"),
+                ("NEXT", "MEDIA_NEXT"),
+            ],
         ]
         for r, row in enumerate(media_rows):
             for c, (label, code) in enumerate(row):
                 mg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        self._remote_media_layout = mg
+        self._remote_media_buttons = tuple(
+            self._remote_key_buttons[len(self._remote_primary_key_buttons) :]
+        )
         outer.addWidget(media)
 
         actions = QWidget()
@@ -295,24 +347,74 @@ class RemotePanel(BasePanel):
         gg.setSpacing(2)
         gg.setContentsMargins(0, 0, 0, 0)
         action_rows = [
-            [("Swipe Up", "swipe_up", "Swipe up"), ("Swipe Down", "swipe_down", "Swipe down"),
-             ("Swipe Left", "swipe_left", "Swipe left"), ("Swipe Right", "swipe_right", "Swipe right")],
-            [("Notif+", "notif_expand", "Expand notifications"), ("Notif-", "notif_collapse", "Collapse notifications"),
-             ("Portrait", "rotate_portrait", "Rotate portrait"), ("Land", "rotate_landscape", "Rotate landscape")],
+            [
+                ("Swipe Up", "swipe_up", "Swipe up"),
+                ("Swipe Down", "swipe_down", "Swipe down"),
+                ("Swipe Left", "swipe_left", "Swipe left"),
+                ("Swipe Right", "swipe_right", "Swipe right"),
+            ],
+            [
+                ("Notif+", "notif_expand", "Expand notifications"),
+                ("Notif-", "notif_collapse", "Collapse notifications"),
+                ("Portrait", "rotate_portrait", "Rotate portrait"),
+                ("Land", "rotate_landscape", "Rotate landscape"),
+            ],
         ]
         for r, row in enumerate(action_rows):
             for c, (label, action, tooltip) in enumerate(row):
                 gg.addWidget(self._remote_action_button(label, action, tooltip), r, c)
+        self._remote_action_layout = gg
         outer.addWidget(actions)
 
         return g
+
+    def apply_responsive_width(self, width: int) -> None:
+        """按面板宽度重排投屏参数和遥控按钮，不重建任何控件。"""
+
+        super().apply_responsive_width(width)
+        if not hasattr(self, "_remote_key_layout"):
+            return
+
+        key_columns = responsive_column_count(
+            width,
+            compact_columns=3,
+            medium_columns=5,
+            wide_columns=5,
+        )
+        media_columns = responsive_column_count(
+            width,
+            compact_columns=3,
+            medium_columns=5,
+            wide_columns=5,
+        )
+        action_columns = responsive_column_count(
+            width,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
+        reflow_widgets(
+            self._remote_key_layout,
+            self._remote_primary_key_buttons,
+            key_columns,
+        )
+        reflow_widgets(
+            self._remote_media_layout,
+            self._remote_media_buttons,
+            media_columns,
+        )
+        reflow_widgets(
+            self._remote_action_layout,
+            self._remote_action_buttons,
+            action_columns,
+        )
 
     def _remote_key_button(self, label: str, code: str, tooltip: str):
         b = self._b(label, self._KEY_ICONS.get(code, "keyboard.svg"), tooltip=tooltip)
         b.setProperty("remoteKey", code)
         b.setFont(self._font_sm)
         b.setIconSize(QSize(13, 13))
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setMinimumWidth(56)
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         b.clicked.connect(lambda _, cd=code: self._send_keyevent(cd))
@@ -325,7 +427,7 @@ class RemotePanel(BasePanel):
         b.setProperty("remoteAction", action)
         b.setFont(self._font_sm)
         b.setIconSize(QSize(13, 13))
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setMinimumWidth(76)
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
@@ -333,29 +435,34 @@ class RemotePanel(BasePanel):
         self._remote_action_buttons.append(b)
         return b
 
-    # -- signals + shortcuts (B9) ----------------------------------------
+    # ── 信号与快捷键 ────────────────────────────────────────────────────
 
     def connect_signals(self):
         self.btn_start.clicked.connect(self._start_scrcpy)
         self.btn_stop.clicked.connect(self._stop_scrcpy)
         self.preset.currentIndexChanged.connect(self._on_preset_changed)
-        # Track individual changes → auto-switch to Custom
-        for combo in (self.maxsize, self.fps, self.codec, self.buffer, self.bitrate,
-                      self.orientation):
+        # 任一参数变化后切换为自定义配置。
+        for combo in (
+            self.maxsize,
+            self.fps,
+            self.codec,
+            self.buffer,
+            self.bitrate,
+            self.orientation,
+        ):
             combo.currentTextChanged.connect(self._on_custom_setting_changed)
-        # B9: Keyboard shortcuts
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
         QShortcut(QKeySequence("Ctrl+Q"), self).activated.connect(self._stop_scrcpy)
-        # Apply loaded preset on startup (loading is still True → no re-save)
+        # 启动时应用已加载预设；此时仍处于 loading 状态，不会重复保存。
         idx = self.preset.currentIndex()
         if idx in self._PRESETS:
             self._on_preset_changed(idx)
         self._loading = False
 
-    # -- B6: settings persistence ----------------------------------------
+    # ── 设置持久化 ──────────────────────────────────────────────────────
 
     def _on_custom_setting_changed(self, _value):
-        """Any individual change switches preset to nothing (custom)."""
+        """任一独立参数变化后取消预设选择并保存为自定义配置。"""
         if getattr(self, "_loading", False):
             return
         self.preset.blockSignals(True)
@@ -377,7 +484,7 @@ class RemotePanel(BasePanel):
     def _load(self, key: str, default: str) -> str:
         return self._settings.get(f"scrcpy_{key}", default)
 
-    # -- scrcpy presets ---------------------------------------------------
+    # ── scrcpy 预设 ─────────────────────────────────────────────────────
 
     def _on_preset_changed(self, idx: int):
         if idx in self._PRESETS:
@@ -393,7 +500,7 @@ class RemotePanel(BasePanel):
             if not was_loading:
                 self._save_all()
 
-    # -- A3: record toggle ------------------------------------------------
+    # ── 录制开关 ────────────────────────────────────────────────────────
 
     def _on_record_toggled(self, checked: bool):
         if not checked:
@@ -404,11 +511,12 @@ class RemotePanel(BasePanel):
         device = self.selected_devices[0] if self.selected_devices else "unknown"
         device_tag = device.replace(":", "_").replace(".", "_")
         from datetime import datetime
+
         filename = f"scrcpy_{device_tag}_{datetime.now().strftime('%H%M%S')}.mp4"
         self._record_path = os.path.join(save_dir, filename)
         self.record_path.setText(self._record_path.replace("\\", "/"))
 
-    # -- scrcpy start / stop ----------------------------------------------
+    # ── scrcpy 启停 ─────────────────────────────────────────────────────
 
     def _start_scrcpy(self):
         if self._process or (self._launch_worker and self._launch_worker.isRunning()):
@@ -421,6 +529,12 @@ class RemotePanel(BasePanel):
         if not devices:
             self._log("WARNING", "No device selected")
             return
+        if len(devices) > 1:
+            self._log(
+                "WARNING",
+                f"Multiple devices selected; Remote will control one active session "
+                f"and ignore {len(devices) - 1} additional selection(s).",
+            )
 
         self._set_running(True)
         self._update_status("Checking...", "#FFC107")
@@ -446,7 +560,8 @@ class RemotePanel(BasePanel):
             self._remote_control.remember_dimensions(active_device, device_info.split("x"))
         self._set_running(True)
         self._update_status("Running", "#28A745")
-        self._log("INFO", f"Launching: scrcpy {' '.join(args[2:])}")
+        self._log("INFO", "Launching scrcpy")
+        self._log("DEBUG", f"scrcpy launch plan prepared: argument_count={len(args)}")
 
         try:
             self._process = self._scrcpy_service.start(
@@ -457,8 +572,9 @@ class RemotePanel(BasePanel):
             threading.Thread(target=self._warm_remote_input_session, daemon=True).start()
             threading.Thread(target=self._read_stderr, daemon=True).start()
             self._watchdog.start(500)
-        except Exception as e:
-            self._log("ERROR", f"scrcpy start failed: {e}")
+        except Exception as exc:
+            self._log("ERROR", f"scrcpy start failed: {type(exc).__name__}")
+            self._active_device = None
             self._set_running(False)
             self._update_status("Error", "#DC3545")
 
@@ -486,14 +602,14 @@ class RemotePanel(BasePanel):
                 line = line.strip()
                 if not line:
                     continue
-                # C13: extract FPS from scrcpy stderr
+                # scrcpy 的标准错误流同时承载 FPS 和诊断信息，必须先识别 FPS。
                 fps = self._scrcpy_service.parse_fps(line)
                 if fps:
                     self._status_update_requested.emit(fps, None)
                 elif self._should_ignore_scrcpy_log_line(line):
                     continue
                 else:
-                    self._log("DEBUG", f"[scrcpy] {line}")
+                    self._log("DEBUG", f"[scrcpy] {self._redact_remote_diagnostic(line)}")
 
     def _poll_process(self):
         if not self._process:
@@ -503,6 +619,7 @@ class RemotePanel(BasePanel):
         if rc is not None:
             self._watchdog.stop()
             self._process = None
+            self._active_device = None
             self._set_running(False)
             self._update_status("Disconnected", "#FFC107")
             if rc != 0:
@@ -520,12 +637,14 @@ class RemotePanel(BasePanel):
         self._active_device = None
         self._set_running(False)
         self._update_status("Idle", None)
+
         def _do_stop():
             try:
                 self._scrcpy_service.stop(self._process_key, timeout=2)
                 self._log("INFO", "scrcpy stopped")
-            except Exception as e:
-                self._log("ERROR", f"stop failed: {e}")
+            except Exception as exc:
+                self._log("ERROR", f"stop failed: {type(exc).__name__}")
+
         threading.Thread(target=_do_stop, daemon=True).start()
 
     def _set_running(self, running: bool):
@@ -535,41 +654,55 @@ class RemotePanel(BasePanel):
         self._set_button_enabled(btn_start, not running)
         self._set_button_enabled(btn_stop, running)
 
-    # -- B8: status indicator ---------------------------------------------
+    # ── 状态指示 ────────────────────────────────────────────────────────
 
     def _update_status(self, text: str, color: str | None):
-        style = f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px; font-weight: bold;"
+        style = "font-weight: bold;"
         if color:
             style = f"color: {color}; {style}"
         self._status_label.setStyleSheet(style)
         self._status_label.setText(f"Status: {text}")
 
-    # -- key events -------------------------------------------------------
+    # ── 按键与输入事件 ──────────────────────────────────────────────────
 
     def _selected_remote_device(self) -> str | None:
-        devices = self.selected_devices
-        if not devices:
-            self._log("WARNING", "No device selected")
+        # 兼容未运行 __init__ 的旧式轻量嵌入场景；正常面板始终持有该字段。
+        if not hasattr(self, "_active_device"):
+            devices = self.selected_devices
+            if not devices:
+                self._log("WARNING", "No device selected")
+                return None
+            return devices[0]
+
+        device = getattr(self, "_active_device", None)
+        process = getattr(self, "_process", None)
+        if not device or process is None or not getattr(self, "_running", False):
+            self._log("WARNING", "Remote session is not running")
             return None
-        return devices[0]
+        try:
+            if process.poll() is not None:
+                self._log("WARNING", "Remote session is not running")
+                return None
+        except (AttributeError, OSError):
+            pass
+        return device
 
     def _send_keyevent(self, key_name: str):
         device = self._selected_remote_device()
         if not device:
             return
-        self._submit_remote_input(
-            lambda: self._remote_control.send_keyevent(device, key_name)
-        )
+        self._submit_remote_input(lambda: self._remote_control.send_keyevent(device, key_name))
 
     def _send_remote_action(self, action: str):
         device = self._selected_remote_device()
         if not device:
             return
+
         def _run():
             try:
                 self._remote_control.perform_action(device, action)
             except Exception as exc:
-                self._log("ERROR", f"remote action failed: {exc}")
+                self._log("ERROR", f"remote action failed: {type(exc).__name__}")
 
         self._submit_remote_input(_run)
 
@@ -593,7 +726,7 @@ class RemotePanel(BasePanel):
                 result = "sent"
             except Exception as exc:
                 result = "failed"
-                self._log("ERROR", f"remote input failed: {exc}")
+                self._log("ERROR", f"remote input failed: {type(exc).__name__}")
             self._mark_remote_completed(result)
 
         try:
@@ -608,7 +741,7 @@ class RemotePanel(BasePanel):
                 getattr(self, "_remote_completed", 0),
                 "failed",
             )
-            self._log("ERROR", f"remote executor stopped: {exc}")
+            self._log("ERROR", f"remote executor stopped: {type(exc).__name__}")
 
     def _mark_remote_submitted(self):
         self._remote_submitted = getattr(self, "_remote_submitted", 0) + 1
@@ -633,7 +766,7 @@ class RemotePanel(BasePanel):
         try:
             self._remote_queue_status_requested.emit(submitted, completed, result)
         except RuntimeError:
-            # Tests may exercise service wiring on __new__ objects without QObject init.
+            # 兼容尚未完成 QObject 初始化的轻量嵌入场景。
             pass
 
     def _update_remote_queue_status(self, submitted: int, completed: int, result: str):
@@ -659,9 +792,11 @@ class RemotePanel(BasePanel):
             show_touches=self.chk_showtouches.isChecked(),
             stay_awake=self.chk_stayawake.isChecked(),
             turn_screen_off=self.chk_turnscreenoff.isChecked(),
-            record_path=self._record_path
-            if self.chk_record.isChecked() and hasattr(self, "_record_path")
-            else "",
+            record_path=(
+                self._record_path
+                if self.chk_record.isChecked() and hasattr(self, "_record_path")
+                else ""
+            ),
             no_window=self.chk_noplayback.isChecked(),
         )
 
@@ -673,7 +808,7 @@ class RemotePanel(BasePanel):
         if self._input_engine.focus_window(title):
             self._log("INFO", "scrcpy window focused for keyboard input")
         else:
-            self._log("DEBUG", f"scrcpy window not focused: {title}")
+            self._log("DEBUG", "scrcpy window focus was not acquired")
 
     def _warm_remote_input_session(self):
         active_device = getattr(self, "_active_device", None)
@@ -683,32 +818,134 @@ class RemotePanel(BasePanel):
             if self._adb.warm_input_session(active_device):
                 self._log("DEBUG", "remote input session warmed")
         except Exception as exc:
-            self._log("DEBUG", f"remote input session warmup skipped: {exc}")
+            self._log(
+                "DEBUG",
+                f"remote input session warmup skipped: error_type={type(exc).__name__}",
+            )
 
-    # -- helpers ----------------------------------------------------------
+    # ── 辅助方法 ────────────────────────────────────────────────────────
 
     def _log(self, level: str, msg: str):
         if getattr(self, "_closing", False):
             return
         self.signals.log_message.emit(level, msg)
 
+    def _redact_remote_diagnostic(self, message: str) -> str:
+        """移除 Remote 诊断信息中的当前设备标识，并限制异常输出长度。"""
+        text = str(message).replace("\r", " ").replace("\n", " ")
+        active_device = str(getattr(self, "_active_device", "") or "")
+        if active_device:
+            text = text.replace(active_device, "<device>")
+        return text[:1000]
+
     def shutdown(self):
+        """先停止 scrcpy 和启动 worker，再关闭输入队列及持久 ADB 会话。"""
         self._closing = True
         if self._process:
             self._watchdog.stop()
             self._process = None
-            try:
-                self._scrcpy_service.stop(self._process_key, timeout=2)
-            except Exception:
-                pass
-        self._stop_launch_worker()
+            self._scrcpy_service.request_stop(self._process_key)
+        self._active_device = None
+        self._running = False
+        self._stop_launch_worker(wait_ms=0)
         executor = getattr(self, "_remote_executor", None)
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
             self._remote_executor = None
         adb = getattr(self, "_adb", None)
-        if adb is not None and hasattr(adb, "close_input_sessions"):
-            adb.close_input_sessions()
+        if (
+            not getattr(self, "_shutdown_task_registered", False)
+            and adb is not None
+            and hasattr(adb, "close_input_sessions")
+        ):
+            threading.Thread(
+                target=adb.close_input_sessions,
+                name="adblab-remote-input-shutdown",
+                daemon=True,
+            ).start()
+
+    def register_shutdown_task(self, supervisor, *, owner_id: str, task_id: str) -> bool:
+        """在界面断开引用前注册 scrcpy、启动 worker 和输入会话清理任务。"""
+        worker = getattr(self, "_launch_worker", None)
+        adb = getattr(self, "_adb", None)
+        close_input = getattr(adb, "close_input_sessions", None)
+        scrcpy_service = getattr(self, "_scrcpy_service", None)
+        process_key = getattr(self, "_process_key", "")
+
+        def process_running() -> bool:
+            if scrcpy_service is None or not process_key:
+                return False
+            try:
+                return bool(scrcpy_service.is_active(process_key))
+            except (AttributeError, RuntimeError, OSError):
+                return True
+
+        if worker is None and not callable(close_input) and not process_running():
+            return False
+        self._shutdown_task_registered = True
+        input_finished = threading.Event()
+        input_started = threading.Event()
+
+        def worker_running() -> bool:
+            if worker is None:
+                return False
+            try:
+                return worker.isRunning()
+            except RuntimeError:
+                return False
+
+        def is_running() -> bool:
+            return worker_running() or not input_finished.is_set() or process_running()
+
+        def request_stop() -> None:
+            if worker_running():
+                worker.requestInterruption()
+            if process_running():
+                scrcpy_service.request_stop(process_key)
+            if callable(close_input) and not input_started.is_set():
+                input_started.set()
+
+                def close_sessions():
+                    try:
+                        close_input()
+                    finally:
+                        input_finished.set()
+
+                threading.Thread(
+                    target=close_sessions,
+                    name="adblab-remote-input-shutdown",
+                    daemon=True,
+                ).start()
+            elif not callable(close_input):
+                input_finished.set()
+
+        def wait(timeout: float) -> bool:
+            deadline = time.monotonic() + max(0.0, float(timeout))
+            while is_running():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                if worker_running():
+                    worker.wait(max(0, min(50, int(remaining * 1000))))
+                else:
+                    time.sleep(min(remaining, 0.05))
+            return True
+
+        def force_stop(timeout: float) -> bool:
+            if not process_running():
+                return False
+            return bool(scrcpy_service.force_stop(process_key, timeout))
+
+        supervisor.register(
+            task_id,
+            owner_id=owner_id,
+            kind="remote_session",
+            request_stop=request_stop,
+            wait=wait,
+            is_running=is_running,
+            force_stop=force_stop,
+        )
+        return True
 
     def _stop_launch_worker(self, wait_ms: int = 3000):
         worker = getattr(self, "_launch_worker", None)

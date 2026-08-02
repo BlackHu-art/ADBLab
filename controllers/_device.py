@@ -1,3 +1,5 @@
+"""提供设备连接、重启、配对和基础信息查询的控制能力。"""
+
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
@@ -14,9 +16,9 @@ from utils.adb_targets import normalize_adb_connect_target
 
 
 class ADBDeviceMixin(_ADBControllerBase):
-    """Device connection, disconnection, restart, reboot, pairing."""
+    """协调设备连接、断开、重启、配对和基础信息持久化。"""
 
-    # ── Provided by _ADBControllerBase ──
+    # 以下属性由 _ADBControllerBase 提供。
     device_model: ADBDevice
     advanced_model: ADBAdvanced
     signals: ADBControllerSignals

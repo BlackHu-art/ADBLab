@@ -1,4 +1,4 @@
-"""ADB model classes — async ADB operations via @async_command decorator."""
+"""导出通过 @async_command 执行异步 ADB 操作的模型类。"""
 
 from models.adb_model import ADBModelCore, async_command
 from models.adb_device import ADBDevice

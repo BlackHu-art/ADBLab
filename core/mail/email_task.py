@@ -1,11 +1,11 @@
-# email_task.py
+"""通过后台任务获取临时邮箱及验证码。"""
 import time
 from datetime import datetime
 
 import requests
 from PySide6.QtCore import QObject, QRunnable, Signal
 
-from core.mail.email_service import EmailService
+from core.mail.email_service import EmailService, MailConfigurationError
 
 
 class EmailSignals(QObject):
@@ -26,13 +26,13 @@ class GetRandomEmailTask(QRunnable):
         self.signals.log_signal.emit(level, f"[{self.timestamp()}] {msg}")
 
     def run(self):
-        """Execute email verification code retrieval process"""
+        """执行临时邮箱申请、轮询和验证码提取流程。"""
         try:
-            # Initialization phase
+            # 初始化外部服务客户端后再输出用户可见进度。
             email_service = EmailService()
             self.log("INFO", "🔄 Starting email verification process")
 
-            # 1. Get temporary email account
+            # 首先申请临时邮箱账号。
             self.log("INFO", "📩 Requesting temporary email account...")
             random_email_data = email_service.get_random_email()
 
@@ -41,10 +41,10 @@ class GetRandomEmailTask(QRunnable):
                 return
 
             email_account = random_email_data["data"]["account"]
-            self.log("SUCCESS", f"📧 Temporary email obtained: {email_account}")
+            self.log("SUCCESS", "📧 Temporary email obtained")
             self.signals.email_updated.emit(email_account)
 
-            # 2. Email polling phase
+            # 邮件到达时间不可预测，因此使用有上限的轮询避免任务永久占用线程。
             self.log("INFO", "🔍 Checking inbox (max 10 attempts)...")
             for attempt in range(1, 16):
                 self.log("DEBUG", f"Attempt #{attempt}: Requesting email list")
@@ -56,7 +56,7 @@ class GetRandomEmailTask(QRunnable):
                 if total_emails >= 1:
                     if rows := email_list_data.get("data", {}).get("rows", []):
                         email_service.email_id = rows[0].get("id")
-                        self.log("SUCCESS", f"Email found (ID: {email_service.email_id})")
+                        self.log("SUCCESS", "Email found")
                         break
                 time.sleep(1.0)
 
@@ -64,21 +64,19 @@ class GetRandomEmailTask(QRunnable):
                 self.log("ERROR", "Email retrieval timeout (16 attempts failed)")
                 return
 
-            # 3. Verification code extraction
+            # 邮件到达后再读取正文并提取验证码。
             self.log("INFO", "🔢 Extracting verification code...")
             verification_code = email_service.get_email_detail()
 
             if verification_code:
-                self.log(
-                    "SUCCESS",
-                    f"✅ Verification code retrieved\n{'═'*30}\n║ Code: {verification_code:^24} ║\n{'═'*30}",
-                )
+                self.log("SUCCESS", "✅ Verification code retrieved")
                 self.signals.vercode_updated.emit(verification_code)
             else:
                 self.log("ERROR", "❌ Failed to extract verification code")
 
+        except MailConfigurationError:
+            self.log("ERROR", "Temporary mail is not configured or is disabled")
         except requests.exceptions.RequestException as e:
-            self.log("ERROR", f"🌐 Network error: {e}")
+            self.log("ERROR", f"🌐 Network error: {type(e).__name__}")
         except Exception as e:
-            self.log("CRITICAL", f"‼️ System failure: {str(e)}")
-            raise  # Preserve original exception stack
+            self.log("CRITICAL", f"‼️ Temporary-mail failure: {type(e).__name__}")

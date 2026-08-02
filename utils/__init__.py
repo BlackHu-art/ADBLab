@@ -1,4 +1,4 @@
-"""Utilities — resource paths, ADB resolver, batch operation tracker."""
+"""汇总资源路径、ADB 解析和批量操作跟踪等通用工具。"""
 
 from utils.resource_path import resource_path, setup_qt_search_paths
 from utils.adb_resolver import adb_path, is_adb_available

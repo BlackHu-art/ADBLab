@@ -1,9 +1,4 @@
-# -*- coding: utf-8 -*-
-
-"""
- @author      :  Frankie
- @time        :  性能相关的工具
-"""
+"""提供 MobilePerf 使用的时间、文件、压缩和单位换算工具。"""
 
 import os
 import time, re
@@ -13,8 +8,6 @@ import zipfile
 
 BaseDir = os.path.dirname(os.path.abspath(__file__))
 
-
-# BaseDir=os.getcwd()
 
 class TimeUtils(object):
     UnderLineFormatter = "%Y_%m_%d_%H_%M_%S"
@@ -69,7 +62,6 @@ class FileUtils(object):
     def get_top_dir():
         dir = os.path.dirname(BaseDir)
         path = os.path.dirname(dir)
-        print("path:%s" % path)
         return path
 
     @staticmethod
@@ -138,8 +130,6 @@ class ZipUtils(object):
         zf = zipfile.ZipFile(zipfilename, "w", zipfile.zlib.DEFLATED)
         for tar in filelist:
             arcname = tar[len(dirname):]
-            # print tar
-            # print arcname
             zf.write(tar, arcname)
         zf.close()
 
