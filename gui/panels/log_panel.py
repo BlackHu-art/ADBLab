@@ -4,11 +4,11 @@ from datetime import datetime
 from html import escape
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from core.log_service import LogLevel, LogService
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
 
 
 class LogPanel(QWidget):
@@ -31,6 +31,7 @@ class LogPanel(QWidget):
         self._init_ui()
         self._connect_services()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
+        BaseStyles.log_font_changed.connect(self._on_log_font_changed)
 
     def _apply_style(self):
         c = BaseStyles.color
@@ -48,26 +49,22 @@ class LogPanel(QWidget):
     def _on_theme_changed(self, _name: str):
         from core.settings_manager import AppSettings
 
-        log_size = AppSettings.instance().get("log_font_size", 9)
-        log_font = QFont(BaseStyles.LOG_FONT, log_size)
-        log_font.setStyleHint(QFont.Monospace)
-        self.text_output.setFont(log_font)
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._apply_style()
         self._cancel_pending_render()
         self._rerender_all()
+
+    def _on_log_font_changed(self, _config):
+        """仅更新日志字体，避免字体调整触发整份日志重新渲染。"""
+
+        self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
     def _init_ui(self):
         self.text_output = QTextEdit(self)
         self.text_output.setReadOnly(True)
         self.text_output.setUndoRedoEnabled(False)
 
-        from core.settings_manager import AppSettings
-
-        log_size = AppSettings.instance().get("log_font_size", 9)
-        log_font = QFont(BaseStyles.LOG_FONT, log_size)
-        log_font.setStyleHint(QFont.Monospace)
-        self.text_output.setFont(log_font)
+        self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

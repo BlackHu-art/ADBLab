@@ -5,9 +5,10 @@
 | 模块 | 路径 | 职责 | 入口 | 上游 | 下游 | 核心文件 | 测试 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 启动与元数据 | `main.py`、`utils/app_metadata.py` | CLI 分派、GUI 启动、打包自检、版本 | `main.py` | 用户、PyInstaller | Qt、MainFrame、MobilePerf | `main.py` | `test_model_execution.py` |
-| GUI 壳与接线 | `gui/main_frame.py` | 主窗口、设备扫描、懒加载页签、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller | `main_frame.py` | `test_model_execution.py` |
-| 面板 | `gui/panels/` | 设备/应用/系统/Remote/日志交互 | Qt 事件与 `SidePanelSignals` | 用户、MainFrame | controller、remote service | `side_panel.py`、`app_panel.py`、`remote_panel.py` | `test_model_execution.py`、`test_remote_services.py` |
-| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`、`file_explorer.py`、`performance_launcher.py` | `test_model_execution.py` |
+| GUI 壳与接线 | `gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 主窗口、原生无边框移动/缩放、尺寸与分栏恢复、设备扫描、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller、AppSettings | `main_frame.py`、`window_layout.py` | `test_model_execution.py`、`test_main_window_layout.py` |
+| 面板 | `gui/panels/`、`gui/widgets/responsive_layout.py` | 设备/应用/系统/Remote/日志交互、懒加载滚动容器与响应式重排 | Qt 事件与 `SidePanelSignals` | 用户、MainFrame | controller、remote service | `side_panel.py`、`base_panel.py`、`app_panel.py`、`system_panel.py`、`remote_panel.py` | `test_model_execution.py`、`test_remote_services.py`、`test_responsive_panels.py` |
+| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`、`file_explorer.py`、`performance_launcher.py`、`settings_dialog.py` | `test_model_execution.py`、`test_settings_typography.py`、`test_settings_window_layout.py` |
+| 样式与字体 | `gui/styles/` | 主题、QSS、应用级字体配置、字体角色与细粒度变更信号 | `BaseStyles`、`TypographyManager` | 启动入口、SettingsDialog | QApplication、全局 GUI | `typography.py`、`fonts.py`、`theme.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` |
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、邮件 | `_base.py` 与 6 个 mixin | `test_model_execution.py` |
 | vNext Operation | `adblab/application/` | 业务 operation 状态、fan-out、取消意图与兼容 metadata envelope | `OperationManager` | 迁移中的 Controller/use case | 纯 Python 锁与值对象 | `operations.py`、`cancellation.py`、`envelope.py` | `test_phase1_operations.py` |
 | ADB Model | `models/adb_*.py` | 设备、应用、系统、网络、测试和高级命令 | `*_async` 方法 | Controller | CommandRunner、ProcessRunner、ADBBridge | `adb_model.py`、`adb_testing.py` | `test_model_execution.py` |
@@ -27,7 +28,9 @@
 
 ### 启动与元数据
 
-- **职责/接口**：`main.py::_dispatch_cli()` 识别 GUI、`--mobileperf-worker`、`--self-check packaging`；`_run_gui()` 创建 QApplication 和 MainFrame；`utils/app_metadata.py` 提供版本常量。
+- **职责/接口**：`main.py::_dispatch_cli()` 识别 GUI、`--mobileperf-worker`、`--self-check packaging`；
+  `_run_gui()` 创建 QApplication，加载应用级字体与主题后创建 MainFrame；
+  `utils/app_metadata.py` 提供版本常量。
 - **输入/输出**：命令行参数、应用设置和资源路径；输出 GUI 事件循环退出码或自检文本/退出码。
 - **上下游**：上游为用户或打包程序；下游为 PySide6、`AppSettings`、`BaseStyles`、`MainFrame`、`mobileperf.android.startup.StartUp`。
 - **配置/数据/外部服务**：读取主题和资源；自检写入后删除用户目录探针；Windows 设置 AppUserModelID。
@@ -35,14 +38,22 @@
 
 ### GUI 壳与面板
 
-- **职责/接口**：`MainFrame` 构建工具栏、左右分栏、Device/Apps/System/Remote 页签和对话框；`_ScanThread` 周期执行设备发现；`SidePanelSignals`/`ADBControllerSignals` 是 UI 对外接口。
+- **职责/接口**：`MainFrame` 构建工具栏、左右分栏、Device/Apps/System/Remote 页签和对话框；
+  `FramelessResizeController` 通过四边四角共八个透明热区调用原生缩放；
+  `window_layout_snapshot/restore_default_window_size/reset_panel_split` 是 Settings 使用的公开布局接口；
+  `_ScanThread` 周期执行设备发现；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口。
 - **输入/输出**：Qt 事件、选中设备和表单值；输出控制信号、日志、状态栏和对话框。
 - **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`AppSettings`。
-- **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸/分栏、主题、保存目录；通过 ADB 扫描设备。
-- **测试/风险/待确认**：MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
+- **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸、
+  `panel_split_ratio`、主题、字体、保存目录；通过 ADB 扫描设备。普通窗口尺寸限制为不小于
+  860×500；屏幕可用范围不小于该最小值时再裁剪到可用范围内，最小尺寸优先；左栏比例限制为
+  0.20–0.70。
+- **测试/风险/待确认**：原生缩放热区、尺寸/比例校验、批量设置适配和响应式断点有单测；
+  MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
   同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一生命周期 owner；
   这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
-  主窗口整体 close 仍包含同步 shutdown，Gate B2 未通过；真实多设备 UI 压测待确认。
+  原生缩放在不同窗口管理器下的实际手感、窄屏及高 DPI 布局仍需人工验证；主窗口整体 close
+  仍包含同步 shutdown，Gate B2 未通过。
 
 ### 对话框
 
@@ -50,7 +61,10 @@
   `TaskSupervisor`/producer-side bounded batch，其他对话框主要使用 `gui/dialogs/lifecycle.py`。
 - **输入/输出**：设备标识、文件/包名、用户配置；输出 ADB 操作、结果文件、日志和设置。
 - **上下游**：上游为 MainFrame/用户；下游为专用 QThread、model service、ProcessRunner、文件系统。
-- **配置/数据/外部服务**：保存目录、日志上限、主题、MobilePerf 参数；调用 ADB、scrcpy、Perfetto URL。
+- **配置/数据/外部服务**：保存目录、日志上限、主题、字体、窗口布局、MobilePerf 参数；
+  SettingsDialog 通过 MainFrame 公开接口展示/恢复窗口尺寸和分栏，并用纵向滚动区及字号感知
+  断点重排外观、窗口、保存目录和日志设置；保存目录选择入口与页脚始终可见，其他对话框按
+  字体角色刷新。调用 ADB、scrcpy、Perfetto URL。
 - **测试/风险/待确认**：Gate B1 覆盖 LiveLogcat heartbeat、停止语义、背压、超时保活和晚到信号；
   独立子进程还以真实 `WA_DeleteOnClose` 连续压力覆盖日志输出期间的窗口销毁、主窗口 Close
   事件及 `lastWindowClosed/aboutToQuit` 隔离；
@@ -86,14 +100,39 @@
 
 ### 设置、日志与性能追踪
 
-- **职责/接口**：`AppSettings` 管理 JSON；`LogService` 用 QMutex 缓冲用户日志并批量发信号，
+- **职责/接口**：`AppSettings` 管理 JSON，提供 `get/set/update/set_many/reset`；`update()` 和
+  `set_many()` 在一次锁内更新后只安排一次防抖保存；`LogService` 用 QMutex 缓冲用户日志并批量发信号，
   DEBUG 仅在源码模式写入线程安全的 stderr；`core.perf_trace` 记录并汇总异步操作耗时。
 - **输入/输出**：设置键值、日志消息、时间戳；输出用户配置文件、INFO 及以上 UI/文件日志和
   仅供开发环境查看的 DEBUG 诊断。
 - **上下游**：上游全应用；下游用户目录、Qt 定时器/信号、Python logging。
-- **配置/数据/外部服务**：`DEFAULTS` 中的主题、窗口、扫描、保存路径、日志、Monkey；无网络依赖。
+- **配置/数据/外部服务**：`DEFAULTS` 中的主题、字体、窗口尺寸、分栏比例、扫描、保存路径、
+  日志、Monkey；无网络依赖。
 - **测试/风险/待确认**：迁移、日志线程、DEBUG 分流、root handler 保留、停止态和 flush
-  有测试；AppSettings 的 debounce Timer 与数据字典无锁，真实并发写设置待确认。
+  有测试；AppSettings 使用 RLock 保护数据、计时器和快照，以独立写锁串行保存回调，批量更新、
+  字段边界、并发保存不覆盖新快照和旧分栏字段迁移有单测。
+  设置仍无 schema/version，`_load()` 仍只载入 `DEFAULTS` 白名单键。
+
+### 样式、字体与响应式布局
+
+- **职责/接口**：`TypographyManager` 持有不可变 `FontConfig`；`FontRole` 定义 `UI`、
+  `UI_SMALL`、`MONO`、`LOG`、`TITLE`；`BaseStyles.font_for_role()` 和
+  `control_height()` 是视图使用的统一工厂，`group_box_title_margin()` 按字体度量提供分组标题
+  净空。普通操作文案使用 `UI`，`UI_SMALL` 仅用于提示和
+  元数据，技术数据与日志分别使用 `MONO`、`LOG`。`responsive_column_count()` 和
+  `reflow_widgets()` 负责根据宽度移动既有控件。
+- **输入/输出**：输入 `font_family`、`ui_font_size`、`log_font_size` 和容器逻辑像素宽度；
+  输出 QApplication 默认字体、角色 QFont、控件安全最小高度、响应式网格列数和三类字体信号。
+- **上下游**：上游为 `main.py`、SettingsDialog、MainFrame/SidePanel 的宽度事件；下游为
+  QApplication、主窗口、面板和对话框。
+- **配置/数据/外部服务**：空字体族表示系统默认；不可用字体回退到 Qt 系统字体；UI 字号
+  8–22、日志字号 7–16；通用面板断点为 420/560 逻辑像素，Device 在 360 像素切换列表布局，
+  Settings 紧凑断点为 `720 + max(0, UI 字号 - 12) × 18`，工具栏保存路径在最小窗口宽度起显示
+  末级目录，1040 像素起切换为宽屏省略模式。无网络或设备依赖。
+- **测试/风险/待确认**：`ui_font_changed`、`log_font_changed`、`fonts_changed` 与
+  `theme_changed` 相互独立；日志字号变化不会触发界面字体订阅者，主题变化不会伪装成字体变化。
+  单测覆盖信号、字体回退、面板/对话框刷新、控件身份保持、最大字号无横向溢出及分组标题净空；
+  真实平台字体替代、中文回退和高 DPI 视觉效果仍需人工验证。
 
 ### DeviceStore
 

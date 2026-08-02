@@ -37,9 +37,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from gui.styles import BaseStyles, get_default_font
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.styles.typography import FontRole
 from models.base.process_runner import ProcessRunner
 
 MIN_ZOOM = 0.10
@@ -104,11 +105,12 @@ class ScreenshotViewer(QDialog):
         self._update_nav_visibility()
 
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
 
     def _init_window(self):
         self.setWindowTitle("Screenshot Viewer")
         self.setWindowIcon(get_themed_icon(self._window_icon_name))
-        self.setFont(get_default_font())
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.setMinimumSize(760, 520)
         self.resize(1100, 760)
 
@@ -132,14 +134,20 @@ class ScreenshotViewer(QDialog):
             BaseStyles.theme_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):
             pass
+        try:
+            BaseStyles.fonts_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
         super().closeEvent(event)
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
-        self.setFont(get_default_font())
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        small_font = BaseStyles.font_for_role(FontRole.UI_SMALL)
+        mono_font = BaseStyles.font_for_role(FontRole.MONO)
+        self.setFont(ui_font)
         c = self._theme_color
         r = BaseStyles
-        small_size = max(10, BaseStyles.DEFAULT_FONT_SIZE - 1)
 
         self.setStyleSheet(
             BaseStyles.SCROLLBAR_STYLE()
@@ -147,8 +155,6 @@ class ScreenshotViewer(QDialog):
             QDialog {{
                 background-color: {c('WINDOW_BG')};
                 color: {c('TEXT_PRIMARY')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QFrame#canvasFrame {{
                 background-color: {c('INPUT_BG')};
@@ -192,11 +198,12 @@ class ScreenshotViewer(QDialog):
                 background: transparent;
             }}
             QLabel#metaLabel,
-            QLabel#pathLabel,
             QLabel#navLabel,
             QLabel#zoomLabel {{
                 color: {c('TEXT_SECONDARY')};
-                font-size: {small_size}px;
+            }}
+            QLabel#pathLabel {{
+                color: {c('TEXT_SECONDARY')};
             }}
             QPushButton {{
                 background-color: {c('BUTTON_BG')};
@@ -204,7 +211,6 @@ class ScreenshotViewer(QDialog):
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {r.RADIUS_SM}px;
                 padding: 0;
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QPushButton:hover {{
                 background-color: {c('BUTTON_HOVER')};
@@ -230,8 +236,21 @@ class ScreenshotViewer(QDialog):
             }}
             """
         )
+        self._path_label.setFont(mono_font)
+        for label in (self._info_label, self._nav_label, self._zoom_label):
+            label.setFont(small_font)
+        self._nav_label.setMinimumWidth(52)
+        self._nav_label.setMinimumWidth(max(52, self._nav_label.sizeHint().width()))
+        self._zoom_label.setMinimumWidth(56)
+        self._zoom_label.setMinimumWidth(max(56, self._zoom_label.sizeHint().width()))
         self._refresh_button_icons()
         if hasattr(self, "_placeholder_text"):
+            if self._placeholder_text is not None:
+                self._placeholder_text.setFont(
+                    BaseStyles.font_for_role(
+                        FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
+                    )
+                )
             self._refresh_placeholder_color()
 
     def _init_ui(self):
@@ -313,7 +332,7 @@ class ScreenshotViewer(QDialog):
         self._nav_label = QLabel("0 / 0")
         self._nav_label.setObjectName("navLabel")
         self._nav_label.setAlignment(Qt.AlignCenter)
-        self._nav_label.setFixedWidth(52)
+        self._nav_label.setMinimumWidth(52)
         self._nav_label.setToolTip("Current screenshot index")
         layout.addWidget(self._nav_label)
 
@@ -328,7 +347,7 @@ class ScreenshotViewer(QDialog):
         self._zoom_label = QLabel("Fit")
         self._zoom_label.setObjectName("zoomLabel")
         self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setFixedWidth(56)
+        self._zoom_label.setMinimumWidth(56)
         self._zoom_label.setToolTip("Current zoom")
         layout.addWidget(self._zoom_label)
 
@@ -424,7 +443,11 @@ class ScreenshotViewer(QDialog):
         self._original_pixmap = None
         self._pixmap_item = None
         self._placeholder_text = self._scene.addText(text)
-        self._placeholder_text.setFont(BaseStyles.get_default_font(max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)))
+        self._placeholder_text.setFont(
+            BaseStyles.font_for_role(
+                FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
+            )
+        )
         self._scene.setSceneRect(QRectF(0, 0, 420, 240))
         bounds = self._placeholder_text.boundingRect()
         self._placeholder_text.setPos((420 - bounds.width()) / 2, (240 - bounds.height()) / 2)

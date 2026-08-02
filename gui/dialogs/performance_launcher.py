@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QTextCursor
+from PySide6.QtGui import QDesktopServices, QFontMetrics, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -34,6 +34,7 @@ from gui.dialogs.lifecycle import QThreadGroupShutdownTask, safe_disconnect, wai
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
+from gui.styles.typography import FontRole
 from models.base.focus_detector import detect_current_package
 from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
@@ -149,6 +150,7 @@ class PerformanceLauncherDialog(QDialog):
         self._build_ui(package_name)
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
         self._theme_sync_timer.start()
 
     def _build_ui(self, package_name: str):
@@ -170,6 +172,7 @@ class PerformanceLauncherDialog(QDialog):
         grid.setColumnStretch(1, 1)
 
         self.package_edit = QLineEdit(package_name)
+        self.package_edit.setObjectName("monoField")
         self.package_edit.setPlaceholderText("com.example.app")
         self.get_package_btn = QPushButton("Get Current Package")
         self.get_package_btn.setIcon(get_themed_icon("target.svg"))
@@ -183,11 +186,14 @@ class PerformanceLauncherDialog(QDialog):
         self.timeout_combo = self._combo(["10", "30", "60", "120", "600", "4320"], "600")
         self.dumpheap_combo = self._combo(["5", "10", "30", "60", "120"], "60")
         self.exception_edit = QLineEdit("fatal exception;has died")
+        self.exception_edit.setObjectName("monoField")
         self.phone_log_edit = QLineEdit("/data/anr")
+        self.phone_log_edit.setObjectName("monoField")
         self.monkey_check = QCheckBox("Enable monkey")
         self.monkey_check.toggled.connect(self._on_monkey_enabled_changed)
         monkey_row = self._build_monkey_row()
         self.save_path_edit = QLineEdit(self._default_save_path())
+        self.save_path_edit.setObjectName("monoField")
         self.save_path_edit.setPlaceholderText("Result root")
         self.pick_save_btn = QPushButton("Browse")
         self.pick_save_btn.setIcon(get_themed_icon("folder.svg"))
@@ -324,9 +330,7 @@ class PerformanceLauncherDialog(QDialog):
         )
         color = BaseStyles.color("LOG_SUCCESS" if total == 100 else "LOG_WARNING")
         self.monkey_total_label.setText(f"Total: {total}%")
-        self.monkey_total_label.setStyleSheet(
-            f"color: {color}; font-weight: bold; font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;"
-        )
+        self.monkey_total_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def _collect_monkey_config(self) -> MobilePerfMonkeyConfig:
         defaults = MobilePerfMonkeyConfig()
@@ -395,7 +399,7 @@ class PerformanceLauncherDialog(QDialog):
         self.progress_bar.setFormat("0%")
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setMinimumWidth(160)
-        self.progress_bar.setFixedHeight(22)
+        self.progress_bar.setProperty("adaptiveBaseHeight", 22)
         row.addWidget(self.progress_bar, 1)
 
         self.perfetto_btn = QPushButton("Open Perfetto")
@@ -739,9 +743,7 @@ class PerformanceLauncherDialog(QDialog):
             else "normal"
         )
         self.status_label.setStyleSheet(
-            f"color: {BaseStyles.color(color_key)}; "
-            f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px; "
-            f"font-weight: {weight};"
+            f"color: {BaseStyles.color(color_key)}; " f"font-weight: {weight};"
         )
 
     def _update_progress(self):
@@ -802,43 +804,29 @@ class PerformanceLauncherDialog(QDialog):
         for combo in self.monkey_pct_combos.values():
             combo.setMinimumWidth(max(72, percent_width))
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
         c = BaseStyles.color
         r = BaseStyles.RADIUS_MD
+        group_title_margin = BaseStyles.group_box_title_margin()
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
-        self.setFont(BaseStyles.get_default_font())
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
             BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
             QDialog {{
                 background-color: {c('PANEL_BG')};
                 color: {c('TEXT_PRIMARY')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
-            }}
-            QDialog QLabel,
-            QDialog QLineEdit,
-            QDialog QComboBox,
-            QDialog QComboBox QAbstractItemView,
-            QDialog QCheckBox,
-            QDialog QPushButton,
-            QDialog QPushButton#accent,
-            QDialog QPushButton#danger,
-            QDialog QGroupBox {{
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QGroupBox#performanceConfig {{
                 background-color: {c('INPUT_BG')};
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {r}px;
-                margin-top: 7px;
+                margin-top: {group_title_margin}px;
                 padding: 10px 10px 8px 10px;
                 color: {c('TEXT_PRIMARY')};
                 font-weight: bold;
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QGroupBox#performanceConfig::title {{
                 subcontrol-origin: margin;
@@ -846,29 +834,23 @@ class PerformanceLauncherDialog(QDialog):
                 padding: 0 8px;
                 left: 10px;
                 color: {c('GROUP_TITLE_COLOR')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QLabel#fieldLabel {{
                 color: {c('TEXT_PRIMARY')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
                 font-weight: bold;
             }}
             QLabel#onlineDeviceLabel {{
                 color: {c('LOG_SUCCESS')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
                 font-weight: bold;
             }}
             QLabel#inlineLabel {{
                 color: {c('TEXT_PRIMARY')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QLabel#configHint {{
                 color: {c('TEXT_SECONDARY')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QLabel#statusLabel {{
                 color: {c('TEXT_SECONDARY')};
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QProgressBar#performanceProgress {{
                 background-color: {c('INPUT_BG')};
@@ -876,8 +858,6 @@ class PerformanceLauncherDialog(QDialog):
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {BaseStyles.RADIUS_MD}px;
                 text-align: center;
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QProgressBar#performanceProgress::chunk {{
                 background-color: {c('LOG_SUCCESS')};
@@ -889,21 +869,15 @@ class PerformanceLauncherDialog(QDialog):
                 border: 1px solid {c('BORDER_COLOR')};
                 border-radius: {BaseStyles.RADIUS_LG}px;
                 padding: 4px;
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QCheckBox {{
                 color: {c('TEXT_PRIMARY')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QWidget#inlineRow,
             QWidget#inlineRow QLabel,
             QWidget#inlineRow QCheckBox {{
                 color: {c('TEXT_PRIMARY')};
                 background-color: transparent;
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QWidget#inlineRow QLineEdit,
             QWidget#inlineRow QComboBox,
@@ -914,8 +888,6 @@ class PerformanceLauncherDialog(QDialog):
                 border-radius: {BaseStyles.RADIUS_MD}px;
                 selection-background-color: {c('SELECTION_BG')};
                 selection-color: {c('SELECTION_TEXT')};
-                font-family: '{BaseStyles.DEFAULT_FONT_FAMILY}';
-                font-size: {BaseStyles.DEFAULT_FONT_SIZE}px;
             }}
             QWidget#inlineRow QLineEdit:disabled,
             QWidget#inlineRow QComboBox:disabled,
@@ -938,12 +910,28 @@ class PerformanceLauncherDialog(QDialog):
         self._applied_theme_signature = self._theme_signature()
 
     def _apply_widget_fonts(self):
-        ui_font = BaseStyles.get_default_font()
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        mono_font = BaseStyles.font_for_role(FontRole.MONO)
+        log_font = BaseStyles.font_for_role(FontRole.LOG)
         self.setFont(ui_font)
-        self.log_view.setFont(ui_font)
-        self.log_view.document().setDefaultFont(ui_font)
         for widget in self.findChildren(QWidget):
             widget.setFont(ui_font)
+        for widget in (
+            self.package_edit,
+            self.exception_edit,
+            self.phone_log_edit,
+            self.save_path_edit,
+            self.serialnum_label,
+        ):
+            widget.setFont(mono_font)
+        self.log_view.setFont(log_font)
+        self.log_view.viewport().setFont(log_font)
+        self.log_view.document().setDefaultFont(log_font)
+        progress_height = QFontMetrics(ui_font).height() + 10
+        self.progress_bar.setMinimumHeight(22)
+        self.progress_bar.setMinimumHeight(
+            max(22, self.progress_bar.sizeHint().height(), progress_height)
+        )
 
     @staticmethod
     def _theme_signature() -> tuple[str, str, int, int]:
@@ -1046,4 +1034,5 @@ class PerformanceLauncherDialog(QDialog):
         safe_disconnect(self.log_received, self._append_log)
         safe_disconnect(self.runner_finished, self._on_runner_finished)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         super().closeEvent(event)

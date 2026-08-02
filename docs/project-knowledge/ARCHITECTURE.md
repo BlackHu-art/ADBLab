@@ -29,7 +29,9 @@ flowchart LR
 ### 1. 启动与应用壳
 
 - `main.py::_dispatch_cli()` 先处理 CLI 子模式；无已知子模式时进入 `_run_gui()`。
-- `_run_gui()` 设置 Windows AppUserModelID、创建 QApplication、初始化资源路径/主题、显示 `gui.main_frame.MainFrame`。
+- `_run_gui()` 设置 Windows AppUserModelID、创建 QApplication、初始化资源路径，调用
+  `BaseStyles.reload_from_settings()` 将统一 UI 字体应用到 QApplication，再加载主题并显示
+  `gui.main_frame.MainFrame`。
 - MobilePerf worker 复用同一可执行入口，但不创建 GUI。
 
 ### 2. 视图与交互层
@@ -40,7 +42,17 @@ flowchart LR
   ScreenshotViewer 作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，由
   MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 与 Settings
   保持有意的模态交互。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
-- `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载。
+- `MainFrame` 保持无边框外观，但通过 `FramelessResizeController` 在四边和四角建立八个透明
+  热区，并将按压交给 `QWindow.startSystemResize()`；工具栏拖动优先使用
+  `QWindow.startSystemMove()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
+- 主窗口尺寸和左右分栏比例由 `gui/window_layout.py` 统一校验。普通窗口缩放与分隔条拖动
+  分别防抖写入设置；分隔条常驻线条不可见，但保留 8 像素透明拖动热区。设置页只通过
+  `window_layout_snapshot()`、`restore_default_window_size()` 和 `reset_panel_split()` 公开接口
+  展示或恢复布局，不直接访问 MainFrame 私有控件。顶部全局保存路径从最小窗口宽度起保持可见，
+  1040 像素以下显示末级目录，宽窗口按字体度量从中间省略，避免与工具栏按钮重叠。
+- `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载；每个功能页放入禁用
+  横向滚动的 `QScrollArea`。左栏分割宽度和各功能页滚动视口宽度变化会触发响应式重排，Device、Apps、
+  System、Remote 只移动既有控件，不重建控件或重新连接信号。
 - `gui/panels/` 负责普通操作表单；`gui/dialogs/` 负责需要独立生命周期的复杂任务。
 - 视图通常不直接阻塞执行命令，但 App Manager、File Explorer、Live Logcat、Performance Launcher 各自持有 QThread/worker 或 runner。
 
@@ -64,8 +76,31 @@ flowchart LR
 - `ProcessRunner`：长进程注册、替换、停止、带 deadline 的强停、进程树终止和全局兜底；
   未确认退出的进程继续保留 tracking。
 - `ADBBridge`：普通 shell 以及每设备一个持久 `adb shell` 输入会话。
-- `AppSettings`、`DeviceStore`：本地 JSON/YAML 持久化与旧资源文件迁移。
+- `AppSettings`：使用可重入锁保护数据、保存计时器和快照，另以写锁串行保存回调；
+  `update()`/`set_many()` 在一个锁域内批量更新，并只安排一次 500 毫秒防抖保存。写盘在取得
+  写锁后生成最新快照，再使用独立临时文件和 `os.replace`，避免旧快照晚完成后覆盖新设置。
+- `DeviceStore`：本地 YAML 持久化、旧资源文件迁移、损坏文件备份和原子替换。
 - `LogService`：跨线程缓冲用户日志并通过 Qt 批量发信号；开发 DEBUG 与用户界面严格分流。
+
+### 字体与响应式布局通道
+
+- `gui/styles/typography.py` 定义不可变 `FontConfig` 和五种稳定角色：`UI`、`UI_SMALL`、
+  `MONO`、`LOG`、`TITLE`。用户字体不可用时回退到 Qt 系统界面字体，等宽角色使用 Qt
+  系统等宽字体；界面字号限制为 8–22，日志字号限制为 7–16。
+- `TypographyManager` 是应用级字体状态源。`ui_font_changed` 只在界面字体族或界面字号变化时
+  发送，`log_font_changed` 只在等宽字体族或日志字号变化时发送，`fonts_changed` 表示任一字体
+  配置变化；字体变化不再借用 `theme_changed`。`BaseStyles` 保留兼容属性和字体工厂，但其值
+  由同一 `FontConfig` 投影。
+- 普通标签、按钮、输入框、下拉框、复选框和页签统一使用 `UI`；`UI_SMALL` 只用于提示、元数据和
+  次要状态，设备标识、包名、命令及路径使用同字号的 `MONO`，日志使用独立 `LOG`。日志面板只订阅
+  `log_font_changed`，主窗口只订阅
+  `ui_font_changed`，需要同时刷新多种角色的面板和对话框订阅 `fonts_changed`。控件最小高度
+  通过字体度量计算；通用分组框也按当前标题字体高度计算顶部净空，并在字号变化后刷新样式，
+  避免放大字号后文字被固定高度裁切或被首行按钮覆盖。
+- `gui/widgets/responsive_layout.py` 以 420/560 逻辑像素为默认断点返回紧凑、中等和宽布局列数，
+  `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用可纵向滚动的内容区，
+  以滚动视口实际宽度及当前 UI 字号调整 Appearance、Window、Storage 与操作按钮的排列；
+  主面板在实际分栏或滚动视口宽度变化时重排。
 
 ### 日志通道
 
@@ -102,10 +137,10 @@ sequenceDiagram
     else 打包自检
         Main->>Main: _self_check_packaging()
     else GUI
-        Main->>Qt: 创建 QApplication / 加载主题
+        Main->>Qt: 创建 QApplication / 应用字体 / 加载主题
         Main->>MF: MainFrame()
         MF->>C: 创建 Controller 与 Models
-        MF->>MF: 构建窗口、面板、信号映射
+        MF->>MF: 恢复尺寸和分栏 / 构建窗口、面板、信号映射
         MF->>ADB: 延后首次 refresh_devices
         opt 持续扫描开启
             MF->>Scan: start()
@@ -153,6 +188,8 @@ sequenceDiagram
    不先移动目录，也不引入 asyncio/qasync 或全局重型 EventBus。决策和阶段定义见
    `docs/architecture/adr/0001-incremental-vnext.md` 与
    `docs/architecture/IMPLEMENTATION_PLAN.md`。
+9. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸与分栏比例
+   使用纯函数校验和公开恢复接口；面板通过断点重排既有控件，避免为缩放复制业务控件和信号接线。
 
 ## vNext 目标边界
 

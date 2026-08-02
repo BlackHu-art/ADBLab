@@ -1,12 +1,13 @@
 """提供设备连接、发现、选择和基础操作面板。"""
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCompleter,
     QComboBox,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QListWidget,
@@ -19,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from gui.panels.base_panel import BasePanel
 from gui.panels.side_panel_signals import BlockSignals
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
 from models.device_store import DeviceStore
 from utils.adb_targets import normalize_adb_connect_target
 
@@ -41,8 +42,7 @@ class DeviceManager(BasePanel):
 
         rc = QHBoxLayout()
         rc.setSpacing(4)
-        self.ip_entry = self._combo()
-        self.ip_entry.setEditable(True)
+        self.ip_entry = self._combo_editable()
         self.ip_entry.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self._build_combo_view()
         self._refresh_device_combobox()
@@ -53,8 +53,10 @@ class DeviceManager(BasePanel):
         rc.addWidget(self.btn_connect_devices, 1)
         gd_l.addLayout(rc)
 
-        body = QHBoxLayout()
+        body = QGridLayout()
         body.setSpacing(4)
+        body.setContentsMargins(0, 0, 0, 0)
+        self._device_body_layout = body
 
         self.listbox_devices = QListWidget()
         self.listbox_devices.setObjectName("deviceList")
@@ -66,9 +68,10 @@ class DeviceManager(BasePanel):
         self._apply_device_list_style()
 
         side = QFrame()
-        sl = QVBoxLayout(side)
+        sl = QGridLayout(side)
         sl.setSpacing(2)
         sl.setContentsMargins(0, 0, 0, 0)
+        self._device_actions_layout = sl
         self.btn_refresh = self._b("Refresh", "arrows-clockwise.svg")
         self.btn_info = self._b("Device Info", "info.svg")
         self.btn_disconnect = self._b("Disconnect", "link-break.svg")
@@ -78,30 +81,85 @@ class DeviceManager(BasePanel):
         self.btn_batch = self._b("Batch Install", "stack-plus.svg")
         self.btn_all = self._b("Select All", "check-square.svg")
         self.btn_none = self._b("Deselect All", "square.svg")
-        for b in (self.btn_refresh, self.btn_info, self.btn_disconnect,
-                  self.btn_restart_dev, self.btn_restart_adb, self.btn_batch,
-                  self.btn_all, self.btn_none):
-            sl.addWidget(b)
-        sl.addStretch()
-        body.addWidget(self.listbox_devices, 3)
-        body.addWidget(side, 1)
+        self._device_action_buttons = (
+            self.btn_refresh,
+            self.btn_info,
+            self.btn_disconnect,
+            self.btn_restart_dev,
+            self.btn_restart_adb,
+            self.btn_batch,
+            self.btn_all,
+            self.btn_none,
+        )
+        self._device_action_frame = side
+        body.addWidget(self.listbox_devices, 0, 0)
+        body.addWidget(side, 0, 1)
+        body.setColumnStretch(0, 3)
+        body.setColumnStretch(1, 1)
+        self.apply_responsive_width(360)
         gd_l.addLayout(body)
         lo.addWidget(g_dev)
         return w
 
+    def apply_responsive_width(self, width: int) -> None:
+        """根据左栏宽度切换设备列表与操作按钮的排布。"""
+
+        compact = int(width) < 360
+        mode = "compact" if compact else "wide"
+        if getattr(self, "_device_layout_mode", None) == mode:
+            return
+        self._device_layout_mode = mode
+
+        body = self._device_body_layout
+        body.removeWidget(self.listbox_devices)
+        body.removeWidget(self._device_action_frame)
+        actions = self._device_actions_layout
+        while actions.count():
+            actions.takeAt(0)
+
+        if compact:
+            body.addWidget(self.listbox_devices, 0, 0, 1, 2)
+            body.addWidget(self._device_action_frame, 1, 0, 1, 2)
+            for index, button in enumerate(self._device_action_buttons):
+                row, column = divmod(index, 2)
+                actions.addWidget(button, row, column)
+                actions.setColumnStretch(column, 1)
+            actions.setRowStretch(len(self._device_action_buttons), 0)
+            body.setColumnStretch(0, 1)
+            body.setColumnStretch(1, 1)
+        else:
+            body.addWidget(self.listbox_devices, 0, 0)
+            body.addWidget(self._device_action_frame, 0, 1)
+            for row, button in enumerate(self._device_action_buttons):
+                actions.addWidget(button, row, 0)
+            actions.setColumnStretch(0, 1)
+            actions.setColumnStretch(1, 0)
+            actions.setRowStretch(len(self._device_action_buttons), 1)
+            body.setColumnStretch(0, 3)
+            body.setColumnStretch(1, 1)
+
     # ── 样式 ────────────────────────────────────────────────────────────
 
-    def _apply_device_list_style(self):
-        from core.settings_manager import AppSettings
-        ui_size = AppSettings.instance().get("ui_font_size", 12)
-        mono_size = max(8, ui_size - 2)
-        font = QFont("Courier New", mono_size)
-        font.setStyleHint(QFont.Monospace)
+    def apply_fonts(self) -> None:
+        """刷新设备列表、下拉表格和补全弹窗使用的等宽字体。"""
+
+        font = BaseStyles.font_for_role(FontRole.MONO)
+        self.listbox_devices.setProperty("fontRole", FontRole.MONO.value)
         self.listbox_devices.setFont(font)
         for i in range(self.listbox_devices.count()):
             item = self.listbox_devices.item(i)
             if item:
                 item.setFont(font)
+        view = self.ip_entry.view()
+        if view is not None:
+            view.setFont(font)
+            horizontal_header = getattr(view, "horizontalHeader", None)
+            if callable(horizontal_header):
+                horizontal_header().setFont(font)
+        self.panel._apply_completer_style(self.ip_entry.completer())
+
+    def _apply_device_list_style(self):
+        self.apply_fonts()
         self.listbox_devices.setStyleSheet(BaseStyles.DEVICE_LIST_STYLE())
 
     # ── 设备列表 ────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -13,9 +14,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
+from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
 
 
 class BasePanel(QWidget):
@@ -24,6 +26,7 @@ class BasePanel(QWidget):
     def __init__(self, panel, parent=None):
         super().__init__(parent)
         self.panel = panel
+        self._responsive_rows = []
 
     # ── 共享属性快捷访问 ────────────────────────────────────────────────
 
@@ -68,13 +71,18 @@ class BasePanel(QWidget):
         """创建统一样式的 QGroupBox。"""
         g = QGroupBox(t)
         g.setFont(self._font_base)
+        g.setProperty("fontRole", FontRole.UI.value)
         g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         return g
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
+        role = FontRole.UI_SMALL if small else FontRole.UI
         label = QLabel(text)
-        label.setFont(self._font_sm if small else self._font_base)
+        label.setFont(
+            BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base
+        )
+        label.setProperty("fontRole", role.value)
         label.setWordWrap(False)
         if align is not None:
             label.setAlignment(align)
@@ -88,6 +96,7 @@ class BasePanel(QWidget):
     def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
         cb = QCheckBox(text)
         cb.setFont(self._font_base)
+        cb.setProperty("fontRole", FontRole.UI.value)
         if tooltip:
             cb.setToolTip(tooltip)
         return cb
@@ -96,8 +105,9 @@ class BasePanel(QWidget):
         """创建图标按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setToolTip(tooltip or t)
@@ -111,8 +121,9 @@ class BasePanel(QWidget):
         """创建只在双击时触发的图标按钮。"""
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setToolTip(tooltip or t)
@@ -124,8 +135,9 @@ class BasePanel(QWidget):
         """创建纯文本按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
+        b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setToolTip(tooltip or t)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
@@ -170,10 +182,67 @@ class BasePanel(QWidget):
         layout.addLayout(row)
         return row
 
+    def _add_responsive_row(
+        self,
+        layout,
+        *items,
+        spacing=4,
+        compact_columns=2,
+        medium_columns=2,
+        wide_columns=None,
+    ):
+        """创建只重排既有控件的响应式网格行。"""
+
+        widgets = tuple(item[0] if isinstance(item, tuple) else item for item in items)
+        stretches = tuple(item[1] if isinstance(item, tuple) else 0 for item in items)
+        row = QGridLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setHorizontalSpacing(spacing)
+        row.setVerticalSpacing(spacing)
+        spec = {
+            "layout": row,
+            "widgets": widgets,
+            "stretches": stretches,
+            "compact_columns": compact_columns,
+            "medium_columns": medium_columns,
+            "wide_columns": wide_columns or len(widgets),
+            "mode": None,
+        }
+        self._responsive_rows.append(spec)
+        layout.addLayout(row)
+        self._reflow_responsive_row(spec, 10_000)
+        return row
+
+    @staticmethod
+    def _reflow_responsive_row(spec, width: int):
+        columns = responsive_column_count(
+            width,
+            compact_columns=spec["compact_columns"],
+            medium_columns=spec["medium_columns"],
+            wide_columns=spec["wide_columns"],
+        )
+        columns = min(columns, max(1, len(spec["widgets"])))
+        if spec["mode"] == columns:
+            return
+        spec["mode"] = columns
+        reflow_widgets(
+            spec["layout"],
+            spec["widgets"],
+            columns,
+            widget_stretches=spec["stretches"],
+        )
+
+    def apply_responsive_width(self, width: int) -> None:
+        """仅在跨越布局断点时重排本面板登记的响应式行。"""
+
+        for spec in self._responsive_rows:
+            self._reflow_responsive_row(spec, width)
+
     def _in(self, p, w=0):
         """创建统一样式的输入框。"""
         i = QLineEdit()
         i.setFont(self._font_sm)
+        i.setProperty("fontRole", FontRole.UI.value)
         i.setPlaceholderText(p)
         i.setMinimumHeight(26)
         i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -181,19 +250,26 @@ class BasePanel(QWidget):
             i.setMaximumWidth(w)
         return i
 
-    def _combo(self, items=None, font=None):
+    def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建统一样式的下拉框。"""
+        role = FontRole(font_role)
+        role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
         c = QComboBox()
-        c.setFont(font or self._font_sm)
+        c.setFont(font or role_font)
+        c.setProperty("fontRole", role.value)
         c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if items:
             c.addItems(items)
         return c
 
-    def _combo_editable(self, items=None, font=None):
+    def _combo_editable(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建样式一致的可编辑下拉框。"""
-        c = self._combo(items, font=font)
+        role = FontRole(font_role)
+        role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
+        resolved_font = font or role_font
+        c = self._combo(items, font=resolved_font, font_role=role)
         c.setEditable(True)
         if c.lineEdit():
-            c.lineEdit().setFont(font or self._font_sm)
+            c.lineEdit().setFont(resolved_font)
+            c.lineEdit().setProperty("fontRole", role.value)
         return c

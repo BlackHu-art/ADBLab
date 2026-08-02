@@ -131,6 +131,25 @@ def test_dialog_status_bar_style_has_theme_background():
     assert f"background-color: {expected_bg}" in style
 
 
+def test_combo_box_arrow_uses_theme_specific_qss_resource():
+    with patch.object(BaseStyles, "current_theme", return_value="Light"):
+        light_style = BaseStyles.INPUT_STYLE()
+    with patch.object(BaseStyles, "current_theme", return_value="Dark"):
+        dark_style = BaseStyles.INPUT_STYLE()
+
+    assert "QComboBox::down-arrow" in light_style
+    assert "icons:caret-down-qss-light.svg" in light_style
+    assert "icons:caret-down-qss-dark.svg" in dark_style
+    assert "icons:caret-down.svg" not in light_style + dark_style
+
+    icon_dir = Path(__file__).parents[1] / "resources" / "icons"
+    light_icon = (icon_dir / "caret-down-qss-light.svg").read_text(encoding="utf-8")
+    dark_icon = (icon_dir / "caret-down-qss-dark.svg").read_text(encoding="utf-8")
+    assert "currentColor" not in light_icon + dark_icon
+    assert "#1a1a1a" in light_icon
+    assert "#e0e0e8" in dark_icon
+
+
 def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons():
     _app = QApplication.instance() or QApplication([])
     dialog = LiveLogcatDialog(device_ip="device-1")
@@ -994,7 +1013,7 @@ def test_performance_launcher_normalizes_mixed_separator_save_path():
         dialog.close()
 
 
-def test_performance_launcher_batches_logs_and_uses_ui_font_size():
+def test_performance_launcher_batches_logs_and_uses_log_font_size():
     _app = QApplication.instance() or QApplication([])
     old_ui_size = BaseStyles.DEFAULT_FONT_SIZE
     old_log_size = BaseStyles.LOG_FONT_SIZE_VAR
@@ -1008,7 +1027,7 @@ def test_performance_launcher_batches_logs_and_uses_ui_font_size():
         dialog._append_log("ERROR", "second")
 
         font = dialog.log_view.font()
-        assert font.pointSize() == 17 or font.pixelSize() == 17
+        assert font.pointSize() == 11 or font.pixelSize() == 11
         assert "first" not in dialog.log_view.toPlainText()
 
         dialog._flush_pending_logs()
@@ -1023,7 +1042,7 @@ def test_performance_launcher_batches_logs_and_uses_ui_font_size():
         dialog.close()
 
 
-def test_performance_launcher_config_and_log_follow_global_ui_font():
+def test_performance_launcher_config_and_log_use_distinct_font_roles():
     def effective_size(widget):
         font = widget.font()
         return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
@@ -1040,7 +1059,7 @@ def test_performance_launcher_config_and_log_follow_global_ui_font():
         assert effective_size(dialog.package_edit) == 18
         assert effective_size(dialog.frequency_combo) == 18
         assert effective_size(dialog.monkey_check) == 18
-        assert effective_size(dialog.log_view) == 18
+        assert effective_size(dialog.log_view) == 10
         hints = [w for w in dialog.findChildren(QLabel) if w.objectName() == "configHint"]
         assert hints
         assert all(effective_size(hint) == 18 for hint in hints)
@@ -1050,7 +1069,7 @@ def test_performance_launcher_config_and_log_follow_global_ui_font():
         dialog.close()
 
 
-def test_performance_launcher_log_ignores_log_font_size_and_uses_ui_document_font():
+def test_performance_launcher_log_follows_log_font_size():
     def effective_font_size(font):
         return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
 
@@ -1068,9 +1087,9 @@ def test_performance_launcher_log_ignores_log_font_size_and_uses_ui_document_fon
         BaseStyles.DEFAULT_FONT_SIZE = 16
         dialog._apply_theme()
 
-        assert effective_font_size(dialog.log_view.font()) == 16
-        assert effective_font_size(dialog.log_view.document().defaultFont()) == 16
-        assert effective_font_size(dialog.log_view.viewport().font()) == 16
+        assert effective_font_size(dialog.log_view.font()) == 14
+        assert effective_font_size(dialog.log_view.document().defaultFont()) == 14
+        assert effective_font_size(dialog.log_view.viewport().font()) == 14
         assert dialog.log_view.toPlainText().strip()
     finally:
         BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
@@ -1169,6 +1188,7 @@ def test_performance_launcher_running_status_is_green_and_progress_updates():
 
         assert dialog.progress_bar.value() == 99
     finally:
+        dialog._runner.is_running = Mock(return_value=False)
         dialog.close()
 
 
@@ -1845,6 +1865,7 @@ def test_main_frame_splitter_size_save_is_debounced():
     frame._panel_splitter.sizes.side_effect = [[300, 700], [320, 680]]
     frame._pending_panel_sizes = None
     frame._panel_size_save_timer = Mock()
+    frame._responsive_layout_timer = Mock()
     frame.SPLITTER_SAVE_DEBOUNCE_MS = 20
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
@@ -1856,9 +1877,11 @@ def test_main_frame_splitter_size_save_is_debounced():
         MainFrame._save_pending_panel_sizes(frame)
 
     assert frame._panel_size_save_timer.start.call_args_list == [call(20), call(20)]
+    assert frame._responsive_layout_timer.start.call_args_list == [call(0), call(0)]
     assert settings.set.call_args_list == [
         call("left_panel_width", 320),
         call("right_panel_width", 680),
+        call("panel_split_ratio", 0.32),
     ]
 
 
@@ -2633,18 +2656,14 @@ def test_side_panel_shutdown_forwards_to_loaded_tabs():
     remote_tab.shutdown.assert_called_once()
 
 
-def test_remote_status_font_size_uses_base_styles_default():
+def test_remote_status_style_does_not_override_global_font():
     remote = SimpleNamespace()
     remote._status_label = Mock()
-    old_size = BaseStyles.DEFAULT_FONT_SIZE
-    BaseStyles.DEFAULT_FONT_SIZE = 16
-    try:
-        RemotePanel._update_status(remote, "Running", None)
-    finally:
-        BaseStyles.DEFAULT_FONT_SIZE = old_size
+    RemotePanel._update_status(remote, "Running", None)
 
     style = remote._status_label.setStyleSheet.call_args.args[0]
-    assert "font-size: 16px" in style
+    assert "font-size" not in style
+    assert "font-weight: bold" in style
 
 
 def test_remote_start_stop_buttons_follow_running_state():
@@ -3057,7 +3076,10 @@ def test_app_details_dialog_close_disconnects_theme_handler():
         dialog.close()
 
     assert dialog._closing is True
-    disconnect.assert_called_once_with(BaseStyles.theme_changed, dialog._apply_theme)
+    assert disconnect.call_args_list == [
+        call(BaseStyles.theme_changed, dialog._apply_theme),
+        call(BaseStyles.fonts_changed, dialog._apply_theme),
+    ]
     wait_threads.assert_called_once_with([], 5000)
     dialog.deleteLater()
 

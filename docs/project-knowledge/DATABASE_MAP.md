@@ -10,7 +10,7 @@
 
 | 存储 | 类型/位置 | 数据结构 | 主要读写入口 | 一致性机制 | 风险 |
 | --- | --- | --- | --- | --- | --- |
-| 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键 | `AppSettings._load/_save_atomic/get/set/reset` | 临时文件 + `os.replace`；500ms debounce | `_data` 与 Timer 无锁；无 schema/version；嵌套默认浅拷贝 |
+| 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，以及当前进程动态写入的其他键 | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 无 schema/version；跨进程没有文件锁；不在 DEFAULTS 的动态键虽可写盘，但重启加载时会被忽略；`get()` 不复制嵌套可变值 |
 | 旧应用设置 | `resources/app_settings.json` | 历史默认/用户值 | AppSettings 首次迁移 | 只在用户文件不存在时迁移 | 资源文件可能含本机路径，作为默认种子可移植性差 |
 | 设备元数据 | YAML；用户配置目录 `connected_devices.yaml` | device id → 属性字典 | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 设备标识属敏感元数据；无 schema/version |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 同上 | DeviceStore 首次迁移 | 无用户文件时复制/加载 | 仓库跟踪文件含历史设备标识，合规性待确认 |
@@ -74,20 +74,36 @@ erDiagram
 
 | 分类 | 配置键 | 使用位置 |
 | --- | --- | --- |
-| 外观 | `theme`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、SettingsDialog、日志/对话框 |
-| 窗口 | `window_width`、`window_height`、`left_panel_width`、`right_panel_width`、`always_on_top` | MainFrame、SettingsDialog |
+| 外观 | `theme`、`font_family`、`ui_font_size`、`log_font_size` | TypographyManager、BaseStyles、SettingsDialog、日志/对话框；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
+| 窗口 | `window_width`、`window_height`、`panel_split_ratio`、兼容字段 `left_panel_width`/`right_panel_width`、`always_on_top` | MainFrame、SettingsDialog；默认 1120×640、最小 860×500，左栏比例限制 0.20–0.70 |
 | 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops` | MainFrame/SettingsDialog；危险确认键由统一策略和 App Manager 入口读取 |
 | 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | Log UI、`core.perf_trace` helpers/Controller |
 | 文件 | `save_directory` | 截图、日志、备份、MobilePerf、文件浏览器 |
 | Monkey | `monkey_params` | AppPanel/Controller |
 | Remote | 动态 `scrcpy_*`、`scrcpy_preset` | RemotePanel；不在 DEFAULTS 白名单中，运行时可写但重新加载时会被 `_load()` 忽略，这是潜在持久化缺陷，需实际确认 |
 
-最后一项来自代码交叉检查：`RemotePanel` 调用 `AppSettings.set("scrcpy_...")`，但 `AppSettings._load()` 只载入 `DEFAULTS` 中的键；因此 Remote 设置会写入 JSON，却不会在下一次进程启动时载入。该问题应补单测后修复。
+最后一项来自代码交叉检查：`AppSettings.update()` 允许当前进程写入动态键，但 `_load()` 只载入
+`DEFAULTS` 中的键。`RemotePanel` 调用 `AppSettings.set("scrcpy_...")` 后，这些值会出现在 JSON，
+却不会在下一次进程启动时载入。该问题应补单测后修复。
+
+字体和布局设置的写入粒度如下：
+
+- Settings 修改字体族与 UI 字号时通过一次 `update()` 更新两个键，日志字号单独更新；随后
+  `BaseStyles.reload_from_settings()` 读取同一份已校验快照并发送字体信号。
+- MainFrame 保存普通窗口尺寸时一次批量写入 `window_width/window_height`；拖动分隔条时一次批量
+  写入左右像素兼容字段和 `panel_split_ratio`。比例是后续恢复的主值，旧像素字段用于迁移回退。
+  旧 JSON 缺少比例键时，`_load()` 会由两个旧像素字段推导比例并立即保存迁移结果。
+- `AppSettings.reset()` 使用 `deepcopy(DEFAULTS)` 恢复嵌套默认值，取消等待中的防抖计时器并立即
+  原子保存；不会与默认 `monkey_params` 共享嵌套可变对象。
 
 ## 事务、索引与并发
 
 - 没有跨文件事务。
-- AppSettings 单文件替换具有崩溃安全性，但两个 Timer/线程并发保存时缺少锁。
+- AppSettings 的内存读取、单项/批量更新、重置、计时器引用和写盘快照均受同一 RLock 保护；
+  `update()`/`set_many()` 将一组字段作为一次内存更新并只调度一个保存计时器。进程内保存回调
+  由独立写锁串行，且在取得写锁后再生成快照，防止旧快照最后覆盖新值；单文件替换具有崩溃
+  安全性。但 `get()` 返回的嵌套字典等可变值不是防御性副本，调用方原地修改不受后续锁保护；
+  跨进程也没有文件锁，仍不能把它当成数据库事务或多进程一致性协议。
 - DeviceStore 在同一 RLock 内读取/生成快照，使用临时文件、`fsync` 和 `os.replace`；
   损坏用户 YAML 会先备份再恢复为空存储。
 - 邮件配置为只读；App Manager 预设 JSON 仍直接覆盖，没有原子替换。
@@ -96,6 +112,7 @@ erDiagram
 ## 数据风险与建议
 
 1. 邮件运行时已迁移用户目录/环境注入并脱敏；仓库所有者仍需轮换、停止跟踪并审查历史。
-2. 为设置/设备/预设增加 `schema_version` 和迁移函数。
+2. 为设置/设备/预设增加 `schema_version` 和迁移函数；若未来出现多个写进程，再增加文件锁或
+   单写者机制。
 3. 明确允许持久化的动态设置键，修复 `scrcpy_*` 重启丢失。
 4. 为结果文件定义敏感级别、默认保留期、导出提示和清理策略。

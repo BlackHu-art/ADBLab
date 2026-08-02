@@ -6,8 +6,9 @@ import threading
 import time
 
 from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QMouseEvent
+from PySide6.QtGui import QIcon, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -37,11 +38,21 @@ from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.styles.icon_loader import get_themed_icon
+from gui.widgets.frameless_resize import FramelessResizeController
+from gui.window_layout import (
+    DEFAULT_PANEL_RATIO,
+    DEFAULT_WINDOW_SIZE,
+    MINIMUM_WINDOW_SIZE,
+    normalize_panel_ratio,
+    normalize_window_size,
+    ratio_from_sizes,
+    split_sizes_for_ratio,
+)
 from models.base.command_runner import CommandRunner
 from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from utils.resource_path import resource_path
 
-from .styles import BaseStyles, get_default_font
+from .styles import BaseStyles, FontRole
 
 
 def _debug_log(owner, event: str, **fields) -> None:
@@ -94,6 +105,7 @@ class MainFrame(QMainWindow):
     SHUTDOWN_FINALIZER_RESERVE_SECONDS = 1.0
     DEVICE_SCAN_DEBOUNCE_MS = 300
     SPLITTER_SAVE_DEBOUNCE_MS = 300
+    WINDOW_SIZE_SAVE_DEBOUNCE_MS = 350
     _adb_bootstrap_finished = Signal()
 
     def __init__(self):
@@ -117,6 +129,9 @@ class MainFrame(QMainWindow):
         self._dangerous_policy = DangerousOperationPolicy()
         self._guarded_signal_handlers = []
         self._drag_pos = None
+        self._layout_ready = False
+        self._resize_controller = None
+        self._normal_window_size = DEFAULT_WINDOW_SIZE
         self._active_dialogs = []
         self._scan_thread = None
         self._closing = False
@@ -131,12 +146,23 @@ class MainFrame(QMainWindow):
         self._panel_size_save_timer = QTimer(self)
         self._panel_size_save_timer.setSingleShot(True)
         self._panel_size_save_timer.timeout.connect(self._save_pending_panel_sizes)
+        self._pending_window_size = None
+        self._window_size_save_timer = QTimer(self)
+        self._window_size_save_timer.setSingleShot(True)
+        self._window_size_save_timer.timeout.connect(self._save_pending_window_size)
+        self._responsive_layout_timer = QTimer(self)
+        self._responsive_layout_timer.setSingleShot(True)
+        self._responsive_layout_timer.timeout.connect(self._apply_panel_responsive_layout)
         self._adb_bootstrap_thread = None
         self._adb_bootstrap_finished.connect(self._start_device_discovery)
         self._always_on_top = False
 
         self._setup_window()
         self._init_panels()
+        self._resize_controller = FramelessResizeController(self)
+        self._layout_ready = True
+        self._update_toolbar_path_display()
+        self._responsive_layout_timer.start(0)
         self._bootstrap_adb_async()
 
     # ── 持续设备扫描 ────────────────────────────────────────────────────
@@ -221,17 +247,23 @@ class MainFrame(QMainWindow):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setMinimumSize(860, 500)
+        self.setMinimumSize(MINIMUM_WINDOW_SIZE)
 
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
         self._always_on_top = bool(s.get("always_on_top", False))
         self._apply_window_flags()
-        w = s.get("window_width", 1200)
-        h = s.get("window_height", 650)
-        self.resize(w, h)
-        self.setFont(get_default_font())
+        screen = self.screen() or QApplication.primaryScreen()
+        available_size = screen.availableGeometry().size() if screen is not None else None
+        restored_size = normalize_window_size(
+            s.get("window_width", DEFAULT_WINDOW_SIZE.width()),
+            s.get("window_height", DEFAULT_WINDOW_SIZE.height()),
+            available_size=available_size,
+        )
+        self._normal_window_size = restored_size
+        self.resize(restored_size)
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.setStyleSheet(f"""
             QMainWindow {{
                 background-color: transparent;
@@ -255,20 +287,22 @@ class MainFrame(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        main_layout.addWidget(self._create_toolbar())
+        # 工具栏只占用字体所需高度，窗口新增的纵向空间全部交给主内容区。
+        main_layout.addWidget(self._create_toolbar(), stretch=0)
 
         left_col = QVBoxLayout()
         left_col.setContentsMargins(0, 0, 0, 0)
         left_col.setSpacing(1)
         dw = self.left_panel.device_widget
-        dw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        dw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.log_panel.setMinimumHeight(120)
         left_col.addWidget(dw)
         left_col.addWidget(self.log_panel, stretch=1)
 
         left_wrapper = QWidget()
         left_wrapper.setObjectName("leftPanelWrapper")
         left_wrapper.setLayout(left_col)
-        left_wrapper.setMinimumWidth(200)
+        left_wrapper.setMinimumWidth(280)
         left_wrapper.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
 
         panel_row = QHBoxLayout()
@@ -278,43 +312,52 @@ class MainFrame(QMainWindow):
         from core.settings_manager import AppSettings
 
         s2 = AppSettings.instance()
-        lw = s2.get("left_panel_width", 595)
-        rw = s2.get("right_panel_width", 592)
-        self._panel_splitter = QSplitter(Qt.Horizontal)
-        self._panel_splitter.setHandleWidth(5)
-        self._panel_splitter.setStyleSheet(
-            f"QSplitter::handle {{ background-color: {BaseStyles.color('BORDER_COLOR')}; }}"
+        lw = s2.get("left_panel_width", 400)
+        rw = s2.get("right_panel_width", 600)
+        stored_ratio = s2.get("panel_split_ratio", None)
+        self._panel_ratio = (
+            normalize_panel_ratio(stored_ratio)
+            if stored_ratio is not None
+            else ratio_from_sizes(lw, rw)
         )
+        self._panel_splitter = QSplitter(Qt.Horizontal)
+        self._panel_splitter.setHandleWidth(8)
+        self._apply_splitter_style()
         self._panel_splitter.addWidget(left_wrapper)
         self._panel_splitter.addWidget(self.left_panel)
-        self._panel_splitter.setSizes([lw, rw])
-        self._panel_splitter.setStretchFactor(0, 0)
+        left_size, right_size = split_sizes_for_ratio(1000, self._panel_ratio)
+        self._panel_splitter.setSizes([left_size, right_size])
+        self._panel_splitter.setStretchFactor(0, 1)
         self._panel_splitter.setStretchFactor(1, 1)
         self._panel_splitter.setChildrenCollapsible(False)
         self._panel_splitter.splitterMoved.connect(self._on_splitter_moved)
         panel_row.addWidget(self._panel_splitter)
-        main_layout.addLayout(panel_row)
+        main_layout.addLayout(panel_row, stretch=1)
 
         self.setCentralWidget(central_widget)
 
         self._connect_all_signals()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
+        BaseStyles.ui_font_changed.connect(self._on_ui_font_changed)
 
     # ── 顶部工具栏 ──────────────────────────────────────────────────────
 
     def _create_toolbar(self) -> QFrame:
         """创建包含功能入口、主题切换和窗口控制的顶部工具栏。"""
         bar = QFrame()
+        self._toolbar = bar
         bar.setObjectName("toolbar")
-        bar.setFixedHeight(32)
+        bar.setMinimumHeight(BaseStyles.control_height(minimum=32, padding=8))
+        bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
 
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(10, 0, 6, 0)
         layout.setSpacing(4)
 
-        title = QLabel("ADBLab")
-        layout.addWidget(title)
+        self._toolbar_title = QLabel("ADBLab")
+        self._toolbar_title.setObjectName("toolbarTitle")
+        layout.addWidget(self._toolbar_title)
 
         self.tb_app_mgr = self._create_toolbar_btn(
             "App Manager", "resources/icons/squares-four.svg"
@@ -343,10 +386,13 @@ class MainFrame(QMainWindow):
         self._tb_save_btn.setProperty("iconName", "folder.svg")
         self._tb_save_btn.setFlat(True)
         self._tb_save_btn.setCursor(Qt.PointingHandCursor)
+        self._tb_save_btn.setFixedSize(28, 24)
         self._tb_save_btn.clicked.connect(self._on_save_path_clicked)
 
         self._save_path_label = QLabel()
         self._save_path_label.setObjectName("savePathLabel")
+        self._save_path_label.setMinimumWidth(0)
+        self._save_path_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         self._refresh_save_path()
 
         layout.addWidget(self.tb_app_mgr)
@@ -435,9 +481,7 @@ class MainFrame(QMainWindow):
             bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
         self._refresh_toolbar_icons()
         self._refresh_save_path()
-        self._panel_splitter.setStyleSheet(
-            f"QSplitter::handle {{ background-color: {BaseStyles.color('BORDER_COLOR')}; }}"
-        )
+        self._apply_splitter_style()
         # 左侧容器不属于 SidePanel 控件树，需要在此单独刷新分组框和设备列表。
         lw = self.findChild(QWidget, "leftPanelWrapper")
         if lw:
@@ -446,6 +490,26 @@ class MainFrame(QMainWindow):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
             self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
+
+    def _on_ui_font_changed(self, _config) -> None:
+        """应用新的界面字体并重新计算工具栏文字相关尺寸。"""
+
+        self.setFont(BaseStyles.font_for_role(FontRole.UI))
+        toolbar = getattr(self, "_toolbar", None)
+        if toolbar is not None:
+            toolbar.setMinimumHeight(BaseStyles.control_height(minimum=32, padding=8))
+            toolbar.updateGeometry()
+        self._refresh_save_path()
+
+    def _apply_splitter_style(self):
+        """隐藏常驻分隔线，同时保留足够宽的透明拖动热区。"""
+
+        splitter = getattr(self, "_panel_splitter", None)
+        if splitter is None:
+            return
+        splitter.setStyleSheet(
+            "QSplitter::handle { background: transparent; border: none; }"
+        )
 
     def _toggle_theme(self):
         """记录工具栏主题切换请求并交给主题服务执行。"""
@@ -844,6 +908,7 @@ class MainFrame(QMainWindow):
         dialog.continuous_scan_toggled.connect(self.set_continuous_scan)
         _debug_log(self, "ui.secondary_window", dialog="SettingsDialog", phase="opened")
         result = dialog.exec_()
+        self._refresh_save_path()
         _debug_log(
             self,
             "ui.secondary_window",
@@ -889,7 +954,35 @@ class MainFrame(QMainWindow):
     # ── 窗口和面板尺寸 ──────────────────────────────────────────────────
 
     def apply_window_size(self, w: int, h: int):
-        self.resize(w, h)
+        screen = self.screen() or QApplication.primaryScreen()
+        available_size = screen.availableGeometry().size() if screen is not None else None
+        size = normalize_window_size(w, h, available_size=available_size)
+        self._normal_window_size = size
+        self.resize(size)
+
+    def window_layout_snapshot(self) -> dict[str, object]:
+        """返回设置页可展示的当前窗口和分栏状态。"""
+
+        size = self._normal_window_size if self.isMaximized() else self.size()
+        return {
+            "width": int(size.width()),
+            "height": int(size.height()),
+            "panel_ratio": self.panel_split_ratio(),
+        }
+
+    def restore_default_window_size(self):
+        """立即恢复默认窗口尺寸，并沿用正常的防抖持久化路径。"""
+
+        if self.isMaximized() or self.isMinimized() or self.isFullScreen():
+            self.showNormal()
+        self.apply_window_size(DEFAULT_WINDOW_SIZE.width(), DEFAULT_WINDOW_SIZE.height())
+        self._schedule_window_size_save(self.size())
+
+    def reset_panel_split(self):
+        """立即恢复默认分栏比例。"""
+
+        self.apply_panel_ratio(DEFAULT_PANEL_RATIO)
+        self._save_pending_panel_sizes()
 
     def _apply_window_flags(self):
         flags = Qt.FramelessWindowHint | Qt.Window
@@ -966,15 +1059,46 @@ class MainFrame(QMainWindow):
     def panel_sizes(self) -> list[int]:
         return self._panel_splitter.sizes() if self._panel_splitter else [400, 600]
 
+    def panel_split_ratio(self) -> float:
+        sizes = self.panel_sizes()
+        if len(sizes) != 2:
+            return DEFAULT_PANEL_RATIO
+        return ratio_from_sizes(sizes[0], sizes[1])
+
     def apply_panel_sizes(self, left_w: int, right_w: int):
         if self._panel_splitter:
             self._panel_splitter.setSizes([left_w, right_w])
+
+    def apply_panel_ratio(self, ratio: float):
+        if not self._panel_splitter:
+            return
+        ratio = normalize_panel_ratio(ratio)
+        total = max(1, sum(self._panel_splitter.sizes()))
+        left_width, right_width = split_sizes_for_ratio(total, ratio)
+        self._panel_ratio = ratio
+        self._panel_splitter.setSizes([left_width, right_width])
+        self._pending_panel_sizes = (left_width, right_width)
+        responsive_timer = getattr(self, "_responsive_layout_timer", None)
+        if responsive_timer is not None:
+            responsive_timer.start(0)
 
     def _on_splitter_moved(self, _pos, _index):
         sizes = self._panel_splitter.sizes()
         if len(sizes) == 2:
             self._pending_panel_sizes = (sizes[0], sizes[1])
             self._panel_size_save_timer.start(self.SPLITTER_SAVE_DEBOUNCE_MS)
+            self._responsive_layout_timer.start(0)
+
+    def _apply_panel_responsive_layout(self):
+        splitter = getattr(self, "_panel_splitter", None)
+        panel = getattr(self, "left_panel", None)
+        if splitter is None or panel is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) == 2:
+            callback = getattr(panel, "apply_responsive_widths", None)
+            if callable(callback):
+                callback(int(sizes[0]), int(sizes[1]))
 
     def _save_pending_panel_sizes(self):
         if not self._pending_panel_sizes:
@@ -984,24 +1108,110 @@ class MainFrame(QMainWindow):
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
-        s.set("left_panel_width", left_w)
-        s.set("right_panel_width", right_w)
+        ratio = ratio_from_sizes(left_w, right_w)
+        self._panel_ratio = ratio
+        MainFrame._update_settings(
+            s,
+            {
+                "left_panel_width": int(left_w),
+                "right_panel_width": int(right_w),
+                "panel_split_ratio": ratio,
+            },
+        )
+
+    @staticmethod
+    def _update_settings(settings, values: dict[str, object]) -> None:
+        """优先批量更新配置，并兼容尚未提供批量接口的设置对象。"""
+
+        set_many = getattr(type(settings), "set_many", None)
+        if callable(set_many):
+            settings.set_many(values)
+            return
+        for key, value in values.items():
+            settings.set(key, value)
+
+    def _schedule_window_size_save(self, size: QSize) -> None:
+        if (
+            not getattr(self, "_layout_ready", False)
+            or getattr(self, "_closing", False)
+            or self.isMaximized()
+            or self.isMinimized()
+            or self.isFullScreen()
+        ):
+            return
+        self._normal_window_size = QSize(size)
+        self._pending_window_size = QSize(size)
+        self._window_size_save_timer.start(self.WINDOW_SIZE_SAVE_DEBOUNCE_MS)
+
+    def _save_pending_window_size(self) -> None:
+        size = self._pending_window_size
+        if size is None:
+            return
+        self._pending_window_size = None
+        self._normal_window_size = QSize(size)
+        settings = AppSettings.instance()
+        MainFrame._update_settings(
+            settings,
+            {"window_width": int(size.width()), "window_height": int(size.height())},
+        )
+
+    def _flush_pending_layout_state(self) -> None:
+        for timer, callback in (
+            (getattr(self, "_window_size_save_timer", None), self._save_pending_window_size),
+            (getattr(self, "_panel_size_save_timer", None), self._save_pending_panel_sizes),
+        ):
+            if timer is not None and timer.isActive():
+                timer.stop()
+                callback()
 
     # ── 全局保存路径 ────────────────────────────────────────────────────
 
     def _refresh_save_path(self):
         from core.settings_manager import AppSettings
 
-        path = AppSettings.instance().save_directory
-        if path and os.path.isdir(path):
-            short = path if len(path) <= 36 else "..." + path[-33:]
-            self._save_path_label.setText("GlobalSavePath: " + short)
+        configured_path = AppSettings.instance().save_directory
+        path = os.path.normpath(configured_path) if configured_path else ""
+        if path:
+            self._save_path_value = path
             self._save_path_label.setToolTip(path)
         else:
-            self._save_path_label.setText("")
+            self._save_path_value = ""
+            self._save_path_label.setToolTip("")
         self._save_path_label.setStyleSheet(
-            f"color: {BaseStyles.color('TEXT_SECONDARY')}; font-size: 10px; padding: 0 2px;"
+            f"color: {BaseStyles.color('TEXT_SECONDARY')}; padding: 0 2px;"
         )
+        self._save_path_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        self._update_toolbar_path_display()
+
+    def _update_toolbar_path_display(self):
+        """按工具栏可用宽度显示、缩略或隐藏全局保存路径。"""
+
+        label = getattr(self, "_save_path_label", None)
+        if label is None:
+            return
+        path = getattr(self, "_save_path_value", "")
+        window_width = self.width()
+        if not path:
+            label.clear()
+            label.hide()
+            return
+
+        label.show()
+        if window_width < 1040:
+            tail = os.path.basename(os.path.normpath(path)) or path
+            source_text = f"…{os.sep}{tail}"
+            maximum_width = min(160, max(96, window_width - 760))
+        else:
+            maximum_width = min(420, max(160, window_width - 860))
+            source_text = "GlobalSavePath: " + path
+        text = label.fontMetrics().elidedText(
+            source_text,
+            Qt.TextElideMode.ElideMiddle,
+            maximum_width,
+        )
+        label.setMaximumWidth(maximum_width)
+        label.setText(text)
+        label.updateGeometry()
 
     def _on_save_path_clicked(self):
         from core.settings_manager import AppSettings
@@ -1021,16 +1231,28 @@ class MainFrame(QMainWindow):
 
     # ── 拖动工具栏移动窗口 ──────────────────────────────────────────────
 
+    def _is_toolbar_drag_target(self, position) -> bool:
+        toolbar = getattr(self, "_toolbar", None)
+        widget = self.childAt(position)
+        while widget is not None:
+            if isinstance(widget, QPushButton):
+                return False
+            if widget is toolbar:
+                return True
+            widget = widget.parentWidget()
+        return False
+
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton:
-            widget = self.childAt(event.pos())
-            if widget and (
-                widget.objectName() == "toolbar"
-                or (widget.parent() and widget.parent().objectName() == "toolbar")
-            ):
-                self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+        if event.button() == Qt.LeftButton and self._is_toolbar_drag_target(
+            event.position().toPoint()
+        ):
+            handle = self.windowHandle()
+            if handle is not None and handle.startSystemMove():
                 event.accept()
                 return
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
@@ -1044,6 +1266,36 @@ class MainFrame(QMainWindow):
         self._drag_pos = None
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.LeftButton and self._is_toolbar_drag_target(
+            event.position().toPoint()
+        ):
+            if self.isMaximized():
+                self.showNormal()
+            else:
+                self.showMaximized()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def resizeEvent(self, event: QResizeEvent):
+        super().resizeEvent(event)
+        controller = getattr(self, "_resize_controller", None)
+        if controller is not None:
+            controller.update_geometry()
+        self._update_toolbar_path_display()
+        responsive_timer = getattr(self, "_responsive_layout_timer", None)
+        if responsive_timer is not None:
+            responsive_timer.start(0)
+        self._schedule_window_size_save(event.size())
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            controller = getattr(self, "_resize_controller", None)
+            if controller is not None:
+                controller.update_geometry()
+
     def closeEvent(self, event):
         """启动异步关闭，只在资源停止和最终状态落盘完成后接受事件。"""
         if getattr(self, "_close_ready", False):
@@ -1052,6 +1304,7 @@ class MainFrame(QMainWindow):
         event.ignore()
         if getattr(self, "_close_started", False):
             return
+        self._flush_pending_layout_state()
         self._close_started = True
         self._closing = True
         self._shutdown_deadline_at = time.monotonic() + max(

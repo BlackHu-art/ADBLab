@@ -116,6 +116,7 @@ def _run_gui() -> int:
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
 
+    # 字体管理器同时更新 QApplication 与各字体角色，保持单一应用入口。
     BaseStyles.reload_from_settings()
     saved_theme = AppSettings.instance().get("theme", "Light")
     BaseStyles.switch_theme(saved_theme)

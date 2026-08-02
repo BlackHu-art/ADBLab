@@ -6,10 +6,10 @@
 | --- | --- |
 | 触发条件 | 用户运行 `main.py`/ADBLab 可执行文件且未指定 worker/self-check 子命令 |
 | 前置条件 | Python 依赖可导入；资源可定位；ADB 可从内置目录或 PATH 解析 |
-| 主流程 | 创建 QApplication → 读取设置和主题 → 创建 MainFrame/Controller/Models → 构建界面和信号 → 延后首次刷新 → 可选启动持续扫描 |
-| 异常流程 | 资源或 Qt 导入失败会在启动阶段退出；ADB 不可用时设备刷新返回失败并写日志；关闭时取消尚未触发的刷新和扫描 |
-| 涉及模块 | `main.py`、`gui/main_frame.py`、`core/settings_manager.py`、`controllers/`、`models/adb_device.py` |
-| 涉及数据 | AppSettings、设备列表、窗口尺寸/分栏、日志 |
+| 主流程 | 创建 QApplication → 批量读取并校验字体设置 → 设置应用级 UI 字体 → 加载主题 → 创建 MainFrame/Controller/Models → 校验并恢复普通窗口尺寸和分栏比例 → 构建界面、原生缩放热区和信号 → 延后首次刷新 → 可选启动持续扫描 |
+| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号、窗口尺寸或分栏比例回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；ADB 不可用时设备刷新返回失败并写日志；关闭时取消尚未触发的刷新和扫描 |
+| 涉及模块 | `main.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/styles/typography.py`、`core/settings_manager.py`、`controllers/`、`models/adb_device.py` |
+| 涉及数据 | AppSettings、FontConfig、设备列表、窗口尺寸/分栏比例、日志 |
 | 代码位置 | `main.py::_run_gui`、`MainFrame.__init__/_start_device_discovery/closeEvent`、`_ScanThread.run` |
 
 ```mermaid
@@ -17,14 +17,41 @@ flowchart TD
     Start["启动"] --> CLI{"_dispatch_cli 是否命中子模式"}
     CLI -->|"worker"| MP["MobilePerf worker"]
     CLI -->|"self-check"| Check["打包资源自检"]
-    CLI -->|"否"| Qt["QApplication + 主题"]
-    Qt --> Frame["构建 MainFrame / Controller / Panels"]
+    CLI -->|"否"| Qt["QApplication + 应用字体 + 主题"]
+    Qt --> Layout["校验窗口尺寸与分栏比例"]
+    Layout --> Frame["构建 MainFrame / Controller / Panels / 缩放热区"]
     Frame --> Initial["定时器触发首次设备刷新"]
     Frame --> Scan{"continuous_device_scan"}
     Scan -->|"开启"| Poll["周期 adb devices"]
     Poll --> Changed{"设备集合变化"}
     Changed -->|"是"| Refresh["刷新设备信息与 UI"]
     Changed -->|"否"| Poll
+```
+
+### 1.1 字体、窗口缩放与响应式布局
+
+| 项目 | 内容 |
+| --- | --- |
+| 触发条件 | 用户在 Settings 修改字体/字号或点击布局重置；用户拖动主窗口边角、工具栏或透明分隔热区；主分栏或页签滚动视口宽度变化 |
+| 前置条件 | QApplication 已创建；MainFrame 已完成窗口和面板初始化；Settings 以 MainFrame 为 parent 时才启用两个布局重置按钮 |
+| 字体主流程 | Settings 将字体族和字号通过 `AppSettings.update()` 批量更新 → `BaseStyles.reload_from_settings()` 生成并应用不可变 FontConfig → QApplication 接收 UI 字体 → 按实际变化发送 `ui_font_changed`、`log_font_changed` 和总括 `fonts_changed` → 主窗口、日志面板、面板/对话框分别刷新自己订阅的字体角色、安全最小高度和分组标题净空；普通操作文案统一使用 UI，提示/元数据使用 UI_SMALL，技术数据和日志分别使用 MONO/LOG |
+| 窗口主流程 | 四边或四角透明热区按压 → `QWindow.startSystemResize()` → 普通窗口尺寸变化 → 350 毫秒防抖批量保存宽高；工具栏空白区按压优先调用 `startSystemMove()`，双击在最大化与普通状态间切换 |
+| 分栏与响应式主流程 | 用户拖动 8 像素透明 QSplitter 热区 → 300 毫秒防抖批量保存左右像素宽度和左栏比例 → 左栏实际宽度驱动 Device，各功能页只以自身滚动视口实际宽度为准 → Device 在 360 像素处切换“列表侧栏/列表上方按钮网格”，Apps/System/Remote 按 420/560 默认断点重排既有控件；设备区允许纵向收缩且日志区至少保留 120 像素；每个懒加载页签位于禁用横向滚动的可纵向滚动区域；顶部全局保存路径从 860 像素最小窗口宽度起显示末级目录，1040 像素起按字体度量省略完整路径 |
+| Settings 布局流程 | Settings 调用 `window_layout_snapshot()` 展示当前普通窗口尺寸与左右比例；“Reset Size”调用 `restore_default_window_size()`，“Reset Split”调用 `reset_panel_split()`；Appearance、Window、Storage & Logs 依据滚动视口宽度及 UI 字号在双列/纵向布局间切换，保存目录按钮始终入布局，内容超高时只使用纵向滚动区，固定页脚保持可操作 |
+| 异常/回退 | 原生移动或缩放未被窗口系统接受时，工具栏移动保留手动拖动回退，缩放热区不自行模拟尺寸；最大化/全屏时缩放热区隐藏且不保存该状态尺寸；无 MainFrame parent 的独立 Settings 只展示设置回退值并禁用布局重置；重排不销毁控件、不重复连接信号 |
+| 涉及模块 | `gui/styles/typography.py`、`gui/styles/fonts.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py`、`gui/widgets/responsive_layout.py`、`gui/dialogs/settings_dialog.py`、`gui/panels/`、`core/settings_manager.py` |
+
+```mermaid
+flowchart LR
+    Settings["Settings 字体控件"] -->|"一次批量更新"| AppSettings["AppSettings.update / set_many"]
+    AppSettings --> Typography["TypographyManager.apply"]
+    Typography --> AppFont["QApplication UI 字体"]
+    Typography --> UISignal["ui_font_changed"]
+    Typography --> LogSignal["log_font_changed"]
+    Typography --> AllSignal["fonts_changed"]
+    Resize["窗口或分栏宽度变化"] --> Main["MainFrame 防抖与宽度转发"]
+    Main --> Store["尺寸与 panel_split_ratio"]
+    Main --> Panels["SidePanel / Panels 响应式重排"]
 ```
 
 ## 2. 连接设备并读取信息
@@ -226,7 +253,7 @@ MainFrame 打开的设备对话框、Performance Launcher 以及 Controller 打�
 应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
 DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
 
-MainFrame 关闭时停止扫描、保存分栏和设置、关闭对话框、shutdown 已加载面板、停止 Controller 的
+MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸和分栏状态，再停止扫描、关闭对话框、shutdown 已加载面板、停止 Controller 的
 testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。
 LiveLogcat 对话框已将 worker/process 注册到 MainFrame 注入的 TaskSupervisor：Stop 只广播
 后台清理；运行中关闭窗口时先隐藏并断开数据界面信号，保留 `finished` 槽作为线程屏障。

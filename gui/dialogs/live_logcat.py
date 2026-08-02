@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -27,9 +27,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
-from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
+from gui.styles.typography import FontRole
 from adblab.application.supervision import StopDisposition, TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from models.base.command_runner import CommandRunner
@@ -360,9 +362,8 @@ class LiveLogcatDialog(QDialog):
         self.setAttribute(Qt.WA_QuitOnClose, False)
         self._init_ui()
         self._apply_theme()
-        from gui.styles import BaseStyles as BS
-
-        BS.theme_changed.connect(self._apply_theme)
+        BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
         self._task_supervisor.task_stopped.connect(self._on_task_stopped)
         self._task_supervisor.owner_stopped.connect(self._on_owner_stopped)
 
@@ -391,24 +392,22 @@ class LiveLogcatDialog(QDialog):
         for code in ("V", "D", "I", "W", "E", "F"):
             self.level_combo.addItem(LEVEL_LABELS[code], code)
         self.level_combo.currentIndexChanged.connect(self._rebuild)
-        self.level_combo.setFixedWidth(120)
+        self.level_combo.setMinimumWidth(120)
         f1.addWidget(self.level_combo)
         f1.addWidget(QLabel("Package:"))
         self.pkg_input = QLineEdit()
         self.pkg_input.setPlaceholderText("com.example.app")
-        self.pkg_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.pkg_input, 1)
         self.btn_get_pkg = QPushButton("Current Package")
         self.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
         self.btn_get_pkg.setIconSize(QSize(14, 14))
         self.btn_get_pkg.setToolTip("Fetch current foreground app package")
-        self.btn_get_pkg.setFixedWidth(120)
+        self.btn_get_pkg.setMinimumWidth(120)
         self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
         f1.addWidget(self.btn_get_pkg)
         f1.addWidget(QLabel("Tag:"))
         self.tag_input = QLineEdit()
         self.tag_input.setPlaceholderText("ActivityManager")
-        self.tag_input.setFont(QFont("Consolas", 9))
         f1.addWidget(self.tag_input, 1)
         layout.addLayout(f1)
 
@@ -448,7 +447,6 @@ class LiveLogcatDialog(QDialog):
         self.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
         self.output.setUndoRedoEnabled(False)
         self.output.document().setMaximumBlockCount(self.MAX_BUFFER)
-        self.output.setFont(QFont("Consolas", 9))
         layout.addWidget(self.output, 1)
 
         self.status_bar = QStatusBar()
@@ -457,11 +455,16 @@ class LiveLogcatDialog(QDialog):
 
         self.highlighter = LogcatHighlighter(self.output.document())
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
-        from gui.styles import BaseStyles as BS
-
+        BS = BaseStyles
+        ui_font = BS.font_for_role(FontRole.UI)
+        mono_font = BS.font_for_role(FontRole.MONO)
+        log_font = BS.font_for_role(FontRole.LOG)
         self.setStyleSheet(BS.PANEL_BASE_STYLE())
+        self.setFont(ui_font)
+        for field in (self.pkg_input, self.tag_input):
+            field.setFont(mono_font)
         fg = BS.color("TEXT_PRIMARY")
         border = BS.color("BORDER_COLOR")
         self.output.setStyleSheet(
@@ -469,7 +472,13 @@ class LiveLogcatDialog(QDialog):
             f"color: {BS.color('LOG_TEXT_COLOR')}; "
             f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;"
         )
+        self.output.setFont(log_font)
+        self.output.document().setDefaultFont(log_font)
         self.status_bar.setStyleSheet(BS.STATUS_BAR_STYLE())
+        self.level_combo.setMinimumWidth(120)
+        self.level_combo.setMinimumWidth(max(120, self.level_combo.sizeHint().width()))
+        self.btn_get_pkg.setMinimumWidth(120)
+        self.btn_get_pkg.setMinimumWidth(max(120, self.btn_get_pkg.sizeHint().width()))
 
         # Logcat 等级颜色跟随当前主题更新。
         hl_colors = {
@@ -983,9 +992,8 @@ class LiveLogcatDialog(QDialog):
         should_stop_owner = False
         self._line_flush_timer.stop()
         self._pending_visible_lines.clear()
-        from gui.styles import BaseStyles as BS
-
-        safe_disconnect(BS.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         safe_disconnect(self._task_supervisor.task_stopped, self._on_task_stopped)
         if self.worker:
             w = self.worker

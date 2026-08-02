@@ -6,7 +6,7 @@ import tempfile
 import threading
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -27,9 +27,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from gui.dialogs.lifecycle import QThreadGroupShutdownTask
+from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
-from gui.dialogs.lifecycle import QThreadGroupShutdownTask
+from gui.styles.typography import FontRole
 from models import file_explorer_service as explorer_service
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
@@ -91,8 +93,8 @@ class FileExplorerDialog(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
-        from gui.styles import BaseStyles as BS
-        BS.theme_changed.connect(self._apply_theme)
+        BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.fonts_changed.connect(self._apply_theme)
         self._refresh()
 
     def _init_ui(self):
@@ -107,7 +109,6 @@ class FileExplorerDialog(QDialog):
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
-        self.path_field.setFont(QFont("Consolas", 9))
         self.path_layout.addWidget(self.path_field, 1)
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Search...")
@@ -169,7 +170,6 @@ class FileExplorerDialog(QDialog):
             self.push_btn,
             self.delete_btn,
         ):
-            b.setFont(QFont("Segoe UI", 9))
             tb.addWidget(b)
         tb.addStretch()
         self.root_cb = QCheckBox("Root")
@@ -203,12 +203,13 @@ class FileExplorerDialog(QDialog):
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
-    def _apply_theme(self, _name: str = ""):
+    def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
-        from gui.styles import BaseStyles
-
         bs = BaseStyles
+        ui_font = bs.font_for_role(FontRole.UI)
+        mono_font = bs.font_for_role(FontRole.MONO)
         self.setStyleSheet(bs.PANEL_BASE_STYLE())
+        self.setFont(ui_font)
         bg = bs.color("INPUT_BG")
         fg = bs.color("TEXT_PRIMARY")
         border = bs.color("BORDER_COLOR")
@@ -224,11 +225,15 @@ class FileExplorerDialog(QDialog):
                 padding: 4px; border: 1px solid {border}; }}
         """)
         self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
-        self.path_field.setStyleSheet(
+        field_style = (
             f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
             f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;"
         )
-        self.search_field.setStyleSheet(self.path_field.styleSheet())
+        self.path_field.setStyleSheet(
+            field_style
+        )
+        self.path_field.setFont(mono_font)
+        self.search_field.setStyleSheet(field_style)
 
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
@@ -531,7 +536,6 @@ class FileExplorerDialog(QDialog):
         lo = QVBoxLayout(dlg)
         editor = QPlainTextEdit()
         editor.setPlainText(content)
-        editor.setFont(QFont("Consolas", 10))
         lo.addWidget(editor)
         btns = QHBoxLayout()
         save_as = QPushButton("Save As...")
@@ -551,7 +555,43 @@ class FileExplorerDialog(QDialog):
         for b in (save_as, save_dev, close):
             btns.addWidget(b)
         lo.addLayout(btns)
+        self._bind_dialog_font_refresh(
+            dlg,
+            lambda: self._apply_text_dialog_fonts(dlg, editor, FontRole.MONO),
+        )
         dlg.exec()
+
+    @staticmethod
+    def _apply_text_dialog_fonts(dialog, editor, role: FontRole) -> None:
+        """刷新临时文本窗口及其显式文本字体。"""
+
+        dialog.setFont(BaseStyles.font_for_role(FontRole.UI))
+        text_font = BaseStyles.font_for_role(role)
+        editor.setFont(text_font)
+        editor.document().setDefaultFont(text_font)
+
+    @staticmethod
+    def _bind_dialog_font_refresh(dialog, refresh) -> None:
+        """让临时对话框在存活期间响应全局字体变化。"""
+
+        font_signal = BaseStyles.fonts_changed
+
+        def apply_font(_config=None):
+            try:
+                refresh()
+            except RuntimeError:
+                return
+
+        def disconnect_font(_result=None):
+            try:
+                font_signal.disconnect(apply_font)
+            except (RuntimeError, TypeError, ValueError):
+                pass
+
+        font_signal.connect(apply_font)
+        dialog.finished.connect(disconnect_font)
+        dialog.destroyed.connect(disconnect_font)
+        apply_font()
 
     @staticmethod
     def _global_save_dir() -> str:
@@ -934,13 +974,16 @@ class FileExplorerDialog(QDialog):
         v = QPlainTextEdit()
         v.setReadOnly(True)
         v.setPlainText(output)
-        v.setFont(QFont("Consolas", 9))
         lo.addWidget(v)
         cb = QPushButton("Close")
         cb.setIcon(get_themed_icon("x.svg"))
         cb.setIconSize(QSize(14, 14))
         cb.clicked.connect(dlg.accept)
         lo.addWidget(cb)
+        self._bind_dialog_font_refresh(
+            dlg,
+            lambda: self._apply_text_dialog_fonts(dlg, v, FontRole.LOG),
+        )
         dlg.show()
 
     def _show_props(self, name: str, is_dir: bool):
@@ -1022,9 +1065,12 @@ class FileExplorerDialog(QDialog):
 
     def closeEvent(self, event):
         """中止文件 worker；未接入统一监督器时在后台完成有限等待。"""
-        from gui.styles import BaseStyles
         try:
             BaseStyles.theme_changed.disconnect(self._apply_theme)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            BaseStyles.fonts_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):
             pass
         workers = self._workers

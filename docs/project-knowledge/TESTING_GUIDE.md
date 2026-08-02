@@ -69,7 +69,7 @@ py -3.11 -m pytest -q
 
 当前是轻量 Qt 行为测试，不是端到端自动化：主题切换、字体/图标、按钮状态、对话框
 close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批次、Performance Launcher
-表单/日志/状态等。
+表单/日志/状态、Settings 宽窄布局和保存目录入口、8–22pt 分组标题净空等。
 
 没有 Playwright/Selenium/Appium/QtBot 的完整用户路径测试，也没有截图对比。
 

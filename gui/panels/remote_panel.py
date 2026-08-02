@@ -13,6 +13,7 @@ from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles
+from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
 from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -144,16 +145,13 @@ class RemotePanel(BasePanel):
         gl = QVBoxLayout(g)
         gl.setSpacing(4)
 
-        r0 = QHBoxLayout()
-        r0.setSpacing(6)
-        r0.addWidget(self._label("Preset:"))
+        preset_label = self._label("Preset:")
 
         self.preset = self._combo(self._PRESET_NAMES)
         saved_preset = self._load("preset", "Smooth")
         self.preset.setCurrentText(saved_preset)
         if self.preset.currentText() != saved_preset:
             self.preset.setCurrentIndex(-1)  # 自定义值不对应任何预设。
-        r0.addWidget(self.preset, 1)  # 减少权重，让下拉框占用较少空间
 
         right_widget = QWidget()
         right_layout = QHBoxLayout(right_widget)
@@ -166,13 +164,17 @@ class RemotePanel(BasePanel):
         self._device_info = self._status_text("")
         right_layout.addWidget(self._device_info)
 
-        r0.addWidget(right_widget, 1)
+        self._add_responsive_row(
+            gl,
+            preset_label,
+            self.preset,
+            right_widget,
+            spacing=6,
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=3,
+        )
 
-        gl.addLayout(r0)
-
-        vg = QGridLayout()
-        vg.setHorizontalSpacing(10)
-        vg.setVerticalSpacing(5)
         settings = [
             ("Size:", "maxsize", self._SIZES, "720"),
             ("FPS:", "fps", self._FPS, "60"),
@@ -181,29 +183,39 @@ class RemotePanel(BasePanel):
             ("Bitrate:", "bitrate", self._BITRATES, "8"),
             ("Orient:", "orientation", self._ORIENTATIONS, "0"),
         ]
-        for i, (lbl, attr, items, default) in enumerate(settings):
-            row, col = divmod(i, 3)
+        setting_widgets = []
+        for lbl, attr, items, default in settings:
             label = self._label(lbl)
             label.setMinimumWidth(56)
             label.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-            vg.addWidget(label, row, col * 2)
             combo = self._combo(items)
             combo.setCurrentText(self._load(attr, default))
-            vg.addWidget(combo, row, col * 2 + 1)
             setattr(self, attr, combo)
+            setting_widgets.extend((label, combo))
+        self._add_responsive_row(
+            gl,
+            *setting_widgets,
+            spacing=5,
+            compact_columns=2,
+            medium_columns=4,
+            wide_columns=6,
+        )
         self.orientation.setToolTip("Lock orientation (0=auto)")
-        gl.addLayout(vg)
 
-        rr = QHBoxLayout()
-        rr.setSpacing(8)
         self.chk_record = self._create_checkbox("Record")
         self.chk_record.setToolTip("Record mirroring to file")
         self.chk_record.toggled.connect(self._on_record_toggled)
-        rr.addWidget(self.chk_record, 1)
         self.record_path = self._status_text("")
-        rr.addWidget(self.record_path, 3)
-        gl.addLayout(rr)
+        self._add_responsive_row(
+            gl,
+            self.chk_record,
+            self.record_path,
+            spacing=8,
+            compact_columns=1,
+            medium_columns=2,
+            wide_columns=2,
+        )
 
         self.chk_fullscreen = self._create_checkbox("Fullscreen")
         self.chk_fullscreen.setToolTip("Launch in fullscreen mode")
@@ -213,11 +225,17 @@ class RemotePanel(BasePanel):
         self.chk_showtouches.setToolTip("Visualize touch points on screen")
         self.chk_stayawake = self._create_checkbox("Awake")
         self.chk_stayawake.setToolTip("Keep device screen on while mirroring")
-        rd1 = QHBoxLayout()
-        rd1.setSpacing(8)
-        for cb in (self.chk_fullscreen, self.chk_aot, self.chk_showtouches, self.chk_stayawake):
-            rd1.addWidget(cb)
-        gl.addLayout(rd1)
+        self._add_responsive_row(
+            gl,
+            self.chk_fullscreen,
+            self.chk_aot,
+            self.chk_showtouches,
+            self.chk_stayawake,
+            spacing=8,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
 
         self.chk_turnscreenoff = self._create_checkbox("Screen Off")
         self.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
@@ -228,33 +246,38 @@ class RemotePanel(BasePanel):
         self.chk_noaudio = self._create_checkbox("No Audio")
         self.chk_noaudio.setChecked(True)
         self.chk_noaudio.setToolTip("Disable audio forwarding")
-        rd2 = QHBoxLayout()
-        rd2.setSpacing(8)
-        for cb in (
+        self._add_responsive_row(
+            gl,
             self.chk_turnscreenoff,
             self.chk_hw_encoder,
             self.chk_noplayback,
             self.chk_noaudio,
-        ):
-            rd2.addWidget(cb)
-        gl.addLayout(rd2)
+            spacing=8,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
 
-        rs = QHBoxLayout()
-        rs.setSpacing(6)
         self.btn_start = self._b(
             "Start", "monitor-play.svg", "accent", tooltip="Start mirroring (Ctrl+Enter)"
         )
-        self.btn_start.setFixedHeight(32)
+        self.btn_start.setMinimumHeight(32)
         self.btn_start.setIconSize(QSize(16, 16))
         self.btn_stop = self._b(
             "Stop", "stop-circle.svg", "danger", tooltip="Stop mirroring (Ctrl+Q)"
         )
-        self.btn_stop.setFixedHeight(32)
+        self.btn_stop.setMinimumHeight(32)
         self.btn_stop.setIconSize(QSize(16, 16))
         self.btn_stop.setEnabled(False)
-        rs.addWidget(self.btn_start, 1)
-        rs.addWidget(self.btn_stop, 1)
-        gl.addLayout(rs)
+        self._add_responsive_row(
+            gl,
+            self.btn_start,
+            self.btn_stop,
+            spacing=6,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=2,
+        )
 
         return g
 
@@ -293,6 +316,8 @@ class RemotePanel(BasePanel):
         for r, row in enumerate(key_rows):
             for c, (label, code) in enumerate(row):
                 kg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        self._remote_key_layout = kg
+        self._remote_primary_key_buttons = tuple(self._remote_key_buttons)
         outer.addWidget(keys)
 
         media = QWidget()
@@ -311,6 +336,10 @@ class RemotePanel(BasePanel):
         for r, row in enumerate(media_rows):
             for c, (label, code) in enumerate(row):
                 mg.addWidget(self._remote_key_button(label, code, f"Send keyevent {code}"), r, c)
+        self._remote_media_layout = mg
+        self._remote_media_buttons = tuple(
+            self._remote_key_buttons[len(self._remote_primary_key_buttons) :]
+        )
         outer.addWidget(media)
 
         actions = QWidget()
@@ -334,16 +363,58 @@ class RemotePanel(BasePanel):
         for r, row in enumerate(action_rows):
             for c, (label, action, tooltip) in enumerate(row):
                 gg.addWidget(self._remote_action_button(label, action, tooltip), r, c)
+        self._remote_action_layout = gg
         outer.addWidget(actions)
 
         return g
+
+    def apply_responsive_width(self, width: int) -> None:
+        """按面板宽度重排投屏参数和遥控按钮，不重建任何控件。"""
+
+        super().apply_responsive_width(width)
+        if not hasattr(self, "_remote_key_layout"):
+            return
+
+        key_columns = responsive_column_count(
+            width,
+            compact_columns=3,
+            medium_columns=5,
+            wide_columns=5,
+        )
+        media_columns = responsive_column_count(
+            width,
+            compact_columns=3,
+            medium_columns=5,
+            wide_columns=5,
+        )
+        action_columns = responsive_column_count(
+            width,
+            compact_columns=2,
+            medium_columns=2,
+            wide_columns=4,
+        )
+        reflow_widgets(
+            self._remote_key_layout,
+            self._remote_primary_key_buttons,
+            key_columns,
+        )
+        reflow_widgets(
+            self._remote_media_layout,
+            self._remote_media_buttons,
+            media_columns,
+        )
+        reflow_widgets(
+            self._remote_action_layout,
+            self._remote_action_buttons,
+            action_columns,
+        )
 
     def _remote_key_button(self, label: str, code: str, tooltip: str):
         b = self._b(label, self._KEY_ICONS.get(code, "keyboard.svg"), tooltip=tooltip)
         b.setProperty("remoteKey", code)
         b.setFont(self._font_sm)
         b.setIconSize(QSize(13, 13))
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setMinimumWidth(56)
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         b.clicked.connect(lambda _, cd=code: self._send_keyevent(cd))
@@ -356,7 +427,7 @@ class RemotePanel(BasePanel):
         b.setProperty("remoteAction", action)
         b.setFont(self._font_sm)
         b.setIconSize(QSize(13, 13))
-        b.setFixedHeight(28)
+        b.setMinimumHeight(28)
         b.setMinimumWidth(76)
         b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         b.clicked.connect(lambda _, act=action: self._send_remote_action(act))
@@ -586,7 +657,7 @@ class RemotePanel(BasePanel):
     # ── 状态指示 ────────────────────────────────────────────────────────
 
     def _update_status(self, text: str, color: str | None):
-        style = f"font-size: {BaseStyles.DEFAULT_FONT_SIZE}px; font-weight: bold;"
+        style = "font-weight: bold;"
         if color:
             style = f"color: {color}; {style}"
         self._status_label.setStyleSheet(style)
