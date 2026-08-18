@@ -13,6 +13,7 @@ import time
 import zipfile
 from datetime import datetime
 
+from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
 from utils.resource_path import resource_path
 
@@ -29,13 +30,27 @@ class ADBTesting(ADBModelCore):
         super().__init__()
         self._aborted_devices = set()
         self._abort_lock = threading.Lock()
+        self._abort_condition = threading.Condition(self._abort_lock)
         self._procs = ProcessRunner()
 
     def shutdown(self):
         """终止 Monkey/logcat 等测试诊断进程，供应用退出时统一调用。"""
-        with self._abort_lock:
+        with self._abort_condition:
             self._aborted_devices.add("*")
+            self._abort_condition.notify_all()
         self._procs.stop_all()
+
+    def _wait_for_monkey_abort(self, device_ip: str, timeout: float) -> bool:
+        """可中断等待监控间隔，并在停止请求到达时立即唤醒。"""
+
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        with self._abort_condition:
+            while device_ip not in self._aborted_devices and "*" not in self._aborted_devices:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._abort_condition.wait(remaining)
+            return True
 
     def _get_current_package(self, device_ip: str) -> str:
         result = detect_current_package(device_ip)
@@ -166,33 +181,45 @@ class ADBTesting(ADBModelCore):
         save_dir: str,
         index: int,
         callback=None,
+        batch_id: str = "",
     ) -> dict:
         def log(msg):
-            if callback:
+            if not callback:
+                return
+            try:
                 callback(f"[{device_ip}] {msg}")
-
-        timestamp = datetime.now().strftime("%H%M%S")
-        log_dir = os.path.join(save_dir, f"{sanitized_name}_monkey_{timestamp}")
-        os.makedirs(log_dir, exist_ok=True)
-        monkey_log_path = os.path.join(log_dir, "monkey.txt")
-        logcat_log_path = os.path.join(log_dir, "logcat.txt")
+            except Exception:
+                # 进度回调只用于诊断，异常不能破坏测试任务的终态回收。
+                return
 
         start_time = datetime.now()
         result = {
             "device_ip": device_ip,
             "success": False,
-            "monkey_log": monkey_log_path,
-            "logcat_log": logcat_log_path,
+            "monkey_log": "",
+            "logcat_log": "",
             "duration": "",
             "error": "",
             "index": index,
+            "batch_id": batch_id,
         }
-        with self._abort_lock:
-            self._aborted_devices.discard(device_ip)
         monkey_fh = None
         logcat_fh = None
 
         try:
+            package_name = normalize_android_package(package_name)
+            timestamp = datetime.now().strftime("%H%M%S")
+            log_dir = os.path.join(save_dir, f"{sanitized_name}_monkey_{timestamp}")
+            monkey_log_path = os.path.join(log_dir, "monkey.txt")
+            logcat_log_path = os.path.join(log_dir, "logcat.txt")
+            result.update(
+                monkey_log=monkey_log_path,
+                logcat_log=logcat_log_path,
+            )
+            os.makedirs(log_dir, exist_ok=True)
+            with self._abort_condition:
+                self._aborted_devices.discard(device_ip)
+
             log("Clearing previous device logs...")
             self._run(["adb", "-s", device_ip, "logcat", "-c"])
 
@@ -262,7 +289,7 @@ class ADBTesting(ADBModelCore):
             probe_failures = 0
 
             while monkey_proc.poll() is None:
-                if device_ip in self._aborted_devices:
+                if self._wait_for_monkey_abort(device_ip, 0):
                     self._procs.stop(f"{device_ip}_monkey")
                     log("Monkey test aborted by user.")
                     result["error"] = "Aborted by user"
@@ -283,7 +310,9 @@ class ADBTesting(ADBModelCore):
                                 f"Foreground app probe failed 3 consecutive times: {probe['error']}"
                             )
                         break
-                    time.sleep(interval)
+                    if self._wait_for_monkey_abort(device_ip, interval):
+                        result["error"] = "Aborted by user"
+                        break
                     continue
 
                 probe_failures = 0
@@ -326,8 +355,8 @@ class ADBTesting(ADBModelCore):
                             )
                         else:
                             log(
-                                f"Heavy recovery #{recovery_count}: killing monkey and "
-                                f"restarting..."
+                                f"Heavy recovery #{recovery_count}: "
+                                "killing monkey and restarting..."
                             )
                             try:
                                 monkey_proc.terminate()
@@ -346,7 +375,9 @@ class ADBTesting(ADBModelCore):
                             self._run(
                                 ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
                             )
-                            time.sleep(1)
+                            if self._wait_for_monkey_abort(device_ip, 1):
+                                result["error"] = "Aborted by user"
+                                break
 
                             try:
                                 monkey_fh.close()
@@ -377,7 +408,9 @@ class ADBTesting(ADBModelCore):
 
                         consecutive_off = 0
 
-                    time.sleep(interval)
+                    if self._wait_for_monkey_abort(device_ip, interval):
+                        result["error"] = "Aborted by user"
+                        break
                 except subprocess.TimeoutExpired:
                     probe_failures += 1
                     log(f"dumpsys window timed out ({probe_failures}/3)")
@@ -387,7 +420,9 @@ class ADBTesting(ADBModelCore):
                         break
                 except Exception as e:
                     log(f"Polling exception: {str(e)}")
-                    time.sleep(interval)
+                    if self._wait_for_monkey_abort(device_ip, interval):
+                        result["error"] = "Aborted by user"
+                        break
 
             result["duration"] = str(datetime.now() - start_time)
             return_code = monkey_proc.poll()
@@ -408,7 +443,7 @@ class ADBTesting(ADBModelCore):
             log(f"Monkey test failed: {e}")
 
         finally:
-            with self._abort_lock:
+            with self._abort_condition:
                 self._aborted_devices.discard(device_ip)
             self._procs.stop(f"{device_ip}_logcat")
             self._procs.stop(f"{device_ip}_monkey")
@@ -434,31 +469,50 @@ class ADBTesting(ADBModelCore):
             return 0
 
     @async_command
-    def kill_monkey_async(self, device_ip: str, index: int) -> dict:
-        with self._abort_lock:
+    def kill_monkey_async(self, device_ip: str, index: int, batch_id: str = "") -> dict:
+        with self._abort_condition:
             self._aborted_devices.add(device_ip)
-        local_code = self._procs.stop(f"{device_ip}_monkey")
-        r = self._run(
-            ["adb", "-s", device_ip, "shell", "pkill -f com.android.commands.monkey || true"],
-            timeout=10,
-            device_ip=device_ip,
-        )
-        error = (r.get("error") or "").strip()
-        already_stopped = local_code is None and not error
-        success = r["success"] or already_stopped or (local_code is not None and not error)
-        if already_stopped:
-            message = "Monkey is not running"
-        elif success:
-            message = "Monkey process stopped"
-        else:
-            message = error or "Monkey stop command failed with no error output"
-        return {
-            "device_ip": device_ip,
-            "index": index,
-            "success": success,
-            "message": message,
-            "already_stopped": already_stopped,
-        }
+            self._abort_condition.notify_all()
+        try:
+            local_code = self._procs.stop(f"{device_ip}_monkey")
+            r = self._run(
+                [
+                    "adb",
+                    "-s",
+                    device_ip,
+                    "shell",
+                    "pkill -f com.android.commands.monkey || true",
+                ],
+                timeout=10,
+                device_ip=device_ip,
+            )
+            error = (r.get("error") or "").strip()
+            already_stopped = local_code is None and not error
+            success = r["success"] or already_stopped or (local_code is not None and not error)
+            if already_stopped:
+                message = "Monkey is not running"
+            elif success:
+                message = "Monkey process stopped"
+            else:
+                message = error or "Monkey stop command failed with no error output"
+            result = {
+                "device_ip": device_ip,
+                "index": index,
+                "success": success,
+                "message": message,
+                "already_stopped": already_stopped,
+            }
+        except Exception as exc:
+            result = {
+                "device_ip": device_ip,
+                "index": index,
+                "success": False,
+                "message": str(exc),
+                "already_stopped": False,
+            }
+        if batch_id:
+            result["batch_id"] = batch_id
+        return result
 
     # Bugreport
 

@@ -3226,6 +3226,7 @@ def test_run_monkey_test_reports_nonzero_exit_as_failure(tmp_path):
     with (
         patch.object(model, "_run", return_value={"success": True, "output": ""}),
         patch.object(model, "_get_current_package", return_value="com.example.app"),
+        patch.object(model, "_wait_for_monkey_abort", return_value=False),
         patch("models.adb_testing.time.sleep"),
     ):
         result = ADBTesting.run_monkey_test_async.__wrapped__(
@@ -3256,6 +3257,7 @@ def test_run_monkey_test_reports_repeated_timeouts_as_failure(tmp_path):
     with (
         patch.object(model, "_run", return_value={"success": True, "output": ""}),
         patch.object(model, "_get_current_package", side_effect=[timeout, timeout, timeout]),
+        patch.object(model, "_wait_for_monkey_abort", return_value=False),
         patch("models.adb_testing.time.sleep"),
     ):
         result = ADBTesting.run_monkey_test_async.__wrapped__(

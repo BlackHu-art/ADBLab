@@ -3,6 +3,8 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
+from utils.adb_values import normalize_android_package, normalize_dumpsys_service
+
 from .adb_model import async_command
 
 
@@ -144,6 +146,41 @@ class ADBSystemMixin:
         )
 
     @async_command
+    def gfxinfo_async(self, device_ip: str, package: str) -> dict:
+        package = normalize_android_package(package)
+        return self._run(
+            [
+                "adb",
+                "-s",
+                device_ip,
+                "shell",
+                "dumpsys",
+                "gfxinfo",
+                package,
+                "framestats",
+            ],
+            timeout=15,
+            device_ip=device_ip,
+            package=package,
+        )
+
+    @async_command
+    def wakelocks_async(self, device_ip: str) -> dict:
+        return self._run(
+            ["adb", "-s", device_ip, "shell", "cat", "/proc/wakelocks"],
+            timeout=10,
+            device_ip=device_ip,
+        )
+
+    @async_command
+    def netstats_detail_async(self, device_ip: str) -> dict:
+        return self._run(
+            ["adb", "-s", device_ip, "shell", "dumpsys", "netstats", "detail"],
+            timeout=20,
+            device_ip=device_ip,
+        )
+
+    @async_command
     def kill_process_async(self, device_ip: str, pid: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "kill", pid],
@@ -261,13 +298,14 @@ class ADBSystemMixin:
 
     @async_command
     def cmd_dumpsys_service_async(self, device_ip: str, service: str = "") -> dict:
+        service = normalize_dumpsys_service(service)
         if service:
             cmd = ["adb", "-s", device_ip, "shell", "dumpsys", service]
             timeout = 20
         else:
             cmd = ["adb", "-s", device_ip, "shell", "service", "list"]
             timeout = 10
-        return self._run(cmd, timeout=timeout, device_ip=device_ip)
+        return self._run(cmd, timeout=timeout, device_ip=device_ip, service=service)
 
     @async_command
     def cmd_launcher_async(self, device_ip: str) -> dict:

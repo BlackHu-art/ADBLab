@@ -27,6 +27,11 @@ def _split_semicolon(value: str | list[str]) -> list[str]:
     return [item.strip() for item in value.split(";") if item.strip()]
 
 
+def _normalize_package(value: str) -> str:
+    """规范化分号分隔的包名，并保留原有顺序、大小写和重复项。"""
+    return ";".join(_split_semicolon(value))
+
+
 def _primary_package(value: str) -> str:
     parts = _split_semicolon(value)
     return parts[0] if parts else value.strip()
@@ -123,6 +128,12 @@ class MobilePerfRunConfig:
     mailbox: str = ""
     monkey_config: MobilePerfMonkeyConfig = field(default_factory=MobilePerfMonkeyConfig)
 
+    def __post_init__(self) -> None:
+        """在模型边界固化分号字段，避免后续序列化产生空项和多余空白。"""
+        self.package = _normalize_package(self.package)
+        self.exception_keywords = _split_semicolon(self.exception_keywords)
+        self.phone_log_paths = _split_semicolon(self.phone_log_paths)
+
     @property
     def result_root(self) -> str:
         return normalize_local_path(self.save_path)
@@ -130,15 +141,15 @@ class MobilePerfRunConfig:
     def to_config_parser(self) -> configparser.ConfigParser:
         parser = configparser.ConfigParser()
         common = {
-            "package": self.package.strip(),
+            "package": self.package,
             "frequency": str(max(1, int(self.frequency_seconds))),
             "timeout": str(max(1, int(self.timeout_minutes))),
             "dumpheap_freq": str(max(1, int(self.dumpheap_minutes))),
             "serialnum": self.device_id.strip(),
-            "exceptionlog": ";".join(_split_semicolon(self.exception_keywords)),
+            "exceptionlog": ";".join(self.exception_keywords),
             "monkey": "true" if self.monkey_enabled else "false",
             "save_path": self.result_root,
-            "phone_log_path": ";".join(_split_semicolon(self.phone_log_paths)),
+            "phone_log_path": ";".join(self.phone_log_paths),
             "mailbox": self.mailbox.strip(),
             "pid_change_focus_package": "",
             "main_activity": "",

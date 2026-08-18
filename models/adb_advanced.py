@@ -36,6 +36,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         width: str = "",
         height: str = "",
         bitrate: str = "8000000",
+        batch_id: str = "",
     ) -> dict:
         try:
             sanitized = re.sub(r"\W+", "_", device_ip)
@@ -68,6 +69,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                     "success": False,
                     "device_ip": device_ip,
                     "error": err or "screenrecord exited immediately",
+                    "batch_id": batch_id,
                 }
             return {
                 "success": True,
@@ -77,42 +79,71 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 "filename": filename,
                 "save_dir": save_dir,
                 "duration": duration,
+                "batch_id": batch_id,
             }
         except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": str(e)}
+            return {"success": False, "device_ip": device_ip, "error": str(e), "batch_id": batch_id}
 
     @async_command
-    def stop_screen_record_async(self, device_ip: str) -> dict:
+    def stop_screen_record_async(self, device_ip: str, batch_id: str = "") -> dict:
         try:
             ret = self._rec_procs.stop(f"record_{device_ip}")
             if ret is not None:
-                return {"success": True, "device_ip": device_ip, "message": "Recording stopped"}
-            return {"success": True, "device_ip": device_ip, "message": "No active recording"}
+                result = {"success": True, "device_ip": device_ip, "message": "Recording stopped"}
+            else:
+                result = {"success": True, "device_ip": device_ip, "message": "No active recording"}
         except Exception as e:
-            return {"success": False, "device_ip": device_ip, "error": str(e)}
+            result = {"success": False, "device_ip": device_ip, "error": str(e)}
+        if batch_id:
+            result["batch_id"] = batch_id
+        return result
 
     @async_command
     def pull_recorded_video_async(
-        self, device_ip: str, remote_path: str, save_dir: str, filename: str
+        self,
+        device_ip: str,
+        remote_path: str,
+        save_dir: str,
+        filename: str,
+        batch_id: str = "",
     ) -> dict:
         local_path = os.path.join(save_dir, filename)
-        pull = self._run(["adb", "-s", device_ip, "pull", remote_path, local_path], timeout=60)
-        if not pull["success"]:
+        try:
+            pull = self._run(
+                ["adb", "-s", device_ip, "pull", remote_path, local_path],
+                timeout=60,
+            )
+            if not pull["success"]:
+                return {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "local_path": local_path,
+                    "error": f"pull failed: {pull.get('error', 'unknown error')}",
+                    "batch_id": batch_id,
+                }
+            cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", remote_path])
+            if not cleanup["success"]:
+                return {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "local_path": local_path,
+                    "error": f"cleanup failed: {cleanup.get('error', 'unknown error')}",
+                    "batch_id": batch_id,
+                }
+            return {
+                "success": True,
+                "device_ip": device_ip,
+                "local_path": local_path,
+                "batch_id": batch_id,
+            }
+        except Exception as exc:
             return {
                 "success": False,
                 "device_ip": device_ip,
                 "local_path": local_path,
-                "error": f"pull failed: {pull.get('error', 'unknown error')}",
+                "error": str(exc),
+                "batch_id": batch_id,
             }
-        cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", remote_path])
-        if not cleanup["success"]:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "local_path": local_path,
-                "error": f"cleanup failed: {cleanup.get('error', 'unknown error')}",
-            }
-        return {"success": True, "device_ip": device_ip, "local_path": local_path}
 
     # 输入事件
 

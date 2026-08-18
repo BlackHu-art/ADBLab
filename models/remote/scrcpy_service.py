@@ -158,8 +158,9 @@ class ScrcpyService:
         return self.process_runner.request_stop(key)
 
     def force_stop(self, key: str, timeout: float) -> bool:
-        """在总时限内强制停止 scrcpy 进程。"""
-        return self.process_runner.force_stop(key, timeout)
+        """强制停止 scrcpy，并仅在进程已解除跟踪时确认成功。"""
+        attempted = bool(self.process_runner.force_stop(key, timeout))
+        return attempted and key not in self.process_runner.active_keys
 
     def is_active(self, key: str) -> bool:
         return key in self.process_runner.active_keys

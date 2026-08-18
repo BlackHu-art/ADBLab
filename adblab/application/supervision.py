@@ -206,7 +206,12 @@ class TaskSupervisor:
                 return self._result(task, StopDisposition.GRACEFUL, request_error)
 
             if task.force_stop is None:
-                return self._result(task, StopDisposition.TIMED_OUT, request_error)
+                completion_error = self._completion_error(task)
+                return self._result(
+                    task,
+                    StopDisposition.TIMED_OUT,
+                    request_error or completion_error,
+                )
             force_end = self._clock() + max(0.0, float(force_timeout))
             forced, force_error = self._force(
                 task,
@@ -226,7 +231,7 @@ class TaskSupervisor:
             return self._result(
                 task,
                 StopDisposition.TIMED_OUT,
-                force_error or request_error,
+                force_error or request_error or self._completion_error(task),
             )
         finally:
             self._release_claim(task.task_id)
@@ -323,7 +328,6 @@ class TaskSupervisor:
 
             for task in survivors:
                 forced, force_error = force_results[task.task_id]
-                error_type = force_error or request_errors[task.task_id]
                 if self._wait(task, max(0.0, final_end - self._clock())):
                     completion_error = self._completion_error(task)
                     if completion_error:
@@ -337,13 +341,13 @@ class TaskSupervisor:
                         results[task.task_id] = self._result(
                             task,
                             StopDisposition.FORCED if forced else StopDisposition.GRACEFUL,
-                            error_type,
+                            force_error or request_errors[task.task_id],
                         )
                 else:
                     results[task.task_id] = self._result(
                         task,
                         StopDisposition.TIMED_OUT,
-                        error_type,
+                        force_error or request_errors[task.task_id] or self._completion_error(task),
                     )
             return tuple(results[task.task_id] for task in tasks)
         finally:

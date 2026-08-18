@@ -21,6 +21,19 @@ from utils.user_data import user_config_path
 SETTINGS_FILE = user_config_path("app_settings.json")
 LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
 
+# RemotePanel 只允许通过这组正式键跨会话保存 scrcpy 表单值。该映射同时作为
+# AppSettings 加载白名单的一部分，使旧版本已经写入 JSON 的同名键无需迁移即可恢复。
+SCRCPY_SETTING_DEFAULTS = {
+    "scrcpy_preset": "Smooth",
+    "scrcpy_maxsize": "1024",
+    "scrcpy_fps": "30",
+    "scrcpy_codec": "h264",
+    "scrcpy_buffer": "50",
+    "scrcpy_bitrate": "4",
+    "scrcpy_orientation": "0",
+}
+
+
 DEFAULTS = {
     # 空字符串表示跟随 Qt 提供的系统默认界面字体。
     "font_family": "",
@@ -56,6 +69,8 @@ DEFAULTS = {
     "left_panel_width": 400,
     "right_panel_width": 600,
     "panel_split_ratio": 0.4,
+    "device_log_split_ratio": 0.6,
+    **SCRCPY_SETTING_DEFAULTS,
 }
 
 _FONT_SIZE_RULES = {
@@ -66,6 +81,12 @@ _FONT_SIZE_RULES = {
 
 def _normalise_setting(key: str, value: Any) -> Any:
     """校验需要稳定边界的设置，其他设置保持原有类型与行为。"""
+
+    if key in SCRCPY_SETTING_DEFAULTS:
+        if value is None or isinstance(value, (bool, dict, list, tuple, set)):
+            return SCRCPY_SETTING_DEFAULTS[key]
+        text = str(value).strip()
+        return text[:128] if text else SCRCPY_SETTING_DEFAULTS[key]
 
     if key == "font_family":
         if not isinstance(value, str):
@@ -85,7 +106,7 @@ def _normalise_setting(key: str, value: Any) -> Any:
             return default
         return max(minimum, min(maximum, size))
 
-    if key == "panel_split_ratio":
+    if key in {"panel_split_ratio", "device_log_split_ratio"}:
         if isinstance(value, bool):
             return DEFAULTS[key]
         try:
@@ -292,4 +313,10 @@ class AppSettings:
         return self.get("log_font_size", 9)
 
 
-__all__ = ["AppSettings", "DEFAULTS", "LEGACY_SETTINGS_FILE", "SETTINGS_FILE"]
+__all__ = [
+    "AppSettings",
+    "DEFAULTS",
+    "LEGACY_SETTINGS_FILE",
+    "SCRCPY_SETTING_DEFAULTS",
+    "SETTINGS_FILE",
+]

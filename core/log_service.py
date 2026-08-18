@@ -58,6 +58,8 @@ class LogService(QObject):
             self._buffer: list[tuple[str, str]] = []
             self._buffer_lock = QMutex()
             self._max_buffer = 5000
+            self._dropped_count = 0
+            self._pending_dropped_count = 0
             self._state = self._STATE_ACCEPTING
             self._setup_logging()
 
@@ -127,6 +129,9 @@ class LogService(QObject):
             self._buffer.append((normalized_level, rendered_message))
             # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
             if len(self._buffer) > self._max_buffer:
+                dropped = len(self._buffer) - self._max_buffer
+                self._dropped_count += dropped
+                self._pending_dropped_count += dropped
                 self._buffer = self._buffer[-self._max_buffer :]
         finally:
             self._buffer_lock.unlock()
@@ -186,11 +191,34 @@ class LogService(QObject):
         self._emit_batch(current_batch)
 
     def _drain_buffer_locked(self) -> list[tuple[str, str]]:
-        if not self._buffer:
+        if not self._buffer and self._pending_dropped_count <= 0:
             return []
         current_batch = self._buffer.copy()
         self._buffer.clear()
+        if self._pending_dropped_count > 0:
+            current_batch.insert(
+                0,
+                (
+                    LogLevel.WARNING,
+                    (
+                        "Log buffer overflow: dropped "
+                        f"{self._pending_dropped_count} records "
+                        f"({self._dropped_count} total dropped)"
+                    ),
+                ),
+            )
+            self._pending_dropped_count = 0
         return current_batch
+
+    @property
+    def dropped_count(self) -> int:
+        """返回本次服务生命周期内因背压被丢弃的累计记录数。"""
+
+        self._buffer_lock.lock()
+        try:
+            return int(self._dropped_count)
+        finally:
+            self._buffer_lock.unlock()
 
     def _emit_batch(self, current_batch: list[tuple[str, str]]) -> None:
         """将单个批次写入文件并通过兼容信号发布给界面。"""

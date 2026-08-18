@@ -3,7 +3,6 @@
 import argparse
 import os
 import queue
-import re
 import sys
 import time
 from configparser import ConfigParser
@@ -25,6 +24,25 @@ from mobileperf.android.tools.androiddevice import AndroidDevice
 from mobileperf.android.trafficstats import TrafficMonitor
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
+
+_CONFIG_BOM_PREFIXES = ("\ufeff", "\xfe\xff", "\xff\xfe", "\xef\xbb\xbf")
+
+
+def _remove_config_bom_prefix(content: str) -> str:
+    """连续移除配置文件开头的 Unicode 或历史 BOM 表示。"""
+    while content:
+        for prefix in _CONFIG_BOM_PREFIXES:
+            if prefix and content.startswith(prefix):
+                content = content[len(prefix) :]
+                break
+        else:
+            break
+    return content
+
+
+def _split_config_list(value: str) -> list[str]:
+    """清理分号列表的首尾空白和空项，同时保留顺序与重复项。"""
+    return [item.strip() for item in value.split(";") if item.strip()]
 
 
 class StartUp:
@@ -102,14 +120,9 @@ class StartUp:
             raise RuntimeError("the config file didn't exist: " + configpath)
         # 显式使用 UTF-8，避免 Windows 默认编码导致配置解析失败。
         with open(configpath, encoding="utf-8") as f:
-            content = f.read()
-            # 清理部分编辑器写入的字节序标记，避免 ConfigParser 将其识别为配置内容。
-            content = re.sub(r"\xfe\xff", "", content)
-            content = re.sub(r"\xff\xfe", "", content)
-            content = re.sub(r"\xef\xbb\xbf", "", content)
-            open(configpath, "w", encoding="utf-8").write(content)
+            content = _remove_config_bom_prefix(f.read())
         paser = ConfigParser()
-        paser.read(configpath, encoding="utf-8")
+        paser.read_string(content, source=configpath)
         config_dic = self.check_config_option(config_dic, paser, "Common", "package")
         config_dic = self.check_config_option(
             config_dic, paser, "Common", "pid_change_focus_package"
@@ -143,22 +156,18 @@ class StartUp:
                     config_dic[option] = (int)(parse.get(section, option)) * 60
                 if option == "timeout":  # 配置值使用分钟，运行时统一转换为秒。
                     config_dic[option] = (int)(parse.get(section, option)) * 60
-                if option in [
-                    "exceptionlog",
-                    "phone_log_path",
+                if option in ["package", "exceptionlog", "phone_log_path"]:
+                    config_dic[option] = _split_config_list(parse.get(section, option))
+                elif option in ["main_activity", "activity_list"]:
+                    config_dic[option] = (
+                        parse.get(section, option).strip().replace("\n", "").split(";")
+                    )
+                elif option in [
                     "space_size_check_path",
-                    "package",
                     "pid_change_focus_package",
                     "watcher_users",
-                    "main_activity",
-                    "activity_list",
                 ]:
-                    if option == "activity_list" or option == "main_activity":
-                        config_dic[option] = (
-                            parse.get(section, option).strip().replace("\n", "").split(";")
-                        )
-                    else:
-                        config_dic[option] = parse.get(section, option).split(";")
+                    config_dic[option] = parse.get(section, option).split(";")
             except Exception:  # 配置值格式错误时沿用既有失败处理。
                 if option != "serialnum":
                     logger.debug("config option error:" + option)

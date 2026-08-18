@@ -125,7 +125,11 @@ class RemoteControlService:
     def _set_rotation(self, device_id: str, rotation: int):
         """关闭自动旋转并写入方向；主键失败时回退兼容设置键。"""
         self.clear_dimensions(device_id)
-        self.adb.shell("settings put system accelerometer_rotation 0", device_id=device_id)
+        prerequisite = self.adb.shell(
+            "settings put system accelerometer_rotation 0", device_id=device_id
+        )
+        if not getattr(prerequisite, "success", True):
+            return prerequisite
         result = self.adb.shell(
             f"settings put system user_rotation {rotation}",
             device_id=device_id,

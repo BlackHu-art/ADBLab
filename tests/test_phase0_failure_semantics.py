@@ -46,6 +46,7 @@ def _run_monkey_with_failed_focus_probes(tmp_path, command_result):
     with (
         patch.object(model, "_run", return_value={"success": True, "output": ""}),
         patch.object(model, "_get_current_package", return_value=""),
+        patch.object(model, "_wait_for_monkey_abort", return_value=False),
         patch("models.adb_testing.CommandRunner.run", return_value=command_result),
         patch("models.adb_testing.time.sleep"),
     ):
