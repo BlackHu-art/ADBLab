@@ -47,7 +47,6 @@ class SidePanelSignals(QObject):
     input_keyevent_requested = Signal(list, str)  # 参数：设备列表、键码
 
     # ── 应用管理 ──
-    generate_email_requested = Signal()
     get_program_requested = Signal(list)
     current_package_received = Signal(str, str)
     uninstall_app_requested = Signal(list, str)

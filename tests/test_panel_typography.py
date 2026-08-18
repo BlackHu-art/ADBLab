@@ -58,7 +58,7 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
         assert _effective_size(panel.tabs.font()) == 18
         assert _effective_size(panel._font_sm) == 18
         assert _effective_size(panel._apps_tab.btn_screenshot.font()) == 18
-        assert _effective_size(panel._apps_tab.email_text_sender.font()) == 18
+        assert _effective_size(panel._apps_tab.verification_text_sender.font()) == 18
         assert _effective_size(panel._apps_tab.record_duration.font()) == 18
         assert _effective_size(panel._apps_tab.monkey_chk_crashes.font()) == 18
         assert _effective_size(system_panel.btn_shell_run.font()) == 18
@@ -175,10 +175,10 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
                 gap, first_content_top = _group_title_gap(group)
                 assert gap >= 4, f"{group.title()} 标题与首行内容仅保留 {gap}px"
                 measured_titles.add(group.title())
-                if group.title() == "Text, Email & Screen Capture":
+                if group.title() == "Text & Screen Capture":
                     first_offsets[font_size] = first_content_top
 
-            assert {"Devices", "Text, Email & Screen Capture"} <= measured_titles
+            assert {"Devices", "Text & Screen Capture"} <= measured_titles
 
         assert first_offsets[22] > first_offsets[12]
         assert first_offsets[8] <= first_offsets[12]

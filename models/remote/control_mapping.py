@@ -2,7 +2,6 @@
 
 from collections.abc import Sequence
 
-
 DimensionsInput = Sequence[str | int] | None
 DEFAULT_DIMENSIONS = (1080, 1920)
 

@@ -20,7 +20,7 @@ def test_androiddevice_logs_only_safe_metadata_for_devices_commands_and_apps(mon
     package_two = "com.private.customer.beta"
     command_argument = "--private-token=command-secret"
     process_id = 987654
-    raw_devices = "List of devices attached\n" f"{serial_one}\tdevice\n" f"{serial_two}\tdevice\n"
+    raw_devices = f"List of devices attached\n{serial_one}\tdevice\n{serial_two}\tdevice\n"
     completed = SimpleNamespace(stdout=raw_devices, stderr="", returncode=0)
     mock_logger = Mock()
 

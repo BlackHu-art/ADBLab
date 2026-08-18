@@ -66,7 +66,10 @@ class ADBApp(ADBModelCore):
     def clear_app_data_async(self, device_ip: str, package_name: str, idx: int) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "clear", package_name],
-            timeout=30, device_ip=device_ip, package_name=package_name, index=idx,
+            timeout=30,
+            device_ip=device_ip,
+            package_name=package_name,
+            index=idx,
         )
 
     @async_command
@@ -76,14 +79,29 @@ class ADBApp(ADBModelCore):
             device_ip=device_ip,
         )
         r2 = self._run(
-            ["adb", "-s", device_ip, "shell", "monkey", "-p", package_name,
-             "-c", "android.intent.category.LAUNCHER", "1"],
+            [
+                "adb",
+                "-s",
+                device_ip,
+                "shell",
+                "monkey",
+                "-p",
+                package_name,
+                "-c",
+                "android.intent.category.LAUNCHER",
+                "1",
+            ],
             device_ip=device_ip,
         )
         return {
             "success": r1["success"] and r2["success"],
-            "device_ip": device_ip, "package_name": package_name, "index": index,
-            "output": f"{r1.get('output', r1.get('error', ''))}\n{r2.get('output', r2.get('error', ''))}",
+            "device_ip": device_ip,
+            "package_name": package_name,
+            "index": index,
+            "output": (
+                f"{r1.get('output', r1.get('error', ''))}\n"
+                f"{r2.get('output', r2.get('error', ''))}"
+            ),
         }
 
     @async_command
@@ -109,28 +127,42 @@ class ADBApp(ADBModelCore):
                     resumed_activity = line.strip()
                     break
         return {
-            "success": True, "device_ip": device_ip, "index": index,
-            "current_focus": current_focus, "resumed_activity": resumed_activity,
+            "success": True,
+            "device_ip": device_ip,
+            "index": index,
+            "current_focus": current_focus,
+            "resumed_activity": resumed_activity,
         }
 
     @async_command
     def parse_apk_info_async(self, apk_path: str) -> dict:
         if not os.path.isfile(apk_path):
-            return {"success": False, "error": f"APK file not found: {apk_path}", "apk_path": apk_path}
+            return {
+                "success": False,
+                "error": f"APK file not found: {apk_path}",
+                "apk_path": apk_path,
+            }
         aapt = shutil.which("aapt")
         if not aapt:
-            return {"success": False, "error": "aapt executable not found in PATH", "apk_path": apk_path}
+            return {
+                "success": False,
+                "error": "aapt executable not found in PATH",
+                "apk_path": apk_path,
+            }
         return self._run([aapt, "dump", "badging", apk_path], timeout=15, apk_path=apk_path)
 
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "input", "text", text],
-            device_ip=device_ip, text=text,
+            device_ip=device_ip,
+            text=text,
         )
 
     def list_installed_packages(self, device_ip: str, index: int) -> dict:
-        r = self._run(["adb", "-s", device_ip, "shell", "pm", "list", "packages"], device_ip=device_ip)
+        r = self._run(
+            ["adb", "-s", device_ip, "shell", "pm", "list", "packages"], device_ip=device_ip
+        )
         if not r["success"]:
             return {"device_ip": device_ip, "success": False, "message": r["error"], "index": index}
         packages = [

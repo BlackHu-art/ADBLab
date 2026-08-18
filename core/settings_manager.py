@@ -10,8 +10,9 @@ import json
 import os
 import tempfile
 import threading
+from collections.abc import Mapping
 from copy import deepcopy
-from typing import Any, Mapping
+from typing import Any
 
 from core.log_service import LogService
 from utils.resource_path import resource_path

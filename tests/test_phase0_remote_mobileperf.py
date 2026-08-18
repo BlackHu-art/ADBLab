@@ -1,4 +1,3 @@
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -70,9 +69,12 @@ def test_remote_multi_device_start_warns_and_binds_first_device():
 
     worker = Mock()
     worker.isRunning.return_value = False
-    with patch("gui.panels.remote_panel.os.path.isfile", return_value=True), patch(
-        "gui.panels.remote_panel.ScrcpyLaunchWorker",
-        return_value=worker,
+    with (
+        patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
+        patch(
+            "gui.panels.remote_panel.ScrcpyLaunchWorker",
+            return_value=worker,
+        ),
     ):
         RemotePanel._start_scrcpy(panel)
 

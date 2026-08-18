@@ -120,14 +120,24 @@ class SystemPanel(BasePanel):
         gsl = QVBoxLayout(gs)
         gsl.setSpacing(2)
         _toggle_icons = {
-            "WiFi": "wifi-high.svg", "Data": "broadcast.svg",
-            "BT": "bluetooth.svg", "NFC": "radio-button.svg",
+            "WiFi": "wifi-high.svg",
+            "Data": "broadcast.svg",
+            "BT": "bluetooth.svg",
+            "NFC": "radio-button.svg",
         }
         for row_cmds in [
-            [("WiFi ON", "svc wifi enable"), ("WiFi OFF", "svc wifi disable"),
-             ("Data ON", "svc data enable"), ("Data OFF", "svc data disable")],
-            [("BT ON", "svc bluetooth enable"), ("BT OFF", "svc bluetooth disable"),
-             ("NFC ON", "svc nfc enable"), ("NFC OFF", "svc nfc disable")],
+            [
+                ("WiFi ON", "svc wifi enable"),
+                ("WiFi OFF", "svc wifi disable"),
+                ("Data ON", "svc data enable"),
+                ("Data OFF", "svc data disable"),
+            ],
+            [
+                ("BT ON", "svc bluetooth enable"),
+                ("BT OFF", "svc bluetooth disable"),
+                ("NFC ON", "svc nfc enable"),
+                ("NFC OFF", "svc nfc disable"),
+            ],
         ]:
             row_buttons = []
             for n, cmd in row_cmds:
@@ -200,11 +210,27 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        self.dumpsys_combo = self._combo_editable([
-            "", "package", "activity", "window", "wifi", "battery", "power", "alarm",
-            "usb", "input", "notification", "connectivity", "audio", "display",
-            "meminfo", "cpuinfo", "netstats",
-        ])
+        self.dumpsys_combo = self._combo_editable(
+            [
+                "",
+                "package",
+                "activity",
+                "window",
+                "wifi",
+                "battery",
+                "power",
+                "alarm",
+                "usb",
+                "input",
+                "notification",
+                "connectivity",
+                "audio",
+                "display",
+                "meminfo",
+                "cpuinfo",
+                "netstats",
+            ]
+        )
         self.btn_dumpsys = self._b("Dumpsys", "clipboard-text.svg")
         self.btn_kernel = self._b("Kernel", "cpu.svg")
         self.btn_kernel.setToolTip("cat /proc/version")
@@ -309,34 +335,145 @@ class SystemPanel(BasePanel):
 
     def connect_signals(self):
         LP = self.signals
-        self.btn_shell_run.clicked.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
-        self.shell_cmd_input.returnPressed.connect(lambda: LP.shell_command_requested.emit(self.selected_devices, self.shell_cmd_input.text()))
-        self.btn_reboot_mode.clicked.connect(lambda: LP.reboot_mode_requested.emit(self.selected_devices, self.reboot_mode_combo.currentText().lower()))
-        self.btn_tcpip_mode.clicked.connect(lambda: LP.tcpip_mode_requested.emit(self.selected_devices, self.tcpip_port_input.text().strip() or "5555"))
-        self.btn_broadcast.clicked.connect(lambda: LP.send_broadcast_requested.emit(self.selected_devices, self.broadcast_action.text().strip()))
-        self.btn_start_activity.clicked.connect(lambda: LP.start_activity_requested.emit(self.selected_devices, self.activity_spec.text().strip()))
-        self.btn_deep_link.clicked.connect(lambda: LP.open_deep_link_requested.emit(self.selected_devices, self.deep_link_uri.text().strip()))
-        self.btn_forward.clicked.connect(lambda: LP.forward_port_requested.emit(self.selected_devices, self.fwd_local.text().strip(), self.fwd_remote.text().strip()))
-        self.btn_list_fwd.clicked.connect(lambda: LP.list_forwards_requested.emit(self.selected_devices))
-        self.btn_remove_fwd.clicked.connect(lambda: LP.remove_forwards_requested.emit(self.selected_devices))
-        self.btn_reverse.clicked.connect(lambda: LP.reverse_port_requested.emit(self.selected_devices, self.fwd_remote.text().strip(), self.fwd_local.text().strip()))
-        self.btn_list_rev.clicked.connect(lambda: LP.list_reverse_requested.emit(self.selected_devices))
-        self.btn_remove_rev.clicked.connect(lambda: LP.remove_reverse_requested.emit(self.selected_devices))
-        self.btn_settings_list.clicked.connect(lambda: LP.settings_list_requested.emit(self.selected_devices, self.settings_ns.currentText()))
-        self.btn_settings_get.clicked.connect(lambda: LP.settings_get_requested.emit(self.selected_devices, self.settings_ns.currentText(), self.settings_key.text().strip()))
-        self.btn_settings_put.clicked.connect(lambda: LP.settings_put_requested.emit(self.selected_devices, self.settings_ns.currentText(), self.settings_key.text().strip(), self.settings_val.text().strip()))
-        self.btn_content_query.clicked.connect(lambda: LP.content_query_requested.emit(self.selected_devices, self.content_uri.text().strip()))
-        self.btn_ps_list.clicked.connect(lambda: LP.list_processes_requested.emit(self.selected_devices))
-        self.btn_kill_pid.clicked.connect(lambda: LP.kill_process_requested.emit(self.selected_devices, self.kill_pid_input.text().strip()))
-        self.btn_battery_set.clicked.connect(lambda: LP.battery_set_requested.emit(self.selected_devices, self.battery_param.currentText(), self.battery_val.text().strip()))
-        self.btn_battery_reset.clicked.connect(lambda: LP.battery_reset_requested.emit(self.selected_devices))
-        self.btn_quick_setting.clicked.connect(lambda: LP.quick_setting_requested.emit(self.selected_devices, self.quick_setting_combo.currentData()))
+        self.btn_shell_run.clicked.connect(
+            lambda: LP.shell_command_requested.emit(
+                self.selected_devices, self.shell_cmd_input.text()
+            )
+        )
+        self.shell_cmd_input.returnPressed.connect(
+            lambda: LP.shell_command_requested.emit(
+                self.selected_devices, self.shell_cmd_input.text()
+            )
+        )
+        self.btn_reboot_mode.clicked.connect(
+            lambda: LP.reboot_mode_requested.emit(
+                self.selected_devices, self.reboot_mode_combo.currentText().lower()
+            )
+        )
+        self.btn_tcpip_mode.clicked.connect(
+            lambda: LP.tcpip_mode_requested.emit(
+                self.selected_devices, self.tcpip_port_input.text().strip() or "5555"
+            )
+        )
+        self.btn_broadcast.clicked.connect(
+            lambda: LP.send_broadcast_requested.emit(
+                self.selected_devices, self.broadcast_action.text().strip()
+            )
+        )
+        self.btn_start_activity.clicked.connect(
+            lambda: LP.start_activity_requested.emit(
+                self.selected_devices, self.activity_spec.text().strip()
+            )
+        )
+        self.btn_deep_link.clicked.connect(
+            lambda: LP.open_deep_link_requested.emit(
+                self.selected_devices, self.deep_link_uri.text().strip()
+            )
+        )
+        self.btn_forward.clicked.connect(
+            lambda: LP.forward_port_requested.emit(
+                self.selected_devices, self.fwd_local.text().strip(), self.fwd_remote.text().strip()
+            )
+        )
+        self.btn_list_fwd.clicked.connect(
+            lambda: LP.list_forwards_requested.emit(self.selected_devices)
+        )
+        self.btn_remove_fwd.clicked.connect(
+            lambda: LP.remove_forwards_requested.emit(self.selected_devices)
+        )
+        self.btn_reverse.clicked.connect(
+            lambda: LP.reverse_port_requested.emit(
+                self.selected_devices, self.fwd_remote.text().strip(), self.fwd_local.text().strip()
+            )
+        )
+        self.btn_list_rev.clicked.connect(
+            lambda: LP.list_reverse_requested.emit(self.selected_devices)
+        )
+        self.btn_remove_rev.clicked.connect(
+            lambda: LP.remove_reverse_requested.emit(self.selected_devices)
+        )
+        self.btn_settings_list.clicked.connect(
+            lambda: LP.settings_list_requested.emit(
+                self.selected_devices, self.settings_ns.currentText()
+            )
+        )
+        self.btn_settings_get.clicked.connect(
+            lambda: LP.settings_get_requested.emit(
+                self.selected_devices,
+                self.settings_ns.currentText(),
+                self.settings_key.text().strip(),
+            )
+        )
+        self.btn_settings_put.clicked.connect(
+            lambda: LP.settings_put_requested.emit(
+                self.selected_devices,
+                self.settings_ns.currentText(),
+                self.settings_key.text().strip(),
+                self.settings_val.text().strip(),
+            )
+        )
+        self.btn_content_query.clicked.connect(
+            lambda: LP.content_query_requested.emit(
+                self.selected_devices, self.content_uri.text().strip()
+            )
+        )
+        self.btn_ps_list.clicked.connect(
+            lambda: LP.list_processes_requested.emit(self.selected_devices)
+        )
+        self.btn_kill_pid.clicked.connect(
+            lambda: LP.kill_process_requested.emit(
+                self.selected_devices, self.kill_pid_input.text().strip()
+            )
+        )
+        self.btn_battery_set.clicked.connect(
+            lambda: LP.battery_set_requested.emit(
+                self.selected_devices,
+                self.battery_param.currentText(),
+                self.battery_val.text().strip(),
+            )
+        )
+        self.btn_battery_reset.clicked.connect(
+            lambda: LP.battery_reset_requested.emit(self.selected_devices)
+        )
+        self.btn_quick_setting.clicked.connect(
+            lambda: LP.quick_setting_requested.emit(
+                self.selected_devices, self.quick_setting_combo.currentData()
+            )
+        )
         self.btn_ime_list.clicked.connect(lambda: LP.ime_list_requested.emit(self.selected_devices))
-        self.btn_ime_set.clicked.connect(lambda: LP.ime_set_requested.emit(self.selected_devices, self.ime_id_input.text().strip()))
-        self.btn_pm_features.clicked.connect(lambda: LP.pm_features_requested.emit(self.selected_devices))
-        self.btn_emu_sms.clicked.connect(lambda: LP.emu_sms_requested.emit(self.selected_devices, self.emu_sms_sender.text().strip(), self.emu_sms_text.text().strip()))
-        self.btn_emu_call.clicked.connect(lambda: LP.emu_call_requested.emit(self.selected_devices, self.emu_call_num.text().strip()))
-        self.btn_emu_geo.clicked.connect(lambda: LP.emu_geo_requested.emit(self.selected_devices, self.emu_geo_lon.text().strip(), self.emu_geo_lat.text().strip()))
-        self.btn_dumpsys.clicked.connect(lambda: self._sh(f"dumpsys {self.dumpsys_combo.currentText().strip()} | head -80" if self.dumpsys_combo.currentText().strip() else "service list"))
+        self.btn_ime_set.clicked.connect(
+            lambda: LP.ime_set_requested.emit(
+                self.selected_devices, self.ime_id_input.text().strip()
+            )
+        )
+        self.btn_pm_features.clicked.connect(
+            lambda: LP.pm_features_requested.emit(self.selected_devices)
+        )
+        self.btn_emu_sms.clicked.connect(
+            lambda: LP.emu_sms_requested.emit(
+                self.selected_devices,
+                self.emu_sms_sender.text().strip(),
+                self.emu_sms_text.text().strip(),
+            )
+        )
+        self.btn_emu_call.clicked.connect(
+            lambda: LP.emu_call_requested.emit(
+                self.selected_devices, self.emu_call_num.text().strip()
+            )
+        )
+        self.btn_emu_geo.clicked.connect(
+            lambda: LP.emu_geo_requested.emit(
+                self.selected_devices,
+                self.emu_geo_lon.text().strip(),
+                self.emu_geo_lat.text().strip(),
+            )
+        )
+        self.btn_dumpsys.clicked.connect(
+            lambda: self._sh(
+                f"dumpsys {self.dumpsys_combo.currentText().strip()} | head -80"
+                if self.dumpsys_combo.currentText().strip()
+                else "service list"
+            )
+        )
         self.btn_kernel.clicked.connect(lambda: self._sh("cat /proc/version"))
         self.btn_cpuinfo_dev.clicked.connect(lambda: self._sh("cat /proc/cpuinfo | head -40"))

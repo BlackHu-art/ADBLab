@@ -20,6 +20,7 @@ def _get_adb_path() -> str:
     global _adb_path
     if _adb_path is None:
         from utils.adb_resolver import adb_path
+
         _adb_path = adb_path()
     return _adb_path
 
@@ -162,7 +163,9 @@ def _slow_threshold_ms() -> float:
         from core.perf_trace import DEFAULT_SLOW_THRESHOLD_MS
         from core.settings_manager import AppSettings
 
-        value = AppSettings.instance().get("performance_log_threshold_ms", DEFAULT_SLOW_THRESHOLD_MS)
+        value = AppSettings.instance().get(
+            "performance_log_threshold_ms", DEFAULT_SLOW_THRESHOLD_MS
+        )
         return max(0.0, float(value))
     except Exception:
         return 300.0
@@ -194,7 +197,7 @@ def _adb_summary(parts: list[str]) -> str:
     command = parts[index]
     if command != "shell":
         return f"adb {command}"
-    shell_parts = parts[index + 1:]
+    shell_parts = parts[index + 1 :]
     if not shell_parts:
         return "adb shell"
     first = shell_parts[0]

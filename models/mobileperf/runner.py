@@ -117,9 +117,7 @@ class MobilePerfRunConfig:
     timeout_minutes: int = 10
     dumpheap_minutes: int = 60
     monkey_enabled: bool = False
-    exception_keywords: list[str] = field(
-        default_factory=lambda: ["fatal exception", "has died"]
-    )
+    exception_keywords: list[str] = field(default_factory=lambda: ["fatal exception", "has died"])
     phone_log_paths: list[str] = field(default_factory=lambda: ["/data/anr"])
     save_path: str = ""
     mailbox: str = ""
@@ -345,8 +343,7 @@ class MobilePerfRunner:
             if context.diagnostic_thread is not None:
                 context.diagnostic_thread.start()
         self._safe_write_diagnostic(
-            "MobilePerf worker started: "
-            f"diagnostic_reader={diagnostic_stream is not None}",
+            f"MobilePerf worker started: diagnostic_reader={diagnostic_stream is not None}",
             context,
         )
         return self.expected_result_root(config)
@@ -386,9 +383,7 @@ class MobilePerfRunner:
                 self._diagnostic_thread = None
                 self._on_log = None
                 self._on_finished = None
-                self._finished_notified = bool(
-                    context is not None and context.finished_notified
-                )
+                self._finished_notified = bool(context is not None and context.finished_notified)
         if context is None:
             self._cleanup_config_dir()
         self._safe_write_diagnostic(

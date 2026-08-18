@@ -3,7 +3,6 @@
 from time import perf_counter
 from typing import Any
 
-
 PERF_KEY = "_perf"
 PAYLOAD_KEY = "_perf_payload"
 DEFAULT_SLOW_THRESHOLD_MS = 300.0

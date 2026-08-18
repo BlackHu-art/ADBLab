@@ -678,37 +678,37 @@ class SettingsDialog(QDialog):
             + BaseStyles.GROUP_BOX_STYLE()
             + f"""
             QDialog {{
-                background-color: {c('WINDOW_BG')};
-                color: {c('TEXT_PRIMARY')};
+                background-color: {c("WINDOW_BG")};
+                color: {c("TEXT_PRIMARY")};
             }}
             QDialog QLabel,
             QDialog QComboBox,
             QDialog QComboBox QAbstractItemView,
             QDialog QCheckBox,
-            QDialog QPushButton {{ color: {c('TEXT_PRIMARY')}; }}
+            QDialog QPushButton {{ color: {c("TEXT_PRIMARY")}; }}
             QScrollArea#settingsScroll {{
                 border: none;
                 background-color: transparent;
             }}
             QWidget#settingsContent {{ background-color: transparent; }}
             QLabel#settingsLabel {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 min-width: 72px;
             }}
             QLabel#hintLabel {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
                 padding: 1px 2px;
             }}
             QLabel#settingsValue {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 padding: 1px 2px;
             }}
             QLabel#settingsDescription {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
                 padding: 0 0 4px 26px;
             }}
             QCheckBox#settingsCheck {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 spacing: 8px;
                 padding: 2px 0;
             }}

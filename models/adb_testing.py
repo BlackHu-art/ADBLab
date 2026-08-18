@@ -13,12 +13,13 @@ import time
 import zipfile
 from datetime import datetime
 
+from utils.archive import safe_extract_zip
+from utils.resource_path import resource_path
+
 from .adb_model import ADBModelCore, async_command
 from .base.command_runner import CommandRunner
 from .base.focus_detector import detect_current_package
 from .base.process_runner import ProcessRunner
-from utils.archive import safe_extract_zip
-from utils.resource_path import resource_path
 
 
 class ADBTesting(ADBModelCore):
@@ -113,8 +114,11 @@ class ADBTesting(ADBModelCore):
             return {"success": False, "device_ip": device_ip, "error": f"screencap: {r['error']}"}
         r = self._run(["adb", "-s", device_ip, "shell", f"test -f {temp_path} && echo ok"])
         if not r["success"] or r.get("output", "").strip() != "ok":
-            return {"success": False, "device_ip": device_ip,
-                    "error": "screenshot file not found on device after screencap"}
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": "screenshot file not found on device after screencap",
+            }
         r = self._run(["adb", "-s", device_ip, "pull", temp_path, save_path])
         if not r["success"]:
             return {"success": False, "device_ip": device_ip, "error": f"pull: {r['error']}"}
@@ -175,9 +179,13 @@ class ADBTesting(ADBModelCore):
 
         start_time = datetime.now()
         result = {
-            "device_ip": device_ip, "success": False,
-            "monkey_log": monkey_log_path, "logcat_log": logcat_log_path,
-            "duration": "", "error": "", "index": index,
+            "device_ip": device_ip,
+            "success": False,
+            "monkey_log": monkey_log_path,
+            "logcat_log": logcat_log_path,
+            "duration": "",
+            "error": "",
+            "index": index,
         }
         with self._abort_lock:
             self._aborted_devices.discard(device_ip)
@@ -197,19 +205,36 @@ class ADBTesting(ADBModelCore):
             )
 
             monkey_cmd = [
-                "adb", "-s", device_ip, "shell", "monkey",
-                "-p", package_name, "-v",
-                "--throttle", str(params.get("throttle", 300)),
-                "--pct-touch", str(params.get("touch", 30)),
-                "--pct-motion", str(params.get("motion", 15)),
-                "--pct-trackball", str(params.get("trackball", 0)),
-                "--pct-nav", str(params.get("nav", 20)),
-                "--pct-majornav", str(params.get("majornav", 10)),
-                "--pct-syskeys", str(params.get("syskeys", 5)),
-                "--pct-appswitch", str(params.get("appswitch", 8)),
-                "--pct-anyevent", str(params.get("anyevent", 10)),
-                "--pct-pinchzoom", str(params.get("pinch", 2)),
-                "-s", str(random.randint(1, 99999)),
+                "adb",
+                "-s",
+                device_ip,
+                "shell",
+                "monkey",
+                "-p",
+                package_name,
+                "-v",
+                "--throttle",
+                str(params.get("throttle", 300)),
+                "--pct-touch",
+                str(params.get("touch", 30)),
+                "--pct-motion",
+                str(params.get("motion", 15)),
+                "--pct-trackball",
+                str(params.get("trackball", 0)),
+                "--pct-nav",
+                str(params.get("nav", 20)),
+                "--pct-majornav",
+                str(params.get("majornav", 10)),
+                "--pct-syskeys",
+                str(params.get("syskeys", 5)),
+                "--pct-appswitch",
+                str(params.get("appswitch", 8)),
+                "--pct-anyevent",
+                str(params.get("anyevent", 10)),
+                "--pct-pinchzoom",
+                str(params.get("pinch", 2)),
+                "-s",
+                str(random.randint(1, 99999)),
             ]
             if params.get("ignore_crashes", True):
                 monkey_cmd.append("--ignore-crashes")
@@ -225,7 +250,9 @@ class ADBTesting(ADBModelCore):
 
             monkey_fh = open(monkey_log_path, "w", encoding="utf-8")
             monkey_proc = self._procs.start(
-                f"{device_ip}_monkey", monkey_cmd, stdout=monkey_fh,
+                f"{device_ip}_monkey",
+                monkey_cmd,
+                stdout=monkey_fh,
             )
 
             log("Starting Monkey Test monitoring loop...")
@@ -253,8 +280,7 @@ class ADBTesting(ADBModelCore):
                             result["error"] = "Device appears disconnected"
                         else:
                             result["error"] = (
-                                "Foreground app probe failed 3 consecutive times: "
-                                f"{probe['error']}"
+                                f"Foreground app probe failed 3 consecutive times: {probe['error']}"
                             )
                         break
                     time.sleep(interval)
@@ -271,7 +297,7 @@ class ADBTesting(ADBModelCore):
                             log(f"App back on target ({package_name})")
                         consecutive_off = 0
 
-    # 分层恢复策略在连续两次偏离目标包时触发。
+                    # 分层恢复策略在连续两次偏离目标包时触发。
                     if consecutive_off >= 2:
                         recovery_count += 1
                         if recovery_count > 5:
@@ -282,14 +308,27 @@ class ADBTesting(ADBModelCore):
                             break
 
                         if recovery_count <= 3:
-                            log(f"Light recovery #{recovery_count}: bringing app back "
-                                f"(monkey -p {package_name} 1)")
+                            log(
+                                f"Light recovery #{recovery_count}: bringing app back "
+                                f"(monkey -p {package_name} 1)"
+                            )
                             self._run(
-                                ["adb", "-s", device_ip, "shell", "monkey",
-                                 "-p", package_name, "1"],
+                                [
+                                    "adb",
+                                    "-s",
+                                    device_ip,
+                                    "shell",
+                                    "monkey",
+                                    "-p",
+                                    package_name,
+                                    "1",
+                                ],
                             )
                         else:
-                            log(f"Heavy recovery #{recovery_count}: killing monkey and restarting...")
+                            log(
+                                f"Heavy recovery #{recovery_count}: killing monkey and "
+                                f"restarting..."
+                            )
                             try:
                                 monkey_proc.terminate()
                                 monkey_proc.wait(timeout=5)
@@ -330,7 +369,9 @@ class ADBTesting(ADBModelCore):
 
                             log(f"Restart monkey: {' '.join(restart_cmd)}")
                             monkey_proc = self._procs.start(
-                                f"{device_ip}_monkey", restart_cmd, stdout=monkey_fh,
+                                f"{device_ip}_monkey",
+                                restart_cmd,
+                                stdout=monkey_fh,
                             )
                             log(f"New monkey started (pid={monkey_proc.pid})")
 
@@ -399,7 +440,8 @@ class ADBTesting(ADBModelCore):
         local_code = self._procs.stop(f"{device_ip}_monkey")
         r = self._run(
             ["adb", "-s", device_ip, "shell", "pkill -f com.android.commands.monkey || true"],
-            timeout=10, device_ip=device_ip,
+            timeout=10,
+            device_ip=device_ip,
         )
         error = (r.get("error") or "").strip()
         already_stopped = local_code is None and not error
@@ -411,8 +453,11 @@ class ADBTesting(ADBModelCore):
         else:
             message = error or "Monkey stop command failed with no error output"
         return {
-            "device_ip": device_ip, "index": index,
-            "success": success, "message": message, "already_stopped": already_stopped,
+            "device_ip": device_ip,
+            "index": index,
+            "success": success,
+            "message": message,
+            "already_stopped": already_stopped,
         }
 
     # Bugreport
@@ -441,8 +486,12 @@ class ADBTesting(ADBModelCore):
         try:
             android_version = tuple(map(int, (version_str or "0").split(".")))
         except ValueError:
-            return {"device_ip": device_ip, "index": index,
-                    "success": False, "message": "Invalid Android version format"}
+            return {
+                "device_ip": device_ip,
+                "index": index,
+                "success": False,
+                "message": "Invalid Android version format",
+            }
 
         try:
             if android_version >= (8, 0):
@@ -463,20 +512,32 @@ class ADBTesting(ADBModelCore):
                 }
             log("Bugreport command completed")
         except Exception as e:
-            return {"device_ip": device_ip, "index": index,
-                    "success": False, "message": f"Bugreport failed: {e}"}
+            return {
+                "device_ip": device_ip,
+                "index": index,
+                "success": False,
+                "message": f"Bugreport failed: {e}",
+            }
 
         if not self._extract_bugreport_zips(target_dir, log):
-            return {"device_ip": device_ip, "index": index,
-                    "success": False, "message": "Failed to extract bugreport ZIP"}
+            return {
+                "device_ip": device_ip,
+                "index": index,
+                "success": False,
+                "message": "Failed to extract bugreport ZIP",
+            }
 
         found_html = self._scan_and_convert_bugreport_txt(target_dir, log)
         if not found_html:
             log("No bugreport text files converted to HTML.")
 
-        return {"device_ip": device_ip, "index": index,
-                "success": True, "message": f"Bugreport saved in {target_dir}",
-                "bugreport_path": target_dir}
+        return {
+            "device_ip": device_ip,
+            "index": index,
+            "success": True,
+            "message": f"Bugreport saved in {target_dir}",
+            "bugreport_path": target_dir,
+        }
 
     def _extract_bugreport_zips(self, target_dir: str, log) -> bool:
         zip_files = [f for f in os.listdir(target_dir) if f.endswith(".zip")]
@@ -538,10 +599,19 @@ class ADBTesting(ADBModelCore):
         os.makedirs(device_anr_dir, exist_ok=True)
         r = self._run(
             ["adb", "-s", device_ip, "pull", "/data/anr", device_anr_dir],
-            timeout=30, device_ip=device_ip,
+            timeout=30,
+            device_ip=device_ip,
         )
         if r["success"]:
-            return {"device_ip": device_ip, "success": True, "index": index,
-                    "message": f"ANR files saved to {device_anr_dir}"}
-        return {"device_ip": device_ip, "success": False, "index": index,
-                "message": f"Failed to pull ANR files.\n{r['error']}"}
+            return {
+                "device_ip": device_ip,
+                "success": True,
+                "index": index,
+                "message": f"ANR files saved to {device_anr_dir}",
+            }
+        return {
+            "device_ip": device_ip,
+            "success": False,
+            "index": index,
+            "message": f"Failed to pull ANR files.\n{r['error']}",
+        }

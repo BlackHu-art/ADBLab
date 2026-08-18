@@ -4,8 +4,13 @@ from time import monotonic
 
 from core.adb_bridge import ADBBridge
 
-from .control_mapping import KEYCODES, DimensionsInput, directional_swipe, notification_swipe, parse_dimensions
-
+from .control_mapping import (
+    KEYCODES,
+    DimensionsInput,
+    directional_swipe,
+    notification_swipe,
+    parse_dimensions,
+)
 
 DEFAULT_DIMENSION_TTL_SECONDS = 30.0
 REMOTE_ACTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -33,7 +38,9 @@ class RemoteControlService:
         self.dimension_ttl_seconds = dimension_ttl_seconds
         self._dimensions_cache: dict[str, tuple[tuple[int, int], float]] = {}
 
-    def remember_dimensions(self, device_id: str, dimensions: DimensionsInput) -> tuple[int, int] | None:
+    def remember_dimensions(
+        self, device_id: str, dimensions: DimensionsInput
+    ) -> tuple[int, int] | None:
         parsed = parse_dimensions(dimensions)
         if not parsed:
             return None

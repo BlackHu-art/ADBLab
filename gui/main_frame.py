@@ -277,9 +277,9 @@ class MainFrame(QMainWindow):
         central_widget.setObjectName("centralWidget")
         central_widget.setStyleSheet(f"""
             #centralWidget {{
-                background-color: {BaseStyles.color('WINDOW_BG')};
+                background-color: {BaseStyles.color("WINDOW_BG")};
                 border-radius: {BaseStyles.RADIUS_XL}px;
-                border: 1px solid {BaseStyles.color('BORDER_COLOR')};
+                border: 1px solid {BaseStyles.color("BORDER_COLOR")};
             }}
         """)
 
@@ -472,9 +472,9 @@ class MainFrame(QMainWindow):
 
         self.centralWidget().setStyleSheet(f"""
             #centralWidget {{
-                background-color: {BaseStyles.color('WINDOW_BG')};
+                background-color: {BaseStyles.color("WINDOW_BG")};
                 border-radius: {BaseStyles.RADIUS_XL}px;
-                border: 1px solid {BaseStyles.color('BORDER_COLOR')};
+                border: 1px solid {BaseStyles.color("BORDER_COLOR")};
             }}
         """)
         for bar in self.findChildren(QFrame, "toolbar"):
@@ -507,9 +507,7 @@ class MainFrame(QMainWindow):
         splitter = getattr(self, "_panel_splitter", None)
         if splitter is None:
             return
-        splitter.setStyleSheet(
-            "QSplitter::handle { background: transparent; border: none; }"
-        )
+        splitter.setStyleSheet("QSplitter::handle { background: transparent; border: none; }")
 
     def _toggle_theme(self):
         """记录工具栏主题切换请求并交给主题服务执行。"""
@@ -612,8 +610,6 @@ class MainFrame(QMainWindow):
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)
         LP.log_message.connect(self.log_service.log)
-        CTL.email_updated.connect(self.left_panel.update_email)
-        CTL.vercode_updated.connect(self.left_panel.update_vercode)
         CTL.record_finished.connect(self.left_panel.on_recording_finished)
         CTL.operation_completed.connect(self.left_panel.on_operation_completed)
         CTL.current_package_received.connect(self.left_panel.update_current_package)
@@ -644,7 +640,6 @@ class MainFrame(QMainWindow):
             (LP.input_tap_requested, AC.input_tap),
             (LP.input_swipe_requested, AC.input_swipe),
             (LP.input_keyevent_requested, AC.input_keyevent),
-            (LP.generate_email_requested, AC.start_random_email_task),
         ]
 
     def _app_signal_map(self, LP, AC):
@@ -1383,10 +1378,7 @@ class MainFrame(QMainWindow):
         self._shutdown_handles.append(controller_shutdown)
 
         def controller_running():
-            return (
-                controller_shutdown.is_running()
-                or ProcessRunner.tracked_active_count() > 0
-            )
+            return controller_shutdown.is_running() or ProcessRunner.tracked_active_count() > 0
 
         def wait_for_controller(timeout: float):
             if not controller_shutdown.wait(timeout):
@@ -1520,11 +1512,10 @@ class MainFrame(QMainWindow):
         if result is not None:
             self._shutdown_results = (*self._shutdown_results, result)
         self._shutdown_residual = tuple(residual)
-        finalizer_failed = (
-            result is not None
-            and result.disposition
-            in {StopDisposition.FAILED, StopDisposition.TIMED_OUT}
-        )
+        finalizer_failed = result is not None and result.disposition in {
+            StopDisposition.FAILED,
+            StopDisposition.TIMED_OUT,
+        }
         if finalizer_failed:
             self.setWindowTitle(
                 "ADBLab - Closing "

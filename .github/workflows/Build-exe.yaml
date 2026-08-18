@@ -88,7 +88,12 @@ jobs:
       - name: Install test dependencies
         if: runner.os == 'Windows'
         shell: bash
-        run: pip install pytest
+        run: pip install -r requirements-dev.txt
+
+      - name: Lint with ruff
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python -m ruff check .
 
       - name: Run tests
         if: runner.os == 'Windows'

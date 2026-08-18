@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import platform
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Mapping
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics, QGuiApplication

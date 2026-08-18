@@ -157,7 +157,7 @@ class ADBBridge:
             raw = result.output if result.success else result.error
             for prefix in ("Physical size:", "Override size:"):
                 if prefix in raw:
-                    return raw[raw.find(prefix):].split(":")[1].strip().split("x")
+                    return raw[raw.find(prefix) :].split(":")[1].strip().split("x")
             return None
         except Exception:
             return None

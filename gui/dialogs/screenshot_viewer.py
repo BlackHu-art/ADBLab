@@ -18,8 +18,8 @@ from PySide6.QtGui import (
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
-    QApplication,
     QAbstractItemView,
+    QApplication,
     QDialog,
     QFrame,
     QGraphicsPixmapItem,
@@ -51,7 +51,7 @@ ZOOM_STEP = 0.10
 class ScreenshotGraphicsView(QGraphicsView):
     """把滚轮和双击缩放操作委托给所属截图查看器。"""
 
-    def __init__(self, owner: "ScreenshotViewer"):
+    def __init__(self, owner: ScreenshotViewer):
         super().__init__()
         self._owner = owner
         self.setObjectName("imageView")
@@ -153,21 +153,21 @@ class ScreenshotViewer(QDialog):
             BaseStyles.SCROLLBAR_STYLE()
             + f"""
             QDialog {{
-                background-color: {c('WINDOW_BG')};
-                color: {c('TEXT_PRIMARY')};
+                background-color: {c("WINDOW_BG")};
+                color: {c("TEXT_PRIMARY")};
             }}
             QFrame#canvasFrame {{
-                background-color: {c('INPUT_BG')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("INPUT_BG")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r.RADIUS_LG}px;
             }}
             QGraphicsView#imageView {{
-                background-color: {c('INPUT_BG')};
+                background-color: {c("INPUT_BG")};
                 border: none;
             }}
             QFrame#bottomDock {{
-                background-color: {c('TOOLBAR_BG')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("TOOLBAR_BG")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r.RADIUS_MD}px;
             }}
             QFrame#bottomBar {{
@@ -175,10 +175,10 @@ class ScreenshotViewer(QDialog):
                 border: none;
             }}
             QListWidget#thumbnailStrip {{
-                background-color: {c('INPUT_BG')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("INPUT_BG")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r.RADIUS_SM}px;
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 padding: 4px;
                 outline: none;
             }}
@@ -189,49 +189,49 @@ class ScreenshotViewer(QDialog):
                 margin: 1px;
             }}
             QListWidget#thumbnailStrip::item:selected {{
-                background-color: {c('SELECTION_BG')};
-                border-color: {c('BORDER_FOCUS')};
-                color: {c('SELECTION_TEXT')};
+                background-color: {c("SELECTION_BG")};
+                border-color: {c("BORDER_FOCUS")};
+                color: {c("SELECTION_TEXT")};
             }}
             QLabel {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 background: transparent;
             }}
             QLabel#metaLabel,
             QLabel#navLabel,
             QLabel#zoomLabel {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
             }}
             QLabel#pathLabel {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
             }}
             QPushButton {{
-                background-color: {c('BUTTON_BG')};
-                color: {c('TEXT_PRIMARY')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("BUTTON_BG")};
+                color: {c("TEXT_PRIMARY")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r.RADIUS_SM}px;
                 padding: 0;
             }}
             QPushButton:hover {{
-                background-color: {c('BUTTON_HOVER')};
-                border-color: {c('BORDER_FOCUS')};
+                background-color: {c("BUTTON_HOVER")};
+                border-color: {c("BORDER_FOCUS")};
             }}
             QPushButton:pressed {{
-                background-color: {c('BUTTON_PRESSED')};
+                background-color: {c("BUTTON_PRESSED")};
             }}
             QPushButton:disabled {{
-                color: {c('TEXT_DISABLED')};
-                background-color: {c('INPUT_BG')};
-                border-color: {c('BORDER_COLOR')};
+                color: {c("TEXT_DISABLED")};
+                background-color: {c("INPUT_BG")};
+                border-color: {c("BORDER_COLOR")};
             }}
             QPushButton#danger:hover {{
-                background-color: {c('BUTTON_DANGER')};
-                border-color: {c('BUTTON_DANGER')};
+                background-color: {c("BUTTON_DANGER")};
+                border-color: {c("BUTTON_DANGER")};
                 color: #ffffff;
             }}
             QPushButton#danger:pressed {{
-                background-color: {c('BUTTON_DANGER_HOVER')};
-                border-color: {c('BUTTON_DANGER_HOVER')};
+                background-color: {c("BUTTON_DANGER_HOVER")};
+                border-color: {c("BUTTON_DANGER_HOVER")};
                 color: #ffffff;
             }}
             """
@@ -444,9 +444,7 @@ class ScreenshotViewer(QDialog):
         self._pixmap_item = None
         self._placeholder_text = self._scene.addText(text)
         self._placeholder_text.setFont(
-            BaseStyles.font_for_role(
-                FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
-            )
+            BaseStyles.font_for_role(FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1))
         )
         self._scene.setSceneRect(QRectF(0, 0, 420, 240))
         bounds = self._placeholder_text.boundingRect()
@@ -498,7 +496,9 @@ class ScreenshotViewer(QDialog):
         try:
             if 0 <= self._current_idx < self._thumb_list.count():
                 self._thumb_list.setCurrentRow(self._current_idx)
-                self._thumb_list.scrollToItem(self._thumb_list.currentItem(), QAbstractItemView.PositionAtCenter)
+                self._thumb_list.scrollToItem(
+                    self._thumb_list.currentItem(), QAbstractItemView.PositionAtCenter
+                )
             else:
                 self._thumb_list.clearSelection()
         finally:
@@ -515,7 +515,11 @@ class ScreenshotViewer(QDialog):
         self._navigate_to((self._current_idx + 1) % len(self._image_paths))
 
     def _apply_fit(self):
-        if self._original_pixmap is None or self._original_pixmap.isNull() or self._pixmap_item is None:
+        if (
+            self._original_pixmap is None
+            or self._original_pixmap.isNull()
+            or self._pixmap_item is None
+        ):
             return
         viewport = self._view.viewport().size()
         max_w = max(viewport.width() - 16, 200)

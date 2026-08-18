@@ -62,15 +62,13 @@ class ADBAppMixin(_ADBControllerBase):
             package_name = result.get("package_name", "")
             if package_name:
                 self._emit_operation(
-                    "get_package", True,
-                    f"Current package on {device_ip}: {package_name}"
+                    "get_package", True, f"Current package on {device_ip}: {package_name}"
                 )
                 self.signals.current_package_received.emit(device_ip, package_name)
         else:
             error = result.get("error", "Unknown error")
             self._emit_operation(
-                "get_package", False,
-                f"Failed to get package on {device_ip}: {error}"
+                "get_package", False, f"Failed to get package on {device_ip}: {error}"
             )
 
     def install_apk(self, devices: list):
@@ -298,7 +296,10 @@ class ADBAppMixin(_ADBControllerBase):
                 msg_lines.append("   ⚠️  No mResumedActivity found")
             self._emit_operation("current_activity", True, "\n".join(msg_lines))
         else:
-            msg = f"❌ Failed to get activity on ({idx}) {device} {progress}\n{self._indent_output(error)}"
+            msg = (
+                f"❌ Failed to get activity on ({idx}) {device} {progress}\n"
+                f"{self._indent_output(error)}"
+            )
             self._emit_operation("current_activity", False, msg)
 
     def parse_apk_info(self):
@@ -333,17 +334,21 @@ class ADBAppMixin(_ADBControllerBase):
                 permissions = re.findall(r"uses-permission: name='(.*?)'", raw_output)
                 features = re.findall(r"uses-feature(?:-not-required)?: name='(.*?)'", raw_output)
                 native_code = re.findall(r"native-code: '(.*?)'", raw_output)
-                formatted = f"""
-    🔹 App: {app_label}
-    📦 Package: {package_name.group(1) if package_name else 'N/A'}
-    🔢 Version: {version_name.group(1) if version_name else 'N/A'} (Code: {version_code.group(1) if version_code else 'N/A'})
-    🎯 SDK: min={min_sdk.group(1) if min_sdk else 'N/A'}, target={target_sdk.group(1) if target_sdk else 'N/A'}, compile={compile_sdk.group(1) if compile_sdk else 'N/A'}
-    🛠️ Build: {build_version.group(1) if build_version else 'N/A'}
-    🖼️ Icon: {icon_path}
-    🔐 Permissions: {len(permissions)} items
-    ⚙️ Features: {", ".join(features) if features else "None"}
-    🧬 Architectures: {", ".join(native_code) if native_code else "None"}
-    """
+                formatted = (
+                    f"""\n    🔹 App: {app_label}\n"""
+                    f"""    📦 Package: {package_name.group(1) if package_name else "N/A"}\n"""
+                    f"""    🔢 Version: {version_name.group(1) if version_name else "N/A"} """
+                    f"""(Code: {version_code.group(1) if version_code else "N/A"})\n"""
+                    f"""    🎯 SDK: min={min_sdk.group(1) if min_sdk else "N/A"}, """
+                    f"""target={target_sdk.group(1) if target_sdk else "N/A"}, """
+                    f"""compile={compile_sdk.group(1) if compile_sdk else "N/A"}\n"""
+                    f"""    🛠️ Build: {build_version.group(1) if build_version else "N/A"}\n"""
+                    f"""    🖼️ Icon: {icon_path}\n"""
+                    f"""    🔐 Permissions: {len(permissions)} items\n"""
+                    f"""    ⚙️ Features: {", ".join(features) if features else "None"}\n"""
+                    f"""    🧬 Architectures: {", ".join(native_code) if native_code else "None"}"""
+                    f"""\n    """
+                )
                 self._emit_operation("apk_info", True, formatted)
             except Exception as e:
                 self._emit_operation(
@@ -378,8 +383,10 @@ class ADBAppMixin(_ADBControllerBase):
             )
         else:
             self._emit_operation(
-                "kill_monkey", False,
-                f"❌ {idx}. Failed to kill monkey on {device_ip}:\nError: {result.get('message', '')}",
+                "kill_monkey",
+                False,
+                f"❌ {idx}. Failed to kill monkey on {device_ip}:\n"
+                f"Error: {result.get('message', '')}",
             )
 
     def list_installed_packages(self, devices: list[str]):
@@ -393,7 +400,7 @@ class ADBAppMixin(_ADBControllerBase):
         idx = result.get("index")
         if result.get("success"):
             packages = result.get("packages", [])
-            formatted = "\n".join(f"{i+1}. {pkg}" for i, pkg in enumerate(packages))
+            formatted = "\n".join(f"{i + 1}. {pkg}" for i, pkg in enumerate(packages))
             msg = f"📦 {idx}. Installed packages on {device_ip}:\n{formatted or '(None found)'}"
             self._emit_operation("installed_packages", True, msg)
         else:
@@ -412,7 +419,9 @@ class ADBAppMixin(_ADBControllerBase):
         log = self.log_service.log
         for idx, device in enumerate(devices, 1):
             self.testing_model.capture_bugreport_async(
-                device, save_dir, idx,
+                device,
+                save_dir,
+                idx,
                 callback=lambda msg: log(LogLevel.INFO, msg),
             )
 
@@ -437,7 +446,10 @@ class ADBAppMixin(_ADBControllerBase):
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
             self.testing_model.pull_anr_files_async(
-                device_ip, f"{sanitized_name}_anr_{timestamp}", save_dir, idx,
+                device_ip,
+                f"{sanitized_name}_anr_{timestamp}",
+                save_dir,
+                idx,
             )
 
     def _process_pull_anr_result(self, result: dict):
@@ -471,21 +483,37 @@ class ADBAppMixin(_ADBControllerBase):
             self._monkey_running.add(d)
         save_dir = self._get_screenshot_dir()
         log = self.log_service.log
-        pct_keys = ["touch", "motion", "trackball", "nav", "majornav", "syskeys", "appswitch", "anyevent", "pinch"]
+        pct_keys = [
+            "touch",
+            "motion",
+            "trackball",
+            "nav",
+            "majornav",
+            "syskeys",
+            "appswitch",
+            "anyevent",
+            "pinch",
+        ]
         pct_str = " ".join(f"{k}={params.get(k, '?')}%" for k in pct_keys)
-        log(LogLevel.INFO,
+        log(
+            LogLevel.INFO,
             f"Monkey start: {len(devices)} device(s) → {package_name} | "
             f"events={params.get('events')} throttle={params.get('throttle')}ms | "
             f"{pct_str} | "
             f"crash_ignore={params.get('ignore_crashes')} "
             f"timeout_ignore={params.get('ignore_timeouts')} "
             f"security_ignore={params.get('ignore_security')} | "
-            f"save_dir={save_dir}")
+            f"save_dir={save_dir}",
+        )
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
             self.testing_model.run_monkey_test_async(
-                device_ip, package_name, params,
-                sanitized_name, save_dir, idx,
+                device_ip,
+                package_name,
+                params,
+                sanitized_name,
+                save_dir,
+                idx,
                 callback=lambda msg: self.log_service.log(LogLevel.INFO, msg),
             )
 
@@ -512,7 +540,7 @@ class ADBAppMixin(_ADBControllerBase):
                 f"║ ❌ Monkey Test Failed - Device: {device_ip}\n"
                 "╠════════════════════════════════════════════════════════════════╣\n"
                 f"║ ⏱️ Duration: {duration}\n"
-                f"║ 💥 Error: {error[:200]}{'...' if len(error)>200 else ''}\n"
+                f"║ 💥 Error: {error[:200]}{'...' if len(error) > 200 else ''}\n"
                 f"║ 🔍 Detailed Log: {monkey_log}\n"
                 "╚════════════════════════════════════════════════════════════════╝"
             )
@@ -573,4 +601,3 @@ class ADBAppMixin(_ADBControllerBase):
             self._emit_operation(
                 "cleanup_device_logs", False, f"Failed to clear log for {device_ip}: {error_msg}"
             )
-

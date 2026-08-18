@@ -159,7 +159,7 @@ def test_task_supervisor_distinguishes_graceful_and_forced_stop():
         request_stop=lambda: None,
         wait=wait,
         is_running=lambda: forced_running[0],
-        force_stop=lambda _timeout: (forced_running.__setitem__(0, False) is None),
+        force_stop=lambda _timeout: forced_running.__setitem__(0, False) is None,
     )
     forced = supervisor.stop("forced", graceful_timeout=0, force_timeout=0)
 
@@ -533,8 +533,7 @@ def test_real_qthread_dialog_close_reaps_blocking_process_off_gui_thread():
 
     deadline = time.perf_counter() + 2
     while (
-        worker.isRunning()
-        or adapter.supervisor.active_count
+        worker.isRunning() or adapter.supervisor.active_count
     ) and time.perf_counter() < deadline:
         time.sleep(0.003)
     assert adapter._pool.waitForDone(1000)

@@ -46,4 +46,3 @@ def adb_path() -> str:
 def is_adb_available() -> bool:
     """检查是否存在可用的 ADB 可执行文件。"""
     return resolve_adb_path() is not None
-

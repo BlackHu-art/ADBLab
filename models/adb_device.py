@@ -9,7 +9,6 @@ import time
 from .adb_model import ADBModelCore, async_command
 from .base.command_runner import CommandRunner
 
-
 BASIC_PROP_FIELDS = {
     "Model": "ro.product.model",
     "Brand": "ro.product.brand",
@@ -256,8 +255,7 @@ class ADBDevice(ADBModelCore):
         raw = {
             key: result.output if result.success else "N/A"
             for key, result in (
-                (key, CommandRunner.run(command, timeout=15))
-                for key, command in probes.items()
+                (key, CommandRunner.run(command, timeout=15)) for key, command in probes.items()
             )
         }
         wm_output = raw["Wm"]

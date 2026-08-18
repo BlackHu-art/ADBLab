@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import QMutex, QObject, QThread, QTimer, Qt, Signal, Slot
+from PySide6.QtCore import QMutex, QObject, Qt, QThread, QTimer, Signal, Slot
 
 from utils.user_data import user_data_root
 

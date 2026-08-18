@@ -22,12 +22,7 @@ def test_bundled_tool_path_copies_frozen_runtime_outside_meipass(tmp_path, monke
     path = Path(bundled_tool_path("scrcpy-win64-v3.3.1", "adb.exe"))
 
     expected = (
-        local_appdata
-        / "ADBLab"
-        / "runtime"
-        / APP_VERSION
-        / "scrcpy-win64-v3.3.1"
-        / "adb.exe"
+        local_appdata / "ADBLab" / "runtime" / APP_VERSION / "scrcpy-win64-v3.3.1" / "adb.exe"
     )
     assert path == expected
     assert expected.read_text(encoding="utf-8") == "adb"

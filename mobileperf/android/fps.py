@@ -1,33 +1,34 @@
-# -*- coding: utf-8 -*-
-
 """
 采集 SurfaceFlinger 或 gfxinfo 帧时间并计算 FPS 与卡顿次数。
 """
 
-import queue
-import datetime
-import time
-import re
-import threading
-import os, sys
 import copy
 import csv
+import datetime
+import os
+import queue
+import re
+import sys
+import threading
+import time
 import traceback
 
 BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, '../..'))
+sys.path.append(os.path.join(BaseDir, "../.."))
 
-from mobileperf.common.basemonitor import Monitor
+from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.common.basemonitor import Monitor
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
-from mobileperf.android.globaldata import RuntimeData
 
 
-class SurfaceStatsCollector(object):
+class SurfaceStatsCollector:
     """从 SurfaceFlinger 输出中采集当前 Surface 的帧统计数据。"""
 
-    def __init__(self, device, frequency, package_name, fps_queue, jank_threshold, use_legacy=False):
+    def __init__(
+        self, device, frequency, package_name, fps_queue, jank_threshold, use_legacy=False
+    ):
         self.device = device
         self.frequency = frequency
         self.package_name = package_name
@@ -47,10 +48,10 @@ class SurfaceStatsCollector(object):
             try:
                 self.focus_window = self.get_focus_activity()
                 # Shell 会解释窗口名中的美元符号，因此发送命令前需要转义。
-                if (self.focus_window.find('$') != -1):
+                if self.focus_window.find("$") != -1:
                     self.focus_window = self.focus_window.replace("$", r"\$")
-            except:
-                logger.warn(u'无法动态获取当前Activity名称，使用page_flip统计全屏帧率！')
+            except Exception:
+                logger.warn("无法动态获取当前Activity名称，使用page_flip统计全屏帧率！")
                 self.use_legacy_method = True
                 self.surface_before = self._get_surface_stats_legacy()
         else:
@@ -59,7 +60,9 @@ class SurfaceStatsCollector(object):
             self.surface_before = self._get_surface_stats_legacy()
         self.collector_thread = threading.Thread(target=self._collector_thread)
         self.collector_thread.start()
-        self.calculator_thread = threading.Thread(target=self._calculator_thread, args=(start_time,))
+        self.calculator_thread = threading.Thread(
+            target=self._calculator_thread, args=(start_time,)
+        )
         self.calculator_thread.start()
 
     def stop(self):
@@ -127,7 +130,6 @@ class SurfaceStatsCollector(object):
         return fps, jank
 
     def _calculate_jankey_new(self, timestamps):
-
         """同时满足以下条件时计为一次卡顿。
 
         1. Display FrameTime 大于前三帧平均耗时的两倍。
@@ -156,8 +158,15 @@ class SurfaceStatsCollector(object):
                 lasttwostamp = timestamps[index - 2][1]
                 lastthreestamp = timestamps[index - 3][1]
                 lastfourstamp = timestamps[index - 4][1]
-                tempframetime = ((lastthreestamp - lastfourstamp) + (lasttwostamp - lastthreestamp) + (
-                        lastonestamp - lasttwostamp)) / 3 * 2
+                tempframetime = (
+                    (
+                        (lastthreestamp - lastfourstamp)
+                        + (lasttwostamp - lastthreestamp)
+                        + (lastonestamp - lasttwostamp)
+                    )
+                    / 3
+                    * 2
+                )
                 currentframetime = currentstamp - lastonestamp
                 if (currentframetime > tempframetime) and (currentframetime > twofilmstamp):
                     jank = jank + 1
@@ -181,16 +190,16 @@ class SurfaceStatsCollector(object):
 
     def _calculator_thread(self, start_time):
         """消费 SurfaceFlinger 数据并将 FPS 结果写入文件或上报队列。"""
-        fps_file = os.path.join(RuntimeData.package_save_path, 'fps.csv')
+        fps_file = os.path.join(RuntimeData.package_save_path, "fps.csv")
         if self.use_legacy_method:
-            fps_title = ['datetime', 'fps']
+            fps_title = ["datetime", "fps"]
         else:
-            fps_title = ['datetime', "activity window", 'fps', 'jank']
+            fps_title = ["datetime", "activity window", "fps", "jank"]
         try:
-            with open(fps_file, 'a+') as df:
-                csv.writer(df, lineterminator='\n').writerow(fps_title)
+            with open(fps_file, "a+") as df:
+                csv.writer(df, lineterminator="\n").writerow(fps_title)
                 if self.fps_queue:
-                    fps_file_dic = {'fps_file': fps_file}
+                    fps_file_dic = {"fps_file": fps_file}
                     self.fps_queue.put(fps_file_dic)
         except RuntimeError as e:
             logger.exception(e)
@@ -198,23 +207,22 @@ class SurfaceStatsCollector(object):
         while True:
             try:
                 data = self.data_queue.get()
-                if isinstance(data, str) and data == 'Stop':
+                if isinstance(data, str) and data == "Stop":
                     break
                 before = time.time()
                 if self.use_legacy_method:
-                    td = data['timestamp'] - self.surface_before['timestamp']
+                    td = data["timestamp"] - self.surface_before["timestamp"]
                     seconds = td.seconds + td.microseconds / 1e6
-                    frame_count = (data['page_flip_count'] -
-                                   self.surface_before['page_flip_count'])
+                    frame_count = data["page_flip_count"] - self.surface_before["page_flip_count"]
                     fps = int(round(frame_count / seconds))
                     if fps > 60:
                         fps = 60
                     self.surface_before = data
-                    logger.debug('FPS:%2s' % fps)
+                    logger.debug("FPS:%2s" % fps)
                     tmp_list = [TimeUtils.getCurrentTimeUnderline(), fps]
                     try:
-                        with open(fps_file, 'a+', encoding="utf-8") as f:
-                            csv.writer(f, lineterminator='\n').writerow(tmp_list)
+                        with open(fps_file, "a+", encoding="utf-8") as f:
+                            csv.writer(f, lineterminator="\n").writerow(tmp_list)
                     except RuntimeError as e:
                         logger.exception(e)
                 else:
@@ -222,23 +230,23 @@ class SurfaceStatsCollector(object):
                     timestamps = data[1]
                     collect_time = data[2]
                     fps, jank = self._calculate_results_new(refresh_period, timestamps)
-                    logger.debug('FPS:%2s Jank:%s' % (fps, jank))
+                    logger.debug("FPS:%2s Jank:%s" % (fps, jank))
                     fps_list = [collect_time, self.focus_window, fps, jank]
                     if self.fps_queue:
                         self.fps_queue.put(fps_list)
                     if not self.fps_queue:  # 未提供上报队列时直接保存本地结果。
                         try:
-                            with open(fps_file, 'a+', encoding="utf-8") as f:
+                            with open(fps_file, "a+", encoding="utf-8") as f:
                                 tmp_list = copy.deepcopy(fps_list)
                                 tmp_list[0] = TimeUtils.formatTimeStamp(tmp_list[0])
-                                csv.writer(f, lineterminator='\n').writerow(tmp_list)
+                                csv.writer(f, lineterminator="\n").writerow(tmp_list)
                         except RuntimeError as e:
                             logger.exception(e)
                 time_consume = time.time() - before
                 delta_inter = self.frequency - time_consume
                 if delta_inter > 0:
                     time.sleep(delta_inter)
-            except:
+            except Exception:
                 logger.error("an exception hanpend in fps _calculator_thread ,reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
@@ -269,8 +277,11 @@ class SurfaceStatsCollector(object):
                         logger.debug("refresh_period is None or timestamps is None")
                         continue
                     # 只保留晚于上次采样点的新帧。
-                    timestamps += [timestamp for timestamp in new_timestamps
-                                   if timestamp[1] > self.last_timestamp]
+                    timestamps += [
+                        timestamp
+                        for timestamp in new_timestamps
+                        if timestamp[1] > self.last_timestamp
+                    ]
                     if len(timestamps):
                         first_timestamp = [[0, self.last_timestamp, 0]]
                         if not is_first:
@@ -290,25 +301,25 @@ class SurfaceStatsCollector(object):
                     delta_inter = self.frequency - time_consume
                     if delta_inter > 0:
                         time.sleep(delta_inter)
-            except:
+            except Exception:
                 logger.error("an exception hanpend in fps _collector_thread , reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
                 if self.fps_queue:
                     self.fps_queue.task_done()
-        self.data_queue.put(u'Stop')
+        self.data_queue.put("Stop")
 
     def _clear_surfaceflinger_latency_data(self):
         """清空 SurfaceFlinger 延迟数据，并返回设备是否支持该命令。
 
         支持时命令不返回内容；不支持时通常返回与 dumpsys SurfaceFlinger 相似的文本。
         """
-        if self.focus_window == None:
-            results = self.device.adb.run_shell_cmd(
-                'dumpsys SurfaceFlinger --latency-clear')
+        if self.focus_window is None:
+            results = self.device.adb.run_shell_cmd("dumpsys SurfaceFlinger --latency-clear")
         else:
             results = self.device.adb.run_shell_cmd(
-                'dumpsys SurfaceFlinger --latency-clear %s' % self.focus_window)
+                "dumpsys SurfaceFlinger --latency-clear %s" % self.focus_window
+            )
         return not len(results)
 
     def _get_surfaceflinger_frame_data(self):
@@ -333,10 +344,13 @@ class SurfaceStatsCollector(object):
         pending_fence_timestamp = (1 << 63) - 1
         if self.device.adb.get_sdk_version() >= 26:
             results = self.device.adb.run_shell_cmd(
-                'dumpsys SurfaceFlinger --latency %s' % self.focus_window)
+                "dumpsys SurfaceFlinger --latency %s" % self.focus_window
+            )
             results = results.replace("\r\n", "\n").splitlines()
             refresh_period = int(results[0]) / nanoseconds_per_second
-            results = self.device.adb.run_shell_cmd('dumpsys gfxinfo %s framestats' % self.package_name)
+            results = self.device.adb.run_shell_cmd(
+                "dumpsys gfxinfo %s framestats" % self.package_name
+            )
             # 将 gfxinfo framestats 结果转换为统一的三时间戳结构。
             results = results.replace("\r\n", "\n").splitlines()
             if not len(results):
@@ -353,7 +367,7 @@ class SurfaceStatsCollector(object):
                     PROFILEDATA_line += 1
                 fields = []
                 fields = line.split(",")
-                if fields and '0' == fields[0]:
+                if fields and "0" == fields[0]:
                     # 提取 INTENDED_VSYNC、VSYNC 和 FRAME_COMPLETED 计算 FPS 与卡顿。
                     timestamp = [int(fields[1]), int(fields[2]), int(fields[13])]
                     if timestamp[1] == pending_fence_timestamp:
@@ -365,7 +379,8 @@ class SurfaceStatsCollector(object):
                     break
         else:
             results = self.device.adb.run_shell_cmd(
-                'dumpsys SurfaceFlinger --latency %s' % self.focus_window)
+                "dumpsys SurfaceFlinger --latency %s" % self.focus_window
+            )
             results = results.replace("\r\n", "\n").splitlines()
             logger.debug("dumpsys SurfaceFlinger --latency result:")
             logger.debug(results)
@@ -405,14 +420,23 @@ class SurfaceStatsCollector(object):
         match = re.search(r"^Result: Parcel\((\w+)", ret)
         if match:
             cur_surface = int(match.group(1), 16)
-            return {'page_flip_count': cur_surface, 'timestamp': timestamp}
+            return {"page_flip_count": cur_surface, "timestamp": timestamp}
         return None
 
 
 class FPSMonitor(Monitor):
     """管理 FPS 采集器及其结果目录。"""
 
-    def __init__(self, device_id, package_name=None, frequency=1.0, timeout=24 * 60 * 60, fps_queue=None, jank_threshold=166, use_legacy=False):
+    def __init__(
+        self,
+        device_id,
+        package_name=None,
+        frequency=1.0,
+        timeout=24 * 60 * 60,
+        fps_queue=None,
+        jank_threshold=166,
+        use_legacy=False,
+    ):
         """初始化 FPS 监控器。
 
         :param str device_id: 设备标识。
@@ -429,22 +453,34 @@ class FPSMonitor(Monitor):
         if not package_name:
             package_name = self.device.adb.get_foreground_process()
         self.package = package_name
-        self.fpscollector = SurfaceStatsCollector(self.device, self.frequency, package_name, fps_queue, self.jank_threshold, self.use_legacy)
+        self.fpscollector = SurfaceStatsCollector(
+            self.device,
+            self.frequency,
+            package_name,
+            fps_queue,
+            self.jank_threshold,
+            self.use_legacy,
+        )
 
     def start(self, start_time):
         """启动 FPS 监控器。"""
         if not RuntimeData.package_save_path:
-            RuntimeData.package_save_path = os.path.join(os.path.abspath(os.path.join(os.getcwd(), "../..")), 'results', self.package, start_time)
+            RuntimeData.package_save_path = os.path.join(
+                os.path.abspath(os.path.join(os.getcwd(), "../..")),
+                "results",
+                self.package,
+                start_time,
+            )
             if not os.path.exists(RuntimeData.package_save_path):
                 os.makedirs(RuntimeData.package_save_path)
         self.start_time = start_time
         self.fpscollector.start(start_time)
-        logger.debug('FPS monitor has start!')
+        logger.debug("FPS monitor has start!")
 
     def stop(self):
         """停止 FPS 监控器。"""
         self.fpscollector.stop()
-        logger.debug('FPS monitor has stop!')
+        logger.debug("FPS monitor has stop!")
 
     def save(self):
         pass

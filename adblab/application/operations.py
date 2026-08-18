@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from enum import Enum
 from threading import RLock
-from typing import Callable, Iterable
 
 from .cancellation import CancellationToken
 

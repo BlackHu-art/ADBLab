@@ -19,20 +19,16 @@ class AppPanel(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
-        g_ts = self._g("Text, Email & Screen Capture")
+        g_ts = self._g("Text & Screen Capture")
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
-        self.btn_generate_email = self._b("Get Email", "envelope.svg")
-        self.email_text_sender = self._in("Email address")
         self.btn_send_text = self._b("Send Text", "text-aa.svg")
-        self.verification_text_sender = self._in("Verification code or text...")
+        self.verification_text_sender = self._in("Email, verification code, or text...")
         self._screenshot_running = False
         self._add_responsive_row(
             gts_l,
-            (self.btn_generate_email, 1),
-            (self.email_text_sender, 1),
             (self.btn_send_text, 1),
-            (self.verification_text_sender, 1),
+            (self.verification_text_sender, 2),
             compact_columns=2,
             medium_columns=2,
             wide_columns=4,
@@ -145,9 +141,15 @@ class AppPanel(BasePanel):
         )
 
         pct_configs = [
-            ("Touch", "touch"),   ("Motion", "motion"),  ("Trackball", "trackball"),
-            ("Nav", "nav"),       ("MjNav", "majornav"), ("Syskey", "syskeys"),
-            ("AppSw", "appswitch"), ("Any", "anyevent"),  ("Pinch", "pinch"),
+            ("Touch", "touch"),
+            ("Motion", "motion"),
+            ("Trackball", "trackball"),
+            ("Nav", "nav"),
+            ("MjNav", "majornav"),
+            ("Syskey", "syskeys"),
+            ("AppSw", "appswitch"),
+            ("Any", "anyevent"),
+            ("Pinch", "pinch"),
         ]
         self._monkey_pct_combos = {}
         pct_widgets = []
@@ -257,18 +259,31 @@ class AppPanel(BasePanel):
 
     def _load_monkey_params(self):
         from core.settings_manager import AppSettings
+
         p = AppSettings.instance().get("monkey_params", {})
 
-        _EV_REV = {1000: "1K", 5000: "5K", 10000: "10K", 50000: "50K",
-                   100000: "100K", 500000: "500K"}
+        _EV_REV = {
+            1000: "1K",
+            5000: "5K",
+            10000: "10K",
+            50000: "50K",
+            100000: "100K",
+            500000: "500K",
+        }
         _events = int(p.get("events", 10000))
         self.monkey_events.setCurrentText(_EV_REV.get(_events, str(_events)))
         self.monkey_throttle.setCurrentText(str(p.get("throttle", 300)))
         # 针对各事件类型的默认值优化，从源头减少跳出
         _pct_defaults = {
-            "touch": 40, "motion": 18, "trackball": 0,
-            "nav": 10, "majornav": 10, "syskeys": 2,
-            "appswitch": 0, "anyevent": 15, "pinch": 5,
+            "touch": 40,
+            "motion": 18,
+            "trackball": 0,
+            "nav": 10,
+            "majornav": 10,
+            "syskeys": 2,
+            "appswitch": 0,
+            "anyevent": 15,
+            "pinch": 5,
         }
         for key, c in self._monkey_pct_combos.items():
             c.setCurrentText(str(p.get(key, _pct_defaults.get(key, 20))))
@@ -278,14 +293,22 @@ class AppPanel(BasePanel):
         self._update_pct_total()
 
     def _collect_monkey_params(self) -> dict:
-        EVENTS_VALS = {"1K": 1000, "5K": 5000, "10K": 10000, "50K": 50000,
-                       "100K": 100000, "500K": 500000}
+        EVENTS_VALS = {
+            "1K": 1000,
+            "5K": 5000,
+            "10K": 10000,
+            "50K": 50000,
+            "100K": 100000,
+            "500K": 500000,
+        }
+
         def _parse_int(t):
             try:
                 t = t.strip()
                 return EVENTS_VALS.get(t) or int(t)
             except (ValueError, AttributeError):
                 return 10000
+
         try:
             throttle = int((self.monkey_throttle.currentText() or "300").strip())
         except ValueError:
@@ -357,14 +380,17 @@ class AppPanel(BasePanel):
         total = sum(int(c.currentText() or "0") for c in self._monkey_pct_combos.values())
         if total != 100:
             from PySide6.QtWidgets import QMessageBox
+
             QMessageBox.warning(
-                self, "Event Mix Invalid",
+                self,
+                "Event Mix Invalid",
                 f"Event percentages sum to {total}%, not 100%.\n"
                 "Monkey will still run but event distribution may be unexpected.\n\n"
-                "Adjust values to sum to 100% for predictable results."
+                "Adjust values to sum to 100% for predictable results.",
             )
         params["package_name"] = self.package_text
         from core.settings_manager import AppSettings
+
         AppSettings.instance().set("monkey_params", params)
         if self.selected_devices:
             self._set_monkey_running(True)
@@ -419,40 +445,47 @@ class AppPanel(BasePanel):
             lambda: LP.disable_app_requested.emit(self.selected_devices, self.package_text)
         )
         # Monkey 测试
-        self.start_monkey_btn.clicked.connect(
-            lambda: self._on_start_monkey())
+        self.start_monkey_btn.clicked.connect(lambda: self._on_start_monkey())
         self.kill_monkey_btn.clicked.connect(self._on_kill_monkey)
         # 诊断报告
-        self.get_bugreport_btn.clicked.connect(lambda: LP.capture_bugreport_requested.emit(self.selected_devices))
-        self.get_anr_file_btn.clicked.connect(lambda: LP.pull_anr_file_requested.emit(self.selected_devices))
-        self.btn_retrieve_devices_logs.clicked.connect(lambda: LP.retrieve_logs_requested.emit(self.selected_devices))
-        self.btn_cleanup_logs.clicked.connect(lambda: LP.cleanup_logs_requested.emit(self.selected_devices))
+        self.get_bugreport_btn.clicked.connect(
+            lambda: LP.capture_bugreport_requested.emit(self.selected_devices)
+        )
+        self.get_anr_file_btn.clicked.connect(
+            lambda: LP.pull_anr_file_requested.emit(self.selected_devices)
+        )
+        self.btn_retrieve_devices_logs.clicked.connect(
+            lambda: LP.retrieve_logs_requested.emit(self.selected_devices)
+        )
+        self.btn_cleanup_logs.clicked.connect(
+            lambda: LP.cleanup_logs_requested.emit(self.selected_devices)
+        )
         # 性能诊断
-        self.btn_meminfo.clicked.connect(lambda: LP.dumpsys_meminfo_requested.emit(self.selected_devices, self.package_text))
-        self.btn_cpuinfo.clicked.connect(lambda: LP.dumpsys_cpuinfo_requested.emit(self.selected_devices))
-        self.btn_battery_info.clicked.connect(lambda: LP.dumpsys_battery_requested.emit(self.selected_devices))
-        self.btn_uptime.clicked.connect(lambda: LP.device_uptime_requested.emit(self.selected_devices))
+        self.btn_meminfo.clicked.connect(
+            lambda: LP.dumpsys_meminfo_requested.emit(self.selected_devices, self.package_text)
+        )
+        self.btn_cpuinfo.clicked.connect(
+            lambda: LP.dumpsys_cpuinfo_requested.emit(self.selected_devices)
+        )
+        self.btn_battery_info.clicked.connect(
+            lambda: LP.dumpsys_battery_requested.emit(self.selected_devices)
+        )
+        self.btn_uptime.clicked.connect(
+            lambda: LP.device_uptime_requested.emit(self.selected_devices)
+        )
         self.btn_top.clicked.connect(lambda: self._sh("top -b -n 1 -m 20"))
-        self.btn_gfx.clicked.connect(lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60"))
+        self.btn_gfx.clicked.connect(
+            lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60")
+        )
         self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
         self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
         # 文本、邮箱和媒体操作
         self.btn_screenshot.clicked.connect(self._on_screenshot)
-        self.btn_screen_record.clicked.connect(
-            lambda: self._on_record_start()
-        )
-        self.btn_stop_record.clicked.connect(
-            lambda: self._on_record_stop()
-        )
+        self.btn_screen_record.clicked.connect(lambda: self._on_record_start())
+        self.btn_stop_record.clicked.connect(lambda: self._on_record_stop())
         self.btn_send_text.clicked.connect(
             lambda: LP.send_text_requested.emit(
                 self.selected_devices, self.verification_text_sender.text()
-            )
-        )
-        self.btn_generate_email.clicked.connect(lambda: LP.generate_email_requested.emit())
-        self.email_text_sender.returnPressed.connect(
-            lambda: LP.send_text_requested.emit(
-                self.selected_devices, self.email_text_sender.text()
             )
         )
         self.verification_text_sender.returnPressed.connect(
@@ -460,9 +493,3 @@ class AppPanel(BasePanel):
                 self.selected_devices, self.verification_text_sender.text()
             )
         )
-
-    def update_email(self, t):
-        self.email_text_sender.setText(t)
-
-    def update_vercode(self, t):
-        self.verification_text_sender.setText(t)

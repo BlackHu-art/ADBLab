@@ -49,7 +49,7 @@ def test_chmod_mode_helpers_normalize_and_build_mode():
 
 def test_file_explorer_command_builders_keep_current_shell_contract():
     assert explorer_service.root_command("ls -la '/sdcard/My Dir'", True) == (
-        'su -c \'ls -la \'"\'"\'/sdcard/My Dir\'"\'"\'\''
+        "su -c 'ls -la '\"'\"'/sdcard/My Dir'\"'\"''"
     )
     assert explorer_service.ls_command("/sdcard/My Dir/$tmp") == (
         "ls -la '/sdcard/My Dir/$tmp' 2>&1"

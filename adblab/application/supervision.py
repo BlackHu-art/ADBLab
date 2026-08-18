@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from threading import Event, Lock, RLock, Thread
-from typing import Callable
 
 
 class StopDisposition(str, Enum):

@@ -7,7 +7,6 @@ from adblab.application.envelope import OperationMetadata
 from adblab.application.operations import OperationManager, OperationState
 from controllers._media import ADBMediaMixin
 
-
 PNG_HEADER = b"\x89PNG\r\n\x1a\n"
 
 
@@ -87,9 +86,7 @@ def test_two_overlapping_screenshot_batches_are_isolated_when_callbacks_interlea
         assert {call.kwargs["_operation_task_id"] for call in tasks_a}.isdisjoint(
             {call.kwargs["_operation_task_id"] for call in tasks_b}
         )
-        assert {call.args[1] for call in tasks_a}.isdisjoint(
-            {call.args[1] for call in tasks_b}
-        )
+        assert {call.args[1] for call in tasks_a}.isdisjoint({call.args[1] for call in tasks_b})
 
         for call in (*tasks_a, *tasks_b):
             _write_png(call)
@@ -109,8 +106,7 @@ def test_two_overlapping_screenshot_batches_are_isolated_when_callbacks_interlea
     assert controller.operation_manager.active_count == 0
     assert controller._show_screenshot_viewer.call_count == 2
     viewer_sets = {
-        frozenset(call.args[0])
-        for call in controller._show_screenshot_viewer.call_args_list
+        frozenset(call.args[0]) for call in controller._show_screenshot_viewer.call_args_list
     }
     assert viewer_sets == {
         frozenset(call.args[1] for call in tasks_a),
@@ -197,14 +193,8 @@ def test_screenshot_duplicate_and_late_callbacks_have_no_duplicate_side_effects(
         first_result = _success(first)
         first_meta = _metadata(first)
 
-        assert (
-            controller._process_screenshot_operation_result(first_result, first_meta)
-            is None
-        )
-        assert (
-            controller._process_screenshot_operation_result(first_result, first_meta)
-            is None
-        )
+        assert controller._process_screenshot_operation_result(first_result, first_meta) is None
+        assert controller._process_screenshot_operation_result(first_result, first_meta) is None
         terminal = controller._process_screenshot_operation_result(
             _success(second),
             _metadata(second),
@@ -215,10 +205,7 @@ def test_screenshot_duplicate_and_late_callbacks_have_no_duplicate_side_effects(
             controller._show_screenshot_viewer.call_count,
         )
 
-        assert (
-            controller._process_screenshot_operation_result(first_result, first_meta)
-            is None
-        )
+        assert controller._process_screenshot_operation_result(first_result, first_meta) is None
 
     assert terminal.state is OperationState.SUCCEEDED
     assert counts == (2, 1, 1)

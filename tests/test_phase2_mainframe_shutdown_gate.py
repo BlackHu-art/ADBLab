@@ -164,7 +164,7 @@ def test_application_stop_broadcasts_across_owners_before_any_wait():
                 events.append(("wait", name)) is None and not running[name]
             ),
             is_running=lambda name=name: running[name],
-            force_stop=lambda _timeout, name=name: (running.__setitem__(name, False) is None),
+            force_stop=lambda _timeout, name=name: running.__setitem__(name, False) is None,
         )
 
     results = supervisor.stop_all(deadline=0.05)

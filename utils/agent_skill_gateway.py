@@ -5,10 +5,10 @@ from __future__ import annotations
 import concurrent.futures
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -89,7 +89,9 @@ class AgentSkillGateway:
         request_id = str((context or {}).get("request_id", uuid.uuid4()))
         context = dict(context or {})
         context["request_id"] = request_id
-        return self._executor.submit(self.run_skill, skill_name, self._safe_payload(payload), context)
+        return self._executor.submit(
+            self.run_skill, skill_name, self._safe_payload(payload), context
+        )
 
     def cancel(self, future: Future[Any]) -> bool:
         """尝试取消一个异步任务。"""

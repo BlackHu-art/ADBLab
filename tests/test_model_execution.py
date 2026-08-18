@@ -14,7 +14,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
-    QMessageBox,
     QPushButton,
     QWidget,
 )
@@ -36,10 +35,19 @@ from core.log_service import LogService
 from core.perf_trace import attach_perf, build_async_perf, split_perf
 from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
 from gui.dialogs.file_explorer import FileExplorerDialog
+from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
+from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.main_frame import MainFrame, _ScanThread
+from gui.panels.app_panel import AppPanel
+from gui.panels.base_panel import BasePanel
+from gui.panels.device_manager import DeviceManager
 from gui.panels.log_panel import LogPanel
+from gui.panels.remote_panel import RemotePanel, ScrcpyLaunchWorker
+from gui.panels.side_panel import SidePanel
+from gui.panels.side_panel_signals import SidePanelSignals
+from gui.styles import BaseStyles, theme
 from main import windows_app_user_model_id
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
@@ -49,25 +57,15 @@ from models.adb_device import (
     parse_getprop_output,
     parse_labeled_sections,
 )
-from models.adb_testing import ADBTesting
 from models.adb_system import ADBSystemMixin
+from models.adb_testing import ADBTesting
 from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from models.file_explorer_worker import ADBWorker, TransferWorker
 from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
-from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
-from gui.dialogs.live_logcat import LiveLogcatDialog
-from gui.panels.app_panel import AppPanel
-from gui.panels.base_panel import BasePanel
-from gui.panels.device_manager import DeviceManager
-from gui.panels.side_panel import SidePanel
-from gui.panels.side_panel_signals import SidePanelSignals
-from gui.panels.remote_panel import RemotePanel, ScrcpyLaunchWorker
-from gui.styles import BaseStyles
-from gui.styles import theme
-from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 from utils.adb_targets import normalize_adb_connect_target
+from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 from utils.batch_tracker import BatchOperationTracker
 
 
@@ -94,8 +92,10 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
             return 0
 
     try:
-        with patch.object(theme.sys, "platform", "win32"), \
-             patch.object(theme.ctypes, "windll", Mock(dwmapi=DwmApi()), create=True):
+        with (
+            patch.object(theme.sys, "platform", "win32"),
+            patch.object(theme.ctypes, "windll", Mock(dwmapi=DwmApi()), create=True),
+        ):
             theme.apply_dark_title_bar(window)
     finally:
         if had_wintypes:
@@ -112,7 +112,7 @@ def test_panel_base_status_bar_style_has_theme_background():
         style = BaseStyles.PANEL_BASE_STYLE()
         marker = "QStatusBar {"
         start = style.index(marker) + len(marker)
-        status_bar_block = style[start:style.index("}", start)]
+        status_bar_block = style[start : style.index("}", start)]
     finally:
         BaseStyles.switch_theme(current_theme)
 
@@ -232,10 +232,7 @@ def test_live_logcat_batches_visible_line_appends():
         dialog.output.appendPlainText.assert_not_called()
         dialog._flush_pending_lines()
 
-        assert appended == [
-            "05-27 12:00:00.000 1 1 I Tag: one\n"
-            "05-27 12:00:00.000 1 1 I Tag: two"
-        ]
+        assert appended == ["05-27 12:00:00.000 1 1 I Tag: one\n05-27 12:00:00.000 1 1 I Tag: two"]
         assert len(dialog.entries) == 2
     finally:
         dialog.close()
@@ -477,11 +474,13 @@ def test_command_runner_logs_slow_sanitized_command():
 
     proc_result = Mock(returncode=0, stdout="ok", stderr="")
 
-    with patch("models.base.command_runner._get_adb_path", return_value="adb.exe"), \
-         patch("models.base.command_runner.subprocess.run", return_value=proc_result), \
-         patch("models.base.command_runner.perf_counter", side_effect=[1.0, 1.5]), \
-         patch("models.base.command_runner._slow_threshold_ms", return_value=100), \
-         patch("core.log_service.LogService") as log_service_cls:
+    with (
+        patch("models.base.command_runner._get_adb_path", return_value="adb.exe"),
+        patch("models.base.command_runner.subprocess.run", return_value=proc_result),
+        patch("models.base.command_runner.perf_counter", side_effect=[1.0, 1.5]),
+        patch("models.base.command_runner._slow_threshold_ms", return_value=100),
+        patch("core.log_service.LogService") as log_service_cls,
+    ):
         result = CommandRunner.run(
             ["adb", "-s", "device-1", "shell", "input", "text", "secret text"],
             timeout=5,
@@ -498,13 +497,18 @@ def test_main_frame_open_cmd_launches_terminal_via_process_runner():
     frame = SimpleNamespace()
     runner = Mock()
 
-    with patch("gui.main_frame.ProcessRunner", return_value=runner), \
-         patch("platform.system", return_value="Windows"), \
-         patch("gui.main_frame.os.path.abspath", return_value="D:/VSCodeStation/ADBLab/gui/main_frame.py"), \
-         patch(
-             "gui.main_frame.os.path.dirname",
-             side_effect=["D:/VSCodeStation/ADBLab/gui", "D:/VSCodeStation/ADBLab"],
-         ):
+    with (
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
+        patch("platform.system", return_value="Windows"),
+        patch(
+            "gui.main_frame.os.path.abspath",
+            return_value="D:/VSCodeStation/ADBLab/gui/main_frame.py",
+        ),
+        patch(
+            "gui.main_frame.os.path.dirname",
+            side_effect=["D:/VSCodeStation/ADBLab/gui", "D:/VSCodeStation/ADBLab"],
+        ),
+    ):
         MainFrame._open_cmd(frame)
 
     runner.spawn.assert_called_once()
@@ -518,9 +522,15 @@ def test_scan_thread_uses_command_runner_for_device_polling():
     emitted = []
     thread.devices_changed.connect(emitted.append)
 
-    with patch("gui.main_frame.CommandRunner.run") as run, \
-         patch.object(_ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)):
-        run.return_value = CommandResult(success=True, output="List of devices attached\ndevice-1\tdevice\n")
+    with (
+        patch("gui.main_frame.CommandRunner.run") as run,
+        patch.object(
+            _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
+        ),
+    ):
+        run.return_value = CommandResult(
+            success=True, output="List of devices attached\ndevice-1\tdevice\n"
+        )
         thread.run()
 
     run.assert_called_once_with(["adb", "devices"], timeout=5)
@@ -531,9 +541,13 @@ def test_scan_thread_skips_polling_while_command_runner_is_busy():
     _app = QApplication.instance() or QApplication([])
     thread = _ScanThread(interval_ms=3000)
 
-    with patch("gui.main_frame.CommandRunner.active_count", return_value=1), \
-         patch("gui.main_frame.CommandRunner.run") as run, \
-         patch.object(_ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)):
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=1),
+        patch("gui.main_frame.CommandRunner.run") as run,
+        patch.object(
+            _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
+        ),
+    ):
         thread.run()
 
     run.assert_not_called()
@@ -551,9 +565,11 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
         if sleeps["count"] >= 60:
             thread._stop_flag = True
 
-    with patch("gui.main_frame.CommandRunner.active_count", return_value=0), \
-         patch("gui.main_frame.CommandRunner.run") as run, \
-         patch.object(_ScanThread, "msleep", side_effect=stop_after_two_polls):
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch("gui.main_frame.CommandRunner.run") as run,
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_two_polls),
+    ):
         run.side_effect = [
             CommandResult(success=True, output="List of devices attached\ndevice-a\tdevice\n"),
             CommandResult(success=True, output="List of devices attached\ndevice-b\tdevice\n"),
@@ -581,14 +597,14 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
         def start(self):
             self.started = True
 
-    with patch("gui.main_frame._ScanThread", FakeScanThread), \
-         patch("core.settings_manager.AppSettings") as settings_cls:
+    with (
+        patch("gui.main_frame._ScanThread", FakeScanThread),
+        patch("core.settings_manager.AppSettings") as settings_cls,
+    ):
         settings_cls.instance.return_value.get.return_value = 12000
         MainFrame._start_scan_thread(frame)
 
-    frame._scan_thread.devices_changed.connect.assert_called_once_with(
-        frame._schedule_scan_refresh
-    )
+    frame._scan_thread.devices_changed.connect.assert_called_once_with(frame._schedule_scan_refresh)
     frame.adb_controller.refresh_devices.assert_not_called()
     assert frame._scan_thread.interval_ms == 12000
     assert frame._scan_thread.started is True
@@ -610,21 +626,21 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.apply_device_theme = Mock()
     fake_side_panel.update_device_list = Mock()
     fake_side_panel.refresh_device_choices = Mock()
-    fake_side_panel.update_email = Mock()
-    fake_side_panel.update_vercode = Mock()
     fake_side_panel.on_recording_finished = Mock()
     fake_side_panel.on_operation_completed = Mock()
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
 
-    with patch("gui.main_frame.LogService"), \
-         patch("gui.main_frame.LogPanel", return_value=fake_log_panel), \
-         patch("gui.main_frame.SidePanel") as side_panel_cls, \
-         patch("gui.main_frame.ADBController") as controller_cls, \
-         patch("gui.main_frame.resource_path", return_value=""), \
-         patch("gui.main_frame.MainFrame._bootstrap_adb_async", fake_bootstrap), \
-         patch("utils.adb_resolver.resolve_adb_path") as resolve:
+    with (
+        patch("gui.main_frame.LogService"),
+        patch("gui.main_frame.LogPanel", return_value=fake_log_panel),
+        patch("gui.main_frame.SidePanel") as side_panel_cls,
+        patch("gui.main_frame.ADBController") as controller_cls,
+        patch("gui.main_frame.resource_path", return_value=""),
+        patch("gui.main_frame.MainFrame._bootstrap_adb_async", fake_bootstrap),
+        patch("utils.adb_resolver.resolve_adb_path") as resolve,
+    ):
         side_panel_cls.return_value = fake_side_panel
         controller_cls.return_value.signals = Mock()
         frame = MainFrame()
@@ -727,9 +743,7 @@ def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
     button = QPushButton()
     button.setProperty("iconName", "circle-half-tilt.svg")
     frame.findChildren = Mock(return_value=[button])
-    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
-        frame
-    )
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
     with patch("gui.main_frame.get_themed_icon", return_value=QIcon()) as themed_icon:
         MainFrame._refresh_toolbar_icons(frame)
@@ -813,9 +827,7 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     button = QPushButton()
     button.setCheckable(True)
     frame.tb_always_on_top = button
-    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
-        frame
-    )
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
         settings = settings_cls.instance.return_value
@@ -842,9 +854,7 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     button = QPushButton()
     button.setCheckable(True)
     frame.tb_always_on_top = button
-    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(
-        frame
-    )
+    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
         settings = settings_cls.instance.return_value
@@ -870,9 +880,10 @@ def test_performance_launcher_get_current_package_updates_package_field():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformanceLauncherDialog(device_ip="device-1")
 
-    with patch("gui.dialogs.performance_launcher.detect_current_package") as detect, patch(
-        "gui.dialogs.performance_launcher.CurrentPackageWorker.start"
-    ) as start_worker:
+    with (
+        patch("gui.dialogs.performance_launcher.detect_current_package") as detect,
+        patch("gui.dialogs.performance_launcher.CurrentPackageWorker.start") as start_worker,
+    ):
         detect.return_value = {
             "success": True,
             "device_ip": "device-1",
@@ -1561,8 +1572,8 @@ def test_mobileperf_monkey_builds_command_from_configurable_options():
 
 
 def test_mobileperf_startup_passes_collection_timeout_to_monkey():
-    from mobileperf.android.startup import StartUp
     from mobileperf.android import startup as startup_module
+    from mobileperf.android.startup import StartUp
 
     startup = StartUp.__new__(StartUp)
     startup.serialnum = "device-1"
@@ -1597,13 +1608,15 @@ def test_mobileperf_startup_passes_collection_timeout_to_monkey():
     startup.device.adb.is_connected.return_value = True
     startup.device.adb.is_app_installed.return_value = False
 
-    with patch.object(startup_module, "CpuMonitor"), \
-         patch.object(startup_module, "MemMonitor"), \
-         patch.object(startup_module, "TrafficMonitor"), \
-         patch.object(startup_module, "FPSMonitor"), \
-         patch.object(startup_module, "FdMonitor"), \
-         patch.object(startup_module, "ThreadNumMonitor"), \
-         patch.object(startup_module, "Monkey") as monkey_cls:
+    with (
+        patch.object(startup_module, "CpuMonitor"),
+        patch.object(startup_module, "MemMonitor"),
+        patch.object(startup_module, "TrafficMonitor"),
+        patch.object(startup_module, "FPSMonitor"),
+        patch.object(startup_module, "FdMonitor"),
+        patch.object(startup_module, "ThreadNumMonitor"),
+        patch.object(startup_module, "Monkey") as monkey_cls,
+    ):
         startup.add_monitor = Mock()
         startup.clear_heapdump = Mock()
         startup.run()
@@ -1611,16 +1624,20 @@ def test_mobileperf_startup_passes_collection_timeout_to_monkey():
     monkey_cls.assert_not_called()
 
     startup.device.adb.is_app_installed.return_value = True
-    with patch.object(startup_module, "CpuMonitor"), \
-         patch.object(startup_module, "MemMonitor"), \
-         patch.object(startup_module, "TrafficMonitor"), \
-         patch.object(startup_module, "FPSMonitor"), \
-         patch.object(startup_module, "FdMonitor"), \
-         patch.object(startup_module, "ThreadNumMonitor"), \
-         patch.object(startup_module, "Monkey") as monkey_cls, \
-         patch.object(startup_module, "LogcatMonitor"), \
-         patch.object(startup_module.FileUtils, "makedir"), \
-         patch.object(startup_module.TimeUtils, "getCurrentTimeUnderline", return_value="2026_06_13_10_00_00"):
+    with (
+        patch.object(startup_module, "CpuMonitor"),
+        patch.object(startup_module, "MemMonitor"),
+        patch.object(startup_module, "TrafficMonitor"),
+        patch.object(startup_module, "FPSMonitor"),
+        patch.object(startup_module, "FdMonitor"),
+        patch.object(startup_module, "ThreadNumMonitor"),
+        patch.object(startup_module, "Monkey") as monkey_cls,
+        patch.object(startup_module, "LogcatMonitor"),
+        patch.object(startup_module.FileUtils, "makedir"),
+        patch.object(
+            startup_module.TimeUtils, "getCurrentTimeUnderline", return_value="2026_06_13_10_00_00"
+        ),
+    ):
         startup.monitors = []
         startup.add_monitor = Mock(side_effect=lambda monitor: startup.monitors.append(monitor))
         startup.save_device_info = Mock()
@@ -1715,10 +1732,10 @@ def test_release_job_keeps_existing_versions_immutable():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 
     assert "gh release delete" not in workflow
-    assert "gh release view \"$TAG\"" in workflow
+    assert 'gh release view "$TAG"' in workflow
     assert "git ls-remote --exit-code --tags origin" in workflow
     assert "exit 1" in workflow
-    assert "gh release create \"$TAG\"" in workflow
+    assert 'gh release create "$TAG"' in workflow
     assert "softprops/action-gh-release" not in workflow
 
 
@@ -1727,7 +1744,7 @@ def test_cross_platform_release_assets_are_single_archives():
 
     assert "name: Zip macOS app artifact" in workflow
     assert "ditto -c -k --sequesterRsrc --keepParent" in workflow
-    assert "rm -f \"dist/$name\"" in workflow
+    assert 'rm -f "dist/$name"' in workflow
     assert "name: Archive Linux artifact" in workflow
     assert "tar -C dist -czf" in workflow
 
@@ -1834,7 +1851,7 @@ def test_main_frame_signal_maps_keep_expected_coverage():
         + MainFrame._system_signal_map(frame, lp, ac)
     )
 
-    assert len(signal_map) == 61
+    assert len(signal_map) == 60
     assert (lp.connect_requested, ac.connect_device) in signal_map
     assert (lp.open_deep_link_requested, ac.open_deep_link) in signal_map
     assert (lp.dumpsys_battery_requested, ac.dumpsys_battery) in signal_map
@@ -1892,9 +1909,7 @@ def test_emit_operation_flushes_user_visible_result_immediately():
 
     _ADBControllerBase._emit_operation(controller, "input_keyevent", True, "Key sent")
 
-    controller.log_service.log.assert_called_once_with(
-        "INFO", "Key sent", flush_immediately=True
-    )
+    controller.log_service.log.assert_called_once_with("INFO", "Key sent", flush_immediately=True)
     controller.signals.operation_completed.emit.assert_called_once_with(
         "input_keyevent", True, "Key sent"
     )
@@ -1979,8 +1994,10 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     controller.executor = ImmediateExecutor()
     controller.signals = Mock()
 
-    with patch("controllers._device.ADBDevice.get_devices_basic_info") as get_info, \
-         patch("controllers._device.DeviceStore.upsert_devices") as upsert:
+    with (
+        patch("controllers._device.ADBDevice.get_devices_basic_info") as get_info,
+        patch("controllers._device.DeviceStore.upsert_devices") as upsert,
+    ):
         get_info.side_effect = [
             {"Brand": "Google", "Model": "Pixel", "Aversion": "15"},
             {"Brand": "Redmi", "Model": "22127", "Aversion": "9"},
@@ -2000,9 +2017,11 @@ def test_screenshot_viewer_opens_folder_via_process_runner():
     viewer._current_path = lambda: path
     runner = Mock()
 
-    with patch("gui.dialogs.screenshot_viewer.ProcessRunner", return_value=runner), \
-         patch("gui.dialogs.screenshot_viewer.os.path.exists", return_value=True), \
-         patch("gui.dialogs.screenshot_viewer.os.name", "nt"):
+    with (
+        patch("gui.dialogs.screenshot_viewer.ProcessRunner", return_value=runner),
+        patch("gui.dialogs.screenshot_viewer.os.path.exists", return_value=True),
+        patch("gui.dialogs.screenshot_viewer.os.name", "nt"),
+    ):
         ScreenshotViewer._open_file_location(viewer)
 
     runner.spawn.assert_called_once()
@@ -2094,7 +2113,9 @@ def test_screenshot_viewer_refreshes_themed_icons(tmp_path):
 
     viewer = ScreenshotViewer([str(image_path)])
     try:
-        with patch("gui.dialogs.screenshot_viewer.get_themed_icon", return_value=QIcon()) as themed_icon:
+        with patch(
+            "gui.dialogs.screenshot_viewer.get_themed_icon", return_value=QIcon()
+        ) as themed_icon:
             viewer._refresh_button_icons()
 
         icon_names = [call.args[0] for call in themed_icon.call_args_list]
@@ -2121,7 +2142,9 @@ def test_screenshot_viewer_actual_size_updates_zoom_label(tmp_path):
         viewer.close()
 
 
-def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_image_removed(tmp_path):
+def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_image_removed(
+    tmp_path,
+):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
@@ -2138,7 +2161,6 @@ def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_ima
     finally:
         if viewer.isVisible():
             viewer.close()
-
 
 
 def test_process_runner_stop_all_without_deadlock():
@@ -2177,7 +2199,6 @@ def test_process_runner_stop_all_tracked_is_global_fallback():
     proc_a.terminate.assert_called_once()
     proc_b.terminate.assert_called_once()
     assert ProcessRunner._global_procs == {}
-
 
 
 def test_parse_connected_devices_ignores_adb_banner_and_header():
@@ -2304,16 +2325,17 @@ def test_get_devices_basic_info_uses_single_getprop_call():
             "-s",
             "device-1",
             "shell",
-            "getprop ro.product.model; getprop ro.product.brand; "
-            "getprop ro.build.version.release",
+            "getprop ro.product.model; getprop ro.product.brand; getprop ro.build.version.release",
         ],
         timeout=15,
     )
 
 
 def test_get_devices_basic_info_falls_back_to_individual_props():
-    with patch("models.adb_device.CommandRunner.run") as run, \
-         patch("models.adb_device.ADBModelCore._fetch_device_info") as fetch:
+    with (
+        patch("models.adb_device.CommandRunner.run") as run,
+        patch("models.adb_device.ADBModelCore._fetch_device_info") as fetch,
+    ):
         run.return_value = CommandResult(success=False, error="offline")
         fetch.return_value = {"Model": "N/A", "Brand": "N/A", "Aversion": "N/A"}
 
@@ -2554,10 +2576,13 @@ def test_device_manager_skips_unchanged_device_combo_refresh():
     manager._device_model = Mock()
     manager.ip_entry = Mock()
 
-    with patch(
-        "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
-        return_value=[("Google", "Pixel", "device-1")],
-    ), patch("gui.panels.device_manager.QCompleter", return_value=Mock()):
+    with (
+        patch(
+            "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
+            return_value=[("Google", "Pixel", "device-1")],
+        ),
+        patch("gui.panels.device_manager.QCompleter", return_value=Mock()),
+    ):
         DeviceManager._refresh_device_combobox(manager)
         DeviceManager._refresh_device_combobox(manager)
 
@@ -2673,9 +2698,7 @@ def test_remote_start_stop_buttons_follow_running_state():
         btn_start=QPushButton(owner),
         btn_stop=QPushButton(owner),
     )
-    remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(
-        remote, button
-    )
+    remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(remote, button)
     remote._set_button_enabled = lambda button, enabled: BasePanel._set_button_enabled(
         remote, button, enabled
     )
@@ -2688,21 +2711,36 @@ def test_remote_start_stop_buttons_follow_running_state():
         assert remote.btn_start.property("buttonVariant") == "accent"
         assert remote.btn_stop.objectName() == "danger"
         assert remote.btn_stop.property("buttonVariant") == "danger"
-        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
+        assert (
+            remote.btn_start.palette().button().color().name()
+            == BaseStyles.color("BUTTON_ACCENT").lower()
+        )
 
         RemotePanel._set_running(remote, True)
 
         assert remote.btn_start.isEnabled() is False
         assert remote.btn_stop.isEnabled() is True
-        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("INPUT_BG").lower()
-        assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("BUTTON_DANGER").lower()
+        assert (
+            remote.btn_start.palette().button().color().name()
+            == BaseStyles.color("INPUT_BG").lower()
+        )
+        assert (
+            remote.btn_stop.palette().button().color().name()
+            == BaseStyles.color("BUTTON_DANGER").lower()
+        )
 
         RemotePanel._set_running(remote, False)
 
         assert remote.btn_start.isEnabled() is True
         assert remote.btn_stop.isEnabled() is False
-        assert remote.btn_start.palette().button().color().name() == BaseStyles.color("BUTTON_ACCENT").lower()
-        assert remote.btn_stop.palette().button().color().name() == BaseStyles.color("INPUT_BG").lower()
+        assert (
+            remote.btn_start.palette().button().color().name()
+            == BaseStyles.color("BUTTON_ACCENT").lower()
+        )
+        assert (
+            remote.btn_stop.palette().button().color().name()
+            == BaseStyles.color("INPUT_BG").lower()
+        )
     finally:
         owner.close()
 
@@ -2724,9 +2762,7 @@ def test_side_panel_theme_refresh_preserves_remote_button_variants():
     panel._apply_tab_style = Mock()
     panel.findChildren = Mock(return_value=[start_button, stop_button])
     panel.apply_device_theme = Mock()
-    panel._refresh_button_style = lambda button: BasePanel._refresh_button_style(
-        panel, button
-    )
+    panel._refresh_button_style = lambda button: BasePanel._refresh_button_style(panel, button)
     BasePanel._apply_button_variant(panel, start_button, "accent")
     BasePanel._apply_button_variant(panel, stop_button, "danger")
     try:
@@ -2734,9 +2770,10 @@ def test_side_panel_theme_refresh_preserves_remote_button_variants():
 
         assert start_button.objectName() == "accent"
         assert start_button.property("buttonVariant") == "accent"
-        assert start_button.palette().button().color().name() == BaseStyles.color(
-            "BUTTON_ACCENT"
-        ).lower()
+        assert (
+            start_button.palette().button().color().name()
+            == BaseStyles.color("BUTTON_ACCENT").lower()
+        )
         assert stop_button.objectName() == "danger"
         assert stop_button.property("buttonVariant") == "danger"
     finally:
@@ -2757,9 +2794,13 @@ def test_remote_control_buttons_are_grouped_without_duplicate_shortcuts():
         assert "NOTIFICATION" not in key_codes
         assert not any(str(code).startswith("DPAD_") for code in key_codes)
         assert len(key_codes) == len(set(key_codes))
-        assert {"notif_expand", "notif_collapse", "rotate_portrait", "rotate_landscape"}.issubset(actions)
+        assert {"notif_expand", "notif_collapse", "rotate_portrait", "rotate_landscape"}.issubset(
+            actions
+        )
         assert {"swipe_up", "swipe_down", "swipe_left", "swipe_right"}.issubset(actions)
-        assert len(remote._remote_control_buttons) == len(remote._remote_key_buttons) + len(remote._remote_action_buttons)
+        assert len(remote._remote_control_buttons) == len(remote._remote_key_buttons) + len(
+            remote._remote_action_buttons
+        )
         assert all(button.property("iconName") for button in remote._remote_control_buttons)
     finally:
         side_panel.close()
@@ -3019,7 +3060,9 @@ def test_app_manager_worker_load_detail_batch_uses_single_batched_shell():
         "__ADBLAB_PKG_END_1__\n"
     )
 
-    with patch.object(worker, "_adb", return_value=CommandResult(success=True, output=output)) as adb:
+    with patch.object(
+        worker, "_adb", return_value=CommandResult(success=True, output=output)
+    ) as adb:
         worker._load_detail_batch(["com.example.one", "com.example.two"])
 
     adb.assert_called_once()
@@ -3071,8 +3114,10 @@ def test_app_details_dialog_close_disconnects_theme_handler():
     with patch.object(AppDetailsDialog, "_load_data"):
         dialog = AppDetailsDialog(None, "device-1", "com.example.demo")
 
-    with patch("gui.dialogs.app_manager.safe_disconnect") as disconnect, \
-         patch("gui.dialogs.app_manager.wait_for_threads_later") as wait_threads:
+    with (
+        patch("gui.dialogs.app_manager.safe_disconnect") as disconnect,
+        patch("gui.dialogs.app_manager.wait_for_threads_later") as wait_threads,
+    ):
         dialog.close()
 
     assert dialog._closing is True
@@ -3084,17 +3129,17 @@ def test_app_details_dialog_close_disconnects_theme_handler():
     dialog.deleteLater()
 
 
-
 def test_extract_package_name_ignores_log_prefix_and_returns_real_package():
     output = "ACTIVITY Sys2038: com.example.app/.MainActivity pid=123"
 
     assert extract_package_name(output) == "com.example.app"
 
 
-
 def test_extract_package_name_prefers_focus_line_over_other_packages():
-    output = "ACTIVITY com.android.launcher3/.Launcher\n" \
-             "mCurrentFocus=Window{u0 com.example.app/.MainActivity}"
+    output = (
+        "ACTIVITY com.android.launcher3/.Launcher\n"
+        "mCurrentFocus=Window{u0 com.example.app/.MainActivity}"
+    )
 
     assert extract_package_name(output) == "com.example.app"
 
@@ -3102,13 +3147,14 @@ def test_extract_package_name_prefers_focus_line_over_other_packages():
 def test_extract_package_name_prefers_visible_top_activity():
     output = (
         "taskId=3: com.android.settings/com.android.settings.Settings "
-        "visible=false topActivity=ComponentInfo{com.android.settings/com.android.settings.Settings}\n"
+        "visible=false topActivity=ComponentInfo{com.android.settings/"
+        "com.android.settings.Settings}\n"
         "taskId=2: com.android.launcher3/com.android.launcher3.Launcher "
-        "visible=true topActivity=ComponentInfo{com.android.launcher3/com.android.launcher3.Launcher}"
+        "visible=true topActivity=ComponentInfo{com.android.launcher3/"
+        "com.android.launcher3.Launcher}"
     )
 
     assert extract_package_name(output) == "com.android.launcher3"
-
 
 
 def test_detect_current_package_uses_lightweight_activity_stack_first():
@@ -3130,11 +3176,17 @@ def test_detect_current_package_uses_lightweight_activity_stack_first():
     }
     runner.run.assert_called_once_with(
         [
-            "adb", "-s", "device-1", "shell", "cmd", "activity", "stack", "list",
+            "adb",
+            "-s",
+            "device-1",
+            "shell",
+            "cmd",
+            "activity",
+            "stack",
+            "list",
         ],
         timeout=5,
     )
-
 
 
 def test_detect_current_package_falls_back_to_resumed_activity():
@@ -3171,9 +3223,11 @@ def test_run_monkey_test_reports_nonzero_exit_as_failure(tmp_path):
     model._procs.start.side_effect = [logcat_proc, monkey_proc]
     model._procs.stop.return_value = None
 
-    with patch.object(model, "_run", return_value={"success": True, "output": ""}), \
-         patch.object(model, "_get_current_package", return_value="com.example.app"), \
-         patch("models.adb_testing.time.sleep"):
+    with (
+        patch.object(model, "_run", return_value={"success": True, "output": ""}),
+        patch.object(model, "_get_current_package", return_value="com.example.app"),
+        patch("models.adb_testing.time.sleep"),
+    ):
         result = ADBTesting.run_monkey_test_async.__wrapped__(
             model,
             "device-1",
@@ -3199,9 +3253,11 @@ def test_run_monkey_test_reports_repeated_timeouts_as_failure(tmp_path):
     model._procs.stop.return_value = None
 
     timeout = subprocess.TimeoutExpired(cmd="dumpsys", timeout=5)
-    with patch.object(model, "_run", return_value={"success": True, "output": ""}), \
-         patch.object(model, "_get_current_package", side_effect=[timeout, timeout, timeout]), \
-         patch("models.adb_testing.time.sleep"):
+    with (
+        patch.object(model, "_run", return_value={"success": True, "output": ""}),
+        patch.object(model, "_get_current_package", side_effect=[timeout, timeout, timeout]),
+        patch("models.adb_testing.time.sleep"),
+    ):
         result = ADBTesting.run_monkey_test_async.__wrapped__(
             model,
             "device-1",
@@ -3216,19 +3272,21 @@ def test_run_monkey_test_reports_repeated_timeouts_as_failure(tmp_path):
     assert result["error"] == "Device appears disconnected"
 
 
-
 def test_get_current_package_uses_shared_detector():
     model = ADBApp()
 
     with patch("models.adb_app.detect_current_package") as detect:
-        detect.return_value = {"success": True, "device_ip": "device-1", "package_name": "com.example.app"}
+        detect.return_value = {
+            "success": True,
+            "device_ip": "device-1",
+            "package_name": "com.example.app",
+        }
 
         result = model.get_current_package("device-1")
 
     assert result["success"] is True
     assert result["package_name"] == "com.example.app"
     detect.assert_called_once_with("device-1")
-
 
 
 def test_install_apk_uses_run_helper_and_preserves_result_fields():
@@ -3263,8 +3321,10 @@ def test_parse_apk_info_accepts_existing_apk_case_insensitively():
     controller = Mock()
     controller.app_model = Mock()
 
-    with patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/DEMO.APK", "")), \
-         patch("controllers._app.os.path.isfile", return_value=True):
+    with (
+        patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/DEMO.APK", "")),
+        patch("controllers._app.os.path.isfile", return_value=True),
+    ):
         ADBAppMixin.parse_apk_info(controller)
 
     controller.app_model.parse_apk_info_async.assert_called_once_with("C:/tmp/DEMO.APK")
@@ -3275,8 +3335,10 @@ def test_parse_apk_info_rejects_missing_file():
     controller = Mock()
     controller.app_model = Mock()
 
-    with patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/demo.apk", "")), \
-         patch("controllers._app.os.path.isfile", return_value=False):
+    with (
+        patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/demo.apk", "")),
+        patch("controllers._app.os.path.isfile", return_value=False),
+    ):
         ADBAppMixin.parse_apk_info(controller)
 
     controller.app_model.parse_apk_info_async.assert_not_called()
@@ -3296,8 +3358,8 @@ def test_batch_install_result_uses_batch_tracker_key():
             lambda op, success, msg: emitted.append((op, success, msg)),
         )
     }
-    controller._emit_operation.side_effect = (
-        lambda op, success, msg: emitted.append((op, success, msg))
+    controller._emit_operation.side_effect = lambda op, success, msg: emitted.append(
+        (op, success, msg)
     )
 
     ADBAppMixin._process_install_apk_result(
@@ -3310,24 +3372,18 @@ def test_batch_install_result_uses_batch_tracker_key():
         },
     )
 
-    assert emitted == [
-        ("batch_install", True, "✅ install success (1/2) demo.apk on device-1")
-    ]
+    assert emitted == [("batch_install", True, "✅ install success (1/2) demo.apk on device-1")]
 
 
 def test_app_controller_install_calls_model_async_directly():
     controller = Mock()
     controller._pending_lock = threading.Lock()
-    controller._batch_trackers = {
-        "install": BatchOperationTracker(1, "Install App", Mock())
-    }
+    controller._batch_trackers = {"install": BatchOperationTracker(1, "Install App", Mock())}
     controller._emit_operation = Mock()
     controller.app_model = Mock()
     controller.executor = Mock()
 
-    ADBAppMixin._install_single_device(
-        controller, 1, "device-1", "demo.apk", "demo.apk", "install"
-    )
+    ADBAppMixin._install_single_device(controller, 1, "device-1", "demo.apk", "demo.apk", "install")
 
     controller.executor.submit.assert_not_called()
     controller.app_model.install_apk_async.assert_called_once_with(
@@ -3351,12 +3407,8 @@ def test_app_controller_direct_async_paths_skip_python_executor():
     ADBAppMixin.get_current_activity(controller, ["device-1"])
 
     controller.executor.submit.assert_not_called()
-    controller.app_model.clear_app_data_async.assert_called_once_with(
-        "device-1", "com.example", 1
-    )
-    controller.app_model.restart_app_async.assert_called_once_with(
-        "device-1", "com.example", 1
-    )
+    controller.app_model.clear_app_data_async.assert_called_once_with("device-1", "com.example", 1)
+    controller.app_model.restart_app_async.assert_called_once_with("device-1", "com.example", 1)
     controller.app_model.get_current_activity_async.assert_called_once_with("device-1", 1)
 
 
@@ -3558,8 +3610,10 @@ def test_take_screenshot_prefers_exec_out_direct_path(tmp_path):
             image_file.write(b"\x89PNG\r\n\x1a\npayload")
         return CommandResult(success=True, output=path)
 
-    with patch("models.adb_testing.CommandRunner.run_to_file", side_effect=write_png), \
-         patch.object(model, "_run") as run:
+    with (
+        patch("models.adb_testing.CommandRunner.run_to_file", side_effect=write_png),
+        patch.object(model, "_run") as run,
+    ):
         result = ADBTesting.take_screenshot_async.__wrapped__(
             model,
             "device-1",
@@ -3579,8 +3633,10 @@ def test_take_screenshot_falls_back_when_exec_out_is_invalid_png(tmp_path):
             image_file.write(b"not png")
         return CommandResult(success=True, output=path)
 
-    with patch("models.adb_testing.CommandRunner.run_to_file", side_effect=write_bad), \
-         patch.object(model, "_run") as run:
+    with (
+        patch("models.adb_testing.CommandRunner.run_to_file", side_effect=write_bad),
+        patch.object(model, "_run") as run,
+    ):
         run.side_effect = [
             {"success": True, "output": ""},
             {"success": True, "output": "ok"},
@@ -3596,7 +3652,6 @@ def test_take_screenshot_falls_back_when_exec_out_is_invalid_png(tmp_path):
 
     assert result == {"success": True, "device_ip": "device-1", "screenshot_path": str(save_path)}
     assert run.call_count == 4
-
 
 
 def test_list_installed_packages_parses_command_output():
@@ -3617,7 +3672,6 @@ def test_list_installed_packages_parses_command_output():
         "packages": ["com.example.one", "com.example.two"],
         "index": 3,
     }
-
 
 
 def test_file_explorer_worker_uses_command_runner_for_short_commands():
@@ -3697,10 +3751,14 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
     progress = []
     finished = []
     worker.progress.connect(progress.append)
-    worker.finished.connect(lambda message, failed, local: finished.append((message, failed, local)))
+    worker.finished.connect(
+        lambda message, failed, local: finished.append((message, failed, local))
+    )
 
-    with patch.object(worker._process_runner, "start", return_value=proc) as start, \
-         patch.object(worker._process_runner, "stop") as stop:
+    with (
+        patch.object(worker._process_runner, "start", return_value=proc) as start,
+        patch.object(worker._process_runner, "stop") as stop,
+    ):
         worker.run()
 
     start.assert_called_once_with(
@@ -3758,9 +3816,7 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     ]
     assert first_row_calls[0].args[2].text() == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
-    dialog.status_bar.showMessage.assert_called_once_with(
-        "/sdcard  |  1 folders, 1 files"
-    )
+    dialog.status_bar.showMessage.assert_called_once_with("/sdcard  |  1 folders, 1 files")
 
 
 def test_file_explorer_table_moves_type_first_and_hides_row_numbers():
@@ -3797,8 +3853,10 @@ def test_adb_bridge_shell_input_uses_process_runner_spawn():
     bridge = ADBBridge(path="adb.exe")
     proc = Mock()
 
-    with patch.object(bridge, "_input_session") as input_session, \
-         patch.object(bridge._process_runner, "spawn", return_value=proc) as spawn:
+    with (
+        patch.object(bridge, "_input_session") as input_session,
+        patch.object(bridge._process_runner, "spawn", return_value=proc) as spawn,
+    ):
         input_session.return_value.send.return_value = False
         result = bridge.shell_input("keyevent 3", device_id="device-1")
 
@@ -3812,8 +3870,10 @@ def test_adb_bridge_shell_input_prefers_persistent_session():
     session = Mock()
     session.send.return_value = True
 
-    with patch.object(bridge, "_input_session", return_value=session), \
-         patch.object(bridge._process_runner, "spawn") as spawn:
+    with (
+        patch.object(bridge, "_input_session", return_value=session),
+        patch.object(bridge._process_runner, "spawn") as spawn,
+    ):
         result = bridge.shell_input("keyevent 3", device_id="device-1")
 
     assert result is session
@@ -3847,9 +3907,7 @@ def test_adb_advanced_input_uses_persistent_shell_bridge():
     result = ADBAdvanced.input_tap_async.__wrapped__(model, "device-1", 10, 20)
 
     assert result == {"success": True, "device_ip": "device-1", "x": 10, "y": 20}
-    model._adb_bridge.shell_input.assert_called_once_with(
-        "tap 10 20", device_id="device-1"
-    )
+    model._adb_bridge.shell_input.assert_called_once_with("tap 10 20", device_id="device-1")
 
 
 def test_adb_advanced_input_failure_is_reported():
@@ -3879,9 +3937,7 @@ def test_quick_setting_batches_animation_commands_into_one_shell():
     with patch.object(model, "_run") as run:
         run.return_value = {"success": True, "device_ip": "device-1"}
 
-        result = ADBSystemMixin.quick_setting_async.__wrapped__(
-            model, "device-1", "anim_off"
-        )
+        result = ADBSystemMixin.quick_setting_async.__wrapped__(model, "device-1", "anim_off")
 
     assert result == {"success": True, "device_ip": "device-1", "action": "anim_off"}
     run.assert_called_once_with(
@@ -3936,18 +3992,20 @@ def test_adb_bridge_devices_parses_command_runner_output():
     run.assert_called_once_with(["adb.exe", "devices"], timeout=15)
 
 
-
 def test_testing_model_current_package_uses_shared_detector():
     model = ADBTesting()
 
     with patch("models.adb_testing.detect_current_package") as detect:
-        detect.return_value = {"success": True, "device_ip": "device-1", "package_name": "com.example.app"}
+        detect.return_value = {
+            "success": True,
+            "device_ip": "device-1",
+            "package_name": "com.example.app",
+        }
 
         package_name = model._get_current_package("device-1")
 
     assert package_name == "com.example.app"
     detect.assert_called_once_with("device-1")
-
 
 
 def test_kill_monkey_treats_empty_device_stop_error_as_idempotent_success():

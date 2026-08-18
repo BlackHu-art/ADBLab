@@ -102,17 +102,24 @@ class DeviceStore:
 
     @classmethod
     def add_device(
-        cls, alias: str, ip: str, brand: str = "Unknown", model: str = "Unknown", android_version: str = ""
+        cls,
+        alias: str,
+        ip: str,
+        brand: str = "Unknown",
+        model: str = "Unknown",
+        android_version: str = "",
     ):
-        cls.upsert_devices([
-            {
-                "alias": alias,
-                "ip": ip,
-                "Brand": brand,
-                "Model": model,
-                "Aversion": str(android_version),
-            }
-        ])
+        cls.upsert_devices(
+            [
+                {
+                    "alias": alias,
+                    "ip": ip,
+                    "Brand": brand,
+                    "Model": model,
+                    "Aversion": str(android_version),
+                }
+            ]
+        )
 
     @classmethod
     def upsert_devices(cls, devices: list[dict]):

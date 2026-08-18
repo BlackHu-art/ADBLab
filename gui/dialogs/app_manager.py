@@ -1,7 +1,6 @@
 """应用管理器对话框 — 列出、筛选、管理、备份/恢复设备上的应用。"""
 
 import json
-import os
 import re
 
 from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer
@@ -428,10 +427,19 @@ class AppManagerDialog(QDialog):
         self.log_output.setFont(log_font)
         self.log_output.document().setDefaultFont(log_font)
         self.tree.setStyleSheet(
-            f"QTreeView {{ background-color:{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; alternate-background-color:{bs.color('INPUT_BG_HOVER')}; }} QTreeView::item:selected {{ background-color:{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; }} QHeaderView::section {{ background-color:{bs.color('BUTTON_BG')}; color:{fg}; padding:4px; border:1px solid {border}; }}"
+            f"QTreeView {{ background-color:{bg}; color:{fg}; border:1px solid {border}; "
+            f"border-radius:{bs.RADIUS_MD}px; "
+            f"alternate-background-color:{bs.color('INPUT_BG_HOVER')}; }} "
+            f"QTreeView::item:selected {{ background-color:{bs.color('SELECTION_BG')}; "
+            f"color:{bs.color('SELECTION_TEXT')}; }} "
+            f"QHeaderView::section {{ background-color:{bs.color('BUTTON_BG')}; color:{fg}; "
+            f"padding:4px; border:1px solid {border}; }}"
         )
         self.icon_list.setStyleSheet(
-            f"QListWidget {{ background-color:{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; }} QListWidget::item:selected {{ background-color:{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px; }}"
+            f"QListWidget {{ background-color:{bg}; color:{fg}; border:1px solid {border}; "
+            f"border-radius:{bs.RADIUS_MD}px; }} QListWidget::item:selected {{ "
+            f"background-color:{bs.color('SELECTION_BG')}; "
+            f"color:{bs.color('SELECTION_TEXT')}; border-radius:4px; }}"
         )
         self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
         _apply_adaptive_text_heights(self)
@@ -606,7 +614,8 @@ class AppManagerDialog(QDialog):
         if self._closing or self._detail_worker_running:
             return
         packages = [
-            pkg for pkg in self._visible_detail_packages()
+            pkg
+            for pkg in self._visible_detail_packages()
             if pkg not in self._pending_detail_packages
         ]
         if not packages:
@@ -652,11 +661,7 @@ class AppManagerDialog(QDialog):
         self._view_mode = not self._view_mode
         self.stack.setCurrentIndex(1 if self._view_mode else 0)
         self.view_toggle.setIcon(
-            get_themed_icon(
-                "list-bullets.svg"
-                if self._view_mode
-                else "squares-four.svg"
-            )
+            get_themed_icon("list-bullets.svg" if self._view_mode else "squares-four.svg")
         )
         self.view_toggle.setToolTip(
             "Switch to List view" if self._view_mode else "Switch to Icon view"
@@ -782,7 +787,9 @@ class AppManagerDialog(QDialog):
         if not self._confirm_dangerous_action(action, 1):
             return
         if action == "force_stop":
-            w = AppManagerWorker(self.device_ip, "modify_app", action="force_stop", package_name=pkg)
+            w = AppManagerWorker(
+                self.device_ip, "modify_app", action="force_stop", package_name=pkg
+            )
             w.log_message.connect(self.log)
             self._track_worker(w)
             w.start()
@@ -801,11 +808,13 @@ class AppManagerDialog(QDialog):
     @staticmethod
     def _global_save_dir() -> str:
         from core.settings_manager import AppSettings
+
         return AppSettings.instance().save_directory
 
     def _backup_one(self, pkg):
         sd = QFileDialog.getExistingDirectory(
-            self, "Select Backup Directory", self._global_save_dir())
+            self, "Select Backup Directory", self._global_save_dir()
+        )
         if not sd:
             return
         w = AppManagerWorker(self.device_ip, "backup_app", package_name=pkg, save_dir=sd)
@@ -849,9 +858,7 @@ class AppManagerDialog(QDialog):
     def _confirm_dangerous_action(self, action: str, target_count: int) -> bool:
         decision = self._dangerous_policy.evaluate(
             action,
-            confirmation_enabled=bool(
-                AppSettings.instance().get("confirm_dangerous_ops", True)
-            ),
+            confirmation_enabled=bool(AppSettings.instance().get("confirm_dangerous_ops", True)),
             target_count=target_count,
         )
         if not decision.requires_confirmation:
@@ -873,8 +880,7 @@ class AppManagerDialog(QDialog):
         if not pkgs:
             QMessageBox.warning(self, "None", "No apps selected.")
             return
-        sd = QFileDialog.getExistingDirectory(
-            self, "Backup Directory", self._global_save_dir())
+        sd = QFileDialog.getExistingDirectory(self, "Backup Directory", self._global_save_dir())
         if not sd:
             return
         for pkg in pkgs:
@@ -973,7 +979,7 @@ class AppManagerDialog(QDialog):
             if p in pkgs:
                 self.model.item(r, 0).setCheckState(Qt.CheckState.Checked)
                 self.selected_packages.add(p)
-        self.log(f"Loaded preset '{data.get('name','?')}' ({len(self.selected_packages)} apps).")
+        self.log(f"Loaded preset '{data.get('name', '?')}' ({len(self.selected_packages)} apps).")
 
     # ── 应用生命周期操作 ───────────────────────────────────────────────────
 
@@ -990,11 +996,7 @@ class AppManagerDialog(QDialog):
 
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
         """将仍在运行的应用管理 worker 作为一组资源注册到监督器。"""
-        workers = [
-            worker
-            for worker in self._workers
-            if QThreadGroupShutdownTask._running(worker)
-        ]
+        workers = [worker for worker in self._workers if QThreadGroupShutdownTask._running(worker)]
         if not workers:
             return ()
         handle = QThreadGroupShutdownTask(workers)

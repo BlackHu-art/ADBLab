@@ -9,7 +9,6 @@ import os
 import re
 from dataclasses import dataclass
 
-
 SHELL_DANGER = re.compile(r'[;&|`$(){}!<>"\'\n\r]')
 _VALID_MODE = re.compile(r"^[0-7]{3,4}$")
 
@@ -74,7 +73,7 @@ def parse_ls_line(line: str) -> dict[str, str] | None:
     if size_index is None or size_index + 1 >= len(parts):
         return None
 
-    modified, name = _split_modified_name(" ".join(parts[size_index + 1:]))
+    modified, name = _split_modified_name(" ".join(parts[size_index + 1 :]))
     if not name:
         return None
     return {
@@ -139,8 +138,18 @@ def _split_modified_name(value: str) -> tuple[str, str]:
 
 def _looks_month(value: str) -> bool:
     return value.lower()[:3] in {
-        "jan", "feb", "mar", "apr", "may", "jun",
-        "jul", "aug", "sep", "oct", "nov", "dec",
+        "jan",
+        "feb",
+        "mar",
+        "apr",
+        "may",
+        "jun",
+        "jul",
+        "aug",
+        "sep",
+        "oct",
+        "nov",
+        "dec",
     }
 
 

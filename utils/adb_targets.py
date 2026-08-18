@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ipaddress
 
-
 CONNECT_TARGET_EXAMPLE = "192.168.1.10:5555"
 
 
@@ -39,7 +38,7 @@ def _split_host_port(target: str) -> tuple[str, str, str]:
         end = target.find("]")
         if end <= 1 or len(target) <= end + 2 or target[end + 1] != ":":
             return "", "", "Please enter IP and port, e.g. [::1]:5555"
-        return target[1:end].strip(), target[end + 2:].strip(), ""
+        return target[1:end].strip(), target[end + 2 :].strip(), ""
 
     if target.count(":") != 1:
         return "", "", f"Please enter IP and port, e.g. {CONNECT_TARGET_EXAMPLE}"

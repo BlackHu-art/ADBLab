@@ -18,8 +18,12 @@ def extract_package_name(output: str) -> str:
         if match:
             return match.group(1)
     focused_lines = [
-        line for line in lines
-        if any(token in line for token in ("mCurrentFocus", "mFocusedApp", "mResumedActivity", "topResumedActivity"))
+        line
+        for line in lines
+        if any(
+            token in line
+            for token in ("mCurrentFocus", "mFocusedApp", "mResumedActivity", "topResumedActivity")
+        )
     ]
     for line in focused_lines + lines:
         if "/" not in line:
@@ -34,7 +38,15 @@ def detect_current_package(device_ip: str, runner=CommandRunner) -> dict:
     """依次执行兼容性探测命令，任一命令识别成功即返回前台包名。"""
     commands = [
         ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],
-        ["adb", "-s", device_ip, "shell", "sh", "-c", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"],
+        [
+            "adb",
+            "-s",
+            device_ip,
+            "shell",
+            "sh",
+            "-c",
+            "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'",
+        ],
         ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "top"],
     ]
     for command in commands:

@@ -95,7 +95,8 @@ class SidePanel(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet(
-            f"QScrollArea {{ border: none; background: transparent; }}\n{BaseStyles.SCROLLBAR_STYLE()}"
+            f"QScrollArea {{ border: none; background: transparent; }}\n"
+            f"{BaseStyles.SCROLLBAR_STYLE()}"
         )
         return scroll
 
@@ -183,12 +184,6 @@ class SidePanel(QWidget):
     def update_current_package(self, device_ip: str, package_name: str):
         self._devices_tab.update_current_package(device_ip, package_name)
 
-    def update_email(self, t: str):
-        self._ensure_tab_loaded(0).update_email(t)
-
-    def update_vercode(self, t: str):
-        self._ensure_tab_loaded(0).update_vercode(t)
-
     def on_recording_finished(self):
         apps_tab = self._ensure_tab_loaded(0)
         if apps_tab:
@@ -227,7 +222,15 @@ class SidePanel(QWidget):
     def _apply_tab_style(self):
         bs = BaseStyles
         self.tabs.setStyleSheet(
-            f"""QTabWidget::pane{{border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;background:{bs.color('WINDOW_BG')};}}QTabBar::tab{{background:{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px;}}QTabBar::tab:selected{{background:{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')};}}QTabBar::tab:hover{{background:{bs.color('BUTTON_HOVER')};}}"""
+            f"""QTabWidget::pane{{border:1px solid {bs.color("BORDER_COLOR")};"""
+            f"""border-radius:{bs.RADIUS_MD}px;background:{bs.color("WINDOW_BG")};}}"""
+            f"""QTabBar::tab{{background:{bs.color("BUTTON_BG")};"""
+            f"""color:{bs.color("TEXT_PRIMARY")};border:1px solid {bs.color("BORDER_COLOR")};"""
+            f"""border-bottom:none;padding:3px 12px;border-radius:{bs.RADIUS_SM}px """
+            f"""{bs.RADIUS_SM}px 0 0;"""
+            f"""margin-right:1px;}}QTabBar::tab:selected{{background:{bs.color("WINDOW_BG")};"""
+            f"""border-bottom:2px solid {bs.color("BUTTON_ACCENT")};}}"""
+            f"""QTabBar::tab:hover{{background:{bs.color("BUTTON_HOVER")};}}"""
         )
 
     def _apply_completer_style(self, c):
@@ -240,7 +243,12 @@ class SidePanel(QWidget):
         p.setFont(self._font_mono)
         bs = BaseStyles
         p.setStyleSheet(
-            f"QListView{{background-color:{bs.color('INPUT_BG')};color:{bs.color('TEXT_PRIMARY')};border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_SM}px;padding:2px;outline:none;}}QListView::item{{padding:4px 8px;}}QListView::item:selected{{background-color:{bs.color('SELECTION_BG')};color:{bs.color('SELECTION_TEXT')};}}QListView::item:hover{{background-color:{bs.color('BUTTON_HOVER')};}}"
+            f"QListView{{background-color:{bs.color('INPUT_BG')};color:{bs.color('TEXT_PRIMARY')};"
+            f"border:1px solid {bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_SM}px;"
+            f"padding:2px;outline:none;}}QListView::item{{padding:4px 8px;}}"
+            f"QListView::item:selected{{background-color:{bs.color('SELECTION_BG')};"
+            f"color:{bs.color('SELECTION_TEXT')};}}"
+            f"QListView::item:hover{{background-color:{bs.color('BUTTON_HOVER')};}}"
         )
 
     def _on_theme_changed(self, _):

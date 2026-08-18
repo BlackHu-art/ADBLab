@@ -1,22 +1,20 @@
-# -*- coding: utf-8 -*-
-
 """将性能采集 CSV 数据写入 Excel 工作簿并生成趋势图。"""
+
 import csv
 import os
 import re
 import sys
 
 BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, '../..'))
-from mobileperf.extlib import xlsxwriter
+sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.common.log import logger
-
+from mobileperf.extlib import xlsxwriter
 
 _INVALID_WORKSHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 _WORKSHEET_NAME_LIMIT = 31
 
 
-class Excel(object):
+class Excel:
     """封装工作簿、工作表名称归一化和趋势图生成。"""
 
     def __init__(self, excel_file):
@@ -36,7 +34,9 @@ class Excel(object):
         while candidate.lower() in self._worksheet_names:
             suffix = "_%s" % suffix_index
             keep = _WORKSHEET_NAME_LIMIT - len(suffix)
-            candidate = "%s%s" % (base_name[:keep], suffix) if keep > 0 else suffix[-_WORKSHEET_NAME_LIMIT:]
+            candidate = (
+                "%s%s" % (base_name[:keep], suffix) if keep > 0 else suffix[-_WORKSHEET_NAME_LIMIT:]
+            )
             suffix_index += 1
 
         self._worksheet_names.add(candidate.lower())
@@ -48,21 +48,25 @@ class Excel(object):
         """写入二维数据，并在数据量足够时插入折线图。"""
         worksheet_name = self._safe_sheet_name(sheet_name)
         worksheet = self.workbook.add_worksheet(worksheet_name)
-        worksheet.write_row('A1', headings)
+        worksheet.write_row("A1", headings)
         for i, line in enumerate(lines, 2):
-            worksheet.write_row('A%d' % i, line)
+            worksheet.write_row("A%d" % i, line)
         columns = len(headings)
         rows = len(lines)
         if columns > 1 and rows > 1:
-            chart = self.workbook.add_chart({'type': 'line'})
+            chart = self.workbook.add_chart({"type": "line"})
             for j in range(1, columns):
-                chart.add_series({'name': [worksheet_name, 0, j],
-                                  'categories': [worksheet_name, 1, 0, rows, 0],
-                                  'values': [worksheet_name, 1, j, rows, j]})
-            chart.set_title({'name': sheet_name.replace('.', ' ').title()})
-            chart.set_x_axis({'name': x_axis})
-            chart.set_y_axis({'name': y_axis})
-            worksheet.insert_chart('B3', chart, {'x_scale': 2, 'y_scale': 2})
+                chart.add_series(
+                    {
+                        "name": [worksheet_name, 0, j],
+                        "categories": [worksheet_name, 1, 0, rows, 0],
+                        "values": [worksheet_name, 1, j, rows, j],
+                    }
+                )
+            chart.set_title({"name": sheet_name.replace(".", " ").title()})
+            chart.set_x_axis({"name": x_axis})
+            chart.set_y_axis({"name": y_axis})
+            worksheet.insert_chart("B3", chart, {"x_scale": 2, "y_scale": 2})
 
     def save(self):
         """关闭工作簿并将内容保存到目标文件。"""
@@ -78,21 +82,21 @@ class Excel(object):
         logger.debug("filename:" + filename)
         worksheet_name = self._safe_sheet_name(filename)
         worksheet = self.workbook.add_worksheet(worksheet_name)
-        with open(csv_file, 'r') as f:
+        with open(csv_file) as f:
             read = csv.reader(f)
-            l = 0
+            row = 0
             headings = []
             for line in read:
                 r = 0
                 for i in line:
                     if self.is_number(i):
-                        worksheet.write(l, r, float(i))
+                        worksheet.write(row, r, float(i))
                     else:
-                        worksheet.write(l, r, i)
+                        worksheet.write(row, r, i)
                     r = r + 1
-                if l == 0:
+                if row == 0:
                     headings = line
-                l = l + 1
+                row = row + 1
             columns = len(headings)
         # 根据表头定位需要绘制的字段及系列名称。
         indexs = []
@@ -102,30 +106,34 @@ class Excel(object):
         series_index.extend([i for i, v in enumerate(headings) if v == "package"])
         logger.debug("series_index")
         logger.debug(series_index)
-        if columns > 1 and l > 2:
-            chart = self.workbook.add_chart({'type': 'line'})
+        if columns > 1 and row > 2:
+            chart = self.workbook.add_chart({"type": "line"})
             i = 0
             for index in indexs:
                 if "pid_cpu%" == headings[index] or "pid_pss(MB)" == headings[index]:
-                    chart.add_series({
-                        # 进程指标以包名列作为系列名称。
-                        'name': [worksheet_name, 1, series_index[i]],
-                        'categories': [worksheet_name, 1, 0, l - 1, 0],
-                        'values': [worksheet_name, 1, index, l - 1, index],
-                        'line': {'color': self.color_list[index % len(self.color_list)]}
-                    })
+                    chart.add_series(
+                        {
+                            # 进程指标以包名列作为系列名称。
+                            "name": [worksheet_name, 1, series_index[i]],
+                            "categories": [worksheet_name, 1, 0, row - 1, 0],
+                            "values": [worksheet_name, 1, index, row - 1, index],
+                            "line": {"color": self.color_list[index % len(self.color_list)]},
+                        }
+                    )
                     i = i + 1
                 else:
-                    chart.add_series({
-                        'name': [worksheet_name, 0, index],
-                        'categories': [worksheet_name, 1, 0, l - 1, 0],
-                        'values': [worksheet_name, 1, index, l - 1, index],
-                        'line': {'color': self.color_list[index % len(self.color_list)]}
-                    })
-            chart.set_title({'name': sheet_name})
-            chart.set_x_axis({'name': x_axis})
-            chart.set_y_axis({'name': y_axis})
-            worksheet.insert_chart('L3', chart, {'x_scale': 2, 'y_scale': 2})
+                    chart.add_series(
+                        {
+                            "name": [worksheet_name, 0, index],
+                            "categories": [worksheet_name, 1, 0, row - 1, 0],
+                            "values": [worksheet_name, 1, index, row - 1, index],
+                            "line": {"color": self.color_list[index % len(self.color_list)]},
+                        }
+                    )
+            chart.set_title({"name": sheet_name})
+            chart.set_x_axis({"name": x_axis})
+            chart.set_y_axis({"name": y_axis})
+            worksheet.insert_chart("L3", chart, {"x_scale": 2, "y_scale": 2})
 
     def is_number(self, s):
         """判断字符串是否可作为数值写入工作表。"""
@@ -137,6 +145,7 @@ class Excel(object):
 
         try:
             import unicodedata
+
             unicodedata.numeric(s)
             return True
         except (TypeError, ValueError):

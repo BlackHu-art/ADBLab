@@ -28,8 +28,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.settings_manager import AppSettings
 from adblab.application.supervision import ThreadedShutdownTask
+from core.settings_manager import AppSettings
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask, safe_disconnect, wait_for_thread_later
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
@@ -524,7 +524,8 @@ class PerformanceLauncherDialog(QDialog):
             QMessageBox.warning(
                 self,
                 "Monkey Event Mix",
-                f"Monkey event percentages sum to {config.monkey_config.total_percentage}%, not 100%.\n"
+                f"Monkey event percentages sum to {config.monkey_config.total_percentage}%, "
+                f"not 100%.\n"
                 "MobilePerf will still start, but the event distribution may be unexpected.",
             )
         self._last_result_root = self._runner.expected_result_root(config)
@@ -743,7 +744,7 @@ class PerformanceLauncherDialog(QDialog):
             else "normal"
         )
         self.status_label.setStyleSheet(
-            f"color: {BaseStyles.color(color_key)}; " f"font-weight: {weight};"
+            f"color: {BaseStyles.color(color_key)}; font-weight: {weight};"
         )
 
     def _update_progress(self):
@@ -814,18 +815,21 @@ class PerformanceLauncherDialog(QDialog):
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
-            BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
+            BaseStyles.INPUT_STYLE()
+            + BaseStyles.BUTTON_QSS()
+            + BaseStyles.SCROLLBAR_STYLE()
+            + f"""
             QDialog {{
-                background-color: {c('PANEL_BG')};
-                color: {c('TEXT_PRIMARY')};
+                background-color: {c("PANEL_BG")};
+                color: {c("TEXT_PRIMARY")};
             }}
             QGroupBox#performanceConfig {{
-                background-color: {c('INPUT_BG')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("INPUT_BG")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r}px;
                 margin-top: {group_title_margin}px;
                 padding: 10px 10px 8px 10px;
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 font-weight: bold;
             }}
             QGroupBox#performanceConfig::title {{
@@ -833,68 +837,68 @@ class PerformanceLauncherDialog(QDialog):
                 subcontrol-position: top left;
                 padding: 0 8px;
                 left: 10px;
-                color: {c('GROUP_TITLE_COLOR')};
+                color: {c("GROUP_TITLE_COLOR")};
             }}
             QLabel#fieldLabel {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 font-weight: bold;
             }}
             QLabel#onlineDeviceLabel {{
-                color: {c('LOG_SUCCESS')};
+                color: {c("LOG_SUCCESS")};
                 font-weight: bold;
             }}
             QLabel#inlineLabel {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
             }}
             QLabel#configHint {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
             }}
             QLabel#statusLabel {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
             }}
             QProgressBar#performanceProgress {{
-                background-color: {c('INPUT_BG')};
-                color: {c('TEXT_PRIMARY')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("INPUT_BG")};
+                color: {c("TEXT_PRIMARY")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {BaseStyles.RADIUS_MD}px;
                 text-align: center;
             }}
             QProgressBar#performanceProgress::chunk {{
-                background-color: {c('LOG_SUCCESS')};
+                background-color: {c("LOG_SUCCESS")};
                 border-radius: {BaseStyles.RADIUS_MD - 1}px;
             }}
             QPlainTextEdit#performanceLog {{
-                background-color: {c('LOG_BACKGROUND')};
-                color: {c('LOG_TEXT_COLOR')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("LOG_BACKGROUND")};
+                color: {c("LOG_TEXT_COLOR")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {BaseStyles.RADIUS_LG}px;
                 padding: 4px;
             }}
             QCheckBox {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
             }}
             QWidget#inlineRow,
             QWidget#inlineRow QLabel,
             QWidget#inlineRow QCheckBox {{
-                color: {c('TEXT_PRIMARY')};
+                color: {c("TEXT_PRIMARY")};
                 background-color: transparent;
             }}
             QWidget#inlineRow QLineEdit,
             QWidget#inlineRow QComboBox,
             QWidget#inlineRow QComboBox QLineEdit {{
-                background-color: {c('INPUT_BG')};
-                color: {c('TEXT_PRIMARY')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("INPUT_BG")};
+                color: {c("TEXT_PRIMARY")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {BaseStyles.RADIUS_MD}px;
-                selection-background-color: {c('SELECTION_BG')};
-                selection-color: {c('SELECTION_TEXT')};
+                selection-background-color: {c("SELECTION_BG")};
+                selection-color: {c("SELECTION_TEXT")};
             }}
             QWidget#inlineRow QLineEdit:disabled,
             QWidget#inlineRow QComboBox:disabled,
             QWidget#inlineRow QComboBox QLineEdit:disabled,
             QWidget#inlineRow QCheckBox:disabled {{
-                color: {c('TEXT_DISABLED')};
-                background-color: {c('PANEL_BG')};
+                color: {c("TEXT_DISABLED")};
+                background-color: {c("PANEL_BG")};
             }}
             """
         )

@@ -79,9 +79,7 @@ class BasePanel(QWidget):
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
         role = FontRole.UI_SMALL if small else FontRole.UI
         label = QLabel(text)
-        label.setFont(
-            BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base
-        )
+        label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base)
         label.setProperty("fontRole", role.value)
         label.setWordWrap(False)
         if align is not None:

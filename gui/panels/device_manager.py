@@ -4,8 +4,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCompleter,
     QComboBox,
+    QCompleter,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -182,8 +182,7 @@ class DeviceManager(BasePanel):
         self.panel._connected_device_cache = devices
         # DeviceStore 可能仍在后台补全新设备信息，先显示占位行，避免刷新后列表短暂为空。
         infos = {
-            str(info.get("ip", "")): info
-            for info in DeviceStore.get_full_devices_info(devices)
+            str(info.get("ip", "")): info for info in DeviceStore.get_full_devices_info(devices)
         }
         for device in devices:
             info = infos.get(device) or {
@@ -239,8 +238,10 @@ class DeviceManager(BasePanel):
         tv.verticalHeader().setDefaultSectionSize(20)
         tv.setMinimumWidth(380)
         tv.setMaximumHeight(240)
-        tv.setStyleSheet("QTableView { border: none; }"
-                         "QHeaderView::section { padding: 2px 6px; font-weight: bold; }")
+        tv.setStyleSheet(
+            "QTableView { border: none; }"
+            "QHeaderView::section { padding: 2px 6px; font-weight: bold; }"
+        )
         self.ip_entry.setModel(model)
         self.ip_entry.setModelColumn(2)
         self.ip_entry.setView(tv)
@@ -257,11 +258,13 @@ class DeviceManager(BasePanel):
         ip_list = []
         for brand, model, ip in devs:
             ip_list.append(ip)
-            self._device_model.appendRow([
-                QStandardItem(str(brand)),
-                QStandardItem(str(model)),
-                QStandardItem(str(ip)),
-            ])
+            self._device_model.appendRow(
+                [
+                    QStandardItem(str(brand)),
+                    QStandardItem(str(model)),
+                    QStandardItem(str(ip)),
+                ]
+            )
         if ip_list:
             comp = QCompleter(ip_list, self)
             comp.setCaseSensitivity(Qt.CaseInsensitive)
@@ -315,6 +318,7 @@ class DeviceManager(BasePanel):
                     if apps_tab:
                         apps_tab.add_package_to_history(package_name)
                     break
+
         QTimer.singleShot(0, _up)
 
     # ── 信号连接 ────────────────────────────────────────────────────────
@@ -338,10 +342,16 @@ class DeviceManager(BasePanel):
             line_edit.returnPressed.connect(self._request_connect)
         self.btn_refresh.clicked.connect(lambda: LP.refresh_devices_requested.emit())
         self.btn_info.clicked.connect(lambda: LP.device_info_requested.emit(self.selected_devices))
-        self.btn_disconnect.clicked.connect(lambda: LP.disconnect_requested.emit(self.selected_devices))
-        self.btn_restart_dev.clicked.connect(lambda: LP.restart_devices_requested.emit(self.selected_devices))
+        self.btn_disconnect.clicked.connect(
+            lambda: LP.disconnect_requested.emit(self.selected_devices)
+        )
+        self.btn_restart_dev.clicked.connect(
+            lambda: LP.restart_devices_requested.emit(self.selected_devices)
+        )
         self.btn_restart_adb.doubleClicked.connect(LP.restart_adb_requested.emit)
-        self.btn_batch.clicked.connect(lambda: LP.batch_install_requested.emit(self.selected_devices))
+        self.btn_batch.clicked.connect(
+            lambda: LP.batch_install_requested.emit(self.selected_devices)
+        )
         self.listbox_devices.itemDoubleClicked.connect(self._on_device_double_click)
         self.btn_all.clicked.connect(lambda: self._set_all_checked(True))
         self.btn_none.clicked.connect(lambda: self._set_all_checked(False))

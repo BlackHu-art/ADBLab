@@ -1,4 +1,5 @@
 """编排 MobilePerf 配置解析、监控器生命周期和采集结果收尾。"""
+
 import argparse
 import os
 import queue
@@ -8,25 +9,25 @@ import time
 from configparser import ConfigParser
 
 BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, '../..'))
+sys.path.append(os.path.join(BaseDir, "../.."))
 
-from mobileperf.common.log import logger
-from mobileperf.android.tools.androiddevice import AndroidDevice
-from mobileperf.common.utils import TimeUtils, FileUtils
 from mobileperf.android.cpu_top import CpuMonitor
-from mobileperf.android.meminfos import MemMonitor
-from mobileperf.android.trafficstats import TrafficMonitor
-from mobileperf.android.fps import FPSMonitor
-from mobileperf.android.thread_num import ThreadNumMonitor
-from mobileperf.android.fd import FdMonitor
-from mobileperf.android.logcat import LogcatMonitor
 from mobileperf.android.devicemonitor import DeviceMonitor
-from mobileperf.android.monkey import Monkey
+from mobileperf.android.fd import FdMonitor
+from mobileperf.android.fps import FPSMonitor
 from mobileperf.android.globaldata import RuntimeData
+from mobileperf.android.logcat import LogcatMonitor
+from mobileperf.android.meminfos import MemMonitor
+from mobileperf.android.monkey import Monkey
 from mobileperf.android.report import Report
+from mobileperf.android.thread_num import ThreadNumMonitor
+from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.android.trafficstats import TrafficMonitor
+from mobileperf.common.log import logger
+from mobileperf.common.utils import FileUtils, TimeUtils
 
 
-class StartUp(object):
+class StartUp:
     """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
 
     def __init__(self, device_id=None, package=None, interval=None, config_path=None):
@@ -38,10 +39,10 @@ class StartUp(object):
         self.config_dic = self.parse_data_from_config()
         RuntimeData.config_dic = self.config_dic
         # 显式参数优先于配置文件，便于上层按采集会话覆盖设备、包名和采样频率。
-        self.serialnum = device_id if device_id != None else self.config_dic['serialnum']
-        self.packages = package if package != None else self.config_dic['package']
-        self.frequency = interval if interval != None else self.config_dic['frequency']
-        self.timeout = self.config_dic['timeout']
+        self.serialnum = device_id if device_id is not None else self.config_dic["serialnum"]
+        self.packages = package if package is not None else self.config_dic["package"]
+        self.frequency = interval if interval is not None else self.config_dic["frequency"]
+        self.timeout = self.config_dic["timeout"]
         self.exceptionlog_list = self.config_dic["exceptionlog"]
         self.device = AndroidDevice(self.serialnum)
         self.stop_file = os.environ.get("MOBILEPERF_STOP_FILE", "")
@@ -52,7 +53,7 @@ class StartUp(object):
         RuntimeData.packages = self.packages
 
         # 保留命令行交互状态。
-        self.keycode = ''
+        self.keycode = ""
         self.pid = 0
 
         self._init_queue()
@@ -73,14 +74,14 @@ class StartUp(object):
     def get_queue_dic(self):
         """返回监控器与数据处理器约定的队列映射。"""
         queue_dic = {}
-        queue_dic['cpu_queue'] = self.cpu_queue
-        queue_dic['mem_queue'] = self.mem_queue
-        queue_dic['power_queue'] = self.power_queue
-        queue_dic['traffic_queue'] = self.traffic_queue
-        queue_dic['fps_queue'] = self.fps_queue
-        queue_dic['fd_queue'] = self.fd_queue
-        queue_dic['thread_queue'] = self.thread_queue
-        queue_dic['activity_queue'] = self.activity_queue
+        queue_dic["cpu_queue"] = self.cpu_queue
+        queue_dic["mem_queue"] = self.mem_queue
+        queue_dic["power_queue"] = self.power_queue
+        queue_dic["traffic_queue"] = self.traffic_queue
+        queue_dic["fps_queue"] = self.fps_queue
+        queue_dic["fd_queue"] = self.fd_queue
+        queue_dic["thread_queue"] = self.thread_queue
+        queue_dic["activity_queue"] = self.activity_queue
         return queue_dic
 
     def add_monitor(self, monitor):
@@ -92,7 +93,9 @@ class StartUp(object):
     def parse_data_from_config(self):
         """读取并校验包名、采样频率、设备序列号等采集配置。"""
         config_dic = {}
-        configpath = self.config_path or os.path.join(RuntimeData.top_dir, "mobileperf", "config.conf")
+        configpath = self.config_path or os.path.join(
+            RuntimeData.top_dir, "mobileperf", "config.conf"
+        )
         logger.debug("configpath:%s" % configpath)
         if not os.path.isfile(configpath):
             logger.error("the config file didn't exist: " + configpath)
@@ -104,11 +107,13 @@ class StartUp(object):
             content = re.sub(r"\xfe\xff", "", content)
             content = re.sub(r"\xff\xfe", "", content)
             content = re.sub(r"\xef\xbb\xbf", "", content)
-            open(configpath, 'w', encoding="utf-8").write(content)
+            open(configpath, "w", encoding="utf-8").write(content)
         paser = ConfigParser()
         paser.read(configpath, encoding="utf-8")
         config_dic = self.check_config_option(config_dic, paser, "Common", "package")
-        config_dic = self.check_config_option(config_dic, paser, "Common", "pid_change_focus_package")
+        config_dic = self.check_config_option(
+            config_dic, paser, "Common", "pid_change_focus_package"
+        )
         config_dic = self.check_config_option(config_dic, paser, "Common", "frequency")
         config_dic = self.check_config_option(config_dic, paser, "Common", "dumpheap_freq")
         config_dic = self.check_config_option(config_dic, paser, "Common", "timeout")
@@ -130,35 +135,50 @@ class StartUp(object):
 
     def check_config_option(self, config_dic, parse, section, option):
         if parse.has_option(section, option):
-
             try:
                 config_dic[option] = parse.get(section, option)
-                if option == 'frequency' or option in self._monkey_int_options():
+                if option == "frequency" or option in self._monkey_int_options():
                     config_dic[option] = (int)(parse.get(section, option))
-                if option == 'dumpheap_freq':  # 配置值使用分钟，运行时统一转换为秒。
+                if option == "dumpheap_freq":  # 配置值使用分钟，运行时统一转换为秒。
                     config_dic[option] = (int)(parse.get(section, option)) * 60
-                if option == 'timeout':  # 配置值使用分钟，运行时统一转换为秒。
+                if option == "timeout":  # 配置值使用分钟，运行时统一转换为秒。
                     config_dic[option] = (int)(parse.get(section, option)) * 60
-                if option in ["exceptionlog", "phone_log_path", "space_size_check_path", "package", "pid_change_focus_package",
-                              "watcher_users", "main_activity", "activity_list"]:
+                if option in [
+                    "exceptionlog",
+                    "phone_log_path",
+                    "space_size_check_path",
+                    "package",
+                    "pid_change_focus_package",
+                    "watcher_users",
+                    "main_activity",
+                    "activity_list",
+                ]:
                     if option == "activity_list" or option == "main_activity":
-                        config_dic[option] = parse.get(section, option).strip().replace("\n", "").split(";")
+                        config_dic[option] = (
+                            parse.get(section, option).strip().replace("\n", "").split(";")
+                        )
                     else:
                         config_dic[option] = parse.get(section, option).split(";")
-            except:  # 配置值格式错误时沿用既有失败处理。
-                if option != 'serialnum':
+            except Exception:  # 配置值格式错误时沿用既有失败处理。
+                if option != "serialnum":
                     logger.debug("config option error:" + option)
                     self._config_error()
                 else:
-                    config_dic[option] = ''
+                    config_dic[option] = ""
         else:  # 未配置的可选项使用默认值，必填项进入错误处理。
             if option in self._optional_config_defaults():
                 config_dic[option] = self._optional_config_defaults()[option]
-            elif option not in ['serialnum', "main_activity", "activity_list", "pid_change_focus_package", "shell_file"]:
+            elif option not in [
+                "serialnum",
+                "main_activity",
+                "activity_list",
+                "pid_change_focus_package",
+                "shell_file",
+            ]:
                 logger.debug("config option error:" + option)
                 self._config_error()
             else:
-                config_dic[option] = ''
+                config_dic[option] = ""
         return config_dic
 
     @staticmethod
@@ -270,27 +290,58 @@ class StartUp(object):
             logger.error("test app not installed:" + self.packages[0])
             return
         try:
-            self.add_monitor(CpuMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
-            self.add_monitor(MemMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
-            self.add_monitor(TrafficMonitor(self.serialnum, self.packages, self.frequency, self.timeout))
+            self.add_monitor(
+                CpuMonitor(self.serialnum, self.packages, self.frequency, self.timeout)
+            )
+            self.add_monitor(
+                MemMonitor(self.serialnum, self.packages, self.frequency, self.timeout)
+            )
+            self.add_monitor(
+                TrafficMonitor(self.serialnum, self.packages, self.frequency, self.timeout)
+            )
             # 软件电量估算误差较大，当前采集流程不启用该监控器。
-            self.add_monitor(FPSMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
+            self.add_monitor(
+                FPSMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
+            )
             # 高版本 Android 可能限制文件描述符读取权限，监控器自行处理采集失败。
-            self.add_monitor(FdMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
-            self.add_monitor(ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout))
+            self.add_monitor(
+                FdMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
+            )
+            self.add_monitor(
+                ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
+            )
             if self.config_dic["monkey"] == "true":
-                self.add_monitor(Monkey(self.serialnum, self.packages[0], timeout=self.timeout, **self._monkey_options()))
+                self.add_monitor(
+                    Monkey(
+                        self.serialnum,
+                        self.packages[0],
+                        timeout=self.timeout,
+                        **self._monkey_options(),
+                    )
+                )
             if self.config_dic["main_activity"] and self.config_dic["activity_list"]:
-                self.add_monitor(DeviceMonitor(self.serialnum, self.packages[0], self.frequency, self.config_dic["main_activity"],
-                                               self.config_dic["activity_list"], RuntimeData.exit_event))
+                self.add_monitor(
+                    DeviceMonitor(
+                        self.serialnum,
+                        self.packages[0],
+                        self.frequency,
+                        self.config_dic["main_activity"],
+                        self.config_dic["activity_list"],
+                        RuntimeData.exit_event,
+                    )
+                )
 
             if len(self.monitors):
                 start_time = TimeUtils.getCurrentTimeUnderline()
                 RuntimeData.start_time = start_time
                 if self.config_dic["save_path"]:
-                    RuntimeData.package_save_path = os.path.join(self.config_dic["save_path"], self.packages[0], start_time)
+                    RuntimeData.package_save_path = os.path.join(
+                        self.config_dic["save_path"], self.packages[0], start_time
+                    )
                 else:
-                    RuntimeData.package_save_path = os.path.join(RuntimeData.top_dir, 'results', self.packages[0], start_time)
+                    RuntimeData.package_save_path = os.path.join(
+                        RuntimeData.top_dir, "results", self.packages[0], start_time
+                    )
                 FileUtils.makedir(RuntimeData.package_save_path)
                 self.save_device_info()
                 for monitor in self.monitors:
@@ -311,9 +362,9 @@ class StartUp(object):
                 except Exception as e:
                     logger.error(e)
 
-                timeout = time_out if time_out != None else self.config_dic['timeout']
+                timeout = time_out if time_out is not None else self.config_dic["timeout"]
                 endtime = time.time() + timeout
-                while (time.time() < endtime):  # 保持主线程存活，直至达到任一退出条件。
+                while time.time() < endtime:  # 保持主线程存活，直至达到任一退出条件。
                     # 测试过程中优先响应应用异常或外部停止信号。
                     if self.check_exit_signal_quit():
                         logger.error("app " + str(self.packages[0]) + " exit signal, quit!")
@@ -337,7 +388,9 @@ class StartUp(object):
         filelist = self.device.adb.list_dir("/data/local/tmp")
         if filelist:
             for file in filelist:
-                if self.packages[0] in file and self.device.adb.is_overtime_days("/data/local/tmp/" + file, 3):
+                if self.packages[0] in file and self.device.adb.is_overtime_days(
+                    "/data/local/tmp/" + file, 3
+                ):
                     self.device.adb.delete_file("/data/local/tmp/%s" % file)
 
     def stop(self):
@@ -358,7 +411,14 @@ class StartUp(object):
             self.device.adb.kill_process("com.android.commands.monkey")
         try:
             # 将测试时长追加到设备信息文件。
-            cost_time = round((float)(time.time() - TimeUtils.getTimeStamp(RuntimeData.start_time, TimeUtils.UnderLineFormatter)) / 3600, 2)
+            cost_time = round(
+                (float)(
+                    time.time()
+                    - TimeUtils.getTimeStamp(RuntimeData.start_time, TimeUtils.UnderLineFormatter)
+                )
+                / 3600,
+                2,
+            )
             self.add_device_info("test cost time:", str(cost_time) + "h")
         except Exception as e:
             logger.error("add test cost time failed")
@@ -391,7 +451,9 @@ class StartUp(object):
         if filelist:
             for file in filelist:
                 if self.packages[0] in file:
-                    self.device.adb.pull_file("/data/local/tmp/%s" % file, RuntimeData.package_save_path)
+                    self.device.adb.pull_file(
+                        "/data/local/tmp/%s" % file, RuntimeData.package_save_path
+                    )
 
     def pull_log_files(self):
         """将配置的设备日志目录拉取到本次结果目录。"""
@@ -404,10 +466,18 @@ class StartUp(object):
         device_file = os.path.join(RuntimeData.package_save_path, "device_test_info.txt")
         with open(device_file, "w+", encoding="utf-8") as writer:
             writer.write("device serialnum:" + self.serialnum + "\n")
-            writer.write("device model:" + self.device.adb.get_phone_brand() + " " + self.device.adb.get_phone_model() + "\n")
+            writer.write(
+                "device model:"
+                + self.device.adb.get_phone_brand()
+                + " "
+                + self.device.adb.get_phone_model()
+                + "\n"
+            )
             writer.write("test package:" + self.packages[0] + "\n")
             writer.write("system version:" + self.device.adb.get_system_version() + "\n")
-            writer.write("test package ver:" + self.device.adb.get_package_ver(self.packages[0]) + "\n")
+            writer.write(
+                "test package ver:" + self.device.adb.get_package_ver(self.packages[0]) + "\n"
+            )
 
     def add_device_info(self, key, value):
         device_file = os.path.join(RuntimeData.package_save_path, "device_test_info.txt")
@@ -415,7 +485,7 @@ class StartUp(object):
             writer.write(key + ":" + value + "\n")
 
     def check_exit_signal_quit(self):
-        if (RuntimeData.exit_event.is_set()):
+        if RuntimeData.exit_event.is_set():
             return True
         else:
             return False
@@ -424,7 +494,7 @@ class StartUp(object):
         return bool(self.stop_file and os.path.exists(self.stop_file))
 
 
-class App():
+class App:
     """保存应用包名、名称和版本信息的轻量数据对象。"""
 
     def __init__(self, package, name="", version=""):

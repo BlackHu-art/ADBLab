@@ -66,7 +66,6 @@ def _self_check_packaging() -> int:
             check(f"import:{module_name}", False, str(exc))
 
     importable("PySide6")
-    importable("requests")
     importable("mobileperf.android.startup")
 
     check("resource:icon.ico", Path(resource_path("icon.ico")).is_file())

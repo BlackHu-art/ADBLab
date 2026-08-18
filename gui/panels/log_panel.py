@@ -37,9 +37,9 @@ class LogPanel(QWidget):
         c = BaseStyles.color
         self.text_output.setStyleSheet(f"""
             QTextEdit {{
-                background-color: {c('LOG_BACKGROUND')};
-                color: {c('LOG_TEXT_COLOR')};
-                border: 1px solid {c('BORDER_COLOR')};
+                background-color: {c("LOG_BACKGROUND")};
+                color: {c("LOG_TEXT_COLOR")};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {BaseStyles.RADIUS_LG}px;
                 padding: 4px;
             }}
@@ -129,7 +129,6 @@ class LogPanel(QWidget):
     def _render_entries(self, rows: list[tuple[str, str, str]]):
         if not rows:
             return
-        c = BaseStyles.color
         cursor = self.text_output.textCursor()
         cursor.movePosition(QTextCursor.End)
         cursor.beginEditBlock()

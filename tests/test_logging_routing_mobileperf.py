@@ -23,8 +23,6 @@ from models.mobileperf.runner import MobilePerfRunConfig, MobilePerfRunner
 def _feedback_controller() -> SimpleNamespace:
     return SimpleNamespace(
         devices_updated=Mock(),
-        email_updated=Mock(),
-        vercode_updated=Mock(),
         record_finished=Mock(),
         operation_completed=Mock(),
         current_package_received=Mock(),

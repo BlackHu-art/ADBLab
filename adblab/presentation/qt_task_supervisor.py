@@ -34,7 +34,7 @@ class QtTaskSupervisor(QObject):
         self._live_instances.add(self)
 
     @classmethod
-    def shared(cls) -> "QtTaskSupervisor":
+    def shared(cls) -> QtTaskSupervisor:
         with cls._shared_lock:
             if cls._shared is None:
                 cls._shared = cls()

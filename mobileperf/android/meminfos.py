@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 采集并解析 Android 设备及目标进程的内存指标。
 """
+
 import csv
 import os
 import re
@@ -9,28 +9,26 @@ import sys
 import threading
 import time
 import traceback
-import base64
-from shutil import copyfile, rmtree
 
 BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, '../..'))
+sys.path.append(os.path.join(BaseDir, "../.."))
 
-from mobileperf.android.tools.androiddevice import AndroidDevice
-from mobileperf.common.utils import TimeUtils, FileUtils, ZipUtils
-from mobileperf.common.log import logger
 from mobileperf.android.globaldata import RuntimeData
+from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.common.log import logger
+from mobileperf.common.utils import TimeUtils
 
 
-class MemInfoPackage(object):
-    RE_PROCESS = re.compile(r'\*\* MEMINFO in pid (\d+) \[(\S+)] \*\*')
-    RE_TOTAL_PSS = re.compile(r'TOTAL\s+(\d+)')
+class MemInfoPackage:
+    RE_PROCESS = re.compile(r"\*\* MEMINFO in pid (\d+) \[(\S+)] \*\*")
+    RE_TOTAL_PSS = re.compile(r"TOTAL\s+(\d+)")
     RE_JAVA_HEAP = re.compile(r"Java Heap:\s+(\d+)")
     RE_Native_HEAP = re.compile(r"Native Heap:\s+(\d+)")
     RE_System = re.compile(r"System:\s+(\d+)")
 
     pid = 0
-    processName = ''
-    datetime = ''
+    processName = ""
+    datetime = ""
     totalPSS = 0
     totalAllocHeap = 0
     javaHeap = 0
@@ -67,7 +65,7 @@ class MemInfoPackage(object):
         if match:
             self.system = round(float(match.group(1)) / 1024, 2)
 
-        result = self.dump.split('\n')  # 按行解析 TOTAL 汇总记录。
+        result = self.dump.split("\n")  # 按行解析 TOTAL 汇总记录。
 
         for line in result:
             if "TOTAL" in line and ":" not in line:
@@ -81,15 +79,16 @@ class MemInfoDevice:
     dumpsys meminfo 开销较大，采样间隔不宜过短；Android 对应实现位于
     ``frameworks/base/core/jni/android_os_Debug.cpp``。
     """
-    RE_TOTAL_MEMORY = re.compile(r'Total RAM:\s+([\d,]+)')
-    RE_FREE_MEMORY = re.compile(r' Free RAM:\s+([\d,]+)')
+
+    RE_TOTAL_MEMORY = re.compile(r"Total RAM:\s+([\d,]+)")
+    RE_FREE_MEMORY = re.compile(r" Free RAM:\s+([\d,]+)")
     RE_USED_MEMORY = re.compile(r" Used RAM:\s+([\d,]+)")
 
     def __init__(self, dump, packages=[]):
         self.totalmem = 0
         self.freemem = 0
         self.usedmem = 0
-        self.datetime = ''
+        self.datetime = ""
         self.dump = dump
         self.packages = packages
         self.package_pid_pss_list = []
@@ -108,13 +107,18 @@ class MemInfoDevice:
         if match:
             self.usedmem = round(float(match.group(1).replace(",", "")) / 1024, 2)
 
-        logger.debug(" device general mem锛宼otal mem: " + str(self.totalmem) + ", \n used mem: " + str(self.usedmem) + ", free mem: " + str(self.freemem))
+        logger.debug(
+            " device general mem锛宼otal mem: "
+            + str(self.totalmem)
+            + ", \n used mem: "
+            + str(self.usedmem)
+            + ", free mem: "
+            + str(self.freemem)
+        )
         for package in self.packages:
             # 子进程可能尚未启动，先填充空值以保持输出结构一致。
             mem_dic = {"package": package, "pid": "", "pss": ""}
-            RE_PROCESS_MEMORY = re.compile(
-                r"([\d,]+)\s*(K|kB):\s+" + package + r"\s+\(pid\s+(\d+)"
-            )
+            RE_PROCESS_MEMORY = re.compile(r"([\d,]+)\s*(K|kB):\s+" + package + r"\s+\(pid\s+(\d+)")
             # 兼容的虚构输出示例：252,370K: <PACKAGE_NAME> (pid 12345 / activities)
             # 兼容的虚构输出示例：111920 kB: <PACKAGE_NAME> (pid 12345 / activities)
             RE_PROCESS_MEMORY_2 = re.compile(
@@ -138,7 +142,7 @@ class MemInfoDevice:
             logger.debug(mem_dic)
 
 
-class MemInfoPackageCollector(object):
+class MemInfoPackageCollector:
     def __init__(self, device, pacakges, interval=1.0, timeout=24 * 60 * 60, mem_queue=None):
         self.device = device
         self.packages = pacakges
@@ -152,12 +156,14 @@ class MemInfoPackageCollector(object):
     def start(self, start_time):
         self.start_time = start_time
         logger.debug("INFO: MemInfoPackageCollector start... ")
-        self.collect_mem_thread = threading.Thread(target=self._collect_memory_thread, args=(start_time,))
+        self.collect_mem_thread = threading.Thread(
+            target=self._collect_memory_thread, args=(start_time,)
+        )
         self.collect_mem_thread.start()
 
     def stop(self):
         logger.debug("INFO: MemInfoPackageCollector stop... ")
-        if (self.collect_mem_thread.is_alive()):
+        if self.collect_mem_thread.is_alive():
             self._stop_event.set()
             self.collect_mem_thread.join(timeout=1)
             self.collect_mem_thread = None
@@ -168,24 +174,26 @@ class MemInfoPackageCollector(object):
     def _dumpsys_meminfo(self):
         """通过 dumpsys meminfo 获取整机和各进程内存，命令本身可能耗时数秒。"""
         time_old = time.time()
-        out = self.device.adb.run_shell_cmd('dumpsys meminfo')
-        meminfo_file = os.path.join(RuntimeData.package_save_path, 'dumpsys_meminfo.txt')
+        out = self.device.adb.run_shell_cmd("dumpsys meminfo")
+        meminfo_file = os.path.join(RuntimeData.package_save_path, "dumpsys_meminfo.txt")
         with open(meminfo_file, "a+", encoding="utf-8") as writer:
             writer.write(TimeUtils.getCurrentTime() + " dumpsys meminfo info:\n")
             writer.write(out + "\n\n")
 
         passedtime = time.time() - time_old  # 记录整机 meminfo 命令耗时。
         logger.debug("dumpsys meminfo time consume:" + str(passedtime))
-        out.replace('\r', '')
+        out.replace("\r", "")
         return MemInfoDevice(dump=out, packages=self.packages)
 
     def _dumpsys_process_meminfo(self, process):
         """采集指定进程的详细内存信息，通常在一秒内完成。"""
         time_old = time.time()
-        out = self.device.adb.run_shell_cmd('dumpsys meminfo %s' % process)
+        out = self.device.adb.run_shell_cmd("dumpsys meminfo %s" % process)
         # Windows 文件名不能包含冒号，因此对子进程分隔符进行替换。
         process_rename = process.replace(":", "_")
-        meminfo_file = os.path.join(RuntimeData.package_save_path, 'dumpsys_meminfo_%s.txt' % process_rename)
+        meminfo_file = os.path.join(
+            RuntimeData.package_save_path, "dumpsys_meminfo_%s.txt" % process_rename
+        )
         with open(meminfo_file, "a+", encoding="utf-8") as writer:
             writer.write(TimeUtils.getCurrentTime() + " dumpsys meminfo package info:\n")
             if out:
@@ -193,39 +201,51 @@ class MemInfoPackageCollector(object):
 
         passedtime = time.time() - time_old  # 记录进程级 meminfo 命令耗时。
         logger.debug("dumpsys meminfo package time consume:" + str(passedtime))
-        out.replace('\r', '')
+        out.replace("\r", "")
         return MemInfoPackage(dump=out)
 
     def _collect_memory_thread(self, start_time):
         end_time = time.time() + self._timeout
         mem_list_titile = ["datatime", "total_ram(MB)", "free_ram(MB)"]
         pid_list_titile = ["datatime"]
-        pss_detail_titile = ["datatime", "package", "pid", "pss", "java_heap", "native_heap", "system"]
+        pss_detail_titile = [
+            "datatime",
+            "package",
+            "pid",
+            "pss",
+            "java_heap",
+            "native_heap",
+            "system",
+        ]
         for i in range(0, len(self.packages)):
             mem_list_titile.extend(["package", "pid", "pid_pss(MB)"])
             pid_list_titile.extend(["package", "pid"])
         if len(self.packages) > 1:
             mem_list_titile.append("total_pss(MB)")
-        mem_file = os.path.join(RuntimeData.package_save_path, 'meminfo.csv')
-        pid_file = os.path.join(RuntimeData.package_save_path, 'pid_change.csv')
+        mem_file = os.path.join(RuntimeData.package_save_path, "meminfo.csv")
+        pid_file = os.path.join(RuntimeData.package_save_path, "pid_change.csv")
         for package in self.packages:
             # 子进程名可能过长，因此缩短文件名以满足 Excel 工作表名长度限制。
             if ":" in package:
-                pss_detail_file = os.path.join(RuntimeData.package_save_path, 'pss_%s.csv' % package.split(":")[-1].split(".")[-1])
+                pss_detail_file = os.path.join(
+                    RuntimeData.package_save_path,
+                    "pss_%s.csv" % package.split(":")[-1].split(".")[-1],
+                )
             else:
-                pss_detail_file = os.path.join(RuntimeData.package_save_path,
-                                               'pss_%s.csv' % package)
-            with open(pss_detail_file, 'a+', encoding="utf-8") as df:
-                csv.writer(df, lineterminator='\n').writerow(pss_detail_titile)
+                pss_detail_file = os.path.join(
+                    RuntimeData.package_save_path, "pss_%s.csv" % package
+                )
+            with open(pss_detail_file, "a+", encoding="utf-8") as df:
+                csv.writer(df, lineterminator="\n").writerow(pss_detail_titile)
         try:
-            with open(mem_file, 'a+', encoding="utf-8") as df:
-                csv.writer(df, lineterminator='\n').writerow(mem_list_titile)
+            with open(mem_file, "a+", encoding="utf-8") as df:
+                csv.writer(df, lineterminator="\n").writerow(mem_list_titile)
                 if self.mem_queue:
-                    mem_file_dic = {'mem_file': mem_file}
+                    mem_file_dic = {"mem_file": mem_file}
                     self.mem_queue.put(mem_file_dic)
 
-            with open(pid_file, 'a+', encoding="utf-8") as df:
-                csv.writer(df, lineterminator='\n').writerow(pid_list_titile)
+            with open(pid_file, "a+", encoding="utf-8") as df:
+                csv.writer(df, lineterminator="\n").writerow(pid_list_titile)
         except RuntimeError as e:
             logger.error(e)
         starttime_stamp = TimeUtils.getTimeStamp(start_time, "%Y_%m_%d_%H_%M_%S")
@@ -240,7 +260,10 @@ class MemInfoPackageCollector(object):
         while not self._stop_event.is_set() and time.time() < end_time:
             try:
                 before = time.time()
-                logger.debug("-----------into _collect_mem_thread loop, thread is : " + str(threading.current_thread().name))
+                logger.debug(
+                    "-----------into _collect_mem_thread loop, thread is : "
+                    + str(threading.current_thread().name)
+                )
                 collection_time = time.time()
                 # 获取目标进程的详细内存信息。
                 for package in self.packages:
@@ -249,19 +272,31 @@ class MemInfoPackageCollector(object):
                         logger.error("package total pss is 0:%s" % package)
                         continue
                     if ":" in package:
-                        pss_detail_file = os.path.join(RuntimeData.package_save_path,
-                                                       'pss_%s.csv' % package.split(":")[-1].split(".")[-1])
+                        pss_detail_file = os.path.join(
+                            RuntimeData.package_save_path,
+                            "pss_%s.csv" % package.split(":")[-1].split(".")[-1],
+                        )
                     else:
-                        pss_detail_file = os.path.join(RuntimeData.package_save_path,
-                                                       'pss_%s.csv' % package)
-                    pss_detail_list = [TimeUtils.formatTimeStamp(collection_time), package, mem_pck_snapshot.pid, mem_pck_snapshot.totalPSS,
-                                       mem_pck_snapshot.javaHeap, mem_pck_snapshot.nativeHeap, mem_pck_snapshot.system]
-                    with open(pss_detail_file, 'a+', encoding="utf-8") as pss_writer:
-                        writer_p = csv.writer(pss_writer, lineterminator='\n')
+                        pss_detail_file = os.path.join(
+                            RuntimeData.package_save_path, "pss_%s.csv" % package
+                        )
+                    pss_detail_list = [
+                        TimeUtils.formatTimeStamp(collection_time),
+                        package,
+                        mem_pck_snapshot.pid,
+                        mem_pck_snapshot.totalPSS,
+                        mem_pck_snapshot.javaHeap,
+                        mem_pck_snapshot.nativeHeap,
+                        mem_pck_snapshot.system,
+                    ]
+                    with open(pss_detail_file, "a+", encoding="utf-8") as pss_writer:
+                        writer_p = csv.writer(pss_writer, lineterminator="\n")
                         writer_p.writerow(pss_detail_list)
 
                 # 按 dumpheap_freq 配置的间隔生成一次 heapdump。
-                if (before - starttime_stamp) > RuntimeData.config_dic["dumpheap_freq"] or first_dump:
+                if (before - starttime_stamp) > RuntimeData.config_dic[
+                    "dumpheap_freq"
+                ] or first_dump:
                     # 生成新文件前清理目标包遗留的 hprof 文件。
                     filelist = self.device.adb.list_dir(hprof_path)
                     if filelist:
@@ -278,44 +313,76 @@ class MemInfoPackageCollector(object):
                 if dumpsys_mem_times % 10 == 0 or first_dump:
                     mem_device_snapshot = self._dumpsys_meminfo()
                     # 正常结果的 totalmem 不应为零，据此识别无效采样。
-                    if mem_device_snapshot == None or not mem_device_snapshot.package_pid_pss_list or mem_device_snapshot.totalmem == 0:
+                    if (
+                        mem_device_snapshot is None
+                        or not mem_device_snapshot.package_pid_pss_list
+                        or mem_device_snapshot.totalmem == 0
+                    ):
                         logger.error("mem_device_snapshot is none")
                         # 无有效结果时回退计数，延后下一次整机采样。
                         dumpsys_mem_times = dumpsys_mem_times - 1
                         continue
                     first_dump = False
-                    logger.debug("current time: " + TimeUtils.getCurrentTime() + ", processname: " + ",total pss:" + str(mem_device_snapshot.total_pss))
+                    logger.debug(
+                        "current time: "
+                        + TimeUtils.getCurrentTime()
+                        + ", processname: "
+                        + ",total pss:"
+                        + str(mem_device_snapshot.total_pss)
+                    )
                     logger.debug("collection time in meminfo is : " + TimeUtils.getCurrentTime())
-                    gather_list = [TimeUtils.formatTimeStamp(collection_time), mem_device_snapshot.totalmem, mem_device_snapshot.freemem]
+                    gather_list = [
+                        TimeUtils.formatTimeStamp(collection_time),
+                        mem_device_snapshot.totalmem,
+                        mem_device_snapshot.freemem,
+                    ]
                     pid_list = [TimeUtils.formatTimeStamp(collection_time)]
                     pid_change = False
                     for i in range(0, len(self.packages)):
                         if len(mem_device_snapshot.package_pid_pss_list) == len(self.packages):
-                            gather_list.extend([mem_device_snapshot.package_pid_pss_list[i]["package"], mem_device_snapshot.package_pid_pss_list[i]["pid"],
-                                                mem_device_snapshot.package_pid_pss_list[i]["pss"]])
+                            gather_list.extend(
+                                [
+                                    mem_device_snapshot.package_pid_pss_list[i]["package"],
+                                    mem_device_snapshot.package_pid_pss_list[i]["pid"],
+                                    mem_device_snapshot.package_pid_pss_list[i]["pss"],
+                                ]
+                            )
                     if not old_package_pid_pss_list:
                         old_package_pid_pss_list = mem_device_snapshot.package_pid_pss_list
                         pid_change = True
                     else:
                         for i in range(0, len(self.packages)):
                             package = mem_device_snapshot.package_pid_pss_list[i]["package"]
-                            if mem_device_snapshot.package_pid_pss_list[i]["pid"] and \
-                                    old_package_pid_pss_list[i]["pid"] != mem_device_snapshot.package_pid_pss_list[i]["pid"]:
+                            if (
+                                mem_device_snapshot.package_pid_pss_list[i]["pid"]
+                                and old_package_pid_pss_list[i]["pid"]
+                                != mem_device_snapshot.package_pid_pss_list[i]["pid"]
+                            ):
                                 pid_change = True
                                 # 仅在上一次 PID 有效时处理进程切换。
                                 if old_package_pid_pss_list[i]["pid"]:
-                                    if package and package in RuntimeData.config_dic["pid_change_focus_package"]:
+                                    if (
+                                        package
+                                        and package
+                                        in RuntimeData.config_dic["pid_change_focus_package"]
+                                    ):
                                         # 仅为关注的包拉取可能存在的 tombstones 文件。
-                                        self.device.adb.pull_file("/data/vendor/tombstones",
-                                                                  RuntimeData.package_save_path)
+                                        self.device.adb.pull_file(
+                                            "/data/vendor/tombstones", RuntimeData.package_save_path
+                                        )
                     if pid_change:
                         old_package_pid_pss_list = mem_device_snapshot.package_pid_pss_list
                         for i in range(0, len(self.packages)):
                             if len(old_package_pid_pss_list) == len(self.packages):
-                                pid_list.extend([old_package_pid_pss_list[i]["package"], old_package_pid_pss_list[i]["pid"]])
+                                pid_list.extend(
+                                    [
+                                        old_package_pid_pss_list[i]["package"],
+                                        old_package_pid_pss_list[i]["pid"],
+                                    ]
+                                )
                         try:
-                            with open(pid_file, 'a+', encoding="utf-8") as pid_writer:
-                                writer_p = csv.writer(pid_writer, lineterminator='\n')
+                            with open(pid_file, "a+", encoding="utf-8") as pid_writer:
+                                writer_p = csv.writer(pid_writer, lineterminator="\n")
                                 writer_p.writerow(pid_list)
                                 logger.debug("write to file:" + pid_file)
                                 logger.debug(pid_list)
@@ -328,8 +395,8 @@ class MemInfoPackageCollector(object):
                         self.mem_queue.put(gather_list)
                     if not self.mem_queue:  # 未提供上报队列时直接保存本地结果。
                         try:
-                            with open(mem_file, 'a+', encoding="utf-8") as mem_writer:
-                                writer_p = csv.writer(mem_writer, lineterminator='\n')
+                            with open(mem_file, "a+", encoding="utf-8") as mem_writer:
+                                writer_p = csv.writer(mem_writer, lineterminator="\n")
                                 writer_p.writerow(gather_list)
                                 logger.debug("write to file:" + mem_file)
                                 logger.debug(gather_list)
@@ -342,7 +409,7 @@ class MemInfoPackageCollector(object):
                 logger.info("time consume for meminfos: " + str(time_consume))
                 if delta_inter > 0:
                     time.sleep(delta_inter)
-            except:
+            except Exception:
                 logger.error("an exception hanpend in meminfo thread, reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
@@ -352,17 +419,26 @@ class MemInfoPackageCollector(object):
         logger.debug("stop event is set or timeout")
 
 
-class MemMonitor(object):
+class MemMonitor:
     def __init__(self, device_id, packages, interval=1.0, timeout=24 * 60 * 60, mem_queue=None):
-        self.device = AndroidDevice(device_id, )
+        self.device = AndroidDevice(
+            device_id,
+        )
         if not packages:
             packages = self.device.adb.get_foreground_process().split("#")
         self.packages = packages
-        self.meminfo_package_collector = MemInfoPackageCollector(self.device, self.packages, interval, timeout, mem_queue)
+        self.meminfo_package_collector = MemInfoPackageCollector(
+            self.device, self.packages, interval, timeout, mem_queue
+        )
 
     def start(self, start_time):
         if not RuntimeData.package_save_path:
-            RuntimeData.package_save_path = os.path.join(os.path.abspath(os.path.join(os.getcwd(), "../..")), 'results', self.packages[0], start_time)
+            RuntimeData.package_save_path = os.path.join(
+                os.path.abspath(os.path.join(os.getcwd(), "../..")),
+                "results",
+                self.packages[0],
+                start_time,
+            )
             if not os.path.exists(RuntimeData.package_save_path):
                 os.makedirs(RuntimeData.package_save_path)
         self.start_time = start_time

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import QCheckBox, QGridLayout, QHBoxLayout, QSizePolicy, 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
 from gui.panels.base_panel import BasePanel
-from gui.styles import BaseStyles
 from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
 from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 

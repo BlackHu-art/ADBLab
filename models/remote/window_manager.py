@@ -6,7 +6,6 @@ import ctypes
 import sys
 import time
 
-
 SW_RESTORE = 9
 
 

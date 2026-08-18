@@ -1,26 +1,34 @@
-# -*- coding: utf-8 -*-
 """监控目标应用的前台 Activity 和安装状态。"""
-import os
-import re
 
-import sys, csv
-import threading
+import csv
+import os
 import random
+import sys
+import threading
 import time
 import traceback
 
 BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, '../..'))
-from mobileperf.common.log import logger
-from mobileperf.android.tools.androiddevice import AndroidDevice
+sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.android.globaldata import RuntimeData
+from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
 
 
-class DeviceMonitor(object):
+class DeviceMonitor:
     """轮询目标应用的前台 Activity，并提供卸载状态检查能力。"""
 
-    def __init__(self, device_id, packagename, interval=1.0, main_activity=[], activity_list=[], event=None, activity_queue=None):
+    def __init__(
+        self,
+        device_id,
+        packagename,
+        interval=1.0,
+        main_activity=[],
+        activity_list=[],
+        event=None,
+        activity_queue=None,
+    ):
         """初始化监控目标、轮询间隔、允许的 Activity 列表和结果队列。"""
         self.uninstall_flag = event
         self.device = AndroidDevice(device_id)
@@ -48,11 +56,11 @@ class DeviceMonitor(object):
 
     def _activity_monitor_thread(self):
         activity_title = ("datetime", "current_activity")
-        self.activity_file = os.path.join(RuntimeData.package_save_path, 'current_activity.csv')
+        self.activity_file = os.path.join(RuntimeData.package_save_path, "current_activity.csv")
         try:
-            with open(self.activity_file, 'a+') as af:
-                csv.writer(af, lineterminator='\n').writerow(activity_title)
-        except Exception as e:
+            with open(self.activity_file, "a+") as af:
+                csv.writer(af, lineterminator="\n").writerow(activity_title)
+        except Exception:
             logger.error("file not found: " + str(self.activity_file))
 
         while not self.stop_event.is_set():
@@ -68,15 +76,18 @@ class DeviceMonitor(object):
                     logger.debug("current activity: " + self.current_activity)
                     if self.main_activity and self.activity_list:
                         if self.current_activity not in self.activity_list:
-                            start_activity = self.packagename + "/" + self.main_activity[
-                                random.randint(0, len(self.main_activity) - 1)]
+                            start_activity = (
+                                self.packagename
+                                + "/"
+                                + self.main_activity[random.randint(0, len(self.main_activity) - 1)]
+                            )
                             logger.debug("start_activity:" + start_activity)
                             self.device.adb.start_activity(start_activity)
                     activity_tuple = (TimeUtils.getCurrentTime(), self.current_activity)
                     # 前台 Activity 同时写入 CSV，便于与其他性能指标按时间对齐。
                     try:
-                        with open(self.activity_file, 'a+', encoding="utf-8") as writer:
-                            writer_p = csv.writer(writer, lineterminator='\n')
+                        with open(self.activity_file, "a+", encoding="utf-8") as writer:
+                            writer_p = csv.writer(writer, lineterminator="\n")
                             writer_p.writerow(activity_tuple)
                     except RuntimeError as e:
                         logger.error(e)
@@ -85,7 +96,7 @@ class DeviceMonitor(object):
                 logger.debug("get app activity time consumed: " + str(time_consume))
                 if delta_inter > 0:
                     time.sleep(delta_inter)
-            except Exception as e:
+            except Exception:
                 s = traceback.format_exc()
                 logger.debug(s)  # 堆栈仅进入开发诊断通道。
                 if self.activity_queue:
@@ -103,12 +114,19 @@ class DeviceMonitor(object):
                     self.uninstall_flag.set()
             time_consume = time.time() - before
             delta_inter = self.interval * 10 - time_consume
-            logger.debug("check installed app: " + self.packagename + ", time consumed: " + str(time_consume) + ", is installed: " + str(is_installed))
+            logger.debug(
+                "check installed app: "
+                + self.packagename
+                + ", time consumed: "
+                + str(time_consume)
+                + ", is installed: "
+                + str(is_installed)
+            )
             if delta_inter > 0:
                 time.sleep(delta_inter)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     monitor = DeviceMonitor("NVGILZSO99999999", "com.taobao.taobao", 2)
     monitor.start(time.time())
     time.sleep(60)

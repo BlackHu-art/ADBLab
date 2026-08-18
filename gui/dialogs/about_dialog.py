@@ -19,7 +19,6 @@ from utils.resource_path import resource_path
 
 
 class AboutDialog(QDialog):
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("About ADBLab")
@@ -133,36 +132,37 @@ class AboutDialog(QDialog):
 
         def c(k):
             return BaseStyles.color(k)
+
         accent = c("BUTTON_ACCENT")
         r = BaseStyles.RADIUS_MD
 
         self.setStyleSheet(f"""
             QDialog {{
-                background-color: {c('PANEL_BG')};
+                background-color: {c("PANEL_BG")};
             }}
             QFrame#aboutHeader {{
                 background-color: transparent;
                 border: none;
             }}
             QLabel#aboutTitle {{
-                color: {c('TITLE_COLOR')};
+                color: {c("TITLE_COLOR")};
                 background: transparent;
             }}
             QLabel#aboutVer {{
-                color: {c('TEXT_SECONDARY')};
+                color: {c("TEXT_SECONDARY")};
                 background: transparent;
             }}
             QLabel#aboutQR {{
-                border: 1px solid {c('BORDER_COLOR')};
+                border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {r}px;
                 background-color: #ffffff;
             }}
             QLabel#aboutHint {{
-                color: {c('BUTTON_ACCENT')};
+                color: {c("BUTTON_ACCENT")};
                 background: transparent;
             }}
             QLabel#aboutFooter {{
-                color: {c('TEXT_DISABLED')};
+                color: {c("TEXT_DISABLED")};
                 background: transparent;
             }}
             QPushButton#aboutCloseBtn {{
@@ -172,10 +172,10 @@ class AboutDialog(QDialog):
                 border-radius: {r}px;
             }}
             QPushButton#aboutCloseBtn:hover {{
-                background-color: {c('BUTTON_ACCENT_HOVER')};
+                background-color: {c("BUTTON_ACCENT_HOVER")};
             }}
             QPushButton#aboutCloseBtn:pressed {{
-                background-color: {c('BUTTON_ACCENT_PRESSED')};
+                background-color: {c("BUTTON_ACCENT_PRESSED")};
             }}
         """)
         self._close_btn.setMinimumHeight(30)

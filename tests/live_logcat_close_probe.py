@@ -80,12 +80,8 @@ def run_probe() -> int:
             super().closeEvent(event)
 
     app = QApplication([])
-    app.lastWindowClosed.connect(
-        lambda: state["last_window_closed_phases"].append(state["phase"])
-    )
-    app.aboutToQuit.connect(
-        lambda: state["about_to_quit_phases"].append(state["phase"])
-    )
+    app.lastWindowClosed.connect(lambda: state["last_window_closed_phases"].append(state["phase"]))
+    app.aboutToQuit.connect(lambda: state["about_to_quit_phases"].append(state["phase"]))
     with (
         patch.object(MainFrame, "_bootstrap_adb_async", lambda self: None),
         patch.object(MainFrame, "_start_device_discovery", lambda self: None),
@@ -187,9 +183,11 @@ def run_probe() -> int:
     QTimer.singleShot(0, start_cycle)
     QTimer.singleShot(
         8000,
-        lambda: fail("global lifecycle timeout")
-        if state["phase"] not in {"deliberate", "failed"}
-        else None,
+        lambda: (
+            fail("global lifecycle timeout")
+            if state["phase"] not in {"deliberate", "failed"}
+            else None
+        ),
     )
     app.exec()
     print(json.dumps(state, sort_keys=True))

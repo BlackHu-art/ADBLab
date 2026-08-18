@@ -200,9 +200,7 @@ def test_mobileperf_runner_callback_failures_do_not_interrupt_pipe_drain(tmp_pat
     assert stdout.closed is True
     assert stderr.closed is True
     assert callback_calls == 4
-    assert "\n".join(received).splitlines() == [
-        f"OUT-{index}" for index in range(2, 8)
-    ]
+    assert "\n".join(received).splitlines() == [f"OUT-{index}" for index in range(2, 8)]
 
 
 def test_mobileperf_runner_old_stderr_uses_its_own_run_context(

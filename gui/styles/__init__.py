@@ -4,9 +4,9 @@
     from gui.styles import BaseStyles, get_default_font
 """
 
-from .theme import ThemeMixin
-from .qss import QSSMixin
 from .fonts import FontConfig, FontMixin, FontRole, get_default_font
+from .qss import QSSMixin
+from .theme import ThemeMixin
 
 
 class BaseStyles(ThemeMixin, QSSMixin, FontMixin):

@@ -4,14 +4,13 @@ __pycache__/
 .codex/
 .vscode/
 .idea/
-core/mail/mail.yaml
 .mypy_cache/
 .playwright-cli/
 .pytest_cache/
 .ruff_cache/
 .superpowers/
+/pyright_output.json
 
 
 logs/
 resources/app.log
-common/mail/mail.yaml

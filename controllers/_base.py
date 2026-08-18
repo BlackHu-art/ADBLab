@@ -3,7 +3,6 @@
 import os
 import threading
 import uuid
-from concurrent.futures import Future
 from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QThreadPool, Slot
@@ -11,7 +10,6 @@ from PySide6.QtCore import QThreadPool, Slot
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.operations import OperationManager, OperationState
 from core.log_service import LogService
-from core.mail.email_task import GetRandomEmailTask
 from core.perf_trace import (
     DEFAULT_SLOW_THRESHOLD_MS,
     format_perf,
@@ -278,14 +276,6 @@ class _ADBControllerBase:
         os.makedirs(default_dir, exist_ok=True)
         self.last_save_dir = default_dir
         return default_dir
-
-    def start_random_email_task(self):
-        task = GetRandomEmailTask()
-        self._email_task = task
-        task.signals.log_signal.connect(self.log_service.log)
-        task.signals.email_updated.connect(self.signals.email_updated)
-        task.signals.vercode_updated.connect(self.signals.vercode_updated)
-        self.thread_pool.start(task)
 
     def shutdown(self):
         """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""

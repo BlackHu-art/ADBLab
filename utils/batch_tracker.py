@@ -33,9 +33,7 @@ class BatchOperationTracker:
                 self._completed = True
                 failed = self.total - self.success
                 summary = (
-                    f"🎯 {self.op_name} completed; "
-                    f"✅ Success: {self.success}; "
-                    f"❌ Failed: {failed}"
+                    f"🎯 {self.op_name} completed; ✅ Success: {self.success}; ❌ Failed: {failed}"
                 )
                 summary_args = (self.op_name, failed == 0, summary)
 

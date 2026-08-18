@@ -15,21 +15,26 @@ class ADBSystemMixin:
     def grant_permission_async(self, device_ip: str, package: str, permission: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "grant", package, permission],
-            device_ip=device_ip, package=package, permission=permission,
+            device_ip=device_ip,
+            package=package,
+            permission=permission,
         )
 
     @async_command
     def revoke_permission_async(self, device_ip: str, package: str, permission: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "revoke", package, permission],
-            device_ip=device_ip, package=package, permission=permission,
+            device_ip=device_ip,
+            package=package,
+            permission=permission,
         )
 
     @async_command
     def reset_permissions_async(self, device_ip: str, package: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "reset-permissions", package],
-            device_ip=device_ip, package=package,
+            device_ip=device_ip,
+            package=package,
         )
 
     @async_command
@@ -46,21 +51,24 @@ class ADBSystemMixin:
     def disable_package_async(self, device_ip: str, package: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "disable", package],
-            device_ip=device_ip, package=package,
+            device_ip=device_ip,
+            package=package,
         )
 
     @async_command
     def enable_package_async(self, device_ip: str, package: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "enable", package],
-            device_ip=device_ip, package=package,
+            device_ip=device_ip,
+            package=package,
         )
 
     @async_command
     def disable_package_user_async(self, device_ip: str, package: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "disable-user", package],
-            device_ip=device_ip, package=package,
+            device_ip=device_ip,
+            package=package,
         )
 
     # 广播 Intent
@@ -83,24 +91,38 @@ class ADBSystemMixin:
     # Activity 启动
 
     @async_command
-    def start_activity_async(self, device_ip: str, component: str = "",
-                             action: str = "", data_uri: str = "",
-                             mime_type: str = "", flags: str = "",
-                             wait: bool = False) -> dict:
+    def start_activity_async(
+        self,
+        device_ip: str,
+        component: str = "",
+        action: str = "",
+        data_uri: str = "",
+        mime_type: str = "",
+        flags: str = "",
+        wait: bool = False,
+    ) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "am", "start"]
-        if component:   cmd.extend(["-n", component])
-        if action:      cmd.extend(["-a", action])
-        if data_uri:    cmd.extend(["-d", data_uri])
-        if mime_type:   cmd.extend(["-t", mime_type])
-        if flags:       cmd.extend(["-f", flags])
-        if wait:        cmd.append("-W")
+        if component:
+            cmd.extend(["-n", component])
+        if action:
+            cmd.extend(["-a", action])
+        if data_uri:
+            cmd.extend(["-d", data_uri])
+        if mime_type:
+            cmd.extend(["-t", mime_type])
+        if flags:
+            cmd.extend(["-f", flags])
+        if wait:
+            cmd.append("-W")
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     @async_command
     def open_deep_link_async(self, device_ip: str, uri: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "am", "start", "-d", uri],
-            timeout=15, device_ip=device_ip, uri=uri,
+            timeout=15,
+            device_ip=device_ip,
+            uri=uri,
         )
 
     # 进程管理
@@ -109,33 +131,39 @@ class ADBSystemMixin:
     def list_processes_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "ps", "-A"],
-            timeout=10, device_ip=device_ip,
+            timeout=10,
+            device_ip=device_ip,
         )
 
     @async_command
     def top_snapshot_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "top", "-b", "-n", "1"],
-            timeout=10, device_ip=device_ip,
+            timeout=10,
+            device_ip=device_ip,
         )
 
     @async_command
     def kill_process_async(self, device_ip: str, pid: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "kill", pid],
-            device_ip=device_ip, pid=pid,
+            device_ip=device_ip,
+            pid=pid,
         )
 
     # 内容提供器（Content Provider）
 
     @async_command
-    def content_query_async(self, device_ip: str, uri: str,
-                            projection: str = "", where: str = "",
-                            sort: str = "") -> dict:
+    def content_query_async(
+        self, device_ip: str, uri: str, projection: str = "", where: str = "", sort: str = ""
+    ) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "content", "query", "--uri", uri]
-        if projection:  cmd.extend(["--projection", projection])
-        if where:       cmd.extend(["--where", where])
-        if sort:        cmd.extend(["--sort", sort])
+        if projection:
+            cmd.extend(["--projection", projection])
+        if where:
+            cmd.extend(["--where", where])
+        if sort:
+            cmd.extend(["--sort", sort])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     @async_command
@@ -158,14 +186,16 @@ class ADBSystemMixin:
     def battery_set_level_async(self, device_ip: str, level: int) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "level", str(level)],
-            device_ip=device_ip, level=level,
+            device_ip=device_ip,
+            level=level,
         )
 
     @async_command
     def battery_set_status_async(self, device_ip: str, status: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "status", str(status)],
-            device_ip=device_ip, status=status,
+            device_ip=device_ip,
+            status=status,
         )
 
     @async_command
@@ -182,7 +212,8 @@ class ADBSystemMixin:
         action = "enable" if enable else "disable"
         return self._run(
             ["adb", "-s", device_ip, "shell", "svc", "wifi", action],
-            device_ip=device_ip, action=action,
+            device_ip=device_ip,
+            action=action,
         )
 
     @async_command
@@ -190,7 +221,8 @@ class ADBSystemMixin:
         action = "enable" if enable else "disable"
         return self._run(
             ["adb", "-s", device_ip, "shell", "svc", "data", action],
-            device_ip=device_ip, action=action,
+            device_ip=device_ip,
+            action=action,
         )
 
     @async_command
@@ -198,7 +230,8 @@ class ADBSystemMixin:
         action = "enable" if enable else "disable"
         return self._run(
             ["adb", "-s", device_ip, "shell", "svc", "bluetooth", action],
-            device_ip=device_ip, action=action,
+            device_ip=device_ip,
+            action=action,
         )
 
     @async_command
@@ -206,7 +239,8 @@ class ADBSystemMixin:
         action = "enable" if enable else "disable"
         return self._run(
             ["adb", "-s", device_ip, "shell", "svc", "nfc", action],
-            device_ip=device_ip, action=action,
+            device_ip=device_ip,
+            action=action,
         )
 
     @async_command
@@ -221,7 +255,8 @@ class ADBSystemMixin:
         mode = "yes" if enable else "no"
         return self._run(
             ["adb", "-s", device_ip, "shell", "cmd", "uimode", "night", mode],
-            device_ip=device_ip, mode=mode,
+            device_ip=device_ip,
+            mode=mode,
         )
 
     @async_command
@@ -247,19 +282,22 @@ class ADBSystemMixin:
     def emu_sms_send_async(self, device_ip: str, sender: str, text: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "emu", "sms", "send", sender, text],
-            device_ip=device_ip, sender=sender,
+            device_ip=device_ip,
+            sender=sender,
         )
 
     @async_command
     def emu_call_async(self, device_ip: str, number: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "emu", "call", number],
-            device_ip=device_ip, number=number,
+            device_ip=device_ip,
+            number=number,
         )
 
     @async_command
-    def emu_geo_fix_async(self, device_ip: str, longitude: str,
-                          latitude: str, altitude: str = "") -> dict:
+    def emu_geo_fix_async(
+        self, device_ip: str, longitude: str, latitude: str, altitude: str = ""
+    ) -> dict:
         cmd = ["adb", "-s", device_ip, "emu", "geo", "fix", longitude, latitude]
         if altitude:
             cmd.append(altitude)
@@ -301,14 +339,16 @@ class ADBSystemMixin:
     def pm_dump_async(self, device_ip: str, package: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "dump", package],
-            timeout=15, device_ip=device_ip,
+            timeout=15,
+            device_ip=device_ip,
         )
 
     @async_command
     def pm_list_features_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "list", "features"],
-            timeout=10, device_ip=device_ip,
+            timeout=10,
+            device_ip=device_ip,
         )
 
     @async_command
@@ -325,7 +365,9 @@ class ADBSystemMixin:
         state = "true" if inactive else "false"
         return self._run(
             ["adb", "-s", device_ip, "shell", "am", "set-inactive", package, state],
-            device_ip=device_ip, package=package, inactive=state,
+            device_ip=device_ip,
+            package=package,
+            inactive=state,
         )
 
     @async_command

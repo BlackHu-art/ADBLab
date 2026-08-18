@@ -9,9 +9,9 @@ import io
 import re
 import sys
 import tokenize
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
 
 # 只纳入已经完成人工治理的目录，后续按批次扩展，避免历史债务阻断现有开发。
 MANAGED_PATHS = (

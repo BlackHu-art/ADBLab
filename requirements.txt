@@ -2,10 +2,6 @@ PySide6==6.8.1.1
 PySide6_Addons==6.8.1.1
 PySide6_Essentials==6.8.1.1
 PyYAML==6.0.2
-Requests==2.32.5
-ruamel.base==1.0.0
-ruamel.yaml
-ruamel.yaml.clib
-pyinstaller
-Pillow
-psutil
+pyinstaller==6.22.2
+Pillow==12.3.0
+psutil==7.2.2

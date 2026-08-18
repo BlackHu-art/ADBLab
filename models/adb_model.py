@@ -14,6 +14,7 @@ from core.perf_trace import attach_perf, build_async_perf, perf_counter
 
 from .base.command_runner import CommandRunner
 
+
 def async_command(method):
     """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。"""
 
@@ -112,11 +113,14 @@ class ADBModelCore(QObject):
 
     @classmethod
     def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:
-        """执行命令，返回 {"success": True, "output": ..., ...} 或 {"success": False, "error": ..., ...}。
+        (
+            """执行命令，返回 {"success": True, "output": ..., ...} 或 """
+            """{"success": False, "error": ..., ...}。
 
         extra 关键字参数会合并到返回字典（如 device_ip、package 等）。
         全项目 @async_command 方法的统一入口。
         """
+        )
         r = CommandRunner.run(cmd, timeout=timeout, shell=shell)
         if r.success:
             return {"success": True, "output": r.output, **extra}

@@ -151,7 +151,7 @@ class AppManagerWorker(QThread):
             except Exception:
                 self.app_detail_batch.emit(pkg, "", "", "")
             if i % 10 == 0:
-                self.log_message.emit(f"Details: {i+1}/{total}")
+                self.log_message.emit(f"Details: {i + 1}/{total}")
 
     def _load_detail_batch_once(self, packages) -> bool:
         safe_packages = [pkg for pkg in packages if _PACKAGE_NAME_RE.match(str(pkg or ""))]
@@ -159,11 +159,13 @@ class AppManagerWorker(QThread):
             return False
         script_parts = []
         for i, pkg in enumerate(packages):
-            script_parts.extend([
-                f"echo {_DETAIL_BEGIN.format(i)}",
-                f"dumpsys package {pkg}",
-                f"echo {_DETAIL_END.format(i)}",
-            ])
+            script_parts.extend(
+                [
+                    f"echo {_DETAIL_BEGIN.format(i)}",
+                    f"dumpsys package {pkg}",
+                    f"echo {_DETAIL_END.format(i)}",
+                ]
+            )
         result = self._adb("shell", " ; ".join(script_parts), timeout=max(5, len(packages) * 2))
         if not result.success:
             return False
@@ -175,7 +177,7 @@ class AppManagerWorker(QThread):
                 return True
             self._emit_package_detail(pkg, sections.get(i, ""))
             if i % 10 == 0:
-                self.log_message.emit(f"Details: {i+1}/{len(packages)}")
+                self.log_message.emit(f"Details: {i + 1}/{len(packages)}")
         return True
 
     def _emit_package_detail(self, pkg: str, out: str):
@@ -201,14 +203,19 @@ class AppManagerWorker(QThread):
         m_ms = re.search(r"minSdk=(\d+)", out)
         m_ts = re.search(r"targetSdk=(\d+)", out)
         label = m_label.group(1).strip() if m_label else pkg.split(".")[-1].capitalize()
-        self.app_details_loaded.emit({
-            "App Name": label,
-            "Package": pkg,
-            "Path": m_cp.group(1) if m_cp else "?",
-            "Version": f"{m_vn.group(1) if m_vn else '?'} (code {m_vc.group(1) if m_vc else '?'})",
-            "Min SDK": m_ms.group(1) if m_ms else "?",
-            "Target SDK": m_ts.group(1) if m_ts else "?",
-        })
+        self.app_details_loaded.emit(
+            {
+                "App Name": label,
+                "Package": pkg,
+                "Path": m_cp.group(1) if m_cp else "?",
+                "Version": (
+                    f"{m_vn.group(1) if m_vn else '?'} (code "
+                    f"{m_vc.group(1) if m_vc else '?'})"
+                ),
+                "Min SDK": m_ms.group(1) if m_ms else "?",
+                "Target SDK": m_ts.group(1) if m_ts else "?",
+            }
+        )
 
     def _fetch_permissions(self, pkg):
         r = self._adb("shell", f"dumpsys package {pkg}")
@@ -216,7 +223,11 @@ class AppManagerWorker(QThread):
 
         def ps(h, t):
             m = re.search(h + r":\n((?:.+?\n)+?)(?:\n\S|\Z)", t, re.MULTILINE)
-            return [line.strip() for line in m.group(1).strip().splitlines() if line.strip()] if m else []
+            return (
+                [line.strip() for line in m.group(1).strip().splitlines() if line.strip()]
+                if m
+                else []
+            )
 
         declared = [p.split(":")[0] for p in ps(r"declared permissions", out)]
         requested = ps(r"requested permissions", out)
@@ -238,7 +249,7 @@ class AppManagerWorker(QThread):
         if not cmd:
             return
         r = self._adb(*cmd)
-        self.log_message.emit(f"{'OK' if r.returncode==0 else 'FAIL'}: {action} {pkg}")
+        self.log_message.emit(f"{'OK' if r.returncode == 0 else 'FAIL'}: {action} {pkg}")
         if r.returncode == 0:
             self.operation_done.emit(action)
 
@@ -254,8 +265,7 @@ class AppManagerWorker(QThread):
         )
         if not result.success:
             self.log_message.emit(
-                f"Failed to launch {pkg}: "
-                f"{self._command_error(result, 'launch command failed')}"
+                f"Failed to launch {pkg}: {self._command_error(result, 'launch command failed')}"
             )
             return
         self.log_message.emit(f"Launched {pkg}")
@@ -265,8 +275,7 @@ class AppManagerWorker(QThread):
         r = self._adb("shell", "pm", "clear", pkg)
         if not r.success:
             self.log_message.emit(
-                f"Failed to clear data for {pkg}: "
-                f"{self._command_error(r, 'clear command failed')}"
+                f"Failed to clear data for {pkg}: {self._command_error(r, 'clear command failed')}"
             )
             return
         self.log_message.emit(f"Cleared data: {pkg} — {r.stdout.strip()}")
@@ -288,8 +297,7 @@ class AppManagerWorker(QThread):
         r = self._adb("shell", f"pm path {pkg}")
         if not r.success:
             self.log_message.emit(
-                f"Backup failed for {pkg}: "
-                f"{self._command_error(r, 'failed to fetch APK paths')}"
+                f"Backup failed for {pkg}: {self._command_error(r, 'failed to fetch APK paths')}"
             )
             return
         paths = [
@@ -361,21 +369,19 @@ class AppManagerWorker(QThread):
                     with zipfile.ZipFile(zp, "r") as zf:
                         safe_extract_zip(zf, tmp)
                     apks = [
-                        os.path.join(r, f) for r, _, fs in os.walk(tmp)
-                        for f in fs if f.endswith(".apk")
+                        os.path.join(r, f)
+                        for r, _, fs in os.walk(tmp)
+                        for f in fs
+                        if f.endswith(".apk")
                     ]
                     if not apks:
                         raise RuntimeError("backup contains no APK files")
                     is_split = len(apks) > 1 and any("base.apk" in a.lower() for a in apks)
                     if is_split:
-                        install_result = self._adb(
-                            "install-multiple", "-r", *apks, timeout=120
-                        )
+                        install_result = self._adb("install-multiple", "-r", *apks, timeout=120)
                         if not install_result.success:
                             raise RuntimeError(
-                                self._command_error(
-                                    install_result, "install-multiple failed"
-                                )
+                                self._command_error(install_result, "install-multiple failed")
                             )
                     else:
                         for a in apks:
@@ -385,16 +391,14 @@ class AppManagerWorker(QThread):
                                     self._command_error(install_result, "install failed")
                                 )
                 succeeded += 1
-                self.log_message.emit(f"Restored ({i+1}/{len(files)}): {os.path.basename(zp)}")
+                self.log_message.emit(f"Restored ({i + 1}/{len(files)}): {os.path.basename(zp)}")
             except Exception as e:
                 failed += 1
                 self.log_message.emit(
-                    f"Restore failed ({i+1}/{len(files)}) for {os.path.basename(zp)}: {e}"
+                    f"Restore failed ({i + 1}/{len(files)}) for {os.path.basename(zp)}: {e}"
                 )
         if failed:
-            self.log_message.emit(
-                f"Restore incomplete: {succeeded} succeeded, {failed} failed"
-            )
+            self.log_message.emit(f"Restore incomplete: {succeeded} succeeded, {failed} failed")
             return
         self.log_message.emit(f"Restore complete: {succeeded}/{len(files)} succeeded")
         self.operation_done.emit("restore")

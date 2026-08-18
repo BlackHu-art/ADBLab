@@ -1,7 +1,6 @@
 import re
 from pathlib import Path
 
-
 WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
 RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
@@ -54,7 +53,7 @@ def test_published_releases_and_tags_are_immutable():
     assert 'gh release view "$TAG"' in workflow
     assert 'git ls-remote --exit-code --tags origin "refs/tags/$TAG"' in workflow
     assert workflow.count("published versions are immutable.") == 2
-    assert "gh release create \"$TAG\"" in workflow
+    assert 'gh release create "$TAG"' in workflow
     assert "gh release delete" not in workflow
     assert "gh run delete" not in workflow
     assert "--cleanup-tag" not in workflow

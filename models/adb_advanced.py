@@ -29,8 +29,13 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def start_screen_record_async(
-        self, device_ip: str, save_dir: str, duration: int = 30,
-        width: str = "", height: str = "", bitrate: str = "8000000",
+        self,
+        device_ip: str,
+        save_dir: str,
+        duration: int = 30,
+        width: str = "",
+        height: str = "",
+        bitrate: str = "8000000",
     ) -> dict:
         try:
             sanitized = re.sub(r"\W+", "_", device_ip)
@@ -38,24 +43,39 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             filename = f"record_{sanitized}_{timestamp}.mp4"
             remote_path = f"/sdcard/{filename}"
             cmd = [
-                "adb", "-s", device_ip, "shell", "screenrecord",
-                "--time-limit", str(duration), "--bit-rate", bitrate,
+                "adb",
+                "-s",
+                device_ip,
+                "shell",
+                "screenrecord",
+                "--time-limit",
+                str(duration),
+                "--bit-rate",
+                bitrate,
             ]
             if width and height:
                 cmd.extend(["--size", f"{width}x{height}"])
             cmd.append(remote_path)
             proc = self._rec_procs.start(
-                f"record_{device_ip}", cmd,
+                f"record_{device_ip}",
+                cmd,
                 stderr=subprocess.PIPE,
             )
             time.sleep(0.3)
             if proc.poll() is not None:
                 err = proc.stderr.read().decode(errors="ignore").strip()
-                return {"success": False, "device_ip": device_ip,
-                        "error": err or "screenrecord exited immediately"}
+                return {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "error": err or "screenrecord exited immediately",
+                }
             return {
-                "success": True, "device_ip": device_ip, "remote_path": remote_path,
-                "proc_pid": proc.pid, "filename": filename, "save_dir": save_dir,
+                "success": True,
+                "device_ip": device_ip,
+                "remote_path": remote_path,
+                "proc_pid": proc.pid,
+                "filename": filename,
+                "save_dir": save_dir,
                 "duration": duration,
             }
         except Exception as e:
@@ -66,10 +86,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         try:
             ret = self._rec_procs.stop(f"record_{device_ip}")
             if ret is not None:
-                return {"success": True, "device_ip": device_ip,
-                        "message": "Recording stopped"}
-            return {"success": True, "device_ip": device_ip,
-                    "message": "No active recording"}
+                return {"success": True, "device_ip": device_ip, "message": "Recording stopped"}
+            return {"success": True, "device_ip": device_ip, "message": "No active recording"}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": str(e)}
 
@@ -104,8 +122,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         return {"success": sent, "device_ip": device_ip, "x": x, "y": y}
 
     @async_command
-    def input_swipe_async(self, device_ip: str, x1: int, y1: int,
-                          x2: int, y2: int, duration_ms: int = 300) -> dict:
+    def input_swipe_async(
+        self, device_ip: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
+    ) -> dict:
         sent = self._send_input(
             device_ip,
             f"swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
@@ -131,8 +150,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         return {"success": sent, "device_ip": device_ip, "keycode": keycode}
 
     @async_command
-    def input_drag_async(self, device_ip: str, x1: int, y1: int,
-                         x2: int, y2: int, duration_ms: int = 300) -> dict:
+    def input_drag_async(
+        self, device_ip: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
+    ) -> dict:
         sent = self._send_input(
             device_ip,
             f"draganddrop {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
@@ -176,22 +196,30 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def dumpsys_cpuinfo_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "cpuinfo"],
-            timeout=15, device_ip=device_ip,
+            timeout=15,
+            device_ip=device_ip,
         )
 
     @async_command
     def dumpsys_battery_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "battery"],
-            timeout=15, device_ip=device_ip,
+            timeout=15,
+            device_ip=device_ip,
         )
 
     # Logcat 过滤
 
     @async_command
     def logcat_filtered_async(
-        self, device_ip: str, log_path: str, buffer: str = "main",
-        priority: str = "V", tag_filter: str = "", regex: str = "", max_lines: str = "",
+        self,
+        device_ip: str,
+        log_path: str,
+        buffer: str = "main",
+        priority: str = "V",
+        tag_filter: str = "",
+        regex: str = "",
+        max_lines: str = "",
     ) -> dict:
         cmd = ["adb", "-s", device_ip, "logcat", "-d", "-b", buffer]
         if tag_filter:
@@ -206,8 +234,12 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         if r["success"]:
             with open(log_path, "w", encoding="utf-8") as f:
                 f.write(r["output"])
-            return {"success": True, "device_ip": device_ip, "log_path": log_path,
-                    "line_count": len(r["output"].splitlines())}
+            return {
+                "success": True,
+                "device_ip": device_ip,
+                "log_path": log_path,
+                "line_count": len(r["output"].splitlines()),
+            }
         return r
 
     @async_command
@@ -220,32 +252,35 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def settings_list_async(self, device_ip: str, namespace: str = "system") -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "settings", "list", namespace],
-            timeout=15, device_ip=device_ip, namespace=namespace,
+            timeout=15,
+            device_ip=device_ip,
+            namespace=namespace,
         )
 
     @async_command
     def settings_get_async(self, device_ip: str, namespace: str, key: str) -> dict:
         result = self._run(
             ["adb", "-s", device_ip, "shell", "settings", "get", namespace, key],
-            device_ip=device_ip, key=key,
+            device_ip=device_ip,
+            key=key,
         )
         if result.get("success"):
             result["value"] = result.get("output", "")
         return result
 
     @async_command
-    def settings_put_async(self, device_ip: str, namespace: str,
-                           key: str, value: str) -> dict:
+    def settings_put_async(self, device_ip: str, namespace: str, key: str, value: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "settings", "put", namespace, key, value],
-            device_ip=device_ip, key=key, value=value,
+            device_ip=device_ip,
+            key=key,
+            value=value,
         )
 
     # 自定义 Shell 命令
 
     @async_command
-    def run_shell_command_async(self, device_ip: str, command: str,
-                                timeout: int = 30) -> dict:
+    def run_shell_command_async(self, device_ip: str, command: str, timeout: int = 30) -> dict:
         full_cmd = ["adb", "-s", device_ip, "shell"] + shlex.split(command)
         return self._run(full_cmd, timeout=timeout, device_ip=device_ip, command=command)
 
@@ -259,8 +294,12 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         r = self._run(cmd, timeout=3, device_ip=device_ip, mode=mode)
         # reboot 超时 = 设备正在重启 = 成功
         if r["success"] or "Timeout" in r.get("error", ""):
-            return {"success": True, "device_ip": device_ip, "mode": mode,
-                    "output": f"Device rebooting to {mode}..."}
+            return {
+                "success": True,
+                "device_ip": device_ip,
+                "mode": mode,
+                "output": f"Device rebooting to {mode}...",
+            }
         return r
 
     # 文件管理
@@ -269,7 +308,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def shell_ls_async(self, device_ip: str, path: str = "/sdcard") -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "ls", "-la", path],
-            timeout=10, device_ip=device_ip, path=path,
+            timeout=10,
+            device_ip=device_ip,
+            path=path,
         )
 
     @async_command
@@ -291,14 +332,16 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def push_file_async(self, device_ip: str, local_path: str, remote_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "push", local_path, remote_path],
-            timeout=60, device_ip=device_ip,
+            timeout=60,
+            device_ip=device_ip,
         )
 
     @async_command
     def pull_file_async(self, device_ip: str, remote_path: str, local_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "pull", remote_path, local_path],
-            timeout=60, device_ip=device_ip,
+            timeout=60,
+            device_ip=device_ip,
         )
 
     @async_command
@@ -342,7 +385,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def getprop_all_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "getprop"],
-            timeout=15, device_ip=device_ip,
+            timeout=15,
+            device_ip=device_ip,
         )
 
     # 应用备份
@@ -351,5 +395,6 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def backup_app_async(self, device_ip: str, package: str, save_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "backup", "-f", save_path, "-noapk", package],
-            timeout=60, device_ip=device_ip,
+            timeout=60,
+            device_ip=device_ip,
         )

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 from utils.agent_builtin_skills import create_default_gateway
 from utils.agent_skill_gateway import AgentSkillGateway, SkillError
@@ -85,6 +85,9 @@ def test_default_skills_ping_exists_sha256() -> None:
     try:
         hashed = gateway.run_skill("file.sha256", {"path": str(temp_path)})
         assert hashed["ok"] is True
-        assert hashed["result"]["sha256"] == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        assert (
+            hashed["result"]["sha256"]
+            == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        )
     finally:
         temp_path.unlink()

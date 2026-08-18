@@ -181,7 +181,9 @@ class FileExplorerDialog(QDialog):
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
         self.table.verticalHeader().setVisible(False)
-        self.table.horizontalHeader().setSectionResizeMode(self.NAME_COL, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            self.NAME_COL, QHeaderView.ResizeMode.Stretch
+        )
         for i in (self.TYPE_COL, self.SIZE_COL, self.MODIFIED_COL):
             self.table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.Interactive
@@ -229,12 +231,9 @@ class FileExplorerDialog(QDialog):
             f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
             f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;"
         )
-        self.path_field.setStyleSheet(
-            field_style
-        )
+        self.path_field.setStyleSheet(field_style)
         self.path_field.setFont(mono_font)
         self.search_field.setStyleSheet(field_style)
-
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
@@ -439,7 +438,9 @@ class FileExplorerDialog(QDialog):
         view = menu.addAction("View") if viewable else None
         act = menu.exec(
             self.table.mapToGlobal(
-                self.table.visualItemRect(self.table.item(self.table.currentRow(), self.NAME_COL)).center()
+                self.table.visualItemRect(
+                    self.table.item(self.table.currentRow(), self.NAME_COL)
+                ).center()
             )
         )
         if act == pull:
@@ -596,11 +597,13 @@ class FileExplorerDialog(QDialog):
     @staticmethod
     def _global_save_dir() -> str:
         from core.settings_manager import AppSettings
+
         return AppSettings.instance().save_directory
 
     def _save_as(self, name, content):
         fp, _ = QFileDialog.getSaveFileName(
-            self, "Save As", os.path.join(self._global_save_dir(), name))
+            self, "Save As", os.path.join(self._global_save_dir(), name)
+        )
         if fp:
             with open(fp, "w", encoding="utf-8") as f:
                 f.write(content)
@@ -629,7 +632,8 @@ class FileExplorerDialog(QDialog):
     def _pull_file(self, name: str):
         full = self._dpath(self.current_path, name)
         save_path, _ = QFileDialog.getSaveFileName(
-            self, "Save As", os.path.join(self._global_save_dir(), name))
+            self, "Save As", os.path.join(self._global_save_dir(), name)
+        )
         if not save_path:
             return
         if self.root_cb.isChecked():
@@ -655,7 +659,9 @@ class FileExplorerDialog(QDialog):
         w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
         w.finished.connect(
             lambda o2, e2, d: (
-                self._run_adb("shell", self._root(explorer_service.delete_command(dev_tmp))).start(),
+                self._run_adb(
+                    "shell", self._root(explorer_service.delete_command(dev_tmp))
+                ).start(),
                 self._on_transfer_done(o2, e2, f"Pulled {name}"),
             )
         )
@@ -665,8 +671,7 @@ class FileExplorerDialog(QDialog):
         rows = set(i.row() for i in self.table.selectedIndexes())
         if not rows:
             return
-        dest = QFileDialog.getExistingDirectory(
-            self, "Destination", self._global_save_dir())
+        dest = QFileDialog.getExistingDirectory(self, "Destination", self._global_save_dir())
         if not dest:
             return
         for row in rows:
@@ -689,9 +694,7 @@ class FileExplorerDialog(QDialog):
             w = self._run_transfer("push", fp, dst)
             w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
             bn = os.path.basename(fp)
-            w.finished.connect(
-                lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}")
-            )
+            w.finished.connect(lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}"))
             w.start()
 
     def _on_transfer_done(self, o, e, msg):
@@ -721,9 +724,7 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.mkdir_command(full)))
-        w.finished.connect(
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}")
-        )
+        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"))
         w.start()
 
     def _touch(self):
@@ -735,9 +736,7 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.touch_command(full)))
-        w.finished.connect(
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}")
-        )
+        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"))
         w.start()
 
     def _rename_item(self, name: str):
@@ -760,18 +759,12 @@ class FileExplorerDialog(QDialog):
     def _delete_item(self, name: str):
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.delete_command(full)))
-        w.finished.connect(
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}")
-        )
+        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}"))
         w.start()
 
     def _delete_selected(self):
         rows = set(i.row() for i in self.table.selectedIndexes())
-        items = [
-            self._file_name_at(r)
-            for r in rows
-            if self._file_name_at(r) != ".."
-        ]
+        items = [self._file_name_at(r) for r in rows if self._file_name_at(r) != ".."]
         if not items:
             return
         if (
@@ -1030,11 +1023,7 @@ class FileExplorerDialog(QDialog):
 
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
         """将仍在运行的文件 worker 作为一组资源注册到监督器。"""
-        workers = [
-            worker
-            for worker in self._workers
-            if QThreadGroupShutdownTask._running(worker)
-        ]
+        workers = [worker for worker in self._workers if QThreadGroupShutdownTask._running(worker)]
         if not workers:
             return ()
         handle = QThreadGroupShutdownTask(workers)

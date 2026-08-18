@@ -43,7 +43,8 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         ip = result.get("device_ip", "")
         if result.get("success"):
             self._emit_operation(
-                "grant_permission", True,
+                "grant_permission",
+                True,
                 f"Granted {result.get('permission')} to {result.get('package')} on {ip}",
             )
         else:
@@ -61,7 +62,8 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         ip = result.get("device_ip", "")
         if result.get("success"):
             self._emit_operation(
-                "revoke_permission", True,
+                "revoke_permission",
+                True,
                 f"Revoked {result.get('permission')} from {result.get('package')} on {ip}",
             )
         else:
@@ -245,7 +247,8 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         ip = result.get("device_ip", "")
         if result.get("success"):
             self._emit_operation(
-                "emu_geo", True,
+                "emu_geo",
+                True,
                 f"GPS set on {ip}: {result.get('longitude')},{result.get('latitude')}",
             )
         else:

@@ -35,7 +35,7 @@ class QSSMixin:
         QScrollBar::handle:vertical:hover,
         QScrollBar::handle:horizontal:hover {{ background: {hh}; }}
         QScrollBar::handle:vertical:pressed,
-        QScrollBar::handle:horizontal:pressed {{ background: {_tc('BORDER_FOCUS')}; }}
+        QScrollBar::handle:horizontal:pressed {{ background: {_tc("BORDER_FOCUS")}; }}
         QScrollBar::add-line, QScrollBar::sub-line {{
             height: 0; width: 0; border: none; background: none;
         }}
@@ -56,16 +56,16 @@ class QSSMixin:
         return f"""
         QPushButton {{
             {cls.BUTTON_BASE()}
-            background-color: {_tc('BUTTON_BG')}; color: {_tc('TEXT_PRIMARY')};
-            border: 1px solid {_tc('BORDER_COLOR')};
+            background-color: {_tc("BUTTON_BG")}; color: {_tc("TEXT_PRIMARY")};
+            border: 1px solid {_tc("BORDER_COLOR")};
         }}
         QPushButton:hover {{
-            background-color: {_tc('BUTTON_HOVER')}; border-color: {_tc('BORDER_FOCUS')};
+            background-color: {_tc("BUTTON_HOVER")}; border-color: {_tc("BORDER_FOCUS")};
         }}
-        QPushButton:pressed {{ background-color: {_tc('BUTTON_PRESSED')}; }}
+        QPushButton:pressed {{ background-color: {_tc("BUTTON_PRESSED")}; }}
         QPushButton:disabled {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_DISABLED')};
-            border-color: {_tc('BORDER_COLOR')};
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_DISABLED")};
+            border-color: {_tc("BORDER_COLOR")};
         }}
         """
 
@@ -74,14 +74,14 @@ class QSSMixin:
         return f"""
         QPushButton#accent {{
             {cls.BUTTON_BASE()}
-            background-color: {_tc('BUTTON_ACCENT')}; color: #ffffff;
-            border: 1px solid {_tc('BUTTON_ACCENT')};
+            background-color: {_tc("BUTTON_ACCENT")}; color: #ffffff;
+            border: 1px solid {_tc("BUTTON_ACCENT")};
         }}
-        QPushButton#accent:hover {{ background-color: {_tc('BUTTON_ACCENT_HOVER')}; }}
-        QPushButton#accent:pressed {{ background-color: {_tc('BUTTON_ACCENT_PRESSED')}; }}
+        QPushButton#accent:hover {{ background-color: {_tc("BUTTON_ACCENT_HOVER")}; }}
+        QPushButton#accent:pressed {{ background-color: {_tc("BUTTON_ACCENT_PRESSED")}; }}
         QPushButton#accent:disabled {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_DISABLED')};
-            border-color: {_tc('BORDER_COLOR')};
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_DISABLED")};
+            border-color: {_tc("BORDER_COLOR")};
         }}
         """
 
@@ -90,14 +90,14 @@ class QSSMixin:
         return f"""
         QPushButton#danger {{
             {cls.BUTTON_BASE()}
-            background-color: {_tc('BUTTON_DANGER')}; color: #ffffff;
-            border: 1px solid {_tc('BUTTON_DANGER')};
+            background-color: {_tc("BUTTON_DANGER")}; color: #ffffff;
+            border: 1px solid {_tc("BUTTON_DANGER")};
         }}
-        QPushButton#danger:hover {{ background-color: {_tc('BUTTON_DANGER_HOVER')}; }}
-        QPushButton#danger:pressed {{ background-color: {_tc('BUTTON_DANGER')}; }}
+        QPushButton#danger:hover {{ background-color: {_tc("BUTTON_DANGER_HOVER")}; }}
+        QPushButton#danger:pressed {{ background-color: {_tc("BUTTON_DANGER")}; }}
         QPushButton#danger:disabled {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_DISABLED')};
-            border-color: {_tc('BORDER_COLOR')};
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_DISABLED")};
+            border-color: {_tc("BORDER_COLOR")};
         }}
         """
 
@@ -117,36 +117,36 @@ class QSSMixin:
         )
         return f"""
         QLineEdit, QComboBox {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
-            border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
-            padding: 3px 6px; selection-background-color: {_tc('SELECTION_BG')};
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_PRIMARY")};
+            border: 1px solid {_tc("BORDER_COLOR")}; border-radius: {RADIUS_MD}px;
+            padding: 3px 6px; selection-background-color: {_tc("SELECTION_BG")};
         }}
-        QLineEdit:focus, QComboBox:focus {{ border-color: {_tc('BORDER_FOCUS')}; }}
+        QLineEdit:focus, QComboBox:focus {{ border-color: {_tc("BORDER_FOCUS")}; }}
         QLineEdit:disabled, QComboBox:disabled {{
-            background-color: {_tc('PANEL_BG')}; color: {_tc('TEXT_DISABLED')};
+            background-color: {_tc("PANEL_BG")}; color: {_tc("TEXT_DISABLED")};
         }}
         QComboBox::drop-down {{
             subcontrol-origin: padding; subcontrol-position: top right; width: 24px;
-            border-left: 1px solid {_tc('BORDER_COLOR')};
+            border-left: 1px solid {_tc("BORDER_COLOR")};
             border-top-right-radius: {RADIUS_MD}px; border-bottom-right-radius: {RADIUS_MD}px;
-            background-color: {_tc('BUTTON_BG')};
+            background-color: {_tc("BUTTON_BG")};
         }}
-        QComboBox::drop-down:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
+        QComboBox::drop-down:hover {{ background-color: {_tc("BUTTON_HOVER")}; }}
         QComboBox::down-arrow {{
             image: url(icons:{arrow_icon}); width: 12px; height: 8px; margin-right: 3px;
         }}
         QComboBox QAbstractItemView {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
-            border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_SM}px;
-            selection-background-color: {_tc('SELECTION_BG')};
-            selection-color: {_tc('SELECTION_TEXT')}; outline: none;
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_PRIMARY")};
+            border: 1px solid {_tc("BORDER_COLOR")}; border-radius: {RADIUS_SM}px;
+            selection-background-color: {_tc("SELECTION_BG")};
+            selection-color: {_tc("SELECTION_TEXT")}; outline: none;
         }}
-        QComboBox QAbstractItemView::item {{ color: {_tc('TEXT_PRIMARY')}; padding: 4px 8px; }}
+        QComboBox QAbstractItemView::item {{ color: {_tc("TEXT_PRIMARY")}; padding: 4px 8px; }}
         QComboBox QAbstractItemView::item:selected {{
-            background-color: {_tc('SELECTION_BG')}; color: {_tc('SELECTION_TEXT')};
+            background-color: {_tc("SELECTION_BG")}; color: {_tc("SELECTION_TEXT")};
         }}
         QComboBox QAbstractItemView::item:hover {{
-            background-color: {_tc('BUTTON_HOVER')}; color: {_tc('TEXT_PRIMARY')};
+            background-color: {_tc("BUTTON_HOVER")}; color: {_tc("TEXT_PRIMARY")};
         }}
         """
 
@@ -166,14 +166,14 @@ class QSSMixin:
         title_margin = cls.group_box_title_margin()
         return f"""
         QGroupBox {{
-            background-color: {_tc('PANEL_BG')}; border: 1px solid {_tc('BORDER_COLOR')};
+            background-color: {_tc("PANEL_BG")}; border: 1px solid {_tc("BORDER_COLOR")};
             border-radius: {RADIUS_LG}px; margin-top: {title_margin}px;
             padding: 2px 4px 1px 4px;
-            font-weight: bold; color: {_tc('TEXT_PRIMARY')};
+            font-weight: bold; color: {_tc("TEXT_PRIMARY")};
         }}
         QGroupBox::title {{
             subcontrol-origin: margin; subcontrol-position: top left; padding: 0 8px;
-            left: 10px; color: {_tc('GROUP_TITLE_COLOR')};
+            left: 10px; color: {_tc("GROUP_TITLE_COLOR")};
         }}
         """
 
@@ -181,19 +181,22 @@ class QSSMixin:
 
     @classmethod
     def LIST_WIDGET_STYLE(cls) -> str:
-        return f"""
+        return (
+            f"""
         QListWidget {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
-            border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_PRIMARY")};
+            border: 1px solid {_tc("BORDER_COLOR")}; border-radius: {RADIUS_MD}px;
             padding: 2px;
             outline: none;
         }}
-        QListWidget::item {{ padding: 3px 6px; border-radius: {RADIUS_SM}px; color: {_tc('TEXT_PRIMARY')}; }}
+        QListWidget::item {{ padding: 3px 6px; border-radius: {RADIUS_SM}px; """
+            f"""color: {_tc("TEXT_PRIMARY")}; }}
         QListWidget::item:selected {{
-            background-color: {_tc('SELECTION_BG')}; color: {_tc('SELECTION_TEXT')};
+            background-color: {_tc("SELECTION_BG")}; color: {_tc("SELECTION_TEXT")};
         }}
-        QListWidget::item:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
+        QListWidget::item:hover {{ background-color: {_tc("BUTTON_HOVER")}; }}
         """
+        )
 
     # ── 工具栏 ──────────────────────────────────────────────────────────
 
@@ -201,19 +204,19 @@ class QSSMixin:
     def TOOLBAR_STYLE(cls) -> str:
         return f"""
         QFrame#toolbar {{
-            background-color: {_tc('TOOLBAR_BG')}; border-radius: {RADIUS_MD}px;
-            border: 1px solid {_tc('BORDER_COLOR')};
+            background-color: {_tc("TOOLBAR_BG")}; border-radius: {RADIUS_MD}px;
+            border: 1px solid {_tc("BORDER_COLOR")};
         }}
         QFrame#toolbar QPushButton {{
-            background-color: transparent; color: {_tc('TEXT_PRIMARY')};
+            background-color: transparent; color: {_tc("TEXT_PRIMARY")};
             border: none; border-radius: {RADIUS_SM}px; padding: 2px 6px;
         }}
-        QFrame#toolbar QPushButton:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
+        QFrame#toolbar QPushButton:hover {{ background-color: {_tc("BUTTON_HOVER")}; }}
         QFrame#toolbar QPushButton#exit_btn:hover {{
-            background-color: {_tc('BUTTON_DANGER')}; color: #ffffff;
+            background-color: {_tc("BUTTON_DANGER")}; color: #ffffff;
         }}
         QFrame#toolbar QLabel {{
-            color: {_tc('TEXT_PRIMARY')};
+            color: {_tc("TEXT_PRIMARY")};
         }}
         QFrame#toolbar QLabel#toolbarTitle {{ font-weight: bold; }}
         """
@@ -233,19 +236,19 @@ class QSSMixin:
     def DEVICE_LIST_STYLE(cls) -> str:
         return f"""
         QListWidget#deviceList {{
-            background-color: {_tc('INPUT_BG')}; color: {_tc('TEXT_PRIMARY')};
-            border: 1px solid {_tc('BORDER_COLOR')}; border-radius: {RADIUS_MD}px;
+            background-color: {_tc("INPUT_BG")}; color: {_tc("TEXT_PRIMARY")};
+            border: 1px solid {_tc("BORDER_COLOR")}; border-radius: {RADIUS_MD}px;
             padding: 2px; outline: none;
         }}
-        QListWidget#deviceList::item {{ padding: 3px 6px; color: {_tc('TEXT_PRIMARY')}; }}
+        QListWidget#deviceList::item {{ padding: 3px 6px; color: {_tc("TEXT_PRIMARY")}; }}
         QListWidget#deviceList::item:selected {{
-            background-color: {_tc('SELECTION_BG')}; color: {_tc('SELECTION_TEXT')};
+            background-color: {_tc("SELECTION_BG")}; color: {_tc("SELECTION_TEXT")};
         }}
-        QListWidget#deviceList::item:hover {{ background-color: {_tc('BUTTON_HOVER')}; }}
+        QListWidget#deviceList::item:hover {{ background-color: {_tc("BUTTON_HOVER")}; }}
         QListWidget::indicator {{ width: 14px; height: 14px; }}
         QListWidget::indicator:unchecked {{
-            image: none; border: 2px solid {_tc('BORDER_COLOR')};
-            border-radius: 3px; background-color: {_tc('INPUT_BG')};
+            image: none; border: 2px solid {_tc("BORDER_COLOR")};
+            border-radius: 3px; background-color: {_tc("INPUT_BG")};
         }}
         QListWidget::indicator:checked {{ image: url(icons:check.svg); border: none; }}
         """
@@ -259,7 +262,8 @@ class QSSMixin:
             + cls.INPUT_STYLE()
             + cls.LIST_WIDGET_STYLE()
             + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }}"
-            + f"QFrame {{ background-color: transparent; border: none; color: {_tc('TEXT_PRIMARY')}; }}"
+            + "QFrame {{ background-color: transparent; border: none; "
+            + f"color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
             + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"
             + cls.STATUS_BAR_STYLE()

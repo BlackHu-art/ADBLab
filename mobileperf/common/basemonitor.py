@@ -5,7 +5,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-class Monitor(object):
+class Monitor:
     """性能测试数据采集能力基类。"""
 
     def __init__(self, **kwargs):
@@ -28,10 +28,10 @@ class Monitor(object):
         """由子类停止采集，并在需要后续解析时保存数据文件。"""
         logger.warn("请在%s类中实现stop方法" % type(self))
 
-
     def save(self):
         """由子类实现数据保存行为。"""
         logger.warn("请在%s类中实现save方法" % type(self))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     pass

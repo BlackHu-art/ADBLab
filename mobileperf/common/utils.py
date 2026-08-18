@@ -1,15 +1,14 @@
 """提供 MobilePerf 使用的时间、文件、压缩和单位换算工具。"""
 
 import os
-import time, re
-import types
-import logging
+import re
+import time
 import zipfile
 
 BaseDir = os.path.dirname(os.path.abspath(__file__))
 
 
-class TimeUtils(object):
+class TimeUtils:
     UnderLineFormatter = "%Y_%m_%d_%H_%M_%S"
     NormalFormatter = "%Y-%m-%d %H-%M-%S"
     ColonFormatter = "%Y-%m-%d %H:%M:%S"
@@ -42,20 +41,19 @@ class TimeUtils(object):
 
     @staticmethod
     def get_interval(begin_timestamp, end_timestamp):
-        '''
+        """
         :param begin_timestamp:
         :param end_timestamp:
         :return:求起止时间戳之间的时间间隔 ，返回H,浮点数
-        '''
+        """
         interval = end_timestamp - begin_timestamp
         return round(float(interval) / (60 * 60))
 
 
-class FileUtils(object):
-
+class FileUtils:
     @staticmethod
     def makedir(dir):
-        if (not os.path.exists(dir)):
+        if not os.path.exists(dir):
             os.makedirs(dir)
 
     @staticmethod
@@ -66,13 +64,13 @@ class FileUtils(object):
 
     @staticmethod
     def get_files(path=None, pattern=None):
-        '''
+        """
         :param path: 目录
         :param pattern: 正则
         :return: 递归遍历目录，返回匹配的文件路径
-        '''
+        """
         file_list = []
-        if path is None or not os.path.exists(path):  #没有路径返回空
+        if path is None or not os.path.exists(path):  # 没有路径返回空
             return file_list
         for oneFile in os.listdir(path):
             if os.path.isfile(os.path.join(path, oneFile)):
@@ -80,43 +78,46 @@ class FileUtils(object):
                 if pattern:
                     match = re.match(pattern, oneFile, flags=0)
                 if match:
-                    file_list.append(os.path.join(path, oneFile))  #是文件 且匹配正则成功 则添加文件
+                    file_list.append(
+                        os.path.join(path, oneFile)
+                    )  # 是文件 且匹配正则成功 则添加文件
             elif os.path.isdir(os.path.join(path, oneFile)):
-                file_list.extend(FileUtils.get_files(os.path.join(path, oneFile), pattern))  #是文件夹 遍历下一级目录下 符合正则的文件 并追加
+                file_list.extend(
+                    FileUtils.get_files(os.path.join(path, oneFile), pattern)
+                )  # 是文件夹 遍历下一级目录下 符合正则的文件 并追加
         return file_list
 
     @staticmethod
     def get_FileSize(filePath):
-        '''
+        """
         获取文件的大小,结果保留4位小数，单位为MB
         :param filePath:
         :return:
-        '''
+        """
         fsize = os.path.getsize(filePath)
         fsize = fsize / float(1024 * 1024)
         return round(fsize, 4)
 
     @staticmethod
     def get_FileAccessTime(filePath):
-        '''获取文件的访问时间'''
+        """获取文件的访问时间"""
         t = os.path.getatime(filePath)
         return t
 
     @staticmethod
     def get_FileCreateTime(filePath):
-        '''获取文件的创建时间'''
+        """获取文件的创建时间"""
         t = os.path.getctime(filePath)
         return t
 
     @staticmethod
     def get_FileModifyTime(filePath):
-        '''获取文件的修改时间'''
+        """获取文件的修改时间"""
         t = os.path.getmtime(filePath)
         return t
 
 
-class ZipUtils(object):
-
+class ZipUtils:
     @staticmethod
     def zip_dir(dirname, zipfilename):
         filelist = []
@@ -129,7 +130,7 @@ class ZipUtils(object):
 
         zf = zipfile.ZipFile(zipfilename, "w", zipfile.zlib.DEFLATED)
         for tar in filelist:
-            arcname = tar[len(dirname):]
+            arcname = tar[len(dirname) :]
             zf.write(tar, arcname)
         zf.close()
 
@@ -150,5 +151,7 @@ def uA2mA(c):
     return round(c / 1000.0, 2)
 
 
-if __name__ == '__main__':
-    ZipUtils.zip_dir("/Users/look/Desktop/project/mobileperf-turandot/mobileperf/common/test", "test.zip")
+if __name__ == "__main__":
+    ZipUtils.zip_dir(
+        "/Users/look/Desktop/project/mobileperf-turandot/mobileperf/common/test", "test.zip"
+    )

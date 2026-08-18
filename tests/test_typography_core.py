@@ -11,7 +11,7 @@ from unittest.mock import patch
 from PySide6.QtGui import QFont
 
 from core import settings_manager
-from gui.styles import BaseStyles, FontRole
+from gui.styles import BaseStyles
 from gui.styles.fonts import _font
 from gui.styles.typography import (
     LOG_FONT_SIZE_MAX,

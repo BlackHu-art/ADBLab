@@ -139,9 +139,7 @@ class ADBMediaMixin(_ADBControllerBase):
         sequence = 1
         while True:
             suffix = "" if sequence == 1 else f"_{sequence}"
-            path = os.path.normpath(
-                os.path.join(save_dir, f"{filename_stem}{suffix}.png")
-            )
+            path = os.path.normpath(os.path.join(save_dir, f"{filename_stem}{suffix}.png"))
             path_key = os.path.normcase(os.path.abspath(path))
             if path_key not in allocated_paths and not os.path.exists(path):
                 allocated_paths.add(path_key)
@@ -325,9 +323,7 @@ class ADBMediaMixin(_ADBControllerBase):
             if artifact.kind == "screenshot"
         }
         paths = [
-            paths_by_unit[unit_id]
-            for unit_id in terminal.unit_ids
-            if unit_id in paths_by_unit
+            paths_by_unit[unit_id] for unit_id in terminal.unit_ids if unit_id in paths_by_unit
         ]
         if paths:
             QTimer.singleShot(
@@ -379,11 +375,13 @@ class ADBMediaMixin(_ADBControllerBase):
             return
         save_dir = self._get_screenshot_dir()
         now = time.time()
-        if not hasattr(self, '_record_info'):
+        if not hasattr(self, "_record_info"):
             self._record_info = {}
         for ip in devices:
             self._record_info[ip] = {
-                "start_time": now, "duration": duration, "save_dir": save_dir,
+                "start_time": now,
+                "duration": duration,
+                "save_dir": save_dir,
             }
             self.advanced_model.start_screen_record_async(ip, save_dir, duration)
 
@@ -391,10 +389,12 @@ class ADBMediaMixin(_ADBControllerBase):
         ip = result.get("device_ip", "")
         if result.get("success"):
             dur = result.get("duration", 30)
-            self._record_info[ip].update({
-                "remote_path": result["remote_path"],
-                "filename": result["filename"],
-            })
+            self._record_info[ip].update(
+                {
+                    "remote_path": result["remote_path"],
+                    "filename": result["filename"],
+                }
+            )
             self._emit_operation(
                 "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
             )
@@ -410,7 +410,9 @@ class ADBMediaMixin(_ADBControllerBase):
     def _auto_pull(self, device_ip: str):
         info = self._record_info.get(device_ip, {})
         if info.get("remote_path"):
-            self._emit_operation("screen_record", True, f"Auto-pulling recording from {device_ip}...")
+            self._emit_operation(
+                "screen_record", True, f"Auto-pulling recording from {device_ip}..."
+            )
             self.advanced_model.pull_recorded_video_async(
                 device_ip, info["remote_path"], info["save_dir"], info["filename"]
             )
@@ -424,8 +426,9 @@ class ADBMediaMixin(_ADBControllerBase):
     def _process_stop_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
         self._emit_operation(
-            "stop_recording", result.get("success", False),
-            f"Recording on {ip}: {result.get('message', '')}"
+            "stop_recording",
+            result.get("success", False),
+            f"Recording on {ip}: {result.get('message', '')}",
         )
         # 主动停止录制后也要拉取已经生成的文件。
         info = self._record_info.get(ip, {})
@@ -443,7 +446,8 @@ class ADBMediaMixin(_ADBControllerBase):
             )
         else:
             self._emit_operation(
-                "pull_recording", False,
+                "pull_recording",
+                False,
                 f"Failed to pull recording from {ip}: {result.get('error')}",
             )
         self.signals.record_finished.emit()

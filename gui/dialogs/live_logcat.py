@@ -6,10 +6,10 @@ import subprocess
 import threading
 import time
 import uuid
-from math import ceil
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from math import ceil
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
@@ -27,13 +27,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from adblab.application.supervision import StopDisposition, TaskStopResult
+from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from adblab.application.supervision import StopDisposition, TaskStopResult
-from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from models.base.command_runner import CommandRunner
 from models.base.process_runner import ProcessRunner
 
@@ -796,11 +796,7 @@ class LiveLogcatDialog(QDialog):
         return was_current
 
     def _on_pkg_worker_finished(self, worker: CurrentPackageWorker):
-        if (
-            self._closing
-            and self._owner_cleanup_requested
-            and not self._owner_cleanup_completed
-        ):
+        if self._closing and self._owner_cleanup_requested and not self._owner_cleanup_completed:
             self._debug_lifecycle("worker_finished_waiting", worker_kind="package_probe")
             return
         was_current = self._release_pkg_worker(worker)
@@ -829,11 +825,7 @@ class LiveLogcatDialog(QDialog):
         worker = worker or self.worker
         if worker is None:
             return
-        if (
-            self._closing
-            and self._owner_cleanup_requested
-            and not self._owner_cleanup_completed
-        ):
+        if self._closing and self._owner_cleanup_requested and not self._owner_cleanup_completed:
             self._debug_lifecycle("worker_finished_waiting", worker_kind="live_logcat")
             return
         was_current = self._release_logcat_worker(worker)
@@ -853,9 +845,7 @@ class LiveLogcatDialog(QDialog):
             snapshots = self._task_supervisor.supervisor.active_snapshot()
         except Exception:
             return (None,)
-        return tuple(
-            item for item in snapshots if item.owner_id == self._supervisor_owner_id
-        )
+        return tuple(item for item in snapshots if item.owner_id == self._supervisor_owner_id)
 
     def _schedule_cleanup_recheck(self) -> None:
         """在停止流程返回后继续观察晚退出的线程或外部进程。"""
