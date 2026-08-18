@@ -52,6 +52,13 @@ from tests.ui_geometry_helpers import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _fast_responsive_debounce(monkeypatch):
+    """逐像素几何扫描无需真实防抖等待，缩短到 1ms 以压缩套件耗时。"""
+
+    monkeypatch.setattr(ResponsiveCoordinator, "RESIZE_DEBOUNCE_MS", 1)
+
+
 def _side_panel() -> SimpleNamespace:
     """构造面板布局测试需要的最小 SidePanel 接口。"""
 
