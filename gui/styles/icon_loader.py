@@ -46,7 +46,13 @@ class _ThemedIconEngine(QIconEngine):
         svg = _load_svg(self._name)
         if not svg:
             return
-        svg = svg.replace("currentColor", _tc("TEXT_PRIMARY"))
+        if mode == QIcon.Mode.Disabled:
+            color_key = "TEXT_DISABLED"
+        elif mode in (QIcon.Mode.Active, QIcon.Mode.Selected) or state == QIcon.State.On:
+            color_key = "BUTTON_ACCENT"
+        else:
+            color_key = "TEXT_PRIMARY"
+        svg = svg.replace("currentColor", _tc(color_key))
         renderer = QSvgRenderer(svg.encode("utf-8"))
         renderer.render(painter, rect)
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QMouseEvent
 from PySide6.QtWidgets import QWidget
@@ -10,10 +12,20 @@ from PySide6.QtWidgets import QWidget
 class _ResizeZone(QWidget):
     """把指定边缘的按压事件交给窗口系统处理。"""
 
-    def __init__(self, window: QWidget, edges: Qt.Edges, cursor: Qt.CursorShape):
+    def __init__(
+        self,
+        window: QWidget,
+        edges: Qt.Edges,
+        cursor: Qt.CursorShape,
+        *,
+        on_user_resize_started: Callable[[], None] | None = None,
+        on_user_resize_cancelled: Callable[[], None] | None = None,
+    ):
         super().__init__(window)
         self._window = window
         self._edges = edges
+        self._on_user_resize_started = on_user_resize_started
+        self._on_user_resize_cancelled = on_user_resize_cancelled
         self.setCursor(cursor)
         self.setObjectName("framelessResizeZone")
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
@@ -26,32 +38,66 @@ class _ResizeZone(QWidget):
             return
         handle = self._window.windowHandle()
         if handle is not None and handle.startSystemResize(self._edges):
+            if self._on_user_resize_started is not None:
+                self._on_user_resize_started()
             event.accept()
             return
+        if self._on_user_resize_cancelled is not None:
+            self._on_user_resize_cancelled()
         super().mousePressEvent(event)
 
 
 class FramelessResizeController:
     """管理四边和四角共八个透明缩放热区。"""
 
-    def __init__(self, window: QWidget, *, edge_width: int = 8, corner_size: int = 14):
+    def __init__(
+        self,
+        window: QWidget,
+        *,
+        edge_width: int = 8,
+        corner_size: int = 14,
+        on_user_resize_started: Callable[[], None] | None = None,
+        on_user_resize_cancelled: Callable[[], None] | None = None,
+    ):
         self._window = window
         self._edge_width = max(4, int(edge_width))
         self._corner_size = max(self._edge_width, int(corner_size))
         edge = Qt.Edge
         cursor = Qt.CursorShape
+        callback_options = {
+            "on_user_resize_started": on_user_resize_started,
+            "on_user_resize_cancelled": on_user_resize_cancelled,
+        }
         self._zones = {
-            "left": _ResizeZone(window, edge.LeftEdge, cursor.SizeHorCursor),
-            "right": _ResizeZone(window, edge.RightEdge, cursor.SizeHorCursor),
-            "top": _ResizeZone(window, edge.TopEdge, cursor.SizeVerCursor),
-            "bottom": _ResizeZone(window, edge.BottomEdge, cursor.SizeVerCursor),
-            "top_left": _ResizeZone(window, edge.TopEdge | edge.LeftEdge, cursor.SizeFDiagCursor),
-            "top_right": _ResizeZone(window, edge.TopEdge | edge.RightEdge, cursor.SizeBDiagCursor),
+            "left": _ResizeZone(window, edge.LeftEdge, cursor.SizeHorCursor, **callback_options),
+            "right": _ResizeZone(window, edge.RightEdge, cursor.SizeHorCursor, **callback_options),
+            "top": _ResizeZone(window, edge.TopEdge, cursor.SizeVerCursor, **callback_options),
+            "bottom": _ResizeZone(
+                window, edge.BottomEdge, cursor.SizeVerCursor, **callback_options
+            ),
+            "top_left": _ResizeZone(
+                window,
+                edge.TopEdge | edge.LeftEdge,
+                cursor.SizeFDiagCursor,
+                **callback_options,
+            ),
+            "top_right": _ResizeZone(
+                window,
+                edge.TopEdge | edge.RightEdge,
+                cursor.SizeBDiagCursor,
+                **callback_options,
+            ),
             "bottom_left": _ResizeZone(
-                window, edge.BottomEdge | edge.LeftEdge, cursor.SizeBDiagCursor
+                window,
+                edge.BottomEdge | edge.LeftEdge,
+                cursor.SizeBDiagCursor,
+                **callback_options,
             ),
             "bottom_right": _ResizeZone(
-                window, edge.BottomEdge | edge.RightEdge, cursor.SizeFDiagCursor
+                window,
+                edge.BottomEdge | edge.RightEdge,
+                cursor.SizeFDiagCursor,
+                **callback_options,
             ),
         }
         self.update_geometry()

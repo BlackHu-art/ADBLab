@@ -15,3 +15,5 @@ class ADBControllerSignals(QObject):
     current_package_received = Signal(str, str)
 
     record_finished = Signal()
+    record_target_finished = Signal(str, str)  # 参数：批次标识、设备
+    monkey_target_finished = Signal(str, str)  # 参数：批次标识、设备
