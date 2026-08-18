@@ -341,11 +341,13 @@ def test_screenshot_viewer_is_independent_but_managed_by_injected_window_owner()
     with (
         patch("controllers._media.ScreenshotViewer", return_value=viewer) as viewer_cls,
         patch("controllers._media.configure_independent_secondary_window") as configure_window,
+        patch("controllers._media.fit_secondary_window_to_owner_screen") as fit_window,
     ):
         controller._show_screenshot_viewer(["shot.png"])
 
     viewer_cls.assert_called_once_with(["shot.png"])
     configure_window.assert_called_once_with(viewer)
+    fit_window.assert_called_once_with(viewer, controller.window_owner)
     viewer.setAttribute.assert_called_once_with(Qt.WA_DeleteOnClose)
     viewer.installEventFilter.assert_called_once_with(controller.window_owner)
     viewer.show.assert_called_once_with()

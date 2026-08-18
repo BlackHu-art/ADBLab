@@ -126,6 +126,14 @@ class LogPanel(QWidget):
         self._pending_scroll_to_bottom = False
         self._pending_trim_count = 0
 
+    def closeEvent(self, event):
+        """关闭时停止防抖定时器并断开类级信号，避免晚到事件触碰已销毁面板。"""
+
+        self._cancel_pending_render()
+        BaseStyles.theme_changed.disconnect(self._on_theme_changed)
+        BaseStyles.log_font_changed.disconnect(self._on_log_font_changed)
+        super().closeEvent(event)
+
     def _render_entries(self, rows: list[tuple[str, str, str]]):
         if not rows:
             return

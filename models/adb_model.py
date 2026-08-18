@@ -27,6 +27,8 @@ def async_command(method):
         operation_task_id = kwargs.pop("_operation_task_id", None)
         operation_target_id = kwargs.pop("_operation_target_id", None)
         expected_artifact_path = kwargs.pop("_operation_expected_artifact_path", None)
+        operation_owner_token = kwargs.pop("_operation_owner_token", None)
+        operation_generation_token = kwargs.pop("_operation_generation_token", None)
         metadata = None
         if operation_id is not None:
             method_name = method.__name__.removesuffix("_async")
@@ -39,6 +41,8 @@ def async_command(method):
                 unit_id=operation_unit_id,
                 target_id=operation_target_id,
                 expected_artifact_path=expected_artifact_path,
+                owner_token=operation_owner_token,
+                generation_token=operation_generation_token,
             )
 
         class CommandTask(QRunnable):

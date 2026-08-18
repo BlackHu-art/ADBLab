@@ -3375,25 +3375,6 @@ def test_batch_install_result_uses_batch_tracker_key():
     assert emitted == [("batch_install", True, "✅ install success (1/2) demo.apk on device-1")]
 
 
-def test_app_controller_install_calls_model_async_directly():
-    controller = Mock()
-    controller._pending_lock = threading.Lock()
-    controller._batch_trackers = {"install": BatchOperationTracker(1, "Install App", Mock())}
-    controller._emit_operation = Mock()
-    controller.app_model = Mock()
-    controller.executor = Mock()
-
-    ADBAppMixin._install_single_device(controller, 1, "device-1", "demo.apk", "demo.apk", "install")
-
-    controller.executor.submit.assert_not_called()
-    controller.app_model.install_apk_async.assert_called_once_with(
-        "device-1", "demo.apk", "demo.apk", 1, "install"
-    )
-    controller._emit_operation.assert_called_once_with(
-        "install", True, "Start install (1/1) demo.apk on device-1 ..."
-    )
-
-
 def test_app_controller_direct_async_paths_skip_python_executor():
     controller = Mock()
     controller._require_devices.return_value = True
@@ -3492,7 +3473,10 @@ def test_connect_device_rejects_incomplete_target_before_adb_call():
 
 def test_kill_monkey_result_logs_not_running_as_success():
     controller = Mock()
-    controller._monkey_running = {"device-1"}
+    controller._monkey_batch_by_device = {"device-1": "b-1"}
+    controller._monkey_stop_acks = {}
+    controller._monkey_run_terminals = {}
+    controller._monkey_stop_requests = {}
 
     ADBAppMixin._process_kill_monkey_result(
         controller,
@@ -3501,11 +3485,12 @@ def test_kill_monkey_result_logs_not_running_as_success():
             "index": 1,
             "success": True,
             "already_stopped": True,
+            "batch_id": "b-1",
             "message": "Monkey is not running",
         },
     )
 
-    assert controller._monkey_running == set()
+    assert controller._monkey_stop_acks == {"device-1": "b-1"}
     controller._emit_operation.assert_called_once_with(
         "kill_monkey", True, "ℹ️ 1. Monkey was not running on device-1"
     )

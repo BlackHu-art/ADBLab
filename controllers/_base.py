@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QThreadPool, Slot
 
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
+from adblab.application.install_batch import InstallBatchUseCase
 from adblab.application.operations import OperationManager, OperationState
 from core.log_service import LogService
 from core.perf_trace import (
@@ -46,6 +47,16 @@ class _ADBControllerBase:
         self._pending_ops = {}
         self._pending_lock = threading.Lock()
         self.operation_manager = OperationManager()
+        self.install_batch_use_case = InstallBatchUseCase(
+            self.operation_manager,
+            id_factory=self._generate_operation_id,
+        )
+        self._install_terminal_lock = threading.RLock()
+        self._install_owned_operations = {}
+        self._install_starting_operations = set()
+        self._install_result_callbacks = {}
+        self._install_deferred_terminals = {}
+        self._install_orphaned_operations = {}
         self._operation_handler_map = {}
         self._connect_model_signals()
         # 由界面组装根注入，只负责生命周期托管，不建立 Qt 原生父子关系。
@@ -114,9 +125,37 @@ class _ADBControllerBase:
         level = "INFO" if success else "ERROR"
         if not message.strip():
             return
-        # 用户点击后的完成态日志要立即进入界面，避免再叠加 200ms 批量刷新延迟。
-        self.log_service.log(level, f"{message}", flush_immediately=True)
-        self.signals.operation_completed.emit(operation, success, message)
+        self._attempt_actions_preserving_first(
+            (
+                "operation completion signal",
+                lambda: self.signals.operation_completed.emit(operation, success, message),
+            ),
+            (
+                "operation completion log",
+                # 用户点击后的完成态日志要立即进入界面，避免再叠加 200ms 批量刷新延迟。
+                lambda: self.log_service.log(
+                    level,
+                    f"{message}",
+                    flush_immediately=True,
+                ),
+            ),
+        )
+
+    @staticmethod
+    def _attempt_actions_preserving_first(*actions) -> None:
+        """依次尝试所有动作，并在最后传播第一个异常。"""
+
+        first_error = None
+        for label, action in actions:
+            try:
+                action()
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                else:
+                    first_error.add_note(f"{label} also failed: {type(exc).__name__}: {exc}")
+        if first_error is not None:
+            raise first_error
 
     def _require_devices(self, devices: list, op_name: str) -> bool:
         """校验设备列表；为空时发出失败结果并返回 False。"""
@@ -161,75 +200,197 @@ class _ADBControllerBase:
         result,
         metadata: OperationMetadata,
     ):
-        snapshot = self.operation_manager.get(metadata.operation_id)
-        if snapshot is None:
-            self.log_service.log(
-                "DEBUG",
-                f"[{op_type}] Ignored stale operation result",
+        accepted, response_claim = self._claim_operation_response(op_type, metadata)
+        if not accepted:
+            return None
+        terminal = None
+        route_error = None
+        try:
+            snapshot = self.operation_manager.get(
+                metadata.operation_id,
+                expected_generation=metadata.generation_token,
             )
-            return
-        if metadata.method_name != op_type or metadata.operation_kind != snapshot.kind:
-            self.log_service.log(
-                "ERROR",
-                f"[{op_type}] Operation metadata mismatch",
-            )
-            self._fail_operation_protocol(
+            if snapshot is None:
+                self.log_service.log(
+                    "DEBUG",
+                    f"[{op_type}] Ignored stale operation result",
+                )
+                return None
+            if not self._operation_metadata_matches(
+                op_type,
+                metadata,
                 snapshot,
-                "Operation metadata mismatch",
+                response_claim,
+            ):
+
+                def fail_metadata_mismatch():
+                    nonlocal terminal
+                    terminal = self._fail_claimed_operation_protocol(
+                        snapshot,
+                        "Operation metadata mismatch",
+                        op_type,
+                        metadata,
+                        response_claim,
+                    )
+
+                self._attempt_actions_preserving_first(
+                    ("operation protocol failure", fail_metadata_mismatch),
+                    (
+                        "operation metadata mismatch log",
+                        lambda: self.log_service.log(
+                            "ERROR",
+                            f"[{op_type}] Operation metadata mismatch",
+                        ),
+                    ),
+                )
+                return terminal
+            operation_handler = self._operation_handler_map.get(op_type)
+            if operation_handler is None:
+
+                def fail_missing_handler():
+                    nonlocal terminal
+                    terminal = self._fail_claimed_operation_protocol(
+                        snapshot,
+                        "Operation handler missing",
+                        op_type,
+                        metadata,
+                        response_claim,
+                    )
+
+                self._attempt_actions_preserving_first(
+                    ("operation protocol failure", fail_missing_handler),
+                    (
+                        "missing operation handler log",
+                        lambda: self.log_service.log(
+                            "ERROR",
+                            f"[{op_type}] No vNext operation handler registered",
+                        ),
+                    ),
+                )
+                return terminal
+            try:
+                terminal = self._invoke_operation_handler(
+                    operation_handler,
+                    op_type,
+                    result,
+                    metadata,
+                    response_claim,
+                )
+            except Exception as handler_error:
+                handler_error_name = type(handler_error).__name__
+
+                def fail_handler_error():
+                    nonlocal terminal
+                    current = self.operation_manager.get(
+                        metadata.operation_id,
+                        expected_generation=metadata.generation_token,
+                    )
+                    terminal = (
+                        self._fail_claimed_operation_protocol(
+                            current,
+                            "Operation handler failed",
+                            op_type,
+                            metadata,
+                            response_claim,
+                        )
+                        if current is not None
+                        else None
+                    )
+
+                self._attempt_actions_preserving_first(
+                    ("operation handler protocol failure", fail_handler_error),
+                    (
+                        "operation handler error log",
+                        lambda: self.log_service.log(
+                            "ERROR",
+                            f"[{op_type}] Operation handler error: {handler_error_name}",
+                        ),
+                    ),
+                )
+                if terminal is None:
+                    self.log_service.log(
+                        "DEBUG",
+                        f"[{op_type}] Operation already terminal after handler error",
+                    )
+            return terminal
+        except Exception as exc:
+            route_error = exc
+            raise
+        finally:
+            try:
+                self._release_operation_response(
+                    op_type,
+                    metadata,
+                    response_claim,
+                    terminal,
+                )
+            except Exception as release_error:
+                if route_error is None:
+                    raise
+                route_error.add_note(
+                    "operation response release also failed: "
+                    f"{type(release_error).__name__}: {release_error}"
+                )
+
+    def _claim_operation_response(
+        self,
+        op_type: str,
+        metadata: OperationMetadata,
+    ) -> tuple[bool, object | None]:
+        return True, None
+
+    def _release_operation_response(
+        self,
+        op_type: str,
+        metadata: OperationMetadata,
+        response_claim: object | None,
+        terminal,
+    ) -> None:
+        return None
+
+    def _operation_metadata_matches(
+        self,
+        op_type: str,
+        metadata: OperationMetadata,
+        snapshot,
+        response_claim: object | None,
+    ) -> bool:
+        return (
+            metadata.method_name == op_type
+            and metadata.operation_kind == snapshot.kind
+            and (
+                metadata.generation_token is None
+                or metadata.generation_token is snapshot.generation_token
             )
-            return
-        operation_handler = self._operation_handler_map.get(op_type)
-        if operation_handler is None:
-            self.log_service.log(
-                "ERROR",
-                f"[{op_type}] No vNext operation handler registered",
-            )
-            self._fail_operation_protocol(
-                snapshot,
-                "Operation handler missing",
-            )
-            return
-        self._dispatch_operation_handler(
-            operation_handler,
-            op_type,
-            result,
-            metadata,
         )
 
-    def _dispatch_operation_handler(
+    def _fail_claimed_operation_protocol(
+        self,
+        snapshot,
+        message: str,
+        op_type: str,
+        metadata: OperationMetadata,
+        response_claim: object | None,
+    ):
+        return self._fail_operation_protocol(snapshot, message)
+
+    def _invoke_operation_handler(
         self,
         handler,
         op_type: str,
         result,
         metadata: OperationMetadata,
+        response_claim: object | None,
     ):
-        try:
-            handler(result, metadata)
-        except Exception as exc:
-            self.log_service.log(
-                "ERROR",
-                f"[{op_type}] Operation handler error: {type(exc).__name__}",
-            )
-            snapshot = self.operation_manager.get(metadata.operation_id)
-            terminal = (
-                self._fail_operation_protocol(
-                    snapshot,
-                    "Operation handler failed",
-                )
-                if snapshot is not None
-                else None
-            )
-            if terminal is None:
-                self.log_service.log(
-                    "DEBUG",
-                    f"[{op_type}] Operation already terminal after handler error",
-                )
+        return handler(result, metadata)
 
     def _fail_operation_protocol(self, snapshot, message: str):
         return self.operation_manager.finish(
             snapshot.operation_id,
             OperationState.FAILED,
             message=message,
+            expected_kind=snapshot.kind,
+            expected_generation=snapshot.generation_token,
         )
 
     def _log_perf_if_slow(self, op_type: str, perf, ui_started_at: float, ui_finished_at: float):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -20,11 +21,56 @@ from adblab.application.operations import (
 )
 from controllers._base import _ADBControllerBase
 from core.log_service import LogService
-from gui.dialogs.lifecycle import configure_independent_secondary_window
+from gui.dialogs.lifecycle import (
+    configure_independent_secondary_window,
+    fit_secondary_window_to_owner_screen,
+)
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_testing import ADBTesting
+from utils.adb_values import normalize_android_package, truncate_diagnostic_output
+
+
+def _emit_readonly_diagnostic_result(
+    controller,
+    result: dict,
+    *,
+    operation: str,
+    label: str,
+    max_lines: int,
+) -> None:
+    """把固定命令的结果裁剪后发布到可见操作日志。"""
+
+    ip = result.get("device_ip", "")
+    if not result.get("success"):
+        controller._emit_operation(
+            operation,
+            False,
+            f"{label} failed on {ip}: {result.get('error')}",
+        )
+        return
+    output, truncated = truncate_diagnostic_output(
+        result.get("output", ""),
+        max_lines=max_lines,
+    )
+    suffix = " [truncated]" if truncated else ""
+    controller._emit_operation(
+        operation,
+        True,
+        f"{label} ({ip}){suffix}:\n{output}",
+    )
+
+
+def _emit_record_target_finished(controller, batch_id: str, device: str) -> None:
+    """发布带批次标识的录屏终态，并保留旧兼容通知。"""
+
+    target_signal = getattr(getattr(controller, "signals", None), "record_target_finished", None)
+    if target_signal is not None:
+        target_signal.emit(batch_id, device)
+    legacy_signal = getattr(getattr(controller, "signals", None), "record_finished", None)
+    if legacy_signal is not None:
+        legacy_signal.emit()
 
 
 class ADBMediaMixin(_ADBControllerBase):
@@ -48,6 +94,10 @@ class ADBMediaMixin(_ADBControllerBase):
         "dumpsys_meminfo": "_process_dumpsys_meminfo_result",
         "dumpsys_cpuinfo": "_process_dumpsys_cpuinfo_result",
         "dumpsys_battery": "_process_dumpsys_battery_result",
+        "top_snapshot": "_process_top_snapshot_result",
+        "gfxinfo": "_process_gfxinfo_result",
+        "wakelocks": "_process_wakelocks_result",
+        "netstats_detail": "_process_netstats_detail_result",
         "battery_set_level": "_process_battery_set_level_result",
         "battery_set_status": "_process_battery_set_status_result",
         "battery_reset": "_process_battery_reset_result",
@@ -91,7 +141,13 @@ class ADBMediaMixin(_ADBControllerBase):
             operation_id=operation_id,
             unit_ids=(task_id for task_id, _device, _path in tasks),
         )
-        self.operation_manager.mark_running(operation.operation_id)
+        running = self.operation_manager.mark_running(
+            operation.operation_id,
+            expected_kind=operation.kind,
+            expected_generation=operation.generation_token,
+        )
+        if running is None:
+            return operation.operation_id
         self.log_service.log(
             "DEBUG",
             f"[screenshot] operation started: target_count={len(tasks)}",
@@ -108,6 +164,7 @@ class ADBMediaMixin(_ADBControllerBase):
                     save_path,
                     operation.operation_id,
                     task_id,
+                    operation.generation_token,
                 )
             except Exception:
                 self.log_service.log(
@@ -121,8 +178,13 @@ class ADBMediaMixin(_ADBControllerBase):
                         OperationState.FAILED,
                         "Screenshot task submission failed",
                     ),
+                    expected_kind=operation.kind,
+                    expected_generation=operation.generation_token,
                 )
-        self._finish_screenshot_if_complete(operation.operation_id)
+        self._finish_screenshot_if_complete(
+            operation.operation_id,
+            operation.generation_token,
+        )
         return operation.operation_id
 
     def _screenshot_path(self, save_dir: str, device_ip: str) -> str:
@@ -152,6 +214,7 @@ class ADBMediaMixin(_ADBControllerBase):
         save_path: str,
         operation_id: str,
         task_id: str,
+        generation_token: object,
     ):
         self.testing_model.take_screenshot_async(
             device_ip,
@@ -162,6 +225,7 @@ class ADBMediaMixin(_ADBControllerBase):
             _operation_unit_id=task_id,
             _operation_target_id=device_ip,
             _operation_expected_artifact_path=save_path,
+            _operation_generation_token=generation_token,
         )
 
     def _process_screenshot_result(self, result: dict):
@@ -184,7 +248,11 @@ class ADBMediaMixin(_ADBControllerBase):
         metadata: OperationMetadata,
     ) -> OperationSnapshot | None:
         operation_id = metadata.operation_id
-        snapshot = self.operation_manager.get(operation_id)
+        snapshot = self.operation_manager.get(
+            operation_id,
+            expected_kind="screenshot",
+            expected_generation=metadata.generation_token,
+        )
         if snapshot is None:
             return None
         task_id = metadata.unit_id
@@ -192,6 +260,7 @@ class ADBMediaMixin(_ADBControllerBase):
             return self._fail_screenshot_operation(
                 operation_id,
                 "Screenshot task identity mismatch",
+                expected_generation=metadata.generation_token,
             )
         if any(item.unit_id == task_id for item in snapshot.unit_results):
             self.log_service.log("DEBUG", "[screenshot] Duplicate result ignored")
@@ -204,18 +273,46 @@ class ADBMediaMixin(_ADBControllerBase):
                 return self._fail_screenshot_operation(
                     operation_id,
                     "Screenshot artifact identity conflict",
+                    expected_generation=metadata.generation_token,
                 )
-            self.operation_manager.add_artifact(
+            artifact_snapshot = self.operation_manager.add_artifact(
                 operation_id,
                 OperationArtifact(path, "screenshot", task_id),
+                expected_kind="screenshot",
+                expected_generation=metadata.generation_token,
             )
-        self.operation_manager.record_unit_result(
+            if artifact_snapshot is None:
+                return None
+        result_snapshot = self.operation_manager.record_unit_result(
             operation_id,
             OperationUnitResult(task_id, unit_state, message),
+            expected_kind="screenshot",
+            expected_generation=metadata.generation_token,
         )
+        if result_snapshot is None:
+            return None
         if valid and path:
             self.signals.screenshot_captured.emit(metadata.target_id, path)
-        return self._finish_screenshot_if_complete(operation_id)
+        return self._finish_screenshot_if_complete(
+            operation_id,
+            metadata.generation_token,
+        )
+
+    def _operation_metadata_matches(
+        self,
+        op_type: str,
+        metadata: OperationMetadata,
+        snapshot,
+        response_claim: object | None,
+    ) -> bool:
+        if snapshot.kind == "screenshot" and metadata.generation_token is None:
+            return False
+        return super()._operation_metadata_matches(
+            op_type,
+            metadata,
+            snapshot,
+            response_claim,
+        )
 
     @staticmethod
     def _classify_screenshot_result(
@@ -243,11 +340,20 @@ class ADBMediaMixin(_ADBControllerBase):
     def _finish_screenshot_if_complete(
         self,
         operation_id: str,
+        generation_token: object,
     ) -> OperationSnapshot | None:
-        snapshot = self.operation_manager.get(operation_id)
+        snapshot = self.operation_manager.get(
+            operation_id,
+            expected_kind="screenshot",
+            expected_generation=generation_token,
+        )
         if snapshot is None or len(snapshot.unit_results) != len(snapshot.unit_ids):
             return None
-        terminal = self.operation_manager.finish_from_unit_results(operation_id)
+        terminal = self.operation_manager.finish_from_unit_results(
+            operation_id,
+            expected_kind="screenshot",
+            expected_generation=generation_token,
+        )
         if terminal is not None:
             self._emit_screenshot_terminal(terminal)
         return terminal
@@ -256,11 +362,15 @@ class ADBMediaMixin(_ADBControllerBase):
         self,
         operation_id: str,
         message: str,
+        *,
+        expected_generation: object,
     ) -> OperationSnapshot | None:
         terminal = self.operation_manager.finish(
             operation_id,
             OperationState.FAILED,
             message=message,
+            expected_kind="screenshot",
+            expected_generation=expected_generation,
         )
         if terminal is not None:
             self._emit_screenshot_terminal(terminal)
@@ -268,27 +378,30 @@ class ADBMediaMixin(_ADBControllerBase):
 
     def _fail_operation_protocol(self, snapshot, message: str):
         if snapshot.kind == "screenshot":
-            return self._fail_screenshot_operation(snapshot.operation_id, message)
+            return self._fail_screenshot_operation(
+                snapshot.operation_id,
+                message,
+                expected_generation=snapshot.generation_token,
+            )
         return super()._fail_operation_protocol(snapshot, message)
 
     def cancel_screenshot(self, operation_id: str) -> bool:
-        if not self.operation_manager.request_cancel(operation_id):
-            return False
-        snapshot = self.operation_manager.get(operation_id)
+        snapshot = self.operation_manager.get(
+            operation_id,
+            expected_kind="screenshot",
+        )
         if snapshot is None:
             return False
-        completed_units = {result.unit_id for result in snapshot.unit_results}
-        for unit_id in snapshot.unit_ids:
-            if unit_id not in completed_units:
-                self.operation_manager.record_unit_result(
-                    operation_id,
-                    OperationUnitResult(
-                        unit_id,
-                        OperationState.CANCELLED,
-                        "Screenshot cancelled",
-                    ),
-                )
-        self._finish_screenshot_if_complete(operation_id)
+        generation_token = snapshot.generation_token
+        terminal = self.operation_manager.cancel_pending_units(
+            operation_id,
+            unit_message="Screenshot cancelled",
+            expected_kind="screenshot",
+            expected_generation=generation_token,
+        )
+        if terminal is None:
+            return False
+        self._emit_screenshot_terminal(terminal)
         return True
 
     def _emit_screenshot_terminal(self, terminal: OperationSnapshot):
@@ -317,10 +430,15 @@ class ADBMediaMixin(_ADBControllerBase):
             terminal.state is OperationState.SUCCEEDED,
             message,
         )
+        succeeded_units = {
+            result.unit_id
+            for result in terminal.unit_results
+            if result.state is OperationState.SUCCEEDED
+        }
         paths_by_unit = {
             artifact.unit_id: artifact.path
             for artifact in terminal.artifacts
-            if artifact.kind == "screenshot"
+            if artifact.kind == "screenshot" and artifact.unit_id in succeeded_units
         }
         paths = [
             paths_by_unit[unit_id] for unit_id in terminal.unit_ids if unit_id in paths_by_unit
@@ -336,6 +454,7 @@ class ADBMediaMixin(_ADBControllerBase):
         configure_independent_secondary_window(viewer)
         viewer.setAttribute(Qt.WA_DeleteOnClose)
         if self.window_owner is not None:
+            fit_secondary_window_to_owner_screen(viewer, self.window_owner)
             viewer.installEventFilter(self.window_owner)
         self._active_viewers.append(viewer)
         log_service = getattr(self, "log_service", None)
@@ -370,23 +489,78 @@ class ADBMediaMixin(_ADBControllerBase):
 
     # 屏幕录制
 
-    def start_screen_record(self, devices: list, duration: int = 30):
+    def start_screen_record(self, devices: list, duration: int = 30, batch_id: str = ""):
+        devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "screen_record"):
             return
-        save_dir = self._get_screenshot_dir()
+        requested_batch_id = str(batch_id).strip()
+        try:
+            duration = int(duration)
+        except (TypeError, ValueError):
+            self._emit_operation("screen_record", False, "Invalid recording duration")
+            for ip in devices:
+                _emit_record_target_finished(self, requested_batch_id, ip)
+            return
+        if not 1 <= duration <= 3600:
+            self._emit_operation(
+                "screen_record", False, "Recording duration must be between 1 and 3600 seconds"
+            )
+            for ip in devices:
+                _emit_record_target_finished(self, requested_batch_id, ip)
+            return
+        batch_id = requested_batch_id or uuid.uuid4().hex
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", batch_id):
+            self._emit_operation("screen_record", False, "Invalid recording batch identifier")
+            for ip in devices:
+                _emit_record_target_finished(self, batch_id, ip)
+            return
+        try:
+            save_dir = self._get_screenshot_dir()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._emit_operation(
+                "screen_record",
+                False,
+                f"Failed to prepare recording directory: {exc}",
+            )
+            for ip in devices:
+                _emit_record_target_finished(self, batch_id, ip)
+            return
         now = time.time()
         if not hasattr(self, "_record_info"):
             self._record_info = {}
         for ip in devices:
+            if ip in self._record_info:
+                self._emit_operation("screen_record", False, f"Recording is already active on {ip}")
+                _emit_record_target_finished(self, batch_id, ip)
+                continue
             self._record_info[ip] = {
                 "start_time": now,
                 "duration": duration,
                 "save_dir": save_dir,
+                "batch_id": batch_id,
             }
-            self.advanced_model.start_screen_record_async(ip, save_dir, duration)
+            try:
+                self.advanced_model.start_screen_record_async(
+                    ip,
+                    save_dir,
+                    duration,
+                    batch_id=batch_id,
+                )
+            except Exception as exc:
+                self._record_info.pop(ip, None)
+                self._emit_operation(
+                    "screen_record",
+                    False,
+                    f"Failed to submit recording for {ip}: {exc}",
+                )
+                _emit_record_target_finished(self, batch_id, ip)
 
     def _process_start_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
+        info = self._record_info.get(ip, {})
+        batch_id = result.get("batch_id") or info.get("batch_id", "")
+        if not info or batch_id != info.get("batch_id", ""):
+            return
         if result.get("success"):
             dur = result.get("duration", 30)
             self._record_info[ip].update(
@@ -398,49 +572,134 @@ class ADBMediaMixin(_ADBControllerBase):
             self._emit_operation(
                 "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
             )
-            # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
-            QTimer.singleShot((dur + 2) * 1000, lambda ip=ip: self._auto_pull(ip))
+            if self._record_info[ip].get("stop_succeeded"):
+                self._auto_pull(ip, batch_id)
+            else:
+                # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
+                QTimer.singleShot(
+                    (dur + 2) * 1000,
+                    lambda ip=ip, batch_id=batch_id: self._auto_pull(ip, batch_id),
+                )
         else:
             self._record_info.pop(ip, None)
+            stop_requests = getattr(self, "_record_stop_requests", {})
+            if isinstance(stop_requests, dict) and stop_requests.get(ip) == batch_id:
+                stop_requests.pop(ip, None)
             self._emit_operation(
                 "screen_record", False, f"Failed to start recording on {ip}: {result.get('error')}"
             )
-            self.signals.record_finished.emit()
+            _emit_record_target_finished(self, batch_id, ip)
 
-    def _auto_pull(self, device_ip: str):
+    def _submit_recording_pull(self, device_ip: str, info: dict) -> bool:
+        """每个设备批次只提交一次录屏拉取；提交失败时立即释放终态。"""
+
+        batch_id = str(info.get("batch_id", ""))
+        current = getattr(self, "_record_info", {}).get(device_ip, {})
+        if current is not info or str(current.get("batch_id", "")) != batch_id:
+            return False
+        if info.get("pull_submitted"):
+            return False
+        # Stop 结果和自动定时器都在 GUI 线程进入此入口，先标记再提交即可阻断重入。
+        info["pull_submitted"] = True
+        try:
+            self.advanced_model.pull_recorded_video_async(
+                device_ip,
+                info["remote_path"],
+                info["save_dir"],
+                info["filename"],
+                batch_id=batch_id,
+            )
+            return True
+        except Exception as exc:
+            current = getattr(self, "_record_info", {}).get(device_ip, {})
+            if current.get("batch_id") == batch_id:
+                self._record_info.pop(device_ip, None)
+            stop_requests = getattr(self, "_record_stop_requests", {})
+            if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == batch_id:
+                stop_requests.pop(device_ip, None)
+            self._emit_operation(
+                "pull_recording",
+                False,
+                f"Failed to submit recording pull for {device_ip}: {exc}",
+            )
+            _emit_record_target_finished(self, batch_id, device_ip)
+            return False
+
+    def _auto_pull(self, device_ip: str, batch_id: str = ""):
         info = self._record_info.get(device_ip, {})
-        if info.get("remote_path"):
+        if batch_id and info.get("batch_id") != batch_id:
+            return
+        if info.get("remote_path") and not info.get("pull_submitted"):
+            submitted = ADBMediaMixin._submit_recording_pull(self, device_ip, info)
+            if not submitted:
+                return
             self._emit_operation(
                 "screen_record", True, f"Auto-pulling recording from {device_ip}..."
             )
-            self.advanced_model.pull_recorded_video_async(
-                device_ip, info["remote_path"], info["save_dir"], info["filename"]
-            )
 
-    def stop_screen_record(self, devices: list):
+    def stop_screen_record(self, devices: list, batch_id: str = ""):
+        devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "stop_recording"):
             return
+        stop_requests = getattr(self, "_record_stop_requests", None)
+        if not isinstance(stop_requests, dict):
+            stop_requests = {}
+            self._record_stop_requests = stop_requests
         for ip in devices:
-            self.advanced_model.stop_screen_record_async(ip)
+            info = getattr(self, "_record_info", {}).get(ip, {})
+            current_batch = str(info.get("batch_id", ""))
+            requested_batch = str(batch_id).strip() or current_batch
+            if batch_id and requested_batch != current_batch:
+                continue
+            if stop_requests.get(ip) == requested_batch:
+                continue
+            stop_requests[ip] = requested_batch
+            try:
+                self.advanced_model.stop_screen_record_async(ip, batch_id=requested_batch)
+            except Exception as exc:
+                stop_requests.pop(ip, None)
+                self._emit_operation(
+                    "stop_recording",
+                    False,
+                    f"Failed to submit recording stop for {ip}: {exc}",
+                )
 
     def _process_stop_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
+        result_batch = str(result.get("batch_id", ""))
+        info = getattr(self, "_record_info", {}).get(ip, {})
+        current_batch = str(info.get("batch_id", ""))
+        stop_requests = getattr(self, "_record_stop_requests", {})
+        if isinstance(stop_requests, dict) and stop_requests.get(ip) == result_batch:
+            stop_requests.pop(ip, None)
+        if current_batch and result_batch != current_batch:
+            return
+        if result_batch and not current_batch:
+            return
         self._emit_operation(
             "stop_recording",
             result.get("success", False),
             f"Recording on {ip}: {result.get('message', '')}",
         )
+        if not result.get("success", False):
+            return
         # 主动停止录制后也要拉取已经生成的文件。
-        info = self._record_info.get(ip, {})
         if info.get("remote_path"):
-            self.advanced_model.pull_recorded_video_async(
-                ip, info["remote_path"], info["save_dir"], info["filename"]
-            )
+            ADBMediaMixin._submit_recording_pull(self, ip, info)
+        elif info:
+            info["stop_succeeded"] = True
 
     def _process_pull_recorded_video_result(self, result: dict):
         ip = result.get("device_ip", "")
+        info = self._record_info.get(ip, {})
+        batch_id = result.get("batch_id") or info.get("batch_id", "")
+        if not info or batch_id != info.get("batch_id", ""):
+            return
+        self._record_info.pop(ip, None)
+        stop_requests = getattr(self, "_record_stop_requests", {})
+        if isinstance(stop_requests, dict) and stop_requests.get(ip) == batch_id:
+            stop_requests.pop(ip, None)
         if result.get("success"):
-            self._record_info.pop(ip, None)
             self._emit_operation(
                 "pull_recording", True, f"Recording saved: {result.get('local_path')}"
             )
@@ -450,7 +709,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 False,
                 f"Failed to pull recording from {ip}: {result.get('error')}",
             )
-        self.signals.record_finished.emit()
+        _emit_record_target_finished(self, batch_id, ip)
 
     # 性能诊断
 
@@ -509,16 +768,95 @@ class ADBMediaMixin(_ADBControllerBase):
                 "dumpsys_battery", False, f"Battery info failed on {ip}: {result.get('error')}"
             )
 
+    def top_snapshot(self, devices: list):
+        if not self._require_devices(devices, "top_snapshot"):
+            return
+        for ip in devices:
+            self.advanced_model.top_snapshot_async(ip)
+
+    def _process_top_snapshot_result(self, result: dict):
+        _emit_readonly_diagnostic_result(
+            self,
+            result,
+            operation="top_snapshot",
+            label="Top snapshot",
+            max_lines=20,
+        )
+
+    def gfxinfo(self, devices: list, package: str):
+        if not self._require_devices(devices, "gfxinfo"):
+            return
+        try:
+            package = normalize_android_package(package)
+        except ValueError as exc:
+            self._emit_operation("gfxinfo", False, str(exc))
+            return
+        for ip in devices:
+            self.advanced_model.gfxinfo_async(ip, package)
+
+    def _process_gfxinfo_result(self, result: dict):
+        _emit_readonly_diagnostic_result(
+            self,
+            result,
+            operation="gfxinfo",
+            label="GFX info",
+            max_lines=60,
+        )
+
+    def wakelocks(self, devices: list):
+        if not self._require_devices(devices, "wakelocks"):
+            return
+        for ip in devices:
+            self.advanced_model.wakelocks_async(ip)
+
+    def _process_wakelocks_result(self, result: dict):
+        _emit_readonly_diagnostic_result(
+            self,
+            result,
+            operation="wakelocks",
+            label="Wakelocks",
+            max_lines=40,
+        )
+
+    def netstats_detail(self, devices: list):
+        if not self._require_devices(devices, "netstats_detail"):
+            return
+        for ip in devices:
+            self.advanced_model.netstats_detail_async(ip)
+
+    def _process_netstats_detail_result(self, result: dict):
+        _emit_readonly_diagnostic_result(
+            self,
+            result,
+            operation="netstats_detail",
+            label="Network statistics",
+            max_lines=60,
+        )
+
     # 电池状态
 
     def battery_set(self, devices: list, param: str, value: str):
         if not self._require_devices(devices, "battery_set"):
             return
+        try:
+            numeric_value = int(str(value).strip())
+        except (TypeError, ValueError):
+            self._emit_operation("battery_set", False, "Battery value must be an integer")
+            return
+        if param == "level" and not 0 <= numeric_value <= 100:
+            self._emit_operation("battery_set", False, "Battery level must be between 0 and 100")
+            return
+        if param == "status" and not 1 <= numeric_value <= 5:
+            self._emit_operation("battery_set", False, "Battery status must be between 1 and 5")
+            return
+        if param not in {"level", "status"}:
+            self._emit_operation("battery_set", False, "Unsupported battery parameter")
+            return
         for ip in devices:
             if param == "level":
-                self.advanced_model.battery_set_level_async(ip, int(value))
+                self.advanced_model.battery_set_level_async(ip, numeric_value)
             elif param == "status":
-                self.advanced_model.battery_set_status_async(ip, value)
+                self.advanced_model.battery_set_status_async(ip, str(numeric_value))
 
     def _process_battery_set_level_result(self, result: dict):
         ip = result.get("device_ip", "")
@@ -613,8 +951,12 @@ class ADBMediaMixin(_ADBControllerBase):
     def kill_process(self, devices: list, pid: str):
         if not self._require_devices(devices, "kill_process"):
             return
+        text = str(pid).strip()
+        if not text.isdigit() or not 1 <= int(text) <= 2_147_483_647:
+            self._emit_operation("kill_process", False, "PID must be a positive integer")
+            return
         for ip in devices:
-            self.advanced_model.kill_process_async(ip, pid)
+            self.advanced_model.kill_process_async(ip, text)
 
     def _process_kill_process_result(self, result: dict):
         ip = result.get("device_ip", "")

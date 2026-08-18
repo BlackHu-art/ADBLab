@@ -1,5 +1,6 @@
 import os
 import threading
+from dataclasses import replace
 from unittest.mock import Mock
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -117,6 +118,89 @@ def test_fanout_rejects_missing_unknown_and_conflicting_unit_results():
         manager.finish(operation.operation_id, OperationState.SUCCEEDED)
 
 
+def test_cancel_pending_units_uses_current_results_and_finishes_atomically():
+    manager = OperationManager()
+    generation = object()
+    operation = manager.begin(
+        "screenshot",
+        unit_ids=("unit-a", "unit-b"),
+        generation_token=generation,
+    )
+    manager.mark_running(
+        operation.operation_id,
+        expected_kind="screenshot",
+        expected_generation=generation,
+    )
+    succeeded = OperationUnitResult("unit-a", OperationState.SUCCEEDED, "captured")
+    manager.record_unit_result(
+        operation.operation_id,
+        succeeded,
+        expected_kind="screenshot",
+        expected_generation=generation,
+    )
+
+    terminal = manager.cancel_pending_units(
+        operation.operation_id,
+        unit_message="Screenshot cancelled",
+        expected_kind="screenshot",
+        expected_generation=generation,
+    )
+
+    assert terminal is not None
+    assert terminal.state is OperationState.PARTIAL
+    assert terminal.cancel_requested is True
+    assert terminal.unit_results == (
+        succeeded,
+        OperationUnitResult("unit-b", OperationState.CANCELLED, "Screenshot cancelled"),
+    )
+    assert manager.active_count == 0
+    assert (
+        manager.cancel_pending_units(
+            operation.operation_id,
+            unit_message="Screenshot cancelled",
+            expected_kind="screenshot",
+            expected_generation=generation,
+        )
+        is None
+    )
+
+
+def test_cancel_pending_units_finishes_after_cancel_intent_was_already_recorded():
+    manager = OperationManager()
+    operation = manager.begin("screenshot", unit_ids=("unit-a",))
+    manager.mark_running(operation.operation_id)
+    assert manager.request_cancel(operation.operation_id) is True
+
+    terminal = manager.cancel_pending_units(
+        operation.operation_id,
+        unit_message="Screenshot cancelled",
+    )
+
+    assert terminal is not None
+    assert terminal.state is OperationState.CANCELLED
+    assert terminal.cancel_requested is True
+    assert terminal.unit_results == (
+        OperationUnitResult("unit-a", OperationState.CANCELLED, "Screenshot cancelled"),
+    )
+    assert manager.active_count == 0
+
+
+def test_cancel_pending_units_preserves_all_completed_success_results():
+    manager = OperationManager()
+    operation = manager.begin("screenshot", unit_ids=("unit-a",))
+    manager.mark_running(operation.operation_id)
+    succeeded = OperationUnitResult("unit-a", OperationState.SUCCEEDED, "captured")
+    manager.record_unit_result(operation.operation_id, succeeded)
+
+    terminal = manager.cancel_pending_units(operation.operation_id)
+
+    assert terminal is not None
+    assert terminal.state is OperationState.SUCCEEDED
+    assert terminal.cancel_requested is True
+    assert terminal.unit_results == (succeeded,)
+    assert manager.active_count == 0
+
+
 def test_operation_artifacts_are_idempotent_and_bound_to_expected_units():
     manager = _manager()
     operation = manager.begin("screenshot", unit_ids=("task-a",))
@@ -197,6 +281,156 @@ def test_concurrent_terminal_writes_have_exactly_one_winner():
     assert manager.active_count == 0
 
 
+def test_operation_generation_is_opaque_and_compare_safe_across_reused_ids():
+    manager = OperationManager(id_factory=lambda: "unused")
+    first_generation = object()
+    first = manager.begin(
+        "install",
+        operation_id="shared-id",
+        unit_ids=("old-unit",),
+        generation_token=first_generation,
+    )
+
+    assert first.generation_token is first_generation
+    assert "generation_token" not in repr(first)
+    assert replace(first, generation_token=object()) == first
+    assert manager.get("shared-id", expected_kind="screenshot") is None
+    assert manager.get("shared-id", expected_generation=object()) is None
+    assert (
+        manager.mark_running(
+            "shared-id",
+            expected_kind="install",
+            expected_generation=first_generation,
+        )
+        is not None
+    )
+    terminal = manager.finish(
+        "shared-id",
+        OperationState.FAILED,
+        expected_kind="install",
+        expected_generation=first_generation,
+    )
+    assert terminal is not None
+
+    second_generation = object()
+    second = manager.begin(
+        "screenshot",
+        operation_id="shared-id",
+        unit_ids=("new-unit",),
+        generation_token=second_generation,
+    )
+    current = manager.mark_running(
+        "shared-id",
+        expected_kind="screenshot",
+        expected_generation=second_generation,
+    )
+
+    assert (
+        manager.request_cancel(
+            "shared-id",
+            expected_kind="install",
+            expected_generation=first_generation,
+        )
+        is False
+    )
+    assert (
+        manager.record_unit_result(
+            "shared-id",
+            OperationUnitResult("new-unit", OperationState.FAILED),
+            expected_kind="install",
+            expected_generation=first_generation,
+        )
+        is None
+    )
+    assert (
+        manager.finish(
+            "shared-id",
+            OperationState.FAILED,
+            expected_kind="install",
+            expected_generation=first_generation,
+        )
+        is None
+    )
+    assert current is not None
+    assert current.generation_token is second.generation_token
+    assert manager.get("shared-id") == current
+    assert manager.get("shared-id").cancel_requested is False
+    assert manager.get("shared-id").unit_results == ()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda manager, operation_id: manager.mark_finalizing(
+            operation_id,
+            expected_generation=object(),
+        ),
+        lambda manager, operation_id: manager.update_progress(
+            operation_id,
+            50,
+            expected_generation=object(),
+        ),
+        lambda manager, operation_id: manager.add_artifact(
+            operation_id,
+            OperationArtifact("shot.png", "screenshot", "task-a"),
+            expected_generation=object(),
+        ),
+        lambda manager, operation_id: manager.finish_from_unit_results(
+            operation_id,
+            expected_generation=object(),
+        ),
+        lambda manager, operation_id: manager.cancel_pending_units(
+            operation_id,
+            expected_generation=object(),
+        ),
+    ),
+)
+def test_every_operation_mutation_rejects_wrong_generation_before_validation(mutation):
+    manager = OperationManager(id_factory=lambda: "unused")
+    generation = object()
+    operation = manager.begin(
+        "screenshot",
+        operation_id="shared-id",
+        unit_ids=("task-a",),
+        generation_token=generation,
+    )
+
+    assert mutation(manager, operation.operation_id) is None
+    assert manager.get(operation.operation_id) == operation
+
+
+def test_unguarded_mutations_keep_legacy_input_validation_for_missing_operation():
+    manager = OperationManager(id_factory=lambda: "unused")
+
+    with pytest.raises(ValueError, match="progress must be between 0 and 100"):
+        manager.update_progress("missing", 101)
+    with pytest.raises(ValueError, match="finish state must be terminal"):
+        manager.finish("missing", OperationState.RUNNING)
+
+
+def test_guarded_mutations_reject_stale_generation_before_input_validation():
+    manager = OperationManager(id_factory=lambda: "unused")
+    operation = manager.begin("sample", operation_id="operation-1")
+
+    assert (
+        manager.update_progress(
+            operation.operation_id,
+            101,
+            expected_generation=object(),
+        )
+        is None
+    )
+    assert (
+        manager.finish(
+            operation.operation_id,
+            OperationState.RUNNING,
+            expected_generation=object(),
+        )
+        is None
+    )
+    assert manager.get(operation.operation_id) == operation
+
+
 @pytest.mark.parametrize("payload", [{"_operation": "business"}, ["a"], "text", None])
 def test_operation_envelope_round_trips_arbitrary_legacy_payload(payload):
     metadata = OperationMetadata(1, "operation-1", "sample", "sample", "task-1")
@@ -249,6 +483,46 @@ def test_async_command_keeps_signal_signature_and_strips_reserved_operation_kwar
     assert metadata.operation_kind == "sample"
     assert metadata.method_name == "sample"
     assert perf["method"] == "sample_async"
+
+
+def test_async_command_carries_manager_generation_without_forwarding_it_to_model_method():
+    _app = QApplication.instance() or QApplication([])
+    model = _EnvelopeModel()
+    model.thread_pool = _ImmediatePool()
+    received = []
+    model.command_finished.connect(lambda _method, result: received.append(result))
+    generation = object()
+
+    model.sample_async(
+        {"success": True},
+        _operation_id="operation-1",
+        _operation_kind="sample",
+        _operation_generation_token=generation,
+    )
+
+    _payload, metadata = split_operation_metadata(received[0])
+    assert metadata.generation_token is generation
+
+
+def test_async_command_carries_owner_token_without_forwarding_it_to_model_method():
+    _app = QApplication.instance() or QApplication([])
+    model = _EnvelopeModel()
+    model.thread_pool = _ImmediatePool()
+    received = []
+    model.command_finished.connect(lambda _method, result: received.append(result))
+    owner_token = object()
+
+    model.sample_async(
+        {"success": True},
+        _operation_id="operation-1",
+        _operation_kind="sample",
+        _operation_owner_token=owner_token,
+    )
+
+    payload_with_perf, metadata = split_operation_metadata(received[0])
+    payload, _perf = split_perf(payload_with_perf)
+    assert payload == {"success": True}
+    assert getattr(metadata, "owner_token", None) is owner_token
 
 
 def test_async_command_reports_business_runtime_error_with_same_operation_metadata():

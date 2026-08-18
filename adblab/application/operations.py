@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from threading import RLock
 
@@ -106,6 +106,7 @@ class OperationSnapshot:
     started_at: float | None
     updated_at: float
     finished_at: float | None
+    generation_token: object = field(default_factory=object, repr=False, compare=False)
 
     @property
     def is_terminal(self) -> bool:
@@ -139,6 +140,7 @@ class OperationManager:
         unit_ids: Iterable[str] = (),
         parent_operation_id: str | None = None,
         operation_id: str | None = None,
+        generation_token: object | None = None,
     ) -> OperationSnapshot:
         """创建排队状态的活动操作，并拒绝重复标识和重复单元。"""
         normalized_kind = self._non_empty(kind, "kind")
@@ -156,6 +158,7 @@ class OperationManager:
                 "parent_operation_id",
             )
         now = self._clock()
+        generation_token = object() if generation_token is None else generation_token
         snapshot = OperationSnapshot(
             operation_id=normalized_id,
             kind=normalized_kind,
@@ -171,6 +174,7 @@ class OperationManager:
             started_at=None,
             updated_at=now,
             finished_at=None,
+            generation_token=generation_token,
         )
         with self._lock:
             if normalized_id in self._active:
@@ -178,9 +182,19 @@ class OperationManager:
             self._active[normalized_id] = _OperationEntry(snapshot, CancellationToken())
             return snapshot
 
-    def get(self, operation_id: str) -> OperationSnapshot | None:
+    def get(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> OperationSnapshot | None:
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             return entry.snapshot if entry else None
 
     def active_snapshot(self) -> tuple[OperationSnapshot, ...]:
@@ -192,21 +206,63 @@ class OperationManager:
         with self._lock:
             return len(self._active)
 
-    def token(self, operation_id: str) -> CancellationToken | None:
+    def token(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> CancellationToken | None:
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             return entry.token if entry else None
 
-    def mark_running(self, operation_id: str) -> OperationSnapshot | None:
-        return self._move(operation_id, OperationState.RUNNING)
+    def mark_running(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> OperationSnapshot | None:
+        return self._move(
+            operation_id,
+            OperationState.RUNNING,
+            expected_kind=expected_kind,
+            expected_generation=expected_generation,
+        )
 
-    def mark_finalizing(self, operation_id: str) -> OperationSnapshot | None:
-        return self._move(operation_id, OperationState.FINALIZING)
+    def mark_finalizing(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> OperationSnapshot | None:
+        return self._move(
+            operation_id,
+            OperationState.FINALIZING,
+            expected_kind=expected_kind,
+            expected_generation=expected_generation,
+        )
 
-    def request_cancel(self, operation_id: str) -> bool:
+    def request_cancel(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> bool:
         """设置协作式取消意图，仅首次有效请求返回 True。"""
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return False
             first_request = entry.token.request()
@@ -219,20 +275,72 @@ class OperationManager:
                 )
             return first_request
 
+    def cancel_pending_units(
+        self,
+        operation_id: str,
+        *,
+        unit_message: str = "Operation cancelled",
+        message: str = "",
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
+    ) -> OperationSnapshot | None:
+        """原子取消未完成单元、汇总终态并移除活动操作。"""
+        with self._lock:
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
+            if entry is None:
+                return None
+            current = entry.snapshot
+            if not current.unit_ids:
+                raise OperationTransitionError("operation has no fan-out units")
+            entry.token.request()
+            completed_units = {result.unit_id for result in current.unit_results}
+            cancelled = tuple(
+                OperationUnitResult(
+                    unit_id,
+                    OperationState.CANCELLED,
+                    str(unit_message),
+                )
+                for unit_id in current.unit_ids
+                if unit_id not in completed_units
+            )
+            entry.snapshot = replace(
+                current,
+                cancel_requested=True,
+                unit_results=(*current.unit_results, *cancelled),
+                updated_at=self._clock(),
+            )
+            return self._finish_from_unit_results_locked(entry, str(message))
+
     def update_progress(
         self,
         operation_id: str,
         progress: float,
         *,
         message: str | None = None,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
-        value = float(progress)
-        if not 0.0 <= value <= 100.0:
-            raise ValueError("progress must be between 0 and 100")
+        guarded = expected_kind is not None or expected_generation is not None
+        if not guarded:
+            value = float(progress)
+            if not 0.0 <= value <= 100.0:
+                raise ValueError("progress must be between 0 and 100")
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
+            if guarded:
+                value = float(progress)
+                if not 0.0 <= value <= 100.0:
+                    raise ValueError("progress must be between 0 and 100")
             current = entry.snapshot
             if value < current.progress:
                 raise OperationTransitionError("operation progress cannot move backwards")
@@ -248,9 +356,16 @@ class OperationManager:
         self,
         operation_id: str,
         result: OperationUnitResult,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
             current = entry.snapshot
@@ -275,9 +390,16 @@ class OperationManager:
         self,
         operation_id: str,
         artifact: OperationArtifact,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
             current = entry.snapshot
@@ -298,14 +420,23 @@ class OperationManager:
         state: OperationState,
         *,
         message: str = "",
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
         """完成非扇出操作，并从活动注册表中原子移除。"""
-        if state not in TERMINAL_STATES:
+        guarded = expected_kind is not None or expected_generation is not None
+        if not guarded and state not in TERMINAL_STATES:
             raise ValueError("finish state must be terminal")
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
+            if guarded and state not in TERMINAL_STATES:
+                raise ValueError("finish state must be terminal")
             current = entry.snapshot
             self._validate_transition(current.state, state)
             if current.unit_ids and state in {
@@ -322,36 +453,56 @@ class OperationManager:
         operation_id: str,
         *,
         message: str = "",
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
         """全部单元上报后汇总终态，并原子移除扇出操作。"""
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
-            current = entry.snapshot
-            if not current.unit_ids:
-                raise OperationTransitionError("operation has no fan-out units")
-            if len(current.unit_results) != len(current.unit_ids):
-                raise IncompleteOperationError("not all operation units have reported")
-            states = {result.state for result in current.unit_results}
-            if states == {OperationState.SUCCEEDED}:
-                terminal = OperationState.SUCCEEDED
-            elif states == {OperationState.CANCELLED}:
-                terminal = OperationState.CANCELLED
-            elif OperationState.SUCCEEDED in states:
-                terminal = OperationState.PARTIAL
-            else:
-                terminal = OperationState.FAILED
-            self._validate_transition(current.state, terminal)
-            return self._finish_locked(entry, terminal, message)
+            return self._finish_from_unit_results_locked(entry, message)
+
+    def _finish_from_unit_results_locked(
+        self,
+        entry: _OperationEntry,
+        message: str,
+    ) -> OperationSnapshot:
+        current = entry.snapshot
+        if not current.unit_ids:
+            raise OperationTransitionError("operation has no fan-out units")
+        if len(current.unit_results) != len(current.unit_ids):
+            raise IncompleteOperationError("not all operation units have reported")
+        states = {result.state for result in current.unit_results}
+        if states == {OperationState.SUCCEEDED}:
+            terminal = OperationState.SUCCEEDED
+        elif states == {OperationState.CANCELLED}:
+            terminal = OperationState.CANCELLED
+        elif OperationState.SUCCEEDED in states:
+            terminal = OperationState.PARTIAL
+        else:
+            terminal = OperationState.FAILED
+        self._validate_transition(current.state, terminal)
+        return self._finish_locked(entry, terminal, message)
 
     def _move(
         self,
         operation_id: str,
         state: OperationState,
+        *,
+        expected_kind: str | None = None,
+        expected_generation: object | None = None,
     ) -> OperationSnapshot | None:
         with self._lock:
-            entry = self._active.get(operation_id)
+            entry = self._matching_entry_locked(
+                operation_id,
+                expected_kind=expected_kind,
+                expected_generation=expected_generation,
+            )
             if entry is None:
                 return None
             current = entry.snapshot
@@ -364,6 +515,25 @@ class OperationManager:
                 updated_at=now,
             )
             return entry.snapshot
+
+    def _matching_entry_locked(
+        self,
+        operation_id: str,
+        *,
+        expected_kind: str | None,
+        expected_generation: object | None,
+    ) -> _OperationEntry | None:
+        entry = self._active.get(operation_id)
+        if entry is None:
+            return None
+        if expected_kind is not None and entry.snapshot.kind != expected_kind:
+            return None
+        if (
+            expected_generation is not None
+            and entry.snapshot.generation_token is not expected_generation
+        ):
+            return None
+        return entry
 
     def _finish_locked(
         self,
