@@ -24,6 +24,8 @@ def _feedback_controller() -> SimpleNamespace:
     return SimpleNamespace(
         devices_updated=Mock(),
         record_finished=Mock(),
+        record_target_finished=Mock(),
+        monkey_target_finished=Mock(),
         operation_completed=Mock(),
         current_package_received=Mock(),
         device_info_updated=Mock(),

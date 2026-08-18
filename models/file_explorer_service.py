@@ -202,10 +202,18 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
 
 
 def normalize_mode(raw_mode: str, is_dir: bool) -> str:
-    mode = (raw_mode or "").strip()
-    if _VALID_MODE.match(mode):
-        return mode.lstrip("0")[-3:]
+    mode = parse_mode(raw_mode)
+    if mode is not None:
+        return mode
     return "755" if is_dir else "644"
+
+
+def parse_mode(raw_mode: str) -> str | None:
+    """解析设备返回的权限模式；无法确认时不伪造默认权限。"""
+    mode = (raw_mode or "").strip()
+    if not _VALID_MODE.fullmatch(mode):
+        return None
+    return mode[-3:]
 
 
 def mode_from_permissions(states: dict[tuple[str, str], bool]) -> str:

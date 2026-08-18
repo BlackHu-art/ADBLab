@@ -159,7 +159,7 @@ def test_task_supervisor_distinguishes_graceful_and_forced_stop():
         request_stop=lambda: None,
         wait=wait,
         is_running=lambda: forced_running[0],
-        force_stop=lambda _timeout: forced_running.__setitem__(0, False) is None,
+        force_stop=lambda _timeout: (forced_running.__setitem__(0, False) is None),
     )
     forced = supervisor.stop("forced", graceful_timeout=0, force_timeout=0)
 
@@ -727,6 +727,41 @@ def test_worker_finished_does_not_unregister_a_surviving_process():
     dialog.close()
 
 
+def test_task_stop_callback_releases_worker_after_process_exits_late():
+    _app = QApplication.instance() or QApplication([])
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    worker = LogcatWorker("target")
+    task_id = "late-process-exit"
+    worker._supervisor_task_id = task_id
+    worker._finished_event.set()
+    process = Mock()
+    process.poll.return_value = None
+    worker._process_runner._procs[worker._process_key] = process
+    dialog.worker = worker
+    dialog._supervisor_task_id = task_id
+
+    dialog._on_worker_finished(worker)
+    assert dialog.worker is worker
+    assert dialog._worker_release_timer.isActive()
+
+    process.poll.return_value = 0
+    worker._process_runner._procs.clear()
+    dialog._on_task_stopped(
+        TaskStopResult(
+            task_id=task_id,
+            owner_id=dialog._supervisor_owner_id,
+            disposition=StopDisposition.GRACEFUL,
+        )
+    )
+
+    assert dialog.worker is None
+    assert dialog._supervisor_task_id is None
+    assert dialog.start_btn.isEnabled()
+    assert not dialog.stop_btn.isEnabled()
+    dialog.close()
+
+
 def test_disconnect_clears_dialog_capturing_handlers_from_orphan_worker():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
@@ -793,7 +828,7 @@ def test_dialog_acknowledges_late_batch_without_touching_closed_ui():
     dialog._on_lines(worker, LogcatBatch((("line", "I", 0),)))
 
     assert worker._inflight_batches == 0
-    assert dialog.entries == []
+    assert not dialog.entries
     worker._finished_event.set()
     dialog.close()
 

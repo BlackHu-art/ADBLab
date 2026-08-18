@@ -2,10 +2,47 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from controllers._base import _ADBControllerBase
 from core.log_service import LogService
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
+from utils.adb_values import (
+    normalize_dumpsys_service,
+    normalize_geo_coordinate,
+    truncate_diagnostic_output,
+)
+
+
+def _emit_system_diagnostic_result(
+    controller,
+    result: dict,
+    *,
+    operation: str,
+    label: str,
+    max_lines: int,
+) -> None:
+    """把系统只读诊断裁剪为可控的界面输出。"""
+
+    ip = result.get("device_ip", "")
+    if not result.get("success"):
+        controller._emit_operation(
+            operation,
+            False,
+            f"{label} failed on {ip}: {result.get('error')}",
+        )
+        return
+    output, truncated = truncate_diagnostic_output(
+        result.get("output", ""),
+        max_lines=max_lines,
+    )
+    suffix = " [truncated]" if truncated else ""
+    controller._emit_operation(
+        operation,
+        True,
+        f"{label} ({ip}){suffix}:\n{output}",
+    )
 
 
 class ADBSystemControllerMixin(_ADBControllerBase):
@@ -19,6 +56,7 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         "grant_permission": "_process_grant_permission_result",
         "revoke_permission": "_process_revoke_permission_result",
         "disable_package": "_process_disable_package_result",
+        "disable_package_user": "_process_disable_package_user_result",
         "enable_package": "_process_enable_package_result",
         "force_stop": "_process_force_stop_result",
         "send_broadcast": "_process_send_broadcast_result",
@@ -29,6 +67,9 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         "emu_sms_send": "_process_emu_sms_send_result",
         "emu_call": "_process_emu_call_result",
         "emu_geo_fix": "_process_emu_geo_fix_result",
+        "cmd_dumpsys_service": "_process_cmd_dumpsys_service_result",
+        "get_kernel_version": "_process_get_kernel_version_result",
+        "get_cpu_info": "_process_get_cpu_info_result",
     }
 
     # 权限管理
@@ -86,6 +127,29 @@ class ADBSystemControllerMixin(_ADBControllerBase):
         else:
             self._emit_operation(
                 "disable_app", False, f"Disable failed on {ip}: {result.get('error')}"
+            )
+
+    def disable_app_for_user(self, devices: list, package: str):
+        """仅对设备当前用户停用应用，不改变普通停用的命令语义。"""
+
+        if not self._require_devices(devices, "disable_app_for_user"):
+            return
+        for ip in devices:
+            self.advanced_model.disable_package_user_async(ip, package)
+
+    def _process_disable_package_user_result(self, result: dict):
+        ip = result.get("device_ip", "")
+        if result.get("success"):
+            self._emit_operation(
+                "disable_app_for_user",
+                True,
+                f"Disabled {result.get('package')} for the current user on {ip}",
+            )
+        else:
+            self._emit_operation(
+                "disable_app_for_user",
+                False,
+                f"Disable for user failed on {ip}: {result.get('error')}",
             )
 
     def enable_app(self, devices: list, package: str):
@@ -240,6 +304,20 @@ class ADBSystemControllerMixin(_ADBControllerBase):
     def emu_geo(self, devices: list, longitude: str, latitude: str):
         if not self._require_devices(devices, "emu_geo"):
             return
+        try:
+            longitude = normalize_geo_coordinate(
+                longitude,
+                minimum=Decimal("-180"),
+                maximum=Decimal("180"),
+            )
+            latitude = normalize_geo_coordinate(
+                latitude,
+                minimum=Decimal("-90"),
+                maximum=Decimal("90"),
+            )
+        except ValueError as exc:
+            self._emit_operation("emu_geo", False, str(exc))
+            return
         for ip in devices:
             self.advanced_model.emu_geo_fix_async(ip, longitude, latitude)
 
@@ -253,3 +331,55 @@ class ADBSystemControllerMixin(_ADBControllerBase):
             )
         else:
             self._emit_operation("emu_geo", False, f"Emu geo failed on {ip}: {result.get('error')}")
+
+    # 只读系统诊断
+
+    def dumpsys_service(self, devices: list, service: str = ""):
+        if not self._require_devices(devices, "dumpsys_service"):
+            return
+        try:
+            service = normalize_dumpsys_service(service)
+        except ValueError as exc:
+            self._emit_operation("dumpsys_service", False, str(exc))
+            return
+        for ip in devices:
+            self.advanced_model.cmd_dumpsys_service_async(ip, service)
+
+    def _process_cmd_dumpsys_service_result(self, result: dict):
+        _emit_system_diagnostic_result(
+            self,
+            result,
+            operation="dumpsys_service",
+            label="Dumpsys service",
+            max_lines=80,
+        )
+
+    def kernel_version(self, devices: list):
+        if not self._require_devices(devices, "kernel_version"):
+            return
+        for ip in devices:
+            self.advanced_model.get_kernel_version_async(ip)
+
+    def _process_get_kernel_version_result(self, result: dict):
+        _emit_system_diagnostic_result(
+            self,
+            result,
+            operation="kernel_version",
+            label="Kernel version",
+            max_lines=10,
+        )
+
+    def cpu_info(self, devices: list):
+        if not self._require_devices(devices, "cpu_info"):
+            return
+        for ip in devices:
+            self.advanced_model.get_cpu_info_async(ip)
+
+    def _process_get_cpu_info_result(self, result: dict):
+        _emit_system_diagnostic_result(
+            self,
+            result,
+            operation="cpu_info",
+            label="CPU information",
+            max_lines=40,
+        )

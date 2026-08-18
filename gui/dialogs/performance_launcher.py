@@ -9,32 +9,40 @@ import time
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFontMetrics, QTextCursor
+from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics, QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
-from gui.dialogs.lifecycle import QThreadGroupShutdownTask, safe_disconnect, wait_for_thread_later
+from gui.dialogs.lifecycle import (
+    QThreadGroupShutdownTask,
+    alive_callback,
+    alive_signal_emitter,
+    safe_disconnect,
+    wait_for_thread_later,
+)
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from models.base.focus_detector import detect_current_package
 from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
@@ -108,7 +116,6 @@ class PerformanceLauncherDialog(QDialog):
     LOG_RENDER_DEBOUNCE_MS = 50
     IMMEDIATE_LOG_BATCH_SIZE = 100
     MAX_PENDING_LOG_ROWS = 2000
-
     log_received = Signal(str, str)
     runner_finished = Signal()
 
@@ -130,6 +137,7 @@ class PerformanceLauncherDialog(QDialog):
         self._pending_log_rows: list[str] = []
         self._pending_log_scroll_to_bottom = False
         self._applied_theme_signature: tuple[str, str, int, int] | None = None
+        self._configuration_locked = False
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.setSingleShot(True)
         self._log_flush_timer.timeout.connect(self._flush_pending_logs)
@@ -142,7 +150,7 @@ class PerformanceLauncherDialog(QDialog):
         self.setWindowTitle(f"Performance - {device_ip}" if device_ip else "Performance")
         self.setWindowIcon(get_themed_icon("speedometer.svg"))
         self.setMinimumSize(880, 660)
-        self.resize(940, 700)
+        self.resize(1200, 900)
         self.setModal(False)
         self.log_received.connect(self._append_log)
         self.runner_finished.connect(self._on_runner_finished)
@@ -155,21 +163,29 @@ class PerformanceLauncherDialog(QDialog):
 
     def _build_ui(self, package_name: str):
         root = QVBoxLayout(self)
+        root.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         root.setContentsMargins(10, 10, 10, 10)
         root.setSpacing(8)
+        self._root_layout = root
 
-        root.addWidget(self._build_config_section(package_name))
+        self._config_group = self._build_config_section(package_name)
+        root.addWidget(self._config_group, 1)
         self.log_view = self._build_log_view()
-        root.addWidget(self.log_view, 1)
-        root.addLayout(self._build_actions())
+        self.log_view.setFixedHeight(96)
+        root.addWidget(self.log_view)
+        self._action_row = self._build_actions()
+        root.addWidget(self._action_row)
 
     def _build_config_section(self, package_name: str) -> QGroupBox:
-        g = QGroupBox("MobilePerf Config")
-        g.setObjectName("performanceConfig")
-        grid = QGridLayout(g)
+        """按分页前版本的九项纵向表单构建配置区。"""
+
+        group = QGroupBox("MobilePerf Config")
+        group.setObjectName("performanceConfig")
+        grid = QGridLayout(group)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
         grid.setColumnStretch(1, 1)
+        self._config_group_layout = grid
 
         self.package_edit = QLineEdit(package_name)
         self.package_edit.setObjectName("monoField")
@@ -180,11 +196,38 @@ class PerformanceLauncherDialog(QDialog):
         self.get_package_btn.setProperty("iconName", "target.svg")
         self.get_package_btn.setToolTip("Fetch current foreground app package")
         self.get_package_btn.clicked.connect(self.fetch_current_package)
-        package_row = self._row_widget(self.package_edit, self.get_package_btn)
+        self.frequency_input = StrictIntComboBox(
+            1,
+            2_147_483_647,
+            5,
+            presets=(1, 2, 5, 10),
+        )
+        self.timeout_input = StrictIntComboBox(
+            1,
+            2_147_483_647,
+            600,
+            presets=(10, 30, 60, 120, 600, 4320),
+        )
+        self.dumpheap_input = StrictIntComboBox(
+            1,
+            2_147_483_647,
+            60,
+            presets=(5, 10, 30, 60, 120),
+        )
+        self.frequency_combo = self.frequency_input
+        self.timeout_combo = self.timeout_input
+        self.dumpheap_combo = self.dumpheap_input
+        self.frequency_unit_label = self._unit_label("s", "seconds")
+        self.timeout_unit_label = self._unit_label("min", "minutes")
+        self.dumpheap_unit_label = self._unit_label("min", "minutes")
+        for unit_label in (
+            self.frequency_unit_label,
+            self.timeout_unit_label,
+            self.dumpheap_unit_label,
+        ):
+            unit_label.setParent(group)
+            unit_label.hide()
 
-        self.frequency_combo = self._combo(["1", "2", "5", "10"], "5")
-        self.timeout_combo = self._combo(["10", "30", "60", "120", "600", "4320"], "600")
-        self.dumpheap_combo = self._combo(["5", "10", "30", "60", "120"], "60")
         self.exception_edit = QLineEdit("fatal exception;has died")
         self.exception_edit.setObjectName("monoField")
         self.phone_log_edit = QLineEdit("/data/anr")
@@ -196,101 +239,193 @@ class PerformanceLauncherDialog(QDialog):
         self.save_path_edit.setObjectName("monoField")
         self.save_path_edit.setPlaceholderText("Result root")
         self.pick_save_btn = QPushButton("Browse")
+        self.pick_save_btn.setToolTip("Select the MobilePerf result directory")
         self.pick_save_btn.setIcon(get_themed_icon("folder.svg"))
         self.pick_save_btn.setIconSize(QSize(14, 14))
         self.pick_save_btn.setProperty("iconName", "folder.svg")
         self.pick_save_btn.clicked.connect(self._pick_save_path)
         save_row = self._row_widget(self.save_path_edit, self.pick_save_btn)
 
-        row = 0
-        row = self._add_config_row(grid, row, "package", package_row, CONFIG_HINTS["package"])
         self.serialnum_label = QLabel(self.device_ip or "-")
         self.serialnum_label.setObjectName("onlineDeviceLabel")
-        self.serialnum_label.setToolTip("Selected online device")
+        self.serialnum_label.setToolTip(f"Selected online device: {self.device_ip or '-'}")
+        self.serialnum_label.setAccessibleName(f"Selected device: {self.device_ip or '-'}")
+        self.serialnum_label.setAccessibleDescription(f"Selected device: {self.device_ip or '-'}")
+
         row = self._add_config_row(
-            grid, row, "serialnum", self.serialnum_label, CONFIG_HINTS["serialnum"]
+            grid,
+            0,
+            "package",
+            self._row_widget(self.package_edit, self.get_package_btn),
+            CONFIG_HINTS["package"],
         )
         row = self._add_config_row(
-            grid, row, "frequency", self.frequency_combo, CONFIG_HINTS["frequency"]
+            grid,
+            row,
+            "serialnum",
+            self.serialnum_label,
+            CONFIG_HINTS["serialnum"],
         )
         row = self._add_config_row(
-            grid, row, "timeout", self.timeout_combo, CONFIG_HINTS["timeout"]
+            grid,
+            row,
+            "frequency",
+            self.frequency_input,
+            CONFIG_HINTS["frequency"],
         )
         row = self._add_config_row(
-            grid, row, "dumpheap_freq", self.dumpheap_combo, CONFIG_HINTS["dumpheap_freq"]
+            grid,
+            row,
+            "timeout",
+            self.timeout_input,
+            CONFIG_HINTS["timeout"],
         )
         row = self._add_config_row(
-            grid, row, "exceptionlog", self.exception_edit, CONFIG_HINTS["exceptionlog"]
+            grid,
+            row,
+            "dumpheap_freq",
+            self.dumpheap_input,
+            CONFIG_HINTS["dumpheap_freq"],
         )
-        row = self._add_config_row(grid, row, "monkey", monkey_row, CONFIG_HINTS["monkey"])
-        row = self._add_config_row(grid, row, "save_path", save_row, CONFIG_HINTS["save_path"])
+        row = self._add_config_row(
+            grid,
+            row,
+            "exceptionlog",
+            self.exception_edit,
+            CONFIG_HINTS["exceptionlog"],
+        )
+        row = self._add_config_row(
+            grid,
+            row,
+            "monkey",
+            monkey_row,
+            CONFIG_HINTS["monkey"],
+        )
+        row = self._add_config_row(
+            grid,
+            row,
+            "save_path",
+            save_row,
+            CONFIG_HINTS["save_path"],
+        )
         self._add_config_row(
-            grid, row, "phone_log_path", self.phone_log_edit, CONFIG_HINTS["phone_log_path"]
+            grid,
+            row,
+            "phone_log_path",
+            self.phone_log_edit,
+            CONFIG_HINTS["phone_log_path"],
         )
+
+        self._config_canvas = group
+        self._configuration_sections = (group,)
         self._on_monkey_enabled_changed(self.monkey_check.isChecked())
-        return g
+        self._apply_monkey_control_widths()
+        return group
 
     def _build_monkey_row(self) -> QWidget:
         container = QWidget()
+        container.setObjectName("performanceMonkeyOptions")
         layout = QGridLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setHorizontalSpacing(6)
         layout.setVerticalSpacing(4)
-
-        self.monkey_throttle_combo = self._combo(
-            ["100", "200", "300", "500", "1000", "2000"], "500"
+        self.monkey_throttle_input = StrictIntComboBox(
+            1,
+            2_147_483_647,
+            500,
+            presets=(100, 200, 300, 500, 1000, 2000),
         )
-        self.monkey_seed_edit = QLineEdit("1000000")
-        self.monkey_seed_edit.setPlaceholderText("Seed")
+        self.monkey_throttle_combo = self.monkey_throttle_input
+        self.monkey_seed_input = StrictIntLineEdit(
+            minimum=0,
+            maximum=2_147_483_647,
+            value=1_000_000,
+        )
+        self.monkey_seed_edit = self.monkey_seed_input
+        self.monkey_throttle_unit_label = self._unit_label("ms")
+        self.monkey_throttle_unit_label.setParent(container)
+        self.monkey_throttle_unit_label.hide()
+
+        throttle_hint = "Monkey --throttle interval in milliseconds."
+        seed_hint = "Monkey -s random seed."
+        self.monkey_check.setAccessibleName("Enable Monkey test")
+        self._apply_hint(self.monkey_check, CONFIG_HINTS["monkey"])
+        self._apply_hint(self.monkey_throttle_input, throttle_hint)
+        self._apply_hint(self.monkey_seed_input, seed_hint)
+        self.monkey_throttle_input.setAccessibleName("Monkey throttle interval")
+        self.monkey_seed_input.setAccessibleName("Monkey random seed")
+        layout.addWidget(self.monkey_check, 0, 0)
+        layout.addWidget(
+            self._inline_label("Throttle (ms)", throttle_hint),
+            0,
+            1,
+        )
+        layout.addWidget(self.monkey_throttle_input, 0, 2)
+        layout.addWidget(self._inline_label("Seed", seed_hint), 0, 3)
+        layout.addWidget(self.monkey_seed_input, 0, 4)
+
         self.monkey_total_label = QLabel("Total: 100%")
         self.monkey_total_label.setObjectName("monkeyTotalLabel")
         self.monkey_total_label.setMinimumWidth(92)
-
-        layout.addWidget(self.monkey_check, 0, 0)
-        layout.addWidget(
-            self._inline_label("Throttle (ms)", "Monkey --throttle interval in milliseconds."), 0, 1
-        )
-        layout.addWidget(self.monkey_throttle_combo, 0, 2)
-        layout.addWidget(self._inline_label("Seed", "Monkey -s random seed."), 0, 3)
-        layout.addWidget(self.monkey_seed_edit, 0, 4)
+        self.monkey_total_label.setToolTip("Total: 100%")
+        self.monkey_total_label.setAccessibleName("Total: 100%")
+        self.monkey_total_label.setAccessibleDescription("Monkey event percentage total: 100%")
+        self._monkey_total_labels = [self.monkey_total_label]
         layout.addWidget(self.monkey_total_label, 0, 5)
 
-        self.monkey_pct_combos: dict[str, QComboBox] = {}
-        percent_defaults = MobilePerfMonkeyConfig()
+        self.monkey_pct_inputs: dict[str, StrictIntComboBox] = {}
+        self.monkey_pct_combos = self.monkey_pct_inputs
+        defaults = MobilePerfMonkeyConfig()
         for index, (label, attr, option_name) in enumerate(MONKEY_PERCENT_FIELDS):
-            row, col = divmod(index, 2)
-            combo = self._combo(
-                ["0", "5", "10", "15", "20", "25", "30", "40", "50", "100"],
-                str(getattr(percent_defaults, attr)),
+            event_row, column = divmod(index, 2)
+            field = StrictIntComboBox(
+                0,
+                100,
+                getattr(defaults, attr),
+                presets=(0, 5, 10, 15, 20, 25, 30, 40, 50, 100),
             )
-            combo.setMinimumWidth(64)
-            combo.setToolTip(f"{option_name}: {label} percentage")
-            combo.currentTextChanged.connect(self._update_monkey_total)
-            if combo.lineEdit():
-                combo.lineEdit().textChanged.connect(self._update_monkey_total)
-            self.monkey_pct_combos[attr] = combo
-            layout.addWidget(self._inline_label(label, option_name), row + 1, col * 3)
-            layout.addWidget(combo, row + 1, col * 3 + 1)
+            field.setMinimumWidth(64)
+            tooltip = f"{label} percentage ({option_name})."
+            self._apply_hint(field, tooltip)
+            field.setAccessibleName(f"{label} percentage")
+            field.valueChanged.connect(self._update_monkey_total)
+            field.validityChanged.connect(self._update_monkey_total)
+            self.monkey_pct_inputs[attr] = field
+            layout.addWidget(self._inline_label(label, tooltip), event_row + 1, column * 3)
+            layout.addWidget(field, event_row + 1, column * 3 + 1)
 
         self.monkey_ignore_crashes = QCheckBox("Ignore crashes")
         self.monkey_ignore_timeouts = QCheckBox("Ignore timeouts")
         self.monkey_ignore_security = QCheckBox("Ignore security")
         self.monkey_kill_after_error = QCheckBox("Kill after error")
-        for checkbox in (
-            self.monkey_ignore_crashes,
-            self.monkey_ignore_timeouts,
-            self.monkey_ignore_security,
-            self.monkey_kill_after_error,
-        ):
-            checkbox.setChecked(True)
-        flags_row = self._row_widget(
+        monkey_flags = (
             self.monkey_ignore_crashes,
             self.monkey_ignore_timeouts,
             self.monkey_ignore_security,
             self.monkey_kill_after_error,
         )
+        flag_hints = (
+            "Continue after an application crash.",
+            "Continue after an application-not-responding timeout.",
+            "Continue after a security exception.",
+            "Stop Monkey after the first error.",
+        )
+        flag_names = (
+            "Ignore application crashes",
+            "Ignore application timeouts",
+            "Ignore security exceptions",
+            "Kill Monkey after error",
+        )
+        self._monkey_flag_labels: list[QLabel] = []
+        for checkbox, hint, accessible_name in zip(monkey_flags, flag_hints, flag_names):
+            checkbox.setChecked(True)
+            self._apply_hint(checkbox, hint)
+            checkbox.setAccessibleName(accessible_name)
+        flags_row = self._row_widget(*monkey_flags)
         layout.addWidget(flags_row, 6, 0, 1, 6)
         layout.setColumnStretch(5, 1)
+        self._event_panel = container
+        self._event_sections = (container,)
         self._update_monkey_total()
         self._apply_monkey_control_widths()
         return container
@@ -302,49 +437,79 @@ class PerformanceLauncherDialog(QDialog):
         label.setMinimumWidth(136)
         if tooltip:
             label.setToolTip(tooltip)
+            label.setAccessibleDescription(tooltip)
+        return label
+
+    @staticmethod
+    def _unit_label(text: str, semantic_name: str | None = None) -> QLabel:
+        """创建不会参与严格数字解析的可见单位标签。"""
+
+        label = QLabel(text)
+        label.setObjectName("unitLabel")
+        label.setAccessibleName(f"Unit: {semantic_name or text}")
         return label
 
     def _monkey_option_widgets(self) -> list[QWidget]:
         widgets: list[QWidget] = [
             self.monkey_throttle_combo,
             self.monkey_seed_edit,
-            self.monkey_total_label,
             self.monkey_ignore_crashes,
             self.monkey_ignore_timeouts,
             self.monkey_ignore_security,
             self.monkey_kill_after_error,
         ]
+        widgets.extend(getattr(self, "_monkey_total_labels", (self.monkey_total_label,)))
         widgets.extend(self.monkey_pct_combos.values())
         return widgets
 
     def _on_monkey_enabled_changed(self, checked: bool):
+        pending_invalid = {}
+        for field in getattr(self, "monkey_pct_combos", {}).values():
+            editor = self._numeric_editor(field)
+            if editor is not None and not field.input_is_acceptable():
+                pending_invalid[field] = editor.text()
         for widget in self._monkey_option_widgets():
             widget.setEnabled(checked)
+        for field, raw_text in pending_invalid.items():
+            editor = self._numeric_editor(field)
+            if editor is not None and editor.text() != raw_text:
+                editor.setText(raw_text)
+        self._update_monkey_total()
 
-    def _update_monkey_total(self):
+    @staticmethod
+    def _numeric_editor(field: QWidget) -> QLineEdit | None:
+        if isinstance(field, QLineEdit):
+            return field
+        return field.findChild(QLineEdit)
+
+    def _update_monkey_total(self, *_args):
         if not hasattr(self, "monkey_total_label"):
             return
-        total = sum(
-            self._int_text(self._combo_text(combo), 0, minimum=0, maximum=100)
-            for combo in self.monkey_pct_combos.values()
-        )
-        color = BaseStyles.color("LOG_SUCCESS" if total == 100 else "LOG_WARNING")
-        self.monkey_total_label.setText(f"Total: {total}%")
-        self.monkey_total_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        if self.monkey_check.isChecked() and any(
+            not field.input_is_acceptable() for field in self.monkey_pct_combos.values()
+        ):
+            for label in getattr(self, "_monkey_total_labels", (self.monkey_total_label,)):
+                label.setText("Total: Invalid")
+                label.setToolTip("Total: Invalid")
+                label.setAccessibleName("Total: Invalid")
+                label.setAccessibleDescription("Monkey event percentage total is invalid")
+                label.setStyleSheet(f"color: {BaseStyles.color('LOG_ERROR')}; font-weight: bold;")
+            return
+        total = sum(field.value() for field in self.monkey_pct_combos.values())
+        color = BaseStyles.color("LOG_SUCCESS" if total == 100 else "LOG_ERROR")
+        for label in getattr(self, "_monkey_total_labels", (self.monkey_total_label,)):
+            full_text = f"Total: {total}%"
+            label.setText(full_text)
+            label.setToolTip(full_text)
+            label.setAccessibleName(full_text)
+            label.setAccessibleDescription(f"Monkey event percentage total: {total}%")
+            label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
     def _collect_monkey_config(self) -> MobilePerfMonkeyConfig:
-        defaults = MobilePerfMonkeyConfig()
-        values = {
-            attr: self._int_text(
-                self._combo_text(combo), getattr(defaults, attr), minimum=0, maximum=100
-            )
-            for attr, combo in self.monkey_pct_combos.items()
-        }
+        values = {attr: field.value() for attr, field in self.monkey_pct_combos.items()}
         return MobilePerfMonkeyConfig(
-            throttle_ms=self._int_text(
-                self._combo_text(self.monkey_throttle_combo), defaults.throttle_ms, minimum=1
-            ),
-            seed=self._int_text(self.monkey_seed_edit.text(), defaults.seed, minimum=0),
+            throttle_ms=self.monkey_throttle_input.value(),
+            seed=self.monkey_seed_input.value(),
             ignore_crashes=self.monkey_ignore_crashes.isChecked(),
             ignore_timeouts=self.monkey_ignore_timeouts.isChecked(),
             ignore_security=self.monkey_ignore_security.isChecked(),
@@ -353,18 +518,55 @@ class PerformanceLauncherDialog(QDialog):
         )
 
     def _add_config_row(
-        self, grid: QGridLayout, row: int, key: str, field: QWidget, hint: str
+        self,
+        grid: QGridLayout,
+        row: int,
+        key: str,
+        field: QWidget,
+        hint: str,
     ) -> int:
         label = QLabel(key)
         label.setObjectName("fieldLabel")
         label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        buddy = field
+        if not field.focusPolicy() & Qt.FocusPolicy.TabFocus:
+            buddy = next(
+                (
+                    child
+                    for child in field.findChildren(QWidget)
+                    if child.focusPolicy() & Qt.FocusPolicy.TabFocus
+                ),
+                field,
+            )
+        if buddy is not field or field.focusPolicy() & Qt.FocusPolicy.TabFocus:
+            label.setBuddy(buddy)
+            if not buddy.accessibleName():
+                buddy.setAccessibleName(key.replace("_", " ").title())
+        if hint:
+            self._apply_hint(label, hint)
+            self._apply_hint(field, hint)
+            for child in field.findChildren(QWidget):
+                if child.focusPolicy() & Qt.FocusPolicy.TabFocus:
+                    self._apply_hint(child, hint)
         grid.addWidget(label, row, 0)
         grid.addWidget(field, row, 1)
         hint_label = QLabel(hint)
         hint_label.setObjectName("configHint")
         hint_label.setWordWrap(True)
+        hint_label.setAccessibleName(f"{key} help")
+        hint_label.setAccessibleDescription(hint)
         grid.addWidget(hint_label, row + 1, 1)
         return row + 2
+
+    @staticmethod
+    def _apply_hint(widget: QWidget, hint: str):
+        current = widget.toolTip().strip()
+        if not current:
+            widget.setToolTip(hint)
+        elif hint not in current:
+            widget.setToolTip(f"{current}\n\n{hint}")
+        if not widget.accessibleDescription().strip():
+            widget.setAccessibleDescription(hint)
 
     def _row_widget(self, *widgets: QWidget) -> QWidget:
         container = QWidget()
@@ -384,9 +586,14 @@ class PerformanceLauncherDialog(QDialog):
         log_view.document().setMaximumBlockCount(self._max_log_lines)
         return log_view
 
-    def _build_actions(self) -> QHBoxLayout:
-        row = QHBoxLayout()
+    def _build_actions(self) -> QWidget:
+        container = QWidget()
+        container.setObjectName("performanceActionRow")
+        container.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        row = QHBoxLayout(container)
+        row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
+
         self.status_label = QLabel("Idle")
         self.status_label.setObjectName("statusLabel")
         self.status_label.setMinimumWidth(92)
@@ -402,21 +609,42 @@ class PerformanceLauncherDialog(QDialog):
         self.progress_bar.setProperty("adaptiveBaseHeight", 22)
         row.addWidget(self.progress_bar, 1)
 
+        self.perfetto_action = QAction(
+            get_themed_icon("speedometer.svg"),
+            "Open Perfetto",
+            self,
+        )
+        self.perfetto_action.setObjectName("performancePerfettoAction")
+        self.perfetto_action.setToolTip("Open Perfetto trace viewer")
+        self.perfetto_action.triggered.connect(self._trigger_open_perfetto)
+        self.result_action = QAction(
+            get_themed_icon("folder-open.svg"),
+            "Open Result",
+            self,
+        )
+        self.result_action.setObjectName("performanceResultAction")
+        self.result_action.setToolTip("Open the latest MobilePerf result")
+        self.result_action.triggered.connect(self._trigger_open_result)
+        self.result_action.setEnabled(False)
+
         self.perfetto_btn = QPushButton("Open Perfetto")
         self.perfetto_btn.setIcon(get_themed_icon("speedometer.svg"))
         self.perfetto_btn.setIconSize(QSize(14, 14))
         self.perfetto_btn.setProperty("iconName", "speedometer.svg")
-        self.perfetto_btn.clicked.connect(self.open_perfetto)
+        self.perfetto_btn.clicked.connect(self.perfetto_action.trigger)
+        self.perfetto_action.changed.connect(self._sync_perfetto_button)
         row.addWidget(self.perfetto_btn)
 
         self.result_btn = QPushButton("Open Result")
         self.result_btn.setIcon(get_themed_icon("folder-open.svg"))
         self.result_btn.setIconSize(QSize(14, 14))
         self.result_btn.setProperty("iconName", "folder-open.svg")
-        self.result_btn.clicked.connect(self.open_result)
+        self.result_btn.clicked.connect(self.result_action.trigger)
+        self.result_action.changed.connect(self._sync_result_button)
         row.addWidget(self.result_btn)
 
         self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setToolTip("Stop the active performance collection")
         self.stop_btn.setObjectName("danger")
         self.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self.stop_btn.setIconSize(QSize(14, 14))
@@ -426,20 +654,82 @@ class PerformanceLauncherDialog(QDialog):
         row.addWidget(self.stop_btn)
 
         self.start_btn = QPushButton("Start")
+        self.start_btn.setToolTip("Start performance collection with this configuration")
         self.start_btn.setObjectName("accent")
         self.start_btn.setIcon(get_themed_icon("play.svg"))
         self.start_btn.setIconSize(QSize(14, 14))
         self.start_btn.setProperty("iconName", "play.svg")
         self.start_btn.clicked.connect(self.start_mobileperf)
         row.addWidget(self.start_btn)
-        return row
+        self._sync_perfetto_button()
+        self._sync_result_button()
+        return container
 
-    def _combo(self, items: list[str], current: str) -> QComboBox:
-        combo = QComboBox()
-        combo.addItems(items)
-        combo.setEditable(True)
-        combo.setCurrentText(current)
-        return combo
+    def _sync_perfetto_button(self) -> None:
+        self.perfetto_btn.setEnabled(self.perfetto_action.isEnabled())
+        self.perfetto_btn.setText(self.perfetto_action.text())
+        self.perfetto_btn.setIcon(self.perfetto_action.icon())
+        self.perfetto_btn.setToolTip(self.perfetto_action.toolTip())
+        self.perfetto_btn.setAccessibleName(self.perfetto_action.text())
+        self.perfetto_btn.setAccessibleDescription(self.perfetto_action.toolTip())
+
+    def _sync_result_button(self) -> None:
+        self.result_btn.setEnabled(self.result_action.isEnabled())
+        self.result_btn.setText(self.result_action.text())
+        self.result_btn.setIcon(self.result_action.icon())
+        self.result_btn.setToolTip(self.result_action.toolTip())
+        self.result_btn.setAccessibleName(self.result_action.text())
+        self.result_btn.setAccessibleDescription(self.result_action.toolTip())
+
+    def _trigger_open_perfetto(self, _checked: bool = False) -> None:
+        self.open_perfetto()
+
+    def _trigger_open_result(self, _checked: bool = False) -> None:
+        self.open_result()
+
+    def _enabled_numeric_inputs(self) -> tuple[tuple[str, QWidget], ...]:
+        """返回当前业务语义下必须有效并提交的数字字段。"""
+
+        fields: tuple[tuple[str, QWidget], ...] = (
+            ("frequency", self.frequency_input),
+            ("timeout", self.timeout_input),
+            ("dumpheap frequency", self.dumpheap_input),
+        )
+        if self.monkey_check.isChecked():
+            fields += (
+                ("Monkey throttle", self.monkey_throttle_input),
+                ("Monkey seed", self.monkey_seed_input),
+            )
+            fields += tuple(
+                (
+                    f"Monkey {name.replace('pct_', '').replace('_', ' ')} percentage",
+                    field,
+                )
+                for name, field in self.monkey_pct_combos.items()
+            )
+        return fields
+
+    def _commit_numeric_inputs(self) -> bool:
+        """先校验全部启用字段，再统一提交，避免产生半提交配置。"""
+
+        fields = self._enabled_numeric_inputs()
+        for label, field in fields:
+            if field.input_is_acceptable():
+                continue
+            QMessageBox.warning(
+                self,
+                "Invalid Number",
+                f"Please enter a valid {label} value within the allowed range.",
+            )
+            field.focus_editor()
+            self._update_monkey_total()
+            return False
+        for _label, field in fields:
+            if not field.commit_value():
+                field.focus_editor()
+                self._update_monkey_total()
+                return False
+        return True
 
     def _device_tag(self) -> str:
         return re.sub(r"[^A-Za-z0-9_.-]+", "_", self.device_ip.strip() or "unknown")
@@ -485,11 +775,13 @@ class PerformanceLauncherDialog(QDialog):
         worker = CurrentPackageWorker(self.device_ip)
         worker.package_ready.connect(self._on_current_package)
         worker.log_ready.connect(self.log_received.emit)
-        worker.finished.connect(lambda _w=worker: self._on_package_worker_finished(_w))
+        worker.finished.connect(alive_callback(self, "_on_package_worker_finished", worker))
         self._package_worker = worker
         worker.start()
 
     def _on_current_package(self, package_name: str):
+        if self._configuration_locked or self._closing:
+            return
         self.package_edit.setText(package_name)
         self.log_received.emit("SUCCESS", f"Current package: {package_name}")
 
@@ -497,16 +789,16 @@ class PerformanceLauncherDialog(QDialog):
         if self._package_worker is worker:
             self._package_worker = None
         if self.get_package_btn:
-            self.get_package_btn.setEnabled(True)
+            self.get_package_btn.setEnabled(not self._configuration_locked and not self._closing)
         worker.deleteLater()
 
     def build_config(self) -> MobilePerfRunConfig:
         return MobilePerfRunConfig(
             device_id=self.device_ip.strip(),
             package=self.package_edit.text().strip(),
-            frequency_seconds=self._int_combo(self.frequency_combo, 5),
-            timeout_minutes=self._int_combo(self.timeout_combo, 600),
-            dumpheap_minutes=self._int_combo(self.dumpheap_combo, 60),
+            frequency_seconds=self.frequency_input.value(),
+            timeout_minutes=self.timeout_input.value(),
+            dumpheap_minutes=self.dumpheap_input.value(),
             monkey_enabled=self.monkey_check.isChecked(),
             monkey_config=self._collect_monkey_config(),
             exception_keywords=self.exception_edit.text().split(";"),
@@ -516,26 +808,33 @@ class PerformanceLauncherDialog(QDialog):
         )
 
     def start_mobileperf(self):
+        if not self._commit_numeric_inputs():
+            return
         config = self.build_config()
         if not config.package:
             QMessageBox.warning(self, "Package Required", "Please enter a package name.")
             return
         if config.monkey_enabled and config.monkey_config.total_percentage != 100:
-            QMessageBox.warning(
+            answer = QMessageBox.question(
                 self,
                 "Monkey Event Mix",
-                f"Monkey event percentages sum to {config.monkey_config.total_percentage}%, "
-                f"not 100%.\n"
-                "MobilePerf will still start, but the event distribution may be unexpected.",
+                f"Monkey event percentages sum to {config.monkey_config.total_percentage}"
+                f"%, not 100%.\n"
+                "Continue with this event distribution?",
+                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                defaultButton=QMessageBox.StandardButton.No,
             )
-        self._last_result_root = self._runner.expected_result_root(config)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self._last_result_root = ""
+        self._update_result_action()
         self._runner_finished_handled = False
         self.log_received.emit("INFO", "Starting mobileperf")
         try:
             self._runner.start(
                 config,
-                on_log=lambda line: self.log_received.emit("RAW", line),
-                on_finished=self.runner_finished.emit,
+                on_log=alive_signal_emitter(self, "log_received", "RAW"),
+                on_finished=alive_signal_emitter(self, "runner_finished"),
             )
         except Exception as exc:
             self.log_received.emit("ERROR", f"Start failed: {exc}")
@@ -564,19 +863,25 @@ class PerformanceLauncherDialog(QDialog):
         self.stop_btn.setEnabled(False)
         self._set_status("Stopping", "stopping")
         self._stop_thread = threading.Thread(
-            target=self._stop_mobileperf_worker,
+            target=self._stop_runner_worker,
+            args=(
+                self._runner,
+                alive_signal_emitter(self, "log_received", "ERROR"),
+                alive_signal_emitter(self, "runner_finished"),
+            ),
             name="adblab-mobileperf-stop",
             daemon=True,
         )
         self._stop_thread.start()
 
-    def _stop_mobileperf_worker(self):
+    @staticmethod
+    def _stop_runner_worker(runner, error_callback, finished_callback):
         try:
-            self._runner.stop()
+            runner.stop()
         except Exception as exc:
-            self.log_received.emit("ERROR", f"Stop failed: {exc}")
+            error_callback(f"Stop failed: {exc}")
         finally:
-            self.runner_finished.emit()
+            finished_callback()
 
     def _poll_runner(self):
         self._update_progress()
@@ -594,9 +899,9 @@ class PerformanceLauncherDialog(QDialog):
         self._stopping = False
         self._poll_timer.stop()
         self._run_started_at = None
-        result_dir = self._runner.latest_result_dir()
-        if result_dir:
-            self._last_result_root = result_dir
+        result_dir = self._runner.latest_result_dir() or ""
+        self._last_result_root = result_dir
+        self._update_result_action()
         report_file = self._runner.latest_report_file()
         last_config = getattr(self._runner, "last_config", None)
         exit_code = getattr(self._runner, "last_exit_code", None)
@@ -652,11 +957,21 @@ class PerformanceLauncherDialog(QDialog):
             self._set_status("Warning", "warning")
 
     def open_result(self):
-        path = self._last_result_root or self._with_device_suffix(self.save_path_edit.text())
-        if not path:
-            path = self._default_save_path()
-        os.makedirs(path, exist_ok=True)
+        path = self._last_result_root
+        if not path or not os.path.isdir(path):
+            QMessageBox.information(
+                self,
+                "Result Not Available",
+                "No MobilePerf result is available yet.",
+            )
+            self._update_result_action()
+            return
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _update_result_action(self):
+        self.result_action.setEnabled(
+            bool(self._last_result_root and os.path.isdir(self._last_result_root))
+        )
 
     @staticmethod
     def open_perfetto():
@@ -717,9 +1032,40 @@ class PerformanceLauncherDialog(QDialog):
         except (TypeError, ValueError):
             return 2000
 
+    def _all_numeric_inputs(self) -> tuple[QWidget, ...]:
+        return (
+            self.frequency_input,
+            self.timeout_input,
+            self.dumpheap_input,
+            self.monkey_throttle_input,
+            self.monkey_seed_input,
+            *self.monkey_pct_inputs.values(),
+        )
+
+    def _set_configuration_enabled(self, enabled: bool) -> None:
+        """只锁定唯一配置分组，并保留严格输入的非法原文。"""
+
+        self._configuration_locked = not enabled
+        pending_invalid = {}
+        for field in self._all_numeric_inputs():
+            editor = self._numeric_editor(field)
+            if editor is not None and not field.input_is_acceptable():
+                pending_invalid[field] = editor.text()
+        for section in self._configuration_sections:
+            section.setEnabled(enabled)
+        if enabled:
+            self._on_monkey_enabled_changed(self.monkey_check.isChecked())
+            worker_running = self._package_worker is not None and self._package_worker.isRunning()
+            self.get_package_btn.setEnabled(not worker_running)
+        for field, raw_text in pending_invalid.items():
+            editor = self._numeric_editor(field)
+            if editor is not None and editor.text() != raw_text:
+                editor.setText(raw_text)
+
     def _set_running(self, running: bool):
         self.start_btn.setEnabled(not running)
         self.stop_btn.setEnabled(running)
+        self._set_configuration_enabled(not running)
         self._set_status("Running" if running else "Idle", "running" if running else "idle")
         if not running:
             self._flush_pending_logs()
@@ -765,33 +1111,6 @@ class PerformanceLauncherDialog(QDialog):
         self._run_started_at = None
         self._run_duration_seconds = 0
         self._set_progress(0)
-
-    @staticmethod
-    def _int_combo(combo: QComboBox, default: int) -> int:
-        try:
-            return max(1, int(combo.currentText().strip()))
-        except ValueError:
-            return default
-
-    @staticmethod
-    def _int_text(
-        text: str, default: int, *, minimum: int | None = None, maximum: int | None = None
-    ) -> int:
-        try:
-            value = int(str(text).strip())
-        except (TypeError, ValueError):
-            value = int(default)
-        if minimum is not None:
-            value = max(minimum, value)
-        if maximum is not None:
-            value = min(maximum, value)
-        return value
-
-    @staticmethod
-    def _combo_text(combo: QComboBox) -> str:
-        if combo.isEditable() and combo.lineEdit():
-            return combo.lineEdit().text()
-        return combo.currentText()
 
     def _apply_monkey_control_widths(self):
         if not hasattr(self, "monkey_throttle_combo"):
@@ -883,9 +1202,7 @@ class PerformanceLauncherDialog(QDialog):
                 color: {c("TEXT_PRIMARY")};
                 background-color: transparent;
             }}
-            QWidget#inlineRow QLineEdit,
-            QWidget#inlineRow QComboBox,
-            QWidget#inlineRow QComboBox QLineEdit {{
+            QLineEdit#monoField {{
                 background-color: {c("INPUT_BG")};
                 color: {c("TEXT_PRIMARY")};
                 border: 1px solid {c("BORDER_COLOR")};
@@ -893,9 +1210,7 @@ class PerformanceLauncherDialog(QDialog):
                 selection-background-color: {c("SELECTION_BG")};
                 selection-color: {c("SELECTION_TEXT")};
             }}
-            QWidget#inlineRow QLineEdit:disabled,
-            QWidget#inlineRow QComboBox:disabled,
-            QWidget#inlineRow QComboBox QLineEdit:disabled,
+            QLineEdit#monoField:disabled,
             QWidget#inlineRow QCheckBox:disabled {{
                 color: {c("TEXT_DISABLED")};
                 background-color: {c("PANEL_BG")};
@@ -911,6 +1226,8 @@ class PerformanceLauncherDialog(QDialog):
             icon_name = button.property("iconName")
             if icon_name:
                 button.setIcon(get_themed_icon(icon_name))
+        self.perfetto_action.setIcon(get_themed_icon("speedometer.svg"))
+        self.result_action.setIcon(get_themed_icon("folder-open.svg"))
         self._applied_theme_signature = self._theme_signature()
 
     def _apply_widget_fonts(self):
@@ -931,6 +1248,8 @@ class PerformanceLauncherDialog(QDialog):
         self.log_view.setFont(log_font)
         self.log_view.viewport().setFont(log_font)
         self.log_view.document().setDefaultFont(log_font)
+        log_height = max(72, min(110, QFontMetrics(log_font).height() * 4 + 12))
+        self.log_view.setFixedHeight(log_height)
         progress_height = QFontMetrics(ui_font).height() + 10
         self.progress_bar.setMinimumHeight(22)
         self.progress_bar.setMinimumHeight(
@@ -1017,6 +1336,21 @@ class PerformanceLauncherDialog(QDialog):
 
     def closeEvent(self, event):
         """停止界面定时器并断开信号，资源等待由已注册的关闭任务接管。"""
+        if (
+            self._runner.is_running() is True
+            and not self._shutdown_registered
+            and not self._closing
+        ):
+            answer = QMessageBox.question(
+                self,
+                "Stop Active Collection",
+                "MobilePerf is still running. Stop it and close this window?",
+                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                defaultButton=QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         self._closing = True
         if self._log_flush_timer.isActive():
             self._log_flush_timer.stop()

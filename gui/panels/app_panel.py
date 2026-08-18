@@ -1,5 +1,7 @@
 """提供应用管理、Monkey 测试、诊断和录屏操作面板。"""
 
+import uuid
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCompleter,
@@ -8,6 +10,14 @@ from PySide6.QtWidgets import (
 )
 
 from gui.panels.base_panel import BasePanel
+from gui.styles import BaseStyles, FontRole
+from gui.widgets.responsive_layout import (
+    GridMode,
+    GridPlacement,
+    WidthPolicy,
+    paired_mode,
+    span_tail_mode,
+)
 
 
 class AppPanel(BasePanel):
@@ -22,22 +32,30 @@ class AppPanel(BasePanel):
         g_ts = self._g("Text & Screen Capture")
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
-        self.btn_send_text = self._b("Send Text", "text-aa.svg")
-        self.verification_text_sender = self._in("Email, verification code, or text...")
+        self.email_text_sender = self._in("Email, verification code, or text...")
+        self.btn_send_text = self._b(
+            "Send", "text-aa.svg", tooltip="Type the entered text on selected devices"
+        )
         self._screenshot_running = False
         self._add_responsive_row(
             gts_l,
+            (self.email_text_sender, 3),
             (self.btn_send_text, 1),
-            (self.verification_text_sender, 2),
-            compact_columns=2,
+            compact_columns=1,
             medium_columns=2,
-            wide_columns=4,
+            wide_columns=2,
         )
-        self.btn_screenshot = self._b("Screenshot", "camera.svg")
+        self.btn_screenshot = self._b(
+            "Screenshot", "camera.svg", tooltip="Capture selected device screens"
+        )
         self.record_duration = self._combo(["10s", "20s", "30s", "60s", "120s", "180s", "300s"])
         self.record_duration.setCurrentText("30s")
-        self.btn_screen_record = self._b("Record", "video-camera.svg")
-        self.btn_stop_record = self._b("Stop Rec", "stop-circle.svg")
+        self.btn_screen_record = self._b(
+            "Record", "video-camera.svg", tooltip="Start screen recording on selected devices"
+        )
+        self.btn_stop_record = self._b(
+            "Stop Rec", "stop-circle.svg", tooltip="Stop the active screen recordings"
+        )
         self.btn_stop_record.setEnabled(False)
         self._add_responsive_row(
             gts_l,
@@ -54,15 +72,21 @@ class AppPanel(BasePanel):
         g_pm = self._g("Package Manager")
         gl_pm = QVBoxLayout(g_pm)
         gl_pm.setSpacing(2)
-        self.program_edit = self._combo_editable()
+        self.program_edit = self._combo_editable(font_role=FontRole.MONO)
+        self.program_edit.setAccessibleName("Package name")
         self.program_edit.setMinimumHeight(28)
-        self.program_edit.lineEdit().setFont(self._font_sm)
+        self.program_edit.lineEdit().setFont(self._font_mono)
+        self.program_edit.lineEdit().setProperty("fontRole", FontRole.MONO.value)
+        self.program_edit.lineEdit().setAccessibleName("Package name")
         self.program_edit.lineEdit().setPlaceholderText("Package name")
+        self.program_edit.currentTextChanged.connect(lambda _text: self._update_action_states())
         self.completer = QCompleter(self.panel._package_history)
         self.completer.setCaseSensitivity(Qt.CaseInsensitive)
         self.panel._apply_completer_style(self.completer)
         self.program_edit.setCompleter(self.completer)
-        self.btn_get_program = self._b("Get Current Package", "target.svg")
+        self.btn_get_program = self._b(
+            "Get Current Package", "target.svg", tooltip="Read the foreground app package"
+        )
         self._add_responsive_row(
             gl_pm,
             (self.program_edit, 2),
@@ -71,74 +95,91 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        self.uninstall_btn = self._b("Uninstall App", "trash.svg")
-        self.clear_app_data_btn = self._b("Clear Data", "eraser.svg")
-        self.restart_app_btn = self._b("Restart App", "repeat.svg")
-        self._add_responsive_row(
+        self.uninstall_btn = self._b(
+            "Uninstall App", "trash.svg", tooltip="Remove the selected package"
+        )
+        self.clear_app_data_btn = self._b(
+            "Clear Data", "eraser.svg", tooltip="Erase data for the selected package"
+        )
+        self.restart_app_btn = self._b(
+            "Restart App", "repeat.svg", tooltip="Force stop and relaunch the selected package"
+        )
+        package_modes = (
+            span_tail_mode("three", 3, 0, column_stretches=(1, 1, 1)),
+            span_tail_mode("two", 2, 1, column_stretches=(1, 1)),
+            span_tail_mode("one", 1, 2, column_stretches=(1,)),
+        )
+        first_package_binding = self._add_responsive_row(
             gl_pm,
             (self.uninstall_btn, 1),
             (self.clear_app_data_btn, 1),
             (self.restart_app_btn, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=3,
+            modes=package_modes,
+            span_tail=True,
         )
-        self.print_activity_btn = self._b("Activity Info", "scroll.svg")
-        self.parse_apk_info_btn = self._b("Parse APK", "magnifying-glass.svg")
-        self.btn_force_stop = self._b("Force Stop App", "stop-circle.svg")
-        self._add_responsive_row(
+        self.print_activity_btn = self._b(
+            "Activity Info", "scroll.svg", tooltip="Show activity details for the selected package"
+        )
+        self.parse_apk_info_btn = self._b(
+            "Parse APK", "magnifying-glass.svg", tooltip="Inspect metadata from a local APK"
+        )
+        self.btn_force_stop = self._b(
+            "Force Stop App", "stop-circle.svg", tooltip="Force stop the selected package"
+        )
+        second_package_binding = self._add_responsive_row(
             gl_pm,
             (self.print_activity_btn, 1),
             (self.parse_apk_info_btn, 1),
             (self.btn_force_stop, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=3,
+            modes=package_modes,
+            span_tail=True,
         )
-        self.btn_disable_app = self._b("Disable App", "prohibit.svg")
-        self.btn_enable_app = self._b("Enable App", "check-circle.svg")
-        self.btn_disable_user = self._b("Disable for User", "user-switch.svg")
-        self._add_responsive_row(
+        self.btn_disable_app = self._b(
+            "Disable App", "prohibit.svg", tooltip="Disable the selected package"
+        )
+        self.btn_enable_app = self._b(
+            "Enable App", "check-circle.svg", tooltip="Enable the selected package"
+        )
+        self.btn_disable_user = self._b(
+            "Disable for User",
+            "user-switch.svg",
+            tooltip="Disable the package for the current user",
+        )
+        third_package_binding = self._add_responsive_row(
             gl_pm,
             (self.btn_disable_app, 1),
             (self.btn_enable_app, 1),
             (self.btn_disable_user, 1),
-            compact_columns=1,
-            medium_columns=2,
-            wide_columns=3,
+            modes=package_modes,
+            span_tail=True,
         )
+        self.package_action_bindings = (
+            first_package_binding,
+            second_package_binding,
+            third_package_binding,
+        )
+        self.package_action_binding = first_package_binding
         lo.addWidget(g_pm)
 
         g_m = self._g("Monkey")
         gm_l = QVBoxLayout(g_m)
         gm_l.setSpacing(3)
 
-        EVENTS_OPTS = ["100", "500", "1K", "5K", "10K", "50K", "100K", "500K"]
+        EVENTS_OPTS = ["100", "500", "1000", "5000", "10000", "50000", "100000", "500000"]
         THROTTLE_OPTS = ["0", "100", "200", "300", "500", "1000", "2000"]
         PCT_OPTS = ["0", "5", "10", "15", "20", "25", "30", "40", "50"]
 
         def _mk_combo(items):
             return self._combo_editable(items)
 
-        lbl_ev = self._label("Events:")
+        self.monkey_events_label = self._label("Events:")
         self.monkey_events = _mk_combo(EVENTS_OPTS)
-        lbl_th = self._label("Throttle:")
+        self._set_combo_int_validator(self.monkey_events, 1, 1_000_000)
+        self.monkey_throttle_label = self._label("Throttle:")
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
-        lbl_ms = self._label("ms")
+        self._set_combo_int_validator(self.monkey_throttle, 0, 60_000)
+        self.monkey_ms_label = self._label("ms")
         self._pct_total_lbl = self._status_text("Total: --")
-        self._add_responsive_row(
-            gm_l,
-            lbl_ev,
-            self.monkey_events,
-            lbl_th,
-            self.monkey_throttle,
-            lbl_ms,
-            self._pct_total_lbl,
-            spacing=3,
-            compact_columns=2,
-            medium_columns=4,
-            wide_columns=6,
-        )
 
         pct_configs = [
             ("Touch", "touch"),
@@ -152,21 +193,88 @@ class AppPanel(BasePanel):
             ("Pinch", "pinch"),
         ]
         self._monkey_pct_combos = {}
+        self._monkey_pct_labels = {}
         pct_widgets = []
         for label, key in pct_configs:
             lbl = self._label(f"{label}:")
             c = _mk_combo(PCT_OPTS)
+            self._set_combo_int_validator(c, 0, 100)
             c.currentTextChanged.connect(self._update_pct_total)
+            self._monkey_pct_labels[key] = lbl
             self._monkey_pct_combos[key] = c
             pct_widgets.extend((lbl, c))
-        self._add_responsive_row(
+        parameter_modes = (
+            GridMode(
+                "wide",
+                6,
+                0,
+                placements=tuple(GridPlacement(index, 0, index) for index in range(6)),
+                column_stretches=(0, 1, 0, 1, 0, 1),
+            ),
+            GridMode(
+                "medium",
+                4,
+                1,
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(2, 0, 2),
+                    GridPlacement(3, 0, 3),
+                    GridPlacement(4, 1, 0, column_span=2),
+                    GridPlacement(5, 1, 2, column_span=2),
+                ),
+                column_stretches=(0, 1, 0, 1),
+            ),
+            GridMode(
+                "compact",
+                2,
+                2,
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(2, 1, 0),
+                    GridPlacement(3, 1, 1),
+                    GridPlacement(4, 2, 0),
+                    GridPlacement(5, 2, 1),
+                ),
+                column_stretches=(0, 1),
+            ),
+        )
+        self.monkey_parameter_binding = self._add_responsive_row(
+            gm_l,
+            self.monkey_events_label,
+            self.monkey_events,
+            self.monkey_throttle_label,
+            self.monkey_throttle,
+            self.monkey_ms_label,
+            self._pct_total_lbl,
+            spacing=3,
+            policies=(
+                WidthPolicy.NATURAL,
+                WidthPolicy.SHRINKABLE,
+                WidthPolicy.NATURAL,
+                WidthPolicy.SHRINKABLE,
+                WidthPolicy.NATURAL,
+                WidthPolicy.WRAPPING,
+            ),
+            modes=parameter_modes,
+        )
+        self.monkey_percentage_binding = self._add_responsive_row(
             gm_l,
             *pct_widgets,
             spacing=3,
-            compact_columns=2,
-            medium_columns=4,
-            wide_columns=6,
+            policies=tuple(
+                policy
+                for _key in pct_configs
+                for policy in (WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE)
+            ),
+            modes=(
+                paired_mode("three", 3, 0),
+                paired_mode("two", 2, 1),
+                paired_mode("one", 1, 2),
+            ),
         )
+        self._monkey_config_layout = self.monkey_percentage_binding
 
         self.monkey_chk_crashes = self._checkbox("Ignore crashes")
         self.monkey_chk_timeouts = self._checkbox("Ignore timeouts")
@@ -182,8 +290,10 @@ class AppPanel(BasePanel):
             wide_columns=3,
         )
 
-        self.start_monkey_btn = self._b("Start", "robot.svg")
-        self.kill_monkey_btn = self._b("Stop", "skull.svg")
+        self.start_monkey_btn = self._b(
+            "Start", "robot.svg", tooltip="Start the configured Monkey test"
+        )
+        self.kill_monkey_btn = self._b("Stop", "skull.svg", tooltip="Stop the active Monkey test")
         self._set_monkey_running(False)
         self._add_responsive_row(
             gm_l,
@@ -198,10 +308,20 @@ class AppPanel(BasePanel):
         g_r = self._g("Reports")
         gr_l = QVBoxLayout(g_r)
         gr_l.setSpacing(2)
-        self.get_bugreport_btn = self._b("Bugreport", "bug.svg")
-        self.get_anr_file_btn = self._b("ANR Files", "warning.svg")
-        self.btn_retrieve_devices_logs = self._b("Retrieve Logs", "file-arrow-down.svg")
-        self.btn_cleanup_logs = self._b("Cleanup Logs", "broom.svg")
+        self.get_bugreport_btn = self._b(
+            "Bugreport", "bug.svg", tooltip="Collect an Android bug report"
+        )
+        self.get_anr_file_btn = self._b(
+            "ANR Files", "warning.svg", tooltip="Retrieve application-not-responding reports"
+        )
+        self.btn_retrieve_devices_logs = self._b(
+            "Retrieve Logs",
+            "file-arrow-down.svg",
+            tooltip="Copy diagnostic logs from selected devices",
+        )
+        self.btn_cleanup_logs = self._b(
+            "Cleanup Logs", "broom.svg", tooltip="Remove collected logs from selected devices"
+        )
         self._add_responsive_row(
             gr_l,
             (self.get_bugreport_btn, 1),
@@ -218,10 +338,16 @@ class AppPanel(BasePanel):
         gl_perf = QVBoxLayout(g_perf)
         gl_perf.setSpacing(2)
 
-        self.btn_meminfo = self._b("Memory", "memory.svg")
-        self.btn_cpuinfo = self._b("CPU Load", "cpu.svg")
-        self.btn_battery_info = self._b("Battery", "battery-full.svg")
-        self.btn_uptime = self._b("Uptime", "clock.svg")
+        self.btn_meminfo = self._b(
+            "Memory", "memory.svg", tooltip="Show memory usage for the selected package"
+        )
+        self.btn_cpuinfo = self._b(
+            "CPU Load", "cpu.svg", tooltip="Show CPU usage for the selected package"
+        )
+        self.btn_battery_info = self._b(
+            "Battery", "battery-full.svg", tooltip="Show battery diagnostics"
+        )
+        self.btn_uptime = self._b("Uptime", "clock.svg", tooltip="Show device and process uptime")
         self._add_responsive_row(
             gl_perf,
             (self.btn_meminfo, 1),
@@ -233,10 +359,14 @@ class AppPanel(BasePanel):
             wide_columns=4,
         )
 
-        self.btn_top = self._b("Top Snapshot", "chart-bar.svg")
-        self.btn_gfx = self._b("GFX Info", "image.svg")
-        self.btn_wakelock = self._b("Wakelocks", "lock.svg")
-        self.btn_netstats = self._b("Net Stats", "chart-line.svg")
+        self.btn_top = self._b(
+            "Top Snapshot", "chart-bar.svg", tooltip="Capture a process usage snapshot"
+        )
+        self.btn_gfx = self._b("GFX Info", "image.svg", tooltip="Show frame rendering statistics")
+        self.btn_wakelock = self._b("Wakelocks", "lock.svg", tooltip="Show active power wake locks")
+        self.btn_netstats = self._b(
+            "Net Stats", "chart-line.svg", tooltip="Show network usage statistics"
+        )
         self._add_responsive_row(
             gl_perf,
             (self.btn_top, 1),
@@ -253,6 +383,18 @@ class AppPanel(BasePanel):
 
         # 恢复上次使用的 Monkey 参数，避免切换页签后丢失测试配置。
         self._load_monkey_params()
+        self._recording_running = False
+        self._recording_active_devices = ()
+        self._recording_pending_count = 0
+        self._recording_pending_devices = set()
+        self._recording_batch_id = ""
+        self._recording_stopping = False
+        self._monkey_active_devices = ()
+        self._monkey_pending_count = 0
+        self._monkey_pending_devices = set()
+        self._monkey_batch_id = ""
+        self._monkey_stopping = False
+        self._update_action_states()
         return w
 
     # ── Monkey 参数持久化 ───────────────────────────────────────────────
@@ -262,16 +404,8 @@ class AppPanel(BasePanel):
 
         p = AppSettings.instance().get("monkey_params", {})
 
-        _EV_REV = {
-            1000: "1K",
-            5000: "5K",
-            10000: "10K",
-            50000: "50K",
-            100000: "100K",
-            500000: "500K",
-        }
         _events = int(p.get("events", 10000))
-        self.monkey_events.setCurrentText(_EV_REV.get(_events, str(_events)))
+        self.monkey_events.setCurrentText(str(_events))
         self.monkey_throttle.setCurrentText(str(p.get("throttle", 300)))
         # 针对各事件类型的默认值优化，从源头减少跳出
         _pct_defaults = {
@@ -292,77 +426,118 @@ class AppPanel(BasePanel):
         self.monkey_chk_security.setChecked(p.get("ignore_security", True))
         self._update_pct_total()
 
-    def _collect_monkey_params(self) -> dict:
-        EVENTS_VALS = {
-            "1K": 1000,
-            "5K": 5000,
-            "10K": 10000,
-            "50K": 50000,
-            "100K": 100000,
-            "500K": 500000,
-        }
+    def reload_from_settings(self) -> bool:
+        """幂等重载 Monkey 设置，供恢复默认值后的协调层调用。"""
 
-        def _parse_int(t):
-            try:
-                t = t.strip()
-                return EVENTS_VALS.get(t) or int(t)
-            except (ValueError, AttributeError):
-                return 10000
+        self._load_monkey_params()
+        self._update_action_states()
+        return True
 
-        try:
-            throttle = int((self.monkey_throttle.currentText() or "300").strip())
-        except ValueError:
-            throttle = 300
+    def _collect_monkey_params(self) -> dict | None:
+        fields = [self.monkey_events, self.monkey_throttle, *self._monkey_pct_combos.values()]
+        if not self._validate_fields(*fields):
+            return None
         p = {
-            "events": _parse_int(self.monkey_events.currentText()),
-            "throttle": throttle,
+            "events": int(self.monkey_events.currentText().strip()),
+            "throttle": int(self.monkey_throttle.currentText().strip()),
             "ignore_crashes": self.monkey_chk_crashes.isChecked(),
             "ignore_timeouts": self.monkey_chk_timeouts.isChecked(),
             "ignore_security": self.monkey_chk_security.isChecked(),
         }
         for key, c in self._monkey_pct_combos.items():
-            try:
-                p[key] = int((c.currentText() or "20").strip())
-            except ValueError:
-                p[key] = 20
+            p[key] = int(c.currentText().strip())
         return p
 
-    def _update_pct_total(self):
+    def _update_pct_total(self, *_args):
         total = 0
         for c in self._monkey_pct_combos.values():
             try:
                 total += int(c.currentText() or "0")
             except ValueError:
                 pass
-        color = "green" if total == 100 else "red"
-        self._pct_total_lbl.setText(
-            f'Total: <span style="color:{color};font-weight:bold">{total}%</span>'
-        )
+        self._pct_total_lbl.setText(f"Total: {total}%")
+        if total == 100:
+            color = BaseStyles.color("LOG_SUCCESS")
+            self._pct_total_lbl.setToolTip("Event percentages total 100%")
+            self._pct_total_lbl.setAccessibleDescription("Event percentages total 100 percent")
+        else:
+            color = BaseStyles.color("LOG_ERROR")
+            self._pct_total_lbl.setToolTip("Event percentages must total 100%")
+            self._pct_total_lbl.setAccessibleDescription(
+                f"Event percentages total {total} percent; 100 percent is recommended"
+            )
+        self._pct_total_lbl.setStyleSheet(f"color: {color}; font-weight: 600;")
 
     def _on_record_start(self):
-        self.btn_screen_record.setEnabled(False)
-        self.btn_stop_record.setEnabled(True)
+        if getattr(self, "_recording_running", False):
+            return
+        devices = tuple(dict.fromkeys(device for device in self.selected_devices if device))
+        if not devices:
+            self._update_action_states()
+            return
+        self._recording_active_devices = devices
+        self._recording_pending_count = len(devices)
+        self._recording_pending_devices = set(devices)
+        self._recording_batch_id = uuid.uuid4().hex
+        self._recording_stopping = False
+        self._recording_running = True
+        self._update_action_states()
         dur = int(self.record_duration.currentText().replace("s", ""))
-        self.signals.screen_record_requested.emit(self.selected_devices, dur)
+        self.signals.screen_record_batch_requested.emit(
+            list(devices),
+            dur,
+            self._recording_batch_id,
+        )
 
     def _on_record_stop(self):
-        self.btn_screen_record.setEnabled(True)
-        self.btn_stop_record.setEnabled(False)
-        self.signals.stop_screen_record_requested.emit(self.selected_devices)
+        if getattr(self, "_recording_stopping", False):
+            return
+        targets = tuple(getattr(self, "_recording_active_devices", ()))
+        batch_id = getattr(self, "_recording_batch_id", "")
+        if not targets or not batch_id:
+            return
+        self._recording_stopping = True
+        self._update_action_states()
+        self.signals.stop_screen_record_batch_requested.emit(list(targets), batch_id)
 
-    # 保留公共入口，供 Controller 在录屏结束后恢复按钮状态。
-    def on_recording_finished(self):
-        self.btn_screen_record.setEnabled(True)
-        self.btn_stop_record.setEnabled(False)
+    def on_recording_target_finished(self, batch_id: str, device: str) -> None:
+        """仅消费当前批次中尚未完成的设备终态。"""
+
+        if batch_id != getattr(self, "_recording_batch_id", ""):
+            return
+        pending_devices = getattr(self, "_recording_pending_devices", set())
+        if device not in pending_devices:
+            return
+        pending_devices.discard(device)
+        self._recording_pending_count = len(pending_devices)
+        if pending_devices:
+            return
+        self._recording_pending_count = 0
+        self._recording_pending_devices = set()
+        self._recording_active_devices = ()
+        self._recording_batch_id = ""
+        self._recording_stopping = False
+        self._recording_running = False
+        self._update_action_states()
+
+    def on_recording_finished(self, *_legacy_args) -> None:
+        """保留旧接口名称；无批次信息的终态不会改变当前任务。"""
+
+        if len(_legacy_args) == 2:
+            self.on_recording_target_finished(*_legacy_args)
 
     def on_operation_completed(self, operation: str, _success: bool, _message: str):
-        if operation in {"monkey", "kill_monkey"}:
-            self._set_monkey_running(False)
         if operation == "screenshot":
             if _message.startswith("Screenshot completed:"):
                 self._set_screenshot_running(False)
             elif _message in {"⚠️ No devices selected", "Unable to prepare screenshot directory"}:
                 self._set_screenshot_running(False)
+        elif operation == "stop_recording" and not _success:
+            self._recording_stopping = False
+            self._update_action_states()
+        elif operation == "kill_monkey" and not _success:
+            self._monkey_stopping = False
+            self._update_action_states()
 
     def _on_screenshot(self):
         if self._screenshot_running:
@@ -371,11 +546,15 @@ class AppPanel(BasePanel):
         self.signals.screenshot_requested.emit(self.selected_devices)
 
     def _set_screenshot_running(self, running: bool):
-        self._set_button_enabled(self.btn_screenshot, not running)
         self._screenshot_running = running
+        self._update_action_states()
 
     def _on_start_monkey(self):
+        if getattr(self, "_monkey_running", False):
+            return
         params = self._collect_monkey_params()
+        if params is None:
+            return
         # Monkey 允许非 100% 的事件比例，但必须提示分布不可预测。
         total = sum(int(c.currentText() or "0") for c in self._monkey_pct_combos.values())
         if total != 100:
@@ -392,17 +571,149 @@ class AppPanel(BasePanel):
         from core.settings_manager import AppSettings
 
         AppSettings.instance().set("monkey_params", params)
-        if self.selected_devices:
-            self._set_monkey_running(True)
-        self.signals.start_monkey_requested.emit(self.selected_devices, params)
+        devices = tuple(dict.fromkeys(device for device in self.selected_devices if device))
+        if not devices:
+            self._update_action_states()
+            return
+        self._monkey_active_devices = devices
+        self._monkey_pending_count = len(devices)
+        self._monkey_pending_devices = set(devices)
+        self._monkey_batch_id = uuid.uuid4().hex
+        self._monkey_stopping = False
+        self._set_monkey_running(True)
+        self.signals.start_monkey_batch_requested.emit(
+            list(devices),
+            params,
+            self._monkey_batch_id,
+        )
+
+    def on_monkey_target_finished(self, batch_id: str, device: str) -> None:
+        """按批次和设备去重 Monkey 终态，忽略迟到结果。"""
+
+        if batch_id != getattr(self, "_monkey_batch_id", ""):
+            return
+        pending_devices = getattr(self, "_monkey_pending_devices", set())
+        if device not in pending_devices:
+            return
+        pending_devices.discard(device)
+        self._monkey_pending_count = len(pending_devices)
+        if pending_devices:
+            return
+        self._monkey_pending_count = 0
+        self._monkey_pending_devices = set()
+        self._monkey_active_devices = ()
+        self._monkey_batch_id = ""
+        self._monkey_stopping = False
+        self._set_monkey_running(False)
 
     def _on_kill_monkey(self):
-        self._set_monkey_running(False)
-        self.signals.kill_monkey_requested.emit(self.selected_devices)
+        if getattr(self, "_monkey_stopping", False):
+            return
+        targets = tuple(getattr(self, "_monkey_active_devices", ()))
+        if not targets:
+            targets = tuple(dict.fromkeys(device for device in self.selected_devices if device))
+        if not targets:
+            return
+        batch_id = getattr(self, "_monkey_batch_id", "")
+        if not batch_id:
+            self.signals.kill_monkey_requested.emit(list(targets))
+            return
+        self._monkey_stopping = True
+        self._update_action_states()
+        self.signals.kill_monkey_batch_requested.emit(list(targets), batch_id)
 
     def _set_monkey_running(self, running: bool):
-        self._set_button_enabled(self.start_monkey_btn, not running)
-        self._set_button_enabled(self.kill_monkey_btn, running)
+        self._monkey_running = running
+        if hasattr(self, "program_edit"):
+            self._update_action_states()
+
+    def _update_action_states(self) -> None:
+        """根据设备、包名和任务状态统一更新应用页操作可用性。"""
+
+        if not hasattr(self, "program_edit"):
+            return
+        has_device = bool(self.selected_devices)
+        has_package = bool(self.package_text.strip())
+
+        device_only_names = (
+            "btn_get_program",
+            "btn_send_text",
+            "print_activity_btn",
+            "get_bugreport_btn",
+            "get_anr_file_btn",
+            "btn_retrieve_devices_logs",
+            "btn_cleanup_logs",
+            "btn_meminfo",
+            "btn_cpuinfo",
+            "btn_battery_info",
+            "btn_uptime",
+            "btn_top",
+            "btn_wakelock",
+            "btn_netstats",
+        )
+        package_names = (
+            "uninstall_btn",
+            "clear_app_data_btn",
+            "restart_app_btn",
+            "btn_force_stop",
+            "btn_disable_app",
+            "btn_enable_app",
+            "btn_disable_user",
+            "btn_gfx",
+        )
+        for name in device_only_names:
+            self._set_action_enabled(name, has_device, "Select a device first")
+        for name in package_names:
+            reason = "Select a device first" if not has_device else "Enter a package name first"
+            self._set_action_enabled(name, has_device and has_package, reason)
+
+        self._set_action_enabled(
+            "btn_screenshot",
+            has_device and not self._screenshot_running,
+            "Select a device first" if not has_device else "Screenshot is in progress",
+        )
+        self._set_action_enabled(
+            "btn_screen_record",
+            has_device and not bool(getattr(self, "_recording_running", False)),
+            "Select a device first" if not has_device else "Recording is already running",
+        )
+        self._set_action_enabled(
+            "btn_stop_record",
+            bool(getattr(self, "_recording_active_devices", ()))
+            and bool(getattr(self, "_recording_running", False))
+            and not bool(getattr(self, "_recording_stopping", False)),
+            (
+                "Stopping recording"
+                if getattr(self, "_recording_stopping", False)
+                else "No recording is running"
+            ),
+        )
+        monkey_running = bool(getattr(self, "_monkey_running", False))
+        self._set_action_enabled(
+            "start_monkey_btn",
+            has_device and has_package and not monkey_running,
+            "Select a device and enter a package name first",
+        )
+        self._set_action_enabled(
+            "kill_monkey_btn",
+            monkey_running
+            and bool(getattr(self, "_monkey_active_devices", ()))
+            and not bool(getattr(self, "_monkey_stopping", False)),
+            (
+                "Stopping Monkey"
+                if getattr(self, "_monkey_stopping", False)
+                else "Monkey is not running"
+            ),
+        )
+
+    def _set_action_enabled(self, name: str, enabled: bool, disabled_reason: str) -> None:
+        button = getattr(self, name, None)
+        if button is None:
+            return
+        button.setEnabled(enabled)
+        button.setToolTip(
+            str(button.property("functionalToolTip") or "") if enabled else disabled_reason
+        )
 
     @property
     def package_text(self) -> str:
@@ -442,7 +753,7 @@ class AppPanel(BasePanel):
             lambda: LP.force_stop_requested.emit(self.selected_devices, self.package_text)
         )
         self.btn_disable_user.clicked.connect(
-            lambda: LP.disable_app_requested.emit(self.selected_devices, self.package_text)
+            lambda: LP.disable_app_for_user_requested.emit(self.selected_devices, self.package_text)
         )
         # Monkey 测试
         self.start_monkey_btn.clicked.connect(lambda: self._on_start_monkey())
@@ -473,23 +784,30 @@ class AppPanel(BasePanel):
         self.btn_uptime.clicked.connect(
             lambda: LP.device_uptime_requested.emit(self.selected_devices)
         )
-        self.btn_top.clicked.connect(lambda: self._sh("top -b -n 1 -m 20"))
+        self.btn_top.clicked.connect(lambda: LP.top_snapshot_requested.emit(self.selected_devices))
         self.btn_gfx.clicked.connect(
-            lambda: self._sh(f"dumpsys gfxinfo {self.package_text} framestats | head -60")
+            lambda: LP.gfxinfo_requested.emit(self.selected_devices, self.package_text)
         )
-        self.btn_wakelock.clicked.connect(lambda: self._sh("cat /proc/wakelocks | head -40"))
-        self.btn_netstats.clicked.connect(lambda: self._sh("dumpsys netstats detail | head -60"))
-        # 文本、邮箱和媒体操作
+        self.btn_wakelock.clicked.connect(
+            lambda: LP.wakelocks_requested.emit(self.selected_devices)
+        )
+        self.btn_netstats.clicked.connect(
+            lambda: LP.netstats_detail_requested.emit(self.selected_devices)
+        )
+        # 文本与媒体操作
         self.btn_screenshot.clicked.connect(self._on_screenshot)
         self.btn_screen_record.clicked.connect(lambda: self._on_record_start())
         self.btn_stop_record.clicked.connect(lambda: self._on_record_stop())
-        self.btn_send_text.clicked.connect(
-            lambda: LP.send_text_requested.emit(
-                self.selected_devices, self.verification_text_sender.text()
-            )
+        self.btn_send_text.clicked.connect(lambda: self._submit_text(self.email_text_sender))
+        self.email_text_sender.returnPressed.connect(
+            lambda: self._submit_text(self.email_text_sender)
         )
-        self.verification_text_sender.returnPressed.connect(
-            lambda: LP.send_text_requested.emit(
-                self.selected_devices, self.verification_text_sender.text()
-            )
-        )
+
+    def _submit_text(self, field) -> None:
+        """让按钮和 Return 路径共享同一必填及设备校验。"""
+
+        devices = list(dict.fromkeys(device for device in self.selected_devices if device))
+        if not devices or not self._validate_fields(field):
+            self._update_action_states()
+            return
+        self.signals.send_text_requested.emit(devices, field.text().strip())

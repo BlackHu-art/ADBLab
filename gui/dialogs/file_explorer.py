@@ -4,8 +4,9 @@ import base64
 import os
 import tempfile
 import threading
+import weakref
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -21,21 +22,111 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
 )
 
-from gui.dialogs.lifecycle import QThreadGroupShutdownTask
+from gui.dialogs.lifecycle import (
+    QThreadGroupShutdownTask,
+    alive_callback,
+    fit_secondary_window_to_owner_screen,
+    is_qobject_alive,
+    safe_disconnect,
+)
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.responsive_layout import reflow_widgets
 from models import file_explorer_service as explorer_service
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
 # ── 文件浏览器对话框 ────────────────────────────────────────────────────
+
+
+class _ImageViewerDialog(QDialog):
+    """保持图片预览控件稳定，并让源图片适配可视区域。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._source_pixmap = QPixmap()
+        self._fit_pending = False
+        self._fit_timer = QTimer(self)
+        self._fit_timer.setSingleShot(True)
+        self._fit_timer.timeout.connect(self._refit_image)
+
+        layout = QVBoxLayout(self)
+        self.image_viewport = QScrollArea()
+        self.image_viewport.setWidgetResizable(False)
+        self.image_viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_viewport.setWidget(self.image_label)
+        layout.addWidget(self.image_viewport, 1)
+
+        self.image_info = QLabel()
+        self.image_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.image_info)
+
+        self.image_close = QPushButton("Close")
+        self.image_close.setToolTip("Close the image preview")
+        self.image_close.setIcon(get_themed_icon("x.svg"))
+        self.image_close.setIconSize(QSize(14, 14))
+        self.image_close.clicked.connect(self.accept)
+        layout.addWidget(self.image_close, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def set_image_source(self, source: QPixmap, name: str) -> None:
+        self._source_pixmap = QPixmap(source)
+        self.image_info.setText(f"{source.width()}x{source.height()}  |  {name}")
+        self._schedule_fit()
+
+    def _fit_image_to_viewport(self, source: QPixmap) -> QPixmap:
+        """从原始图片等比缩放到可视区域，且不放大小图。"""
+
+        available = self.image_viewport.viewport().contentsRect().size()
+        if source.isNull() or available.width() <= 0 or available.height() <= 0:
+            return QPixmap(source)
+        if source.width() <= available.width() and source.height() <= available.height():
+            return QPixmap(source)
+        return source.scaled(
+            available,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+    def _refit_image(self) -> None:
+        self._fit_pending = False
+        if self._source_pixmap.isNull():
+            return
+        pixmap = self._fit_image_to_viewport(self._source_pixmap)
+        self.image_label.setPixmap(pixmap)
+        self.image_label.setFixedSize(pixmap.size())
+
+    def release_image_source(self) -> None:
+        """延迟删除对话框前取消待处理适配并释放图片。"""
+
+        self._fit_timer.stop()
+        self._fit_pending = False
+        self._source_pixmap = QPixmap()
+        self.image_label.clear()
+        self.image_label.setFixedSize(QSize())
+
+    def _schedule_fit(self) -> None:
+        if self._fit_pending:
+            return
+        self._fit_pending = True
+        self._fit_timer.start(0)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._schedule_fit()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._schedule_fit()
 
 
 class FileExplorerDialog(QDialog):
@@ -71,6 +162,8 @@ class FileExplorerDialog(QDialog):
     ARCHIVE_EXTS = {"zip", "gz", "tar", "tgz", "xz", "7z", "rar"}
     AUDIO_EXTS = {"mp3", "wav", "ogg", "m4a", "aac", "flac"}
     VIDEO_EXTS = {"mp4", "mkv", "webm", "mov", "avi"}
+    _orphaned_workers = set()
+    _orphaned_workers_lock = threading.Lock()
 
     def __init__(self, parent=None, device_ip: str = ""):
         super().__init__(parent, Qt.Window)
@@ -82,6 +175,11 @@ class FileExplorerDialog(QDialog):
         self.copy_mode = False
         self.symlink_targets = {}
         self._workers = []
+        self._worker_ui_bindings = {}
+        self._worker_lifecycle_handlers = {}
+        self._refresh_request_id = 0
+        self._active_refresh = None
+        self._closing = False
         self._sort_col = 0
         self._sort_order = Qt.SortOrder.AscendingOrder
 
@@ -102,64 +200,75 @@ class FileExplorerDialog(QDialog):
         layout.setSpacing(4)
         layout.setContentsMargins(6, 6, 6, 6)
 
-        self.path_layout = QHBoxLayout()
-        self.path_layout.setSpacing(4)
-        self.path_layout.addWidget(QLabel("Path:"))
+        self._path_layout = QGridLayout()
+        self.path_layout = self._path_layout
+        self._path_layout.setSpacing(4)
+        self._path_label = QLabel("Path:")
         self.path_field = QLineEdit(self.current_path)
+        self._path_label.setBuddy(self.path_field)
+        self.path_field.setAccessibleName("Remote path")
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
-        self.path_layout.addWidget(self.path_field, 1)
         self.search_field = QLineEdit()
         self.search_field.setPlaceholderText("Search...")
+        self.search_field.setAccessibleName("File search")
         self.search_field.textChanged.connect(self._filter)
-        self.path_layout.addWidget(self.search_field)
-        layout.addLayout(self.path_layout)
+        layout.addLayout(self._path_layout)
 
-        tb = QHBoxLayout()
-        tb.setSpacing(3)
+        self._toolbar_layout = QGridLayout()
+        self._toolbar_layout.setSpacing(3)
         self.back_btn = QPushButton()
         self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
-        self.back_btn.setToolTip("Back")
+        self.back_btn.setToolTip("Return to the previous folder")
+        self.back_btn.setAccessibleName("Back")
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
         self.fwd_btn = QPushButton()
         self.fwd_btn.setIcon(get_themed_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
-        self.fwd_btn.setToolTip("Forward")
+        self.fwd_btn.setToolTip("Return to the next folder")
+        self.fwd_btn.setAccessibleName("Forward")
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
         self.up_btn = QPushButton()
         self.up_btn.setIcon(get_themed_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
-        self.up_btn.setToolTip("Parent")
+        self.up_btn.setToolTip("Open the parent folder")
+        self.up_btn.setAccessibleName("Parent folder")
         self.up_btn.clicked.connect(self._go_parent)
         self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn.setToolTip("Reload the current device folder")
         self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._refresh)
         self.mkdir_btn = QPushButton("New Folder")
+        self.mkdir_btn.setToolTip("Create a folder in the current location")
         self.mkdir_btn.setIcon(get_themed_icon("folder-plus.svg"))
         self.mkdir_btn.setIconSize(QSize(14, 14))
         self.mkdir_btn.clicked.connect(self._mkdir)
         self.touch_btn = QPushButton("New File")
+        self.touch_btn.setToolTip("Create an empty file in the current location")
         self.touch_btn.setIcon(get_themed_icon("file-plus.svg"))
         self.touch_btn.setIconSize(QSize(14, 14))
         self.touch_btn.clicked.connect(self._touch)
         self.pull_btn = QPushButton("Pull")
+        self.pull_btn.setToolTip("Copy selected items to the computer")
         self.pull_btn.setIcon(get_themed_icon("download-simple.svg"))
         self.pull_btn.setIconSize(QSize(14, 14))
         self.pull_btn.clicked.connect(self._pull_selected)
         self.push_btn = QPushButton("Push")
+        self.push_btn.setToolTip("Copy a local file to the current device folder")
         self.push_btn.setIcon(get_themed_icon("upload-simple.svg"))
         self.push_btn.setIconSize(QSize(14, 14))
         self.push_btn.clicked.connect(self._push_file)
         self.delete_btn = QPushButton("Delete")
+        self.delete_btn.setToolTip("Remove the selected device items")
         self.delete_btn.setIcon(get_themed_icon("trash.svg"))
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.clicked.connect(self._delete_selected)
-        for b in (
+        self._toolbar_buttons = (
             self.back_btn,
             self.fwd_btn,
             self.up_btn,
@@ -169,13 +278,12 @@ class FileExplorerDialog(QDialog):
             self.pull_btn,
             self.push_btn,
             self.delete_btn,
-        ):
-            tb.addWidget(b)
-        tb.addStretch()
+        )
         self.root_cb = QCheckBox("Root")
         self.root_cb.setToolTip("Use root access (su)")
-        tb.addWidget(self.root_cb)
-        layout.addLayout(tb)
+        self.root_cb.setAccessibleName("Use root access")
+        layout.addLayout(self._toolbar_layout)
+        self._reflow_top_controls()
 
         self.table = QTableWidget()
         self.table.setColumnCount(4)
@@ -202,6 +310,48 @@ class FileExplorerDialog(QDialog):
         self.status_bar = QStatusBar()
         self.status_bar.showMessage("Ready")
         layout.addWidget(self.status_bar)
+
+    def _reflow_top_controls(self) -> None:
+        """在窄窗口中把路径、搜索和工具按钮重排到多行。"""
+
+        if not hasattr(self, "_path_layout"):
+            return
+        available_width = max(1, self.contentsRect().width() - 12)
+        for widget in (self._path_label, self.path_field, self.search_field):
+            self._path_layout.removeWidget(widget)
+        if available_width < 720:
+            self._path_layout.addWidget(self._path_label, 0, 0)
+            self._path_layout.addWidget(self.path_field, 0, 1)
+            self._path_layout.addWidget(self.search_field, 1, 0, 1, 2)
+            self._path_layout.setColumnStretch(1, 1)
+        else:
+            self._path_layout.addWidget(self._path_label, 0, 0)
+            self._path_layout.addWidget(self.path_field, 0, 1)
+            self._path_layout.addWidget(self.search_field, 0, 2)
+            self._path_layout.setColumnStretch(1, 1)
+
+        columns = 9 if available_width >= 900 else 5 if available_width >= 560 else 3
+        self._toolbar_layout.removeWidget(self.root_cb)
+        reflow_widgets(self._toolbar_layout, self._toolbar_buttons, columns)
+        remainder = len(self._toolbar_buttons) % columns
+        root_row = len(self._toolbar_buttons) // columns
+        if remainder:
+            self._toolbar_layout.addWidget(self.root_cb, root_row, remainder)
+        else:
+            self._toolbar_layout.addWidget(self.root_cb, root_row, 0, 1, columns)
+        for column in range(columns):
+            self._toolbar_layout.setColumnStretch(column, 1)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow_top_controls()
+
+    def _create_context_menu(self) -> QMenu:
+        """创建跟随当前主题且由窗口托管的上下文菜单。"""
+
+        menu = QMenu(self)
+        menu.setStyleSheet(BaseStyles.MENU_STYLE())
+        return menu
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
@@ -246,20 +396,98 @@ class FileExplorerDialog(QDialog):
     def _dpath(self, *parts) -> str:
         return explorer_service.device_path(*parts)
 
-    def _prune_worker(self, w):
-        if w in self._workers:
-            self._workers.remove(w)
+    def _connect_worker_ui(self, worker, signal, handler, *, guard_objects=()):
+        """连接 worker 的界面回调，并在窗口或关联子窗口销毁后拒绝晚到信号。"""
+
+        dialog_ref = weakref.ref(self)
+        guard_refs = tuple(weakref.ref(obj) for obj in guard_objects if obj is not None)
+
+        def guarded(*args):
+            dialog = dialog_ref()
+            if dialog is None or getattr(dialog, "_closing", False) or not is_qobject_alive(dialog):
+                return
+            if any(not is_qobject_alive(ref()) for ref in guard_refs):
+                return
+            handler(*args)
+
+        signal.connect(guarded)
+        self._worker_ui_bindings.setdefault(worker, []).append((signal, guarded))
+        return guarded
+
+    def _disconnect_worker_ui(self, worker) -> None:
+        """断开指定 worker 的全部界面回调。"""
+
+        for signal, handler in self._worker_ui_bindings.pop(worker, ()):
+            safe_disconnect(signal, handler)
+
+    def _prune_worker(self, worker) -> None:
+        if self._closing:
+            return
+        self._disconnect_worker_ui(worker)
+        lifecycle_handler = self._worker_lifecycle_handlers.pop(worker, None)
+        if lifecycle_handler is not None:
+            safe_disconnect(worker.finished, lifecycle_handler)
+        if worker in self._workers:
+            self._workers.remove(worker)
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
+
+    @classmethod
+    def _retain_workers_until_stopped(cls, workers) -> None:
+        """解除窗口所有权后持续持有线程，避免运行中的 QThread 被销毁。"""
+
+        retained = []
+        for worker in workers:
+            try:
+                worker.setParent(None)
+            except RuntimeError:
+                continue
+            if QThreadGroupShutdownTask._running(worker):
+                retained.append(worker)
+            else:
+                worker.deleteLater()
+        if not retained:
+            return
+
+        with cls._orphaned_workers_lock:
+            cls._orphaned_workers.update(retained)
+
+        def wait_for_workers():
+            for worker in retained:
+                try:
+                    worker.wait()
+                except RuntimeError:
+                    pass
+                finally:
+                    with cls._orphaned_workers_lock:
+                        cls._orphaned_workers.discard(worker)
+                    try:
+                        worker.deleteLater()
+                    except RuntimeError:
+                        pass
+
+        threading.Thread(
+            target=wait_for_workers,
+            name="adblab-file-explorer-worker-wait",
+            daemon=True,
+        ).start()
 
     def _run_adb(self, *args, timeout: int = 30):
         worker = ADBWorker(self.device_ip, list(args), timeout=timeout)
-        worker.finished.connect(lambda _w=worker: self._prune_worker(_w))
+        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
+        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
+        self._worker_lifecycle_handlers[worker] = lifecycle_handler
         self._workers.append(worker)
         worker.setParent(self)
         return worker
 
     def _run_transfer(self, *args):
         worker = TransferWorker(self.device_ip, list(args))
-        worker.finished.connect(lambda _w=worker: self._prune_worker(_w))
+        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
+        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
+        self._worker_lifecycle_handlers[worker] = lifecycle_handler
         self._workers.append(worker)
         worker.setParent(self)
         return worker
@@ -293,31 +521,66 @@ class FileExplorerDialog(QDialog):
         self._navigate(self.forward_stack.pop(), push=False)
 
     def _go_parent(self):
+        self.status_bar.showMessage("Opening parent folder...")
         self._navigate(os.path.dirname(self.current_path))
 
     # ── 目录列表 ────────────────────────────────────────────────────────
 
     def _refresh(self):
+        if self._closing:
+            return
+        self._refresh_request_id += 1
+        request_id = self._refresh_request_id
+        requested_path = self.current_path
+        self._active_refresh = (request_id, requested_path)
         self.search_field.clear()
         self.status_bar.showMessage("Loading...")
         self.table.setRowCount(0)
         self.symlink_targets.clear()
 
-        cmd = explorer_service.ls_command(self.current_path)
+        cmd = explorer_service.ls_command(requested_path)
         shell_cmd = self._root(cmd)
         worker = self._run_adb("shell", shell_cmd)
-        worker.finished.connect(self._on_ls_result)
+        worker.setProperty("refreshRequestId", request_id)
+        worker.setProperty("requestedPath", requested_path)
+        self._connect_worker_ui(
+            worker,
+            worker.result_ready,
+            lambda output, error: self._on_ls_result(
+                output,
+                error,
+                request_id=request_id,
+                requested_path=requested_path,
+            ),
+        )
         worker.start()
 
-    def _on_ls_result(self, output, error):
+    def _on_ls_result(
+        self,
+        output,
+        error,
+        *,
+        request_id: int | None = None,
+        requested_path: str | None = None,
+    ):
+        requested_path = requested_path or self.current_path
+        if request_id is not None and (
+            getattr(self, "_closing", False)
+            or getattr(self, "_active_refresh", None) != (request_id, requested_path)
+            or self.current_path != requested_path
+        ):
+            return
         if error and not output.strip():
+            if request_id is not None:
+                self._active_refresh = None
             self.status_bar.showMessage("Error loading directory")
             return
         self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         try:
-            rows, self.symlink_targets = explorer_service.parse_ls_output(output)
-            parent_offset = 1 if self.current_path != "/" else 0
+            rows, symlink_targets = explorer_service.parse_ls_output(output)
+            self.symlink_targets = symlink_targets
+            parent_offset = 1 if requested_path != "/" else 0
             self.table.setRowCount(len(rows) + parent_offset)
 
             if parent_offset:
@@ -333,7 +596,9 @@ class FileExplorerDialog(QDialog):
 
         folders = sum(1 for entry in rows if entry.is_dir)
         files = len(rows) - folders
-        self.status_bar.showMessage(f"{self.current_path}  |  {folders} folders, {files} files")
+        if request_id is not None:
+            self._active_refresh = None
+        self.status_bar.showMessage(f"{requested_path}  |  {folders} folders, {files} files")
 
     def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
         type_item = QTableWidgetItem(file_type)
@@ -431,7 +696,7 @@ class FileExplorerDialog(QDialog):
             self._view_or_pull(name)
 
     def _view_or_pull(self, name: str):
-        menu = QMenu()
+        menu = self._create_context_menu()
         pull = menu.addAction("Pull File")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self.TEXT_EXTS or ext in self.IMAGE_EXTS
@@ -457,15 +722,19 @@ class FileExplorerDialog(QDialog):
         else:
             shell = self._root(explorer_service.cat_command(full))
             w = self._run_adb("shell", shell)
-            w.finished.connect(lambda o, e: self._show_text_viewer(name, o, e, full))
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e: self._show_text_viewer(name, o, e, full),
+            )
             w.start()
 
     def _view_image(self, name: str, full_path: str):
-        dlg = QDialog(self)
+        dlg = _ImageViewerDialog(self)
         dlg.setWindowTitle(name)
         dlg.setMinimumSize(750, 550)
         dlg.setModal(True)
-        QVBoxLayout(dlg)
+        fit_secondary_window_to_owner_screen(dlg, self)
 
         tmp_dir = os.path.join(tempfile.gettempdir(), "adblab_explorer")
         os.makedirs(tmp_dir, exist_ok=True)
@@ -484,47 +753,41 @@ class FileExplorerDialog(QDialog):
                     QMessageBox.critical(dlg, "Error", o)
                     return
                 w2 = self._run_transfer("pull", dev_tmp, tmp_path)
-                w2.finished.connect(
-                    lambda o2, e2, d: self._show_image(dlg, name, tmp_path, dev_tmp)
+                self._connect_worker_ui(
+                    w2,
+                    w2.result_ready,
+                    lambda o2, e2, d: self._show_image(dlg, name, tmp_path, dev_tmp),
+                    guard_objects=(dlg,),
                 )
                 w2.start()
 
-            w1.finished.connect(_on_copy)
+            self._connect_worker_ui(w1, w1.result_ready, _on_copy, guard_objects=(dlg,))
             w1.start()
         else:
             w = self._run_transfer("pull", full_path, tmp_path)
-            w.finished.connect(lambda o2, e2, d: self._show_image(dlg, name, tmp_path, ""))
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o2, e2, d: self._show_image(dlg, name, tmp_path, ""),
+                guard_objects=(dlg,),
+            )
             w.start()
 
-        dlg.exec()
         try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
+            dlg.exec()
+        finally:
+            if is_qobject_alive(dlg):
+                dlg.release_image_source()
+                dlg.deleteLater()
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     def _show_image(self, dlg, name, tmp_path, dev_tmp):
         if dev_tmp:
             self._run_adb("shell", f'rm "{dev_tmp}"').start()
-        lbl = QLabel()
-        pm = QPixmap(tmp_path)
-        if pm.width() > 730 or pm.height() > 530:
-            pm = pm.scaled(
-                730,
-                530,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        lbl.setPixmap(pm)
-        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dlg.layout().addWidget(lbl)
-        info = QLabel(f"{pm.width()}x{pm.height()}  |  {name}")
-        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        dlg.layout().addWidget(info)
-        cb = QPushButton("Close")
-        cb.setIcon(get_themed_icon("x.svg"))
-        cb.setIconSize(QSize(14, 14))
-        cb.clicked.connect(dlg.accept)
-        dlg.layout().addWidget(cb, alignment=Qt.AlignmentFlag.AlignCenter)
+        dlg.set_image_source(QPixmap(tmp_path), name)
 
     def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
         if error:
@@ -540,16 +803,19 @@ class FileExplorerDialog(QDialog):
         lo.addWidget(editor)
         btns = QHBoxLayout()
         save_as = QPushButton("Save As...")
+        save_as.setToolTip("Save the edited text to the computer")
         save_as.setIcon(get_themed_icon("floppy-disk.svg"))
         save_as.setIconSize(QSize(14, 14))
         save_as.clicked.connect(lambda: self._save_as(name, editor.toPlainText()))
         save_dev = QPushButton("Save to Device")
+        save_dev.setToolTip("Write the edited text back to the device")
         save_dev.setIcon(get_themed_icon("device-mobile.svg"))
         save_dev.setIconSize(QSize(14, 14))
         save_dev.clicked.connect(
             lambda: self._save_to_device(name, editor.toPlainText(), full_path)
         )
         close = QPushButton("Close")
+        close.setToolTip("Close the text viewer")
         close.setIcon(get_themed_icon("x.svg"))
         close.setIconSize(QSize(14, 14))
         close.clicked.connect(dlg.accept)
@@ -560,6 +826,7 @@ class FileExplorerDialog(QDialog):
             dlg,
             lambda: self._apply_text_dialog_fonts(dlg, editor, FontRole.MONO),
         )
+        fit_secondary_window_to_owner_screen(dlg, self)
         dlg.exec()
 
     @staticmethod
@@ -584,10 +851,7 @@ class FileExplorerDialog(QDialog):
                 return
 
         def disconnect_font(_result=None):
-            try:
-                font_signal.disconnect(apply_font)
-            except (RuntimeError, TypeError, ValueError):
-                pass
+            safe_disconnect(font_signal, apply_font)
 
         font_signal.connect(apply_font)
         dialog.finished.connect(disconnect_font)
@@ -617,7 +881,11 @@ class FileExplorerDialog(QDialog):
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
         cmd = self._root(explorer_service.save_text_command(b64, full_path))
         w = self._run_adb("shell", cmd)
-        w.finished.connect(lambda o, e: self._on_save_result(o, e, name))
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e: self._on_save_result(o, e, name),
+        )
         w.start()
 
     def _on_save_result(self, output, error, name):
@@ -636,6 +904,7 @@ class FileExplorerDialog(QDialog):
         )
         if not save_path:
             return
+        self.status_bar.showMessage(f"Pulling {name}...")
         if self.root_cb.isChecked():
             dt = f"/data/local/tmp/{name}"
             w = self._run_adb(
@@ -643,27 +912,46 @@ class FileExplorerDialog(QDialog):
                 self._root(explorer_service.copy_for_root_pull_command(full, dt)),
                 timeout=120,
             )
-            w.finished.connect(lambda o, e: self._finish_root_pull(o, e, name, dt, save_path))
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e: self._finish_root_pull(o, e, name, dt, save_path),
+            )
             w.start()
         else:
             w = self._run_transfer("pull", full, save_path)
-            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
-            w.finished.connect(lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"))
+            self._connect_worker_ui(
+                w,
+                w.progress,
+                lambda msg: self.status_bar.showMessage(msg),
+            )
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"),
+            )
             w.start()
 
     def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
         if e:
             QMessageBox.critical(self, "Error", o)
+            self.status_bar.showMessage(f"Failed: {o}")
             return
         w = self._run_transfer("pull", dev_tmp, save_path)
-        w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
-        w.finished.connect(
+        self._connect_worker_ui(
+            w,
+            w.progress,
+            lambda msg: self.status_bar.showMessage(msg),
+        )
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
             lambda o2, e2, d: (
                 self._run_adb(
                     "shell", self._root(explorer_service.delete_command(dev_tmp))
                 ).start(),
                 self._on_transfer_done(o2, e2, f"Pulled {name}"),
-            )
+            ),
         )
         w.start()
 
@@ -681,8 +969,16 @@ class FileExplorerDialog(QDialog):
             src = self._dpath(self.current_path, name)
             dst = os.path.join(dest, name)
             w = self._run_transfer("pull", src, dst)
-            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
-            w.finished.connect(lambda o, e, d, n=name: self._on_transfer_done(o, e, f"Pulled {n}"))
+            self._connect_worker_ui(
+                w,
+                w.progress,
+                lambda msg: self.status_bar.showMessage(msg),
+            )
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e, d, n=name: self._on_transfer_done(o, e, f"Pulled {n}"),
+            )
             w.start()
 
     def _push_file(self):
@@ -692,9 +988,17 @@ class FileExplorerDialog(QDialog):
         for fp in files:
             dst = self._dpath(self.current_path, os.path.basename(fp))
             w = self._run_transfer("push", fp, dst)
-            w.progress.connect(lambda msg: self.status_bar.showMessage(msg))
+            self._connect_worker_ui(
+                w,
+                w.progress,
+                lambda msg: self.status_bar.showMessage(msg),
+            )
             bn = os.path.basename(fp)
-            w.finished.connect(lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}"))
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}"),
+            )
             w.start()
 
     def _on_transfer_done(self, o, e, msg):
@@ -724,7 +1028,11 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.mkdir_command(full)))
-        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"))
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"),
+        )
         w.start()
 
     def _touch(self):
@@ -736,7 +1044,11 @@ class FileExplorerDialog(QDialog):
             return
         full = self._dpath(self.current_path, name)
         w = self._run_adb("shell", self._root(explorer_service.touch_command(full)))
-        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"))
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"),
+        )
         w.start()
 
     def _rename_item(self, name: str):
@@ -749,31 +1061,56 @@ class FileExplorerDialog(QDialog):
         old = self._dpath(self.current_path, name)
         new_p = self._dpath(self.current_path, new)
         w = self._run_adb("shell", self._root(explorer_service.move_command(old, new_p)))
-        w.finished.connect(
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
             lambda o, e, old_name=name, new_name=new: self._on_file_op_done(
                 o, e, f"Renamed {old_name} -> {new_name}"
-            )
+            ),
         )
         w.start()
 
     def _delete_item(self, name: str):
         full = self._dpath(self.current_path, name)
+        self.status_bar.showMessage(f"Deleting {name}...")
         w = self._run_adb("shell", self._root(explorer_service.delete_command(full)))
-        w.finished.connect(lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}"))
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}"),
+        )
         w.start()
+
+    def _request_delete(self, names: str | list[str]):
+        """显示明确目标且默认取消的统一删除确认。"""
+        items = [names] if isinstance(names, str) else list(names)
+        items = [name for name in items if name and name != ".."]
+        if not items:
+            return
+        targets = "\n".join(self._dpath(self.current_path, name) for name in items)
+        prompt = (
+            "Delete this item permanently?\n\n"
+            if len(items) == 1
+            else f"Delete these {len(items)} items permanently?\n\n"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Delete",
+            prompt + targets,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        for name in items:
+            self._delete_item(name)
 
     def _delete_selected(self):
         rows = set(i.row() for i in self.table.selectedIndexes())
         items = [self._file_name_at(r) for r in rows if self._file_name_at(r) != ".."]
         if not items:
             return
-        if (
-            QMessageBox.question(self, "Delete", f"Delete {len(items)} item(s)?")
-            != QMessageBox.StandardButton.Yes
-        ):
-            return
-        for name in items:
-            self._delete_item(name)
+        self._request_delete(items)
 
     # ── 复制、剪切与粘贴 ────────────────────────────────────────────────
 
@@ -802,8 +1139,12 @@ class FileExplorerDialog(QDialog):
                     self._root(explorer_service.copy_command(src, dst)),
                     timeout=120,
                 )
-                w.finished.connect(
-                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Pasted {n}")
+                self._connect_worker_ui(
+                    w,
+                    w.result_ready,
+                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(
+                        o, e, f"Pasted {n}"
+                    ),
                 )
                 w.start()
             else:
@@ -812,8 +1153,10 @@ class FileExplorerDialog(QDialog):
                     self._root(explorer_service.move_command(src, dst)),
                     timeout=120,
                 )
-                w.finished.connect(
-                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Moved {n}")
+                self._connect_worker_ui(
+                    w,
+                    w.result_ready,
+                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Moved {n}"),
                 )
                 w.start()
         self.status_bar.showMessage(f"Paste submitted: {len(self.clipboard)} item(s)")
@@ -845,12 +1188,17 @@ class FileExplorerDialog(QDialog):
         lo.addWidget(preview)
         btn_row = QHBoxLayout()
         apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("Apply the selected file permissions")
         apply_btn.setIcon(get_themed_icon("check-circle.svg"))
         apply_btn.setIconSize(QSize(14, 14))
+        apply_btn.setEnabled(False)
         revert_btn = QPushButton("Revert")
+        revert_btn.setToolTip("Restore the original file permissions")
         revert_btn.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         revert_btn.setIconSize(QSize(14, 14))
+        revert_btn.setEnabled(False)
         close_btn = QPushButton("Close")
+        close_btn.setToolTip("Close the permissions window")
         close_btn.setIcon(get_themed_icon("x.svg"))
         close_btn.setIconSize(QSize(14, 14))
         btn_row.addStretch()
@@ -878,11 +1226,26 @@ class FileExplorerDialog(QDialog):
         w = self._run_adb("shell", explorer_service.stat_mode_command(full))
 
         def _on_stat(o, e):
-            orig[0] = explorer_service.normalize_mode(o, is_dir)
+            if e:
+                preview.setText("Unable to read current permissions")
+                QMessageBox.critical(dlg, "Permissions Error", o or "Permission read failed")
+                return
+            mode = explorer_service.parse_mode(o)
+            if mode is None:
+                preview.setText("Unable to read current permissions")
+                QMessageBox.critical(
+                    dlg,
+                    "Permissions Error",
+                    "The device returned an invalid permission mode.",
+                )
+                return
+            orig[0] = mode
             set_from_mode(orig[0])
             preview.setText(f"chmod {to_mode()}  {full}")
+            apply_btn.setEnabled(True)
+            revert_btn.setEnabled(True)
 
-        w.finished.connect(_on_stat)
+        self._connect_worker_ui(w, w.result_ready, _on_stat, guard_objects=(dlg,))
         w.start()
 
         for cb in cbs.values():
@@ -890,17 +1253,43 @@ class FileExplorerDialog(QDialog):
         revert_btn.clicked.connect(
             lambda: (set_from_mode(orig[0]), preview.setText(f"chmod {to_mode()}  {full}"))
         )
-        apply_btn.clicked.connect(
-            lambda: (
-                self._run_adb(
-                    "shell",
-                    self._root(explorer_service.chmod_command(to_mode(), full)),
-                ).start(),
-                dlg.accept(),
-                self._refresh(),
+
+        def _apply_permissions():
+            apply_btn.setEnabled(False)
+            revert_btn.setEnabled(False)
+            mode = to_mode()
+            preview.setText(f"Applying chmod {mode}  {full}...")
+            chmod_worker = self._run_adb(
+                "shell",
+                self._root(explorer_service.chmod_command(mode, full)),
             )
-        )
+
+            def _on_chmod(output, error):
+                if error:
+                    apply_btn.setEnabled(True)
+                    revert_btn.setEnabled(True)
+                    preview.setText(f"chmod failed for {full}")
+                    QMessageBox.critical(
+                        dlg,
+                        "Permissions Error",
+                        output or "Permission update failed",
+                    )
+                    return
+                self.status_bar.showMessage(f"Permissions updated for {name}")
+                self._refresh()
+                dlg.accept()
+
+            self._connect_worker_ui(
+                chmod_worker,
+                chmod_worker.result_ready,
+                _on_chmod,
+                guard_objects=(dlg,),
+            )
+            chmod_worker.start()
+
+        apply_btn.clicked.connect(_apply_permissions)
         dlg.resize(420, 240)
+        fit_secondary_window_to_owner_screen(dlg, self)
         dlg.exec()
 
     # ── 右键菜单 ────────────────────────────────────────────────────────
@@ -914,11 +1303,12 @@ class FileExplorerDialog(QDialog):
         if name == "..":
             return
         is_dir = self._file_type_at(row) == "Folder"
-        menu = QMenu()
+        menu = self._create_context_menu()
         if is_dir:
             menu.addAction("Open", lambda: self._on_double_click(row, 0))
         else:
-            menu.addAction("View", lambda: self._view_file(name))
+            is_image = self._ext(name).lower() in self.IMAGE_EXTS
+            menu.addAction("View", lambda: self._view_file(name, is_image))
         menu.addSeparator()
         menu.addAction("Pull", lambda: self._pull_file(name))
         if not is_dir:
@@ -930,7 +1320,7 @@ class FileExplorerDialog(QDialog):
         menu.addAction("Permissions", lambda: self._show_chmod(name, is_dir))
         menu.addSeparator()
         menu.addAction("Rename", lambda: self._rename_item(name))
-        menu.addAction("Delete", lambda: self._delete_item(name))
+        menu.addAction("Delete", lambda: self._request_delete(name))
         menu.addSeparator()
         menu.addAction("Copy", lambda: self._copy_items(True))
         menu.addAction("Cut", lambda: self._copy_items(False))
@@ -944,10 +1334,12 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         cmd = self._root(explorer_service.install_apk_command(full))
         w = self._run_adb("shell", cmd)
-        w.finished.connect(
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
             lambda o, e: self.status_bar.showMessage(
                 f"APK {name} installed" if not e else f"APK install failed: {o}"
-            )
+            ),
         )
         w.start()
 
@@ -955,7 +1347,11 @@ class FileExplorerDialog(QDialog):
         full = self._dpath(self.current_path, name)
         cmd = explorer_service.script_command(full, self.root_cb.isChecked())
         w = self._run_adb("shell", self._root(cmd) if self.root_cb.isChecked() else cmd)
-        w.finished.connect(lambda o, e: self._show_script_output(name, o, e))
+        self._connect_worker_ui(
+            w,
+            w.result_ready,
+            lambda o, e: self._show_script_output(name, o, e),
+        )
         w.start()
 
     def _show_script_output(self, name, output, error):
@@ -969,6 +1365,7 @@ class FileExplorerDialog(QDialog):
         v.setPlainText(output)
         lo.addWidget(v)
         cb = QPushButton("Close")
+        cb.setToolTip("Close the script output window")
         cb.setIcon(get_themed_icon("x.svg"))
         cb.setIconSize(QSize(14, 14))
         cb.clicked.connect(dlg.accept)
@@ -977,24 +1374,43 @@ class FileExplorerDialog(QDialog):
             dlg,
             lambda: self._apply_text_dialog_fonts(dlg, v, FontRole.LOG),
         )
+        fit_secondary_window_to_owner_screen(dlg, self)
         dlg.show()
 
     def _show_props(self, name: str, is_dir: bool):
         full = self._dpath(self.current_path, name)
         if is_dir:
             w = self._run_adb("shell", explorer_service.folder_size_command(full))
-            w.finished.connect(
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
                 lambda o, e: self._show_props_done(
-                    name, full, "Folder", o.strip().split()[0] if o.strip() else "?", e
-                )
+                    name,
+                    full,
+                    "Folder",
+                    (o.strip() if e else (o.strip().split()[0] if o.strip() else "?")),
+                    e,
+                ),
             )
             w.start()
         else:
             w = self._run_adb("shell", explorer_service.ls_command(full))
-            w.finished.connect(lambda o, e: self._show_props_file(name, full, o, e))
+            self._connect_worker_ui(
+                w,
+                w.result_ready,
+                lambda o, e: self._show_props_file(name, full, o, e),
+            )
             w.start()
 
     def _show_props_file(self, name, full, output, error):
+        if error:
+            QMessageBox.critical(
+                self,
+                f"Properties Error: {name}",
+                output or "Unable to read file properties",
+            )
+            self.status_bar.showMessage(f"Failed to read properties for {name}")
+            return
         entry = self._parse_ls(output.splitlines()[0] if output.strip() else "")
         if entry:
             info = (
@@ -1009,6 +1425,14 @@ class FileExplorerDialog(QDialog):
         QMessageBox.information(self, f"Properties: {name}", info)
 
     def _show_props_done(self, name, full, ftype, size, error):
+        if error:
+            QMessageBox.critical(
+                self,
+                f"Properties Error: {name}",
+                size or "Unable to read folder properties",
+            )
+            self.status_bar.showMessage(f"Failed to read properties for {name}")
+            return
         info = f"Name: {name}\nType: {ftype}\nSize: {size}\nPath: {full}"
         QMessageBox.information(self, f"Properties: {name}", info)
 
@@ -1053,24 +1477,33 @@ class FileExplorerDialog(QDialog):
     # ── 资源清理 ────────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        """中止文件 worker；未接入统一监督器时在后台完成有限等待。"""
-        try:
-            BaseStyles.theme_changed.disconnect(self._apply_theme)
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            BaseStyles.fonts_changed.disconnect(self._apply_theme)
-        except (TypeError, RuntimeError):
-            pass
-        workers = self._workers
+        """先隔离全部界面回调，再中止并持续持有尚未退出的 worker。"""
+        if self._closing:
+            super().closeEvent(event)
+            return
+        self._closing = True
+        self._active_refresh = None
+        safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        workers = list(
+            dict.fromkeys(
+                (
+                    *self._workers,
+                    *self._worker_ui_bindings,
+                    *self._worker_lifecycle_handlers,
+                )
+            )
+        )
         self._workers = []
-        for w in workers:
-            if w.isRunning():
-                w.abort()
-                w.setParent(None)
-        if not getattr(self, "_shutdown_registered", False):
-            threading.Thread(
-                target=lambda ws=workers: [w.wait(5000) for w in ws if w.isRunning()],
-                daemon=True,
-            ).start()
+        for worker in workers:
+            self._disconnect_worker_ui(worker)
+            lifecycle_handler = self._worker_lifecycle_handlers.pop(worker, None)
+            if lifecycle_handler is not None:
+                safe_disconnect(worker.finished, lifecycle_handler)
+            if QThreadGroupShutdownTask._running(worker):
+                try:
+                    worker.abort()
+                except RuntimeError:
+                    pass
+        self._retain_workers_until_stopped(workers)
         super().closeEvent(event)

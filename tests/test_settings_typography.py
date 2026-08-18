@@ -125,6 +125,21 @@ def test_settings_font_changes_apply_immediately_through_compatibility_entry(
         dialog.close()
 
 
+def test_settings_log_limit_change_is_emitted_immediately(monkeypatch, qt_application):
+    settings = _FakeSettings()
+    _install_fake_settings(monkeypatch, settings)
+    dialog = SettingsDialog()
+    values = []
+    dialog.log_max_lines_changed.connect(values.append)
+    try:
+        dialog._combo_log_lines.setCurrentText("5000")
+
+        assert settings.data["log_max_lines"] == 5000
+        assert values == [5000]
+    finally:
+        dialog.close()
+
+
 def test_settings_font_previews_use_distinct_typography_roles(monkeypatch, qt_application):
     settings = _FakeSettings()
     _install_fake_settings(monkeypatch, settings)
@@ -205,8 +220,12 @@ def test_settings_restore_defaults_blocks_control_callbacks_and_stays_open(
     dialog = SettingsDialog()
     applied = []
     scan_values = []
+    log_limit_values = []
+    save_directory_values = []
     dialog.settings_applied.connect(lambda: applied.append(True))
     dialog.continuous_scan_toggled.connect(scan_values.append)
+    dialog.log_max_lines_changed.connect(log_limit_values.append)
+    dialog.save_directory_changed.connect(save_directory_values.append)
     dialog.show()
     try:
         dialog._reset_all()
@@ -226,5 +245,7 @@ def test_settings_restore_defaults_blocks_control_callbacks_and_stays_open(
         assert dialog.isVisible()
         assert applied == [True]
         assert scan_values == [True]
+        assert log_limit_values == [2000]
+        assert save_directory_values == [""]
     finally:
         dialog.close()

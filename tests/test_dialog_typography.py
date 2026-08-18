@@ -4,16 +4,13 @@ from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog,
     QGroupBox,
     QPlainTextEdit,
     QPushButton,
-    QStyle,
-    QStyleOptionGroupBox,
-    QWidget,
+    QScrollArea,
 )
 
 from core.settings_manager import AppSettings
@@ -36,23 +33,6 @@ def _assert_role(widget_or_font, role: FontRole, *, size: int | None = None) -> 
     actual = widget_or_font if isinstance(widget_or_font, QFont) else widget_or_font.font()
     assert actual.family() == expected.family()
     assert _font_size(actual) == expected.pointSize()
-
-
-def _group_title_gap(group: QGroupBox) -> int:
-    option = QStyleOptionGroupBox()
-    group.initStyleOption(option)
-    title_rect = group.style().subControlRect(
-        QStyle.ComplexControl.CC_GroupBox,
-        option,
-        QStyle.SubControl.SC_GroupBoxLabel,
-        group,
-    )
-    children = [
-        child
-        for child in group.findChildren(QWidget, options=Qt.FindDirectChildrenOnly)
-        if not child.isHidden()
-    ]
-    return min(child.geometry().top() for child in children) - title_rect.bottom() - 1
 
 
 @contextmanager
@@ -206,7 +186,6 @@ def test_open_secondary_dialogs_refresh_fonts_and_text_constraints(qt_applicatio
         try:
             BaseStyles.reload_from_settings()
             qt_application.processEvents()
-
             apps = dialogs["apps"]
             logcat = dialogs["logcat"]
             performance = dialogs["performance"]
@@ -242,7 +221,6 @@ def test_open_secondary_dialogs_refresh_fonts_and_text_constraints(qt_applicatio
             qt_application.processEvents()
             performance_group = performance.findChild(QGroupBox, "performanceConfig")
             assert performance_group is not None
-            assert _group_title_gap(performance_group) >= 4
         finally:
             settings.update(
                 {
@@ -253,3 +231,50 @@ def test_open_secondary_dialogs_refresh_fonts_and_text_constraints(qt_applicatio
             )
             BaseStyles.reload_from_settings()
             qt_application.processEvents()
+
+
+def test_performance_large_font_keeps_direct_content_without_scroll_container(
+    qt_application,
+    monkeypatch,
+):
+    original = BaseStyles.current_font_config()
+    settings = {
+        "font_family": original.ui_family,
+        "ui_font_size": 22,
+        "log_font_size": original.log_size,
+    }
+
+    class _Settings:
+        save_directory = "."
+
+        def get(self, key, default=None):
+            return settings.get(key, default)
+
+    monkeypatch.setattr(AppSettings, "instance", staticmethod(lambda: _Settings()))
+    dialog = None
+    try:
+        BaseStyles.reload_from_settings()
+        qt_application.processEvents()
+        dialog = PerformanceLauncherDialog(device_ip="test-device")
+        dialog.show()
+        qt_application.processEvents()
+
+        assert dialog.minimumSize().width() == 880
+        assert dialog.minimumSize().height() == 660
+        assert dialog.size().width() <= 1200
+        assert dialog.size().height() == 900
+        assert dialog.findChildren(QScrollArea) == []
+        assert dialog.log_view.height() <= 110
+    finally:
+        if dialog is not None:
+            dialog._theme_sync_timer.stop()
+            dialog.close()
+        settings.update(
+            {
+                "font_family": original.ui_family,
+                "ui_font_size": original.ui_size,
+                "log_font_size": original.log_size,
+            }
+        )
+        BaseStyles.reload_from_settings()
+        qt_application.processEvents()

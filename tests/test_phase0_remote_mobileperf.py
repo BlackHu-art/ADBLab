@@ -26,7 +26,7 @@ def _remote_panel(*, active_device, selected_devices, process_running=True):
     return panel
 
 
-def test_remote_input_stays_bound_to_active_session_device_after_selection_changes():
+def test_remote_input_targets_current_single_selection_independent_of_mirroring():
     panel = _remote_panel(
         active_device="device-a",
         selected_devices=["device-b"],
@@ -36,10 +36,10 @@ def test_remote_input_stays_bound_to_active_session_device_after_selection_chang
     queued_task = panel._remote_executor.submit.call_args.args[0]
     queued_task()
 
-    panel._remote_control.perform_action.assert_called_once_with("device-a", "swipe_up")
+    panel._remote_control.perform_action.assert_called_once_with("device-b", "swipe_up")
 
 
-def test_remote_input_is_rejected_without_a_running_active_session():
+def test_remote_input_is_available_without_a_running_mirroring_session():
     panel = _remote_panel(
         active_device=None,
         selected_devices=["device-b"],
@@ -47,15 +47,14 @@ def test_remote_input_is_rejected_without_a_running_active_session():
     )
 
     RemotePanel._send_keyevent(panel, "HOME")
+    queued_task = panel._remote_executor.submit.call_args.args[0]
+    queued_task()
 
-    panel._remote_executor.submit.assert_not_called()
-    panel._remote_control.send_keyevent.assert_not_called()
-    level, message = panel._log.call_args.args
-    assert level == "WARNING"
-    assert "not running" in message.lower()
+    panel._remote_control.send_keyevent.assert_called_once_with("device-b", "HOME")
+    panel._log.assert_not_called()
 
 
-def test_remote_multi_device_start_warns_and_binds_first_device():
+def test_remote_multi_device_start_requires_exactly_one_selection():
     panel = RemotePanel.__new__(RemotePanel)
     panel.panel = Mock(selected_devices=["device-a", "device-b"])
     panel._process = None
@@ -78,12 +77,10 @@ def test_remote_multi_device_start_warns_and_binds_first_device():
     ):
         RemotePanel._start_scrcpy(panel)
 
-    assert panel._active_device == "device-a"
+    assert not getattr(panel, "_active_device", None)
+    worker.start.assert_not_called()
     assert any(
-        call.args[0] == "WARNING"
-        and "1 additional selection" in call.args[1]
-        and "device-a" not in call.args[1]
-        and "device-b" not in call.args[1]
+        call.args[0] == "WARNING" and "exactly one" in call.args[1].lower()
         for call in panel._log.call_args_list
     )
 

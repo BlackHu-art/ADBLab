@@ -4,12 +4,15 @@ from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QGroupBox, QStyle, QStyleOptionGroupBox, QWidget
+from PySide6.QtTest import QSignalSpy
+from PySide6.QtWidgets import QGroupBox, QScrollArea, QStyle, QStyleOptionGroupBox, QWidget
 
 from gui.panels.device_manager import DeviceManager
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.responsive_controller import ReflowReason
+from tests.ui_geometry_helpers import wait_until
 
 
 def _effective_size(font: QFont) -> int:
@@ -58,14 +61,14 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
         assert _effective_size(panel.tabs.font()) == 18
         assert _effective_size(panel._font_sm) == 18
         assert _effective_size(panel._apps_tab.btn_screenshot.font()) == 18
-        assert _effective_size(panel._apps_tab.verification_text_sender.font()) == 18
+        assert _effective_size(panel._apps_tab.email_text_sender.font()) == 18
         assert _effective_size(panel._apps_tab.record_duration.font()) == 18
         assert _effective_size(panel._apps_tab.monkey_chk_crashes.font()) == 18
         assert _effective_size(system_panel.btn_shell_run.font()) == 18
         assert _effective_size(remote_panel.btn_start.font()) == 18
         assert _effective_size(panel._devices_tab.btn_refresh.font()) == 18
-        assert _effective_size(panel._devices_tab.ip_entry.font()) == 18
-        assert _effective_size(panel._devices_tab.ip_entry.lineEdit().font()) == 18
+        assert _effective_size(panel._devices_tab.ip_entry.font()) == 14
+        assert _effective_size(panel._devices_tab.ip_entry.lineEdit().font()) == 14
         assert _effective_size(panel._devices_tab.listbox_devices.font()) == 14
         assert _effective_size(panel._devices_tab.ip_entry.view().font()) == 14
         assert _effective_size(panel._devices_tab.ip_entry.view().horizontalHeader().font()) == 14
@@ -84,6 +87,76 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
         assert all(_effective_size(widget.font()) == 18 for widget in ui_widgets)
         assert small_widgets == []
     finally:
+        panel.close()
+
+
+def test_detached_devices_theme_and_font_bursts_each_settle_once(
+    monkeypatch,
+    qt_application,
+):
+    """脱离 SidePanel 树的 Devices 也刷新样式，且每批刷新仅稳定一代。"""
+
+    panel = SidePanel()
+    device_widget = panel.device_widget
+    device_widget.resize(420, 360)
+    device_widget.show()
+    wait_until(
+        qt_application,
+        lambda: (
+            panel._responsive_coordinator.diagnostics.stable
+            and panel._last_settled_generation
+            == panel._responsive_coordinator.diagnostics.generation
+        ),
+    )
+    try:
+        marker = "QListWidget#deviceList { background: rgb(1, 2, 3); }"
+        monkeypatch.setattr(
+            BaseStyles,
+            "DEVICE_LIST_STYLE",
+            classmethod(lambda _cls: marker),
+        )
+        before = panel._responsive_coordinator.diagnostics.generation
+        theme_settled = QSignalSpy(panel.responsive_layout_settled)
+        for _ in range(3):
+            panel._on_theme_changed(None)
+        wait_until(
+            qt_application,
+            lambda: (
+                panel._responsive_coordinator.diagnostics.stable
+                and panel._last_settled_generation
+                == panel._responsive_coordinator.diagnostics.generation
+                and panel._last_settled_generation > before
+            ),
+        )
+        assert marker in panel._devices_tab.listbox_devices.styleSheet()
+        assert device_widget.findChildren(QScrollArea) == []
+        assert panel._responsive_coordinator.diagnostics.generation == before + 1
+        assert theme_settled.count() == 1
+        assert ReflowReason.THEME in panel._responsive_coordinator.diagnostics.reasons
+
+        monkeypatch.setattr(
+            BaseStyles,
+            "font_for_role",
+            classmethod(lambda _cls, _role, size=None: QFont("Arial", size or 18)),
+        )
+        before = panel._responsive_coordinator.diagnostics.generation
+        font_settled = QSignalSpy(panel.responsive_layout_settled)
+        for _ in range(3):
+            panel._on_fonts_changed(None)
+        wait_until(
+            qt_application,
+            lambda: (
+                panel._responsive_coordinator.diagnostics.stable
+                and panel._last_settled_generation
+                == panel._responsive_coordinator.diagnostics.generation
+                and panel._last_settled_generation > before
+            ),
+        )
+        assert panel._responsive_coordinator.diagnostics.generation == before + 1
+        assert font_settled.count() == 1
+        assert ReflowReason.FONT in panel._responsive_coordinator.diagnostics.reasons
+    finally:
+        device_widget.close()
         panel.close()
 
 
@@ -156,6 +229,7 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
     device_widget.show()
     qt_application.processEvents()
     first_offsets = {}
+    device_control_heights = {}
     try:
         for font_size in (12, 22, 8):
             current_size["value"] = font_size
@@ -174,14 +248,18 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
             for group in groups:
                 gap, first_content_top = _group_title_gap(group)
                 assert gap >= 4, f"{group.title()} 标题与首行内容仅保留 {gap}px"
-                measured_titles.add(group.title())
+                title = group.title()
+                measured_titles.add("Devices" if title.startswith("Devices · ") else title)
                 if group.title() == "Text & Screen Capture":
                     first_offsets[font_size] = first_content_top
 
             assert {"Devices", "Text & Screen Capture"} <= measured_titles
+            device_control_heights[font_size] = panel._devices_tab.btn_refresh.minimumHeight()
 
         assert first_offsets[22] > first_offsets[12]
         assert first_offsets[8] <= first_offsets[12]
+        assert device_control_heights[22] > device_control_heights[12]
+        assert device_control_heights[8] <= device_control_heights[12]
     finally:
         device_widget.close()
         panel.close()

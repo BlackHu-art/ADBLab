@@ -34,7 +34,9 @@ class SidePanelSignals(QObject):
     # ── 截图与录屏 ──
     screenshot_requested = Signal(list)
     screen_record_requested = Signal(list, int)  # 参数：设备列表、录制时长
+    screen_record_batch_requested = Signal(list, int, str)  # 参数：设备列表、时长、批次标识
     stop_screen_record_requested = Signal(list)  # 参数：设备列表
+    stop_screen_record_batch_requested = Signal(list, str)  # 参数：设备列表、批次标识
     batch_install_requested = Signal(list)  # 参数：设备列表
 
     # ── 设备日志 ──
@@ -55,6 +57,7 @@ class SidePanelSignals(QObject):
     print_activity_requested = Signal(list)
     parse_apk_info_requested = Signal()
     disable_app_requested = Signal(list, str)  # 参数：设备列表、包名
+    disable_app_for_user_requested = Signal(list, str)  # 参数：设备列表、包名
     enable_app_requested = Signal(list, str)  # 参数：设备列表、包名
     force_stop_requested = Signal(list, str)  # 参数：设备列表、包名
     open_deep_link_requested = Signal(list, str)  # 参数：设备列表、URI
@@ -67,14 +70,23 @@ class SidePanelSignals(QObject):
     dumpsys_meminfo_requested = Signal(list, str)  # 参数：设备列表、包名
     dumpsys_cpuinfo_requested = Signal(list)
     dumpsys_battery_requested = Signal(list)
+    top_snapshot_requested = Signal(list)
+    gfxinfo_requested = Signal(list, str)  # 参数：设备列表、包名
+    wakelocks_requested = Signal(list)
+    netstats_detail_requested = Signal(list)
+    dumpsys_service_requested = Signal(list, str)  # 参数：设备列表、服务名
+    kernel_version_requested = Signal(list)
+    cpu_info_requested = Signal(list)
     battery_set_requested = Signal(list, str, str)  # 参数：设备列表、参数名、参数值
     battery_reset_requested = Signal(list)
 
     # ── Monkey 与测试 ──
     kill_monkey_requested = Signal(list)
+    kill_monkey_batch_requested = Signal(list, str)  # 参数：设备列表、批次标识
     pull_anr_file_requested = Signal(list)
     capture_bugreport_requested = Signal(list)
     start_monkey_requested = Signal(list, dict)
+    start_monkey_batch_requested = Signal(list, dict, str)  # 参数：设备列表、配置、批次标识
 
     # ── Shell 与文件 ──
     shell_command_requested = Signal(list, str)  # 参数：设备列表、命令

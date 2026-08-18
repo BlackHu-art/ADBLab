@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 
 from PySide6.QtCore import Qt
@@ -40,6 +41,7 @@ def _metadata(call):
         unit_id=call.kwargs["_operation_unit_id"],
         target_id=call.kwargs["_operation_target_id"],
         expected_artifact_path=call.kwargs["_operation_expected_artifact_path"],
+        generation_token=call.kwargs["_operation_generation_token"],
     )
 
 
@@ -298,6 +300,107 @@ def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp
     assert controller.operation_manager.active_count == 0
 
 
+def test_screenshot_cancel_uses_results_written_after_its_initial_snapshot(tmp_path):
+    controller = _controller(tmp_path)
+    operation_id = controller.take_screenshot(["target-a", "target-b"])
+    first, _second = _tasks(controller, operation_id)
+    _write_png(first)
+    initial_snapshot_read = Event()
+    release_cancel = Event()
+    real_get = controller.operation_manager.get
+    cancel_results = []
+    cancel_errors = []
+
+    def block_after_initial_cancel_snapshot(candidate_id, **kwargs):
+        snapshot = real_get(candidate_id, **kwargs)
+        if (
+            candidate_id == operation_id
+            and kwargs.get("expected_kind") == "screenshot"
+            and kwargs.get("expected_generation") is None
+        ):
+            initial_snapshot_read.set()
+            assert release_cancel.wait(timeout=2)
+        return snapshot
+
+    def cancel():
+        try:
+            cancel_results.append(controller.cancel_screenshot(operation_id))
+        except BaseException as exc:  # pragma: no cover - asserted through cancel_errors
+            cancel_errors.append(exc)
+
+    controller.operation_manager.get = Mock(side_effect=block_after_initial_cancel_snapshot)
+    cancel_thread = Thread(target=cancel)
+    with patch(
+        "controllers._media.QTimer.singleShot",
+        side_effect=lambda _delay, callback: callback(),
+    ):
+        cancel_thread.start()
+        assert initial_snapshot_read.wait(timeout=2)
+        assert (
+            controller._process_screenshot_operation_result(
+                _success(first),
+                _metadata(first),
+            )
+            is None
+        )
+        release_cancel.set()
+        cancel_thread.join(timeout=2)
+
+    assert cancel_thread.is_alive() is False
+    assert cancel_errors == []
+    assert cancel_results == [True]
+    assert controller.operation_manager.active_count == 0
+    controller.signals.operation_completed.emit.assert_called_once()
+    assert controller.signals.operation_completed.emit.call_args.args[1] is False
+    assert "1/2 succeeded" in controller.signals.operation_completed.emit.call_args.args[2]
+
+
+def test_cancel_between_artifact_and_result_does_not_publish_cancelled_artifact(tmp_path):
+    controller = _controller(tmp_path)
+    operation_id = controller.take_screenshot(["target-a"])
+    task = _tasks(controller, operation_id)[0]
+    _write_png(task)
+    artifact_recorded = Event()
+    release_result = Event()
+    real_record = controller.operation_manager.record_unit_result
+    callback_errors = []
+
+    def block_before_result(*args, **kwargs):
+        artifact_recorded.set()
+        assert release_result.wait(timeout=2)
+        return real_record(*args, **kwargs)
+
+    def handle_result():
+        try:
+            controller._process_screenshot_operation_result(
+                _success(task),
+                _metadata(task),
+            )
+        except BaseException as exc:  # pragma: no cover - asserted through callback_errors
+            callback_errors.append(exc)
+
+    controller.operation_manager.record_unit_result = Mock(side_effect=block_before_result)
+    callback_thread = Thread(target=handle_result)
+    with patch(
+        "controllers._media.QTimer.singleShot",
+        side_effect=lambda _delay, callback: callback(),
+    ):
+        callback_thread.start()
+        assert artifact_recorded.wait(timeout=2)
+        assert controller.cancel_screenshot(operation_id) is True
+        release_result.set()
+        callback_thread.join(timeout=2)
+
+    assert callback_thread.is_alive() is False
+    assert callback_errors == []
+    assert controller.operation_manager.active_count == 0
+    controller.signals.screenshot_captured.emit.assert_not_called()
+    controller._show_screenshot_viewer.assert_not_called()
+    controller.signals.operation_completed.emit.assert_called_once()
+    assert "0/1 succeeded" in controller.signals.operation_completed.emit.call_args.args[2]
+    assert "1 cancelled" in controller.signals.operation_completed.emit.call_args.args[2]
+
+
 def test_screenshot_filters_empty_and_duplicate_targets_and_uses_no_legacy_shared_state(tmp_path):
     controller = _controller(tmp_path)
 
@@ -329,6 +432,111 @@ def test_screenshot_metadata_mismatch_fails_closed_and_emits_compat_terminal(tmp
     controller.signals.screenshot_captured.emit.assert_not_called()
     controller.signals.operation_completed.emit.assert_called_once()
     assert controller.signals.operation_completed.emit.call_args.args[1] is False
+
+
+def test_old_screenshot_generation_cannot_mutate_reused_operation_id(tmp_path):
+    controller = _controller(tmp_path)
+    controller._operation_handler_map = {
+        "take_screenshot": controller._process_screenshot_operation_result
+    }
+    controller._generate_operation_id = Mock(side_effect=("shared-id", "old-task"))
+    old_id = controller.take_screenshot(["target-a"])
+    old_call = _tasks(controller, old_id)[0]
+    old_snapshot = controller.operation_manager.get(old_id)
+    controller.operation_manager.finish(
+        old_id,
+        OperationState.FAILED,
+        expected_kind="screenshot",
+        expected_generation=old_snapshot.generation_token,
+    )
+    new_generation = object()
+    new_snapshot = controller.operation_manager.begin(
+        "screenshot",
+        operation_id=old_id,
+        unit_ids=("new-task",),
+        generation_token=new_generation,
+    )
+    current = controller.operation_manager.mark_running(
+        old_id,
+        expected_kind="screenshot",
+        expected_generation=new_generation,
+    )
+
+    assert (
+        controller._route_operation_response(
+            "take_screenshot",
+            _success(old_call),
+            _metadata(old_call),
+        )
+        is None
+    )
+    assert current is not None
+    assert current.generation_token is new_snapshot.generation_token
+    assert controller.operation_manager.get(old_id) == current
+    assert controller.operation_manager.get(old_id).unit_results == ()
+    controller.signals.operation_completed.emit.assert_not_called()
+
+
+def test_screenshot_result_without_generation_fails_closed(tmp_path):
+    controller = _controller(tmp_path)
+    controller._operation_handler_map = {
+        "take_screenshot": controller._process_screenshot_operation_result
+    }
+    operation_id = controller.take_screenshot(["target-a"])
+    task = _tasks(controller, operation_id)[0]
+    metadata = _metadata(task)
+    metadata = OperationMetadata(
+        version=metadata.version,
+        operation_id=metadata.operation_id,
+        operation_kind=metadata.operation_kind,
+        method_name=metadata.method_name,
+        task_id=metadata.task_id,
+        unit_id=metadata.unit_id,
+        target_id=metadata.target_id,
+        expected_artifact_path=metadata.expected_artifact_path,
+        generation_token=None,
+    )
+
+    terminal = controller._route_operation_response(
+        "take_screenshot",
+        _success(task),
+        metadata,
+    )
+
+    assert terminal.state is OperationState.FAILED
+    assert controller.operation_manager.active_count == 0
+    controller.signals.screenshot_captured.emit.assert_not_called()
+    controller.signals.operation_completed.emit.assert_called_once()
+
+
+def test_screenshot_cas_loss_before_artifact_record_emits_no_success(tmp_path):
+    controller = _controller(tmp_path)
+    operation_id = controller.take_screenshot(["target-a"])
+    task = _tasks(controller, operation_id)[0]
+    _write_png(task)
+    snapshot = controller.operation_manager.get(operation_id)
+    real_add_artifact = controller.operation_manager.add_artifact
+
+    def finish_before_add(*args, **kwargs):
+        controller.operation_manager.finish(
+            operation_id,
+            OperationState.FAILED,
+            expected_kind=snapshot.kind,
+            expected_generation=snapshot.generation_token,
+        )
+        return real_add_artifact(*args, **kwargs)
+
+    controller.operation_manager.add_artifact = Mock(side_effect=finish_before_add)
+
+    assert (
+        controller._process_screenshot_operation_result(
+            _success(task),
+            _metadata(task),
+        )
+        is None
+    )
+    controller.signals.screenshot_captured.emit.assert_not_called()
+    controller.signals.operation_completed.emit.assert_not_called()
 
 
 def test_screenshot_viewer_is_independent_but_managed_by_injected_window_owner():

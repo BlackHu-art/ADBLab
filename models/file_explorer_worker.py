@@ -10,9 +10,9 @@ from .base.process_runner import ProcessRunner
 
 
 class ADBWorker(QThread):
-    """执行短 ADB Shell 命令，并通过完成信号返回输出或错误。"""
+    """执行短 ADB Shell 命令，并通过业务结果信号返回输出或错误。"""
 
-    finished = Signal(str, bool)
+    result_ready = Signal(str, bool)
 
     def __init__(self, device_ip: str, args: list, timeout: int = 30):
         super().__init__()
@@ -32,16 +32,16 @@ class ADBWorker(QThread):
         if self._aborted:
             return
         if result.success:
-            self.finished.emit(result.output, False)
+            self.result_ready.emit(result.output, False)
         else:
-            self.finished.emit(result.error, True)
+            self.result_ready.emit(result.error, True)
 
 
 class TransferWorker(QThread):
-    """执行 pull 或 push 长进程，并逐行发送进度。"""
+    """执行 pull 或 push 长进程，并分别发送进度和业务结果。"""
 
     progress = Signal(str)
-    finished = Signal(str, bool, str)
+    result_ready = Signal(str, bool, str)
 
     def __init__(self, device_ip: str, args: list, cwd: str = ""):
         super().__init__()
@@ -87,10 +87,10 @@ class TransferWorker(QThread):
             ret = self._proc.wait()
             local = self.args[-1] if len(self.args) >= 2 else ""
             if ret == 0:
-                self.finished.emit(last or "OK", False, local)
+                self.result_ready.emit(last or "OK", False, local)
             else:
-                self.finished.emit(last or f"Exit {ret}", True, local)
+                self.result_ready.emit(last or f"Exit {ret}", True, local)
         except Exception as e:
-            self.finished.emit(str(e), True, "")
+            self.result_ready.emit(str(e), True, "")
         finally:
             self._process_runner.stop(self._process_key, timeout=0)

@@ -30,6 +30,20 @@ def test_unknown_operation_is_not_intercepted():
     assert decision.requires_confirmation is False
 
 
+def test_disable_for_user_keeps_dangerous_operation_confirmation():
+    decision = DangerousOperationPolicy().evaluate(
+        "disable_app_for_user",
+        confirmation_enabled=True,
+        target_count=2,
+    )
+
+    assert decision.requires_confirmation is True
+    assert decision.operation.key == "disable_app_for_user"
+    assert decision.operation.risk == "high"
+    assert "current user" in decision.message
+    assert "2 targets" in decision.message
+
+
 def test_main_frame_guard_blocks_declined_operation(monkeypatch):
     calls = []
     logs = []

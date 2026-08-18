@@ -6,6 +6,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -338,23 +340,34 @@ class LiveLogcatDialog(QDialog):
         self._supervisor_task_id = None
         self.worker = None
         self._pkg_worker = None
-        self.entries = []
+        self.entries = deque(maxlen=self.MAX_BUFFER)
         self._pending_visible_lines = []
         self._closing = False
         self._close_pending = False
         self._close_ready = False
         self._owner_cleanup_requested = False
         self._owner_cleanup_completed = False
+        self._reflowing_filters = False
         self._line_flush_timer = QTimer(self)
         self._line_flush_timer.setSingleShot(True)
         self._line_flush_timer.timeout.connect(self._flush_pending_lines)
+        self._filter_rebuild_timer = QTimer(self)
+        self._filter_rebuild_timer.setSingleShot(True)
+        self._filter_rebuild_timer.setInterval(120)
+        self._filter_rebuild_timer.timeout.connect(self._rebuild)
+        self._filter_reflow_timer = QTimer(self)
+        self._filter_reflow_timer.setSingleShot(True)
+        self._filter_reflow_timer.timeout.connect(self._reflow_filters)
         self._cleanup_recheck_timer = QTimer(self)
         self._cleanup_recheck_timer.setSingleShot(True)
         self._cleanup_recheck_timer.timeout.connect(self._poll_close_cleanup)
+        self._worker_release_timer = QTimer(self)
+        self._worker_release_timer.setSingleShot(True)
+        self._worker_release_timer.timeout.connect(self._poll_worker_release)
 
         self.setWindowTitle(f"Live Logcat - {device_ip}")
         self.setWindowIcon(get_themed_icon("scroll.svg"))
-        self.setMinimumSize(980, 620)
+        self.setMinimumSize(640, 420)
         self.resize(1000, 650)
         self.setModal(False)
         self.setAttribute(Qt.WA_DeleteOnClose)
@@ -384,46 +397,64 @@ class LiveLogcatDialog(QDialog):
         layout.setSpacing(4)
         layout.setContentsMargins(6, 6, 6, 6)
 
-        f1 = QHBoxLayout()
-        f1.setSpacing(6)
-        f1.addWidget(QLabel("Level:"))
+        filters = QGridLayout()
+        filters.setHorizontalSpacing(6)
+        filters.setVerticalSpacing(4)
+        self._filters_layout = filters
+        self._level_label = QLabel("Level:")
         self.level_combo = QComboBox()
         self.level_combo.addItem("All", None)
         for code in ("V", "D", "I", "W", "E", "F"):
             self.level_combo.addItem(LEVEL_LABELS[code], code)
         self.level_combo.currentIndexChanged.connect(self._rebuild)
         self.level_combo.setMinimumWidth(120)
-        f1.addWidget(self.level_combo)
-        f1.addWidget(QLabel("Package:"))
+        self._level_label.setBuddy(self.level_combo)
+        self.level_combo.setAccessibleName("Log level")
+        self._package_label = QLabel("Package:")
         self.pkg_input = QLineEdit()
         self.pkg_input.setPlaceholderText("com.example.app")
-        f1.addWidget(self.pkg_input, 1)
+        self._package_label.setBuddy(self.pkg_input)
+        self.pkg_input.setAccessibleName("Package filter")
         self.btn_get_pkg = QPushButton("Current Package")
         self.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
         self.btn_get_pkg.setIconSize(QSize(14, 14))
         self.btn_get_pkg.setToolTip("Fetch current foreground app package")
         self.btn_get_pkg.setMinimumWidth(120)
         self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
-        f1.addWidget(self.btn_get_pkg)
-        f1.addWidget(QLabel("Tag:"))
+        self._tag_label = QLabel("Tag:")
         self.tag_input = QLineEdit()
         self.tag_input.setPlaceholderText("ActivityManager")
-        f1.addWidget(self.tag_input, 1)
-        layout.addLayout(f1)
+        self.tag_input.textChanged.connect(self._schedule_filter_rebuild)
+        self._tag_label.setBuddy(self.tag_input)
+        self.tag_input.setAccessibleName("Tag filter")
+        self._filter_controls = (
+            self._level_label,
+            self.level_combo,
+            self._package_label,
+            self.pkg_input,
+            self.btn_get_pkg,
+            self._tag_label,
+            self.tag_input,
+        )
+        self._reflow_filters()
+        layout.addLayout(filters)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
         self.start_btn = QPushButton("Start")
+        self.start_btn.setToolTip("Start streaming device log messages")
         self.start_btn.setIcon(get_themed_icon("play.svg"))
         self.start_btn.setIconSize(QSize(14, 14))
         self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setToolTip("Stop the active log stream")
         self.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self.stop_btn.setIconSize(QSize(14, 14))
-        self.stop_btn.setEnabled(False)
         self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setToolTip("Remove all displayed log messages")
         self.clear_btn.setIcon(get_themed_icon("broom.svg"))
         self.clear_btn.setIconSize(QSize(14, 14))
         self.export_btn = QPushButton("Export")
+        self.export_btn.setToolTip("Save the displayed log messages to a file")
         self.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
         self.export_btn.setIconSize(QSize(14, 14))
         self.wrap_btn = QPushButton("Wrap")
@@ -431,15 +462,26 @@ class LiveLogcatDialog(QDialog):
         self.wrap_btn.setIconSize(QSize(14, 14))
         self.wrap_btn.setCheckable(True)
         self.wrap_btn.setChecked(True)
-        self.wrap_btn.setToolTip("Toggle line wrapping")
+        self.wrap_btn.setToolTip("Wrap long log lines within the view")
         self.start_btn.clicked.connect(self._start)
         self.stop_btn.clicked.connect(self._stop)
         self.clear_btn.clicked.connect(self._clear)
         self.export_btn.clicked.connect(self._export)
         self.wrap_btn.clicked.connect(self._toggle_wrap)
-        for b in (self.start_btn, self.stop_btn, self.clear_btn, self.export_btn, self.wrap_btn):
-            btn_row.addWidget(b)
-        btn_row.addStretch()
+        action_buttons = (
+            self.start_btn,
+            self.stop_btn,
+            self.clear_btn,
+            self.export_btn,
+            self.wrap_btn,
+        )
+        for button in action_buttons:
+            btn_row.addWidget(button)
+
+        self.status_bar = QStatusBar()
+        self.status_bar.setSizeGripEnabled(False)
+        self.status_bar.showMessage("Ready")
+        btn_row.addWidget(self.status_bar, 1)
         layout.addLayout(btn_row)
 
         self.output = QPlainTextEdit()
@@ -449,11 +491,56 @@ class LiveLogcatDialog(QDialog):
         self.output.document().setMaximumBlockCount(self.MAX_BUFFER)
         layout.addWidget(self.output, 1)
 
-        self.status_bar = QStatusBar()
-        self.status_bar.showMessage("Ready")
-        layout.addWidget(self.status_bar)
-
         self.highlighter = LogcatHighlighter(self.output.document())
+        self._set_running_actions(False)
+        self._update_content_actions()
+
+    @staticmethod
+    def _filter_minimum_width(widget) -> int:
+        return max(widget.minimumSize().width(), widget.minimumSizeHint().width())
+
+    def _reflow_filters(self) -> None:
+        if self._reflowing_filters:
+            return
+        self._reflowing_filters = True
+        layout = self._filters_layout
+        controls = self._filter_controls
+        spacing = layout.horizontalSpacing()
+        required_width = sum(self._filter_minimum_width(control) for control in controls)
+        required_width += spacing * (len(controls) - 1)
+        root_layout = self.layout()
+        root_margins = root_layout.contentsMargins() if root_layout is not None else None
+        available_width = self.contentsRect().width()
+        if root_margins is not None:
+            available_width -= root_margins.left() + root_margins.right()
+        wide = max(0, available_width) >= required_width
+
+        while layout.count():
+            layout.takeAt(0)
+        for column in range(7):
+            layout.setColumnStretch(column, 0)
+        for row in range(5):
+            layout.setRowStretch(row, 0)
+
+        if wide:
+            for column, control in enumerate(controls):
+                layout.addWidget(control, 0, column)
+            layout.setColumnStretch(3, 2)
+            layout.setColumnStretch(6, 2)
+            self.layout().activate()
+            self._reflowing_filters = False
+            return
+
+        layout.addWidget(self._level_label, 0, 0)
+        layout.addWidget(self.level_combo, 1, 0, 1, 2)
+        layout.addWidget(self._package_label, 2, 0)
+        layout.addWidget(self.pkg_input, 2, 1)
+        layout.addWidget(self.btn_get_pkg, 3, 0, 1, 2)
+        layout.addWidget(self._tag_label, 4, 0)
+        layout.addWidget(self.tag_input, 4, 1)
+        layout.setColumnStretch(1, 1)
+        self.layout().activate()
+        self._reflowing_filters = False
 
     def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
@@ -475,23 +562,64 @@ class LiveLogcatDialog(QDialog):
         self.output.setFont(log_font)
         self.output.document().setDefaultFont(log_font)
         self.status_bar.setStyleSheet(BS.STATUS_BAR_STYLE())
+        self._apply_action_button_styles()
         self.level_combo.setMinimumWidth(120)
         self.level_combo.setMinimumWidth(max(120, self.level_combo.sizeHint().width()))
         self.btn_get_pkg.setMinimumWidth(120)
         self.btn_get_pkg.setMinimumWidth(max(120, self.btn_get_pkg.sizeHint().width()))
+        self._reflow_filters()
 
         # Logcat 等级颜色跟随当前主题更新。
         hl_colors = {
-            "V": "#8899aa",
-            "D": "#6db3d8",
-            "I": "#6cc76c",
-            "W": "#e0a040",
-            "E": "#e05555",
-            "F": "#ee55aa",
+            "V": BS.color("LOG_DEBUG"),
+            "D": BS.color("LOG_DEBUG"),
+            "I": BS.color("LOG_INFO"),
+            "W": BS.color("LOG_WARNING"),
+            "E": BS.color("LOG_ERROR"),
+            "F": BS.color("LOG_CRITICAL"),
             "S": BS.color("TEXT_SECONDARY"),
             "U": fg,
         }
         self.highlighter.set_theme(hl_colors)
+
+    def _apply_action_button_styles(self) -> None:
+        """按当前主题刷新启动和停止按钮的语义色。"""
+
+        bs = BaseStyles
+        self.start_btn.setStyleSheet(f"""
+            QPushButton {{
+                {bs.BUTTON_BASE()}
+                background-color: {bs.color("LOG_SUCCESS")}; color: #ffffff;
+                border: 1px solid {bs.color("LOG_SUCCESS")};
+            }}
+            QPushButton:hover {{ border-color: {bs.color("TEXT_PRIMARY")}; }}
+            QPushButton:pressed {{ border-color: {bs.color("BORDER_FOCUS")}; }}
+            QPushButton:focus {{ border: 2px solid {bs.color("TEXT_PRIMARY")}; }}
+            QPushButton:disabled {{
+                background-color: {bs.color("INPUT_BG")};
+                color: {bs.color("TEXT_DISABLED")};
+                border-color: {bs.color("BORDER_COLOR")};
+            }}
+            """)
+        self.stop_btn.setObjectName("danger")
+        self.stop_btn.setProperty("buttonVariant", "danger")
+        self.stop_btn.setStyleSheet(bs.BUTTON_QSS())
+        for button in (self.start_btn, self.stop_btn):
+            button.style().unpolish(button)
+            button.style().polish(button)
+            button.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow_filters()
+        self._filter_reflow_timer.start(0)
+
+    def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
+        """统一维护日志采集按钮状态，避免异步路径出现状态分叉。"""
+
+        self.start_btn.setEnabled(not running)
+        self.stop_btn.setEnabled(running and not stopping)
+        self._apply_action_button_styles()
 
     # ── 筛选 ────────────────────────────────────────────────────────────
 
@@ -515,6 +643,20 @@ class LiveLogcatDialog(QDialog):
         visible = [t for t, lv, tg, _ in self.entries if self._passes(lv, tg)]
         if visible:
             self.output.setPlainText("\n".join(visible) + "\n")
+        self._update_content_actions(bool(visible))
+
+    def _schedule_filter_rebuild(self, _text: str = ""):
+        """合并连续输入，避免每个按键都完整重建日志文档。"""
+
+        self._filter_rebuild_timer.start()
+
+    def _update_content_actions(self, has_visible_content: bool | None = None):
+        """按已知可见状态更新动作，避免复制整份日志文档。"""
+
+        if has_visible_content is None:
+            has_visible_content = not self.output.document().isEmpty()
+        self.clear_btn.setEnabled(bool(self.entries) or has_visible_content)
+        self.export_btn.setEnabled(has_visible_content)
 
     # ── 操作 ────────────────────────────────────────────────────────────
 
@@ -552,10 +694,12 @@ class LiveLogcatDialog(QDialog):
     def _start(self):
         if self.worker and self.worker.is_active():
             return
+        self._worker_release_timer.stop()
         self.entries.clear()
         self._pending_visible_lines.clear()
         self._line_flush_timer.stop()
         self.output.clear()
+        self._update_content_actions(False)
         pkg = self.pkg_input.text().strip()
         tag = self.tag_input.text().strip()
         worker = LogcatWorker(self.device_ip, package=pkg, tag=tag)
@@ -593,14 +737,13 @@ class LiveLogcatDialog(QDialog):
             return
         self.worker = worker
         self._supervisor_task_id = task_id
-        self.start_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
+        self._set_running_actions(True)
         worker.start()
 
     def _stop(self):
         if self.worker and self._supervisor_task_id:
             self.status_bar.showMessage("Stopping...")
-            self.stop_btn.setEnabled(False)
+            self._set_running_actions(True, stopping=True)
             self._task_supervisor.stop_async(self._supervisor_task_id)
 
     def _clear(self):
@@ -609,6 +752,7 @@ class LiveLogcatDialog(QDialog):
         self._line_flush_timer.stop()
         self.output.clear()
         self.status_bar.showMessage("Cleared")
+        self._update_content_actions(False)
 
     def _toggle_wrap(self):
         if self.wrap_btn.isChecked():
@@ -699,14 +843,15 @@ class LiveLogcatDialog(QDialog):
         if self._closing:
             return
         tag_part = self._extract_tag(text)
+        if not isinstance(self.entries, deque):
+            self.entries = deque(self.entries, maxlen=self.MAX_BUFFER)
         self.entries.append((text, level, tag_part, pid))
-        if len(self.entries) > self.MAX_BUFFER:
-            self.entries = self.entries[-self.MAX_BUFFER :]
         if self._passes(level, tag_part):
             self._pending_visible_lines.append(text)
             if len(self._pending_visible_lines) > self.MAX_BUFFER:
                 self._pending_visible_lines = self._pending_visible_lines[-self.MAX_BUFFER :]
             self._schedule_line_flush()
+        self.clear_btn.setEnabled(True)
 
     def _on_lines(self, worker: LogcatWorker, batch: LogcatBatch):
         try:
@@ -738,6 +883,7 @@ class LiveLogcatDialog(QDialog):
         self.output.appendPlainText("\n".join(lines))
         self.output.moveCursor(QTextCursor.MoveOperation.End)
         self.output.ensureCursorVisible()
+        self._update_content_actions(True)
 
     def _on_status(self, msg: str):
         if self._closing:
@@ -775,6 +921,14 @@ class LiveLogcatDialog(QDialog):
             self.status_bar.showMessage("Logcat already stopped")
         else:
             self.status_bar.showMessage("Logcat cleanup failed")
+        worker = self.worker
+        if worker is None:
+            self._set_running_actions(False)
+        elif self._release_logcat_worker(worker):
+            self._set_running_actions(False)
+        elif not self._worker_release_timer.isActive():
+            # 监督结果和 QThread.finished 可能乱序；继续观察晚退出的受跟踪进程。
+            self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
 
     def _on_current_pkg(self, package: str):
         if self._closing:
@@ -817,6 +971,9 @@ class LiveLogcatDialog(QDialog):
         if was_current:
             self.worker = None
             self._supervisor_task_id = None
+            release_timer = getattr(self, "_worker_release_timer", None)
+            if release_timer is not None:
+                release_timer.stop()
         if is_qobject_alive(worker):
             worker.deleteLater()
         return was_current
@@ -831,13 +988,28 @@ class LiveLogcatDialog(QDialog):
         was_current = self._release_logcat_worker(worker)
         if self.worker is worker:
             self._debug_lifecycle("worker_retained", reason="process_still_active")
+            if not self._closing and not self._worker_release_timer.isActive():
+                self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
             return
         if self._closing:
             self._try_finalize_close("logcat_worker_finished")
             return
         if was_current:
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
+            self._set_running_actions(False)
+
+    def _poll_worker_release(self) -> None:
+        """在窗口保持打开时释放线程先结束、进程稍后退出的日志任务。"""
+
+        if self._closing:
+            return
+        worker = self.worker
+        if worker is None:
+            self._set_running_actions(False)
+            return
+        if self._release_logcat_worker(worker):
+            self._set_running_actions(False)
+            return
+        self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
 
     def _owner_residual_tasks(self):
         """返回仍由当前日志窗口负责的受监督资源。"""
@@ -981,6 +1153,8 @@ class LiveLogcatDialog(QDialog):
         self._closing = True
         should_stop_owner = False
         self._line_flush_timer.stop()
+        self._filter_rebuild_timer.stop()
+        self._worker_release_timer.stop()
         self._pending_visible_lines.clear()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)

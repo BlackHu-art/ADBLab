@@ -1,5 +1,7 @@
 """提供即时生效、支持主题切换的完整设置对话框。"""
 
+import weakref
+
 from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QResizeEvent
 from PySide6.QtWidgets import (
@@ -30,17 +32,20 @@ from gui.window_layout import DEFAULT_PANEL_RATIO, ratio_from_sizes
 class SettingsDialog(QDialog):
     settings_applied = Signal()
     continuous_scan_toggled = Signal(bool)
+    log_max_lines_changed = Signal(int)
+    save_directory_changed = Signal(str)
 
     _SYSTEM_DEFAULT_FONT = "System Default"
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._owner_ref = weakref.ref(parent) if parent is not None else lambda: None
         self.s = AppSettings.instance()
         self.setWindowTitle("Settings")
         self.setWindowIcon(get_themed_icon("gear.svg"))
         self.setMinimumSize(520, 420)
-        self.resize(760, 620)
-        self.setModal(True)
+        self.resize(680, 560)
+        self.setModal(False)
 
         self._build_ui()
         self._apply_theme()
@@ -84,7 +89,9 @@ class SettingsDialog(QDialog):
 
     def _build_appearance(self, body):
         g = self._section("Appearance")
-        self._theme_combo = self._combo(BaseStyles.theme_names(), BaseStyles.current_theme())
+        self._theme_combo = self._combo(
+            BaseStyles.theme_names(), BaseStyles.current_theme(), maximum_width=180
+        )
         self._theme_combo.currentTextChanged.connect(self._on_theme_changed)
         configured_family = str(self.s.get("font_family", "") or "")
         font_families = self._available_ui_font_families(configured_family)
@@ -92,17 +99,20 @@ class SettingsDialog(QDialog):
         self._font_combo = self._combo(
             font_families,
             selected_family,
+            maximum_width=260,
         )
         self._font_combo.setMinimumContentsLength(13)
         self._font_combo.currentTextChanged.connect(self._on_font_family_changed)
         self._combo_font = self._combo(
             ["8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22"],
             str(self.s.get("ui_font_size", 12)),
+            maximum_width=100,
         )
         self._combo_font.currentTextChanged.connect(self._on_font_changed)
         self._combo_log_font = self._combo(
             ["7", "8", "9", "10", "11", "12", "13", "14", "15", "16"],
             str(self.s.get("log_font_size", 9)),
+            maximum_width=100,
         )
         self._combo_log_font.currentTextChanged.connect(self._on_log_font_changed)
 
@@ -115,6 +125,10 @@ class SettingsDialog(QDialog):
         self._ui_font_label = self._label("Interface Font")
         self._ui_size_label = self._label("Interface Size")
         self._log_size_label = self._label("Log Size")
+        self._theme_label.setBuddy(self._theme_combo)
+        self._ui_font_label.setBuddy(self._font_combo)
+        self._ui_size_label.setBuddy(self._combo_font)
+        self._log_size_label.setBuddy(self._combo_log_font)
         gg.addWidget(self._theme_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addWidget(self._theme_combo, 0, 1)
         gg.addWidget(self._ui_font_label, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
@@ -157,12 +171,20 @@ class SettingsDialog(QDialog):
         self._panel_split_value = QLabel()
         self._panel_split_value.setObjectName("settingsValue")
 
-        self._btn_reset_window_size = self._icon_button("arrow-u-up-left.svg", "Reset Size")
+        self._btn_reset_window_size = self._icon_button(
+            "arrow-u-up-left.svg",
+            "Reset Size",
+            "Restore the default main window size",
+        )
         self._btn_reset_window_size.clicked.connect(self._restore_default_window_size)
-        self._btn_reset_panel_split = self._icon_button("arrow-u-up-left.svg", "Reset Split")
+        self._btn_reset_panel_split = self._icon_button(
+            "arrow-u-up-left.svg",
+            "Reset Split",
+            "Restore the default panel proportions",
+        )
         self._btn_reset_panel_split.clicked.connect(self._reset_panel_split)
 
-        owner = self.parent()
+        owner = self._layout_owner()
         self._btn_reset_window_size.setEnabled(
             callable(getattr(owner, "restore_default_window_size", None))
         )
@@ -192,9 +214,9 @@ class SettingsDialog(QDialog):
 
         self._chk_confirm = self._checkbox("Confirm risky actions")
         self._chk_confirm.setChecked(self.s.get("confirm_dangerous_ops", True))
-        self._chk_confirm.toggled.connect(lambda v: self.s.set("confirm_dangerous_ops", v))
+        self._chk_confirm.toggled.connect(self._on_confirm_dangerous_toggled)
         self._confirm_description = self._description(
-            "Ask before rebooting a device or uninstalling an application."
+            "Confirm reboot, uninstall, clear data, Shell, port, and process operations."
         )
 
         self._chk_continuous_scan = self._checkbox("Scan for new devices")
@@ -231,9 +253,12 @@ class SettingsDialog(QDialog):
         self._lbl_save.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._lbl_save.setMinimumWidth(0)
         self._update_save_directory_display(save_dir)
-        self._btn_save = self._icon_button("folder.svg", "Choose...")
+        self._btn_save = self._icon_button(
+            "folder.svg", "Choose...", "Select the default output directory"
+        )
         self._btn_save.clicked.connect(self._on_pick_save_dir)
         self._save_dir_label = self._label("Save Directory")
+        self._save_dir_label.setBuddy(self._btn_save)
         gg.addWidget(self._save_dir_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addWidget(self._lbl_save, 0, 1)
         gg.addWidget(self._btn_save, 0, 2)
@@ -241,11 +266,11 @@ class SettingsDialog(QDialog):
         self._combo_log_lines = self._combo(
             ["1000", "2000", "3000", "5000", "10000"],
             str(self.s.get("log_max_lines", 2000)),
+            maximum_width=128,
         )
-        self._combo_log_lines.currentTextChanged.connect(
-            lambda t: self.s.set("log_max_lines", int(t))
-        )
+        self._combo_log_lines.currentTextChanged.connect(self._on_log_max_lines_changed)
         self._max_log_label = self._label("Visible Log Lines")
+        self._max_log_label.setBuddy(self._combo_log_lines)
         gg.addWidget(self._max_log_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
         gg.addWidget(self._combo_log_lines, 1, 1)
 
@@ -260,6 +285,7 @@ class SettingsDialog(QDialog):
         row.setSpacing(8)
         row.setContentsMargins(10, 8, 10, 10)
         self._btn_restore_defaults = QPushButton("Restore Defaults")
+        self._btn_restore_defaults.setToolTip("Reset all preferences to their defaults")
         self._btn_restore_defaults.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         self._btn_restore_defaults.setIconSize(QSize(14, 14))
         self._btn_restore_defaults.setCursor(Qt.PointingHandCursor)
@@ -268,6 +294,7 @@ class SettingsDialog(QDialog):
         row.addWidget(self._btn_restore_defaults)
         row.addStretch()
         self._btn_close = QPushButton("Close")
+        self._btn_close.setToolTip("Save changes and close settings")
         self._btn_close.setIcon(get_themed_icon("x.svg"))
         self._btn_close.setIconSize(QSize(14, 14))
         self._btn_close.setCursor(Qt.PointingHandCursor)
@@ -291,14 +318,15 @@ class SettingsDialog(QDialog):
         lbl.setProperty("fontRole", FontRole.UI.value)
         return lbl
 
-    def _combo(self, items: list, current: str) -> QComboBox:
+    def _combo(self, items: list, current: str, *, maximum_width: int) -> QComboBox:
         c = QComboBox()
         c.addItems(items)
         c.setCurrentText(current)
         c.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         c.setMinimumContentsLength(8)
-        c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        c.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         c.setMinimumWidth(0)
+        c.setMaximumWidth(maximum_width)
         return c
 
     def _description(self, text: str) -> QLabel:
@@ -330,19 +358,22 @@ class SettingsDialog(QDialog):
         cb.setMinimumWidth(0)
         return cb
 
-    def _icon_button(self, icon: str, text: str = "") -> QPushButton:
+    def _icon_button(self, icon: str, text: str = "", tooltip: str = "") -> QPushButton:
         btn = QPushButton(text)
         if icon:
             btn.setIcon(get_themed_icon(icon))
             btn.setIconSize(QSize(14, 14))
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setToolTip(text)
+        btn.setToolTip(tooltip)
+        btn.setAccessibleDescription(tooltip)
+        if text:
+            btn.setAccessibleName(text)
         btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         return btn
 
     def _window_layout_snapshot(self) -> dict[str, object]:
         """通过主窗口公开接口读取布局状态，并为独立打开场景提供设置回退值。"""
-        owner = self.parent()
+        owner = self._layout_owner()
         snapshot_method = getattr(owner, "window_layout_snapshot", None)
         snapshot = snapshot_method() if callable(snapshot_method) else {}
         if not isinstance(snapshot, dict):
@@ -388,13 +419,13 @@ class SettingsDialog(QDialog):
         self._panel_split_value.setText(f"{left_percent}% / {100 - left_percent}%")
 
     def _restore_default_window_size(self):
-        action = getattr(self.parent(), "restore_default_window_size", None)
+        action = getattr(self._layout_owner(), "restore_default_window_size", None)
         if callable(action):
             action()
         self._refresh_window_layout_summary()
 
     def _reset_panel_split(self):
-        action = getattr(self.parent(), "reset_panel_split", None)
+        action = getattr(self._layout_owner(), "reset_panel_split", None)
         if callable(action):
             action()
         self._refresh_window_layout_summary()
@@ -527,7 +558,7 @@ class SettingsDialog(QDialog):
         if not hasattr(self, "_settings_scroll") or not hasattr(self, "_appearance_compact"):
             return
         available_width = max(0, self._settings_scroll.viewport().width())
-        threshold = 720 + max(0, BaseStyles.DEFAULT_FONT_SIZE - 12) * 18
+        threshold = 640 + max(0, BaseStyles.DEFAULT_FONT_SIZE - 12) * 18
         compact = available_width < threshold
         if force or compact != self._appearance_compact:
             self._layout_appearance(compact)
@@ -590,6 +621,39 @@ class SettingsDialog(QDialog):
         self.s.set("continuous_device_scan", checked)
         self.continuous_scan_toggled.emit(checked)
 
+    def _on_confirm_dangerous_toggled(self, checked: bool):
+        """关闭危险操作确认前再次说明影响，避免误触后失去保护。"""
+
+        if not checked:
+            answer = QMessageBox.question(
+                self,
+                "Disable Safety Prompts",
+                "Disable confirmations for clear data, Shell commands, port changes, process "
+                "termination, app state changes, and other risky operations?",
+                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                defaultButton=QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                blocker = QSignalBlocker(self._chk_confirm)
+                self._chk_confirm.setChecked(True)
+                blocker.unblock()
+                self.s.set("confirm_dangerous_ops", True)
+                return
+        self.s.set("confirm_dangerous_ops", checked)
+
+    def _on_log_max_lines_changed(self, text: str):
+        value = int(text)
+        self.s.set("log_max_lines", value)
+        self.log_max_lines_changed.emit(value)
+
+    def _layout_owner(self):
+        """返回仍然存活的主窗口；对话框解除 Qt parent 后仍可调用布局接口。"""
+
+        try:
+            return self._owner_ref()
+        except (ReferenceError, RuntimeError):
+            return None
+
     def _update_save_directory_display(self, directory: str):
         text = str(directory or "~/ADBLab (default)")
         self._lbl_save.setText(text)
@@ -600,6 +664,7 @@ class SettingsDialog(QDialog):
         if d:
             self.s.set("save_directory", d)
             self._update_save_directory_display(d)
+            self.save_directory_changed.emit(d)
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
@@ -650,6 +715,10 @@ class SettingsDialog(QDialog):
 
     def _apply_theme(self, _name: str = ""):
         apply_dark_title_bar(self)
+        if hasattr(self, "_theme_combo"):
+            blocker = QSignalBlocker(self._theme_combo)
+            self._theme_combo.setCurrentText(BaseStyles.current_theme())
+            blocker.unblock()
         c = BaseStyles.color
         ui_font = BaseStyles.font_for_role(FontRole.UI)
         small_font = BaseStyles.font_for_role(FontRole.UI_SMALL)
@@ -712,6 +781,10 @@ class SettingsDialog(QDialog):
                 spacing: 8px;
                 padding: 2px 0;
             }}
+            QCheckBox#settingsCheck:focus {{
+                border: 1px solid {c("BORDER_FOCUS")};
+                border-radius: 4px;
+            }}
         """
         )
         self._refresh_font_previews()
@@ -740,10 +813,16 @@ class SettingsDialog(QDialog):
         self._refresh_window_layout_summary()
 
     def _reset_all(self):
-        if (
-            QMessageBox.question(self, "Reset Settings", "Restore all settings to defaults?")
-            == QMessageBox.StandardButton.Yes
-        ):
+        answer = QMessageBox.question(
+            self,
+            "Reset Settings",
+            "Restore all settings to defaults? This immediately resets the theme, fonts, "
+            "window size, panel split, device scan, save path, Remote options, and Monkey "
+            "parameters.",
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            defaultButton=QMessageBox.StandardButton.No,
+        )
+        if answer == QMessageBox.StandardButton.Yes:
             self.s.reset()
             controls = (
                 self._theme_combo,
@@ -766,4 +845,6 @@ class SettingsDialog(QDialog):
             BaseStyles.switch_theme(str(self.s.get("theme", "Light")))
             BaseStyles.reload_from_settings()
             self.continuous_scan_toggled.emit(bool(self.s.get("continuous_device_scan", True)))
+            self.log_max_lines_changed.emit(int(self.s.get("log_max_lines", 2000)))
+            self.save_directory_changed.emit(str(self.s.get("save_directory", "") or ""))
             self.settings_applied.emit()

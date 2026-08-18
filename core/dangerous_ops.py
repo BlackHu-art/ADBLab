@@ -28,6 +28,11 @@ _OPERATIONS = {
     "uninstall_apk": DangerousOperation("uninstall_apk", "Uninstall application", "high"),
     "clear_app_data": DangerousOperation("clear_app_data", "Clear application data", "high"),
     "disable_app": DangerousOperation("disable_app", "Disable application", "high"),
+    "disable_app_for_user": DangerousOperation(
+        "disable_app_for_user",
+        "Disable application for the current user",
+        "high",
+    ),
     "force_stop": DangerousOperation("force_stop", "Force-stop application", "medium"),
     "kill_monkey": DangerousOperation("kill_monkey", "Stop Monkey processes", "medium"),
     "run_shell_command": DangerousOperation(

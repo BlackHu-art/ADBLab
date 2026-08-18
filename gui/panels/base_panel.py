@@ -1,6 +1,7 @@
 """提供标签页共享的控件工厂和设备、包名访问接口。"""
 
 from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QWidget,
 )
@@ -17,7 +19,38 @@ from PySide6.QtWidgets import (
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
-from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
+from gui.widgets.responsive_controller import (
+    ReflowReason,
+    ResponsiveCoordinator,
+    ResponsiveGridBinding,
+)
+from gui.widgets.responsive_layout import (
+    RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY,
+    GridMode,
+    LayoutContext,
+    WidthPolicy,
+    row_major_mode,
+    span_tail_mode,
+)
+
+
+class _ResponsiveGroupBox(QGroupBox):
+    """只让真实溢出行撑宽分组，标题和普通尺寸提示不得制造横向滚动。"""
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        overflow_width = max(
+            (
+                int(child.property("responsiveOverflowWidth") or 0)
+                for child in self.findChildren(
+                    QWidget,
+                    options=Qt.FindChildOption.FindDirectChildrenOnly,
+                )
+            ),
+            default=0,
+        )
+        minimum_width = overflow_width + 32 if overflow_width else self.minimumWidth()
+        return QSize(max(0, minimum_width), max(0, hint.height()))
 
 
 class BasePanel(QWidget):
@@ -26,7 +59,17 @@ class BasePanel(QWidget):
     def __init__(self, panel, parent=None):
         super().__init__(parent)
         self.panel = panel
-        self._responsive_rows = []
+        self._responsive_rows: list[ResponsiveGridBinding] = []
+        # PySide 的 Qt 父子关系负责 C++ 生命周期；这里额外保留 Python 包装器，避免
+        # 仅在局部变量中创建的控件被回收后令 binding 的弱引用提前失效。
+        self._responsive_row_owners: list[tuple[QWidget, tuple[QWidget, ...]]] = []
+        self._responsive_inset_cache: dict[int, tuple[int, int]] = {}
+        coordinator = getattr(panel, "_responsive_coordinator", None)
+        if coordinator is None:
+            coordinator = ResponsiveCoordinator()
+            self._local_responsive_coordinator = coordinator
+        self._responsive_coordinator = coordinator
+        self._responsive_bindings_activated = False
 
     # ── 共享属性快捷访问 ────────────────────────────────────────────────
 
@@ -69,11 +112,13 @@ class BasePanel(QWidget):
 
     def _g(self, t):
         """创建统一样式的 QGroupBox。"""
-        g = QGroupBox(t)
+        g = _ResponsiveGroupBox(t)
         g.setFont(self._font_base)
         g.setProperty("fontRole", FontRole.UI.value)
         g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
         g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        g.setToolTip(t)
+        g.setAccessibleName(t)
         return g
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
@@ -81,7 +126,7 @@ class BasePanel(QWidget):
         label = QLabel(text)
         label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base)
         label.setProperty("fontRole", role.value)
-        label.setWordWrap(False)
+        label.setWordWrap(True)
         if align is not None:
             label.setAlignment(align)
         return label
@@ -93,22 +138,33 @@ class BasePanel(QWidget):
 
     def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
         cb = QCheckBox(text)
+        cb.setAccessibleName(text)
         cb.setFont(self._font_base)
         cb.setProperty("fontRole", FontRole.UI.value)
         if tooltip:
             cb.setToolTip(tooltip)
         return cb
 
+    @staticmethod
+    def _set_button_help(button: QPushButton, tooltip: str) -> None:
+        description = str(tooltip or "").strip()
+        if not description:
+            raise ValueError("Buttons must provide a functional tooltip")
+        button.setToolTip(description)
+        button.setAccessibleDescription(description)
+        button.setProperty("functionalToolTip", description)
+
     def _b(self, t, i, variant="", tooltip=None):
         """创建图标按钮；variant 可指定默认、强调或危险样式。"""
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
         b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
-        b.setToolTip(tooltip or t)
+        b.setAccessibleName(t)
+        self._set_button_help(b, tooltip)
         b.setProperty("iconName", i)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
@@ -120,11 +176,12 @@ class BasePanel(QWidget):
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
         b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
-        b.setToolTip(tooltip or t)
+        b.setAccessibleName(t)
+        self._set_button_help(b, tooltip)
         b.setProperty("iconName", i)
         b.setCursor(Qt.PointingHandCursor)
         return b
@@ -134,9 +191,10 @@ class BasePanel(QWidget):
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
         b.setMinimumHeight(28)
-        b.setToolTip(tooltip or t)
+        b.setAccessibleName(t)
+        self._set_button_help(b, tooltip)
         b.setCursor(Qt.PointingHandCursor)
         if variant:
             self._apply_button_variant(b, variant)
@@ -188,53 +246,285 @@ class BasePanel(QWidget):
         compact_columns=2,
         medium_columns=2,
         wide_columns=None,
-    ):
-        """创建只重排既有控件的响应式网格行。"""
+        policies=None,
+        modes=None,
+        span_tail=False,
+    ) -> ResponsiveGridBinding:
+        """在真实视觉树中创建一行 binding，并注册到面板级协调器。"""
 
         widgets = tuple(item[0] if isinstance(item, tuple) else item for item in items)
         stretches = tuple(item[1] if isinstance(item, tuple) else 0 for item in items)
-        row = QGridLayout()
+        row_container = QWidget()
+        row_container.setMinimumWidth(0)
+        row_policy = row_container.sizePolicy()
+        row_policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+        row_policy.setVerticalPolicy(QSizePolicy.Policy.Preferred)
+        row_container.setSizePolicy(row_policy)
+        row = QGridLayout(row_container)
         row.setContentsMargins(0, 0, 0, 0)
         row.setHorizontalSpacing(spacing)
         row.setVerticalSpacing(spacing)
-        spec = {
-            "layout": row,
-            "widgets": widgets,
-            "stretches": stretches,
-            "compact_columns": compact_columns,
-            "medium_columns": medium_columns,
-            "wide_columns": wide_columns or len(widgets),
-            "mode": None,
-        }
-        self._responsive_rows.append(spec)
-        layout.addLayout(row)
-        self._reflow_responsive_row(spec, 10_000)
-        return row
+        mode_items = (
+            tuple(modes)
+            if modes is not None
+            else self._responsive_modes(
+                len(widgets),
+                stretches,
+                compact_columns=compact_columns,
+                medium_columns=medium_columns,
+                wide_columns=wide_columns or len(widgets),
+                span_tail=bool(span_tail),
+            )
+        )
+        policy_items = (
+            tuple(policies)
+            if policies is not None
+            else tuple(self._responsive_policy(widget) for widget in widgets)
+        )
+        for widget, width_policy in zip(widgets, policy_items):
+            if width_policy not in (WidthPolicy.SHRINKABLE, WidthPolicy.WRAPPING):
+                continue
+            if width_policy is WidthPolicy.WRAPPING and widget.minimumWidth() <= 0:
+                # 空状态或短标签也必须保留一个稳定、与字体相关的可见单元；
+                # 该下限不读取运行时文案，因此不会让状态文本推动全页断点漂移。
+                widget.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 6)
+                self._refresh_responsive_widget_minimum(widget)
+            elif width_policy is WidthPolicy.SHRINKABLE and widget.minimumWidth() <= 0:
+                # 输入字段可以收缩，但不能被自然宽度更大的相邻动作挤成零宽。
+                widget.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 2)
+                self._refresh_responsive_widget_minimum(widget)
+            # 规划器已经为可收缩/可换行项给出下限；Qt 侧同步忽略会随文本
+            # 变化的 sizeHint，避免父布局在空间充足时仍把相邻网格列挤到重叠。
+            widget_policy = widget.sizePolicy()
+            widget_policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
+            widget.setSizePolicy(widget_policy)
+        # 构建阶段先以最保守的一列把既有控件挂入真实视觉树；内容进入
+        # QScrollArea 后，唯一 coordinator 再按最终 viewport 原子应用计划。
+        for index, widget in enumerate(widgets):
+            row.addWidget(widget, index, 0)
+        binding = ResponsiveGridBinding(
+            row_container,
+            row,
+            widgets,
+            policy_items,
+            mode_items,
+            self._responsive_coordinator,
+            context_provider=self._responsive_context,
+            use_provided_geometry=True,
+            adaptive_spacing=True,
+        )
+        self._responsive_rows.append(binding)
+        self._responsive_row_owners.append((row_container, widgets))
+        self._link_form_labels(widgets)
+        layout.addWidget(row_container)
+        return binding
 
     @staticmethod
-    def _reflow_responsive_row(spec, width: int):
-        columns = responsive_column_count(
-            width,
-            compact_columns=spec["compact_columns"],
-            medium_columns=spec["medium_columns"],
-            wide_columns=spec["wide_columns"],
+    def _refresh_responsive_widget_minimum(widget: QWidget) -> None:
+        """按控件当前字体刷新由响应布局托管的稳定最小宽度。"""
+
+        em_count = int(widget.property(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY) or 0)
+        if em_count > 0:
+            widget.setMinimumWidth(max(1, widget.fontMetrics().horizontalAdvance("M" * em_count)))
+
+    def refresh_responsive_metrics(self) -> None:
+        """字体变化后刷新所有自动下限，不直接发起新的布局代次。"""
+
+        seen: set[int] = set()
+        for _container, widgets in self._responsive_row_owners:
+            for widget in widgets:
+                key = id(widget)
+                if key in seen:
+                    continue
+                seen.add(key)
+                self._refresh_responsive_widget_minimum(widget)
+
+    def responsive_geometry_is_applied(self) -> bool:
+        """返回所有响应行的已应用计划是否覆盖当前真实几何与样式上下文。"""
+
+        if not self._responsive_bindings_activated or not self._responsive_rows:
+            return False
+        for binding in self._responsive_rows:
+            plan = binding.applied_plan
+            if plan is None:
+                return False
+            try:
+                context = binding.responsive_context()
+            except RuntimeError:
+                return False
+            if (
+                plan.available_width != context.width
+                or plan.context_fingerprint != context.fingerprint
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _responsive_mode_name(columns: int) -> str:
+        names = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}
+        return names.get(columns, f"columns-{columns}")
+
+    @classmethod
+    def _responsive_modes(
+        cls,
+        widget_count: int,
+        stretches: tuple[int, ...],
+        *,
+        compact_columns: int,
+        medium_columns: int,
+        wide_columns: int,
+        span_tail: bool,
+    ) -> tuple[GridMode, ...]:
+        """从兼容列数声明生成按真实度量选择的严格候选序列。"""
+
+        columns = sorted(
+            {
+                max(1, min(widget_count, int(value)))
+                for value in (wide_columns, medium_columns, compact_columns, 1)
+            },
+            reverse=True,
         )
-        columns = min(columns, max(1, len(spec["widgets"])))
-        if spec["mode"] == columns:
+        result = []
+        for rank, column_count in enumerate(columns):
+            column_stretches = tuple(
+                max(
+                    (stretches[index] for index in range(column, widget_count, column_count)),
+                    default=1,
+                )
+                for column in range(column_count)
+            )
+            factory = span_tail_mode if span_tail else row_major_mode
+            result.append(
+                factory(
+                    cls._responsive_mode_name(column_count),
+                    column_count,
+                    rank,
+                    column_stretches=column_stretches,
+                )
+            )
+        return tuple(result)
+
+    @staticmethod
+    def _responsive_policy(widget: QWidget) -> WidthPolicy:
+        """按控件语义选择稳定宽度来源，不读取用户当前输入文本。"""
+
+        if isinstance(widget, (QLineEdit, QComboBox)):
+            return WidthPolicy.SHRINKABLE
+        if isinstance(widget, QLabel) and widget.wordWrap():
+            return WidthPolicy.WRAPPING
+        if isinstance(widget, QWidget) and not isinstance(
+            widget,
+            (QCheckBox, QPushButton, QLabel),
+        ):
+            return WidthPolicy.SHRINKABLE
+        return WidthPolicy.NATURAL
+
+    def _responsive_context(self, container: QWidget) -> LayoutContext:
+        """返回 viewport 内该行的真实可用宽度、受限状态和样式代次。"""
+
+        rect = container.contentsRect()
+        available_width = rect.width()
+        ancestor = container.parentWidget()
+        scroll = None
+        while ancestor is not None:
+            if isinstance(ancestor, QScrollArea):
+                scroll = ancestor
+                break
+            ancestor = ancestor.parentWidget()
+        if scroll is not None and (content := scroll.widget()) is not None:
+            left_inset, right_inset = self._responsive_horizontal_insets(container, content)
+            available_width = max(
+                0,
+                scroll.viewport().contentsRect().width() - left_inset - right_inset,
+            )
+        return LayoutContext(
+            available_width,
+            rect.height(),
+            bool(getattr(self.panel, "_restricted_width_mode", False)),
+            (self._font_base.family(), self._font_base.pointSizeF()),
+            int(getattr(self.panel, "_responsive_style_generation", 0)),
+        )
+
+    def _responsive_horizontal_insets(
+        self,
+        container: QWidget,
+        content: QWidget,
+    ) -> tuple[int, int]:
+        """从父布局内容矩形累加稳定边距，不把行自身限宽后的空白算作边距。"""
+
+        left = 0
+        right = 0
+        geometry_is_current = True
+        child = container
+        while child is not content:
+            parent = child.parentWidget()
+            if parent is None:
+                break
+            parent_layout = parent.layout()
+            if parent_layout is not None and parent_layout.indexOf(child) >= 0:
+                inner = parent_layout.contentsRect()
+                candidate_left = max(0, inner.left())
+                candidate_right = max(0, parent.width() - inner.right() - 1)
+                # resize/layout 请求刚到达时，QLayout 可能仍持有上一帧几何；此时
+                # 巨大的尾部空白不是结构边距，先退回声明 margins，下一轮再读取实值。
+                candidate_total = candidate_left + candidate_right
+                segment_is_current = inner.width() > 0 and candidate_total <= max(
+                    64, parent.width() // 4
+                )
+                if segment_is_current:
+                    left += candidate_left
+                    right += candidate_right
+                else:
+                    geometry_is_current = False
+                    margins = parent_layout.contentsMargins()
+                    left += max(0, margins.left())
+                    right += max(0, margins.right())
+            else:
+                margins = parent.contentsMargins()
+                left += max(0, margins.left())
+                right += max(0, margins.right())
+            child = parent
+        key = id(container)
+        if geometry_is_current:
+            result = (left, right)
+            self._responsive_inset_cache[key] = result
+            return result
+        return self._responsive_inset_cache.get(key, (left, right))
+
+    def activate_responsive_bindings(self) -> None:
+        """在内容进入 QScrollArea 视觉树后只请求一次初始规划。"""
+
+        if self._responsive_bindings_activated:
             return
-        spec["mode"] = columns
-        reflow_widgets(
-            spec["layout"],
-            spec["widgets"],
-            columns,
-            widget_stretches=spec["stretches"],
-        )
+        self._responsive_bindings_activated = True
+        self._request_responsive_reflow(ReflowReason.EXPLICIT)
+
+    def _request_responsive_reflow(self, reason: ReflowReason) -> None:
+        request = getattr(self.panel, "request_responsive_reflow", None)
+        if callable(request):
+            request(reason)
+        else:
+            self._responsive_coordinator.request_reflow(reason)
 
     def apply_responsive_width(self, width: int) -> None:
-        """仅在跨越布局断点时重排本面板登记的响应式行。"""
+        """保留旧宽度门面；实际规划只读取行容器的真实 contentsRect。"""
 
-        for spec in self._responsive_rows:
-            self._reflow_responsive_row(spec, width)
+        del width
+        self._request_responsive_reflow(ReflowReason.RESIZE)
+
+    def _atomic_form_pair(self, label: QLabel, field: QWidget) -> QWidget:
+        """把真实标签与 buddy 字段放进不可拆分的水平语义单元。"""
+
+        container = QWidget()
+        pair_layout = QHBoxLayout(container)
+        pair_layout.setContentsMargins(0, 0, 0, 0)
+        pair_layout.setSpacing(4)
+        pair_layout.addWidget(label)
+        pair_layout.addWidget(field, 1)
+        label.setBuddy(self._input_widget(field))
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        return container
 
     def _in(self, p, w=0):
         """创建统一样式的输入框。"""
@@ -242,11 +532,85 @@ class BasePanel(QWidget):
         i.setFont(self._font_sm)
         i.setProperty("fontRole", FontRole.UI.value)
         i.setPlaceholderText(p)
+        i.setAccessibleName(p)
         i.setMinimumHeight(26)
         i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         if w:
             i.setMaximumWidth(w)
         return i
+
+    def _in_int(self, placeholder: str, minimum: int, maximum: int, width: int = 0):
+        """创建带业务范围约束的整数输入框。"""
+
+        field = self._in(placeholder, width)
+        field.setValidator(QIntValidator(minimum, maximum, field))
+        return field
+
+    def _in_float(
+        self,
+        placeholder: str,
+        minimum: float,
+        maximum: float,
+        decimals: int = 6,
+        width: int = 0,
+    ):
+        """创建带业务范围约束的浮点输入框。"""
+
+        field = self._in(placeholder, width)
+        validator = QDoubleValidator(minimum, maximum, decimals, field)
+        validator.setNotation(QDoubleValidator.StandardNotation)
+        field.setValidator(validator)
+        return field
+
+    @staticmethod
+    def _input_widget(widget):
+        if isinstance(widget, QComboBox) and widget.isEditable():
+            return widget.lineEdit()
+        return widget
+
+    def _link_form_labels(self, widgets) -> None:
+        """把行内标签与紧随其后的输入控件关联，并补全可访问名称。"""
+
+        for index, label in enumerate(widgets[:-1]):
+            if not isinstance(label, QLabel):
+                continue
+            for candidate in widgets[index + 1 :]:
+                target = self._input_widget(candidate)
+                if not isinstance(target, (QLineEdit, QComboBox, QCheckBox)):
+                    continue
+                label.setBuddy(target)
+                name = label.text().strip().rstrip(":")
+                if name and not target.accessibleName():
+                    target.setAccessibleName(name)
+                break
+
+    def _validate_fields(self, *fields, focus_invalid: bool = True) -> bool:
+        """统一验证必填字段和 Qt validator，失败时不进入业务信号层。"""
+
+        for field in fields:
+            target = self._input_widget(field)
+            text = target.text().strip() if hasattr(target, "text") else ""
+            acceptable = bool(text) and (
+                not hasattr(target, "hasAcceptableInput") or target.hasAcceptableInput()
+            )
+            target.setProperty("inputInvalid", not acceptable)
+            if not acceptable:
+                if focus_invalid:
+                    target.setFocus(Qt.OtherFocusReason)
+                return False
+        return True
+
+    def _set_combo_int_validator(
+        self,
+        combo: QComboBox,
+        minimum: int,
+        maximum: int,
+    ) -> None:
+        """为可编辑整数下拉框安装范围 validator。"""
+
+        editor = combo.lineEdit()
+        if editor is not None:
+            editor.setValidator(QIntValidator(minimum, maximum, editor))
 
     def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建统一样式的下拉框。"""

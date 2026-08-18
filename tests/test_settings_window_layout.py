@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QMainWindow,
+    QSizePolicy,
     QStyle,
     QStyleOptionGroupBox,
     QWidget,
@@ -128,7 +129,7 @@ def test_settings_content_reflows_and_scrolls_at_narrow_width(
     dialog.show()
     qt_application.processEvents()
     try:
-        assert dialog.isModal()
+        assert not dialog.isModal()
         assert dialog._settings_scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
         assert dialog._settings_scroll.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
         assert dialog._settings_scroll.verticalScrollBar().maximum() > 0
@@ -172,7 +173,7 @@ def test_settings_content_keeps_existing_two_column_form_when_wide(
         dialog.close()
 
 
-def test_settings_default_size_shows_complete_content_without_scrolling(
+def test_settings_default_size_is_compact_and_content_remains_scrollable(
     monkeypatch,
     qt_application,
 ):
@@ -181,11 +182,40 @@ def test_settings_default_size_shows_complete_content_without_scrolling(
     dialog.show()
     qt_application.processEvents()
     try:
-        assert dialog.size().width() == 760
-        assert dialog.size().height() == 620
+        assert dialog.size().width() == 680
+        assert dialog.size().height() == 560
         assert dialog._settings_scroll.horizontalScrollBar().maximum() == 0
-        assert dialog._settings_scroll.verticalScrollBar().maximum() == 0
+        assert dialog._settings_scroll.verticalScrollBar().maximum() > 0
         assert dialog._btn_save.isVisible()
+        assert dialog._btn_close.isVisible()
+    finally:
+        dialog.close()
+
+
+def test_settings_comboboxes_use_compact_content_widths(
+    monkeypatch,
+    qt_application,
+):
+    _install_fake_settings(monkeypatch, _FakeSettings())
+    dialog = SettingsDialog()
+    dialog.show()
+    qt_application.processEvents()
+    try:
+        assert dialog._theme_combo.maximumWidth() <= 180
+        assert dialog._font_combo.maximumWidth() <= 260
+        assert dialog._combo_font.maximumWidth() <= 100
+        assert dialog._combo_log_font.maximumWidth() <= 100
+        assert dialog._combo_log_lines.maximumWidth() <= 128
+        assert all(
+            combo.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Preferred
+            for combo in (
+                dialog._theme_combo,
+                dialog._font_combo,
+                dialog._combo_font,
+                dialog._combo_log_font,
+                dialog._combo_log_lines,
+            )
+        )
     finally:
         dialog.close()
 

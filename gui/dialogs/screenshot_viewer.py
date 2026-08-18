@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QGraphicsScene,
     QGraphicsView,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListView,
@@ -76,6 +77,19 @@ class ScreenshotGraphicsView(QGraphicsView):
         super().mouseDoubleClickEvent(event)
 
 
+class ScreenshotBottomBar(QFrame):
+    """在实际可用宽度变化后请求所属查看器重排既有工具控件。"""
+
+    def __init__(self, owner: ScreenshotViewer):
+        super().__init__()
+        self._owner = owner
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self._owner, "_bottom_bar_layout"):
+            self._owner._schedule_bottom_bar_reflow()
+
+
 class ScreenshotViewer(QDialog):
     """浏览截图批次，并管理当前图片的显示和文件操作。"""
 
@@ -91,10 +105,22 @@ class ScreenshotViewer(QDialog):
         self._pixmap_item: QGraphicsPixmapItem | None = None
         self._window_icon_name = "camera.svg"
         self._icon_buttons: list[QPushButton] = []
+        self._reflowing_bottom_bar = False
+        self._bottom_bar_plan_fingerprint: tuple[object, ...] | None = None
 
         self._init_window()
         self._init_shortcuts()
         self._init_ui()
+        self._status_restore_text = ""
+        self._status_restore_timer = QTimer(self)
+        self._status_restore_timer.setSingleShot(True)
+        self._status_restore_timer.timeout.connect(self._restore_info_status)
+        self._fit_resize_timer = QTimer(self)
+        self._fit_resize_timer.setSingleShot(True)
+        self._fit_resize_timer.timeout.connect(self._apply_fit)
+        self._bottom_bar_reflow_timer = QTimer(self)
+        self._bottom_bar_reflow_timer.setSingleShot(True)
+        self._bottom_bar_reflow_timer.timeout.connect(self._reflow_bottom_bar)
         self._apply_theme()
         self._rebuild_thumbnails()
 
@@ -122,14 +148,17 @@ class ScreenshotViewer(QDialog):
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
         QShortcut(QKeySequence("Ctrl+0"), self, self._reset_zoom)
         QShortcut(QKeySequence("Ctrl+1"), self, self._actual_size)
-        QShortcut(QKeySequence("Left"), self, self.navigate_prev)
-        QShortcut(QKeySequence("Right"), self, self.navigate_next)
+        QShortcut(QKeySequence("Alt+Left"), self, self.navigate_prev)
+        QShortcut(QKeySequence("Alt+Right"), self, self.navigate_next)
 
     @staticmethod
     def _theme_color(key: str) -> str:
         return BaseStyles.color(key)
 
     def closeEvent(self, event):
+        self._status_restore_timer.stop()
+        self._fit_resize_timer.stop()
+        self._bottom_bar_reflow_timer.stop()
         try:
             BaseStyles.theme_changed.disconnect(self._apply_theme)
         except (TypeError, RuntimeError):
@@ -165,6 +194,9 @@ class ScreenshotViewer(QDialog):
                 background-color: {c("INPUT_BG")};
                 border: none;
             }}
+            QGraphicsView#imageView:focus {{
+                border: 2px solid {c("BORDER_FOCUS")};
+            }}
             QFrame#bottomDock {{
                 background-color: {c("TOOLBAR_BG")};
                 border: 1px solid {c("BORDER_COLOR")};
@@ -181,6 +213,9 @@ class ScreenshotViewer(QDialog):
                 color: {c("TEXT_PRIMARY")};
                 padding: 4px;
                 outline: none;
+            }}
+            QListWidget#thumbnailStrip:focus {{
+                border: 2px solid {c("BORDER_FOCUS")};
             }}
             QListWidget#thumbnailStrip::item {{
                 border: 1px solid transparent;
@@ -219,6 +254,9 @@ class ScreenshotViewer(QDialog):
             QPushButton:pressed {{
                 background-color: {c("BUTTON_PRESSED")};
             }}
+            QPushButton:focus {{
+                border: 2px solid {c("BORDER_FOCUS")};
+            }}
             QPushButton:disabled {{
                 color: {c("TEXT_DISABLED")};
                 background-color: {c("INPUT_BG")};
@@ -239,11 +277,15 @@ class ScreenshotViewer(QDialog):
         self._path_label.setFont(mono_font)
         for label in (self._info_label, self._nav_label, self._zoom_label):
             label.setFont(small_font)
+        self._nav_label.setMinimumWidth(0)
         self._nav_label.setMinimumWidth(52)
         self._nav_label.setMinimumWidth(max(52, self._nav_label.sizeHint().width()))
+        self._zoom_label.setMinimumWidth(0)
         self._zoom_label.setMinimumWidth(56)
         self._zoom_label.setMinimumWidth(max(56, self._zoom_label.sizeHint().width()))
         self._refresh_button_icons()
+        if hasattr(self, "_bottom_bar"):
+            self._reflow_bottom_bar()
         if hasattr(self, "_placeholder_text"):
             if self._placeholder_text is not None:
                 self._placeholder_text.setFont(
@@ -303,9 +345,9 @@ class ScreenshotViewer(QDialog):
         return dock
 
     def _build_bottom_bar(self) -> QFrame:
-        bar = QFrame()
+        bar = ScreenshotBottomBar(self)
         bar.setObjectName("bottomBar")
-        layout = QHBoxLayout(bar)
+        layout = QGridLayout(bar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
@@ -316,68 +358,236 @@ class ScreenshotViewer(QDialog):
         self._path_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self._path_label.setToolTip("Screenshot file path")
-        layout.addWidget(self._path_label, stretch=1)
+        self._path_label.setAccessibleName("Screenshot file path")
+        self._path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         self._info_label = QLabel("")
         self._info_label.setObjectName("metaLabel")
         self._info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._info_label.setMinimumWidth(150)
         self._info_label.setToolTip("Image size, file size, and modified time")
-        layout.addWidget(self._info_label, stretch=0)
+        self._info_label.setAccessibleName("Screenshot metadata")
+        self._info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         self._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
         self._prev_btn.clicked.connect(self.navigate_prev)
-        layout.addWidget(self._prev_btn)
 
         self._nav_label = QLabel("0 / 0")
         self._nav_label.setObjectName("navLabel")
         self._nav_label.setAlignment(Qt.AlignCenter)
         self._nav_label.setMinimumWidth(52)
         self._nav_label.setToolTip("Current screenshot index")
-        layout.addWidget(self._nav_label)
 
         self._next_btn = self._tool_button("caret-right.svg", "Next screenshot (Right)")
         self._next_btn.clicked.connect(self.navigate_next)
-        layout.addWidget(self._next_btn)
 
         self._zoom_out_btn = self._tool_button("magnifying-glass-minus.svg", "Zoom out (Ctrl+-)")
         self._zoom_out_btn.clicked.connect(self.zoom_out)
-        layout.addWidget(self._zoom_out_btn)
 
         self._zoom_label = QLabel("Fit")
         self._zoom_label.setObjectName("zoomLabel")
         self._zoom_label.setAlignment(Qt.AlignCenter)
         self._zoom_label.setMinimumWidth(56)
         self._zoom_label.setToolTip("Current zoom")
-        layout.addWidget(self._zoom_label)
 
         self._zoom_in_btn = self._tool_button("magnifying-glass-plus.svg", "Zoom in (Ctrl+=)")
         self._zoom_in_btn.clicked.connect(self.zoom_in)
-        layout.addWidget(self._zoom_in_btn)
 
         self._fit_btn = self._tool_button("frame-corners.svg", "Fit to window (Ctrl+0)")
         self._fit_btn.clicked.connect(self._reset_zoom)
-        layout.addWidget(self._fit_btn)
 
         self._actual_btn = self._tool_button("number-square-one.svg", "Actual size (Ctrl+1)")
         self._actual_btn.clicked.connect(self._actual_size)
-        layout.addWidget(self._actual_btn)
 
         self._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
         self._copy_btn.clicked.connect(self.copy_to_clipboard)
-        layout.addWidget(self._copy_btn)
 
         self._folder_btn = self._tool_button("folder-open.svg", "Open file location")
         self._folder_btn.clicked.connect(self._open_file_location)
-        layout.addWidget(self._folder_btn)
 
         self._delete_btn = self._tool_button("trash.svg", "Delete screenshot")
         self._delete_btn.setObjectName("danger")
         self._delete_btn.clicked.connect(self._delete_file)
-        layout.addWidget(self._delete_btn)
+
+        self._metadata_group = self._bottom_bar_group("screenshotMetadataGroup")
+        metadata_layout = self._metadata_group.layout()
+        metadata_layout.addWidget(self._path_label, 1)
+        metadata_layout.addWidget(self._info_label, 1)
+
+        self._navigation_group = self._bottom_bar_group("screenshotNavigationGroup")
+        navigation_layout = self._navigation_group.layout()
+        for control in (self._prev_btn, self._nav_label, self._next_btn):
+            navigation_layout.addWidget(control)
+
+        self._actions_group = self._bottom_bar_group("screenshotActionsGroup")
+        actions_layout = self._actions_group.layout()
+        for control in (
+            self._zoom_out_btn,
+            self._zoom_label,
+            self._zoom_in_btn,
+            self._fit_btn,
+            self._actual_btn,
+            self._copy_btn,
+            self._folder_btn,
+            self._delete_btn,
+        ):
+            actions_layout.addWidget(control)
 
         self._bottom_bar = bar
+        self._bottom_bar_layout = layout
+        self._bottom_bar_groups = (
+            self._metadata_group,
+            self._navigation_group,
+            self._actions_group,
+        )
+        self._bottom_bar_controls = (
+            self._path_label,
+            self._info_label,
+            self._prev_btn,
+            self._nav_label,
+            self._next_btn,
+            self._zoom_out_btn,
+            self._zoom_label,
+            self._zoom_in_btn,
+            self._fit_btn,
+            self._actual_btn,
+            self._copy_btn,
+            self._folder_btn,
+            self._delete_btn,
+        )
+        self._reflow_bottom_bar()
         return bar
+
+    @staticmethod
+    def _bottom_bar_group(object_name: str) -> QFrame:
+        group = QFrame()
+        group.setObjectName(object_name)
+        group.setFrameShape(QFrame.Shape.NoFrame)
+        group.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
+        layout = QHBoxLayout(group)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        return group
+
+    @staticmethod
+    def _group_minimum_size(group: QFrame) -> QSize:
+        layout = group.layout()
+        layout_minimum = layout.minimumSize() if layout is not None else QSize()
+        return group.minimumSizeHint().expandedTo(layout_minimum)
+
+    def _reflow_bottom_bar(self) -> None:
+        if self._reflowing_bottom_bar:
+            return
+        self._reflowing_bottom_bar = True
+        try:
+            layout = self._bottom_bar_layout
+            spacing = max(0, layout.spacing())
+            group_sizes = tuple(
+                self._group_minimum_size(group) for group in self._bottom_bar_groups
+            )
+            metadata_size, navigation_size, actions_size = group_sizes
+            available_width = self._bottom_bar.contentsRect().width()
+            if hasattr(self, "_bottom_dock"):
+                root_margins = self.layout().contentsMargins()
+                dock_margins = self._bottom_dock.layout().contentsMargins()
+                available_width = self.contentsRect().width()
+                available_width -= root_margins.left() + root_margins.right()
+                available_width -= dock_margins.left() + dock_margins.right()
+                available_width -= 2 * self._bottom_dock.frameWidth()
+            available_width = max(0, available_width)
+
+            wide_required = sum(size.width() for size in group_sizes) + (2 * spacing)
+            split_required = max(
+                metadata_size.width(),
+                navigation_size.width() + actions_size.width() + spacing,
+            )
+            if available_width >= wide_required:
+                mode = "wide"
+            elif available_width >= split_required:
+                mode = "split"
+            else:
+                mode = "stacked"
+            fingerprint = (
+                mode,
+                spacing,
+                tuple((size.width(), size.height()) for size in group_sizes),
+            )
+            if fingerprint == self._bottom_bar_plan_fingerprint:
+                return
+
+            while layout.count():
+                layout.takeAt(0)
+            for column in range(3):
+                layout.setColumnStretch(column, 0)
+                layout.setColumnMinimumWidth(column, 0)
+            for row in range(3):
+                layout.setRowStretch(row, 0)
+                layout.setRowMinimumHeight(row, 0)
+
+            if mode == "wide":
+                layout.addWidget(self._metadata_group, 0, 0)
+                layout.addWidget(
+                    self._navigation_group,
+                    0,
+                    1,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.addWidget(
+                    self._actions_group,
+                    0,
+                    2,
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.setColumnStretch(0, 1)
+            elif mode == "split":
+                layout.addWidget(self._metadata_group, 0, 0, 1, 2)
+                layout.addWidget(
+                    self._navigation_group,
+                    1,
+                    0,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.addWidget(
+                    self._actions_group,
+                    1,
+                    1,
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.setColumnStretch(0, 1)
+            else:
+                layout.addWidget(self._metadata_group, 0, 0)
+                layout.addWidget(
+                    self._navigation_group,
+                    1,
+                    0,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.addWidget(
+                    self._actions_group,
+                    2,
+                    0,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                )
+                layout.setColumnStretch(0, 1)
+
+            self._bottom_bar.setMinimumHeight(0)
+            layout.activate()
+            self._bottom_bar.setMinimumHeight(layout.minimumSize().height())
+            self._bottom_bar_plan_fingerprint = fingerprint
+            self._bottom_bar.updateGeometry()
+            if hasattr(self, "_bottom_dock"):
+                self._bottom_dock.updateGeometry()
+                self._bottom_dock.layout().activate()
+            root_layout = self.layout()
+            if root_layout is not None:
+                root_layout.activate()
+        finally:
+            self._reflowing_bottom_bar = False
+
+    def _schedule_bottom_bar_reflow(self) -> None:
+        """合并顶层和底栏 resize，只在最终几何上重排一次。"""
+
+        self._bottom_bar_reflow_timer.start(0)
 
     def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
         button = QPushButton()
@@ -385,6 +595,7 @@ class ScreenshotViewer(QDialog):
         button.setIconSize(QSize(14, 14))
         button.setFixedSize(28, 28)
         button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
         button.setCursor(Qt.PointingHandCursor)
         button.setProperty("iconName", icon_name)
         self._icon_buttons.append(button)
@@ -409,19 +620,24 @@ class ScreenshotViewer(QDialog):
         if index < 0 or index >= len(self._image_paths):
             return
         self._current_idx = index
+        paths_changed = False
         while self._image_paths:
             path = self._current_path()
             if not path or not os.path.exists(path):
                 del self._image_paths[self._current_idx]
+                paths_changed = True
             else:
                 pixmap = QPixmap(path)
                 if not pixmap.isNull():
+                    if paths_changed:
+                        self._rebuild_thumbnails()
                     self._show_pixmap(pixmap)
                     self._update_info()
                     self._update_nav_visibility()
                     self._sync_thumbnail_selection()
                     return
                 del self._image_paths[self._current_idx]
+                paths_changed = True
             if self._current_idx >= len(self._image_paths):
                 self._current_idx = max(0, len(self._image_paths) - 1)
         self._rebuild_thumbnails()
@@ -452,7 +668,10 @@ class ScreenshotViewer(QDialog):
         self._refresh_placeholder_color()
         self._path_label.setText("")
         self._path_label.setToolTip("")
+        self._path_label.setAccessibleDescription("")
         self._info_label.setText(text)
+        self._info_label.setToolTip(text)
+        self._info_label.setAccessibleDescription(text)
         self._zoom_label.setText("Fit")
         self._update_nav_visibility()
 
@@ -586,7 +805,11 @@ class ScreenshotViewer(QDialog):
         modified = self._format_modified_time(path)
         self._path_label.setText(os.path.basename(path))
         self._path_label.setToolTip(os.path.abspath(path))
-        self._info_label.setText(f"{pw} x {ph} | {size_str} | {modified}")
+        self._path_label.setAccessibleDescription(os.path.abspath(path))
+        metadata = f"{pw} x {ph} | {size_str} | {modified}"
+        self._info_label.setText(metadata)
+        self._info_label.setToolTip(metadata)
+        self._info_label.setAccessibleDescription(metadata)
         self._update_nav_label()
 
     @staticmethod
@@ -645,9 +868,13 @@ class ScreenshotViewer(QDialog):
             self._flash_status("Image copied")
 
     def _flash_status(self, text: str):
-        previous = self._info_label.text()
+        if not self._status_restore_timer.isActive():
+            self._status_restore_text = self._info_label.text()
         self._info_label.setText(text)
-        QTimer.singleShot(1800, lambda: self._info_label.setText(previous))
+        self._status_restore_timer.start(1800)
+
+    def _restore_info_status(self) -> None:
+        self._info_label.setText(self._status_restore_text)
 
     def _open_file_location(self):
         path = self._current_path()
@@ -683,14 +910,7 @@ class ScreenshotViewer(QDialog):
         path = self._current_path()
         has_file = bool(path and os.path.exists(path))
         menu = QMenu(self)
-        c = self._theme_color
-        menu.setStyleSheet(
-            f"QMenu {{ background: {c('PANEL_BG')}; border: 1px solid {c('BORDER_COLOR')}; "
-            f"border-radius: {BaseStyles.RADIUS_SM}px; padding: 4px; color: {c('TEXT_PRIMARY')}; }}"
-            f"QMenu::item {{ padding: 6px 24px; border-radius: 3px; }}"
-            f"QMenu::item:selected {{ background: {c('BUTTON_HOVER')}; }}"
-            f"QMenu::separator {{ height: 1px; background: {c('BORDER_COLOR')}; margin: 4px 8px; }}"
-        )
+        menu.setStyleSheet(BaseStyles.MENU_STYLE())
 
         copy_action = menu.addAction("Copy Image\tCtrl+C")
         copy_action.triggered.connect(self.copy_to_clipboard)
@@ -724,5 +944,7 @@ class ScreenshotViewer(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "_bottom_bar"):
+            self._schedule_bottom_bar_reflow()
         if getattr(self, "_fit_to_window", False):
-            QTimer.singleShot(0, self._apply_fit)
+            self._fit_resize_timer.start(0)

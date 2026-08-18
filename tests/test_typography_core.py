@@ -254,3 +254,26 @@ def test_settings_load_migrates_legacy_panel_widths_to_ratio(tmp_path, monkeypat
         assert stored["panel_split_ratio"] == 0.25
     finally:
         settings_manager.AppSettings._instance = old_instance
+
+
+def test_settings_loads_and_validates_device_log_split_ratio(tmp_path, monkeypatch):
+    settings_file = tmp_path / "app_settings.json"
+    settings_file.write_text(
+        json.dumps({"device_log_split_ratio": 0.62}),
+        encoding="utf-8",
+    )
+    old_instance = settings_manager.AppSettings._instance
+    monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(settings_manager, "LEGACY_SETTINGS_FILE", str(tmp_path / "legacy.json"))
+    settings_manager.AppSettings._instance = None
+    try:
+        settings = settings_manager.AppSettings.instance()
+
+        assert settings.get("device_log_split_ratio") == 0.62
+        settings.set("device_log_split_ratio", 5)
+        assert settings.get("device_log_split_ratio") == 0.70
+    finally:
+        timer = getattr(settings_manager.AppSettings._instance, "_save_timer", None)
+        if timer is not None:
+            timer.cancel()
+        settings_manager.AppSettings._instance = old_instance

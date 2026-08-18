@@ -8,6 +8,7 @@ from datetime import datetime
 from controllers._base import _ADBControllerBase
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
+from utils.adb_values import normalize_tcp_port
 
 
 class ADBFileMixin(_ADBControllerBase):
@@ -93,6 +94,12 @@ class ADBFileMixin(_ADBControllerBase):
     def forward_port(self, devices: list, local_port: str, remote_port: str):
         if not self._require_devices(devices, "forward_port"):
             return
+        try:
+            local_port = normalize_tcp_port(local_port)
+            remote_port = normalize_tcp_port(remote_port)
+        except ValueError as exc:
+            self._emit_operation("forward_port", False, str(exc))
+            return
         for ip in devices:
             self.advanced_model.forward_port_async(ip, local_port, remote_port)
 
@@ -146,6 +153,12 @@ class ADBFileMixin(_ADBControllerBase):
 
     def reverse_port(self, devices: list, remote_port: str, local_port: str):
         if not self._require_devices(devices, "reverse_port"):
+            return
+        try:
+            remote_port = normalize_tcp_port(remote_port)
+            local_port = normalize_tcp_port(local_port)
+        except ValueError as exc:
+            self._emit_operation("reverse_port", False, str(exc))
             return
         for ip in devices:
             self.advanced_model.reverse_port_async(ip, remote_port, local_port)

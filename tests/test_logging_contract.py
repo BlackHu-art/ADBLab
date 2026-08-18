@@ -190,6 +190,26 @@ def test_log_panel_rejects_debug_from_direct_call(
         panel.close()
 
 
+def test_log_panel_applies_new_line_limit_immediately(
+    create_log_service: Callable[[], LogService],
+) -> None:
+    create_log_service()
+    panel = LogPanel()
+    try:
+        panel._entries = [
+            ("12:00:00", LogLevel.INFO, f"line-{index}") for index in range(105)
+        ]
+        panel._rerender_all()
+
+        panel.set_max_lines(100)
+
+        assert panel._max_lines == 100
+        assert panel._entries[0][2] == "line-5"
+        assert "line-0" not in panel.text_output.toPlainText()
+    finally:
+        panel.close()
+
+
 def test_shutdown_is_idempotent_and_rejects_late_logs(
     create_log_service: Callable[[], LogService],
 ) -> None:

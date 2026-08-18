@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRunnable, Qt, QThread
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -164,7 +164,7 @@ def test_application_stop_broadcasts_across_owners_before_any_wait():
                 events.append(("wait", name)) is None and not running[name]
             ),
             is_running=lambda name=name: running[name],
-            force_stop=lambda _timeout, name=name: running.__setitem__(name, False) is None,
+            force_stop=lambda _timeout, name=name: (running.__setitem__(name, False) is None),
         )
 
     results = supervisor.stop_all(deadline=0.05)
@@ -287,7 +287,11 @@ def test_performance_dialog_close_delegates_running_stop_without_waiting():
     dialog.stop_mobileperf = Mock()
 
     started = time.perf_counter()
-    dialog.close()
+    with patch(
+        "gui.dialogs.performance_launcher.QMessageBox.question",
+        return_value=QMessageBox.StandardButton.Yes,
+    ):
+        dialog.close()
     elapsed = time.perf_counter() - started
 
     assert elapsed < 0.1

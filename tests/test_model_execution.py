@@ -1,5 +1,9 @@
+import configparser
 import ctypes
+import hashlib
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -14,8 +18,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIcon, QPixmap
+from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -27,9 +31,12 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
+from adblab.application.operations import OperationManager
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
+from controllers._system import ADBSystemControllerMixin
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.log_service import LogService
 from core.perf_trace import attach_perf, build_async_perf, split_perf
@@ -48,6 +55,8 @@ from gui.panels.remote_panel import RemotePanel, ScrcpyLaunchWorker
 from gui.panels.side_panel import SidePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.styles import BaseStyles, theme
+from gui.styles.typography import FontRole
+from gui.widgets.responsive_controller import ReflowReason
 from main import windows_app_user_model_id
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
@@ -213,7 +222,7 @@ def test_live_logcat_ignores_queued_line_after_close():
         dialog._on_line("05-27 12:00:00.000 1 1 I Tag: message", "I")
 
         dialog.output.appendPlainText.assert_not_called()
-        assert dialog.entries == []
+        assert not dialog.entries
     finally:
         dialog.close()
 
@@ -232,7 +241,9 @@ def test_live_logcat_batches_visible_line_appends():
         dialog.output.appendPlainText.assert_not_called()
         dialog._flush_pending_lines()
 
-        assert appended == ["05-27 12:00:00.000 1 1 I Tag: one\n05-27 12:00:00.000 1 1 I Tag: two"]
+        assert appended == [
+            "05-27 12:00:00.000 1 1 I Tag: one\n" "05-27 12:00:00.000 1 1 I Tag: two"
+        ]
         assert len(dialog.entries) == 2
     finally:
         dialog.close()
@@ -309,6 +320,14 @@ def test_safe_disconnect_ignores_already_disconnected_signals():
     class AlreadyDisconnectedSignal:
         def disconnect(self, _handler=None):
             raise RuntimeError("already disconnected")
+
+    safe_disconnect(AlreadyDisconnectedSignal(), Mock())
+
+
+def test_safe_disconnect_ignores_generic_signal_missing_handler():
+    class AlreadyDisconnectedSignal:
+        def disconnect(self, _handler=None):
+            raise ValueError("handler is not connected")
 
     safe_disconnect(AlreadyDisconnectedSignal(), Mock())
 
@@ -623,10 +642,15 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel = QWidget()
     fake_side_panel.device_widget = QWidget()
     fake_side_panel.signals = Mock()
+    fake_side_panel.selected_devices_changed = Mock()
     fake_side_panel.apply_device_theme = Mock()
     fake_side_panel.update_device_list = Mock()
     fake_side_panel.refresh_device_choices = Mock()
+    fake_side_panel.set_restricted_width_mode = Mock()
+    fake_side_panel.responsive_layout_settled = Mock()
     fake_side_panel.on_recording_finished = Mock()
+    fake_side_panel.on_recording_target_finished = Mock()
+    fake_side_panel.on_monkey_target_finished = Mock()
     fake_side_panel.on_operation_completed = Mock()
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
@@ -839,7 +863,7 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     frame.setWindowFlags.assert_not_called()
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
-    assert button.toolTip() == "Unpin from top"
+    assert button.toolTip() == "Allow other windows above the main window"
     assert button.isChecked() is True
     assert button.property("iconName") == "push-pin-slash.svg"
 
@@ -923,16 +947,16 @@ def test_performance_launcher_collects_monkey_config_from_controls():
     dialog = PerformanceLauncherDialog(device_ip="device-1", package_name="com.example.app")
     try:
         dialog.monkey_check.setChecked(True)
-        dialog.monkey_throttle_combo.setCurrentText("1000")
-        dialog.monkey_seed_edit.setText("42")
+        dialog.monkey_throttle_input.setValue(1000)
+        dialog.monkey_seed_input.setValue(42)
         dialog.monkey_ignore_crashes.setChecked(False)
         dialog.monkey_ignore_timeouts.setChecked(True)
         dialog.monkey_ignore_security.setChecked(False)
         dialog.monkey_kill_after_error.setChecked(True)
-        dialog.monkey_pct_combos["pct_touch"].setCurrentText("40")
-        dialog.monkey_pct_combos["pct_motion"].setCurrentText("20")
-        dialog.monkey_pct_combos["pct_nav"].setCurrentText("30")
-        dialog.monkey_pct_combos["pct_anyevent"].setCurrentText("10")
+        dialog.monkey_pct_inputs["pct_touch"].setValue(40)
+        dialog.monkey_pct_inputs["pct_motion"].setValue(20)
+        dialog.monkey_pct_inputs["pct_nav"].setValue(30)
+        dialog.monkey_pct_inputs["pct_anyevent"].setValue(10)
         for key in [
             "pct_trackball",
             "pct_majornav",
@@ -941,7 +965,7 @@ def test_performance_launcher_collects_monkey_config_from_controls():
             "pct_flip",
             "pct_pinchzoom",
         ]:
-            dialog.monkey_pct_combos[key].setCurrentText("0")
+            dialog.monkey_pct_inputs[key].setValue(0)
 
         cfg = dialog.build_config()
 
@@ -954,42 +978,66 @@ def test_performance_launcher_collects_monkey_config_from_controls():
         assert cfg.monkey_config.kill_after_error is True
         assert cfg.monkey_config.total_percentage == 100
         assert dialog.monkey_total_label.text() == "Total: 100%"
+        assert dialog.monkey_total_label.accessibleName() == "Total: 100%"
     finally:
         dialog.close()
 
 
-def test_performance_launcher_monkey_total_uses_uncommitted_edit_text_and_full_labels():
+def test_performance_launcher_monkey_total_uses_committed_values_and_accessible_labels():
     _app = QApplication.instance() or QApplication([])
     dialog = PerformanceLauncherDialog(device_ip="device-1", package_name="com.example.app")
     try:
         dialog.monkey_check.setChecked(True)
         values = {
-            "pct_touch": "35",
-            "pct_motion": "15",
-            "pct_trackball": "0",
-            "pct_nav": "20",
-            "pct_majornav": "10",
-            "pct_syskeys": "5",
-            "pct_appswitch": "5",
-            "pct_anyevent": "10",
-            "pct_flip": "0",
-            "pct_pinchzoom": "0",
+            "pct_touch": 35,
+            "pct_motion": 15,
+            "pct_trackball": 0,
+            "pct_nav": 20,
+            "pct_majornav": 10,
+            "pct_syskeys": 5,
+            "pct_appswitch": 5,
+            "pct_anyevent": 10,
+            "pct_flip": 0,
+            "pct_pinchzoom": 0,
         }
         for key, value in values.items():
-            combo = dialog.monkey_pct_combos[key]
-            combo.lineEdit().setText(value)
+            dialog.monkey_pct_inputs[key].setValue(value)
 
         cfg = dialog.build_config()
-        label_texts = {label.text() for label in dialog.findChildren(QLabel)}
-
-        assert dialog.monkey_total_label.text() == "Total: 100%"
+        assert all(label.text() == "Total: 100%" for label in dialog._monkey_total_labels)
+        assert all(label.accessibleName() == "Total: 100%" for label in dialog._monkey_total_labels)
         assert cfg.monkey_config.total_percentage == 100
         assert cfg.monkey_config.pct_touch == 35
         assert cfg.monkey_config.pct_appswitch == 5
-        assert "Major navigation events" in label_texts
-        assert "App switch events" in label_texts
-        assert "Keyboard flip events" in label_texts
-        assert "Pinch/zoom events" in label_texts
+        expected_event_names = {
+            "pct_touch": "Touch events percentage",
+            "pct_motion": "Motion events percentage",
+            "pct_trackball": "Trackball events percentage",
+            "pct_nav": "Navigation events percentage",
+            "pct_majornav": "Major navigation events percentage",
+            "pct_syskeys": "System key events percentage",
+            "pct_appswitch": "App switch events percentage",
+            "pct_anyevent": "Any events percentage",
+            "pct_flip": "Keyboard flip events percentage",
+            "pct_pinchzoom": "Pinch/zoom events percentage",
+        }
+        assert {
+            key: field.accessibleName() for key, field in dialog.monkey_pct_inputs.items()
+        } == expected_event_names
+        expected_flag_names = {
+            "Ignore application crashes",
+            "Ignore application timeouts",
+            "Ignore security exceptions",
+            "Kill Monkey after error",
+        }
+        flag_checkboxes = {
+            dialog.monkey_ignore_crashes,
+            dialog.monkey_ignore_timeouts,
+            dialog.monkey_ignore_security,
+            dialog.monkey_kill_after_error,
+        }
+        assert {checkbox.accessibleName() for checkbox in flag_checkboxes} == expected_flag_names
+        assert all(checkbox.toolTip().strip() for checkbox in flag_checkboxes)
     finally:
         dialog.close()
 
@@ -1005,6 +1053,10 @@ def test_performance_launcher_monkey_throttle_width_fits_largest_value_after_fon
 
         assert dialog.monkey_throttle_combo.minimumWidth() >= metrics.horizontalAdvance("2000") + 54
         assert dialog.monkey_seed_edit.minimumWidth() >= metrics.horizontalAdvance("1000000") + 28
+        assert all(
+            combo.minimumWidth() >= metrics.horizontalAdvance("100") + 50
+            for combo in dialog.monkey_pct_combos.values()
+        )
     finally:
         BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
         dialog.close()
@@ -1054,8 +1106,8 @@ def test_performance_launcher_batches_logs_and_uses_log_font_size():
 
 
 def test_performance_launcher_config_and_log_use_distinct_font_roles():
-    def effective_size(widget):
-        font = widget.font()
+    def effective_size(widget_or_font):
+        font = widget_or_font if isinstance(widget_or_font, QFont) else widget_or_font.font()
         return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
 
     _app = QApplication.instance() or QApplication([])
@@ -1073,7 +1125,28 @@ def test_performance_launcher_config_and_log_use_distinct_font_roles():
         assert effective_size(dialog.log_view) == 10
         hints = [w for w in dialog.findChildren(QLabel) if w.objectName() == "configHint"]
         assert hints
-        assert all(effective_size(hint) == 18 for hint in hints)
+        assert all(label.text().strip() for label in hints)
+        assert all(effective_size(label) == 18 for label in hints)
+        expected_ui_font = BaseStyles.font_for_role(FontRole.UI)
+        ui_described_fields = (
+            dialog.frequency_input,
+            dialog.timeout_input,
+            dialog.dumpheap_input,
+        )
+        described_fields = (
+            dialog.package_edit,
+            *ui_described_fields,
+            dialog.exception_edit,
+            dialog.save_path_edit,
+            dialog.phone_log_edit,
+        )
+        assert all(
+            field.font().family() == expected_ui_font.family()
+            and effective_size(field) == effective_size(expected_ui_font)
+            for field in ui_described_fields
+        )
+        assert all(field.toolTip().strip() for field in described_fields)
+        assert all(field.accessibleDescription().strip() for field in described_fields)
     finally:
         BaseStyles.DEFAULT_FONT_SIZE = old_ui_size
         BaseStyles.LOG_FONT_SIZE_VAR = old_log_size
@@ -1140,7 +1213,7 @@ def test_performance_launcher_monkey_parameter_text_follows_dark_theme_colors():
         style = dialog.styleSheet()
 
         assert "QLabel#inlineLabel" in style
-        assert "QWidget#inlineRow QComboBox QLineEdit" in style
+        assert "QLineEdit, QComboBox, QSpinBox" in style
         assert BaseStyles.color("TEXT_PRIMARY") in style
         assert BaseStyles.color("INPUT_BG") in style
         assert "color: #000" not in style
@@ -1254,6 +1327,35 @@ def test_performance_launcher_runner_finished_restores_buttons_once():
         dialog.close()
 
 
+def _mobileperf_config_signature(path: Path) -> tuple[bytes, int, str]:
+    content = path.read_bytes()
+    return content, path.stat().st_mtime_ns, hashlib.sha256(content).hexdigest()
+
+
+def _parse_mobileperf_config_without_device(path: Path) -> dict[str, object]:
+    from mobileperf.android.startup import StartUp
+
+    startup = StartUp.__new__(StartUp)
+    startup.config_path = str(path)
+    return startup.parse_data_from_config()
+
+
+_MOBILEPERF_TEST_BOM_PREFIXES = (
+    ("unicode", "\ufeff"),
+    ("historical-be", "\xfe\xff"),
+    ("historical-le", "\xff\xfe"),
+    ("historical-utf8", "\xef\xbb\xbf"),
+)
+_MOBILEPERF_CONSECUTIVE_BOM_CASES = [
+    pytest.param(prefix + prefix, id=f"repeat-{name}")
+    for name, prefix in _MOBILEPERF_TEST_BOM_PREFIXES
+] + [
+    pytest.param(first + second, id=f"mixed-{first_name}-{second_name}")
+    for first_name, first in _MOBILEPERF_TEST_BOM_PREFIXES
+    for second_name, second in _MOBILEPERF_TEST_BOM_PREFIXES
+]
+
+
 def test_mobileperf_config_generation_does_not_touch_default_config(tmp_path):
     default_config = Path("mobileperf/config.conf")
     before = default_config.read_text(encoding="utf-8")
@@ -1302,6 +1404,272 @@ def test_mobileperf_config_generation_does_not_touch_default_config(tmp_path):
     assert "mailbox = qa@example.com" in text
     assert "phone_log_path = /data/anr;/sdcard/logs" in text
     assert default_config.read_text(encoding="utf-8") == before
+
+
+def test_mobileperf_run_config_normalizes_semicolon_values_without_mutating_inputs():
+    exception_keywords = [" Fatal Exception ", "", " Fatal Exception "]
+    phone_log_paths = [" /data/anr ", "  ", "/sdcard/Logs"]
+    monkey_config = MobilePerfMonkeyConfig(seed=73)
+
+    cfg = MobilePerfRunConfig(
+        device_id=" test-device ",
+        package=" Main.App ; child.Pkg ;; Main.App ",
+        frequency_seconds=7,
+        timeout_minutes=11,
+        dumpheap_minutes=13,
+        monkey_enabled=True,
+        exception_keywords=exception_keywords,
+        phone_log_paths=phone_log_paths,
+        save_path=" output/path ",
+        mailbox=" qa@example.invalid ",
+        monkey_config=monkey_config,
+    )
+
+    assert cfg.package == "Main.App;child.Pkg;Main.App"
+    assert cfg.exception_keywords == ["Fatal Exception", "Fatal Exception"]
+    assert cfg.phone_log_paths == ["/data/anr", "/sdcard/Logs"]
+    assert cfg.exception_keywords is not exception_keywords
+    assert cfg.phone_log_paths is not phone_log_paths
+    assert exception_keywords == [" Fatal Exception ", "", " Fatal Exception "]
+    assert phone_log_paths == [" /data/anr ", "  ", "/sdcard/Logs"]
+    assert cfg.device_id == " test-device "
+    assert cfg.frequency_seconds == 7
+    assert cfg.timeout_minutes == 11
+    assert cfg.dumpheap_minutes == 13
+    assert cfg.monkey_enabled is True
+    assert cfg.save_path == " output/path "
+    assert cfg.mailbox == " qa@example.invalid "
+    assert cfg.monkey_config is monkey_config
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("", ""),
+        (" ; ; ", ""),
+        (" Main.App ; child.Pkg ;; Main.App ", "Main.App;child.Pkg;Main.App"),
+    ],
+)
+def test_mobileperf_package_normalizer_preserves_order_case_and_duplicates(raw, expected):
+    from models.mobileperf.runner import _normalize_package
+
+    assert _normalize_package(raw) == expected
+
+
+def test_mobileperf_startup_parses_bom_readonly_config_without_modifying_input(tmp_path):
+    cfg = MobilePerfRunConfig(
+        device_id="test-device",
+        package=" com.main ; child.Pkg ; ",
+        frequency_seconds=5,
+        timeout_minutes=10,
+        dumpheap_minutes=2,
+    )
+    path = Path(cfg.write_config(tmp_path))
+    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+    before = _mobileperf_config_signature(path)
+    path.chmod(stat.S_IREAD)
+    try:
+        parsed = _parse_mobileperf_config_without_device(path)
+
+        assert parsed["package"] == ["com.main", "child.Pkg"]
+        assert parsed["frequency"] == 5
+        assert parsed["timeout"] == 600
+        assert parsed["dumpheap_freq"] == 120
+        assert _mobileperf_config_signature(path) == before
+    finally:
+        path.chmod(stat.S_IREAD | stat.S_IWRITE)
+
+
+@pytest.mark.parametrize("bom_prefixes", _MOBILEPERF_CONSECUTIVE_BOM_CASES)
+def test_mobileperf_startup_removes_consecutive_supported_bom_prefixes_at_file_head(
+    tmp_path,
+    bom_prefixes,
+):
+    cfg = MobilePerfRunConfig(
+        device_id="test-device",
+        package="Main.App",
+        exception_keywords=["Fatal"],
+    )
+    path = Path(cfg.write_config(tmp_path))
+    path.write_text(bom_prefixes + path.read_text(encoding="utf-8"), encoding="utf-8")
+    before = _mobileperf_config_signature(path)
+
+    parsed = _parse_mobileperf_config_without_device(path)
+
+    assert parsed["package"] == ["Main.App"]
+    assert parsed["exceptionlog"] == ["Fatal"]
+    assert _mobileperf_config_signature(path) == before
+
+
+@pytest.mark.parametrize(
+    "bom_text",
+    [pytest.param(prefix, id=name) for name, prefix in _MOBILEPERF_TEST_BOM_PREFIXES],
+)
+def test_mobileperf_startup_preserves_supported_bom_text_inside_config_values(
+    tmp_path,
+    bom_text,
+):
+    expected_keyword = f"Fatal{bom_text}Case"
+    cfg = MobilePerfRunConfig(
+        device_id="test-device",
+        package="Main.App",
+        exception_keywords=[expected_keyword],
+    )
+    path = Path(cfg.write_config(tmp_path))
+    before = _mobileperf_config_signature(path)
+
+    parsed = _parse_mobileperf_config_without_device(path)
+
+    assert parsed["exceptionlog"] == [expected_keyword]
+    assert _mobileperf_config_signature(path) == before
+
+
+def test_mobileperf_config_bom_cleanup_accepts_empty_text():
+    from mobileperf.android.startup import _remove_config_bom_prefix
+
+    assert _remove_config_bom_prefix("") == ""
+
+
+def test_mobileperf_config_round_trip_preserves_units_and_complete_monkey_values(tmp_path):
+    monkey_config = MobilePerfMonkeyConfig(
+        throttle_ms=321,
+        seed=987654,
+        ignore_crashes=False,
+        ignore_timeouts=True,
+        ignore_security=False,
+        kill_after_error=True,
+        pct_touch=1,
+        pct_motion=2,
+        pct_trackball=3,
+        pct_nav=4,
+        pct_majornav=5,
+        pct_syskeys=6,
+        pct_appswitch=7,
+        pct_anyevent=8,
+        pct_flip=9,
+        pct_pinchzoom=10,
+    )
+    cfg = MobilePerfRunConfig(
+        device_id="test-device",
+        package=" Main.App ; child.Pkg ; Main.App ",
+        frequency_seconds=17,
+        timeout_minutes=23,
+        dumpheap_minutes=29,
+        monkey_enabled=True,
+        exception_keywords=[" Fatal Exception ", "", "Warn"],
+        phone_log_paths=[" /data/anr ", "", "/sdcard/Logs"],
+        save_path=str(tmp_path / "output"),
+        mailbox="qa@example.invalid",
+        monkey_config=monkey_config,
+    )
+    path = Path(cfg.write_config(tmp_path))
+    before = _mobileperf_config_signature(path)
+
+    parsed = _parse_mobileperf_config_without_device(path)
+
+    assert parsed == {
+        "package": ["Main.App", "child.Pkg", "Main.App"],
+        "pid_change_focus_package": [""],
+        "frequency": 17,
+        "dumpheap_freq": 29 * 60,
+        "timeout": 23 * 60,
+        "serialnum": "test-device",
+        "mailbox": "qa@example.invalid",
+        "exceptionlog": ["Fatal Exception", "Warn"],
+        "save_path": os.path.normpath(str(tmp_path / "output")),
+        "phone_log_path": ["/data/anr", "/sdcard/Logs"],
+        "monkey": "true",
+        "monkey_throttle": 321,
+        "monkey_seed": 987654,
+        "monkey_ignore_crashes": "false",
+        "monkey_ignore_timeouts": "true",
+        "monkey_ignore_security": "false",
+        "monkey_kill_after_error": "true",
+        "monkey_pct_touch": 1,
+        "monkey_pct_motion": 2,
+        "monkey_pct_trackball": 3,
+        "monkey_pct_nav": 4,
+        "monkey_pct_majornav": 5,
+        "monkey_pct_syskeys": 6,
+        "monkey_pct_appswitch": 7,
+        "monkey_pct_anyevent": 8,
+        "monkey_pct_flip": 9,
+        "monkey_pct_pinchzoom": 10,
+        "main_activity": [""],
+        "activity_list": [""],
+    }
+    assert _mobileperf_config_signature(path) == before
+
+
+def test_mobileperf_startup_cleans_only_designated_config_lists(tmp_path):
+    cfg = MobilePerfRunConfig(
+        device_id="test-device",
+        package="Main.App",
+        exception_keywords=["Fatal"],
+        phone_log_paths=["/data/anr"],
+    )
+    path = Path(cfg.write_config(tmp_path))
+    content = path.read_text(encoding="utf-8")
+    content = content.replace("package = Main.App", "package = Main.App ;; Child ; Main.App")
+    content = content.replace("exceptionlog = Fatal", "exceptionlog = ; Fatal ;; Warn ;")
+    content = content.replace(
+        "phone_log_path = /data/anr", "phone_log_path = ; /data/anr ;; /sdcard/Logs ;"
+    )
+    content = content.replace("main_activity = ", "main_activity =  MainActivity ; Child ")
+    content = content.replace("activity_list = ", "activity_list =  One ; ; Two ")
+    path.write_text(content, encoding="utf-8")
+    before = _mobileperf_config_signature(path)
+
+    parsed = _parse_mobileperf_config_without_device(path)
+
+    assert parsed["package"] == ["Main.App", "Child", "Main.App"]
+    assert parsed["exceptionlog"] == ["Fatal", "Warn"]
+    assert parsed["phone_log_path"] == ["/data/anr", "/sdcard/Logs"]
+    assert parsed["main_activity"] == ["MainActivity ", " Child"]
+    assert parsed["activity_list"] == ["One ", " ", " Two"]
+    assert _mobileperf_config_signature(path) == before
+
+
+def test_mobileperf_startup_parses_default_config_copy_without_modifying_input(tmp_path):
+    path = tmp_path / "default.conf"
+    shutil.copy2(Path("mobileperf/config.conf"), path)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    path.write_text(
+        "".join(
+            "serialnum=test-device\n" if line.startswith("serialnum=") else line for line in lines
+        ),
+        encoding="utf-8",
+    )
+    before = _mobileperf_config_signature(path)
+
+    parsed = _parse_mobileperf_config_without_device(path)
+
+    assert parsed["package"]
+    assert parsed["frequency"] > 0
+    assert _mobileperf_config_signature(path) == before
+
+
+@pytest.mark.parametrize(
+    ("replacement", "error_type"),
+    [
+        (lambda text: text.replace("[Common]", "Common"), configparser.Error),
+        (lambda text: text.replace("frequency = 5", "frequency = invalid"), SystemExit),
+    ],
+)
+def test_mobileperf_startup_invalid_config_fails_without_modifying_input(
+    tmp_path,
+    replacement,
+    error_type,
+):
+    cfg = MobilePerfRunConfig(device_id="test-device", package="Main.App")
+    path = Path(cfg.write_config(tmp_path))
+    path.write_text(replacement(path.read_text(encoding="utf-8")), encoding="utf-8")
+    before = _mobileperf_config_signature(path)
+
+    with pytest.raises(error_type):
+        _parse_mobileperf_config_without_device(path)
+
+    assert _mobileperf_config_signature(path) == before
 
 
 def test_mobileperf_config_normalizes_save_path_before_write(tmp_path):
@@ -1851,10 +2219,26 @@ def test_main_frame_signal_maps_keep_expected_coverage():
         + MainFrame._system_signal_map(frame, lp, ac)
     )
 
-    assert len(signal_map) == 60
+    assert len(signal_map) == 72
     assert (lp.connect_requested, ac.connect_device) in signal_map
     assert (lp.open_deep_link_requested, ac.open_deep_link) in signal_map
+    assert (lp.disable_app_requested, ac.disable_app) in signal_map
+    assert (
+        lp.disable_app_for_user_requested,
+        ac.disable_app_for_user,
+    ) in signal_map
     assert (lp.dumpsys_battery_requested, ac.dumpsys_battery) in signal_map
+    assert (lp.screen_record_batch_requested, ac.start_screen_record) in signal_map
+    assert (lp.start_monkey_batch_requested, ac.run_monkey_test) in signal_map
+    assert (lp.top_snapshot_requested, ac.top_snapshot) in signal_map
+    assert (lp.gfxinfo_requested, ac.gfxinfo) in signal_map
+    assert (lp.wakelocks_requested, ac.wakelocks) in signal_map
+    assert (lp.netstats_detail_requested, ac.netstats_detail) in signal_map
+    assert (lp.dumpsys_service_requested, ac.dumpsys_service) in signal_map
+    assert (lp.kernel_version_requested, ac.kernel_version) in signal_map
+    assert (lp.cpu_info_requested, ac.cpu_info) in signal_map
+    assert (lp.stop_screen_record_batch_requested, ac.stop_screen_record) in signal_map
+    assert (lp.kill_monkey_batch_requested, ac.kill_monkey) in signal_map
     assert (lp.emu_geo_requested, ac.emu_geo) in signal_map
 
 
@@ -1879,10 +2263,10 @@ def test_main_frame_scan_refresh_debounce_collapses_bursts():
 def test_main_frame_splitter_size_save_is_debounced():
     frame = SimpleNamespace()
     frame._panel_splitter = Mock()
-    frame._panel_splitter.sizes.side_effect = [[300, 700], [320, 680]]
+    frame._panel_splitter.sizes.side_effect = [[300, 700], [320, 680], [320, 680]]
     frame._pending_panel_sizes = None
     frame._panel_size_save_timer = Mock()
-    frame._responsive_layout_timer = Mock()
+    frame.left_panel = SimpleNamespace(request_responsive_reflow=Mock())
     frame.SPLITTER_SAVE_DEBOUNCE_MS = 20
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
@@ -1894,7 +2278,10 @@ def test_main_frame_splitter_size_save_is_debounced():
         MainFrame._save_pending_panel_sizes(frame)
 
     assert frame._panel_size_save_timer.start.call_args_list == [call(20), call(20)]
-    assert frame._responsive_layout_timer.start.call_args_list == [call(0), call(0)]
+    assert frame.left_panel.request_responsive_reflow.call_args_list == [
+        call(ReflowReason.SPLITTER),
+        call(ReflowReason.SPLITTER),
+    ]
     assert settings.set.call_args_list == [
         call("left_panel_width", 320),
         call("right_panel_width", 680),
@@ -2325,7 +2712,8 @@ def test_get_devices_basic_info_uses_single_getprop_call():
             "-s",
             "device-1",
             "shell",
-            "getprop ro.product.model; getprop ro.product.brand; getprop ro.build.version.release",
+            "getprop ro.product.model; getprop ro.product.brand; "
+            "getprop ro.build.version.release",
         ],
         timeout=15,
     )
@@ -2395,6 +2783,7 @@ def test_device_manager_shows_placeholder_for_new_unstored_device():
     manager = SimpleNamespace(selected_devices=[])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager.set_discovery_state = Mock()
     manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     with patch("gui.panels.device_manager.DeviceStore.get_full_devices_info", return_value=[]):
@@ -2404,6 +2793,7 @@ def test_device_manager_shows_placeholder_for_new_unstored_device():
     item = manager.listbox_devices.item(0)
     assert "Detecting" in item.text()
     assert item.data(Qt.UserRole)["ip"] == "emulator-5554"
+    manager.set_discovery_state.assert_called_once_with("ready")
 
 
 def test_device_manager_updates_device_list_incrementally():
@@ -2412,6 +2802,7 @@ def test_device_manager_updates_device_list_incrementally():
     manager = SimpleNamespace(selected_devices=[])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager.set_discovery_state = Mock()
     manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
 
     first_infos = [
@@ -2437,6 +2828,7 @@ def test_device_manager_updates_device_list_incrementally():
     assert first_item.checkState() == Qt.Checked
     assert manager.listbox_devices.item(1).data(Qt.UserRole)["ip"] == "device-3"
     assert "Detecting" in manager.listbox_devices.item(1).text()
+    assert manager.set_discovery_state.call_args_list == [call("ready"), call("ready")]
 
 
 def test_device_manager_none_device_list_clears_without_model_lookup():
@@ -2445,6 +2837,7 @@ def test_device_manager_none_device_list_clears_without_model_lookup():
     manager = SimpleNamespace(selected_devices=["device-1"])
     manager.panel = panel
     manager.listbox_devices = QListWidget()
+    manager.set_discovery_state = Mock()
     manager._device_items_by_ip = lambda: DeviceManager._device_items_by_ip(manager)
     item = QListWidgetItem("device-1")
     item.setData(Qt.UserRole, {"ip": "device-1"})
@@ -2457,6 +2850,7 @@ def test_device_manager_none_device_list_clears_without_model_lookup():
     get_devices.assert_not_called()
     assert manager.listbox_devices.count() == 0
     assert panel._connected_device_cache == []
+    manager.set_discovery_state.assert_called_once_with("empty")
 
 
 def _build_connect_device_manager():
@@ -2524,16 +2918,27 @@ def test_device_manager_rejects_incomplete_connect_target_before_signal_emit():
     assert "IP and port" in logs[-1][1]
 
 
-def test_base_panel_button_factory_adds_tooltip_and_icon_name():
+def test_base_panel_button_factory_adds_functional_help_and_icon_name():
     panel = Mock()
     panel._font_sm = QFont()
     base = BasePanel(panel)
 
-    button = base._b("Refresh", "arrows-clockwise.svg")
+    button = base._b("Refresh", "arrows-clockwise.svg", tooltip="Reload the device list")
 
-    assert button.toolTip() == "Refresh"
+    assert button.toolTip() == "Reload the device list"
+    assert button.accessibleDescription() == "Reload the device list"
+    assert button.property("functionalToolTip") == "Reload the device list"
     assert button.property("iconName") == "arrows-clockwise.svg"
     assert button.cursor().shape() == Qt.PointingHandCursor
+
+
+def test_base_panel_button_factory_rejects_missing_functional_help():
+    panel = Mock()
+    panel._font_sm = QFont()
+    base = BasePanel(panel)
+
+    with pytest.raises(ValueError, match="Buttons must provide a functional tooltip"):
+        base._b("Refresh", "arrows-clockwise.svg")
 
 
 def test_base_panel_text_factories_apply_panel_fonts():
@@ -2575,18 +2980,21 @@ def test_device_manager_skips_unchanged_device_combo_refresh():
     manager.panel = panel
     manager._device_model = Mock()
     manager.ip_entry = Mock()
+    manager._sync_address_popup_width = Mock()
 
     with (
         patch(
             "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
             return_value=[("Google", "Pixel", "device-1")],
         ),
-        patch("gui.panels.device_manager.QCompleter", return_value=Mock()),
+        patch("gui.panels.device_manager.QCompleter", return_value=Mock()) as completer_cls,
     ):
         DeviceManager._refresh_device_combobox(manager)
         DeviceManager._refresh_device_combobox(manager)
 
     manager._device_model.removeRows.assert_called_once()
+    manager._sync_address_popup_width.assert_called_once_with()
+    completer_cls.assert_called_once()
 
 
 def test_side_panel_theme_refresh_updates_button_icons():
@@ -2853,14 +3261,16 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
 
             assert panel.start_monkey_btn.isEnabled() is False
             assert panel.kill_monkey_btn.isEnabled() is True
-            side_panel.signals.start_monkey_requested.emit.assert_called_once()
+            side_panel.signals.start_monkey_batch_requested.emit.assert_called_once()
+            batch_id = side_panel.signals.start_monkey_batch_requested.emit.call_args.args[2]
 
-            panel.on_operation_completed("monkey", True, "done")
+            panel.on_monkey_target_finished(batch_id, "device-1")
 
             assert panel.start_monkey_btn.isEnabled() is True
             assert panel.kill_monkey_btn.isEnabled() is False
 
-            panel._set_monkey_running(True)
+            panel._on_start_monkey()
+            second_batch_id = side_panel.signals.start_monkey_batch_requested.emit.call_args.args[2]
             panel.on_operation_completed("install", True, "done")
 
             assert panel.start_monkey_btn.isEnabled() is False
@@ -2868,9 +3278,14 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
 
             panel._on_kill_monkey()
 
-            assert panel.start_monkey_btn.isEnabled() is True
+            assert panel.start_monkey_btn.isEnabled() is False
             assert panel.kill_monkey_btn.isEnabled() is False
-            side_panel.signals.kill_monkey_requested.emit.assert_called_once_with(["device-1"])
+            side_panel.signals.kill_monkey_batch_requested.emit.assert_called_once_with(
+                ["device-1"], second_batch_id
+            )
+
+            panel.on_monkey_target_finished(second_batch_id, "device-1")
+            assert panel.start_monkey_btn.isEnabled() is True
         finally:
             widget.deleteLater()
 
@@ -2917,6 +3332,73 @@ def test_app_panel_screenshot_button_disables_during_operation_then_recovers():
             widget.deleteLater()
 
 
+def test_app_panel_routes_disable_buttons_to_distinct_signals():
+    _app = QApplication.instance() or QApplication([])
+    side_panel = Mock()
+    side_panel._font_sm = QFont("Arial", 12)
+    side_panel._font_base = QFont("Arial", 12)
+    side_panel._font_mono = QFont("Courier New", 10)
+    side_panel._font_tab = QFont("Arial", 12)
+    side_panel._package_history = []
+    side_panel._apply_completer_style = Mock()
+    side_panel.selected_devices = ["device-1"]
+    side_panel.signals = SidePanelSignals()
+    regular_requests = []
+    user_requests = []
+    side_panel.signals.disable_app_requested.connect(
+        lambda devices, package: regular_requests.append((devices, package))
+    )
+    side_panel.signals.disable_app_for_user_requested.connect(
+        lambda devices, package: user_requests.append((devices, package))
+    )
+    panel = AppPanel(side_panel)
+
+    with patch("core.settings_manager.AppSettings") as settings_cls:
+        settings_cls.instance.return_value.get.return_value = {}
+        widget = panel.build_ui()
+        panel.connect_signals()
+        try:
+            panel.program_edit.setCurrentText("com.example.app")
+            panel.btn_disable_app.click()
+            panel.btn_disable_user.click()
+        finally:
+            widget.deleteLater()
+
+    assert regular_requests == [(["device-1"], "com.example.app")]
+    assert user_requests == [(["device-1"], "com.example.app")]
+
+
+def test_controller_routes_disable_scopes_to_distinct_model_methods():
+    controller = SimpleNamespace(
+        advanced_model=Mock(),
+        _require_devices=Mock(return_value=True),
+    )
+
+    ADBSystemControllerMixin.disable_app(
+        controller,
+        ["device-1", "device-2"],
+        "com.example.app",
+    )
+    ADBSystemControllerMixin.disable_app_for_user(
+        controller,
+        ["device-1", "device-2"],
+        "com.example.app",
+    )
+
+    assert controller.advanced_model.disable_package_async.call_args_list == [
+        call("device-1", "com.example.app"),
+        call("device-2", "com.example.app"),
+    ]
+    assert controller.advanced_model.disable_package_user_async.call_args_list == [
+        call("device-1", "com.example.app"),
+        call("device-2", "com.example.app"),
+    ]
+    assert (
+        ADBSystemControllerMixin._handlers["disable_package_user"]
+        == "_process_disable_package_user_result"
+    )
+
+
 def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
     _app = QApplication.instance() or QApplication([])
     panel = SidePanel()
@@ -2952,6 +3434,7 @@ def _app_manager_for_unit_tests():
     dialog._detail_row_by_pkg = {}
     dialog._detail_icon_by_pkg = {}
     dialog._view_mode = False
+    dialog._syncing_selection = False
     dialog._closing = False
     dialog.device_ip = "device-1"
     dialog.status_bar = Mock()
@@ -2973,6 +3456,7 @@ def _app_manager_for_unit_tests():
     dialog.icon_list = Mock()
     dialog.icon_list.clear = Mock()
     dialog.icon_list.addItem = Mock()
+    dialog._sync_selection_views = Mock()
     dialog._gen_icon = AppManagerDialog._gen_icon
     dialog._on_detail = lambda *args: AppManagerDialog._on_detail(dialog, *args)
     dialog._on_detail_worker_finished = lambda packages=None: (
@@ -3147,11 +3631,11 @@ def test_extract_package_name_prefers_focus_line_over_other_packages():
 def test_extract_package_name_prefers_visible_top_activity():
     output = (
         "taskId=3: com.android.settings/com.android.settings.Settings "
-        "visible=false topActivity=ComponentInfo{com.android.settings/"
-        "com.android.settings.Settings}\n"
+        "visible=false "
+        "topActivity=ComponentInfo{com.android.settings/com.android.settings.Settings}\n"
         "taskId=2: com.android.launcher3/com.android.launcher3.Launcher "
-        "visible=true topActivity=ComponentInfo{com.android.launcher3/"
-        "com.android.launcher3.Launcher}"
+        "visible=true "
+        "topActivity=ComponentInfo{com.android.launcher3/com.android.launcher3.Launcher}"
     )
 
     assert extract_package_name(output) == "com.android.launcher3"
@@ -3348,7 +3832,7 @@ def test_parse_apk_info_rejects_missing_file():
     assert controller._emit_operation.call_args.args[1] is False
 
 
-def test_batch_install_result_uses_batch_tracker_key():
+def test_batch_install_result_without_envelope_uses_legacy_tracker_handler():
     emitted = []
 
     controller = Mock()
@@ -3375,6 +3859,60 @@ def test_batch_install_result_uses_batch_tracker_key():
     )
 
     assert emitted == [("batch_install", True, "✅ install success (1/2) demo.apk on device-1")]
+
+
+def test_app_controller_install_submission_uses_metadata_without_early_completion():
+    controller = Mock()
+    controller.operation_manager = OperationManager()
+    controller._emit_operation = Mock()
+    controller.log_service = Mock()
+    controller.app_model = Mock()
+    controller.executor = Mock()
+    controller._install_terminal_lock = threading.RLock()
+    controller._install_starting_operations = set()
+    operation = controller.operation_manager.begin(
+        "install",
+        operation_id="operation-1",
+        unit_ids=("task-1",),
+    )
+    controller.operation_manager.mark_running(operation.operation_id)
+    unit = InstallUnit(
+        "task-1",
+        1,
+        InstallRequest("device-1", "demo.apk", "demo.apk"),
+    )
+    owner_token = object()
+    controller.install_batch_use_case = InstallBatchUseCase(controller.operation_manager)
+    controller.install_batch_use_case._active_units[operation.operation_id] = (unit,)
+    controller.install_batch_use_case._active_owner_tokens[operation.operation_id] = owner_token
+    controller.install_batch_use_case._active_kinds[operation.operation_id] = operation.kind
+    controller.install_batch_use_case._active_generations[operation.operation_id] = (
+        operation.generation_token
+    )
+
+    ADBAppMixin._submit_install_unit(
+        controller,
+        operation.operation_id,
+        unit,
+        owner_token=owner_token,
+    )
+
+    controller.executor.submit.assert_not_called()
+    controller.app_model.install_apk_async.assert_called_once_with(
+        "device-1",
+        "demo.apk",
+        "demo.apk",
+        1,
+        "install",
+        _operation_id="operation-1",
+        _operation_kind="install",
+        _operation_task_id="task-1",
+        _operation_unit_id="task-1",
+        _operation_target_id="device-1",
+        _operation_owner_token=owner_token,
+        _operation_generation_token=operation.generation_token,
+    )
+    controller._emit_operation.assert_not_called()
 
 
 def test_app_controller_direct_async_paths_skip_python_executor():
@@ -3473,12 +4011,9 @@ def test_connect_device_rejects_incomplete_target_before_adb_call():
     assert "IP and port" in controller._emit_operation.call_args.args[2]
 
 
-def test_kill_monkey_result_logs_not_running_as_success():
+def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():
     controller = Mock()
-    controller._monkey_batch_by_device = {"device-1": "b-1"}
-    controller._monkey_stop_acks = {}
-    controller._monkey_run_terminals = {}
-    controller._monkey_stop_requests = {}
+    controller._monkey_running = {"device-1"}
 
     ADBAppMixin._process_kill_monkey_result(
         controller,
@@ -3487,12 +4022,11 @@ def test_kill_monkey_result_logs_not_running_as_success():
             "index": 1,
             "success": True,
             "already_stopped": True,
-            "batch_id": "b-1",
             "message": "Monkey is not running",
         },
     )
 
-    assert controller._monkey_stop_acks == {"device-1": "b-1"}
+    assert controller._monkey_running == {"device-1"}
     controller._emit_operation.assert_called_once_with(
         "kill_monkey", True, "ℹ️ 1. Monkey was not running on device-1"
     )
@@ -3664,7 +4198,7 @@ def test_list_installed_packages_parses_command_output():
 def test_file_explorer_worker_uses_command_runner_for_short_commands():
     worker = ADBWorker("device-1", ["shell", "ls", "/sdcard"])
     emitted = []
-    worker.finished.connect(lambda output, failed: emitted.append((output, failed)))
+    worker.result_ready.connect(lambda output, failed: emitted.append((output, failed)))
 
     with patch("models.file_explorer_worker.CommandRunner.run") as run:
         run.return_value = CommandResult(success=True, output="Download\nPictures")
@@ -3681,7 +4215,7 @@ def test_file_explorer_worker_uses_command_runner_for_short_commands():
 def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
     worker = ADBWorker("device-1", ["shell", "du", "-sh", "/sdcard"], timeout=120)
     emitted = []
-    worker.finished.connect(lambda output, failed: emitted.append((output, failed)))
+    worker.result_ready.connect(lambda output, failed: emitted.append((output, failed)))
 
     with patch("models.file_explorer_worker.CommandRunner.run") as run:
         run.return_value = CommandResult(success=True, output="1G /sdcard")
@@ -3693,6 +4227,153 @@ def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
         ["adb", "-s", "device-1", "shell", "du", "-sh", "/sdcard"],
         timeout=120,
     )
+
+
+def test_file_explorer_worker_keeps_result_separate_from_thread_completion(qt_application):
+    worker = ADBWorker("device-1", ["shell", "ls", "/sdcard"])
+    results = []
+    thread_completions = []
+    worker.result_ready.connect(lambda output, failed: results.append((output, failed)))
+    worker.finished.connect(lambda: thread_completions.append(True))
+
+    with patch("models.file_explorer_worker.CommandRunner.run") as run:
+        run.return_value = CommandResult(success=True, output="Pictures")
+        worker.start()
+        assert worker.wait(1000)
+        qt_application.processEvents()
+
+    assert results == [("Pictures", False)]
+    assert thread_completions == [True]
+
+
+class _FakeFileExplorerADBWorker(QObject):
+    result_ready = Signal(str, bool)
+    finished = Signal()
+    instances = []
+
+    def __init__(self, device_ip, args, timeout=30):
+        super().__init__()
+        self.device_ip = device_ip
+        self.args = list(args)
+        self.timeout = timeout
+        self.running = False
+        self.abort_calls = 0
+        self.wait_calls = 0
+        type(self).instances.append(self)
+
+    def start(self):
+        self.running = True
+
+    def isRunning(self):
+        return self.running
+
+    def abort(self):
+        self.abort_calls += 1
+        self.running = False
+
+    def wait(self, *_args):
+        self.wait_calls += 1
+        self.running = False
+        return True
+
+    def complete(self, output, error=False):
+        self.running = False
+        self.result_ready.emit(output, error)
+        self.finished.emit()
+
+
+def test_file_explorer_refresh_carries_monotonic_request_identity(qt_application):
+    _FakeFileExplorerADBWorker.instances = []
+    with (
+        patch.object(FileExplorerDialog, "_refresh"),
+        patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
+    ):
+        dialog = FileExplorerDialog(device_ip="device-1")
+
+    try:
+        with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+            FileExplorerDialog._refresh(dialog)
+            dialog.current_path = "/sdcard/next"
+            FileExplorerDialog._refresh(dialog)
+
+        first, second = _FakeFileExplorerADBWorker.instances
+        assert first.property("refreshRequestId") == 1
+        assert first.property("requestedPath") == "/storage/emulated/0"
+        assert second.property("refreshRequestId") == 2
+        assert second.property("requestedPath") == "/sdcard/next"
+        assert dialog._active_refresh == (2, "/sdcard/next")
+    finally:
+        dialog.close()
+        qt_application.processEvents()
+
+
+def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_application):
+    _FakeFileExplorerADBWorker.instances = []
+    with (
+        patch.object(FileExplorerDialog, "_refresh"),
+        patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
+    ):
+        dialog = FileExplorerDialog(device_ip="device-1")
+
+    try:
+        with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+            dialog._navigate("/sdcard/first")
+            dialog._navigate("/sdcard/second")
+
+        first, second = _FakeFileExplorerADBWorker.instances
+        second.complete("-rw-r--r-- 1 shell shell 20 May 30 current.txt")
+        qt_application.processEvents()
+        current_status = dialog.status_bar.currentMessage()
+
+        first.complete("-rw-r--r-- 1 shell shell 10 May 30 stale.txt")
+        qt_application.processEvents()
+
+        assert dialog.current_path == "/sdcard/second"
+        assert dialog._file_name_at(1) == "current.txt"
+        assert dialog.status_bar.currentMessage() == current_status
+        assert current_status == "/sdcard/second  |  0 folders, 1 files"
+        assert first not in dialog._workers
+        assert second not in dialog._workers
+    finally:
+        dialog.close()
+        qt_application.processEvents()
+
+
+def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_application):
+    _FakeFileExplorerADBWorker.instances = []
+    with (
+        patch.object(FileExplorerDialog, "_refresh"),
+        patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
+    ):
+        dialog = FileExplorerDialog(device_ip="device-1")
+
+    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        worker = dialog._run_adb("shell", "ls /sdcard")
+    dialog.status_bar.showMessage = Mock()
+    queued_ui_callback = dialog._connect_worker_ui(
+        worker,
+        worker.result_ready,
+        lambda output, error: dialog.status_bar.showMessage(output),
+    )
+    worker.start()
+
+    with patch.object(FileExplorerDialog, "_retain_workers_until_stopped") as retain:
+        dialog.closeEvent(QCloseEvent())
+
+    # 模拟关闭事件发生前已排队、关闭后才被事件循环投递的界面回调。
+    queued_ui_callback("queued result", False)
+    worker.result_ready.emit("late result", False)
+    qt_application.processEvents()
+
+    assert dialog._closing is True
+    assert dialog._worker_ui_bindings == {}
+    assert dialog._worker_lifecycle_handlers == {}
+    assert worker.abort_calls == 1
+    dialog.status_bar.showMessage.assert_not_called()
+    retain.assert_called_once()
+    assert retain.call_args.args[0] == [worker]
+    dialog.deleteLater()
+    qt_application.processEvents()
 
 
 def test_file_explorer_transfer_failure_does_not_refresh():
@@ -3738,7 +4419,7 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
     progress = []
     finished = []
     worker.progress.connect(progress.append)
-    worker.finished.connect(
+    worker.result_ready.connect(
         lambda message, failed, local: finished.append((message, failed, local))
     )
 
@@ -3942,6 +4623,35 @@ def test_quick_setting_batches_animation_commands_into_one_shell():
     )
 
 
+def test_disable_package_commands_keep_global_and_user_scopes_distinct():
+    model = SimpleNamespace(_run=Mock(return_value={"success": True}))
+
+    ADBSystemMixin.disable_package_async.__wrapped__(
+        model,
+        "device-1",
+        "com.example.app",
+    )
+
+    model._run.assert_called_once_with(
+        ["adb", "-s", "device-1", "shell", "pm", "disable", "com.example.app"],
+        device_ip="device-1",
+        package="com.example.app",
+    )
+
+    model._run.reset_mock()
+    ADBSystemMixin.disable_package_user_async.__wrapped__(
+        model,
+        "device-1",
+        "com.example.app",
+    )
+
+    model._run.assert_called_once_with(
+        ["adb", "-s", "device-1", "shell", "pm", "disable-user", "com.example.app"],
+        device_ip="device-1",
+        package="com.example.app",
+    )
+
+
 def test_adb_input_session_writes_input_command_to_stdin():
     proc = Mock()
     proc.stdin = Mock()
@@ -4128,7 +4838,7 @@ def test_log_service_emits_batch_before_compat_single_signals(isolated_log_servi
     assert singles[-2:] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
 
 
-def test_log_panel_appends_large_batch_in_one_render_pass(isolated_log_service):
+def test_log_panel_appends_large_batch_with_a_per_frame_budget(isolated_log_service):
     _app = QApplication.instance() or QApplication([])
     assert LogService() is isolated_log_service
     panel = LogPanel()
@@ -4144,8 +4854,12 @@ def test_log_panel_appends_large_batch_in_one_render_pass(isolated_log_service):
         records = [("INFO", f"line-{i}") for i in range(1000)]
 
         panel._append_logs(records)
+        while panel._pending_rows:
+            panel._flush_pending_rows()
 
-        assert calls == [1000]
+        assert sum(calls) == 1000
+        assert all(size <= panel.FRAME_BATCH_SIZE for size in calls)
+        assert len(calls) > 1
         assert len(panel._entries) == 1000
         assert "line-999" in panel.text_output.toPlainText()
     finally:
