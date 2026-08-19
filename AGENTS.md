@@ -4,8 +4,8 @@ ADBLab 是基于 PySide6 的 Android 设备管理、测试、Remote 和 MobilePe
 
 ## 开始任务
 
-1. 开始任务前，先读取 `docs/project-knowledge/INDEX.md`。
-2. 根据任务类型读取对应知识文档；涉及核心逻辑时先阅读 `ARCHITECTURE.md`、`MODULE_MAP.md`、`BUSINESS_FLOW.md` 和现有测试。
+1. 开始任务前，先读取 `docs/README.md`（知识库 MOC 入口）。
+2. 根据任务类型读取对应知识文档；涉及核心逻辑时先阅读 `docs/project-knowledge/ARCHITECTURE.md`、`docs/project-knowledge/MODULE_MAP.md`、`docs/project-knowledge/BUSINESS_FLOW.md` 和现有测试。
 3. 修改核心逻辑时，先追踪入口、调用链、失败路径、线程/进程清理和现有测试。
 
 ## 代码与命令
@@ -36,7 +36,7 @@ git diff --check
 
 ## 文档与提交前检查
 
-- 修改架构、接口、数据模型/存储、配置键、外部依赖或主要业务流程后，必须同步更新 `docs/project-knowledge/`。
+- 修改架构、接口、数据模型/存储、配置键、外部依赖或主要业务流程后，必须同步更新 `docs/project-knowledge/`；操作命令、门禁或风格规范变化同步 `docs/guides/`；新增决策写入 `docs/architecture/adr/`。
 - 提交前确认 `utils/app_metadata.py` 中的 `APP_VERSION` 已相对上一个提交递增，且本次提交没有复用历史版本。
 - 提交前确认测试通过、打包自检通过、`git diff --check` 无错误、没有意外生成文件和敏感数据。
 - 修改构建/资源收集时，额外验证 PyInstaller 产物；修改 ADB/Remote/MobilePerf 时补对应单测并在授权设备上做最小实机验证。

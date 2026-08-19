@@ -5,8 +5,8 @@
 
 ## 归档政策
 
-1. 现状事实、当前架构与业务流程一律以 [../project-knowledge/](../project-knowledge/INDEX.md)
-   和 [../architecture/](../architecture/)（ADR、实施计划）为准；冲突时以当前代码和测试为准。
+1. 现状事实、当前架构与业务流程一律以 [../README.md](../README.md)（MOC 入口）和
+   [../architecture/](../architecture/)（ADR、实施计划）为准；冲突时以当前代码和测试为准。
 2. 归档只搬移文件、不修改正文；需要纠正的历史陈述以新文档或当前知识文档为准，不回改归档内容。
 3. 新的过程记录（如未来 Phase 账本）先放在 `docs/architecture/`，待阶段结束或结论并入
    当前知识文档后，再移入本目录对应子目录。
