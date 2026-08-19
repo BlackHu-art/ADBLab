@@ -59,6 +59,7 @@
 - [0001-incremental-vnext](architecture/adr/0001-incremental-vnext.md)：vNext 增量迁移决策。
 - [0002-operation-contract](architecture/adr/0002-operation-contract.md)：OperationManager 契约决策。
 - [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化四阶段计划（3.2.0 基线）。
+- [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
 - [IMPLEMENTATION_PLAN](architecture/IMPLEMENTATION_PLAN.md)：vNext 实施计划。
 - [agent_contract](architecture/agent_contract.md)：统一技能调用契约。
 

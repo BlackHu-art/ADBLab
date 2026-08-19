@@ -256,8 +256,9 @@ sequenceDiagram
   路径仍存在并发隔离不足。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
   已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
-- 除 LiveLogcat 外，对话框仍各自实现 worker 生命周期；统一任务注册/取消协议尚未扩展到
-  App Manager、File Explorer、Remote 和 MobilePerf。
+- 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher、
+  LiveLogcat 与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止），
+  不再各自在 closeEvent 里同步等待 worker。
 - 本地配置没有 schema/version；只有白名单键迁移。Remote 的 `scrcpy_*` 键已通过
   `SCRCPY_SETTING_DEFAULTS` 白名单纳入 DEFAULTS 并可跨会话恢复，DeviceStore 已改为锁内快照和
   原子替换，但设置存储仍没有统一 schema/version。
