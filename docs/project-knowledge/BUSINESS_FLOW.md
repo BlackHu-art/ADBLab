@@ -109,17 +109,24 @@ sequenceDiagram
 
 批量操作使用 `BatchOperationTracker` 聚合完成数；当前 tracker 按操作名存储，重叠同类批次会覆盖状态。App Panel 的“Disable for User”按钮实际发出与普通 Disable 相同的信号，最终调用 `pm disable`，没有实现名称所暗示的 `disable-user`。
 
+安装批次（Gate C）不再使用共享 tracker：`InstallBatchUseCase`（`adblab/application/install_batch.py`）
+为每次提交创建带 `operation_id`/unit 身份的批次，通过 `start/complete/fail/cancel/retry` 状态机
+管理整批与逐 unit 结果，支持部分失败（PARTIAL）与失败项重试；Controller 在提交前先
+`_reserve_install_start` 预留并绑定 `_InstallOperationOwner` 所有权，结果按 owner/generation
+token 校验归属与代次，晚到或错代结果直接丢弃；批次级协作取消把取消意图广播给仍待处理的
+pending units。
+
 ## 4. Monkey 稳定性测试
 
 | 项目 | 内容 |
 | --- | --- |
-| 触发条件 | 用户配置包名、事件比例、事件数/throttle/flags 后启动 Monkey |
+| 触发条件 | 用户配置包名、事件比例、事件数/throttle/flags 后启动 Monkey（支持批次：`start_monkey_batch_requested`） |
 | 前置条件 | 设备在线、目标包已安装、事件参数可被 Android Monkey 接受 |
-| 主流程 | AppPanel → Controller → `ADBTesting.run_monkey_test_async` → 检测当前包 → 启动并跟踪 Monkey 进程 → 同步 logcat/恢复目标包 → 输出日志和结果 |
-| 异常流程 | 非零退出返回失败；用户中止会停止进程；前台探测超时、失败或空结果均按失败处理，连续 3 次失败后终止任务并进入清理，不再把未知状态当作前台正常 |
+| 主流程 | AppPanel → Controller → `ADBTesting.run_monkey_test_async` → 检测当前包 → 启动并跟踪 Monkey 进程 → 同步 logcat/恢复目标包 → 输出日志和结果；批次路径按 batch id 登记 stop 意图，每台设备完成/失败/取消后发 `monkey_target_finished(batch_id, device)` |
+| 异常流程 | 非零退出返回失败；用户中止会停止进程；前台探测超时、失败或空结果均按失败处理，连续 3 次失败后终止任务并进入清理，不再把未知状态当作前台正常；等待阶段通过 `_wait_for_monkey_abort` 短轮询探测中止请求，避免真实阻塞 |
 | 涉及模块 | `gui/panels/app_panel.py`、`controllers/_app.py`、`models/adb_testing.py`、`models/base/focus_detector.py` |
 | 涉及数据 | Monkey 参数、随机种子、当前包名、logcat 和执行日志 |
-| 代码位置 | `ADBTesting.run_monkey_test_async`、`detect_current_package`、Controller Monkey handlers |
+| 代码位置 | `ADBTesting.run_monkey_test_async`、`_wait_for_monkey_abort`、`detect_current_package`、Controller Monkey handlers |
 
 ```mermaid
 flowchart TD
@@ -140,14 +147,15 @@ flowchart TD
 | --- | --- |
 | 触发条件 | 用户选择一个或多个设备执行截图、录屏、bugreport、ANR、日志导出 |
 | 前置条件 | 设备在线；保存目录可写；录屏/bugreport 相关设备命令可用；可选 Java 已安装 |
-| 主流程 | Screenshot 为一次请求创建 parent operation 和每设备 task metadata → model 执行 exec-out/pull → Controller 校验目标、预期路径与 PNG artifact → fan-out 汇总 → 逐项发 `screenshot_captured` 且每批最多打开一次 viewer；录屏/诊断继续走原 Controller/model 路径 |
-| 异常流程 | 截图 exec-out 非 PNG 时回退设备临时文件；缺失/无效/路径不符 artifact 视为失败；部分失败终态为 PARTIAL 且兼容 success=False；重复/晚到 callback 丢弃；bugreport ZIP 路径逃逸被拒绝；视频 pull 成功但远端清理失败时当前实现会整体报告失败 |
-| 涉及模块 | `controllers/_media.py`、`controllers/_app.py`、`models/adb_advanced.py`、`models/adb_testing.py`、`utils/archive.py`、`gui/dialogs/screenshot_viewer.py` |
+| 主流程 | Screenshot 为一次请求创建 parent operation 和每设备 task metadata → model 执行 exec-out/pull → Controller 校验目标、预期路径与 PNG artifact → fan-out 汇总 → 逐项发 `screenshot_captured` 且每批最多打开一次 viewer；录屏/诊断走 Controller/model 路径，批次录屏按 batch id 跟踪，每台设备停止/失败后发 `record_target_finished(batch_id, device)` |
+| 异常流程 | 截图 exec-out 非 PNG 时回退设备临时文件；缺失/无效/路径不符 artifact 视为失败；部分失败终态为 PARTIAL 且兼容 success=False；重复/晚到 callback 丢弃（截图取消经 `cancel_pending_units` 按 generation 原子化）；bugreport ZIP 路径逃逸被拒绝；录屏 pull 与远端清理分离报告，pull 成功但 cleanup 失败会整体报告失败 |
+| 涉及模块 | `controllers/_media.py`、`controllers/_app.py`、`models/adb_advanced.py`、`models/adb_testing.py`、`utils/archive.py`、`gui/dialogs/screenshot_viewer.py`、`gui/dialogs/lifecycle.py` |
 | 涉及数据 | PNG、MP4、ZIP、txt、ANR、bugreport 转换目录 |
-| 代码位置 | `take_screenshot_async`、`start/stop_screen_record_async`、`capture_bugreport_async`、`safe_extract_zip` |
+| 代码位置 | `take_screenshot_async`、`start/stop_screen_record_async`、`pull_recorded_video_async`、`capture_bugreport_async`、`safe_extract_zip` |
 
 Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次按 operation/task id 隔离；
-录屏和其他 Controller 批次仍需后续迁移。
+录屏批次已接入 batch id 与 `record_target_finished` 终态信号，但其共享状态仍由 Controller
+持有，尚未迁入 OperationManager。
 
 ## 6. 设备文件浏览与传输
 
@@ -190,7 +198,7 @@ sequenceDiagram
 | 触发条件 | 用户在 Remote 页选择设备和 scrcpy 参数并启动 |
 | 前置条件 | scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
 | 主流程 | RemotePanel 将启动选择绑定为 `_active_device` → 创建 launch worker → ScrcpyService 检查版本/设备/编码器并生成 LaunchPlan → ProcessRunner 启动 scrcpy → stderr/FPS reader 和 watchdog 更新状态 → 输入只向活动会话设备发送 |
-| 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；关闭页签停止 scrcpy、worker、executor 和 input session；非 Windows 找不到系统 scrcpy 则无法启动 |
+| 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭页签停止 scrcpy、worker、executor 和 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
 | 涉及模块 | `gui/panels/remote_panel.py`、`models/remote/*`、`core/adb_bridge.py` |
 | 涉及数据 | `ScrcpyConfig`、`PreflightResult`、`ScrcpyLaunchPlan`、设备尺寸缓存、FPS 文本 |
 | 代码位置 | `ScrcpyService.build_launch_plan/start/stop`、`RemoteControlService.perform_action`、`RemotePanel.shutdown` |
@@ -226,23 +234,23 @@ sequenceDiagram
 | --- | --- |
 | 触发条件 | 用户选择设备/包名，配置采样与 Monkey 后在 Performance Launcher 启动 |
 | 前置条件 | 设备在线、目标包已安装、保存目录可写、MobilePerf 模块可导入 |
-| 主流程 | 表单生成 `MobilePerfRunConfig` → Runner 记录运行前结果/报告签名并创建运行代次上下文 → 写临时配置 → 根据开发/冻结状态启动 module 或 `--mobileperf-worker` → StartUp 验证设备/包并采集 → stdout/stderr reader 分别排空且共同收口后通知完成 → GUI 只定位本次新建或变化的非空报告；退出码 0 且有当前报告才显示 Completed/100 |
+| 主流程 | 表单生成 `MobilePerfRunConfig`（`__post_init__` 规范化分号字段）→ Runner 记录运行前结果/报告签名并创建运行代次上下文 → 写临时配置 → 根据开发/冻结状态启动 module 或 `--mobileperf-worker` → StartUp 逐层剥离配置 BOM 前缀后验证设备/包并采集 → stdout/stderr reader 分别排空且共同收口后通知完成 → GUI 只定位本次新建或变化的非空报告；退出码 0 且有当前报告才显示 Completed/100 |
 | 异常流程 | 启动异常立即恢复 UI；停止先写 stop 文件并等待报告，超时后强制终止；非零退出、缺少当前报告或只有旧报告均显示 Failed/Warning 且进度低于 100；内核仍可能最终 `os._exit` |
 | 涉及模块 | `gui/dialogs/performance_launcher.py`、`models/mobileperf/runner.py`、`mobileperf/android/startup.py` 与各 monitor |
 | 涉及数据 | 临时 config、指标 CSV、XLSX、设备信息、logcat、heapdump、外部设备日志 |
 | 代码位置 | `PerformanceLauncherDialog.start_mobileperf/stop_mobileperf`、`MobilePerfRunner.start/stop`、`StartUp.run/stop` |
 
-## 9. 临时邮箱与验证码
+## 9. 安装批次（Gate C）
 
 | 项目 | 内容 |
 | --- | --- |
-| 触发条件 | Controller 启动随机邮箱任务 |
-| 前置条件 | 用户配置目录 `mail.yaml`（或显式环境注入）启用且包含签名材料；外部 API 可达 |
-| 主流程 | QRunnable 创建 EmailService → 请求随机账号 → 仅在内存更新账号/指纹 → 轮询列表 → 获取详情 → 正则提取验证码 → Qt signal 返回 UI |
-| 异常流程 | 缺配置/禁用时明确失败；所有 HTTP 请求使用 connect/read timeout；网络与解析错误只记录端点和异常类型，不记录账号、正文、验证码、请求/响应或签名 |
-| 涉及模块 | `controllers/_base.py`、`core/mail/email_task.py`、`core/mail/email_service.py` |
-| 涉及数据 | 请求材料、账号、邮件元数据/正文、验证码；全部按敏感数据处理 |
-| 代码位置 | `_ADBControllerBase.start_email_task`、`GetRandomEmailTask.run`、`EmailService.fetch_and_process_email` |
+| 触发条件 | 用户在 Apps 面板选择多设备/多 APK 安装或点击批量安装（`batch_install_requested`） |
+| 前置条件 | 已选择设备；APK 文件存在且可被 aapt/install 接受 |
+| 主流程 | Controller 校验请求并 `_reserve_install_start` 预留批次 → 创建 `InstallBatchUseCase` 批次（operation id + 每 unit 身份，绑定 `_InstallOperationOwner` 所有权与 generation）→ 逐 unit 经 `install_apk_async`（`async_command` 透传 owner/generation token 到 `OperationMetadata`）提交 → 每 unit 结果按 owner/generation 校验归属后记录 → 全部结束后按 unit 结果汇总终态（成功/部分失败/失败），失败项可整批重试（retry） |
+| 异常流程 | 选择取消/空请求直接失败；提交阶段异常丢弃预留；晚到或错代结果标记 stale 并丢弃；协作取消（cancel）把意图广播给未处理 units；部分 unit 失败不影响其他 unit 收口，终态为 PARTIAL 且兼容 success=False |
+| 涉及模块 | `gui/panels/app_panel.py`、`controllers/_app.py`、`adblab/application/install_batch.py`、`adblab/application/operations.py`、`models/adb_app.py` |
+| 涉及数据 | 安装请求列表、unit 结果、批次终态、owner/generation token |
+| 代码位置 | `InstallBatchUseCase.start/complete/fail/cancel/retry`、`_reserve_install_start/_submit_install_unit/_finish_install_start`、`OperationManager.cancel_pending_units/record_unit_result/finish_from_unit_results` |
 
 ## 10. 应用关闭
 

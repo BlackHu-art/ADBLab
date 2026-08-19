@@ -17,7 +17,8 @@
 | Remote 状态 | UI scrcpy 参数、预检、设备尺寸 | 生成 launch plan、FPS 解析、坐标映射 | scrcpy 进程、状态标签、尺寸 TTL 缓存 | Remote 会话 |
 | MobilePerf 配置 | Performance 对话框 | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
-| 临时邮箱数据 | mail YAML、外部 API JSON | 请求签名/指纹更新、轮询、验证码提取 | Qt signals、日志、mail YAML | 账号/配置跨调用；邮件数据短期内存但可能进入日志 |
+| `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
+| 安装批次状态 | Apps 面板批量安装请求 | `InstallBatchUseCase` 的 start/complete/fail/cancel/retry 状态机按 operation/unit 收口 | 内存 registry（`OperationManager`）、Qt signals、日志 | 批次生命周期；终态原子移除 |
 | 运行时工具缓存 | PyInstaller bundle | 版本化复制 | 用户目录 `runtime/<version>` | 跨进程复用，可人工清理 |
 
 ## 总体数据流
@@ -68,7 +69,24 @@ sequenceDiagram
 
 `已提交` → `QRunnable 执行` → `CommandResult` → `command_finished` → `Controller handler` → `成功/失败日志与 UI 信号`。
 
-超时由 CommandRunner 转换为失败结果而不是重新抛出 `subprocess.TimeoutExpired`。依赖捕获该异常的上层逻辑不会生效；当前 Monkey 恢复流程就是受影响的实例。
+超时由 CommandRunner 转换为失败结果而不是重新抛出 `subprocess.TimeoutExpired`。依赖捕获该异常的上层逻辑不会生效；Monkey 恢复流程通过 `_wait_for_monkey_abort` 短轮询探测中止请求来配合该语义，而不是依赖异常传播。带 operation 的调用（`_operation_id`/owner/generation token）只进入 `OperationMetadata` 信封，Controller handler 先按 owner/generation 校验归属与代次，再决定接受、转发或丢弃结果。
+
+## 安装批次状态流
+
+```mermaid
+flowchart TD
+    Form["Apps 面板批量安装"] --> Reserve["Controller _reserve_install_start 预留"]
+    Reserve --> UC["InstallBatchUseCase.start（operation id + 每 unit 身份）"]
+    UC --> Submit["逐 unit install_apk_async"]
+    Submit --> Envelope["async_command 组装 OperationMetadata（owner/generation token）"]
+    Envelope --> Results["command_finished 回 Controller"]
+    Results --> Claim{"owner/generation 校验"}
+    Claim -->|"匹配"| Record["record_unit_result 收口"]
+    Claim -->|"晚到/错代"| Drop["丢弃 stale 结果"]
+    Record --> Summary["finish_from_unit_results 汇总终态"]
+    Summary --> UI["批次信号 + 日志"]
+    Cancel["协作取消/超时"] --> Pending["cancel_pending_units（广播给未处理 units）"]
+```
 
 ## 设置与设备存储生命周期
 
@@ -149,41 +167,12 @@ flowchart TD
     Worker --> Cleanup["os._exit 结束；适配层清理临时配置"]
 ```
 
-结果目录包含设备型号、系统版本、包版本、指标和可能的设备日志/heapdump，可能含个人或业务敏感信息；当前未见加密、自动保留期或访问控制。
-
-## 临时邮箱数据流
-
-```mermaid
-sequenceDiagram
-    participant UI as "Controller/UI"
-    participant Task as "GetRandomEmailTask"
-    participant Service as "EmailService"
-    participant Config as "用户目录 mail.yaml / 环境注入"
-    participant API as "外部临时邮箱 API"
-
-    UI->>Task: 启动任务
-    Task->>Service: 创建服务/读取配置
-    Service->>Config: 只读签名材料
-    Service->>API: 请求随机账号
-    API-->>Service: 账号 JSON
-    Service->>Service: 账号/指纹只保留在内存
-    loop 轮询收件箱
-        Service->>API: list
-        API-->>Service: 邮件列表
-        Service->>API: detail
-        API-->>Service: 邮件正文
-        Service->>Service: 提取验证码
-    end
-    Service-->>Task: 账号/验证码
-    Task-->>UI: Qt signals
-```
-
-本知识库故意不记录配置值、账号、邮件正文和验证码。当前实现仅记录端点与异常类型，
-账号和验证码经 Qt signals 返回 UI，不写配置或日志；历史源码配置仍属于需要所有者处理的风险。
+结果目录包含设备型号、系统版本、包版本、指标和可能的设备日志/heapdump，可能含个人或业务敏感信息；当前未见加密、自动保留期或访问控制。连续运行配置在 `StartUp` 读取时逐层剥离 Unicode/历史字节序标记（`_CONFIG_BOM_PREFIXES`），并保持输入文件只读。
 
 ## 数据保留与删除
 
-- UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各对话框另有显示缓冲上限。
+- UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各对话框另有显示缓冲上限，缓冲溢出时
+  会丢弃最旧行并累计丢弃计数（`LogService.dropped_count` / LogPanel `_pending_dropped_total`）。
 - AppSettings 和 DeviceStore 没有 schema 版本或保留期。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 启动时会清理设备 `/data/local/tmp` 中符合包名且超过约 3 天的 heapdump；这一行为在 `StartUp.clear_heapdump()`。

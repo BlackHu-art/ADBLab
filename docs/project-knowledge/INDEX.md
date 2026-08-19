@@ -6,9 +6,10 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 事实基线 | `dev` 分支提交 `1f86f3f9378c`，扫描日期 2026-07-23 |
-| 本次整理 | 2026-07-25，当前仓库 `dev@6f7b699def01` |
-| 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
+| 事实基线 | `dev` 分支提交 `2f999eb`（HEAD，`2f999ebe9178`），扫描日期 2026-08-18 |
+| 本次整理 | 2026-08-18，当前仓库 `dev@2f999eb`，版本 3.1.67 |
+| 基线以来变更 | `dev` 自 main 基线 `8b84f8d`（3.1.14）重做，新增 6 个提交：`70be33e`（卫生：移除邮件服务/锁定依赖/统一 lint）、`481175d`（安装批次 Gate C）、`e36e3e6`（Remote/MobilePerf 修复）、`6ae6fea`（响应式框架控件）、`3492159`（响应式面板/对话框/主窗口）、`2f999eb`（screen adapter 抽取与几何扫描提速） |
+| 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
 | 敏感信息规则 | 不记录密钥、Token、密码、私有证书、真实设备唯一标识、邮件正文或验证码 |
 
@@ -40,13 +41,13 @@
 
 ### 流程与数据
 
-- [BUSINESS_FLOW.md](BUSINESS_FLOW.md)：启动、设备、应用、Monkey、诊断、文件、Remote、MobilePerf、临时邮箱和关闭链路。
+- [BUSINESS_FLOW.md](BUSINESS_FLOW.md)：启动、设备、应用、安装批次、Monkey、诊断、文件、Remote、MobilePerf 和关闭链路。
 - [DATA_FLOW.md](DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期和状态变化。
 - [DATABASE_MAP.md](DATABASE_MAP.md)：无数据库结论，以及 JSON/YAML/普通文件型持久化映射。
 
 ### 边界、交付与质量
 
-- [API_MAP.md](API_MAP.md)：入站 API 结论、外部临时邮箱 HTTP API、ADB 命令接口和文件/进程安全约定。
+- [API_MAP.md](API_MAP.md)：入站 API 结论、ADB 命令接口和文件/进程安全约定。
 - [BUILD_AND_RUN.md](BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
 - [TESTING_GUIDE.md](TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口和提交前门禁。
 - [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)：按严重程度排序的缺陷、安全风险、技术债、历史热点和修复优先级。
@@ -56,13 +57,14 @@
 
 修改以下区域前，优先按“入口 → 调用链 → 失败路径 → 清理路径 → 测试”的顺序追踪：
 
-- `gui/main_frame.py`：主窗口、设备扫描、面板懒加载、信号接线和关闭清理。
-- `controllers/`：批次状态、异步结果分派、截图/录屏共享状态和危险操作入口。
+- `gui/main_frame.py`：主窗口（约 2,500 行）、设备扫描、工具栏溢出、面板懒加载、信号接线和关闭清理。
+- `adblab/application/`：`operations.py`（OperationManager 单元接口）与 `install_batch.py`（安装批次 Gate C 用例）。
+- `controllers/`：批次状态与所有权/generation 边界、异步结果分派、截图/录屏共享状态和危险操作入口。
 - `models/base/`、`core/adb_bridge.py`：短命令、长进程和持久 shell 边界。
+- `gui/widgets/responsive_controller.py`、`gui/widgets/responsive_layout.py`、`gui/screen_adapter.py`：响应式重排协调器、语义布局和屏幕适配协议。
 - `gui/dialogs/app_manager.py`、`models/app_manager_worker.py`：批量应用操作、备份恢复和失败传播。
-- `gui/panels/remote_panel.py`、`models/remote/`：scrcpy 预检、输入映射、watchdog 和会话关闭。
-- `models/mobileperf/`、`mobileperf/android/`：隔离子进程、采样线程、报告落盘和遗留 ADB 实现。
-- `core/mail/`：外部临时邮箱 API、日志脱敏、配置位置和打包行为。
+- `gui/panels/remote_panel.py`、`models/remote/`：scrcpy 预检、输入映射、会话所有权/watchdog 和关闭清理。
+- `models/mobileperf/`、`mobileperf/android/`：隔离子进程、采样线程、报告落盘和遗留 ADB 实现（`shell=True` 未重写）。
 
 ## 知识库维护规则
 
@@ -71,12 +73,13 @@
 3. 新增功能时至少更新 [MODULE_MAP.md](MODULE_MAP.md) 和相关业务/数据/边界文档；新增风险时同步 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
 4. 新增术语或缩写时同步 [glossary.md](glossary.md)，避免同一词在不同文档中漂移。
 5. 每个 Git 提交必须在 `utils/app_metadata.py` 中递增一次 `APP_VERSION`，默认递增补丁版本且不得复用历史版本。
-6. 提交前至少运行 `py -3.11 -m pytest -q`、`py -3.11 main.py --self-check packaging`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE.md](TESTING_GUIDE.md) 扩展验证。
+6. 提交前至少运行 `py -3.11 -m pytest -q`（全量约 930 项、约 11 分钟）、`py -3.11 main.py --self-check packaging`、`ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE.md](TESTING_GUIDE.md) 扩展验证。
 
-## 2026-07-25 知识库卫生检查
+## 2026-08-18 知识库卫生检查
 
-- 已扫描 13 个 Markdown 文档；当前没有超过 365 天的陈旧页。
+- 已扫描 14 个 Markdown 文档；当前没有超过 365 天的陈旧页。
 - 未发现同一缩写的明显定义漂移；高频缩写已集中补充到 [glossary.md](glossary.md)。
+- 邮件服务（`core/mail/`、邮件获取入口、邮件/验证码信号、requests/ruamel 依赖）已全部移除，知识库同步清除相关描述，仅保留历史跟踪配置的所有者轮换提醒。
 - `INDEX.md` 作为入口页没有入站链接属于正常现象；不要按孤立页归档。
 - 所有文档仍缺具名 owner；需要由项目维护者确认文档负责人和复审周期。
 

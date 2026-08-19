@@ -1,13 +1,13 @@
 # 构建与运行
 
-本页只记录能从仓库配置得到验证，或在 2026-07-23 实际执行过的命令。所有命令默认在项目根目录执行。
+本页只记录能从仓库配置得到验证，或在 2026-08-18 实际执行过的命令。所有命令默认在项目根目录执行。
 
 ## 环境要求
 
 | 项目 | 要求/状态 | 依据 |
 | --- | --- | --- |
 | Python | 3.11 为 README 与 CI 标准版本 | `README.md`、`Build-exe.yaml` |
-| 语法兼容目标 | Black/Ruff 配置为 Python 3.10 | `pyproject.toml` |
+| 语法兼容目标 | Ruff/Black 配置为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows 10/11 | README；Windows 内置 adb/scrcpy |
 | GUI | PySide6 6.8.1.1 | `requirements.txt` |
 | ADB/scrcpy | Windows 已内置；非 Windows 从 PATH 解析 | `utils/adb_resolver.py`、`models/remote/scrcpy_service.py` |
@@ -21,13 +21,13 @@
 py -3.11 -m pip install -r requirements.txt
 ```
 
-pytest 不在 `requirements.txt`，CI 使用：
+测试与 lint 依赖在 `requirements-dev.txt`（pytest 9.1.1、ruff 0.16.3），CI 使用：
 
 ```powershell
-py -3.11 -m pip install pytest
+py -3.11 -m pip install -r requirements-dev.txt
 ```
 
-项目没有 `setup.py`/`setup.cfg`/Poetry/PDM/uv/npm 构建入口，也没有单独的开发依赖文件。是否要求虚拟环境由团队待确认；仓库没有给出正式命令，本文不自行补写。
+项目没有 `setup.py`/`setup.cfg`/Poetry/PDM/uv/npm 构建入口；是否要求虚拟环境由团队待确认，仓库没有给出正式命令，本文不自行补写。
 
 ## 配置
 
@@ -36,10 +36,10 @@ py -3.11 -m pip install pytest
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
 - ADB 解析优先级为 Windows 内置 `scrcpy-win64-v3.3.1/adb.exe`，再到 PATH 中的 adb。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
-- 临时邮箱只读取用户配置目录的 `mail.yaml`，也可通过 `ADBLAB_MAIL_CONFIG` 指定用户受控文件；
-  签名材料可由进程环境注入。不要把真实凭据写入仓库配置或日志。
-- 历史跟踪的 `core/mail/mail.yaml` 仍需仓库所有者轮换材料、停止跟踪并审查 Git 历史；
-  不应复制或扩散其内容。
+- Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
+  纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
+- 历史邮件服务（`core/mail/` 与 `mail.yaml`）已移除；Git 历史中曾跟踪的邮件配置仍需
+  仓库所有者轮换材料、停止跟踪并审查 Git 历史，不应复制或扩散其内容。
 
 ## 启动
 
@@ -66,9 +66,12 @@ py -3.11 main.py --mobileperf-worker --config <由 MobilePerfRunner 生成的配
 py -3.11 -m pytest --collect-only -q
 py -3.11 -m pytest -q
 py -3.11 main.py --self-check packaging
+ruff check .
 ```
 
-结果：229 tests collected；229 passed in 2.83s；packaging self-check 的 PySide6、Requests、MobilePerf、icon/resources、Windows 内置 adb/scrcpy 和用户数据目录检查全部通过。
+结果：930 tests collected；930 passed，全量约 11 分钟；packaging self-check 的 PySide6、
+MobilePerf、icon/resources、Windows 内置 adb/scrcpy 和用户数据目录检查全部通过（Requests
+检查已随邮件服务移除）；`ruff check .` 0 错误。
 
 仓库 README 还建议：
 
@@ -79,7 +82,9 @@ git diff --check
 
 `compileall` 会生成 `__pycache__`，本次知识库任务遵守“只创建文档”，因此未执行；`git diff --check` 应在文档全部生成后执行。
 
-Ruff/Black 配置存在但依赖未声明、CI 未调用。若本机已经安装，可从 `pyproject.toml` 推导工具会使用行宽 100 和 py310 目标；仓库没有给出团队认可的固定执行命令，因此本页不把它们列为已验证门禁。
+Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集、`mobileperf/**`
+E402/UP031 与 `tests/live_logcat_close_probe.py` E402 豁免）；`pyproject.toml` 仍保留
+Black 与重复的 Ruff 配置，两处存在时 ruff.toml 优先。门禁命令为 `ruff check .`。
 
 ## 本地 PyInstaller 构建
 
@@ -96,7 +101,7 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 - 收集 `resources/`、`icon.ico`、`scrcpy-win64-v3.3.1/`、`mobileperf/`。
 - 收集全部 `mobileperf` 子模块。
 - 生成 windowed、onedir 的 `ADBLab`。
-- 不收集 `core/mail/mail.yaml`；临时邮箱按设计从用户域配置或显式环境注入读取。
+- 邮件服务已移除，spec 不再涉及任何 `mail.yaml` 收集项。
 
 本次未实际执行完整 PyInstaller 构建；源码模式 packaging self-check 已通过。完整构建会创建 `build/` 和 `dist/`，不符合本次只创建文档的范围。
 
@@ -107,8 +112,9 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 `.github/workflows/Build-exe.yaml` 在 `main` push 或手动触发时：
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
-2. 使用 Python 3.11 安装 requirements。
-3. Windows 运行 `python -m pytest -q`；macOS/Linux 只运行 source packaging self-check。
+2. 使用 Python 3.11 安装 `requirements.txt` 运行依赖。
+3. Windows 额外安装 `requirements-dev.txt`（pytest/ruff），先运行 `python -m ruff check .`
+   再运行 `python -m pytest -q`；macOS/Linux 只运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。
 6. 压缩并上传三平台制品。
@@ -147,6 +153,5 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 | APK 信息解析失败 | `aapt` 不在 PATH 或 APK 不存在 |
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
-| Remote 设置重启后恢复默认 | `scrcpy_*` 不在 AppSettings DEFAULTS 白名单，当前很可能无法载入，待修复验证 |
-| 打包后临时邮箱未配置 | 在用户配置目录创建受控 `mail.yaml` 或使用显式环境注入；源码树配置不会被读取 |
+| Remote 设置重启后恢复默认 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单修复；旧 JSON 中同名键无需迁移即可载入 |
 | README 中找不到 Performance 旧目录 | README 仍引用已删除的旧性能模块；当前实现是 `performance_launcher.py` + `models/mobileperf/` + `mobileperf/` |

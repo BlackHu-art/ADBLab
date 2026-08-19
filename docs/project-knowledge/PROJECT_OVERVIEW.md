@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 桌面工具。它把 ADB、scrcpy、logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，主入口为 `main.py::_run_gui()`，当前版本由 `utils/app_metadata.py::APP_VERSION` 定义为 3.1.2。
+ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 桌面工具。它把 ADB、scrcpy、logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，主入口为 `main.py::_run_gui()`，当前版本由 `utils/app_metadata.py::APP_VERSION` 定义为 3.1.67。
 
 ## 核心用户
 
@@ -15,19 +15,19 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 ## 主要业务能力
 
 1. 设备发现与连接：轮询 `adb devices`，连接/配对/断开 TCP 设备，读取设备属性并持久化设备列表。
-2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、当前前台应用检测和 APK 信息解析。
+2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、批量安装（Gate C 批次）、当前前台应用检测和 APK 信息解析。
 3. 测试与诊断：Monkey、截图、录屏、logcat、bugreport、ANR、进程/电池/系统信息。
 4. 文件操作：浏览设备文件、上传/下载、编辑、复制/移动/删除、权限修改、APK 安装和脚本执行。
 5. Remote：启动 scrcpy、查看 FPS、发送按键/滑动/旋转和窗口聚焦。
 6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出 CSV/XLSX 与设备信息。
-7. 辅助工具：临时邮箱轮询、主题/字体/窗口设置、日志面板和结果文件查看。
+7. 辅助工具：主题/字体/窗口设置（含响应式重排与屏幕适配）、日志面板和结果文件查看。
 
 ## 应用类型与边界
 
 - 类型：单进程 Qt 桌面 GUI；MobilePerf、scrcpy、logcat、Monkey 等长任务会派生外部进程或子线程。
 - 入站接口：没有 Web 服务器、HTTP 路由、RPC 服务或消息消费者。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
-- 主要外部边界：Android ADB server/device、scrcpy、临时邮箱 HTTPS API、可选 `aapt`、Java/JAR、Perfetto 网站和本地文件系统。
+- 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）和本地文件系统；主应用没有出站 HTTP 客户端。
 - 主要平台：README 与 Windows 内置工具表明 Windows 10/11 是主平台；CI 还构建 macOS/Linux，但这两类包不包含 scrcpy，完整功能状态待实机确认。
 
 ## 技术栈
@@ -36,13 +36,12 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 | --- | --- | --- |
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
 | GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool | `requirements.txt`、`gui/`、`models/adb_model.py` |
-| HTTP | Requests 2.32.5 | `core/mail/email_service.py` |
-| 配置 | JSON、PyYAML、ruamel.yaml | `core/settings_manager.py`、`models/device_store.py`、`core/mail/email_service.py` |
+| 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
 | 外部命令 | ADB、scrcpy、aapt、Java | `models/base/`、`models/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `models/mobileperf/`、`mobileperf/android/` |
-| 测试 | pytest | `pyproject.toml`、`tests/` |
-| 格式/检查 | Black、Ruff，行宽 100，目标 Python 3.10 语法 | `pyproject.toml`；工具未列入 `requirements.txt` |
-| 打包/发布 | PyInstaller、GitHub Actions、GitHub Release | `ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
+| 测试 | pytest 9.1.1、Ruff 0.16.3 | `requirements-dev.txt`、`ruff.toml`、`tests/` |
+| 格式/检查 | Ruff/Black，行宽 100，目标 Python 3.10 语法 | `ruff.toml`（门禁）、`pyproject.toml` |
+| 打包/发布 | PyInstaller 6.22.2、GitHub Actions、GitHub Release | `requirements.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
 
 ## 运行环境
 
@@ -53,9 +52,10 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 ## 当前状态
 
-- 活跃版本：3.1.2；当前扫描分支 `dev`，提交 `1f86f3f9378c`。
-- 2026-07-23 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，229 项全部通过；`py -3.11 main.py --self-check packaging` 通过。
-- CI 在 Windows 运行完整测试，在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
+- 活跃版本：3.1.67；当前扫描分支 `dev`，提交 `2f999eb`（基线 `8b84f8d` 之后重做的 6 个新提交）。
+- 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
+  `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。
+- CI 在 Windows 运行完整测试（含 ruff lint 步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
 - README 的性能章节和目录树仍引用已经不存在的 `models/performance/`、`gui/performance_web/`、两个旧性能对话框和 `tests/test_performance_services.py`，因此 README 不能单独作为当前架构事实来源。
 - Git 历史显示 244 个提交、3 个作者标识；最近三个月只有一个作者标识活跃，存在知识集中风险。
 

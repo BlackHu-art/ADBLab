@@ -10,21 +10,15 @@
 | MobilePerf worker | `main.py --mobileperf-worker --config <path>` | config 路径 | 运行采集子进程 | 无应用级鉴权 | runner/startup tests |
 | 打包自检 | `main.py --self-check packaging` | 固定 target | 检查导入、资源、工具和用户目录 | 无 | CI + 实际验证 |
 
-因此本文件的 HTTP 表描述的是**应用调用的外部 API**，不是 ADBLab 对外提供的 API。
+因此本文件的接口表描述的是**应用调用的外部接口**，不是 ADBLab 对外提供的 API。
 
-## 外部临时邮箱 HTTP API
+## 外部 HTTP API 结论
 
-统一基址定义在 `core/mail/email_service.py::EmailService.BASE_URL`。以下信息只记录路径和数据类型，不记录任何请求签名、Token、指纹值、账号或邮件内容。
-
-| 方法 | 路径 | 入口代码 | 请求参数 | 响应 | 鉴权/请求材料 | 核心调用链 | 测试 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| POST | `/rand_account` | `EmailService.get_random_email()` | 空 JSON | 随机临时邮箱账号对象 | 用户域签名配置；内存指纹 | task → get_random_email → 内存状态 | `test_email_service.py` |
-| POST | `/list` | `EmailService.get_email_list()` | 当前账号与分页/查询类载荷 | 邮件摘要列表 | 用户域签名配置 | fetch_and_process_email → list | `test_email_service.py` |
-| POST | `/detail` | `EmailService.get_email_detail()` | 邮件标识与账号上下文 | 邮件详情/正文 | 用户域签名配置 | fetch_and_process_email → detail → extract code | `test_email_service.py` |
-
-边界约束：运行时不读取源码树 `mail.yaml`，配置来自用户目录或显式环境注入；所有 POST 强制
-connect/read timeout；日志不记录 payload、response、账号、正文、验证码、指纹或签名。仓库历史
-跟踪配置的轮换/清理，以及服务方协议、授权、数据处理条款和限流策略仍待所有者确认。
+当前主应用代码中没有出站 HTTP 客户端（`requests`/`urllib` 等不再被任何一方源码导入），
+也没有外部 HTTP 服务调用。仅有的 URL 引用是 About 对话框的 GitHub 链接和
+`PerformanceLauncherDialog.open_perfetto()` 用 `QDesktopServices.openUrl` 打开
+`ui.perfetto.dev`，两者都只是交给系统浏览器打开，不构成 API 调用。历史邮件服务
+（临时邮箱 HTTP API、`core/mail/`、requests/ruamel 依赖）已随 `70be33e` 移除。
 
 ## ADB 命令接口地图
 
@@ -38,10 +32,11 @@ ADB 是项目实际最重要的外部操作 API。参数通常以数组传给 su
 | 输入控制 | `ADBAdvanced`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 结果或乐观布尔 | 低延迟持久 shell；设备执行未回读 | 有 |
 | 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除确认 | 有 |
 | 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair/ping/netstat` | host/device port | CommandResult | connect target 校验；其他端口校验不完整 | 部分 |
-| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/tag/path | 流、文件、目录 | ZIP 安全解压 | 有 |
-| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord` | device/path/time | PNG/MP4 | PNG 签名检查和回退 | 有 |
+| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/tag/path | 流、文件、目录 | ZIP 安全解压；诊断参数经 `utils/adb_values.py` 白名单/规范化（包名、dumpsys 服务名、`gfxinfo`/`wakelocks`/`netstats detail`） | 有 |
+| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | PNG 签名检查和回退；录屏 pull 与远端 cleanup 分离报告，结果携带 `batch_id` | 有 |
 | 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 移植内核校验较弱、命令实现独立 | 部分 |
 | 任意 shell/intent | SystemPanel/ADBSystemMixin | `adb shell ...`、`am start/broadcast` | 用户文本 | CommandResult | 已知高影响入口接入统一危险确认；参数校验仍不完整 | 部分 |
+| Monkey | `ADBTesting` | `monkey`、`am force-stop` | package/events/throttle/flags | CommandResult | 前台探测 fail-closed；`_wait_for_monkey_abort` 短轮询探测中止 | 有 |
 
 ## scrcpy 进程接口
 

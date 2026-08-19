@@ -16,10 +16,9 @@ flowchart LR
     DialogServices --> Scrcpy["scrcpy 外部进程"]
     DialogServices --> MP["MobilePerf 隔离子进程"]
     Controller --> Core["Settings / DeviceStore / LogService / perf_trace helpers"]
+    Controller --> UseCases["adblab/application<br/>OperationManager / InstallBatchUseCase"]
     GUI --> Core
     Core --> Store["用户目录 JSON / YAML / 日志与结果文件"]
-    Controller --> Mail["临时邮箱任务"]
-    Mail --> HTTP["外部 HTTPS 临时邮箱服务"]
     MP --> ADB
     MP --> Results["CSV / XLSX / heapdump / 设备信息"]
 ```
@@ -61,11 +60,17 @@ flowchart LR
 - `controllers.ADBController` 由 `ADBDeviceMixin`、`ADBInputMixin`、`ADBMediaMixin`、`ADBAppMixin`、`ADBFileMixin`、`ADBSystemControllerMixin` 和 `_ADBControllerBase` 组合。
 - `_ADBControllerBase` 根据 MRO 合并各 mixin 的 `_handlers` 注册表，按 model 返回的 method 名称分派到相应 `_process_*_result` 方法。
 - Controller 聚合多设备批次、录屏和保存路径，再将结果转换为 GUI 信号；Screenshot 已作为
-  vNext Gate A 迁入 OperationManager，不再使用 Controller 共享剩余计数/路径列表。
+  vNext Gate A 迁入 OperationManager，不再使用 Controller 共享剩余计数/路径列表；安装批次已作为
+  Gate C 迁入 `InstallBatchUseCase`。`ADBControllerSignals` 新增
+  `record_target_finished(str, str)` 与 `monkey_target_finished(str, str)` 批次终态信号（参数为批次标识、设备），
+  `SidePanelSignals` 提供 `screen_record_batch_requested`、`start_monkey_batch_requested`、
+  `stop_screen_record_batch_requested`、`kill_monkey_batch_requested` 与 `batch_install_requested` 等批次入口。
 
 ### 4. Model 与 Service 层
 
 - `models/adb_model.py::async_command` 把方法放入全局 QThreadPool；结果通过 `command_finished(method, result)` 回到 Controller。
+  operation 相关的 `_operation_id/_operation_owner_token/_operation_generation_token` 等关键字参数
+  只用于构造 `OperationMetadata` 信封（`adblab/application/envelope.py`），不会转发给底层 model 方法。
 - `models/adb_device.py`、`adb_app.py`、`adb_advanced.py`、`adb_testing.py` 提供主要 ADB 能力；`adb_network.py` 和 `adb_system.py` 作为 mixin 复用。
 - `models/remote/` 与 `models/file_explorer_service.py` 尽量保持无 Qt 或低 Qt 耦合，便于单测。
 - `models/mobileperf/runner.py` 是主应用和移植内核之间的进程隔离适配层。
@@ -101,6 +106,15 @@ flowchart LR
   `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用可纵向滚动的内容区，
   以滚动视口实际宽度及当前 UI 字号调整 Appearance、Window、Storage 与操作按钮的排列；
   主面板在实际分栏或滚动视口宽度变化时重排。
+- `gui/widgets/responsive_controller.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
+  用一次度量生成布局计划（`LayoutPlan`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
+  的收敛循环（`MAX_APPLY_ROUNDS = 3`），窗口尺寸变化经 40 毫秒防抖（`RESIZE_DEBOUNCE_MS = 40`）
+  批量触发重排；`gui/widgets/preset_spin_box.py` 提供严格整数预设输入（`StrictIntComboBox`），
+  保证 Monkey 事件数、throttle 等业务值始终是合法整数。
+- `gui/screen_adapter.py` 定义 `ScreenAdapter` 协议和 `QtScreenAdapter` 实现（从 `main_frame.py`
+  抽出）：统一封装窗口所在屏幕、可用几何、逻辑 DPI 与屏幕/DPI 变更订阅，供主窗口尺寸约束、
+  二级窗口适配（`gui/dialogs/lifecycle.py::fit_secondary_window_to_owner_screen`）和工具栏保存路径
+  显示宽度计算复用；GUI 依赖协议而不是直接调用 QScreen，便于测试注入与几何探针。
 
 ### 日志通道
 
@@ -165,7 +179,7 @@ sequenceDiagram
 | 执行单元 | 用途 | 生命周期管理 |
 | --- | --- | --- |
 | Qt 主线程 | UI、信号槽、定时器、日志呈现 | QApplication 事件循环 |
-| 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令、邮件任务 | model 信号 + Controller shutdown；不统一等待所有 QRunnable |
+| 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | model 信号 + Controller shutdown；不统一等待所有 QRunnable |
 | `_ScanThread` | 设备列表轮询 | MainFrame 显式停止/等待 |
 | 对话框 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | LiveLogcat 已由 TaskSupervisor 后台治理；其余仍由各 closeEvent abort/延后等待 |
 | 应用自有 cleanup QThreadPool | LiveLogcat 资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor，dialog 注入；不使用 global pool |
@@ -195,9 +209,13 @@ sequenceDiagram
 
 - **OperationManager** 管理业务操作身份、状态机、进度、取消意图和结果汇总，不拥有线程或进程。
 - Phase 1 实现位于 `adblab/application/`：active registry 在终态原子移除，fan-out 使用明确 unit
-  结果汇总，metadata envelope 保持 `Signal(str, object)` 兼容。详细决策见
-  `docs/architecture/adr/0002-operation-contract.md`。
+  结果汇总，metadata envelope 保持 `Signal(str, object)` 兼容。`OperationMetadata` 增加
+  `owner_token`（结果响应所有权）与 `generation_token`（代次边界，用于丢弃晚到/错代结果）；
+  `OperationManager` 提供 `cancel_pending_units`、`record_unit_result`、`finish_from_unit_results`
+  等单元接口。详细决策见 `docs/architecture/adr/0002-operation-contract.md`。
 - **TaskSupervisor** 管理 QThread/QRunnable/Executor/外部进程的注册、停止和等待，不判断业务成功。
+  Remote/MobilePerf 重做后，超时或失败停止结果会携带 `completion_error`，避免把被强制停止的任务
+  误报为成功。
 - LiveLogcat Gate B1 已接入 TaskSupervisor：停止广播在 GUI 线程外执行，超时资源保留
   residual snapshot，日志在 producer 侧做有界 batch，工作线程信号通过对话框 QObject 槽
   校验发送者，避免匿名回调越过接收者生命周期。运行中关闭日志窗口时先隐藏并断开数据界面信号，
@@ -209,22 +227,31 @@ sequenceDiagram
 - GUI 只消费兼容 facade 或新端口，不直接依赖具体 worker；旧信号在迁移期保持名称、参数和线程语义。
 - Phase 0 已先收紧安全与结果真实性：危险操作统一确认、批次汇总线程安全、Monkey 前台探测
   fail-closed、App Manager 失败传播、Remote 输入锁定活动会话、MobilePerf 仅接受本次运行产物、
-  DeviceStore 原子写，以及邮件用户目录配置与日志脱敏。
-- 三个架构门必须分别证明：Screenshot 的 operation 隔离、LiveLogcat 的资源托管、Install batch
-  的批次部分失败语义；任一门失败时只回滚该门，不拆除兼容 facade。
+  DeviceStore 原子写。
+- 三个架构门的状态：Screenshot（Gate A）已完成 operation 隔离；Install batch（Gate C）已完成
+  批次部分失败语义（`adblab/application/install_batch.py::InstallBatchUseCase` 的
+  start/complete/fail/cancel/retry、operation/unit 身份、协作取消、Controller 侧提交预留/所有权/
+  generation 边界）；LiveLogcat（Gate B）B1 已接入 TaskSupervisor，但 Gate B2 的 MainFrame 整体
+  异步关闭尚未实施，因此 Gate B 总体仍是 No-Go。任一门回滚时只回滚该门，不拆除兼容 facade。
 
 ## 已知架构限制
 
-- Controller 仍持有较多业务状态；Screenshot 已完成 operation 隔离，但安装批次、录屏和其他
-  `_pending_ops` 路径仍存在并发隔离不足。
+- Controller 仍持有较多业务状态；Screenshot 已完成 operation 隔离，安装批次已迁入
+  `InstallBatchUseCase`，但录屏、卸载/清数据/重启/当前 Activity 等其他 `_pending_ops`/`_batch_trackers`
+  路径仍存在并发隔离不足。
 - 命令执行边界没有完全统一：`core/adb_bridge.py` 和 `mobileperf/android/tools/androiddevice.py` 直接创建 Popen，后者还使用 `shell=True`。
 - 除 LiveLogcat 外，对话框仍各自实现 worker 生命周期；统一任务注册/取消协议尚未扩展到
   App Manager、File Explorer、Remote 和 MobilePerf。
-- 本地配置没有 schema/version；只有白名单键迁移。DeviceStore 已改为锁内快照和原子替换，
-  但设置存储仍没有统一 schema/version。
+- 本地配置没有 schema/version；只有白名单键迁移。Remote 的 `scrcpy_*` 键已通过
+  `SCRCPY_SETTING_DEFAULTS` 白名单纳入 DEFAULTS 并可跨会话恢复，DeviceStore 已改为锁内快照和
+  原子替换，但设置存储仍没有统一 schema/version。
 - 没有真正的鉴权/权限分层；已知危险入口现在受 `confirm_dangerous_ops` 和统一策略保护，
   但本地用户仍可在确认后执行 shell、文件删除、应用清除等高影响操作。
 - 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；CI 只在 Windows 运行完整 pytest。
-- 临时邮箱运行时已只读取用户配置目录或显式环境注入；外部服务授权、稳定性和数据处理条款仍待确认，
-  仓库中历史跟踪配置仍需所有者轮换并清理历史。
-- README 仍描述已删除的旧性能子系统，架构文档存在漂移历史。
+- 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与 requests/ruamel
+  依赖均已删除，运行时不再发起任何外部 HTTP 调用）；仓库历史中曾跟踪的邮件配置仍需所有者
+  轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
+- 响应式重做后 `gui/main_frame.py` 仍约 2,500 行，是后续大文件拆分的候选；目前已只抽出
+  `gui/screen_adapter.py`，其余拆分待后续。
+- 全量 pytest 约 930 项、耗时约 11 分钟，响应式几何扫描测试是主要耗时来源之一
+  （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。

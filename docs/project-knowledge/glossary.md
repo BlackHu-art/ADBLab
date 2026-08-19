@@ -15,7 +15,7 @@
 | handler map | 合并各 Controller mixin 的 `_handlers` 注册表，按异步 model method 名称选择 `_process_*_result` 处理器 | `controllers/_base.py` |
 | Model | 封装 ADB 操作并输出标准结果的逻辑层 | `models/adb_device.py` 等 |
 | Service | 较低 Qt 耦合的可复用业务/外部工具适配 | `models/remote/`、`file_explorer_service.py` |
-| Worker | 在 QThread/QRunnable/子进程中执行耗时任务的执行体 | `AppManagerWorker`、文件浏览器的 `ADBWorker`/`TransferWorker`、`GetRandomEmailTask` |
+| Worker | 在 QThread/QRunnable/子进程中执行耗时任务的执行体 | `AppManagerWorker`、文件浏览器的 `ADBWorker`/`TransferWorker` |
 | `async_command` | 把 model 方法包装成 QRunnable 并发出 `command_finished` | `models/adb_model.py` |
 | CommandRunner | 短生命周期 subprocess 执行器 | `models/base/command_runner.py` |
 | CommandResult | 包含 success/output/error/returncode/timed_out 等的标准命令结果 | `models/base/command_runner.py` |
@@ -27,6 +27,12 @@
 | LogService | 线程安全缓冲、批量向 Qt 发日志信号的服务 | `core/log_service.py` |
 | perf trace | 由 `build_async_perf/attach_perf/split_perf/summarize_perf` 等函数记录和汇总异步耗时 | `core/perf_trace.py` |
 | BatchOperationTracker | 统计多设备/多包批次完成数的轻量对象 | `utils/batch_tracker.py` |
+| OperationManager | 管理业务操作身份、状态机、进度、取消意图和结果汇总的纯 Python registry，不拥有线程/进程 | `adblab/application/operations.py` |
+| OperationMetadata | `async_command` 为 operation 调用组装的信封：operation/unit/task/target 身份、预期 artifact、owner/generation token | `adblab/application/envelope.py` |
+| InstallBatchUseCase | 安装批次 Gate C 用例：start/complete/fail/cancel/retry 状态机、部分失败与失败项重试 | `adblab/application/install_batch.py` |
+| Gate A / Gate B / Gate C | vNext 三个架构门：Screenshot operation 隔离（已过）、LiveLogcat 资源托管（B1 已过、B2 No-Go）、Install batch 批次部分失败语义（已过） | `docs/architecture/adr/0001-incremental-vnext.md` |
+| ResponsiveCoordinator | 响应式重排的单一协调入口：度量 → 布局计划 → 溢出收敛（最多 3 轮、40ms 防抖） | `gui/widgets/responsive_controller.py` |
+| ScreenAdapter / QtScreenAdapter | 屏幕适配协议与 Qt 实现：所在屏幕、可用几何、逻辑 DPI 与变更订阅 | `gui/screen_adapter.py` |
 | Remote | scrcpy 投屏与 ADB 远程输入功能 | `gui/panels/remote_panel.py`、`models/remote/` |
 | scrcpy | Android 投屏/控制外部工具 | `scrcpy-win64-v3.3.1/`、`ScrcpyService` |
 | ScrcpyConfig | scrcpy 用户配置数据类 | `models/remote/types.py` |
@@ -55,7 +61,7 @@
 | aapt | Android Asset Packaging Tool，用于解析本地 APK 元数据 | `models/adb_app.py` |
 | chkbugreport JAR | 可选 bugreport 转换工具 | `resources/chkbugreport-0.5-215.jar`、`models/adb_testing.py` |
 | PyInstaller | 桌面应用打包工具 | `ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
-| YAML | 人类可读配置格式；项目用于设备元数据和邮件配置 | `models/device_store.py`、`core/mail/email_service.py` |
+| YAML | 人类可读配置格式；项目用于设备元数据 | `models/device_store.py` |
 | JSON | 轻量数据交换/配置格式；项目用于应用设置和 App Manager 预设 | `core/settings_manager.py`、`gui/dialogs/app_manager.py` |
 | CSV | 逗号分隔表格文件；MobilePerf 各指标先落 CSV | `mobileperf/android/` |
 | XLSX | Excel 工作簿格式；MobilePerf 汇总报告输出格式 | `mobileperf/android/report.py` |
@@ -73,8 +79,8 @@
 | CI | Continuous Integration；持续集成 | `.github/workflows/Build-exe.yaml` |
 | GUI | Graphical User Interface；图形界面 | PySide6 主应用 |
 | UI | User Interface；用户界面 | panels、dialogs、日志和状态栏 |
-| HTTP | Hypertext Transfer Protocol；外部服务调用协议 | 临时邮箱 API |
-| HTTPS | HTTP over TLS；加密 HTTP | 临时邮箱 API 基址 |
+| HTTP | Hypertext Transfer Protocol；外部服务调用协议 | 主应用无出站 HTTP 客户端；仅浏览器打开 GitHub/Perfetto 链接 |
+| HTTPS | HTTP over TLS；加密 HTTP | 同上；历史邮件 API 已移除 |
 | FPS | Frames Per Second；每秒帧数 | Remote stderr 解析、MobilePerf FPS monitor |
 | PATH | 操作系统可执行文件搜索路径 | 非 Windows 解析 adb/scrcpy/aapt/Java |
 | JAR | Java Archive；Java 归档文件 | chkbugreport 工具 |

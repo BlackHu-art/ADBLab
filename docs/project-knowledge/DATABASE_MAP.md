@@ -14,7 +14,6 @@
 | 旧应用设置 | `resources/app_settings.json` | 历史默认/用户值 | AppSettings 首次迁移 | 只在用户文件不存在时迁移 | 资源文件可能含本机路径，作为默认种子可移植性差 |
 | 设备元数据 | YAML；用户配置目录 `connected_devices.yaml` | device id → 属性字典 | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 设备标识属敏感元数据；无 schema/version |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 同上 | DeviceStore 首次迁移 | 无用户文件时复制/加载 | 仓库跟踪文件含历史设备标识，合规性待确认 |
-| 临时邮箱配置 | 用户配置目录 `mail.yaml` 或显式环境注入 | `enabled` 与服务签名材料 | `email_service.mail_config_path/_load_mail_config` | 只读加载；不持久化账号、验证码或指纹 | 历史源码配置仍需所有者轮换/停止跟踪；无配置 UI/schema |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerDialog._create_preset/_load_preset` | 直接 open/json dump | 无 schema、编码未显式指定、异常处理不足 |
 | MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
@@ -36,7 +35,6 @@ erDiagram
     PERFORMANCE_RUN ||--o| REPORT_FILE : "汇总"
     DEVICE ||--o{ MEDIA_FILE : "截图/录屏/诊断"
     APP_PRESET }o--o{ APP_PACKAGE : "选择"
-    MAIL_CONFIG ||--o{ MAIL_REQUEST : "驱动"
 
     APP_SETTINGS {
         string key
@@ -80,11 +78,13 @@ erDiagram
 | 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | Log UI、`core.perf_trace` helpers/Controller |
 | 文件 | `save_directory` | 截图、日志、备份、MobilePerf、文件浏览器 |
 | Monkey | `monkey_params` | AppPanel/Controller |
-| Remote | 动态 `scrcpy_*`、`scrcpy_preset` | RemotePanel；不在 DEFAULTS 白名单中，运行时可写但重新加载时会被 `_load()` 忽略，这是潜在持久化缺陷，需实际确认 |
+| 分栏 | `device_log_split_ratio` | MainFrame 日志区/设备区分栏比例 |
+| Remote | `scrcpy_preset`、`scrcpy_maxsize`、`scrcpy_fps`、`scrcpy_codec`、`scrcpy_buffer`、`scrcpy_bitrate`、`scrcpy_orientation` | RemotePanel；这些键由 `SCRCPY_SETTING_DEFAULTS` 白名单纳入 `DEFAULTS`，运行时可写且重启可载入 |
 
-最后一项来自代码交叉检查：`AppSettings.update()` 允许当前进程写入动态键，但 `_load()` 只载入
-`DEFAULTS` 中的键。`RemotePanel` 调用 `AppSettings.set("scrcpy_...")` 后，这些值会出现在 JSON，
-却不会在下一次进程启动时载入。该问题应补单测后修复。
+最后一项来自代码交叉检查：`core/settings_manager.py` 的 `SCRCPY_SETTING_DEFAULTS` 把 Remote 的
+七个 `scrcpy_*` 键作为白名单并入 `DEFAULTS`，`_normalise_setting` 对它们做字符串归一化
+（空值/非标量回退默认值、截断到 128 字符），因此旧版本已写入 JSON 的同名键无需迁移即可在
+下次启动时恢复；`test_settings_persistence.py` 验证正式键在应用重建后的持久化与旧 JSON 兼容性。
 
 字体和布局设置的写入粒度如下：
 
@@ -106,13 +106,14 @@ erDiagram
   跨进程也没有文件锁，仍不能把它当成数据库事务或多进程一致性协议。
 - DeviceStore 在同一 RLock 内读取/生成快照，使用临时文件、`fsync` 和 `os.replace`；
   损坏用户 YAML 会先备份再恢复为空存储。
-- 邮件配置为只读；App Manager 预设 JSON 仍直接覆盖，没有原子替换。
+- App Manager 预设 JSON 仍直接覆盖，没有原子替换。
 - 文件型数据没有索引；规模目前小，性能不是主要风险，一致性和隐私更重要。
 
 ## 数据风险与建议
 
-1. 邮件运行时已迁移用户目录/环境注入并脱敏；仓库所有者仍需轮换、停止跟踪并审查历史。
+1. 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、信号与 requests/ruamel 依赖均删除），
+   不再有任何邮件配置或外部 API 调用；仓库 Git 历史中曾跟踪的邮件配置仍需所有者轮换并审查历史。
 2. 为设置/设备/预设增加 `schema_version` 和迁移函数；若未来出现多个写进程，再增加文件锁或
    单写者机制。
-3. 明确允许持久化的动态设置键，修复 `scrcpy_*` 重启丢失。
+3. 明确允许持久化的动态设置键；`scrcpy_*` 已通过白名单修复，其余动态键仍需评估。
 4. 为结果文件定义敏感级别、默认保留期、导出提示和清理策略。
