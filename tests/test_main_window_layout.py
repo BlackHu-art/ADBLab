@@ -1054,7 +1054,7 @@ def test_settings_dialog_opens_as_reusable_non_modal_window():
         log_panel=SimpleNamespace(set_max_lines=Mock()),
     )
 
-    with patch("gui.main_frame.SettingsDialog", return_value=dialog):
+    with patch("gui.secondary_windows.SettingsDialog", return_value=dialog):
         MainFrame._show_settings(frame)
 
     frame._register_dialog.assert_called_once()

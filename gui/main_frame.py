@@ -3,47 +3,34 @@
 import os
 import shutil
 import threading
-import time
 from collections.abc import Callable
 
 from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QIcon, QKeySequence, QMouseEvent, QResizeEvent, QShortcut
+from PySide6.QtGui import QIcon, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
-    QAbstractButton,
     QApplication,
-    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMessageBox,
     QSizePolicy,
     QSplitter,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-from adblab.application.supervision import StopDisposition, ThreadedShutdownTask
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from core.dangerous_ops import DangerousOperationPolicy
 from core.log_service import LogService
 from core.settings_manager import AppSettings
-from gui.dialogs.about_dialog import AboutDialog
-from gui.dialogs.app_manager import AppManagerDialog
-from gui.dialogs.file_explorer import FileExplorerDialog
-from gui.dialogs.lifecycle import (
-    configure_independent_secondary_window,
-    fit_secondary_window_to_owner_screen,
-)
-from gui.dialogs.live_logcat import LiveLogcatDialog
-from gui.dialogs.settings_dialog import SettingsDialog
+from gui.close_controller import CloseController
+from gui.main_frame_toolbar import ToolbarController
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
-from gui.styles.icon_loader import get_themed_icon
+from gui.secondary_windows import SecondaryWindowHost
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
@@ -152,6 +139,9 @@ class MainFrame(QMainWindow):
         self.task_supervisor = QtTaskSupervisor()
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
+        self._toolbar_controller = ToolbarController(self)
+        self._secondary_window_host = SecondaryWindowHost(self)
+        self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
         self._shutdown_handles = []
         self._shutdown_results = ()
@@ -646,193 +636,9 @@ class MainFrame(QMainWindow):
     # ── 顶部工具栏 ──────────────────────────────────────────────────────
 
     def _create_toolbar(self) -> QFrame:
-        """创建包含功能入口、主题切换和窗口控制的顶部工具栏。"""
-        bar = QFrame()
-        self._toolbar = bar
-        bar.setObjectName("toolbar")
-        bar.setMinimumHeight(BaseStyles.control_height(minimum=32, padding=8))
-        bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
-
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(10, 0, 6, 0)
-        layout.setSpacing(4)
-
-        self._toolbar_title = QLabel("ADBLab")
-        self._toolbar_title.setObjectName("toolbarTitle")
-        layout.addWidget(self._toolbar_title)
-
-        self._toolbar_actions = {}
-        self._toolbar_action_buttons = {}
-        action_specs = (
-            (
-                "app_mgr",
-                "App Manager",
-                "squares-four.svg",
-                "Manage apps on the selected device",
-                self._show_app_manager,
-                False,
-            ),
-            (
-                "file_explorer",
-                "File Explorer",
-                "folder-open.svg",
-                "Browse files on the selected device",
-                self._show_file_explorer,
-                False,
-            ),
-            (
-                "logcat",
-                "Live Logcat",
-                "scroll.svg",
-                "View live logs from the selected device",
-                self._show_logcat,
-                False,
-            ),
-            (
-                "performance",
-                "Performance",
-                "speedometer.svg",
-                "Configure and start performance monitoring",
-                self._show_performance_monitor,
-                False,
-            ),
-            (
-                "settings",
-                "Settings",
-                "gear.svg",
-                "Configure application preferences",
-                self._show_settings,
-                False,
-            ),
-            (
-                "cmd",
-                "CMD",
-                "terminal-window.svg",
-                "Open a command prompt in the ADB tools folder",
-                self._open_cmd,
-                False,
-            ),
-            (
-                "save_path",
-                "Change default save directory",
-                "folder.svg",
-                "Choose the default output directory",
-                self._on_save_path_clicked,
-                False,
-            ),
-            (
-                "clear",
-                "Clear Log",
-                "broom.svg",
-                "Remove all messages from the operation log",
-                self.clear_log,
-                False,
-            ),
-            (
-                "about",
-                "About",
-                "info.svg",
-                "Show application version and project information",
-                self._show_about_dialog,
-                False,
-            ),
-            (
-                "theme",
-                "Toggle Light/Dark theme",
-                "circle-half-tilt.svg",
-                "Switch between light and dark themes",
-                self._toggle_theme,
-                False,
-            ),
-            (
-                "always_on_top",
-                "Pin on top",
-                "push-pin.svg",
-                "Keep the main window above other windows",
-                self.set_always_on_top,
-                True,
-            ),
-            (
-                "minimize",
-                "Minimize",
-                "minus.svg",
-                "Hide the main window in the taskbar",
-                self._minimize_window,
-                False,
-            ),
-            (
-                "maximize",
-                "Maximize",
-                "square.svg",
-                "Expand the main window to fill the screen",
-                self._toggle_maximize_restore,
-                False,
-            ),
-            ("exit", "Exit", "x.svg", "Close ADBLab", self._request_application_close, False),
-        )
-        for key, label, icon_name, tooltip, callback, checkable in action_specs:
-            self._create_toolbar_action(
-                key,
-                label,
-                icon_name,
-                callback,
-                tooltip=tooltip,
-                checkable=checkable,
-                checked=self._always_on_top if key == "always_on_top" else False,
-            )
-
-        self.tb_app_mgr = self._create_toolbar_action_button("app_mgr")
-        self.tb_file_explorer = self._create_toolbar_action_button("file_explorer")
-        self.tb_logcat = self._create_toolbar_action_button("logcat")
-        self.tb_performance = self._create_toolbar_action_button("performance")
-        self.tb_settings = self._create_toolbar_action_button("settings")
-        self.tb_cmd = self._create_toolbar_action_button("cmd")
-        self._tb_save_btn = self._create_toolbar_action_button("save_path")
-        self._tb_save_btn.setObjectName("savePathBtn")
-        self._tb_save_btn.setCursor(Qt.PointingHandCursor)
-
-        self._save_path_label = QLabel()
-        self._save_path_label.setObjectName("savePathLabel")
-        self._save_path_label.setMinimumWidth(0)
-        self._save_path_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-
-        layout.addWidget(self.tb_app_mgr)
-        layout.addWidget(self.tb_file_explorer)
-        layout.addWidget(self.tb_logcat)
-        layout.addWidget(self.tb_performance)
-        layout.addWidget(self.tb_settings)
-        layout.addWidget(self.tb_cmd)
-        layout.addWidget(self._tb_save_btn)
-        layout.addWidget(self._save_path_label)
-        layout.addStretch()
-
-        self.tb_clear = self._create_toolbar_action_button("clear")
-        self.tb_about = self._create_toolbar_action_button("about")
-        self.theme_btn = self._create_toolbar_action_button("theme", icon_size=QSize(16, 16))
-        self.tb_always_on_top = self._create_toolbar_action_button("always_on_top")
-        self._refresh_always_on_top_button()
-        self.tb_minimize = self._create_toolbar_action_button("minimize")
-        self.tb_maximize = self._create_toolbar_action_button("maximize")
-        self.tb_exit = self._create_toolbar_action_button("exit")
-        self.tb_exit.setObjectName("exit_btn")
-
-        for btn in (
-            self.tb_clear,
-            self.tb_about,
-            self.theme_btn,
-            self.tb_always_on_top,
-        ):
-            layout.addWidget(btn)
-
-        layout.addWidget(self.tb_minimize)
-        layout.addWidget(self.tb_maximize)
-        layout.addWidget(self.tb_exit)
-
-        self._refresh_toolbar_metrics()
-        self._refresh_save_path()
-
-        return bar
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._create_toolbar()
 
     def _create_toolbar_action(
         self,
@@ -844,76 +650,44 @@ class MainFrame(QMainWindow):
         tooltip: str,
         checkable: bool = False,
         checked: bool = False,
-    ) -> QAction:
-        """创建业务入口唯一持有的 QAction。"""
-
-        action = QAction(get_themed_icon(icon_name), label, self)
-        action.setToolTip(tooltip)
-        action.setProperty("functionalToolTip", tooltip)
-        action.setProperty("iconName", icon_name)
-        action.setProperty("accessibleName", label)
-        action.setProperty("accessibleDescription", tooltip)
-        action.setCheckable(checkable)
-        action.setChecked(checked)
-        if checkable:
-            action.triggered.connect(callback)
-        else:
-            action.triggered.connect(lambda _checked=False, handler=callback: handler())
-        action.changed.connect(lambda key=key: self._sync_toolbar_action_button(key))
-        self._toolbar_actions[key] = action
-        return action
+    ):
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._create_toolbar_action(
+            key,
+            label,
+            icon_name,
+            callback,
+            tooltip=tooltip,
+            checkable=checkable,
+            checked=checked,
+        )
 
     def _create_toolbar_action_button(
         self,
         key: str,
         *,
         icon_size: QSize = QSize(14, 14),
-    ) -> QToolButton:
-        action = self._toolbar_actions[key]
-        button = self._create_toolbar_btn(action.toolTip(), "", action=action)
-        button.setIconSize(icon_size)
-        self._toolbar_action_buttons[key] = button
-        self._sync_toolbar_action_button(key)
-        return button
+    ):
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._create_toolbar_action_button(key, icon_size=icon_size)
 
     def _create_toolbar_btn(
         self,
         tooltip: str,
         icon_path: str,
         *,
-        action: QAction | None = None,
-    ) -> QToolButton:
-        """创建带图标和提示文本的扁平工具栏按钮。"""
-        icon_name = icon_path.replace("resources/icons/", "")
-        btn = QToolButton()
-        if action is not None:
-            btn.setDefaultAction(action)
-            icon_name = str(action.property("iconName") or "")
-        elif icon_name:
-            btn.setIcon(get_themed_icon(icon_name))
-        btn.setIconSize(QSize(14, 14))
-        btn.setToolTip(tooltip)
-        btn.setAccessibleName(tooltip)
-        btn.setProperty("iconName", icon_name)
-        btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        btn.setAutoRaise(True)
-        return btn
+        action=None,
+    ):
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._create_toolbar_btn(tooltip, icon_path, action=action)
 
     def _sync_toolbar_action_button(self, key: str) -> None:
-        """把 QAction 的展示状态投射到兼容 QToolButton。"""
-
-        action = getattr(self, "_toolbar_actions", {}).get(key)
-        button = getattr(self, "_toolbar_action_buttons", {}).get(key)
-        if action is None or button is None:
-            return
-        button.setEnabled(action.isEnabled())
-        button.setCheckable(action.isCheckable())
-        button.setChecked(action.isChecked())
-        button.setIcon(action.icon())
-        button.setToolTip(action.toolTip())
-        button.setAccessibleName(str(action.property("accessibleName") or action.text()))
-        button.setAccessibleDescription(str(action.property("accessibleDescription") or ""))
-        button.setProperty("iconName", action.property("iconName"))
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._sync_toolbar_action_button(key)
 
     def _set_toolbar_action_state(
         self,
@@ -926,44 +700,22 @@ class MainFrame(QMainWindow):
         accessible_name: str | None = None,
         icon_name: str | None = None,
     ) -> None:
-        """优先写 canonical QAction，并兼容只构造旧按钮的轻量调用方。"""
-
-        action = getattr(self, "_toolbar_actions", {}).get(key)
-        target = action or getattr(self, button_name, None)
-        if target is None:
-            return
-        if enabled is not None:
-            target.setEnabled(enabled)
-        if checked is not None:
-            target.setChecked(checked)
-        if tooltip is not None:
-            target.setToolTip(tooltip)
-        if accessible_name is not None:
-            if action is not None:
-                action.setText(accessible_name)
-                action.setProperty("accessibleName", accessible_name)
-            else:
-                target.setAccessibleName(accessible_name)
-        if icon_name is not None:
-            target.setProperty("iconName", icon_name)
-            target.setIcon(get_themed_icon(icon_name))
-        if action is not None:
-            self._sync_toolbar_action_button(key)
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._set_toolbar_action_state(
+            key,
+            button_name,
+            enabled=enabled,
+            checked=checked,
+            tooltip=tooltip,
+            accessible_name=accessible_name,
+            icon_name=icon_name,
+        )
 
     def _setup_shortcuts(self) -> None:
-        """注册不占用 Remote 启停组合键的主窗口快捷操作。"""
-
-        bindings = (
-            ("F5", self._request_device_refresh),
-            ("Ctrl+,", self._show_settings),
-            ("Ctrl+Shift+L", self.clear_log),
-        )
-        self._main_shortcuts = []
-        for sequence, callback in bindings:
-            shortcut = QShortcut(QKeySequence(sequence), self)
-            shortcut.setContext(Qt.ShortcutContext.WindowShortcut)
-            shortcut.activated.connect(callback)
-            self._main_shortcuts.append(shortcut)
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._setup_shortcuts()
 
     def _request_device_refresh(self) -> None:
         """先公开扫描状态，再通过既有信号请求刷新。"""
@@ -972,19 +724,9 @@ class MainFrame(QMainWindow):
         self.left_panel.signals.refresh_devices_requested.emit()
 
     def _refresh_toolbar_metrics(self) -> None:
-        """按当前界面字体更新工具栏高度和图标按钮点击区域。"""
-
-        toolbar = getattr(self, "_toolbar", None)
-        if toolbar is None:
-            return
-        toolbar_height = BaseStyles.control_height(minimum=32, padding=8)
-        requested_button_height = BaseStyles.control_height(minimum=24, padding=4)
-        button_height = min(requested_button_height, max(24, toolbar_height - 2))
-        size = QSize(max(28, button_height), button_height)
-        toolbar.setMinimumHeight(toolbar_height)
-        for button in toolbar.findChildren(QAbstractButton):
-            button.setFixedSize(size)
-        toolbar.updateGeometry()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._refresh_toolbar_metrics()
 
     def _on_theme_changed(self, _name: str):
         """主题变化后刷新窗口样式和图标，并持久化主题选择。"""
@@ -1034,78 +776,39 @@ class MainFrame(QMainWindow):
                 )
 
     def _toggle_theme(self):
-        """记录工具栏主题切换请求并交给主题服务执行。"""
-        _debug_log(
-            self,
-            "ui.toolbar",
-            action="theme",
-            phase="requested",
-            current_theme=BaseStyles.current_theme(),
-        )
-        BaseStyles.toggle_theme()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._toggle_theme()
 
     def _minimize_window(self):
-        """记录工具栏最小化动作。"""
-        _debug_log(self, "ui.toolbar", action="minimize", phase="requested")
-        self.showMinimized()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._minimize_window()
 
     def _toggle_maximize_restore(self):
-        """切换最大化状态，并同步窗口控制按钮的图标和说明。"""
-
-        if self.isMaximized():
-            self.showNormal()
-        else:
-            self.showMaximized()
-        self._refresh_maximize_button()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._toggle_maximize_restore()
 
     def _refresh_maximize_button(self) -> None:
-        maximized = self.isMaximized()
-        label = "Restore" if maximized else "Maximize"
-        tooltip = (
-            "Restore the main window to its previous size"
-            if maximized
-            else "Expand the main window to fill the screen"
-        )
-        icon_name = "corners-in.svg" if maximized else "square.svg"
-        MainFrame._set_toolbar_action_state(
-            self,
-            "maximize",
-            "tb_maximize",
-            tooltip=tooltip,
-            accessible_name=label,
-            icon_name=icon_name,
-        )
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._refresh_maximize_button()
 
     def _request_application_close(self):
-        """记录工具栏退出动作，实际资源清理由 closeEvent 接管。"""
-        _debug_log(self, "ui.toolbar", action="exit", phase="requested")
-        self.close()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._request_application_close()
 
     def _refresh_active_dialog_themes(self):
-        survivors = []
-        for dialog in list(getattr(self, "_active_dialogs", [])):
-            try:
-                if hasattr(dialog, "_sync_theme_state"):
-                    dialog._sync_theme_state(force=True)
-                elif hasattr(dialog, "_apply_theme"):
-                    dialog._apply_theme(BaseStyles.current_theme())
-                survivors.append(dialog)
-            except RuntimeError:
-                continue
-        self._active_dialogs = survivors
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._refresh_active_dialog_themes()
 
     def _refresh_toolbar_icons(self):
-        actions = tuple(getattr(self, "_toolbar_actions", {}).values())
-        for action in actions:
-            icon_name = action.property("iconName")
-            if icon_name:
-                action.setIcon(get_themed_icon(icon_name))
-        for button in self.findChildren(QAbstractButton):
-            icon_name = button.property("iconName")
-            default_action = button.defaultAction() if isinstance(button, QToolButton) else None
-            if icon_name and default_action not in actions:
-                button.setIcon(get_themed_icon(icon_name))
-        self._refresh_always_on_top_button()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._refresh_toolbar_icons()
 
     def _connect_all_signals(self):
         """将左侧面板信号连接到 ADB Controller，并包装危险操作校验。"""
@@ -1345,243 +1048,76 @@ class MainFrame(QMainWindow):
         self.log_service.log("INFO", "Log cleared")
 
     def _show_about_dialog(self):
-        """显示关于对话框。"""
-        _debug_log(self, "ui.toolbar", action="about", phase="requested")
-        dialog = AboutDialog(self)
-        dialog.installEventFilter(self)
-        _debug_log(self, "ui.secondary_window", dialog="AboutDialog", phase="opened")
-        result = dialog.exec_()
-        _debug_log(
-            self,
-            "ui.secondary_window",
-            dialog="AboutDialog",
-            phase="closed",
-            result=result,
-        )
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_about_dialog()
 
     def _show_app_manager(self):
-        """为每个已选设备打开应用管理窗口。"""
-        _debug_log(self, "ui.toolbar", action="app_manager", phase="requested")
-        self._show_device_dialogs(AppManagerDialog)
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_app_manager()
 
     def _show_file_explorer(self):
-        """为每个已选设备打开文件浏览窗口。"""
-        _debug_log(self, "ui.toolbar", action="file_explorer", phase="requested")
-        self._show_device_dialogs(FileExplorerDialog)
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_file_explorer()
 
     def _show_logcat(self):
-        """为每个已选设备打开实时 Logcat 窗口。"""
-        _debug_log(self, "ui.toolbar", action="live_logcat", phase="requested")
-        self._show_device_dialogs(
-            LiveLogcatDialog,
-            task_supervisor=self.task_supervisor,
-            log_service=getattr(self, "log_service", None),
-        )
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_logcat()
 
     def _show_performance_monitor(self):
-        """打开原生性能采集启动对话框。"""
-        from gui.dialogs.performance_launcher import PerformanceLauncherDialog
-
-        _debug_log(self, "ui.toolbar", action="performance", phase="requested")
-        devices = self.left_panel.selected_devices
-        if not devices:
-            _debug_log(
-                self,
-                "ui.secondary_window",
-                dialog="PerformanceLauncherDialog",
-                phase="blocked",
-                reason="no_device",
-            )
-            self.log_service.log("WARNING", "No device selected")
-            return
-        if len(devices) != 1:
-            _debug_log(
-                self,
-                "ui.secondary_window",
-                dialog="PerformanceLauncherDialog",
-                phase="blocked",
-                reason="ambiguous_device_selection",
-            )
-            self.log_service.log(
-                "WARNING",
-                "Performance requires exactly one selected device",
-            )
-            return
-        device_ip = devices[0]
-        try:
-            package_name = self.left_panel.current_package_text()
-        except RuntimeError:
-            package_name = ""
-        dlg = self._find_active_dialog(PerformanceLauncherDialog, device_ip or "default")
-        if dlg:
-            _debug_log(
-                self,
-                "ui.secondary_window",
-                dialog="PerformanceLauncherDialog",
-                phase="reused",
-            )
-            MainFrame._show_fitted_dialog(self, dlg)
-            return
-        dlg = self._register_dialog(
-            PerformanceLauncherDialog(
-                device_ip=device_ip,
-                package_name=package_name,
-            ),
-            PerformanceLauncherDialog,
-            device_ip or "default",
-        )
-        dlg.show()
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_performance_monitor()
 
     def _show_device_dialogs(self, dialog_cls, **dialog_kwargs):
-        """为选中设备创建由主窗口托管的非模态窗口。"""
-        devices = self.left_panel.selected_devices
-        if not devices:
-            _debug_log(
-                self,
-                "ui.secondary_window",
-                dialog=dialog_cls.__name__,
-                phase="blocked",
-                reason="no_device",
-            )
-            self.log_service.log("WARNING", "No device selected")
-            return
-        for ip in devices:
-            dlg = self._find_active_dialog(dialog_cls, ip)
-            if dlg:
-                _debug_log(
-                    self,
-                    "ui.secondary_window",
-                    dialog=dialog_cls.__name__,
-                    phase="reused",
-                )
-                MainFrame._show_fitted_dialog(self, dlg)
-                continue
-            dlg = self._register_dialog(
-                dialog_cls(device_ip=ip, **dialog_kwargs),
-                dialog_cls,
-                ip,
-            )
-            dlg.show()
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_device_dialogs(dialog_cls, **dialog_kwargs)
 
     def _register_dialog(self, dialog, dialog_cls=None, device_ip=None):
-        configure_independent_secondary_window(dialog)
-        fit_secondary_window_to_owner_screen(dialog, self)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dialog.installEventFilter(self)
-        dialog_name = dialog_cls.__name__ if dialog_cls is not None else type(dialog).__name__
-        if dialog_cls is not None:
-            dialog.setProperty("dialog_class", dialog_name)
-        if device_ip is not None:
-            dialog.setProperty("device_ip", device_ip)
-        self._active_dialogs.append(dialog)
-        _debug_log(
-            self,
-            "ui.secondary_window",
-            active_count=len(self._active_dialogs),
-            dialog=dialog_name,
-            phase="created",
-        )
-        dialog.destroyed.connect(
-            lambda _obj=None, dlg=dialog, name=dialog_name: self._on_dialog_destroyed(
-                dlg,
-                name,
-            )
-        )
-        return dialog
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._register_dialog(dialog, dialog_cls, device_ip)
 
     def _show_fitted_dialog(self, dialog) -> None:
-        """复用二级窗口前重新限制几何，并将其激活。"""
-
-        try:
-            fit_secondary_window_to_owner_screen(dialog, self)
-        except (AttributeError, RuntimeError, TypeError):
-            pass
-        dialog.show()
-        dialog.raise_()
-        dialog.activateWindow()
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_fitted_dialog(dialog)
 
     def _find_active_dialog(self, dialog_cls, device_ip):
-        survivors = []
-        match = None
-        for dialog in self._active_dialogs:
-            try:
-                if getattr(dialog, "_closing", False):
-                    survivors.append(dialog)
-                    continue
-                same_dialog = (
-                    dialog.property("dialog_class") == dialog_cls.__name__
-                    and dialog.property("device_ip") == device_ip
-                )
-            except RuntimeError:
-                continue
-            survivors.append(dialog)
-            if same_dialog and match is None:
-                match = dialog
-        self._active_dialogs = survivors
-        return match
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._find_active_dialog(dialog_cls, device_ip)
 
     def _forget_dialog(self, dialog):
-        try:
-            self._active_dialogs.remove(dialog)
-        except ValueError:
-            pass
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._forget_dialog(dialog)
 
     def _on_dialog_destroyed(self, dialog, dialog_name: str):
-        """移除已销毁窗口并记录二级窗口关闭完成。"""
-        self._forget_dialog(dialog)
-        _debug_log(
-            self,
-            "ui.secondary_window",
-            active_count=len(self._active_dialogs),
-            dialog=dialog_name,
-            phase="closed",
-        )
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._on_dialog_destroyed(dialog, dialog_name)
 
     def eventFilter(self, watched, event):
-        """记录受主窗口托管的二级窗口关闭请求。"""
-        if event.type() == QEvent.Type.Close:
-            try:
-                dialog_name = watched.property("dialog_class") or type(watched).__name__
-            except RuntimeError:
-                dialog_name = type(watched).__name__
-            _debug_log(
-                self,
-                "ui.secondary_window",
-                dialog=dialog_name,
-                phase="close_requested",
-            )
-            return False
+        host = getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        handled = host.eventFilter(watched, event)
+        if handled is not None:
+            return handled
         return super().eventFilter(watched, event)
 
     def _show_settings(self):
-        """显示或激活非模态的单实例设置窗口。"""
-        _debug_log(self, "ui.toolbar", action="settings", phase="requested")
-        dialog = self._find_active_dialog(SettingsDialog, "global")
-        if dialog:
-            MainFrame._show_fitted_dialog(self, dialog)
-            return
-        dialog = self._register_dialog(SettingsDialog(self), SettingsDialog, "global")
-        dialog.continuous_scan_toggled.connect(self.set_continuous_scan)
-        dialog.log_max_lines_changed.connect(self.log_panel.set_max_lines)
-        dialog.save_directory_changed.connect(lambda _path: self._refresh_save_path())
-        dialog.settings_applied.connect(self._refresh_live_settings)
-        _debug_log(self, "ui.secondary_window", dialog="SettingsDialog", phase="opened")
-        dialog.show()
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._show_settings()
 
     def _refresh_live_settings(self) -> None:
-        """让主窗口和已加载页签重新读取可即时生效的设置。"""
-
-        settings = AppSettings.instance()
-        always_on_top = bool(settings.get("always_on_top", False))
-        if always_on_top != self._always_on_top:
-            self.set_always_on_top(always_on_top)
-        else:
-            self._refresh_always_on_top_button()
-        self.log_panel.set_max_lines(settings.get("log_max_lines", 2000))
-        refresh_panels = getattr(self.left_panel, "refresh_from_settings", None)
-        if callable(refresh_panels):
-            refresh_panels()
-        self._refresh_save_path()
+        return (
+            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
+        )._refresh_live_settings()
 
     def _open_cmd(self):
         """在项目根目录打开系统终端。"""
@@ -2060,130 +1596,31 @@ class MainFrame(QMainWindow):
     # ── 全局保存路径 ────────────────────────────────────────────────────
 
     def _sync_save_path_action(self, path: str) -> None:
-        """让默认按钮公开当前完整保存路径。"""
-
-        action = getattr(self, "_toolbar_actions", {}).get("save_path")
-        if action is None:
-            return
-        label = "Change default save directory"
-        if path:
-            current_path = f"Current save directory: {path}"
-            action.setText(f"{label} — {path.replace('&', '&&')}")
-            action.setToolTip(f"Choose a different default output directory\n{current_path}")
-            action.setStatusTip(current_path)
-            action.setProperty("accessibleDescription", current_path)
-        else:
-            action.setText(label)
-            action.setToolTip("Choose the default output directory")
-            action.setStatusTip("")
-            action.setProperty("accessibleDescription", "")
-        action.setProperty("accessibleName", label)
-        MainFrame._sync_toolbar_action_button(self, "save_path")
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._sync_save_path_action(path)
 
     def _refresh_save_path(self):
-        from core.settings_manager import AppSettings
-
-        configured_path = AppSettings.instance().save_directory
-        path = os.path.normpath(configured_path) if configured_path else ""
-        MainFrame._sync_save_path_action(self, path)
-        if path:
-            self._save_path_value = path
-            self._save_path_label.setToolTip(path)
-            self._save_path_label.setAccessibleName("Global save path")
-            self._save_path_label.setAccessibleDescription(path)
-        else:
-            self._save_path_value = ""
-            self._save_path_label.setToolTip("")
-            self._save_path_label.setAccessibleDescription("")
-        self._save_path_label.setStyleSheet(
-            f"color: {BaseStyles.color('TEXT_SECONDARY')}; padding: 0 2px;"
-        )
-        self._save_path_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
-        self._update_toolbar_path_display()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._refresh_save_path()
 
     def _update_toolbar_path_display(self):
-        """按工具栏扣除其余控件后的真实剩余宽度省略保存路径。"""
-
-        label = getattr(self, "_save_path_label", None)
-        if label is None:
-            return
-        path = getattr(self, "_save_path_value", "")
-        if not path:
-            label.clear()
-            label.hide()
-            return
-
-        save_button = getattr(self, "_tb_save_btn", None)
-        if save_button is not None and save_button.isHidden():
-            label.hide()
-            return
-
-        toolbar = getattr(self, "_toolbar", None)
-        layout = toolbar.layout() if toolbar is not None else None
-        if toolbar is None or layout is None:
-            return
-        margins = layout.contentsMargins()
-        active_items = []
-        required_width = 0
-        for index in range(layout.count()):
-            item = layout.itemAt(index)
-            widget = item.widget()
-            if widget is not None and widget is not label and widget.isHidden():
-                continue
-            active_items.append(item)
-            if widget is None or widget is label:
-                continue
-            if widget.minimumWidth() == widget.maximumWidth():
-                required_width += widget.minimumWidth()
-            else:
-                required_width += max(widget.minimumWidth(), widget.sizeHint().width())
-        spacing_width = max(0, len(active_items) - 1) * max(0, layout.spacing())
-        maximum_width = max(
-            0,
-            min(
-                420,
-                toolbar.width() - margins.left() - margins.right() - required_width - spacing_width,
-            ),
-        )
-        label.setVisible(maximum_width > 0)
-        source_text = "GlobalSavePath: " + path
-        text = label.fontMetrics().elidedText(
-            source_text,
-            Qt.TextElideMode.ElideMiddle,
-            maximum_width,
-        )
-        label.setMaximumWidth(maximum_width)
-        label.setText(text)
-        label.updateGeometry()
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._update_toolbar_path_display()
 
     def _on_save_path_clicked(self):
-        from core.settings_manager import AppSettings
-
-        _debug_log(self, "ui.toolbar", action="save_path", phase="requested")
-        s = AppSettings.instance()
-        current = s.save_directory
-        d = QFileDialog.getExistingDirectory(
-            self, "Select Default Save Directory", current if os.path.isdir(current) else ""
-        )
-        if d:
-            s.set("save_directory", d)
-            self._refresh_save_path()
-            _debug_log(self, "ui.toolbar", action="save_path", phase="updated")
-        else:
-            _debug_log(self, "ui.toolbar", action="save_path", phase="cancelled")
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._on_save_path_clicked()
 
     # ── 拖动工具栏移动窗口 ──────────────────────────────────────────────
 
     def _is_toolbar_drag_target(self, position) -> bool:
-        toolbar = getattr(self, "_toolbar", None)
-        widget = self.childAt(position)
-        while widget is not None:
-            if isinstance(widget, QAbstractButton):
-                return False
-            if widget is toolbar:
-                return True
-            widget = widget.parentWidget()
-        return False
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._is_toolbar_drag_target(position)
 
     def mousePressEvent(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton and self._is_toolbar_drag_target(
@@ -2240,250 +1677,31 @@ class MainFrame(QMainWindow):
             self._refresh_maximize_button()
 
     def closeEvent(self, event):
-        """启动异步关闭，只在资源停止和最终状态落盘完成后接受事件。"""
-        self._unbind_window_screen()
-        if getattr(self, "_close_ready", False):
-            event.accept()
-            return
-        event.ignore()
-        if getattr(self, "_close_started", False):
-            return
-        self._flush_pending_layout_state()
-        self._close_started = True
-        self._closing = True
-        self._shutdown_deadline_at = time.monotonic() + max(
-            0.0,
-            float(self.SHUTDOWN_DEADLINE_SECONDS),
+        (getattr(self, "_close_controller", None) or CloseController(self)).handle_close_event(
+            event
         )
-        self.log_service.log(
-            "DEBUG",
-            (
-                "application shutdown requested: "
-                f"deadline_seconds={float(self.SHUTDOWN_DEADLINE_SECONDS):.1f}"
-            ),
-        )
-        self.setWindowTitle("ADBLab - Closing...")
-        self.setEnabled(False)
-        self.task_supervisor.begin_application_shutdown()
-        self._register_application_shutdown_tasks()
-        self._prepare_ui_for_shutdown()
-        remaining = max(0.0, self._shutdown_deadline_at - time.monotonic())
-        reserve = min(
-            max(0.0, float(self.SHUTDOWN_FINALIZER_RESERVE_SECONDS)),
-            remaining * 0.25,
-        )
-        self.task_supervisor.stop_all_async(deadline=max(0.0, remaining - reserve))
 
     def _register_application_shutdown_tasks(self):
-        """按扫描、面板、对话框和 Controller 顺序注册应用级关闭资源。"""
-        supervisor = self.task_supervisor.supervisor
-        thread = self._scan_thread
-        if thread is not None:
-
-            def scan_running():
-                try:
-                    return thread.isRunning()
-                except RuntimeError:
-                    return False
-
-            if scan_running():
-                supervisor.register(
-                    f"{self._shutdown_owner_id}-scan",
-                    owner_id=self._shutdown_owner_id,
-                    kind="device_scan",
-                    request_stop=thread.stop,
-                    wait=lambda timeout: thread.wait(max(0, int(timeout * 1000))),
-                    is_running=scan_running,
-                )
-
-        register_panel_tasks = getattr(self.left_panel, "register_shutdown_tasks", None)
-        if callable(register_panel_tasks):
-            register_panel_tasks(
-                supervisor,
-                owner_id=self._shutdown_owner_id,
-            )
-
-        for index, dialog in enumerate(list(self._active_dialogs)):
-            register_dialog_tasks = getattr(dialog, "register_shutdown_tasks", None)
-            if not callable(register_dialog_tasks):
-                continue
-            try:
-                register_dialog_tasks(
-                    supervisor,
-                    owner_id=self._shutdown_owner_id,
-                    task_prefix=f"{self._shutdown_owner_id}-dialog-{index}",
-                )
-            except Exception as exc:
-                self.log_service.log(
-                    "ERROR",
-                    f"Shutdown task registration failed: {type(exc).__name__}",
-                    flush_immediately=True,
-                )
-
-        controller_shutdown = ThreadedShutdownTask(
-            self.adb_controller.shutdown,
-            name="adblab-controller-shutdown",
-        )
-        self._shutdown_handles.append(controller_shutdown)
-
-        def controller_running():
-            return controller_shutdown.is_running() or ProcessRunner.tracked_active_count() > 0
-
-        def wait_for_controller(timeout: float):
-            if not controller_shutdown.wait(timeout):
-                return False
-            return ProcessRunner.tracked_active_count() == 0
-
-        supervisor.register(
-            f"{self._shutdown_owner_id}-controller",
-            owner_id=self._shutdown_owner_id,
-            kind="controller_shutdown",
-            request_stop=controller_shutdown.request_stop,
-            wait=wait_for_controller,
-            is_running=controller_running,
-            force_stop=ProcessRunner.force_all_tracked,
-            error_type=controller_shutdown.get_error_type,
-        )
+        return (
+            getattr(self, "_close_controller", None) or CloseController(self)
+        )._register_application_shutdown_tasks()
 
     def _prepare_ui_for_shutdown(self):
-        """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
-        if self._initial_refresh_timer.isActive():
-            self._initial_refresh_timer.stop()
-        if self._scan_refresh_timer.isActive():
-            self._scan_refresh_timer.stop()
-        if self._scan_thread is not None:
-            self._scan_thread.stop()
-            devices_changed = getattr(self._scan_thread, "devices_changed", None)
-            discovery_state_changed = getattr(
-                self._scan_thread,
-                "discovery_state_changed",
-                None,
-            )
-            try:
-                if devices_changed is not None:
-                    devices_changed.disconnect(self._schedule_scan_refresh)
-            except (TypeError, RuntimeError, AttributeError):
-                pass
-            try:
-                if discovery_state_changed is not None:
-                    discovery_state_changed.disconnect(self.left_panel.set_device_discovery_state)
-            except (TypeError, RuntimeError, AttributeError):
-                pass
-        for dlg in list(self._active_dialogs):
-            try:
-                dlg.close()
-            except Exception:
-                pass
-        # 独立窗口可能在后台资源停止前忽略关闭事件；保留强引用直到 destroyed 回调移除。
-        for viewer in list(getattr(self.adb_controller, "_active_viewers", [])):
-            try:
-                viewer.close()
-            except Exception:
-                pass
-        shutdown_left_panel = getattr(self.left_panel, "shutdown", None)
-        if callable(shutdown_left_panel):
-            shutdown_left_panel()
+        return (
+            getattr(self, "_close_controller", None) or CloseController(self)
+        )._prepare_ui_for_shutdown()
 
     def _on_application_stopped(self, results, residual):
-        """汇总资源停止结果，再启动配置和日志收尾任务。"""
-        if (
-            not self._close_started
-            or self._close_ready
-            or getattr(self, "_shutdown_finalizer_started", False)
-        ):
-            return
-        self._shutdown_finalizer_started = True
-        self._shutdown_results = tuple(results)
-        self._shutdown_residual = tuple(residual)
-        self.log_service.log(
-            "DEBUG",
-            (
-                "application producers stopped: "
-                f"result_count={len(self._shutdown_results)} "
-                f"residual_count={len(self._shutdown_residual)}"
-            ),
-        )
-        failed = [
-            result
-            for result in self._shutdown_results
-            if getattr(result, "disposition", None) == StopDisposition.FAILED
-        ]
-        if failed:
-            error_types = sorted({result.error_type or "UnknownError" for result in failed})
-            self.log_service.log(
-                "ERROR",
-                f"Shutdown task failures count={len(failed)} types={','.join(error_types)}",
-                flush_immediately=True,
-            )
-        if self._shutdown_residual:
-            kinds = sorted({item.kind for item in self._shutdown_residual})
-            self.setWindowTitle(
-                f"ADBLab - Closing ({len(self._shutdown_residual)} residual resources)"
-            )
-            self.log_service.log(
-                "WARNING",
-                (
-                    f"Shutdown residual resources count={len(self._shutdown_residual)} "
-                    f"kinds={','.join(kinds)}"
-                ),
-                flush_immediately=True,
-            )
-        if self._panel_size_save_timer.isActive():
-            self._panel_size_save_timer.stop()
-            self._save_pending_panel_sizes()
-
-        # 最终用户日志必须在 GUI 线程刷新并冻结；后台 finalizer 只负责配置落盘。
-        self.log_service.shutdown()
-        finalizer = ThreadedShutdownTask(
-            self._flush_shutdown_state,
-            name="adblab-shutdown-finalizer",
-        )
-        self._shutdown_handles.append(finalizer)
-        finalizer_task_id = f"{self._shutdown_owner_id}-finalizer"
-        self.task_supervisor.supervisor.register(
-            finalizer_task_id,
-            owner_id=self._shutdown_owner_id,
-            kind="shutdown_finalizer",
-            request_stop=finalizer.request_stop,
-            wait=finalizer.wait,
-            is_running=finalizer.is_running,
-            error_type=finalizer.get_error_type,
-        )
-        remaining = max(0.0, self._shutdown_deadline_at - time.monotonic())
-        self.task_supervisor.stop_finalizer_async(
-            finalizer_task_id,
-            deadline=remaining,
-        )
+        return (
+            getattr(self, "_close_controller", None) or CloseController(self)
+        )._on_application_stopped(results, residual)
 
     def _flush_shutdown_state(self):
-        """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""
-        from core.settings_manager import AppSettings
-
-        s = AppSettings.instance()
-        if s._save_timer:
-            s._save_timer.cancel()
-        s._save_atomic()
+        return (
+            getattr(self, "_close_controller", None) or CloseController(self)
+        )._flush_shutdown_state()
 
     def _on_application_finalized(self, result, residual):
-        """记录收尾结果并重新触发关闭事件，使 Qt 最终销毁窗口。"""
-        if not self._close_started or self._close_ready:
-            return
-        if result is not None:
-            self._shutdown_results = (*self._shutdown_results, result)
-        self._shutdown_residual = tuple(residual)
-        finalizer_failed = result is not None and result.disposition in {
-            StopDisposition.FAILED,
-            StopDisposition.TIMED_OUT,
-        }
-        if finalizer_failed:
-            self.setWindowTitle(
-                "ADBLab - Closing "
-                f"(finalizer {result.disposition.value}, "
-                f"{len(self._shutdown_residual)} residual resources)"
-            )
-        if self._shutdown_residual:
-            self.setWindowTitle(
-                f"ADBLab - Closing ({len(self._shutdown_residual)} residual resources)"
-            )
-        self._close_ready = True
-        QTimer.singleShot(0, self.close)
+        return (
+            getattr(self, "_close_controller", None) or CloseController(self)
+        )._on_application_finalized(result, residual)

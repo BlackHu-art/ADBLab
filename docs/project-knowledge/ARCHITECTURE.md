@@ -265,7 +265,9 @@ sequenceDiagram
 - 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与 requests/ruamel
   依赖均已删除，运行时不再发起任何外部 HTTP 调用）；仓库历史中曾跟踪的邮件配置仍需所有者
   轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
-- 响应式重做后 `gui/main_frame.py` 仍约 2,500 行，是后续大文件拆分的候选；目前已只抽出
-  `gui/screen_adapter.py`，其余拆分待后续。
+- `gui/main_frame.py` 已按 ADR-0003 Phase 2 拆出 `gui/main_frame_toolbar.py`、
+  `gui/secondary_windows.py`、`gui/close_controller.py` 三个组合控制器（MainFrame 保留同名
+  委托 wrapper，约 1,700 行）；`controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
+  两个 mixin。`tests/test_model_execution.py` 拆分与剩余大文件治理仍待后续。
 - 全量 pytest 约 930 项、耗时约 11 分钟，响应式几何扫描测试是主要耗时来源之一
   （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。

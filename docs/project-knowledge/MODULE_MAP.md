@@ -62,8 +62,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
   原生缩放在不同窗口管理器下的实际手感、窄屏及高 DPI 布局仍需人工验证；主窗口 close 已改为
   两阶段异步关闭（broadcast-first deadline，Gate B2 通过，契约测试见
-  `test_phase2_mainframe_shutdown_gate.py`）；`main_frame.py` 仍约 2,500 行，除 screen adapter 外的
-  大文件拆分待后续。
+  `test_phase2_mainframe_shutdown_gate.py`）；`main_frame.py` 已按 ADR-0003 Phase 2 拆出
+  `main_frame_toolbar.py`/`secondary_windows.py`/`close_controller.py` 三个组合模块
+  （MainFrame 约 1,700 行，保留同名委托 wrapper）。
 
 ### 对话框
 

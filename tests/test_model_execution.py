@@ -769,7 +769,7 @@ def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
     frame.findChildren = Mock(return_value=[button])
     frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
-    with patch("gui.main_frame.get_themed_icon", return_value=QIcon()) as themed_icon:
+    with patch("gui.main_frame_toolbar.get_themed_icon", return_value=QIcon()) as themed_icon:
         MainFrame._refresh_toolbar_icons(frame)
 
     themed_icon.assert_called_once_with("circle-half-tilt.svg")

@@ -2953,7 +2953,11 @@ def _show_device_height(widget, manager, requested_height: int, qt_application):
 
 
 def _show_device_geometry(widget, manager, width: int, height: int, qt_application):
-    """直接请求 Devices 根尺寸，等待新代次稳定并拒绝 Qt 静默夹紧。"""
+    """直接请求 Devices 根尺寸，等待新代次稳定并拒绝 Qt 静默夹紧。
+
+    期望高度取请求值与重排后最小高度提示的较大者：apply_responsive_width 可能把按钮
+    换行使最小高度上浮（如 760px 时 256→272），Qt 依契约夹紧到新最小值，不算静默夹紧。
+    """
 
     panel = manager.panel
     wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
@@ -2980,7 +2984,8 @@ def _show_device_geometry(widget, manager, width: int, height: int, qt_applicati
         ),
     )
     diagnostics = panel._responsive_coordinator.diagnostics
-    assert widget.contentsRect().size() == QSize(width, height), (
+    expected_height = max(height, widget.minimumSizeHint().height())
+    assert widget.contentsRect().size() == QSize(width, expected_height), (
         (width, height),
         widget.contentsRect().size(),
         widget.minimumSizeHint(),
