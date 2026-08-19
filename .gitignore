@@ -10,7 +10,7 @@ __pycache__/
 .ruff_cache/
 .superpowers/
 /pyright_output.json
-
+docs/.obsidian/
 
 logs/
 resources/app.log

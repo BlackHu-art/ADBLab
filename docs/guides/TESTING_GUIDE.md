@@ -187,8 +187,8 @@ py -3.11 scripts/check_comment_language.py controllers gui
 
 ## 提交前门禁
 
-每次创建提交前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对 `HEAD` 已递增；
-默认递增补丁版本，并确保没有复用历史版本。
+推送到远端前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对上次推送已递增（默认补丁 +1），
+并确保没有复用历史版本；本地提交不修改版本号。
 
 最低门禁：
 
