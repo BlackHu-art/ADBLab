@@ -65,7 +65,16 @@ py -3.11 main.py --self-check packaging
 ruff check .
 ```
 
-`py -3.11 -m pytest -q` 全量 930 项通过、约 11 分钟；`ruff check .` 0 错误。只跑无 Qt 纯逻辑的快速子集可使用 pytest 的文件选择能力，但仓库没有定义正式 fast marker；在 CI/提交前仍应执行完整命令。
+`py -3.11 -m pytest -q` 全量 930 项通过、约 11 分钟；`ruff check .` 0 错误。测试分层 marker 由
+ADR-0003 Phase 0 引入：`unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针），
+文件到 marker 的映射集中在 `tests/conftest.py::pytest_collection_modifyitems`。CI 在完整测试前先跑
+快速子集（unit + integration，不含 UI 几何扫描）：
+
+```powershell
+py -3.11 -m pytest -q -m "not ui"
+```
+
+新增 UI 类测试文件时同步登记 conftest 映射；在 CI/提交前仍应执行完整命令。
 
 ## 覆盖分层
 
@@ -121,7 +130,7 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
 6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
 7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
-8. 全量套件约 11 分钟，响应式几何扫描占比较高，缺少按层/按模块的快速子集标记。
+8. 全量套件约 11 分钟，响应式几何扫描占比较高；已引入 unit/ui/integration marker 和 CI 快速子集（Phase 0），`test_model_execution.py` 拆分与按层耗时预算仍待 Phase 2。
 
 ## 推荐新增测试
 

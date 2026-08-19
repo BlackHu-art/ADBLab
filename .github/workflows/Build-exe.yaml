@@ -95,6 +95,11 @@ jobs:
         shell: bash
         run: python -m ruff check .
 
+      - name: Run fast tests (unit + integration)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python -m pytest -q -m "not ui"
+
       - name: Run tests
         if: runner.os == 'Windows'
         shell: bash

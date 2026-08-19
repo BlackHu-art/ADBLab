@@ -1,8 +1,11 @@
 # ADR-0003：项目结构优化计划（四阶段渐进式）
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-08-19
 - 基线版本：3.2.0
+
+实施进度：Phase 0 已落地（unit/ui/integration marker 集中在 `tests/conftest.py`，CI 在完整测试前
+运行 `pytest -q -m "not ui"` 快速子集，本地实测约 16 秒/573 项）。
 
 ## 背景
 

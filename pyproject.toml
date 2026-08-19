@@ -26,3 +26,8 @@ skip-magic-trailing-comma = false
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "unit: 无 Qt/进程依赖的纯逻辑测试（CI 快速子集）",
+    "ui: 需要 QApplication、窗口几何或字体度量的轻量 Qt 测试",
+    "integration: 子进程、外部边界或探针类测试（CI 快速子集）",
+]

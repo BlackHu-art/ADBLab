@@ -98,3 +98,44 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe):
         BaseStyles.switch_theme(initial_theme)
     if qt_application.font() != initial_font:
         qt_application.setFont(initial_font)
+
+
+# 测试分层 marker 映射（ADR-0003 Phase 0）：集中登记，避免在几十个文件里散落 pytestmark。
+# 新增 UI 类或探针类测试文件时，在这里同步登记并更新 TESTING_GUIDE 的 marker 说明。
+_UI_TEST_FILES = frozenset(
+    {
+        "test_accessibility_contract.py",
+        "test_app_manager_selection.py",
+        "test_button_tooltips.py",
+        "test_dialog_typography.py",
+        "test_main_window_layout.py",
+        # test_model_execution.py 为混合大文件；Phase 2 拆分后按主题重新归类。
+        "test_model_execution.py",
+        "test_panel_typography.py",
+        "test_performance_responsive.py",
+        "test_preset_spin_box.py",
+        "test_responsive_layout_controller.py",
+        "test_responsive_panels.py",
+        "test_settings_typography.py",
+        "test_settings_window_layout.py",
+        "test_typography_core.py",
+        "test_ui_geometry_helpers.py",
+        "test_window_lifecycle.py",
+    }
+)
+
+_INTEGRATION_TEST_FILES = frozenset(
+    {
+        "test_mobileperf_runner_concurrency.py",
+        "test_ui_dpi_matrix.py",
+    }
+)
+
+
+def pytest_collection_modifyitems(config, items):
+    """按文件把测试标记为 ui / integration，其余保持默认（计入快速子集）。"""
+    for item in items:
+        if item.path.name in _UI_TEST_FILES:
+            item.add_marker(pytest.mark.ui)
+        elif item.path.name in _INTEGRATION_TEST_FILES:
+            item.add_marker(pytest.mark.integration)
