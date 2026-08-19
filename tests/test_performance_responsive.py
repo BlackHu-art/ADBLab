@@ -25,7 +25,7 @@ from gui.dialogs.performance_launcher import (
     PerformanceLauncherDialog,
 )
 from gui.styles import BaseStyles
-from models.mobileperf import MobilePerfMonkeyConfig
+from services.mobileperf_runner import MobilePerfMonkeyConfig
 
 
 @dataclass

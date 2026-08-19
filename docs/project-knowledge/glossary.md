@@ -20,7 +20,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | ADBController | 把 Qt signals 协调到 ADB models 的多 mixin Controller | `controllers/__init__.py::ADBController` |
 | handler map | 合并各 Controller mixin 的 `_handlers` 注册表，按异步 model method 名称选择 `_process_*_result` 处理器 | `controllers/_base.py` |
 | Model | 封装 ADB 操作并输出标准结果的逻辑层 | `models/adb_device.py` 等 |
-| Service | 较低 Qt 耦合的可复用业务/外部工具适配 | `models/remote/`、`file_explorer_service.py` |
+| Service | 较低 Qt 耦合的可复用业务/外部工具适配 | `services/remote/`、`services/file_explorer.py` |
 | Worker | 在 QThread/QRunnable/子进程中执行耗时任务的执行体 | `AppManagerWorker`、文件浏览器的 `ADBWorker`/`TransferWorker` |
 | `async_command` | 把 model 方法包装成 QRunnable 并发出 `command_finished` | `models/adb_model.py` |
 | CommandRunner | 短生命周期 subprocess 执行器 | `models/base/command_runner.py` |
@@ -39,14 +39,14 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | Gate A / Gate B / Gate C | vNext 三个架构门：Screenshot operation 隔离（已过）、LiveLogcat 资源托管与主窗口两阶段异步关闭（B1/B2 已过）、Install batch 批次部分失败语义（已过） | `docs/architecture/adr/0001-incremental-vnext.md` |
 | ResponsiveCoordinator | 响应式重排的单一协调入口：度量 → 布局计划 → 溢出收敛（最多 3 轮、40ms 防抖） | `gui/widgets/responsive_controller.py` |
 | ScreenAdapter / QtScreenAdapter | 屏幕适配协议与 Qt 实现：所在屏幕、可用几何、逻辑 DPI 与变更订阅 | `gui/screen_adapter.py` |
-| Remote | scrcpy 投屏与 ADB 远程输入功能 | `gui/panels/remote_panel.py`、`models/remote/` |
+| Remote | scrcpy 投屏与 ADB 远程输入功能 | `gui/panels/remote_panel.py`、`services/remote/` |
 | scrcpy | Android 投屏/控制外部工具 | `scrcpy-win64-v3.3.1/`、`ScrcpyService` |
-| ScrcpyConfig | scrcpy 用户配置数据类 | `models/remote/types.py` |
-| PreflightResult | scrcpy 启动前设备可达性和详情检查结果 | `models/remote/types.py` |
-| ScrcpyLaunchPlan | 可执行文件、参数、预检结果的启动计划 | `models/remote/types.py` |
+| ScrcpyConfig | scrcpy 用户配置数据类 | `services/remote/types.py` |
+| PreflightResult | scrcpy 启动前设备可达性和详情检查结果 | `services/remote/types.py` |
+| ScrcpyLaunchPlan | 可执行文件、参数、预检结果的启动计划 | `services/remote/types.py` |
 | MobilePerf | 随项目移植的 Android 性能采集内核 | `mobileperf/` |
-| MobilePerfRunner | GUI 到 MobilePerf 子进程的适配器 | `models/mobileperf/runner.py` |
-| MobilePerfRunConfig | 运行参数数据类，可写临时 config | `models/mobileperf/runner.py` |
+| MobilePerfRunner | GUI 到 MobilePerf 子进程的适配器 | `services/mobileperf_runner.py` |
+| MobilePerfRunConfig | 运行参数数据类，可写临时 config | `services/mobileperf_runner.py` |
 | StartUp | MobilePerf 内核组合和运行入口 | `mobileperf/android/startup.py::StartUp` |
 | monitor | MobilePerf 的单类指标采集器，如 CPU/Mem/FPS | `mobileperf/android/*.py` |
 | RuntimeData | MobilePerf 的类级全局运行状态 | `mobileperf/android/globaldata.py` |

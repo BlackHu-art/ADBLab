@@ -44,7 +44,7 @@ from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from models.base.focus_detector import detect_current_package
-from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
+from services.mobileperf_runner import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
 CONFIG_HINTS = {
     "package": (

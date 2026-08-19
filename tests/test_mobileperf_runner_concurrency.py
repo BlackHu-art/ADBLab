@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from models.base.process_runner import ProcessRunner
-from models.mobileperf.runner import MobilePerfRunConfig, MobilePerfRunner
+from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 
 class _CountingStream:

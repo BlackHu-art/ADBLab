@@ -169,11 +169,11 @@ Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次�
 | --- | --- |
 | 触发条件 | 用户打开 File Explorer，浏览目录或执行 pull/push/edit/copy/move/delete/chmod/install/execute |
 | 前置条件 | 已选择设备；路径和文件名可被服务层接受；本地目标目录可写 |
-| 主流程 | Dialog 构造规范化设备路径 → `models.file_explorer_service` 模块级纯函数安全引用/构造命令 → 短操作由 `ADBWorker`/CommandRunner 执行，传输由 `TransferWorker`/ProcessRunner 执行 → 成功后刷新列表 |
+| 主流程 | Dialog 构造规范化设备路径 → `services.file_explorer` 模块级纯函数安全引用/构造命令 → 短操作由 `ADBWorker`/CommandRunner 执行，传输由 `TransferWorker`/ProcessRunner 执行 → 成功后刷新列表 |
 | 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除前确认；关闭对话框时中止 worker；root 包装或设备权限不足会失败 |
-| 涉及模块 | `gui/dialogs/file_explorer.py`、`models/file_explorer_service.py`、`models/file_explorer_worker.py` |
+| 涉及模块 | `gui/dialogs/file_explorer.py`、`services/file_explorer.py`、`models/file_explorer_worker.py` |
 | 涉及数据 | 目录项、文件内容、临时设备/本地文件、权限模式 |
-| 代码位置 | `models/file_explorer_service.py` 的 `safe_name/shell_quote/parse_ls_output/*_command`、`FileExplorerDialog._navigate/_pull_file/_delete_selected/_paste_items/closeEvent` |
+| 代码位置 | `services/file_explorer.py` 的 `safe_name/shell_quote/parse_ls_output/*_command`、`FileExplorerDialog._navigate/_pull_file/_delete_selected/_paste_items/closeEvent` |
 
 ```mermaid
 sequenceDiagram
@@ -205,7 +205,7 @@ sequenceDiagram
 | 前置条件 | scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
 | 主流程 | RemotePanel 将启动选择绑定为 `_active_device` → 创建 launch worker → ScrcpyService 检查版本/设备/编码器并生成 LaunchPlan → ProcessRunner 启动 scrcpy → stderr/FPS reader 和 watchdog 更新状态 → 输入只向活动会话设备发送 |
 | 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭页签停止 scrcpy、worker、executor 和 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
-| 涉及模块 | `gui/panels/remote_panel.py`、`models/remote/*`、`core/adb_bridge.py` |
+| 涉及模块 | `gui/panels/remote_panel.py`、`services/remote/*`、`core/adb_bridge.py` |
 | 涉及数据 | `ScrcpyConfig`、`PreflightResult`、`ScrcpyLaunchPlan`、设备尺寸缓存、FPS 文本 |
 | 代码位置 | `ScrcpyService.build_launch_plan/start/stop`、`RemoteControlService.perform_action`、`RemotePanel.shutdown` |
 
@@ -242,7 +242,7 @@ sequenceDiagram
 | 前置条件 | 设备在线、目标包已安装、保存目录可写、MobilePerf 模块可导入 |
 | 主流程 | 表单生成 `MobilePerfRunConfig`（`__post_init__` 规范化分号字段）→ Runner 记录运行前结果/报告签名并创建运行代次上下文 → 写临时配置 → 根据开发/冻结状态启动 module 或 `--mobileperf-worker` → StartUp 逐层剥离配置 BOM 前缀后验证设备/包并采集 → stdout/stderr reader 分别排空且共同收口后通知完成 → GUI 只定位本次新建或变化的非空报告；退出码 0 且有当前报告才显示 Completed/100 |
 | 异常流程 | 启动异常立即恢复 UI；停止先写 stop 文件并等待报告，超时后强制终止；非零退出、缺少当前报告或只有旧报告均显示 Failed/Warning 且进度低于 100；内核仍可能最终 `os._exit` |
-| 涉及模块 | `gui/dialogs/performance_launcher.py`、`models/mobileperf/runner.py`、`mobileperf/android/startup.py` 与各 monitor |
+| 涉及模块 | `gui/dialogs/performance_launcher.py`、`services/mobileperf_runner.py`、`mobileperf/android/startup.py` 与各 monitor |
 | 涉及数据 | 临时 config、指标 CSV、XLSX、设备信息、logcat、heapdump、外部设备日志 |
 | 代码位置 | `PerformanceLauncherDialog.start_mobileperf/stop_mobileperf`、`MobilePerfRunner.start/stop`、`StartUp.run/stop` |
 

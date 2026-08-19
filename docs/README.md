@@ -78,8 +78,8 @@
 - `models/base/`、`core/adb_bridge.py`：短命令、长进程和持久 shell 边界。
 - `gui/widgets/responsive_controller.py`、`gui/widgets/responsive_layout.py`、`gui/screen_adapter.py`：响应式重排协调器、语义布局和屏幕适配协议。
 - `gui/dialogs/app_manager.py`、`models/app_manager_worker.py`：批量应用操作、备份恢复和失败传播。
-- `gui/panels/remote_panel.py`、`models/remote/`：scrcpy 预检、输入映射、会话所有权/watchdog 和关闭清理。
-- `models/mobileperf/`、`mobileperf/android/`：隔离子进程、采样线程、报告落盘和遗留 ADB 实现（`shell=True` 未重写）。
+- `gui/panels/remote_panel.py`、`services/remote/`：scrcpy 预检、输入映射、会话所有权/watchdog 和关闭清理。
+- `services/mobileperf_runner.py`、`mobileperf/android/`：隔离子进程、采样线程、报告落盘和遗留 ADB 实现（`shell=True` 已移除，独立 Popen 生命周期仍待统一）。
 
 ## 知识库维护规则
 

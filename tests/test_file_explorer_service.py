@@ -1,4 +1,4 @@
-from models import file_explorer_service as explorer_service
+from services import file_explorer as explorer_service
 
 
 def test_parse_ls_output_sorts_folders_first_and_tracks_symlinks():

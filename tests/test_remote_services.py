@@ -13,7 +13,7 @@ from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from models.base.command_runner import CommandResult
 from models.base.process_runner import ProcessRunner
-from models.remote import (
+from services.remote import (
     RemoteControlService,
     RemoteInputEngine,
     RemoteWindowManager,
@@ -21,7 +21,7 @@ from models.remote import (
     ScrcpyService,
     build_scrcpy_args,
 )
-from models.remote.control_mapping import directional_swipe, notification_swipe
+from services.remote.control_mapping import directional_swipe, notification_swipe
 
 
 class _TestSignal:
@@ -198,9 +198,9 @@ def test_scrcpy_service_resolves_bundled_windows_executable():
     service = ScrcpyService()
 
     with (
-        patch("models.remote.scrcpy_service.platform.system", return_value="Windows"),
+        patch("services.remote.scrcpy_service.platform.system", return_value="Windows"),
         patch(
-            "models.remote.scrcpy_service.bundled_tool_path",
+            "services.remote.scrcpy_service.bundled_tool_path",
             return_value="C:/ADBLab/scrcpy.exe",
         ),
     ):
@@ -211,8 +211,8 @@ def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
     service = ScrcpyService()
 
     with (
-        patch("models.remote.scrcpy_service.platform.system", return_value="Linux"),
-        patch("models.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"),
+        patch("services.remote.scrcpy_service.platform.system", return_value="Linux"),
+        patch("services.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"),
     ):
         assert service.resolve_executable() == "/usr/bin/scrcpy"
 
@@ -414,7 +414,7 @@ def test_remote_input_engine_delegates_window_focus():
 def test_remote_window_manager_non_windows_focus_is_noop():
     manager = RemoteWindowManager()
 
-    with patch("models.remote.window_manager.sys.platform", "linux"):
+    with patch("services.remote.window_manager.sys.platform", "linux"):
         assert manager.focus("ADBLab Remote - device-1", timeout_seconds=0) is False
 
 
@@ -424,8 +424,8 @@ def test_remote_window_manager_focus_accepts_already_foreground_window():
     user32.GetForegroundWindow.return_value = 123
 
     with (
-        patch("models.remote.window_manager.sys.platform", "win32"),
-        patch("models.remote.window_manager.ctypes.windll") as windll,
+        patch("services.remote.window_manager.sys.platform", "win32"),
+        patch("services.remote.window_manager.ctypes.windll") as windll,
         patch.object(manager, "_find_window", return_value=123),
     ):
         windll.user32 = user32

@@ -23,10 +23,10 @@ flowchart TD
     Controllers --> ADBModels["models/adb_*.py"]
     Controllers --> Store["models/device_store.py"]
     Controllers --> UseCases["adblab/application<br/>operations / install_batch"]
-    Panels --> Remote["models/remote"]
+    Panels --> Remote["services/remote"]
     Dialogs --> AppWorker["models/app_manager_worker.py"]
     Dialogs --> FileWorker["models/file_explorer_worker.py"]
-    Dialogs --> MobileAdapter["models/mobileperf/runner.py"]
+    Dialogs --> MobileAdapter["services/mobileperf_runner.py"]
     ADBModels --> Base["models/base"]
     Remote --> Base
     FileWorker --> Base
@@ -47,9 +47,9 @@ flowchart TD
 | `controllers/_base.py` | 四个 ADB model、DeviceStore、`adblab.application`（OperationManager/InstallBatchUseCase） | 命令分派和结果聚合 | Controller 不应反向被 model 导入 |
 | `models/adb_*.py` | `models/base`、`core.adb_bridge` | 执行 ADB 与长进程 | 常规短命令应走 CommandRunner |
 | `gui/dialogs/app_manager.py` | `models/app_manager_worker.py` | 对话框专用异步任务 | 跳过统一 Controller |
-| `gui/dialogs/file_explorer.py` | file explorer service/worker | 文件命令构建和传输 | 跳过统一 Controller |
-| `gui/panels/remote_panel.py` | `models/remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
-| `gui/dialogs/performance_launcher.py` | `models/mobileperf.runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
+| `gui/dialogs/file_explorer.py` | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
+| `gui/panels/remote_panel.py` | `services.remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
+| `gui/dialogs/performance_launcher.py` | `services.mobileperf_runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
 | `core.settings_manager` | `core.log_service`、`utils.user_data` | 设置错误日志与用户路径 | core 内部存在横向依赖 |
 | `mobileperf/android/*` | `mobileperf/android/tools/androiddevice.py` | 采集设备指标 | 与主应用执行层重复实现 |
 
@@ -89,7 +89,7 @@ flowchart LR
 | 外部依赖 | 用途 | 解析/调用位置 | 缺失行为 |
 | --- | --- | --- | --- |
 | ADB | 几乎所有设备操作 | `utils/adb_resolver.py`、CommandRunner、MobilePerf ADB | 操作失败；自检在 Windows 检查内置文件 |
-| scrcpy | 投屏和视频流 | `models/remote/scrcpy_service.py` | Remote 启动失败；非 Windows 要求 PATH 提供 |
+| scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py` | Remote 启动失败；非 Windows 要求 PATH 提供 |
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
@@ -140,7 +140,7 @@ service/model 构造。
 
 ### scrcpy 进程接口
 
-`models/remote/scrcpy_args.py` 将 `ScrcpyConfig` 转为参数数组，`ScrcpyService.build_launch_plan()`
+`services/remote/scrcpy_args.py` 将 `ScrcpyConfig` 转为参数数组，`ScrcpyService.build_launch_plan()`
 先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stderr 用于状态/FPS 解析。
 Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服务端暴露。
 

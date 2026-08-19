@@ -15,7 +15,7 @@ from core.adb_bridge import ADBBridge
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.panels.base_panel import BasePanel
 from gui.widgets.responsive_layout import WidthPolicy, paired_mode, row_major_mode
-from models.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
+from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
 class ScrcpyLaunchWorker(QThread):
@@ -46,7 +46,7 @@ class ScrcpyLaunchWorker(QThread):
 
     @staticmethod
     def _build_args(cfg: dict, encoder: str | None) -> list[str]:
-        from models.remote import build_scrcpy_args
+        from services.remote import build_scrcpy_args
 
         return build_scrcpy_args(ScrcpyConfig.from_mapping(cfg), encoder)
 

@@ -43,8 +43,8 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
 | GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
-| 外部命令 | ADB、scrcpy、aapt、Java | `models/base/`、`models/remote/`、`models/adb_testing.py` |
-| 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `models/mobileperf/`、`mobileperf/android/` |
+| 外部命令 | ADB、scrcpy、aapt、Java | `models/base/`、`services/remote/`、`models/adb_testing.py` |
+| 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |
 | 测试 | pytest 9.1.1、Ruff 0.16.3 | `requirements-dev.txt`、`ruff.toml`、`tests/` |
 | 格式/检查 | Ruff/Black，行宽 100，目标 Python 3.10 语法 | `ruff.toml`（门禁）、`pyproject.toml` |
 | 打包/发布 | PyInstaller 6.22.2、GitHub Actions、GitHub Release | `requirements.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |

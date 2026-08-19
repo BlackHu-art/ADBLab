@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QApplication
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.panels.remote_panel import RemotePanel
 from models.base.process_runner import ProcessRunner
-from models.mobileperf.runner import MobilePerfRunConfig, MobilePerfRunner
+from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 
 def _remote_panel(*, active_device, selected_devices, process_running=True):

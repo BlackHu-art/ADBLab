@@ -1,8 +1,12 @@
 # ADR-0004：物理包归一（services/ 顶层包）与 MobilePerf 内核实例化
 
-- 状态：Proposed
+- 状态：Accepted
 - 日期：2026-08-19
 - 前置：ADR-0003 Phase 1–3
+
+实施进度：包移动（决策 1–3）已完成——`services/file_explorer.py`、
+`services/remote/`、`services/mobileperf_runner.py` 落位，全部导入点已改向，
+`models/mobileperf/` 包已删除；MobilePerf 内核实例化（决策 4）待实施。
 
 ## 背景
 

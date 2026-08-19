@@ -41,8 +41,8 @@ from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 from gui.widgets.responsive_layout import reflow_widgets
-from models import file_explorer_service as explorer_service
 from models.file_explorer_worker import ADBWorker, TransferWorker
+from services import file_explorer as explorer_service
 
 # ── 文件浏览器对话框 ────────────────────────────────────────────────────
 

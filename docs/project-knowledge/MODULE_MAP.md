@@ -23,9 +23,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | 核心基础设施 | `core/` | 设置、日志、性能追踪、持久输入 shell | 单例/服务类 | 全应用 | JSON、Qt、subprocess | `settings_manager.py`、`log_service.py`、`adb_bridge.py` | `test_model_*.py` |
 | 设备存储 | `models/device_store.py` | 设备元数据原子读写、损坏备份和旧文件迁移 | `DeviceStore` | Controller、DeviceManager | YAML、用户目录 | `device_store.py` | `test_model_*.py`、`test_device_store_concurrency.py` |
 | 应用管理 Worker | `models/app_manager_worker.py` | 应用列表、详情、权限、备份恢复 | `AppManagerWorker.run` | App Manager 对话框 | ADB、ZIP、线程池 | `app_manager_worker.py` | `test_model_*.py` |
-| 文件浏览器 | `models/file_explorer_*`、`gui/dialogs/file_explorer.py` | 路径/命令构建、列表解析、传输和文件 UI | `FileExplorerDialog` | MainFrame | ADB、文件系统 | `file_explorer_service.py`、`file_explorer_worker.py` | 3 个测试文件均有覆盖 |
-| Remote | `models/remote/`、`gui/panels/remote_panel.py` | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
-| MobilePerf 适配 | `models/mobileperf/`、`gui/dialogs/performance_launcher.py` | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `runner.py`、`performance_launcher.py` | `test_model_*.py` |
+| 文件浏览器 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer.py` | 路径/命令构建、列表解析、传输和文件 UI | `FileExplorerDialog` | MainFrame | ADB、文件系统 | `file_explorer.py`、`file_explorer_worker.py` | 3 个测试文件均有覆盖 |
+| Remote | `services/remote/`、`gui/panels/remote_panel.py` | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
+| MobilePerf 适配 | `services/mobileperf_runner.py`、`gui/dialogs/performance_launcher.py` | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `mobileperf_runner.py`、`performance_launcher.py` | `test_model_*.py` |
 | MobilePerf 内核 | `mobileperf/android/` | 多指标采集、Monkey、logcat、CSV/XLSX 报告 | `StartUp.run` | MobilePerfRunner/CLI | ADB、线程、XLSXWriter | `startup.py`、各 monitor、`androiddevice.py` | `test_model_*.py` 部分覆盖 |
 | 工具与路径 | `utils/` | ADB/资源/用户目录解析、ZIP 安全、诊断值校验 | 函数/小类 | 全应用 | OS、文件系统 | `runtime_tools.py`、`archive.py`、`adb_values.py` 等 | `test_runtime_tools.py`、`test_model_*.py` |
 | 构建与发布 | `ADBLab.spec`、`.github/workflows/` | 测试、三平台打包、Release 和清理 | GitHub 事件/本地 PyInstaller | 开发者、GitHub | PyInstaller、GitHub API | `Build-exe.yaml`、`Auto-Clean.yaml` | 工作流契约测试 |
@@ -179,7 +179,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### 文件浏览器
 
-- **职责/接口**：`models.file_explorer_service` 的模块级纯函数负责安全文件名、引用、路径、`ls` 解析与命令构建；两个 worker 负责短命令/传输；对话框负责浏览和操作。
+- **职责/接口**：`services.file_explorer` 的模块级纯函数负责安全文件名、引用、路径、`ls` 解析与命令构建；两个 worker 负责短命令/传输；对话框负责浏览和操作。
 - **输入/输出**：设备路径、文件名、本地路径；输出目录项、传输文件、编辑结果和状态。
 - **上下游**：上游 MainFrame/用户；下游 CommandRunner、ProcessRunner、ADB、文件系统。
 - **配置/数据/外部服务**：保存目录、root 命令包装；无数据库。

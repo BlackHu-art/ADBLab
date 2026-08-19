@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from models.base.process_runner import ProcessRunner
-from models.mobileperf import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
+from services.mobileperf_runner import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
 
 def _mobileperf_config_signature(path: Path) -> tuple[bytes, int, str]:
@@ -140,7 +140,7 @@ def test_mobileperf_run_config_normalizes_semicolon_values_without_mutating_inpu
     ],
 )
 def test_mobileperf_package_normalizer_preserves_order_case_and_duplicates(raw, expected):
-    from models.mobileperf.runner import _normalize_package
+    from services.mobileperf_runner import _normalize_package
 
     assert _normalize_package(raw) == expected
 

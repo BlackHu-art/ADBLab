@@ -10,7 +10,7 @@
 | 语法兼容目标 | Ruff/Black 配置为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows 10/11 | README；Windows 内置 adb/scrcpy |
 | GUI | PySide6 6.8.1.1 | `requirements.txt` |
-| ADB/scrcpy | Windows 已内置；非 Windows 从 PATH 解析 | `utils/adb_resolver.py`、`models/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows 已内置；非 Windows 从 PATH 解析 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
 ## 安装
@@ -158,4 +158,4 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
 | Remote 设置重启后恢复默认 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单修复；旧 JSON 中同名键无需迁移即可载入 |
-| README 中找不到 Performance 旧目录 | README 仍引用已删除的旧性能模块；当前实现是 `performance_launcher.py` + `models/mobileperf/` + `mobileperf/` |
+| README 中找不到 Performance 旧目录 | README 仍引用已删除的旧性能模块；当前实现是 `performance_launcher.py` + `services/mobileperf_runner.py` + `mobileperf/` |
