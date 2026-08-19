@@ -14,12 +14,37 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from core.log_service import LogService
 from utils.resource_path import resource_path
 from utils.user_data import user_config_path
 
 SETTINGS_FILE = user_config_path("app_settings.json")
 LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
+
+# 设置层错误日志的注入点：组合根在创建 LogService 后调用 set_error_sink 注入实现，
+# 使 core 不依赖 Qt/LogService 即可单测；未注入时错误静默丢弃（ADR-0003 Phase 3）。
+_error_sink = None
+_error_sink_lock = threading.Lock()
+
+
+def set_error_sink(sink) -> None:
+    """注入 ``(level: str, message: str) -> None`` 形式的错误日志接收器。"""
+
+    global _error_sink
+    with _error_sink_lock:
+        _error_sink = sink
+
+
+def _log_error(level: str, message: str) -> None:
+    """向注入的错误日志接收器转发消息；无接收器或接收器异常时静默。"""
+
+    with _error_sink_lock:
+        sink = _error_sink
+    if sink is None:
+        return
+    try:
+        sink(level, message)
+    except Exception:
+        pass
 
 # RemotePanel 只允许通过这组正式键跨会话保存 scrcpy 表单值。该映射同时作为
 # AppSettings 加载白名单的一部分，使旧版本已经写入 JSON 的同名键无需迁移即可恢复。
@@ -188,13 +213,7 @@ class AppSettings:
                     migrated_panel_ratio = True
             loaded_from = settings_path
         except (json.JSONDecodeError, ValueError, OSError) as error:
-            try:
-                LogService().log(
-                    "WARNING",
-                    f"Failed to load settings ({error}), using defaults",
-                )
-            except Exception:
-                pass
+            _log_error("WARNING", f"Failed to load settings ({error}), using defaults")
 
         if loaded_from and (
             migrated_panel_ratio
@@ -230,10 +249,7 @@ class AppSettings:
                     os.unlink(temporary_path)
                 except OSError:
                     pass
-            try:
-                LogService().log("ERROR", f"Failed to save settings: {error}")
-            except Exception:
-                pass
+            _log_error("ERROR", f"Failed to save settings: {error}")
 
     def _schedule_save(self) -> None:
         """重新启动单个防抖计时器。"""
@@ -319,4 +335,5 @@ __all__ = [
     "LEGACY_SETTINGS_FILE",
     "SCRCPY_SETTING_DEFAULTS",
     "SETTINGS_FILE",
+    "set_error_sink",
 ]

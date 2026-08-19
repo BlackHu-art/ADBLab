@@ -24,7 +24,7 @@ from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from core.dangerous_ops import DangerousOperationPolicy
 from core.log_service import LogService
-from core.settings_manager import AppSettings
+from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
 from gui.main_frame_toolbar import ToolbarController
 from gui.panels.log_panel import LogPanel
@@ -132,6 +132,7 @@ class MainFrame(QMainWindow):
         self._restricted_workspace = None
         self._device_layout_ready_for_constraints = False
         self.log_service = LogService()
+        set_error_sink(self.log_service.log)
         self.log_panel = LogPanel()
         self.left_panel = SidePanel()
         self.adb_controller = ADBController(self.log_service)

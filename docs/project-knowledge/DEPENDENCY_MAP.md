@@ -12,7 +12,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 也会依赖 Qt 和 `models.base.command_runner` 的能力边界并不完全纯净，因此当前是“务实分层”而非严格 Clean Architecture。
+复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3），并借用 `models.base.command_runner` 的能力边界，因此当前是“务实分层”而非严格 Clean Architecture。
 
 ```mermaid
 flowchart TD
@@ -155,7 +155,7 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 
 ## 循环依赖与方向风险
 
-- 未发现明显的 Python import 闭环，但 `core.settings_manager` 在异常路径创建 `LogService`，GUI/Controller 又广泛依赖设置与日志，增加初始化时序耦合。
+- 未发现明显的 Python import 闭环，但 `core` 中仅 `log_service.py` 依赖 Qt；`settings_manager` 的错误日志已改为可注入 sink（`set_error_sink`，MainFrame 组合根注入 LogService，ADR-0003 Phase 3），core 其余模块可在无 Qt 环境下导入与单测。
 - GUI 直接依赖 model worker/service 形成多条平行编排路径；新功能若同时在 Controller 和 Dialog 内实现，容易产生行为分叉。
 - MobilePerf 保留独立 ADB 层，没有复用 CommandRunner/ProcessRunner；修复超时、编码、日志脱敏时需要同时维护两套实现。
 - `README.md` 宣称“所有长进程统一走 ProcessRunner”，但 `ADBInputSession` 和 MobilePerf 内核例外；文档规则需要表述为主应用优先原则。

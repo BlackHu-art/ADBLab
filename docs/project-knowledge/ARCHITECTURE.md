@@ -94,6 +94,8 @@ flowchart LR
 - `AppSettings`：使用可重入锁保护数据、保存计时器和快照，另以写锁串行保存回调；
   `update()`/`set_many()` 在一个锁域内批量更新，并只安排一次 500 毫秒防抖保存。写盘在取得
   写锁后生成最新快照，再使用独立临时文件和 `os.replace`，避免旧快照晚完成后覆盖新设置。
+  错误日志经可注入的 `set_error_sink` 接收器输出（MainFrame 组合根注入 LogService），
+  使 `core` 除 `log_service.py` 外不依赖 Qt。
 - `DeviceStore`：本地 YAML 持久化、旧资源文件迁移、损坏文件备份和原子替换。
 - `LogService`：跨线程缓冲用户日志并通过 Qt 批量发信号；开发 DEBUG 与用户界面严格分流。
 
