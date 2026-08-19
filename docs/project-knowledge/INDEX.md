@@ -75,13 +75,11 @@
 5. 每个 Git 提交必须在 `utils/app_metadata.py` 中递增一次 `APP_VERSION`，默认递增补丁版本且不得复用历史版本。
 6. 提交前至少运行 `py -3.11 -m pytest -q`（全量约 930 项、约 11 分钟）、`py -3.11 main.py --self-check packaging`、`ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE.md](TESTING_GUIDE.md) 扩展验证。
 
-## 2026-08-18 知识库卫生检查
+## 归档
 
-- 已扫描 14 个 Markdown 文档；当前没有超过 365 天的陈旧页。
-- 未发现同一缩写的明显定义漂移；高频缩写已集中补充到 [glossary.md](glossary.md)。
-- 邮件服务（`core/mail/`、邮件获取入口、邮件/验证码信号、requests/ruamel 依赖）已全部移除，知识库同步清除相关描述，仅保留历史跟踪配置的所有者轮换提醒。
-- `INDEX.md` 作为入口页没有入站链接属于正常现象；不要按孤立页归档。
-- 所有文档仍缺具名 owner；需要由项目维护者确认文档负责人和复审周期。
+过程记录与历史检查已移入 [../archive/](../archive/README.md)：Phase 0/1/2 实施账本、Agent 技能
+评审和 2026-08-18 知识库卫生检查。归档文档不再更新，现状事实一律以本目录与
+[../architecture/](../architecture/) 的 ADR/实施计划为准。
 
 ## 明确排除
 
