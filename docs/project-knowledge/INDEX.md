@@ -20,10 +20,10 @@
 | 快速理解项目 | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)、[glossary.md](glossary.md) | [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) |
 | 修改启动、分层、线程或关闭逻辑 | [ARCHITECTURE.md](ARCHITECTURE.md)、[MODULE_MAP.md](MODULE_MAP.md) | [BUSINESS_FLOW.md](BUSINESS_FLOW.md)、[TESTING_GUIDE.md](TESTING_GUIDE.md) |
 | 修改具体功能模块 | [MODULE_MAP.md](MODULE_MAP.md) | 对应 [BUSINESS_FLOW.md](BUSINESS_FLOW.md) 章节、[TESTING_GUIDE.md](TESTING_GUIDE.md) |
-| 修改 ADB/HTTP/外部命令边界 | [API_MAP.md](API_MAP.md)、[DEPENDENCY_MAP.md](DEPENDENCY_MAP.md) | [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) |
-| 修改配置、持久化或用户数据 | [DATABASE_MAP.md](DATABASE_MAP.md)、[DATA_FLOW.md](DATA_FLOW.md) | [BUILD_AND_RUN.md](BUILD_AND_RUN.md) |
+| 修改 ADB/HTTP/外部命令边界 | [DEPENDENCY_MAP.md](DEPENDENCY_MAP.md) | [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) |
+| 修改配置、持久化或用户数据 | [DATA_FLOW.md](DATA_FLOW.md) | [BUILD_AND_RUN.md](BUILD_AND_RUN.md) |
 | 修改 Remote 或 MobilePerf | [BUSINESS_FLOW.md](BUSINESS_FLOW.md)、[MODULE_MAP.md](MODULE_MAP.md) | [DEPENDENCY_MAP.md](DEPENDENCY_MAP.md)、[TESTING_GUIDE.md](TESTING_GUIDE.md) |
-| 修改日志、注释或文档字符串 | [ARCHITECTURE.md](ARCHITECTURE.md)、[COMMENT_STYLE.md](COMMENT_STYLE.md) | [TESTING_GUIDE.md](TESTING_GUIDE.md) |
+| 修改日志、注释或文档字符串 | [ARCHITECTURE.md](ARCHITECTURE.md)、[TESTING_GUIDE.md](TESTING_GUIDE.md)（注释规范章节） | [TESTING_GUIDE.md](TESTING_GUIDE.md) |
 | 构建、打包、发布或 CI | [BUILD_AND_RUN.md](BUILD_AND_RUN.md)、[TESTING_GUIDE.md](TESTING_GUIDE.md) | [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) |
 
 ## 文档地图
@@ -42,16 +42,13 @@
 ### 流程与数据
 
 - [BUSINESS_FLOW.md](BUSINESS_FLOW.md)：启动、设备、应用、安装批次、Monkey、诊断、文件、Remote、MobilePerf 和关闭链路。
-- [DATA_FLOW.md](DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期和状态变化。
-- [DATABASE_MAP.md](DATABASE_MAP.md)：无数据库结论，以及 JSON/YAML/普通文件型持久化映射。
+- [DATA_FLOW.md](DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期、状态变化，以及文件型存储、设置字段与无数据库结论。
 
 ### 边界、交付与质量
 
-- [API_MAP.md](API_MAP.md)：入站 API 结论、ADB 命令接口和文件/进程安全约定。
 - [BUILD_AND_RUN.md](BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
-- [TESTING_GUIDE.md](TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口和提交前门禁。
+- [TESTING_GUIDE.md](TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口、提交前门禁，以及中文注释与文档风格规范。
 - [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)：按严重程度排序的缺陷、安全风险、技术债、历史热点和修复优先级。
-- [COMMENT_STYLE.md](COMMENT_STYLE.md)：中文注释和文档字符串规范、受控范围及静态检查方法。
 
 ## 维护热点
 
