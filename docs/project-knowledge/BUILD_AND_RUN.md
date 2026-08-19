@@ -27,7 +27,11 @@ py -3.11 -m pip install -r requirements.txt
 py -3.11 -m pip install -r requirements-dev.txt
 ```
 
-项目没有 `setup.py`/`setup.cfg`/Poetry/PDM/uv/npm 构建入口；是否要求虚拟环境由团队待确认，仓库没有给出正式命令，本文不自行补写。
+项目没有 `setup.py`/`setup.cfg`/Poetry/PDM/npm 构建入口；是否要求虚拟环境由团队待确认，仓库没有给出正式命令，本文不自行补写。
+
+虚拟环境提示：若 venv 由 `uv venv`（未加 `--seed`）等工具创建，环境内可能没有 pip 模块，
+PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module named pip`。此时运行
+`.venv\Scripts\python.exe -m ensurepip --upgrade` 补种 pip 即可（已在 2026-08-19 实际执行验证）。
 
 ## 配置
 
