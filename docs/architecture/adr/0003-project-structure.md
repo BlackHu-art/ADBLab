@@ -14,11 +14,13 @@
 （2489→1707 行，提交 `0ea8f8f`），`controllers/_app.py` 已拆出 `_app_install.py`/`_app_monkey.py`
 （1295→234 行，同提交），`tests/test_model_execution.py` 已拆为 10 个主题文件
 （`test_model_*.py`，236 项，conftest marker 映射同步更新，纯逻辑测试进入快速子集）。
-Phase 2 全部完成。Phase 3 进行中：core 设置层错误日志已注入化（`set_error_sink`，core 仅
+Phase 2 全部完成。Phase 3 已落地：core 设置层错误日志已注入化（`set_error_sink`，core 仅
 `log_service.py` 依赖 Qt）；卸载/清数据/重启/当前 Activity 批次已迁入 `DeviceBatchUseCase`，
-`utils/batch_tracker.py` 已退役；录屏 `_record_info` 迁 `ScreenRecordUseCase` 进行中。
-Phase 4 进行中：`services/` 顶层包移动已完成（ADR-0004，提交 `cf19d26`），MobilePerf
-内核实例化（去 `os._exit`/`os.chdir`、RuntimeData 实例上下文）进行中。
+`utils/batch_tracker.py` 已退役；录屏已迁入 `ScreenRecordUseCase`（提交 `6519a9c`）。
+Phase 4 已落地：`services/` 顶层包移动（ADR-0004，提交 `cf19d26`）与 MobilePerf 内核
+实例化（RuntimeData 每运行实例 + daemon 采集线程 + 去 `os._exit`/`os.chdir`，提交
+`c235e89`）。全量 952 项通过。计划外遗留：input/refresh/设备日志的 `_pending_ops`
+单发登记仍待迁移（RISKS_AND_DEBT 已记录）。
 
 ## 背景
 
