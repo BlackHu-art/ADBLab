@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
 from adblab.application.operations import OperationManager
 from controllers._app import ADBAppMixin
@@ -18,7 +19,6 @@ from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
-from utils.batch_tracker import BatchOperationTracker
 
 
 def _app_manager_for_unit_tests():
@@ -434,18 +434,16 @@ def test_parse_apk_info_rejects_missing_file():
     assert controller._emit_operation.call_args.args[1] is False
 
 
-def test_batch_install_result_without_envelope_uses_legacy_tracker_handler():
+def test_batch_install_result_without_envelope_uses_legacy_batch_handler():
     emitted = []
 
     controller = Mock()
     controller._pending_lock = threading.Lock()
-    controller._batch_trackers = {
-        "batch_install": BatchOperationTracker(
-            2,
-            "Batch Install",
-            lambda op, success, msg: emitted.append((op, success, msg)),
-        )
-    }
+    controller.device_batches = DeviceBatchUseCase(OperationManager())
+    start = controller.device_batches.start(
+        "batch_install", ["device-1", "device-2"], label="Batch Install"
+    )
+    controller._batch_starts = {"batch_install": start}
     controller._emit_operation.side_effect = lambda op, success, msg: emitted.append(
         (op, success, msg)
     )
@@ -520,7 +518,9 @@ def test_app_controller_install_submission_uses_metadata_without_early_completio
 def test_app_controller_direct_async_paths_skip_python_executor():
     controller = Mock()
     controller._require_devices.return_value = True
-    controller._batch_trackers = {}
+    controller._pending_lock = threading.Lock()
+    controller._batch_starts = {}
+    controller.device_batches = DeviceBatchUseCase(OperationManager())
     controller._emit_operation = Mock()
     controller.app_model = Mock()
     controller.executor = Mock()

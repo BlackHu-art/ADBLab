@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest
 from adblab.application.operations import (
@@ -45,7 +46,11 @@ def _controller():
         controller.operation_manager,
         id_factory=controller._generate_operation_id,
     )
-    controller._batch_trackers = {}
+    controller.device_batches = DeviceBatchUseCase(
+        controller.operation_manager,
+        id_factory=controller._generate_operation_id,
+    )
+    controller._batch_starts = {}
     controller._pending_lock = threading.Lock()
     controller._operation_handler_map = {
         "install_apk": controller._process_install_operation_result,
@@ -247,8 +252,8 @@ def test_overlapping_install_batches_keep_identity_and_emit_only_terminal_result
 
     assert controller.signals.operation_completed.emit.call_count == 2
     assert controller.operation_manager.active_count == 0
-    assert "install" not in controller._batch_trackers
-    assert "batch_install" not in controller._batch_trackers
+    assert "install" not in controller._batch_starts
+    assert "batch_install" not in controller._batch_starts
 
 
 def test_cancel_before_first_submit_emits_one_terminal_after_start_handoff():
@@ -1116,7 +1121,7 @@ def test_single_apk_entry_uses_same_operation_identity_for_every_device():
     assert {call.kwargs["_operation_kind"] for call in tasks} == {"install"}
     assert {call.kwargs["_operation_id"] for call in tasks} == {operation_id}
     assert controller.signals.operation_completed.emit.call_count == 0
-    assert "install" not in controller._batch_trackers
+    assert "install" not in controller._batch_starts
 
 
 def test_install_batch_partial_maps_to_compat_failure_and_reports_counts():

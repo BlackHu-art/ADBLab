@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtCore import QThreadPool, Slot
 
+from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
 from adblab.application.operations import OperationManager, OperationState
@@ -51,6 +52,11 @@ class _ADBControllerBase:
             self.operation_manager,
             id_factory=self._generate_operation_id,
         )
+        self.device_batches = DeviceBatchUseCase(
+            self.operation_manager,
+            id_factory=self._generate_operation_id,
+        )
+        self._batch_starts = {}
         self._install_terminal_lock = threading.RLock()
         self._install_owned_operations = {}
         self._install_starting_operations = set()
@@ -65,7 +71,6 @@ class _ADBControllerBase:
         self._active_viewers = []
         self._monkey_running = set()
         self.executor = ThreadPoolExecutor(max_workers=4)
-        self._batch_trackers = {}
         self._build_handler_map()
 
         try:

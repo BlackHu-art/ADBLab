@@ -1,5 +1,4 @@
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -9,29 +8,6 @@ import pytest
 from models.adb_testing import ADBTesting
 from models.app_manager_worker import AppManagerWorker
 from models.base.command_runner import CommandResult
-from utils.batch_tracker import BatchOperationTracker
-
-
-def test_batch_tracker_reports_partial_failure_and_completes_once_under_concurrency():
-    summaries = []
-    tracker = BatchOperationTracker(
-        64,
-        "Batch Install",
-        lambda operation, success, message: summaries.append((operation, success, message)),
-    )
-    outcomes = [True] * 63 + [False]
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        list(executor.map(tracker.record, outcomes))
-        list(executor.map(tracker.record, [True] * 16))
-
-    assert tracker.finished == 64
-    assert tracker.success == 63
-    assert len(summaries) == 1
-    assert summaries[0][0] == "Batch Install"
-    assert summaries[0][1] is False
-    assert "Success: 63" in summaries[0][2]
-    assert "Failed: 1" in summaries[0][2]
 
 
 def _run_monkey_with_failed_focus_probes(tmp_path, command_result):

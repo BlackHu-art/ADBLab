@@ -9,6 +9,7 @@ from functools import partial
 
 from PySide6.QtWidgets import QFileDialog
 
+from adblab.application.device_batch import DeviceBatchStart, DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata
 from adblab.application.install_batch import (
     InstallBatchOutcome,
@@ -22,13 +23,40 @@ from controllers._base import _ADBControllerBase
 from core.log_service import LogService
 from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_app import ADBApp
-from utils.batch_tracker import BatchOperationTracker
 
 
 class _InstallOperationOwner:
     """标识只属于 Controller 安装 generation 的不透明所有权。"""
 
     __slots__ = ()
+
+
+def _unit_for_device(start: DeviceBatchStart, device_ip: str):
+    """返回批次中指定设备的执行单元；设备不在批次中时返回 None。"""
+    for unit in start.units:
+        if unit.device == device_ip:
+            return unit
+    return None
+
+
+def _record_device_batch_result(controller, operation: str, device_ip: str, success: bool) -> str:
+    """把无 envelope 的遗留批次结果记入 DeviceBatchUseCase，返回进度字符串。
+
+    兼容 Gate C 之前的批次安装路径：结果不携带 operation 信封时，按批次标识在
+    ``_batch_starts`` 中查找已登记的批次；全部单元收口后发射与旧 BatchOperationTracker
+    相同的汇总信号。未登记批次时返回空进度。以模块级函数实现，兼容测试里的
+    unbound 调用与 Mock 控制器。
+    """
+    with controller._pending_lock:
+        start = controller._batch_starts.get(operation)
+    if start is None:
+        return ""
+    unit = _unit_for_device(start, device_ip)
+    if unit is not None:
+        outcome = controller.device_batches.record_unit_result(unit.unit_id, device_ip, success)
+        if outcome is not None:
+            controller._emit_operation(operation, outcome.success, outcome.message)
+    return controller.device_batches.progress(start.operation_id)
 
 
 class ADBAppInstallMixin(_ADBControllerBase):
@@ -39,7 +67,8 @@ class ADBAppInstallMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     log_service: LogService
     executor: ThreadPoolExecutor
-    _batch_trackers: dict
+    _batch_starts: dict
+    device_batches: DeviceBatchUseCase
     install_batch_use_case: InstallBatchUseCase
 
     _handlers = {
@@ -595,9 +624,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         result.get("index", 1)
         success = result.get("success")
         operation = result.get("operation", "install")
-        with self._pending_lock:
-            tracker = self._batch_trackers.get(operation)
-        progress = tracker.record(success) if tracker else ""
+        progress = _record_device_batch_result(self, operation, device_ip, success)
         if success:
             self._emit_operation(
                 operation, True, f"✅ install success {progress} {apk_name} on {device_ip}"
@@ -616,15 +643,16 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not package_name:
             self._emit_operation("uninstall", False, "⚠️ No package name provided")
             return
-        self._batch_trackers["uninstall"] = BatchOperationTracker(
-            len(devices), "Uninstall App", self._emit_operation
-        )
+        start = self.device_batches.start("uninstall", devices, label="Uninstall App")
+        with self._pending_lock:
+            self._batch_starts["uninstall"] = start
         for idx, device_ip in enumerate(devices, 1):
             self._execute_uninstall_task(idx, device_ip, package_name)
 
     def _execute_uninstall_task(self, idx: int, device_ip: str, package_name: str):
-        tracker = self._batch_trackers.get("uninstall")
-        total = tracker.total if tracker else "?"
+        with self._pending_lock:
+            start = self._batch_starts.get("uninstall")
+        total = len(start.units) if start else "?"
         self._emit_operation(
             "uninstall", True, f"Start uninstall ({idx}/{total}) {package_name} on {device_ip} ..."
         )
@@ -635,8 +663,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        tracker = self._batch_trackers.get("uninstall")
-        progress = tracker.record(success) if tracker else ""
+        progress = _record_device_batch_result(self, "uninstall", ip, success)
         if success:
             self._emit_operation(
                 "uninstall", True, f"✅ uninstall success {progress} {pkg} on {ip}"
@@ -652,9 +679,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not package_name:
             self._emit_operation("clear_data", False, "⚠️ No package name provided")
             return
-        self._batch_trackers["clear_data"] = BatchOperationTracker(
-            len(devices), "Clear App Data", self._emit_operation
-        )
+        start = self.device_batches.start("clear_data", devices, label="Clear App Data")
+        with self._pending_lock:
+            self._batch_starts["clear_data"] = start
         for idx, device_ip in enumerate(devices, 1):
             self._emit_operation(
                 "clear_data",
@@ -668,8 +695,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        tracker = self._batch_trackers.get("clear_data")
-        progress = tracker.record(success) if tracker else ""
+        progress = _record_device_batch_result(self, "clear_data", ip, success)
         if success:
             self._emit_operation(
                 "clear_data", True, f"✅ clear data success {progress} {pkg} on {ip}"
@@ -685,9 +711,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not package_name:
             self._emit_operation("restart_app", False, "⚠️ No package name provided")
             return
-        self._batch_trackers["restart_app"] = BatchOperationTracker(
-            len(devices), "Restart App", self._emit_operation
-        )
+        start = self.device_batches.start("restart_app", devices, label="Restart App")
+        with self._pending_lock:
+            self._batch_starts["restart_app"] = start
         for idx, device_ip in enumerate(devices, 1):
             self._emit_operation(
                 "restart_app",
@@ -702,8 +728,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         pkg = result.get("package_name", "unknown")
         output = result.get("output", "").strip()
         success = result.get("success")
-        tracker = self._batch_trackers.get("restart_app")
-        progress = tracker.record(success) if tracker else ""
+        progress = _record_device_batch_result(self, "restart_app", ip, success)
         if success:
             msg = (
                 f"✅ Restart Success {progress}\n"
@@ -723,9 +748,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not devices:
             self._emit_operation("current_activity", False, "⚠️ No device selected")
             return
-        self._batch_trackers["current_activity"] = BatchOperationTracker(
-            len(devices), "Activity Info", self._emit_operation
-        )
+        start = self.device_batches.start("current_activity", devices, label="Activity Info")
+        with self._pending_lock:
+            self._batch_starts["current_activity"] = start
         for idx, device_ip in enumerate(devices, 1):
             self._emit_operation(
                 "current_activity",
@@ -741,8 +766,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         focus = result.get("current_focus", "").strip()
         resumed = result.get("resumed_activity", "").strip()
         error = result.get("error", "").strip()
-        tracker = self._batch_trackers.get("current_activity")
-        progress = tracker.record(success) if tracker else ""
+        progress = _record_device_batch_result(self, "current_activity", device, success)
         if success:
             msg_lines = [f"📱 ({idx}) {device} {progress} - Activity Info"]
             if focus:

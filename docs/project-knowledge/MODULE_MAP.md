@@ -27,7 +27,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | Remote | `models/remote/`、`gui/panels/remote_panel.py` | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
 | MobilePerf 适配 | `models/mobileperf/`、`gui/dialogs/performance_launcher.py` | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `runner.py`、`performance_launcher.py` | `test_model_*.py` |
 | MobilePerf 内核 | `mobileperf/android/` | 多指标采集、Monkey、logcat、CSV/XLSX 报告 | `StartUp.run` | MobilePerfRunner/CLI | ADB、线程、XLSXWriter | `startup.py`、各 monitor、`androiddevice.py` | `test_model_*.py` 部分覆盖 |
-| 工具与路径 | `utils/` | ADB/资源/用户目录解析、ZIP 安全、批次跟踪、诊断值校验 | 函数/小类 | 全应用 | OS、文件系统 | `runtime_tools.py`、`archive.py`、`adb_values.py`、`batch_tracker.py` 等 | `test_runtime_tools.py`、`test_model_*.py` |
+| 工具与路径 | `utils/` | ADB/资源/用户目录解析、ZIP 安全、诊断值校验 | 函数/小类 | 全应用 | OS、文件系统 | `runtime_tools.py`、`archive.py`、`adb_values.py` 等 | `test_runtime_tools.py`、`test_model_*.py` |
 | 构建与发布 | `ADBLab.spec`、`.github/workflows/` | 测试、三平台打包、Release 和清理 | GitHub 事件/本地 PyInstaller | 开发者、GitHub | PyInstaller、GitHub API | `Build-exe.yaml`、`Auto-Clean.yaml` | 工作流契约测试 |
 
 ## 模块明细
@@ -88,8 +88,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **职责/接口**：`controllers.__init__.ADBController` 用多重继承组合设备、应用、文件、输入、媒体和系统 mixin；`_ADBControllerBase` 创建 model、建立方法名 handler map、接收 `command_finished` 并发出 UI 反馈；安装批次通过 `InstallBatchUseCase` 完成提交预留、所有权（`_InstallOperationOwner`）与 generation 边界，Monkey/录屏批次使用独立 stop-request 映射并发出 `monkey_target_finished`/`record_target_finished` 终态信号。
 - **输入/输出**：Qt signals 的设备/命令参数；输出日志、进度、设备列表、截图路径和操作完成信号。
 - **上下游**：上游 MainFrame/panels；下游四个 ADB model、DeviceStore、线程池、`InstallBatchUseCase`/`OperationManager`。
-- **配置/数据/外部服务**：性能日志阈值、保存目录和 Monkey 参数；仍维护部分 `_pending_ops`、
-  `_batch_trackers`（卸载/清数据/重启/当前 Activity）和录屏共享状态，Screenshot 已使用 OperationManager。
+- **配置/数据/外部服务**：性能日志阈值、保存目录和 Monkey 参数；卸载/清数据/重启/当前 Activity
+  批次已迁入 `DeviceBatchUseCase`（ADR-0003 Phase 3）；录屏共享状态与 input/refresh/设备日志的
+  `_pending_ops` 仍保留在 Controller。
 - **测试/风险/待确认**：Screenshot 两批交错、部分失败、artifact、取消和晚到结果已有 Gate A
   故障注入测试；安装批次 Gate C 有独立 use-case 与 gate 测试；录屏/卸载等 `_batch_trackers`
   路径仍可能共享可变状态，多设备实机行为待验证。

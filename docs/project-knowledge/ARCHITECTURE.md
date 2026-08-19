@@ -251,9 +251,10 @@ sequenceDiagram
 
 ## 已知架构限制
 
-- Controller 仍持有较多业务状态；Screenshot 已完成 operation 隔离，安装批次已迁入
-  `InstallBatchUseCase`，但录屏、卸载/清数据/重启/当前 Activity 等其他 `_pending_ops`/`_batch_trackers`
-  路径仍存在并发隔离不足。
+- Controller 仍持有录屏与单发操作的共享状态；Screenshot 已完成 operation 隔离，安装批次已迁入
+  `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 已迁入 `DeviceBatchUseCase`（ADR-0003
+  Phase 3，`_batch_trackers` 已删除），录屏 `_record_info` 与 input/refresh/设备日志的
+  `_pending_ops` 仍待迁移。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
   已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
 - 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher、

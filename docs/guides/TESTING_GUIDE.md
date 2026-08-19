@@ -31,7 +31,8 @@
 | `tests/test_comment_language.py` | 中文注释识别、豁免规则、模块说明和渐进受控范围 | 静态规范门禁 |
 | `tests/test_device_store_concurrency.py` | 并发 upsert、原子替换故障、损坏备份恢复 | 并发/故障注入 |
 | `tests/test_dangerous_ops.py` | 统一策略、设置开关、主窗口和 App Manager 拒绝路径 | 策略/UI 契约 |
-| `tests/test_phase0_failure_semantics.py` | 批次汇总、Monkey fail-closed、AppManager 错误传播 | 失败语义 |
+| `tests/test_phase0_failure_semantics.py` | Monkey fail-closed、AppManager 错误传播 | 失败语义 |
+| `tests/test_device_batch_use_case.py` | `DeviceBatchUseCase` 汇总/部分失败/晚到结果/并发（ADR-0003 Phase 3） | 纯单元测试 |
 | `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
 | `tests/test_ci_contracts.py` | 最小权限、固定 SHA、不可变 Release、只读保留审计、CI lint 步骤 | CI 安全契约 |
 | `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope、单元接口（`cancel_pending_units` 等）与 Controller 路由 | 架构契约 |

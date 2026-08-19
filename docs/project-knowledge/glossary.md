@@ -32,7 +32,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | AppSettings | 应用设置单例和 JSON 存储 | `core/settings_manager.py` |
 | LogService | 线程安全缓冲、批量向 Qt 发日志信号的服务 | `core/log_service.py` |
 | perf trace | 由 `build_async_perf/attach_perf/split_perf/summarize_perf` 等函数记录和汇总异步耗时 | `core/perf_trace.py` |
-| BatchOperationTracker | 统计多设备/多包批次完成数的轻量对象 | `utils/batch_tracker.py` |
+| DeviceBatchUseCase | 卸载/清数据/重启/当前 Activity 等简单多设备批次的状态与汇总用例，构建在 OperationManager 之上，复刻旧 BatchOperationTracker 的进度与文案（旧 tracker 已删除） | `adblab/application/device_batch.py` |
 | OperationManager | 管理业务操作身份、状态机、进度、取消意图和结果汇总的纯 Python registry，不拥有线程/进程 | `adblab/application/operations.py` |
 | OperationMetadata | `async_command` 为 operation 调用组装的信封：operation/unit/task/target 身份、预期 artifact、owner/generation token | `adblab/application/envelope.py` |
 | InstallBatchUseCase | 安装批次 Gate C 用例：start/complete/fail/cancel/retry 状态机、部分失败与失败项重试 | `adblab/application/install_batch.py` |
