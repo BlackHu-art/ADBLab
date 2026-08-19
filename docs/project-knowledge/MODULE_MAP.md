@@ -1,3 +1,9 @@
+---
+status: current
+last_verified: 2026-08-19
+related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
+---
+
 # 模块地图
 
 ## 总表

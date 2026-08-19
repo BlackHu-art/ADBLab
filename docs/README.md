@@ -14,14 +14,15 @@
 | 过程归档 | `docs/archive/` | 阶段账本、评审、历史卫生检查 | 只归档不更新 |
 
 单源规则：每个事实只在一篇文档展开，其余文档用链接指回，不复述；风险条目只进
-[project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。
+[project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。完整约定见
+[CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)。
 
 ## 基线与状态
 
 | 项目 | 当前记录 |
 | --- | --- |
 | 事实基线 | `dev` 分支 HEAD，扫描日期 2026-08-19 |
-| 本次整理 | 2026-08-19，当前仓库 `dev`，版本 3.1.72 |
+| 本次整理 | 2026-08-19，当前仓库 `dev`，版本 3.1.73 |
 | 基线以来变更 | `dev` 自 main 基线 `8b84f8d`（3.1.14）重做：7 个实现提交（`70be33e` 卫生、`481175d` 安装批次 Gate C、`e36e3e6` Remote/MobilePerf 修复、`6ae6fea` 响应式框架控件、`3492159` 响应式面板/对话框/主窗口、`2f999eb` screen adapter 抽取与几何扫描提速、`d099b39` 知识库校准），以及随后的文档锚点同步提交 |
 | 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
@@ -86,6 +87,7 @@
 4. 新增术语或缩写时同步 [glossary](project-knowledge/glossary.md)，避免同一词在不同文档中漂移。
 5. 每个 Git 提交必须在 `utils/app_metadata.py` 中递增一次 `APP_VERSION`，默认递增补丁版本且不得复用历史版本。
 6. 提交前至少运行 `py -3.11 -m pytest -q`（全量约 930 项、约 11 分钟）、`py -3.11 main.py --self-check packaging`、`ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE](guides/TESTING_GUIDE.md) 扩展验证。
+7. 文档类提交前运行 `py -3.11 scripts/check_doc_links.py`，确保链接与 frontmatter 通过。
 
 ## 归档
 

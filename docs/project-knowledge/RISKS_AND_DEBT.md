@@ -1,3 +1,10 @@
+---
+status: current
+last_verified: 2026-08-19
+owner: 待确认
+related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
+---
+
 # 风险与技术债
 
 下表按严重程度和影响排序。前 10 项是本次审计的最高优先级；“Open”表示尚未修复，

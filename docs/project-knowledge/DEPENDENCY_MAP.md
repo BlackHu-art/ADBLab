@@ -1,3 +1,9 @@
+---
+status: current
+last_verified: 2026-08-19
+related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
+---
+
 # 依赖地图
 
 ## 内部依赖方向

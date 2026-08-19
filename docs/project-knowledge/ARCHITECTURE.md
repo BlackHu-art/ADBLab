@@ -1,3 +1,13 @@
+---
+status: current
+last_verified: 2026-08-19
+related:
+  - MODULE_MAP.md
+  - BUSINESS_FLOW.md
+  - ../architecture/IMPLEMENTATION_PLAN.md
+  - ../architecture/adr/0001-incremental-vnext.md
+---
+
 # 架构说明
 
 ## 总体架构

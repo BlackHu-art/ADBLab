@@ -1,3 +1,9 @@
+---
+status: current
+last_verified: 2026-08-19
+related: [MODULE_MAP.md, DATA_FLOW.md]
+---
+
 # 主要业务流程
 
 ## 1. 应用启动与设备发现

@@ -1,3 +1,9 @@
+---
+status: current
+last_verified: 2026-08-19
+related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
+---
+
 # 数据流
 
 ## 核心数据对象

@@ -1,3 +1,9 @@
+---
+status: current
+last_verified: 2026-08-19
+related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
+---
+
 # 术语表
 
 本页集中定义项目专有概念和高频缩写。新增文档或功能时，若引入新的模块名、外部工具、数据格式或缩写，应同步补充本页。
