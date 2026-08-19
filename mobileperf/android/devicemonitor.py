@@ -3,13 +3,10 @@
 import csv
 import os
 import random
-import sys
 import threading
 import time
 import traceback
 
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
 from mobileperf.common.log import logger

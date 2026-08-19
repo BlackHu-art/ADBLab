@@ -4656,21 +4656,28 @@ def test_adb_input_session_writes_input_command_to_stdin():
     proc = Mock()
     proc.stdin = Mock()
     proc.poll.return_value = None
-    session = ADBInputSession("adb.exe", "device-1")
+    runner = Mock()
+    runner.start.return_value = proc
 
-    with patch("core.adb_bridge.subprocess.Popen", return_value=proc) as popen:
+    with patch("core.adb_bridge.ProcessRunner", return_value=runner):
+        session = ADBInputSession("adb.exe", "device-1")
         assert session.send("keyevent 3") is True
 
-    popen.assert_called_once()
-    assert popen.call_args.args[0] == ["adb.exe", "-s", "device-1", "shell"]
+    runner.start.assert_called_once()
+    assert runner.start.call_args.args[:2] == (
+        session._key,
+        ["adb.exe", "-s", "device-1", "shell"],
+    )
     proc.stdin.write.assert_called_once_with("input keyevent 3\n")
     proc.stdin.flush.assert_called_once()
 
 
 def test_adb_input_session_returns_false_when_process_cannot_start():
-    session = ADBInputSession("adb.exe", "device-1")
+    runner = Mock()
+    runner.start.side_effect = OSError("boom")
 
-    with patch("core.adb_bridge.subprocess.Popen", side_effect=OSError("boom")):
+    with patch("core.adb_bridge.ProcessRunner", return_value=runner):
+        session = ADBInputSession("adb.exe", "device-1")
         assert session.send("keyevent 3") is False
 
 

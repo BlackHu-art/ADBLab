@@ -29,8 +29,13 @@ def _process_events() -> None:
     QCoreApplication.processEvents(QEventLoop.ProcessEventsFlag.AllEvents, 10)
 
 
-def wait_until(app: QApplication, predicate: Callable[[], bool], *, timeout_ms: int = 1500) -> None:
-    """在明确 deadline 内让 Qt 事件循环推进至条件成立。"""
+def wait_until(app: QApplication, predicate: Callable[[], bool], *, timeout_ms: int = 6000) -> None:
+    """在明确 deadline 内让 Qt 事件循环推进至条件成立。
+
+    全量套件运行到末尾时进程内 Qt 对象与延迟删除事件大量累积，单次 processEvents
+    调度变慢，1500ms 会出现确定性超时（与具体前置文件无关、单独跑该文件不复现），
+    因此把默认 deadline 放宽到 6000ms 以保证顺序无关的稳定性。
+    """
 
     del app
     deadline = QDeadlineTimer(timeout_ms)

@@ -12,8 +12,7 @@ exclude = [
 [lint]
 select = ["E", "F", "W", "UP", "I"]
 
-# mobileperf 遗留子进程层的动态导入路径与 %-格式化：属结构性遗留，
-# 在 Remote/MobilePerf 功能域重做（shell=True 与执行边界重构）时统一清理后再移除豁免。
+# ADR-0003 Phase 1 已把 mobileperf 执行层改为参数数组 + psutil（core/process_utils），
+# 一方源码不再有 E402/UP031 违规，`mobileperf/**` 豁免随之移除；extlib 仍走整体 exclude。
 [lint.per-file-ignores]
-"mobileperf/**" = ["E402", "UP031"]
 "tests/live_logcat_close_probe.py" = ["E402"]  # 探针脚本需先注入 sys.path 再导入

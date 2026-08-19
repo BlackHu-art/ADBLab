@@ -3,10 +3,7 @@
 import csv
 import os
 import re
-import sys
 
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.common.log import logger
 from mobileperf.extlib import xlsxwriter
 
@@ -32,16 +29,16 @@ class Excel:
         suffix_index = 1
 
         while candidate.lower() in self._worksheet_names:
-            suffix = "_%s" % suffix_index
+            suffix = f"_{suffix_index}"
             keep = _WORKSHEET_NAME_LIMIT - len(suffix)
             candidate = (
-                "%s%s" % (base_name[:keep], suffix) if keep > 0 else suffix[-_WORKSHEET_NAME_LIMIT:]
+                f"{base_name[:keep]}{suffix}" if keep > 0 else suffix[-_WORKSHEET_NAME_LIMIT:]
             )
             suffix_index += 1
 
         self._worksheet_names.add(candidate.lower())
         if candidate != raw_name:
-            logger.debug("worksheet name normalized: %s -> %s" % (raw_name, candidate))
+            logger.debug(f"worksheet name normalized: {raw_name} -> {candidate}")
         return candidate
 
     def add_sheet(self, sheet_name, x_axis, y_axis, headings, lines):
@@ -50,7 +47,7 @@ class Excel:
         worksheet = self.workbook.add_worksheet(worksheet_name)
         worksheet.write_row("A1", headings)
         for i, line in enumerate(lines, 2):
-            worksheet.write_row("A%d" % i, line)
+            worksheet.write_row(f"A{i:d}", line)
         columns = len(headings)
         rows = len(lines)
         if columns > 1 and rows > 1:

@@ -10,8 +10,6 @@ import sys
 import threading
 import time
 
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
@@ -229,35 +227,29 @@ class ADB:
 
     @staticmethod
     def killOccupy5037Process():
-        if ADB.get_os_name() == "Windows":
-            sub = subprocess.Popen(
-                'netstat -ano|findstr "5037"', stdout=subprocess.PIPE, shell=True
-            )
-            ret = sub.stdout.read()
-            sub.wait()
-            if not ret:
-                logger.debug("netstat is empty")
-                return
-            lines = ret.splitlines()
-            for line in lines:
-                if "LISTENING" in line:
-                    pid = line.split()[-1]
-                    sub = subprocess.Popen(
-                        "tasklist |findstr %s" % pid, stdout=subprocess.PIPE, shell=True
-                    )
-                    ret = sub.stdout.read()
-                    sub.wait()
-                    _process_name = ret.split()[0]
-                    logger.debug("adb port conflict detected: listener_count=1")
-                    #                 DDMS会用到adb 杀了adb会导致 IDE调试或控制台可能不正常，后面
-                    #                 需要改环境变量
-                    subprocess.Popen(
-                        "taskkill /T /F /PID %s" % pid, stdout=subprocess.PIPE, shell=True
-                    )
-                    logger.debug("adb port conflict process terminated")
-                    break
+        """终止占用 5037 端口的进程（ADB server 端口冲突处理）。
+
+        不再使用 netstat/tasklist/taskkill 与 shell 字符串拼接；统一通过
+        ``core.process_utils`` 的 psutil 实现查找监听进程并按进程树终止
+        （ADR-0003 Phase 1）。注意：DDMS 等工具也会借用 adb，终止 adb server
+        可能影响 IDE 调试，沿用原有行为并在日志中记录 PID 与进程名。
+        """
+        from core.process_utils import find_pids_listening_on, kill_process_tree, process_name
+
+        pids = find_pids_listening_on(5037)
+        if not pids:
+            logger.debug("no process occupies port 5037")
+            return
+        for pid in pids:
+            name = process_name(pid)
+            logger.debug("adb port conflict detected: pid=%s name=%s", pid, name)
+            terminated, detail = kill_process_tree(pid)
+            if terminated:
+                logger.debug("adb port conflict process terminated: pid=%s", pid)
             else:
-                logger.debug("don't have process occupy 5037")
+                logger.warning(
+                    "adb port conflict process termination failed: pid=%s detail=%s", pid, detail
+                )
 
     def _timer(self, process, timeout):
         """进程超时器，监控adb同步命令执行是否超时，超时强制结束执行。当timeout<=0时，永不超时
@@ -441,7 +433,7 @@ class ADB:
                     + "\n"
                 )
             self.before_connect = True
-        ret = self.run_adb_cmd("shell", "%s" % cmd, **kwds)
+        ret = self.run_adb_cmd("shell", f"{cmd}", **kwds)
         # 当 adb 命令传入 sync=False时，ret是Poen对象
         if ret is None:
             logger.error("adb shell command failed")
@@ -494,7 +486,7 @@ class ADB:
                         if not self.log_file_create_time:
                             self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         logcat_file = os.path.join(
-                            save_dir, "logcat_%s.log" % self.log_file_create_time
+                            save_dir, f"logcat_{self.log_file_create_time}.log"
                         )
                         self.append_log_line_num = 0
                         self.save(logcat_file, logs)
@@ -504,7 +496,7 @@ class ADB:
                         self.file_log_line_num = 0
                         self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         logcat_file = os.path.join(
-                            save_dir, "logcat_%s.log" % self.log_file_create_time
+                            save_dir, f"logcat_{self.log_file_create_time}.log"
                         )
                         self.save(logcat_file, logs)
                         logs = []
@@ -595,7 +587,7 @@ class ADB:
             result = self.run_adb_cmd("push", src_path, dst_path, timeout=30)
             if result.find("No such file or directory") >= 0:
                 logger.error("adb push source does not exist")
-            if ("%d" % file_size) in result:
+            if f"{file_size:d}" in result:
                 return result
         logger.error(
             "adb push failed: attempt_count=3 output_length=%s",
@@ -621,24 +613,24 @@ class ADB:
             self.pull_file(src_file_path, dst_path)
 
     def screencap_out(self, pc_save_path):
-        result = self.run_adb_cmd("exec-out screencap -p %s" % pc_save_path, timeout=20)
+        result = self.run_adb_cmd(f"exec-out screencap -p {pc_save_path}", timeout=20)
         return result
 
     def screencap(self, save_path):
-        result = self.run_shell_cmd("screencap -p %s" % save_path, timeout=20)
+        result = self.run_shell_cmd(f"screencap -p {save_path}", timeout=20)
         return result
 
     def delete_file(self, file_path):
         """删除手机上文件"""
-        self.run_shell_cmd("rm %s" % file_path)
+        self.run_shell_cmd(f"rm {file_path}")
 
     def delete_folder(self, folder_path):
         """删除手机上的目录"""
-        self.run_shell_cmd("rm -R %s" % folder_path)
+        self.run_shell_cmd(f"rm -R {folder_path}")
 
     def check_path_size(self, folder_path, ratio):
         """检测手机上目录空间占比，超过多少比例"""
-        out = self.run_shell_cmd("df %s" % folder_path)
+        out = self.run_shell_cmd(f"df {folder_path}")
         logger.debug("device storage query completed: output_length=%s", _payload_length(out))
         if out:
             lines = out.replace("\r", "").splitlines()
@@ -655,7 +647,7 @@ class ADB:
         :param path:
         :return:
         """
-        result = self.run_shell_cmd("ls -l %s" % path)
+        result = self.run_shell_cmd(f"ls -l {path}")
         if not result:
             return False
         result = result.replace("\r\r\n", "\n")
@@ -669,13 +661,13 @@ class ADB:
         :param folder_path:
         :return:
         """
-        self.run_shell_cmd("mkdir %s" % folder_path)
+        self.run_shell_cmd(f"mkdir {folder_path}")
 
     def list_dir(self, dir_path):
         """列取目录下文件 文件夹
         返回 文件名 列表
         """
-        result = self.run_shell_cmd("ls -l %s" % dir_path)
+        result = self.run_shell_cmd(f"ls -l {dir_path}")
         if not result:
             return ""
         result = result.replace("\r\r\n", "\n")
@@ -695,7 +687,7 @@ class ADB:
         返回文件绝对路径 列表
         """
         # 通过详细目录列表读取文件修改时间。
-        result = self.run_shell_cmd("ls -l %s" % dir_path)
+        result = self.run_shell_cmd(f"ls -l {dir_path}")
         if not result:
             return ""
         result = result.replace("\r\r\n", "\n")
@@ -712,7 +704,7 @@ class ADB:
                 last_modify_time = match.group(1)
                 last_modify_timestamp = TimeUtils.getTimeStamp(last_modify_time, "%Y-%m-%d %H:%M")
                 if start_time < last_modify_timestamp and last_modify_timestamp < end_time:
-                    file_list.append("%s/%s" % (dir_path, items[-1]))
+                    file_list.append(f"{dir_path}/{items[-1]}")
         logger.debug(
             "device directory time filter completed: matched_count=%s",
             len(file_list),
@@ -720,7 +712,7 @@ class ADB:
         return file_list
 
     def is_overtime_days(self, filepath, days=7):
-        result = self.run_shell_cmd("ls -l %s" % filepath)
+        result = self.run_shell_cmd(f"ls -l {filepath}")
         if not result:
             return False
         result = result.replace("\r\r\n", "\n")
@@ -744,18 +736,18 @@ class ADB:
     def start_activity(self, activity_name, action="", data_uri="", extra={}, wait=True):
         """打开一个Activity"""
         if action != "":  # 指定Action
-            action = "-a %s " % action
+            action = f"-a {action} "
         if data_uri != "":
-            data_uri = "-d %s " % data_uri
+            data_uri = f"-d {data_uri} "
         extra_str = ""
         for key in extra.keys():  # 指定额外参数
-            extra_str += "-e %s %s " % (key, extra[key])
+            extra_str += f"-e {key} {extra[key]} "
         W = ""
         if wait:
             W = "-W"  # 等待启动完成才返回
 
         result = self.run_shell_cmd(
-            "am start %s -n %s %s %s %s" % (W, activity_name, action, data_uri, extra_str),
+            f"am start {W} -n {activity_name} {action} {data_uri} {extra_str}",
             timeout=30,
             retry_count=1,
         )
@@ -899,7 +891,7 @@ class ADB:
         :return: 无
         """
         pid = self.get_pid_from_pck(package_name)
-        return self.run_shell_cmd("debuggerd -b %s > %s" % (pid, save_path))
+        return self.run_shell_cmd(f"debuggerd -b {pid} > {save_path}")
 
     def get_process_stack_from_pid(self, pid, save_path):
         """
@@ -907,37 +899,35 @@ class ADB:
         :param save_path: 堆栈文件保存路径
         :return: 无
         """
-        return self.run_shell_cmd("debuggerd -b %s > %s" % (pid, save_path))
+        return self.run_shell_cmd(f"debuggerd -b {pid} > {save_path}")
 
     def dumpheap(self, package, save_path):
-        heapfile = "/data/local/tmp/%s_dumpheap_%s.hprof" % (
-            package,
-            TimeUtils.getCurrentTimeUnderline(),
+        heapfile = (
+            f"/data/local/tmp/{package}_dumpheap_{TimeUtils.getCurrentTimeUnderline()}.hprof"
         )
-        self.run_shell_cmd("am dumpheap %s %s" % (package, heapfile))
+        self.run_shell_cmd(f"am dumpheap {package} {heapfile}")
         time.sleep(10)
         self.pull_file(heapfile, save_path)
 
     def dump_native_heap(self, package, save_path):
-        native_heap_file = "/data/local/tmp/%s_native_heap_%s.txt" % (
-            package,
-            TimeUtils.getCurrentTimeUnderline(),
+        native_heap_file = (
+            f"/data/local/tmp/{package}_native_heap_{TimeUtils.getCurrentTimeUnderline()}.txt"
         )
-        self.run_shell_cmd("am dumpheap -n %s %s" % (package, native_heap_file))
+        self.run_shell_cmd(f"am dumpheap -n {package} {native_heap_file}")
 
     def clear_data(self, packagename):
         """清除指定包的 用户数据"""
-        return self.run_shell_cmd("pm clear %s" % packagename)
+        return self.run_shell_cmd(f"pm clear {packagename}")
 
     def stop_package(self, packagename):
         """杀死指定包的进程"""
-        return self.run_shell_cmd("am force-stop %s" % packagename)
+        return self.run_shell_cmd(f"am force-stop {packagename}")
 
     def input(self, string):
-        return self.run_shell_cmd("input text %s" % string)
+        return self.run_shell_cmd(f"input text {string}")
 
     def ping(self, address, count):
-        return self.run_shell_cmd("shell ping -c %d %s" % (count, address), timeout=None)
+        return self.run_shell_cmd(f"shell ping -c {count:d} {address}", timeout=None)
 
     def get_system_version(self):
         """获取系统版本，如：4.1.2"""
@@ -1059,7 +1049,7 @@ class ADB:
         :return:
         """
         uid = None
-        _cmd = "dumpsys package %s" % pkg
+        _cmd = f"dumpsys package {pkg}"
         out = self.run_shell_cmd(_cmd)
         lines = out.replace("\r", "").splitlines()
         if len(lines) > 0:
@@ -1209,7 +1199,7 @@ class ADB:
         :param type:  手机上的端口类型
         :type type:   String，LocalSocket地址使用“localabstract”
         """
-        ret = self.run_adb_cmd("forward", "tcp:%d" % port1, "%s:%s" % (type, port2))
+        ret = self.run_adb_cmd("forward", f"tcp:{port1:d}", f"{type}:{port2}")
         if ret is None:
             return False
         return True
@@ -1243,10 +1233,9 @@ class ADB:
         timeout = 3 * 60  # TODO: 确认3分钟是否足够
         tmp_path = "/data/local/tmp/" + os.path.split(apk_path)[-1]
         self.push_file(apk_path, tmp_path)
-        cmdline = "pm install %s %s %s" % (
-            "-r -t" if over_install else "",
-            "-d" if downgrade else "",
-            tmp_path,
+        cmdline = (
+            f"pm install {'-r -t' if over_install else ''} "
+            f"{'-d' if downgrade else ''} {tmp_path}"
         )
         ret = ""
         for i in range(3):
@@ -1269,7 +1258,7 @@ class ADB:
                     "INSTALL_PARSE_FAILED_NO_CERTIFICATES" in ret
                     or "INSTALL_FAILED_INSUFFICIENT_STORAGE" in ret
                 ):
-                    raise RuntimeError("安装应用失败：%s" % ret)
+                    raise RuntimeError(f"安装应用失败：{ret}")
 
                 if "INSTALL_FAILED_UID_CHANGED" in ret:
                     logger.error("应用安装失败：reason=uid_changed")
@@ -1320,7 +1309,7 @@ class ADB:
 
     def uninstall_apk(self, pkg_name):
         """卸载应用"""
-        result = self.run_adb_cmd("uninstall %s" % pkg_name, timeout=30)
+        result = self.run_adb_cmd(f"uninstall {pkg_name}", timeout=30)
         return result.find("Success") >= 0
 
 

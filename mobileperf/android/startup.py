@@ -7,9 +7,6 @@ import sys
 import time
 from configparser import ConfigParser
 
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
-
 from mobileperf.android.cpu_top import CpuMonitor
 from mobileperf.android.devicemonitor import DeviceMonitor
 from mobileperf.android.fd import FdMonitor
@@ -114,7 +111,7 @@ class StartUp:
         configpath = self.config_path or os.path.join(
             RuntimeData.top_dir, "mobileperf", "config.conf"
         )
-        logger.debug("configpath:%s" % configpath)
+        logger.debug(f"configpath:{configpath}")
         if not os.path.isfile(configpath):
             logger.error("the config file didn't exist: " + configpath)
             raise RuntimeError("the config file didn't exist: " + configpath)
@@ -400,7 +397,7 @@ class StartUp:
                 if self.packages[0] in file and self.device.adb.is_overtime_days(
                     "/data/local/tmp/" + file, 3
                 ):
-                    self.device.adb.delete_file("/data/local/tmp/%s" % file)
+                    self.device.adb.delete_file(f"/data/local/tmp/{file}")
 
     def stop(self):
         """停止监控器、生成报告并回收本次采集产生的设备侧文件。"""
@@ -461,7 +458,7 @@ class StartUp:
             for file in filelist:
                 if self.packages[0] in file:
                     self.device.adb.pull_file(
-                        "/data/local/tmp/%s" % file, RuntimeData.package_save_path
+                        f"/data/local/tmp/{file}", RuntimeData.package_save_path
                     )
 
     def pull_log_files(self):

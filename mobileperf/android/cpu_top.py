@@ -5,13 +5,9 @@
 import csv
 import os
 import re
-import sys
 import threading
 import time
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -128,9 +124,9 @@ class PckCpuinfo:
                 self.iow_rate = match.group(3)
                 self.irq_rate = match.group(4)
                 self.device_cpu_rate = int(self.user_rate) + int(self.system_rate)
-                logger.debug("  cpuinfos,device system_rate: %s" % self.system_rate)
-                logger.debug("  cpuinfos, device user_rate: %s" % self.user_rate)
-                logger.debug("  cpuinfos, device device_cpu_rate: %s" % self.device_cpu_rate)
+                logger.debug(f"  cpuinfos,device system_rate: {self.system_rate}")
+                logger.debug(f"  cpuinfos, device user_rate: {self.user_rate}")
+                logger.debug(f"  cpuinfos, device device_cpu_rate: {self.device_cpu_rate}")
         else:  # Android 8.0 及以上版本的输出格式
             # 表头顺序与类定义处保留的 Android 8.0 输出样例一致。
             match = self.RE_CPU_O.search(self.source)
@@ -150,7 +146,7 @@ class PckCpuinfo:
                     + ",device cpu: "
                     + str(self.device_cpu_rate)
                 )
-                logger.debug("idle_rate: %s" % self.idle_rate)
+                logger.debug(f"idle_rate: {self.idle_rate}")
 
     def sum_procs_cpurate(self):
         """累计同一 UID 下所有进程的 CPU 使用率。"""
@@ -239,11 +235,11 @@ class CpuCollector:
         self.cpu_list = []
         self.sdkversion = self.get_sdkversion()
         # 使用批处理模式，避免 top 交互界面截断进程名。
-        self.top_cmd = "top -b -n 1 -d %d" % self._interval
+        self.top_cmd = f"top -b -n 1 -d {self._interval:d}"
         ret = self.device.adb.run_shell_cmd(self.top_cmd)
         if ret and 'Invalid argument "-b"' in ret:
             logger.debug("top -b not support")
-            self.top_cmd = "top -n 1 -d %d" % self._interval
+            self.top_cmd = f"top -n 1 -d {self._interval:d}"
         logger.debug("sdk version : " + str(self.sdkversion))
 
     def get_sdkversion(self):

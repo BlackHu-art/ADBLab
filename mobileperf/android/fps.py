@@ -8,13 +8,9 @@ import datetime
 import os
 import queue
 import re
-import sys
 import threading
 import time
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -218,7 +214,7 @@ class SurfaceStatsCollector:
                     if fps > 60:
                         fps = 60
                     self.surface_before = data
-                    logger.debug("FPS:%2s" % fps)
+                    logger.debug(f"FPS:{fps:2}")
                     tmp_list = [TimeUtils.getCurrentTimeUnderline(), fps]
                     try:
                         with open(fps_file, "a+", encoding="utf-8") as f:
@@ -230,7 +226,7 @@ class SurfaceStatsCollector:
                     timestamps = data[1]
                     collect_time = data[2]
                     fps, jank = self._calculate_results_new(refresh_period, timestamps)
-                    logger.debug("FPS:%2s Jank:%s" % (fps, jank))
+                    logger.debug(f"FPS:{fps:2} Jank:{jank}")
                     fps_list = [collect_time, self.focus_window, fps, jank]
                     if self.fps_queue:
                         self.fps_queue.put(fps_list)
@@ -318,7 +314,7 @@ class SurfaceStatsCollector:
             results = self.device.adb.run_shell_cmd("dumpsys SurfaceFlinger --latency-clear")
         else:
             results = self.device.adb.run_shell_cmd(
-                "dumpsys SurfaceFlinger --latency-clear %s" % self.focus_window
+                f"dumpsys SurfaceFlinger --latency-clear {self.focus_window}"
             )
         return not len(results)
 
@@ -344,12 +340,12 @@ class SurfaceStatsCollector:
         pending_fence_timestamp = (1 << 63) - 1
         if self.device.adb.get_sdk_version() >= 26:
             results = self.device.adb.run_shell_cmd(
-                "dumpsys SurfaceFlinger --latency %s" % self.focus_window
+                f"dumpsys SurfaceFlinger --latency {self.focus_window}"
             )
             results = results.replace("\r\n", "\n").splitlines()
             refresh_period = int(results[0]) / nanoseconds_per_second
             results = self.device.adb.run_shell_cmd(
-                "dumpsys gfxinfo %s framestats" % self.package_name
+                f"dumpsys gfxinfo {self.package_name} framestats"
             )
             # 将 gfxinfo framestats 结果转换为统一的三时间戳结构。
             results = results.replace("\r\n", "\n").splitlines()
@@ -379,7 +375,7 @@ class SurfaceStatsCollector:
                     break
         else:
             results = self.device.adb.run_shell_cmd(
-                "dumpsys SurfaceFlinger --latency %s" % self.focus_window
+                f"dumpsys SurfaceFlinger --latency {self.focus_window}"
             )
             results = results.replace("\r\n", "\n").splitlines()
             logger.debug("dumpsys SurfaceFlinger --latency result:")

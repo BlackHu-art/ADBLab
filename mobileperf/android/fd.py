@@ -5,13 +5,9 @@
 import csv
 import os
 import re
-import sys
 import threading
 import time
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -53,7 +49,7 @@ class FdInfoPackageCollector:
         # 进程重启导致 PID 变化时更新全局快照。
         if None is RuntimeData.old_pid or RuntimeData.old_pid != pid:
             RuntimeData.old_pid = pid
-        out = self.device.adb.run_shell_cmd("cat /proc/%s/status" % pid)
+        out = self.device.adb.run_shell_cmd(f"cat /proc/{pid}/status")
         collection_time = time.time()
         logger.debug("collection time in fd info is : " + str(collection_time))
         if out:

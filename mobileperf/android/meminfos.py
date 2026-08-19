@@ -5,13 +5,9 @@
 import csv
 import os
 import re
-import sys
 import threading
 import time
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -188,11 +184,11 @@ class MemInfoPackageCollector:
     def _dumpsys_process_meminfo(self, process):
         """采集指定进程的详细内存信息，通常在一秒内完成。"""
         time_old = time.time()
-        out = self.device.adb.run_shell_cmd("dumpsys meminfo %s" % process)
+        out = self.device.adb.run_shell_cmd(f"dumpsys meminfo {process}")
         # Windows 文件名不能包含冒号，因此对子进程分隔符进行替换。
         process_rename = process.replace(":", "_")
         meminfo_file = os.path.join(
-            RuntimeData.package_save_path, "dumpsys_meminfo_%s.txt" % process_rename
+            RuntimeData.package_save_path, f"dumpsys_meminfo_{process_rename}.txt"
         )
         with open(meminfo_file, "a+", encoding="utf-8") as writer:
             writer.write(TimeUtils.getCurrentTime() + " dumpsys meminfo package info:\n")
@@ -229,11 +225,11 @@ class MemInfoPackageCollector:
             if ":" in package:
                 pss_detail_file = os.path.join(
                     RuntimeData.package_save_path,
-                    "pss_%s.csv" % package.split(":")[-1].split(".")[-1],
+                    f"pss_{package.split(':')[-1].split('.')[-1]}.csv",
                 )
             else:
                 pss_detail_file = os.path.join(
-                    RuntimeData.package_save_path, "pss_%s.csv" % package
+                    RuntimeData.package_save_path, f"pss_{package}.csv"
                 )
             with open(pss_detail_file, "a+", encoding="utf-8") as df:
                 csv.writer(df, lineterminator="\n").writerow(pss_detail_titile)
@@ -269,16 +265,16 @@ class MemInfoPackageCollector:
                 for package in self.packages:
                     mem_pck_snapshot = self._dumpsys_process_meminfo(package)
                     if 0 == mem_pck_snapshot.totalPSS:
-                        logger.error("package total pss is 0:%s" % package)
+                        logger.error(f"package total pss is 0:{package}")
                         continue
                     if ":" in package:
                         pss_detail_file = os.path.join(
                             RuntimeData.package_save_path,
-                            "pss_%s.csv" % package.split(":")[-1].split(".")[-1],
+                            f"pss_{package.split(':')[-1].split('.')[-1]}.csv",
                         )
                     else:
                         pss_detail_file = os.path.join(
-                            RuntimeData.package_save_path, "pss_%s.csv" % package
+                            RuntimeData.package_save_path, f"pss_{package}.csv"
                         )
                     pss_detail_list = [
                         TimeUtils.formatTimeStamp(collection_time),

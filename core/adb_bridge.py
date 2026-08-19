@@ -15,13 +15,27 @@ logger = logging.getLogger("adb_bridge")
 
 
 class ADBInputSession:
-    """维护持久化的 adb shell 会话，降低输入命令延迟。"""
+    """维护持久化的 adb shell 会话，降低输入命令延迟。
 
-    def __init__(self, adb: str, device_id: str | None = None):
+    会话进程通过 ProcessRunner 注册进实例与全局跟踪表，关闭时先礼貌退出，
+    再由 runner 兜底终止进程树（ADR-0003 Phase 1）。
+    """
+
+    def __init__(
+        self,
+        adb: str,
+        device_id: str | None = None,
+        runner: ProcessRunner | None = None,
+    ):
         self.adb = adb
         self.device_id = device_id
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._runner = runner or ProcessRunner()
+
+    @property
+    def _key(self) -> str:
+        return f"adb-input-session-{id(self)}"
 
     def send(self, command: str) -> bool:
         """通过标准输入发送命令；返回 False 时由调用方执行降级路径。"""
@@ -56,7 +70,8 @@ class ADBInputSession:
             cmd.extend(["-s", self.device_id])
         cmd.append("shell")
         try:
-            self._proc = subprocess.Popen(
+            self._proc = self._runner.start(
+                self._key,
                 cmd,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.DEVNULL,
@@ -64,7 +79,6 @@ class ADBInputSession:
                 text=True,
                 encoding="utf-8",
                 errors="ignore",
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             return self._proc
         except Exception:
@@ -83,10 +97,7 @@ class ADBInputSession:
         except Exception:
             pass
         try:
-            proc.wait(timeout=1)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
+            self._runner.stop(self._key, timeout=1)
         except Exception:
             pass
 
@@ -142,7 +153,7 @@ class ADBBridge:
         with self._input_sessions_lock:
             session = self._input_sessions.get(key)
             if session is None:
-                session = ADBInputSession(self.path, device_id)
+                session = ADBInputSession(self.path, device_id, runner=self._process_runner)
                 self._input_sessions[key] = session
             return session
 

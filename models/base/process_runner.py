@@ -41,6 +41,7 @@ class ProcessRunner:
         stdout=None,
         stderr=None,
         *,
+        stdin=None,
         cwd: str | None = None,
         text: bool = False,
         encoding: str | None = None,
@@ -59,6 +60,7 @@ class ProcessRunner:
             cmd,
             stdout=subprocess.DEVNULL if stdout is None else stdout,
             stderr=subprocess.DEVNULL if stderr is None else stderr,
+            stdin=stdin,
             cwd=cwd,
             text=text,
             encoding=encoding,
@@ -81,6 +83,7 @@ class ProcessRunner:
         stdout=None,
         stderr=None,
         *,
+        stdin=None,
         cwd: str | None = None,
         text: bool = False,
         encoding: str | None = None,
@@ -96,6 +99,8 @@ class ProcessRunner:
             "text": text,
             "bufsize": bufsize,
         }
+        if stdin is not None:
+            popen_kwargs["stdin"] = stdin
         if stdout is not None:
             popen_kwargs["stdout"] = stdout
         if stderr is not None:

@@ -50,21 +50,21 @@ class Report:
                 }
                 if ":" in package:
                     # 子进程包名过长会导致 Excel 工作表写入失败，使用末段缩短名称。
-                    self.summary_csf_file["pss_%s.csv" % package.split(":")[-1].split(".")[-1]] = (
+                    self.summary_csf_file[f"pss_{package.split(':')[-1].split('.')[-1]}.csv"] = (
                         pss_detail_dic
                     )
                 else:
-                    self.summary_csf_file["pss_%s.csv" % package] = pss_detail_dic
+                    self.summary_csf_file[f"pss_{package}.csv"] = pss_detail_dic
         logger.debug(self.packages)
         logger.debug(self.summary_csf_file)
-        logger.info("create report for %s" % csv_dir)
+        logger.info(f"create report for {csv_dir}")
         file_names = self.filter_file_names(csv_dir)
-        logger.debug("%s" % file_names)
+        logger.debug(f"{file_names}")
         if file_names:
-            book_name = "summary_%s.xlsx" % TimeUtils.getCurrentTimeUnderline()
+            book_name = f"summary_{TimeUtils.getCurrentTimeUnderline()}.xlsx"
             excel = Excel(book_name)
             for file_name in file_names:
-                logger.debug("get csv %s to excel" % file_name)
+                logger.debug(f"get csv {file_name} to excel")
                 values = self.summary_csf_file[file_name]
                 excel.csv_to_xlsx(
                     file_name,
@@ -73,7 +73,7 @@ class Report:
                     values["y_axis"],
                     values["values"],
                 )
-            logger.info("wait to save %s" % book_name)
+            logger.info(f"wait to save {book_name}")
             excel.save()
 
     def filter_file_names(self, device):

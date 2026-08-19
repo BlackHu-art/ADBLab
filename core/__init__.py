@@ -1,7 +1,6 @@
-"""导出 ADB 桥接、日志、设置和邮件等核心服务。"""
+"""ADBLab 核心基础设施包。
 
-from core.adb_bridge import ADBBridge
-from core.log_service import LogLevel, LogService
-from core.settings_manager import AppSettings
-
-__all__ = ["ADBBridge", "LogLevel", "LogService", "AppSettings"]
+本包保持轻量入口：不在 __init__ 中主动导入依赖 Qt 的模块，避免 ``import core.xxx``
+把 PySide6 拉进不需要 Qt 的执行边界（如 MobilePerf 内核）。各模块按需显式导入，
+例如 ``from core.log_service import LogService``。
+"""

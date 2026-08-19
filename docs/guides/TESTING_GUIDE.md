@@ -6,7 +6,8 @@
 - 测试目录：`tests/`；`conftest.py` 提供 session 级 `qt_application` 引用保持、autouse
   `isolated_ui_state`（每个用例结束后恢复主题/字体、清理新建顶层窗口的定时器并调用 shutdown）
   与 `isolated_ui_state_probe` 断言入口，隔离跨测试的 Qt 延迟销毁状态。
-- 2026-08-18 使用 Python 3.11 的全量回归为 **930 项通过**，套件约 11 分钟；响应式几何扫描
+- 2026-08-18 使用 Python 3.11 的全量回归为 **930 项通过**，套件约 11 分钟；2026-08-19 增补
+  P0/P1 测试后为 **940 项通过**，本机约 5 分钟（此前 11 分钟含机器负载差异）。响应式几何扫描
   测试通过 autouse 把 `ResponsiveCoordinator.RESIZE_DEBOUNCE_MS` 降到 1ms，单文件从约 6 分钟
   降到约 1.5 分钟。
 - 测试主要使用 monkeypatch、临时目录、轻量 fake/stub 和通过 `__new__` 构造的最小 Qt 对象；不要求真实 Android 设备。
@@ -67,7 +68,7 @@ py -3.11 main.py --self-check packaging
 ruff check .
 ```
 
-`py -3.11 -m pytest -q` 全量 930 项通过、约 11 分钟；`ruff check .` 0 错误。测试分层 marker 由
+`py -3.11 -m pytest -q` 全量 940 项通过、本机约 5 分钟；`ruff check .` 0 错误。`tests/ui_geometry_helpers.py::wait_until` 的默认 deadline 为 6000ms：全量套件末尾 Qt 延迟删除事件累积会拖慢单次 `processEvents`，1500ms 曾在顺序相关场景下确定性超时（单独跑该文件不复现），放宽后顺序无关且全量稳定。测试分层 marker 由
 ADR-0003 Phase 0 引入：`unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针），
 文件到 marker 的映射集中在 `tests/conftest.py::pytest_collection_modifyitems`。CI 在完整测试前先跑
 快速子集（unit + integration，不含 UI 几何扫描）：

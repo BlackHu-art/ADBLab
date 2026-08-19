@@ -3,14 +3,9 @@
 import csv
 import os
 import re
-import sys
 import threading
 import time
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
-import sys
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -23,7 +18,7 @@ class TrafficUtils:
     def getUID(device, pkg):
         """从 dumpsys package 输出中解析目标包的 UID。"""
         uid = None
-        _cmd = "dumpsys package %s" % pkg
+        _cmd = f"dumpsys package {pkg}"
         out = device.adb.run_shell_cmd(_cmd)
         lines = out.replace("\r", "").splitlines()
         logger.debug("line length: " + str(len(lines)))
@@ -191,7 +186,7 @@ class TrafficCollecor:
         return NetDevInfo(out)
 
     def _cat_traffic_pid_dev(self, pid):
-        out = self.device.adb.run_shell_cmd("cat /proc/%d/net/dev" % pid)
+        out = self.device.adb.run_shell_cmd(f"cat /proc/{pid:d}/net/dev")
         out.replace("\r", "")
         return NetDevInfo(out)
 
@@ -343,7 +338,7 @@ class TrafficCollecor:
                     pid = self.device.adb.get_pid_from_pck(self.packages[i])
                     pck_net_info = self._cat_traffic_pid_dev(pid)
                     if not pck_net_info.source:
-                        logger.error("package net dev failed %s:" % self.packages[i])
+                        logger.error(f"package net dev failed {self.packages[i]}:")
                         continue
                     if self.traffic_init:
                         self.pck_init_net_list.append(pck_net_info)

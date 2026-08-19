@@ -5,13 +5,10 @@ import csv
 import json
 import os
 import queue
-import sys
 import threading
 import time
 import traceback
 
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
@@ -97,7 +94,7 @@ class DataWorker:
         if self.queuedic:
             return self.queuedic[key]
         else:
-            raise RuntimeError("no %s queue exist,please creat" % key)
+            raise RuntimeError(f"no {key} queue exist,please creat")
 
     def _handle_data_thread(self):
         """在独立线程中消费所有采集器队列，并按同一时间戳聚合数据。"""

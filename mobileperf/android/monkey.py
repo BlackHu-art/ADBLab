@@ -2,12 +2,8 @@
 
 import math
 import os
-import sys
 import threading
 import traceback
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -101,22 +97,13 @@ class Monkey:
         self.monkey_cmd = self._build_monkey_cmd(package, event_count)
         if timeout_seconds is not None:
             logger.info(
-                "start monkey for %ss, throttle=%sms, events=%s, pct_total=%s"
-                % (
-                    timeout_seconds,
-                    self.throttle_ms,
-                    event_count,
-                    self._event_percentage_total(),
-                )
+                f"start monkey for {timeout_seconds}s, throttle={self.throttle_ms}ms, "
+                f"events={event_count}, pct_total={self._event_percentage_total()}"
             )
         else:
             logger.info(
-                "start monkey, throttle=%sms, events=%s, pct_total=%s"
-                % (
-                    self.throttle_ms,
-                    event_count,
-                    self._event_percentage_total(),
-                )
+                f"start monkey, throttle={self.throttle_ms}ms, "
+                f"events={event_count}, pct_total={self._event_percentage_total()}"
             )
         self._log_pipe = self.device.adb.run_shell_cmd(self.monkey_cmd, sync=False)
         self._monkey_thread = threading.Thread(
@@ -207,7 +194,7 @@ class Monkey:
         try:
             self.device.adb.kill_process("com.android.commands.monkey")
         except Exception as e:
-            logger.debug("kill monkey skipped: %s" % e)
+            logger.debug(f"kill monkey skipped: {e}")
         if hasattr(self, "_monkey_thread") and self._monkey_thread.is_alive():
             self._monkey_thread.join(timeout=2)
 
@@ -240,7 +227,7 @@ class Monkey:
                         if not self.log_file_create_time:
                             self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         log_file = os.path.join(
-                            save_dir, "monkey_%s.log" % self.log_file_create_time
+                            save_dir, f"monkey_{self.log_file_create_time}.log"
                         )
                         self.append_log_line_num = 0
                         # 降低音量，避免音量过大导致语音指令失败。
@@ -252,7 +239,7 @@ class Monkey:
                         self.file_log_line_num = 0
                         self.log_file_create_time = TimeUtils.getCurrentTimeUnderline()
                         log_file = os.path.join(
-                            save_dir, "monkey_%s.log" % self.log_file_create_time
+                            save_dir, f"monkey_{self.log_file_create_time}.log"
                         )
                         self.save(log_file, logs)
                         logs = []

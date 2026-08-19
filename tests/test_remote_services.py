@@ -287,13 +287,18 @@ def test_adb_input_session_warm_opens_shell_without_writing_input():
     proc = Mock()
     proc.stdin = Mock()
     proc.poll.return_value = None
-    session = ADBInputSession("adb.exe", "device-1")
+    runner = Mock()
+    runner.start.return_value = proc
 
-    with patch("core.adb_bridge.subprocess.Popen", return_value=proc) as popen:
+    with patch("core.adb_bridge.ProcessRunner", return_value=runner):
+        session = ADBInputSession("adb.exe", "device-1")
         assert session.warm() is True
 
-    popen.assert_called_once()
-    assert popen.call_args.args[0] == ["adb.exe", "-s", "device-1", "shell"]
+    runner.start.assert_called_once()
+    assert runner.start.call_args.args[:2] == (
+        session._key,
+        ["adb.exe", "-s", "device-1", "shell"],
+    )
     proc.stdin.write.assert_not_called()
     proc.stdin.flush.assert_not_called()
 

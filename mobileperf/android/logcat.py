@@ -2,11 +2,7 @@
 
 import csv
 import os
-import sys
 import time
-
-BaseDir = os.path.dirname(__file__)
-sys.path.append(os.path.join(BaseDir, "../.."))
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -87,7 +83,7 @@ class LogcatMonitor(Monitor):
                     f.write(log_line + "\n")
                 process_stack_log_file = os.path.join(
                     RuntimeData.package_save_path,
-                    "process_stack_%s_%s.log" % (self.package, TimeUtils.getCurrentTimeUnderline()),
+                    f"process_stack_{self.package}_{TimeUtils.getCurrentTimeUnderline()}.log",
                 )
                 # 进程异常退出后 PID 可能变化，只允许使用异常发生时保存的旧 PID。
                 if RuntimeData.old_pid:
