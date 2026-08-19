@@ -11,6 +11,7 @@ from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
 from adblab.application.operations import OperationManager, OperationState
+from adblab.application.screen_record import ScreenRecordUseCase
 from core.log_service import LogService
 from core.perf_trace import (
     DEFAULT_SLOW_THRESHOLD_MS,
@@ -56,6 +57,7 @@ class _ADBControllerBase:
             self.operation_manager,
             id_factory=self._generate_operation_id,
         )
+        self.screen_records = ScreenRecordUseCase()
         self._batch_starts = {}
         self._install_terminal_lock = threading.RLock()
         self._install_owned_operations = {}

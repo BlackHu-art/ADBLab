@@ -526,19 +526,11 @@ class ADBMediaMixin(_ADBControllerBase):
                 _emit_record_target_finished(self, batch_id, ip)
             return
         now = time.time()
-        if not hasattr(self, "_record_info"):
-            self._record_info = {}
         for ip in devices:
-            if ip in self._record_info:
+            if not self.screen_records.start(ip, batch_id, save_dir, duration, start_time=now):
                 self._emit_operation("screen_record", False, f"Recording is already active on {ip}")
                 _emit_record_target_finished(self, batch_id, ip)
                 continue
-            self._record_info[ip] = {
-                "start_time": now,
-                "duration": duration,
-                "save_dir": save_dir,
-                "batch_id": batch_id,
-            }
             try:
                 self.advanced_model.start_screen_record_async(
                     ip,
@@ -547,7 +539,7 @@ class ADBMediaMixin(_ADBControllerBase):
                     batch_id=batch_id,
                 )
             except Exception as exc:
-                self._record_info.pop(ip, None)
+                self.screen_records.finish(ip, batch_id)
                 self._emit_operation(
                     "screen_record",
                     False,
@@ -557,22 +549,19 @@ class ADBMediaMixin(_ADBControllerBase):
 
     def _process_start_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
-        info = self._record_info.get(ip, {})
-        batch_id = result.get("batch_id") or info.get("batch_id", "")
-        if not info or batch_id != info.get("batch_id", ""):
+        info = self.screen_records.active(ip)
+        batch_id = result.get("batch_id") or (info or {}).get("batch_id", "")
+        if info is None or batch_id != info.get("batch_id", ""):
             return
         if result.get("success"):
             dur = result.get("duration", 30)
-            self._record_info[ip].update(
-                {
-                    "remote_path": result["remote_path"],
-                    "filename": result["filename"],
-                }
+            self.screen_records.mark_started(
+                ip, batch_id, result["remote_path"], result["filename"]
             )
             self._emit_operation(
                 "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
             )
-            if self._record_info[ip].get("stop_succeeded"):
+            if self.screen_records.is_stop_succeeded(ip, batch_id):
                 self._auto_pull(ip, batch_id)
             else:
                 # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
@@ -581,10 +570,8 @@ class ADBMediaMixin(_ADBControllerBase):
                     lambda ip=ip, batch_id=batch_id: self._auto_pull(ip, batch_id),
                 )
         else:
-            self._record_info.pop(ip, None)
-            stop_requests = getattr(self, "_record_stop_requests", {})
-            if isinstance(stop_requests, dict) and stop_requests.get(ip) == batch_id:
-                stop_requests.pop(ip, None)
+            self.screen_records.finish(ip, batch_id)
+            self.screen_records.clear_stop_request(ip, batch_id)
             self._emit_operation(
                 "screen_record", False, f"Failed to start recording on {ip}: {result.get('error')}"
             )
@@ -594,13 +581,9 @@ class ADBMediaMixin(_ADBControllerBase):
         """每个设备批次只提交一次录屏拉取；提交失败时立即释放终态。"""
 
         batch_id = str(info.get("batch_id", ""))
-        current = getattr(self, "_record_info", {}).get(device_ip, {})
-        if current is not info or str(current.get("batch_id", "")) != batch_id:
+        # Stop 结果和自动定时器都在 GUI 线程进入此入口；use case 内原子标记阻断重入。
+        if not self.screen_records.mark_pull_submitted(device_ip, batch_id):
             return False
-        if info.get("pull_submitted"):
-            return False
-        # Stop 结果和自动定时器都在 GUI 线程进入此入口，先标记再提交即可阻断重入。
-        info["pull_submitted"] = True
         try:
             self.advanced_model.pull_recorded_video_async(
                 device_ip,
@@ -611,12 +594,8 @@ class ADBMediaMixin(_ADBControllerBase):
             )
             return True
         except Exception as exc:
-            current = getattr(self, "_record_info", {}).get(device_ip, {})
-            if current.get("batch_id") == batch_id:
-                self._record_info.pop(device_ip, None)
-            stop_requests = getattr(self, "_record_stop_requests", {})
-            if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == batch_id:
-                stop_requests.pop(device_ip, None)
+            self.screen_records.finish(device_ip, batch_id)
+            self.screen_records.clear_stop_request(device_ip, batch_id)
             self._emit_operation(
                 "pull_recording",
                 False,
@@ -626,7 +605,7 @@ class ADBMediaMixin(_ADBControllerBase):
             return False
 
     def _auto_pull(self, device_ip: str, batch_id: str = ""):
-        info = self._record_info.get(device_ip, {})
+        info = self.screen_records.active(device_ip) or {}
         if batch_id and info.get("batch_id") != batch_id:
             return
         if info.get("remote_path") and not info.get("pull_submitted"):
@@ -641,23 +620,18 @@ class ADBMediaMixin(_ADBControllerBase):
         devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "stop_recording"):
             return
-        stop_requests = getattr(self, "_record_stop_requests", None)
-        if not isinstance(stop_requests, dict):
-            stop_requests = {}
-            self._record_stop_requests = stop_requests
         for ip in devices:
-            info = getattr(self, "_record_info", {}).get(ip, {})
+            info = self.screen_records.active(ip) or {}
             current_batch = str(info.get("batch_id", ""))
             requested_batch = str(batch_id).strip() or current_batch
             if batch_id and requested_batch != current_batch:
                 continue
-            if stop_requests.get(ip) == requested_batch:
+            if not self.screen_records.request_stop(ip, requested_batch):
                 continue
-            stop_requests[ip] = requested_batch
             try:
                 self.advanced_model.stop_screen_record_async(ip, batch_id=requested_batch)
             except Exception as exc:
-                stop_requests.pop(ip, None)
+                self.screen_records.clear_stop_request(ip, requested_batch)
                 self._emit_operation(
                     "stop_recording",
                     False,
@@ -667,11 +641,9 @@ class ADBMediaMixin(_ADBControllerBase):
     def _process_stop_screen_record_result(self, result: dict):
         ip = result.get("device_ip", "")
         result_batch = str(result.get("batch_id", ""))
-        info = getattr(self, "_record_info", {}).get(ip, {})
+        info = self.screen_records.active(ip) or {}
         current_batch = str(info.get("batch_id", ""))
-        stop_requests = getattr(self, "_record_stop_requests", {})
-        if isinstance(stop_requests, dict) and stop_requests.get(ip) == result_batch:
-            stop_requests.pop(ip, None)
+        self.screen_records.clear_stop_request(ip, result_batch)
         if current_batch and result_batch != current_batch:
             return
         if result_batch and not current_batch:
@@ -687,18 +659,16 @@ class ADBMediaMixin(_ADBControllerBase):
         if info.get("remote_path"):
             ADBMediaMixin._submit_recording_pull(self, ip, info)
         elif info:
-            info["stop_succeeded"] = True
+            self.screen_records.mark_stop_succeeded(ip, current_batch)
 
     def _process_pull_recorded_video_result(self, result: dict):
         ip = result.get("device_ip", "")
-        info = self._record_info.get(ip, {})
-        batch_id = result.get("batch_id") or info.get("batch_id", "")
-        if not info or batch_id != info.get("batch_id", ""):
+        info = self.screen_records.active(ip)
+        batch_id = result.get("batch_id") or (info or {}).get("batch_id", "")
+        if info is None or batch_id != info.get("batch_id", ""):
             return
-        self._record_info.pop(ip, None)
-        stop_requests = getattr(self, "_record_stop_requests", {})
-        if isinstance(stop_requests, dict) and stop_requests.get(ip) == batch_id:
-            stop_requests.pop(ip, None)
+        self.screen_records.finish(ip, batch_id)
+        self.screen_records.clear_stop_request(ip, batch_id)
         if result.get("success"):
             self._emit_operation(
                 "pull_recording", True, f"Recording saved: {result.get('local_path')}"
