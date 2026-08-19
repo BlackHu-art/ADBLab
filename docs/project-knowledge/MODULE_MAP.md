@@ -60,8 +60,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
   同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一生命周期 owner；
   这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
-  原生缩放在不同窗口管理器下的实际手感、窄屏及高 DPI 布局仍需人工验证；主窗口整体 close
-  仍包含同步 shutdown，Gate B2 未通过；`main_frame.py` 仍约 2,500 行，除 screen adapter 外的
+  原生缩放在不同窗口管理器下的实际手感、窄屏及高 DPI 布局仍需人工验证；主窗口 close 已改为
+  两阶段异步关闭（broadcast-first deadline，Gate B2 通过，契约测试见
+  `test_phase2_mainframe_shutdown_gate.py`）；`main_frame.py` 仍约 2,500 行，除 screen adapter 外的
   大文件拆分待后续。
 
 ### 对话框
@@ -207,8 +208,10 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **配置/数据/外部服务**：临时 config、`ADB_PATH`、停止标记、结果目录；MobilePerf 使用类级 RuntimeData 和多个原生线程。
 - **测试/风险/待确认**：配置、启动/停止、报告名、停止文件、当前运行产物筛选、退出码状态、
   stdout/stderr 高并发排空、回调异常、连续运行隔离与 BOM 前缀兼容有测试；
-  只有退出码 0 且存在本次生成的非空报告才显示 Completed/100。内核仍有直接 Popen/`shell=True`、
-  全局 `os.chdir`、`os._exit(0)` 和重复 ADB 生命周期，需实机长跑和异常恢复验证。
+  只有退出码 0 且存在本次生成的非空报告才显示 Completed/100。`shell=True` 已按 ADR-0003
+  Phase 1 移除：5037 端口清理改走 `core/process_utils`（psutil），14 个文件的 sys.path
+  引导块已删除（内核经 `-m` 或 frozen worker 以包模式运行）。内核仍保留独立 Popen
+  生命周期（参数数组）、全局 `os.chdir`、`os._exit(0)`，需实机长跑和异常恢复验证。
 
 ### 工具、构建与发布
 

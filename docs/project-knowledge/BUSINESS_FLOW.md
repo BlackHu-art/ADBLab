@@ -276,5 +276,8 @@ LiveLogcat 对话框已将 worker/process 注册到 MainFrame 注入的 TaskSupe
 隐藏窗口也继续持有 QObject，避免仍运行的 QThread 被提前析构；LiveLogcat 显式关闭
 `WA_QuitOnClose`，不会参与应用的最后窗口退出判定。若线程完成信号先于超时结果到达，
 关闭复核定时器会继续观察晚退出的受跟踪进程，并在实际清零后完成销毁。
-但 MainFrame 自身仍同步等待扫描、Remote 和 Controller 进程；Gate B2 的异步关闭状态机尚未完成，
-因此应用整体关闭仍是 No-Go，不能由 LiveLogcat B1 推导全局资源归零。
+MainFrame 自身也已改为两阶段异步关闭（Gate B2）：首次 close 事件只进入 closing 状态、停止 UI
+定时器并断开生产者信号，随后按扫描、面板、对话框、Controller 顺序注册关闭任务，以
+broadcast-first + 共享 wall-clock deadline 广播停止；全部资源归零或到达 deadline 后，后台
+finalizer 原子落盘配置并重新触发 close 完成销毁，超时资源保留在 residual snapshot 中且不
+宣称资源归零。该链路由 `test_phase2_mainframe_shutdown_gate.py` 的 11 项契约测试覆盖。

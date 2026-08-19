@@ -36,7 +36,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | OperationManager | 管理业务操作身份、状态机、进度、取消意图和结果汇总的纯 Python registry，不拥有线程/进程 | `adblab/application/operations.py` |
 | OperationMetadata | `async_command` 为 operation 调用组装的信封：operation/unit/task/target 身份、预期 artifact、owner/generation token | `adblab/application/envelope.py` |
 | InstallBatchUseCase | 安装批次 Gate C 用例：start/complete/fail/cancel/retry 状态机、部分失败与失败项重试 | `adblab/application/install_batch.py` |
-| Gate A / Gate B / Gate C | vNext 三个架构门：Screenshot operation 隔离（已过）、LiveLogcat 资源托管（B1 已过、B2 No-Go）、Install batch 批次部分失败语义（已过） | `docs/architecture/adr/0001-incremental-vnext.md` |
+| Gate A / Gate B / Gate C | vNext 三个架构门：Screenshot operation 隔离（已过）、LiveLogcat 资源托管与主窗口两阶段异步关闭（B1/B2 已过）、Install batch 批次部分失败语义（已过） | `docs/architecture/adr/0001-incremental-vnext.md` |
 | ResponsiveCoordinator | 响应式重排的单一协调入口：度量 → 布局计划 → 溢出收敛（最多 3 轮、40ms 防抖） | `gui/widgets/responsive_controller.py` |
 | ScreenAdapter / QtScreenAdapter | 屏幕适配协议与 Qt 实现：所在屏幕、可用几何、逻辑 DPI 与变更订阅 | `gui/screen_adapter.py` |
 | Remote | scrcpy 投屏与 ADB 远程输入功能 | `gui/panels/remote_panel.py`、`models/remote/` |

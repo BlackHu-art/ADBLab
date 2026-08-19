@@ -61,7 +61,7 @@ flowchart TD
 | PyYAML | 6.0.2 固定 | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements.txt`、`ADBLab.spec`、workflow |
 | Pillow | 12.3.0 固定 | 当前一方源码未发现导入 | 可能是历史/间接依赖，待确认是否可移除 |
-| psutil | 7.2.2 固定 | 当前一方源码未发现导入 | 可能是历史依赖，待确认是否可移除 |
+| psutil | 7.2.2 固定 | `core/process_utils.py`：TCP 端口占用查找与进程树终止（ADR-0003 Phase 1 起） | `requirements.txt`、`core/process_utils.py` |
 | XlsxWriter 移植副本 | 仓库内 vendored | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出现在 `requirements.txt`；
@@ -164,8 +164,8 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 ## 依赖治理建议
 
 1. 已锁定运行依赖（PySide6/PyYAML/PyInstaller/Pillow/psutil）与开发依赖（pytest/ruff）；
-   确认 Pillow、psutil 是否仍被间接使用，未使用则从 `requirements.txt` 移除；
-   评估是否清理 `mobileperf/setup.py` 的遗留 `requests` 描述。
+   psutil 已由 `core/process_utils.py` 使用（Phase 1）；继续确认 Pillow 是否仍被间接使用，
+   未使用则从 `requirements.txt` 移除；评估是否清理 `mobileperf/setup.py` 的遗留 `requests` 描述。
 2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入无缓存 `ruff check .` 步骤；
    可进一步在 CI 加入 format check 并消除 ruff.toml 与 pyproject.toml 的重复配置。
 3. 固定 Auto-Clean 第三方 action 到不可变 commit SHA，并把权限缩小到实际需要。

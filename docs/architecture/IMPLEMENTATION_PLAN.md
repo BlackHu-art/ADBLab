@@ -142,8 +142,9 @@ QUEUED → RUNNING → SUCCEEDED | PARTIAL | FAILED | CANCELLED
 - Phase 0：自动化门禁 Go；实机项待确认。
 - Phase 1：公共 Operation/Cancellation/envelope 契约完成。
 - Phase 2：Gate A Screenshot 自动化通过；Gate B1 LiveLogcat component 自动化通过
-  （全量回归 320 项），
-  Gate B2 MainFrame integrated shutdown 仍为 No-Go；按门禁约束尚未进入 Gate C。
+  （全量回归 320 项），Gate B2 MainFrame integrated shutdown 已实施（两阶段 broadcast-first
+  异步关闭，`tests/test_phase2_mainframe_shutdown_gate.py` 11 项契约测试），Gate B 总体 Go；
+  Gate C（Install batch）已通过。
 
 ## 7. Qt 约束
 

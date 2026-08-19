@@ -5,7 +5,10 @@
 - 基线版本：3.2.0
 
 实施进度：Phase 0 已落地（unit/ui/integration marker 集中在 `tests/conftest.py`，CI 在完整测试前
-运行 `pytest -q -m "not ui"` 快速子集，本地实测约 16 秒/573 项）。
+运行 `pytest -q -m "not ui"` 快速子集，本地实测约 16 秒/573 项）。Phase 1 已落地：新增
+`core/process_utils.py`（psutil 端口查找/进程树终止），`killOccupy5037Process` 删除三处 `shell=True`，
+`ADBInputSession` 经 `ProcessRunner.start`（新增 `stdin` 支持）纳入实例与全局跟踪，14 个
+mobileperf 文件的 sys.path 引导块删除（E402 清零），`mobileperf/**` 的 lint 豁免整体移除。
 
 ## 背景
 

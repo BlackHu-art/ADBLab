@@ -233,7 +233,10 @@ sequenceDiagram
   owner residual 均已清零后才允许销毁。超时或失败时隐藏窗口和 QObject 继续存活；
   GUI 定时器继续复核线程先结束但外部进程晚退出的路径，避免丢失最后一次唤醒。
   `WA_QuitOnClose` 明确关闭，二级日志窗口不参与应用级最后窗口退出判定。
-  Gate B2 的 MainFrame 整体异步关闭尚未实施，因此 Gate B 总体仍是 No-Go。
+  Gate B2 的 MainFrame 两阶段异步关闭已实施：`closeEvent` 首次事件只进入 closing 状态并广播停止
+  （broadcast-first、共享 wall-clock deadline），所有资源归零或到达 deadline 后经后台 finalizer
+  落盘配置并重新触发 close 完成销毁；`tests/test_phase2_mainframe_shutdown_gate.py` 11 项契约测试
+  覆盖非阻塞、幂等、residual snapshot 与 finalizer 语义，Gate B 总体为 Go。
 - GUI 只消费兼容 facade 或新端口，不直接依赖具体 worker；旧信号在迁移期保持名称、参数和线程语义。
 - Phase 0 已先收紧安全与结果真实性：危险操作统一确认、批次汇总线程安全、Monkey 前台探测
   fail-closed、App Manager 失败传播、Remote 输入锁定活动会话、MobilePerf 仅接受本次运行产物、
@@ -241,15 +244,16 @@ sequenceDiagram
 - 三个架构门的状态：Screenshot（Gate A）已完成 operation 隔离；Install batch（Gate C）已完成
   批次部分失败语义（`adblab/application/install_batch.py::InstallBatchUseCase` 的
   start/complete/fail/cancel/retry、operation/unit 身份、协作取消、Controller 侧提交预留/所有权/
-  generation 边界）；LiveLogcat（Gate B）B1 已接入 TaskSupervisor，但 Gate B2 的 MainFrame 整体
-  异步关闭尚未实施，因此 Gate B 总体仍是 No-Go。任一门回滚时只回滚该门，不拆除兼容 facade。
+  generation 边界）；LiveLogcat（Gate B）B1（组件级资源托管）与 B2（MainFrame 两阶段异步关闭）
+  均已完成，Gate B 总体为 Go。任一门回滚时只回滚该门，不拆除兼容 facade。
 
 ## 已知架构限制
 
 - Controller 仍持有较多业务状态；Screenshot 已完成 operation 隔离，安装批次已迁入
   `InstallBatchUseCase`，但录屏、卸载/清数据/重启/当前 Activity 等其他 `_pending_ops`/`_batch_trackers`
   路径仍存在并发隔离不足。
-- 命令执行边界没有完全统一：`core/adb_bridge.py` 和 `mobileperf/android/tools/androiddevice.py` 直接创建 Popen，后者还使用 `shell=True`。
+- 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
+  已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
 - 除 LiveLogcat 外，对话框仍各自实现 worker 生命周期；统一任务注册/取消协议尚未扩展到
   App Manager、File Explorer、Remote 和 MobilePerf。
 - 本地配置没有 schema/version；只有白名单键迁移。Remote 的 `scrcpy_*` 键已通过

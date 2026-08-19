@@ -25,6 +25,8 @@
 | `tests/test_logging_routing_mobileperf.py` | MainFrame 工具栏/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
 | `tests/test_mobileperf_runner_concurrency.py` | 双管道压力、回调异常排空和连续运行代次隔离 | 进程/线程并发契约 |
 | `tests/test_mobileperf_androiddevice_log_safety.py` | MobilePerf 遗留 ADB 层日志/脱敏安全 | 安全契约 |
+| `tests/test_mobileperf_port_cleanup.py` | 5037 端口冲突清理（`core/process_utils` 契约，Phase 1） | 单元契约 |
+| `tests/test_process_utils.py` | 端口监听查找与进程树终止的 psutil 行为 | 纯单元测试 |
 | `tests/test_comment_language.py` | 中文注释识别、豁免规则、模块说明和渐进受控范围 | 静态规范门禁 |
 | `tests/test_device_store_concurrency.py` | 并发 upsert、原子替换故障、损坏备份恢复 | 并发/故障注入 |
 | `tests/test_dangerous_ops.py` | 统一策略、设置开关、主窗口和 App Manager 拒绝路径 | 策略/UI 契约 |
@@ -36,7 +38,7 @@
 | `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、超时保活和独立进程关闭压力 | 架构 Gate B1 |
 | `tests/test_phase2_install_batch_use_case.py` | `InstallBatchUseCase` 状态机：start/complete/fail/cancel/retry、部分失败、owner/generation 边界 | 架构 Gate C 用例 |
 | `tests/test_phase2_install_batch_gate.py` | 安装批次 Controller 集成：提交预留、所有权、协作取消、失败项 retry、晚到结果 | 架构 Gate C 门禁 |
-| `tests/test_phase2_mainframe_shutdown_gate.py` | 主窗口关闭广播-first deadline、资源归零/residual snapshot 探索 | 架构 Gate B2 前置 |
+| `tests/test_phase2_mainframe_shutdown_gate.py` | 主窗口两阶段异步关闭：广播-first deadline、非阻塞/幂等、资源归零与 residual snapshot | 架构 Gate B2 契约 |
 | `tests/live_logcat_close_probe.py` | 真实延迟删除下连续关闭输出中的 LiveLogcat，并区分主窗口 Close、Qt 正常退出和原生崩溃 | Gate B1 子进程探针 |
 | `tests/test_window_lifecycle.py` | 二级窗口的 parent 约束、关闭隔离和 owner 屏幕适配 | 轻量 UI 生命周期契约 |
 | `tests/test_responsive_panels.py` | 响应式面板几何扫描（autouse 降防抖到 1ms）、控件身份保持、溢出收敛 | 轻量 UI 契约 |
@@ -136,8 +138,9 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 
 按优先级：
 
-1. MainFrame 异步关闭（Gate B2）集成测试：首次关闭不阻塞事件循环，所有 owner 广播停止，
-   最终资源归零或保留 residual snapshot（`test_phase2_mainframe_shutdown_gate.py` 已开始探索）。
+1. MainFrame 异步关闭（Gate B2）契约已落地：`test_phase2_mainframe_shutdown_gate.py` 11 项测试
+   覆盖首次关闭不阻塞事件循环、所有 owner 广播停止、资源归零或保留 residual snapshot；剩余
+   为真实设备 helper 进程树集成验证。
 2. 录屏批次迁移 OperationManager 后的并发/取消契约测试。
 3. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
 4. PyInstaller Windows 打包能力检查；macOS/Linux 加 scrcpy 缺失的明确降级测试。
