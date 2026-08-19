@@ -29,7 +29,7 @@ class FdInfoPackageCollector:
     def start(self, start_time):
         logger.debug("INFO: FdInfoPackageCollector start... ")
         self.collect_fd_thread = threading.Thread(
-            target=self._collect_fd_thread, args=(start_time,)
+            target=self._collect_fd_thread, args=(start_time,), daemon=True
         )
         self.collect_fd_thread.start()
 

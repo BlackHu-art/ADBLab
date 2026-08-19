@@ -207,13 +207,14 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   读取连续运行配置时逐层剥离 Unicode/历史字节序标记（`_CONFIG_BOM_PREFIXES`）并保持输入只读。
 - **输入/输出**：设备、包名、频率、时长、Monkey、dumpheap、日志路径；输出 CSV/XLSX、设备信息、日志与 heapdump。
 - **上下游**：上游 PerformanceLauncherDialog；下游 `python -m mobileperf.android.startup` 或冻结程序 worker、ADB、XLSXWriter。
-- **配置/数据/外部服务**：临时 config、`ADB_PATH`、停止标记、结果目录；MobilePerf 使用类级 RuntimeData 和多个原生线程。
+- **配置/数据/外部服务**：临时 config、`ADB_PATH`、停止标记、结果目录；MobilePerf 使用每运行一份的 RuntimeData 实例上下文与多个 daemon 采集线程（ADR-0004）。
 - **测试/风险/待确认**：配置、启动/停止、报告名、停止文件、当前运行产物筛选、退出码状态、
   stdout/stderr 高并发排空、回调异常、连续运行隔离与 BOM 前缀兼容有测试；
   只有退出码 0 且存在本次生成的非空报告才显示 Completed/100。`shell=True` 已按 ADR-0003
   Phase 1 移除：5037 端口清理改走 `core/process_utils`（psutil），14 个文件的 sys.path
   引导块已删除（内核经 `-m` 或 frozen worker 以包模式运行）。内核仍保留独立 Popen
-  生命周期（参数数组）、全局 `os.chdir`、`os._exit(0)`，需实机长跑和异常恢复验证。
+  生命周期（参数数组）；`os.chdir` 与 `os._exit` 已按 ADR-0004 移除，停止路径结构化收口；
+  长跑/断线故障测试与实机验证待确认。
 
 ### 工具、构建与发布
 

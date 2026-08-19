@@ -55,7 +55,7 @@ class DataWorker:
     def start(self, interval, start_time):
         self.interval = interval
         self.starttime = start_time
-        self.dataworker_thread = threading.Thread(target=self._handle_data_thread)
+        self.dataworker_thread = threading.Thread(target=self._handle_data_thread, daemon=True)
         self.dataworker_thread.start()
         logger.debug("DataWorker started...")
 

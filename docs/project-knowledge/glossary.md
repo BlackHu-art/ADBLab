@@ -49,7 +49,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | MobilePerfRunConfig | 运行参数数据类，可写临时 config | `services/mobileperf_runner.py` |
 | StartUp | MobilePerf 内核组合和运行入口 | `mobileperf/android/startup.py::StartUp` |
 | monitor | MobilePerf 的单类指标采集器，如 CPU/Mem/FPS | `mobileperf/android/*.py` |
-| RuntimeData | MobilePerf 的类级全局运行状态 | `mobileperf/android/globaldata.py` |
+| RuntimeData | MobilePerf 每运行一份的运行时状态；类属性读写经元类代理转发到当前运行实例，调用点保持兼容 | `mobileperf/android/globaldata.py` |
 | Monkey | Android 随机事件压力工具；项目有普通测试模式和 MobilePerf 可选 monitor | `models/adb_testing.py`、`mobileperf/android/monkey.py` |
 | FocusDetector | 通过多个 dumpsys 路径解析前台包名 | `models/base/focus_detector.py` |
 | bugreport | Android 系统诊断归档，可选经 chkbugreport JAR 转换 | `models/adb_testing.py` |

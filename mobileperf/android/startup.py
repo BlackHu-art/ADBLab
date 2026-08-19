@@ -46,6 +46,7 @@ class StartUp:
     """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
 
     def __init__(self, device_id=None, package=None, interval=None, config_path=None):
+        RuntimeData.begin_run()
         RuntimeData.top_dir = os.getcwd()
         if "android" in RuntimeData.top_dir:
             RuntimeData.top_dir = FileUtils.get_top_dir()
@@ -384,7 +385,7 @@ class StartUp:
         except KeyboardInterrupt:  # 捕获命令行中断并执行统一收尾。
             logger.debug(" catch keyboardInterrupt, goodbye!!!")
             self.stop()
-            os._exit(0)
+            return
         except Exception as e:
             logger.error("Exception in run")
             logger.error(e)
@@ -445,7 +446,9 @@ class StartUp:
         except Exception as e:
             logger.error("pull log files failed")
             logger.error(e)
-        os._exit(0)
+        # 结构化收口：采集线程均为 daemon，stop 完成后进程随 run 返回正常退出，
+        # 由父进程 MobilePerfRunner 按退出码与报告存在性判定结果（ADR-0004）。
+        RuntimeData.end_run()
 
     def memory_analyse(self):
         """保留内存分析兼容入口，当前未启用具体实现。"""

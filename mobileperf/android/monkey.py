@@ -107,7 +107,9 @@ class Monkey:
             )
         self._log_pipe = self.device.adb.run_shell_cmd(self.monkey_cmd, sync=False)
         self._monkey_thread = threading.Thread(
-            target=self._monkey_thread_func, args=[RuntimeData.package_save_path]
+            target=self._monkey_thread_func,
+            args=[RuntimeData.package_save_path],
+            daemon=True,
         )
         self._monkey_thread.start()
 

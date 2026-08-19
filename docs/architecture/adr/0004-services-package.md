@@ -1,12 +1,14 @@
 # ADR-0004：物理包归一（services/ 顶层包）与 MobilePerf 内核实例化
 
-- 状态：Accepted
+- 状态：Accepted（全部落地，实机验证待确认）
 - 日期：2026-08-19
 - 前置：ADR-0003 Phase 1–3
 
-实施进度：包移动（决策 1–3）已完成——`services/file_explorer.py`、
-`services/remote/`、`services/mobileperf_runner.py` 落位，全部导入点已改向，
-`models/mobileperf/` 包已删除；MobilePerf 内核实例化（决策 4）待实施。
+实施进度：决策 1–4 已全部落地——`services/file_explorer.py`、`services/remote/`、
+`services/mobileperf_runner.py` 落位（导入点全部改向，`models/mobileperf/` 包删除）；
+MobilePerf 内核已实例化：RuntimeData 改每运行实例（元类代理兼容调用点）、12 处采集线程
+daemon 化、`os.chdir` 移除（报告路径显式拼接）、两处 `os._exit` 移除（结构化收口）。
+实机长跑验证待确认。
 
 ## 背景
 

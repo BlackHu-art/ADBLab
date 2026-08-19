@@ -279,7 +279,7 @@ flowchart TD
     Stop["超时 / exit event / stop 文件"] --> Worker
     Worker --> Pull["拉取 heapdump 和配置的设备日志路径"]
     Pull --> Result
-    Worker --> Cleanup["os._exit 结束；适配层清理临时配置"]
+    Worker --> Cleanup["结构化收口；适配层清理临时配置"]
 ```
 
 结果目录包含设备型号、系统版本、包版本、指标和可能的设备日志/heapdump，可能含个人或业务敏感信息；当前未见加密、自动保留期或访问控制。连续运行配置在 `StartUp` 读取时逐层剥离 Unicode/历史字节序标记（`_CONFIG_BOM_PREFIXES`），并保持输入文件只读。

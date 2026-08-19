@@ -251,7 +251,7 @@ class CpuCollector:
     def start(self, start_time):
         """启动后台线程采集 CPU 信息。"""
         self.collect_package_cpu_thread = threading.Thread(
-            target=self._collect_package_cpu_thread, args=(start_time,)
+            target=self._collect_package_cpu_thread, args=(start_time,), daemon=True
         )
         self.collect_package_cpu_thread.start()
         logger.debug("INFO: CpuCollector start...")

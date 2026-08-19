@@ -54,10 +54,10 @@ class SurfaceStatsCollector:
             logger.debug("dumpsys SurfaceFlinger --latency-clear is none")
             self.use_legacy_method = True
             self.surface_before = self._get_surface_stats_legacy()
-        self.collector_thread = threading.Thread(target=self._collector_thread)
+        self.collector_thread = threading.Thread(target=self._collector_thread, daemon=True)
         self.collector_thread.start()
         self.calculator_thread = threading.Thread(
-            target=self._calculator_thread, args=(start_time,)
+            target=self._calculator_thread, args=(start_time,), daemon=True
         )
         self.calculator_thread.start()
 

@@ -153,7 +153,7 @@ class MemInfoPackageCollector:
         self.start_time = start_time
         logger.debug("INFO: MemInfoPackageCollector start... ")
         self.collect_mem_thread = threading.Thread(
-            target=self._collect_memory_thread, args=(start_time,)
+            target=self._collect_memory_thread, args=(start_time,), daemon=True
         )
         self.collect_mem_thread.start()
 

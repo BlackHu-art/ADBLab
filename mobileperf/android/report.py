@@ -11,7 +11,8 @@ class Report:
     """筛选可汇总的指标文件，并生成带曲线的 Excel 工作簿。"""
 
     def __init__(self, csv_dir, packages=[]):
-        os.chdir(csv_dir)
+        self.csv_dir = csv_dir
+        # 不切换进程工作目录：报告与 CSV 路径一律显式拼接（ADR-0004）。
         # 仅下列 CSV 指标需要生成汇总曲线。
         self.summary_csf_file = {
             "cpuinfo.csv": {
@@ -62,12 +63,12 @@ class Report:
         logger.debug(f"{file_names}")
         if file_names:
             book_name = f"summary_{TimeUtils.getCurrentTimeUnderline()}.xlsx"
-            excel = Excel(book_name)
+            excel = Excel(os.path.join(csv_dir, book_name))
             for file_name in file_names:
                 logger.debug(f"get csv {file_name} to excel")
                 values = self.summary_csf_file[file_name]
                 excel.csv_to_xlsx(
-                    file_name,
+                    os.path.join(csv_dir, file_name),
                     values["table_name"],
                     values["x_axis"],
                     values["y_axis"],

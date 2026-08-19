@@ -171,7 +171,7 @@ class TrafficCollecor:
     def start(self, start_time):
         logger.debug("INFO: TrafficCollecor  start...")
         self.collect_traffic_thread = threading.Thread(
-            target=self._collect_traffic_thread, args=(start_time,)
+            target=self._collect_traffic_thread, args=(start_time,), daemon=True
         )
         self.collect_traffic_thread.start()
 

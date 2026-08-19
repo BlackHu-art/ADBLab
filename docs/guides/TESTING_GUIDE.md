@@ -33,6 +33,7 @@
 | `tests/test_dangerous_ops.py` | 统一策略、设置开关、主窗口和 App Manager 拒绝路径 | 策略/UI 契约 |
 | `tests/test_phase0_failure_semantics.py` | Monkey fail-closed、AppManager 错误传播 | 失败语义 |
 | `tests/test_device_batch_use_case.py` | `DeviceBatchUseCase` 汇总/部分失败/晚到结果/并发（ADR-0003 Phase 3） | 纯单元测试 |
+| `tests/test_screen_record_use_case.py` | `ScreenRecordUseCase` 登记/幂等标记/批次校验/终态移除（ADR-0003 Phase 3） | 纯单元测试 |
 | `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
 | `tests/test_ci_contracts.py` | 最小权限、固定 SHA、不可变 Release、只读保留审计、CI lint 步骤 | CI 安全契约 |
 | `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope、单元接口（`cancel_pending_units` 等）与 Controller 路由 | 架构契约 |
@@ -130,7 +131,8 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 2. Controller 的并发录屏和剩余 `_pending_ops`/`_batch_trackers`（卸载/清数据/重启/当前 Activity）
    清理尚无 operation-id 压力测试；Screenshot Gate A 与 Install batch Gate C 已覆盖各自的重叠/晚到结果。
 3. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
-4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连和 `os._exit` 前落盘无集成测试。
+4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连无集成测试（`os._exit`/`os.chdir`
+   已按 ADR-0004 移除，停止路径结构化收口，长跑验证仍待实机）。
 5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
 6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
 7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。

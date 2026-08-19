@@ -241,7 +241,7 @@ sequenceDiagram
 | 触发条件 | 用户选择设备/包名，配置采样与 Monkey 后在 Performance Launcher 启动 |
 | 前置条件 | 设备在线、目标包已安装、保存目录可写、MobilePerf 模块可导入 |
 | 主流程 | 表单生成 `MobilePerfRunConfig`（`__post_init__` 规范化分号字段）→ Runner 记录运行前结果/报告签名并创建运行代次上下文 → 写临时配置 → 根据开发/冻结状态启动 module 或 `--mobileperf-worker` → StartUp 逐层剥离配置 BOM 前缀后验证设备/包并采集 → stdout/stderr reader 分别排空且共同收口后通知完成 → GUI 只定位本次新建或变化的非空报告；退出码 0 且有当前报告才显示 Completed/100 |
-| 异常流程 | 启动异常立即恢复 UI；停止先写 stop 文件并等待报告，超时后强制终止；非零退出、缺少当前报告或只有旧报告均显示 Failed/Warning 且进度低于 100；内核仍可能最终 `os._exit` |
+| 异常流程 | 启动异常立即恢复 UI；停止先写 stop 文件并等待报告，超时后强制终止；非零退出、缺少当前报告或只有旧报告均显示 Failed/Warning 且进度低于 100；内核已按 ADR-0004 移除 `os._exit`，stop 完成后结构化收口（采集线程 daemon） |
 | 涉及模块 | `gui/dialogs/performance_launcher.py`、`services/mobileperf_runner.py`、`mobileperf/android/startup.py` 与各 monitor |
 | 涉及数据 | 临时 config、指标 CSV、XLSX、设备信息、logcat、heapdump、外部设备日志 |
 | 代码位置 | `PerformanceLauncherDialog.start_mobileperf/stop_mobileperf`、`MobilePerfRunner.start/stop`、`StartUp.run/stop` |

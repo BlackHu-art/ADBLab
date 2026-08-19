@@ -38,7 +38,9 @@ class DeviceMonitor:
         self.current_activity = None
 
     def start(self, starttime):
-        self.activity_monitor_thread = threading.Thread(target=self._activity_monitor_thread)
+        self.activity_monitor_thread = threading.Thread(
+            target=self._activity_monitor_thread, daemon=True
+        )
         self.activity_monitor_thread.start()
         logger.debug("DeviceMonitor activitymonitor has started...")
 

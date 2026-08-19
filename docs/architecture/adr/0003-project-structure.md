@@ -16,7 +16,9 @@
 （`test_model_*.py`，236 项，conftest marker 映射同步更新，纯逻辑测试进入快速子集）。
 Phase 2 全部完成。Phase 3 进行中：core 设置层错误日志已注入化（`set_error_sink`，core 仅
 `log_service.py` 依赖 Qt）；卸载/清数据/重启/当前 Activity 批次已迁入 `DeviceBatchUseCase`，
-`utils/batch_tracker.py` 已退役；录屏 `_record_info` 与剩余 `_pending_ops` 待迁移。
+`utils/batch_tracker.py` 已退役；录屏 `_record_info` 迁 `ScreenRecordUseCase` 进行中。
+Phase 4 进行中：`services/` 顶层包移动已完成（ADR-0004，提交 `cf19d26`），MobilePerf
+内核实例化（去 `os._exit`/`os.chdir`、RuntimeData 实例上下文）进行中。
 
 ## 背景
 

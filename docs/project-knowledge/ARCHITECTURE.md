@@ -198,14 +198,14 @@ sequenceDiagram
 | Controller ThreadPoolExecutor | 并行设备信息等 Python 任务 | `_ADBControllerBase.shutdown()` |
 | Remote ThreadPoolExecutor(1) | 串行发送 Remote 输入 | `RemotePanel.shutdown()` |
 | 外部进程 | adb、scrcpy、logcat、Monkey、终端 | CommandRunner/ProcessRunner；部分例外见风险 |
-| MobilePerf 子进程与内部线程 | 指标采集和报告 | stop 文件、最长等待、必要时强制终止；内核最终 `os._exit(0)` |
+| MobilePerf 子进程与内部线程 | 指标采集和报告 | stop 文件、最长等待、必要时强制终止；采集线程 daemon 化，stop 完成后结构化收口（ADR-0004） |
 
 ## 关键架构决策
 
 1. **GUI 与设备命令解耦**：Qt 信号和异步 model 避免常规 ADB 调用阻塞 UI。证据：`gui/main_frame.py`、`models/adb_model.py::async_command`。
 2. **短命令/长进程分流**：短命令返回统一 `CommandResult`，长进程可被全局停止。证据：`models/base/command_runner.py`、`process_runner.py`。
 3. **复杂交互使用专用服务**：Remote、File Explorer 和 MobilePerf 把命令构建与生命周期从普通 panel 中拆出。
-4. **MobilePerf 进程隔离**：移植内核使用全局状态、`os.chdir` 和 `os._exit`，通过独立子进程限制对 GUI 的影响。证据：`services/mobileperf_runner.py`、`mobileperf/android/startup.py`。
+4. **MobilePerf 进程隔离**：移植内核按 ADR-0004 改为每运行一份的 RuntimeData 实例上下文（元类代理兼容既有调用点）、daemon 采集线程、无 `os.chdir`/`os._exit` 的结构化收口，继续通过独立子进程限制对 GUI 的影响。证据：`services/mobileperf_runner.py`、`mobileperf/android/globaldata.py`、`startup.py`。
 5. **运行时数据进入用户目录**：设置、设备列表、运行时工具缓存写入 `utils/user_data.py` 定义的位置，避免安装目录只读。
 6. **Windows onedir 优先**：内置 adb/scrcpy 是长生命周期进程，CI 和 spec 的 Windows 产物采用 onedir，避免 onefile 临时目录锁定。
 7. **视图懒加载和批量日志**：减少启动开销及高频 logcat/MobilePerf 对 UI 事件循环的压力。
@@ -253,7 +253,7 @@ sequenceDiagram
 
 - Controller 仍持有录屏与单发操作的共享状态；Screenshot 已完成 operation 隔离，安装批次已迁入
   `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 已迁入 `DeviceBatchUseCase`（ADR-0003
-  Phase 3，`_batch_trackers` 已删除），录屏 `_record_info` 与 input/refresh/设备日志的
+  Phase 3，`_batch_trackers` 已删除），录屏已迁入 `ScreenRecordUseCase`；仅剩 input/refresh/设备日志的
   `_pending_ops` 仍待迁移。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
   已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。

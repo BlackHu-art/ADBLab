@@ -29,7 +29,7 @@ class ThreadNumPackageCollector:
     def start(self, start_time):
         logger.debug("INFO: ThreadNum PackageCollector start... ")
         self.collect_thread_num_thread = threading.Thread(
-            target=self._collect_thread_num_thread, args=(start_time,)
+            target=self._collect_thread_num_thread, args=(start_time,), daemon=True
         )
         self.collect_thread_num_thread.start()
 
