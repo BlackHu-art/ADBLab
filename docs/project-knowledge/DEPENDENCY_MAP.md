@@ -105,7 +105,7 @@ flowchart LR
 
 | 类型 | 入口 | 参数 | 输出/作用 | 鉴权 | 测试 |
 | --- | --- | --- | --- | --- | --- |
-| GUI | `main.py` 无子命令 | Qt/用户输入 | 启动 MainFrame | 依赖本机用户和 ADB 授权 | `test_model_execution.py` 部分覆盖 |
+| GUI | `main.py` 无子命令 | Qt/用户输入 | 启动 MainFrame | 依赖本机用户和 ADB 授权 | `test_model_mainframe.py` 部分覆盖 |
 | MobilePerf worker | `main.py --mobileperf-worker --config <path>` | config 路径 | 运行采集子进程 | 无应用级鉴权 | runner/startup tests |
 | 打包自检 | `main.py --self-check packaging` | 固定 target | 检查导入、资源、工具和用户目录 | 无 | CI + 实际验证 |
 

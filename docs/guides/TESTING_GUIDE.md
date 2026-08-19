@@ -18,7 +18,7 @@
 | 文件 | 规模/职责 | 主要类型 |
 | --- | --- | --- |
 | `tests/conftest.py` | session 级 QApplication 引用保持；autouse UI 状态隔离/探针 | 共享夹具 |
-| `tests/test_model_execution.py` | 约 4,900 行；启动、GUI 生命周期、命令/进程、Controller、ADB model、MobilePerf、App/File/Log 等综合回归 | 单元 + 轻量组件/契约测试 |
+| `tests/test_model_*.py` | 由原 `test_model_execution.py` 按 ADR-0003 Phase 2 拆出的 10 个主题文件（meta/processes/mainframe/performance_launcher/mobileperf/ci_controller/device/panels/apps/media_adb），共 236 项；启动、GUI 生命周期、命令/进程、Controller、ADB model、MobilePerf、App/File/Log 等综合回归 | 单元 + 轻量组件/契约测试 |
 | `tests/test_remote_services.py` | Remote launch plan、scrcpy 参数/版本/预检、输入映射、面板启动停止和关闭、TaskSupervisor completion_error | service 单元 + 轻量 UI |
 | `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
 | `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
@@ -55,7 +55,7 @@
 | `tests/test_button_tooltips.py` | 按钮文本与 tooltip 一致性 | UI 契约 |
 | `tests/test_agent_skill_gateway.py` | 内置 agent 技能网关 PoC | 工具契约 |
 
-README 引用的 `tests/test_performance_services.py` 当前不存在；旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `test_model_execution.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
+README 引用的 `tests/test_performance_services.py` 当前不存在；旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
 
 ## 执行命令
 
@@ -133,7 +133,7 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
 6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
 7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
-8. 全量套件约 11 分钟，响应式几何扫描占比较高；已引入 unit/ui/integration marker 和 CI 快速子集（Phase 0），`test_model_execution.py` 拆分与按层耗时预算仍待 Phase 2。
+8. 全量套件约 12 分钟，响应式几何扫描占比较高；已引入 unit/ui/integration marker 和 CI 快速子集（Phase 0，本地约 16 秒/458 项），`test_model_execution.py` 已按 Phase 2 拆为 10 个主题文件，纯逻辑测试进入快速子集。
 
 ## 推荐新增测试
 

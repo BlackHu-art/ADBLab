@@ -5,13 +5,16 @@
 - 基线版本：3.2.0
 
 实施进度：Phase 0 已落地（unit/ui/integration marker 集中在 `tests/conftest.py`，CI 在完整测试前
-运行 `pytest -q -m "not ui"` 快速子集，本地实测约 16 秒/573 项）。Phase 1 已落地（提交 `8f10e54`）：
+运行 `pytest -q -m "not ui"` 快速子集，本地实测约 16 秒/458 项）。Phase 1 已落地（提交 `8f10e54`）：
 新增 `core/process_utils.py`（psutil 端口查找/进程树终止），`killOccupy5037Process` 删除三处
 `shell=True`，`ADBInputSession` 经 `ProcessRunner.start`（新增 `stdin` 支持）纳入实例与全局跟踪，
 14 个 mobileperf 文件的 sys.path 引导块删除（E402 清零），83 处 %-格式化转 f-string（UP031 清零），
 `mobileperf/**` 的 lint 豁免整体移除；全量 940 项通过、打包自检通过。Phase 2 进行中：
-`gui/main_frame.py` 按工具栏/二级窗口/关闭状态机三拆，`controllers/_app.py` 按 install/monkey 两拆，
-随后拆分 `tests/test_model_execution.py`。
+`gui/main_frame.py` 已拆出 `main_frame_toolbar.py`/`secondary_windows.py`/`close_controller.py`
+（2489→1707 行，提交 `0ea8f8f`），`controllers/_app.py` 已拆出 `_app_install.py`/`_app_monkey.py`
+（1295→234 行，同提交），`tests/test_model_execution.py` 已拆为 10 个主题文件
+（`test_model_*.py`，236 项，conftest marker 映射同步更新，纯逻辑测试进入快速子集）。
+Phase 2 全部完成。
 
 ## 背景
 

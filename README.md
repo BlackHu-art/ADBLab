@@ -174,10 +174,9 @@ ADBLab/
 │   └── batch_tracker.py            # 多设备批量进度追踪
 │
 ├── tests/
-│   ├── test_model_execution.py
+│   ├── test_model_*.py              # 由 test_model_execution.py 拆出的主题回归（10 个文件）
 │   ├── test_remote_services.py
-│   ├── test_file_explorer_service.py
-│   └── test_performance_services.py
+│   └── test_file_explorer_service.py
 │
 ├── resources/                      # 设置、历史、预览图、二维码、图标、Bugreport 转换器
 └── scrcpy-win64-v3.3.1/            # Windows 版 adb/scrcpy 运行时
@@ -259,11 +258,10 @@ ADBLab/
 
 当前测试目录覆盖：
 
-- `tests/test_model_execution.py`：命令/进程执行层与 ADB model 行为。
+- `tests/test_model_*.py`（10 个主题文件，原 `test_model_execution.py` 拆分）：命令/进程执行层、ADB model、GUI 生命周期、MobilePerf 等行为。
 - `tests/test_remote_services.py`：Remote scrcpy 参数、预检、按键/手势映射。
 - `tests/test_file_explorer_service.py`：文件浏览器路径、quoting、`ls` 解析、权限模式。
-- `tests/test_performance_services.py`：性能指标解析、采样、报告、dashboard 数据。
-- MobilePerf/Performance 入口、置顶切换、Monkey/Remote 字体主题刷新等 UI 行为集中在 `tests/test_model_execution.py` 中做轻量回归。
+- MobilePerf/Performance 入口、置顶切换、Monkey/Remote 字体主题刷新等 UI 行为集中在 `tests/test_model_*.py` 中做轻量回归。
 
 建议改动后至少执行：
 

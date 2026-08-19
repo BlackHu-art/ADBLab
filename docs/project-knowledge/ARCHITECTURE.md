@@ -268,6 +268,6 @@ sequenceDiagram
 - `gui/main_frame.py` 已按 ADR-0003 Phase 2 拆出 `gui/main_frame_toolbar.py`、
   `gui/secondary_windows.py`、`gui/close_controller.py` 三个组合控制器（MainFrame 保留同名
   委托 wrapper，约 1,700 行）；`controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
-  两个 mixin。`tests/test_model_execution.py` 拆分与剩余大文件治理仍待后续。
+  两个 mixin；`tests/test_model_execution.py` 拆为 10 个 `tests/test_model_*.py` 主题文件。
 - 全量 pytest 约 930 项、耗时约 11 分钟，响应式几何扫描测试是主要耗时来源之一
   （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。
