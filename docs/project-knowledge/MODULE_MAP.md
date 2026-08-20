@@ -13,7 +13,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | 启动与元数据 | `main.py`、`utils/app_metadata.py` | CLI 分派、GUI 启动、打包自检、版本 | `main.py` | 用户、PyInstaller | Qt、MainFrame、MobilePerf | `main.py` | `test_model_*.py` |
 | GUI 壳与接线 | `gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 主窗口、原生无边框移动/缩放、尺寸与分栏恢复、设备扫描、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller、AppSettings | `main_frame.py`、`window_layout.py` | `test_model_*.py`、`test_main_window_layout.py` |
 | 面板 | `gui/panels/`、`gui/widgets/responsive_layout.py`、`gui/widgets/responsive_controller.py` | 设备/应用/系统/Remote/日志交互、懒加载滚动容器与响应式重排（`ResponsiveCoordinator` 单一协调入口） | Qt 事件与 `SidePanelSignals` | 用户、MainFrame | controller、remote service | `side_panel.py`、`base_panel.py`、`app_panel.py`、`system_panel.py`、`remote_panel.py`、`responsive_controller.py` | `test_model_*.py`、`test_remote_services.py`、`test_responsive_panels.py`、`test_responsive_layout_controller.py` |
-| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`、`file_explorer.py`、`performance_launcher.py`、`settings_dialog.py`、`lifecycle.py` | `test_model_*.py`、`test_settings_typography.py`、`test_settings_window_layout.py`、`test_window_lifecycle.py`、`test_app_manager_selection.py` |
+| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`（+ `app_manager_details/form/views/batch.py`）、`file_explorer.py`（+ `file_explorer_list/view/ops/image.py`）、`performance_launcher.py`、`settings_dialog.py`、`lifecycle.py` | `test_model_*.py`、`test_settings_typography.py`、`test_settings_window_layout.py`、`test_window_lifecycle.py`、`test_app_manager_selection.py` |
 | 样式与字体 | `gui/styles/` | 主题、QSS、应用级字体配置、字体角色与细粒度变更信号 | `BaseStyles`、`TypographyManager` | 启动入口、SettingsDialog | QApplication、全局 GUI | `typography.py`、`fonts.py`、`theme.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` |
 | 屏幕适配 | `gui/screen_adapter.py` | `ScreenAdapter` 协议 + `QtScreenAdapter`：屏幕/可用几何/DPI 与变更订阅 | `QtScreenAdapter` | MainFrame、二级窗口生命周期 | QScreen、QGuiApplication | `screen_adapter.py` | `test_main_window_layout.py`、`test_ui_geometry_helpers.py`、`test_ui_dpi_matrix.py` |
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合、批次所有权/generation 边界 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、InstallBatchUseCase/OperationManager | `_base.py` 与 6 个 mixin | `test_model_*.py` |
@@ -23,7 +23,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | 核心基础设施 | `core/` | 设置（schema 版本化迁移）、日志、性能追踪、持久输入 shell | 单例/服务类 | 全应用 | JSON、Qt、subprocess | `settings_manager.py`、`log_service.py`、`adb_bridge.py` | `test_model_*.py` |
 | 设备存储 | `models/device_store.py` | 设备元数据原子读写、损坏备份和旧文件迁移 | `DeviceStore` | Controller、DeviceManager | YAML、用户目录 | `device_store.py` | `test_model_*.py`、`test_device_store_concurrency.py` |
 | 应用管理 Worker | `models/app_manager_worker.py` | 应用列表、详情、权限、备份恢复 | `AppManagerWorker.run` | App Manager 对话框 | ADB、ZIP、线程池 | `app_manager_worker.py` | `test_model_*.py` |
-| 文件浏览器 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer.py` | 路径/命令构建、列表解析、传输和文件 UI | `FileExplorerDialog` | MainFrame | ADB、文件系统 | `file_explorer.py`、`file_explorer_worker.py` | 3 个测试文件均有覆盖 |
+| 文件浏览器 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer.py`（+ `file_explorer_list.py`/`file_explorer_view.py`/`file_explorer_ops.py`/`file_explorer_image.py` 组合控制器） | 路径/命令构建、列表解析、传输和文件 UI | `FileExplorerDialog` | MainFrame | ADB、文件系统 | `file_explorer.py`、`file_explorer_worker.py` | 3 个测试文件均有覆盖 |
 | Remote | `services/remote/`、`gui/panels/remote_panel.py`（+ `remote_panel_form.py`/`remote_panel_scrcpy.py`/`remote_panel_input.py` 组合控制器） | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
 | MobilePerf 适配 | `services/mobileperf_runner.py`、`gui/dialogs/performance_launcher.py`（+ `performance_launcher_form.py`/`performance_launcher_run.py`/`performance_launcher_log.py` 组合控制器） | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `mobileperf_runner.py`、`performance_launcher*.py` | `test_model_*.py` |
 | MobilePerf 内核 | `mobileperf/android/` | 多指标采集、Monkey、logcat、CSV/XLSX 报告 | `StartUp.run` | MobilePerfRunner/CLI | ADB、线程、XLSXWriter | `startup.py`、各 monitor、`androiddevice.py` | `test_model_*.py` 部分覆盖 |
@@ -160,13 +160,13 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### DeviceStore
 
-- **职责/接口**：`load/save/upsert_devices/get_device` 管理用户目录 `connected_devices.yaml` 并迁移旧 `resources/connected_devices.yaml`。
+- **职责/接口**：`load/save/upsert_devices/get_device` 管理用户目录 `connected_devices.yaml` 并迁移旧 `resources/connected_devices.yaml`（ADR-0006 起为空映射占位，不再携带历史设备标识）。
 - **输入/输出**：ADB 设备标识与属性；输出 YAML 和设备字典。
 - **上下游**：上游 Controller/DeviceManager；下游 PyYAML、用户目录。
 - **配置/数据/外部服务**：存储设备连接信息和显示属性；无数据库。
 - **测试/风险/待确认**：迁移、并发 upsert、原子替换失败和损坏文件备份有测试；读取和写入位于
-  同一可重入锁域，写盘使用临时文件、`fsync` 和 `os.replace`。现有旧文件含设备标识，
-  仓库分发合规性仍待确认。
+  同一可重入锁域，写盘使用临时文件、`fsync` 和 `os.replace`。仓库内已无真实设备标识，
+  合规问题随 ADR-0006 闭环。
 
 ### App Manager
 
