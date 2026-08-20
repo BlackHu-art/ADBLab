@@ -815,17 +815,11 @@ class PerformanceLauncherDialog(QDialog):
             QMessageBox.warning(self, "Package Required", "Please enter a package name.")
             return
         if config.monkey_enabled and config.monkey_config.total_percentage != 100:
-            answer = QMessageBox.question(
-                self,
-                "Monkey Event Mix",
+            self.log_received.emit(
+                "WARNING",
                 f"Monkey event percentages sum to {config.monkey_config.total_percentage}"
-                f"%, not 100%.\n"
-                "Continue with this event distribution?",
-                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                defaultButton=QMessageBox.StandardButton.No,
+                f"%, not 100%; continuing with this distribution.",
             )
-            if answer != QMessageBox.StandardButton.Yes:
-                return
         self._last_result_root = ""
         self._update_result_action()
         self._runner_finished_handled = False
@@ -1336,21 +1330,6 @@ class PerformanceLauncherDialog(QDialog):
 
     def closeEvent(self, event):
         """停止界面定时器并断开信号，资源等待由已注册的关闭任务接管。"""
-        if (
-            self._runner.is_running() is True
-            and not self._shutdown_registered
-            and not self._closing
-        ):
-            answer = QMessageBox.question(
-                self,
-                "Stop Active Collection",
-                "MobilePerf is still running. Stop it and close this window?",
-                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                defaultButton=QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                event.ignore()
-                return
         self._closing = True
         if self._log_flush_timer.isActive():
             self._log_flush_timer.stop()

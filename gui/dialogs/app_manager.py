@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.dangerous_ops import DangerousOperationPolicy
 from core.settings_manager import AppSettings
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
@@ -124,7 +123,6 @@ class AppDetailsDialog(QDialog):
         self.package_name = package_name
         self._workers = []
         self._closing = False
-        self._dangerous_policy = DangerousOperationPolicy()
         self.setWindowTitle(f"Details: {package_name}")
         self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
@@ -1227,7 +1225,6 @@ class AppManagerDialog(QDialog):
 
     @staticmethod
     def _global_save_dir() -> str:
-        from core.settings_manager import AppSettings
 
         return AppSettings.instance().save_directory
 
@@ -1309,23 +1306,9 @@ class AppManagerDialog(QDialog):
         self._load_apps()
 
     def _confirm_dangerous_action(self, action: str, target_count: int) -> bool:
-        decision = self._dangerous_policy.evaluate(
-            action,
-            confirmation_enabled=bool(AppSettings.instance().get("confirm_dangerous_ops", True)),
-            target_count=target_count,
-        )
-        if not decision.requires_confirmation:
-            return True
-        answer = QMessageBox.question(
-            self,
-            "Confirm dangerous operation",
-            decision.message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            self.log(f"Cancelled dangerous operation: {action}")
-            return False
+        """兼容占位：危险操作不再弹窗确认，直接放行。"""
+
+        del action, target_count
         return True
 
     def _backup_selected(self):

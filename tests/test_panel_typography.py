@@ -184,10 +184,12 @@ def test_device_manager_font_refreshes_current_completer(monkeypatch):
     manager.panel._apply_completer_style.assert_called_once_with(completer)
 
 
-def test_log_panel_font_change_does_not_rerender_entries(
+def test_log_panel_font_change_rerenders_for_hanging_indent(
     monkeypatch,
     qt_application,
 ):
+    """字号变化会重绘：悬挂缩进按新字体度量计算（ADR-0005 日志优化）。"""
+
     monkeypatch.setattr(LogPanel, "_connect_services", lambda _self: None)
     panel = LogPanel()
     rerender = Mock()
@@ -203,7 +205,7 @@ def test_log_panel_font_change_does_not_rerender_entries(
         panel._on_log_font_changed(None)
 
         assert _effective_size(panel.text_output.font()) == 13
-        rerender.assert_not_called()
+        rerender.assert_called_once()
     finally:
         panel.close()
 

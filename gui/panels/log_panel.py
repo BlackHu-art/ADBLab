@@ -4,24 +4,22 @@
 - 记录为 ``(时间戳, 级别, 消息)`` 三元组，时间戳由 LogService 在产生时生成，
   面板数据层保留但不渲染（界面只显示级别与消息）；
 - 每条日志渲染为独立 ``<p>`` 块，使裁剪可按块从文档头部删除（O(裁剪行)）；
-- 级别标签固定宽度：用 ``&nbsp;`` 补位（普通空格会被 HTML 折叠导致错位），
-  ERROR/CRITICAL 加粗；多行消息悬挂缩进；
-- 条目 HTML 按 (级别, 消息) 缓存，主题切换时重建缓存并整份重绘。
+- 每行采用块级悬挂缩进：`margin-left` 为当前级别标签的实际像素宽（按日志字体
+  度量，字号变化自动适配），`text-indent` 负等值——自动折行与显式换行都对齐到
+  消息列起点，级别与消息间只保留一个空格；
+- ERROR/CRITICAL 加粗；条目内容 HTML 按 (级别, 消息) 缓存，主题切换时重建。
 """
 
 from collections import OrderedDict
 from html import escape
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QFontMetrics, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
 
-# 级别标签固定宽度(9) + 空格 后的消息列起点（时间戳不渲染）。
-_MESSAGE_COLUMN = 10
-_LEVEL_COLUMN_WIDTH = 9
 _HTML_CACHE_LIMIT = 2048
 
 
@@ -77,9 +75,11 @@ class LogPanel(QWidget):
         self._rerender_all()
 
     def _on_log_font_changed(self, _config):
-        """仅更新日志字体，避免字体调整触发整份日志重新渲染。"""
+        """更新日志字体并按新字号重绘（悬挂缩进按字体度量计算）。"""
 
         self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
+        self._consume_pending_without_render()
+        self._rerender_all()
 
     def _init_ui(self):
         self.text_output = QTextEdit(self)
@@ -191,10 +191,14 @@ class LogPanel(QWidget):
             sb.setValue(min(max(0, int(scroll_value)), sb.maximum()))
 
     def _row_html(self, timestamp: str, level: str, message: str) -> str:
-        """组装单条日志的块级 HTML；消息体按 (级别, 消息) 缓存，时间戳不渲染。"""
+        """组装单条日志的块级 HTML；时间戳不渲染，悬挂缩进按当前字体度量。"""
 
         del timestamp
-        return f'<p style="margin:0;">{self._message_body_html(level, message)}</p>'
+        indent = QFontMetrics(self.text_output.font()).horizontalAdvance(f"[{level}] ")
+        body = self._message_body_html(level, message)
+        return (
+            f'<p style="margin-left:{indent}px; text-indent:-{indent}px;">{body}</p>'
+        )
 
     def _message_body_html(self, level: str, message: str) -> str:
         """返回级别标签与消息正文的 HTML；命中缓存时跳过转义与拼接。"""
@@ -210,15 +214,12 @@ class LogPanel(QWidget):
             if level in ("DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
             else "LOG_INFO"
         )
-        # 固定宽度级别列：HTML 会折叠连续普通空格，因此用 &nbsp; 补位保证对齐；
-        # ERROR/CRITICAL 加粗突出。
-        level_text = escape(f"[{level}]".ljust(_LEVEL_COLUMN_WIDTH)).replace(" ", "&nbsp;")
+        # 级别与消息之间只保留一个普通空格；ERROR/CRITICAL 加粗突出。
         bold_open, bold_close = ("<b>", "</b>") if level in ("ERROR", "CRITICAL") else ("", "")
-        msg = escape(str(message))
-        # 多行消息悬挂缩进：续行对齐到消息列起点，避免与级别列粘连。
-        msg = msg.replace("\n", f"<br>{'&nbsp;' * _MESSAGE_COLUMN}")
+        msg = escape(str(message)).replace("\n", "<br>")
         body = (
-            f'{bold_open}<span style="color:{c(lv_key)}">{level_text}</span>{bold_close} '
+            f'{bold_open}<span style="color:{c(lv_key)}">[{escape(str(level))}]</span>'
+            f'{bold_close} '
             f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span>'
         )
         if len(self._html_cache) >= _HTML_CACHE_LIMIT:

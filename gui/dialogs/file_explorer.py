@@ -873,11 +873,6 @@ class FileExplorerDialog(QDialog):
                 f.write(content)
 
     def _save_to_device(self, name, content, full_path):
-        if (
-            QMessageBox.question(self, "Confirm", f"Save to {full_path}?")
-            != QMessageBox.StandardButton.Yes
-        ):
-            return
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
         cmd = self._root(explorer_service.save_text_command(b64, full_path))
         w = self._run_adb("shell", cmd)
@@ -1082,25 +1077,11 @@ class FileExplorerDialog(QDialog):
         w.start()
 
     def _request_delete(self, names: str | list[str]):
-        """显示明确目标且默认取消的统一删除确认。"""
+        """删除选中条目；不再弹窗确认，删除前仍校验目标并排除 ".."。"""
+
         items = [names] if isinstance(names, str) else list(names)
         items = [name for name in items if name and name != ".."]
         if not items:
-            return
-        targets = "\n".join(self._dpath(self.current_path, name) for name in items)
-        prompt = (
-            "Delete this item permanently?\n\n"
-            if len(items) == 1
-            else f"Delete these {len(items)} items permanently?\n\n"
-        )
-        answer = QMessageBox.question(
-            self,
-            "Delete",
-            prompt + targets,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
             return
         for name in items:
             self._delete_item(name)

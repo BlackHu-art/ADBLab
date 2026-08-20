@@ -30,7 +30,6 @@
 | `tests/test_process_utils.py` | 端口监听查找与进程树终止的 psutil 行为 | 纯单元测试 |
 | `tests/test_comment_language.py` | 中文注释识别、豁免规则、模块说明和渐进受控范围 | 静态规范门禁 |
 | `tests/test_device_store_concurrency.py` | 并发 upsert、原子替换故障、损坏备份恢复 | 并发/故障注入 |
-| `tests/test_dangerous_ops.py` | 统一策略、设置开关、主窗口和 App Manager 拒绝路径 | 策略/UI 契约 |
 | `tests/test_phase0_failure_semantics.py` | Monkey fail-closed、AppManager 错误传播 | 失败语义 |
 | `tests/test_device_batch_use_case.py` | `DeviceBatchUseCase` 汇总/部分失败/晚到结果/并发（ADR-0003 Phase 3） | 纯单元测试 |
 | `tests/test_screen_record_use_case.py` | `ScreenRecordUseCase` 登记/幂等标记/批次校验/终态移除（ADR-0003 Phase 3） | 纯单元测试 |

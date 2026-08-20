@@ -245,7 +245,7 @@ sequenceDiagram
   落盘配置并重新触发 close 完成销毁；`tests/test_phase2_mainframe_shutdown_gate.py` 11 项契约测试
   覆盖非阻塞、幂等、residual snapshot 与 finalizer 语义，Gate B 总体为 Go。
 - GUI 只消费兼容 facade 或新端口，不直接依赖具体 worker；旧信号在迁移期保持名称、参数和线程语义。
-- Phase 0 已先收紧安全与结果真实性：危险操作统一确认、批次汇总线程安全、Monkey 前台探测
+- Phase 0 已先收紧安全与结果真实性：批次汇总线程安全、Monkey 前台探测
   fail-closed、App Manager 失败传播、Remote 输入锁定活动会话、MobilePerf 仅接受本次运行产物、
   DeviceStore 原子写。
 - 三个架构门的状态：Screenshot（Gate A）已完成 operation 隔离；Install batch（Gate C）已完成
@@ -268,7 +268,8 @@ sequenceDiagram
 - 本地配置没有 schema/version；只有白名单键迁移。Remote 的 `scrcpy_*` 键已通过
   `SCRCPY_SETTING_DEFAULTS` 白名单纳入 DEFAULTS 并可跨会话恢复，DeviceStore 已改为锁内快照和
   原子替换，但设置存储仍没有统一 schema/version。
-- 没有真正的鉴权/权限分层；已知危险入口现在受 `confirm_dangerous_ops` 和统一策略保护，
+- 没有真正的鉴权/权限分层；危险入口不再弹窗确认（按产品决定全局移除，`confirm_dangerous_ops`
+  键仅兼容保留），误操作防护依赖目标校验、失败结果传播与审计日志。
   但本地用户仍可在确认后执行 shell、文件删除、应用清除等高影响操作。
 - 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；CI 只在 Windows 运行完整 pytest。
 - 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与 requests/ruamel

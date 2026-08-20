@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -622,23 +621,8 @@ class SettingsDialog(QDialog):
         self.continuous_scan_toggled.emit(checked)
 
     def _on_confirm_dangerous_toggled(self, checked: bool):
-        """关闭危险操作确认前再次说明影响，避免误触后失去保护。"""
+        """兼容保留：危险操作确认已全局移除，该键仅作兼容存储不再驱动弹窗。"""
 
-        if not checked:
-            answer = QMessageBox.question(
-                self,
-                "Disable Safety Prompts",
-                "Disable confirmations for clear data, Shell commands, port changes, process "
-                "termination, app state changes, and other risky operations?",
-                buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                defaultButton=QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
-                blocker = QSignalBlocker(self._chk_confirm)
-                self._chk_confirm.setChecked(True)
-                blocker.unblock()
-                self.s.set("confirm_dangerous_ops", True)
-                return
         self.s.set("confirm_dangerous_ops", checked)
 
     def _on_log_max_lines_changed(self, text: str):
@@ -813,38 +797,28 @@ class SettingsDialog(QDialog):
         self._refresh_window_layout_summary()
 
     def _reset_all(self):
-        answer = QMessageBox.question(
-            self,
-            "Reset Settings",
-            "Restore all settings to defaults? This immediately resets the theme, fonts, "
-            "window size, panel split, device scan, save path, Remote options, and Monkey "
-            "parameters.",
-            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            defaultButton=QMessageBox.StandardButton.No,
+        self.s.reset()
+        controls = (
+            self._theme_combo,
+            self._font_combo,
+            self._combo_font,
+            self._combo_log_font,
+            self._chk_confirm,
+            self._chk_continuous_scan,
+            self._combo_log_lines,
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            self.s.reset()
-            controls = (
-                self._theme_combo,
-                self._font_combo,
-                self._combo_font,
-                self._combo_log_font,
-                self._chk_confirm,
-                self._chk_continuous_scan,
-                self._combo_log_lines,
-            )
-            blockers = [QSignalBlocker(control) for control in controls]
-            try:
-                self._sync_controls_from_settings()
-            finally:
-                for blocker in blockers:
-                    blocker.unblock()
+        blockers = [QSignalBlocker(control) for control in controls]
+        try:
+            self._sync_controls_from_settings()
+        finally:
+            for blocker in blockers:
+                blocker.unblock()
 
-            self._restore_default_window_size()
-            self._reset_panel_split()
-            BaseStyles.switch_theme(str(self.s.get("theme", "Light")))
-            BaseStyles.reload_from_settings()
-            self.continuous_scan_toggled.emit(bool(self.s.get("continuous_device_scan", True)))
-            self.log_max_lines_changed.emit(int(self.s.get("log_max_lines", 2000)))
-            self.save_directory_changed.emit(str(self.s.get("save_directory", "") or ""))
-            self.settings_applied.emit()
+        self._restore_default_window_size()
+        self._reset_panel_split()
+        BaseStyles.switch_theme(str(self.s.get("theme", "Light")))
+        BaseStyles.reload_from_settings()
+        self.continuous_scan_toggled.emit(bool(self.s.get("continuous_device_scan", True)))
+        self.log_max_lines_changed.emit(int(self.s.get("log_max_lines", 2000)))
+        self.save_directory_changed.emit(str(self.s.get("save_directory", "") or ""))
+        self.settings_applied.emit()

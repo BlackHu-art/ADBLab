@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRunnable, Qt, QThread
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -287,11 +287,7 @@ def test_performance_dialog_close_delegates_running_stop_without_waiting():
     dialog.stop_mobileperf = Mock()
 
     started = time.perf_counter()
-    with patch(
-        "gui.dialogs.performance_launcher.QMessageBox.question",
-        return_value=QMessageBox.StandardButton.Yes,
-    ):
-        dialog.close()
+    dialog.close()
     elapsed = time.perf_counter() - started
 
     assert elapsed < 0.1

@@ -1,7 +1,7 @@
 """集中定义应用名称、版本和发布标签。"""
 
 APP_NAME = "ADBLab"
-APP_VERSION = "3.2.5"
+APP_VERSION = "3.2.6"
 APP_RELEASE_TAG = f"v{APP_VERSION}"
 
 

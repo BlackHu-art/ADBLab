@@ -107,7 +107,7 @@ sequenceDiagram
 | --- | --- |
 | 触发条件 | 用户在 Apps 面板或 App Manager 选择安装、卸载、启停、清数据、权限、备份/恢复等操作 |
 | 前置条件 | 已选择设备；包名/APK/备份文件存在且相关系统工具可用 |
-| 主流程 | 已知危险动作先经统一策略和 `confirm_dangerous_ops` 确认；简单操作再走 SidePanel signal → ADBController → ADBApp/Advanced/System model；复杂列表/详情/备份走 AppManagerWorker QThread → ADB → signal 更新对话框 |
+| 主流程 | 危险动作不再弹窗确认（2026-08-19 全局移除），直接走 SidePanel signal → ADBController → ADBApp/Advanced/System model；复杂列表/详情/备份走 AppManagerWorker QThread → ADB → signal 更新对话框 |
 | 异常流程 | 用户拒绝确认时不调用 Controller/worker；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
 | 涉及模块 | `gui/panels/app_panel.py`、`gui/dialogs/app_manager.py`、`controllers/_app.py`、`models/adb_app.py`、`models/app_manager_worker.py` |
 | 涉及数据 | 包名、APK 路径、权限、应用详情、预设 JSON、备份 ZIP |

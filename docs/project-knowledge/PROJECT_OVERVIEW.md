@@ -58,7 +58,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 ## 当前状态
 
-- 活跃版本：3.2.5；当前扫描分支 `dev`（自基线 `8b84f8d` 重做，提交清单见 [../README.md](../README.md)）。
+- 活跃版本：3.2.6；当前扫描分支 `dev`（自基线 `8b84f8d` 重做，提交清单见 [../README.md](../README.md)）。
 - 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
   `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。
 - CI 在 Windows 运行完整测试（含 ruff lint 步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。

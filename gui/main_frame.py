@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QMainWindow,
-    QMessageBox,
     QSizePolicy,
     QSplitter,
     QVBoxLayout,
@@ -22,7 +21,6 @@ from PySide6.QtWidgets import (
 
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
-from core.dangerous_ops import DangerousOperationPolicy
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
@@ -151,7 +149,6 @@ class MainFrame(QMainWindow):
         self._shutdown_finalizer_started = False
         self._close_started = False
         self._close_ready = False
-        self._dangerous_policy = DangerousOperationPolicy()
         self._guarded_signal_handlers = []
         self._drag_pos = None
         self._layout_ready = False
@@ -832,43 +829,10 @@ class MainFrame(QMainWindow):
         self._update_device_toolbar_actions()
 
     def _guard_dangerous_handler(self, handler):
-        operation_key = getattr(handler, "__name__", "")
+        """兼容占位：危险操作不再弹窗确认，信号直接透传处理器。"""
 
-        def guarded(*args):
-            target_count = len(args[0]) if args and isinstance(args[0], (list, tuple, set)) else 1
-            decision = self._dangerous_policy.evaluate(
-                operation_key,
-                confirmation_enabled=bool(
-                    AppSettings.instance().get("confirm_dangerous_ops", True)
-                ),
-                target_count=target_count,
-            )
-            if decision.requires_confirmation:
-                answer = QMessageBox.question(
-                    self,
-                    "Confirm dangerous operation",
-                    decision.message,
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                    QMessageBox.StandardButton.No,
-                )
-                if answer != QMessageBox.StandardButton.Yes:
-                    self.log_service.log(
-                        "WARNING",
-                        f"Dangerous operation cancelled: {operation_key}",
-                        flush_immediately=True,
-                    )
-                    return None
-            return handler(*args)
-
-        if (
-            self._dangerous_policy.evaluate(
-                operation_key,
-                confirmation_enabled=True,
-            ).operation
-            is None
-        ):
-            return handler
-        return guarded
+        del self
+        return handler
 
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)
