@@ -196,8 +196,10 @@ class LogPanel(QWidget):
         del timestamp
         indent = QFontMetrics(self.text_output.font()).horizontalAdvance(f"[{level}] ")
         body = self._message_body_html(level, message)
+        # margin 上下必须显式归零：Qt 富文本对 <p> 有默认 12px 上下外边距，
+        # 否则每条日志之间以及首条日志上方会出现空白行。
         return (
-            f'<p style="margin-left:{indent}px; text-indent:-{indent}px;">{body}</p>'
+            f'<p style="margin:0 0 0 {indent}px; text-indent:-{indent}px;">{body}</p>'
         )
 
     def _message_body_html(self, level: str, message: str) -> str:
