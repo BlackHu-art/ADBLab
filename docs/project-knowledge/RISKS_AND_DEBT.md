@@ -38,6 +38,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Low | `ProcessRunner` 模块说明和 README 宣称所有 Popen 统一，实际存在例外 | `models/base/process_runner.py`、`README.md`、`core/adb_bridge.py`、MobilePerf | 维护者误以为 shutdown 能覆盖全部进程 | 修正文档并建立 subprocess lint/例外清单 | Open |
 | Low | ruff.toml 为 `mobileperf/**` 豁免 E402/UP031、`tests/live_logcat_close_probe.py` 豁免 E402 | `ruff.toml::[lint.per-file-ignores]` | 豁免区域脱离 lint 门禁，违规样式会继续积累 | Phase 1 已删除 14 个文件的 sys.path 引导块（E402 清零）并转换 %-格式化（UP031 清零），`mobileperf/**` 豁免已移除；仅保留探针脚本 E402 豁免 | Closed |
 | Low | Pillow、psutil 已锁定版本但一方源码未发现导入 | `requirements.txt`；导入扫描 | 构建面与供应链面略大于实际需要 | psutil 已由 `core/process_utils.py` 实际使用（ADR-0003 Phase 1），确认可从本条目移除；Pillow 仍需确认间接使用或移除；评估清理 `mobileperf/setup.py` 遗留的 `requests` 描述 | 待确认 |
+| Low | 全量 pytest 偶发"测试全绿但进程退出异常"（退出挂起或 0xC0000005，约 10 次全量中出现 3 次） | `pytest` 全量套件收尾阶段 | 本地/CI 误报失败，浪费重跑时间 | 测试结果本身不受影响（进度条全绿）；怀疑为 Qt 延迟删除在解释器关闭期的环境级竞态；建议后续用 `-p no:cacheprovider` 对照或最小化探针定位后修复 | Open |
 | Low | Git 历史近期只有一个作者标识活跃，核心热点知识集中 | 244 提交的 author/hotspot 分析；`main_frame.py` 等 | 维护连续性和评审独立性降低 | 使用本知识库、CODEOWNERS/双人评审、模块化测试与交接 | 待确认 |
 | Closed | 邮件服务（`core/mail/`、邮件获取入口、邮件/验证码信号、requests/ruamel 依赖）已整体移除 | `git show 70be33e`；`requirements.txt` | 不再有外部邮箱 API 面、凭据处理或日志扩散面 | 代码侧已闭环；Git 历史中曾跟踪的邮件配置仍须由仓库所有者轮换、停止跟踪并审查历史（保留提醒） | Closed |
 

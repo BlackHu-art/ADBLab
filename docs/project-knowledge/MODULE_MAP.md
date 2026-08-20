@@ -121,9 +121,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **职责/接口**：`AppSettings` 管理 JSON，提供 `get/set/update/set_many/reset`；`update()` 和
   `set_many()` 在一次锁内更新后只安排一次防抖保存；Remote 的 `scrcpy_*` 键通过
   `SCRCPY_SETTING_DEFAULTS` 白名单纳入 `DEFAULTS` 并可跨会话恢复；`LogService` 用 QMutex 缓冲
-  用户日志并批量发信号，缓冲区溢出时累计 `dropped_count` 并在下一次批量发送时插入一条
-  WARNING 提示（日志突发治理）；DEBUG 仅在源码模式写入线程安全的 stderr；`core.perf_trace`
-  记录并汇总异步操作耗时。
+  用户日志并批量发信号，记录为 `(时间戳, 级别, 消息)` 三元组（时间戳在产生时生成），缓冲区
+  溢出时累计 `dropped_count` 并在下一次批量发送时插入一条 WARNING 提示（日志突发治理）；DEBUG
+  仅在源码模式写入线程安全的 stderr；`core.perf_trace` 记录并汇总异步操作耗时。
 - **输入/输出**：设置键值、日志消息、时间戳；输出用户配置文件、INFO 及以上 UI/文件日志和
   仅供开发环境查看的 DEBUG 诊断。
 - **上下游**：上游全应用；下游用户目录、Qt 定时器/信号、Python logging。

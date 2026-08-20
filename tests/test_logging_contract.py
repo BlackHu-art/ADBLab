@@ -45,7 +45,7 @@ def test_debug_only_writes_to_source_stderr(
     monkeypatch.delattr(sys, "frozen", raising=False)
     monkeypatch.setattr(sys, "stderr", stream)
     service = create_log_service()
-    batch_records: list[list[tuple[str, str]]] = []
+    batch_records: list[list[tuple[str, str, str]]] = []
     single_records: list[tuple[str, str]] = []
     service.logs_received.connect(batch_records.append)
     service.log_received.connect(lambda level, message: single_records.append((level, message)))
@@ -169,23 +169,45 @@ def test_file_logging_uses_user_directory_and_excludes_debug(
     assert "不可落盘" not in content
 
 
-def test_log_panel_rejects_debug_from_direct_call(
+def test_log_panel_renders_records_verbatim(
     create_log_service: Callable[[], LogService],
 ) -> None:
+    """面板不再二次过滤级别：DEBUG 拦截是 LogService 的单一职责。"""
+
     create_log_service()
     panel = LogPanel()
     try:
         panel._append_logs(
             [
-                (LogLevel.DEBUG, "不可显示"),
-                (LogLevel.INFO, "允许显示"),
+                ("12:00:00", LogLevel.DEBUG, "直接调用可见"),
+                ("12:00:01", LogLevel.INFO, "允许显示"),
             ]
         )
         panel._flush_pending_rows()
 
-        assert [entry[1:] for entry in panel._entries] == [(LogLevel.INFO, "允许显示")]
-        assert "不可显示" not in panel.text_output.toPlainText()
+        assert [entry[1:] for entry in panel._entries] == [
+            (LogLevel.DEBUG, "直接调用可见"),
+            (LogLevel.INFO, "允许显示"),
+        ]
+        assert "直接调用可见" in panel.text_output.toPlainText()
         assert "允许显示" in panel.text_output.toPlainText()
+    finally:
+        panel.close()
+
+
+def test_log_panel_batch_records_carry_source_timestamps(
+    create_log_service: Callable[[], LogService],
+) -> None:
+    create_log_service()
+    panel = LogPanel()
+    try:
+        panel._append_logs([("12:00:00", LogLevel.INFO, "带时间戳")])
+        panel._flush_pending_rows()
+
+        timestamp, level, message = panel._entries[0]
+        assert timestamp == "12:00:00"
+        assert level == LogLevel.INFO
+        assert message == "带时间戳"
     finally:
         panel.close()
 

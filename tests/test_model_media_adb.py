@@ -952,7 +952,7 @@ def test_log_service_shutdown_rejects_background_thread_without_deadlock(isolate
     assert isinstance(errors[0], RuntimeError)
     service._buffer_lock.lock()
     try:
-        assert service._buffer == [("INFO", "shutdown sentinel")]
+        assert [entry[1:] for entry in service._buffer] == [("INFO", "shutdown sentinel")]
     finally:
         service._buffer_lock.unlock()
 
@@ -989,7 +989,10 @@ def test_log_service_emits_batch_before_compat_single_signals(isolated_log_servi
     service.log("WARNING", "batched-2")
     service._flush_buffer()
 
-    assert batch_emitted[-1] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
+    assert [(level, message) for _ts, level, message in batch_emitted[-1]] == [
+        ("INFO", "batched-1"),
+        ("WARNING", "batched-2"),
+    ]
     assert singles[-2:] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
 
 
@@ -1006,7 +1009,7 @@ def test_log_panel_appends_large_batch_with_a_per_frame_budget(isolated_log_serv
             return original(rows)
 
         panel._render_entries = counted
-        records = [("INFO", f"line-{i}") for i in range(1000)]
+        records = [("12:00:00", "INFO", f"line-{i}") for i in range(1000)]
 
         panel._append_logs(records)
         while panel._pending_rows:
@@ -1037,8 +1040,8 @@ def test_log_panel_coalesces_small_log_batches_before_rendering(isolated_log_ser
 
         panel._render_entries = counted
 
-        panel._append_logs([("INFO", "small-1")])
-        panel._append_logs([("INFO", "small-2")])
+        panel._append_logs([("12:00:00", "INFO", "small-1")])
+        panel._append_logs([("12:00:01", "INFO", "small-2")])
 
         assert calls == []
         panel._flush_pending_rows()

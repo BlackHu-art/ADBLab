@@ -1,14 +1,26 @@
-"""提供支持主题切换、自动滚动和批量渲染的用户日志面板。"""
+"""提供支持主题切换、自动滚动和批量渲染的用户日志面板。
 
-from datetime import datetime
+结构说明（ADR-0005 日志优化）：
+- 记录为 ``(时间戳, 级别, 消息)`` 三元组，时间戳由 LogService 在产生时生成；
+- 每条日志渲染为独立 ``<p>`` 块，使裁剪可按块从文档头部删除（O(裁剪行)）；
+- 级别标签固定宽度（等宽字体补位），ERROR/CRITICAL 加粗；多行消息悬挂缩进；
+- 条目 HTML 按 (级别, 消息) 缓存，主题切换时重建缓存并整份重绘。
+"""
+
+from collections import OrderedDict
 from html import escape
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
-from core.log_service import LogLevel, LogService
+from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
+
+# 时间戳(8) + 空格 + 固定宽度级别标签(9) + 空格 后的消息列起点。
+_MESSAGE_COLUMN = 19
+_LEVEL_COLUMN_WIDTH = 9
+_HTML_CACHE_LIMIT = 2048
 
 
 class LogPanel(QWidget):
@@ -21,13 +33,12 @@ class LogPanel(QWidget):
         from core.settings_manager import AppSettings
 
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
-        self._entries = []
-        self._line_count = 0
+        self._entries: list[tuple[str, str, str]] = []
         self._pending_dropped_total = 0
         self._pending_drop_notice_count = 0
-        self._pending_rows = []
+        self._pending_rows: list[tuple[str, str, str]] = []
         self._pending_scroll_to_bottom = False
-        self._pending_trim_count = 0
+        self._html_cache: OrderedDict[tuple[str, str], str] = OrderedDict()
         self._render_pending_timer = QTimer(self)
         self._render_pending_timer.setSingleShot(True)
         self._render_pending_timer.timeout.connect(self._flush_pending_rows)
@@ -35,6 +46,10 @@ class LogPanel(QWidget):
         self._connect_services()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
         BaseStyles.log_font_changed.connect(self._on_log_font_changed)
+
+    # ------------------------------------------------------------------
+    # 样式与主题
+    # ------------------------------------------------------------------
 
     def _apply_style(self):
         c = BaseStyles.color
@@ -55,6 +70,8 @@ class LogPanel(QWidget):
         self._max_lines = AppSettings.instance().get("log_max_lines", 2000)
         self._apply_style()
         self._consume_pending_without_render()
+        # 颜色系变化后重建条目缓存，再整份重绘。
+        self._html_cache.clear()
         self._rerender_all()
 
     def _on_log_font_changed(self, _config):
@@ -79,38 +96,30 @@ class LogPanel(QWidget):
     def _connect_services(self):
         LogService().logs_received.connect(self._append_logs, Qt.ConnectionType.AutoConnection)
 
-    def _append_log(self, level: str, message: str):
-        self._append_logs([(level, message)])
+    # ------------------------------------------------------------------
+    # 缓冲与防抖
+    # ------------------------------------------------------------------
 
-    def _append_logs(self, records: list[tuple[str, str]]):
-        # 面板边界再次过滤 DEBUG，防止尚未迁移的直连信号绕过日志服务。
-        visible_records = [
-            (level, message) for level, message in records if str(level).upper() != LogLevel.DEBUG
+    def _append_log(self, level: str, message: str):
+        self._append_logs([("", level, message)])
+
+    def _append_logs(self, records: list[tuple[str, str, str]]):
+        """接收三元组批次；DEBUG 已由 LogService 在源头过滤，此处不再重复。"""
+
+        rows = [
+            (str(timestamp), str(level).upper(), str(message))
+            for timestamp, level, message in records
         ]
-        if not visible_records:
+        if not rows:
             return
         sb = self.text_output.verticalScrollBar()
         at_bottom = sb.value() >= sb.maximum() - 20
 
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        rows = [(timestamp, level, message) for level, message in visible_records]
         self._pending_rows.extend(rows)
         self._bound_pending_backlog()
         self._pending_scroll_to_bottom = self._pending_scroll_to_bottom or at_bottom
-        self._pending_trim_count = len(self._pending_rows)
         if not self._render_pending_timer.isActive():
             self._render_pending_timer.start(self.RENDER_DEBOUNCE_MS)
-
-    def _render_rows(self, rows: list[tuple[str, str, str]], at_bottom: bool, added_count: int):
-        scroll_bar = self.text_output.verticalScrollBar()
-        scroll_value = scroll_bar.value()
-        self._entries.extend(rows)
-        self._render_entries(rows)
-        if at_bottom:
-            scroll_bar.setValue(scroll_bar.maximum())
-        else:
-            scroll_bar.setValue(min(scroll_value, scroll_bar.maximum()))
-        self._trim_excess_lines(added_count)
 
     def _flush_pending_rows(self):
         if not self._pending_rows and not self._pending_drop_notice_count:
@@ -126,13 +135,132 @@ class LogPanel(QWidget):
         still_at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 20
         at_bottom = self._pending_scroll_to_bottom and still_at_bottom
         added_count = len(rows)
-        self._pending_trim_count = max(0, self._pending_trim_count - added_count)
         self._render_rows(rows, at_bottom, added_count)
         if self._pending_rows:
             self._render_pending_timer.start(self.RENDER_DEBOUNCE_MS)
         else:
             self._pending_scroll_to_bottom = False
-            self._pending_trim_count = 0
+
+    # ------------------------------------------------------------------
+    # 渲染
+    # ------------------------------------------------------------------
+
+    def _render_rows(self, rows: list[tuple[str, str, str]], at_bottom: bool, added_count: int):
+        scroll_bar = self.text_output.verticalScrollBar()
+        scroll_value = scroll_bar.value()
+        self._entries.extend(rows)
+        self._render_entries(rows)
+        if at_bottom:
+            scroll_bar.setValue(scroll_bar.maximum())
+        else:
+            scroll_bar.setValue(min(scroll_value, scroll_bar.maximum()))
+        self._trim_excess()
+
+    def _render_entries(self, rows: list[tuple[str, str, str]]):
+        if not rows:
+            return
+        cursor = self.text_output.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.beginEditBlock()
+        try:
+            cursor.insertHtml("".join(self._row_html(ts, level, msg) for ts, level, msg in rows))
+        finally:
+            cursor.endEditBlock()
+
+    def _rerender_all(
+        self,
+        *,
+        scroll_to_bottom: bool | None = None,
+        scroll_value: int | None = None,
+    ):
+        """批量重绘，并恢复用户在历史记录中的滚动锚点。"""
+
+        sb = self.text_output.verticalScrollBar()
+        if scroll_to_bottom is None:
+            scroll_to_bottom = sb.value() >= sb.maximum() - 20
+        if scroll_value is None:
+            scroll_value = sb.value()
+        self.text_output.setHtml(
+            "".join(self._row_html(ts, level, msg) for ts, level, msg in self._entries)
+        )
+        if scroll_to_bottom:
+            sb.setValue(sb.maximum())
+        else:
+            sb.setValue(min(max(0, int(scroll_value)), sb.maximum()))
+
+    def _row_html(self, timestamp: str, level: str, message: str) -> str:
+        """组装单条日志的块级 HTML；消息体按 (级别, 消息) 缓存。"""
+
+        body = self._message_body_html(level, message)
+        c = BaseStyles.color
+        return (
+            f'<p style="margin:0;">'
+            f'<span style="color:{c("LOG_TIMESTAMP")}">{escape(timestamp)}</span> '
+            f"{body}"
+            f"</p>"
+        )
+
+    def _message_body_html(self, level: str, message: str) -> str:
+        """返回级别标签与消息正文的 HTML；命中缓存时跳过转义与拼接。"""
+
+        cache_key = (level, message)
+        cached = self._html_cache.get(cache_key)
+        if cached is not None:
+            self._html_cache.move_to_end(cache_key)
+            return cached
+        c = BaseStyles.color
+        lv_key = (
+            f"LOG_{level}"
+            if level in ("DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
+            else "LOG_INFO"
+        )
+        # 等宽字体下固定宽度级别列；ERROR/CRITICAL 加粗突出。
+        level_text = f"[{level}]".ljust(_LEVEL_COLUMN_WIDTH)
+        bold_open, bold_close = ("<b>", "</b>") if level in ("ERROR", "CRITICAL") else ("", "")
+        msg = escape(str(message))
+        # 多行消息悬挂缩进：续行对齐到消息列起点，避免与级别列粘连。
+        msg = msg.replace("\n", f"<br>{'&nbsp;' * _MESSAGE_COLUMN}")
+        body = (
+            f'{bold_open}<span style="color:{c(lv_key)}">{escape(level_text)}</span>{bold_close} '
+            f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span>'
+        )
+        if len(self._html_cache) >= _HTML_CACHE_LIMIT:
+            self._html_cache.clear()
+        self._html_cache[cache_key] = body
+        return body
+
+    # ------------------------------------------------------------------
+    # 裁剪与清理
+    # ------------------------------------------------------------------
+
+    def _trim_excess(self):
+        """超过上限时按块从文档头部删除，避免整份重绘（O(裁剪行)）。"""
+
+        if len(self._entries) <= self._max_lines:
+            return
+        excess = len(self._entries) - self._max_lines
+        self._entries = self._entries[excess:]
+        self._remove_head_blocks(excess)
+
+    def _remove_head_blocks(self, count: int):
+        document = self.text_output.document()
+        if count <= 0 or document.blockCount() <= 1:
+            return
+        scroll_bar = self.text_output.verticalScrollBar()
+        at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 20
+        scroll_value = scroll_bar.value()
+        cursor = QTextCursor(document)
+        cursor.movePosition(QTextCursor.Start)
+        cursor.movePosition(
+            QTextCursor.Down,
+            QTextCursor.KeepAnchor,
+            min(count, document.blockCount() - 1),
+        )
+        cursor.removeSelectedText()
+        if at_bottom:
+            scroll_bar.setValue(scroll_bar.maximum())
+        else:
+            scroll_bar.setValue(min(scroll_value, scroll_bar.maximum()))
 
     @property
     def dropped_pending_count(self) -> int:
@@ -157,13 +285,15 @@ class LogPanel(QWidget):
         self._pending_drop_notice_count += overflow
 
     def _pending_drop_notice_row(self) -> tuple[str, str, str]:
+        from datetime import datetime
+
         timestamp = datetime.now().strftime("%H:%M:%S")
         message = (
             "Log display backlog overflow: dropped "
             f"{self._pending_drop_notice_count} records "
             f"({self._pending_dropped_total} total dropped)"
         )
-        return timestamp, LogLevel.WARNING, message
+        return timestamp, "WARNING", message
 
     def _consume_pending_without_render(self) -> None:
         """主题重绘前接纳等待行，避免取消定时器时丢失用户日志。"""
@@ -176,7 +306,6 @@ class LogPanel(QWidget):
             self._entries.extend(self._pending_rows)
         self._pending_rows = []
         self._pending_scroll_to_bottom = False
-        self._pending_trim_count = 0
         self._pending_drop_notice_count = 0
         if len(self._entries) > self._max_lines:
             self._entries = self._entries[-self._max_lines :]
@@ -186,7 +315,6 @@ class LogPanel(QWidget):
             self._render_pending_timer.stop()
         self._pending_rows = []
         self._pending_scroll_to_bottom = False
-        self._pending_trim_count = 0
         self._pending_drop_notice_count = 0
 
     def closeEvent(self, event):
@@ -197,81 +325,12 @@ class LogPanel(QWidget):
         BaseStyles.log_font_changed.disconnect(self._on_log_font_changed)
         super().closeEvent(event)
 
-    def _render_entries(self, rows: list[tuple[str, str, str]]):
-        if not rows:
-            return
-        cursor = self.text_output.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        cursor.beginEditBlock()
-        try:
-            cursor.insertHtml("".join(self._entry_html(ts, level, msg) for ts, level, msg in rows))
-        finally:
-            cursor.endEditBlock()
-
-    def _entry_html(self, timestamp: str, level: str, message: str) -> str:
-        c = BaseStyles.color
-        lv_key = (
-            f"LOG_{level}"
-            if level in ("DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
-            else "LOG_INFO"
-        )
-        msg = escape(str(message)).replace("\n", "<br>")
-        return (
-            f'<span style="color:{c("LOG_TIMESTAMP")}">{escape(timestamp)}</span> '
-            f'<span style="color:{c(lv_key)}">[{escape(str(level))}]</span> '
-            f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span><br>'
-        )
-
-    def _rerender_all(
-        self,
-        *,
-        scroll_to_bottom: bool | None = None,
-        scroll_value: int | None = None,
-    ):
-        """批量重绘，并恢复用户在历史记录中的滚动锚点。"""
-
-        sb = self.text_output.verticalScrollBar()
-        if scroll_to_bottom is None:
-            scroll_to_bottom = sb.value() >= sb.maximum() - 20
-        if scroll_value is None:
-            scroll_value = sb.value()
-        self.text_output.setHtml(
-            "".join(self._entry_html(ts, level, msg) for ts, level, msg in self._entries)
-        )
-        if scroll_to_bottom:
-            sb.setValue(sb.maximum())
-        else:
-            sb.setValue(min(max(0, int(scroll_value)), sb.maximum()))
-
-    def _trim_excess_lines(self, added_count: int = 1):
-        """超过上限时批量删除旧日志，常规情况下每五十行检查一次。"""
-        force_trim = added_count <= 0
-        if not force_trim:
-            self._line_count += added_count
-        if (
-            not force_trim
-            and self._line_count % 50 != 0
-            and len(self._entries) <= self._max_lines + 100
-        ):
-            return
-        if len(self._entries) <= self._max_lines:
-            return
-        excess = len(self._entries) - self._max_lines
-        sb = self.text_output.verticalScrollBar()
-        at_bottom = sb.value() >= sb.maximum() - 20
-        scroll_value = sb.value()
-        self._entries = self._entries[excess:]
-        self._rerender_all(
-            scroll_to_bottom=at_bottom,
-            scroll_value=scroll_value,
-        )
-
     def clear(self):
         self._cancel_pending_render()
         self._entries.clear()
         self.text_output.clear()
-        self._line_count = 0
         self._pending_dropped_total = 0
+        self._html_cache.clear()
 
     def set_max_lines(self, max_lines: int):
         """立即应用日志保留上限，并裁剪已经显示的历史记录。"""
@@ -283,4 +342,4 @@ class LogPanel(QWidget):
         self._max_lines = max(normalized, 100)
         self._bound_pending_backlog()
         self._flush_pending_rows()
-        self._trim_excess_lines(0)
+        self._trim_excess()

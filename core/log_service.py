@@ -27,8 +27,8 @@ class LogLevel:
 class LogService(QObject):
     """在线程间缓冲用户日志，并将开发调试日志隔离到标准错误流。"""
 
-    log_received = Signal(str, str)  # 参数：日志级别、消息。
-    logs_received = Signal(list)  # 参数：由日志级别和消息组成的批次。
+    log_received = Signal(str, str)  # 兼容信号：参数为日志级别、消息。
+    logs_received = Signal(list)  # 批次信号：元素为 (时间戳, 级别, 消息) 三元组。
     _flush_requested = Signal()
     _flush_now_requested = Signal()
     _stop_requested = Signal()
@@ -55,7 +55,7 @@ class LogService(QObject):
         if not getattr(self, "_initialized", False):
             super().__init__()
             self._initialized = True
-            self._buffer: list[tuple[str, str]] = []
+            self._buffer: list[tuple[str, str, str]] = []
             self._buffer_lock = QMutex()
             self._max_buffer = 5000
             self._dropped_count = 0
@@ -109,7 +109,11 @@ class LogService(QObject):
             return False
 
     def log(self, level: str, message: str, *args, **kwargs) -> None:
-        """记录日志；DEBUG 仅在源码运行时写入开发环境控制台。"""
+        """记录日志；DEBUG 仅在源码运行时写入开发环境控制台。
+
+        时间戳在记录产生时生成（而非界面接收时），使排队/背压场景下的
+        显示时间仍反映真实发生时间。
+        """
         flush_immediately = kwargs.pop("flush_immediately", False)
         normalized_level = str(level).upper()
         rendered_message = str(message)
@@ -118,6 +122,7 @@ class LogService(QObject):
                 rendered_message = rendered_message % args
             except (TypeError, ValueError):
                 rendered_message = str(message)
+        timestamp = datetime.now().strftime("%H:%M:%S")
 
         self._buffer_lock.lock()
         try:
@@ -126,7 +131,7 @@ class LogService(QObject):
             if normalized_level == LogLevel.DEBUG:
                 self.write_developer_console(LogLevel.DEBUG, rendered_message)
                 return
-            self._buffer.append((normalized_level, rendered_message))
+            self._buffer.append((timestamp, normalized_level, rendered_message))
             # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
             if len(self._buffer) > self._max_buffer:
                 dropped = len(self._buffer) - self._max_buffer
@@ -190,7 +195,7 @@ class LogService(QObject):
             return
         self._emit_batch(current_batch)
 
-    def _drain_buffer_locked(self) -> list[tuple[str, str]]:
+    def _drain_buffer_locked(self) -> list[tuple[str, str, str]]:
         if not self._buffer and self._pending_dropped_count <= 0:
             return []
         current_batch = self._buffer.copy()
@@ -199,6 +204,7 @@ class LogService(QObject):
             current_batch.insert(
                 0,
                 (
+                    datetime.now().strftime("%H:%M:%S"),
                     LogLevel.WARNING,
                     (
                         "Log buffer overflow: dropped "
@@ -220,15 +226,15 @@ class LogService(QObject):
         finally:
             self._buffer_lock.unlock()
 
-    def _emit_batch(self, current_batch: list[tuple[str, str]]) -> None:
+    def _emit_batch(self, current_batch: list[tuple[str, str, str]]) -> None:
         """将单个批次写入文件并通过兼容信号发布给界面。"""
         if not current_batch:
             return
-        for level, message in current_batch:
+        for _timestamp, level, message in current_batch:
             self._write_file_log(level, message)
-        # 界面优先消费批量信号，兼容信号继续服务尚未迁移的调用方。
+        # 界面优先消费批次信号，兼容信号继续服务尚未迁移的调用方。
         self.logs_received.emit(current_batch)
-        for level, message in current_batch:
+        for _timestamp, level, message in current_batch:
             self.log_received.emit(level, message)
 
     def _write_file_log(self, level: str, message: str) -> None:

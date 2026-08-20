@@ -22,7 +22,7 @@
 | `tests/test_remote_services.py` | Remote launch plan、scrcpy 参数/版本/预检、输入映射、面板启动停止和关闭、TaskSupervisor completion_error | service 单元 + 轻量 UI |
 | `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
 | `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
-| `tests/test_logging_contract.py` | DEBUG 源码 stderr 分流、界面/文件隔离、root handler、停止态 | 日志基础契约 |
+| `tests/test_logging_contract.py` | DEBUG 源码 stderr 分流、界面/文件隔离、root handler、停止态；面板渲染三元组批次、源时间戳、按块增量裁剪 | 日志基础契约 |
 | `tests/test_logging_routing_mobileperf.py` | MainFrame 工具栏/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
 | `tests/test_mobileperf_runner_concurrency.py` | 双管道压力、回调异常排空和连续运行代次隔离 | 进程/线程并发契约 |
 | `tests/test_mobileperf_androiddevice_log_safety.py` | MobilePerf 遗留 ADB 层日志/脱敏安全 | 安全契约 |
