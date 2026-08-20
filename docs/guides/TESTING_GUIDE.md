@@ -220,8 +220,9 @@ git diff --check
 
 除 pytest/ruff 外，`requirements-dev.txt` 提供以下工具（配置随仓库）：
 
-- **pyright**（类型检查，基线范围 `adblab/` + `services/` + `core/` + `controllers/`，配置见
-  `pyrightconfig.json`）：`py -3.11 -m pyright`（venv 内 `pyright` 可执行文件亦可直接运行）。
+- **pyright**（类型检查，基线范围 `adblab/` + `services/` + `core/` + `controllers/` +
+  `models/` + `utils/`，配置见 `pyrightconfig.json`）：`py -3.11 -m pyright`（venv 内
+  `pyright` 可执行文件亦可直接运行）。
 - **pytest-cov**（覆盖率）：`py -3.11 -m pytest -q -m "not ui" --cov=adblab --cov=services --cov-report=term-missing`。
   基线（2026-08-19，快速子集）：adblab + services 合计 88%（2301 语句，279 未覆盖）。
 - **pytest-xdist**（并行）：`py -3.11 -m pytest -q -n auto`。注意：含子进程探针的

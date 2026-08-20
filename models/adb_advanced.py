@@ -64,7 +64,11 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             )
             time.sleep(0.3)
             if proc.poll() is not None:
-                err = proc.stderr.read().decode(errors="ignore").strip()
+                err = (
+                    proc.stderr.read().decode(errors="ignore").strip()
+                    if proc.stderr is not None
+                    else ""
+                )
                 return {
                     "success": False,
                     "device_ip": device_ip,

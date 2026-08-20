@@ -15,7 +15,7 @@ def _base_dir() -> str:
     PyInstaller 打包后资源解压到 sys._MEIPASS；开发模式下为项目根目录（utils/ 的上一级）。
     """
     if getattr(sys, "frozen", False):
-        return sys._MEIPASS
+        return str(getattr(sys, "_MEIPASS"))
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

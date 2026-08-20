@@ -75,8 +75,12 @@ class TransferWorker(QThread):
                 bufsize=1,
             )
             last = ""
+            stdout = self._proc.stdout
+            if stdout is None:
+                self.result_ready.emit("Transfer process stdout unavailable", True, "")
+                return
             while not self._aborted:
-                line = self._proc.stdout.readline()
+                line = stdout.readline()
                 if not line and self._proc.poll() is not None:
                     break
                 if line:

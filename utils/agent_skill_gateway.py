@@ -34,7 +34,7 @@ class AgentSkillGateway:
     """管理技能注册与同步/异步执行。"""
 
     def __init__(self, max_workers: int = 4) -> None:
-        self._skills: dict[str, Callable[[Mapping[str, Any], Mapping[str, Any]], Any]] = {}
+        self._skills: dict[str, Callable[..., Any]] = {}
         self._lock = threading.RLock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
 

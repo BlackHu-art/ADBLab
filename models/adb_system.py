@@ -3,13 +3,17 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
+from typing import Any
+
 from utils.adb_values import normalize_android_package, normalize_dumpsys_service
 
 from .adb_model import async_command
 
 
 class ADBSystemMixin:
-    """封装系统级 ADB 操作。"""
+    """系统级 ADB 操作 mixin；与 ADBModelCore 组合后提供 _run 执行入口。"""
+
+    _run: Any
 
     # 应用权限
 
@@ -76,7 +80,7 @@ class ADBSystemMixin:
     # 广播 Intent
 
     @async_command
-    def send_broadcast_async(self, device_ip: str, action: str, extras: dict = None) -> dict:
+    def send_broadcast_async(self, device_ip: str, action: str, extras: dict | None = None) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "am", "broadcast", "-a", action]
         if extras:
             for k, v in extras.items():
@@ -204,7 +208,7 @@ class ADBSystemMixin:
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     @async_command
-    def content_insert_async(self, device_ip: str, uri: str, binds: dict = None) -> dict:
+    def content_insert_async(self, device_ip: str, uri: str, binds: dict | None = None) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "content", "insert", "--uri", uri]
         for k, v in (binds or {}).items():
             cmd.extend(["--bind", f"{k}:s:{v}"])

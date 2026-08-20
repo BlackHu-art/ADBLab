@@ -3,11 +3,15 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
+from typing import Any
+
 from .adb_model import async_command
 
 
 class ADBNetworkMixin:
-    """封装网络相关的 ADB 操作。"""
+    """封装网络相关的 ADB 操作；与 ADBModelCore 组合后提供 _run 执行入口。"""
+
+    _run: Any
 
     # 端口正向与反向映射
 
