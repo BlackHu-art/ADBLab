@@ -7,7 +7,7 @@ import logging
 import subprocess
 import threading
 
-from core.exec import CommandResult, CommandRunner, ProcessRunner
+from core.exec import CommandResult, CommandRunner, ExecHandle, ProcessRunner
 from utils.adb_resolver import adb_path
 
 logger = logging.getLogger("adb_bridge")
@@ -28,7 +28,7 @@ class ADBInputSession:
     ):
         self.adb = adb
         self.device_id = device_id
-        self._proc: subprocess.Popen | None = None
+        self._proc: ExecHandle | None = None
         self._lock = threading.Lock()
         self._runner = runner or ProcessRunner()
 
@@ -60,7 +60,7 @@ class ADBInputSession:
             proc = self._ensure_process()
             return bool(proc and proc.stdin and proc.poll() is None)
 
-    def _ensure_process(self) -> subprocess.Popen | None:
+    def _ensure_process(self) -> ExecHandle | None:
         if self._proc and self._proc.poll() is None:
             return self._proc
         self._close_locked()

@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import time
 
-from core.exec import CommandRunner, ProcessRunner
+from core.exec import CommandRunner, ExecHandle, ProcessRunner
 from utils.runtime_tools import bundled_tool_path
 
 from .scrcpy_args import build_scrcpy_args
@@ -136,7 +136,7 @@ class ScrcpyService:
             messages=messages,
         )
 
-    def start(self, key: str, args: list[str]):
+    def start(self, key: str, args: list[str]) -> ExecHandle:
         """启动由 ``ProcessRunner`` 跟踪的 scrcpy 长进程。"""
         return self.process_runner.start(
             key,

@@ -67,3 +67,29 @@ def test_kill_process_tree_access_denied_reports_failure():
         ok, detail = kill_process_tree(123)
     assert ok is False
     assert detail
+
+
+def test_kill_process_tree_respects_shared_deadline():
+    parent = MagicMock()
+    child = MagicMock()
+    parent.children.return_value = [child]
+    parent.wait.side_effect = psutil.TimeoutExpired(1)
+    with patch("psutil.Process", return_value=parent), patch(
+        "core.process_utils.time.monotonic", return_value=100.0
+    ):
+        ok, detail = kill_process_tree(123, force=True, timeout=0.0)
+    assert ok is False
+    assert detail == "parent-123-kill-failed"
+    assert not child.terminate.called
+
+
+def test_kill_process_tree_kills_before_deadline():
+    parent = MagicMock()
+    parent.children.return_value = []
+    parent.wait.side_effect = psutil.TimeoutExpired(1)
+    with patch("psutil.Process", return_value=parent), patch(
+        "core.process_utils.time.monotonic", return_value=100.0
+    ):
+        ok, detail = kill_process_tree(123, force=True, timeout=5.0)
+    assert ok is False
+    assert parent.kill.called

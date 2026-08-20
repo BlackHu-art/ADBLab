@@ -290,6 +290,44 @@ def test_process_runner_stop_all_without_deadlock():
     assert runner._procs == {}
 
 
+def test_process_runner_tree_kill_delegates_to_process_utils():
+    proc = Mock()
+    proc.pid = 1234
+    with patch("core.exec.kill_process_tree", return_value=(True, "terminated")) as kill:
+        assert ProcessRunner._kill_process_tree(proc) is True
+    kill.assert_called_once_with(1234, force=True)
+
+
+def test_process_runner_tree_kill_missing_pid_is_fail_safe():
+    proc = Mock()
+    proc.pid = None
+    with patch("core.exec.kill_process_tree") as kill:
+        assert ProcessRunner._kill_process_tree(proc) is False
+    kill.assert_not_called()
+
+
+def test_process_runner_bounded_tree_kill_respects_deadline():
+    proc = Mock()
+    proc.pid = 4321
+    with (
+        patch("core.exec.time.monotonic", return_value=50.0),
+        patch("core.exec.kill_process_tree", return_value=(True, "terminated")) as kill,
+    ):
+        assert ProcessRunner._kill_process_tree_bounded(proc, 52.0) is True
+    kill.assert_called_once_with(4321, force=True, timeout=2.0)
+
+
+def test_process_runner_bounded_tree_kill_expired_deadline_skips():
+    proc = Mock()
+    proc.pid = 4321
+    with (
+        patch("core.exec.time.monotonic", return_value=60.0),
+        patch("core.exec.kill_process_tree") as kill,
+    ):
+        assert ProcessRunner._kill_process_tree_bounded(proc, 55.0) is False
+    kill.assert_not_called()
+
+
 def test_process_runner_stop_all_tracked_is_global_fallback():
     ProcessRunner._global_procs.clear()
     runner_a = ProcessRunner()

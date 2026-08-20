@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.exec import ProcessRunner
+from core.exec import ExecHandle, ProcessRunner
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 
@@ -174,7 +174,7 @@ class _MobilePerfRunContext:
 
     generation: int
     process_key: str
-    proc: subprocess.Popen
+    proc: ExecHandle
     config: MobilePerfRunConfig
     redaction_values: tuple[str, ...]
     on_log: Callable[[str], None] | None
@@ -215,7 +215,7 @@ class MobilePerfRunner:
         self._python_executable = python_executable or sys.executable
         self._process_key_prefix = f"mobileperf_{id(self)}"
         self._process_key = self._process_key_prefix
-        self._proc: subprocess.Popen | None = None
+        self._proc: ExecHandle | None = None
         self._config_dir: tempfile.TemporaryDirectory[str] | None = None
         self._config_path: str = ""
         self._stop_path: str = ""

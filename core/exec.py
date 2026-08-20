@@ -15,7 +15,9 @@ import threading
 import time
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+
+from core.process_utils import kill_process_tree
 
 CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
@@ -54,10 +56,14 @@ class ExecHandle(Protocol):
     """进程句柄协议：描述 ``subprocess.Popen`` 与测试替身共同满足的结构面。
 
     ``MobilePerfRunner``、``ScrcpyService``、``ADBInputSession`` 等适配器面向该
-    协议做类型标注，不引入额外包装对象（``Popen`` 天然满足协议）。
+    协议做类型标注，不引入额外包装对象（``Popen`` 天然满足协议）。stdio 以
+    ``Any`` 承载，保证管道 reader 与持久输入会话可直接访问流对象（ADR-0005）。
     """
 
     returncode: int | None
+    stdin: Any
+    stdout: Any
+    stderr: Any
 
     def poll(self) -> int | None: ...
     def wait(self, timeout: float | None = None) -> int: ...
@@ -419,10 +425,8 @@ class ProcessRunner:
 
     @staticmethod
     def _kill_process_tree_bounded(proc: subprocess.Popen, deadline: float) -> bool:
-        """在 Windows 上按绝对截止时间调用 taskkill 终止进程树。"""
+        """在共享绝对截止时间内通过 psutil 终止进程树（ADR-0005 Step C）。"""
 
-        if sys.platform != "win32":
-            return False
         pid = getattr(proc, "pid", None)
         if not pid:
             return False
@@ -430,15 +434,8 @@ class ProcessRunner:
         if remaining <= 0:
             return False
         try:
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=remaining,
-                creationflags=CREATE_NO_WINDOW,
-                check=False,
-            )
-            return True
+            confirmed, _detail = kill_process_tree(int(pid), force=True, timeout=remaining)
+            return confirmed
         except Exception:
             return False
 
@@ -477,23 +474,14 @@ class ProcessRunner:
 
     @staticmethod
     def _kill_process_tree(proc: subprocess.Popen) -> bool:
-        """在 Windows 上终止目标进程及其子进程，其他平台返回 False。"""
+        """通过 psutil 终止目标进程及其子进程（ADR-0005 Step C 统一实现）。"""
 
-        if sys.platform != "win32":
-            return False
         pid = getattr(proc, "pid", None)
         if not pid:
             return False
         try:
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                creationflags=CREATE_NO_WINDOW,
-                check=False,
-            )
-            return True
+            confirmed, _detail = kill_process_tree(int(pid), force=True)
+            return confirmed
         except Exception:
             return False
 
