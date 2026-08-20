@@ -58,11 +58,11 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 ## 当前状态
 
-- 活跃版本：3.2.1；当前扫描分支 `dev`（自基线 `8b84f8d` 重做，提交清单见 [../README.md](../README.md)）。
+- 活跃版本：3.2.2；当前扫描分支 `dev`（自基线 `8b84f8d` 重做，提交清单见 [../README.md](../README.md)）。
 - 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
   `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。
 - CI 在 Windows 运行完整测试（含 ruff lint 步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
-- README 的性能章节和目录树仍引用已经不存在的 `models/performance/`、`gui/performance_web/`、两个旧性能对话框和 `tests/test_performance_services.py`，因此 README 不能单独作为当前架构事实来源。
+- README 的性能章节与目录树已于 2026-08-19 修正（移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/`、`batch_tracker.py` 等过时条目，目录树同步 `services/` 与 `adblab/`）。
 - Git 历史显示 244 个提交、3 个作者标识；最近三个月只有一个作者标识活跃，存在知识集中风险。
 
 ## 关键术语

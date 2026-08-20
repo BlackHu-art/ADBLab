@@ -50,14 +50,13 @@ py -3.11 main.py --self-check packaging
 - 本地 APK 解析，读取包名、版本、权限、架构等信息；会校验 APK 路径和 `aapt` 可用性。
 - Monkey 压力测试：事件占比、事件数、throttle、flags、随机种子、按设备中止；非 0 退出、设备连续超时和恢复失败会返回失败状态。
 - Bugreport、ANR 拉取、logcat 导出/清理、meminfo、cpuinfo、gfxinfo、top、wakelock、netstats 等诊断入口；Bugreport ZIP 使用安全解压并通过 `resource_path()` 定位转换器。
-- 临时邮箱能力：通过 `core/mail/` 调用 AMZ123 API 获取邮箱与验证码。
 
 ### Remote 投屏控制
 
 - 内置 scrcpy v3.3.1，支持流畅/均衡/画质/低延迟预设。
 - 自定义分辨率、FPS、码率、codec、buffer、方向锁定、录制文件。
 - 支持全屏、置顶、显示触摸、保持唤醒、关闭设备屏幕、无窗口、无音频。
-- `models/remote/` 提供原生无界面服务层：
+- `services/remote/` 提供原生无界面服务层：
   - `ScrcpyService`：scrcpy 路径解析、版本检测、预检、编码器检测、启动/停止、FPS 解析。
   - `RemoteControlService`：按键、D-Pad、滑动、通知栏、旋转等 ADB 控制。
   - `control_mapping.py`：keycode 和手势坐标计算。
@@ -71,7 +70,7 @@ py -3.11 main.py --self-check packaging
 - 文件操作失败时不会再显示成功文案或无条件刷新；粘贴按每个任务的实际结果反馈。
 - 文本和图片查看，脚本执行，APK 直接安装，文件属性查看。
 - chmod 权限弹窗与 root 模式。
-- `models/file_explorer_service.py` 是无 Qt 依赖的纯逻辑层，负责路径处理、shell quoting、`ls -la` 解析、权限模式和文件名安全校验。
+- `services/file_explorer.py` 是无 Qt 依赖的纯逻辑层，负责路径处理、shell quoting、`ls -la` 解析、权限模式和文件名安全校验。
 
 ### 性能监控
 
@@ -79,19 +78,10 @@ py -3.11 main.py --self-check packaging
 - `gui/dialogs/performance_launcher.py` 提供 MobilePerf 启动弹窗，支持获取当前前台包名、配置采样频率/时长/Monkey/dumpheap/异常关键字、启动/停止采集、打开结果目录和跳转 Perfetto。
 - MobilePerf 结果目录会追加设备名称，方便区分多设备保存文件。
 - MobilePerf 日志使用纯文本批量追加，保留工具原始输出，不再额外叠加 ADBLab 时间和等级前缀，避免长时间运行导致主界面卡顿。
-- `mobileperf/` 保持独立移植目录；ADBLab 通过 `models/mobileperf/runner.py` 生成临时配置并启动子进程，不直接修改 `mobileperf/config.conf`。
+- `mobileperf/` 保持独立移植目录；ADBLab 通过 `services/mobileperf_runner.py` 生成临时配置并启动子进程，不直接修改 `mobileperf/config.conf`。
 - 打包后 MobilePerf 通过 `ADBLab.exe --mobileperf-worker` 进入采集子进程，不再依赖 `python -m mobileperf.android.startup`。
 - MobilePerf 子进程通过 `ADB_PATH` 使用 ADBLab 解析出的内置 ADB，并把日志写入用户可写目录，避免安装目录或 PyInstaller 临时目录写入失败。
 - 原 Perfetto 跳转已移动到 Performance 弹窗内的 `Open Perfetto` 按钮。
-- `gui/dialogs/performance_monitor.py` 提供单设备性能弹窗，`gui/dialogs/performance_timeline.py` 提供原生时间线图。
-- `gui/performance_web/` 提供可选 Web 仪表盘资源：`index.html`、`style.css`、`app.js`。
-- `models/performance/` 提供采集、解析、会话、报告和 worker 层：
-  - 启动耗时：`am start -S -W` 与 logcat `Displayed` / `Fully drawn` 解析。
-  - 帧率与卡顿：`dumpsys gfxinfo <package> framestats` 统计。
-  - 内存：`dumpsys meminfo` 的 PSS、Java Heap、Native Heap、Graphics、Views、Activities 等字段。
-  - CPU：读取 `/proc/<pid>/stat` 与 `/proc/stat` 做进程 CPU delta。
-  - 设备信息：getprop、cpuinfo、meminfo、SurfaceFlinger、root 状态等。
-  - 报告：生成 summary、metrics、文本报告和趋势分析所需数据。
 
 ### 弹窗与工具
 
@@ -117,13 +107,13 @@ ADBLab/
 ├── mobileperf/                     # MobilePerf 移植内核，保持独立目录
 ├── .github/workflows/
 │   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release
-│   └── Auto-Clean.yaml             # 清理旧 workflow runs / releases
+│   └── Auto-Clean.yaml             # 手动只读 Retention Audit（不自动删除）
 │
 ├── core/                           # 核心基础设施
-│   ├── adb_bridge.py               # 轻量 ADB 桥接
+│   ├── adb_bridge.py               # 轻量 ADB 桥接与持久输入会话
 │   ├── log_service.py              # 线程安全日志服务，跨线程 flush 回到 owner thread
 │   ├── settings_manager.py         # 应用设置单例，JSON 原子写入
-│   └── mail/                       # 临时邮箱 API 与异步任务
+│   └── process_utils.py            # psutil 端口查找与进程树终止
 │
 ├── controllers/                    # Controller 层，多个 mixin 组合成 ADBController
 │   ├── __init__.py
@@ -135,7 +125,7 @@ ADBLab/
 │   ├── _input.py                   # 文本输入、点击、滑动、keyevent、settings
 │   └── _file.py                    # 文件、端口、content query
 │
-├── models/                         # Model 与服务层
+├── models/                         # Model 与 Worker 层
 │   ├── adb_model.py                # @async_command 与 ADBModelCore
 │   ├── adb_device.py               # 设备操作
 │   ├── adb_app.py                  # 应用操作
@@ -145,21 +135,25 @@ ADBLab/
 │   ├── adb_system.py               # 系统 ADB mixin
 │   ├── app_manager_worker.py       # 应用管理器 worker
 │   ├── file_explorer_worker.py     # 文件浏览器 QThread worker
-│   ├── file_explorer_service.py    # 文件浏览器纯逻辑服务
 │   ├── device_store.py             # YAML 设备信息持久化
-│   ├── base/
-│   │   ├── command_runner.py       # 短生命周期命令统一入口
-│   │   ├── process_runner.py       # 长生命周期进程统一管理
-│   │   └── focus_detector.py       # 前台包名检测
-│   ├── remote/                     # Remote / scrcpy 无界面服务层
-│   ├── mobileperf/                 # MobilePerf runner、临时配置与日志/结果管理
-│   └── performance/                # 性能监控服务、解析、会话、报告、workers
+│   └── base/
+│       ├── command_runner.py       # 短生命周期命令统一入口
+│       ├── process_runner.py       # 长生命周期进程统一管理
+│       └── focus_detector.py       # 前台包名检测
+│
+├── services/                       # 纯服务层（低 Qt 耦合，ADR-0004）
+│   ├── file_explorer.py            # 文件浏览器纯逻辑服务
+│   ├── mobileperf_runner.py        # MobilePerf 子进程适配层
+│   └── remote/                     # Remote / scrcpy 无界面服务层
+│
+├── adblab/                         # vNext 应用内核（新代码落位，ADR-0001/0003）
+│   ├── application/                # OperationManager、InstallBatch/DeviceBatch/ScreenRecord 用例
+│   └── presentation/               # QtTaskSupervisor 等 Qt 适配
 │
 ├── gui/                            # PySide6 视图层
-│   ├── main_frame.py               # 主窗口、工具栏、QSplitter、信号接线
+│   ├── main_frame.py               # 主窗口组合根（工具栏/二级窗口/关闭控制器已拆出）
 │   ├── panels/                     # 右侧 Apps/System/Remote 面板与左侧设备/日志面板
 │   ├── dialogs/                    # About、App Manager、File Explorer、Logcat、Performance、Screenshot、Settings
-│   ├── performance_web/            # 性能监控 Web 仪表盘静态资源
 │   ├── styles/                     # 主题、QSS、字体、图标加载
 │   └── widgets/                    # 自定义控件
 │
@@ -170,8 +164,7 @@ ADBLab/
 │   ├── adb_targets.py              # ADB 连接目标 ip:port 规范化与校验
 │   ├── archive.py                  # ZIP 安全解压工具
 │   ├── runtime_tools.py            # 打包后外部工具路径与运行时缓存
-│   ├── user_data.py                # 用户可写配置/运行时目录
-│   └── batch_tracker.py            # 多设备批量进度追踪
+│   └── user_data.py                # 用户可写配置/运行时目录
 │
 ├── tests/
 │   ├── test_model_*.py              # 由 test_model_execution.py 拆出的主题回归（10 个文件）
@@ -220,10 +213,9 @@ ADBLab/
 |--------|------|------|
 | 命令执行 | `models/base/command_runner.py` | ADB 与短命令统一执行入口，规范输出与 timeout |
 | 进程执行 | `models/base/process_runner.py` | 管理长生命周期进程，支持 stop、spawn、stop_all |
-| Remote | `models/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
-| File Explorer | `models/file_explorer_service.py` | shell quoting、路径、权限、文件列表解析 |
-| MobilePerf | `models/mobileperf/` + `mobileperf/` | 临时 config、子进程启动/停止、日志批量回传、结果目录定位 |
-| Performance | `models/performance/` | 指标采集、解析、报告、会话、时间线数据 |
+| Remote | `services/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
+| File Explorer | `services/file_explorer.py` | shell quoting、路径、权限、文件列表解析 |
+| MobilePerf | `services/mobileperf_runner.py` + `mobileperf/` | 临时 config、子进程启动/停止、日志批量回传、结果目录定位 |
 | 设置 | `core/settings_manager.py` | 应用配置 JSON 原子写入和自动保存 |
 | 日志 | `core/log_service.py` | 线程安全日志缓冲与 UI 刷新 |
 | 运行时工具 | `utils/runtime_tools.py` / `utils/user_data.py` | 打包后工具路径、用户可写目录和运行时缓存 |

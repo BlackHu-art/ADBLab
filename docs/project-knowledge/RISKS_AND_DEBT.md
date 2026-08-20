@@ -23,7 +23,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | High | MainFrame 关闭链曾同步等待扫描、Remote、Controller 和 tracked processes | `gui/main_frame.py::closeEvent`；`gui/panels/remote_panel.py::shutdown`；`controllers/_base.py::shutdown` | 关闭窗口时事件循环可停顿数秒，多个资源 deadline 叠加 | Gate B2 已实施：两阶段异步关闭（broadcast-first、共享 wall-clock deadline、后台 finalizer、residual snapshot），`test_phase2_mainframe_shutdown_gate.py` 11 项契约测试通过；真实设备 helper 进程树集成验证待确认 | Closed |
 | Medium | Remote 动态 `scrcpy_*` 设置写入后不会被白名单加载器恢复 | `core/settings_manager.py::_load`；`gui/panels/remote_panel.py` | 用户重启应用后 Remote 参数丢失，UI 与 JSON 表象不一致 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单并入 DEFAULTS 并补持久化测试 | Closed |
 | Medium | Release job 删除同版本 Release/tag，并自动清理旧 releases/runs | `.github/workflows/Build-exe.yaml::Create Release` | 重跑可能改写已经发布的版本；回溯性和制品可验证性降低 | 已改为存在 Release/tag 即失败，且没有自动 prune/delete | Closed |
-| Medium | README 描述多个已不存在的旧性能模块和测试文件 | `README.md` 性能章节/项目结构；缺失 `models/performance/`、`gui/performance_web/`、旧 dialogs、`tests/test_performance_services.py` | 新成员误判架构、执行无效路径、修改错误模块 | 以本知识库为准并修正 README；提交检查验证文档路径 | Open |
+| Medium | README 曾描述多个已不存在的旧性能模块和测试文件 | `README.md` 性能章节/项目结构 | 新成员误判架构、执行无效路径、修改错误模块 | 已修正 README（2026-08-19）：移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/` 条目，目录树与服务拆分表同步 `services/`、`adblab/`；知识库为架构事实来源 | Closed |
 | Medium | AppSettings 早期 `_data`/debounce 无锁，Timer 保存可与后续 set/reset 交错 | `core/settings_manager.py::set/reset/_save_atomic` | 丢设置、写入非预期快照；低概率关闭竞态 | 已用 RLock 保护数据/计时器/快照并以独立写锁串行保存，close 时取消计时器并同步 flush；仍有跨进程无文件锁限制 | Closed |
 | Medium | `LogService` 曾在初始化时清除 root logger handlers，并把 DEBUG 发送到运行界面 | `core/log_service.py`；`gui/panels/log_panel.py` | 第三方日志丢失，内部诊断污染用户界面 | 已改为命名 logger、源码 stderr DEBUG、界面二次过滤和停止态晚到日志拒绝；新增缓冲溢出丢弃计数治理突发 | Closed |
 | Medium | 用户可执行任意设备 shell/intent，输入校验与端口/PID/namespace/value 校验不统一 | `gui/panels/system_panel.py`、`controllers/_input.py/_file.py/_system.py`、`models/adb_system.py` | 误操作设备、注入设备 shell 复合命令、配置非法状态 | 明确高级模式；危险确认；结构化参数和范围校验；`utils/adb_values.py` 白名单已覆盖包名/dumpsys 服务名等诊断参数；审计日志脱敏 | Open |
@@ -49,7 +49,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 
 1. MobilePerf 执行层重构（shell=True/5037 端口处理）与 E402/UP031 豁免移除。
 2. MainFrame 大文件拆分（screen_adapter 之后继续）；Gate B2 异步关闭已完成，剩余真实设备 helper 进程树集成验证。
-3. AppManager manifest/hash 与实机恢复验证；Controller 剩余 `_batch_trackers` 路径迁入 operation 边界。
+3. AppManager manifest/hash 与实机恢复验证；Controller 剩余 `_pending_ops`（input/refresh/设备日志）迁入 operation 边界。
 4. 录屏 pull/cleanup 状态分离与 `get_current_activity_async` 结果真实性。
 5. README 漂移修正、Pillow/psutil 依赖确认与全量套件耗时预算。
 6. MobilePerf 长跑/断线故障测试与实机验证（`os._exit`/`os.chdir` 已按 ADR-0004 移除）。

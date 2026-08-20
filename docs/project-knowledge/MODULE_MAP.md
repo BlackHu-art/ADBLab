@@ -92,8 +92,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   批次已迁入 `DeviceBatchUseCase`（ADR-0003 Phase 3）；录屏共享状态与 input/refresh/设备日志的
   `_pending_ops` 仍保留在 Controller。
 - **测试/风险/待确认**：Screenshot 两批交错、部分失败、artifact、取消和晚到结果已有 Gate A
-  故障注入测试；安装批次 Gate C 有独立 use-case 与 gate 测试；录屏/卸载等 `_batch_trackers`
-  路径仍可能共享可变状态，多设备实机行为待验证。
+  故障注入测试；安装批次 Gate C 有独立 use-case 与 gate 测试；卸载/清数据/重启/当前 Activity 与录屏
+  已迁入 DeviceBatchUseCase/ScreenRecordUseCase，仅剩 input/refresh/设备日志的 `_pending_ops`
+  单发登记仍保留在 Controller。
 
 ### ADB Model
 

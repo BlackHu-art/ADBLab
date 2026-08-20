@@ -57,7 +57,7 @@
 | `tests/test_button_tooltips.py` | 按钮文本与 tooltip 一致性 | UI 契约 |
 | `tests/test_agent_skill_gateway.py` | 内置 agent 技能网关 PoC | 工具契约 |
 
-README 引用的 `tests/test_performance_services.py` 当前不存在；旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
+旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
 
 ## 执行命令
 
@@ -128,8 +128,8 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 ## 当前覆盖缺口
 
 1. `scrcpy_*` 白名单持久化已有 `test_settings_persistence.py` 覆盖；其余动态设置键的 schema/版本迁移策略仍无测试。
-2. Controller 的并发录屏和剩余 `_pending_ops`/`_batch_trackers`（卸载/清数据/重启/当前 Activity）
-   清理尚无 operation-id 压力测试；Screenshot Gate A 与 Install batch Gate C 已覆盖各自的重叠/晚到结果。
+2. Controller 剩余 `_pending_ops`（input/refresh/设备日志）清理尚无 operation-id 压力测试；Screenshot Gate A、
+   Install batch Gate C、DeviceBatch/ScreenRecord 用例已覆盖各自的重叠/晚到结果。
 3. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
 4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连无集成测试（`os._exit`/`os.chdir`
    已按 ADR-0004 移除，停止路径结构化收口，长跑验证仍待实机）。

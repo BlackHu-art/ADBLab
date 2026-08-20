@@ -179,7 +179,7 @@ Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次�
 sequenceDiagram
     participant U as "用户"
     participant D as "FileExplorerDialog"
-    participant S as "file_explorer_service 纯函数"
+    participant S as "file_explorer 纯函数"
     participant W as "Worker"
     participant A as "ADB/设备文件系统"
 
