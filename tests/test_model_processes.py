@@ -154,7 +154,7 @@ def test_process_runner_start_replaces_existing_process_without_deadlock():
     started = []
 
     def start_process():
-        with patch("models.base.process_runner.subprocess.Popen", return_value=new_proc):
+        with patch("core.exec.subprocess.Popen", return_value=new_proc):
             started.append(runner.start("device_logcat", ["adb", "logcat"]))
 
     thread = threading.Thread(target=start_process, daemon=True)
@@ -179,7 +179,7 @@ def test_process_runner_start_stops_process_registered_during_start():
         runner._procs["device_logcat"] = displaced_proc
         return new_proc
 
-    with patch("models.base.process_runner.subprocess.Popen", side_effect=popen_side_effect):
+    with patch("core.exec.subprocess.Popen", side_effect=popen_side_effect):
         started = runner.start("device_logcat", ["adb", "logcat"])
 
     assert started is new_proc
@@ -192,7 +192,7 @@ def test_process_runner_start_forwards_stream_kwargs():
     runner = ProcessRunner()
     proc = Mock()
 
-    with patch("models.base.process_runner.subprocess.Popen", return_value=proc) as popen:
+    with patch("core.exec.subprocess.Popen", return_value=proc) as popen:
         started = runner.start(
             "logcat_device",
             ["adb", "logcat"],
@@ -220,7 +220,7 @@ def test_process_runner_spawn_supports_untracked_external_launches():
     runner = ProcessRunner()
     proc = Mock()
 
-    with patch("models.base.process_runner.subprocess.Popen", return_value=proc) as popen:
+    with patch("core.exec.subprocess.Popen", return_value=proc) as popen:
         started = runner.spawn(
             ["cmd.exe", "/K", "echo hi"],
             cwd="C:/work",
@@ -240,7 +240,7 @@ def test_command_runner_run_to_file_streams_binary_stdout(tmp_path):
     output_path = tmp_path / "out.bin"
     proc_result = Mock(returncode=0, stderr=b"")
 
-    with patch("models.base.command_runner.subprocess.run", return_value=proc_result) as run:
+    with patch("core.exec.subprocess.run", return_value=proc_result) as run:
         result = CommandRunner.run_to_file(["python", "-c", "print('ok')"], str(output_path))
 
     assert result.success is True
@@ -255,10 +255,10 @@ def test_command_runner_logs_slow_sanitized_command():
     proc_result = Mock(returncode=0, stdout="ok", stderr="")
 
     with (
-        patch("models.base.command_runner._get_adb_path", return_value="adb.exe"),
-        patch("models.base.command_runner.subprocess.run", return_value=proc_result),
-        patch("models.base.command_runner.perf_counter", side_effect=[1.0, 1.5]),
-        patch("models.base.command_runner._slow_threshold_ms", return_value=100),
+        patch("core.exec.resolve_adb_program", return_value="adb.exe"),
+        patch("core.exec.subprocess.run", return_value=proc_result),
+        patch("core.exec.perf_counter", side_effect=[1.0, 1.5]),
+        patch("core.exec._slow_threshold_ms", return_value=100),
         patch("core.log_service.LogService") as log_service_cls,
     ):
         result = CommandRunner.run(

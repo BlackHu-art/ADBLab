@@ -6,8 +6,7 @@ import shutil
 import subprocess
 import time
 
-from models.base.command_runner import CommandRunner
-from models.base.process_runner import ProcessRunner
+from core.exec import CommandRunner, ProcessRunner
 from utils.runtime_tools import bundled_tool_path
 
 from .scrcpy_args import build_scrcpy_args

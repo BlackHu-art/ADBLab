@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from models.base.process_runner import ProcessRunner
+from core.exec import ProcessRunner
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 

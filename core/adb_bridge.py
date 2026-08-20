@@ -7,8 +7,7 @@ import logging
 import subprocess
 import threading
 
-from models.base.command_runner import CommandResult, CommandRunner
-from models.base.process_runner import ProcessRunner
+from core.exec import CommandResult, CommandRunner, ProcessRunner
 from utils.adb_resolver import adb_path
 
 logger = logging.getLogger("adb_bridge")
