@@ -202,8 +202,8 @@ py -3.11 scripts/check_comment_language.py controllers gui
 
 ## 提交前门禁
 
-推送到远端前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对上次推送已递增（默认补丁 +1），
-并确保没有复用历史版本；本地提交不修改版本号。
+dev 推送到 main 前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对上次发布已递增（默认补丁 +1），
+并确保没有复用历史版本；本地与 dev 提交不修改版本号。
 
 最低门禁：
 
