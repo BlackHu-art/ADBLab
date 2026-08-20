@@ -19,7 +19,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | High | 自动清理和 Release 重建可能以过大权限删除 workflow、Release 和 tag | `.github/workflows/Auto-Clean.yaml`；`.github/workflows/Build-exe.yaml` | 供应链或误配置破坏交付资产 | Auto-Clean 保持只读 Retention Audit；Build 发布后按产品决定保留最新 5 个版本 tag（更旧的 tag 与其 Release 自动删除），同版本仍不可变；固定 action SHA 与最小权限不变，并有契约测试 | Closed |
 | High | DeviceStore 写盘非原子且锁范围不覆盖 save | `models/device_store.py::load/save/upsert_devices` | 并发设备刷新/连接可能丢更新或产生损坏 YAML，崩溃可截断文件 | 已实现同锁域快照、临时文件 fsync + `os.replace`、损坏备份恢复和并发/故障测试 | Closed |
 | High | AppManagerWorker 多条路径忽略 ADB 失败并继续报告成功 | `models/app_manager_worker.py` 的备份 pull、恢复 install、权限修改、列表/详情路径 | 备份不完整、恢复未发生、权限未修改但用户收到成功提示，可能导致数据丢失 | 已检查关键 CommandResult、失败停止/汇总并使用 staging；manifest/hash 与实机恢复仍待后续 | Partial |
-| High | Controller 用共享字段管理同类操作，重叠批次/录屏可能串台 | `controllers/_base.py::_batch_trackers/_pending_ops`；`controllers/_media.py::_record_info` | 多设备或快速重复操作产生错误进度、错误路径、状态覆盖和内存增长 | Screenshot 已通过 OperationManager Gate A；安装批次已通过 InstallBatchUseCase Gate C；卸载/清数据/重启/当前 Activity 已迁入 `DeviceBatchUseCase`（`_batch_trackers` 已删除）；录屏已迁入 `ScreenRecordUseCase`（ADR-0003 Phase 3，`_record_info` 已删除）；仅剩 input/refresh/设备日志的 `_pending_ops` 仍待迁移 | Partial |
+| High | Controller 用共享字段管理同类操作，重叠批次/录屏可能串台 | 已删除的 `_batch_trackers`/`_pending_ops`；`controllers/_media.py::_record_info` | 多设备或快速重复操作产生错误进度、错误路径、状态覆盖和内存增长 | Screenshot 走 OperationManager；安装批次走 InstallBatchUseCase；卸载/清数据/重启/当前 Activity 走 DeviceBatchUseCase；录屏走 ScreenRecordUseCase；遗留 `_pending_ops` 死账本（无消费者）已删除，Controller 业务状态清零 | Closed |
 | High | MainFrame 关闭链曾同步等待扫描、Remote、Controller 和 tracked processes | `gui/main_frame.py::closeEvent`；`gui/panels/remote_panel.py::shutdown`；`controllers/_base.py::shutdown` | 关闭窗口时事件循环可停顿数秒，多个资源 deadline 叠加 | Gate B2 已实施：两阶段异步关闭（broadcast-first、共享 wall-clock deadline、后台 finalizer、residual snapshot），`test_phase2_mainframe_shutdown_gate.py` 11 项契约测试通过；真实设备 helper 进程树集成验证待确认 | Closed |
 | Medium | Remote 动态 `scrcpy_*` 设置写入后不会被白名单加载器恢复 | `core/settings_manager.py::_load`；`gui/panels/remote_panel.py` | 用户重启应用后 Remote 参数丢失，UI 与 JSON 表象不一致 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单并入 DEFAULTS 并补持久化测试 | Closed |
 | Medium | Release job 删除同版本 Release/tag，并自动清理旧 releases/runs | `.github/workflows/Build-exe.yaml::Create Release` | 重跑可能改写已经发布的版本；回溯性和制品可验证性降低 | 同版本存在即失败保持不变；2026-08-19 起发布后自动删除超出最新 5 个的旧 tag（及对应 Release），为产品明确要求而非误删除 | Closed |
@@ -50,7 +50,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 
 1. MobilePerf 执行层重构（shell=True/5037 端口处理）与 E402/UP031 豁免移除。
 2. MainFrame 大文件拆分（screen_adapter 之后继续）；Gate B2 异步关闭已完成，剩余真实设备 helper 进程树集成验证。
-3. AppManager manifest/hash 与实机恢复验证；Controller 剩余 `_pending_ops`（input/refresh/设备日志）迁入 operation 边界。
+3. AppManager manifest/hash 与实机恢复验证（Controller 批次/单发状态已全部迁入 use case 或删除）。
 4. 录屏 pull/cleanup 状态分离与 `get_current_activity_async` 结果真实性。
 5. README 漂移修正、Pillow/psutil 依赖确认与全量套件耗时预算。
 6. MobilePerf 长跑/断线故障测试与实机验证（`os._exit`/`os.chdir` 已按 ADR-0004 移除）。

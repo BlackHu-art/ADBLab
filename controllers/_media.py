@@ -82,7 +82,6 @@ class ADBMediaMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     log_service: LogService
     executor: ThreadPoolExecutor
-    _pending_ops: dict
     _active_viewers: list
     last_save_dir: str | None
 

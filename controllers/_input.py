@@ -15,7 +15,6 @@ class ADBInputMixin(_ADBControllerBase):
     advanced_model: ADBAdvanced
     app_model: ADBApp
     signals: ADBControllerSignals
-    _pending_ops: dict
 
     _handlers = {
         "input_tap": "_process_input_tap_result",
@@ -89,9 +88,6 @@ class ADBInputMixin(_ADBControllerBase):
             self._send_text_to_device(device_ip, text)
 
     def _send_text_to_device(self, device_ip: str, text: str):
-        operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("input_text", device_ip)
         self.app_model.input_text_async(device_ip, text)
 
     def _process_input_text_result(self, result: dict):

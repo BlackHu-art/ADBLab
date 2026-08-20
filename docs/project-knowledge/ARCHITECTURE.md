@@ -38,8 +38,8 @@ flowchart LR
 ### 1. 启动与应用壳
 
 - `main.py::_dispatch_cli()` 先处理 CLI 子模式；无已知子模式时进入 `_run_gui()`。
-- `_run_gui()` 设置 Windows AppUserModelID、创建 QApplication、初始化资源路径，调用
-  `BaseStyles.reload_from_settings()` 将统一 UI 字体应用到 QApplication，再加载主题并显示
+- `_run_gui()` 设置 Windows AppUserModelID、创建 QApplication、初始化资源路径，并在任何设置
+  读取之前创建 LogService 并调用 `set_error_sink` 注入设置层错误接收器，随后加载主题并显示
   `gui.main_frame.MainFrame`。
 - MobilePerf worker 复用同一可执行入口，但不创建 GUI。
 
@@ -256,10 +256,9 @@ sequenceDiagram
 
 ## 已知架构限制
 
-- Controller 仍持有录屏与单发操作的共享状态；Screenshot 已完成 operation 隔离，安装批次已迁入
-  `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 已迁入 `DeviceBatchUseCase`（ADR-0003
-  Phase 3，`_batch_trackers` 已删除），录屏已迁入 `ScreenRecordUseCase`；仅剩 input/refresh/设备日志的
-  `_pending_ops` 仍待迁移。
+- Controller 不再持有批次/单发共享状态：Screenshot 走 OperationManager，安装批次走
+  `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 走 `DeviceBatchUseCase`，录屏走
+  `ScreenRecordUseCase`；遗留的 `_pending_ops` 死账本（写入者无读取者）已整体删除。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
   已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
 - 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher、

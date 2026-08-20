@@ -24,7 +24,6 @@ class ADBDeviceMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     log_service: LogService
     executor: ThreadPoolExecutor
-    _pending_ops: dict
 
     _handlers = {
         "connect_device": "_process_connect_device_result",
@@ -52,15 +51,6 @@ class ADBDeviceMixin(_ADBControllerBase):
         else:
             ip = None
             raw = str(result)
-            found_key = None
-            with self._pending_lock:
-                for key, (op_name, op_ip) in self._pending_ops.items():
-                    if op_name == "connect":
-                        ip = op_ip
-                        found_key = key
-                        break
-                if found_key:
-                    del self._pending_ops[found_key]
         if not ip:
             self._emit_operation("connect", False, "⚠️ Unknown device connection")
             return
@@ -86,9 +76,6 @@ class ADBDeviceMixin(_ADBControllerBase):
         self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
-        operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("refresh", None)
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:

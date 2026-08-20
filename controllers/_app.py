@@ -24,7 +24,6 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
     testing_model: ADBTesting
     signals: ADBControllerSignals
     log_service: LogService
-    _pending_ops: dict
 
     _handlers = {
         "get_current_package": "_process_get_package_result",
@@ -219,9 +218,6 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
         timestamp = datetime.now().strftime("%H%M%S")
         sanitized_ip = re.sub(r"\W+", "_", device_ip)
         log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
-        operation_id = self._generate_operation_id()
-        with self._pending_lock:
-            self._pending_ops[operation_id] = ("retrieve_device_logs", device_ip)
         self.testing_model.retrieve_device_logs_async(device_ip, log_path)
 
     def _process_retrieve_logs_result(self, result: dict):
@@ -243,9 +239,6 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
         if not self._require_devices(devices, "cleanup_device_logs"):
             return
         for device_ip in devices:
-            operation_id = self._generate_operation_id()
-            with self._pending_lock:
-                self._pending_ops[operation_id] = ("cleanup_device_logs", device_ip)
             self.testing_model.cleanup_device_logs_async(device_ip)
 
     def _process_cleanup_logs_result(self, result: dict):

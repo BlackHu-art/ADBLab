@@ -163,6 +163,12 @@ class AppSettings:
     _instance = None
     _instance_lock = threading.Lock()
 
+    # 实例状态在 __new__ 中初始化；此处仅声明类型供静态检查。
+    _lock: threading.RLock
+    _write_lock: threading.Lock
+    _data: dict
+    _save_timer: threading.Timer | None
+
     def __new__(cls):
         if cls._instance is None:
             with cls._instance_lock:

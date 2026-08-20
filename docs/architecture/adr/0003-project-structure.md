@@ -19,8 +19,8 @@ Phase 2 全部完成。Phase 3 已落地：core 设置层错误日志已注入�
 `utils/batch_tracker.py` 已退役；录屏已迁入 `ScreenRecordUseCase`（提交 `6519a9c`）。
 Phase 4 已落地：`services/` 顶层包移动（ADR-0004，提交 `cf19d26`）与 MobilePerf 内核
 实例化（RuntimeData 每运行实例 + daemon 采集线程 + 去 `os._exit`/`os.chdir`，提交
-`c235e89`）。全量 952 项通过。计划外遗留：input/refresh/设备日志的 `_pending_ops`
-单发登记仍待迁移（RISKS_AND_DEBT 已记录）。
+`c235e89`）。全量 952 项通过。后续（2026-08-19）：`_pending_ops` 死账本已整体删除
+（写入者无消费者），Controller 业务状态清零；main.py 在设置读取前注入日志接收器。
 
 ## 背景
 

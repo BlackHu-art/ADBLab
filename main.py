@@ -107,13 +107,19 @@ def _run_gui() -> int:
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
-    from core.settings_manager import AppSettings
+    from core.log_service import LogService
+    from core.settings_manager import AppSettings, set_error_sink
     from gui.main_frame import MainFrame
     from gui.styles import BaseStyles
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
+
+    # 先于任何设置读取创建日志服务并注入设置层错误接收器，使启动期
+    # （MainFrame 创建之前）的设置加载/保存错误可见，而不是静默丢弃。
+    LogService()
+    set_error_sink(LogService().log)
 
     # 字体管理器同时更新 QApplication 与各字体角色，保持单一应用入口。
     BaseStyles.reload_from_settings()

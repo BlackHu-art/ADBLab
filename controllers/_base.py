@@ -46,7 +46,6 @@ class _ADBControllerBase:
         self.connected_devices_file = resource_path("resources/connected_devices.yaml")
         self.package_info = resource_path("resources/package_info.yaml")
         self.thread_pool = QThreadPool.globalInstance()
-        self._pending_ops = {}
         self._pending_lock = threading.Lock()
         self.operation_manager = OperationManager()
         self.install_batch_use_case = InstallBatchUseCase(
