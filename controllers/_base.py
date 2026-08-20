@@ -126,7 +126,7 @@ class _ADBControllerBase:
             raise TypeError("handler must be callable")
         self._operation_handler_map[op_type.strip()] = handler
 
-    @Slot(str, bool, str)
+    @Slot(str, bool, str)  # pyright: ignore[reportArgumentType]
     def _emit_operation(self, operation: str, success: bool, message: str):
         level = "INFO" if success else "ERROR"
         if not message.strip():
@@ -183,7 +183,7 @@ class _ADBControllerBase:
 
             if op_type == "get_connected_devices":
                 if isinstance(result, list):
-                    self._process_device_list(result)
+                    getattr(self, "_process_device_list")(result)
                 else:
                     self._emit_operation(op_type, False, "Invalid device list format")
                 return

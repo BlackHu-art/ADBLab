@@ -125,7 +125,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             )
             stop_acks[device_ip] = batch_id
             if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, device_ip)
+                _finalize_monkey_target(self, batch_id, str(device_ip))
             return
         if result.get("success"):
             self._emit_operation(
@@ -133,7 +133,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             )
             stop_acks[device_ip] = batch_id
             if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, device_ip)
+                _finalize_monkey_target(self, batch_id, str(device_ip))
         else:
             if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == batch_id:
                 stop_requests.pop(device_ip, None)
@@ -146,7 +146,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 f"\nError: {result.get('message', '')}",
             )
             if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, device_ip)
+                _finalize_monkey_target(self, batch_id, str(device_ip))
             return
 
     def run_monkey_test(self, devices: list, params: dict, batch_id: str = ""):

@@ -6,6 +6,7 @@ import os
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
+from typing import Any, cast
 
 from PySide6.QtWidgets import QFileDialog
 
@@ -211,7 +212,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
             "INFO",
             f"Starting install task {unit.index}/{len(operation.unit_ids)}",
         )
-        self.app_model.install_apk_async(
+        cast(Any, self.app_model).install_apk_async(
             request.device_id,
             request.apk_path,
             request.apk_name,
@@ -624,7 +625,9 @@ class ADBAppInstallMixin(_ADBControllerBase):
         result.get("index", 1)
         success = result.get("success")
         operation = result.get("operation", "install")
-        progress = _record_device_batch_result(self, operation, device_ip, success)
+        progress = _record_device_batch_result(
+            self, str(operation), str(device_ip), bool(success)
+        )
         if success:
             self._emit_operation(
                 operation, True, f"✅ install success {progress} {apk_name} on {device_ip}"
@@ -663,7 +666,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        progress = _record_device_batch_result(self, "uninstall", ip, success)
+        progress = _record_device_batch_result(self, "uninstall", str(ip), bool(success))
         if success:
             self._emit_operation(
                 "uninstall", True, f"✅ uninstall success {progress} {pkg} on {ip}"
@@ -695,7 +698,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
-        progress = _record_device_batch_result(self, "clear_data", ip, success)
+        progress = _record_device_batch_result(self, "clear_data", str(ip), bool(success))
         if success:
             self._emit_operation(
                 "clear_data", True, f"✅ clear data success {progress} {pkg} on {ip}"
@@ -728,7 +731,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         pkg = result.get("package_name", "unknown")
         output = result.get("output", "").strip()
         success = result.get("success")
-        progress = _record_device_batch_result(self, "restart_app", ip, success)
+        progress = _record_device_batch_result(self, "restart_app", str(ip), bool(success))
         if success:
             msg = (
                 f"✅ Restart Success {progress}\n"
@@ -766,7 +769,7 @@ class ADBAppInstallMixin(_ADBControllerBase):
         focus = result.get("current_focus", "").strip()
         resumed = result.get("resumed_activity", "").strip()
         error = result.get("error", "").strip()
-        progress = _record_device_batch_result(self, "current_activity", device, success)
+        progress = _record_device_batch_result(self, "current_activity", str(device), bool(success))
         if success:
             msg_lines = [f"📱 ({idx}) {device} {progress} - Activity Info"]
             if focus:

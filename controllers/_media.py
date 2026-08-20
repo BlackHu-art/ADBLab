@@ -9,6 +9,7 @@ import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from typing import Any, cast
 
 from PySide6.QtCore import Qt, QTimer
 
@@ -215,7 +216,7 @@ class ADBMediaMixin(_ADBControllerBase):
         task_id: str,
         generation_token: object,
     ):
-        self.testing_model.take_screenshot_async(
+        cast(Any, self.testing_model).take_screenshot_async(
             device_ip,
             save_path,
             _operation_id=operation_id,
@@ -451,7 +452,7 @@ class ADBMediaMixin(_ADBControllerBase):
     def _show_screenshot_viewer(self, image_paths: list):
         viewer = ScreenshotViewer(image_paths)
         configure_independent_secondary_window(viewer)
-        viewer.setAttribute(Qt.WA_DeleteOnClose)
+        viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         if self.window_owner is not None:
             fit_secondary_window_to_owner_screen(viewer, self.window_owner)
             viewer.installEventFilter(self.window_owner)

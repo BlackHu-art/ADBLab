@@ -1,5 +1,5 @@
 {
-    "include": ["adblab", "services", "core"],
+    "include": ["adblab", "services", "core", "controllers"],
     "exclude": [
         "**/__pycache__",
         ".venv",
