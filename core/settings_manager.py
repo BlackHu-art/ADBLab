@@ -1,7 +1,8 @@
 """通过 JSON 文件持久化应用设置。
 
 使用 :meth:`AppSettings.instance` 访问单例，并通过原子写入和批量更新降低配置
-损坏及高频重复写入的风险。
+损坏及高频重复写入的风险。设置文件顶层携带 ``schema_version``，加载时按迁移链
+补齐结构（ADR-0006），未知键显式剔除并记录警告。
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import json
 import os
 import tempfile
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
 
@@ -157,6 +158,85 @@ def _legacy_panel_ratio(left_width: Any, right_width: Any) -> float:
     return max(0.2, min(0.7, left / total))
 
 
+def _stored_schema_version(stored: dict) -> int:
+    """读取存储字典的 schema 版本；缺失或非正整数一律视为 v1（种子时代）。"""
+
+    version = stored.get("schema_version")
+    if isinstance(version, bool) or not isinstance(version, int):
+        return 1
+    return max(1, version)
+
+
+def _migrate_1_to_2(stored: dict) -> None:
+    """v1 → v2：折算面板比例并补齐缺失键，用户已设值一律不动（ADR-0006）。"""
+
+    if "panel_split_ratio" not in stored:
+        stored["panel_split_ratio"] = _legacy_panel_ratio(
+            stored.get("left_panel_width"),
+            stored.get("right_panel_width"),
+        )
+    for key, default in DEFAULTS.items():
+        if key not in stored:
+            stored[key] = deepcopy(default)
+    monkey = stored.get("monkey_params")
+    if isinstance(monkey, dict):
+        merged = deepcopy(DEFAULTS["monkey_params"])
+        merged.update(monkey)
+        stored["monkey_params"] = merged
+    else:
+        stored["monkey_params"] = deepcopy(DEFAULTS["monkey_params"])
+
+
+def _migrate_2_to_3(stored: dict) -> None:
+    """v2 → v3：剔除未知键（含 monkey_params 内的死键）并记录警告（ADR-0006）。"""
+
+    _prune_unknown_keys(stored)
+
+
+def _run_migrations(stored: dict, from_version: int) -> None:
+    """按版本升序对存储字典做原地结构迁移。"""
+
+    for version in range(from_version, CURRENT_SCHEMA_VERSION):
+        migration = _MIGRATIONS.get(version)
+        if migration is not None:
+            migration(stored)
+
+
+def _prune_unknown_keys(stored: dict) -> None:
+    """剔除未知顶层键与未知 monkey_params 键，每类一次性记录警告。"""
+
+    unknown = sorted(
+        str(key) for key in stored if key not in DEFAULTS and key != "schema_version"
+    )
+    for key in unknown:
+        stored.pop(key, None)
+    if unknown:
+        _log_error(
+            "WARNING",
+            f"Ignored {len(unknown)} unknown settings key(s): {', '.join(unknown)}",
+        )
+    monkey = stored.get("monkey_params")
+    if not isinstance(monkey, dict):
+        return
+    monkey_defaults = DEFAULTS["monkey_params"]
+    monkey_unknown = sorted(str(key) for key in monkey if key not in monkey_defaults)
+    for key in monkey_unknown:
+        monkey.pop(key, None)
+    if monkey_unknown:
+        _log_error(
+            "WARNING",
+            f"Ignored {len(monkey_unknown)} unknown monkey_params key(s): "
+            f"{', '.join(monkey_unknown)}",
+        )
+
+
+_MIGRATIONS: dict[int, Callable[[dict], None]] = {
+    1: _migrate_1_to_2,
+    2: _migrate_2_to_3,
+}
+CURRENT_SCHEMA_VERSION = max(_MIGRATIONS) + 1
+
+
 class AppSettings:
     """线程安全的应用设置单例。"""
 
@@ -168,6 +248,7 @@ class AppSettings:
     _write_lock: threading.Lock
     _data: dict
     _save_timer: threading.Timer | None
+    _seen_version: int
 
     def __new__(cls):
         if cls._instance is None:
@@ -178,6 +259,7 @@ class AppSettings:
                     instance._write_lock = threading.Lock()
                     instance._data = deepcopy(DEFAULTS)
                     instance._save_timer = None
+                    instance._seen_version = CURRENT_SCHEMA_VERSION
                     cls._instance = instance
                     instance._load()
         return cls._instance
@@ -189,7 +271,12 @@ class AppSettings:
         return cls()
 
     def _load(self) -> None:
-        """加载用户设置；不存在时尝试迁移旧安装目录中的设置。"""
+        """加载用户设置；不存在时尝试迁移旧安装目录中的设置。
+
+        按 ADR-0006 的迁移链补齐结构：无 ``schema_version`` 的文件视为 v1，
+        逐版本迁移到 ``CURRENT_SCHEMA_VERSION`` 后剔除未知键；来自旧版本文件的
+        迁移结果立即落盘。版本高于当前支持范围的文件只读已知键、不清理不迁移。
+        """
 
         paths = [SETTINGS_FILE]
         if os.path.normcase(os.path.abspath(LEGACY_SETTINGS_FILE)) != os.path.normcase(
@@ -201,28 +288,34 @@ class AppSettings:
             return
 
         loaded_from = ""
-        migrated_panel_ratio = False
+        needs_immediate_save = False
         try:
             with open(settings_path, encoding="utf-8") as file:
                 stored = json.load(file)
             if not isinstance(stored, dict):
                 raise ValueError("settings file is not a JSON object")
+            stored_version = _stored_schema_version(stored)
             with self._lock:
+                if stored_version > CURRENT_SCHEMA_VERSION:
+                    self._seen_version = stored_version
+                    _log_error(
+                        "WARNING",
+                        f"Settings schema v{stored_version} is newer than supported "
+                        f"v{CURRENT_SCHEMA_VERSION}; known keys loaded, file left untouched",
+                    )
+                else:
+                    _run_migrations(stored, stored_version)
+                    _prune_unknown_keys(stored)
+                    needs_immediate_save = stored_version < CURRENT_SCHEMA_VERSION
                 for key in DEFAULTS:
                     if key in stored:
                         self._data[key] = _normalise_setting(key, stored[key])
-                if "panel_split_ratio" not in stored:
-                    self._data["panel_split_ratio"] = _legacy_panel_ratio(
-                        self._data["left_panel_width"],
-                        self._data["right_panel_width"],
-                    )
-                    migrated_panel_ratio = True
             loaded_from = settings_path
         except (json.JSONDecodeError, ValueError, OSError) as error:
             _log_error("WARNING", f"Failed to load settings ({error}), using defaults")
 
         if loaded_from and (
-            migrated_panel_ratio
+            needs_immediate_save
             or (loaded_from != SETTINGS_FILE and not os.path.exists(SETTINGS_FILE))
         ):
             self._save_atomic()
@@ -237,6 +330,9 @@ class AppSettings:
             with self._write_lock:
                 with self._lock:
                     snapshot = deepcopy(self._data)
+                    # 版本号由加载/保存流程托管：来自更高版本的只读文件保留其
+                    # 版本号，避免降级安装把新文件改写回旧版本。
+                    snapshot["schema_version"] = self._seen_version
                 target = os.fspath(SETTINGS_FILE)
                 target_directory = os.path.dirname(target) or os.curdir
                 os.makedirs(target_directory, exist_ok=True)
@@ -281,13 +377,20 @@ class AppSettings:
         self.update({key: value})
 
     def update(self, values: Mapping[str, Any]) -> None:
-        """批量更新多项设置，并仅安排一次防抖持久化。"""
+        """批量更新多项设置，并仅安排一次防抖持久化。
+
+        ``schema_version`` 由加载/保存流程托管，调用方写入会被忽略并记录警告。
+        """
 
         if not isinstance(values, Mapping):
             raise TypeError("values must be a mapping")
         normalised = {
-            str(key): _normalise_setting(str(key), value) for key, value in values.items()
+            str(key): _normalise_setting(str(key), value)
+            for key, value in values.items()
+            if str(key) != "schema_version"
         }
+        if any(str(key) == "schema_version" for key in values):
+            _log_error("WARNING", "schema_version is loader-managed; update() ignored it")
         if not normalised:
             return
         with self._lock:
@@ -337,6 +440,7 @@ class AppSettings:
 
 __all__ = [
     "AppSettings",
+    "CURRENT_SCHEMA_VERSION",
     "DEFAULTS",
     "LEGACY_SETTINGS_FILE",
     "SCRCPY_SETTING_DEFAULTS",

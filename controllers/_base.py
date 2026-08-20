@@ -29,7 +29,6 @@ from models.adb_device import ADBDevice
 from models.adb_testing import ADBTesting
 from models.base.process_runner import ProcessRunner
 from models.device_store import DeviceStore
-from utils.resource_path import resource_path
 
 
 class _ADBControllerBase:
@@ -43,8 +42,6 @@ class _ADBControllerBase:
         self.app_model = ADBApp()
         self.testing_model = ADBTesting()
         self.advanced_model = ADBAdvanced()
-        self.connected_devices_file = resource_path("resources/connected_devices.yaml")
-        self.package_info = resource_path("resources/package_info.yaml")
         self.thread_pool = QThreadPool.globalInstance()
         self._pending_lock = threading.Lock()
         self.operation_manager = OperationManager()

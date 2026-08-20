@@ -84,3 +84,106 @@ def test_existing_json_scrcpy_keys_load_without_migration(isolated_settings):
     assert settings.get("scrcpy_bitrate") == "8"
     assert settings.get("scrcpy_orientation") == "270"
     assert settings.get("retired_remote_setting") is None
+
+
+def test_saved_file_stamps_current_schema_version(isolated_settings):
+    settings = settings_manager.AppSettings.instance()
+    settings.update({"theme": "Dark"})
+    pending_timer = settings._save_timer
+    if pending_timer is not None:
+        pending_timer.cancel()
+    settings._save_atomic()
+
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == settings_manager.CURRENT_SCHEMA_VERSION
+    assert stored["theme"] == "Dark"
+
+
+def test_v1_file_migrates_and_stamps_current_schema_version(isolated_settings):
+    legacy = {
+        "theme": "Dark",
+        "left_panel_width": 300,
+        "right_panel_width": 900,
+        "monkey_params": {"events": 5000, "package_name": "com.example"},
+        "retired_setting": "drop-me",
+    }
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == "Dark"
+    assert settings.get("panel_split_ratio") == 0.25
+    assert settings.get("device_scan_interval_ms") == 15000
+    monkey = settings.get("monkey_params")
+    assert monkey["events"] == 5000
+    assert monkey["throttle"] == 300
+    assert "package_name" not in monkey
+
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == settings_manager.CURRENT_SCHEMA_VERSION
+    assert "retired_setting" not in stored
+    # 左右像素宽度仍是活跃设置键（窗口布局在读），迁移只补充比例，不删除像素键。
+    assert stored["panel_split_ratio"] == 0.25
+    assert stored["left_panel_width"] == 300
+
+
+def test_unknown_keys_pruned_with_warning(isolated_settings):
+    captured = []
+
+    def sink(level, message):
+        captured.append((level, message))
+
+    settings_manager.set_error_sink(sink)
+    try:
+        legacy = {
+            "theme": "Dark",
+            "retired_setting": "x",
+            "monkey_params": {"events": 100, "package_name": "com.example"},
+        }
+        isolated_settings.parent.mkdir(parents=True)
+        isolated_settings.write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
+
+        settings = settings_manager.AppSettings.instance()
+
+        assert settings.get("theme") == "Dark"
+        assert settings.get("retired_setting") is None
+        warnings = [message for level, message in captured if level == "WARNING"]
+        assert any("retired_setting" in message for message in warnings)
+        assert any("package_name" in message for message in warnings)
+    finally:
+        settings_manager.set_error_sink(None)
+
+
+def test_future_schema_version_keeps_known_values_and_version(isolated_settings):
+    future = {"schema_version": 99, "theme": "Dark", "future_key": "keep-me"}
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(json.dumps(future, ensure_ascii=False), encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == "Dark"
+    settings.update({"ui_font_size": 14})
+    pending_timer = settings._save_timer
+    if pending_timer is not None:
+        pending_timer.cancel()
+    settings._save_atomic()
+
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == 99
+    assert stored["theme"] == "Dark"
+
+
+def test_update_ignores_schema_version(isolated_settings):
+    settings = settings_manager.AppSettings.instance()
+    settings.update({"schema_version": 99, "theme": "Dark"})
+
+    assert settings.get("theme") == "Dark"
+    assert settings.get("schema_version") is None
+
+    pending_timer = settings._save_timer
+    if pending_timer is not None:
+        pending_timer.cancel()
+    settings._save_atomic()
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == settings_manager.CURRENT_SCHEMA_VERSION

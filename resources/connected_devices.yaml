@@ -1,20 +1,4 @@
-device_10.0.0.111:5188:
-  Aversion: '11'
-  Brand: BTV
-  Model: B13
-  ip: 10.0.0.111:5188
-device_10.0.0.195:5555:
-  Aversion: '12'
-  Brand: Xiaomi
-  Model: MIBOX4
-  ip: 10.0.0.195:5555
-device_RFCW71D91SP:
-  Aversion: '15'
-  Brand: samsung
-  Model: SM-S911U
-  ip: RFCW71D91SP
-device_emulator-5556:
-  Aversion: '9'
-  Brand: Meizu
-  Model: M973Q
-  ip: emulator-5556
+# 遗留设备迁移种子（ADR-0006 Step B）：
+# 已清空——不再携带任何历史真实设备标识；DeviceStore 只迁移用户配置目录里的
+# 设备历史，首装用户从空快照开始。
+{}
