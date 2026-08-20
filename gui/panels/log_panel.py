@@ -1,9 +1,11 @@
 """提供支持主题切换、自动滚动和批量渲染的用户日志面板。
 
 结构说明（ADR-0005 日志优化）：
-- 记录为 ``(时间戳, 级别, 消息)`` 三元组，时间戳由 LogService 在产生时生成；
+- 记录为 ``(时间戳, 级别, 消息)`` 三元组，时间戳由 LogService 在产生时生成，
+  面板数据层保留但不渲染（界面只显示级别与消息）；
 - 每条日志渲染为独立 ``<p>`` 块，使裁剪可按块从文档头部删除（O(裁剪行)）；
-- 级别标签固定宽度（等宽字体补位），ERROR/CRITICAL 加粗；多行消息悬挂缩进；
+- 级别标签固定宽度：用 ``&nbsp;`` 补位（普通空格会被 HTML 折叠导致错位），
+  ERROR/CRITICAL 加粗；多行消息悬挂缩进；
 - 条目 HTML 按 (级别, 消息) 缓存，主题切换时重建缓存并整份重绘。
 """
 
@@ -17,8 +19,8 @@ from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
 
-# 时间戳(8) + 空格 + 固定宽度级别标签(9) + 空格 后的消息列起点。
-_MESSAGE_COLUMN = 19
+# 级别标签固定宽度(9) + 空格 后的消息列起点（时间戳不渲染）。
+_MESSAGE_COLUMN = 10
 _LEVEL_COLUMN_WIDTH = 9
 _HTML_CACHE_LIMIT = 2048
 
@@ -189,16 +191,10 @@ class LogPanel(QWidget):
             sb.setValue(min(max(0, int(scroll_value)), sb.maximum()))
 
     def _row_html(self, timestamp: str, level: str, message: str) -> str:
-        """组装单条日志的块级 HTML；消息体按 (级别, 消息) 缓存。"""
+        """组装单条日志的块级 HTML；消息体按 (级别, 消息) 缓存，时间戳不渲染。"""
 
-        body = self._message_body_html(level, message)
-        c = BaseStyles.color
-        return (
-            f'<p style="margin:0;">'
-            f'<span style="color:{c("LOG_TIMESTAMP")}">{escape(timestamp)}</span> '
-            f"{body}"
-            f"</p>"
-        )
+        del timestamp
+        return f'<p style="margin:0;">{self._message_body_html(level, message)}</p>'
 
     def _message_body_html(self, level: str, message: str) -> str:
         """返回级别标签与消息正文的 HTML；命中缓存时跳过转义与拼接。"""
@@ -214,14 +210,15 @@ class LogPanel(QWidget):
             if level in ("DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
             else "LOG_INFO"
         )
-        # 等宽字体下固定宽度级别列；ERROR/CRITICAL 加粗突出。
-        level_text = f"[{level}]".ljust(_LEVEL_COLUMN_WIDTH)
+        # 固定宽度级别列：HTML 会折叠连续普通空格，因此用 &nbsp; 补位保证对齐；
+        # ERROR/CRITICAL 加粗突出。
+        level_text = escape(f"[{level}]".ljust(_LEVEL_COLUMN_WIDTH)).replace(" ", "&nbsp;")
         bold_open, bold_close = ("<b>", "</b>") if level in ("ERROR", "CRITICAL") else ("", "")
         msg = escape(str(message))
         # 多行消息悬挂缩进：续行对齐到消息列起点，避免与级别列粘连。
         msg = msg.replace("\n", f"<br>{'&nbsp;' * _MESSAGE_COLUMN}")
         body = (
-            f'{bold_open}<span style="color:{c(lv_key)}">{escape(level_text)}</span>{bold_close} '
+            f'{bold_open}<span style="color:{c(lv_key)}">{level_text}</span>{bold_close} '
             f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span>'
         )
         if len(self._html_cache) >= _HTML_CACHE_LIMIT:

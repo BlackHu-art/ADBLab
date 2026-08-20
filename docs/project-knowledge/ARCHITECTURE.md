@@ -133,8 +133,9 @@ flowchart LR
 - 用户日志仅接收 `INFO/SUCCESS/WARNING/ERROR/CRITICAL`，由 `LogService` 缓冲后发送到
   `LogPanel`；时间戳在日志产生时由 LogService 生成，批次信号携带 `(时间戳, 级别, 消息)`
   三元组；DEBUG 拦截只在服务层发生（单一职责），面板渲染收到的记录原样显示。
-  `LogPanel` 每条记录渲染为独立 HTML 块：级别列固定宽度（等宽字体补位）、ERROR/CRITICAL
-  加粗、多行消息悬挂缩进；条目 HTML 按 (级别, 消息) 缓存，主题切换重建缓存并整份重绘；
+  `LogPanel` 每条记录渲染为独立 HTML 块：级别列固定宽度（`&nbsp;` 补位，普通空格会被
+  HTML 折叠导致错位）、ERROR/CRITICAL 加粗、多行消息悬挂缩进；时间戳保留在记录中但
+  不渲染；条目 HTML 按 (级别, 消息) 缓存，主题切换重建缓存并整份重绘；
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
   不进入 Qt 信号、界面缓存或文件日志。windowed 环境没有 `stderr` 时静默丢弃。

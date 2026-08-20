@@ -208,6 +208,9 @@ def test_log_panel_batch_records_carry_source_timestamps(
         assert timestamp == "12:00:00"
         assert level == LogLevel.INFO
         assert message == "带时间戳"
+        # 数据层保留时间戳，但界面不渲染时间列（避免与级别列重叠）。
+        assert "带时间戳" in panel.text_output.toPlainText()
+        assert "12:00:00" not in panel.text_output.toPlainText()
     finally:
         panel.close()
 
