@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: 2026-08-20
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -19,13 +19,13 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合、批次所有权/generation 边界 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、InstallBatchUseCase/OperationManager | `_base.py` 与 6 个 mixin | `test_model_*.py` |
 | vNext Operation | `adblab/application/` | 业务 operation 状态、fan-out、取消意图与兼容 metadata envelope；安装批次用例 | `OperationManager`、`InstallBatchUseCase` | 迁移中的 Controller/use case | 纯 Python 锁与值对象 | `operations.py`、`cancellation.py`、`envelope.py`、`install_batch.py` | `test_phase1_operations.py`、`test_phase2_install_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
 | ADB Model | `models/adb_*.py` | 设备、应用、系统、网络、测试和高级命令；operation token 透传 | `*_async` 方法 | Controller | CommandRunner、ProcessRunner、ADBBridge | `adb_model.py`、`adb_testing.py` | `test_model_*.py` |
-| 命令与进程 | `models/base/` | 短命令结果规范化、长进程管理、前台包检测 | `CommandRunner.run`、`ProcessRunner.start` | models、dialogs、remote | subprocess、ADB | `command_runner.py`、`process_runner.py` | `test_model_*.py` |
-| 核心基础设施 | `core/` | 设置、日志、性能追踪、持久输入 shell | 单例/服务类 | 全应用 | JSON、Qt、subprocess | `settings_manager.py`、`log_service.py`、`adb_bridge.py` | `test_model_*.py` |
+| 命令与进程 | `core/exec.py`（`models/base/*runner*` 为兼容垫片） | 短命令结果规范化、长进程管理、ADB 路径解析、进程句柄协议 | `CommandRunner.run`、`ProcessRunner.start`、`ExecHandle` | models、dialogs、remote、services | subprocess、ADB | `exec.py` | `test_model_*.py` |
+| 核心基础设施 | `core/` | 设置（schema 版本化迁移）、日志、性能追踪、持久输入 shell | 单例/服务类 | 全应用 | JSON、Qt、subprocess | `settings_manager.py`、`log_service.py`、`adb_bridge.py` | `test_model_*.py` |
 | 设备存储 | `models/device_store.py` | 设备元数据原子读写、损坏备份和旧文件迁移 | `DeviceStore` | Controller、DeviceManager | YAML、用户目录 | `device_store.py` | `test_model_*.py`、`test_device_store_concurrency.py` |
 | 应用管理 Worker | `models/app_manager_worker.py` | 应用列表、详情、权限、备份恢复 | `AppManagerWorker.run` | App Manager 对话框 | ADB、ZIP、线程池 | `app_manager_worker.py` | `test_model_*.py` |
 | 文件浏览器 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`gui/dialogs/file_explorer.py` | 路径/命令构建、列表解析、传输和文件 UI | `FileExplorerDialog` | MainFrame | ADB、文件系统 | `file_explorer.py`、`file_explorer_worker.py` | 3 个测试文件均有覆盖 |
-| Remote | `services/remote/`、`gui/panels/remote_panel.py` | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
-| MobilePerf 适配 | `services/mobileperf_runner.py`、`gui/dialogs/performance_launcher.py` | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `mobileperf_runner.py`、`performance_launcher.py` | `test_model_*.py` |
+| Remote | `services/remote/`、`gui/panels/remote_panel.py`（+ `remote_panel_form.py`/`remote_panel_scrcpy.py`/`remote_panel_input.py` 组合控制器） | scrcpy 预检/启动/FPS、ADB 输入、窗口聚焦 | `RemotePanel` | SidePanel | scrcpy、ADBBridge、Win32 | `scrcpy_service.py`、`control_service.py` | `test_remote_services.py` |
+| MobilePerf 适配 | `services/mobileperf_runner.py`、`gui/dialogs/performance_launcher.py`（+ `performance_launcher_form.py`/`performance_launcher_run.py`/`performance_launcher_log.py` 组合控制器） | 配置生成、子进程生命周期、日志和结果定位 | `PerformanceLauncherDialog` | MainFrame | MobilePerf 内核、ADB | `mobileperf_runner.py`、`performance_launcher*.py` | `test_model_*.py` |
 | MobilePerf 内核 | `mobileperf/android/` | 多指标采集、Monkey、logcat、CSV/XLSX 报告 | `StartUp.run` | MobilePerfRunner/CLI | ADB、线程、XLSXWriter | `startup.py`、各 monitor、`androiddevice.py` | `test_model_*.py` 部分覆盖 |
 | 工具与路径 | `utils/` | ADB/资源/用户目录解析、ZIP 安全、诊断值校验 | 函数/小类 | 全应用 | OS、文件系统 | `runtime_tools.py`、`archive.py`、`adb_values.py` 等 | `test_runtime_tools.py`、`test_model_*.py` |
 | 构建与发布 | `ADBLab.spec`、`.github/workflows/` | 测试、三平台打包、Release 和清理 | GitHub 事件/本地 PyInstaller | 开发者、GitHub | PyInstaller、GitHub API | `Build-exe.yaml`、`Auto-Clean.yaml` | 工作流契约测试 |

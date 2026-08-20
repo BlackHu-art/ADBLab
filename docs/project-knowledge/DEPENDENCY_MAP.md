@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: 2026-08-20
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -12,7 +12,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3），并借用 `models.base.command_runner` 的能力边界，因此当前是“务实分层”而非严格 Clean Architecture。
+复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3）；`CommandRunner`/`ProcessRunner` 执行边界已迁入 `core/exec.py`（ADR-0005），`models/base/*runner*` 仅为兼容垫片，`core` 不再反向依赖 `models`。
 
 ```mermaid
 flowchart TD
@@ -159,7 +159,7 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 - GUI 直接依赖 model worker/service 形成多条平行编排路径；新功能若同时在 Controller 和 Dialog 内实现，容易产生行为分叉。
 - MobilePerf 保留独立 ADB 层，没有复用 CommandRunner/ProcessRunner；修复超时、编码、日志脱敏时需要同时维护两套实现。
 - `README.md` 宣称“所有长进程统一走 ProcessRunner”，但 `ADBInputSession` 和 MobilePerf 内核例外；文档规则需要表述为主应用优先原则。
-- `models/base/process_runner.py` 的模块说明也声称全项目 Popen 集中于此，与当前实现不一致，是未来重构或修正文档的信号。
+- ADR-0005 已把 `CommandRunner`/`ProcessRunner` 物理迁入 `core/exec.py`（`models/base/*runner*` 为垫片），`core` → `models` 的反向依赖解除；垫片清零计划见 ADR-0005 后果一节。
 
 ## 依赖治理建议
 

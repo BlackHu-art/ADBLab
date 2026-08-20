@@ -23,9 +23,9 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | Service | 较低 Qt 耦合的可复用业务/外部工具适配 | `services/remote/`、`services/file_explorer.py` |
 | Worker | 在 QThread/QRunnable/子进程中执行耗时任务的执行体 | `AppManagerWorker`、文件浏览器的 `ADBWorker`/`TransferWorker` |
 | `async_command` | 把 model 方法包装成 QRunnable 并发出 `command_finished` | `models/adb_model.py` |
-| CommandRunner | 短生命周期 subprocess 执行器 | `models/base/command_runner.py` |
-| CommandResult | 包含 success/output/error/returncode/timed_out 等的标准命令结果 | `models/base/command_runner.py` |
-| ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `models/base/process_runner.py` |
+| CommandRunner | 短生命周期 subprocess 执行器 | `core/exec.py`（`models/base/command_runner.py` 为兼容垫片，ADR-0005） |
+| CommandResult | 包含 success/output/error/returncode 的标准命令结果 | `core/exec.py` |
+| ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `core/exec.py`（`models/base/process_runner.py` 为兼容垫片，ADR-0005） |
 | ADBBridge | ADB shell 适配，支持持久输入 session | `core/adb_bridge.py` |
 | ADBInputSession | 每设备持久 `adb shell`，用于低延迟 input 命令 | `core/adb_bridge.py` |
 | DeviceStore | 连接设备元数据的 YAML 存储 | `models/device_store.py` |
