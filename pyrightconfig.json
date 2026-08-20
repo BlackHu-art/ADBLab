@@ -1,0 +1,18 @@
+{
+    "include": ["adblab", "services"],
+    "exclude": [
+        "**/__pycache__",
+        ".venv",
+        "build",
+        "dist"
+    ],
+    "pythonVersion": "3.11",
+    "venvPath": ".",
+    "venv": ".venv",
+    "typeCheckingMode": "basic",
+    "reportMissingTypeStubs": false,
+    "reportUnusedImport": false,
+    "reportUnusedVariable": false,
+    "reportPrivateUsage": false,
+    "reportOptionalSubscript": false
+}

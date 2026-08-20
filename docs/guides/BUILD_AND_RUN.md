@@ -21,7 +21,8 @@
 py -3.11 -m pip install -r requirements.txt
 ```
 
-测试与 lint 依赖在 `requirements-dev.txt`（pytest 9.1.1、ruff 0.16.3），CI 使用：
+测试与 lint 依赖在 `requirements-dev.txt`（pytest 9.1.1、ruff 0.16.3、coverage、pytest-cov、
+pytest-xdist、pre-commit、pyright），CI 使用：
 
 ```powershell
 py -3.11 -m pip install -r requirements-dev.txt

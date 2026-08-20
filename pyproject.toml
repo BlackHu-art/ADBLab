@@ -31,3 +31,16 @@ markers = [
     "ui: 需要 QApplication、窗口几何或字体度量的轻量 Qt 测试",
     "integration: 子进程、外部边界或探针类测试（CI 快速子集）",
 ]
+
+[tool.coverage.run]
+source = ["adblab", "services", "core", "controllers", "models", "gui", "utils"]
+omit = ["mobileperf/extlib/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]

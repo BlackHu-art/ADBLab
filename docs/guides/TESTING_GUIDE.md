@@ -216,3 +216,18 @@ git diff --check
 ```
 
 若修改 PyInstaller/资源/入口，再执行 spec 构建和打包后 self-check。若修改 ADB 命令、Remote 或 MobilePerf，除单测外应在授权测试设备上执行最小实机验证，并确保日志不含真实敏感值。
+
+## 质量工具链
+
+除 pytest/ruff 外，`requirements-dev.txt` 提供以下工具（配置随仓库）：
+
+- **pyright**（类型检查，基线范围 `adblab/` + `services/`，配置见 `pyrightconfig.json`）：
+  `py -3.11 -m pyright`（venv 内 `pyright` 可执行文件亦可直接运行）。
+- **pytest-cov**（覆盖率）：`py -3.11 -m pytest -q -m "not ui" --cov=adblab --cov=services --cov-report=term-missing`。
+  基线（2026-08-19，快速子集）：adblab + services 合计 88%（2301 语句，279 未覆盖）。
+- **pytest-xdist**（并行）：`py -3.11 -m pytest -q -n auto`。注意：含子进程探针的
+  `test_phase2_live_logcat_gate.py` 在并行 worker 下不稳定，并行运行请限定纯逻辑子集
+  （如 `-n 4 -m "not ui" --ignore=tests/test_phase2_live_logcat_gate.py`）；CI 仍保持串行全量。
+- **pre-commit**（本地钩子）：`.pre-commit-config.yaml` 已配置 ruff、中文注释门禁与
+  文档链接校验三个本地钩子；首次使用执行 `pre-commit install`（依赖 pre-commit 本体与
+  `.venv` 已安装）。

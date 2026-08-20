@@ -329,10 +329,11 @@ class MobilePerfRunner:
             self._active_context = context
             self._proc = proc
             diagnostic_stream = getattr(proc, "stderr", None)
-            try:
-                iter(diagnostic_stream)
-            except TypeError:
-                diagnostic_stream = None
+            if diagnostic_stream is not None:
+                try:
+                    iter(diagnostic_stream)
+                except TypeError:
+                    diagnostic_stream = None
             if diagnostic_stream is None:
                 context.stderr_done.set()
             context.log_thread = threading.Thread(
@@ -519,7 +520,7 @@ class MobilePerfRunner:
                 pass
             if context is not None:
                 self._mark_reader_done(context, context.stdout_done)
-            else:
+            elif proc is not None:
                 exit_code = proc.poll()
                 if exit_code is not None:
                     self._last_exit_code = exit_code
@@ -575,6 +576,8 @@ class MobilePerfRunner:
         if self._is_frozen():
             return
         stream = getattr(sys, "stderr", None)
+        if stream is None:
+            return
         if not callable(getattr(stream, "write", None)):
             return
         text = self._redact_runtime_values(

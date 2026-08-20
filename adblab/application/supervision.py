@@ -392,7 +392,10 @@ class TaskSupervisor:
     @staticmethod
     def _force(task: _SupervisedTask, timeout: float) -> tuple[bool, str]:
         try:
-            return bool(task.force_stop(max(0.0, float(timeout)))), ""
+            force_stop = task.force_stop
+            if force_stop is None:
+                raise TypeError("force_stop must be callable")
+            return bool(force_stop(max(0.0, float(timeout)))), ""
         except Exception as exc:
             return False, type(exc).__name__
 
