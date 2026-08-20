@@ -106,7 +106,7 @@ ADBLab/
 ├── icon.ico
 ├── mobileperf/                     # MobilePerf 移植内核，保持独立目录
 ├── .github/workflows/
-│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release
+│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release（发布后保留最新 5 个版本 tag）
 │   └── Auto-Clean.yaml             # 手动只读 Retention Audit（不自动删除）
 │
 ├── core/                           # 核心基础设施

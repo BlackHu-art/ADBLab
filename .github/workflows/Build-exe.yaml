@@ -218,3 +218,24 @@ jobs:
             --notes "Automated release $TAG"
         env:
           GH_TOKEN: ${{ github.token }}
+
+      - name: Retain latest 5 version tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEEP=5
+          mapfile -t TAGS < <(git ls-remote --tags origin "refs/tags/v*" \
+            | awk '{print $2}' | sed 's|refs/tags/||' | sort -V)
+          if [ "${#TAGS[@]}" -le "$KEEP" ]; then
+            echo "Version tags within retention limit (${#TAGS[@]} <= ${KEEP}); nothing to prune."
+            exit 0
+          fi
+          DROP_COUNT=$((${#TAGS[@]} - KEEP))
+          echo "Pruning ${DROP_COUNT} oldest version tags; keeping newest ${KEEP}."
+          for TAG in "${TAGS[@]:0:${DROP_COUNT}}"; do
+            echo "Removing old version tag and its release: $TAG"
+            gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes || true
+            git push origin --delete "refs/tags/$TAG" || true
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}

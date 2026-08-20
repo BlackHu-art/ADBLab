@@ -34,7 +34,7 @@
 | `tests/test_device_batch_use_case.py` | `DeviceBatchUseCase` 汇总/部分失败/晚到结果/并发（ADR-0003 Phase 3） | 纯单元测试 |
 | `tests/test_screen_record_use_case.py` | `ScreenRecordUseCase` 登记/幂等标记/批次校验/终态移除（ADR-0003 Phase 3） | 纯单元测试 |
 | `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
-| `tests/test_ci_contracts.py` | 最小权限、固定 SHA、不可变 Release、只读保留审计、CI lint 步骤 | CI 安全契约 |
+| `tests/test_ci_contracts.py` | 最小权限、固定 SHA、同版本不可变、保留最新 5 个版本 tag、只读保留审计、CI lint 步骤 | CI 安全契约 |
 | `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope、单元接口（`cancel_pending_units` 等）与 Controller 路由 | 架构契约 |
 | `tests/test_phase2_screenshot_gate.py` | 重叠截图、乱序/部分失败、artifact、提交异常、取消（generation 原子化）、重复/晚到和兼容 signal | 架构 Gate A |
 | `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、超时保活和独立进程关闭压力 | 架构 Gate B1 |

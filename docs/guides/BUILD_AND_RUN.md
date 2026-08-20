@@ -123,7 +123,7 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。
 6. 压缩并上传三平台制品。
-7. Release job 单独使用 `contents: write`；若同版本 Release 或远端 tag 已存在则失败，保持发布不可变。
+7. Release job 单独使用 `contents: write`；若同版本 Release 或远端 tag 已存在则失败，保持同版本发布不可变；发布完成后执行 "Retain latest 5 version tags" 步骤，删除超出最新 5 个的旧版本 tag 及其 Release。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
 CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需要同时维护。

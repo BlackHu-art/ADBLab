@@ -47,25 +47,34 @@ def test_build_uses_read_only_default_permissions_and_scoped_release_write():
     assert "actions: write" not in workflow
 
 
-def test_published_releases_and_tags_are_immutable():
+def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():
     workflow = _read(BUILD_WORKFLOW)
 
+    # 同版本发布仍不可变：存在 Release/tag 即失败。
     assert 'gh release view "$TAG"' in workflow
     assert 'git ls-remote --exit-code --tags origin "refs/tags/$TAG"' in workflow
     assert workflow.count("published versions are immutable.") == 2
     assert 'gh release create "$TAG"' in workflow
-    assert "gh release delete" not in workflow
     assert "gh run delete" not in workflow
     assert "--cleanup-tag" not in workflow
+    # 版本 tag 保留策略：发布完成后自动删除最旧的 tag，仅保留最新 5 个。
+    assert "name: Retain latest 5 version tags" in workflow
+    assert "KEEP=5" in workflow
+    assert 'gh release delete "$TAG"' in workflow
+    assert 'git push origin --delete "refs/tags/$TAG"' in workflow
 
 
-def test_build_has_no_automatic_retention_cleanup():
+def test_build_prunes_tags_but_not_workflow_runs_or_artifacts():
     workflow = _read(BUILD_WORKFLOW)
 
+    # 工作流运行与制品仍无自动清理（Auto-Clean 保持手动只读审计）。
     assert "Prune old workflow runs" not in workflow
     assert "Prune old releases" not in workflow
     assert "Deleting run" not in workflow
     assert "Deleting release" not in workflow
+    # tag 保留只删除超出最新 5 个的旧版本 tag 及其 Release。
+    assert "Retain latest 5 version tags" in workflow
+    assert "${#TAGS[@]} - KEEP" in workflow
 
 
 def test_retention_workflow_is_manual_and_read_only():

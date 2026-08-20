@@ -30,15 +30,17 @@ def test_cross_platform_builds_do_not_run_full_gui_test_suite():
     assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
 
 
-def test_release_job_keeps_existing_versions_immutable():
+def test_release_job_keeps_same_version_immutable_and_prunes_old_tags():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 
-    assert "gh release delete" not in workflow
     assert 'gh release view "$TAG"' in workflow
     assert "git ls-remote --exit-code --tags origin" in workflow
     assert "exit 1" in workflow
     assert 'gh release create "$TAG"' in workflow
     assert "softprops/action-gh-release" not in workflow
+    # 同版本不可变之外，发布完成后保留最新 5 个版本 tag，更旧的自动删除。
+    assert "name: Retain latest 5 version tags" in workflow
+    assert "KEEP=5" in workflow
 
 
 def test_cross_platform_release_assets_are_single_archives():
