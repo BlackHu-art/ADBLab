@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: 2026-08-21
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 ---
 
@@ -23,9 +23,9 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | Service | 较低 Qt 耦合的可复用业务/外部工具适配 | `services/remote/`、`services/file_explorer.py` |
 | Worker | 在 QThread/QRunnable/子进程中执行耗时任务的执行体 | `AppManagerWorker`、文件浏览器的 `ADBWorker`/`TransferWorker` |
 | `async_command` | 把 model 方法包装成 QRunnable 并发出 `command_finished` | `models/adb_model.py` |
-| CommandRunner | 短生命周期 subprocess 执行器 | `core/exec.py`（`models/base/command_runner.py` 为兼容垫片，ADR-0005） |
+| CommandRunner | 短生命周期 subprocess 执行器 | `core/exec.py`（旧 `models/base/command_runner.py` 已删除，ADR-0005） |
 | CommandResult | 包含 success/output/error/returncode 的标准命令结果 | `core/exec.py` |
-| ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `core/exec.py`（`models/base/process_runner.py` 为兼容垫片，ADR-0005） |
+| ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `core/exec.py`（旧 `models/base/process_runner.py` 已删除，ADR-0005） |
 | ADBBridge | ADB shell 适配，支持持久输入 session | `core/adb_bridge.py` |
 | ADBInputSession | 每设备持久 `adb shell`，用于低延迟 input 命令 | `core/adb_bridge.py` |
 | DeviceStore | 连接设备元数据的 YAML 存储 | `models/device_store.py` |
@@ -55,9 +55,9 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | bugreport | Android 系统诊断归档，可选经 chkbugreport JAR 转换 | `models/adb_testing.py` |
 | ANR | Application Not Responding 诊断文件/状态 | Controller/testing model |
 | Perfetto | 外部性能 trace 分析网站，本项目只提供打开链接 | `PerformanceLauncherDialog.open_perfetto` |
-| 用户数据目录 | 应用可写配置、日志和运行时工具缓存根目录 | `utils/user_data.py` |
+| 用户数据目录 | 应用可写配置和日志目录；不等同于非 Windows 的工具 cache 根目录 | `utils/user_data.py` |
 | resource path | 开发目录或 PyInstaller `_MEIPASS` 的只读资源定位 | `utils/resource_path.py` |
-| runtime tool cache | onefile 场景复制长进程工具的稳定用户目录 | `utils/runtime_tools.py` |
+| runtime tool cache | frozen onefile 场景复制长进程工具的稳定平台 cache 目录 | `utils/runtime_tools.py` |
 | 待确认 | 仓库代码不能独立证明，需要产品、运维、服务方或实机验证 | 本知识库统一标记 |
 
 ## 外部工具与文件格式
@@ -88,6 +88,6 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | HTTP | Hypertext Transfer Protocol；外部服务调用协议 | 主应用无出站 HTTP 客户端；仅浏览器打开 GitHub/Perfetto 链接 |
 | HTTPS | HTTP over TLS；加密 HTTP | 同上；历史邮件 API 已移除 |
 | FPS | Frames Per Second；每秒帧数 | Remote stderr 解析、MobilePerf FPS monitor |
-| PATH | 操作系统可执行文件搜索路径 | 非 Windows 解析 adb/scrcpy/aapt/Java |
+| PATH | 操作系统可执行文件搜索路径 | scrcpy/aapt/Java 及内置路径缺失时的 adb；非 Windows 源码模式的 adb 优先级存在已知缺口 |
 | JAR | Java Archive；Java 归档文件 | chkbugreport 工具 |
-| README | 仓库首页文档 | 当前存在性能旧路径漂移，不能单独作为架构事实来源 |
+| README | 仓库首页文档 | 当前目录与性能入口已校正；核心架构事实仍应与知识库和代码交叉核对 |

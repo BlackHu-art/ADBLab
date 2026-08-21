@@ -1,6 +1,7 @@
 # 构建与运行
 
-本页只记录能从仓库配置得到验证，或在 2026-08-18 实际执行过的命令。所有命令默认在项目根目录执行。
+本页记录能从仓库配置验证的命令，以及带日期的历史执行记录；历史记录不替代后续工作树复验。
+所有命令默认在项目根目录执行。
 
 ## 环境要求
 
@@ -8,27 +9,31 @@
 | --- | --- | --- |
 | Python | 3.11 为 README 与 CI 标准版本 | `README.md`、`Build-exe.yaml` |
 | 语法兼容目标 | Ruff/Black 配置为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
-| 主平台 | Windows 10/11 | README；Windows 内置 adb/scrcpy |
+| 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6 6.8.1.1 | `requirements.txt` |
-| ADB/scrcpy | Windows 已内置；非 Windows 从 PATH 解析 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器当前无平台门控，见下文风险 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
 ## 安装
 
-仓库 README 的安装命令：
+仓库内开发环境统一命名为 `.venv`。在 Windows PowerShell 中创建环境并安装完整开发工具链：
 
 ```powershell
-py -3.11 -m pip install -r requirements.txt
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 ```
 
-测试与 lint 依赖在 `requirements-dev.txt`（pytest 9.1.1、ruff 0.16.3、coverage、pytest-cov、
-pytest-xdist、pre-commit、pyright），CI 使用：
+依赖按用途逐层包含：
 
-```powershell
-py -3.11 -m pip install -r requirements-dev.txt
-```
+- `requirements.txt`：PySide6、PyYAML、psutil 等应用运行依赖。
+- `requirements-build.txt`：包含运行依赖，并增加 PyInstaller。
+- `requirements-dev.txt`：包含构建依赖，并增加 pytest、Ruff、coverage、pytest-cov、
+  pytest-xdist、pre-commit 和 pyright。
 
-项目没有 `setup.py`/`setup.cfg`/Poetry/PDM/npm 构建入口；是否要求虚拟环境由团队待确认，仓库没有给出正式命令，本文不自行补写。
+只运行源码时可以改装 `requirements.txt`；执行本地打包时安装 `requirements-build.txt`。开发、
+测试和提交前检查统一安装 `requirements-dev.txt`。项目没有根级 `setup.py`/`setup.cfg`、
+Poetry、PDM 或 npm 构建入口。
 
 虚拟环境提示：若 venv 由 `uv venv`（未加 `--seed`）等工具创建，环境内可能没有 pip 模块，
 PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module named pip`。此时运行
@@ -39,7 +44,9 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
-- ADB 解析优先级为 Windows 内置 `scrcpy-win64-v3.3.1/adb.exe`，再到 PATH 中的 adb。
+- ADB 解析器当前不区分平台：先检查 `scrcpy-win64-v3.3.1/adb.exe`，不存在时才查找
+  PATH 中的 adb。因此非 Windows 源码 checkout 只要保留该目录，也会误选 Windows PE；
+  未收集该目录的非 Windows 打包产物才会回退 PATH。此缺口已记入风险账本。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
@@ -51,52 +58,56 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
 ```powershell
-py -3.11 main.py
+.\.venv\Scripts\python.exe main.py
 ```
 
 内部/诊断子模式：
 
 ```powershell
-py -3.11 main.py --self-check packaging
-py -3.11 main.py --mobileperf-worker --config <由 MobilePerfRunner 生成的配置路径>
+.\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe main.py --mobileperf-worker --config <由 MobilePerfRunner 生成的配置路径>
 ```
 
 第二条是内部 worker 入口，正常用户应通过 Performance Launcher 启动，不应手写含真实设备/包信息的配置并提交到仓库。
 
 ## 测试与检查
 
-本次实际执行并通过：
+标准门禁命令：
 
 ```powershell
-py -3.11 -m pytest --collect-only -q
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
-ruff check .
+.\.venv\Scripts\python.exe -m pytest --collect-only -q
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe -m ruff check .
 ```
 
-结果：930 tests collected；930 passed，全量约 11 分钟；packaging self-check 的 PySide6、
-MobilePerf、icon/resources、Windows 内置 adb/scrcpy 和用户数据目录检查全部通过（Requests
-检查已随邮件服务移除）；`ruff check .` 0 错误。
+2026-08-21 使用 Python 3.11.9 和 `requirements-dev.txt` 实际验证：961 tests collected；
+961 passed in 350.61s；packaging self-check 的 PySide6、MobilePerf、icon/resources、Windows
+内置 adb/scrcpy 和用户数据目录检查全部通过；Ruff 0 错误。验证环境已卸载 Pillow，证明当前
+源码、测试和 packaging self-check 不依赖它。
 
 仓库 README 还建议：
 
 ```powershell
-py -3.11 -m compileall -q main.py utils models mobileperf gui controllers core
+.\.venv\Scripts\python.exe -m compileall -q main.py utils models mobileperf gui controllers core
 git diff --check
 ```
 
-`compileall` 会生成 `__pycache__`，本次知识库任务遵守“只创建文档”，因此未执行；`git diff --check` 应在文档全部生成后执行。
+`compileall` 会生成 `__pycache__`，执行后应检查并清理意外生成物；
+`git diff --check` 应在本次修改全部完成后执行。
 
-Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集、`mobileperf/**`
-E402/UP031 与 `tests/live_logcat_close_probe.py` E402 豁免）；`pyproject.toml` 仍保留
-Black 与重复的 Ruff 配置，两处存在时 ruff.toml 优先。门禁命令为 `ruff check .`。
+Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集）；
+`mobileperf/**` 的 E402/UP031 豁免已移除，当前仅保留 `tests/live_logcat_close_probe.py` 的 E402
+逐文件豁免，`mobileperf/extlib` 作为 vendored 源码整体排除。`pyproject.toml` 仍保留 Black 与
+重复的 Ruff 配置，两处存在时 ruff.toml 优先。门禁命令为
+`.\.venv\Scripts\python.exe -m ruff check .`。
 
 ## 本地 PyInstaller 构建
 
 README 提供的 Windows spec 构建命令：
 
 ```powershell
-py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
+.\.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noconfirm --clean
 & .\dist\ADBLab\ADBLab.exe --self-check packaging
 ```
 
@@ -108,7 +119,12 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 - 生成 windowed、onedir 的 `ADBLab`。
 - 邮件服务已移除，spec 不再涉及任何 `mail.yaml` 收集项。
 
-本次未实际执行完整 PyInstaller 构建；源码模式 packaging self-check 已通过。完整构建会创建 `build/` 和 `dist/`，不符合本次只创建文档的范围。
+完整 PyInstaller 构建会创建 `build/` 和 `dist/`；仅修改源码或文档时可先运行 packaging
+self-check，修改 PyInstaller、资源收集或入口时必须额外验证完整产物。
+
+2026-08-21 依赖分层调整后，以 PyInstaller 6.22.2 完整执行 `ADBLab.spec` 构建并运行产物
+packaging self-check，均以退出码 0 完成；递归检查产物归档未发现 `PIL`/`Pillow` 条目。
+验证使用系统临时目录，完成后已清理，不在仓库保留 `build/` 或 `dist/`。
 
 ## CI/CD
 
@@ -117,13 +133,16 @@ py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
 `.github/workflows/Build-exe.yaml` 在 `main` push 或手动触发时：
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
-2. 使用 Python 3.11 安装 `requirements.txt` 运行依赖。
-3. Windows 额外安装 `requirements-dev.txt`（pytest/ruff），先运行 `python -m ruff check .`
-   再运行 `python -m pytest -q`；macOS/Linux 只运行 source packaging self-check。
+2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。
+3. Windows 额外安装 `requirements-dev.txt`，依次运行 `python -m ruff check .`、
+   `python -m pytest -q -m "not ui"` 快速子集和 `python -m pytest -q` 完整套件；macOS/Linux
+   只运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。
 6. 压缩并上传三平台制品。
-7. Release job 单独使用 `contents: write`；若同版本 Release 或远端 tag 已存在则失败，保持同版本发布不可变；发布完成后执行 "Retain latest 5 version tags" 步骤，删除超出最新 5 个的旧版本 tag 及其 Release。
+7. Release job 单独使用 `contents: write`；现存同版本 Release 或远端 tag 会使发布失败，防止直接
+   覆盖。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
+   Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
 CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需要同时维护。
@@ -159,4 +178,4 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
 | Remote 设置重启后恢复默认 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单修复；旧 JSON 中同名键无需迁移即可载入 |
-| README 中找不到 Performance 旧目录 | README 仍引用已删除的旧性能模块；当前实现是 `performance_launcher.py` + `services/mobileperf_runner.py` + `mobileperf/` |
+| 按旧文档找不到 Performance 目录 | 旧性能模块已删除，README 已校正；当前实现是 `performance_launcher.py` + `services/mobileperf_runner.py` + `mobileperf/` |

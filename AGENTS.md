@@ -11,9 +11,11 @@ ADBLab 是基于 PySide6 的 Android 设备管理、测试、Remote 和 MobilePe
 ## 代码与命令
 
 - Python 3.11 是 README/CI 标准；Black/Ruff 行宽 100，语法目标 py310。
+- 仓库内开发环境统一使用 `.venv`；安装 `requirements-dev.txt` 可获得运行、构建和测试工具链。
 - 短命令优先走 `CommandRunner`，长进程走 `ProcessRunner`；设备 shell 动态值必须校验/quote。
 - PySide6 后台任务不得阻塞 UI；窗口关闭时断开信号并停止/等待 worker 和外部进程。
-- 运行时可写数据使用 `utils/user_data.py`，不要写 PyInstaller 资源/安装目录。
+- 配置和日志等用户数据使用 `utils/user_data.py`，onefile 工具缓存使用 `utils/runtime_tools.py`；
+  不要写 PyInstaller 资源/安装目录。
 - 解压外部 ZIP 必须使用 `utils.archive.safe_extract_zip()`。
 - 应用版本只在 `utils/app_metadata.py` 修改。
 - `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地提交与 dev
@@ -22,8 +24,8 @@ ADBLab 是基于 PySide6 的 Android 设备管理、测试、Remote 和 MobilePe
 常用门禁：
 
 ```powershell
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
 git diff --check
 ```
 

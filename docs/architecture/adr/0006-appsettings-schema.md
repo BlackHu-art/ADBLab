@@ -1,6 +1,6 @@
 # ADR-0006：AppSettings schema 版本化与遗留种子清理
 
-- 状态：Accepted（Step A–C 全部落地）
+- 状态：Accepted（Step A–C 主路径已落地；未来版本字段透传存在实现偏差）
 - 日期：2026-08-20
 - 前置：ADR-0003（core 自足、原子持久化）
 
@@ -11,6 +11,11 @@
 `schema_version`）；`connected_devices.yaml` 清空为占位（历史真实设备标识移除）；
 `controllers/_base.py` 死属性与空占位 `resources/package_info.yaml` 已删除。
 知识库（DATA_FLOW/RISKS_AND_DEBT）已同步。
+
+实现偏差（2026-08-21 复核）：高于当前版本的文件在 `_load()` 当下确实不会被改写，
+且后续保存会保留较高的 `schema_version`；但 `_data` 只接收 `DEFAULTS` 已知键，任一后续
+保存都会用该已知键快照覆盖文件，从而丢失未来版本的未知字段。决策 2 的“原样保留”
+尚未完整落地，已记入风险账本。
 
 ## 背景
 
@@ -27,7 +32,7 @@
   以及已无界面消费的 `confirm_dangerous_ops`。该文件仅在用户配置不存在时作为
   迁移源被读取，但内容本身是 2023 时代快照，首装用户会继承其中的本机路径与旧值。
 - 遗留种子 `resources/connected_devices.yaml` 含历史真实设备标识（两台内网 IP
-  与一台序列号 `RFCW71D91SP`），违反 AGENTS.md"不得提交真实设备唯一标识"约定；
+  与一台设备序列号，具体值已脱敏），违反 AGENTS.md"不得提交真实设备唯一标识"约定；
   `models/device_store.py` 仅在用户文件不存在时把它当迁移源读取。
 - `resources/package_info.yaml` 为空占位，仅被 `controllers/_base.py` 的两个
   **只写不读**属性（`connected_devices_file`、`package_info`）引用，属死代码。

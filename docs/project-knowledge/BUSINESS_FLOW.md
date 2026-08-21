@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: 2026-08-21
 related: [MODULE_MAP.md, DATA_FLOW.md]
 ---
 
@@ -108,12 +108,14 @@ sequenceDiagram
 | 触发条件 | 用户在 Apps 面板或 App Manager 选择安装、卸载、启停、清数据、权限、备份/恢复等操作 |
 | 前置条件 | 已选择设备；包名/APK/备份文件存在且相关系统工具可用 |
 | 主流程 | 危险动作不再弹窗确认（2026-08-19 全局移除），直接走 SidePanel signal → ADBController → ADBApp/Advanced/System model；复杂列表/详情/备份走 AppManagerWorker QThread → ADB → signal 更新对话框 |
-| 异常流程 | 用户拒绝确认时不调用 Controller/worker；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
+| 异常流程 | 目标或参数校验失败时不调用 Controller/worker；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
 | 涉及模块 | `gui/panels/app_panel.py`、`gui/dialogs/app_manager.py`、`controllers/_app.py`、`models/adb_app.py`、`models/app_manager_worker.py` |
 | 涉及数据 | 包名、APK 路径、权限、应用详情、预设 JSON、备份 ZIP |
 | 代码位置 | `ADBAppMixin`、`ADBApp`、`AppManagerWorker.run` 及 `_backup_app/_restore_apps/_modify_permission` 路径 |
 
-批量操作使用 `BatchOperationTracker` 聚合完成数；当前 tracker 按操作名存储，重叠同类批次会覆盖状态。App Panel 的“Disable for User”按钮实际发出与普通 Disable 相同的信号，最终调用 `pm disable`，没有实现名称所暗示的 `disable-user`。
+卸载、清数据、重启和当前 Activity 批次使用 `DeviceBatchUseCase` 聚合完成数；Controller 通过
+`_batch_starts` 按操作名保留兼容结果路由。App Panel 的“Disable for User”按钮发出独立
+`disable_app_for_user_requested` 信号，最终由 `disable_package_user_async` 执行 `pm disable-user`。
 
 安装批次（Gate C）不再使用共享 tracker：`InstallBatchUseCase`（`adblab/application/install_batch.py`）
 为每次提交创建带 `operation_id`/unit 身份的批次，通过 `start/complete/fail/cancel/retry` 状态机
@@ -160,8 +162,8 @@ flowchart TD
 | 代码位置 | `take_screenshot_async`、`start/stop_screen_record_async`、`pull_recorded_video_async`、`capture_bugreport_async`、`safe_extract_zip` |
 
 Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次按 operation/task id 隔离；
-录屏批次已接入 batch id 与 `record_target_finished` 终态信号，但其共享状态仍由 Controller
-持有，尚未迁入 OperationManager。
+录屏批次已接入 batch id 与 `record_target_finished` 终态信号，原 `_record_info`/
+`_record_stop_requests` 共享字典已收敛到线程安全的 `ScreenRecordUseCase`，未并入 OperationManager。
 
 ## 6. 设备文件浏览与传输
 
@@ -170,7 +172,7 @@ Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次�
 | 触发条件 | 用户打开 File Explorer，浏览目录或执行 pull/push/edit/copy/move/delete/chmod/install/execute |
 | 前置条件 | 已选择设备；路径和文件名可被服务层接受；本地目标目录可写 |
 | 主流程 | Dialog 构造规范化设备路径 → `services.file_explorer` 模块级纯函数安全引用/构造命令 → 短操作由 `ADBWorker`/CommandRunner 执行，传输由 `TransferWorker`/ProcessRunner 执行 → 成功后刷新列表 |
-| 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除前确认；关闭对话框时中止 worker；root 包装或设备权限不足会失败 |
+| 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除操作不再弹窗，但仍校验目标并排除 `..`；关闭对话框时中止 worker；root 包装或设备权限不足会失败 |
 | 涉及模块 | `gui/dialogs/file_explorer.py`、`services/file_explorer.py`、`models/file_explorer_worker.py` |
 | 涉及数据 | 目录项、文件内容、临时设备/本地文件、权限模式 |
 | 代码位置 | `services/file_explorer.py` 的 `safe_name/shell_quote/parse_ls_output/*_command`、`FileExplorerDialog._navigate/_pull_file/_delete_selected/_paste_items/closeEvent` |

@@ -74,16 +74,16 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ${{ matrix.pip_cache }}
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
           restore-keys: ${{ runner.os }}-pip-
 
       - name: Clean
         shell: bash
         run: rm -rf build dist || true
 
-      - name: Install dependencies
+      - name: Install build dependencies
         shell: bash
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-build.txt
 
       - name: Install test dependencies
         if: runner.os == 'Windows'
@@ -95,7 +95,7 @@ jobs:
         shell: bash
         run: python -m ruff check .
 
-      - name: Run fast tests (unit + integration)
+      - name: Run fast tests (not UI)
         if: runner.os == 'Windows'
         shell: bash
         run: python -m pytest -q -m "not ui"

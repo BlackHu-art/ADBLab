@@ -21,9 +21,9 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 事实基线 | `dev` 分支 HEAD，扫描日期 2026-08-19 |
-| 本次整理 | 2026-08-19，当前仓库 `dev`，版本 3.2.0 |
-| 基线以来变更 | `dev` 自 main 基线 `8b84f8d`（3.1.14）重做：7 个实现提交（`70be33e` 卫生、`481175d` 安装批次 Gate C、`e36e3e6` Remote/MobilePerf 修复、`6ae6fea` 响应式框架控件、`3492159` 响应式面板/对话框/主窗口、`2f999eb` screen adapter 抽取与几何扫描提速、`d099b39` 知识库校准），以及随后的文档锚点同步提交 |
+| 事实基线 | `dev` 当前工作树，扫描日期 2026-08-21；Git HEAD 锚点 `2a33c7934376` |
+| 本次整理 | 2026-08-21，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.0 |
+| 历史锚点 | main 基线 `8b84f8d`（3.1.14）；不再手工维护易漂移的提交清单，按需运行 `git log 8b84f8d..HEAD` 获取当前变更 |
 | 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
 | 敏感信息规则 | 不记录密钥、Token、密码、私有证书、真实设备唯一标识、邮件正文或验证码 |
@@ -35,7 +35,7 @@
 | 快速理解项目 | [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)、[glossary](project-knowledge/glossary.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
 | 修改启动、分层、线程或关闭逻辑 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)、[MODULE_MAP](project-knowledge/MODULE_MAP.md) | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
 | 修改具体功能模块 | [MODULE_MAP](project-knowledge/MODULE_MAP.md) | 对应 [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md) 章节、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 修改 ADB/HTTP/外部命令边界 | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
+| 修改 ADB/外部命令/平台服务边界 | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
 | 修改配置、持久化或用户数据 | [DATA_FLOW](project-knowledge/DATA_FLOW.md) | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
 | 修改 Remote 或 MobilePerf | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)、[MODULE_MAP](project-knowledge/MODULE_MAP.md) | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
 | 修改日志、注释或文档字符串 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md)（注释规范章节） | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
@@ -60,6 +60,8 @@
 - [0002-operation-contract](architecture/adr/0002-operation-contract.md)：OperationManager 契约决策。
 - [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化四阶段计划（3.2.0 基线）。
 - [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
+- [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
+- [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。
 - [IMPLEMENTATION_PLAN](architecture/IMPLEMENTATION_PLAN.md)：vNext 实施计划。
 - [agent_contract](architecture/agent_contract.md)：统一技能调用契约。
 
@@ -72,10 +74,10 @@
 
 修改以下区域前，优先按"入口 → 调用链 → 失败路径 → 清理路径 → 测试"的顺序追踪：
 
-- `gui/main_frame.py`：主窗口（约 2,500 行）、设备扫描、工具栏溢出、面板懒加载、信号接线和关闭清理。
+- `gui/main_frame.py`：主窗口（约 1,700 行）、设备扫描、工具栏溢出、面板懒加载、信号接线和关闭清理。
 - `adblab/application/`：`operations.py`（OperationManager 单元接口）与 `install_batch.py`（安装批次 Gate C 用例）。
 - `controllers/`：批次状态与所有权/generation 边界、异步结果分派、截图/录屏共享状态和危险操作入口。
-- `models/base/`、`core/adb_bridge.py`：短命令、长进程和持久 shell 边界。
+- `core/exec.py`、`core/adb_bridge.py`、`models/file_explorer_worker.py`：短命令、长进程、传输进程和持久 shell 边界。
 - `gui/widgets/responsive_controller.py`、`gui/widgets/responsive_layout.py`、`gui/screen_adapter.py`：响应式重排协调器、语义布局和屏幕适配协议。
 - `gui/dialogs/app_manager.py`、`models/app_manager_worker.py`：批量应用操作、备份恢复和失败传播。
 - `gui/panels/remote_panel.py`、`services/remote/`：scrcpy 预检、输入映射、会话所有权/watchdog 和关闭清理。
@@ -88,8 +90,8 @@
 3. 新增功能时至少更新 [MODULE_MAP](project-knowledge/MODULE_MAP.md) 和相关业务/数据/边界文档；新增风险时同步 [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)。
 4. 新增术语或缩写时同步 [glossary](project-knowledge/glossary.md)，避免同一词在不同文档中漂移。
 5. `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号且不得复用历史版本。
-6. 提交前至少运行 `py -3.11 -m pytest -q`（全量约 930 项、约 11 分钟）、`py -3.11 main.py --self-check packaging`、`ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE](guides/TESTING_GUIDE.md) 扩展验证。
-7. 文档类提交前运行 `py -3.11 scripts/check_doc_links.py`，确保链接与 frontmatter 通过。
+6. 提交前至少运行 `.\.venv\Scripts\python.exe -m pytest -q`、`.\.venv\Scripts\python.exe main.py --self-check packaging`、`.\.venv\Scripts\python.exe -m ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE](guides/TESTING_GUIDE.md) 扩展验证。
+7. 文档类提交前运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py`，确保链接与 frontmatter 通过。
 
 ## 归档
 

@@ -45,7 +45,7 @@ related: [glossary.md, ARCHITECTURE.md]
 
 ## 陈旧检查
 
-- 每次文档提交前运行 `py -3.11 scripts/check_doc_links.py`，校验链接与 frontmatter。
+- 每次文档提交前运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py`，校验链接与 frontmatter。
 - 每季度执行一次卫生检查：把超过 365 天未 `last_verified` 的现状文档列为陈旧页，人工校准或
   归档；检查报告写入 `archive/hygiene/`，不写在入口页正文。
 

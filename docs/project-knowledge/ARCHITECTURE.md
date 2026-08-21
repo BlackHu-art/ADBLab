@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-20
+last_verified: 2026-08-21
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
@@ -208,10 +208,13 @@ sequenceDiagram
 ## 关键架构决策
 
 1. **GUI 与设备命令解耦**：Qt 信号和异步 model 避免常规 ADB 调用阻塞 UI。证据：`gui/main_frame.py`、`models/adb_model.py::async_command`。
-2. **短命令/长进程分流**：短命令返回统一 `CommandResult`，长进程可被全局停止。证据：`core/exec.py`（ADR-0005，`models/base/*runner*` 为兼容垫片）。
+2. **短命令/长进程分流**：短命令返回统一 `CommandResult`，长进程可被全局停止。当前实现和导出
+   均位于 `core/exec.py`（ADR-0005）；旧 `models/base/*runner*` 路径已删除。
 3. **复杂交互使用专用服务**：Remote、File Explorer 和 MobilePerf 把命令构建与生命周期从普通 panel 中拆出。
 4. **MobilePerf 进程隔离**：移植内核按 ADR-0004 改为每运行一份的 RuntimeData 实例上下文（元类代理兼容既有调用点）、daemon 采集线程、无 `os.chdir`/`os._exit` 的结构化收口，继续通过独立子进程限制对 GUI 的影响。证据：`services/mobileperf_runner.py`、`mobileperf/android/globaldata.py`、`startup.py`。
-5. **运行时数据进入用户目录**：设置、设备列表、运行时工具缓存写入 `utils/user_data.py` 定义的位置，避免安装目录只读。
+5. **运行时数据进入平台可写目录**：设置和设备列表写入 `utils/user_data.py` 定义的配置目录；
+   运行时工具缓存由 `utils/runtime_tools.py` 写入 Windows LocalAppData 或非 Windows 的 XDG/用户
+   cache 目录，均避免写入只读安装目录。
 6. **Windows onedir 优先**：内置 adb/scrcpy 是长生命周期进程，CI 和 spec 的 Windows 产物采用 onedir，避免 onefile 临时目录锁定。
 7. **视图懒加载和批量日志**：减少启动开销及高频 logcat/MobilePerf 对 UI 事件循环的压力。
 8. **vNext 采用增量迁移**：保留 `ADBController` 与现有 Qt signals 作为兼容门面，先增加
@@ -256,27 +259,32 @@ sequenceDiagram
 
 ## 已知架构限制
 
-- Controller 不再持有批次/单发共享状态：Screenshot 走 OperationManager，安装批次走
+- Controller 已删除通用 `_pending_ops` 死账本，Screenshot 走 OperationManager，安装批次走
   `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 走 `DeviceBatchUseCase`，录屏走
-  `ScreenRecordUseCase`；遗留的 `_pending_ops` 死账本（写入者无读取者）已整体删除。
+  `ScreenRecordUseCase`。Controller 仍保留 `_batch_starts` 兼容索引、安装所有权/generation 映射和
+  Monkey 停止映射等编排状态，不能概括为“不再持有批次/单发共享状态”。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
   已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
 - 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher、
   LiveLogcat 与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止），
   不再各自在 closeEvent 里同步等待 worker。
-- 本地配置没有 schema/version；只有白名单键迁移。Remote 的 `scrcpy_*` 键已通过
-  `SCRCPY_SETTING_DEFAULTS` 白名单纳入 DEFAULTS 并可跨会话恢复，DeviceStore 已改为锁内快照和
-  原子替换，但设置存储仍没有统一 schema/version。
+- 本地配置已按 ADR-0006 引入由加载/保存流程托管的 `schema_version` 和 v1→v2→v3 迁移链：
+  无版本文件按 v1 迁移，受支持版本迁移后剔除未知键。高于当前版本的文件在加载时
+  只读取已知键且不立即改写；但之后任一保存会以已知键快照覆盖文件，虽保留较高
+  `schema_version`，仍会丢失未来版本的未知字段。
+  Remote 的 `scrcpy_*` 键通过 `SCRCPY_SETTING_DEFAULTS` 纳入 `DEFAULTS` 并可跨会话恢复；
+  DeviceStore 仍是无 schema/version 的 YAML 存储，但已改为锁内快照和原子替换。
 - 没有真正的鉴权/权限分层；危险入口不再弹窗确认（按产品决定全局移除，`confirm_dangerous_ops`
-  键仅兼容保留），误操作防护依赖目标校验、失败结果传播与审计日志。
-  但本地用户仍可在确认后执行 shell、文件删除、应用清除等高影响操作。
+  键和设置控件仅兼容保留，不驱动弹窗），误操作防护依赖目标校验、失败结果传播与审计日志。
+  本地用户通过目标校验后可直接执行 shell、文件删除、应用清除等高影响操作。
 - 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；CI 只在 Windows 运行完整 pytest。
-- 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与 requests/ruamel
-  依赖均已删除，运行时不再发起任何外部 HTTP 调用）；仓库历史中曾跟踪的邮件配置仍需所有者
-  轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
+- 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与顶层
+  requests/ruamel 依赖均已删除，主应用运行时不再发起外部 HTTP 调用）；`mobileperf/setup.py`
+  仍保留 `requests`/`urllib3` 的遗留工程声明，但不属于顶层运行依赖。仓库历史中曾跟踪的邮件配置仍需
+  所有者轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
 - `gui/main_frame.py` 已按 ADR-0003 Phase 2 拆出 `gui/main_frame_toolbar.py`、
   `gui/secondary_windows.py`、`gui/close_controller.py` 三个组合控制器（MainFrame 保留同名
   委托 wrapper，约 1,700 行）；`controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
   两个 mixin；`tests/test_model_execution.py` 拆为 10 个 `tests/test_model_*.py` 主题文件。
-- 全量 pytest 约 930 项、耗时约 11 分钟，响应式几何扫描测试是主要耗时来源之一
+- 2026-08-21 全量 pytest 为 961 项、耗时 350.61 秒，响应式几何扫描测试是主要耗时来源之一
   （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。

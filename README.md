@@ -11,7 +11,7 @@
 | 应用版本 | 以 `utils/app_metadata.py` 中的 `APP_VERSION` 为准 |
 | 开发语言 | Python，建议使用 Python 3.11 |
 | GUI 框架 | PySide6 / Qt 6 |
-| 主要平台 | Windows 10/11 |
+| 主要平台 | Windows（精确版本兼容矩阵待确认） |
 | 内置工具 | `scrcpy-win64-v3.3.1/`，包含 `adb.exe` 与 `scrcpy.exe` |
 | 作者 | Frankie Hu (Copyright (c) 2026) |
 
@@ -19,16 +19,22 @@
 
 ## 快速启动
 
-```bash
-py -3.11 -m pip install -r requirements.txt
-py -3.11 main.py
+```powershell
+py -3.11 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe main.py
 ```
+
+`requirements.txt` 只包含运行依赖；`requirements-build.txt` 在其上增加 PyInstaller；
+`requirements-dev.txt` 再增加测试、lint、类型检查和 pre-commit 工具。开发环境统一使用根目录
+`.venv`，不要直接向系统 Python 安装项目依赖。
 
 常用验证命令：
 
-```bash
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
 ```
 
 ---
@@ -90,7 +96,8 @@ py -3.11 main.py --self-check packaging
 - 实时 Logcat：等级、包名、Tag 过滤，语法高亮，导出文本。
 - 截图查看器：多图导航、缩放、复制、另存为、打开目录、删除。
 - Monkey、Remote、MobilePerf 弹窗和面板响应全局主题、字体、图标刷新和深浅色切换。
-- 设置弹窗：主题、字体、窗口尺寸、面板宽度、保存目录、日志行数、危险操作确认、持续扫描等。
+- 设置弹窗：主题、字体、窗口尺寸、面板宽度、保存目录、日志行数、持续扫描，以及兼容保留但
+  当前不驱动确认弹窗的危险操作开关。
 
 ---
 
@@ -99,14 +106,16 @@ py -3.11 main.py --self-check packaging
 ```text
 ADBLab/
 ├── main.py                         # 程序入口，支持 GUI、--self-check、--mobileperf-worker
-├── requirements.txt                # 运行与打包依赖
+├── requirements.txt                # 应用运行依赖
+├── requirements-build.txt          # 运行依赖 + PyInstaller
+├── requirements-dev.txt            # 构建依赖 + 测试、lint、类型检查工具
 ├── pyproject.toml                  # black / ruff / pytest 配置，目标语法 py310
 ├── ADBLab.spec                     # PyInstaller 打包配置
 ├── README.md
 ├── icon.ico
 ├── mobileperf/                     # MobilePerf 移植内核，保持独立目录
 ├── .github/workflows/
-│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release（发布后保留最新 5 个版本 tag）
+│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release（发布后保留最新 5 个版本）
 │   └── Auto-Clean.yaml             # 手动只读 Retention Audit（不自动删除）
 │
 ├── core/                           # 核心基础设施
@@ -193,7 +202,8 @@ ADBLab/
 
 - UI 只负责交互、状态展示和信号连接。
 - 短命令统一走 `CommandRunner.run()`。
-- 长生命周期任务统一走 `ProcessRunner.start()` / `ProcessRunner.spawn()`。
+- 主应用可控的长生命周期任务优先走 `ProcessRunner.start()` / `ProcessRunner.spawn()`；
+  MobilePerf 等独立执行边界见后文。
 - UI 层不能直接调用 `subprocess.run()`、`subprocess.Popen()` 或 `os.startfile()`。
 - Remote、File Explorer、Performance 的复杂逻辑都放入无 Qt 或低 Qt 耦合的服务层，便于单测和复用。
 
@@ -202,8 +212,11 @@ ADBLab/
 - 主线程：Qt 事件循环和 UI 渲染。
 - 普通异步 ADB 命令：`@async_command` 包装成 QRunnable，交给 `QThreadPool`。
 - 弹窗级任务：App Manager、File Explorer、Performance 使用专用 QThread/worker。
-- 长进程：Monkey、Logcat、scrcpy、性能采样等由 `ProcessRunner` 管理进程生命周期。
-- 主窗口关闭时会统一停止扫描线程、Remote tab、controller model、线程池和被追踪的长进程。
+- 主应用可控长进程：Logcat、scrcpy 和 MobilePerf worker 等优先由 `ProcessRunner`
+  管理；MobilePerf 内核仍是独立 Popen/ADB 边界。
+- 主窗口关闭时会请求停止扫描、Remote tab 和 controller model，取消 Controller executor
+  中尚未运行的任务，并停止被追踪的长进程；全局 `QThreadPool` 中已运行 QRunnable
+  的统一等待/取消仍是已知边界缺口。
 - 日志：`LogService` 批量缓冲刷新，并通过 Qt 信号把跨线程 flush 调回 owner thread。
 
 ### 当前服务拆分
@@ -224,20 +237,19 @@ ADBLab/
 
 ## 依赖
 
-`requirements.txt` 当前内容：
+依赖按运行、构建和开发三层维护：
 
-| 包 | 版本 | 用途 |
-|----|------|------|
-| PySide6 / PySide6_Addons / PySide6_Essentials | 6.8.1.1 | Qt 6 GUI |
-| PyYAML | 6.0.2 | YAML 解析 |
-| ruamel.yaml / ruamel.yaml.clib / ruamel.base | latest / 1.0.0 | YAML 读写 |
-| Requests | 2.32.5 | HTTP 请求，临时邮箱 API |
-| Pillow | 未固定 | 图片相关处理 |
-| pyinstaller | 未固定 | Windows exe 打包 |
+| 包 | 版本 | 所在文件 | 用途 |
+|----|------|----------|------|
+| PySide6 / Addons / Essentials / shiboken6 | 6.8.1.1 | `requirements.txt` | Qt 6 GUI 与 Qt 对象有效性检查 |
+| PyYAML | 6.0.2 | `requirements.txt` | YAML 解析 |
+| psutil | 7.2.2 | `requirements.txt` | 端口占用查询与进程树清理 |
+| PyInstaller | 6.22.2 | `requirements-build.txt` | 三平台制品构建 |
+| pytest / Ruff 等 | 见文件 | `requirements-dev.txt` | 测试、lint、覆盖率、类型检查与本地钩子 |
 
 系统侧依赖：
 
-- Windows 10/11。
+- Windows 是主要支持目标；Windows 10/11 的精确兼容范围尚无仓库内验证矩阵。
 - ADB：已内置在 `scrcpy-win64-v3.3.1/`。
 - scrcpy：已内置 Windows 版 `scrcpy.exe`。
 - aapt：用于本地 APK 解析，需要外部提供。
@@ -256,21 +268,22 @@ ADBLab/
 
 建议改动后至少执行：
 
-```bash
-py -3.11 -m compileall -q main.py utils models mobileperf gui controllers core
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
+```powershell
+.\.venv\Scripts\python.exe -m compileall -q main.py utils models mobileperf gui controllers core
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
 git diff --check
 ```
 
 打包验证：
 
-```bash
-py -3.11 -m PyInstaller ADBLab.spec --noconfirm --clean
+```powershell
+.\.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noconfirm --clean
 .\dist\ADBLab\ADBLab.exe --self-check packaging
 ```
 
-`--self-check packaging` 会检查 PySide6、Requests、MobilePerf 子入口、图标/resources、Windows 内置 adb/scrcpy 和用户可写目录。该命令不会启动主界面。
+`--self-check packaging` 会检查 PySide6、MobilePerf 子入口、图标/resources、Windows 内置
+adb/scrcpy 和用户可写目录。该命令不会启动主界面。
 
 文档或中文内容改动后，建议使用 UTF-8 读回确认，避免 Windows 终端编码显示误判：
 
@@ -297,32 +310,36 @@ APP_RELEASE_TAG = f"v{APP_VERSION}"
 - GitHub Actions 构建产物名称。
 - GitHub Release tag 和 release title。
 
-每次创建 Git 提交都必须在同一提交中更新一次 `APP_VERSION`，并且不得复用历史版本。
-默认只递增补丁版本；主版本或次版本由明确的发布计划决定。发布时再从 `main` 构建或手动
-运行 `Build-exe.yaml`。
+`APP_VERSION` 仅在准备把 dev 代码推送到 main 时递增一次，并且不得复用历史版本；本地提交和
+dev 分支提交都不修改版本号。默认只递增补丁版本；主版本或次版本由明确的发布计划决定。
+发布时再从 `main` 构建或手动运行 `Build-exe.yaml`。
 
 GitHub Actions 构建流程：
 
-- 安装依赖后先运行 `python -m pytest -q`。
+- Windows 安装开发依赖后依次运行 Ruff、`pytest -m "not ui"` 快速子集和完整 pytest；
+  macOS/Linux 只运行源码模式 packaging self-check。
 - Windows 使用 onedir 产物并打包成 zip，避免 onefile 临时目录被 adb/scrcpy 长进程锁住。
 - PyInstaller 显式收集 `mobileperf` 子模块和资源。
 - Windows 产物上传前执行 `--self-check packaging`。
-- Release 只在 build job 成功后创建。
+- Release 只在 build job 成功后创建；现存同版本禁止覆盖，发布后自动保留最新 5 个版本，
+  删除更旧的 tag 及对应 Release。
 
 ---
 
 ## 代码约定
 
 - 保持 PySide6 作为唯一应用 UI 栈，不把 PyQt5/PySide2 UI 代码引入主应用路径。
-- ADB 短命令走 `CommandRunner.run()`，长进程走 `ProcessRunner`。
+- 主应用 ADB 短命令走 `CommandRunner.run()`，可控长进程优先走 `ProcessRunner`；MobilePerf 内核
+  仍保留独立 Popen/ADB 执行边界。
 - UI 文件不要拼接复杂 shell 命令；优先放到 service 层集中处理和单测。
 - 涉及中文 Windows 的 subprocess 文本输出时，使用 `encoding="utf-8", errors="ignore"`。
 - 弹窗生命周期要显式停止后台 worker 或长进程。
-- 打包后不能假设当前目录可写；配置、日志、缓存等运行时数据应写入 `utils/user_data.py` 提供的用户目录。
+- 打包后不能假设当前目录可写；配置和日志写入 `utils/user_data.py` 提供的用户目录，运行时工具
+  缓存由 `utils/runtime_tools.py` 写入平台缓存目录。
 - 解压外部 ZIP 必须使用 `utils/archive.py::safe_extract_zip()`，不要直接调用 `ZipFile.extractall()`。
 - Windows exe 内的长生命周期外部工具优先使用 onedir 资源路径；onefile 场景需先复制到稳定运行时缓存。
 - 所有弹窗应响应 `BaseStyles.theme_changed`。
 - 图标使用 `get_themed_icon("name.svg")`，不要直接使用原始 `QIcon`。
 - 应用版本只改 `utils/app_metadata.py`。
-- 每个 Git 提交必须包含一次 `APP_VERSION` 递增，默认递增补丁版本。
+- 仅在 dev 代码推送到 main 时递增一次 `APP_VERSION`（默认补丁版本）；本地与 dev 提交不修改版本号。
 - 新增功能优先补充对应服务层测试，而不是只测 UI。

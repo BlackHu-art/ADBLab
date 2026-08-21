@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: 2026-08-21
 related: [glossary.md, ARCHITECTURE.md, RISKS_AND_DEBT.md]
 ---
 
@@ -34,7 +34,8 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 - 入站接口：没有 Web 服务器、HTTP 路由、RPC 服务或消息消费者。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
 - 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）和本地文件系统；主应用没有出站 HTTP 客户端。
-- 主要平台：README 与 Windows 内置工具表明 Windows 10/11 是主平台；CI 还构建 macOS/Linux，但这两类包不包含 scrcpy，完整功能状态待实机确认。
+- 主要平台：Windows 是主支持目标并内置 adb/scrcpy；仓库没有 Windows 10/11 的版本兼容矩阵。
+  CI 还构建 macOS/Linux，但这两类包不包含 scrcpy，完整功能状态待实机确认。
 
 ## 技术栈
 
@@ -43,27 +44,33 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
 | GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
-| 外部命令 | ADB、scrcpy、aapt、Java | `models/base/`、`services/remote/`、`models/adb_testing.py` |
+| 外部命令 | ADB、scrcpy、aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`services/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |
 | 测试 | pytest 9.1.1、Ruff 0.16.3 | `requirements-dev.txt`、`ruff.toml`、`tests/` |
 | 格式/检查 | Ruff/Black，行宽 100，目标 Python 3.10 语法 | `ruff.toml`（门禁）、`pyproject.toml` |
-| 打包/发布 | PyInstaller 6.22.2、GitHub Actions、GitHub Release | `requirements.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
+| 打包/发布 | PyInstaller 6.22.2、GitHub Actions、GitHub Release | `requirements-build.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
 
 ## 运行环境
 
-- CI 和 README 的标准解释器为 Python 3.11；`pyproject.toml` 的格式/静态检查目标是 Python 3.10 语法兼容。
+- CI 和 README 的标准解释器为 Python 3.11；仓库内开发环境统一为 `.venv`，完整工具链由
+  `requirements-dev.txt` 安装；`pyproject.toml` 的格式/静态检查目标是 Python 3.10 语法兼容。
 - Windows 开发运行可使用仓库内 `scrcpy-win64-v3.3.1/adb.exe` 和 `scrcpy.exe`。
 - 用户可写数据根目录由 `utils/user_data.py::user_data_root()` 决定：Windows 默认 `%LOCALAPPDATA%/ADBLab`；非 Windows 使用 XDG 配置目录或 `~/.config/ADBLab`。
 - 开发模式直接引用仓库资源；PyInstaller onefile 场景由 `utils/runtime_tools.py::bundled_tool_path()` 把长生命周期工具复制到稳定的用户运行时缓存。
 
 ## 当前状态
 
-- 活跃版本：3.2.0；当前扫描分支 `dev`（自基线 `8b84f8d` 重做，提交清单见 [../README.md](../README.md)）。
+- 活跃版本：3.2.0；2026-08-21 扫描 `dev` 当前工作树，Git HEAD 锚点为 `2a33c7934376`，
+  main 历史基线为 `8b84f8d`。
 - 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
   `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。
+- 历史执行记录：2026-08-21 在不含 Pillow、按当时 `requirements-dev.txt` 安装的 Python 3.11.9
+  环境中，961 项测试全部通过（350.61 秒），测试收集、Ruff 与 packaging self-check 同步通过；
+  该记录不替代后续工作树的重新验证。
 - CI 在 Windows 运行完整测试（含 ruff lint 步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
 - README 的性能章节与目录树已于 2026-08-19 修正（移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/`、`batch_tracker.py` 等过时条目，目录树同步 `services/` 与 `adblab/`）。
-- Git 历史显示 244 个提交、3 个作者标识；最近三个月只有一个作者标识活跃，存在知识集中风险。
+- Git 快照（2026-08-21，HEAD `2a33c7934376`）：317 个提交、4 个作者标识，最近三个月有
+  2 个作者标识活跃；这是动态指标快照，知识集中程度仍待结合模块所有权确认。
 
 ## 关键术语
 

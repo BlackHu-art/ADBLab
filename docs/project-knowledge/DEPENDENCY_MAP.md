@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-20
+last_verified: 2026-08-21
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -12,7 +12,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3）；`CommandRunner`/`ProcessRunner` 执行边界已迁入 `core/exec.py`（ADR-0005），`models/base/*runner*` 仅为兼容垫片，`core` 不再反向依赖 `models`。
+复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3）；`CommandRunner`/`ProcessRunner` 执行边界已迁入 `core/exec.py`（ADR-0005），旧 `models/base/*runner*` 路径已删除，`core` 不再反向依赖 `models`。
 
 ```mermaid
 flowchart TD
@@ -57,19 +57,20 @@ flowchart TD
 
 | 依赖 | 版本状态 | 实际用途 | 证据/备注 |
 | --- | --- | --- | --- |
-| PySide6 / Addons / Essentials | 6.8.1.1 固定 | GUI、线程、信号槽 | `requirements.txt`、`gui/` |
+| PySide6 / Addons / Essentials / shiboken6 | 6.8.1.1 固定 | GUI、线程、信号槽、Qt 对象有效性检查 | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | PyYAML | 6.0.2 固定 | DeviceStore YAML | `models/device_store.py` |
-| PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements.txt`、`ADBLab.spec`、workflow |
-| Pillow | 12.3.0 固定 | 当前一方源码未发现导入 | 可能是历史/间接依赖，待确认是否可移除 |
+| PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | 7.2.2 固定 | `core/process_utils.py`：TCP 端口占用查找与进程树终止（ADR-0003 Phase 1 起） | `requirements.txt`、`core/process_utils.py` |
 | XlsxWriter 移植副本 | 仓库内 vendored | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出现在 `requirements.txt`；
-主应用一方源码也不再导入它们。`mobileperf/setup.py` 仍列出 `requests`，属于随项目携带的
-MobilePerf 移植工程自身的遗留 setup 描述，主应用运行不依赖它，是否清理待确认。
+主应用一方源码也不再导入它们。`mobileperf/setup.py` 仍列出 `requests` 和 `urllib3`，属于随项目
+携带的 MobilePerf 移植工程自身的遗留 setup 描述，主应用运行不依赖它们，是否清理待确认。
 
-pytest 与 Ruff 位于 `requirements-dev.txt`（pytest 9.1.1、ruff 0.16.3），CI 在 Windows 上
-先用 `requirements-dev.txt` 安装测试依赖再运行 `ruff check .` 与 pytest；Ruff 门禁配置以
+依赖文件按用途逐层包含：`requirements.txt` 是运行时集合；`requirements-build.txt` 增加
+PyInstaller；`requirements-dev.txt` 再增加 pytest 9.1.1、Ruff 0.16.3、覆盖率、并行测试、
+pre-commit 和 pyright。CI 全平台安装 build 集合，Windows 再安装 dev 集合并运行 Ruff 与
+pytest；Ruff 门禁配置以
 `ruff.toml` 为准（`pyproject.toml` 中的 `[tool.ruff]` 与 Black 配置仍在，但存在两处配置时
 ruff.toml 优先）。
 
@@ -151,24 +152,27 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 - 外部 ZIP 必须用 `utils.archive.safe_extract_zip()`，防止目录穿越。
 - 长进程应注册到 ProcessRunner；带 UI 生命周期的复合 worker/process task 还应注册到
   TaskSupervisor。只有确认退出后才能移除 tracking，timeout 必须保留 residual snapshot。
-- MobilePerf 内核仍存在 `shell=True` 和直接 Popen 的遗留例外，详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
+- MobilePerf 内核仍保留独立的直接 Popen/ADB 执行边界，但当前使用参数数组和 `shell=False`；
+  5037 端口清理由 `core.process_utils` 负责。详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
 
 ## 循环依赖与方向风险
 
 - 未发现明显的 Python import 闭环，但 `core` 中仅 `log_service.py` 依赖 Qt；`settings_manager` 的错误日志已改为可注入 sink（`set_error_sink`，MainFrame 组合根注入 LogService，ADR-0003 Phase 3），core 其余模块可在无 Qt 环境下导入与单测。
 - GUI 直接依赖 model worker/service 形成多条平行编排路径；新功能若同时在 Controller 和 Dialog 内实现，容易产生行为分叉。
 - MobilePerf 保留独立 ADB 层，没有复用 CommandRunner/ProcessRunner；修复超时、编码、日志脱敏时需要同时维护两套实现。
-- `README.md` 宣称“所有长进程统一走 ProcessRunner”，但 `ADBInputSession` 和 MobilePerf 内核例外；文档规则需要表述为主应用优先原则。
-- ADR-0005 已把 `CommandRunner`/`ProcessRunner` 物理迁入 `core/exec.py`（`models/base/*runner*` 为垫片），`core` → `models` 的反向依赖解除；垫片清零计划见 ADR-0005 后果一节。
+- 主应用长进程优先走 ProcessRunner；`ADBInputSession` 已通过实例 ProcessRunner 进入实例与全局跟踪，
+  MobilePerf 内核仍是独立执行边界。
+- ADR-0005 已把 `CommandRunner`/`ProcessRunner` 物理迁入 `core/exec.py`，旧
+  `models/base/*runner*` 路径已删除，`core` → `models` 的反向依赖解除。
 
 ## 依赖治理建议
 
-1. 已锁定运行依赖（PySide6/PyYAML/PyInstaller/Pillow/psutil）与开发依赖（pytest/ruff）；
-   psutil 已由 `core/process_utils.py` 使用（Phase 1）；继续确认 Pillow 是否仍被间接使用，
-   未使用则从 `requirements.txt` 移除；评估是否清理 `mobileperf/setup.py` 的遗留 `requests` 描述。
-2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入无缓存 `ruff check .` 步骤；
+1. 运行、构建、开发依赖已分层并固定版本；一方源码无 Pillow/PIL 引用，已从运行依赖移除；
+   `shiboken6` 因一方源码直接导入而显式固定。继续评估是否清理 `mobileperf/setup.py` 的
+   遗留 `requests`/`urllib3` 描述。
+2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入 Ruff 门禁；
    可进一步在 CI 加入 format check 并消除 ruff.toml 与 pyproject.toml 的重复配置。
 3. 固定 Auto-Clean 第三方 action 到不可变 commit SHA，并把权限缩小到实际需要。
 4. 为 aapt、Java、非 Windows scrcpy 提供启动前能力检查与 UI 提示。
-5. 长期将 MobilePerf 的 ADB 执行接口适配到统一抽象，至少统一超时、编码和日志脱敏策略；
-   该重构完成后再移除 ruff.toml 中 `mobileperf/**` 的 E402/UP031 豁免。
+5. 长期将 MobilePerf 的 ADB 执行接口适配到统一抽象，至少统一超时、编码、进程跟踪和日志脱敏
+   策略；`mobileperf/**` 的 E402/UP031 Ruff 豁免已移除，不再是该重构的前置条件。

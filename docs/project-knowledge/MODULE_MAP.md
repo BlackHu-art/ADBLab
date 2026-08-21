@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-20
+last_verified: 2026-08-21
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -19,7 +19,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合、批次所有权/generation 边界 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、InstallBatchUseCase/OperationManager | `_base.py` 与 6 个 mixin | `test_model_*.py` |
 | vNext Operation | `adblab/application/` | 业务 operation 状态、fan-out、取消意图与兼容 metadata envelope；安装批次用例 | `OperationManager`、`InstallBatchUseCase` | 迁移中的 Controller/use case | 纯 Python 锁与值对象 | `operations.py`、`cancellation.py`、`envelope.py`、`install_batch.py` | `test_phase1_operations.py`、`test_phase2_install_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
 | ADB Model | `models/adb_*.py` | 设备、应用、系统、网络、测试和高级命令；operation token 透传 | `*_async` 方法 | Controller | CommandRunner、ProcessRunner、ADBBridge | `adb_model.py`、`adb_testing.py` | `test_model_*.py` |
-| 命令与进程 | `core/exec.py`（`models/base/*runner*` 为兼容垫片） | 短命令结果规范化、长进程管理、ADB 路径解析、进程句柄协议 | `CommandRunner.run`、`ProcessRunner.start`、`ExecHandle` | models、dialogs、remote、services | subprocess、ADB | `exec.py` | `test_model_*.py` |
+| 命令与进程 | `core/exec.py`（旧 `models/base/*runner*` 路径已删除） | 短命令结果规范化、长进程管理、ADB 路径解析、进程句柄协议 | `CommandRunner.run`、`ProcessRunner.start`、`ExecHandle` | models、dialogs、remote、services | subprocess、ADB | `exec.py` | `test_model_*.py` |
 | 核心基础设施 | `core/` | 设置（schema 版本化迁移）、日志、性能追踪、持久输入 shell | 单例/服务类 | 全应用 | JSON、Qt、subprocess | `settings_manager.py`、`log_service.py`、`adb_bridge.py` | `test_model_*.py` |
 | 设备存储 | `models/device_store.py` | 设备元数据原子读写、损坏备份和旧文件迁移 | `DeviceStore` | Controller、DeviceManager | YAML、用户目录 | `device_store.py` | `test_model_*.py`、`test_device_store_concurrency.py` |
 | 应用管理 Worker | `models/app_manager_worker.py` | 应用列表、详情、权限、备份恢复 | `AppManagerWorker.run` | App Manager 对话框 | ADB、ZIP、线程池 | `app_manager_worker.py` | `test_model_*.py` |
@@ -89,12 +89,12 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **输入/输出**：Qt signals 的设备/命令参数；输出日志、进度、设备列表、截图路径和操作完成信号。
 - **上下游**：上游 MainFrame/panels；下游四个 ADB model、DeviceStore、线程池、`InstallBatchUseCase`/`OperationManager`。
 - **配置/数据/外部服务**：性能日志阈值、保存目录和 Monkey 参数；卸载/清数据/重启/当前 Activity
-  批次已迁入 `DeviceBatchUseCase`（ADR-0003 Phase 3）；录屏共享状态与 input/refresh/设备日志的
-  `_pending_ops` 仍保留在 Controller。
+  批次已迁入 `DeviceBatchUseCase`（ADR-0003 Phase 3），录屏状态已迁入 `ScreenRecordUseCase`；
+  通用 `_pending_ops` 已删除，Controller 仍保留 `_batch_starts` 兼容索引、安装所有权/generation
+  映射和 Monkey 停止映射等编排状态。
 - **测试/风险/待确认**：Screenshot 两批交错、部分失败、artifact、取消和晚到结果已有 Gate A
   故障注入测试；安装批次 Gate C 有独立 use-case 与 gate 测试；卸载/清数据/重启/当前 Activity 与录屏
-  已迁入 DeviceBatchUseCase/ScreenRecordUseCase，仅剩 input/refresh/设备日志的 `_pending_ops`
-  单发登记仍保留在 Controller。
+  已迁入 DeviceBatchUseCase/ScreenRecordUseCase，旧 `_pending_ops` 登记已整体删除。
 
 ### ADB Model
 
@@ -114,7 +114,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **输入/输出**：参数数组、超时、流；输出 `CommandResult` 或 `Popen`/布尔发送状态。
 - **上下游**：上游 models/dialogs/Remote；下游操作系统、ADB 和 taskkill。
 - **配置/数据/外部服务**：解析内置 ADB；记录活跃命令计数和全局进程表。
-- **测试/风险/待确认**：替换、停止、并发和清理有单测；`ADBBridge` 直接使用 Popen，MobilePerf 内核也绕过统一边界；持久输入仅确认写入成功，不能确认设备实际执行。
+- **测试/风险/待确认**：替换、停止、并发和清理有单测；`ADBInputSession` 通过实例
+  `ProcessRunner` 进入实例与全局跟踪，MobilePerf 内核仍是独立 Popen/ADB 执行边界；持久输入仅确认
+  写入成功，不能确认设备实际执行。
 
 ### 设置、日志与性能追踪
 
@@ -131,8 +133,10 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   扫描、保存路径、日志、Monkey、`scrcpy_*` 白名单；无网络依赖。
 - **测试/风险/待确认**：迁移、日志线程、DEBUG 分流、root handler 保留、停止态和 flush
   有测试；AppSettings 使用 RLock 保护数据、计时器和快照，以独立写锁串行保存回调，批量更新、
-  字段边界、并发保存不覆盖新快照和旧分栏字段迁移有单测。
-  设置仍无 schema/version，`_load()` 仍只载入 `DEFAULTS` 白名单键。
+  字段边界、并发保存不覆盖新快照和旧分栏字段迁移有单测。设置已使用 `schema_version` 和
+  v1→v2→v3 迁移链；`_load()` 对受支持版本完成迁移并剔除未知键，对未来版本只载入
+  `DEFAULTS` 中的已知键且不立即改写原文件。后续保存虽保留较高版本号，但会丢失
+  未载入内存的未来字段，该降级兼容缺口尚待修复。
 
 ### 样式、字体与响应式布局
 
@@ -184,7 +188,8 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **输入/输出**：设备路径、文件名、本地路径；输出目录项、传输文件、编辑结果和状态。
 - **上下游**：上游 MainFrame/用户；下游 CommandRunner、ProcessRunner、ADB、文件系统。
 - **配置/数据/外部服务**：保存目录、root 命令包装；无数据库。
-- **测试/风险/待确认**：引用、解析、传输失败和 UI 表格有测试；删除使用递归 `rm -rf` 但有确认；root 模式、脚本执行和大文件取消在真实设备上的行为待确认。
+- **测试/风险/待确认**：引用、解析、传输失败和 UI 表格有测试；删除会校验目标并排除 `..`，
+  但不再弹窗确认，随后使用递归 `rm -rf`；root 模式、脚本执行和大文件取消在真实设备上的行为待确认。
 
 ### Remote
 
@@ -224,5 +229,6 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **上下游**：上游全应用/开发者/GitHub；下游 OS 文件系统、PyInstaller、GitHub API。
 - **配置/数据/外部服务**：requirements、spec、workflow permissions、版本常量。
 - **测试/风险/待确认**：路径、ZIP 和工作流安全契约有测试；Actions 固定到已核验 commit SHA，
-  默认最小权限，Release job 单独获得 `contents: write`，同版本发布不可变且不存在自动删除/清理。
-  macOS/Linux 实际功能、代码签名与发布审批仍待确认。
+  默认最小权限，Release job 单独获得 `contents: write`；现存同版本 Release/tag 禁止覆盖，发布后
+  自动保留最新 5 个版本并删除更旧的 tag/Release。macOS/Linux 实际功能、代码签名与发布审批
+  仍待确认。

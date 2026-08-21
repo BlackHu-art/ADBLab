@@ -10,15 +10,19 @@
   P0/P1 测试后为 **940 项通过**，本机约 5 分钟（此前 11 分钟含机器负载差异）。响应式几何扫描
   测试通过 autouse 把 `ResponsiveCoordinator.RESIZE_DEBOUNCE_MS` 降到 1ms，单文件从约 6 分钟
   降到约 1.5 分钟。
+- 历史执行记录：2026-08-21 使用 Python 3.11.9、pytest 9.1.1 和当时的 dev 依赖验证
+  **961 项通过**，耗时 350.61 秒；同一环境已卸载 Pillow，测试收集、全量回归和 packaging
+  self-check 均通过。该记录不替代后续工作树的重新验证。
 - 测试主要使用 monkeypatch、临时目录、轻量 fake/stub 和通过 `__new__` 构造的最小 Qt 对象；不要求真实 Android 设备。
-- 没有覆盖率工具配置或覆盖率基线，不能由“930 项通过”推导语句/分支覆盖率。
+- `pyproject.toml` 已配置 coverage 范围，2026-08-19 快速子集记录了 adblab + services 88%
+  语句覆盖率；全量用例数量仍不能直接推导语句或分支覆盖率。
 
 ## 测试目录
 
 | 文件 | 规模/职责 | 主要类型 |
 | --- | --- | --- |
 | `tests/conftest.py` | session 级 QApplication 引用保持；autouse UI 状态隔离/探针 | 共享夹具 |
-| `tests/test_model_*.py` | 由原 `test_model_execution.py` 按 ADR-0003 Phase 2 拆出的 10 个主题文件（meta/processes/mainframe/performance_launcher/mobileperf/ci_controller/device/panels/apps/media_adb），共 236 项；启动、GUI 生命周期、命令/进程、Controller、ADB model、MobilePerf、App/File/Log 等综合回归 | 单元 + 轻量组件/契约测试 |
+| `tests/test_model_*.py` | 由原 `test_model_execution.py` 按 ADR-0003 Phase 2 拆出的 10 个主题文件（meta/processes/mainframe/performance_launcher/mobileperf/ci_controller/device/panels/apps/media_adb）；2026-08-21 collect-only 快照为 241 项；启动、GUI 生命周期、命令/进程、Controller、ADB model、MobilePerf、App/File/Log 等综合回归 | 单元 + 轻量组件/契约测试 |
 | `tests/test_remote_services.py` | Remote launch plan、scrcpy 参数/版本/预检、输入映射、面板启动停止和关闭、TaskSupervisor completion_error | service 单元 + 轻量 UI |
 | `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
 | `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
@@ -63,19 +67,24 @@
 实际验证过（Python 3.11）：
 
 ```powershell
-py -3.11 -m pytest --collect-only -q
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
-ruff check .
+.\.venv\Scripts\python.exe -m pytest --collect-only -q
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe -m ruff check .
 ```
 
-`py -3.11 -m pytest -q` 全量 940 项通过、本机约 5 分钟；`ruff check .` 0 错误。`tests/ui_geometry_helpers.py::wait_until` 的默认 deadline 为 6000ms：全量套件末尾 Qt 延迟删除事件累积会拖慢单次 `processEvents`，1500ms 曾在顺序相关场景下确定性超时（单独跑该文件不复现），放宽后顺序无关且全量稳定。测试分层 marker 由
-ADR-0003 Phase 0 引入：`unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针），
-文件到 marker 的映射集中在 `tests/conftest.py::pytest_collection_modifyitems`。CI 在完整测试前先跑
-快速子集（unit + integration，不含 UI 几何扫描）：
+最近一次历史全量记录为 2026-08-21 的 961 项通过、350.61 秒，Ruff 0 错误；本次知识校准
+只执行 collect-only，得到总计 961、`not ui` 478、UI 483、integration 8、unit 0，不代表全量
+测试已重新通过。`tests/ui_geometry_helpers.py::wait_until` 的默认 deadline 为 6000ms：全量套件末尾
+Qt 延迟删除事件累积会拖慢单次 `processEvents`，1500ms 曾在顺序相关场景下确定性超时（单独跑
+该文件不复现），放宽后顺序无关且历史全量记录稳定。测试分层 marker 由
+ADR-0003 Phase 0 注册了 `unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针）
+三个 marker；当前 `tests/conftest.py::pytest_collection_modifyitems` 只按文件附加 `ui` 和
+`integration`，尚未给测试附加 `unit`。CI 在完整测试前先跑 `not ui` 快速子集，即所有未标记为
+UI 的项目（包含 integration 和未标 marker 的项目），不能把它等同为显式的“unit + integration”：
 
 ```powershell
-py -3.11 -m pytest -q -m "not ui"
+.\.venv\Scripts\python.exe -m pytest -q -m "not ui"
 ```
 
 新增 UI 类测试文件时同步登记 conftest 映射；在 CI/提交前仍应执行完整命令。
@@ -126,16 +135,21 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 
 ## 当前覆盖缺口
 
-1. `scrcpy_*` 白名单持久化已有 `test_settings_persistence.py` 覆盖；其余动态设置键的 schema/版本迁移策略仍无测试。
-2. Controller 剩余 `_pending_ops`（input/refresh/设备日志）清理尚无 operation-id 压力测试；Screenshot Gate A、
-   Install batch Gate C、DeviceBatch/ScreenRecord 用例已覆盖各自的重叠/晚到结果。
+1. `test_settings_persistence.py` 已覆盖 `scrcpy_*` 持久化、schema 写入、v1 迁移、未知键清理和
+   未来版本的已知值/版本号；但未断言后续保存仍保留未来未知字段，当前实现也会
+   在该场景丢失这些字段；跨进程并发写入亦无文件锁/测试。
+2. Controller 的通用 `_pending_ops` 已删除；Screenshot Gate A、Install batch Gate C、
+   DeviceBatch/ScreenRecord 用例已覆盖各自的重叠/晚到结果，但多类型任务同时运行的
+   真实设备长时压力与关闭回收仍无集成验证。
 3. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
 4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连无集成测试（`os._exit`/`os.chdir`
    已按 ADR-0004 移除，停止路径结构化收口，长跑验证仍待实机）。
 5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
 6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
 7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
-8. 全量套件约 12 分钟，响应式几何扫描占比较高；已引入 unit/ui/integration marker 和 CI 快速子集（Phase 0，本地约 16 秒/458 项），`test_model_execution.py` 已按 Phase 2 拆为 10 个主题文件，纯逻辑测试进入快速子集。
+8. 最近一次全量记录约 6 分钟，响应式几何扫描占比较高；CI 快速子集使用 `not ui`，
+   2026-08-21 collect-only 快照为 478/961 项。当前只自动附加 ui/integration marker，unit marker
+   尚未实际分配；`test_model_execution.py` 已按 Phase 2 拆为 10 个主题文件。
 
 ## 推荐新增测试
 
@@ -144,10 +158,10 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 1. MainFrame 异步关闭（Gate B2）契约已落地：`test_phase2_mainframe_shutdown_gate.py` 11 项测试
    覆盖首次关闭不阻塞事件循环、所有 owner 广播停止、资源归零或保留 residual snapshot；剩余
    为真实设备 helper 进程树集成验证。
-2. 录屏批次迁移 OperationManager 后的并发/取消契约测试。
+2. 补充 `ScreenRecordUseCase` 与 Controller 之间的并发、取消和关闭契约测试。
 3. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
 4. PyInstaller Windows 打包能力检查；macOS/Linux 加 scrcpy 缺失的明确降级测试。
-5. 为全量套件引入按层/按模块的 fast 子集与耗时预算，缓解约 11 分钟的门禁时长。
+5. 持续维护按层/按模块的 fast 子集与耗时预算，控制当前约 6 分钟的全量门禁。
 
 ## 注释与文档风格
 
@@ -188,13 +202,13 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 运行默认门禁：
 
 ```powershell
-py -3.11 scripts/check_comment_language.py
+.\.venv\Scripts\python.exe scripts/check_comment_language.py
 ```
 
 评审待治理目录时可以显式传入路径；该方式用于生成债务清单，不代表该目录已经进入默认门禁：
 
 ```powershell
-py -3.11 scripts/check_comment_language.py controllers gui
+.\.venv\Scripts\python.exe scripts/check_comment_language.py controllers gui
 ```
 
 门禁只解决可自动判断的语言一致性问题。注释是否准确、是否提供必要的生命周期和失败语义，仍需
@@ -208,9 +222,9 @@ dev 推送到 main 前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 
 最低门禁：
 
 ```powershell
-py -3.11 -m pytest -q
-py -3.11 main.py --self-check packaging
-ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe -m ruff check .
 git diff --check
 ```
 
@@ -222,13 +236,13 @@ git diff --check
 
 - **pyright**（类型检查，基线范围 `adblab/` + `services/` + `core/` + `controllers/` +
   `models/` + `utils/` + `gui/`，配置见 `pyrightconfig.json`；2026-08-21 起 `gui/`
-  随 PySide6 6.8 作用域枚举现代化完成后纳入，全仓 0 错误）：`py -3.11 -m pyright`
+  随 PySide6 6.8 作用域枚举现代化完成后纳入，全仓 0 错误）：`.\.venv\Scripts\python.exe -m pyright`
   （venv 内 `pyright` 可执行文件亦可直接运行）。
-- **pytest-cov**（覆盖率）：`py -3.11 -m pytest -q -m "not ui" --cov=adblab --cov=services --cov-report=term-missing`。
+- **pytest-cov**（覆盖率）：`.\.venv\Scripts\python.exe -m pytest -q -m "not ui" --cov=adblab --cov=services --cov-report=term-missing`。
   基线（2026-08-19，快速子集）：adblab + services 合计 88%（2301 语句，279 未覆盖）。
-- **pytest-xdist**（并行）：`py -3.11 -m pytest -q -n auto`。注意：含子进程探针的
+- **pytest-xdist**（并行）：`.\.venv\Scripts\python.exe -m pytest -q -n auto`。注意：含子进程探针的
   `test_phase2_live_logcat_gate.py` 在并行 worker 下不稳定，并行运行请限定纯逻辑子集
   （如 `-n 4 -m "not ui" --ignore=tests/test_phase2_live_logcat_gate.py`）；CI 仍保持串行全量。
 - **pre-commit**（本地钩子）：`.pre-commit-config.yaml` 已配置 ruff、中文注释门禁与
-  文档链接校验三个本地钩子；首次使用执行 `pre-commit install`（依赖 pre-commit 本体与
-  `.venv` 已安装）。
+  文档链接校验三个本地钩子；首次使用执行
+  `.\.venv\Scripts\python.exe -m pre_commit install`。

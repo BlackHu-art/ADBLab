@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-20
+last_verified: 2026-08-21
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -25,7 +25,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
 | 安装批次状态 | Apps 面板批量安装请求 | `InstallBatchUseCase` 的 start/complete/fail/cancel/retry 状态机按 operation/unit 收口 | 内存 registry（`OperationManager`）、Qt signals、日志 | 批次生命周期；终态原子移除 |
-| 运行时工具缓存 | PyInstaller bundle | 版本化复制 | 用户目录 `runtime/<version>` | 跨进程复用，可人工清理 |
+| 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时做版本化存在性检查/覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
 
 ## 总体数据流
 
@@ -130,7 +130,7 @@ JSON、YAML 和普通文件持久化，下表是等价的存储地图。
 
 | 存储 | 类型/位置 | 数据结构 | 主要读写入口 | 一致性机制 | 风险 |
 | --- | --- | --- | --- | --- | --- |
-| 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；未知键加载时剔除并记录 WARNING |
+| 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；受支持版本的未知键加载时剔除并记录 WARNING；未来版本在加载时不立即改写，但后续保存会丢失未知字段 |
 | 旧应用设置 | `resources/app_settings.json` | 中性默认种子（`save_directory` 为空、无旧像素值、monkey 参数与代码默认一致） | AppSettings 首次迁移 | 只在用户文件不存在时迁移；迁移结果立即写入用户目录 | 种子已清理本机路径与过期值，可移植性无风险 |
 | 设备元数据 | YAML；用户配置目录 `connected_devices.yaml` | device id → 属性字典 | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 设备标识属敏感元数据；无 schema/version |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 已清空历史设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 历史真实设备标识已从仓库移除，合规风险解除 |
@@ -138,7 +138,7 @@ JSON、YAML 和普通文件持久化，下表是等价的存储地图。
 | MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、Dialogs | 单文件/目录操作 | 无统一配额、保留或访问控制 |
-| 运行时工具缓存 | 用户数据 `runtime/<version>` | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 版本化目录 + 完成标记/复制逻辑 | 完整性/签名只依赖打包来源；清理策略待确认 |
+| 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层文件存在性检查/覆盖复制，不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
 
 ### 逻辑数据关系
 
@@ -288,8 +288,9 @@ flowchart TD
 
 - UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各对话框另有显示缓冲上限，缓冲溢出时
   会丢弃最旧行并累计丢弃计数（`LogService.dropped_count` / LogPanel `_pending_dropped_total`）。
-- AppSettings 和 DeviceStore 没有 schema 版本或保留期。
+- AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 启动时会清理设备 `/data/local/tmp` 中符合包名且超过约 3 天的 heapdump；这一行为在 `StartUp.clear_heapdump()`。
-- GitHub Actions 仅保留手动只读 Retention Audit，不自动清理 workflow runs、Release 或 tag。
+- Auto-Clean 工作流仅提供手动只读 Retention Audit，不清理 workflow runs；Build Release job 会在
+  发布后保留最新 5 个版本，并删除更旧的 tag 及其 Release。
 - 数据分类、隐私声明、默认保留期和安全删除要求均为待确认。
