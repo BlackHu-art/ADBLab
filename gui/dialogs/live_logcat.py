@@ -1,324 +1,27 @@
 """提供设备 Logcat 实时读取、筛选、高亮和导出对话框。"""
 
-import os
-import re
-import subprocess
-import threading
-import time
 import uuid
 from collections import deque
-from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
-from math import ceil
 
-from PySide6.QtCore import QSize, Qt, QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QSyntaxHighlighter, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QFileDialog,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QStatusBar,
-    QVBoxLayout,
-)
+from PySide6.QtCore import Qt, QTimer, Slot
+from PySide6.QtWidgets import QDialog
 
-from adblab.application.supervision import StopDisposition, TaskStopResult
+from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
-from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
+from gui.dialogs.lifecycle import safe_disconnect
+from gui.dialogs.live_logcat_form import LiveLogcatForm
+from gui.dialogs.live_logcat_lifecycle import LiveLogcatLifecycle
+from gui.dialogs.live_logcat_stream import LiveLogcatStream
+from gui.dialogs.live_logcat_worker import (
+    CurrentPackageWorker,
+    LogcatBatch,
+    LogcatTermination,
+    LogcatTerminationKind,  # noqa: F401  供测试通过本模块命名空间导入。
+    LogcatWorker,
+)
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
-from gui.styles.theme import apply_dark_title_bar
-from gui.styles.typography import FontRole
-from models.base.command_runner import CommandRunner
-from models.base.process_runner import ProcessRunner
-
-THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
-FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
-
-LEVEL_ORDER = {"V": 0, "D": 1, "I": 2, "W": 3, "E": 4, "F": 5, "S": 6}
-LEVEL_LABELS = {
-    "V": "Verbose+",
-    "D": "Debug+",
-    "I": "Info+",
-    "W": "Warning+",
-    "E": "Error+",
-    "F": "Fatal",
-    "S": "Silent",
-}
-
-
-class LogcatTerminationKind(str, Enum):
-    CANCELLED = "cancelled"
-    START_FAILED = "start_failed"
-    UNEXPECTED_EXIT = "unexpected_exit"
-
-
-@dataclass(frozen=True)
-class LogcatTermination:
-    kind: LogcatTerminationKind
-    exit_code: int | None = None
-    error_type: str = ""
-
-
-@dataclass(frozen=True)
-class LogcatBatch:
-    lines: tuple[tuple[str, str, int], ...]
-    dropped_before: int = 0
-
-
-class LogcatWorker(QThread):
-    BATCH_SIZE = 100
-    BATCH_INTERVAL_SECONDS = 0.075
-    MAX_INFLIGHT_BATCHES = 8
-
-    line_ready = Signal(str, str, int)
-    lines_ready = Signal(object)
-    dropped_ready = Signal(int)
-    status_changed = Signal(str)
-    terminated = Signal(object)
-
-    def __init__(self, device_ip: str, package: str = "", tag: str = ""):
-        super().__init__()
-        self.device_ip = device_ip
-        self.package = package.strip()
-        self.tag = tag.strip()
-        self._process_key = f"logcat_{id(self)}"
-        self._process_runner = ProcessRunner()
-        self._proc = None
-        self._stop_event = threading.Event()
-        self._finished_event = threading.Event()
-        self._launch_lock = threading.Lock()
-        self._batch_lock = threading.Lock()
-        self._inflight_batches = 0
-        self._dropped_lines = 0
-
-    def request_stop(self):
-        """向 logcat 线程和受跟踪进程发送幂等停止请求。"""
-        with self._launch_lock:
-            self._stop_event.set()
-            self._process_runner.request_stop(self._process_key)
-
-    def force_stop(self, timeout_seconds: float) -> bool:
-        """在给定预算内强制终止受跟踪进程。"""
-        with self._launch_lock:
-            self._stop_event.set()
-            return self._process_runner.force_stop(self._process_key, timeout_seconds)
-
-    def stop(self):
-        """保留兼容停止入口；这里只请求停止，不等待进程退出。"""
-        self.request_stop()
-
-    def is_active(self) -> bool:
-        try:
-            thread_running = self.isRunning()
-        except RuntimeError:
-            # QThread 完成后 Qt 包装对象可能已延迟删除，但进程监督必须持续到被跟踪进程退出。
-            thread_running = False
-        return (
-            thread_running
-            or not self._finished_event.is_set()
-            or self._process_key in self._process_runner.active_keys
-        )
-
-    def wait_for_stop(self, timeout_seconds: float) -> bool:
-        """等待线程和进程均退出，但不超过调用方给定的预算。"""
-        deadline = time.monotonic() + max(0.0, float(timeout_seconds))
-        while True:
-            if not self.is_active():
-                return True
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return False
-            self._finished_event.wait(min(remaining, 0.05))
-
-    def acknowledge_batch(self) -> None:
-        with self._batch_lock:
-            self._inflight_batches = max(0, self._inflight_batches - 1)
-
-    def run(self):
-        termination = None
-        batch = []
-        last_batch_at = time.monotonic()
-        cmd = ["adb", "-s", self.device_ip, "logcat", "-T", "1", "-v", "threadtime"]
-        filter_pid = None
-        try:
-            if self._stop_event.is_set():
-                termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
-                return
-            if self.package:
-                r = CommandRunner.run(
-                    ["adb", "-s", self.device_ip, "shell", "pidof", self.package],
-                    timeout=5,
-                )
-                if not r.success:
-                    termination = LogcatTermination(
-                        LogcatTerminationKind.START_FAILED,
-                        error_type="PidProbeFailed",
-                    )
-                    self.status_changed.emit("Unable to start package-filtered logcat")
-                    return
-                pid = r.output.strip().split()[0] if r.output.strip() else ""
-                if pid and pid.isdigit():
-                    filter_pid = int(pid)
-                    cmd.extend(["--pid", pid])
-                    self.status_changed.emit("Package filter active")
-                else:
-                    self.status_changed.emit("Selected package is not running; showing all logs")
-            if self._stop_event.is_set():
-                termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
-                return
-            self.status_changed.emit("Starting logcat...")
-            with self._launch_lock:
-                if self._stop_event.is_set():
-                    termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
-                    return
-                self._proc = self._process_runner.start(
-                    self._process_key,
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    text=True,
-                    bufsize=1,
-                    encoding="utf-8",
-                    errors="ignore",
-                )
-            self.status_changed.emit("Logcat running")
-            while not self._stop_event.is_set():
-                line = self._proc.stdout.readline()
-                if not line:
-                    if self._proc.poll() is not None:
-                        break
-                    continue
-                text = line.rstrip("\r\n")
-                if text:
-                    batch.append((text, self._parse_level(text), filter_pid or 0))
-                    now = time.monotonic()
-                    if (
-                        len(batch) >= self.BATCH_SIZE
-                        or now - last_batch_at >= self.BATCH_INTERVAL_SECONDS
-                    ):
-                        self._emit_batch(batch)
-                        batch = []
-                        last_batch_at = now
-            if self._stop_event.is_set():
-                termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
-            else:
-                termination = LogcatTermination(
-                    LogcatTerminationKind.UNEXPECTED_EXIT,
-                    exit_code=self._proc.poll(),
-                )
-        except Exception as exc:
-            termination = LogcatTermination(
-                (
-                    LogcatTerminationKind.START_FAILED
-                    if self._proc is None
-                    else LogcatTerminationKind.UNEXPECTED_EXIT
-                ),
-                error_type=type(exc).__name__,
-            )
-            self.status_changed.emit("Logcat could not continue")
-        finally:
-            if batch:
-                self._emit_batch(batch)
-            self._emit_remaining_drop_count()
-            try:
-                process_exited = self._proc is None or self._proc.poll() is not None
-            except OSError:
-                process_exited = False
-            if process_exited:
-                self._process_runner.stop(self._process_key, timeout=0)
-            else:
-                self._process_runner.request_stop(self._process_key)
-            if self._proc and self._proc.stdout:
-                try:
-                    self._proc.stdout.close()
-                except Exception:
-                    pass
-            self._proc = None
-            if termination is None:
-                termination = LogcatTermination(
-                    LogcatTerminationKind.CANCELLED
-                    if self._stop_event.is_set()
-                    else LogcatTerminationKind.UNEXPECTED_EXIT
-                )
-            self.terminated.emit(termination)
-            self._finished_event.set()
-
-    def _emit_batch(self, lines: list[tuple[str, str, int]]) -> None:
-        with self._batch_lock:
-            if self._inflight_batches >= self.MAX_INFLIGHT_BATCHES:
-                self._dropped_lines += len(lines)
-                return
-            dropped = self._dropped_lines
-            self._dropped_lines = 0
-            self._inflight_batches += 1
-        self.lines_ready.emit(LogcatBatch(tuple(lines), dropped))
-
-    def _emit_remaining_drop_count(self) -> None:
-        with self._batch_lock:
-            dropped = self._dropped_lines
-            self._dropped_lines = 0
-        if dropped:
-            self.dropped_ready.emit(dropped)
-
-    @staticmethod
-    def _parse_level(line: str) -> str:
-        m = THREADTIME_RE.search(line) or FALLBACK_RE.search(line)
-        return m.group(1) if m else "U"
-
-
-class CurrentPackageWorker(QThread):
-    package_ready = Signal(str)
-    status_changed = Signal(str)
-
-    def __init__(self, device_ip: str):
-        super().__init__()
-        self.device_ip = device_ip
-
-    def run(self):
-        if self.isInterruptionRequested():
-            return
-        try:
-            r = CommandRunner.run(
-                ["adb", "-s", self.device_ip, "shell", "dumpsys", "window"],
-                timeout=5,
-            )
-            if self.isInterruptionRequested():
-                return
-            for line in r.output.splitlines():
-                if "mCurrentFocus" in line:
-                    m = re.search(r"Window\{.*?\s(\S+?)/", line)
-                    if m:
-                        self.package_ready.emit(m.group(1))
-                        return
-            self.status_changed.emit("No foreground app found")
-        except Exception as e:
-            if not self.isInterruptionRequested():
-                self.status_changed.emit(f"Error: {e}")
-
-
-class LogcatHighlighter(QSyntaxHighlighter):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._colors = {}
-
-    def set_theme(self, theme_colors: dict):
-        self._colors = theme_colors
-        self.rehighlight()
-
-    def highlightBlock(self, text: str):
-        level = LogcatWorker._parse_level(text)
-        color = self._colors.get(level, self._colors.get("U", "#cccccc"))
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        self.setFormat(0, len(text), fmt)
+from models.base.command_runner import CommandRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 
 
 class LiveLogcatDialog(QDialog):
@@ -333,6 +36,9 @@ class LiveLogcatDialog(QDialog):
         log_service=None,
     ):
         super().__init__(parent, Qt.Window)
+        self._form_controller = LiveLogcatForm(self)
+        self._stream_controller = LiveLogcatStream(self)
+        self._lifecycle_controller = LiveLogcatLifecycle(self)
         self.device_ip = device_ip
         self._task_supervisor = task_supervisor or QtTaskSupervisor.shared()
         self._log_service = log_service
@@ -392,727 +98,233 @@ class LiveLogcatDialog(QDialog):
         details = " ".join(f"{name}={value}" for name, value in sorted(values.items()))
         self._log_service.log("DEBUG", f"ui.secondary_window {details}")
 
+    # ── 表单控制器委托 wrapper ─────────────────────────────────────────
+
     def _init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setSpacing(4)
-        layout.setContentsMargins(6, 6, 6, 6)
+        return (getattr(self, "_form_controller", None) or LiveLogcatForm(self))._init_ui()
 
-        filters = QGridLayout()
-        filters.setHorizontalSpacing(6)
-        filters.setVerticalSpacing(4)
-        self._filters_layout = filters
-        self._level_label = QLabel("Level:")
-        self.level_combo = QComboBox()
-        self.level_combo.addItem("All", None)
-        for code in ("V", "D", "I", "W", "E", "F"):
-            self.level_combo.addItem(LEVEL_LABELS[code], code)
-        self.level_combo.currentIndexChanged.connect(self._rebuild)
-        self.level_combo.setMinimumWidth(120)
-        self._level_label.setBuddy(self.level_combo)
-        self.level_combo.setAccessibleName("Log level")
-        self._package_label = QLabel("Package:")
-        self.pkg_input = QLineEdit()
-        self.pkg_input.setPlaceholderText("com.example.app")
-        self._package_label.setBuddy(self.pkg_input)
-        self.pkg_input.setAccessibleName("Package filter")
-        self.btn_get_pkg = QPushButton("Current Package")
-        self.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
-        self.btn_get_pkg.setIconSize(QSize(14, 14))
-        self.btn_get_pkg.setToolTip("Fetch current foreground app package")
-        self.btn_get_pkg.setMinimumWidth(120)
-        self.btn_get_pkg.clicked.connect(self._fetch_current_pkg)
-        self._tag_label = QLabel("Tag:")
-        self.tag_input = QLineEdit()
-        self.tag_input.setPlaceholderText("ActivityManager")
-        self.tag_input.textChanged.connect(self._schedule_filter_rebuild)
-        self._tag_label.setBuddy(self.tag_input)
-        self.tag_input.setAccessibleName("Tag filter")
-        self._filter_controls = (
-            self._level_label,
-            self.level_combo,
-            self._package_label,
-            self.pkg_input,
-            self.btn_get_pkg,
-            self._tag_label,
-            self.tag_input,
-        )
-        self._reflow_filters()
-        layout.addLayout(filters)
-
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(6)
-        self.start_btn = QPushButton("Start")
-        self.start_btn.setToolTip("Start streaming device log messages")
-        self.start_btn.setIcon(get_themed_icon("play.svg"))
-        self.start_btn.setIconSize(QSize(14, 14))
-        self.stop_btn = QPushButton("Stop")
-        self.stop_btn.setToolTip("Stop the active log stream")
-        self.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
-        self.stop_btn.setIconSize(QSize(14, 14))
-        self.clear_btn = QPushButton("Clear")
-        self.clear_btn.setToolTip("Remove all displayed log messages")
-        self.clear_btn.setIcon(get_themed_icon("broom.svg"))
-        self.clear_btn.setIconSize(QSize(14, 14))
-        self.export_btn = QPushButton("Export")
-        self.export_btn.setToolTip("Save the displayed log messages to a file")
-        self.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
-        self.export_btn.setIconSize(QSize(14, 14))
-        self.wrap_btn = QPushButton("Wrap")
-        self.wrap_btn.setIcon(get_themed_icon("arrows-left-right.svg"))
-        self.wrap_btn.setIconSize(QSize(14, 14))
-        self.wrap_btn.setCheckable(True)
-        self.wrap_btn.setChecked(True)
-        self.wrap_btn.setToolTip("Wrap long log lines within the view")
-        self.start_btn.clicked.connect(self._start)
-        self.stop_btn.clicked.connect(self._stop)
-        self.clear_btn.clicked.connect(self._clear)
-        self.export_btn.clicked.connect(self._export)
-        self.wrap_btn.clicked.connect(self._toggle_wrap)
-        action_buttons = (
-            self.start_btn,
-            self.stop_btn,
-            self.clear_btn,
-            self.export_btn,
-            self.wrap_btn,
-        )
-        for button in action_buttons:
-            btn_row.addWidget(button)
-
-        self.status_bar = QStatusBar()
-        self.status_bar.setSizeGripEnabled(False)
-        self.status_bar.showMessage("Ready")
-        btn_row.addWidget(self.status_bar, 1)
-        layout.addLayout(btn_row)
-
-        self.output = QPlainTextEdit()
-        self.output.setReadOnly(True)
-        self.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-        self.output.setUndoRedoEnabled(False)
-        self.output.document().setMaximumBlockCount(self.MAX_BUFFER)
-        layout.addWidget(self.output, 1)
-
-        self.highlighter = LogcatHighlighter(self.output.document())
-        self._set_running_actions(False)
-        self._update_content_actions()
+    def _apply_theme(self, _value=None):
+        return (
+            getattr(self, "_form_controller", None) or LiveLogcatForm(self)
+        )._apply_theme(_value)
 
     @staticmethod
     def _filter_minimum_width(widget) -> int:
-        return max(widget.minimumSize().width(), widget.minimumSizeHint().width())
+        return LiveLogcatForm._filter_minimum_width(widget)
 
     def _reflow_filters(self) -> None:
-        if self._reflowing_filters:
-            return
-        self._reflowing_filters = True
-        layout = self._filters_layout
-        controls = self._filter_controls
-        spacing = layout.horizontalSpacing()
-        required_width = sum(self._filter_minimum_width(control) for control in controls)
-        required_width += spacing * (len(controls) - 1)
-        root_layout = self.layout()
-        root_margins = root_layout.contentsMargins() if root_layout is not None else None
-        available_width = self.contentsRect().width()
-        if root_margins is not None:
-            available_width -= root_margins.left() + root_margins.right()
-        wide = max(0, available_width) >= required_width
-
-        while layout.count():
-            layout.takeAt(0)
-        for column in range(7):
-            layout.setColumnStretch(column, 0)
-        for row in range(5):
-            layout.setRowStretch(row, 0)
-
-        if wide:
-            for column, control in enumerate(controls):
-                layout.addWidget(control, 0, column)
-            layout.setColumnStretch(3, 2)
-            layout.setColumnStretch(6, 2)
-            self.layout().activate()
-            self._reflowing_filters = False
-            return
-
-        layout.addWidget(self._level_label, 0, 0)
-        layout.addWidget(self.level_combo, 1, 0, 1, 2)
-        layout.addWidget(self._package_label, 2, 0)
-        layout.addWidget(self.pkg_input, 2, 1)
-        layout.addWidget(self.btn_get_pkg, 3, 0, 1, 2)
-        layout.addWidget(self._tag_label, 4, 0)
-        layout.addWidget(self.tag_input, 4, 1)
-        layout.setColumnStretch(1, 1)
-        self.layout().activate()
-        self._reflowing_filters = False
-
-    def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self)
-        BS = BaseStyles
-        ui_font = BS.font_for_role(FontRole.UI)
-        mono_font = BS.font_for_role(FontRole.MONO)
-        log_font = BS.font_for_role(FontRole.LOG)
-        self.setStyleSheet(BS.PANEL_BASE_STYLE())
-        self.setFont(ui_font)
-        for field in (self.pkg_input, self.tag_input):
-            field.setFont(mono_font)
-        fg = BS.color("TEXT_PRIMARY")
-        border = BS.color("BORDER_COLOR")
-        self.output.setStyleSheet(
-            f"background-color: {BS.color('LOG_BACKGROUND')}; "
-            f"color: {BS.color('LOG_TEXT_COLOR')}; "
-            f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;"
-        )
-        self.output.setFont(log_font)
-        self.output.document().setDefaultFont(log_font)
-        self.status_bar.setStyleSheet(BS.STATUS_BAR_STYLE())
-        self._apply_action_button_styles()
-        self.level_combo.setMinimumWidth(120)
-        self.level_combo.setMinimumWidth(max(120, self.level_combo.sizeHint().width()))
-        self.btn_get_pkg.setMinimumWidth(120)
-        self.btn_get_pkg.setMinimumWidth(max(120, self.btn_get_pkg.sizeHint().width()))
-        self._reflow_filters()
-
-        # Logcat 等级颜色跟随当前主题更新。
-        hl_colors = {
-            "V": BS.color("LOG_DEBUG"),
-            "D": BS.color("LOG_DEBUG"),
-            "I": BS.color("LOG_INFO"),
-            "W": BS.color("LOG_WARNING"),
-            "E": BS.color("LOG_ERROR"),
-            "F": BS.color("LOG_CRITICAL"),
-            "S": BS.color("TEXT_SECONDARY"),
-            "U": fg,
-        }
-        self.highlighter.set_theme(hl_colors)
+        return (
+            getattr(self, "_form_controller", None) or LiveLogcatForm(self)
+        )._reflow_filters()
 
     def _apply_action_button_styles(self) -> None:
-        """按当前主题刷新启动和停止按钮的语义色。"""
-
-        bs = BaseStyles
-        self.start_btn.setStyleSheet(f"""
-            QPushButton {{
-                {bs.BUTTON_BASE()}
-                background-color: {bs.color("LOG_SUCCESS")}; color: #ffffff;
-                border: 1px solid {bs.color("LOG_SUCCESS")};
-            }}
-            QPushButton:hover {{ border-color: {bs.color("TEXT_PRIMARY")}; }}
-            QPushButton:pressed {{ border-color: {bs.color("BORDER_FOCUS")}; }}
-            QPushButton:focus {{ border: 2px solid {bs.color("TEXT_PRIMARY")}; }}
-            QPushButton:disabled {{
-                background-color: {bs.color("INPUT_BG")};
-                color: {bs.color("TEXT_DISABLED")};
-                border-color: {bs.color("BORDER_COLOR")};
-            }}
-            """)
-        self.stop_btn.setObjectName("danger")
-        self.stop_btn.setProperty("buttonVariant", "danger")
-        self.stop_btn.setStyleSheet(bs.BUTTON_QSS())
-        for button in (self.start_btn, self.stop_btn):
-            button.style().unpolish(button)
-            button.style().polish(button)
-            button.update()
+        return (
+            getattr(self, "_form_controller", None) or LiveLogcatForm(self)
+        )._apply_action_button_styles()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._reflow_filters()
-        self._filter_reflow_timer.start(0)
+        return (
+            getattr(self, "_form_controller", None) or LiveLogcatForm(self)
+        ).resizeEvent(event)
 
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
-        """统一维护日志采集按钮状态，避免异步路径出现状态分叉。"""
+        return (
+            getattr(self, "_form_controller", None) or LiveLogcatForm(self)
+        )._set_running_actions(running, stopping=stopping)
 
-        self.start_btn.setEnabled(not running)
-        self.stop_btn.setEnabled(running and not stopping)
-        self._apply_action_button_styles()
-
-    # ── 筛选 ────────────────────────────────────────────────────────────
+    # ── 流式控制器委托 wrapper ─────────────────────────────────────────
 
     def _min_level(self):
-        code = self.level_combo.currentData()
-        return LEVEL_ORDER.get(code, -1) if code else None
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._min_level()
 
     def _passes(self, level: str, tag_part: str) -> bool:
-        minimum = self._min_level()
-        if minimum is not None and LEVEL_ORDER.get(level, -1) < minimum:
-            return False
-        tag_filter = self.tag_input.text().strip()
-        if tag_filter and tag_filter.lower() not in tag_part.lower():
-            return False
-        return True
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._passes(level, tag_part)
 
     def _rebuild(self):
-        self._line_flush_timer.stop()
-        self._pending_visible_lines.clear()
-        self.output.clear()
-        visible = [t for t, lv, tg, _ in self.entries if self._passes(lv, tg)]
-        if visible:
-            self.output.setPlainText("\n".join(visible) + "\n")
-        self._update_content_actions(bool(visible))
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._rebuild()
 
     def _schedule_filter_rebuild(self, _text: str = ""):
-        """合并连续输入，避免每个按键都完整重建日志文档。"""
-
-        self._filter_rebuild_timer.start()
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._schedule_filter_rebuild(_text)
 
     def _update_content_actions(self, has_visible_content: bool | None = None):
-        """按已知可见状态更新动作，避免复制整份日志文档。"""
-
-        if has_visible_content is None:
-            has_visible_content = not self.output.document().isEmpty()
-        self.clear_btn.setEnabled(bool(self.entries) or has_visible_content)
-        self.export_btn.setEnabled(has_visible_content)
-
-    # ── 操作 ────────────────────────────────────────────────────────────
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._update_content_actions(has_visible_content)
 
     def _fetch_current_pkg(self):
-        if self._pkg_worker and self._pkg_worker.isRunning():
-            return
-        self.status_bar.showMessage("Fetching current package...")
-        self.btn_get_pkg.setEnabled(False)
-        worker = CurrentPackageWorker(self.device_ip)
-        worker.package_ready.connect(self._on_current_pkg)
-        worker.status_changed.connect(self._on_status)
-        finished_handler = self._on_pkg_worker_finished_signal
-        worker._dialog_finished_handler = finished_handler
-        worker.finished.connect(finished_handler, Qt.ConnectionType.QueuedConnection)
-        task_id = f"current-package-{uuid.uuid4()}"
-        worker._supervisor_task_id = task_id
-        try:
-            self._task_supervisor.supervisor.register(
-                task_id,
-                owner_id=self._supervisor_owner_id,
-                kind="current_package_probe",
-                request_stop=worker.requestInterruption,
-                wait=lambda timeout, _worker=worker: _worker.wait(max(0, ceil(timeout * 1000))),
-                is_running=worker.isRunning,
-            )
-        except Exception:
-            self._disconnect_pkg_worker(worker)
-            worker.deleteLater()
-            self.btn_get_pkg.setEnabled(True)
-            self.status_bar.showMessage("Unable to supervise package lookup")
-            return
-        self._pkg_worker = worker
-        worker.start()
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._fetch_current_pkg()
 
     def _start(self):
-        if self.worker and self.worker.is_active():
-            return
-        self._worker_release_timer.stop()
-        self.entries.clear()
-        self._pending_visible_lines.clear()
-        self._line_flush_timer.stop()
-        self.output.clear()
-        self._update_content_actions(False)
-        pkg = self.pkg_input.text().strip()
-        tag = self.tag_input.text().strip()
-        worker = LogcatWorker(self.device_ip, package=pkg, tag=tag)
-        task_id = f"live-logcat-{uuid.uuid4()}"
-        lines_handler = self._on_lines_signal
-        dropped_handler = self._on_dropped_signal
-        status_handler = self._on_worker_status_signal
-        ended_handler = self._on_worker_terminated_signal
-        finished_handler = self._on_worker_finished_signal
-        worker._dialog_lines_handler = lines_handler
-        worker._dialog_dropped_handler = dropped_handler
-        worker._dialog_status_handler = status_handler
-        worker._dialog_ended_handler = ended_handler
-        worker._dialog_finished_handler = finished_handler
-        worker._supervisor_task_id = task_id
-        connection_type = Qt.ConnectionType.QueuedConnection
-        worker.lines_ready.connect(lines_handler, connection_type)
-        worker.dropped_ready.connect(dropped_handler, connection_type)
-        worker.status_changed.connect(status_handler, connection_type)
-        worker.terminated.connect(ended_handler, connection_type)
-        worker.finished.connect(finished_handler, connection_type)
-        try:
-            self._task_supervisor.supervisor.register(
-                task_id,
-                owner_id=self._supervisor_owner_id,
-                kind="live_logcat",
-                request_stop=worker.request_stop,
-                wait=worker.wait_for_stop,
-                is_running=worker.is_active,
-                force_stop=worker.force_stop,
-            )
-        except Exception:
-            self.status_bar.showMessage("Unable to supervise logcat task")
-            worker.deleteLater()
-            return
-        self.worker = worker
-        self._supervisor_task_id = task_id
-        self._set_running_actions(True)
-        worker.start()
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._start()
 
     def _stop(self):
-        if self.worker and self._supervisor_task_id:
-            self.status_bar.showMessage("Stopping...")
-            self._set_running_actions(True, stopping=True)
-            self._task_supervisor.stop_async(self._supervisor_task_id)
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._stop()
 
     def _clear(self):
-        self.entries.clear()
-        self._pending_visible_lines.clear()
-        self._line_flush_timer.stop()
-        self.output.clear()
-        self.status_bar.showMessage("Cleared")
-        self._update_content_actions(False)
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._clear()
 
     def _toggle_wrap(self):
-        if self.wrap_btn.isChecked():
-            self.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-            self.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self.wrap_btn.setText("Wrap")
-            self.status_bar.showMessage("Line wrap: ON")
-        else:
-            self.output.setLineWrapMode(QPlainTextEdit.NoWrap)
-            self.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
-            self.wrap_btn.setText("No Wrap")
-            self.status_bar.showMessage("Line wrap: OFF - horizontal scroll enabled")
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._toggle_wrap()
 
     def _export(self):
-        from core.settings_manager import AppSettings
-
-        save_dir = AppSettings.instance().save_directory
-        name = f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-        fp, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export",
-            os.path.join(save_dir, name),
-            "Text Files (*.txt);;All Files (*)",
-        )
-        if fp:
-            try:
-                with open(fp, "w", encoding="utf-8") as f:
-                    f.write(self.output.toPlainText())
-                self.status_bar.showMessage(f"Exported to {fp}")
-            except OSError as e:
-                QMessageBox.critical(self, "Error", str(e))
-
-    # ── 信号槽 ──────────────────────────────────────────────────────────
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._export()
 
     @Slot(object)
     def _on_lines_signal(self, batch: LogcatBatch):
-        """通过对话框 QObject 槽接收批次，避免匿名回调越过窗口生命周期。"""
-        worker = self.sender()
-        if worker is not None:
-            self._on_lines(worker, batch)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_lines_signal(batch)
 
     @Slot(int)
     def _on_dropped_signal(self, count: int):
-        """接收当前工作线程报告的背压丢弃数量。"""
-        worker = self.sender()
-        if worker is not None:
-            self._on_dropped(worker, count)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_dropped_signal(count)
 
     @Slot(str)
     def _on_worker_status_signal(self, message: str):
-        """接收当前工作线程的状态变更。"""
-        worker = self.sender()
-        if worker is not None:
-            self._on_worker_status(worker, message)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_worker_status_signal(message)
 
     @Slot(object)
     def _on_worker_terminated_signal(self, result: LogcatTermination):
-        """接收当前工作线程的终止语义。"""
-        worker = self.sender()
-        if worker is not None:
-            self._on_worker_terminated(worker, result)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_worker_terminated_signal(result)
 
     @Slot()
     def _on_worker_finished_signal(self):
-        """在线程 finished 信号到达 GUI 线程后释放工作对象。"""
-        worker = self.sender() or self.worker
-        if worker is not None:
-            self._on_worker_finished(worker)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_worker_finished_signal()
 
     @Slot()
     def _on_pkg_worker_finished_signal(self):
-        """在包名查询线程 finished 信号到达 GUI 线程后释放工作对象。"""
-        worker = self.sender() or self._pkg_worker
-        if worker is not None:
-            self._on_pkg_worker_finished(worker)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_pkg_worker_finished_signal()
 
     @staticmethod
     def _extract_tag(line: str) -> str:
-        """从 threadtime 格式日志中提取 TAG 字段。"""
-        parts = line.split(None, 6)
-        if len(parts) >= 6:
-            tag_raw = parts[5]
-            if tag_raw.endswith(":"):
-                return tag_raw[:-1]
-        return ""
+        return LiveLogcatStream._extract_tag(line)
 
     def _on_line(self, text: str, level: str, pid: int = 0):
-        if self._closing:
-            return
-        tag_part = self._extract_tag(text)
-        if not isinstance(self.entries, deque):
-            self.entries = deque(self.entries, maxlen=self.MAX_BUFFER)
-        self.entries.append((text, level, tag_part, pid))
-        if self._passes(level, tag_part):
-            self._pending_visible_lines.append(text)
-            if len(self._pending_visible_lines) > self.MAX_BUFFER:
-                self._pending_visible_lines = self._pending_visible_lines[-self.MAX_BUFFER :]
-            self._schedule_line_flush()
-        self.clear_btn.setEnabled(True)
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._on_line(
+            text, level, pid
+        )
 
     def _on_lines(self, worker: LogcatWorker, batch: LogcatBatch):
-        try:
-            if self._closing or self.worker is not worker:
-                return
-            if batch.dropped_before:
-                self.status_bar.showMessage(
-                    f"Logcat running; {batch.dropped_before} lines dropped under load"
-                )
-            for text, level, pid in batch.lines:
-                self._on_line(text, level, pid)
-        finally:
-            worker.acknowledge_batch()
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_lines(worker, batch)
 
     def _on_dropped(self, worker: LogcatWorker, count: int):
-        if not self._closing and self.worker is worker:
-            self.status_bar.showMessage(f"Logcat running; {count} lines dropped under load")
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_dropped(worker, count)
 
     def _schedule_line_flush(self):
-        if not self._line_flush_timer.isActive():
-            self._line_flush_timer.start(75)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._schedule_line_flush()
 
     def _flush_pending_lines(self):
-        if self._closing or not self._pending_visible_lines:
-            return
-        lines = self._pending_visible_lines
-        self._pending_visible_lines = []
-        # 高频 logcat 输出合并成一次 QTextDocument 更新，Stop/过滤按钮会更容易抢到事件循环。
-        self.output.appendPlainText("\n".join(lines))
-        self.output.moveCursor(QTextCursor.MoveOperation.End)
-        self.output.ensureCursorVisible()
-        self._update_content_actions(True)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._flush_pending_lines()
 
     def _on_status(self, msg: str):
-        if self._closing:
-            return
-        self.status_bar.showMessage(msg)
+        return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._on_status(msg)
 
     def _on_worker_status(self, worker: LogcatWorker, msg: str):
-        if self.worker is worker:
-            self._on_status(msg)
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_worker_status(worker, msg)
 
     def _on_worker_terminated(self, worker: LogcatWorker, result: LogcatTermination):
-        if self._closing or self.worker is not worker:
-            return
-        if result.kind is LogcatTerminationKind.CANCELLED:
-            self.status_bar.showMessage("Logcat stop requested")
-        elif result.kind is LogcatTerminationKind.START_FAILED:
-            self.status_bar.showMessage("Logcat failed to start")
-        else:
-            self.status_bar.showMessage("Logcat ended unexpectedly")
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._on_worker_terminated(worker, result)
+
+    # ── 生命周期控制器委托 wrapper ─────────────────────────────────────
 
     def _on_task_stopped(self, result: TaskStopResult):
-        if (
-            self._closing
-            or result.owner_id != self._supervisor_owner_id
-            or result.task_id != self._supervisor_task_id
-        ):
-            return
-        if result.disposition is StopDisposition.GRACEFUL:
-            self.status_bar.showMessage("Logcat stopped")
-        elif result.disposition is StopDisposition.FORCED:
-            self.status_bar.showMessage("Logcat force-stopped")
-        elif result.disposition is StopDisposition.TIMED_OUT:
-            self.status_bar.showMessage("Logcat cleanup timed out; task remains supervised")
-        elif result.disposition is StopDisposition.ALREADY_STOPPED:
-            self.status_bar.showMessage("Logcat already stopped")
-        else:
-            self.status_bar.showMessage("Logcat cleanup failed")
-        worker = self.worker
-        if worker is None:
-            self._set_running_actions(False)
-        elif self._release_logcat_worker(worker):
-            self._set_running_actions(False)
-        elif not self._worker_release_timer.isActive():
-            # 监督结果和 QThread.finished 可能乱序；继续观察晚退出的受跟踪进程。
-            self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_task_stopped(result)
 
     def _on_current_pkg(self, package: str):
-        if self._closing:
-            return
-        self.pkg_input.setText(package)
-        self.status_bar.showMessage(f"Package: {package}")
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_current_pkg(package)
 
     def _release_pkg_worker(self, worker: CurrentPackageWorker) -> bool:
-        """释放已经停止的包名查询线程，并返回它是否仍是当前线程。"""
-        self._disconnect_pkg_worker(worker)
-        task_id = getattr(worker, "_supervisor_task_id", None)
-        if task_id:
-            self._task_supervisor.supervisor.unregister(task_id)
-        was_current = self._pkg_worker is worker
-        if was_current:
-            self._pkg_worker = None
-        if is_qobject_alive(worker):
-            worker.deleteLater()
-        return was_current
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._release_pkg_worker(worker)
 
     def _on_pkg_worker_finished(self, worker: CurrentPackageWorker):
-        if self._closing and self._owner_cleanup_requested and not self._owner_cleanup_completed:
-            self._debug_lifecycle("worker_finished_waiting", worker_kind="package_probe")
-            return
-        was_current = self._release_pkg_worker(worker)
-        if self._closing:
-            self._try_finalize_close("package_worker_finished")
-        elif was_current:
-            self.btn_get_pkg.setEnabled(True)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_pkg_worker_finished(worker)
 
     def _release_logcat_worker(self, worker: LogcatWorker) -> bool:
-        """仅在线程和受跟踪进程都停止后释放 Logcat 工作对象。"""
-        if worker.is_active():
-            return False
-        self._disconnect_worker(worker)
-        task_id = getattr(worker, "_supervisor_task_id", None)
-        if task_id:
-            self._task_supervisor.supervisor.unregister(task_id)
-        was_current = self.worker is worker
-        if was_current:
-            self.worker = None
-            self._supervisor_task_id = None
-            release_timer = getattr(self, "_worker_release_timer", None)
-            if release_timer is not None:
-                release_timer.stop()
-        if is_qobject_alive(worker):
-            worker.deleteLater()
-        return was_current
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._release_logcat_worker(worker)
 
     def _on_worker_finished(self, worker: LogcatWorker | None = None):
-        worker = worker or self.worker
-        if worker is None:
-            return
-        if self._closing and self._owner_cleanup_requested and not self._owner_cleanup_completed:
-            self._debug_lifecycle("worker_finished_waiting", worker_kind="live_logcat")
-            return
-        was_current = self._release_logcat_worker(worker)
-        if self.worker is worker:
-            self._debug_lifecycle("worker_retained", reason="process_still_active")
-            if not self._closing and not self._worker_release_timer.isActive():
-                self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
-            return
-        if self._closing:
-            self._try_finalize_close("logcat_worker_finished")
-            return
-        if was_current:
-            self._set_running_actions(False)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_worker_finished(worker)
 
     def _poll_worker_release(self) -> None:
-        """在窗口保持打开时释放线程先结束、进程稍后退出的日志任务。"""
-
-        if self._closing:
-            return
-        worker = self.worker
-        if worker is None:
-            self._set_running_actions(False)
-            return
-        if self._release_logcat_worker(worker):
-            self._set_running_actions(False)
-            return
-        self._worker_release_timer.start(self.CLEANUP_RECHECK_MS)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._poll_worker_release()
 
     def _owner_residual_tasks(self):
-        """返回仍由当前日志窗口负责的受监督资源。"""
-        try:
-            snapshots = self._task_supervisor.supervisor.active_snapshot()
-        except Exception:
-            return (None,)
-        return tuple(item for item in snapshots if item.owner_id == self._supervisor_owner_id)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._owner_residual_tasks()
 
     def _schedule_cleanup_recheck(self) -> None:
-        """在停止流程返回后继续观察晚退出的线程或外部进程。"""
-        if (
-            self._close_pending
-            and not self._close_ready
-            and not self._cleanup_recheck_timer.isActive()
-        ):
-            self._cleanup_recheck_timer.start(self.CLEANUP_RECHECK_MS)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._schedule_cleanup_recheck()
 
     def _poll_close_cleanup(self) -> None:
-        """重新核对资源屏障，避免线程先结束而进程晚退出时丢失唤醒。"""
-        if self._try_finalize_close("cleanup_recheck", log_deferred=False):
-            return
-        if self._owner_cleanup_completed:
-            self._schedule_cleanup_recheck()
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._poll_close_cleanup()
 
     def _prune_stopped_owner_tasks(self, residual) -> None:
-        """注销已确认停止但仍残留在监督注册表中的当前窗口任务。"""
-        for item in residual:
-            if item is not None and not item.running:
-                self._task_supervisor.supervisor.unregister(item.task_id)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._prune_stopped_owner_tasks(residual)
 
     def _try_finalize_close(self, trigger: str, *, log_deferred: bool = True) -> bool:
-        """仅在工作对象和监督注册均清零后允许销毁窗口。"""
-        if not self._close_pending or self._close_ready:
-            return False
-        if self._owner_cleanup_requested and not self._owner_cleanup_completed:
-            if log_deferred:
-                self._debug_lifecycle(
-                    "close_deferred",
-                    reason="owner_cleanup_running",
-                    trigger=trigger,
-                )
-            return False
-        if self.worker is not None and not self.worker.is_active():
-            self._release_logcat_worker(self.worker)
-        if self._pkg_worker is not None and not self._pkg_worker.isRunning():
-            self._release_pkg_worker(self._pkg_worker)
-        residual = self._owner_residual_tasks()
-        self._prune_stopped_owner_tasks(residual)
-        residual = self._owner_residual_tasks()
-        if self.worker is not None or self._pkg_worker is not None or residual:
-            if log_deferred:
-                self._debug_lifecycle(
-                    "close_deferred",
-                    package_worker_retained=self._pkg_worker is not None,
-                    residual_count=len(residual),
-                    trigger=trigger,
-                    worker_retained=self.worker is not None,
-                )
-            if self._owner_cleanup_completed:
-                self._schedule_cleanup_recheck()
-            return False
-        if self._cleanup_recheck_timer.isActive():
-            self._cleanup_recheck_timer.stop()
-        self._close_ready = True
-        safe_disconnect(self._task_supervisor.owner_stopped, self._on_owner_stopped)
-        self._debug_lifecycle("resources_stopped", trigger=trigger)
-        QTimer.singleShot(0, self.close)
-        return True
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._try_finalize_close(trigger, log_deferred=log_deferred)
 
     def _on_owner_stopped(self, owner_id: str, results):
-        """停止流程返回后复核真实资源屏障，不把超时误判为已停止。"""
-        if owner_id != self._supervisor_owner_id or not self._close_pending or self._close_ready:
-            return
-        results = tuple(results or ())
-        unresolved = tuple(result for result in results if not result.stopped)
-        self._owner_cleanup_completed = True
-        residual = self._owner_residual_tasks()
-        self._debug_lifecycle(
-            "owner_stop_completed",
-            residual_count=len(residual),
-            result_count=len(results),
-            unresolved_count=len(unresolved),
-        )
-        self._try_finalize_close("owner_stop_completed")
-
-    # ── 资源清理 ────────────────────────────────────────────────────────
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_owner_stopped(owner_id, results)
 
     def _disconnect_worker(self, worker: LogcatWorker, *, keep_finished: bool = False):
-        bindings = (
-            ("_dialog_lines_handler", worker.lines_ready),
-            ("_dialog_dropped_handler", worker.dropped_ready),
-            ("_dialog_status_handler", worker.status_changed),
-            ("_dialog_ended_handler", worker.terminated),
-            ("_dialog_finished_handler", worker.finished),
-        )
-        for attribute, signal_ in bindings:
-            if keep_finished and attribute == "_dialog_finished_handler":
-                continue
-            handler = getattr(worker, attribute, None)
-            if handler is not None:
-                safe_disconnect(signal_, handler)
-            setattr(worker, attribute, None)
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._disconnect_worker(worker, keep_finished=keep_finished)
 
     def _disconnect_pkg_worker(
         self,
@@ -1120,16 +332,9 @@ class LiveLogcatDialog(QDialog):
         *,
         keep_finished: bool = False,
     ):
-        for signal_, handler in (
-            (worker.package_ready, self._on_current_pkg),
-            (worker.status_changed, self._on_status),
-        ):
-            if handler is not None:
-                safe_disconnect(signal_, handler)
-        handler = getattr(worker, "_dialog_finished_handler", None)
-        if handler is not None and not keep_finished:
-            safe_disconnect(worker.finished, handler)
-            worker._dialog_finished_handler = None
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._disconnect_pkg_worker(worker, keep_finished=keep_finished)
 
     def closeEvent(self, event):
         """先隐藏并清理后台资源，完成后再销毁日志窗口。"""
