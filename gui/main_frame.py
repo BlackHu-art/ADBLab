@@ -1655,7 +1655,7 @@ class MainFrame(QMainWindow):
             getattr(self, "_close_controller", None) or CloseController(self)
         )._prepare_ui_for_shutdown()
 
-    def _on_application_stopped(self, results, residual):
+    def _on_application_stopped(self, results: tuple, residual: tuple) -> None:
         return (
             getattr(self, "_close_controller", None) or CloseController(self)
         )._on_application_stopped(results, residual)
@@ -1665,7 +1665,7 @@ class MainFrame(QMainWindow):
             getattr(self, "_close_controller", None) or CloseController(self)
         )._flush_shutdown_state()
 
-    def _on_application_finalized(self, result, residual):
+    def _on_application_finalized(self, result: object | None, residual: tuple) -> None:
         return (
             getattr(self, "_close_controller", None) or CloseController(self)
         )._on_application_finalized(result, residual)

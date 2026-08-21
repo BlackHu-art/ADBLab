@@ -15,8 +15,8 @@ class QtTaskSupervisor(QObject):
 
     task_stopped = Signal(object)
     owner_stopped = Signal(str, object)
-    application_stopped = Signal(object, object)
-    application_finalized = Signal(object, object)
+    application_stopped = Signal(tuple, tuple)
+    application_finalized = Signal(object, tuple)
 
     _shared = None
     _shared_lock = Lock()

@@ -4,7 +4,11 @@ import time
 
 from PySide6.QtCore import QTimer
 
-from adblab.application.supervision import StopDisposition, ThreadedShutdownTask
+from adblab.application.supervision import (
+    StopDisposition,
+    TaskStopResult,
+    ThreadedShutdownTask,
+)
 from core.exec import ProcessRunner
 
 
@@ -161,7 +165,7 @@ class CloseController:
         if callable(shutdown_left_panel):
             shutdown_left_panel()
 
-    def _on_application_stopped(self, results, residual):
+    def _on_application_stopped(self, results: tuple, residual: tuple) -> None:
         """汇总资源停止结果，再启动配置和日志收尾任务。"""
         if (
             not self._frame._close_started
@@ -241,7 +245,11 @@ class CloseController:
             s._save_timer.cancel()
         s._save_atomic()
 
-    def _on_application_finalized(self, result, residual):
+    def _on_application_finalized(
+        self,
+        result: TaskStopResult | None,
+        residual: tuple,
+    ) -> None:
         """记录收尾结果并重新触发关闭事件，使 Qt 最终销毁窗口。"""
         if not self._frame._close_started or self._frame._close_ready:
             return
