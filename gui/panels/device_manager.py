@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
     QCompleter,  # noqa: F401  供测试通过本模块命名空间补丁 QCompleter。
     QFrame,
     QGridLayout,
-    QListWidget,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -53,14 +52,14 @@ class DeviceManager(BasePanel):
         w = QWidget()
         self.device_widget = w
         w.setObjectName("deviceManager")
-        w.setAttribute(Qt.WA_StyledBackground, True)
+        w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
         g_dev = self._g("Devices")
         self._device_group = g_dev
-        g_dev.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        g_dev.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         g_dev.setAccessibleName("Devices")
         gd_l = QVBoxLayout(g_dev)
         # 与分组标题保留固定净空；连接区形态保持固定，极限尺寸由局部滚动承接。
@@ -78,7 +77,7 @@ class DeviceManager(BasePanel):
         self.ip_entry.setAccessibleName("Device address")
         self.ip_entry.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.ip_entry.setMinimumWidth(0)
-        self.ip_entry.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.ip_entry.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.ip_entry.installEventFilter(self)
         self._build_combo_view()
         self._refresh_device_combobox()
@@ -98,7 +97,7 @@ class DeviceManager(BasePanel):
         body_host = _ShrinkableDeviceBody()
         body_host.setObjectName("deviceBody")
         body_host.setMinimumWidth(0)
-        body_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        body_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._device_body_host = body_host
         body = QGridLayout(body_host)
         body.setHorizontalSpacing(2)
@@ -112,12 +111,12 @@ class DeviceManager(BasePanel):
         self.listbox_devices.setAccessibleDescription(
             "Use the checkboxes to select one or more devices for an operation"
         )
-        self.listbox_devices.setEditTriggers(QListWidget.NoEditTriggers)
-        self.listbox_devices.setSelectionBehavior(QListWidget.SelectRows)
+        self.listbox_devices.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.listbox_devices.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         # 设备操作以复选状态为唯一真源，关闭独立行选择以避免高亮与勾选含义冲突。
-        self.listbox_devices.setSelectionMode(QListWidget.NoSelection)
-        self.listbox_devices.setDragDropMode(QAbstractItemView.NoDragDrop)
-        self.listbox_devices.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Ignored)
+        self.listbox_devices.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.listbox_devices.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.listbox_devices.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.listbox_devices.setMinimumWidth(0)
         self._apply_device_list_style()
 
@@ -170,7 +169,7 @@ class DeviceManager(BasePanel):
             sl.addWidget(button, row, 0)
         self._device_action_frame = side
         side.setMinimumWidth(0)
-        side.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        side.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         for button in self._device_action_buttons:
             button.setMinimumWidth(0)
         body.addWidget(self.listbox_devices, 0, 0)
@@ -345,9 +344,9 @@ class DeviceManager(BasePanel):
         selected = []
         for index in range(self.listbox_devices.count()):
             item = self.listbox_devices.item(index)
-            if item is None or item.checkState() != Qt.Checked:
+            if item is None or item.checkState() != Qt.CheckState.Checked:
                 continue
-            info = item.data(Qt.UserRole)
+            info = item.data(Qt.ItemDataRole.UserRole)
             if isinstance(info, dict) and info.get("ip"):
                 selected.append(str(info["ip"]))
         return selected
@@ -366,7 +365,7 @@ class DeviceManager(BasePanel):
                 return
             for i in range(frame.listbox_devices.count()):
                 item = frame.listbox_devices.item(i)
-                info = item.data(Qt.UserRole)
+                info = item.data(Qt.ItemDataRole.UserRole)
                 if info and info.get("ip") == device_ip:
                     item.setText(f"{device_ip}  |  {package_name}")
                     apps_tab = getattr(frame.panel, "_apps_tab", None)
@@ -417,7 +416,7 @@ class DeviceManager(BasePanel):
         self.listbox_devices.itemChanged.connect(lambda _item: self._update_action_states())
 
     def _set_all_checked(self, checked: bool):
-        state = Qt.Checked if checked else Qt.Unchecked
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         blocker = QSignalBlocker(self.listbox_devices)
         try:
             for i in range(self.listbox_devices.count()):

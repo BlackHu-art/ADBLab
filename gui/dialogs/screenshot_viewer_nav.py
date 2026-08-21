@@ -62,7 +62,7 @@ class ScreenshotViewerNav:
         self._frame._placeholder_text = None
         self._frame._original_pixmap = pixmap
         self._frame._pixmap_item = self._frame._scene.addPixmap(pixmap)
-        self._frame._pixmap_item.setTransformationMode(Qt.SmoothTransformation)
+        self._frame._pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
         self._frame._scene.setSceneRect(QRectF(pixmap.rect()))
         self._frame._fit_to_window = True
         self._frame._zoom_factor = 1.0
@@ -105,7 +105,7 @@ class ScreenshotViewerNav:
         self._frame._thumb_list.clear()
         for index, path in enumerate(self._frame._image_paths):
             item = QListWidgetItem(self._thumbnail_icon(path), os.path.basename(path))
-            item.setData(Qt.UserRole, index)
+            item.setData(Qt.ItemDataRole.UserRole, index)
             item.setToolTip(os.path.abspath(path))
             item.setSizeHint(QSize(116, 78))
             self._frame._thumb_list.addItem(item)
@@ -116,11 +116,16 @@ class ScreenshotViewerNav:
         pixmap = QPixmap(path)
         if pixmap.isNull():
             return get_themed_icon("image-broken.svg")
-        thumb = pixmap.scaled(86, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        thumb = pixmap.scaled(
+            86,
+            58,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
         return QIcon(thumb)
 
     def _on_thumbnail_clicked(self, item: QListWidgetItem):
-        index = item.data(Qt.UserRole)
+        index = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(index, int):
             self._navigate_to(index)
 
@@ -132,7 +137,8 @@ class ScreenshotViewerNav:
             if 0 <= self._frame._current_idx < self._frame._thumb_list.count():
                 self._frame._thumb_list.setCurrentRow(self._frame._current_idx)
                 self._frame._thumb_list.scrollToItem(
-                    self._frame._thumb_list.currentItem(), QAbstractItemView.PositionAtCenter
+                    self._frame._thumb_list.currentItem(),
+                    QAbstractItemView.ScrollHint.PositionAtCenter,
                 )
             else:
                 self._frame._thumb_list.clearSelection()
@@ -172,9 +178,9 @@ class ScreenshotViewerNav:
         self._frame._fit_to_window = fit
         previous_anchor = self._frame._view.transformationAnchor()
         self._frame._view.setTransformationAnchor(
-            QGraphicsView.AnchorUnderMouse
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse
             if anchor_under_mouse
-            else QGraphicsView.AnchorViewCenter
+            else QGraphicsView.ViewportAnchor.AnchorViewCenter
         )
         self._frame._view.setTransform(
             QTransform().scale(self._frame._zoom_factor, self._frame._zoom_factor)

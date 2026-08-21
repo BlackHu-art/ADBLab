@@ -93,7 +93,13 @@ class FileExplorerView:
 
             def _on_copy(o, e):
                 if e:
-                    QMessageBox.critical(dlg, "Error", o)
+                    QMessageBox.critical(
+                        dlg,
+                        "Error",
+                        o,
+                        QMessageBox.StandardButton.Ok,
+                        QMessageBox.StandardButton.NoButton,
+                    )
                     return
                 w2 = self._frame._run_transfer("pull", dev_tmp, tmp_path)
                 self._frame._connect_worker_ui(
@@ -134,7 +140,13 @@ class FileExplorerView:
 
     def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
         if error:
-            QMessageBox.critical(self._frame, "Error", content)
+            QMessageBox.critical(
+                self._frame,
+                "Error",
+                content,
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         dlg = QDialog(self._frame)
         dlg.setWindowTitle(name)

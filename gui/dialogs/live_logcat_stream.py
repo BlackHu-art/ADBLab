@@ -163,13 +163,13 @@ class LiveLogcatStream:
 
     def _toggle_wrap(self):
         if self._frame.wrap_btn.isChecked():
-            self._frame.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._frame.wrap_btn.setText("Wrap")
             self._frame.status_bar.showMessage("Line wrap: ON")
         else:
-            self._frame.output.setLineWrapMode(QPlainTextEdit.NoWrap)
-            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
+            self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+            self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
             self._frame.wrap_btn.setText("No Wrap")
             self._frame.status_bar.showMessage("Line wrap: OFF - horizontal scroll enabled")
 
@@ -190,7 +190,13 @@ class LiveLogcatStream:
                     f.write(self._frame.output.toPlainText())
                 self._frame.status_bar.showMessage(f"Exported to {fp}")
             except OSError as e:
-                QMessageBox.critical(self._frame, "Error", str(e))
+                QMessageBox.critical(
+                    self._frame,
+                    "Error",
+                    str(e),
+                    QMessageBox.StandardButton.Ok,
+                    QMessageBox.StandardButton.NoButton,
+                )
 
     # ── 信号槽 ──────────────────────────────────────────────────────────
 

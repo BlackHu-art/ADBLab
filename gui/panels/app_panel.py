@@ -83,7 +83,7 @@ class AppPanel(BasePanel):
         line_edit.setPlaceholderText("Package name")
         self.program_edit.currentTextChanged.connect(lambda _text: self._update_action_states())
         self.completer = QCompleter(self.panel._package_history)
-        self.completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.panel._apply_completer_style(self.completer)
         self.program_edit.setCompleter(self.completer)
         self.btn_get_program = self._b(
@@ -568,6 +568,8 @@ class AppPanel(BasePanel):
                 f"Event percentages sum to {total}%, not 100%.\n"
                 "Monkey will still run but event distribution may be unexpected.\n\n"
                 "Adjust values to sum to 100% for predictable results.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
             )
         params["package_name"] = self.package_text
         from core.settings_manager import AppSettings

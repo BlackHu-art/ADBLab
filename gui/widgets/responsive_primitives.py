@@ -6,9 +6,10 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from PySide6.QtCore import QEvent, QObject
+from PySide6.QtGui import QWindow
 from PySide6.QtWidgets import QWidget
 
 from gui.widgets.responsive_layout import LayoutContext
@@ -35,9 +36,9 @@ class ReflowTarget(Protocol):
 
     def responsive_context(self) -> LayoutContext: ...
 
-    def responsive_plan(self, context: LayoutContext): ...
+    def responsive_plan(self, context: LayoutContext) -> object: ...
 
-    def conservative_responsive_plan(self, context: LayoutContext): ...
+    def conservative_responsive_plan(self, context: LayoutContext) -> object: ...
 
     def apply_responsive_plan(self, plan) -> None: ...
 
@@ -57,7 +58,7 @@ class ResponsiveDiagnostics:
 class _TopLevelAttachment:
     top_level_ref: weakref.ReferenceType[QWidget]
     event_filter: QObject
-    screen_handle_ref: weakref.ReferenceType[QObject] | None = None
+    screen_handle_ref: weakref.ReferenceType[QWindow] | None = None
     screen_slot: Callable[..., None] | None = None
     destroyed_slot: Callable[..., None] | None = None
 
@@ -109,6 +110,8 @@ class _ResponsiveEventFilter(QObject):
         if event.type() == _CLEAR_INTERNAL_LAYOUT_FEEDBACK_EVENT:
             coordinator = self._coordinator_ref()
             if coordinator is not None:
-                coordinator._clear_internal_layout_feedback(self._key, event.generation)
+                coordinator._clear_internal_layout_feedback(
+                    self._key, cast(_ClearInternalLayoutFeedbackEvent, event).generation
+                )
             return True
         return super().event(event)

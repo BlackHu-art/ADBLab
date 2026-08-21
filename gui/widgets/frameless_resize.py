@@ -15,7 +15,7 @@ class _ResizeZone(QWidget):
     def __init__(
         self,
         window: QWidget,
-        edges: Qt.Edges,
+        edges: Qt.Edge,
         cursor: Qt.CursorShape,
         *,
         on_user_resize_started: Callable[[], None] | None = None,

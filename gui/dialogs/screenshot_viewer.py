@@ -304,7 +304,7 @@ class ScreenshotViewer(QDialog):
         super().closeEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.ControlModifier:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._zoom_from_wheel(event.angleDelta().y())
             event.accept()
             return

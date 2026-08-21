@@ -261,6 +261,7 @@ class CloseController:
             StopDisposition.TIMED_OUT,
         }
         if finalizer_failed:
+            assert result is not None  # finalizer_failed 蕴含 result 非 None
             self._frame.setWindowTitle(
                 "ADBLab - Closing "
                 f"(finalizer {result.disposition.value}, "

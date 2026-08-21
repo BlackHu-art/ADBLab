@@ -1,5 +1,7 @@
 """提供标签页共享的控件工厂和设备、包名访问接口。"""
 
+from typing import Any, cast
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
@@ -116,7 +118,7 @@ class BasePanel(QWidget):
         g.setFont(self._font_base)
         g.setProperty("fontRole", FontRole.UI.value)
         g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
-        g.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        g.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         g.setToolTip(t)
         g.setAccessibleName(t)
         return g
@@ -146,7 +148,7 @@ class BasePanel(QWidget):
         return cb
 
     @staticmethod
-    def _set_button_help(button: QPushButton, tooltip: str) -> None:
+    def _set_button_help(button: QPushButton, tooltip: str | None) -> None:
         description = str(tooltip or "").strip()
         if not description:
             raise ValueError("Buttons must provide a functional tooltip")
@@ -159,14 +161,14 @@ class BasePanel(QWidget):
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setAccessibleName(t)
         self._set_button_help(b, tooltip)
         b.setProperty("iconName", i)
-        b.setCursor(Qt.PointingHandCursor)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
         if variant:
             self._apply_button_variant(b, variant)
         return b
@@ -176,14 +178,14 @@ class BasePanel(QWidget):
         b = DoubleClickButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         b.setMinimumHeight(28)
         b.setIcon(get_themed_icon(i))
         b.setIconSize(QSize(14, 14))
         b.setAccessibleName(t)
         self._set_button_help(b, tooltip)
         b.setProperty("iconName", i)
-        b.setCursor(Qt.PointingHandCursor)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
         return b
 
     def _qb(self, t, variant="", tooltip=None):
@@ -191,11 +193,11 @@ class BasePanel(QWidget):
         b = QPushButton(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         b.setMinimumHeight(28)
         b.setAccessibleName(t)
         self._set_button_help(b, tooltip)
-        b.setCursor(Qt.PointingHandCursor)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
         if variant:
             self._apply_button_variant(b, variant)
         return b
@@ -534,7 +536,7 @@ class BasePanel(QWidget):
         i.setPlaceholderText(p)
         i.setAccessibleName(p)
         i.setMinimumHeight(26)
-        i.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        i.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if w:
             i.setMaximumWidth(w)
         return i
@@ -558,14 +560,16 @@ class BasePanel(QWidget):
 
         field = self._in(placeholder, width)
         validator = QDoubleValidator(minimum, maximum, decimals, field)
-        validator.setNotation(QDoubleValidator.StandardNotation)
+        validator.setNotation(QDoubleValidator.Notation.StandardNotation)
         field.setValidator(validator)
         return field
 
     @staticmethod
     def _input_widget(widget):
         if isinstance(widget, QComboBox) and widget.isEditable():
-            return widget.lineEdit()
+            editor = widget.lineEdit()
+            assert editor is not None  # 可编辑下拉框必有内置 QLineEdit
+            return editor
         return widget
 
     def _link_form_labels(self, widgets) -> None:
@@ -588,7 +592,7 @@ class BasePanel(QWidget):
         """统一验证必填字段和 Qt validator，失败时不进入业务信号层。"""
 
         for field in fields:
-            target = self._input_widget(field)
+            target = cast(Any, self._input_widget(field))
             text = target.text().strip() if hasattr(target, "text") else ""
             acceptable = bool(text) and (
                 not hasattr(target, "hasAcceptableInput") or target.hasAcceptableInput()
@@ -596,7 +600,7 @@ class BasePanel(QWidget):
             target.setProperty("inputInvalid", not acceptable)
             if not acceptable:
                 if focus_invalid:
-                    target.setFocus(Qt.OtherFocusReason)
+                    target.setFocus(Qt.FocusReason.OtherFocusReason)
                 return False
         return True
 
@@ -619,7 +623,7 @@ class BasePanel(QWidget):
         c = QComboBox()
         c.setFont(font or role_font)
         c.setProperty("fontRole", role.value)
-        c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if items:
             c.addItems(items)
         return c

@@ -29,7 +29,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About ADBLab")
         self.setWindowIcon(get_themed_icon("info.svg"))
-        self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.WindowCloseButtonHint)
         self._applying_geometry = False
         self._initial_show_pending = True
 
@@ -46,14 +46,14 @@ class AboutDialog(QDialog):
         self._scroll_area = QScrollArea()
         self._scroll_area.setObjectName("aboutScrollArea")
         self._scroll_area.setWidgetResizable(True)
-        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._scroll_area.setFrameShape(QFrame.NoFrame)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         outer_layout.addWidget(self._scroll_area)
 
         self._content_host = QWidget()
         self._content_host.setObjectName("aboutContentHost")
-        self._content_host.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._content_host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._content_layout = QVBoxLayout(self._content_host)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
@@ -67,7 +67,7 @@ class AboutDialog(QDialog):
 
         self._title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
         self._title.setObjectName("aboutTitle")
-        self._title.setAlignment(Qt.AlignCenter)
+        self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
         self._title.setOpenExternalLinks(True)
         self._title.setTextInteractionFlags(
@@ -80,7 +80,7 @@ class AboutDialog(QDialog):
 
         self._version = QLabel(f"Version {APP_VERSION}")
         self._version.setObjectName("aboutVer")
-        self._version.setAlignment(Qt.AlignCenter)
+        self._version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._version.setWordWrap(True)
         header_layout.addWidget(self._version)
 
@@ -91,7 +91,7 @@ class AboutDialog(QDialog):
 
         self._qr = QLabel()
         self._qr.setObjectName("aboutQR")
-        self._qr.setAlignment(Qt.AlignCenter)
+        self._qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._qr.setFixedSize(220, 220)
         self._qr.setScaledContents(True)
         self._qr.setAccessibleName("Author support QR code")
@@ -99,11 +99,11 @@ class AboutDialog(QDialog):
         pix = QPixmap(resource_path("resources/ZFB.jpg"))
         if not pix.isNull():
             self._qr.setPixmap(pix)
-        body.addWidget(self._qr, 0, Qt.AlignHCenter)
+        body.addWidget(self._qr, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._hint = QLabel("Scan to support the author")
         self._hint.setObjectName("aboutHint")
-        self._hint.setAlignment(Qt.AlignCenter)
+        self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setWordWrap(True)
         body.addWidget(self._hint)
 
@@ -115,7 +115,7 @@ class AboutDialog(QDialog):
 
         self._footer = QLabel("Copyright © 2026 Frankie Hu")
         self._footer.setObjectName("aboutFooter")
-        self._footer.setAlignment(Qt.AlignCenter)
+        self._footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._footer.setWordWrap(True)
         footer_layout.addWidget(self._footer)
 
@@ -127,7 +127,7 @@ class AboutDialog(QDialog):
         self._close_btn.setMinimumWidth(100)
         self._close_btn.clicked.connect(self.close)
         button_row = QVBoxLayout()
-        button_row.setAlignment(Qt.AlignHCenter)
+        button_row.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         button_row.addWidget(self._close_btn)
         footer_layout.addLayout(button_row)
 

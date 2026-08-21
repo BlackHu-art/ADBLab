@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import cast
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFocusEvent, QKeyEvent, QValidator
@@ -54,6 +55,7 @@ class StrictIntComboBox(QComboBox):
         self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.addItems([str(preset) for preset in preset_values])
         editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
         editor.setMaxLength(self._MAX_INPUT_LENGTH)
         editor.installEventFilter(self)
         editor.textChanged.connect(self._on_editor_text_changed)
@@ -82,6 +84,7 @@ class StrictIntComboBox(QComboBox):
         changed = value != self._value
         self._value = value
         editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
         blocker = QSignalBlocker(editor)
         editor.setText(str(value))
         del blocker
@@ -118,7 +121,7 @@ class StrictIntComboBox(QComboBox):
         if watched is self.lineEdit():
             if event.type() == QEvent.Type.FocusOut:
                 self.commit_value()
-            elif event.type() == QEvent.Type.KeyPress and event.key() in (
+            elif event.type() == QEvent.Type.KeyPress and cast(QKeyEvent, event).key() in (
                 Qt.Key.Key_Return,
                 Qt.Key.Key_Enter,
             ):

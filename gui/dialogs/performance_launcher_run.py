@@ -22,7 +22,13 @@ class PerformanceLauncherRun:
             return
         config = self._frame.build_config()
         if not config.package:
-            QMessageBox.warning(self._frame, "Package Required", "Please enter a package name.")
+            QMessageBox.warning(
+                self._frame,
+                "Package Required",
+                "Please enter a package name.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         if config.monkey_enabled and config.monkey_config.total_percentage != 100:
             self._frame.log_received.emit(

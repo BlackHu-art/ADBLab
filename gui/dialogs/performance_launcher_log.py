@@ -51,7 +51,7 @@ class PerformanceLauncherLog:
 
     def _render_log_rows(self, rows: list[str]):
         cursor = self._frame.log_view.textCursor()
-        cursor.movePosition(QTextCursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
         try:
             cursor.insertText("\n".join(rows) + "\n")

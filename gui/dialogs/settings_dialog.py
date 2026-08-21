@@ -59,7 +59,7 @@ class SettingsDialog(QDialog):
 
         content_widget = QWidget()
         content_widget.setObjectName("settingsContent")
-        content_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        content_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         content = QVBoxLayout(content_widget)
         content.setContentsMargins(10, 10, 10, 10)
         content.setSpacing(8)
@@ -73,8 +73,8 @@ class SettingsDialog(QDialog):
         self._settings_scroll = QScrollArea()
         self._settings_scroll.setObjectName("settingsScroll")
         self._settings_scroll.setWidgetResizable(True)
-        self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._settings_scroll.setWidget(content_widget)
         self._settings_scroll.viewport().installEventFilter(self)
         root.addWidget(self._settings_scroll, 1)
@@ -128,34 +128,58 @@ class SettingsDialog(QDialog):
         self._ui_font_label.setBuddy(self._font_combo)
         self._ui_size_label.setBuddy(self._combo_font)
         self._log_size_label.setBuddy(self._combo_log_font)
-        gg.addWidget(self._theme_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._theme_label, 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._theme_combo, 0, 1)
-        gg.addWidget(self._ui_font_label, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._ui_font_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._font_combo, 0, 3)
-        gg.addWidget(self._ui_size_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._ui_size_label, 1, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._combo_font, 1, 1)
-        gg.addWidget(self._log_size_label, 1, 2, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._log_size_label, 1, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._combo_log_font, 1, 3)
 
         self._ui_font_preview = QLabel("Aa 中文 123")
         self._ui_font_preview.setObjectName("uiFontPreview")
         self._ui_font_preview.setWordWrap(True)
-        self._ui_font_preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._ui_font_preview.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self._log_font_preview = QLabel("12:30  INFO  Sample log")
         self._log_font_preview.setObjectName("logFontPreview")
         self._log_font_preview.setWordWrap(True)
-        self._log_font_preview.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._log_font_preview.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         self._ui_preview_label = self._label("UI Preview")
         self._log_preview_label = self._label("Log Preview")
-        gg.addWidget(self._ui_preview_label, 2, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._ui_preview_label,
+            2,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         gg.addWidget(self._ui_font_preview, 2, 1)
-        gg.addWidget(self._log_preview_label, 2, 2, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._log_preview_label,
+            2,
+            2,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         gg.addWidget(self._log_font_preview, 2, 3)
 
         self._font_apply_hint = QLabel("Changes apply immediately.")
         self._font_apply_hint.setObjectName("hintLabel")
         self._font_apply_hint.setWordWrap(True)
-        self._font_apply_hint.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._font_apply_hint.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
         gg.addWidget(self._font_apply_hint, 3, 1, 1, 3)
         gg.setColumnStretch(1, 1)
         gg.setColumnStretch(3, 1)
@@ -196,10 +220,20 @@ class SettingsDialog(QDialog):
         self._window_grid = gg
         self._current_size_label = self._label("Current Size")
         self._panel_split_label = self._label("Panel Split")
-        gg.addWidget(self._current_size_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._current_size_label,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         gg.addWidget(self._window_size_value, 0, 1)
         gg.addWidget(self._btn_reset_window_size, 0, 2)
-        gg.addWidget(self._panel_split_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._panel_split_label,
+            1,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         gg.addWidget(self._panel_split_value, 1, 1)
         gg.addWidget(self._btn_reset_panel_split, 1, 2)
         gg.setColumnStretch(1, 1)
@@ -248,8 +282,8 @@ class SettingsDialog(QDialog):
         self._lbl_save = QLabel(save_dir if save_dir else "~/ADBLab (default)")
         self._lbl_save.setObjectName("hintLabel")
         self._lbl_save.setWordWrap(True)
-        self._lbl_save.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._lbl_save.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._lbl_save.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._lbl_save.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._lbl_save.setMinimumWidth(0)
         self._update_save_directory_display(save_dir)
         self._btn_save = self._icon_button(
@@ -258,7 +292,9 @@ class SettingsDialog(QDialog):
         self._btn_save.clicked.connect(self._on_pick_save_dir)
         self._save_dir_label = self._label("Save Directory")
         self._save_dir_label.setBuddy(self._btn_save)
-        gg.addWidget(self._save_dir_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._save_dir_label, 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._lbl_save, 0, 1)
         gg.addWidget(self._btn_save, 0, 2)
 
@@ -270,7 +306,9 @@ class SettingsDialog(QDialog):
         self._combo_log_lines.currentTextChanged.connect(self._on_log_max_lines_changed)
         self._max_log_label = self._label("Visible Log Lines")
         self._max_log_label.setBuddy(self._combo_log_lines)
-        gg.addWidget(self._max_log_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        gg.addWidget(
+            self._max_log_label, 1, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         gg.addWidget(self._combo_log_lines, 1, 1)
 
         gg.setColumnStretch(1, 1)
@@ -287,7 +325,7 @@ class SettingsDialog(QDialog):
         self._btn_restore_defaults.setToolTip("Reset all preferences to their defaults")
         self._btn_restore_defaults.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         self._btn_restore_defaults.setIconSize(QSize(14, 14))
-        self._btn_restore_defaults.setCursor(Qt.PointingHandCursor)
+        self._btn_restore_defaults.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_restore_defaults.setAutoDefault(False)
         self._btn_restore_defaults.clicked.connect(self._reset_all)
         row.addWidget(self._btn_restore_defaults)
@@ -296,7 +334,7 @@ class SettingsDialog(QDialog):
         self._btn_close.setToolTip("Save changes and close settings")
         self._btn_close.setIcon(get_themed_icon("x.svg"))
         self._btn_close.setIconSize(QSize(14, 14))
-        self._btn_close.setCursor(Qt.PointingHandCursor)
+        self._btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
         self._btn_close.setObjectName("accent")
         self._btn_close.setDefault(True)
         self._btn_close.clicked.connect(self.accept)
@@ -323,7 +361,7 @@ class SettingsDialog(QDialog):
         c.setCurrentText(current)
         c.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         c.setMinimumContentsLength(8)
-        c.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        c.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         c.setMinimumWidth(0)
         c.setMaximumWidth(maximum_width)
         return c
@@ -333,7 +371,7 @@ class SettingsDialog(QDialog):
         label.setObjectName("settingsDescription")
         label.setProperty("fontRole", FontRole.UI_SMALL.value)
         label.setWordWrap(True)
-        label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         label.setMinimumWidth(0)
         return label
 
@@ -353,7 +391,7 @@ class SettingsDialog(QDialog):
         cb.setObjectName("settingsCheck")
         cb.setProperty("fontRole", FontRole.UI.value)
         cb.setToolTip(text)
-        cb.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        cb.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         cb.setMinimumWidth(0)
         return cb
 
@@ -362,15 +400,15 @@ class SettingsDialog(QDialog):
         if icon:
             btn.setIcon(get_themed_icon(icon))
             btn.setIconSize(QSize(14, 14))
-        btn.setCursor(Qt.PointingHandCursor)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setToolTip(tooltip)
         btn.setAccessibleDescription(tooltip)
         if text:
             btn.setAccessibleName(text)
-        btn.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         return btn
 
-    def _window_layout_snapshot(self) -> dict[str, object]:
+    def _window_layout_snapshot(self) -> dict[str, int | float]:
         """通过主窗口公开接口读取布局状态，并为独立打开场景提供设置回退值。"""
         owner = self._layout_owner()
         snapshot_method = getattr(owner, "window_layout_snapshot", None)
@@ -463,7 +501,14 @@ class SettingsDialog(QDialog):
             )
             current_row = 0
             for label, control in rows:
-                grid.addWidget(label, current_row, 0, 1, 2, Qt.AlignLeft | Qt.AlignVCenter)
+                grid.addWidget(
+                    label,
+                    current_row,
+                    0,
+                    1,
+                    2,
+                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                )
                 grid.addWidget(control, current_row + 1, 0, 1, 2)
                 current_row += 2
             grid.addWidget(self._font_apply_hint, current_row, 0, 1, 2)
@@ -473,17 +518,35 @@ class SettingsDialog(QDialog):
             grid.setColumnStretch(3, 0)
             return
 
-        grid.addWidget(self._theme_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._theme_label, 0, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         grid.addWidget(self._theme_combo, 0, 1)
-        grid.addWidget(self._ui_font_label, 0, 2, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._ui_font_label, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         grid.addWidget(self._font_combo, 0, 3)
-        grid.addWidget(self._ui_size_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._ui_size_label, 1, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         grid.addWidget(self._combo_font, 1, 1)
-        grid.addWidget(self._log_size_label, 1, 2, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._log_size_label, 1, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         grid.addWidget(self._combo_log_font, 1, 3)
-        grid.addWidget(self._ui_preview_label, 2, 0, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._ui_preview_label,
+            2,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         grid.addWidget(self._ui_font_preview, 2, 1)
-        grid.addWidget(self._log_preview_label, 2, 2, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._log_preview_label,
+            2,
+            2,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         grid.addWidget(self._log_font_preview, 2, 3)
         grid.addWidget(self._font_apply_hint, 3, 1, 1, 3)
         grid.setColumnStretch(0, 0)
@@ -503,21 +566,31 @@ class SettingsDialog(QDialog):
         grid = self._window_grid
         self._remove_widgets(grid, widgets)
         if compact:
-            grid.addWidget(self._current_size_label, 0, 0, 1, 2, Qt.AlignLeft)
+            grid.addWidget(self._current_size_label, 0, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
             grid.addWidget(self._window_size_value, 1, 0, 1, 2)
-            grid.addWidget(self._btn_reset_window_size, 2, 0, 1, 2, Qt.AlignLeft)
-            grid.addWidget(self._panel_split_label, 3, 0, 1, 2, Qt.AlignLeft)
+            grid.addWidget(self._btn_reset_window_size, 2, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(self._panel_split_label, 3, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
             grid.addWidget(self._panel_split_value, 4, 0, 1, 2)
-            grid.addWidget(self._btn_reset_panel_split, 5, 0, 1, 2, Qt.AlignLeft)
+            grid.addWidget(self._btn_reset_panel_split, 5, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
             grid.setColumnStretch(0, 1)
             grid.setColumnStretch(1, 0)
             grid.setColumnStretch(2, 0)
             return
 
-        grid.addWidget(self._current_size_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._current_size_label,
+            0,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         grid.addWidget(self._window_size_value, 0, 1)
         grid.addWidget(self._btn_reset_window_size, 0, 2)
-        grid.addWidget(self._panel_split_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+        grid.addWidget(
+            self._panel_split_label,
+            1,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         grid.addWidget(self._panel_split_value, 1, 1)
         grid.addWidget(self._btn_reset_panel_split, 1, 2)
         grid.setColumnStretch(0, 0)
@@ -535,18 +608,28 @@ class SettingsDialog(QDialog):
         grid = self._general_grid
         self._remove_widgets(grid, widgets)
         if compact:
-            grid.addWidget(self._save_dir_label, 0, 0, 1, 2, Qt.AlignLeft)
+            grid.addWidget(self._save_dir_label, 0, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
             grid.addWidget(self._lbl_save, 1, 0, 1, 2)
-            grid.addWidget(self._btn_save, 2, 0, 1, 2, Qt.AlignLeft)
-            grid.addWidget(self._max_log_label, 3, 0, 1, 2, Qt.AlignLeft)
+            grid.addWidget(self._btn_save, 2, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
+            grid.addWidget(self._max_log_label, 3, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
             grid.addWidget(self._combo_log_lines, 4, 0, 1, 2)
             grid.setColumnStretch(0, 1)
             grid.setColumnStretch(1, 0)
         else:
-            grid.addWidget(self._save_dir_label, 0, 0, Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(
+                self._save_dir_label,
+                0,
+                0,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            )
             grid.addWidget(self._lbl_save, 0, 1)
             grid.addWidget(self._btn_save, 0, 2)
-            grid.addWidget(self._max_log_label, 1, 0, Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(
+                self._max_log_label,
+                1,
+                0,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            )
             grid.addWidget(self._combo_log_lines, 1, 1)
             grid.setColumnStretch(0, 0)
             grid.setColumnStretch(1, 1)

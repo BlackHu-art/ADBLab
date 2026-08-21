@@ -49,7 +49,7 @@ class AppManagerViews:
 
         def populate_current(apps):
             dialog = dialog_ref()
-            if is_qobject_alive(dialog):
+            if dialog is not None and is_qobject_alive(dialog):
                 dialog._populate(apps, request_id=request_id)
 
         w.apps_loaded.connect(populate_current)
@@ -90,7 +90,7 @@ class AppManagerViews:
             short_name = name[:18] + (".." if len(name) > 18 else "")
             icon = self._frame._gen_icon(name, at, 48)
             item = QListWidgetItem(icon, short_name)
-            item.setData(Qt.UserRole, pkg)
+            item.setData(Qt.ItemDataRole.UserRole, pkg)
             item.setToolTip(f"{pkg}\nType: {at} | Status: {st}")
             item.setSizeHint(QSize(106, 72))
             if st == "Disabled":
@@ -173,7 +173,7 @@ class AppManagerViews:
         if self._frame._view_mode:
             for i in range(self._frame.icon_list.count()):
                 item = self._frame.icon_list.item(i)
-                pkg = item.data(Qt.UserRole) if item else ""
+                pkg = item.data(Qt.ItemDataRole.UserRole) if item else ""
                 if item and not item.isHidden() and pkg and pkg not in self._frame._detail_cache:
                     packages.append(pkg)
                     if len(packages) >= limit:
@@ -232,7 +232,7 @@ class AppManagerViews:
             self._frame.device_ip, "load_detail_batch", packages=packages
         )
         request_id = getattr(self._frame, "_active_load_request", 0)
-        w._app_load_request_id = request_id
+        setattr(w, "_app_load_request_id", request_id)
         w.app_detail_batch.connect(self._frame._on_detail)
         w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
         w.finished.connect(
@@ -285,7 +285,7 @@ class AppManagerViews:
         item = self._frame.icon_list.itemAt(pos)
         if not item:
             return
-        pkg = item.data(Qt.UserRole)
+        pkg = item.data(Qt.ItemDataRole.UserRole)
         if not pkg:
             return
         self._frame._icon_selected_pkg = pkg
@@ -308,7 +308,7 @@ class AppManagerViews:
         menu.exec(self._frame.icon_list.mapToGlobal(pos))
 
     def _icon_double_click(self, item):
-        pkg = item.data(Qt.UserRole)
+        pkg = item.data(Qt.ItemDataRole.UserRole)
         if pkg:
             self._frame._show_details_for(pkg)
 
@@ -319,7 +319,7 @@ class AppManagerViews:
         # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。
         for i in range(self._frame.icon_list.count()):
             item = self._frame.icon_list.item(i)
-            pkg = (item.data(Qt.UserRole) or "").lower()
+            pkg = (item.data(Qt.ItemDataRole.UserRole) or "").lower()
             name = (item.text().split("\n")[0] or "").lower()
             type_match = (
                 ft == "All"
@@ -351,14 +351,15 @@ class AppManagerViews:
         if self._frame._syncing_selection:
             return
         icon_packages = {
-            item.data(Qt.UserRole)
+            item.data(Qt.ItemDataRole.UserRole)
             for index in range(self._frame.icon_list.count())
-            if (item := self._frame.icon_list.item(index)) is not None and item.data(Qt.UserRole)
+            if (item := self._frame.icon_list.item(index)) is not None
+            and item.data(Qt.ItemDataRole.UserRole)
         }
         selected_icons = {
-            item.data(Qt.UserRole)
+            item.data(Qt.ItemDataRole.UserRole)
             for item in self._frame.icon_list.selectedItems()
-            if item.data(Qt.UserRole)
+            if item.data(Qt.ItemDataRole.UserRole)
         }
         self._frame.selected_packages.difference_update(icon_packages)
         self._frame.selected_packages.update(selected_icons)
@@ -381,7 +382,7 @@ class AppManagerViews:
                 available_packages.add(package)
         for index in range(self._frame.icon_list.count()):
             item = self._frame.icon_list.item(index)
-            package = item.data(Qt.UserRole) if item else ""
+            package = item.data(Qt.ItemDataRole.UserRole) if item else ""
             if package:
                 icon_items.append((item, package))
                 available_packages.add(package)

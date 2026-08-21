@@ -1,5 +1,7 @@
 """应用管理器表单控制器 — 构建界面、应用主题并处理响应式重排。"""
 
+from typing import cast
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFontMetrics, QStandardItemModel
 from PySide6.QtWidgets import (
@@ -348,7 +350,9 @@ class AppManagerForm:
         if span_last_in_two_columns and columns == 2:
             last_button = buttons[-1]
             last_index = layout.indexOf(last_button)
-            row, _column, _row_span, _column_span = layout.getItemPosition(last_index)
+            row, _column, _row_span, _column_span = cast(
+                tuple[int, int, int, int], layout.getItemPosition(last_index)
+            )
             layout.removeWidget(last_button)
             layout.addWidget(last_button, row, 0, 1, 2)
 

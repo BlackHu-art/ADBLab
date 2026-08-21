@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
 
@@ -114,9 +116,7 @@ class DeviceManagerLayout:
             "stacked",
             force_one_column=mode == "wide",
         )
-        stacked_height_limit = self._frame._device_stacked_height_limit(
-            mode, stacked_action_plan
-        )
+        stacked_height_limit = self._frame._device_stacked_height_limit(mode, stacked_action_plan)
         # 高度不参与列/宿主决策：compact/medium 使用更省高的全宽网格，wide 才并排。
         body_mode = "side_by_side" if mode == "wide" else "stacked"
         if body_mode == "stacked":
@@ -283,11 +283,11 @@ class DeviceManagerLayout:
 
         option = QStyleOptionViewItem()
         self._frame.listbox_devices.initViewItemOption(option)
-        option.features |= (
+        cast(Any, option).features |= (
             QStyleOptionViewItem.ViewItemFeature.HasDisplay
             | QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
         )
-        option.checkState = Qt.CheckState.Unchecked
+        cast(Any, option).checkState = Qt.CheckState.Unchecked
         indicator_height = self._frame.listbox_devices.style().pixelMetric(
             QStyle.PixelMetric.PM_IndicatorHeight,
             option,
@@ -312,7 +312,10 @@ class DeviceManagerLayout:
     def _device_list_reserves_horizontal_scrollbar(self) -> bool:
         """除明确禁用外，预留横向滚动条高度，避免内容出现时顶开 splitter。"""
 
-        return self._frame.listbox_devices.horizontalScrollBarPolicy() != Qt.ScrollBarAlwaysOff
+        return (
+            self._frame.listbox_devices.horizontalScrollBarPolicy()
+            != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
 
     def _update_device_minimum_heights(
         self,

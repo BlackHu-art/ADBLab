@@ -47,8 +47,8 @@ class ResponsiveCoordinator:
         self._fallback_locked = False
         self._reasons: list[ReflowReason] = []
         self._pending_reasons: list[ReflowReason] = []
-        self._plan_history: list[object] = []
-        self._settling_history: list[object] = []
+        self._plan_history: list[tuple[tuple[int, object], ...]] = []
+        self._settling_history: list[tuple[tuple[int, object], ...]] = []
         self._context_sync_rounds = 0
         self._settling_barrier_fingerprint: object | None = None
         self._in_apply = False
@@ -223,12 +223,12 @@ class ResponsiveCoordinator:
             candidates.append((target, context, plan))
         return candidates
 
-    def _batch_fingerprint(self, candidates) -> tuple[object, ...]:
+    def _batch_fingerprint(self, candidates) -> tuple[tuple[int, object], ...]:
         return tuple(
             (id(target), self._plan_fingerprint(plan)) for target, _context, plan in candidates
         )
 
-    def _batch_settling_fingerprint(self, candidates) -> tuple[object, ...]:
+    def _batch_settling_fingerprint(self, candidates) -> tuple[tuple[int, object], ...]:
         return tuple(
             (id(target), self._plan_settling_fingerprint(plan))
             for target, _context, plan in candidates

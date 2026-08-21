@@ -7,11 +7,16 @@ import re
 import threading
 
 from PySide6.QtCore import QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QFontMetrics
+from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFileDialog,
+    QLabel,
+    QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QWidget,
 )
@@ -35,6 +40,7 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from models.base.focus_detector import detect_current_package
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
@@ -75,6 +81,25 @@ class PerformanceLauncherDialog(QDialog):
     MAX_PENDING_LOG_ROWS = 2000
     log_received = Signal(str, str)
     runner_finished = Signal()
+
+    # 表单与动作区控件在控制器中创建，此处提供类级类型声明供跨控制器解析。
+    log_view: QPlainTextEdit
+    save_path_edit: QLineEdit
+    get_package_btn: QPushButton
+    package_edit: QLineEdit
+    frequency_input: StrictIntComboBox
+    timeout_input: StrictIntComboBox
+    dumpheap_input: StrictIntComboBox
+    monkey_check: QCheckBox
+    exception_edit: QLineEdit
+    phone_log_edit: QLineEdit
+    result_action: QAction
+    progress_bar: QProgressBar
+    monkey_throttle_combo: StrictIntComboBox
+    monkey_seed_edit: StrictIntLineEdit
+    monkey_pct_combos: dict[str, StrictIntComboBox]
+    perfetto_action: QAction
+    serialnum_label: QLabel
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
         super().__init__(parent)

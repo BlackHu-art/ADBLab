@@ -79,7 +79,7 @@ class FileExplorerDialog(QDialog):
     _orphaned_workers_lock = threading.Lock()
 
     def __init__(self, parent=None, device_ip: str = ""):
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent, Qt.WindowType.Window)
         self._list_controller = FileExplorerList(self)
         self._view_controller = FileExplorerView(self)
         self._ops_controller = FileExplorerOps(self)
@@ -104,7 +104,7 @@ class FileExplorerDialog(QDialog):
         self.setMinimumSize(950, 620)
         self.resize(1000, 650)
         self.setModal(False)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
@@ -689,6 +689,8 @@ class FileExplorerDialog(QDialog):
                 self,
                 f"Properties Error: {name}",
                 output or "Unable to read file properties",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
             )
             self.status_bar.showMessage(f"Failed to read properties for {name}")
             return
@@ -711,6 +713,8 @@ class FileExplorerDialog(QDialog):
                 self,
                 f"Properties Error: {name}",
                 size or "Unable to read folder properties",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
             )
             self.status_bar.showMessage(f"Failed to read properties for {name}")
             return

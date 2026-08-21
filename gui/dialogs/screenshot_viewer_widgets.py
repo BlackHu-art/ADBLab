@@ -19,21 +19,23 @@ class ScreenshotGraphicsView(QGraphicsView):
         super().__init__()
         self._owner = owner
         self.setObjectName("imageView")
-        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.setRenderHints(
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
+        )
+        self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.ControlModifier:
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
             self._owner._zoom_from_wheel(event.angleDelta().y())
             event.accept()
             return
         super().wheelEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton:
             self._owner.toggle_fit_actual()
             event.accept()
             return

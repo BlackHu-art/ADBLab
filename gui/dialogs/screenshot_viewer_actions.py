@@ -55,7 +55,13 @@ class ScreenshotViewerActions:
         try:
             os.remove(path)
         except OSError as exc:
-            QMessageBox.warning(self._frame, "Delete Failed", str(exc))
+            QMessageBox.warning(
+                self._frame,
+                "Delete Failed",
+                str(exc),
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         del self._frame._image_paths[self._frame._current_idx]
         if not self._frame._image_paths:

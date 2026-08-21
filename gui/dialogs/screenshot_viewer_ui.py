@@ -1,5 +1,7 @@
 """提供截图查看器对话框的主题与界面构建控制器。"""
 
+from typing import cast
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -209,15 +211,15 @@ class ScreenshotViewerUI:
 
         self._frame._thumb_list = QListWidget()
         self._frame._thumb_list.setObjectName("thumbnailStrip")
-        self._frame._thumb_list.setViewMode(QListView.IconMode)
-        self._frame._thumb_list.setFlow(QListView.LeftToRight)
-        self._frame._thumb_list.setMovement(QListView.Static)
-        self._frame._thumb_list.setResizeMode(QListView.Adjust)
+        self._frame._thumb_list.setViewMode(QListView.ViewMode.IconMode)
+        self._frame._thumb_list.setFlow(QListView.Flow.LeftToRight)
+        self._frame._thumb_list.setMovement(QListView.Movement.Static)
+        self._frame._thumb_list.setResizeMode(QListView.ResizeMode.Adjust)
         self._frame._thumb_list.setWrapping(False)
         self._frame._thumb_list.setUniformItemSizes(True)
-        self._frame._thumb_list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._frame._thumb_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._frame._thumb_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._frame._thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._frame._thumb_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._frame._thumb_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._frame._thumb_list.setIconSize(QSize(86, 58))
         self._frame._thumb_list.setFixedHeight(92)
         self._frame._thumb_list.itemClicked.connect(self._frame._on_thumbnail_clicked)
@@ -236,28 +238,40 @@ class ScreenshotViewerUI:
 
         self._frame._path_label = QLabel("")
         self._frame._path_label.setObjectName("pathLabel")
-        self._frame._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._frame._path_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self._frame._path_label.setMinimumWidth(120)
-        self._frame._path_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._frame._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._frame._path_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+        self._frame._path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         self._frame._path_label.setToolTip("Screenshot file path")
         self._frame._path_label.setAccessibleName("Screenshot file path")
-        self._frame._path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._frame._path_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
 
         self._frame._info_label = QLabel("")
         self._frame._info_label.setObjectName("metaLabel")
-        self._frame._info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._frame._info_label.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
         self._frame._info_label.setMinimumWidth(150)
         self._frame._info_label.setToolTip("Image size, file size, and modified time")
         self._frame._info_label.setAccessibleName("Screenshot metadata")
-        self._frame._info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._frame._info_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
 
         self._frame._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
         self._frame._prev_btn.clicked.connect(self._frame.navigate_prev)
 
         self._frame._nav_label = QLabel("0 / 0")
         self._frame._nav_label.setObjectName("navLabel")
-        self._frame._nav_label.setAlignment(Qt.AlignCenter)
+        self._frame._nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._nav_label.setMinimumWidth(52)
         self._frame._nav_label.setToolTip("Current screenshot index")
 
@@ -271,7 +285,7 @@ class ScreenshotViewerUI:
 
         self._frame._zoom_label = QLabel("Fit")
         self._frame._zoom_label.setObjectName("zoomLabel")
-        self._frame._zoom_label.setAlignment(Qt.AlignCenter)
+        self._frame._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._zoom_label.setMinimumWidth(56)
         self._frame._zoom_label.setToolTip("Current zoom")
 
@@ -283,14 +297,10 @@ class ScreenshotViewerUI:
         self._frame._fit_btn = self._tool_button("frame-corners.svg", "Fit to window (Ctrl+0)")
         self._frame._fit_btn.clicked.connect(self._frame._reset_zoom)
 
-        self._frame._actual_btn = self._tool_button(
-            "number-square-one.svg", "Actual size (Ctrl+1)"
-        )
+        self._frame._actual_btn = self._tool_button("number-square-one.svg", "Actual size (Ctrl+1)")
         self._frame._actual_btn.clicked.connect(self._frame._actual_size)
 
-        self._frame._copy_btn = self._tool_button(
-            "copy.svg", "Copy image to clipboard (Ctrl+C)"
-        )
+        self._frame._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
         self._frame._copy_btn.clicked.connect(self._frame.copy_to_clipboard)
 
         self._frame._folder_btn = self._tool_button("folder-open.svg", "Open file location")
@@ -301,17 +311,17 @@ class ScreenshotViewerUI:
         self._frame._delete_btn.clicked.connect(self._frame._delete_file)
 
         self._frame._metadata_group = self._bottom_bar_group("screenshotMetadataGroup")
-        metadata_layout = self._frame._metadata_group.layout()
+        metadata_layout = cast(QHBoxLayout, self._frame._metadata_group.layout())
         metadata_layout.addWidget(self._frame._path_label, 1)
         metadata_layout.addWidget(self._frame._info_label, 1)
 
         self._frame._navigation_group = self._bottom_bar_group("screenshotNavigationGroup")
-        navigation_layout = self._frame._navigation_group.layout()
+        navigation_layout = cast(QHBoxLayout, self._frame._navigation_group.layout())
         for control in (self._frame._prev_btn, self._frame._nav_label, self._frame._next_btn):
             navigation_layout.addWidget(control)
 
         self._frame._actions_group = self._bottom_bar_group("screenshotActionsGroup")
-        actions_layout = self._frame._actions_group.layout()
+        actions_layout = cast(QHBoxLayout, self._frame._actions_group.layout())
         for control in (
             self._frame._zoom_out_btn,
             self._frame._zoom_label,
@@ -489,7 +499,7 @@ class ScreenshotViewerUI:
         button.setFixedSize(28, 28)
         button.setToolTip(tooltip)
         button.setAccessibleName(tooltip)
-        button.setCursor(Qt.PointingHandCursor)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setProperty("iconName", icon_name)
         self._frame._icon_buttons.append(button)
         return button

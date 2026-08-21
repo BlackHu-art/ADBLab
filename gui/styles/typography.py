@@ -6,6 +6,7 @@ import platform
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, cast
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QFontMetrics, QGuiApplication
@@ -52,7 +53,7 @@ def _safe_size(value: object, default: int, minimum: int, maximum: int) -> int:
     if isinstance(value, bool):
         return default
     try:
-        size = int(value)
+        size = int(cast(Any, value))
     except (TypeError, ValueError, OverflowError):
         return default
     return max(minimum, min(maximum, size))
@@ -222,7 +223,7 @@ class TypographyManager(QObject):
 
         app = QGuiApplication.instance()
         if app is not None:
-            app.setFont(self.font_for_role(FontRole.UI))
+            cast(QGuiApplication, app).setFont(self.font_for_role(FontRole.UI))
 
     def font_for_role(self, role: FontRole | str, size: int | None = None) -> QFont:
         """按角色创建字体，调用方可为少量特殊场景覆盖字号。"""

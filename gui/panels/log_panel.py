@@ -162,7 +162,7 @@ class LogPanel(QWidget):
         if not rows:
             return
         cursor = self.text_output.textCursor()
-        cursor.movePosition(QTextCursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
         try:
             cursor.insertHtml("".join(self._row_html(ts, level, msg) for ts, level, msg in rows))
@@ -250,10 +250,10 @@ class LogPanel(QWidget):
         at_bottom = scroll_bar.value() >= scroll_bar.maximum() - 20
         scroll_value = scroll_bar.value()
         cursor = QTextCursor(document)
-        cursor.movePosition(QTextCursor.Start)
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
         cursor.movePosition(
-            QTextCursor.Down,
-            QTextCursor.KeepAnchor,
+            QTextCursor.MoveOperation.Down,
+            QTextCursor.MoveMode.KeepAnchor,
             min(count, document.blockCount() - 1),
         )
         cursor.removeSelectedText()

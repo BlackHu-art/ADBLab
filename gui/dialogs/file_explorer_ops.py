@@ -57,7 +57,13 @@ class FileExplorerOps:
 
     def _on_save_result(self, output, error, name):
         if error:
-            QMessageBox.critical(self._frame, "Error", f"Save failed: {output}")
+            QMessageBox.critical(
+                self._frame,
+                "Error",
+                f"Save failed: {output}",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
         else:
             self._frame.status_bar.showMessage(f"Saved {name}")
             self._frame._refresh()
@@ -101,7 +107,13 @@ class FileExplorerOps:
 
     def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
         if e:
-            QMessageBox.critical(self._frame, "Error", o)
+            QMessageBox.critical(
+                self._frame,
+                "Error",
+                o,
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             self._frame.status_bar.showMessage(f"Failed: {o}")
             return
         w = self._frame._run_transfer("pull", dev_tmp, save_path)
@@ -172,7 +184,13 @@ class FileExplorerOps:
 
     def _on_transfer_done(self, o, e, msg):
         if e:
-            QMessageBox.critical(self._frame, "Error", o)
+            QMessageBox.critical(
+                self._frame,
+                "Error",
+                o,
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             self._frame.status_bar.showMessage(f"Failed: {o}")
             return
         self._frame.status_bar.showMessage(msg)
@@ -180,7 +198,13 @@ class FileExplorerOps:
 
     def _on_file_op_done(self, output: str, error: bool, success_msg: str):
         if error:
-            QMessageBox.critical(self._frame, "Error", output)
+            QMessageBox.critical(
+                self._frame,
+                "Error",
+                output,
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             self._frame.status_bar.showMessage(f"Failed: {output}")
             return
         self._frame.status_bar.showMessage(success_msg)
@@ -194,7 +218,11 @@ class FileExplorerOps:
             return
         if not self._frame._safe_name(name):
             QMessageBox.warning(
-                self._frame, "Invalid Name", "Folder name contains invalid characters"
+                self._frame,
+                "Invalid Name",
+                "Folder name contains invalid characters",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
             )
             return
         full = self._frame._dpath(self._frame.current_path, name)
@@ -211,7 +239,13 @@ class FileExplorerOps:
         if not ok or not name or "/" in name:
             return
         if not self._frame._safe_name(name):
-            QMessageBox.warning(self._frame, "Invalid Name", "Filename contains invalid characters")
+            QMessageBox.warning(
+                self._frame,
+                "Invalid Name",
+                "Filename contains invalid characters",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         full = self._frame._dpath(self._frame.current_path, name)
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.touch_command(full)))
@@ -227,7 +261,13 @@ class FileExplorerOps:
         if not ok or not new or new == name:
             return
         if not self._frame._safe_name(new):
-            QMessageBox.warning(self._frame, "Invalid Name", "New name contains invalid characters")
+            QMessageBox.warning(
+                self._frame,
+                "Invalid Name",
+                "New name contains invalid characters",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         old = self._frame._dpath(self._frame.current_path, name)
         new_p = self._frame._dpath(self._frame.current_path, new)
@@ -387,7 +427,13 @@ class FileExplorerOps:
         def _on_stat(o, e):
             if e:
                 preview.setText("Unable to read current permissions")
-                QMessageBox.critical(dlg, "Permissions Error", o or "Permission read failed")
+                QMessageBox.critical(
+                    dlg,
+                    "Permissions Error",
+                    o or "Permission read failed",
+                    QMessageBox.StandardButton.Ok,
+                    QMessageBox.StandardButton.NoButton,
+                )
                 return
             mode = explorer_service.parse_mode(o)
             if mode is None:
@@ -396,6 +442,8 @@ class FileExplorerOps:
                     dlg,
                     "Permissions Error",
                     "The device returned an invalid permission mode.",
+                    QMessageBox.StandardButton.Ok,
+                    QMessageBox.StandardButton.NoButton,
                 )
                 return
             orig[0] = mode
@@ -432,6 +480,8 @@ class FileExplorerOps:
                         dlg,
                         "Permissions Error",
                         output or "Permission update failed",
+                        QMessageBox.StandardButton.Ok,
+                        QMessageBox.StandardButton.NoButton,
                     )
                     return
                 self._frame.status_bar.showMessage(f"Permissions updated for {name}")

@@ -4,8 +4,10 @@ import re
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
@@ -55,6 +57,14 @@ class LogcatWorker(QThread):
     dropped_ready = Signal(int)
     status_changed = Signal(str)
     terminated = Signal(object)
+
+    # 对话框连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
+    _dialog_lines_handler: Callable[..., Any] | None
+    _dialog_dropped_handler: Callable[..., Any] | None
+    _dialog_status_handler: Callable[..., Any] | None
+    _dialog_ended_handler: Callable[..., Any] | None
+    _dialog_finished_handler: Callable[..., Any] | None
+    _supervisor_task_id: str | None
 
     def __init__(self, device_ip: str, package: str = "", tag: str = ""):
         super().__init__()
@@ -162,10 +172,14 @@ class LogcatWorker(QThread):
                     errors="ignore",
                 )
             self.status_changed.emit("Logcat running")
+            proc = self._proc
+            assert proc is not None  # start() 返回后进程句柄非空
+            stdout = proc.stdout
+            assert stdout is not None  # stdout=PIPE 时输出句柄非空
             while not self._stop_event.is_set():
-                line = self._proc.stdout.readline()
+                line = stdout.readline()
                 if not line:
-                    if self._proc.poll() is not None:
+                    if proc.poll() is not None:
                         break
                     continue
                 text = line.rstrip("\r\n")
@@ -249,6 +263,10 @@ class LogcatWorker(QThread):
 class CurrentPackageWorker(QThread):
     package_ready = Signal(str)
     status_changed = Signal(str)
+
+    # 对话框连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
+    _dialog_finished_handler: Callable[..., Any] | None
+    _supervisor_task_id: str | None
 
     def __init__(self, device_ip: str):
         super().__init__()

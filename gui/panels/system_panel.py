@@ -1,5 +1,7 @@
 """提供 Shell、系统设置、端口转发、电池和模拟器操作面板。"""
 
+from typing import Any, cast
+
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
@@ -648,8 +650,8 @@ class SystemPanel(BasePanel):
         }
         for button, fields in field_requirements.items():
             valid = all(
-                bool(self._input_widget(field).text().strip())
-                and self._input_widget(field).hasAcceptableInput()
+                bool(cast(Any, self._input_widget(field)).text().strip())
+                and cast(Any, self._input_widget(field)).hasAcceptableInput()
                 for field in fields
             )
             self._set_button_enabled(button, has_device and valid)

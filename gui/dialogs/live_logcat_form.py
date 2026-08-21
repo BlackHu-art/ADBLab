@@ -121,7 +121,7 @@ class LiveLogcatForm:
 
         self._frame.output = QPlainTextEdit()
         self._frame.output.setReadOnly(True)
-        self._frame.output.setLineWrapMode(QPlainTextEdit.WidgetWidth)
+        self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._frame.output.setUndoRedoEnabled(False)
         self._frame.output.document().setMaximumBlockCount(self._frame.MAX_BUFFER)
         layout.addWidget(self._frame.output, 1)

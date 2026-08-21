@@ -39,7 +39,7 @@ class ToolbarController:
         self._frame._toolbar = bar
         bar.setObjectName("toolbar")
         bar.setMinimumHeight(BaseStyles.control_height(minimum=32, padding=8))
-        bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
 
         layout = QHBoxLayout(bar)
@@ -185,12 +185,15 @@ class ToolbarController:
         self._frame.tb_cmd = self._frame._create_toolbar_action_button("cmd")
         self._frame._tb_save_btn = self._frame._create_toolbar_action_button("save_path")
         self._frame._tb_save_btn.setObjectName("savePathBtn")
-        self._frame._tb_save_btn.setCursor(Qt.PointingHandCursor)
+        self._frame._tb_save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         self._frame._save_path_label = QLabel()
         self._frame._save_path_label.setObjectName("savePathLabel")
         self._frame._save_path_label.setMinimumWidth(0)
-        self._frame._save_path_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        self._frame._save_path_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Preferred,
+        )
 
         layout.addWidget(self._frame.tb_app_mgr)
         layout.addWidget(self._frame.tb_file_explorer)

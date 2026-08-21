@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
@@ -38,7 +40,7 @@ class DeviceManagerView:
             view.setFont(font)
             horizontal_header = getattr(view, "horizontalHeader", None)
             if callable(horizontal_header):
-                horizontal_header().setFont(font)
+                cast(QHeaderView, horizontal_header()).setFont(font)
         self._frame.panel._apply_completer_style(self._frame.ip_entry.completer())
         sync_heights = getattr(self._frame, "_sync_device_control_heights", None)
         update_minimums = getattr(self._frame, "_update_device_minimum_heights", None)
@@ -79,7 +81,7 @@ class DeviceManagerView:
         self._frame._device_group.setAccessibleDescription(description)
         self._frame._device_group.setToolTip(description)
 
-    def update_device_list(self, devices: list[str] = None):
+    def update_device_list(self, devices: list[str] | None = None):
         if devices is None:
             devices = []
         devices = list(dict.fromkeys(devices or []))
@@ -114,11 +116,13 @@ class DeviceManagerView:
                     item = existing.get(ip_addr)
                     if item is None:
                         item = QListWidgetItem()
-                        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                         self._frame.listbox_devices.addItem(item)
                     item.setText(txt)
-                    item.setData(Qt.UserRole, info)
-                    item.setCheckState(Qt.Checked if ip_addr in prev else Qt.Unchecked)
+                    item.setData(Qt.ItemDataRole.UserRole, info)
+                    item.setCheckState(
+                        Qt.CheckState.Checked if ip_addr in prev else Qt.CheckState.Unchecked
+                    )
                     item.setToolTip(txt)
         finally:
             del blocker
@@ -176,7 +180,7 @@ class DeviceManagerView:
         items = {}
         for row in range(self._frame.listbox_devices.count()):
             item = self._frame.listbox_devices.item(row)
-            info = item.data(Qt.UserRole) if item else None
+            info = item.data(Qt.ItemDataRole.UserRole) if item else None
             ip = info.get("ip", "") if isinstance(info, dict) else ""
             if ip:
                 items[str(ip)] = item
@@ -188,15 +192,21 @@ class DeviceManagerView:
         self._frame._device_model = model
         tv = QTableView()
         tv.setModel(model)
-        tv.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)  # 品牌列占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # 型号列占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # IP 列适应内容
+        tv.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeMode.Stretch
+        )  # 品牌列占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )  # 型号列占剩余空间
+        tv.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.ResizeToContents
+        )  # IP 列适应内容
         tv.verticalHeader().setVisible(False)
-        tv.setSelectionBehavior(QAbstractItemView.SelectRows)
-        tv.setSelectionMode(QAbstractItemView.SingleSelection)
+        tv.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        tv.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         tv.setShowGrid(False)
         tv.horizontalHeader().setHighlightSections(False)
-        tv.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        tv.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         tv.setFont(self._frame._font_mono)
         tv.horizontalHeader().setFont(self._frame._font_mono)
         tv.verticalHeader().setDefaultSectionSize(20)
@@ -232,8 +242,8 @@ class DeviceManagerView:
             )
         if ip_list:
             comp = _device_manager_module.QCompleter(ip_list, self._frame)
-            comp.setCaseSensitivity(Qt.CaseInsensitive)
-            comp.setFilterMode(Qt.MatchContains)
+            comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+            comp.setFilterMode(Qt.MatchFlag.MatchContains)
             self._frame.panel._apply_completer_style(comp)
             self._frame.ip_entry.setCompleter(comp)
             self._frame._sync_address_popup_width()
@@ -257,6 +267,10 @@ class DeviceManagerView:
         self._frame.panel._current_ip = t.strip()
 
     def _on_device_double_click(self, item):
-        if not (item.flags() & Qt.ItemIsUserCheckable):
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-        item.setCheckState(Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked)
+        if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(
+            Qt.CheckState.Unchecked
+            if item.checkState() == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )

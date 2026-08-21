@@ -290,7 +290,7 @@ class PerformanceLauncherForm:
         self._frame._monkey_total_labels = [self._frame.monkey_total_label]
         layout.addWidget(self._frame.monkey_total_label, 0, 5)
 
-        self._frame.monkey_pct_inputs: dict[str, StrictIntComboBox] = {}
+        self._frame.monkey_pct_inputs = {}
         self._frame.monkey_pct_combos = self._frame.monkey_pct_inputs
         defaults = MobilePerfMonkeyConfig()
         for index, (label, attr, option_name) in enumerate(MONKEY_PERCENT_FIELDS):
@@ -333,7 +333,7 @@ class PerformanceLauncherForm:
             "Ignore security exceptions",
             "Kill Monkey after error",
         )
-        self._frame._monkey_flag_labels: list[QLabel] = []
+        self._frame._monkey_flag_labels = []
         for checkbox, hint, accessible_name in zip(monkey_flags, flag_hints, flag_names):
             checkbox.setChecked(True)
             self._apply_hint(checkbox, hint)
@@ -350,7 +350,7 @@ class PerformanceLauncherForm:
     def _inline_label(self, text: str, tooltip: str = "") -> QLabel:
         label = QLabel(text)
         label.setObjectName("inlineLabel")
-        label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setMinimumWidth(136)
         if tooltip:
             label.setToolTip(tooltip)
@@ -450,7 +450,7 @@ class PerformanceLauncherForm:
     ) -> int:
         label = QLabel(key)
         label.setObjectName("fieldLabel")
-        label.setAlignment(Qt.AlignRight | Qt.AlignTop)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         buddy = field
         if not field.focusPolicy() & Qt.FocusPolicy.TabFocus:
             buddy = next(
@@ -604,10 +604,12 @@ class PerformanceLauncherForm:
         self._frame.result_btn.setAccessibleName(self._frame.result_action.text())
         self._frame.result_btn.setAccessibleDescription(self._frame.result_action.toolTip())
 
-    def _enabled_numeric_inputs(self) -> tuple[tuple[str, QWidget], ...]:
+    def _enabled_numeric_inputs(
+        self,
+    ) -> tuple[tuple[str, StrictIntComboBox | StrictIntLineEdit], ...]:
         """返回当前业务语义下必须有效并提交的数字字段。"""
 
-        fields: tuple[tuple[str, QWidget], ...] = (
+        fields: tuple[tuple[str, StrictIntComboBox | StrictIntLineEdit], ...] = (
             ("frequency", self._frame.frequency_input),
             ("timeout", self._frame.timeout_input),
             ("dumpheap frequency", self._frame.dumpheap_input),
@@ -637,6 +639,8 @@ class PerformanceLauncherForm:
                 self._frame,
                 "Invalid Number",
                 f"Please enter a valid {label} value within the allowed range.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
             )
             field.focus_editor()
             self._update_monkey_total()
@@ -648,7 +652,7 @@ class PerformanceLauncherForm:
                 return False
         return True
 
-    def _all_numeric_inputs(self) -> tuple[QWidget, ...]:
+    def _all_numeric_inputs(self) -> tuple[StrictIntComboBox | StrictIntLineEdit, ...]:
         return (
             self._frame.frequency_input,
             self._frame.timeout_input,

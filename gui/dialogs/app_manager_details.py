@@ -41,7 +41,7 @@ class AppDetailsDialog(QDialog):
         self.setWindowIcon(get_themed_icon("info.svg"))
         self.setMinimumSize(750, 560)
         self.setModal(False)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
@@ -181,7 +181,13 @@ class AppDetailsDialog(QDialog):
                 rq.append(item.text())
         sel = rc + rq
         if not sel:
-            QMessageBox.warning(self, "No Selection", f"No permissions selected to {action}.")
+            QMessageBox.warning(
+                self,
+                "No Selection",
+                f"No permissions selected to {action}.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         for perm in sel:
             self._rw(

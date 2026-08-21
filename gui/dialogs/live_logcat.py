@@ -35,7 +35,7 @@ class LiveLogcatDialog(QDialog):
         task_supervisor: QtTaskSupervisor | None = None,
         log_service=None,
     ):
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent, Qt.WindowType.Window)
         self._form_controller = LiveLogcatForm(self)
         self._stream_controller = LiveLogcatStream(self)
         self._lifecycle_controller = LiveLogcatLifecycle(self)
@@ -76,9 +76,9 @@ class LiveLogcatDialog(QDialog):
         self.setMinimumSize(640, 420)
         self.resize(1000, 650)
         self.setModal(False)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         # 二级日志窗口不参与“最后窗口关闭即退出”的应用级判定。
-        self.setAttribute(Qt.WA_QuitOnClose, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
@@ -176,25 +176,25 @@ class LiveLogcatDialog(QDialog):
     def _export(self):
         return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._export()
 
-    @Slot(object)
+    @Slot(object)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
     def _on_lines_signal(self, batch: LogcatBatch):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._on_lines_signal(batch)
 
-    @Slot(int)
+    @Slot(int)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
     def _on_dropped_signal(self, count: int):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._on_dropped_signal(count)
 
-    @Slot(str)
+    @Slot(str)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
     def _on_worker_status_signal(self, message: str):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._on_worker_status_signal(message)
 
-    @Slot(object)
+    @Slot(object)  # type: ignore  # PySide6 stub 将 Slot 装饰器限定为单参函数
     def _on_worker_terminated_signal(self, result: LogcatTermination):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)

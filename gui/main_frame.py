@@ -4,6 +4,7 @@ import os
 import shutil
 import threading
 from collections.abc import Callable
+from typing import cast
 
 from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QIcon, QMouseEvent, QResizeEvent
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner
@@ -133,7 +135,7 @@ class MainFrame(QMainWindow):
         self.log_panel = LogPanel()
         self.left_panel = SidePanel()
         self.adb_controller = ADBController(self.log_service)
-        self.adb_controller.window_owner = self
+        setattr(self.adb_controller, "window_owner", self)
         self.task_supervisor = QtTaskSupervisor()
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
@@ -285,7 +287,7 @@ class MainFrame(QMainWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
-        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
@@ -443,7 +445,7 @@ class MainFrame(QMainWindow):
         output = getattr(log_panel, "text_output", None)
         if output is None:
             minimum_height = getattr(log_panel, "minimumHeight", None)
-            return max(32, int(minimum_height())) if callable(minimum_height) else 32
+            return max(32, int(cast(int, minimum_height()))) if callable(minimum_height) else 32
         return max(
             32,
             int(output.fontMetrics().height()) + 2 * max(0, int(output.frameWidth())),
@@ -547,7 +549,7 @@ class MainFrame(QMainWindow):
         left_col.setContentsMargins(0, 0, 0, 0)
         left_col.setSpacing(1)
         dw = self.left_panel.device_widget
-        dw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        dw.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         # Devices 的安全下限由当前字体下的一行列表和全部动作行动态度量。
         dw.setMinimumHeight(0)
         self._apply_log_soft_minimum()
@@ -572,7 +574,7 @@ class MainFrame(QMainWindow):
             stored_device_log_ratio,
             fallback=DEFAULT_DEVICE_LOG_RATIO,
         )
-        self._device_log_splitter = QSplitter(Qt.Vertical)
+        self._device_log_splitter = QSplitter(Qt.Orientation.Vertical)
         self._device_log_splitter.setObjectName("deviceLogSplitter")
         self._device_log_splitter.setAccessibleName("Devices and operation log splitter")
         self._device_log_splitter.setHandleWidth(8)
@@ -602,7 +604,7 @@ class MainFrame(QMainWindow):
             if stored_ratio is not None
             else ratio_from_sizes(lw, rw)
         )
-        self._panel_splitter = QSplitter(Qt.Horizontal)
+        self._panel_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._panel_splitter.setHandleWidth(8)
         self._apply_splitter_style()
         self._panel_splitter.addWidget(left_wrapper)
@@ -745,7 +747,7 @@ class MainFrame(QMainWindow):
         self._refresh_save_path()
         self._apply_splitter_style()
         # 左侧容器不属于 SidePanel 控件树，需要在此单独刷新分组框和设备列表。
-        lw = self.findChild(QWidget, "leftPanelWrapper")
+        lw = cast(QWidget | None, self.findChild(QWidget, "leftPanelWrapper"))
         if lw:
             lw.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
             for g in lw.findChildren(QGroupBox):
@@ -1164,9 +1166,9 @@ class MainFrame(QMainWindow):
         self._save_pending_device_log_sizes()
 
     def _apply_window_flags(self):
-        flags = Qt.FramelessWindowHint | Qt.Window
+        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
         if self._always_on_top:
-            flags |= Qt.WindowStaysOnTopHint
+            flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
 
     def _set_always_on_top_native(self, enabled: bool) -> bool:
@@ -1410,7 +1412,7 @@ class MainFrame(QMainWindow):
         if not callable(size_hint):
             return minimum
         try:
-            return max(minimum, int(size_hint().height()))
+            return max(minimum, int(cast(QSize, size_hint()).height()))
         except (AttributeError, RuntimeError, TypeError, ValueError):
             return minimum
 
@@ -1587,7 +1589,7 @@ class MainFrame(QMainWindow):
         )._is_toolbar_drag_target(position)
 
     def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton and self._is_toolbar_drag_target(
+        if event.button() == Qt.MouseButton.LeftButton and self._is_toolbar_drag_target(
             event.position().toPoint()
         ):
             handle = self.windowHandle()
@@ -1600,7 +1602,7 @@ class MainFrame(QMainWindow):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() & Qt.LeftButton and self._drag_pos:
+        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
             event.accept()
             return
@@ -1611,7 +1613,7 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if event.button() == Qt.LeftButton and self._is_toolbar_drag_target(
+        if event.button() == Qt.MouseButton.LeftButton and self._is_toolbar_drag_target(
             event.position().toPoint()
         ):
             self._toggle_maximize_restore()
@@ -1665,7 +1667,7 @@ class MainFrame(QMainWindow):
             getattr(self, "_close_controller", None) or CloseController(self)
         )._flush_shutdown_state()
 
-    def _on_application_finalized(self, result: object | None, residual: tuple) -> None:
+    def _on_application_finalized(self, result: TaskStopResult | None, residual: tuple) -> None:
         return (
             getattr(self, "_close_controller", None) or CloseController(self)
         )._on_application_finalized(result, residual)

@@ -1,7 +1,7 @@
 """应用管理器对话框 — 列出、筛选、管理、备份/恢复设备上的应用。"""
 
 from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QTextEdit
 
 from gui.dialogs.app_manager_batch import AppManagerBatch
 from gui.dialogs.app_manager_details import AppDetailsDialog  # noqa: F401  供测试直接导入。
@@ -66,8 +66,11 @@ class AppSortProxy(QSortFilterProxyModel):
 
 
 class AppManagerDialog(QDialog):
+    # 日志区由 AppManagerForm 控制器创建，此处提供类级类型声明供跨控制器解析。
+    log_output: QTextEdit
+
     def __init__(self, parent=None, device_ip: str = ""):
-        super().__init__(parent, Qt.Window)
+        super().__init__(parent, Qt.WindowType.Window)
         self.device_ip = device_ip
         self.selected_packages = set()
         self._syncing_selection = False
@@ -96,7 +99,7 @@ class AppManagerDialog(QDialog):
         self.setMinimumSize(760, 600)
         self.resize(1000, 660)
         self.setModal(False)
-        self.setAttribute(Qt.WA_DeleteOnClose)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)

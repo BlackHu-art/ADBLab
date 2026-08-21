@@ -4,10 +4,16 @@ import os  # noqa: F401  测试通过 remote_panel 命名空间补丁 os.path.is
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import cast
 
 from PySide6.QtCore import QCoreApplication, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import QWidget  # noqa: F401  测试补丁 remote_panel 的 QWidget.closeEvent。
+from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWidget.closeEvent。
+    QComboBox,
+    QLabel,
+    QPushButton,
+    QWidget,
+)
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
@@ -113,6 +119,18 @@ class RemotePanel(BasePanel):
         "rotate_portrait": "device-rotate.svg",
         "rotate_landscape": "device-rotate.svg",
     }
+
+    # 表单控件由 RemotePanelForm 控制器创建，此处提供类级类型声明供跨控制器解析。
+    btn_start: QPushButton
+    btn_stop: QPushButton
+    preset: QComboBox
+    maxsize: QComboBox
+    fps: QComboBox
+    codec: QComboBox
+    buffer: QComboBox
+    bitrate: QComboBox
+    orientation: QComboBox
+    _status_label: QLabel
 
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
@@ -355,6 +373,7 @@ class RemotePanel(BasePanel):
 
                 def close_sessions():
                     try:
+                        assert close_input is not None  # 上游 callable 守卫收窄
                         close_input()
                     except Exception as exc:
                         record_input_error(exc)
@@ -387,6 +406,7 @@ class RemotePanel(BasePanel):
                 if remaining <= 0:
                     return False
                 if worker_running():
+                    assert worker is not None  # worker_running() 已排除 None
                     worker.wait(max(0, min(50, int(remaining * 1000))))
                 else:
                     time.sleep(min(remaining, 0.05))
@@ -395,6 +415,7 @@ class RemotePanel(BasePanel):
         def force_stop(timeout: float) -> bool:
             if not process_running():
                 return False
+            assert scrcpy_service is not None  # process_running() 已排除 None
             forced = bool(scrcpy_service.force_stop(process_key, timeout))
             if forced:
                 process_terminal.set()
@@ -547,8 +568,8 @@ class RemotePanel(BasePanel):
                 current = cls._launch_worker_reaper_states.get(worker_key)
                 if current is not state:
                     return
-                current["attempts"] = int(current["attempts"]) + 1
-                attempts = int(current["attempts"])
+                attempts = cast(int, current["attempts"]) + 1
+                current["attempts"] = attempts
                 if attempts >= cls._LAUNCH_WORKER_DELETE_RETRY_LIMIT:
                     current["exhausted"] = True
             if attempts < cls._LAUNCH_WORKER_DELETE_RETRY_LIMIT:

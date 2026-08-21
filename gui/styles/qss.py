@@ -1,5 +1,7 @@
 """提供 ADBLab 控件使用的 QSS 样式模板。"""
 
+from typing import Any, cast
+
 from PySide6.QtGui import QFontMetrics
 
 from .theme import _tc
@@ -113,7 +115,7 @@ class QSSMixin:
     @classmethod
     def INPUT_STYLE(cls) -> str:
         # QSS 加载 SVG 时不会继承控件的前景色，因此使用按主题固化描边色的资源。
-        theme_suffix = "dark" if cls.current_theme() == "Dark" else "light"
+        theme_suffix = "dark" if cast(Any, cls).current_theme() == "Dark" else "light"
         arrow_icon = f"caret-down-qss-{theme_suffix}.svg"
         up_arrow_icon = f"caret-up-qss-{theme_suffix}.svg"
         return f"""
@@ -215,7 +217,7 @@ class QSSMixin:
     def group_box_title_margin(cls) -> int:
         """返回能为当前界面字体保留标题净空的分组框上边距。"""
 
-        title_height = QFontMetrics(cls.font_for_role(FontRole.UI)).height()
+        title_height = QFontMetrics(cast(Any, cls).font_for_role(FontRole.UI)).height()
         # 项目内分组布局至少还会提供 12px 的内容起始距离。这里按标题实际高度
         # 动态补足剩余空间，使常规字号和最大字号下都保留至少 4px 的净空。
         return max(8, title_height - 8)

@@ -1,6 +1,9 @@
 """协调设备、应用、系统和 Remote 子面板的延迟加载与信号连接。"""
 
+from typing import cast
+
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QGroupBox,
     QPushButton,
@@ -107,8 +110,8 @@ class SidePanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         # 响应式重排优先；极窄宽度或超大字体下保留可访问的横向兜底。
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setStyleSheet(
             "QScrollArea { border: none; background: transparent; }\n"
             f"{BaseStyles.SCROLLBAR_STYLE()}"
@@ -151,7 +154,7 @@ class SidePanel(QWidget):
                 return super().eventFilter(watched, event)
             apply_responsive_width = getattr(tab, "apply_responsive_width", None)
             if callable(apply_responsive_width):
-                apply_responsive_width(event.size().width())
+                apply_responsive_width(cast(QResizeEvent, event).size().width())
         return super().eventFilter(watched, event)
 
     def _connect_lazy_tab_signals(self, index: int, tab=None):
@@ -198,7 +201,7 @@ class SidePanel(QWidget):
 
     # ── MainFrame 使用的公共接口 ─────────────────────────────────────────
 
-    def update_device_list(self, devices: list[str] = None):
+    def update_device_list(self, devices: list[str] | None = None):
         self._devices_tab.update_device_list(devices)
 
     def set_device_discovery_state(self, state: str) -> None:

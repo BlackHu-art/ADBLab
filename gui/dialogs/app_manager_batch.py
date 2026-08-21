@@ -171,7 +171,13 @@ class AppManagerBatch:
             return
         pkgs = self._frame._get_selected_pkgs()
         if not pkgs:
-            QMessageBox.warning(self._frame, "No Selection", "No apps selected.")
+            QMessageBox.warning(
+                self._frame,
+                "No Selection",
+                "No apps selected.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         if not self._frame._confirm_dangerous_action(action, len(pkgs)):
             return
@@ -234,7 +240,13 @@ class AppManagerBatch:
 
         pkgs = self._frame._get_selected_pkgs()
         if not pkgs:
-            QMessageBox.warning(self._frame, "No Selection", "No apps selected.")
+            QMessageBox.warning(
+                self._frame,
+                "No Selection",
+                "No apps selected.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         sd = QFileDialog.getExistingDirectory(
             self._frame, "Backup Directory", self._frame._global_save_dir()
@@ -270,7 +282,13 @@ class AppManagerBatch:
     def _show_details(self):
         packages = self._frame._get_selected_pkgs()
         if not packages:
-            QMessageBox.warning(self._frame, "No Selection", "No app selected.")
+            QMessageBox.warning(
+                self._frame,
+                "No Selection",
+                "No app selected.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         pkg = packages[0]
         if pkg:
@@ -278,7 +296,13 @@ class AppManagerBatch:
 
     def _create_preset(self):
         if not self._frame.selected_packages:
-            QMessageBox.warning(self._frame, "No Selection", "Select apps first.")
+            QMessageBox.warning(
+                self._frame,
+                "No Selection",
+                "Select apps first.",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
             return
         dlg = QDialog(self._frame)
         dlg.setWindowTitle("Create Preset")
@@ -377,7 +401,13 @@ class AppManagerBatch:
 
     def _report_preset_error(self, action: str, error: Exception) -> None:
         message = f"Unable to {action} preset: {error}"
-        QMessageBox.critical(self._frame, "Preset Error", message)
+        QMessageBox.critical(
+            self._frame,
+            "Preset Error",
+            message,
+            QMessageBox.StandardButton.Ok,
+            QMessageBox.StandardButton.NoButton,
+        )
         self._frame.status_bar.showMessage(message)
         self._frame.log(message)
 
