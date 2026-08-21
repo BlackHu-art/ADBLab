@@ -153,9 +153,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **上下游**：上游为 `main.py`、SettingsDialog、MainFrame/SidePanel 的宽度事件；下游为
   QApplication、主窗口、面板和对话框。
 - **配置/数据/外部服务**：空字体族表示系统默认；不可用字体回退到 Qt 系统字体；UI 字号
-  8–22、日志字号 7–16；通用面板断点为 420/560 逻辑像素，Device 在 360 像素切换列表布局，
-  Settings 紧凑断点为 `720 + max(0, UI 字号 - 12) × 18`，工具栏保存路径在最小窗口宽度起显示
-  末级目录，1040 像素起切换为宽屏省略模式。无网络或设备依赖。
+  8–22、日志字号 7–16；通用面板断点为 420/560 逻辑像素，Device 按控件最小宽度动态切换列表/网格布局，
+  Settings 紧凑断点为 `640 + max(0, UI 字号 - 12) × 18`，工具栏保存路径在最小窗口宽度起显示
+  末级目录，并按工具栏剩余宽度动态省略。无网络或设备依赖。
 - **测试/风险/待确认**：`ui_font_changed`、`log_font_changed`、`fonts_changed` 与
   `theme_changed` 相互独立；日志字号变化不会触发界面字体订阅者，主题变化不会伪装成字体变化。
   单测覆盖信号、字体回退、面板/对话框刷新、控件身份保持、最大字号无横向溢出及分组标题净空、
@@ -164,7 +164,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### DeviceStore
 
-- **职责/接口**：`load/save/upsert_devices/get_device` 管理用户目录 `connected_devices.yaml` 并迁移旧 `resources/connected_devices.yaml`（ADR-0006 起为空映射占位，不再携带历史设备标识）。
+- **职责/接口**：`load/save/upsert_devices/get_all/get_basic_devices_info/get_full_devices_info` 管理用户目录 `connected_devices.yaml` 并迁移旧 `resources/connected_devices.yaml`（ADR-0006 起为空映射占位，不再携带历史设备标识）。
 - **输入/输出**：ADB 设备标识与属性；输出 YAML 和设备字典。
 - **上下游**：上游 Controller/DeviceManager；下游 PyYAML、用户目录。
 - **配置/数据/外部服务**：存储设备连接信息和显示属性；无数据库。
@@ -194,14 +194,14 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 ### Remote
 
 - **职责/接口**：`ScrcpyService` 构建 `ScrcpyLaunchPlan` 并启动/停止（强制停止只在进程已解除
-  tracking 时确认成功）；`RemoteControlService`/`RemoteInputEngine` 转换按键、滑动和旋转（旋转
-  前置设置失败会中止，输入 claim 只对活动会话生效）；`RemotePanel` 管理 worker、stderr/FPS、
+  tracking 时确认成功）；`RemoteControlService` 转换按键、滑动和旋转（旋转
+  前置设置失败会中止），`RemoteInputEngine` 负责外部投屏窗口标题与聚焦；`RemotePanel` 管理 worker、stderr/FPS、
   watchdog 和串行输入 executor，并把关闭/超时经 TaskSupervisor 治理。
 - **输入/输出**：设备、编码器、码率/分辨率/FPS/方向等设置；输出 scrcpy 窗口、状态/FPS 和 ADB 输入。
 - **上下游**：上游 SidePanel；下游 scrcpy、ADBBridge、Win32 window API、ProcessRunner。
 - **配置/数据/外部服务**：`scrcpy_*` 设置键（已入 DEFAULTS 白名单）、尺寸 TTL 缓存。
-- **测试/风险/待确认**：服务、面板与关闭清理覆盖较好；输入已锁定 scrcpy 启动时的
-  `_active_device`，会话未运行时拒绝输入，多选启动仅使用第一个选择并给出不含设备标识的警告；
+- **测试/风险/待确认**：服务、面板与关闭清理覆盖较好；启动与输入均要求恰好一个选中设备（多选直接拒绝，警告不含设备标识）；
+  `_active_device` 用于 warmup 与脱敏，会话未运行时拒绝输入；
   supervisor 超时结果携带 `completion_error`，避免把强制停止误报为成功。
   非 Windows 依赖系统 scrcpy，真实设备控制仍待验证。
 

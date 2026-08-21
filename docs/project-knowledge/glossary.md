@@ -51,7 +51,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | monitor | MobilePerf 的单类指标采集器，如 CPU/Mem/FPS | `mobileperf/android/*.py` |
 | RuntimeData | MobilePerf 每运行一份的运行时状态；类属性读写经元类代理转发到当前运行实例，调用点保持兼容 | `mobileperf/android/globaldata.py` |
 | Monkey | Android 随机事件压力工具；项目有普通测试模式和 MobilePerf 可选 monitor | `models/adb_testing.py`、`mobileperf/android/monkey.py` |
-| FocusDetector | 通过多个 dumpsys 路径解析前台包名 | `models/base/focus_detector.py` |
+| 前台包名检测 | 通过多个 dumpsys 路径解析前台包名的模块级函数（无 FocusDetector 类） | `models/base/focus_detector.py`（`detect_current_package` / `extract_package_name`） |
 | bugreport | Android 系统诊断归档，可选经 chkbugreport JAR 转换 | `models/adb_testing.py` |
 | ANR | Application Not Responding 诊断文件/状态 | Controller/testing model |
 | Perfetto | 外部性能 trace 分析网站，本项目只提供打开链接 | `PerformanceLauncherDialog.open_perfetto` |

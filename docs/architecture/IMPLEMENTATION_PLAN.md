@@ -29,18 +29,20 @@ Infrastructure Adapters → Application Ports
 Bootstrap / Composition Root → 负责装配
 ```
 
-第一阶段只新增真正需要的架构内核，不机械套用四层目录：
+第一阶段只新增真正需要的架构内核，不机械套用四层目录（`infrastructure/` 层未单列，命令/进程执行边界仍由 `core/exec.py` 承载）：
 
 ```text
 adblab/
 ├── application/
 │   ├── operations.py
 │   ├── cancellation.py
-│   └── supervision.py
-├── infrastructure/
-│   └── execution.py
+│   ├── supervision.py
+│   ├── envelope.py
+│   ├── install_batch.py
+│   ├── device_batch.py
+│   └── screen_record.py
 └── presentation/
-    └── qt_operation_bridge.py
+    └── qt_task_supervisor.py
 ```
 
 旧 `controllers/`、`models/`、`gui/`、`core/` 和 `utils/` 在核心迁移完成前保持原路径。

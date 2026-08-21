@@ -50,7 +50,7 @@ flowchart TD
 | `gui/dialogs/file_explorer.py` | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
 | `gui/panels/remote_panel.py` | `services.remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
 | `gui/dialogs/performance_launcher.py` | `services.mobileperf_runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
-| `core.settings_manager` | `core.log_service`、`utils.user_data` | 设置错误日志与用户路径 | core 内部存在横向依赖 |
+| `core.settings_manager` | `utils.user_data`、`utils.resource_path` | 用户配置路径与种子资源 | 错误日志经可注入 `set_error_sink` 输出，不直接依赖 log_service |
 | `mobileperf/android/*` | `mobileperf/android/tools/androiddevice.py` | 采集设备指标 | 与主应用执行层重复实现 |
 
 ## 第三方 Python 依赖
@@ -131,9 +131,9 @@ service/model 构造。
 | 设备属性 | `ADBDevice.get_device_info_async` | `getprop`、`dumpsys`、`wm` | device | 属性字典 | 批量 labeled section 解析 | 有 |
 | 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | package 校验不统一；批量 worker 有部分校验 | 有，实机缺 |
 | 输入控制 | `ADBAdvanced`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 结果或乐观布尔 | 低延迟持久 shell；设备执行未回读 | 有 |
-| 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除确认 | 有 |
+| 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` | 有 |
 | 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair/ping/netstat` | host/device port | CommandResult | connect target 校验；其他端口校验不完整 | 部分 |
-| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/tag/path | 流、文件、目录 | ZIP 安全解压；诊断参数经 `utils/adb_values.py` 白名单/规范化（包名、dumpsys 服务名、`gfxinfo`/`wakelocks`/`netstats detail`） | 有 |
+| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/tag/path | 流、文件、目录 | ZIP 安全解压；诊断参数经 `utils/adb_values.py` 白名单/规范化（包名、dumpsys 服务名、tcp 端口、geo 坐标） | 有 |
 | 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | PNG 签名检查和回退；录屏 pull 与远端 cleanup 分离报告，结果携带 `batch_id` | 有 |
 | 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 移植内核校验较弱、命令实现独立 | 部分 |
 | 任意 shell/intent | SystemPanel/ADBSystemMixin | `adb shell ...`、`am start/broadcast` | 用户文本 | CommandResult | 参数校验仍不完整（弹窗确认已全局移除，防护依赖校验与日志） | 部分 |
@@ -172,7 +172,7 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
    遗留 `requests`/`urllib3` 描述。
 2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入 Ruff 门禁；
    可进一步在 CI 加入 format check 并消除 ruff.toml 与 pyproject.toml 的重复配置。
-3. 固定 Auto-Clean 第三方 action 到不可变 commit SHA，并把权限缩小到实际需要。
+3. Auto-Clean 已为只读 `gh` CLI 审计（无第三方 action）；如后续引入 action，再固定到不可变 commit SHA 并把权限缩小到实际需要。
 4. 为 aapt、Java、非 Windows scrcpy 提供启动前能力检查与 UI 提示。
 5. 长期将 MobilePerf 的 ADB 执行接口适配到统一抽象，至少统一超时、编码、进程跟踪和日志脱敏
    策略；`mobileperf/**` 的 E402/UP031 Ruff 豁免已移除，不再是该重构的前置条件。

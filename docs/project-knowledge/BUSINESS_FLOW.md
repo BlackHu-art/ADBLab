@@ -42,7 +42,7 @@ flowchart TD
 | 前置条件 | QApplication 已创建；MainFrame 已完成窗口和面板初始化；Settings 以 MainFrame 为 parent 时才启用两个布局重置按钮 |
 | 字体主流程 | Settings 将字体族和字号通过 `AppSettings.update()` 批量更新 → `BaseStyles.reload_from_settings()` 生成并应用不可变 FontConfig → QApplication 接收 UI 字体 → 按实际变化发送 `ui_font_changed`、`log_font_changed` 和总括 `fonts_changed` → 主窗口、日志面板、面板/对话框分别刷新自己订阅的字体角色、安全最小高度和分组标题净空；普通操作文案统一使用 UI，提示/元数据使用 UI_SMALL，技术数据和日志分别使用 MONO/LOG |
 | 窗口主流程 | 四边或四角透明热区按压 → `QWindow.startSystemResize()` → 普通窗口尺寸变化 → 350 毫秒防抖批量保存宽高；工具栏空白区按压优先调用 `startSystemMove()`，双击在最大化与普通状态间切换 |
-| 分栏与响应式主流程 | 用户拖动 8 像素透明 QSplitter 热区 → 300 毫秒防抖批量保存左右像素宽度和左栏比例 → 左栏实际宽度驱动 Device，各功能页只以自身滚动视口实际宽度为准 → Device 在 360 像素处切换“列表侧栏/列表上方按钮网格”，Apps/System/Remote 按 420/560 默认断点重排既有控件；设备区允许纵向收缩且日志区至少保留 120 像素；每个懒加载页签位于禁用横向滚动的可纵向滚动区域；顶部全局保存路径从 860 像素最小窗口宽度起显示末级目录，1040 像素起按字体度量省略完整路径 |
+| 分栏与响应式主流程 | 用户拖动 8 像素透明 QSplitter 热区 → 300 毫秒防抖批量保存左右像素宽度和左栏比例 → 左栏实际宽度驱动 Device，各功能页只以自身滚动视口实际宽度为准 → Device 按控件最小宽度动态切换列表/网格布局，Apps/System/Remote 按 420/560 默认断点重排既有控件；设备区允许纵向收缩且日志区保留字体感知的软下限；每个懒加载页签位于横向滚动按需的可纵向滚动区域；顶部全局保存路径从 860 像素最小窗口宽度起显示末级目录，并按工具栏剩余宽度动态省略完整路径 |
 | Settings 布局流程 | Settings 调用 `window_layout_snapshot()` 展示当前普通窗口尺寸与左右比例；“Reset Size”调用 `restore_default_window_size()`，“Reset Split”调用 `reset_panel_split()`；Appearance、Window、Storage & Logs 依据滚动视口宽度及 UI 字号在双列/纵向布局间切换，保存目录按钮始终入布局，内容超高时只使用纵向滚动区，固定页脚保持可操作 |
 | 异常/回退 | 原生移动或缩放未被窗口系统接受时，工具栏移动保留手动拖动回退，缩放热区不自行模拟尺寸；最大化/全屏时缩放热区隐藏且不保存该状态尺寸；无 MainFrame parent 的独立 Settings 只展示设置回退值并禁用布局重置；重排不销毁控件、不重复连接信号 |
 | 涉及模块 | `gui/styles/typography.py`、`gui/styles/fonts.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py`、`gui/widgets/responsive_layout.py`、`gui/dialogs/settings_dialog.py`、`gui/panels/`、`core/settings_manager.py` |
@@ -65,7 +65,7 @@ flowchart LR
 | 项目 | 内容 |
 | --- | --- |
 | 触发条件 | 用户输入 `ip:port`/`[IPv6]:port` 并点击连接，或请求刷新 |
-| 前置条件 | 目标通过 `normalize_adb_target()`；ADB server 可用；设备允许调试 |
+| 前置条件 | 目标通过 `normalize_adb_connect_target()`；ADB server 可用；设备允许调试 |
 | 主流程 | UI 校验 → Controller 调用 `connect_device_async` → `adb connect` → 解析返回 → 刷新设备列表 → 并行/批量读取 getprop 和探测信息 → DeviceStore upsert → 更新 UI |
 | 异常流程 | 地址不完整在 UI/Controller 拒绝；ADB 超时/返回非零形成失败结果；已连接文本仍会触发刷新；离线/未授权设备信息不完整 |
 | 涉及模块 | `gui/panels/device_manager.py`、`controllers/_device.py`、`models/adb_device.py`、`models/device_store.py` |
@@ -82,8 +82,8 @@ sequenceDiagram
     participant S as "DeviceStore"
 
     U->>DM: 输入连接目标
-    DM->>DM: normalize_adb_target
-    DM-->>C: connect_device_requested
+    DM->>DM: normalize_adb_connect_target
+    DM-->>C: connect_requested
     C->>C: 再次校验/建立 pending trace
     C->>M: connect_device_async
     M->>A: adb connect target
@@ -264,8 +264,8 @@ sequenceDiagram
 
 MainFrame 打开的设备对话框、Performance Launcher 以及 Controller 打开的 ScreenshotViewer
 都作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，并由 MainFrame/Controller
-持有强引用、安装事件过滤器和执行显式关闭清理，因此可以与主界面自由切换。About 与 Settings
-继续使用模态交互。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
+持有强引用、安装事件过滤器和执行显式关闭清理，因此可以与主界面自由切换。About 继续使用模态交互，
+Settings 作为非模态独立窗口打开。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
 应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
 DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
 

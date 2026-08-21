@@ -49,8 +49,8 @@ flowchart LR
   `QtTaskSupervisor`，连接全部 GUI 信号并管理对话框。
 - `MainFrame` 是所有二级窗口的生命周期根：设备类对话框、Performance Launcher 和
   ScreenshotViewer 作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，由
-  MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 与 Settings
-  保持有意的模态交互。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
+  MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 保持有意的模态交互，
+  Settings 作为非模态独立窗口打开。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
 - `MainFrame` 保持无边框外观，但通过 `FramelessResizeController` 在四边和四角建立八个透明
   热区，并将按压交给 `QWindow.startSystemResize()`；工具栏拖动优先使用
   `QWindow.startSystemMove()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
@@ -58,9 +58,8 @@ flowchart LR
   分别防抖写入设置；分隔条常驻线条不可见，但保留 8 像素透明拖动热区。设置页只通过
   `window_layout_snapshot()`、`restore_default_window_size()` 和 `reset_panel_split()` 公开接口
   展示或恢复布局，不直接访问 MainFrame 私有控件。顶部全局保存路径从最小窗口宽度起保持可见，
-  1040 像素以下显示末级目录，宽窗口按字体度量从中间省略，避免与工具栏按钮重叠。
-- `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载；每个功能页放入禁用
-  横向滚动的 `QScrollArea`。左栏分割宽度和各功能页滚动视口宽度变化会触发响应式重排，Device、Apps、
+  窄窗口显示末级目录，宽窗口按字体度量从中间省略（按工具栏剩余宽度动态计算），避免与工具栏按钮重叠。
+- `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载；每个功能页放入 `QScrollArea`（横向滚动按需，极窄宽度下保留可访问的横向兜底）。左栏分割宽度和各功能页滚动视口宽度变化会触发响应式重排，Device、Apps、
   System、Remote 只移动既有控件，不重建控件或重新连接信号。
 - `gui/panels/` 负责普通操作表单；`gui/dialogs/` 负责需要独立生命周期的复杂任务。
 - 视图通常不直接阻塞执行命令，但 App Manager、File Explorer、Live Logcat、Performance Launcher 各自持有 QThread/worker 或 runner。
@@ -118,8 +117,8 @@ flowchart LR
   `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用可纵向滚动的内容区，
   以滚动视口实际宽度及当前 UI 字号调整 Appearance、Window、Storage 与操作按钮的排列；
   主面板在实际分栏或滚动视口宽度变化时重排。
-- `gui/widgets/responsive_controller.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
-  用一次度量生成布局计划（`LayoutPlan`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
+- `gui/widgets/responsive_coordinator.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
+  用一次度量生成布局计划（内部为 `ReflowTarget`/`_plan_history`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
   的收敛循环（`MAX_APPLY_ROUNDS = 3`），窗口尺寸变化经 40 毫秒防抖（`RESIZE_DEBOUNCE_MS = 40`）
   批量触发重排；`gui/widgets/preset_spin_box.py` 提供严格整数预设输入（`StrictIntComboBox`），
   保证 Monkey 事件数、throttle 等业务值始终是合法整数。
@@ -133,8 +132,7 @@ flowchart LR
 - 用户日志仅接收 `INFO/SUCCESS/WARNING/ERROR/CRITICAL`，由 `LogService` 缓冲后发送到
   `LogPanel`；时间戳在日志产生时由 LogService 生成，批次信号携带 `(时间戳, 级别, 消息)`
   三元组；DEBUG 拦截只在服务层发生（单一职责），面板渲染收到的记录原样显示。
-  `LogPanel` 每条记录渲染为独立 HTML 块：级别列固定宽度（`&nbsp;` 补位，普通空格会被
-  HTML 折叠导致错位）、ERROR/CRITICAL 加粗、多行消息悬挂缩进；时间戳保留在记录中但
+  `LogPanel` 每条记录渲染为独立 HTML 块：级别列固定宽度（级别标签 + 单空格对齐）、ERROR/CRITICAL 加粗、多行消息悬挂缩进；时间戳保留在记录中但
   不渲染；条目 HTML 按 (级别, 消息) 缓存，主题切换重建缓存并整份重绘；
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
@@ -263,11 +261,12 @@ sequenceDiagram
   `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 走 `DeviceBatchUseCase`，录屏走
   `ScreenRecordUseCase`。Controller 仍保留 `_batch_starts` 兼容索引、安装所有权/generation 映射和
   Monkey 停止映射等编排状态，不能概括为“不再持有批次/单发共享状态”。
-- 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；`shell=True`
-  已按 ADR-0003 Phase 1 移除，`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
-- 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher、
-  LiveLogcat 与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止），
-  不再各自在 closeEvent 里同步等待 worker。
+- 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；调用层
+  已无 `shell=True`（API 参数 `shell` 默认 False 仍保留），`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
+- 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher
+  与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止）；
+  LiveLogcat 直接连接 `task_supervisor.task_stopped/owner_stopped` 并调用 `stop_owner_async`。
+  它们都不再各自在 closeEvent 里同步等待 worker。
 - 本地配置已按 ADR-0006 引入由加载/保存流程托管的 `schema_version` 和 v1→v2→v3 迁移链：
   无版本文件按 v1 迁移，受支持版本迁移后剔除未知键。高于当前版本的文件在加载时
   只读取已知键且不立即改写；但之后任一保存会以已知键快照覆盖文件，虽保留较高
