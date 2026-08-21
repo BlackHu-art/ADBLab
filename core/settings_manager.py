@@ -354,15 +354,19 @@ class AppSettings:
             _log_error("ERROR", f"Failed to save settings: {error}")
 
     def _schedule_save(self) -> None:
-        """重新启动单个防抖计时器。"""
+        """重新启动单个防抖计时器。
+
+        旧计时器的取消在锁内完成，避免并发 update/reset 取消已被替换的
+        Timer 之后仍然启动新 Timer 的窗口（审计 T-5）。
+        """
 
         with self._lock:
             previous_timer = self._save_timer
+            if previous_timer is not None:
+                previous_timer.cancel()
             timer = threading.Timer(0.5, self._save_atomic)
             timer.daemon = True
             self._save_timer = timer
-        if previous_timer is not None:
-            previous_timer.cancel()
         timer.start()
 
     def get(self, key: str, default: Any = None) -> Any:

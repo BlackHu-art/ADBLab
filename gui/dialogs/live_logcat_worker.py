@@ -9,8 +9,7 @@ from enum import Enum
 
 from PySide6.QtCore import QThread, Signal
 
-from models.base.command_runner import CommandRunner
-from models.base.process_runner import ProcessRunner
+from core.exec import CommandRunner, ProcessRunner
 
 THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
 FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")

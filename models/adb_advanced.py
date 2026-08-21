@@ -11,10 +11,12 @@ import subprocess
 import time
 from datetime import datetime
 
+from core.exec import ProcessRunner
+from utils.atomic_text import atomic_write_text
+
 from .adb_model import ADBModelCore, async_command
 from .adb_network import ADBNetworkMixin
 from .adb_system import ADBSystemMixin
-from .base.process_runner import ProcessRunner
 
 
 class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
@@ -267,8 +269,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             cmd.extend(["-m", max_lines])
         r = self._run(cmd, timeout=30, device_ip=device_ip)
         if r["success"]:
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.write(r["output"])
+            atomic_write_text(log_path, r["output"])
             return {
                 "success": True,
                 "device_ip": device_ip,

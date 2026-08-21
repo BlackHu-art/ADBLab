@@ -2,11 +2,12 @@
 
 import os
 import subprocess
+import threading
+import time
 
 from PySide6.QtCore import QThread, Signal
 
-from .base.command_runner import CommandRunner
-from .base.process_runner import ProcessRunner
+from core.exec import CommandRunner, ProcessRunner
 
 
 class ADBWorker(QThread):
@@ -19,17 +20,17 @@ class ADBWorker(QThread):
         self.device_ip = device_ip
         self.args = args
         self.timeout = timeout
-        self._aborted = False
+        self._aborted = threading.Event()
 
     def abort(self):
         """设置中止意图，命令返回后不再发送完成结果。"""
-        self._aborted = True
+        self._aborted.set()
         self.requestInterruption()
 
     def run(self):
         """执行一次短命令，并将失败状态作为信号参数传播。"""
         result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=self.timeout)
-        if self._aborted:
+        if self._aborted.is_set():
             return
         if result.success:
             self.result_ready.emit(result.output, False)
@@ -51,11 +52,11 @@ class TransferWorker(QThread):
         self._proc = None
         self._process_key = f"transfer_{id(self)}"
         self._process_runner = ProcessRunner()
-        self._aborted = False
+        self._aborted = threading.Event()
 
     def abort(self):
         """请求中止并停止当前传输进程。"""
-        self._aborted = True
+        self._aborted.set()
         self.requestInterruption()
         self._process_runner.stop(self._process_key, timeout=2)
 
@@ -79,14 +80,17 @@ class TransferWorker(QThread):
             if stdout is None:
                 self.result_ready.emit("Transfer process stdout unavailable", True, "")
                 return
-            while not self._aborted:
+            while not self._aborted.is_set():
                 line = stdout.readline()
-                if not line and self._proc.poll() is not None:
-                    break
-                if line:
-                    last = line.rstrip("\n")
-                    self.progress.emit(last)
-            if self._aborted:
+                if not line:
+                    if self._proc.poll() is not None:
+                        break
+                    # stdout 已到 EOF 而进程尚未退出：短暂等待避免空转忙等。
+                    time.sleep(0.05)
+                    continue
+                last = line.rstrip("\n")
+                self.progress.emit(last)
+            if self._aborted.is_set():
                 return
             ret = self._proc.wait()
             local = self.args[-1] if len(self.args) >= 2 else ""

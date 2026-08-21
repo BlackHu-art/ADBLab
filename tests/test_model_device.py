@@ -2,13 +2,13 @@
 
 from unittest.mock import patch
 
+from core.exec import CommandResult
 from models.adb_device import (
     ADBDevice,
     parse_connected_devices,
     parse_getprop_output,
     parse_labeled_sections,
 )
-from models.base.command_runner import CommandResult
 
 
 def test_parse_connected_devices_ignores_adb_banner_and_header():

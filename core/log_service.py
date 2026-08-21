@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Optional
 
@@ -68,7 +69,7 @@ class LogService(QObject):
         self._enable_file_log = False
         self._log_path = user_data_root() / "logs" / "app.log"
         self._flush_interval = 200
-        self._file_handler: logging.FileHandler | None = None
+        self._file_handler: RotatingFileHandler | None = None
 
         self._timer = QTimer()
         self._timer.setInterval(self._flush_interval)
@@ -86,11 +87,17 @@ class LogService(QObject):
         self.logger.propagate = False
 
     def _add_file_handler(self) -> bool:
-        """在用户可写目录中创建仅接收 INFO 及以上级别的处理器。"""
+        """在用户可写目录中创建仅接收 INFO 及以上级别的处理器。
+
+        使用带大小上限的轮转处理器，避免 app.log 无界增长占满磁盘。
+        """
+
         try:
             Path(self._log_path).parent.mkdir(parents=True, exist_ok=True)
-            file_handler = logging.FileHandler(
+            file_handler = RotatingFileHandler(
                 self._log_path,
+                maxBytes=2 * 1024 * 1024,
+                backupCount=3,
                 encoding="utf-8",
                 delay=False,
             )

@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from models.base.process_runner import ProcessRunner
+from core.exec import ProcessRunner
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 

@@ -4,14 +4,14 @@
 - 日期：2026-08-20
 - 前置：ADR-0003（分层与物理包）、ADR-0004（services/ 归一）
 
-实施进度：Step A–D 已全部落地——`core/exec.py` 承载 `CommandResult`/`CommandRunner`/
-`ProcessRunner`/`ExecHandle`/`resolve_command`/创建标志；`models/base/command_runner.py`
-与 `models/base/process_runner.py` 转为兼容垫片；`core/adb_bridge.py`、`services/*`
-改从 `core.exec` 导入，core → models 反向依赖解除；测试 patch 目标全部迁至
-`core.exec.*`。Step C：`ProcessRunner` 树杀路径统一委托 `core/process_utils.
-kill_process_tree`（psutil，支持共享绝对截止时间），内联 taskkill 路径删除。
-Step D：`ExecHandle` 协议含 stdio 结构面，`MobilePerfRunner`/`ScrcpyService`/
-`ADBInputSession` 已面向协议标注。全量测试守护通过。
+实施进度：Step A–D 已全部落地，垫片清零完成——`core/exec.py` 承载
+`CommandResult`/`CommandRunner`/`ProcessRunner`/`ExecHandle`/`resolve_command`/创建标志；
+`core/adb_bridge.py`、`services/*`、`models/*`、`gui/*`、`controllers/*` 与全部测试的导入
+均直连 `core.exec`，`models/base/command_runner.py` 与 `models/base/process_runner.py`
+两个垫片文件已删除（2026-08-21），core → models 反向依赖解除。Step C：`ProcessRunner`
+树杀路径统一委托 `core/process_utils.kill_process_tree`（psutil，支持共享绝对截止时间），
+内联 taskkill 路径删除。Step D：`ExecHandle` 协议含 stdio 结构面，`MobilePerfRunner`/
+`ScrcpyService`/`ADBInputSession` 已面向协议标注。全量测试守护通过。
 
 ## 背景
 

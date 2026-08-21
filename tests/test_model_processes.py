@@ -5,9 +5,9 @@ import threading
 import warnings
 from unittest.mock import Mock, patch
 
+from core.exec import ProcessRunner
 from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
 from gui.panels.remote_panel import ScrcpyLaunchWorker
-from models.base.process_runner import ProcessRunner
 
 
 def test_scrcpy_launch_args_include_selected_ui_options():
@@ -235,7 +235,7 @@ def test_process_runner_spawn_supports_untracked_external_launches():
 
 
 def test_command_runner_run_to_file_streams_binary_stdout(tmp_path):
-    from models.base.command_runner import CommandRunner
+    from core.exec import CommandRunner
 
     output_path = tmp_path / "out.bin"
     proc_result = Mock(returncode=0, stderr=b"")
@@ -250,7 +250,7 @@ def test_command_runner_run_to_file_streams_binary_stdout(tmp_path):
 
 
 def test_command_runner_logs_slow_sanitized_command():
-    from models.base.command_runner import CommandRunner
+    from core.exec import CommandRunner
 
     proc_result = Mock(returncode=0, stdout="ok", stderr="")
 

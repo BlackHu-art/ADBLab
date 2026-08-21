@@ -10,9 +10,8 @@ from functools import wraps
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from adblab.application.envelope import OperationMetadata, attach_operation_metadata
+from core.exec import CommandRunner
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
-
-from .base.command_runner import CommandRunner
 
 
 def async_command(method):

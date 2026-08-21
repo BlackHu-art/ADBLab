@@ -13,11 +13,11 @@ from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
 from adblab.application.operations import OperationManager
 from controllers._app import ADBAppMixin
+from core.exec import CommandResult
 from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
 from gui.styles import BaseStyles
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
-from models.base.command_runner import CommandResult
 from models.base.focus_detector import detect_current_package, extract_package_name
 
 

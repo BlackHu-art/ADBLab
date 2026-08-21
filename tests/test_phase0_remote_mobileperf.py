@@ -3,9 +3,9 @@ from unittest.mock import Mock, patch
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from core.exec import ProcessRunner
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.panels.remote_panel import RemotePanel
-from models.base.process_runner import ProcessRunner
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 

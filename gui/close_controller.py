@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import QTimer
 
 from adblab.application.supervision import StopDisposition, ThreadedShutdownTask
-from models.base.process_runner import ProcessRunner
+from core.exec import ProcessRunner
 
 
 class CloseController:

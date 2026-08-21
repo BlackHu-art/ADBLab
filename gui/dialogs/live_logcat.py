@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.exec import CommandRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 from gui.dialogs.lifecycle import safe_disconnect
 from gui.dialogs.live_logcat_form import LiveLogcatForm
 from gui.dialogs.live_logcat_lifecycle import LiveLogcatLifecycle
@@ -21,7 +22,6 @@ from gui.dialogs.live_logcat_worker import (
 )
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
-from models.base.command_runner import CommandRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 
 
 class LiveLogcatDialog(QDialog):

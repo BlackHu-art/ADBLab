@@ -211,7 +211,11 @@ class ADBSystemMixin:
     def content_insert_async(self, device_ip: str, uri: str, binds: dict | None = None) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "content", "insert", "--uri", uri]
         for k, v in (binds or {}).items():
-            cmd.extend(["--bind", f"{k}:s:{v}"])
+            key, value = str(k), str(v)
+            # bind 语法为 key:type:value，冒号或空值会破坏解析并污染命令结构。
+            if not key or not value or ":" in key or ":" in value:
+                raise ValueError(f"invalid content insert bind: {k!r}={v!r}")
+            cmd.extend(["--bind", f"{key}:s:{value}"])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     @async_command

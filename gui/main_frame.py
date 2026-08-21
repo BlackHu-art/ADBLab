@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
+from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
@@ -42,8 +43,6 @@ from gui.window_layout import (
     ratio_from_sizes,
     split_sizes_for_constraints,
 )
-from models.base.command_runner import CommandRunner
-from models.base.process_runner import CREATE_NEW_CONSOLE, ProcessRunner
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole

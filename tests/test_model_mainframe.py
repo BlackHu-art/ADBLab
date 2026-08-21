@@ -10,12 +10,11 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QPushButton, QWidget
 
+from core.exec import CREATE_NEW_CONSOLE, CommandResult
 from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.main_frame import MainFrame, _ScanThread
 from gui.widgets.responsive_controller import ReflowReason
-from models.base.command_runner import CommandResult
-from models.base.process_runner import CREATE_NEW_CONSOLE
 
 
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():

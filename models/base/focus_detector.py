@@ -2,7 +2,7 @@
 
 import re
 
-from .command_runner import CommandRunner
+from core.exec import CommandRunner
 
 _PACKAGE_RE = re.compile(r"([\w.]+(?:\.[\w.]+)+)/")
 _TOP_ACTIVITY_RE = re.compile(r"topActivity=ComponentInfo\{([\w.]+(?:\.[\w.]+)+)/")

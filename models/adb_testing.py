@@ -13,14 +13,14 @@ import time
 import zipfile
 from datetime import datetime
 
+from core.exec import CommandRunner, ProcessRunner
 from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
+from utils.atomic_text import atomic_write_text
 from utils.resource_path import resource_path
 
 from .adb_model import ADBModelCore, async_command
-from .base.command_runner import CommandRunner
 from .base.focus_detector import detect_current_package
-from .base.process_runner import ProcessRunner
 
 
 class ADBTesting(ADBModelCore):
@@ -156,8 +156,7 @@ class ADBTesting(ADBModelCore):
             r = self._run(["adb", "-s", device_ip, "logcat", "-d"])
             if not r["success"]:
                 return {"success": False, "device_ip": device_ip, "error": r["error"]}
-            with open(log_path, "w", encoding="utf-8") as f:
-                f.write(r["output"])
+            atomic_write_text(log_path, r["output"])
             return {"success": True, "device_ip": device_ip, "log_path": log_path}
         except Exception as e:
             return {"success": False, "device_ip": device_ip, "error": f"FileError: {str(e)}"}
@@ -332,7 +331,10 @@ class ADBTesting(ADBModelCore):
                         if recovery_count > 5:
                             log("Max recovery (5) reached, stopping test")
                             monkey_proc.terminate()
-                            monkey_proc.wait(timeout=5)
+                            try:
+                                monkey_proc.wait(timeout=5)
+                            except Exception:
+                                pass
                             result["error"] = "Exceeded max recovery attempts"
                             break
 

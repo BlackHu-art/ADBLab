@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from core.exec import CommandResult
 from models.adb_testing import ADBTesting
 from models.app_manager_worker import AppManagerWorker
-from models.base.command_runner import CommandResult
 
 
 def _run_monkey_with_failed_focus_probes(tmp_path, command_result):

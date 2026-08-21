@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from models.base.process_runner import ProcessRunner
+from core.exec import ProcessRunner
 from services.mobileperf_runner import MobilePerfMonkeyConfig, MobilePerfRunConfig, MobilePerfRunner
 
 

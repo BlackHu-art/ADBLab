@@ -12,11 +12,11 @@ from unittest.mock import Mock, patch
 
 from PySide6.QtCore import QEvent
 
+from core.exec import ProcessRunner
 from gui.main_frame import MainFrame
 from gui.panels.remote_panel import RemotePanel
 from mobileperf.common import log as mobileperf_log
 from mobileperf.common.utils import FileUtils
-from models.base.process_runner import ProcessRunner
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
 

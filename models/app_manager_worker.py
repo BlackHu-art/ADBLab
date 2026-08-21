@@ -5,13 +5,13 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 import zipfile
 
 from PySide6.QtCore import QThread, Signal
 
+from core.exec import CommandRunner
 from utils.archive import safe_extract_zip
-
-from .base.command_runner import CommandRunner
 
 _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
 _DETAIL_BEGIN = "__ADBLAB_PKG_BEGIN_{}__"
@@ -58,11 +58,11 @@ class AppManagerWorker(QThread):
         self.device_ip = device_ip
         self.operation = operation
         self.kwargs = kwargs
-        self._aborted = False
+        self._aborted = threading.Event()
 
     def abort(self):
         """请求协作式中止，正在执行的短命令完成后由任务检查状态。"""
-        self._aborted = True
+        self._aborted.set()
         self.requestInterruption()
 
     def run(self):
@@ -107,10 +107,10 @@ class AppManagerWorker(QThread):
         self.log_message.emit("Fetching installed apps...")
         try:
             r = self._adb("shell", "pm", "list", "packages", "-f")
-            if self._aborted:
+            if self._aborted.is_set():
                 return
             dr = self._adb("shell", "pm", "list", "packages", "-d")
-            if self._aborted:
+            if self._aborted.is_set():
                 return
             disabled = {line.replace("package:", "").strip() for line in dr.stdout.splitlines()}
             apps = []
@@ -143,7 +143,7 @@ class AppManagerWorker(QThread):
         if self._load_detail_batch_once(packages):
             return
         for i, pkg in enumerate(packages):
-            if self._aborted or self.isInterruptionRequested():
+            if self._aborted.is_set() or self.isInterruptionRequested():
                 return
             try:
                 r = self._adb("shell", f"dumpsys package {pkg}", timeout=5)
@@ -173,7 +173,7 @@ class AppManagerWorker(QThread):
         if len(sections) != len(packages):
             return False
         for i, pkg in enumerate(packages):
-            if self._aborted or self.isInterruptionRequested():
+            if self._aborted.is_set() or self.isInterruptionRequested():
                 return True
             self._emit_package_detail(pkg, sections.get(i, ""))
             if i % 10 == 0:
@@ -323,7 +323,7 @@ class AppManagerWorker(QThread):
                     f"APK pulls failed; {failed_pulls[0]}"
                 )
                 return
-            if self._aborted or self.isInterruptionRequested():
+            if self._aborted.is_set() or self.isInterruptionRequested():
                 self.log_message.emit(f"Backup aborted for {pkg}")
                 return
 
@@ -361,7 +361,7 @@ class AppManagerWorker(QThread):
         succeeded = 0
         failed = 0
         for i, zp in enumerate(files):
-            if self._aborted or self.isInterruptionRequested():
+            if self._aborted.is_set() or self.isInterruptionRequested():
                 return
             app = os.path.basename(zp).replace("backup_", "").replace(".zip", "")
             try:

@@ -18,6 +18,7 @@ from adblab.application.supervision import (
     TaskSupervisor,
 )
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.exec import CommandResult, ProcessRunner
 from gui.dialogs.live_logcat import (
     LiveLogcatDialog,
     LogcatBatch,
@@ -25,8 +26,6 @@ from gui.dialogs.live_logcat import (
     LogcatWorker,
 )
 from gui.main_frame import MainFrame
-from models.base.command_runner import CommandResult
-from models.base.process_runner import ProcessRunner
 
 
 class FakeQtTaskSupervisor(QObject):

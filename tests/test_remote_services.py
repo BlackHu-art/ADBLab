@@ -9,10 +9,9 @@ from PySide6.QtWidgets import QListWidgetItem
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from core.adb_bridge import ADBBridge, ADBInputSession
+from core.exec import CommandResult, ProcessRunner
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
-from models.base.command_runner import CommandResult
-from models.base.process_runner import ProcessRunner
 from services.remote import (
     RemoteControlService,
     RemoteInputEngine,

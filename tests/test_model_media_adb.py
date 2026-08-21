@@ -16,6 +16,7 @@ from PySide6.QtGui import QCloseEvent, QIcon, QPixmap
 from PySide6.QtWidgets import QApplication
 
 from core.adb_bridge import ADBBridge, ADBInputSession
+from core.exec import CommandResult
 from core.log_service import LogService
 from gui.dialogs.file_explorer import FileExplorerDialog
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
@@ -24,7 +25,6 @@ from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 from models.adb_system import ADBSystemMixin
 from models.adb_testing import ADBTesting
-from models.base.command_runner import CommandResult
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
 
@@ -769,6 +769,31 @@ def test_quick_setting_batches_animation_commands_into_one_shell():
         device_ip="device-1",
         action="anim_off",
     )
+
+
+def test_content_insert_rejects_invalid_bind_keys_or_values():
+    model = ADBAdvanced()
+
+    with patch.object(model, "_run") as run:
+        run.return_value = {"success": True, "device_ip": "device-1"}
+        result = ADBSystemMixin.content_insert_async.__wrapped__(
+            model,
+            "device-1",
+            "content://demo",
+            {"title": "hello"},
+        )
+        assert result == {"success": True, "device_ip": "device-1"}
+        run.assert_called_once_with(
+            ["adb", "-s", "device-1", "shell", "content", "insert", "--uri", "content://demo"]
+            + ["--bind", "title:s:hello"],
+            timeout=15,
+            device_ip="device-1",
+        )
+
+    for bad_binds in ({"": "v"}, {"k": ""}, {"a:b": "v"}, {"k": "a:b"}):
+        with patch.object(model, "_run") as run, pytest.raises(ValueError):
+            ADBSystemMixin.content_insert_async.__wrapped__(model, "device-1", "uri", bad_binds)
+        run.assert_not_called()
 
 
 def test_disable_package_commands_keep_global_and_user_scopes_distinct():

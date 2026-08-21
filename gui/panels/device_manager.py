@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import weakref
+
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -356,13 +358,18 @@ class DeviceManager(BasePanel):
         return t if (self.panel._user_selected_ip or t) else ""
 
     def update_current_package(self, device_ip: str, package_name: str):
+        frame_ref = weakref.ref(self)
+
         def _up():
-            for i in range(self.listbox_devices.count()):
-                item = self.listbox_devices.item(i)
+            frame = frame_ref()
+            if frame is None:
+                return
+            for i in range(frame.listbox_devices.count()):
+                item = frame.listbox_devices.item(i)
                 info = item.data(Qt.UserRole)
                 if info and info.get("ip") == device_ip:
                     item.setText(f"{device_ip}  |  {package_name}")
-                    apps_tab = getattr(self.panel, "_apps_tab", None)
+                    apps_tab = getattr(frame.panel, "_apps_tab", None)
                     if apps_tab:
                         apps_tab.add_package_to_history(package_name)
                     break

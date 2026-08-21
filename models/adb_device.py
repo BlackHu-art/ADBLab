@@ -6,8 +6,9 @@
 import re
 import time
 
+from core.exec import CommandRunner
+
 from .adb_model import ADBModelCore, async_command
-from .base.command_runner import CommandRunner
 
 BASIC_PROP_FIELDS = {
     "Model": "ro.product.model",
