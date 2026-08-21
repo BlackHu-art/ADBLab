@@ -110,9 +110,10 @@ ADBLab/
 │   └── Auto-Clean.yaml             # 手动只读 Retention Audit（不自动删除）
 │
 ├── core/                           # 核心基础设施
+│   ├── exec.py                     # CommandRunner/ProcessRunner/ExecHandle 统一执行契约（ADR-0005）
 │   ├── adb_bridge.py               # 轻量 ADB 桥接与持久输入会话
 │   ├── log_service.py              # 线程安全日志服务，跨线程 flush 回到 owner thread
-│   ├── settings_manager.py         # 应用设置单例，JSON 原子写入
+│   ├── settings_manager.py         # 应用设置单例，JSON 原子写入（schema 版本化，ADR-0006）
 │   └── process_utils.py            # psutil 端口查找与进程树终止
 │
 ├── controllers/                    # Controller 层，多个 mixin 组合成 ADBController
@@ -137,9 +138,7 @@ ADBLab/
 │   ├── file_explorer_worker.py     # 文件浏览器 QThread worker
 │   ├── device_store.py             # YAML 设备信息持久化
 │   └── base/
-│       ├── command_runner.py       # 短生命周期命令统一入口
-│       ├── process_runner.py       # 长生命周期进程统一管理
-│       └── focus_detector.py       # 前台包名检测
+│       └── focus_detector.py       # 前台包名检测（CommandRunner/ProcessRunner 已迁 core/exec.py）
 │
 ├── services/                       # 纯服务层（低 Qt 耦合，ADR-0004）
 │   ├── file_explorer.py            # 文件浏览器纯逻辑服务
@@ -211,8 +210,8 @@ ADBLab/
 
 | 服务层 | 文件 | 说明 |
 |--------|------|------|
-| 命令执行 | `models/base/command_runner.py` | ADB 与短命令统一执行入口，规范输出与 timeout |
-| 进程执行 | `models/base/process_runner.py` | 管理长生命周期进程，支持 stop、spawn、stop_all |
+| 命令执行 | `core/exec.py` | ADB 与短命令统一执行入口（CommandRunner/CommandResult），规范输出与 timeout |
+| 进程执行 | `core/exec.py` | 长生命周期进程统一管理（ProcessRunner，支持 stop、spawn、stop_all）与 ExecHandle 协议（ADR-0005） |
 | Remote | `services/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
 | File Explorer | `services/file_explorer.py` | shell quoting、路径、权限、文件列表解析 |
 | MobilePerf | `services/mobileperf_runner.py` + `mobileperf/` | 临时 config、子进程启动/停止、日志批量回传、结果目录定位 |
