@@ -110,7 +110,9 @@ class StrictIntComboBox(QComboBox):
         return True
 
     def focus_editor(self) -> None:
-        self.lineEdit().setFocus(Qt.FocusReason.OtherFocusReason)
+        editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.lineEdit():
@@ -267,8 +269,10 @@ class StrictIntSpinBox(QSpinBox):
         self._input_valid = True
         self.setRange(minimum, maximum)
         self.setKeyboardTracking(False)
-        self.lineEdit().installEventFilter(self)
-        self.lineEdit().textChanged.connect(self._on_editor_text_changed)
+        editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
+        editor.installEventFilter(self)
+        editor.textChanged.connect(self._on_editor_text_changed)
         self.setValue(value)
 
     def _parse_acceptable(self, text: str) -> int | None:
@@ -311,12 +315,16 @@ class StrictIntSpinBox(QSpinBox):
     def input_is_acceptable(self) -> bool:
         """返回编辑器当前原文是否可作为业务整数提交。"""
 
-        return self._parse_acceptable(self.lineEdit().text()) is not None
+        editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
+        return self._parse_acceptable(editor.text()) is not None
 
     def commit_value(self) -> bool:
         """提交当前合法原文；非法时保留原文和旧业务值。"""
 
-        parsed = self._parse_acceptable(self.lineEdit().text())
+        editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
+        parsed = self._parse_acceptable(editor.text())
         if parsed is None:
             self._set_input_validity(False)
             return False
@@ -326,7 +334,9 @@ class StrictIntSpinBox(QSpinBox):
     def focus_editor(self) -> None:
         """把键盘焦点交给内部文本编辑器。"""
 
-        self.lineEdit().setFocus(Qt.FocusReason.OtherFocusReason)
+        editor = self.lineEdit()
+        assert editor is not None  # stub Optional 收窄
+        editor.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def setValue(self, value: int) -> None:
         """设置业务值，并在同值调用时也清除非法编辑状态。"""

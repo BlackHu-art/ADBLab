@@ -121,10 +121,18 @@ class AppDetailsDialog(QDialog):
 
     @staticmethod
     def _ta(lw):
-        any_u = any(lw.item(i).checkState() != Qt.CheckState.Checked for i in range(lw.count()))
+        any_u = False
+        for i in range(lw.count()):
+            item = lw.item(i)
+            assert item is not None  # stub Optional 收窄
+            if item.checkState() != Qt.CheckState.Checked:
+                any_u = True
+                break
         st = Qt.CheckState.Checked if any_u else Qt.CheckState.Unchecked
         for i in range(lw.count()):
-            lw.item(i).setCheckState(st)
+            item = lw.item(i)
+            assert item is not None  # stub Optional 收窄
+            item.setCheckState(st)
 
     def _load_data(self):
         if self._closing:
@@ -159,16 +167,18 @@ class AppDetailsDialog(QDialog):
         fill(self.runtime_list, runtime, lambda r: f"{r[0]} (Granted: {r[1]})")
 
     def _mp(self, action):
-        rc = [
-            self.runtime_list.item(i).text().split(" (")[0]
-            for i in range(self.runtime_list.count())
-            if self.runtime_list.item(i).checkState() == Qt.CheckState.Checked
-        ]
-        rq = [
-            self.requested_list.item(i).text()
-            for i in range(self.requested_list.count())
-            if self.requested_list.item(i).checkState() == Qt.CheckState.Checked
-        ]
+        rc = []
+        for i in range(self.runtime_list.count()):
+            item = self.runtime_list.item(i)
+            assert item is not None  # stub Optional 收窄
+            if item.checkState() == Qt.CheckState.Checked:
+                rc.append(item.text().split(" (")[0])
+        rq = []
+        for i in range(self.requested_list.count()):
+            item = self.requested_list.item(i)
+            assert item is not None  # stub Optional 收窄
+            if item.checkState() == Qt.CheckState.Checked:
+                rq.append(item.text())
         sel = rc + rq
         if not sel:
             QMessageBox.warning(self, "No Selection", f"No permissions selected to {action}.")

@@ -631,7 +631,8 @@ class BasePanel(QWidget):
         resolved_font = font or role_font
         c = self._combo(items, font=resolved_font, font_role=role)
         c.setEditable(True)
-        if c.lineEdit():
-            c.lineEdit().setFont(resolved_font)
-            c.lineEdit().setProperty("fontRole", role.value)
+        editor = c.lineEdit()
+        if editor is not None:  # stub Optional 收窄
+            editor.setFont(resolved_font)
+            editor.setProperty("fontRole", role.value)
         return c

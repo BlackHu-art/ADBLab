@@ -238,9 +238,11 @@ class DeviceManagerView:
             self._frame.ip_entry.setCompleter(comp)
             self._frame._sync_address_popup_width()
         self._frame.ip_entry.setCurrentIndex(-1)
-        self._frame.ip_entry.lineEdit().clear()
-        self._frame.ip_entry.lineEdit().setPlaceholderText("Select or type IP : Port")
-        self._frame.ip_entry.lineEdit().setAccessibleName("Device address")
+        line_edit = self._frame.ip_entry.lineEdit()
+        assert line_edit is not None  # stub Optional 收窄
+        line_edit.clear()
+        line_edit.setPlaceholderText("Select or type IP : Port")
+        line_edit.setAccessibleName("Device address")
 
     def _on_ip_selected(self, i):
         if 0 <= i < self._frame._device_model.rowCount():

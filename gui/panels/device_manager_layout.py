@@ -493,9 +493,10 @@ class DeviceManagerLayout:
         """让设备地址下拉表格和补全弹窗保持与输入框相同的当前宽度。"""
 
         width = max(1, self._frame.ip_entry.width())
+        completer = self._frame.ip_entry.completer()
         for popup in (
             self._frame.ip_entry.view(),
-            self._frame.ip_entry.completer().popup() if self._frame.ip_entry.completer() else None,
+            completer.popup() if completer is not None else None,
         ):
             if popup is None:
                 continue

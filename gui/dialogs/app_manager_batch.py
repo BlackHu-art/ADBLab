@@ -37,8 +37,12 @@ class AppManagerBatch:
             return
         src = self._frame.proxy.mapToSource(idx)
         row = src.row()
-        pkg = self._frame.model.item(row, 2).text()
-        atype = self._frame.model.item(row, 5).text()
+        pkg_item = self._frame.model.item(row, 2)
+        atype_item = self._frame.model.item(row, 5)
+        if pkg_item is None or atype_item is None:
+            return
+        pkg = pkg_item.text()
+        atype = atype_item.text()
         menu = self._frame._create_context_menu()
         menu.addAction("App Details", lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
@@ -345,7 +349,10 @@ class AppManagerBatch:
             return
         available_packages = set()
         for r in range(self._frame.model.rowCount()):
-            p = self._frame.model.item(r, 2).text()
+            pkg_item = self._frame.model.item(r, 2)
+            if pkg_item is None:
+                continue
+            p = pkg_item.text()
             if p:
                 available_packages.add(p)
         self._frame.selected_packages.clear()

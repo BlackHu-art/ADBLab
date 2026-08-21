@@ -421,7 +421,9 @@ class DeviceManager(BasePanel):
         blocker = QSignalBlocker(self.listbox_devices)
         try:
             for i in range(self.listbox_devices.count()):
-                self.listbox_devices.item(i).setCheckState(state)
+                item = self.listbox_devices.item(i)
+                assert item is not None  # stub Optional 收窄
+                item.setCheckState(state)
         finally:
             del blocker
         self._update_action_states()
