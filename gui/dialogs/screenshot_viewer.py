@@ -2,92 +2,28 @@
 
 from __future__ import annotations
 
-import os
-import sys
-from datetime import datetime
+import os  # noqa: F401  供测试通过本模块命名空间补丁。
 
-from PySide6.QtCore import QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import (
-    QColor,
-    QIcon,
-    QKeySequence,
-    QPainter,
-    QPixmap,
-    QShortcut,
-    QTransform,
-    QWheelEvent,
-)
+from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtGui import QIcon, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QApplication,
     QDialog,
     QFrame,
     QGraphicsPixmapItem,
-    QGraphicsScene,
-    QGraphicsView,
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QListView,
-    QListWidget,
     QListWidgetItem,
-    QMenu,
-    QMessageBox,
     QPushButton,
-    QSizePolicy,
-    QVBoxLayout,
 )
 
+from core.exec import ProcessRunner  # noqa: F401  供测试通过本模块命名空间补丁。
+from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
+from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
+from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
+from gui.dialogs.screenshot_viewer_widgets import (  # noqa: F401  供按名导入。
+    ScreenshotBottomBar,
+    ScreenshotGraphicsView,
+)
 from gui.styles import BaseStyles
-from gui.styles.icon_loader import get_themed_icon
-from gui.styles.theme import apply_dark_title_bar
-from gui.styles.typography import FontRole
-from models.base.process_runner import ProcessRunner
-
-MIN_ZOOM = 0.10
-MAX_ZOOM = 5.00
-ZOOM_STEP = 0.10
-
-
-class ScreenshotGraphicsView(QGraphicsView):
-    """把滚轮和双击缩放操作委托给所属截图查看器。"""
-
-    def __init__(self, owner: ScreenshotViewer):
-        super().__init__()
-        self._owner = owner
-        self.setObjectName("imageView")
-        self.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
-        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-        self.setContextMenuPolicy(Qt.CustomContextMenu)
-
-    def wheelEvent(self, event: QWheelEvent):
-        if event.modifiers() & Qt.ControlModifier:
-            self._owner._zoom_from_wheel(event.angleDelta().y())
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._owner.toggle_fit_actual()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
-
-
-class ScreenshotBottomBar(QFrame):
-    """在实际可用宽度变化后请求所属查看器重排既有工具控件。"""
-
-    def __init__(self, owner: ScreenshotViewer):
-        super().__init__()
-        self._owner = owner
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self._owner, "_bottom_bar_layout"):
-            self._owner._schedule_bottom_bar_reflow()
+from gui.styles.icon_loader import get_themed_icon  # noqa: F401  供测试通过本模块命名空间补丁。
 
 
 class ScreenshotViewer(QDialog):
@@ -95,6 +31,9 @@ class ScreenshotViewer(QDialog):
 
     def __init__(self, image_paths: list, current_index: int = 0, parent=None):
         super().__init__(parent)
+        self._ui_controller = ScreenshotViewerUI(self)
+        self._nav_controller = ScreenshotViewerNav(self)
+        self._actions_controller = ScreenshotViewerActions(self)
         self._image_paths = list(image_paths) if image_paths else []
         self._current_idx = (
             max(0, min(current_index, len(self._image_paths) - 1)) if self._image_paths else 0
@@ -133,27 +72,222 @@ class ScreenshotViewer(QDialog):
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
 
+    # ── 主题与界面控制器委托 wrapper ──────────────────────────────────────
+
     def _init_window(self):
-        self.setWindowTitle("Screenshot Viewer")
-        self.setWindowIcon(get_themed_icon(self._window_icon_name))
-        self.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self.setMinimumSize(760, 520)
-        self.resize(1100, 760)
+        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_window()
 
     def _init_shortcuts(self):
-        QShortcut(QKeySequence("Esc"), self, self.close)
-        QShortcut(QKeySequence("Ctrl+C"), self, self.copy_to_clipboard)
-        QShortcut(QKeySequence("Ctrl+="), self, self.zoom_in)
-        QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
-        QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
-        QShortcut(QKeySequence("Ctrl+0"), self, self._reset_zoom)
-        QShortcut(QKeySequence("Ctrl+1"), self, self._actual_size)
-        QShortcut(QKeySequence("Alt+Left"), self, self.navigate_prev)
-        QShortcut(QKeySequence("Alt+Right"), self, self.navigate_next)
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._init_shortcuts()
 
     @staticmethod
     def _theme_color(key: str) -> str:
-        return BaseStyles.color(key)
+        return ScreenshotViewerUI._theme_color(key)
+
+    def _apply_theme(self, _value=None):
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._apply_theme(_value)
+
+    def _init_ui(self):
+        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_ui()
+
+    def _build_canvas(self) -> QFrame:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._build_canvas()
+
+    def _build_bottom_dock(self) -> QFrame:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._build_bottom_dock()
+
+    def _build_bottom_bar(self) -> QFrame:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._build_bottom_bar()
+
+    @staticmethod
+    def _bottom_bar_group(object_name: str) -> QFrame:
+        return ScreenshotViewerUI._bottom_bar_group(object_name)
+
+    @staticmethod
+    def _group_minimum_size(group: QFrame) -> QSize:
+        return ScreenshotViewerUI._group_minimum_size(group)
+
+    def _reflow_bottom_bar(self) -> None:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._reflow_bottom_bar()
+
+    def _schedule_bottom_bar_reflow(self) -> None:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._schedule_bottom_bar_reflow()
+
+    def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._tool_button(icon_name, tooltip)
+
+    def _refresh_button_icons(self):
+        return (
+            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
+        )._refresh_button_icons()
+
+    # ── 导航/缩放控制器委托 wrapper ───────────────────────────────────────
+
+    def _current_path(self) -> str:
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._current_path()
+
+    def _navigate_to(self, index: int):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._navigate_to(index)
+
+    def _show_pixmap(self, pixmap: QPixmap):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._show_pixmap(pixmap)
+
+    def _show_placeholder(self, text: str):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._show_placeholder(text)
+
+    def _refresh_placeholder_color(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._refresh_placeholder_color()
+
+    def _rebuild_thumbnails(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._rebuild_thumbnails()
+
+    def _thumbnail_icon(self, path: str) -> QIcon:
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._thumbnail_icon(path)
+
+    def _on_thumbnail_clicked(self, item: QListWidgetItem):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._on_thumbnail_clicked(item)
+
+    def _sync_thumbnail_selection(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._sync_thumbnail_selection()
+
+    def navigate_prev(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        ).navigate_prev()
+
+    def navigate_next(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        ).navigate_next()
+
+    def _apply_fit(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._apply_fit()
+
+    def _set_zoom(self, factor: float, *, fit: bool = False, anchor_under_mouse: bool = False):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._set_zoom(factor, fit=fit, anchor_under_mouse=anchor_under_mouse)
+
+    def _zoom_from_wheel(self, delta: int):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._zoom_from_wheel(delta)
+
+    def zoom_in(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)).zoom_in()
+
+    def zoom_out(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)).zoom_out()
+
+    def _reset_zoom(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._reset_zoom()
+
+    def _actual_size(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._actual_size()
+
+    def toggle_fit_actual(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        ).toggle_fit_actual()
+
+    def _update_zoom_label(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._update_zoom_label()
+
+    def _update_info(self):
+        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._update_info()
+
+    @staticmethod
+    def _format_size(path: str) -> str:
+        return ScreenshotViewerNav._format_size(path)
+
+    @staticmethod
+    def _format_modified_time(path: str) -> str:
+        return ScreenshotViewerNav._format_modified_time(path)
+
+    def _update_nav_visibility(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._update_nav_visibility()
+
+    def _update_nav_label(self):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._update_nav_label()
+
+    def _update_actions_enabled(self, enabled: bool):
+        return (
+            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
+        )._update_actions_enabled(enabled)
+
+    # ── 操作控制器委托 wrapper ─────────────────────────────────────────────
+
+    def copy_to_clipboard(self):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        ).copy_to_clipboard()
+
+    def _flash_status(self, text: str):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._flash_status(text)
+
+    def _restore_info_status(self) -> None:
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._restore_info_status()
+
+    def _open_file_location(self):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._open_file_location()
+
+    def _delete_file(self):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._delete_file()
+
+    def _on_context_menu(self, pos):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._on_context_menu(pos)
+
+    # ── 生命周期与事件 ─────────────────────────────────────────────────────
 
     def closeEvent(self, event):
         self._status_restore_timer.stop()
@@ -168,772 +302,6 @@ class ScreenshotViewer(QDialog):
         except (TypeError, RuntimeError):
             pass
         super().closeEvent(event)
-
-    def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self)
-        ui_font = BaseStyles.font_for_role(FontRole.UI)
-        small_font = BaseStyles.font_for_role(FontRole.UI_SMALL)
-        mono_font = BaseStyles.font_for_role(FontRole.MONO)
-        self.setFont(ui_font)
-        c = self._theme_color
-        r = BaseStyles
-
-        self.setStyleSheet(
-            BaseStyles.SCROLLBAR_STYLE()
-            + f"""
-            QDialog {{
-                background-color: {c("WINDOW_BG")};
-                color: {c("TEXT_PRIMARY")};
-            }}
-            QFrame#canvasFrame {{
-                background-color: {c("INPUT_BG")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r.RADIUS_LG}px;
-            }}
-            QGraphicsView#imageView {{
-                background-color: {c("INPUT_BG")};
-                border: none;
-            }}
-            QGraphicsView#imageView:focus {{
-                border: 2px solid {c("BORDER_FOCUS")};
-            }}
-            QFrame#bottomDock {{
-                background-color: {c("TOOLBAR_BG")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r.RADIUS_MD}px;
-            }}
-            QFrame#bottomBar {{
-                background-color: transparent;
-                border: none;
-            }}
-            QListWidget#thumbnailStrip {{
-                background-color: {c("INPUT_BG")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r.RADIUS_SM}px;
-                color: {c("TEXT_PRIMARY")};
-                padding: 4px;
-                outline: none;
-            }}
-            QListWidget#thumbnailStrip:focus {{
-                border: 2px solid {c("BORDER_FOCUS")};
-            }}
-            QListWidget#thumbnailStrip::item {{
-                border: 1px solid transparent;
-                border-radius: {r.RADIUS_SM}px;
-                padding: 3px;
-                margin: 1px;
-            }}
-            QListWidget#thumbnailStrip::item:selected {{
-                background-color: {c("SELECTION_BG")};
-                border-color: {c("BORDER_FOCUS")};
-                color: {c("SELECTION_TEXT")};
-            }}
-            QLabel {{
-                color: {c("TEXT_PRIMARY")};
-                background: transparent;
-            }}
-            QLabel#metaLabel,
-            QLabel#navLabel,
-            QLabel#zoomLabel {{
-                color: {c("TEXT_SECONDARY")};
-            }}
-            QLabel#pathLabel {{
-                color: {c("TEXT_SECONDARY")};
-            }}
-            QPushButton {{
-                background-color: {c("BUTTON_BG")};
-                color: {c("TEXT_PRIMARY")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r.RADIUS_SM}px;
-                padding: 0;
-            }}
-            QPushButton:hover {{
-                background-color: {c("BUTTON_HOVER")};
-                border-color: {c("BORDER_FOCUS")};
-            }}
-            QPushButton:pressed {{
-                background-color: {c("BUTTON_PRESSED")};
-            }}
-            QPushButton:focus {{
-                border: 2px solid {c("BORDER_FOCUS")};
-            }}
-            QPushButton:disabled {{
-                color: {c("TEXT_DISABLED")};
-                background-color: {c("INPUT_BG")};
-                border-color: {c("BORDER_COLOR")};
-            }}
-            QPushButton#danger:hover {{
-                background-color: {c("BUTTON_DANGER")};
-                border-color: {c("BUTTON_DANGER")};
-                color: #ffffff;
-            }}
-            QPushButton#danger:pressed {{
-                background-color: {c("BUTTON_DANGER_HOVER")};
-                border-color: {c("BUTTON_DANGER_HOVER")};
-                color: #ffffff;
-            }}
-            """
-        )
-        self._path_label.setFont(mono_font)
-        for label in (self._info_label, self._nav_label, self._zoom_label):
-            label.setFont(small_font)
-        self._nav_label.setMinimumWidth(0)
-        self._nav_label.setMinimumWidth(52)
-        self._nav_label.setMinimumWidth(max(52, self._nav_label.sizeHint().width()))
-        self._zoom_label.setMinimumWidth(0)
-        self._zoom_label.setMinimumWidth(56)
-        self._zoom_label.setMinimumWidth(max(56, self._zoom_label.sizeHint().width()))
-        self._refresh_button_icons()
-        if hasattr(self, "_bottom_bar"):
-            self._reflow_bottom_bar()
-        if hasattr(self, "_placeholder_text"):
-            if self._placeholder_text is not None:
-                self._placeholder_text.setFont(
-                    BaseStyles.font_for_role(
-                        FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1)
-                    )
-                )
-            self._refresh_placeholder_color()
-
-    def _init_ui(self):
-        root = QVBoxLayout(self)
-        root.setContentsMargins(10, 8, 10, 10)
-        root.setSpacing(8)
-
-        root.addWidget(self._build_canvas(), stretch=1)
-        root.addWidget(self._build_bottom_dock())
-
-    def _build_canvas(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("canvasFrame")
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(0)
-
-        self._scene = QGraphicsScene(self)
-        self._view = ScreenshotGraphicsView(self)
-        self._view.setScene(self._scene)
-        self._view.customContextMenuRequested.connect(self._on_context_menu)
-        layout.addWidget(self._view)
-        return frame
-
-    def _build_bottom_dock(self) -> QFrame:
-        dock = QFrame()
-        dock.setObjectName("bottomDock")
-        layout = QVBoxLayout(dock)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
-
-        self._thumb_list = QListWidget()
-        self._thumb_list.setObjectName("thumbnailStrip")
-        self._thumb_list.setViewMode(QListView.IconMode)
-        self._thumb_list.setFlow(QListView.LeftToRight)
-        self._thumb_list.setMovement(QListView.Static)
-        self._thumb_list.setResizeMode(QListView.Adjust)
-        self._thumb_list.setWrapping(False)
-        self._thumb_list.setUniformItemSizes(True)
-        self._thumb_list.setSelectionMode(QAbstractItemView.SingleSelection)
-        self._thumb_list.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._thumb_list.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._thumb_list.setIconSize(QSize(86, 58))
-        self._thumb_list.setFixedHeight(92)
-        self._thumb_list.itemClicked.connect(self._on_thumbnail_clicked)
-        layout.addWidget(self._thumb_list)
-
-        layout.addWidget(self._build_bottom_bar())
-        self._bottom_dock = dock
-        return dock
-
-    def _build_bottom_bar(self) -> QFrame:
-        bar = ScreenshotBottomBar(self)
-        bar.setObjectName("bottomBar")
-        layout = QGridLayout(bar)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-
-        self._path_label = QLabel("")
-        self._path_label.setObjectName("pathLabel")
-        self._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._path_label.setMinimumWidth(120)
-        self._path_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self._path_label.setToolTip("Screenshot file path")
-        self._path_label.setAccessibleName("Screenshot file path")
-        self._path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-
-        self._info_label = QLabel("")
-        self._info_label.setObjectName("metaLabel")
-        self._info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._info_label.setMinimumWidth(150)
-        self._info_label.setToolTip("Image size, file size, and modified time")
-        self._info_label.setAccessibleName("Screenshot metadata")
-        self._info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-
-        self._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
-        self._prev_btn.clicked.connect(self.navigate_prev)
-
-        self._nav_label = QLabel("0 / 0")
-        self._nav_label.setObjectName("navLabel")
-        self._nav_label.setAlignment(Qt.AlignCenter)
-        self._nav_label.setMinimumWidth(52)
-        self._nav_label.setToolTip("Current screenshot index")
-
-        self._next_btn = self._tool_button("caret-right.svg", "Next screenshot (Right)")
-        self._next_btn.clicked.connect(self.navigate_next)
-
-        self._zoom_out_btn = self._tool_button("magnifying-glass-minus.svg", "Zoom out (Ctrl+-)")
-        self._zoom_out_btn.clicked.connect(self.zoom_out)
-
-        self._zoom_label = QLabel("Fit")
-        self._zoom_label.setObjectName("zoomLabel")
-        self._zoom_label.setAlignment(Qt.AlignCenter)
-        self._zoom_label.setMinimumWidth(56)
-        self._zoom_label.setToolTip("Current zoom")
-
-        self._zoom_in_btn = self._tool_button("magnifying-glass-plus.svg", "Zoom in (Ctrl+=)")
-        self._zoom_in_btn.clicked.connect(self.zoom_in)
-
-        self._fit_btn = self._tool_button("frame-corners.svg", "Fit to window (Ctrl+0)")
-        self._fit_btn.clicked.connect(self._reset_zoom)
-
-        self._actual_btn = self._tool_button("number-square-one.svg", "Actual size (Ctrl+1)")
-        self._actual_btn.clicked.connect(self._actual_size)
-
-        self._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
-        self._copy_btn.clicked.connect(self.copy_to_clipboard)
-
-        self._folder_btn = self._tool_button("folder-open.svg", "Open file location")
-        self._folder_btn.clicked.connect(self._open_file_location)
-
-        self._delete_btn = self._tool_button("trash.svg", "Delete screenshot")
-        self._delete_btn.setObjectName("danger")
-        self._delete_btn.clicked.connect(self._delete_file)
-
-        self._metadata_group = self._bottom_bar_group("screenshotMetadataGroup")
-        metadata_layout = self._metadata_group.layout()
-        metadata_layout.addWidget(self._path_label, 1)
-        metadata_layout.addWidget(self._info_label, 1)
-
-        self._navigation_group = self._bottom_bar_group("screenshotNavigationGroup")
-        navigation_layout = self._navigation_group.layout()
-        for control in (self._prev_btn, self._nav_label, self._next_btn):
-            navigation_layout.addWidget(control)
-
-        self._actions_group = self._bottom_bar_group("screenshotActionsGroup")
-        actions_layout = self._actions_group.layout()
-        for control in (
-            self._zoom_out_btn,
-            self._zoom_label,
-            self._zoom_in_btn,
-            self._fit_btn,
-            self._actual_btn,
-            self._copy_btn,
-            self._folder_btn,
-            self._delete_btn,
-        ):
-            actions_layout.addWidget(control)
-
-        self._bottom_bar = bar
-        self._bottom_bar_layout = layout
-        self._bottom_bar_groups = (
-            self._metadata_group,
-            self._navigation_group,
-            self._actions_group,
-        )
-        self._bottom_bar_controls = (
-            self._path_label,
-            self._info_label,
-            self._prev_btn,
-            self._nav_label,
-            self._next_btn,
-            self._zoom_out_btn,
-            self._zoom_label,
-            self._zoom_in_btn,
-            self._fit_btn,
-            self._actual_btn,
-            self._copy_btn,
-            self._folder_btn,
-            self._delete_btn,
-        )
-        self._reflow_bottom_bar()
-        return bar
-
-    @staticmethod
-    def _bottom_bar_group(object_name: str) -> QFrame:
-        group = QFrame()
-        group.setObjectName(object_name)
-        group.setFrameShape(QFrame.Shape.NoFrame)
-        group.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Preferred)
-        layout = QHBoxLayout(group)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        return group
-
-    @staticmethod
-    def _group_minimum_size(group: QFrame) -> QSize:
-        layout = group.layout()
-        layout_minimum = layout.minimumSize() if layout is not None else QSize()
-        return group.minimumSizeHint().expandedTo(layout_minimum)
-
-    def _reflow_bottom_bar(self) -> None:
-        if self._reflowing_bottom_bar:
-            return
-        self._reflowing_bottom_bar = True
-        try:
-            layout = self._bottom_bar_layout
-            spacing = max(0, layout.spacing())
-            group_sizes = tuple(
-                self._group_minimum_size(group) for group in self._bottom_bar_groups
-            )
-            metadata_size, navigation_size, actions_size = group_sizes
-            available_width = self._bottom_bar.contentsRect().width()
-            if hasattr(self, "_bottom_dock"):
-                root_margins = self.layout().contentsMargins()
-                dock_margins = self._bottom_dock.layout().contentsMargins()
-                available_width = self.contentsRect().width()
-                available_width -= root_margins.left() + root_margins.right()
-                available_width -= dock_margins.left() + dock_margins.right()
-                available_width -= 2 * self._bottom_dock.frameWidth()
-            available_width = max(0, available_width)
-
-            wide_required = sum(size.width() for size in group_sizes) + (2 * spacing)
-            split_required = max(
-                metadata_size.width(),
-                navigation_size.width() + actions_size.width() + spacing,
-            )
-            if available_width >= wide_required:
-                mode = "wide"
-            elif available_width >= split_required:
-                mode = "split"
-            else:
-                mode = "stacked"
-            fingerprint = (
-                mode,
-                spacing,
-                tuple((size.width(), size.height()) for size in group_sizes),
-            )
-            if fingerprint == self._bottom_bar_plan_fingerprint:
-                return
-
-            while layout.count():
-                layout.takeAt(0)
-            for column in range(3):
-                layout.setColumnStretch(column, 0)
-                layout.setColumnMinimumWidth(column, 0)
-            for row in range(3):
-                layout.setRowStretch(row, 0)
-                layout.setRowMinimumHeight(row, 0)
-
-            if mode == "wide":
-                layout.addWidget(self._metadata_group, 0, 0)
-                layout.addWidget(
-                    self._navigation_group,
-                    0,
-                    1,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.addWidget(
-                    self._actions_group,
-                    0,
-                    2,
-                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.setColumnStretch(0, 1)
-            elif mode == "split":
-                layout.addWidget(self._metadata_group, 0, 0, 1, 2)
-                layout.addWidget(
-                    self._navigation_group,
-                    1,
-                    0,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.addWidget(
-                    self._actions_group,
-                    1,
-                    1,
-                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.setColumnStretch(0, 1)
-            else:
-                layout.addWidget(self._metadata_group, 0, 0)
-                layout.addWidget(
-                    self._navigation_group,
-                    1,
-                    0,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.addWidget(
-                    self._actions_group,
-                    2,
-                    0,
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                )
-                layout.setColumnStretch(0, 1)
-
-            self._bottom_bar.setMinimumHeight(0)
-            layout.activate()
-            self._bottom_bar.setMinimumHeight(layout.minimumSize().height())
-            self._bottom_bar_plan_fingerprint = fingerprint
-            self._bottom_bar.updateGeometry()
-            if hasattr(self, "_bottom_dock"):
-                self._bottom_dock.updateGeometry()
-                self._bottom_dock.layout().activate()
-            root_layout = self.layout()
-            if root_layout is not None:
-                root_layout.activate()
-        finally:
-            self._reflowing_bottom_bar = False
-
-    def _schedule_bottom_bar_reflow(self) -> None:
-        """合并顶层和底栏 resize，只在最终几何上重排一次。"""
-
-        self._bottom_bar_reflow_timer.start(0)
-
-    def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
-        button = QPushButton()
-        button.setIcon(get_themed_icon(icon_name))
-        button.setIconSize(QSize(14, 14))
-        button.setFixedSize(28, 28)
-        button.setToolTip(tooltip)
-        button.setAccessibleName(tooltip)
-        button.setCursor(Qt.PointingHandCursor)
-        button.setProperty("iconName", icon_name)
-        self._icon_buttons.append(button)
-        return button
-
-    def _refresh_button_icons(self):
-        self.setWindowIcon(get_themed_icon(self._window_icon_name))
-        for button in getattr(self, "_icon_buttons", []):
-            icon_name = button.property("iconName")
-            if icon_name:
-                button.setIcon(get_themed_icon(icon_name))
-
-    def _current_path(self) -> str:
-        if 0 <= self._current_idx < len(self._image_paths):
-            return self._image_paths[self._current_idx]
-        return ""
-
-    def _navigate_to(self, index: int):
-        if not self._image_paths:
-            self._show_placeholder("No screenshot available")
-            return
-        if index < 0 or index >= len(self._image_paths):
-            return
-        self._current_idx = index
-        paths_changed = False
-        while self._image_paths:
-            path = self._current_path()
-            if not path or not os.path.exists(path):
-                del self._image_paths[self._current_idx]
-                paths_changed = True
-            else:
-                pixmap = QPixmap(path)
-                if not pixmap.isNull():
-                    if paths_changed:
-                        self._rebuild_thumbnails()
-                    self._show_pixmap(pixmap)
-                    self._update_info()
-                    self._update_nav_visibility()
-                    self._sync_thumbnail_selection()
-                    return
-                del self._image_paths[self._current_idx]
-                paths_changed = True
-            if self._current_idx >= len(self._image_paths):
-                self._current_idx = max(0, len(self._image_paths) - 1)
-        self._rebuild_thumbnails()
-        self._show_placeholder("No valid screenshots")
-
-    def _show_pixmap(self, pixmap: QPixmap):
-        self._scene.clear()
-        self._placeholder_text = None
-        self._original_pixmap = pixmap
-        self._pixmap_item = self._scene.addPixmap(pixmap)
-        self._pixmap_item.setTransformationMode(Qt.SmoothTransformation)
-        self._scene.setSceneRect(QRectF(pixmap.rect()))
-        self._fit_to_window = True
-        self._zoom_factor = 1.0
-        self._apply_fit()
-
-    def _show_placeholder(self, text: str):
-        self._scene.clear()
-        self._original_pixmap = None
-        self._pixmap_item = None
-        self._placeholder_text = self._scene.addText(text)
-        self._placeholder_text.setFont(
-            BaseStyles.font_for_role(FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1))
-        )
-        self._scene.setSceneRect(QRectF(0, 0, 420, 240))
-        bounds = self._placeholder_text.boundingRect()
-        self._placeholder_text.setPos((420 - bounds.width()) / 2, (240 - bounds.height()) / 2)
-        self._refresh_placeholder_color()
-        self._path_label.setText("")
-        self._path_label.setToolTip("")
-        self._path_label.setAccessibleDescription("")
-        self._info_label.setText(text)
-        self._info_label.setToolTip(text)
-        self._info_label.setAccessibleDescription(text)
-        self._zoom_label.setText("Fit")
-        self._update_nav_visibility()
-
-    def _refresh_placeholder_color(self):
-        item = getattr(self, "_placeholder_text", None)
-        if item is not None:
-            try:
-                item.setDefaultTextColor(QColor(self._theme_color("TEXT_DISABLED")))
-            except RuntimeError:
-                self._placeholder_text = None
-
-    def _rebuild_thumbnails(self):
-        if not hasattr(self, "_thumb_list"):
-            return
-        self._thumb_list.clear()
-        for index, path in enumerate(self._image_paths):
-            item = QListWidgetItem(self._thumbnail_icon(path), os.path.basename(path))
-            item.setData(Qt.UserRole, index)
-            item.setToolTip(os.path.abspath(path))
-            item.setSizeHint(QSize(116, 78))
-            self._thumb_list.addItem(item)
-        self._sync_thumbnail_selection()
-        self._update_nav_visibility()
-
-    def _thumbnail_icon(self, path: str) -> QIcon:
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
-            return get_themed_icon("image-broken.svg")
-        thumb = pixmap.scaled(86, 58, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        return QIcon(thumb)
-
-    def _on_thumbnail_clicked(self, item: QListWidgetItem):
-        index = item.data(Qt.UserRole)
-        if isinstance(index, int):
-            self._navigate_to(index)
-
-    def _sync_thumbnail_selection(self):
-        if not hasattr(self, "_thumb_list"):
-            return
-        self._thumb_list.blockSignals(True)
-        try:
-            if 0 <= self._current_idx < self._thumb_list.count():
-                self._thumb_list.setCurrentRow(self._current_idx)
-                self._thumb_list.scrollToItem(
-                    self._thumb_list.currentItem(), QAbstractItemView.PositionAtCenter
-                )
-            else:
-                self._thumb_list.clearSelection()
-        finally:
-            self._thumb_list.blockSignals(False)
-
-    def navigate_prev(self):
-        if len(self._image_paths) <= 1:
-            return
-        self._navigate_to((self._current_idx - 1) % len(self._image_paths))
-
-    def navigate_next(self):
-        if len(self._image_paths) <= 1:
-            return
-        self._navigate_to((self._current_idx + 1) % len(self._image_paths))
-
-    def _apply_fit(self):
-        if (
-            self._original_pixmap is None
-            or self._original_pixmap.isNull()
-            or self._pixmap_item is None
-        ):
-            return
-        viewport = self._view.viewport().size()
-        max_w = max(viewport.width() - 16, 200)
-        max_h = max(viewport.height() - 16, 150)
-        pw = max(1, self._original_pixmap.width())
-        ph = max(1, self._original_pixmap.height())
-        scale = min(max_w / pw, max_h / ph, 1.0)
-        self._set_zoom(scale, fit=True)
-        self._view.centerOn(self._pixmap_item)
-
-    def _set_zoom(self, factor: float, *, fit: bool = False, anchor_under_mouse: bool = False):
-        if self._original_pixmap is None or self._original_pixmap.isNull():
-            return
-        self._zoom_factor = max(MIN_ZOOM, min(MAX_ZOOM, float(factor)))
-        self._fit_to_window = fit
-        previous_anchor = self._view.transformationAnchor()
-        self._view.setTransformationAnchor(
-            QGraphicsView.AnchorUnderMouse if anchor_under_mouse else QGraphicsView.AnchorViewCenter
-        )
-        self._view.setTransform(QTransform().scale(self._zoom_factor, self._zoom_factor))
-        self._view.setTransformationAnchor(previous_anchor)
-        self._update_zoom_label()
-
-    def _zoom_from_wheel(self, delta: int):
-        if self._original_pixmap is None or self._original_pixmap.isNull():
-            return
-        multiplier = 1.0 + ZOOM_STEP if delta > 0 else 1.0 - ZOOM_STEP
-        self._set_zoom(self._zoom_factor * multiplier, anchor_under_mouse=True)
-
-    def zoom_in(self):
-        self._set_zoom(self._zoom_factor + ZOOM_STEP)
-
-    def zoom_out(self):
-        self._set_zoom(self._zoom_factor - ZOOM_STEP)
-
-    def _reset_zoom(self):
-        self._fit_to_window = True
-        self._apply_fit()
-
-    def _actual_size(self):
-        self._set_zoom(1.0)
-
-    def toggle_fit_actual(self):
-        if self._fit_to_window:
-            self._actual_size()
-        else:
-            self._reset_zoom()
-
-    def _update_zoom_label(self):
-        pct = int(round(self._zoom_factor * 100))
-        if self._fit_to_window:
-            self._zoom_label.setText("Fit" if pct == 100 else f"Fit {pct}%")
-        else:
-            self._zoom_label.setText(f"{pct}%")
-
-    def _update_info(self):
-        path = self._current_path()
-        if not path or self._original_pixmap is None:
-            self._info_label.setText("")
-            return
-        pw = self._original_pixmap.width()
-        ph = self._original_pixmap.height()
-        size_str = self._format_size(path)
-        modified = self._format_modified_time(path)
-        self._path_label.setText(os.path.basename(path))
-        self._path_label.setToolTip(os.path.abspath(path))
-        self._path_label.setAccessibleDescription(os.path.abspath(path))
-        metadata = f"{pw} x {ph} | {size_str} | {modified}"
-        self._info_label.setText(metadata)
-        self._info_label.setToolTip(metadata)
-        self._info_label.setAccessibleDescription(metadata)
-        self._update_nav_label()
-
-    @staticmethod
-    def _format_size(path: str) -> str:
-        try:
-            size_bytes = os.path.getsize(path)
-        except OSError:
-            return "-"
-        if size_bytes >= 1_048_576:
-            return f"{size_bytes / 1_048_576:.1f} MB"
-        if size_bytes >= 1024:
-            return f"{size_bytes / 1024:.0f} KB"
-        return f"{size_bytes} B"
-
-    @staticmethod
-    def _format_modified_time(path: str) -> str:
-        try:
-            return datetime.fromtimestamp(os.path.getmtime(path)).strftime("%H:%M:%S")
-        except OSError:
-            return "-"
-
-    def _update_nav_visibility(self):
-        has_image = bool(self._image_paths and self._original_pixmap is not None)
-        multi = len(self._image_paths) > 1
-        self._thumb_list.setVisible(multi)
-        self._prev_btn.setEnabled(multi)
-        self._next_btn.setEnabled(multi)
-        self._update_nav_label()
-        self._update_actions_enabled(has_image)
-
-    def _update_nav_label(self):
-        if self._image_paths:
-            self._nav_label.setText(f"{self._current_idx + 1} / {len(self._image_paths)}")
-        else:
-            self._nav_label.setText("0 / 0")
-
-    def _update_actions_enabled(self, enabled: bool):
-        for button in (
-            self._zoom_out_btn,
-            self._zoom_in_btn,
-            self._fit_btn,
-            self._actual_btn,
-            self._copy_btn,
-            self._folder_btn,
-            self._delete_btn,
-        ):
-            button.setEnabled(enabled)
-
-    def copy_to_clipboard(self):
-        path = self._current_path()
-        if not path:
-            return
-        pixmap = self._original_pixmap or QPixmap(path)
-        if not pixmap.isNull():
-            QApplication.clipboard().setPixmap(pixmap)
-            self._flash_status("Image copied")
-
-    def _flash_status(self, text: str):
-        if not self._status_restore_timer.isActive():
-            self._status_restore_text = self._info_label.text()
-        self._info_label.setText(text)
-        self._status_restore_timer.start(1800)
-
-    def _restore_info_status(self) -> None:
-        self._info_label.setText(self._status_restore_text)
-
-    def _open_file_location(self):
-        path = self._current_path()
-        if not path or not os.path.exists(path):
-            return
-        folder = os.path.dirname(os.path.abspath(path))
-        if os.name == "nt":
-            command = ["explorer", folder]
-        elif sys.platform == "darwin":
-            command = ["open", folder]
-        else:
-            command = ["xdg-open", folder]
-        ProcessRunner().spawn(command)
-
-    def _delete_file(self):
-        path = self._current_path()
-        if not path or not os.path.exists(path):
-            return
-        try:
-            os.remove(path)
-        except OSError as exc:
-            QMessageBox.warning(self, "Delete Failed", str(exc))
-            return
-        del self._image_paths[self._current_idx]
-        if not self._image_paths:
-            self.close()
-            return
-        self._rebuild_thumbnails()
-        self._current_idx = min(self._current_idx, len(self._image_paths) - 1)
-        self._navigate_to(self._current_idx)
-
-    def _on_context_menu(self, pos):
-        path = self._current_path()
-        has_file = bool(path and os.path.exists(path))
-        menu = QMenu(self)
-        menu.setStyleSheet(BaseStyles.MENU_STYLE())
-
-        copy_action = menu.addAction("Copy Image\tCtrl+C")
-        copy_action.triggered.connect(self.copy_to_clipboard)
-        copy_action.setEnabled(has_file)
-
-        menu.addSeparator()
-
-        folder_action = menu.addAction("Open File Location")
-        folder_action.triggered.connect(self._open_file_location)
-        folder_action.setEnabled(has_file)
-
-        delete_action = menu.addAction("Delete Screenshot")
-        delete_action.triggered.connect(self._delete_file)
-        delete_action.setEnabled(has_file)
-
-        menu.addSeparator()
-
-        menu.addAction("Zoom In\tCtrl+=").triggered.connect(self.zoom_in)
-        menu.addAction("Zoom Out\tCtrl+-").triggered.connect(self.zoom_out)
-        menu.addAction("Fit to Window\tCtrl+0").triggered.connect(self._reset_zoom)
-        menu.addAction("Actual Size\tCtrl+1").triggered.connect(self._actual_size)
-
-        menu.exec(self._view.mapToGlobal(pos))
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.ControlModifier:
