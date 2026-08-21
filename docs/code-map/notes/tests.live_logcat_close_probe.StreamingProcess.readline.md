@@ -1,0 +1,9 @@
+---
+kind: method
+---
+
+# readline(self)
+
+- 定义于：[[tests.live_logcat_close_probe.StreamingProcess]]
+- 全名：tests.live_logcat_close_probe.StreamingProcess.readline
+

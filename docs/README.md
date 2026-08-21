@@ -70,6 +70,10 @@
 - [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
 - [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口、提交前门禁，以及中文注释与文档风格规范。
 
+### 代码地图（code-map/）
+
+- [CODE_MAP](code-map/CODE_MAP.md)：全量第一方代码的 Obsidian 知识图谱（MOC），文件/类/方法节点用 wikilink 互链（导入/继承/调用/实例化），自动生成。
+
 ## 维护热点
 
 修改以下区域前，优先按"入口 → 调用链 → 失败路径 → 清理路径 → 测试"的顺序追踪：

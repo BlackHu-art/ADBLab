@@ -1,0 +1,9 @@
+---
+kind: method
+---
+
+# _header_clicked(self, col)
+
+- 定义于：[[gui.dialogs.file_explorer_list.FileExplorerList]]
+- 全名：gui.dialogs.file_explorer_list.FileExplorerList._header_clicked
+
