@@ -63,7 +63,8 @@ class ADBDeviceMixin(_ADBControllerBase):
             self._emit_operation("connect", False, f"Connection failed: {raw}")
 
     def _finalize_connected_device(self, ip: str, message: str):
-        self._save_device_info(ip)
+        # 设备信息查询（getprop）与 DeviceStore 落盘放到 executor，避免阻塞 GUI 线程。
+        self.executor.submit(self._save_device_info, ip)
         self.refresh_devices()
         self._emit_operation("connect", True, message)
 
@@ -87,6 +88,8 @@ class ADBDeviceMixin(_ADBControllerBase):
             return
 
         def _update():
+            if getattr(self, "_shutting_down", False):
+                return
             records = []
             for ip in devices:
                 try:
@@ -114,6 +117,8 @@ class ADBDeviceMixin(_ADBControllerBase):
         self.executor.submit(_update)
 
     def _save_device_info(self, ip: str):
+        if getattr(self, "_shutting_down", False):
+            return
         try:
             info = ADBDevice.get_devices_basic_info(ip)
             DeviceStore.add_device(
@@ -201,6 +206,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         if result.get("success"):
             QTimer.singleShot(
                 10_000,
+                self.signals,
                 lambda: (
                     self.refresh_devices(),
                     self._emit_operation(
@@ -219,7 +225,7 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def _process_restart_adb_result(self, result: dict):
         if result.get("success"):
-            QTimer.singleShot(3000, self.refresh_devices)
+            QTimer.singleShot(3000, self.signals, self.refresh_devices)
             self._emit_operation(
                 "restart_adb",
                 True,
@@ -240,7 +246,7 @@ class ADBDeviceMixin(_ADBControllerBase):
         ip = result.get("device_ip", "unknown")
         mode = result.get("mode", "?")
         if result.get("success"):
-            QTimer.singleShot(10_000, self.refresh_devices)
+            QTimer.singleShot(10_000, self.signals, self.refresh_devices)
             self._emit_operation("reboot_mode", True, f"{ip} rebooting to {mode}...")
         else:
             self._emit_operation(

@@ -139,7 +139,9 @@ class ADBInputMixin(_ADBControllerBase):
         if result.get("success"):
             ns = result.get("namespace", "")
             self._emit_operation(
-                "settings_list", True, f"Settings [{ns}] ({ip}):\n{result.get('output', '')[:2000]}"
+                "settings_list",
+                True,
+                f"Settings [{ns}] ({ip}):\n{result.get('output', '')[:2000]}",
             )
         else:
             self._emit_operation(

@@ -42,9 +42,6 @@ def test_chmod_mode_helpers_normalize_and_build_mode():
     }
 
     assert explorer_service.mode_from_permissions(states) == "754"
-    assert explorer_service.normalize_mode("0755\n", is_dir=False) == "755"
-    assert explorer_service.normalize_mode("bad", is_dir=True) == "755"
-    assert explorer_service.normalize_mode("bad", is_dir=False) == "644"
 
 
 def test_file_explorer_command_builders_keep_current_shell_contract():

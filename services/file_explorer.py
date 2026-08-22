@@ -201,12 +201,6 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
     return rows, symlink_targets
 
 
-def normalize_mode(raw_mode: str, is_dir: bool) -> str:
-    mode = parse_mode(raw_mode)
-    if mode is not None:
-        return mode
-    return "755" if is_dir else "644"
-
 
 def parse_mode(raw_mode: str) -> str | None:
     """解析设备返回的权限模式；无法确认时不伪造默认权限。"""

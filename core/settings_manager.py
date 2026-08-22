@@ -260,6 +260,7 @@ class AppSettings:
                     instance._data = deepcopy(DEFAULTS)
                     instance._save_timer = None
                     instance._seen_version = CURRENT_SCHEMA_VERSION
+                    instance._future_extra = {}
                     cls._instance = instance
                     instance._load()
         return cls._instance
@@ -303,6 +304,10 @@ class AppSettings:
                         f"Settings schema v{stored_version} is newer than supported "
                         f"v{CURRENT_SCHEMA_VERSION}; known keys loaded, file left untouched",
                     )
+                    self._future_extra = {
+                        k: v for k, v in stored.items()
+                        if k not in DEFAULTS and k != "schema_version"
+                    }
                 else:
                     _run_migrations(stored, stored_version)
                     _prune_unknown_keys(stored)
@@ -333,6 +338,8 @@ class AppSettings:
                     # 版本号由加载/保存流程托管：来自更高版本的只读文件保留其
                     # 版本号，避免降级安装把新文件改写回旧版本。
                     snapshot["schema_version"] = self._seen_version
+                    # 保留更高版本文件的未知字段，避免降级安装一次保存就破坏新版本数据。
+                    snapshot.update(self._future_extra)
                 target = os.fspath(SETTINGS_FILE)
                 target_directory = os.path.dirname(target) or os.curdir
                 os.makedirs(target_directory, exist_ok=True)

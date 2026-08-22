@@ -557,6 +557,56 @@ def test_async_command_submission_failure_is_synchronous_for_owner_cleanup():
         )
 
 
+class _LongEnvelopeModel(ADBModelCore):
+    @async_command(long_running=True)
+    def long_sample_async(self, value):
+        return value
+
+
+def test_async_command_long_running_routes_to_long_pool():
+    _app = QApplication.instance() or QApplication([])
+    model = _LongEnvelopeModel()
+    model.long_pool = _ImmediatePool()
+    model.thread_pool = _FailingPool()
+    received = []
+    model.command_finished.connect(lambda _method, result: received.append(result))
+
+    model.long_sample_async({"success": True})
+
+    assert len(received) == 1
+    payload_with_perf, _metadata = split_operation_metadata(received[0])
+    payload, _perf = split_perf(payload_with_perf)
+    assert payload == {"success": True}
+
+
+def test_command_task_runs_in_real_thread_pool_and_emits_finished():
+    from PySide6.QtCore import QThreadPool
+
+    from models.adb_model import CommandTask
+
+    app = QApplication.instance() or QApplication([])
+    model = _EnvelopeModel()
+    received = []
+    model.command_finished.connect(lambda method, result: received.append((method, result)))
+
+    def method(self, value):
+        return value
+
+    task = CommandTask(model, method, 0.0, None, {"success": True})
+    pool = QThreadPool()
+    pool.start(task)
+    assert pool.waitForDone(5000)
+
+    app.processEvents()
+    assert len(received) == 1
+    method_name, wrapped = received[0]
+    assert method_name == "method"
+    payload_with_perf, metadata = split_operation_metadata(wrapped)
+    assert metadata is None
+    payload, _perf = split_perf(payload_with_perf)
+    assert payload == {"success": True}
+
+
 def _controller_for_operations():
     controller = _ADBControllerBase.__new__(_ADBControllerBase)
     controller.log_service = Mock()

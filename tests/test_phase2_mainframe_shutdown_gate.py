@@ -133,7 +133,7 @@ def _drain_frame_signals(frame):
         if handler == frame._on_application_finalized:
             with patch(
                 "gui.main_frame.QTimer.singleShot",
-                side_effect=lambda _delay, callback: callback(),
+                side_effect=lambda *args: args[-1](),
             ):
                 handler(*args)
         else:
@@ -497,3 +497,39 @@ def test_mainframe_deadline_closes_with_residual_without_claiming_resource_zero(
     settings._save_atomic.assert_called_once()
     frame.log_service.shutdown.assert_called_once()
     blocker.set()
+
+
+def test_close_controller_flush_shutdown_state_persists_pending_settings(tmp_path, monkeypatch):
+    """真实落盘：取消防抖计时器后原子保存待写设置，而非仅调用被注入的 stub。"""
+
+    import json
+
+    from core import settings_manager
+    from gui.close_controller import CloseController
+
+    previous_instance = settings_manager.AppSettings._instance
+    settings_file = tmp_path / "config" / "app_settings.json"
+    monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(settings_file))
+    monkeypatch.setattr(
+        settings_manager,
+        "LEGACY_SETTINGS_FILE",
+        str(tmp_path / "legacy" / "app_settings.json"),
+    )
+    settings_manager.AppSettings._instance = None
+    try:
+        controller = CloseController(None)
+        settings = settings_manager.AppSettings.instance()
+        settings.update({"theme": "Dark"})
+        assert settings._save_timer is not None
+
+        controller._flush_shutdown_state()
+
+        stored = json.loads(settings_file.read_text(encoding="utf-8"))
+        assert stored["theme"] == "Dark"
+    finally:
+        current = settings_manager.AppSettings._instance
+        if current is not None and current is not previous_instance:
+            timer = current._save_timer
+            if timer is not None:
+                timer.cancel()
+        settings_manager.AppSettings._instance = previous_instance

@@ -6,7 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import cast
 
-from PySide6.QtCore import QCoreApplication, QThread, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWidget.closeEvent。
     QComboBox,
@@ -491,7 +491,7 @@ class RemotePanel(BasePanel):
                 cls._schedule_launch_worker_delete(worker, restart_exhausted=True)
 
             try:
-                worker.finished.connect(release_after_finished)
+                worker.finished.connect(release_after_finished, Qt.ConnectionType.QueuedConnection)
             except Exception:
                 pass
             else:

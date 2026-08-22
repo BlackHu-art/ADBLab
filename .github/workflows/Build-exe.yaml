@@ -28,6 +28,14 @@ jobs:
           )
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
+      - name: Verify version not already published
+        shell: bash
+        run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.version.outputs.version }}" | grep -q .; then
+            echo "Tag ${{ steps.version.outputs.version }} already exists; bump utils/app_metadata.py APP_VERSION"
+            exit 1
+          fi
+
   build:
     needs: version
     name: Build ${{ matrix.os }}
@@ -94,6 +102,11 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: python -m ruff check .
+
+      - name: Type check with pyright
+        if: runner.os == 'Windows'
+        shell: bash
+        run: python -m pyright
 
       - name: Run fast tests (not UI)
         if: runner.os == 'Windows'

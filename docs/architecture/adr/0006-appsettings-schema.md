@@ -1,6 +1,6 @@
 # ADR-0006：AppSettings schema 版本化与遗留种子清理
 
-- 状态：Accepted（Step A–C 主路径已落地；未来版本字段透传存在实现偏差）
+- 状态：Accepted（Step A–C 主路径已落地；未来版本字段透传已闭环）
 - 日期：2026-08-20
 - 前置：ADR-0003（core 自足、原子持久化）
 
@@ -12,10 +12,10 @@
 `controllers/_base.py` 死属性与空占位 `resources/package_info.yaml` 已删除。
 知识库（DATA_FLOW/RISKS_AND_DEBT）已同步。
 
-实现偏差（2026-08-21 复核）：高于当前版本的文件在 `_load()` 当下确实不会被改写，
-且后续保存会保留较高的 `schema_version`；但 `_data` 只接收 `DEFAULTS` 已知键，任一后续
-保存都会用该已知键快照覆盖文件，从而丢失未来版本的未知字段。决策 2 的“原样保留”
-尚未完整落地，已记入风险账本。
+实现偏差已闭环（2026-08-21 后续复核）：高于当前版本的文件在 `_load()` 当下不会被改写，
+后续保存保留较高的 `schema_version`；`_load()` 将未知字段缓存进 `_future_extra`，`_save_atomic`
+在快照中合并回写，避免降级安装破坏新版本数据。决策 2 的“原样保留”已完整落地，
+并有 `test_future_schema_version_keeps_known_values_and_version` 回归断言。
 
 ## 背景
 

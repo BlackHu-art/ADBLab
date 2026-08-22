@@ -347,3 +347,69 @@ def test_process_runner_stop_all_tracked_is_global_fallback():
     proc_a.terminate.assert_called_once()
     proc_b.terminate.assert_called_once()
     assert ProcessRunner._global_procs == {}
+
+
+def test_process_runner_request_stop_unknown_key_returns_false():
+    runner = ProcessRunner()
+    assert runner.request_stop("missing") is False
+
+
+def test_process_runner_request_stop_terminates_running_process():
+    runner = ProcessRunner()
+    proc = Mock()
+    proc.poll.return_value = None
+    runner._procs["key"] = proc
+
+    assert runner.request_stop("key") is True
+    proc.terminate.assert_called_once()
+
+
+def test_process_runner_request_stop_skips_terminate_when_exited():
+    runner = ProcessRunner()
+    proc = Mock()
+    proc.poll.return_value = 0
+    runner._procs["key"] = proc
+
+    assert runner.request_stop("key") is False
+    proc.terminate.assert_not_called()
+
+
+def test_process_runner_request_stop_returns_false_on_oserror():
+    runner = ProcessRunner()
+    proc = Mock()
+    proc.poll.return_value = None
+    proc.terminate.side_effect = OSError("denied")
+    runner._procs["key"] = proc
+
+    assert runner.request_stop("key") is False
+
+
+def test_process_runner_force_stop_unknown_key_returns_false():
+    runner = ProcessRunner()
+    assert runner.force_stop("missing") is False
+
+
+def test_process_runner_force_stop_delegates_to_stop_when_exited():
+    runner = ProcessRunner()
+    proc = Mock()
+    proc.poll.return_value = 0
+    runner._procs["key"] = proc
+
+    with patch.object(runner, "stop") as stop:
+        assert runner.force_stop("key", timeout=0) is False
+    stop.assert_called_once_with("key", timeout=0)
+
+
+def test_process_runner_force_stop_removes_tracking_when_killed():
+    ProcessRunner._global_procs.clear()
+    runner = ProcessRunner()
+    proc = Mock()
+    proc.pid = 12345
+    proc.poll.side_effect = [None, 0]
+    runner._procs["key"] = proc
+
+    with patch.object(ProcessRunner, "_kill_process_tree_bounded", return_value=True):
+        assert runner.force_stop("key", timeout=2) is True
+
+    assert "key" not in runner._procs
+    proc.wait.assert_called()

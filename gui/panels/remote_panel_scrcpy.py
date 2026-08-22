@@ -3,6 +3,8 @@
 import os
 import threading
 
+from PySide6.QtCore import Qt
+
 from services.remote import ScrcpyConfig
 
 
@@ -54,7 +56,10 @@ class RemotePanelScrcpy:
         worker = ScrcpyLaunchWorker(config, service=self._frame._scrcpy_service)
         worker.log_message.connect(self._frame._log)
         worker.launch_ready.connect(self._frame._on_launch_ready)
-        worker.finished.connect(lambda _w=worker: self._frame._on_launch_finished(_w))
+        worker.finished.connect(
+            lambda _w=worker: self._frame._on_launch_finished(_w),
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._frame._launch_worker = worker
         try:
             worker.start()

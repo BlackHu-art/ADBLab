@@ -172,6 +172,7 @@ def test_future_schema_version_keeps_known_values_and_version(isolated_settings)
     stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
     assert stored["schema_version"] == 99
     assert stored["theme"] == "Dark"
+    assert stored["future_key"] == "keep-me"
 
 
 def test_update_ignores_schema_version(isolated_settings):

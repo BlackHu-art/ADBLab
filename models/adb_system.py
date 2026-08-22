@@ -3,6 +3,7 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
+import shlex
 from typing import Any
 
 from utils.adb_values import normalize_android_package, normalize_dumpsys_service
@@ -20,7 +21,10 @@ class ADBSystemMixin:
     @async_command
     def grant_permission_async(self, device_ip: str, package: str, permission: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "grant", package, permission],
+            [
+                "adb", "-s", device_ip, "shell", "pm", "grant",
+                shlex.quote(package), shlex.quote(permission),
+            ],
             device_ip=device_ip,
             package=package,
             permission=permission,
@@ -29,7 +33,10 @@ class ADBSystemMixin:
     @async_command
     def revoke_permission_async(self, device_ip: str, package: str, permission: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "revoke", package, permission],
+            [
+                "adb", "-s", device_ip, "shell", "pm", "revoke",
+                shlex.quote(package), shlex.quote(permission),
+            ],
             device_ip=device_ip,
             package=package,
             permission=permission,
@@ -38,7 +45,7 @@ class ADBSystemMixin:
     @async_command
     def reset_permissions_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "reset-permissions", package],
+            ["adb", "-s", device_ip, "shell", "pm", "reset-permissions", shlex.quote(package)],
             device_ip=device_ip,
             package=package,
         )
@@ -46,7 +53,7 @@ class ADBSystemMixin:
     @async_command
     def list_permissions_async(self, device_ip: str, package: str = "") -> dict:
         if package:
-            cmd = ["adb", "-s", device_ip, "shell", "pm", "dump", package]
+            cmd = ["adb", "-s", device_ip, "shell", "pm", "dump", shlex.quote(package)]
         else:
             cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "permissions"]
         return self._run(cmd, timeout=15, device_ip=device_ip, package=package)
@@ -56,7 +63,7 @@ class ADBSystemMixin:
     @async_command
     def disable_package_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "disable", package],
+            ["adb", "-s", device_ip, "shell", "pm", "disable", shlex.quote(package)],
             device_ip=device_ip,
             package=package,
         )
@@ -64,7 +71,7 @@ class ADBSystemMixin:
     @async_command
     def enable_package_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "enable", package],
+            ["adb", "-s", device_ip, "shell", "pm", "enable", shlex.quote(package)],
             device_ip=device_ip,
             package=package,
         )
@@ -72,7 +79,7 @@ class ADBSystemMixin:
     @async_command
     def disable_package_user_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "disable-user", package],
+            ["adb", "-s", device_ip, "shell", "pm", "disable-user", shlex.quote(package)],
             device_ip=device_ip,
             package=package,
         )
@@ -81,17 +88,17 @@ class ADBSystemMixin:
 
     @async_command
     def send_broadcast_async(self, device_ip: str, action: str, extras: dict | None = None) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "am", "broadcast", "-a", action]
+        cmd = ["adb", "-s", device_ip, "shell", "am", "broadcast", "-a", shlex.quote(action)]
         if extras:
             for k, v in extras.items():
                 if isinstance(v, bool):
-                    cmd.extend(["--ez", k, "true" if v else "false"])
+                    cmd.extend(["--ez", shlex.quote(str(k)), "true" if v else "false"])
                 elif isinstance(v, int):
-                    cmd.extend(["--ei", k, str(v)])
+                    cmd.extend(["--ei", shlex.quote(str(k)), str(v)])
                 elif isinstance(v, float):
-                    cmd.extend(["--ef", k, str(v)])
+                    cmd.extend(["--ef", shlex.quote(str(k)), str(v)])
                 else:
-                    cmd.extend(["--es", k, str(v)])
+                    cmd.extend(["--es", shlex.quote(str(k)), shlex.quote(str(v))])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     # Activity 启动
@@ -109,15 +116,15 @@ class ADBSystemMixin:
     ) -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "am", "start"]
         if component:
-            cmd.extend(["-n", component])
+            cmd.extend(["-n", shlex.quote(component)])
         if action:
-            cmd.extend(["-a", action])
+            cmd.extend(["-a", shlex.quote(action)])
         if data_uri:
-            cmd.extend(["-d", data_uri])
+            cmd.extend(["-d", shlex.quote(data_uri)])
         if mime_type:
-            cmd.extend(["-t", mime_type])
+            cmd.extend(["-t", shlex.quote(mime_type)])
         if flags:
-            cmd.extend(["-f", flags])
+            cmd.extend(["-f", shlex.quote(flags)])
         if wait:
             cmd.append("-W")
         return self._run(cmd, timeout=15, device_ip=device_ip)
@@ -125,7 +132,7 @@ class ADBSystemMixin:
     @async_command
     def open_deep_link_async(self, device_ip: str, uri: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "am", "start", "-d", uri],
+            ["adb", "-s", device_ip, "shell", "am", "start", "-d", shlex.quote(uri)],
             timeout=15,
             device_ip=device_ip,
             uri=uri,
@@ -187,7 +194,7 @@ class ADBSystemMixin:
     @async_command
     def kill_process_async(self, device_ip: str, pid: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "kill", pid],
+            ["adb", "-s", device_ip, "shell", "kill", shlex.quote(str(pid))],
             device_ip=device_ip,
             pid=pid,
         )
@@ -198,18 +205,18 @@ class ADBSystemMixin:
     def content_query_async(
         self, device_ip: str, uri: str, projection: str = "", where: str = "", sort: str = ""
     ) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "content", "query", "--uri", uri]
+        cmd = ["adb", "-s", device_ip, "shell", "content", "query", "--uri", shlex.quote(uri)]
         if projection:
-            cmd.extend(["--projection", projection])
+            cmd.extend(["--projection", shlex.quote(projection)])
         if where:
-            cmd.extend(["--where", where])
+            cmd.extend(["--where", shlex.quote(where)])
         if sort:
-            cmd.extend(["--sort", sort])
+            cmd.extend(["--sort", shlex.quote(sort)])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     @async_command
     def content_insert_async(self, device_ip: str, uri: str, binds: dict | None = None) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "content", "insert", "--uri", uri]
+        cmd = ["adb", "-s", device_ip, "shell", "content", "insert", "--uri", shlex.quote(uri)]
         for k, v in (binds or {}).items():
             key, value = str(k), str(v)
             # bind 语法为 key:type:value，冒号或空值会破坏解析并污染命令结构。
@@ -220,9 +227,9 @@ class ADBSystemMixin:
 
     @async_command
     def content_delete_async(self, device_ip: str, uri: str, where: str = "") -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "content", "delete", "--uri", uri]
+        cmd = ["adb", "-s", device_ip, "shell", "content", "delete", "--uri", shlex.quote(uri)]
         if where:
-            cmd.extend(["--where", where])
+            cmd.extend(["--where", shlex.quote(where)])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
     # 电池状态模拟
@@ -368,7 +375,7 @@ class ADBSystemMixin:
     @async_command
     def ime_set_async(self, device_ip: str, ime_id: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "ime", "set", ime_id],
+            ["adb", "-s", device_ip, "shell", "ime", "set", shlex.quote(ime_id)],
             device_ip=device_ip,
         )
 
@@ -377,14 +384,14 @@ class ADBSystemMixin:
     @async_command
     def pm_path_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "path", package],
+            ["adb", "-s", device_ip, "shell", "pm", "path", shlex.quote(package)],
             device_ip=device_ip,
         )
 
     @async_command
     def pm_dump_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "dump", package],
+            ["adb", "-s", device_ip, "shell", "pm", "dump", shlex.quote(package)],
             timeout=15,
             device_ip=device_ip,
         )
@@ -410,7 +417,7 @@ class ADBSystemMixin:
     def set_inactive_async(self, device_ip: str, package: str, inactive: bool) -> dict:
         state = "true" if inactive else "false"
         return self._run(
-            ["adb", "-s", device_ip, "shell", "am", "set-inactive", package, state],
+            ["adb", "-s", device_ip, "shell", "am", "set-inactive", shlex.quote(package), state],
             device_ip=device_ip,
             package=package,
             inactive=state,
@@ -419,7 +426,7 @@ class ADBSystemMixin:
     @async_command
     def force_stop_async(self, device_ip: str, package: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "am", "force-stop", package],
+            ["adb", "-s", device_ip, "shell", "am", "force-stop", shlex.quote(package)],
             device_ip=device_ip,
         )
 

@@ -317,7 +317,7 @@ class FileExplorerDialog(QDialog):
                 return
             handler(*args)
 
-        signal.connect(guarded)
+        signal.connect(guarded, Qt.ConnectionType.QueuedConnection)
         self._worker_ui_bindings.setdefault(worker, []).append((signal, guarded))
         return guarded
 

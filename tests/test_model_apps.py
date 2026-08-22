@@ -434,32 +434,6 @@ def test_parse_apk_info_rejects_missing_file():
     assert controller._emit_operation.call_args.args[1] is False
 
 
-def test_batch_install_result_without_envelope_uses_legacy_batch_handler():
-    emitted = []
-
-    controller = Mock()
-    controller._pending_lock = threading.Lock()
-    controller.device_batches = DeviceBatchUseCase(OperationManager())
-    start = controller.device_batches.start(
-        "batch_install", ["device-1", "device-2"], label="Batch Install"
-    )
-    controller._batch_starts = {"batch_install": start}
-    controller._emit_operation.side_effect = lambda op, success, msg: emitted.append(
-        (op, success, msg)
-    )
-
-    ADBAppMixin._process_install_apk_result(
-        controller,
-        {
-            "success": True,
-            "device_ip": "device-1",
-            "apk_name": "demo.apk",
-            "operation": "batch_install",
-        },
-    )
-
-    assert emitted == [("batch_install", True, "✅ install success (1/2) demo.apk on device-1")]
-
 
 def test_app_controller_install_submission_uses_metadata_without_early_completion():
     controller = Mock()

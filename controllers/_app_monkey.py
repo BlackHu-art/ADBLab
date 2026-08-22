@@ -31,24 +31,31 @@ def _monkey_state_map(controller, name: str) -> dict:
 def _finalize_monkey_target(controller, batch_id: str, device: str) -> bool:
     """在运行终态和停止确认均满足后，原子释放设备批次。"""
 
-    batch_map = _monkey_state_map(controller, "_monkey_batch_by_device")
-    current_batch = str(batch_map.get(device, ""))
-    if current_batch and current_batch != batch_id:
-        return False
-    if batch_id and not current_batch:
-        return False
-    batch_map.pop(device, None)
-    controller._monkey_running.discard(device)
-    for name in (
-        "_monkey_stop_requests",
-        "_monkey_stop_acks",
-        "_monkey_run_terminals",
-    ):
-        state_map = _monkey_state_map(controller, name)
-        if state_map.get(device) == batch_id:
-            state_map.pop(device, None)
-    _emit_monkey_target_finished(controller, batch_id, device)
-    return True
+    lock = getattr(controller, "_monkey_lock", None)
+    if lock is not None:
+        lock.acquire()
+    try:
+        batch_map = _monkey_state_map(controller, "_monkey_batch_by_device")
+        current_batch = str(batch_map.get(device, ""))
+        if current_batch and current_batch != batch_id:
+            return False
+        if batch_id and not current_batch:
+            return False
+        batch_map.pop(device, None)
+        controller._monkey_running.discard(device)
+        for name in (
+            "_monkey_stop_requests",
+            "_monkey_stop_acks",
+            "_monkey_run_terminals",
+        ):
+            state_map = _monkey_state_map(controller, name)
+            if state_map.get(device) == batch_id:
+                state_map.pop(device, None)
+        _emit_monkey_target_finished(controller, batch_id, device)
+        return True
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 class ADBAppMonkeyMixin(_ADBControllerBase):
@@ -170,15 +177,28 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         if not package_name:
             return self._emit_operation("monkey", False, "No package name provided")
         # 同一设备只允许一个 Monkey 会话，避免重复启动后无法准确停止。
-        dupes = [d for d in devices if d in self._monkey_running]
-        if dupes:
-            self._emit_operation("monkey", False, f"Monkey already running on: {', '.join(dupes)}")
-            for device in devices:
-                _emit_monkey_target_finished(self, batch_id, device)
-            return
+        # 占位与会话登记在同一锁内原子完成；save_dir 失败时回滚占位。
+        if not hasattr(self, "_monkey_batch_by_device"):
+            self._monkey_batch_by_device = {}
+        with self._monkey_lock:
+            dupes = [d for d in devices if d in self._monkey_running]
+            if dupes:
+                self._emit_operation(
+                    "monkey", False, f"Monkey already running on: {', '.join(dupes)}"
+                )
+                for device in devices:
+                    _emit_monkey_target_finished(self, batch_id, device)
+                return
+            for d in devices:
+                self._monkey_running.add(d)
+                self._monkey_batch_by_device[d] = batch_id
         try:
             save_dir = self._get_screenshot_dir()
         except (OSError, RuntimeError, ValueError) as exc:
+            with self._monkey_lock:
+                for d in devices:
+                    self._monkey_running.discard(d)
+                    self._monkey_batch_by_device.pop(d, None)
             self._emit_operation(
                 "monkey",
                 False,
@@ -187,11 +207,6 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             for device in devices:
                 _emit_monkey_target_finished(self, batch_id, device)
             return
-        if not hasattr(self, "_monkey_batch_by_device"):
-            self._monkey_batch_by_device = {}
-        for d in devices:
-            self._monkey_running.add(d)
-            self._monkey_batch_by_device[d] = batch_id
         log = self.log_service.log
         pct_keys = [
             "touch",
@@ -312,7 +327,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 f"║ 🔍 Detailed Log: {monkey_log}\n"
                 "╚════════════════════════════════════════════════════════════════╝"
             )
-        emitted = self._emit_operation("monkey", result.get("success"), message)
+        emitted = self._emit_operation("monkey", bool(result.get("success")), message)
         stop_requests = _monkey_state_map(self, "_monkey_stop_requests")
         stop_acks = _monkey_state_map(self, "_monkey_stop_acks")
         if stop_requests.get(device_ip) == batch_id:

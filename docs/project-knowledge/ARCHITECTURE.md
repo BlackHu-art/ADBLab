@@ -269,8 +269,8 @@ sequenceDiagram
   它们都不再各自在 closeEvent 里同步等待 worker。
 - 本地配置已按 ADR-0006 引入由加载/保存流程托管的 `schema_version` 和 v1→v2→v3 迁移链：
   无版本文件按 v1 迁移，受支持版本迁移后剔除未知键。高于当前版本的文件在加载时
-  只读取已知键且不立即改写；但之后任一保存会以已知键快照覆盖文件，虽保留较高
-  `schema_version`，仍会丢失未来版本的未知字段。
+  只读取已知键且不立即改写；未知的未来字段经 `_future_extra` 缓存并在每次保存时
+  合并回文件，保留较高 `schema_version`，避免降级安装破坏新版本数据。
   Remote 的 `scrcpy_*` 键通过 `SCRCPY_SETTING_DEFAULTS` 纳入 `DEFAULTS` 并可跨会话恢复；
   DeviceStore 仍是无 schema/version 的 YAML 存储，但已改为锁内快照和原子替换。
 - 没有真正的鉴权/权限分层；危险入口不再弹窗确认（按产品决定全局移除，`confirm_dangerous_ops`

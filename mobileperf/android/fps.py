@@ -13,7 +13,7 @@ import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
-from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.android.tools.androiddevice import AndroidDevice, _shq
 from mobileperf.common.basemonitor import Monitor
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
@@ -314,7 +314,7 @@ class SurfaceStatsCollector:
             results = self.device.adb.run_shell_cmd("dumpsys SurfaceFlinger --latency-clear")
         else:
             results = self.device.adb.run_shell_cmd(
-                f"dumpsys SurfaceFlinger --latency-clear {self.focus_window}"
+                f"dumpsys SurfaceFlinger --latency-clear {_shq(self.focus_window)}"
             )
         return not len(results)
 
@@ -340,12 +340,14 @@ class SurfaceStatsCollector:
         pending_fence_timestamp = (1 << 63) - 1
         if self.device.adb.get_sdk_version() >= 26:
             results = self.device.adb.run_shell_cmd(
-                f"dumpsys SurfaceFlinger --latency {self.focus_window}"
+                f"dumpsys SurfaceFlinger --latency {_shq(self.focus_window)}"
             )
             results = results.replace("\r\n", "\n").splitlines()
+            if not results or not results[0].isdigit():
+                return (None, None)
             refresh_period = int(results[0]) / nanoseconds_per_second
             results = self.device.adb.run_shell_cmd(
-                f"dumpsys gfxinfo {self.package_name} framestats"
+                f"dumpsys gfxinfo {_shq(self.package_name)} framestats"
             )
             # 将 gfxinfo framestats 结果转换为统一的三时间戳结构。
             results = results.replace("\r\n", "\n").splitlines()
@@ -363,7 +365,7 @@ class SurfaceStatsCollector:
                     PROFILEDATA_line += 1
                 fields = []
                 fields = line.split(",")
-                if fields and "0" == fields[0]:
+                if fields and "0" == fields[0] and len(fields) >= 14:
                     # 提取 INTENDED_VSYNC、VSYNC 和 FRAME_COMPLETED 计算 FPS 与卡顿。
                     timestamp = [int(fields[1]), int(fields[2]), int(fields[13])]
                     if timestamp[1] == pending_fence_timestamp:
@@ -375,7 +377,7 @@ class SurfaceStatsCollector:
                     break
         else:
             results = self.device.adb.run_shell_cmd(
-                f"dumpsys SurfaceFlinger --latency {self.focus_window}"
+                f"dumpsys SurfaceFlinger --latency {_shq(self.focus_window)}"
             )
             results = results.replace("\r\n", "\n").splitlines()
             logger.debug("dumpsys SurfaceFlinger --latency result:")

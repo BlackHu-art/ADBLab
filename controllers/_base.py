@@ -68,7 +68,9 @@ class _ADBControllerBase:
         self.last_save_dir = None
         self._active_viewers = []
         self._monkey_running = set()
+        self._monkey_lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=4)
+        self._shutting_down = False
         self._build_handler_map()
 
         try:
@@ -168,6 +170,8 @@ class _ADBControllerBase:
         return True
 
     def _handle_async_response(self, method_name: str, result):
+        if getattr(self, "_shutting_down", False):
+            return
         result, operation_metadata = split_operation_metadata(result)
         result, perf = split_perf(result)
         op_type = method_name.replace("_async", "")
@@ -451,6 +455,7 @@ class _ADBControllerBase:
             shutdown = getattr(model, "shutdown", None)
             if callable(shutdown):
                 shutdown()
+        self._shutting_down = True
         ProcessRunner.stop_all_tracked()
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.log_service.log("DEBUG", "controller shutdown completed")

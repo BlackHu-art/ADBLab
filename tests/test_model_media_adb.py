@@ -750,6 +750,19 @@ def test_adb_advanced_shutdown_stops_recording_and_input_sessions():
     model._adb_bridge.close_input_sessions.assert_called_once_with(None)
 
 
+def test_adb_advanced_reboot_mode_treats_timeout_as_success():
+    model = ADBAdvanced()
+
+    with patch.object(model, "_run") as run:
+        run.return_value = {"success": False, "error": "Timeout(3s)", "device_ip": "device-1"}
+
+        result = ADBAdvanced.reboot_mode_async.__wrapped__(model, "device-1", "recovery")
+
+    assert result["success"] is True
+    assert result["mode"] == "recovery"
+    assert "Device rebooting" in result["output"]
+
+
 def test_quick_setting_batches_animation_commands_into_one_shell():
     model = ADBAdvanced()
 

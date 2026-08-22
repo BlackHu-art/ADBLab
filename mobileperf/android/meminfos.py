@@ -10,7 +10,7 @@ import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
-from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.android.tools.androiddevice import AndroidDevice, _shq
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
 
@@ -184,7 +184,7 @@ class MemInfoPackageCollector:
     def _dumpsys_process_meminfo(self, process):
         """采集指定进程的详细内存信息，通常在一秒内完成。"""
         time_old = time.time()
-        out = self.device.adb.run_shell_cmd(f"dumpsys meminfo {process}")
+        out = self.device.adb.run_shell_cmd(f"dumpsys meminfo {_shq(process)}")
         # Windows 文件名不能包含冒号，因此对子进程分隔符进行替换。
         process_rename = process.replace(":", "_")
         meminfo_file = os.path.join(

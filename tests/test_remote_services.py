@@ -29,7 +29,7 @@ class _TestSignal:
     def __init__(self):
         self.callbacks = []
 
-    def connect(self, callback):
+    def connect(self, callback, *_args):
         self.callbacks.append(callback)
 
     def emit(self):

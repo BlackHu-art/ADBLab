@@ -179,6 +179,7 @@ def test_controller_shutdown_stops_model_processes_and_executor():
 
 def test_connect_device_result_uses_returned_device_ip():
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.executor = Mock()
     controller._save_device_info = Mock()
     controller.refresh_devices = Mock()
     controller._emit_operation = Mock()
@@ -188,7 +189,7 @@ def test_connect_device_result_uses_returned_device_ip():
         {"success": True, "device_ip": "device-2", "output": "connected to device-2"},
     )
 
-    controller._save_device_info.assert_called_once_with("device-2")
+    controller.executor.submit.assert_called_once_with(controller._save_device_info, "device-2")
     controller.refresh_devices.assert_called_once()
     controller._emit_operation.assert_called_once_with(
         "connect", True, "Successfully connected to device-2"
@@ -197,6 +198,7 @@ def test_connect_device_result_uses_returned_device_ip():
 
 def test_connect_device_result_refreshes_when_already_connected():
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.executor = Mock()
     controller._save_device_info = Mock()
     controller.refresh_devices = Mock()
     controller._emit_operation = Mock()
@@ -206,7 +208,7 @@ def test_connect_device_result_refreshes_when_already_connected():
         {"success": True, "device_ip": "device-2", "output": "already connected to device-2"},
     )
 
-    controller._save_device_info.assert_called_once_with("device-2")
+    controller.executor.submit.assert_called_once_with(controller._save_device_info, "device-2")
     controller.refresh_devices.assert_called_once()
     controller._emit_operation.assert_called_once_with(
         "connect", True, "device-2 is already connected"

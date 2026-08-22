@@ -668,7 +668,8 @@ class MobilePerfRunner:
         )
         self._cleanup_run_context(context)
         with self._state_lock:
-            if self._active_context is context:
+            notify = self._active_context is context
+            if notify:
                 self._last_exit_code = exit_code
                 self._proc = None
                 self._active_context = None
@@ -677,7 +678,7 @@ class MobilePerfRunner:
                 self._on_log = None
                 self._on_finished = None
                 self._finished_notified = True
-        if context.on_finished:
+        if notify and context.on_finished:
             try:
                 context.on_finished()
             except Exception as exc:

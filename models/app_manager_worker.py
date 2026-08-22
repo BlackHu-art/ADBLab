@@ -3,6 +3,7 @@
 import concurrent.futures
 import os
 import re
+import shlex
 import shutil
 import tempfile
 import threading
@@ -14,6 +15,11 @@ from core.exec import CommandRunner
 from utils.archive import safe_extract_zip
 
 _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+
+
+def _safe_pkg(pkg: str) -> bool:
+    """校验包名为安全 token，拒绝 shell 元字符与路径分隔符。"""
+    return bool(_PACKAGE_NAME_RE.fullmatch(str(pkg or "")))
 _DETAIL_BEGIN = "__ADBLAB_PKG_BEGIN_{}__"
 _DETAIL_END = "__ADBLAB_PKG_END_{}__"
 
@@ -153,6 +159,9 @@ class AppManagerWorker(QThread):
         for i, pkg in enumerate(packages):
             if self._aborted.is_set() or self.isInterruptionRequested():
                 return
+            if not _safe_pkg(pkg):
+                self.app_detail_batch.emit(pkg, "", "", "")
+                continue
             try:
                 r = self._adb("shell", f"dumpsys package {pkg}", timeout=5)
                 self._emit_package_detail(pkg, r.stdout)
@@ -162,7 +171,7 @@ class AppManagerWorker(QThread):
                 self.log_message.emit(f"Details: {i + 1}/{total}")
 
     def _load_detail_batch_once(self, packages) -> bool:
-        safe_packages = [pkg for pkg in packages if _PACKAGE_NAME_RE.match(str(pkg or ""))]
+        safe_packages = [pkg for pkg in packages if _PACKAGE_NAME_RE.fullmatch(str(pkg or ""))]
         if len(safe_packages) != len(packages):
             return False
         script_parts = []
@@ -202,6 +211,9 @@ class AppManagerWorker(QThread):
         )
 
     def _fetch_app_details(self, pkg):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         r = self._adb("shell", f"dumpsys package {pkg}")
         out = r.stdout
         m_cp = re.search(r"codePath=(.*)", out)
@@ -226,6 +238,9 @@ class AppManagerWorker(QThread):
         )
 
     def _fetch_permissions(self, pkg):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         r = self._adb("shell", f"dumpsys package {pkg}")
         out = r.stdout
 
@@ -247,6 +262,9 @@ class AppManagerWorker(QThread):
         self.permissions_loaded.emit(declared, requested, runtime)
 
     def _modify_app(self, action, pkg):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         cmds = {
             "disable": ["shell", "pm", "disable-user", "--user", "0", pkg],
             "enable": ["shell", "pm", "enable", pkg],
@@ -257,11 +275,14 @@ class AppManagerWorker(QThread):
         if not cmd:
             return
         r = self._adb(*cmd)
-        self.log_message.emit(f"{'OK' if r.returncode == 0 else 'FAIL'}: {action} {pkg}")
-        if r.returncode == 0:
+        self.log_message.emit(f"{'OK' if r.success else 'FAIL'}: {action} {pkg}")
+        if r.success:
             self.operation_done.emit(action)
 
     def _launch_app(self, pkg):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         result = self._adb(
             "shell",
             "monkey",
@@ -280,6 +301,9 @@ class AppManagerWorker(QThread):
         self.operation_done.emit("launch")
 
     def _clear_app(self, pkg):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         r = self._adb("shell", "pm", "clear", pkg)
         if not r.success:
             self.log_message.emit(
@@ -290,7 +314,13 @@ class AppManagerWorker(QThread):
         self.operation_done.emit("clear")
 
     def _modify_permission(self, pkg, perm, action):
-        r = self._adb("shell", "pm", action, pkg, perm)
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
+        if action not in {"grant", "revoke"}:
+            self.log_message.emit(f"Invalid permission action: {action}")
+            return
+        r = self._adb("shell", "pm", action, pkg, shlex.quote(perm))
         if not r.success:
             self.log_message.emit(
                 f"Failed to {action} permission {perm}: "
@@ -301,6 +331,9 @@ class AppManagerWorker(QThread):
         self.operation_done.emit("permissions_changed")
 
     def _backup_app(self, pkg, save_dir):
+        if not _safe_pkg(pkg):
+            self.log_message.emit(f"Invalid package: {pkg}")
+            return
         self.backup_progress.emit(pkg, "Fetching APK paths")
         r = self._adb("shell", f"pm path {pkg}")
         if not r.success:

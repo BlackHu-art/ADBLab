@@ -70,6 +70,7 @@ class PckCpuinfo:
         """解析 top 输出中与目标包完全匹配的进程 CPU 信息。"""
         if self.packages is None or self.packages == "":
             logger.error("no process name input, please input")
+            return
 
         for package in self.packages:
             package_dic = {"package": package, "pid": "", "pid_cpu": ""}
@@ -109,7 +110,7 @@ class PckCpuinfo:
                             logger.debug(
                                 "package: " + package + ", cpu_rate: " + str(self.pck_cpu_rate)
                             )
-                            self.total_pid_cpu = self.total_pid_cpu + float(self.pck_cpu_rate)
+                            self.total_pid_cpu = self.total_pid_cpu + float(self.pck_cpu_rate or 0)
                         break
             self.package_list.append(package_dic)
             logger.debug(package_dic)
@@ -362,7 +363,7 @@ class CpuCollector:
                 logger.error(e)
                 s = traceback.format_exc()
                 logger.debug(s)  # 将异常堆栈写入调试日志。
-                if self.cpu_queue:
+                if getattr(self, "cpu_queue", None):
                     self.cpu_queue.task_done()
         logger.debug("stop event is set or timeout")
 

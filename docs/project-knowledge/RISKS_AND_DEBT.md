@@ -47,7 +47,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | screenrecord 以 `stderr=PIPE` 启动且无消费线程，stderr 写满 64KB 管道会阻塞录屏进程 | `models/adb_advanced.py:60-71` | 录屏进程死锁 | 专项审计（2026-08-21）P-1：stderr 改 DEVNULL 或起排空线程；需实机验证 screenrecord stderr 量 | Open |
 | Low | 设备信息把 `ro.serialno` 与 MAC 以 INFO 落用户日志与 app.log | `controllers/_device.py::_process_device_info_result`；`core/log_service.py::LogService._add_file_handler` | 违反"不记录真实设备唯一标识"约定 | 专项审计（2026-08-21）O-1：序列号/MAC 脱敏后展示，不落文件日志 | Open |
 | Low | 专项审计（2026-08-21）A 组低风险 8 项：日志文件无轮转（O-2→RotatingFileHandler 2MiB×3）、设置防抖 Timer 锁外 cancel（T-5）、monkey 最大恢复 wait 无超时（T-7）、传输 EOF 忙等（P-3）、worker `_aborted` 布尔跨线程无同步（T-4→threading.Event）、logcat 导出非原子写（O-3→`utils/atomic_text.py`）、content_insert bind 未校验（I-4→冒号/空值拒绝）、`update_current_package` 闭包捕获 self（R-2→weakref） | `git show b8e2f47` | 命令注入结构破坏、半截文件、退出拖慢、忙等 CPU | 已修复并补测试（`test_atomic_text.py`、content_insert 校验用例）；其余审计项（I-2/I-3/T-3/T-6/C-1/C-2/R-3/P-2）见审计报告留待后续批次 | Closed |
-| Medium | 降级版本加载未来 `AppSettings` schema 后，任一后续保存都会丢失未知的未来字段 | `core/settings_manager.py::_load/_save_atomic`；`tests/test_settings_persistence.py::test_future_schema_version_keeps_known_values_and_version` | 用旧版应用修改一项设置即可破坏新版本数据，与 ADR-0006 的降级兼容决策不符 | 对未来 schema 保留原始未知字段并在保存时合并，或进入显式只读模式；新增 `future_key` 在 update/save 后仍存在的回归断言 | Open |
+| Medium | 降级版本加载未来 `AppSettings` schema 后，任一后续保存都会丢失未知的未来字段 | `core/settings_manager.py::_load/_save_atomic`；`tests/test_settings_persistence.py::test_future_schema_version_keeps_known_values_and_version` | 用旧版应用修改一项设置即可破坏新版本数据，与 ADR-0006 的降级兼容决策不符 | 已通过 `_future_extra` 在加载时缓存未知字段、保存时合并回写；`future_key` 在 update/save 后仍存在的回归断言已落地 | Closed |
 | Medium | 非 Windows 源码运行时，ADB 解析器仍会优先选择仓库内 Windows `adb.exe` | `utils/adb_resolver.py::resolve_adb_path`；`utils/runtime_tools.py::bundled_tool_path`；`tests/test_runtime_tools.py::test_resolve_adb_path_prefers_runtime_tool_path` | macOS/Linux checkout 可能把 Windows PE 当作 adb 执行，设备功能直接失败；现有 CI 自检不覆盖该功能路径 | 在 resolver 中增加平台门控，非 Windows 直接解析 PATH `adb`；补 Linux/macOS 路径优先级契约测试 | Open |
 
 ## 历史维护热点
@@ -61,10 +61,9 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 1. 统一校验或 quote 设备 shell 动态值，关闭命令注入面。
 2. 收口全局 `QThreadPool`/Controller executor 关闭边界，并处理 screenrecord `stderr=PIPE`
    未持续排空的阻塞风险。
-3. 修复未来 AppSettings schema 在后续保存时丢失未知字段的降级兼容缺口。
-4. 补齐 AppManager manifest/hash 和授权实机恢复验证。
-5. 为 Release 保留策略增加持久版本登记，避免已清理的历史版本被重新使用。
-6. 分离录屏 pull/cleanup 状态，并修正 `get_current_activity_async` 的失败/无结果语义。
+3. 补齐 AppManager manifest/hash 和授权实机恢复验证。
+4. 为 Release 保留策略增加持久版本登记，避免已清理的历史版本被重新使用。
+5. 分离录屏 pull/cleanup 状态，并修正 `get_current_activity_async` 的失败/无结果语义。
 7. 完成 MainFrame/helper 进程树、MobilePerf 长跑/断线以及跨类型任务并发的授权
    实机集成验证。
 8. 修正非 Windows 源码模式的 ADB 路径优先级，定位全量套件耗时与偶发 Qt

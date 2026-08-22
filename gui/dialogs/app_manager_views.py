@@ -44,7 +44,9 @@ class AppManagerViews:
         if is_qobject_alive(self._frame._detail_timer):
             self._frame._detail_timer.stop()
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "load_apps")
-        w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+        w.log_message.connect(
+            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        )
         dialog_ref = weakref.ref(self._frame)
 
         def populate_current(apps):
@@ -52,7 +54,7 @@ class AppManagerViews:
             if dialog is not None and is_qobject_alive(dialog):
                 dialog._populate(apps, request_id=request_id)
 
-        w.apps_loaded.connect(populate_current)
+        w.apps_loaded.connect(populate_current, Qt.ConnectionType.QueuedConnection)
         self._frame._track_worker(w)
         w.start()
 
@@ -234,14 +236,17 @@ class AppManagerViews:
         request_id = getattr(self._frame, "_active_load_request", 0)
         setattr(w, "_app_load_request_id", request_id)
         w.app_detail_batch.connect(self._frame._on_detail)
-        w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+        w.log_message.connect(
+            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        )
         w.finished.connect(
             alive_callback(
                 self._frame,
                 "_on_detail_worker_finished",
                 packages,
                 request_id,
-            )
+            ),
+            Qt.ConnectionType.QueuedConnection,
         )
         self._frame._track_worker(w)
         w.start()

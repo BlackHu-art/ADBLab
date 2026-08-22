@@ -4,6 +4,7 @@
 """
 
 import os
+import shlex
 import shutil
 
 from .adb_model import ADBModelCore, async_command
@@ -38,7 +39,7 @@ class ADBApp(ADBModelCore):
             operation=operation,
         )
 
-    @async_command
+    @async_command(long_running=True)
     def install_apk_async(
         self,
         device_ip: str,
@@ -65,7 +66,7 @@ class ADBApp(ADBModelCore):
     @async_command
     def clear_app_data_async(self, device_ip: str, package_name: str, idx: int) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "clear", package_name],
+            ["adb", "-s", device_ip, "shell", "pm", "clear", shlex.quote(package_name)],
             timeout=30,
             device_ip=device_ip,
             package_name=package_name,
@@ -75,7 +76,7 @@ class ADBApp(ADBModelCore):
     @async_command
     def restart_app_async(self, device_ip: str, package_name: str, index: int) -> dict:
         r1 = self._run(
-            ["adb", "-s", device_ip, "shell", "am", "force-stop", package_name],
+            ["adb", "-s", device_ip, "shell", "am", "force-stop", shlex.quote(package_name)],
             device_ip=device_ip,
         )
         r2 = self._run(
@@ -86,7 +87,7 @@ class ADBApp(ADBModelCore):
                 "shell",
                 "monkey",
                 "-p",
-                package_name,
+                shlex.quote(package_name),
                 "-c",
                 "android.intent.category.LAUNCHER",
                 "1",
@@ -154,7 +155,7 @@ class ADBApp(ADBModelCore):
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "input", "text", text],
+            ["adb", "-s", device_ip, "shell", "input", "text", shlex.quote(text)],
             device_ip=device_ip,
             text=text,
         )

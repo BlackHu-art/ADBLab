@@ -5,9 +5,11 @@ ADBModelCore，再由控制器独立组合使用，从而避免循环依赖。
 """
 
 import uuid
+from collections.abc import Callable
 from functools import wraps
+from typing import Any, TypeVar, overload
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
+from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 
 from adblab.application.envelope import OperationMetadata, attach_operation_metadata
 from core.exec import CommandRunner
@@ -47,8 +49,27 @@ class CommandTask(QRunnable):
             pass  # 结果投递期间 Qt 对象可能已经由 C++ 侧删除。
 
 
-def async_command(method):
-    """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。"""
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+@overload
+def async_command(method: _F, *, long_running: bool = False) -> _F: ...
+
+
+@overload
+def async_command(
+    method: None = None, *, long_running: bool = False
+) -> Callable[[_F], _F]: ...
+
+
+def async_command(method=None, *, long_running: bool = False) -> Any:
+    """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。
+
+    long_running=True 时提交到专用长任务池，避免长任务占满全局池导致短命令饥饿。
+    """
+
+    if method is None:
+        return lambda m: async_command(m, long_running=long_running)
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -85,7 +106,8 @@ def async_command(method):
             *args,
             **kwargs,
         )
-        self.thread_pool.start(task)
+        pool = self.long_pool if long_running else self.thread_pool
+        pool.start(task)
 
     return wrapper
 
@@ -101,6 +123,8 @@ class ADBModelCore(QObject):
     def __init__(self):
         super().__init__()
         self.thread_pool = QThreadPool.globalInstance()
+        self.long_pool = QThreadPool()
+        self.long_pool.setMaxThreadCount(max(2, QThread.idealThreadCount() // 2))
 
     @classmethod
     def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:

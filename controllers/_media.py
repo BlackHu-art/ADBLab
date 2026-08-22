@@ -87,7 +87,6 @@ class ADBMediaMixin(_ADBControllerBase):
     last_save_dir: str | None
 
     _handlers = {
-        "take_screenshot": "_process_screenshot_result",
         "start_screen_record": "_process_start_screen_record_result",
         "stop_screen_record": "_process_stop_screen_record_result",
         "pull_recorded_video": "_process_pull_recorded_video_result",
@@ -227,20 +226,6 @@ class ADBMediaMixin(_ADBControllerBase):
             _operation_expected_artifact_path=save_path,
             _operation_generation_token=generation_token,
         )
-
-    def _process_screenshot_result(self, result: dict):
-        """处理未携带 operation envelope 的旧版兼容结果。"""
-        device_ip = result.get("device_ip", "")
-        path = result.get("screenshot_path", "")
-        if result.get("success") and ADBTesting._is_valid_png(path):
-            self.signals.screenshot_captured.emit(device_ip, path)
-            self._emit_operation("screenshot", True, "Screenshot captured")
-        else:
-            self._emit_operation(
-                "screenshot",
-                False,
-                "Screenshot capture failed",
-            )
 
     def _process_screenshot_operation_result(
         self,
@@ -446,6 +431,7 @@ class ADBMediaMixin(_ADBControllerBase):
         if paths:
             QTimer.singleShot(
                 0,
+                self.signals,
                 lambda captured=tuple(paths): self._show_screenshot_viewer(list(captured)),
             )
 
@@ -567,6 +553,7 @@ class ADBMediaMixin(_ADBControllerBase):
                 # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
                 QTimer.singleShot(
                     (dur + 2) * 1000,
+                    self.signals,
                     lambda ip=ip, batch_id=batch_id: self._auto_pull(ip, batch_id),
                 )
         else:

@@ -75,7 +75,7 @@ def test_two_overlapping_screenshot_batches_are_isolated_when_callbacks_interlea
     controller = _controller(tmp_path)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         operation_a = controller.take_screenshot(["target-a", "target-b"])
         operation_b = controller.take_screenshot(["target-a", "target-c"])
@@ -125,7 +125,7 @@ def test_screenshot_partial_failure_is_not_reported_as_success(tmp_path):
     controller = _controller(tmp_path)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         operation_id = controller.take_screenshot(["target-a", "target-b", "target-c"])
         success_task, failed_task, missing_task = _tasks(controller, operation_id)
@@ -186,7 +186,7 @@ def test_screenshot_duplicate_and_late_callbacks_have_no_duplicate_side_effects(
     controller = _controller(tmp_path)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         operation_id = controller.take_screenshot(["target-a", "target-b"])
         first, second = _tasks(controller, operation_id)
@@ -263,7 +263,7 @@ def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp
     controller = _controller(tmp_path)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         operation_id = controller.take_screenshot(["target-a", "target-b"])
         first, second = _tasks(controller, operation_id)
@@ -332,7 +332,7 @@ def test_screenshot_cancel_uses_results_written_after_its_initial_snapshot(tmp_p
     cancel_thread = Thread(target=cancel)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         cancel_thread.start()
         assert initial_snapshot_read.wait(timeout=2)
@@ -383,7 +383,7 @@ def test_cancel_between_artifact_and_result_does_not_publish_cancelled_artifact(
     callback_thread = Thread(target=handle_result)
     with patch(
         "controllers._media.QTimer.singleShot",
-        side_effect=lambda _delay, callback: callback(),
+        side_effect=lambda *args: args[-1](),
     ):
         callback_thread.start()
         assert artifact_recorded.wait(timeout=2)

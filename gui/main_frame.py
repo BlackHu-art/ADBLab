@@ -861,6 +861,7 @@ class MainFrame(QMainWindow):
         if operation == "refresh" and not success:
             QTimer.singleShot(
                 0,
+                self,
                 lambda: self.left_panel.set_device_discovery_state("unavailable"),
             )
 

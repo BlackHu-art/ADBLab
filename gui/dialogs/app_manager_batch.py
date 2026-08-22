@@ -2,6 +2,7 @@
 
 import json
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -98,7 +99,9 @@ class AppManagerBatch:
         if self._batch_action_blocked():
             return
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "launch_app", package_name=pkg)
-        w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+        w.log_message.connect(
+            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        )
         self._frame._track_worker(w)
         w.start()
 
@@ -113,20 +116,28 @@ class AppManagerBatch:
             w = _app_manager.AppManagerWorker(
                 self._frame.device_ip, "modify_app", action="force_stop", package_name=pkg
             )
-            w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+            w.log_message.connect(
+                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            )
             self._frame._track_worker(w)
             w.start()
         elif action == "clear":
             w = _app_manager.AppManagerWorker(self._frame.device_ip, "clear_app", package_name=pkg)
-            w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+            w.log_message.connect(
+                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            )
             self._frame._track_worker(w)
             w.start()
         else:
             w = _app_manager.AppManagerWorker(
                 self._frame.device_ip, "modify_app", action=action, package_name=pkg
             )
-            w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
-            w.operation_done.connect(alive_callback(self._frame, "_load_apps"))
+            w.log_message.connect(
+                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            )
+            w.operation_done.connect(
+                alive_callback(self._frame, "_load_apps"), Qt.ConnectionType.QueuedConnection
+            )
             self._frame._track_worker(w)
             w.start()
 
@@ -148,8 +159,13 @@ class AppManagerBatch:
         w = _app_manager.AppManagerWorker(
             self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
         )
-        w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
-        w.backup_progress.connect(alive_forwarding_callback(self._frame, "_log_backup_progress"))
+        w.log_message.connect(
+            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        )
+        w.backup_progress.connect(
+            alive_forwarding_callback(self._frame, "_log_backup_progress"),
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._frame._track_worker(w)
         w.start()
 
@@ -186,8 +202,13 @@ class AppManagerBatch:
             w = _app_manager.AppManagerWorker(
                 self._frame.device_ip, "modify_app", action=action, package_name=pkg
             )
-            w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
-            w.finished.connect(alive_callback(self._frame, "_on_batch_worker_finished", w))
+            w.log_message.connect(
+                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            )
+            w.finished.connect(
+                alive_callback(self._frame, "_on_batch_worker_finished", w),
+                Qt.ConnectionType.QueuedConnection,
+            )
             self._frame._track_worker(w)
             workers.append(w)
 
@@ -257,9 +278,12 @@ class AppManagerBatch:
             w = _app_manager.AppManagerWorker(
                 self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
             )
-            w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
+            w.log_message.connect(
+                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            )
             w.backup_progress.connect(
-                alive_forwarding_callback(self._frame, "_log_backup_progress")
+                alive_forwarding_callback(self._frame, "_log_backup_progress"),
+                Qt.ConnectionType.QueuedConnection,
             )
             self._frame._track_worker(w)
             w.start()
@@ -273,9 +297,16 @@ class AppManagerBatch:
         if not files:
             return
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "restore_apps", file_paths=files)
-        w.log_message.connect(alive_forwarding_callback(self._frame, "log"))
-        w.backup_progress.connect(alive_forwarding_callback(self._frame, "_log_backup_progress"))
-        w.operation_done.connect(alive_callback(self._frame, "_load_apps"))
+        w.log_message.connect(
+            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        )
+        w.backup_progress.connect(
+            alive_forwarding_callback(self._frame, "_log_backup_progress"),
+            Qt.ConnectionType.QueuedConnection,
+        )
+        w.operation_done.connect(
+            alive_callback(self._frame, "_load_apps"), Qt.ConnectionType.QueuedConnection
+        )
         self._frame._track_worker(w)
         w.start()
 
@@ -413,7 +444,9 @@ class AppManagerBatch:
 
     def _track_worker(self, w):
         w.setParent(self._frame)
-        w.finished.connect(alive_callback(self._frame, "_prune_worker", w))
+        w.finished.connect(
+            alive_callback(self._frame, "_prune_worker", w), Qt.ConnectionType.QueuedConnection
+        )
         self._frame._workers.append(w)
 
     def _prune_worker(self, w):

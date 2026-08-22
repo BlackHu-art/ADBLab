@@ -8,7 +8,7 @@ import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
-from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.android.tools.androiddevice import AndroidDevice, _shq
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
 
@@ -18,7 +18,7 @@ class TrafficUtils:
     def getUID(device, pkg):
         """从 dumpsys package 输出中解析目标包的 UID。"""
         uid = None
-        _cmd = f"dumpsys package {pkg}"
+        _cmd = f"dumpsys package {_shq(pkg)}"
         out = device.adb.run_shell_cmd(_cmd)
         lines = out.replace("\r", "").splitlines()
         logger.debug("line length: " + str(len(lines)))
@@ -64,10 +64,12 @@ class TrafficSnapshot:
     def _parse(self):
         sp_lines = self.source.split("\n")
         for line in sp_lines:
-            if self.uid and self.uid in line:
-                tart_list = line.split()
-                tag = tart_list[2]
-                if tag == "0x0":  # 只统计与 UID 直接关联的默认 acct_tag_hex。
+            tart_list = line.split()
+            # /proc/net/xt_qtaguid/stats 列序：idx iface acct_tag_hex uid cnt_set rx_bytes ...
+            if len(tart_list) < 9 or not self.uid or tart_list[3] != self.uid:
+                continue
+            tag = tart_list[2]
+            if tag == "0x0":  # 只统计与 UID 直接关联的默认 acct_tag_hex。
                     self.rx_uid_bytes += int(tart_list[5])  # 汇总所有网络接口的接收字节。
                     self.rx_uid_packets += int(tart_list[6])
                     self.tx_uid_bytes += int(tart_list[7])
@@ -137,7 +139,7 @@ class NetDevInfo:
                 items = line.split()
                 self.mobile_rx = int(items[1])
                 self.mobile_tx = int(items[9])
-                self.mobile_total = self.wifi_rx + self.wifi_tx
+                self.mobile_total = self.mobile_rx + self.mobile_tx
                 logger.debug(
                     "mobile_rx : "
                     + items[1]

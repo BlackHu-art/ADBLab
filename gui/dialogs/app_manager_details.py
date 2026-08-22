@@ -205,11 +205,15 @@ class AppDetailsDialog(QDialog):
         w.setParent(self)
         for s in ["log_message", "app_details_loaded", "permissions_loaded", "operation_done"]:
             if s in kw:
-                getattr(w, s).connect(kw[s])
+                getattr(w, s).connect(kw[s], Qt.ConnectionType.QueuedConnection)
         owner = self.parent()
         if hasattr(owner, "log"):
-            w.log_message.connect(alive_forwarding_callback(owner, "log"))
-        w.finished.connect(alive_callback(self, "_prune_worker", w))
+            w.log_message.connect(
+                alive_forwarding_callback(owner, "log"), Qt.ConnectionType.QueuedConnection
+            )
+        w.finished.connect(
+            alive_callback(self, "_prune_worker", w), Qt.ConnectionType.QueuedConnection
+        )
         self._workers.append(w)
         w.start()
         return w

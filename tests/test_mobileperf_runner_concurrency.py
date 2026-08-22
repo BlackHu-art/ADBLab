@@ -207,7 +207,7 @@ def test_mobileperf_runner_old_stderr_uses_its_own_run_context(
     tmp_path,
     monkeypatch,
 ):
-    """第二次运行开始后，首轮延迟 stderr 仍使用首轮脱敏值和完成回调。"""
+    """第二次运行开始后，首轮延迟 stderr 仍使用首轮脱敏值；其迟到完成通知被抑制。"""
     diagnostic_output = io.StringIO()
     monkeypatch.setattr(sys, "stderr", diagnostic_output)
     first_stdout = _CountingStream(["first-output\n"])
@@ -246,7 +246,8 @@ def test_mobileperf_runner_old_stderr_uses_its_own_run_context(
     assert second_finished.wait(timeout=5)
 
     first_stderr.release.set()
-    assert first_finished.wait(timeout=5)
+    # 旧运行已非活动上下文，迟到完成通知应被抑制，避免误触发新运行完成。
+    assert first_finished.is_set() is False
     for thread in (first_context.log_thread, first_context.diagnostic_thread):
         assert thread is not None
         thread.join(timeout=1)

@@ -396,7 +396,7 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     workers = [Mock(), Mock()]
     finished_callbacks = []
     for worker in workers:
-        worker.finished.connect.side_effect = finished_callbacks.append
+        worker.finished.connect.side_effect = lambda cb, *_args: finished_callbacks.append(cb)
 
     with patch("gui.dialogs.app_manager.AppManagerWorker", side_effect=workers) as worker_cls:
         AppManagerDialog._modify_selected(dialog, "disable")

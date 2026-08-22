@@ -77,8 +77,3 @@ class _ThemedIconEngine(QIconEngine):
 def get_themed_icon(name: str) -> QIcon:
     """返回始终使用当前主题颜色绘制的 QIcon。"""
     return QIcon(_ThemedIconEngine(name))
-
-
-def clear_svg_cache() -> None:
-    """清空 SVG 文件缓存，供磁盘图标更新后调用。"""
-    _SVG.clear()

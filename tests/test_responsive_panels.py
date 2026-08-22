@@ -1850,7 +1850,7 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
         def __init__(self):
             self.callbacks = []
 
-        def connect(self, callback):
+        def connect(self, callback, *_args):
             self.callbacks.append(callback)
 
         def disconnect(self, callback=None):

@@ -6,7 +6,7 @@ import os
 import re
 import threading
 
-from PySide6.QtCore import QThread, QTimer, QUrl, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -318,7 +318,10 @@ class PerformanceLauncherDialog(QDialog):
         worker = CurrentPackageWorker(self.device_ip)
         worker.package_ready.connect(self._on_current_package)
         worker.log_ready.connect(self.log_received.emit)
-        worker.finished.connect(alive_callback(self, "_on_package_worker_finished", worker))
+        worker.finished.connect(
+            alive_callback(self, "_on_package_worker_finished", worker),
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._package_worker = worker
         worker.start()
 
@@ -403,10 +406,7 @@ class PerformanceLauncherDialog(QDialog):
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
-            BaseStyles.INPUT_STYLE()
-            + BaseStyles.BUTTON_QSS()
-            + BaseStyles.SCROLLBAR_STYLE()
-            + f"""
+            BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
             QDialog {{
                 background-color: {c("PANEL_BG")};
                 color: {c("TEXT_PRIMARY")};

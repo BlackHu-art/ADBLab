@@ -73,7 +73,6 @@ class ADBAppInstallMixin(_ADBControllerBase):
     install_batch_use_case: InstallBatchUseCase
 
     _handlers = {
-        "install_apk": "_process_install_apk_result",
         "uninstall_app": "_process_uninstall_apk_result",
         "clear_app_data": "_process_clear_app_data_result",
         "restart_app": "_process_restart_app_result",
@@ -618,27 +617,6 @@ class ADBAppInstallMixin(_ADBControllerBase):
                 ),
             ),
         )
-
-    def _process_install_apk_result(self, result: dict):
-        apk_name = result.get("apk_name")
-        device_ip = result.get("device_ip")
-        result.get("index", 1)
-        success = result.get("success")
-        operation = result.get("operation", "install")
-        progress = _record_device_batch_result(
-            self, str(operation), str(device_ip), bool(success)
-        )
-        if success:
-            self._emit_operation(
-                operation, True, f"✅ install success {progress} {apk_name} on {device_ip}"
-            )
-        else:
-            self._emit_operation(
-                operation,
-                False,
-                f"❌ install failed {progress} {apk_name} on {device_ip}\n"
-                f"Error: {result.get('error', 'Unknown error')}",
-            )
 
     def uninstall_apk(self, devices: list, package_name: str):
         if not self._require_devices(devices, "uninstall"):

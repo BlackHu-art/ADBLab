@@ -22,6 +22,22 @@ def _is_safe_shell_path(value: str) -> bool:
     """拒绝包含 shell 元字符的路径，防止 rm/mkdir 等命令注入。"""
     return not _SHELL_META_RE.search(value) and _BACKTICK not in value
 
+
+def _shq(value: object) -> str:
+    """用单引号包裹远端 shell 参数，防止设备 sh 二次解释。"""
+    text = str(value)
+    return "'" + text.replace("'", "'\"'\"'") + "'"
+
+
+def _is_safe_basename(value: str) -> bool:
+    """拒绝路径分隔符、父目录与 shell 元字符，防止设备返回文件名被拼进路径穿越。"""
+    return (
+        _is_safe_shell_path(value)
+        and "/" not in value
+        and "\\" not in value
+        and value not in (".", "..")
+    )
+
 _SAFE_ADB_VERBS = frozenset(
     {
         "bugreport",
@@ -625,7 +641,7 @@ class ADB:
         return result
 
     def screencap(self, save_path):
-        result = self.run_shell_cmd(f"screencap -p {save_path}", timeout=20)
+        result = self.run_shell_cmd(f"screencap -p {_shq(save_path)}", timeout=20)
         return result
 
     def delete_file(self, file_path):
@@ -644,7 +660,7 @@ class ADB:
 
     def check_path_size(self, folder_path, ratio):
         """检测手机上目录空间占比，超过多少比例"""
-        out = self.run_shell_cmd(f"df {folder_path}")
+        out = self.run_shell_cmd(f"df {_shq(folder_path)}")
         logger.debug("device storage query completed: output_length=%s", _payload_length(out))
         if out:
             lines = out.replace("\r", "").splitlines()
@@ -661,7 +677,7 @@ class ADB:
         :param path:
         :return:
         """
-        result = self.run_shell_cmd(f"ls -l {path}")
+        result = self.run_shell_cmd(f"ls -l {_shq(path)}")
         if not result:
             return False
         result = result.replace("\r\r\n", "\n")
@@ -675,13 +691,13 @@ class ADB:
         :param folder_path:
         :return:
         """
-        self.run_shell_cmd(f"mkdir {folder_path}")
+        self.run_shell_cmd(f"mkdir {_shq(folder_path)}")
 
     def list_dir(self, dir_path):
         """列取目录下文件 文件夹
         返回 文件名 列表
         """
-        result = self.run_shell_cmd(f"ls -l {dir_path}")
+        result = self.run_shell_cmd(f"ls -l {_shq(dir_path)}")
         if not result:
             return ""
         result = result.replace("\r\r\n", "\n")
@@ -692,7 +708,8 @@ class ADB:
             items = line.split()
             # total 180 去掉total这行
             if items[0] != "total" and len(items) != 2:
-                file_list.append(items[-1])
+                if _is_safe_basename(items[-1]):
+                    file_list.append(items[-1])
         return file_list
 
     def list_dir_between_time(self, dir_path, start_time, end_time):
@@ -701,7 +718,7 @@ class ADB:
         返回文件绝对路径 列表
         """
         # 通过详细目录列表读取文件修改时间。
-        result = self.run_shell_cmd(f"ls -l {dir_path}")
+        result = self.run_shell_cmd(f"ls -l {_shq(dir_path)}")
         if not result:
             return ""
         result = result.replace("\r\r\n", "\n")
@@ -718,7 +735,8 @@ class ADB:
                 last_modify_time = match.group(1)
                 last_modify_timestamp = TimeUtils.getTimeStamp(last_modify_time, "%Y-%m-%d %H:%M")
                 if start_time < last_modify_timestamp and last_modify_timestamp < end_time:
-                    file_list.append(f"{dir_path}/{items[-1]}")
+                    if _is_safe_basename(items[-1]):
+                        file_list.append(f"{dir_path}/{items[-1]}")
         logger.debug(
             "device directory time filter completed: matched_count=%s",
             len(file_list),
@@ -726,7 +744,7 @@ class ADB:
         return file_list
 
     def is_overtime_days(self, filepath, days=7):
-        result = self.run_shell_cmd(f"ls -l {filepath}")
+        result = self.run_shell_cmd(f"ls -l {_shq(filepath)}")
         if not result:
             return False
         result = result.replace("\r\r\n", "\n")
@@ -750,18 +768,18 @@ class ADB:
     def start_activity(self, activity_name, action="", data_uri="", extra={}, wait=True):
         """打开一个Activity"""
         if action != "":  # 指定Action
-            action = f"-a {action} "
+            action = f"-a {_shq(action)} "
         if data_uri != "":
-            data_uri = f"-d {data_uri} "
+            data_uri = f"-d {_shq(data_uri)} "
         extra_str = ""
         for key in extra.keys():  # 指定额外参数
-            extra_str += f"-e {key} {extra[key]} "
+            extra_str += f"-e {_shq(key)} {_shq(extra[key])} "
         W = ""
         if wait:
             W = "-W"  # 等待启动完成才返回
 
         result = self.run_shell_cmd(
-            f"am start {W} -n {activity_name} {action} {data_uri} {extra_str}",
+            f"am start {W} -n {_shq(activity_name)} {action} {data_uri} {extra_str}",
             timeout=30,
             retry_count=1,
         )
@@ -905,7 +923,7 @@ class ADB:
         :return: 无
         """
         pid = self.get_pid_from_pck(package_name)
-        return self.run_shell_cmd(f"debuggerd -b {pid} > {save_path}")
+        return self.run_shell_cmd(f"debuggerd -b {pid} > {_shq(save_path)}")
 
     def get_process_stack_from_pid(self, pid, save_path):
         """
@@ -913,13 +931,13 @@ class ADB:
         :param save_path: 堆栈文件保存路径
         :return: 无
         """
-        return self.run_shell_cmd(f"debuggerd -b {pid} > {save_path}")
+        return self.run_shell_cmd(f"debuggerd -b {pid} > {_shq(save_path)}")
 
     def dumpheap(self, package, save_path):
         heapfile = (
             f"/data/local/tmp/{package}_dumpheap_{TimeUtils.getCurrentTimeUnderline()}.hprof"
         )
-        self.run_shell_cmd(f"am dumpheap {package} {heapfile}")
+        self.run_shell_cmd(f"am dumpheap {_shq(package)} {_shq(heapfile)}")
         time.sleep(10)
         self.pull_file(heapfile, save_path)
 
@@ -927,21 +945,21 @@ class ADB:
         native_heap_file = (
             f"/data/local/tmp/{package}_native_heap_{TimeUtils.getCurrentTimeUnderline()}.txt"
         )
-        self.run_shell_cmd(f"am dumpheap -n {package} {native_heap_file}")
+        self.run_shell_cmd(f"am dumpheap -n {_shq(package)} {_shq(native_heap_file)}")
 
     def clear_data(self, packagename):
         """清除指定包的 用户数据"""
-        return self.run_shell_cmd(f"pm clear {packagename}")
+        return self.run_shell_cmd(f"pm clear {_shq(packagename)}")
 
     def stop_package(self, packagename):
         """杀死指定包的进程"""
-        return self.run_shell_cmd(f"am force-stop {packagename}")
+        return self.run_shell_cmd(f"am force-stop {_shq(packagename)}")
 
     def input(self, string):
-        return self.run_shell_cmd(f"input text {string}")
+        return self.run_shell_cmd(f"input text {_shq(string)}")
 
     def ping(self, address, count):
-        return self.run_shell_cmd(f"shell ping -c {count:d} {address}", timeout=None)
+        return self.run_shell_cmd(f"shell ping -c {count:d} {_shq(address)}", timeout=None)
 
     def get_system_version(self):
         """获取系统版本，如：4.1.2"""
@@ -967,7 +985,7 @@ class ADB:
 
     def get_package_ver(self, package):
         """获取应用版本信息"""
-        package_ver = self.run_shell_cmd("dumpsys package " + package)
+        package_ver = self.run_shell_cmd(f"dumpsys package {_shq(package)}")
         if package_ver:
             return package_ver
         else:
@@ -1066,7 +1084,7 @@ class ADB:
         :return:
         """
         uid = None
-        _cmd = f"dumpsys package {pkg}"
+        _cmd = f"dumpsys package {_shq(pkg)}"
         out = self.run_shell_cmd(_cmd)
         lines = out.replace("\r", "").splitlines()
         if len(lines) > 0:
@@ -1246,10 +1264,11 @@ class ADB:
         """ """
         timeout = 3 * 60  # TODO: 确认3分钟是否足够
         tmp_path = "/data/local/tmp/" + os.path.split(apk_path)[-1]
+        # push 是 host 侧动词，目标路径保持裸值；进入设备 shell 的 pm 命令需 quote。
         self.push_file(apk_path, tmp_path)
         cmdline = (
             f"pm install {'-r -t' if over_install else ''} "
-            f"{'-d' if downgrade else ''} {tmp_path}"
+            f"{'-d' if downgrade else ''} {_shq(tmp_path)}"
         )
         ret = ""
         for i in range(3):

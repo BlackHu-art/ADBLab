@@ -170,7 +170,7 @@ class ADBTesting(ADBModelCore):
 
     # Monkey 测试
 
-    @async_command
+    @async_command(long_running=True)
     def run_monkey_test_async(
         self,
         device_ip: str,
@@ -518,7 +518,7 @@ class ADBTesting(ADBModelCore):
 
     # Bugreport
 
-    @async_command
+    @async_command(long_running=True)
     def capture_bugreport_async(
         self, device_ip: str, save_root: str, index: int, callback=None
     ) -> dict:
@@ -647,7 +647,7 @@ class ADBTesting(ADBModelCore):
 
     # ANR 文件拉取
 
-    @async_command
+    @async_command(long_running=True)
     def pull_anr_files_async(
         self, device_ip: str, sanitized_name: str, save_dir: str, index: int
     ) -> dict:

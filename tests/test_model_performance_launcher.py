@@ -41,6 +41,7 @@ def test_performance_launcher_get_current_package_updates_package_field():
         start_worker.assert_called_once_with()
         dialog._package_worker.run()
         dialog._package_worker.finished.emit()
+        _app.processEvents()
 
     assert dialog.package_edit.text() == "com.example.app"
     assert dialog.get_package_btn.isEnabled() is True

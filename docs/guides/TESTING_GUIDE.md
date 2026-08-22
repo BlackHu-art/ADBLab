@@ -136,8 +136,8 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 ## 当前覆盖缺口
 
 1. `test_settings_persistence.py` 已覆盖 `scrcpy_*` 持久化、schema 写入、v1 迁移、未知键清理和
-   未来版本的已知值/版本号；但未断言后续保存仍保留未来未知字段，当前实现也会
-   在该场景丢失这些字段；跨进程并发写入亦无文件锁/测试。
+   未来版本的已知值/版本号；`_future_extra` 会在后续保存时合并回未来未知字段（有回归断言
+   `future_key` 在 update/save 后仍存在）；跨进程并发写入仍无文件锁/测试。
 2. Controller 的通用 `_pending_ops` 已删除；Screenshot Gate A、Install batch Gate C、
    DeviceBatch/ScreenRecord 用例已覆盖各自的重叠/晚到结果，但多类型任务同时运行的
    真实设备长时压力与关闭回收仍无集成验证。

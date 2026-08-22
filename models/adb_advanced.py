@@ -112,7 +112,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             result["batch_id"] = batch_id
         return result
 
-    @async_command
+    @async_command(long_running=True)
     def pull_recorded_video_async(
         self,
         device_ip: str,
@@ -135,7 +135,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                     "error": f"pull failed: {pull.get('error', 'unknown error')}",
                     "batch_id": batch_id,
                 }
-            cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", remote_path])
+            cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", shlex.quote(remote_path)])
             if not cleanup["success"]:
                 return {
                     "success": False,
@@ -294,7 +294,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     @async_command
     def settings_list_async(self, device_ip: str, namespace: str = "system") -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "settings", "list", namespace],
+            ["adb", "-s", device_ip, "shell", "settings", "list", shlex.quote(namespace)],
             timeout=15,
             device_ip=device_ip,
             namespace=namespace,
@@ -303,7 +303,10 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     @async_command
     def settings_get_async(self, device_ip: str, namespace: str, key: str) -> dict:
         result = self._run(
-            ["adb", "-s", device_ip, "shell", "settings", "get", namespace, key],
+            [
+                "adb", "-s", device_ip, "shell", "settings", "get",
+                shlex.quote(namespace), shlex.quote(key),
+            ],
             device_ip=device_ip,
             key=key,
         )
@@ -314,7 +317,10 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     @async_command
     def settings_put_async(self, device_ip: str, namespace: str, key: str, value: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "settings", "put", namespace, key, value],
+            [
+                "adb", "-s", device_ip, "shell", "settings", "put",
+                shlex.quote(namespace), shlex.quote(key), shlex.quote(value),
+            ],
             device_ip=device_ip,
             key=key,
             value=value,
@@ -350,7 +356,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     @async_command
     def shell_ls_async(self, device_ip: str, path: str = "/sdcard") -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "ls", "-la", path],
+            ["adb", "-s", device_ip, "shell", "ls", "-la", shlex.quote(path)],
             timeout=10,
             device_ip=device_ip,
             path=path,
@@ -361,13 +367,13 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         cmd = ["adb", "-s", device_ip, "shell", "rm"]
         if recursive:
             cmd.append("-r")
-        cmd.append(path)
+        cmd.append(shlex.quote(path))
         return self._run(cmd, device_ip=device_ip)
 
     @async_command
     def shell_mkdir_async(self, device_ip: str, path: str) -> dict:
         return self._run(
-            ["adb", "-s", device_ip, "shell", "mkdir", "-p", path],
+            ["adb", "-s", device_ip, "shell", "mkdir", "-p", shlex.quote(path)],
             device_ip=device_ip,
         )
 
@@ -379,7 +385,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             device_ip=device_ip,
         )
 
-    @async_command
+    @async_command(long_running=True)
     def pull_file_async(self, device_ip: str, remote_path: str, local_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "pull", remote_path, local_path],
@@ -434,7 +440,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     # 应用备份
 
-    @async_command
+    @async_command(long_running=True)
     def backup_app_async(self, device_ip: str, package: str, save_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "backup", "-f", save_path, "-noapk", package],
