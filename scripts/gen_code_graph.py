@@ -279,7 +279,9 @@ def local_names(node: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
     return names
 
 
-def resolve_call_target(node: ast.expr, mod: str, cls_qname: str | None, locals_: set[str]) -> str | None:
+def resolve_call_target(
+    node: ast.expr, mod: str, cls_qname: str | None, locals_: set[str]
+) -> str | None:
     imp = imports.get(mod, {"mod": {}, "from": {}})
     from_imp = imp["from"]
     mod_imp = imp["mod"]
@@ -467,7 +469,9 @@ def main() -> None:
         old.unlink()
 
     for p, mod, tree in files:
-        (OUT_DIR / (basename_map[mod] + ".md")).write_text(render_file(mod, p, tree), encoding="utf-8")
+        (OUT_DIR / (basename_map[mod] + ".md")).write_text(
+            render_file(mod, p, tree), encoding="utf-8"
+        )
     for q in classes:
         (OUT_DIR / (basename_map[q] + ".md")).write_text(render_class(q), encoding="utf-8")
     for q in funcs:
@@ -477,8 +481,15 @@ def main() -> None:
     MOC.write_text(render_moc(), encoding="utf-8")
 
     n_notes = len(module_set) + len(classes) + len(funcs)
-    print(f"节点：文件 {len(module_set)}，类 {len(classes)}，函数/方法 {len(funcs)}，合计 {n_notes}")
-    print(f"边：import {len(edges['import'])}，inherit {len(edges['inherit'])}，define {len(edges['define'])}，call {len(edges['call'])}，instantiate {len(edges['instantiate'])}")
+    print(
+        f"节点：文件 {len(module_set)}，类 {len(classes)}，"
+        f"函数/方法 {len(funcs)}，合计 {n_notes}"
+    )
+    print(
+        f"边：import {len(edges['import'])}，inherit {len(edges['inherit'])}，"
+        f"define {len(edges['define'])}，call {len(edges['call'])}，"
+        f"instantiate {len(edges['instantiate'])}"
+    )
     print(f"输出：{MOC.relative_to(ROOT).as_posix()} + {OUT_DIR.relative_to(ROOT).as_posix()}/*.md")
 
 

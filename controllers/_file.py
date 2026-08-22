@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 from controllers._base import _ADBControllerBase
-from gui.panels.adb_control_signals import ADBControllerSignals
+from controllers.signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from utils.adb_values import normalize_tcp_port
 

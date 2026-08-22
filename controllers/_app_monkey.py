@@ -6,8 +6,8 @@ import re
 import uuid
 
 from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package
 

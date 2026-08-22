@@ -109,10 +109,18 @@ class AppManagerWorker(QThread):
             r = self._adb("shell", "pm", "list", "packages", "-f")
             if self._aborted.is_set():
                 return
+            if not r.success:
+                error = str(getattr(r, "error", "") or "").strip()
+                self.log_message.emit(f"Failed to list apps: {error or 'adb command failed'}")
+                return
             dr = self._adb("shell", "pm", "list", "packages", "-d")
             if self._aborted.is_set():
                 return
-            disabled = {line.replace("package:", "").strip() for line in dr.stdout.splitlines()}
+            disabled = (
+                {line.replace("package:", "").strip() for line in dr.stdout.splitlines()}
+                if dr.success
+                else set()
+            )
             apps = []
             for line in r.stdout.splitlines():
                 parts = line.split("=")

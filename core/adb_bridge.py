@@ -120,16 +120,20 @@ class ADBBridge:
         cmd.extend(["shell", command])
         return CommandRunner.run(cmd, timeout=15)
 
-    def shell_input(self, command: str, device_id: str | None = None):
-        """向设备 Shell 发送 input 命令，例如 keyevent 或 swipe。"""
+    def shell_input(self, command: str, device_id: str | None = None) -> bool:
+        """向设备 Shell 发送 input 命令，例如 keyevent 或 swipe。
+
+        优先复用持久会话；会话失效时降级为有界同步命令并校验退出码，
+        避免产生无人跟踪、关闭时不被清理的独立进程。
+        """
         session = self._input_session(device_id)
         if session.send(command):
-            return session
+            return True
         cmd = [self.path]
         if device_id:
             cmd.extend(["-s", device_id])
         cmd.extend(["shell", f"input {command}"])
-        return self._process_runner.spawn(cmd)
+        return CommandRunner.run(cmd, timeout=15).success
 
     def warm_input_session(self, device_id: str | None = None) -> bool:
         """预热持久输入 Shell，缩短首条真实输入命令的等待时间。"""

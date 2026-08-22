@@ -21,8 +21,8 @@ from adblab.application.install_batch import (
 )
 from adblab.application.operations import OperationState, OperationTransitionError
 from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_app import ADBApp
 
 

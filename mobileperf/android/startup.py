@@ -3,6 +3,7 @@
 import argparse
 import os
 import queue
+import re
 import sys
 import time
 from configparser import ConfigParser
@@ -42,6 +43,20 @@ def _split_config_list(value: str) -> list[str]:
     return [item.strip() for item in value.split(";") if item.strip()]
 
 
+_SAFE_PACKAGE_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+
+
+def _is_safe_package(package: str) -> bool:
+    """Android 包名仅允许字母数字、下划线与点；拒绝路径分隔符、.. 与 shell 元字符。"""
+    pkg = (package or "").strip()
+    return (
+        bool(pkg)
+        and _SAFE_PACKAGE_RE.fullmatch(pkg) is not None
+        and ".." not in pkg
+        and not pkg.startswith(".")
+    )
+
+
 class StartUp:
     """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
 
@@ -57,6 +72,9 @@ class StartUp:
         # 显式参数优先于配置文件，便于上层按采集会话覆盖设备、包名和采样频率。
         self.serialnum = device_id if device_id is not None else self.config_dic["serialnum"]
         self.packages = package if package is not None else self.config_dic["package"]
+        self.packages = [p for p in self.packages if _is_safe_package(p)]
+        if not self.packages:
+            raise ValueError("no valid package configured")
         self.frequency = interval if interval is not None else self.config_dic["frequency"]
         self.timeout = self.config_dic["timeout"]
         self.exceptionlog_list = self.config_dic["exceptionlog"]

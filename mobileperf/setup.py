@@ -11,9 +11,5 @@ setup(
     author="look",
     maintainer="look",
     author_email="57280907@qq.com",
-    install_requires=[
-        "requests",
-        "urllib3",
-    ],
     description="Python Android mobile perf (support Python3)",
 )

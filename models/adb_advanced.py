@@ -197,10 +197,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         return {"success": sent, "device_ip": device_ip}
 
     def _send_input(self, device_ip: str, input_args: str) -> bool:
-        """复用持久 adb shell input 通道；失败时 ADBBridge 内部会回退到独立进程。"""
+        """复用持久 adb shell input 通道；失败时降级为有界同步命令并校验结果。"""
         try:
-            self._input_bridge().shell_input(input_args, device_id=device_ip)
-            return True
+            return self._input_bridge().shell_input(input_args, device_id=device_ip)
         except Exception:
             return False
 

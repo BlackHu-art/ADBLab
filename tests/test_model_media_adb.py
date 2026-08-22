@@ -665,20 +665,22 @@ def test_adb_bridge_shell_uses_command_runner():
     run.assert_called_once_with(["adb.exe", "-s", "device-1", "shell", "wm size"], timeout=15)
 
 
-def test_adb_bridge_shell_input_uses_process_runner_spawn():
+def test_adb_bridge_shell_input_falls_back_to_bounded_command():
     bridge = ADBBridge(path="adb.exe")
-    proc = Mock()
 
     with (
         patch.object(bridge, "_input_session") as input_session,
-        patch.object(bridge._process_runner, "spawn", return_value=proc) as spawn,
+        patch("core.adb_bridge.CommandRunner.run") as run,
     ):
+        run.return_value = CommandResult(success=True, output="")
         input_session.return_value.send.return_value = False
         result = bridge.shell_input("keyevent 3", device_id="device-1")
 
-    assert result is proc
+    assert result is True
     input_session.assert_called_once_with("device-1")
-    spawn.assert_called_once_with(["adb.exe", "-s", "device-1", "shell", "input keyevent 3"])
+    run.assert_called_once_with(
+        ["adb.exe", "-s", "device-1", "shell", "input keyevent 3"], timeout=15
+    )
 
 
 def test_adb_bridge_shell_input_prefers_persistent_session():
@@ -688,13 +690,13 @@ def test_adb_bridge_shell_input_prefers_persistent_session():
 
     with (
         patch.object(bridge, "_input_session", return_value=session),
-        patch.object(bridge._process_runner, "spawn") as spawn,
+        patch("core.adb_bridge.CommandRunner.run") as run,
     ):
         result = bridge.shell_input("keyevent 3", device_id="device-1")
 
-    assert result is session
+    assert result is True
     session.send.assert_called_once_with("keyevent 3")
-    spawn.assert_not_called()
+    run.assert_not_called()
 
 
 def test_adb_bridge_close_input_sessions_closes_and_removes_sessions():
@@ -719,6 +721,7 @@ def test_adb_bridge_close_input_sessions_closes_and_removes_sessions():
 def test_adb_advanced_input_uses_persistent_shell_bridge():
     model = ADBAdvanced()
     model._adb_bridge = Mock()
+    model._adb_bridge.shell_input.return_value = True
 
     result = ADBAdvanced.input_tap_async.__wrapped__(model, "device-1", 10, 20)
 

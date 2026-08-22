@@ -1,4 +1,7 @@
-"""定义 Controller 向界面发布状态和业务结果的 Qt 信号。"""
+"""定义 Controller 向界面发布状态和业务结果的 Qt 信号。
+
+位于 controllers 包内，避免 controllers → gui 的包级循环依赖（ADR 分层）。
+"""
 
 from PySide6.QtCore import QObject, Signal
 

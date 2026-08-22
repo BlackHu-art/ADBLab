@@ -10,8 +10,8 @@ from PySide6.QtWidgets import QFileDialog
 
 from controllers._app_install import ADBAppInstallMixin
 from controllers._app_monkey import ADBAppMonkeyMixin
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 

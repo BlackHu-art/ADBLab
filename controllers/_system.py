@@ -5,8 +5,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from utils.adb_values import (
     normalize_dumpsys_service,

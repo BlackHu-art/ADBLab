@@ -7,8 +7,8 @@ from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import QTimer
 
 from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_device import ADBDevice
 from models.device_store import DeviceStore
@@ -132,6 +132,10 @@ class ADBDeviceMixin(_ADBControllerBase):
     def _process_device_info_result(self, result: dict):
         device_ip = result.get("device_ip") or result.get("ip", "Unknown")
         log = self.log_service.log
+        key_fields = ("Model", "Brand", "Android Version", "SDK Version")
+        failed = all(
+            str(result.get(key, "")).strip() in ("", "N/A", "-") for key in key_fields
+        )
         log("INFO", f"📱 Device Info - {device_ip}")
         log("INFO", f"  🧭 Model            : {result.get('Model', '-')}")
         log("INFO", f"  🏷️ Brand            : {result.get('Brand', '-')}")
@@ -161,7 +165,10 @@ class ADBDeviceMixin(_ADBControllerBase):
         log("INFO", "  📡 MAC / IP Info    :")
         for line in result.get("Mac", "").splitlines():
             log("INFO", f"    {line}")
-        log("INFO", "  ✅ complete\n")
+        if failed:
+            log("WARNING", "  ⚠️ 设备信息采集失败（设备离线或命令失败）\n")
+        else:
+            log("INFO", "  ✅ complete\n")
 
     def disconnect_devices(self, devices: list):
         if not self._require_devices(devices, "disconnect"):

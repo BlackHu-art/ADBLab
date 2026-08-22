@@ -19,3 +19,6 @@ docs/.obsidian/
 
 logs/
 resources/app.log
+
+*.tmp.py
+.obsidian/

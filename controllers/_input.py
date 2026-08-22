@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from controllers._base import _ADBControllerBase
-from gui.panels.adb_control_signals import ADBControllerSignals
+from controllers.signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 

@@ -181,6 +181,7 @@ class LogcatWorker(QThread):
                 if not line:
                     if proc.poll() is not None:
                         break
+                    time.sleep(0.05)  # EOF 早于进程退出时的短暂空窗，避免忙等
                     continue
                 text = line.rstrip("\r\n")
                 if text:

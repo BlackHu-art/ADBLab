@@ -21,13 +21,13 @@ from adblab.application.operations import (
     OperationUnitResult,
 )
 from controllers._base import _ADBControllerBase
+from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
 from gui.dialogs.lifecycle import (
     configure_independent_secondary_window,
     fit_secondary_window_to_owner_screen,
 )
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package, truncate_diagnostic_output

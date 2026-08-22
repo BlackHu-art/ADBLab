@@ -14,6 +14,14 @@ from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
 
+_BACKTICK = chr(96)
+_SHELL_META_RE = re.compile(r"[;&|$()<>\s]")
+
+
+def _is_safe_shell_path(value: str) -> bool:
+    """拒绝包含 shell 元字符的路径，防止 rm/mkdir 等命令注入。"""
+    return not _SHELL_META_RE.search(value) and _BACKTICK not in value
+
 _SAFE_ADB_VERBS = frozenset(
     {
         "bugreport",
@@ -621,11 +629,17 @@ class ADB:
         return result
 
     def delete_file(self, file_path):
-        """删除手机上文件"""
+        """删除手机上文件；拒绝含 shell 元字符的路径以防命令注入。"""
+        if not _is_safe_shell_path(file_path):
+            logger.error("skip delete of unsafe device path: %s", file_path)
+            return
         self.run_shell_cmd(f"rm {file_path}")
 
     def delete_folder(self, folder_path):
-        """删除手机上的目录"""
+        """删除手机上的目录；拒绝含 shell 元字符的路径以防命令注入。"""
+        if not _is_safe_shell_path(folder_path):
+            logger.error("skip delete of unsafe device path: %s", folder_path)
+            return
         self.run_shell_cmd(f"rm -R {folder_path}")
 
     def check_path_size(self, folder_path, ratio):
@@ -960,9 +974,12 @@ class ADB:
             return ""
 
     def get_sdk_version(self):
-        """获取SDK版本，如：16"""
+        """获取SDK版本，如：16；设备断连或输出不可解析时返回 0。"""
         if not self._sdk_version:
-            self._sdk_version = int(self.run_shell_cmd("getprop ro.build.version.sdk"))
+            try:
+                self._sdk_version = int(self.run_shell_cmd("getprop ro.build.version.sdk"))
+            except (TypeError, ValueError):
+                self._sdk_version = 0
         return self._sdk_version
 
     def get_phone_brand(self):

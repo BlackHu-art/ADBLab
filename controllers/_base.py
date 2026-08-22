@@ -12,6 +12,7 @@ from adblab.application.envelope import OperationMetadata, split_operation_metad
 from adblab.application.install_batch import InstallBatchUseCase
 from adblab.application.operations import OperationManager, OperationState
 from adblab.application.screen_record import ScreenRecordUseCase
+from controllers.signals import ADBControllerSignals
 from core.exec import ProcessRunner
 from core.log_service import LogService
 from core.perf_trace import (
@@ -23,7 +24,6 @@ from core.perf_trace import (
     summarize_perf,
 )
 from core.settings_manager import AppSettings
-from gui.panels.adb_control_signals import ADBControllerSignals
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 from models.adb_device import ADBDevice
