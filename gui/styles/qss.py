@@ -140,6 +140,13 @@ class QSSMixin:
         QSpinBox QLineEdit:disabled {{
             background-color: transparent; color: {_tc("TEXT_DISABLED")};
         }}
+        QComboBox QLineEdit {{
+            background-color: transparent; border: none; border-radius: 0;
+            padding: 0 4px; color: {_tc("TEXT_PRIMARY")};
+        }}
+        QComboBox QLineEdit:disabled {{
+            background-color: transparent; color: {_tc("TEXT_DISABLED")};
+        }}
         QSpinBox::up-button, QSpinBox::down-button {{
             subcontrol-origin: border; width: 18px;
             background-color: {_tc("BUTTON_BG")};
@@ -355,11 +362,13 @@ class QSSMixin:
             cls.BUTTON_QSS()
             + cls.INPUT_STYLE()
             + cls.LIST_WIDGET_STYLE()
-            + f"QWidget {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QWidget {{ background: transparent; color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QDialog {{ background-color: {_tc('WINDOW_BG')}; color: {_tc('TEXT_PRIMARY')}; }}"
             + "QFrame { background-color: transparent; border: none; "
             + f"color: {_tc('TEXT_PRIMARY')}; }}"
             + f"QLabel {{ color: {_tc('TEXT_PRIMARY')}; background-color: transparent; }}"
-            + f"QCheckBox {{ color: {_tc('TEXT_PRIMARY')}; }}"
+            + f"QCheckBox, QRadioButton {{ color: {_tc('TEXT_PRIMARY')}; "
+            + "background-color: transparent; }"
             + f"QCheckBox:focus {{ border: 1px solid {_tc('BORDER_FOCUS')}; "
             + f"border-radius: {RADIUS_SM}px; }}"
             + cls.STATUS_BAR_STYLE()
