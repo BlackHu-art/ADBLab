@@ -77,7 +77,7 @@ flowchart LR
 
 ### 4. Model 与 Service 层
 
-- `models/adb_model.py::async_command` 把方法放入全局 QThreadPool；结果通过 `command_finished(method, result)` 回到 Controller。
+- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。
   operation 相关的 `_operation_id/_operation_owner_token/_operation_generation_token` 等关键字参数
   只用于构造 `OperationMetadata` 信封（`adblab/application/envelope.py`），不会转发给底层 model 方法。
 - `models/adb_device.py`、`adb_app.py`、`adb_advanced.py`、`adb_testing.py` 提供主要 ADB 能力；`adb_network.py` 和 `adb_system.py` 作为 mixin 复用。
@@ -132,7 +132,7 @@ flowchart LR
 - 用户日志仅接收 `INFO/SUCCESS/WARNING/ERROR/CRITICAL`，由 `LogService` 缓冲后发送到
   `LogPanel`；时间戳在日志产生时由 LogService 生成，批次信号携带 `(时间戳, 级别, 消息)`
   三元组；DEBUG 拦截只在服务层发生（单一职责），面板渲染收到的记录原样显示。
-  `LogPanel` 每条记录渲染为独立 HTML 块：级别列固定宽度（级别标签 + 单空格对齐）、ERROR/CRITICAL 加粗、多行消息悬挂缩进；时间戳保留在记录中但
+  `LogPanel` 每条记录渲染为独立块（逐条 `insertBlock` + 显式 `QTextBlockFormat` 悬挂缩进，避免 `insertHtml` 把连续记录合并进同一块）：级别列固定宽度（级别标签 + 单空格对齐）、ERROR/CRITICAL 加粗、多行消息悬挂缩进；时间戳保留在记录中但
   不渲染；条目 HTML 按 (级别, 消息) 缓存，主题切换重建缓存并整份重绘；
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
@@ -195,6 +195,7 @@ sequenceDiagram
 | --- | --- | --- |
 | Qt 主线程 | UI、信号槽、定时器、日志呈现 | QApplication 事件循环 |
 | 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | model 信号 + Controller shutdown；不统一等待所有 QRunnable |
+| 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/backup）| `@async_command(long_running=True)` 分流，与全局池隔离 |
 | `_ScanThread` | 设备列表轮询 | MainFrame 显式停止/等待 |
 | 对话框 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | LiveLogcat 已由 TaskSupervisor 后台治理；其余仍由各 closeEvent abort/延后等待 |
 | 应用自有 cleanup QThreadPool | LiveLogcat 资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor，dialog 注入；不使用 global pool |

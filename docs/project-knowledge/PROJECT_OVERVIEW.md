@@ -67,7 +67,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 - 历史执行记录：2026-08-21 在不含 Pillow、按当时 `requirements-dev.txt` 安装的 Python 3.11.9
   环境中，961 项测试全部通过（350.61 秒），测试收集、Ruff 与 packaging self-check 同步通过；
   该记录不替代后续工作树的重新验证。
-- CI 在 Windows 运行完整测试（含 ruff lint 步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
+- CI 在 Windows 运行完整测试（含 ruff lint 与 pyright 类型检查步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
 - README 的性能章节与目录树已于 2026-08-19 修正（移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/`、`batch_tracker.py` 等过时条目，目录树同步 `services/` 与 `adblab/`）。
 - Git 快照（2026-08-21，HEAD `a0344f3`）：318 个提交、4 个作者标识，最近三个月有
   2 个作者标识活跃；这是动态指标快照，知识集中程度仍待结合模块所有权确认。
@@ -77,7 +77,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 - **CommandRunner**：短生命周期命令的同步执行边界，返回 `CommandResult`。
 - **ProcessRunner**：长生命周期外部进程的注册、停止和全局兜底管理器。
 - **ADBController**：多个控制器 mixin 组合的 GUI 协调层。
-- **async_command**：把 model 方法放入全局 QThreadPool 的装饰器。
+- **async_command**：把 model 方法放入 QThreadPool 的装饰器；`long_running=True` 走每模型长任务池。
 - **DeviceStore**：已连接设备元数据的 YAML 存储。
 - **Remote**：scrcpy 投屏与 ADB 输入控制功能。
 - **MobilePerf**：独立子进程性能采集内核，不等同于 README 中已删除的旧 `models/performance/`。

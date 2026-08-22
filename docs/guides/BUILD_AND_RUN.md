@@ -135,7 +135,7 @@ packaging self-check，均以退出码 0 完成；递归检查产物归档未发
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。
 3. Windows 额外安装 `requirements-dev.txt`，依次运行 `python -m ruff check .`、
-   `python -m pytest -q -m "not ui"` 快速子集和 `python -m pytest -q` 完整套件；macOS/Linux
+   `python -m pyright`、`python -m pytest -q -m "not ui"` 快速子集和 `python -m pytest -q` 完整套件；macOS/Linux
    只运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。

@@ -98,7 +98,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### ADB Model
 
-- **职责/接口**：`@async_command` 将 `*_async` 方法提交 QThreadPool，并只把 operation 身份/
+- **职责/接口**：`@async_command` 将 `*_async` 方法提交 QThreadPool（普通命令走全局池，`long_running=True` 走每模型 `long_pool`），并只把 operation 身份/
   owner/generation token 组装进 `OperationMetadata` 信封，不透传给 model 方法体；
   `ADBDevice`、`ADBApp`、`ADBAdvanced`、`ADBTesting` 提供设备、应用、系统、测试命令；
   `adb_system.py` 对包名、dumpsys 服务名等诊断参数做白名单/规范化校验（`utils/adb_values.py`）。
