@@ -20,7 +20,7 @@ kind: class
 - [[models.adb_advanced.ADBAdvanced.input_keyevent_async]] — （无 docstring）
 - [[models.adb_advanced.ADBAdvanced.input_longpress_async]] — （无 docstring）
 - [[models.adb_advanced.ADBAdvanced.input_drag_async]] — （无 docstring）
-- [[models.adb_advanced.ADBAdvanced._send_input]] — 复用持久 adb shell input 通道；失败时 ADBBridge 内部会回退到独立进程
+- [[models.adb_advanced.ADBAdvanced._send_input]] — 复用持久 adb shell input 通道；失败时降级为有界同步命令并校验结果
 - [[models.adb_advanced.ADBAdvanced._input_bridge]] — （无 docstring）
 - [[models.adb_advanced.ADBAdvanced.close_input_sessions]] — （无 docstring）
 - [[models.adb_advanced.ADBAdvanced.shutdown]] — 关闭高级功能持有的长生命周期进程，防止主窗口退出后残留

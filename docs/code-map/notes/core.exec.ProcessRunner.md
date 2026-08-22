@@ -18,7 +18,7 @@ kind: class
 - [[core.exec.ProcessRunner.request_stop]] — 请求进程正常终止，但不等待退出，也不提前移除跟踪记录
 - [[core.exec.ProcessRunner.force_stop]] — 在调用方给定的总时限内强制停止一个被跟踪进程
 - [[core.exec.ProcessRunner._kill_process_tree_bounded]] — 在共享绝对截止时间内通过 psutil 终止进程树（ADR-0005 Step C）
-- [[core.exec.ProcessRunner._stop_proc]] — 先请求正常退出，超时后终止进程树并返回可确认的退出码
+- [[core.exec.ProcessRunner._stop_proc]] — 先请求正常退出，超时后终止进程树；timeout 为整段流程的总时限
 - [[core.exec.ProcessRunner._kill_process_tree]] — 通过 psutil 终止目标进程及其子进程（ADR-0005 Step C 统一实现）
 - [[core.exec.ProcessRunner.poll]] — 检查指定 key 的进程是否仍在运行
 - [[core.exec.ProcessRunner.active_keys]] — （无 docstring）

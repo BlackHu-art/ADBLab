@@ -11,6 +11,7 @@ kind: file
 ## 类
 
 - [[models.adb_model.ADBModelCore]] — 提供信号、线程池和命令执行等共享基础设施
+- [[models.adb_model.CommandTask]] — 把单个 @async_command 调用包装成 QRunnable，跨线程执行后回发 command_finished
 
 ## 函数
 

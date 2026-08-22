@@ -441,10 +441,11 @@ class ProcessRunner:
 
     @staticmethod
     def _stop_proc(proc: subprocess.Popen | None, timeout: float = 5.0) -> int | None:
-        """先请求正常退出，超时后终止进程树并返回可确认的退出码。"""
+        """先请求正常退出，超时后终止进程树；timeout 为整段流程的总时限。"""
 
         if proc is None:
             return None
+        deadline = time.monotonic() + max(0.0, float(timeout))
         try:
             if proc.poll() is not None:
                 return proc.returncode
@@ -452,22 +453,24 @@ class ProcessRunner:
         except OSError:
             return getattr(proc, "returncode", None)
         try:
-            proc.wait(timeout=timeout)
+            remaining = max(0.0, deadline - time.monotonic())
+            proc.wait(timeout=remaining)
             return proc.returncode
         except subprocess.TimeoutExpired:
-            if not ProcessRunner._kill_process_tree(proc):
+            if not ProcessRunner._kill_process_tree_bounded(proc, deadline):
                 try:
                     proc.kill()
                 except OSError:
                     return getattr(proc, "returncode", None)
+            remaining = max(0.0, deadline - time.monotonic())
             try:
-                proc.wait(timeout=2.0)
+                proc.wait(timeout=remaining)
             except subprocess.TimeoutExpired:
                 try:
                     proc.kill()
-                    proc.wait(timeout=2.0)
-                except (OSError, subprocess.TimeoutExpired):
-                    return getattr(proc, "returncode", None)
+                except OSError:
+                    pass
+                return getattr(proc, "returncode", None)
             return proc.returncode
         except OSError:
             return getattr(proc, "returncode", None)

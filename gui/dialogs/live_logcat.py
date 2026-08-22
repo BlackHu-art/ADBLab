@@ -47,7 +47,7 @@ class LiveLogcatDialog(QDialog):
         self.worker = None
         self._pkg_worker = None
         self.entries = deque(maxlen=self.MAX_BUFFER)
-        self._pending_visible_lines = []
+        self._pending_visible_lines = deque(maxlen=self.MAX_BUFFER)
         self._closing = False
         self._close_pending = False
         self._close_ready = False

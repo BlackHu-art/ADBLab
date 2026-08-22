@@ -325,7 +325,12 @@ def test_mobileperf_startup_parses_default_config_copy_without_modifying_input(t
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     path.write_text(
         "".join(
-            "serialnum=test-device\n" if line.startswith("serialnum=") else line for line in lines
+            "serialnum=test-device\n"
+            if line.startswith("serialnum=")
+            else "package=com.example.app\n"
+            if line.startswith("package=")
+            else line
+            for line in lines
         ),
         encoding="utf-8",
     )

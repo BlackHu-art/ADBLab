@@ -98,8 +98,8 @@ git diff --check
 
 Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集）；
 `mobileperf/**` 的 E402/UP031 豁免已移除，当前仅保留 `tests/live_logcat_close_probe.py` 的 E402
-逐文件豁免，`mobileperf/extlib` 作为 vendored 源码整体排除。`pyproject.toml` 仍保留 Black 与
-重复的 Ruff 配置，两处存在时 ruff.toml 优先。门禁命令为
+逐文件豁免，`mobileperf/extlib` 作为 vendored 源码整体排除。Ruff 配置已收敛到 `ruff.toml`，
+`pyproject.toml` 仅保留 `[tool.black]` 与 pytest/coverage 配置。门禁命令为
 `.\.venv\Scripts\python.exe -m ruff check .`。
 
 ## 本地 PyInstaller 构建

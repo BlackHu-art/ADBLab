@@ -15,6 +15,7 @@ kind: file
 
 ## 函数
 
+- [[mobileperf.android.startup._is_safe_package]] — Android 包名仅允许字母数字、下划线与点；拒绝路径分隔符、.. 与 shell 元字符
 - [[mobileperf.android.startup._remove_config_bom_prefix]] — 连续移除配置文件开头的 Unicode 或历史 BOM 表示
 - [[mobileperf.android.startup._split_config_list]] — 清理分号列表的首尾空白和空项，同时保留顺序与重复项
 

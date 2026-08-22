@@ -103,7 +103,11 @@ class ADBDeviceMixin(_ADBControllerBase):
                 except Exception:
                     pass
             if records:
-                DeviceStore.upsert_devices(records)
+                try:
+                    DeviceStore.upsert_devices(records)
+                except Exception as e:
+                    self.log_service.log("ERROR", f"DeviceStore write failed: {str(e)}")
+                    return
                 # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
                 self.signals.devices_updated.emit(devices)
 

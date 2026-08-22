@@ -12,6 +12,7 @@ from typing import Any
 from PySide6.QtCore import QThread, Signal
 
 from core.exec import CommandRunner, ProcessRunner
+from utils.adb_values import normalize_android_package
 
 THREADTIME_RE = re.compile(r"^\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\d+\s+([VDIWEAFS])\s+")
 FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
@@ -135,6 +136,15 @@ class LogcatWorker(QThread):
                 termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
                 return
             if self.package:
+                try:
+                    normalize_android_package(self.package)
+                except ValueError:
+                    termination = LogcatTermination(
+                        LogcatTerminationKind.START_FAILED,
+                        error_type="InvalidPackage",
+                    )
+                    self.status_changed.emit("Invalid package name for logcat filter")
+                    return
                 r = CommandRunner.run(
                     ["adb", "-s", self.device_ip, "shell", "pidof", self.package],
                     timeout=5,

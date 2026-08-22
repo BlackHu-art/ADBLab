@@ -14,6 +14,39 @@ from core.exec import CommandRunner
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
 
 
+class CommandTask(QRunnable):
+    """把单个 @async_command 调用包装成 QRunnable，跨线程执行后回发 command_finished。"""
+
+    def __init__(self, model, method_ref, queued_at, metadata, *args, **kwargs):
+        super().__init__()
+        self.model = model
+        self.method_ref = method_ref
+        self.queued_at = queued_at
+        self.metadata = metadata
+        self.args = args
+        self.kwargs = kwargs
+
+    def run(self):
+        import shiboken6
+
+        started_at = perf_counter()
+        try:
+            result = self.method_ref(self.model, *self.args, **self.kwargs)
+        except Exception as e:
+            result = {"success": False, "error": str(e)}
+        finished_at = perf_counter()
+        perf = build_async_perf(
+            self.method_ref.__name__, self.queued_at, started_at, finished_at
+        )
+        result = attach_operation_metadata(attach_perf(result, perf), self.metadata)
+        try:
+            if not shiboken6.isValid(self.model):
+                return
+            self.model.command_finished.emit(self.method_ref.__name__, result)
+        except RuntimeError:
+            pass  # 结果投递期间 Qt 对象可能已经由 C++ 侧删除。
+
+
 def async_command(method):
     """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。"""
 
@@ -44,51 +77,6 @@ def async_command(method):
                 generation_token=operation_generation_token,
             )
 
-        class CommandTask(QRunnable):
-            def __init__(
-                self,
-                model,
-                method_ref,
-                queued_at,
-                metadata,
-                *args,
-                **kwargs,
-            ):
-                super().__init__()
-                self.model = model
-                self.method_ref = method_ref
-                self.queued_at = queued_at
-                self.metadata = metadata
-                self.args = args
-                self.kwargs = kwargs
-
-            def run(self):
-                import shiboken6
-
-                started_at = perf_counter()
-                try:
-                    result = self.method_ref(self.model, *self.args, **self.kwargs)
-                except Exception as e:
-                    result = {"success": False, "error": str(e)}
-
-                finished_at = perf_counter()
-                perf = build_async_perf(
-                    self.method_ref.__name__,
-                    self.queued_at,
-                    started_at,
-                    finished_at,
-                )
-                result = attach_operation_metadata(
-                    attach_perf(result, perf),
-                    self.metadata,
-                )
-                try:
-                    if not shiboken6.isValid(self.model):
-                        return
-                    self.model.command_finished.emit(self.method_ref.__name__, result)
-                except RuntimeError:
-                    pass  # 结果投递期间 Qt 对象可能已经由 C++ 侧删除。
-
         task = CommandTask(
             self,
             method,
@@ -116,14 +104,11 @@ class ADBModelCore(QObject):
 
     @classmethod
     def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:
-        (
-            """执行命令，返回 {"success": True, "output": ..., ...} 或 """
-            """{"success": False, "error": ..., ...}。
+        """执行命令，返回 {"success": True, ...} 或 {"success": False, "error": ...}。
 
         extra 关键字参数会合并到返回字典（如 device_ip、package 等）。
-        全项目 @async_command 方法的统一入口。
+        全项目 @async_command 方法的统一入口。shell=False 时仍由设备端 sh 二次解释，动态值需 quote。
         """
-        )
         r = CommandRunner.run(cmd, timeout=timeout, shell=shell)
         if r.success:
             return {"success": True, "output": r.output, **extra}

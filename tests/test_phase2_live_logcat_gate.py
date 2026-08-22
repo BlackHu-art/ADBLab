@@ -565,7 +565,7 @@ def test_logcat_cancel_before_run_never_spawns_process():
 
 
 def test_logcat_pid_probe_failure_is_start_failure_without_spawn():
-    worker = LogcatWorker("target", package="package")
+    worker = LogcatWorker("target", package="com.example.app")
     terminations = []
     worker.terminated.connect(terminations.append)
 

@@ -12,6 +12,6 @@ kind: class
 ## 方法
 
 - [[models.adb_model.ADBModelCore.__init__]] — （无 docstring）
-- [[models.adb_model.ADBModelCore._run]] — 执行命令，返回 {"success": True, "output": ..., ...} 或 {"success": False, "error": ...,
+- [[models.adb_model.ADBModelCore._run]] — 执行命令，返回 {"success": True, ...} 或 {"success": False, "error": ...}
 - [[models.adb_model.ADBModelCore._fetch_device_info]] — 在指定设备上批量执行 Shell 命令并收集结果
 

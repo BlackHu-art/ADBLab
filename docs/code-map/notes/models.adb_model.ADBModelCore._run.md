@@ -7,5 +7,5 @@ kind: method
 - 定义于：[[models.adb_model.ADBModelCore]]
 - 全名：models.adb_model.ADBModelCore._run
 
-> 执行命令，返回 {"success": True, "output": ..., ...} 或 {"success": False, "error": ...,
+> 执行命令，返回 {"success": True, ...} 或 {"success": False, "error": ...}
 

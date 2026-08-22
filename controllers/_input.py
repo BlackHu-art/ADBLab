@@ -94,7 +94,7 @@ class ADBInputMixin(_ADBControllerBase):
         device_ip = result.get("device_ip")
         text = result.get("text", "")
         if result.get("success"):
-            self._emit_operation("input_text", True, f"Text '{text}' input on {device_ip}")
+            self._emit_operation("input_text", True, f"Text input on {device_ip} (len={len(text)})")
             self.signals.text_input.emit(device_ip, text)
         else:
             error = result.get("error", "Unknown error")
@@ -175,7 +175,7 @@ class ADBInputMixin(_ADBControllerBase):
         ip = result.get("device_ip", "")
         if result.get("success"):
             self._emit_operation(
-                "settings_put", True, f"Set {result.get('key')}={result.get('value')} on {ip}"
+                "settings_put", True, f"Set {result.get('key')} on {ip}"
             )
         else:
             self._emit_operation(

@@ -30,11 +30,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo "Releases after the newest 8 (audit only):"
+          echo "Releases after the newest 5 (audit only):"
           gh release list \
             --repo "$GITHUB_REPOSITORY" \
             --limit 100 \
             --json tagName,name,createdAt,isImmutable \
-            --jq '.[8:]'
+            --jq '.[5:]'
         env:
           GH_TOKEN: ${{ github.token }}

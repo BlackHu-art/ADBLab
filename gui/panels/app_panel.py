@@ -724,7 +724,7 @@ class AppPanel(BasePanel):
         return self.program_edit.currentText() if hasattr(self, "program_edit") else ""
 
     def add_package_to_history(self, pkg: str):
-        if pkg not in [self.program_edit.itemText(j) for j in range(self.program_edit.count())]:
+        if self.program_edit.findText(pkg) < 0:
             self.program_edit.addItem(pkg)
         self.program_edit.setCurrentText(pkg)
 

@@ -194,6 +194,9 @@ class _ADBControllerBase:
                     self._emit_operation(op_type, False, f"Handler error: {str(e)}")
             else:
                 self._default_async_handler(op_type, result)
+        except Exception as e:
+            self.log_service.log("ERROR", f"[{op_type}] Response routing error: {str(e)}")
+            self._emit_operation(op_type, False, f"Response routing error: {str(e)}")
         finally:
             self._log_perf_if_slow(op_type, perf, ui_started_at, perf_counter())
 

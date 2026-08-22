@@ -71,8 +71,7 @@ Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出�
 PyInstaller；`requirements-dev.txt` 再增加 pytest 9.1.1、Ruff 0.16.3、覆盖率、并行测试、
 pre-commit 和 pyright。CI 全平台安装 build 集合，Windows 再安装 dev 集合并运行 Ruff 与
 pytest；Ruff 门禁配置以
-`ruff.toml` 为准（`pyproject.toml` 中的 `[tool.ruff]` 与 Black 配置仍在，但存在两处配置时
-ruff.toml 优先）。
+`ruff.toml` 为准（Ruff 配置已收敛到 `ruff.toml`，`pyproject.toml` 仅保留 `[tool.black]` 与 pytest/coverage 配置）。
 
 ## 外部系统与工具依赖
 
@@ -171,7 +170,7 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
    `shiboken6` 因一方源码直接导入而显式固定。继续评估是否清理 `mobileperf/setup.py` 的
    遗留 `requests`/`urllib3` 描述。
 2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入 Ruff 门禁；
-   可进一步在 CI 加入 format check 并消除 ruff.toml 与 pyproject.toml 的重复配置。
+   Ruff 重复配置已消除（仅 `ruff.toml` 生效）；可进一步在 CI 加入 format check 并清理死配置 `[tool.black]`。
 3. Auto-Clean 已为只读 `gh` CLI 审计（无第三方 action）；如后续引入 action，再固定到不可变 commit SHA 并把权限缩小到实际需要。
 4. 为 aapt、Java、非 Windows scrcpy 提供启动前能力检查与 UI 提示。
 5. 长期将 MobilePerf 的 ADB 执行接口适配到统一抽象，至少统一超时、编码、进程跟踪和日志脱敏

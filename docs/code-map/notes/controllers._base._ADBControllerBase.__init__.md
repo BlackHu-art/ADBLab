@@ -21,7 +21,7 @@ kind: method
 - [[adblab.application.install_batch.InstallBatchUseCase]]
 - [[adblab.application.operations.OperationManager]]
 - [[adblab.application.screen_record.ScreenRecordUseCase]]
-- [[gui.panels.adb_control_signals.ADBControllerSignals]]
+- [[controllers.signals.ADBControllerSignals]]
 - [[models.adb_advanced.ADBAdvanced]]
 - [[models.adb_app.ADBApp]]
 - [[models.adb_device.ADBDevice]]

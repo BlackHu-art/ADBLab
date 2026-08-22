@@ -255,10 +255,6 @@ class LiveLogcatStream:
         self._frame.entries.append((text, level, tag_part, pid))
         if self._passes(level, tag_part):
             self._frame._pending_visible_lines.append(text)
-            if len(self._frame._pending_visible_lines) > self._frame.MAX_BUFFER:
-                self._frame._pending_visible_lines = self._frame._pending_visible_lines[
-                    -self._frame.MAX_BUFFER :
-                ]
             self._schedule_line_flush()
         self._frame.clear_btn.setEnabled(True)
 
@@ -287,7 +283,7 @@ class LiveLogcatStream:
         if self._frame._closing or not self._frame._pending_visible_lines:
             return
         lines = self._frame._pending_visible_lines
-        self._frame._pending_visible_lines = []
+        self._frame._pending_visible_lines = deque(maxlen=self._frame.MAX_BUFFER)
         # 高频 logcat 输出合并成一次 QTextDocument 更新，Stop/过滤按钮会更容易抢到事件循环。
         self._frame.output.appendPlainText("\n".join(lines))
         self._frame.output.moveCursor(QTextCursor.MoveOperation.End)

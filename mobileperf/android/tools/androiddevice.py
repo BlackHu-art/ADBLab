@@ -1225,10 +1225,7 @@ class ADB:
         """重启手机
         boot_type: "bootloader", "recovery", or "None".
         """
-        if not boot_type:
-            self.run_adb_cmd("reboot " + boot_type)
-        else:
-            self.run_adb_cmd("reboot")
+        self.run_adb_cmd("reboot" + (f" {boot_type}" if boot_type else ""))
 
     def _copy_set_propex(self):
         cpu_abi = self.get_cpu_abi()

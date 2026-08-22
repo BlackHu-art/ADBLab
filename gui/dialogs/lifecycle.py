@@ -204,22 +204,29 @@ def wait_for_threads_later(threads: list[QThread], timeout_ms: int) -> None:
     with _retained_qthreads_lock:
         _retained_qthreads.update(retained)
 
-    wait_slice_ms = max(50, int(timeout_ms or 0))
+    deadline = None
+    if timeout_ms:
+        deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
 
     def wait_until_stopped() -> None:
         for thread in retained:
             try:
                 while thread.isRunning():
-                    thread.wait(wait_slice_ms)
+                    if deadline is not None and time.monotonic() >= deadline:
+                        break
+                    thread.wait(50)
+                running = thread.isRunning()
+            except RuntimeError:
+                running = False
+            if running:
+                # 超时仍未停止：保留对象，避免对运行中的 QThread 调 deleteLater 触发崩溃。
+                continue
+            with _retained_qthreads_lock:
+                _retained_qthreads.discard(thread)
+            try:
+                thread.deleteLater()
             except RuntimeError:
                 pass
-            finally:
-                with _retained_qthreads_lock:
-                    _retained_qthreads.discard(thread)
-                try:
-                    thread.deleteLater()
-                except RuntimeError:
-                    pass
 
     threading.Thread(
         target=wait_until_stopped,

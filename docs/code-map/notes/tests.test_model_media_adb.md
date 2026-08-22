@@ -18,8 +18,8 @@ kind: file
 - [[tests.test_model_media_adb.test_adb_advanced_shutdown_stops_recording_and_input_sessions]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_bridge_close_input_sessions_closes_and_removes_sessions]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_bridge_devices_parses_command_runner_output]] — （无 docstring）
+- [[tests.test_model_media_adb.test_adb_bridge_shell_input_falls_back_to_bounded_command]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_bridge_shell_input_prefers_persistent_session]] — （无 docstring）
-- [[tests.test_model_media_adb.test_adb_bridge_shell_input_uses_process_runner_spawn]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_bridge_shell_uses_command_runner]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_input_session_returns_false_when_process_cannot_start]] — （无 docstring）
 - [[tests.test_model_media_adb.test_adb_input_session_writes_input_command_to_stdin]] — （无 docstring）

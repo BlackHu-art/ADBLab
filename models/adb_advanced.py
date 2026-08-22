@@ -93,6 +93,14 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     @async_command
     def stop_screen_record_async(self, device_ip: str, batch_id: str = "") -> dict:
         try:
+            # 先给设备端 screenrecord 发 SIGINT 让其封口，避免残留进程与损坏 mp4。
+            try:
+                self._run(
+                    ["adb", "-s", device_ip, "shell", "pkill", "-2", "screenrecord"],
+                    timeout=5,
+                )
+            except Exception:
+                pass
             ret = self._rec_procs.stop(f"record_{device_ip}")
             if ret is not None:
                 result = {"success": True, "device_ip": device_ip, "message": "Recording stopped"}

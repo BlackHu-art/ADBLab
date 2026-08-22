@@ -109,7 +109,7 @@ ADBLab/
 ├── requirements.txt                # 应用运行依赖
 ├── requirements-build.txt          # 运行依赖 + PyInstaller
 ├── requirements-dev.txt            # 构建依赖 + 测试、lint、类型检查工具
-├── pyproject.toml                  # black / ruff / pytest 配置，目标语法 py310
+├── pyproject.toml                  # black / pytest / coverage 配置，目标语法 py310
 ├── ADBLab.spec                     # PyInstaller 打包配置
 ├── README.md
 ├── icon.ico

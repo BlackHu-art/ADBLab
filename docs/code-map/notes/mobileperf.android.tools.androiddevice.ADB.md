@@ -38,8 +38,8 @@ kind: class
 - [[mobileperf.android.tools.androiddevice.ADB.pull_file_between_time]] — 提取/data/anr 目录下 在起止时间戳之间的文件
 - [[mobileperf.android.tools.androiddevice.ADB.screencap_out]] — （无 docstring）
 - [[mobileperf.android.tools.androiddevice.ADB.screencap]] — （无 docstring）
-- [[mobileperf.android.tools.androiddevice.ADB.delete_file]] — 删除手机上文件
-- [[mobileperf.android.tools.androiddevice.ADB.delete_folder]] — 删除手机上的目录
+- [[mobileperf.android.tools.androiddevice.ADB.delete_file]] — 删除手机上文件；拒绝含 shell 元字符的路径以防命令注入
+- [[mobileperf.android.tools.androiddevice.ADB.delete_folder]] — 删除手机上的目录；拒绝含 shell 元字符的路径以防命令注入
 - [[mobileperf.android.tools.androiddevice.ADB.check_path_size]] — 检测手机上目录空间占比，超过多少比例
 - [[mobileperf.android.tools.androiddevice.ADB.is_exist]] — 判断文件或文件夹是否存在
 - [[mobileperf.android.tools.androiddevice.ADB.mkdir]] — 在设备上创建目录
@@ -66,7 +66,7 @@ kind: class
 - [[mobileperf.android.tools.androiddevice.ADB.get_genie_uuid]] — 获取设备 UUID
 - [[mobileperf.android.tools.androiddevice.ADB.get_genie_wifi]] — 获取设备 Wi-Fi MAC 地址
 - [[mobileperf.android.tools.androiddevice.ADB.get_package_ver]] — 获取应用版本信息
-- [[mobileperf.android.tools.androiddevice.ADB.get_sdk_version]] — 获取SDK版本，如：16
+- [[mobileperf.android.tools.androiddevice.ADB.get_sdk_version]] — 获取SDK版本，如：16；设备断连或输出不可解析时返回 0
 - [[mobileperf.android.tools.androiddevice.ADB.get_phone_brand]] — 获取手机品牌  如：Mi Samsung OnePlus
 - [[mobileperf.android.tools.androiddevice.ADB.get_phone_model]] — 获取手机型号  如：A0001 M2S
 - [[mobileperf.android.tools.androiddevice.ADB.get_screen_size]] — 获取屏幕大小  如：5.5 可能获取不到
