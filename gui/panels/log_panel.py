@@ -14,7 +14,7 @@ from collections import OrderedDict
 from html import escape
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFontMetrics, QTextCursor
+from PySide6.QtGui import QFontMetrics, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
 
 from core.log_service import LogService
@@ -165,7 +165,19 @@ class LogPanel(QWidget):
         cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.beginEditBlock()
         try:
-            cursor.insertHtml("".join(self._row_html(ts, level, msg) for ts, level, msg in rows))
+            fm = QFontMetrics(self.text_output.font())
+            for _ts, level, msg in rows:
+                # insertHtml 会把片段第一个块合并进光标所在块；当前块非空时先换行。
+                if cursor.block().text():
+                    cursor.insertBlock()
+                cursor.insertHtml(self._message_body_html(level, msg))
+                indent = fm.horizontalAdvance(f"[{level}] ")
+                fmt = QTextBlockFormat()
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(0)
+                fmt.setLeftMargin(indent)
+                fmt.setTextIndent(-indent)
+                cursor.setBlockFormat(fmt)
         finally:
             cursor.endEditBlock()
 
@@ -218,7 +230,7 @@ class LogPanel(QWidget):
         )
         # 级别与消息之间只保留一个普通空格；ERROR/CRITICAL 加粗突出。
         bold_open, bold_close = ("<b>", "</b>") if level in ("ERROR", "CRITICAL") else ("", "")
-        msg = escape(str(message)).replace("\n", "<br>")
+        msg = escape(str(message).strip("\r\n")).replace("\n", "<br>")
         body = (
             f'{bold_open}<span style="color:{c(lv_key)}">[{escape(str(level))}]</span>'
             f'{bold_close} '

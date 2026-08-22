@@ -2006,6 +2006,25 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
         _close_feature_panel(panel)
 
 
+def _expected_grid_placement(index: int, item_count: int, columns: int, span_tail: bool):
+    """按 responsive_layout._generated_placements 的 row-major/span-tail 规则推导位置。"""
+
+    if not span_tail or item_count == 0 or item_count % columns == 0:
+        return (index // columns, index % columns, 1, 1)
+    tail_count = item_count % columns
+    full_count = item_count - tail_count
+    if index < full_count:
+        return (index // columns, index % columns, 1, 1)
+    tail_row = full_count // columns
+    base_span, extra = divmod(columns, tail_count)
+    tail_index = index - full_count
+    column = 0
+    for prior in range(tail_index):
+        column += base_span + (1 if prior < extra else 0)
+    span = base_span + (1 if tail_index < extra else 0)
+    return (tail_row, column, 1, span)
+
+
 def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
     qt_application,
     monkeypatch,
@@ -2035,15 +2054,13 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
                 layout = widgets[0].parentWidget().layout()
                 assert isinstance(layout, QGridLayout)
                 assert layout.columnCount() <= 4
+                span_tail = bool(getattr(plan.mode, "span_tail", False))
                 for index, widget in enumerate(widgets):
                     item_index = layout.indexOf(widget)
                     assert item_index >= 0
                     row, column, row_span, column_span = layout.getItemPosition(item_index)
-                    assert (row, column, row_span, column_span) == (
-                        index // columns,
-                        index % columns,
-                        1,
-                        1,
+                    assert (row, column, row_span, column_span) == _expected_grid_placement(
+                        index, len(widgets), columns, span_tail
                     )
                     assert_positive_geometry(widget, content)
                 assert_non_overlapping(widgets, content)

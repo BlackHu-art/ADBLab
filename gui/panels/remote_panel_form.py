@@ -8,7 +8,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QCheckBox, QSizePolicy, QVBoxLayout, QWidget
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
-from gui.widgets.responsive_layout import WidthPolicy, paired_mode, row_major_mode
+from gui.widgets.responsive_layout import WidthPolicy, paired_mode, row_major_mode, span_tail_mode
 
 
 class RemotePanelForm:
@@ -219,8 +219,8 @@ class RemotePanelForm:
             self._frame._remote_key_button(label, code, f"Send keyevent {code}")
         self._frame._remote_primary_key_buttons = tuple(self._frame._remote_key_buttons)
         control_modes = (
-            row_major_mode("four", 4, 0, column_stretches=(1, 1, 1, 1)),
-            row_major_mode("two", 2, 1, column_stretches=(1, 1)),
+            span_tail_mode("four", 4, 0, column_stretches=(1, 1, 1, 1)),
+            span_tail_mode("two", 2, 1, column_stretches=(1, 1)),
         )
         self._frame._remote_key_binding = self._frame._add_responsive_row(
             outer,

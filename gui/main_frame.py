@@ -192,6 +192,9 @@ class MainFrame(QMainWindow):
         )
         self._layout_ready = True
         self._update_toolbar_path_display()
+        attach_top_level = getattr(self.left_panel, "attach_responsive_top_level", None)
+        if callable(attach_top_level):
+            attach_top_level(self)
         self._request_side_panel_reflow(self, ReflowReason.EXPLICIT)
         self._bootstrap_adb_async()
 

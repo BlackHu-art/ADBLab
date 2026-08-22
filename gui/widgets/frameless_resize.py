@@ -37,9 +37,12 @@ class _ResizeZone(QWidget):
             super().mousePressEvent(event)
             return
         handle = self._window.windowHandle()
+        # 先开启持久化事务：即使原生缩放未成功启动（无 handle / startSystemResize
+        # 返回 False），随后没有实际 resize 的事务也会被 _finish_user_resize_transaction
+        # 以 _pending_user_window_size is None 分支回滚。
+        if self._on_user_resize_started is not None:
+            self._on_user_resize_started()
         if handle is not None and handle.startSystemResize(self._edges):
-            if self._on_user_resize_started is not None:
-                self._on_user_resize_started()
             event.accept()
             return
         if self._on_user_resize_cancelled is not None:

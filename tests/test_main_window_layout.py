@@ -964,7 +964,7 @@ def test_frameless_resize_zone_reports_native_start_result(qt_application, start
         on_started.assert_called_once_with()
         on_cancelled.assert_not_called()
     else:
-        on_started.assert_not_called()
+        on_started.assert_called_once_with()
         on_cancelled.assert_called_once_with()
 
 
@@ -987,7 +987,7 @@ def test_frameless_resize_zone_cancels_when_window_handle_is_missing(qt_applicat
 
     QTest.mouseClick(controller._zones["right"], Qt.MouseButton.LeftButton)
 
-    on_started.assert_not_called()
+    on_started.assert_called_once_with()
     on_cancelled.assert_called_once_with()
 
 

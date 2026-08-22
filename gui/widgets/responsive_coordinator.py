@@ -381,6 +381,12 @@ class ResponsiveCoordinator:
             self._ensure_screen_signal(key, top_level)
         if event_type == QEvent.Type.LayoutRequest and key in self._internal_layout_feedback:
             return
+        # 应用自身在 _apply_workspace_constraints 内调用 resize() 产生的 Resize 事件
+        # 不应触发额外代次：该流程已显式 request_reflow(SCREEN/DPI)。
+        if event_type == QEvent.Type.Resize and getattr(
+            top_level, "_applying_workspace_constraints", False
+        ):
+            return
         reason = _EVENT_REASONS.get(event_type)
         if reason is not None:
             self.request_reflow(reason)

@@ -226,6 +226,15 @@ class SidePanel(QWidget):
         if not self._responsive_settle_timer.isActive():
             self._responsive_settle_timer.start()
 
+    def attach_responsive_top_level(self, widget: QWidget) -> None:
+        """让协调器直接观察顶层窗口的 Resize/Font/Theme/LayoutRequest 事件。
+
+        仅依赖 viewport 事件过滤器会漏掉未加载 tab 与 Devices 面板，窗口缩放时
+        这些区域不会重排；挂到顶层后协调器通过事件过滤器统一感知尺寸变化。
+        """
+
+        self._responsive_coordinator.attach_top_level(widget)
+
     def _poll_responsive_settled(self) -> None:
         """在协调器真实收口后，为测试和诊断发布一次稳定代次。"""
 
