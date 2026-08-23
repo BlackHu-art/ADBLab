@@ -80,15 +80,7 @@ class StartUp:
         self.exceptionlog_list = self.config_dic["exceptionlog"]
         self.device = AndroidDevice(self.serialnum)
         self.stop_file = os.environ.get("MOBILEPERF_STOP_FILE", "")
-        # 未配置包名时，将设备当前的前台进程作为采集目标。
-        if not self.packages:
-            # ADB 适配层使用井号分隔多个前台进程名称。
-            self.packages = self.device.adb.get_foreground_process().split("#")
         RuntimeData.packages = self.packages
-
-        # 保留命令行交互状态。
-        self.keycode = ""
-        self.pid = 0
 
         self._init_queue()
         self.monitors = []

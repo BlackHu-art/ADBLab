@@ -637,6 +637,7 @@ class FileExplorerDialog(QDialog):
 
     def _show_script_output(self, name, output, error):
         dlg = QDialog(self)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setWindowTitle(f"Output: {name}")
         dlg.setMinimumSize(700, 400)
         dlg.setModal(False)

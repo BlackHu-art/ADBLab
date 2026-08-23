@@ -28,7 +28,11 @@ class RemoteWindowManager:
                 if user32.GetForegroundWindow() == hwnd:
                     return True
                 user32.SetForegroundWindow(hwnd)
-                return user32.GetForegroundWindow() == hwnd
+                while time.monotonic() < deadline:
+                    if user32.GetForegroundWindow() == hwnd:
+                        return True
+                    time.sleep(self.poll_interval_seconds)
+                return False
             time.sleep(self.poll_interval_seconds)
         return False
 

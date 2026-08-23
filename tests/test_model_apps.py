@@ -510,6 +510,31 @@ def test_app_controller_direct_async_paths_skip_python_executor():
     controller.app_model.get_current_activity_async.assert_called_once_with("device-1", 1)
 
 
+def test_reject_concurrent_batch_blocks_second_same_op_start():
+    controller = ADBAppMixin.__new__(ADBAppMixin)
+    controller._emit_operation = Mock()
+    controller._pending_lock = threading.Lock()
+    controller._batch_starts = {}
+    controller.device_batches = DeviceBatchUseCase(OperationManager())
+    controller.app_model = Mock()
+
+    ADBAppMixin.uninstall_apk(controller, ["device-1"], "com.example")
+
+    controller.app_model.uninstall_app_async.assert_called_once_with(
+        "device-1", "com.example", 1
+    )
+    assert "uninstall" in controller._batch_starts
+
+    # 同类批次尚未收口时，第二次启动应被拒绝且不发起新批次。
+    controller.app_model.uninstall_app_async.reset_mock()
+    ADBAppMixin.uninstall_apk(controller, ["device-2"], "com.example")
+
+    controller.app_model.uninstall_app_async.assert_not_called()
+    rejected = controller._emit_operation.call_args_list[-1]
+    assert rejected.args[:2] == ("uninstall", False)
+    assert "already in progress" in rejected.args[2]
+
+
 def test_parse_apk_info_reports_missing_file():
     model = ADBApp()
     with patch("models.adb_app.os.path.isfile", return_value=False):

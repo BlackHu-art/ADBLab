@@ -308,22 +308,6 @@ def test_process_runner_stop_all_without_deadlock():
     assert runner._procs == {}
 
 
-def test_process_runner_tree_kill_delegates_to_process_utils():
-    proc = Mock()
-    proc.pid = 1234
-    with patch("core.exec.kill_process_tree", return_value=(True, "terminated")) as kill:
-        assert ProcessRunner._kill_process_tree(proc) is True
-    kill.assert_called_once_with(1234, force=True)
-
-
-def test_process_runner_tree_kill_missing_pid_is_fail_safe():
-    proc = Mock()
-    proc.pid = None
-    with patch("core.exec.kill_process_tree") as kill:
-        assert ProcessRunner._kill_process_tree(proc) is False
-    kill.assert_not_called()
-
-
 def test_process_runner_bounded_tree_kill_respects_deadline():
     proc = Mock()
     proc.pid = 4321

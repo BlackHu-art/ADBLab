@@ -67,8 +67,6 @@ class SurfaceStatsCollector:
             self.stop_event.set()
             self.collector_thread.join(timeout=2)
             self.collector_thread = None
-            if self.fps_queue:
-                self.fps_queue.task_done()
         # 计算线程依赖采集线程写入的 "Stop" 哨兵退出；采集线程异常或未启动时补发，
         # 避免计算线程在 data_queue.get() 上无限阻塞。
         self.data_queue.put("Stop")
@@ -229,8 +227,6 @@ class SurfaceStatsCollector:
                 logger.error("an exception hanpend in fps _calculator_thread ,reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.fps_queue:
-                    self.fps_queue.task_done()
 
     def _collector_thread(self):
         """循环采集帧数据。
@@ -284,8 +280,6 @@ class SurfaceStatsCollector:
                 logger.error("an exception hanpend in fps _collector_thread , reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.fps_queue:
-                    self.fps_queue.task_done()
         self.data_queue.put("Stop")
 
     def _clear_surfaceflinger_latency_data(self):

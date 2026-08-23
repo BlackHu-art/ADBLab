@@ -1,5 +1,7 @@
 """应用管理器详情对话框 — 展示单个应用的详情与权限管理。"""
 
+import html
+
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
@@ -148,7 +150,7 @@ class AppDetailsDialog(QDialog):
     def _od(self, d):
         self.detail_text.clear()
         for k, v in d.items():
-            self.detail_text.append(f"<b>{k}:</b> {v}")
+            self.detail_text.append(f"<b>{html.escape(str(k))}:</b> {html.escape(str(v))}")
 
     def _op(self, declared, requested, runtime):
         def fill(lw, items, fmt=lambda x: x, *, checkable=True):

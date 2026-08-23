@@ -462,6 +462,7 @@ class ADB:
                         self.save(logcat_file, logs)
                         logs = []
                 else:
+                    time.sleep(1)  # readline() 到 EOF 时避免忙等空转。
                     log_is_none = log_is_none + 1
                     if log_is_none % 1000 == 0:
                         logger.info("log is none")
@@ -634,7 +635,7 @@ class ADB:
             retry_count=1,
         )
         ret_dict = {}
-        for line in result:
+        for line in result.splitlines():
             if ": " in line:
                 key, value = line.split(": ")
                 ret_dict[key] = value
@@ -772,7 +773,13 @@ class ADB:
         :param save_path: 堆栈文件保存路径
         :return: 无
         """
-        return self.run_shell_cmd(f"debuggerd -b {pid} > {_shq(save_path)}")
+        # debuggerd 的输出重定向由设备端 shell 解释，会把堆栈写到设备侧路径而非本机文件；
+        # 改为捕获 stdout 后由本机写入 save_path。
+        stack = self.run_shell_cmd(f"debuggerd -b {pid}")
+        if stack:
+            with open(save_path, "w+", encoding="utf-8") as f:
+                f.write(stack)
+        return stack
 
     def dumpheap(self, package, save_path):
         heapfile = (

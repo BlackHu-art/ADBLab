@@ -486,8 +486,7 @@ def main() -> None:
         f"函数/方法 {len(funcs)}，合计 {n_notes}"
     )
     print(
-        f"边：import {len(edges['import'])}，inherit {len(edges['inherit'])}，"
-        f"define {len(edges['define'])}，call {len(edges['call'])}，"
+        f"边：define {len(edges['define'])}，call {len(edges['call'])}，"
         f"instantiate {len(edges['instantiate'])}"
     )
     print(f"输出：{MOC.relative_to(ROOT).as_posix()} + {OUT_DIR.relative_to(ROOT).as_posix()}/*.md")

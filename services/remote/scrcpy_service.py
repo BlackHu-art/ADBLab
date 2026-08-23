@@ -53,10 +53,10 @@ class ScrcpyService:
     def device_info(self, adb: str, device: str) -> str:
         try:
             result = self.run_command([adb, "-s", device, "shell", "wm size"], timeout=5)
-            raw = result.output or ""
-            for prefix in ("Physical size:", "Override size:"):
-                if prefix in raw:
-                    return raw[raw.find(prefix) :].split(":")[1].strip()
+            for prefix in ("Override size:", "Physical size:"):
+                for line in (result.output or "").splitlines():
+                    if prefix in line:
+                        return line.split(":", 1)[1].strip()
         except Exception:
             pass
         return ""

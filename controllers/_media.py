@@ -868,7 +868,13 @@ class ADBMediaMixin(_ADBControllerBase):
     ):
         if not self._require_devices(devices, "logcat_filtered"):
             return
-        save_dir = self._get_screenshot_dir()
+        try:
+            save_dir = self._get_screenshot_dir()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._emit_operation(
+                "logcat_filtered", False, f"Failed to prepare logcat directory: {exc}"
+            )
+            return
         for ip in devices:
             timestamp = datetime.now().strftime("%H%M%S")
             sanitized = re.sub(r"\W+", "_", ip)

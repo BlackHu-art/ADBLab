@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import itertools
 import subprocess
 import sys
 import threading
@@ -21,7 +22,6 @@ from core.process_utils import kill_process_tree
 
 CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _adb_path: str | None = None
 _adb_path_lock = threading.Lock()
@@ -264,8 +264,10 @@ class ProcessRunner:
 
     _global_procs: dict[tuple[int, str], subprocess.Popen] = {}
     _global_lock = threading.Lock()
+    _instance_ids = itertools.count()
 
     def __init__(self):
+        self._instance_id = next(ProcessRunner._instance_ids)
         self._procs: dict[str, subprocess.Popen] = {}
         self._lock = threading.Lock()
 
@@ -485,19 +487,6 @@ class ProcessRunner:
         except OSError:
             return getattr(proc, "returncode", None)
 
-    @staticmethod
-    def _kill_process_tree(proc: subprocess.Popen) -> bool:
-        """通过 psutil 终止目标进程及其子进程（ADR-0005 Step C 统一实现）。"""
-
-        pid = getattr(proc, "pid", None)
-        if not pid:
-            return False
-        try:
-            confirmed, _detail = kill_process_tree(int(pid), force=True)
-            return confirmed
-        except Exception:
-            return False
-
     def poll(self, key: str) -> int | None:
         """检查指定 key 的进程是否仍在运行。"""
 
@@ -607,21 +596,20 @@ class ProcessRunner:
         if proc is None:
             return
         with self._global_lock:
-            self._global_procs[(id(self), key)] = proc
+            self._global_procs[(self._instance_id, key)] = proc
 
     def _unregister_global(self, key: str, proc: subprocess.Popen | None):
         if proc is None:
             return
         with self._global_lock:
-            stored = self._global_procs.get((id(self), key))
+            stored = self._global_procs.get((self._instance_id, key))
             if stored is proc:
-                self._global_procs.pop((id(self), key), None)
+                self._global_procs.pop((self._instance_id, key), None)
 
 
 __all__ = [
     "CF",
     "CREATE_NEW_CONSOLE",
-    "CREATE_NO_WINDOW",
     "CommandResult",
     "CommandRunner",
     "ExecHandle",

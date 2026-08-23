@@ -249,14 +249,12 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                     batch_id=batch_id,
                 )
             except Exception as exc:
-                self._monkey_running.discard(device_ip)
-                self._monkey_batch_by_device.pop(device_ip, None)
                 self._emit_operation(
                     "monkey",
                     False,
                     f"Failed to submit Monkey test for {device_ip}: {exc}",
                 )
-                _emit_monkey_target_finished(self, batch_id, device_ip)
+                _finalize_monkey_target(self, batch_id, device_ip)
 
     @staticmethod
     def _validated_monkey_params(params: dict) -> dict:

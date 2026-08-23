@@ -3,6 +3,7 @@
 import math
 import os
 import threading
+import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
@@ -90,7 +91,7 @@ class Monkey:
 
     def start_monkey(self, package, event_count=None, timeout_seconds=None):
         """构造命令并启动 Monkey 进程及日志读取线程。"""
-        if hasattr(self, "_monkey_running") and self.running:
+        if self.running:
             logger.warn("monkey process have started,not need start")
             return
         event_count = max(1, int(event_count if event_count is not None else self.event_count))
@@ -246,6 +247,7 @@ class Monkey:
                         self.save(log_file, logs)
                         logs = []
                 else:
+                    time.sleep(1)  # readline() 到 EOF 时避免忙等空转。
                     log_is_none = log_is_none + 1
                     if log_is_none % 1000 == 0:
                         logger.info("log is none")

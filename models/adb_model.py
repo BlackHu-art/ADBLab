@@ -139,10 +139,14 @@ class ADBModelCore(QObject):
         return {"success": False, "error": r.error, **extra}
 
     @staticmethod
-    def _fetch_device_info(commands: dict[str, list[str]]) -> dict[str, str]:
-        """在指定设备上批量执行 Shell 命令并收集结果。"""
+    def _fetch_device_info(
+        commands: dict[str, list[str]], timeout: int = 5
+    ) -> dict[str, str]:
+        """在指定设备上批量执行 Shell 命令并收集结果；失败即提前退出。"""
         device_info = {}
         for key, cmd in commands.items():
-            r = CommandRunner.run(cmd)
-            device_info[key] = r.output if r.success else "N/A"
+            r = CommandRunner.run(cmd, timeout=timeout)
+            if not r.success:
+                break
+            device_info[key] = r.output
         return device_info

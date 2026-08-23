@@ -645,6 +645,42 @@ def test_controller_routes_disable_scopes_to_distinct_model_methods():
     )
 
 
+def test_emu_sms_rejects_empty_sender_and_newlines_before_adb():
+    controller = SimpleNamespace(
+        advanced_model=Mock(),
+        _require_devices=Mock(return_value=True),
+        _emit_operation=Mock(),
+    )
+
+    ADBSystemControllerMixin.emu_sms(controller, ["device-1"], "", "hello")
+    ADBSystemControllerMixin.emu_sms(controller, ["device-1"], "555\n1234", "hello")
+    ADBSystemControllerMixin.emu_sms(controller, ["device-1"], "555-1234", "first\nsecond")
+
+    controller.advanced_model.emu_sms_send_async.assert_not_called()
+    assert [c.args[:2] for c in controller._emit_operation.call_args_list] == [
+        ("emu_sms", False),
+        ("emu_sms", False),
+        ("emu_sms", False),
+    ]
+
+
+def test_emu_call_rejects_empty_and_newline_number_before_adb():
+    controller = SimpleNamespace(
+        advanced_model=Mock(),
+        _require_devices=Mock(return_value=True),
+        _emit_operation=Mock(),
+    )
+
+    ADBSystemControllerMixin.emu_call(controller, ["device-1"], "")
+    ADBSystemControllerMixin.emu_call(controller, ["device-1"], "555\n1234")
+
+    controller.advanced_model.emu_call_async.assert_not_called()
+    assert [c.args[:2] for c in controller._emit_operation.call_args_list] == [
+        ("emu_call", False),
+        ("emu_call", False),
+    ]
+
+
 def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
     _app = QApplication.instance() or QApplication([])
     panel = SidePanel()

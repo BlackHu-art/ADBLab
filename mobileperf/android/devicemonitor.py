@@ -49,8 +49,6 @@ class DeviceMonitor:
             self.stop_event.set()
             self.activity_monitor_thread.join(timeout=1)
             self.activity_monitor_thread = None
-            if self.activity_queue:
-                self.activity_queue.task_done()
         logger.debug("DeviceMonitor stopped!")
 
     def _activity_monitor_thread(self):
@@ -98,8 +96,6 @@ class DeviceMonitor:
             except Exception:
                 s = traceback.format_exc()
                 logger.debug(s)  # 堆栈仅进入开发诊断通道。
-                if self.activity_queue:
-                    self.activity_queue.task_done()
 
 if __name__ == "__main__":
     monitor = DeviceMonitor("NVGILZSO99999999", "com.taobao.taobao", 2)

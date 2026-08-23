@@ -859,6 +859,42 @@ def test_disable_package_commands_keep_global_and_user_scopes_distinct():
     )
 
 
+def test_emu_sms_validation_rejects_newlines_before_adb():
+    model = SimpleNamespace(_run=Mock(return_value={"success": True}))
+
+    text_result = ADBSystemMixin.emu_sms_send_async.__wrapped__(
+        model, "device-1", "555-1234", "first\nsecond"
+    )
+    sender_result = ADBSystemMixin.emu_sms_send_async.__wrapped__(
+        model, "device-1", "555\r1234", "hello"
+    )
+
+    assert text_result == {
+        "success": False,
+        "device_ip": "device-1",
+        "error": "SMS text cannot contain line breaks",
+    }
+    assert sender_result == {
+        "success": False,
+        "device_ip": "device-1",
+        "error": "Invalid sender number",
+    }
+    model._run.assert_not_called()
+
+
+def test_emu_call_validation_rejects_newlines_before_adb():
+    model = SimpleNamespace(_run=Mock(return_value={"success": True}))
+
+    result = ADBSystemMixin.emu_call_async.__wrapped__(model, "device-1", "555\n1234")
+
+    assert result == {
+        "success": False,
+        "device_ip": "device-1",
+        "error": "Invalid phone number",
+    }
+    model._run.assert_not_called()
+
+
 def test_adb_input_session_writes_input_command_to_stdin():
     proc = Mock()
     proc.stdin = Mock()

@@ -623,7 +623,7 @@ def test_controller_routes_metadata_only_to_registered_vnext_handler():
     operation = controller.operation_manager.begin("sample")
     controller.operation_manager.mark_running(operation.operation_id)
     handler = Mock()
-    controller._register_operation_handler("sample", handler)
+    controller._operation_handler_map["sample"] = handler
     metadata = OperationMetadata(1, operation.operation_id, "sample", "sample", "task-1")
 
     _ADBControllerBase._handle_async_response(
@@ -654,7 +654,7 @@ def test_controller_handler_exception_fails_and_cleans_operation_once():
     controller = _controller_for_operations()
     operation = controller.operation_manager.begin("sample")
     controller.operation_manager.mark_running(operation.operation_id)
-    controller._register_operation_handler("sample", Mock(side_effect=RuntimeError("boom")))
+    controller._operation_handler_map["sample"] = Mock(side_effect=RuntimeError("boom"))
     metadata = OperationMetadata(1, operation.operation_id, "sample", "sample", "task-1")
 
     controller._route_operation_response("sample", {"success": True}, metadata)

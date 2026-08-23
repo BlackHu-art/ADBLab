@@ -183,17 +183,17 @@ class TrafficCollecor:
 
     def _cat_traffic_data(self, packagename, uid):
         out = self.device.adb.run_shell_cmd("cat /proc/net/xt_qtaguid/stats")
-        out.replace("\r", "")
+        out = out.replace("\r", "")
         return TrafficSnapshot(out, packagename, uid)
 
     def _cat_traffic_device_dev(self):
         out = self.device.adb.run_shell_cmd("cat /proc/net/dev")
-        out.replace("\r", "")
+        out = out.replace("\r", "")
         return NetDevInfo(out)
 
     def _cat_traffic_pid_dev(self, pid):
         out = self.device.adb.run_shell_cmd(f"cat /proc/{pid:d}/net/dev")
-        out.replace("\r", "")
+        out = out.replace("\r", "")
         return NetDevInfo(out)
 
     def _collect_traffic_thread(self, start_time):
@@ -243,7 +243,8 @@ class TrafficCollecor:
                 traffic_snapshot = self._cat_traffic_data(self.packages[0], uid)
 
                 if traffic_snapshot.source == "" or traffic_snapshot.source is None:
-                    continue  # 本轮没有采集结果时直接等待下一轮。
+                    time.sleep(self._interval)  # 本轮无结果时等待下一轮，避免空转。
+                    continue
 
                 if self.traffic_init:
                     self.traffic_init_dic = self.get_traffic_init_data(traffic_snapshot)
@@ -293,8 +294,6 @@ class TrafficCollecor:
                 logger.error("an exception hanpend in traffic thread , reason unkown! e: ")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.traffic_queue:
-                    self.traffic_queue.task_done()
 
     def get_traffic_with_dev(self):
         end_time = time.time() + self._timeout
@@ -326,6 +325,7 @@ class TrafficCollecor:
                 device_cur_net = self._cat_traffic_device_dev()
 
                 if device_cur_net.source == "" or device_cur_net.source is None:
+                    time.sleep(self._interval)
                     continue
 
                 if self.traffic_init:
@@ -342,6 +342,9 @@ class TrafficCollecor:
                 self.total_pck_net = 0
                 for i in range(0, len(self.packages)):
                     pid = self.device.adb.get_pid_from_pck(self.packages[i])
+                    if pid is None:
+                        logger.error(f"package pid not found {self.packages[i]}:")
+                        continue
                     pck_net_info = self._cat_traffic_pid_dev(pid)
                     if not pck_net_info.source:
                         logger.error(f"package net dev failed {self.packages[i]}:")
@@ -351,7 +354,7 @@ class TrafficCollecor:
                         if i == len(self.packages) - 1:
                             self.traffic_init = False
                     pck_grow = self.get_net_from_begin(self.pck_init_net_list[i], pck_net_info)
-                    self.total_pck_net = self.total_pck_net + pck_grow.wifi_total
+                    self.total_pck_net = self.total_pck_net + pck_grow.total
                     net_row.extend(
                         [
                             self.packages[i],
@@ -390,8 +393,6 @@ class TrafficCollecor:
                 logger.error("an exception hanpend in traffic thread , reason unkown! e: ")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.traffic_queue:
-                    self.traffic_queue.task_done()
 
     def get_traffic_init_data(self, traffic_snapshot):
         # 设备返回的是开机累计值，保存首轮快照才能计算本次采集增量。
@@ -473,8 +474,6 @@ class TrafficCollecor:
             self._stop_event.set()
             self.collect_traffic_thread.join(timeout=1)
             self.collect_traffic_thread = None
-            if self.traffic_queue:
-                self.traffic_queue.task_done()
 
 
 class TrafficMonitor:

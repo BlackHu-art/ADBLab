@@ -20,7 +20,6 @@ class QtTaskSupervisor(QObject):
 
     _shared = None
     _shared_lock = Lock()
-    _live_instances = set()
 
     def __init__(self, supervisor: TaskSupervisor | None = None):
         super().__init__(None)
@@ -31,7 +30,6 @@ class QtTaskSupervisor(QObject):
         self._application_stop_started = False
         self._application_stop_dispatched = False
         self._application_finalizer_dispatched = False
-        self._live_instances.add(self)
 
     @classmethod
     def shared(cls) -> QtTaskSupervisor:

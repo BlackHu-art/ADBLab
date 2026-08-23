@@ -4,9 +4,14 @@
 """
 
 import shlex
+from decimal import Decimal
 from typing import Any
 
-from utils.adb_values import normalize_android_package, normalize_dumpsys_service
+from utils.adb_values import (
+    normalize_android_package,
+    normalize_dumpsys_service,
+    normalize_geo_coordinate,
+)
 
 from .adb_model import async_command
 
@@ -202,8 +207,26 @@ class ADBSystemMixin:
 
     @async_command
     def battery_set_level_async(self, device_ip: str, level: int) -> dict:
+        try:
+            level_value = int(level)
+        except (TypeError, ValueError):
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": f"Invalid battery level: {level!r} (expected integer 0..100)",
+            }
+        if not 0 <= level_value <= 100:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "level": level,
+                "error": f"Battery level must be between 0 and 100, got {level_value}",
+            }
         return self._run(
-            ["adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "level", str(level)],
+            [
+                "adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "level",
+                str(level_value),
+            ],
             device_ip=device_ip,
             level=level,
         )
@@ -296,6 +319,20 @@ class ADBSystemMixin:
     ) -> dict:
         cmd = ["adb", "-s", device_ip, "emu", "geo", "fix", longitude, latitude]
         if altitude:
+            try:
+                altitude = normalize_geo_coordinate(
+                    altitude,
+                    minimum=Decimal("-1000"),
+                    maximum=Decimal("100000"),
+                )
+            except ValueError as exc:
+                return {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "longitude": longitude,
+                    "latitude": latitude,
+                    "error": f"Invalid altitude: {exc}",
+                }
             cmd.append(altitude)
         return self._run(cmd, device_ip=device_ip, longitude=longitude, latitude=latitude)
 

@@ -60,16 +60,16 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 ## 当前状态
 
-- 活跃版本：3.2.1；2026-08-21 扫描 `dev` 当前工作树，Git HEAD 锚点为 `a0344f3`，
+- 活跃版本：3.2.1；2026-08-23 扫描 `dev` 当前工作树，Git HEAD 锚点为 `5cee5ca`，
   main 历史基线为 `8b84f8d`。
 - 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
   `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。
 - 历史执行记录：2026-08-21 在不含 Pillow、按当时 `requirements-dev.txt` 安装的 Python 3.11.9
-  环境中，961 项测试全部通过（350.61 秒），测试收集、Ruff 与 packaging self-check 同步通过；
+  环境中，961 项测试全部通过（350.61 秒），测试收集、Ruff 与 packaging self-check 同步通过；2026-08-23 HEAD `5cee5ca` 下 `--collect-only` 收集到 1062 项；
   该记录不替代后续工作树的重新验证。
 - CI 在 Windows 运行完整测试（含 ruff lint 与 pyright 类型检查步骤），在 Windows/macOS/Linux 构建；仅 Windows 产物执行打包后自检。
 - README 的性能章节与目录树已于 2026-08-19 修正（移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/`、`batch_tracker.py` 等过时条目，目录树同步 `services/` 与 `adblab/`）。
-- Git 快照（2026-08-21，HEAD `a0344f3`）：318 个提交、4 个作者标识，最近三个月有
+- Git 快照（2026-08-23，HEAD `5cee5ca`）：328 个提交、4 个作者标识，最近三个月有
   2 个作者标识活跃；这是动态指标快照，知识集中程度仍待结合模块所有权确认。
 
 ## 关键术语

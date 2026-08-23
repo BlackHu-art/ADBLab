@@ -154,7 +154,7 @@ class ADBDevice(ADBModelCore):
         r = self._run(["adb", "start-server"], timeout=5)
         return {"success": r["success"], "error": r["error"] if not r["success"] else ""}
 
-    @async_command
+    @async_command(long_running=True)
     def get_device_info_async(self, device: str) -> dict[str, str]:
         info = self._fetch_full_device_info(device)
         info["device_ip"] = device

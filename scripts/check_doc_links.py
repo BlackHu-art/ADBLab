@@ -66,9 +66,13 @@ def related_paths(frontmatter: dict | None) -> list[str]:
 
 def check_file(path: Path) -> list[str]:
     errors: list[str] = []
-    text = path.read_text(encoding="utf-8")
-    frontmatter = parse_frontmatter(text)
     rel_display = path.relative_to(ROOT).as_posix()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(f"{rel_display}: 无法读取文件 -> {exc}")
+        return errors
+    frontmatter = parse_frontmatter(text)
 
     if "project-knowledge" in path.parts:
         if frontmatter is None:

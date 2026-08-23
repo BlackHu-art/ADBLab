@@ -261,3 +261,83 @@ def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():
     controller._emit_operation.assert_called_once_with(
         "kill_monkey", True, "ℹ️ 1. Monkey was not running on device-1"
     )
+
+
+def _connected_devices_controller():
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.log_service = Mock()
+    controller._settings = Mock()
+    controller._settings.get.return_value = 10_000
+    controller._handler_map = {}
+    controller._emit_operation = Mock()
+    controller.signals = Mock()
+    controller._process_device_list = Mock()
+    return controller
+
+
+def test_connected_devices_success_routes_to_process_device_list():
+    controller = _connected_devices_controller()
+
+    _ADBControllerBase._handle_async_response(
+        controller,
+        "get_connected_devices_async",
+        {"success": True, "devices": ["device-1", "device-2"]},
+    )
+
+    controller._process_device_list.assert_called_once_with(["device-1", "device-2"])
+    controller._emit_operation.assert_not_called()
+    controller.signals.devices_updated.emit.assert_not_called()
+
+
+def test_connected_devices_failure_emits_error_and_clears_list():
+    controller = _connected_devices_controller()
+
+    _ADBControllerBase._handle_async_response(
+        controller,
+        "get_connected_devices_async",
+        {"success": False, "devices": [], "error": "adb unavailable"},
+    )
+
+    controller._process_device_list.assert_not_called()
+    controller._emit_operation.assert_called_once_with(
+        "get_connected_devices", False, "adb unavailable"
+    )
+    controller.signals.devices_updated.emit.assert_called_once_with([])
+
+
+def test_connected_devices_non_dict_result_reports_invalid_format():
+    controller = _connected_devices_controller()
+
+    _ADBControllerBase._handle_async_response(
+        controller,
+        "get_connected_devices_async",
+        ["device-1"],
+    )
+
+    controller._process_device_list.assert_not_called()
+    controller._emit_operation.assert_called_once_with(
+        "get_connected_devices", False, "Invalid device list format"
+    )
+    controller.signals.devices_updated.emit.assert_not_called()
+
+
+def test_emit_operation_is_silent_while_shutting_down():
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller._shutting_down = True
+    controller.log_service = Mock()
+    controller.signals = Mock()
+
+    _ADBControllerBase._emit_operation(controller, "input_keyevent", True, "Key sent")
+
+    controller.signals.operation_completed.emit.assert_not_called()
+    controller.log_service.log.assert_not_called()
+
+
+def test_refresh_devices_is_noop_while_shutting_down():
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller._shutting_down = True
+    controller.device_model = Mock()
+
+    ADBDeviceMixin.refresh_devices(controller)
+
+    controller.device_model.get_connected_devices_async.assert_not_called()

@@ -3,14 +3,11 @@
 ADB 路径由 utils.adb_resolver 解析，内置 scrcpy ADB 的优先级高于系统 PATH。
 """
 
-import logging
 import subprocess
 import threading
 
 from core.exec import CommandResult, CommandRunner, ExecHandle, ProcessRunner
-from utils.adb_resolver import adb_path
-
-logger = logging.getLogger("adb_bridge")
+from utils.adb_resolver import adb_path, resolve_adb_path
 
 
 class ADBInputSession:
@@ -109,7 +106,7 @@ class ADBBridge:
         self._process_runner = ProcessRunner()
         self._input_sessions: dict[str, ADBInputSession] = {}
         self._input_sessions_lock = threading.Lock()
-        if not self.path:
+        if path is None and resolve_adb_path() is None:
             raise FileNotFoundError("ADB not found — install Android SDK Platform Tools")
 
     def shell(self, command: str, device_id: str | None = None) -> CommandResult:

@@ -168,9 +168,6 @@ class MemInfoPackageCollector:
             self._stop_event.set()
             self.collect_mem_thread.join(timeout=1)
             self.collect_mem_thread = None
-            # 采集线程结束后通知上报队列当前任务已经完成。
-            if self.mem_queue:
-                self.mem_queue.task_done()
 
     def _dumpsys_meminfo(self):
         """通过 dumpsys meminfo 获取整机和各进程内存，命令本身可能耗时数秒。"""
@@ -183,7 +180,7 @@ class MemInfoPackageCollector:
 
         passedtime = time.time() - time_old  # 记录整机 meminfo 命令耗时。
         logger.debug("dumpsys meminfo time consume:" + str(passedtime))
-        out.replace("\r", "")
+        out = out.replace("\r", "")
         return MemInfoDevice(dump=out, packages=self.packages)
 
     def _dumpsys_process_meminfo(self, process):
@@ -202,7 +199,7 @@ class MemInfoPackageCollector:
 
         passedtime = time.time() - time_old  # 记录进程级 meminfo 命令耗时。
         logger.debug("dumpsys meminfo package time consume:" + str(passedtime))
-        out.replace("\r", "")
+        out = out.replace("\r", "")
         return MemInfoPackage(dump=out)
 
     def _collect_memory_thread(self, start_time):
@@ -414,8 +411,6 @@ class MemInfoPackageCollector:
                 logger.error("an exception hanpend in meminfo thread, reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.mem_queue:
-                    self.mem_queue.task_done()
 
         logger.debug("stop event is set or timeout")
 

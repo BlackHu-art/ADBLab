@@ -336,6 +336,7 @@ class AppManagerBatch:
             )
             return
         dlg = QDialog(self._frame)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setWindowTitle("Create Preset")
         dlg.setMinimumSize(380, 280)
         dlg.resize(380, 280)

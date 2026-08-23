@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache, QTextCursor
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -24,6 +24,44 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 from services import file_explorer as explorer_service
+
+MAX_TEXT_VIEW_BYTES = 2 * 1024 * 1024
+TEXT_RENDER_CHUNK = 64 * 1024
+MAX_IMAGE_PREVIEW_DIMENSION = 2048
+
+
+def _set_plain_text_chunked(editor: QPlainTextEdit, content: str) -> None:
+    editor.setUpdatesEnabled(False)
+    try:
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        for start in range(0, len(content), TEXT_RENDER_CHUNK):
+            cursor.insertText(content[start : start + TEXT_RENDER_CHUNK])
+    finally:
+        editor.setUpdatesEnabled(True)
+
+
+def _load_image_preview(path: str) -> QPixmap:
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0
+    key = f"adblab:explorer:image:{path}:{mtime}"
+    cached = QPixmapCache.find(key)
+    if cached is not None and not cached.isNull():
+        return cached
+    reader = QImageReader(path)
+    native = reader.size()
+    if native.isValid() and not native.isEmpty():
+        scale = min(1.0, MAX_IMAGE_PREVIEW_DIMENSION / max(native.width(), native.height()))
+        if scale < 1.0:
+            reader.setScaledSize(
+                QSize(max(1, int(native.width() * scale)), max(1, int(native.height() * scale)))
+            )
+    pixmap = QPixmap.fromImage(reader.read())
+    if not pixmap.isNull():
+        QPixmapCache.insert(key, pixmap)
+    return pixmap
 
 
 class FileExplorerView:
@@ -61,7 +99,9 @@ class FileExplorerView:
         if is_image:
             self._view_image(name, full)
         else:
-            shell = self._frame._root(explorer_service.cat_command(full))
+            shell = self._frame._root(
+                explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1)
+            )
             w = self._frame._run_adb("shell", shell)
             self._frame._connect_worker_ui(
                 w,
@@ -145,7 +185,7 @@ class FileExplorerView:
     def _show_image(self, dlg, name, tmp_path, dev_tmp):
         if dev_tmp:
             self._frame._run_adb("shell", explorer_service.delete_command(dev_tmp)).start()
-        dlg.set_image_source(QPixmap(tmp_path), name)
+        dlg.set_image_source(_load_image_preview(tmp_path), name)
 
     def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
         if error:
@@ -157,13 +197,18 @@ class FileExplorerView:
                 QMessageBox.StandardButton.NoButton,
             )
             return
+        truncated = len(content.encode("utf-8", errors="ignore")) > MAX_TEXT_VIEW_BYTES
         dlg = QDialog(self._frame)
         dlg.setWindowTitle(name)
         dlg.setMinimumSize(750, 550)
         dlg.setModal(True)
         lo = QVBoxLayout(dlg)
         editor = QPlainTextEdit()
-        editor.setPlainText(content)
+        _set_plain_text_chunked(editor, content)
+        if truncated:
+            editor.appendPlainText(
+                f"\n… (preview truncated; file exceeds {MAX_TEXT_VIEW_BYTES // (1024 * 1024)} MB)"
+            )
         lo.addWidget(editor)
         btns = QHBoxLayout()
         save_as = QPushButton("Save As...")

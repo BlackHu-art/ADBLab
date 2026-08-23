@@ -5,8 +5,6 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import QThreadPool
-
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
@@ -42,7 +40,6 @@ class _ADBControllerBase:
         self.app_model = ADBApp()
         self.testing_model = ADBTesting()
         self.advanced_model = ADBAdvanced()
-        self.thread_pool = QThreadPool.globalInstance()
         self._pending_lock = threading.Lock()
         self.operation_manager = OperationManager()
         self.install_batch_use_case = InstallBatchUseCase(
@@ -117,14 +114,6 @@ class _ADBControllerBase:
 
     def _generate_operation_id(self) -> str:
         return str(uuid.uuid4())
-
-    def _register_operation_handler(self, op_type: str, handler):
-        """注册 vNext 处理器，同时保持旧处理器签名不变。"""
-        if not isinstance(op_type, str) or not op_type.strip():
-            raise ValueError("op_type must be a non-empty string")
-        if not callable(handler):
-            raise TypeError("handler must be callable")
-        self._operation_handler_map[op_type.strip()] = handler
 
     def _emit_operation(self, operation: str, success: bool, message: str):
         if getattr(self, "_shutting_down", False):

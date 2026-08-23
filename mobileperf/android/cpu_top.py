@@ -289,6 +289,7 @@ class CpuCollector:
                 logger.debug("  ============== time consume for cpu info : " + str(time_consume))
                 if cpu_info is None or cpu_info.source == "" or not cpu_info.package_list:
                     logger.debug("cpuinfos, can't get cpu info, continue")
+                    time.sleep(self._interval)
                     continue
                 self.cpu_list.extend(
                     [
@@ -327,8 +328,6 @@ class CpuCollector:
                 logger.error(e)
                 s = traceback.format_exc()
                 logger.debug(s)  # 将异常堆栈写入调试日志。
-                if getattr(self, "cpu_queue", None):
-                    self.cpu_queue.task_done()
         logger.debug("stop event is set or timeout")
 
 

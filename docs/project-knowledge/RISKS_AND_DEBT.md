@@ -42,11 +42,11 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Low | 全量 pytest 偶发"测试全绿但进程退出异常"（退出挂起或 0xC0000005，约 10 次全量中出现 3 次） | `pytest` 全量套件收尾阶段 | 本地/CI 误报失败，浪费重跑时间 | 测试结果本身不受影响（进度条全绿）；怀疑为 Qt 延迟删除在解释器关闭期的环境级竞态；建议后续用 `-p no:cacheprovider` 对照或最小化探针定位后修复 | Open |
 | Low | Git 历史作者标识较少，核心热点可能存在知识集中 | 2026-08-21、HEAD `a0344f3`：318 提交、4 个作者标识，近三个月 2 个标识活跃；`main_frame.py` 等 | 维护连续性和评审独立性降低 | 动态指标仅作快照；结合模块所有权确认风险，并使用知识库、CODEOWNERS/双人评审、模块化测试与交接 | 待确认 |
 | High | 邮件服务（`core/mail/`、邮件获取入口、邮件/验证码信号、顶层 requests/ruamel 依赖）已整体移除 | `git show 70be33e`；`requirements.txt` | 不再有外部邮箱 API 面、凭据处理或日志扩散面 | 主应用代码侧已闭环，`mobileperf/setup.py` 的 requests/urllib3 遗留声明也已移除。Git 历史中曾跟踪的邮件配置仍须由仓库所有者轮换、停止跟踪并审查历史（保留提醒） | Closed |
-| High | 设备 shell 动态值（path/host/uri/package/permission/action/component/ime/settings key/value/text）直接作为 `adb shell` 参数未 quote，任一值含 `;`/`$(…)`/`\|`/`&` 即触发设备端命令注入 | `models/adb_advanced.py`；`models/adb_network.py`；`models/adb_system.py`；`models/adb_app.py`；`controllers/_file.py`；`controllers/_system.py`；`controllers/_input.py` | 设备端命令注入、误操作设备；白名单 `utils/adb_values.py` 仅覆盖 package/dumpsys-service/tcp-port/geo | 已部分落地：model 层统一 `shlex.quote`（package/permission/settings/text 等）、`dumpsys_meminfo` package 已 quote、file_explorer 的 rm 复用 `shell_quote` 且 `_view_image` 校验文件名、`emu_sms/emu_call` 控制器拒绝换行；`content_insert` 的 --bind 已 `shlex.quote`、`input_keyevent/longpress` 已 `int()` 强转，model 层防御已补齐（不可达死方法随清理移除）；授权真机最小验证待做 | Partial |
+| High | 设备 shell 动态值（path/host/uri/package/permission/action/component/ime/settings key/value/text）直接作为 `adb shell` 参数未 quote，任一值含 `;`/`$(…)`/`\|`/`&` 即触发设备端命令注入 | `models/adb_advanced.py`；`models/adb_network.py`；`models/adb_system.py`；`models/adb_app.py`；`controllers/_file.py`；`controllers/_system.py`；`controllers/_input.py` | 设备端命令注入、误操作设备；白名单 `utils/adb_values.py` 仅覆盖 package/dumpsys-service/tcp-port/geo | 已部分落地：model 层统一 `shlex.quote`（package/permission/settings/text 等）、`dumpsys_meminfo` package 已 quote、file_explorer 的 rm 复用 `shell_quote` 且 `_view_image` 校验文件名、`emu_sms/emu_call` 控制器拒绝换行；授权真机最小验证待做 | Partial |
 | Medium | 全局 `QThreadPool` 的 QRunnable 关闭时不统一等待/取消；Controller `ThreadPoolExecutor(4)` 会取消待运行 future，但 `wait=False` 不等待已运行任务，长命令（install 120s、bugreport 180s）仍可拖慢退出 | `models/adb_model.py::async_command/ADBModelCore.__init__`；`controllers/_base.py::_ADBControllerBase.shutdown` | 进程退出被拖到 timeout 上限 | 专项审计（2026-08-21）T-1/T-2：已通过 `@async_command(long_running=True)` 将长任务分流到每模型 `long_pool`（部分缓解）；仍待给 QRunnable 增加可等待句柄或在 shutdown 前 `waitForDone(短超时)`，并对已运行 executor 任务增加协作式取消和有界收口 | Open |
 | Medium | screenrecord 以 `stderr=PIPE` 启动且无消费线程，stderr 写满 64KB 管道会阻塞录屏进程 | `models/adb_advanced.py:60-71` | 录屏进程死锁 | 已改 stderr=DEVNULL 并补 start_screen_record_async 单测；授权实机验证 screenrecord stderr 量待做 | Partial |
 | Low | 设备信息把 `ro.serialno` 与 MAC 以 INFO 落用户日志 | `controllers/_device.py::_process_device_info_result` | 违反"不记录真实设备唯一标识"约定 | 专项审计（2026-08-21）O-1：序列号/MAC 脱敏后展示；app.log 文件日志链路已整体移除（_enable_file_log 恒为 False，从未启用） | Open |
-| Low | 专项审计（2026-08-21）A 组低风险 8 项：日志文件无轮转（O-2→RotatingFileHandler 2MiB×3）、设置防抖 Timer 锁外 cancel（T-5）、monkey 最大恢复 wait 无超时（T-7）、传输 EOF 忙等（P-3）、worker `_aborted` 布尔跨线程无同步（T-4→threading.Event）、logcat 导出非原子写（O-3→`utils/atomic_text.py`）、content_insert bind 未校验（I-4→冒号/空值拒绝）、`update_current_package` 闭包捕获 self（R-2→weakref） | `git show b8e2f47` | 命令注入结构破坏、半截文件、退出拖慢、忙等 CPU | 已修复并补测试（`test_atomic_text.py`、content_insert 校验用例）；其余审计项（I-2/I-3/T-3/T-6/C-1/C-2/R-3/P-2）见审计报告留待后续批次 | Closed |
+| Low | 专项审计（2026-08-21）A 组低风险 7 项：日志文件无轮转（O-2→RotatingFileHandler 2MiB×3）、设置防抖 Timer 锁外 cancel（T-5）、monkey 最大恢复 wait 无超时（T-7）、传输 EOF 忙等（P-3）、worker `_aborted` 布尔跨线程无同步（T-4→threading.Event）、logcat 导出非原子写（O-3→`utils/atomic_text.py`）、`update_current_package` 闭包捕获 self（R-2→weakref） | `git show b8e2f47` | 命令注入结构破坏、半截文件、退出拖慢、忙等 CPU | 已修复并补测试（`test_atomic_text.py`）；其余审计项（I-2/I-3/T-3/T-6/C-1/C-2/R-3/P-2）见审计报告留待后续批次 | Closed |
 | Medium | 降级版本加载未来 `AppSettings` schema 后，任一后续保存都会丢失未知的未来字段 | `core/settings_manager.py::_load/_save_atomic`；`tests/test_settings_persistence.py::test_future_schema_version_keeps_known_values_and_version` | 用旧版应用修改一项设置即可破坏新版本数据，与 ADR-0006 的降级兼容决策不符 | 已通过 `_future_extra` 在加载时缓存未知字段、保存时合并回写；`future_key` 在 update/save 后仍存在的回归断言已落地 | Closed |
 | Medium | 非 Windows 源码运行时，ADB 解析器仍会优先选择仓库内 Windows `adb.exe` | `utils/adb_resolver.py::resolve_adb_path`；`utils/runtime_tools.py::bundled_tool_path`；`tests/test_runtime_tools.py::test_resolve_adb_path_prefers_runtime_tool_path` | macOS/Linux checkout 可能把 Windows PE 当作 adb 执行，设备功能直接失败；现有 CI 自检不覆盖该功能路径 | 已在 resolver 增加平台门控（非 Windows 直接解析 PATH `adb`），并补 `test_resolve_adb_path_uses_path_on_non_windows` 契约测试 | Closed |
 
@@ -62,8 +62,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 2. 收口全局 `QThreadPool`/Controller executor 关闭边界。
 3. 补齐 AppManager manifest/hash 和授权实机恢复验证。
 4. 为 Release 保留策略增加持久版本登记，避免已清理的历史版本被重新使用。
-7. 完成 MainFrame/helper 进程树、MobilePerf 长跑/断线以及跨类型任务并发的授权
+5. 完成 MainFrame/helper 进程树、MobilePerf 长跑/断线以及跨类型任务并发的授权
    实机集成验证。
-8. 修正非 Windows 源码模式的 ADB 路径优先级，定位全量套件耗时与偶发 Qt
-   解释器退出异常，再补齐 macOS/Linux 功能验证。
-9. 建立设备标识脱敏及诊断/媒体导出数据的保留与清理策略。
+6. 定位全量套件耗时与偶发 Qt 解释器退出异常，再补齐 macOS/Linux 功能验证。
+7. 建立设备标识脱敏及诊断/媒体导出数据的保留与清理策略。

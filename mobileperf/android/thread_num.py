@@ -39,9 +39,6 @@ class ThreadNumPackageCollector:
             self._stop_event.set()
             self.collect_thread_num_thread.join(timeout=1)
             self.collect_thread_num_thread = None
-            # 采集线程结束后通知上报队列当前任务已经完成。
-            if self.thread_queue:
-                self.thread_queue.task_done()
 
     def get_process_thread_num(self, process):
         pid = self.device.adb.get_pid_from_pck(self.packagename)
@@ -82,6 +79,7 @@ class ThreadNumPackageCollector:
                 logger.debug(thread_pck_info)
                 current_time = TimeUtils.getCurrentTime()
                 if not thread_pck_info:
+                    time.sleep(self._interval)
                     continue
                 else:
                     logger.debug(
@@ -115,8 +113,6 @@ class ThreadNumPackageCollector:
                 logger.error("an exception hanpend in thread num thread, reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.thread_queue:
-                    self.thread_queue.task_done()
 
 
 class ThreadNumMonitor:

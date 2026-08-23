@@ -39,15 +39,11 @@ class FdInfoPackageCollector:
             self._stop_event.set()
             self.collect_fd_thread.join(timeout=1)
             self.collect_fd_thread = None
-            # 采集线程结束后通知上报队列当前任务已经完成。
-            if self.fd_queue:
-                self.fd_queue.task_done()
 
-    def get_process_fd(self, process):
+    def get_process_fd(self):
         pid = self.device.adb.get_pid_from_pck(self.packagename)
-        global old_pid
         # 进程重启导致 PID 变化时更新全局快照。
-        if None is RuntimeData.old_pid or RuntimeData.old_pid != pid:
+        if RuntimeData.old_pid is None or RuntimeData.old_pid != pid:
             RuntimeData.old_pid = pid
         out = self.device.adb.run_shell_cmd(f"cat /proc/{pid}/status")
         collection_time = time.time()
@@ -82,9 +78,10 @@ class FdInfoPackageCollector:
                 )
 
                 # 从目标进程状态中获取文件描述符容量。
-                fd_pck_info = self.get_process_fd(self.packagename)
+                fd_pck_info = self.get_process_fd()
                 current_time = TimeUtils.getCurrentTime()
                 if not fd_pck_info:
+                    time.sleep(self._interval)
                     continue
                 else:
                     logger.debug(
@@ -118,8 +115,6 @@ class FdInfoPackageCollector:
                 logger.error("an exception hanpend in fdinfo thread, reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
-                if self.fd_queue:
-                    self.fd_queue.task_done()
 
 
 class FdMonitor:

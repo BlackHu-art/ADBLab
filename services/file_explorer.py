@@ -230,6 +230,10 @@ def cat_command(path: str) -> str:
     return f"cat {shell_quote(path)}"
 
 
+def head_command(path: str, byte_limit: int) -> str:
+    return f"head -c {int(byte_limit)} {shell_quote(path)}"
+
+
 def copy_for_root_pull_command(src: str, dst: str) -> str:
     return f"dd if={shell_quote(src)} of={shell_quote(dst)} && chmod 644 {shell_quote(dst)}"
 

@@ -1,9 +1,10 @@
 """应用管理器视图控制器 — 加载/填充应用列表、筛选与选择同步、详情懒加载。"""
 
 import weakref
+from functools import lru_cache
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QStandardItem
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem
 from PySide6.QtWidgets import QListWidgetItem
 
 from gui.dialogs.lifecycle import (
@@ -14,6 +15,35 @@ from gui.dialogs.lifecycle import (
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
+
+
+@lru_cache(maxsize=16)
+def _icon_font(size: int) -> QFont:
+    font = BaseStyles.font_for_role(FontRole.UI, size=size // 3 + 1)
+    font.setBold(True)
+    return font
+
+
+@lru_cache(maxsize=4096)
+def _painted_icon(name: str, atype: str, size: int) -> QIcon:
+    pix = QPixmap(size, size)
+    pix.fill(Qt.GlobalColor.transparent)
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    colors = {"User": "#4CAF50", "System": "#F44336", "Vendor": "#FF9800", "Other": "#9E9E9E"}
+    c = QColor(colors.get(atype, "#9E9E9E"))
+    p.setBrush(c)
+    p.setPen(Qt.PenStyle.NoPen)
+    margin = size // 12
+    rsize = size - margin * 2
+    radius = size // 5
+    p.drawRoundedRect(margin, margin, rsize, rsize, radius, radius)
+    p.setPen(QColor("#ffffff"))
+    abbreviation = name[:2].upper() if len(name) >= 2 else name.upper()
+    p.setFont(_icon_font(size))
+    p.drawText(margin, margin, rsize, rsize, Qt.AlignmentFlag.AlignCenter, abbreviation)
+    p.end()
+    return QIcon(pix)
 
 
 class AppManagerViews:
@@ -87,18 +117,22 @@ class AppManagerViews:
             self._frame._detail_row_by_pkg[pkg] = row
         self._frame.tree.setSortingEnabled(True)
         self._frame.icon_list.clear()
-        sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
-        for name, pkg, st, at in sorted_apps:
-            short_name = name[:18] + (".." if len(name) > 18 else "")
-            icon = self._frame._gen_icon(name, at, 48)
-            item = QListWidgetItem(icon, short_name)
-            item.setData(Qt.ItemDataRole.UserRole, pkg)
-            item.setToolTip(f"{pkg}\nType: {at} | Status: {st}")
-            item.setSizeHint(QSize(106, 72))
-            if st == "Disabled":
-                item.setForeground(BaseStyles.get_color("TEXT_DISABLED"))
-            self._frame.icon_list.addItem(item)
-            self._frame._detail_icon_by_pkg[pkg] = item
+        self._frame.icon_list.setUpdatesEnabled(False)
+        try:
+            sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
+            for name, pkg, st, at in sorted_apps:
+                short_name = name[:18] + (".." if len(name) > 18 else "")
+                icon = self._frame._gen_icon(name, at, 48)
+                item = QListWidgetItem(icon, short_name)
+                item.setData(Qt.ItemDataRole.UserRole, pkg)
+                item.setToolTip(f"{pkg}\nType: {at} | Status: {st}")
+                item.setSizeHint(QSize(106, 72))
+                if st == "Disabled":
+                    item.setForeground(BaseStyles.get_color("TEXT_DISABLED"))
+                self._frame.icon_list.addItem(item)
+                self._frame._detail_icon_by_pkg[pkg] = item
+        finally:
+            self._frame.icon_list.setUpdatesEnabled(True)
         self._frame._syncing_selection = False
         self._frame._sync_selection_views()
         self._frame._filter()
@@ -253,26 +287,7 @@ class AppManagerViews:
 
     @staticmethod
     def _gen_icon(name, atype, size=48):
-        pix = QPixmap(size, size)
-        pix.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pix)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        colors = {"User": "#4CAF50", "System": "#F44336", "Vendor": "#FF9800", "Other": "#9E9E9E"}
-        c = QColor(colors.get(atype, "#9E9E9E"))
-        p.setBrush(c)
-        p.setPen(Qt.PenStyle.NoPen)
-        margin = size // 12
-        rsize = size - margin * 2
-        radius = size // 5
-        p.drawRoundedRect(margin, margin, rsize, rsize, radius, radius)
-        p.setPen(QColor("#ffffff"))
-        abbreviation = name[:2].upper() if len(name) >= 2 else name.upper()
-        font = BaseStyles.font_for_role(FontRole.UI, size=size // 3 + 1)
-        font.setBold(True)
-        p.setFont(font)
-        p.drawText(margin, margin, rsize, rsize, Qt.AlignmentFlag.AlignCenter, abbreviation)
-        p.end()
-        return QIcon(pix)
+        return _painted_icon(name, atype, size)
 
     def _toggle_view(self):
         self._frame._sync_selection_views()

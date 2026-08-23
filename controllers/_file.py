@@ -72,7 +72,11 @@ class ADBFileMixin(_ADBControllerBase):
     def file_pull(self, devices: list, remote_path: str):
         if not self._require_devices(devices, "file_pull"):
             return
-        save_dir = self._get_screenshot_dir()
+        try:
+            save_dir = self._get_screenshot_dir()
+        except (OSError, RuntimeError, ValueError) as exc:
+            self._emit_operation("file_pull", False, f"Failed to prepare pull directory: {exc}")
+            return
         for ip in devices:
             filename = (
                 os.path.basename(remote_path) or f"pulled_{datetime.now().strftime('%H%M%S')}"

@@ -570,3 +570,27 @@ def test_screenshot_viewer_is_independent_but_managed_by_injected_window_owner()
     assert controller._active_viewers == []
     closed_message = controller.log_service.log.call_args.args[1]
     assert "phase=closed" in closed_message
+
+
+def test_screenshot_viewer_is_skipped_while_shutting_down():
+    controller = ADBMediaMixin.__new__(ADBMediaMixin)
+    controller._shutting_down = True
+    controller._active_viewers = []
+
+    with patch("controllers._media.ScreenshotViewer") as viewer_cls:
+        controller._show_screenshot_viewer(["shot.png"])
+
+    viewer_cls.assert_not_called()
+    assert controller._active_viewers == []
+
+
+def test_auto_pull_is_skipped_while_shutting_down():
+    controller = ADBMediaMixin.__new__(ADBMediaMixin)
+    controller._shutting_down = True
+    controller.screen_records = Mock()
+    controller.advanced_model = Mock()
+
+    controller._auto_pull("device-1", "batch-1")
+
+    controller.screen_records.active.assert_not_called()
+    controller.advanced_model.pull_recorded_video_async.assert_not_called()

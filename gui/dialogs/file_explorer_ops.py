@@ -366,6 +366,7 @@ class FileExplorerOps:
     def _show_chmod(self, name: str, is_dir: bool):
         full = self._frame._dpath(self._frame.current_path, name)
         dlg = QDialog(self._frame)
+        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setWindowTitle(f"Permissions - {name}")
         dlg.setModal(True)
         lo = QVBoxLayout(dlg)

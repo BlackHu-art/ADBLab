@@ -144,11 +144,8 @@ class ThemeMixin:
     RADIUS_XL: int = 12
     ICON_SIZE: int = 18
     TOOLBAR_ICON_SIZE: int = 16
-    WINDOW_BACKGROUND: str = "#f0f0f0"
 
     theme_changed = theme_changed
-    # 兼容旧调用方；字体变更已使用独立信号，不再借用该主题信号。
-    settings_changed = theme_changed
 
     @classmethod
     def theme_names(cls):

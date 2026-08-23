@@ -99,10 +99,21 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             except Exception:
                 pass
             ret = self._rec_procs.stop(f"record_{device_ip}")
-            if ret is not None:
+            if ret is None:
+                result = {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "message": "No active recording",
+                }
+            elif ret == 0:
                 result = {"success": True, "device_ip": device_ip, "message": "Recording stopped"}
             else:
-                result = {"success": True, "device_ip": device_ip, "message": "No active recording"}
+                result = {
+                    "success": False,
+                    "device_ip": device_ip,
+                    "message": f"Recording stopped with exit code {ret}",
+                    "error": f"Recording stopped with exit code {ret}",
+                }
         except Exception as e:
             result = {"success": False, "device_ip": device_ip, "error": str(e)}
         if batch_id:
@@ -318,7 +329,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def run_shell_command_async(self, device_ip: str, command: str, timeout: int = 30) -> dict:
-        full_cmd = ["adb", "-s", device_ip, "shell"] + shlex.split(command)
+        full_cmd = ["adb", "-s", device_ip, "shell", command]
         return self._run(full_cmd, timeout=timeout, device_ip=device_ip, command=command)
 
     # 重启模式

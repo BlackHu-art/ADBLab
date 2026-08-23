@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 
 from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QPixmap, QTransform
+from PySide6.QtGui import QColor, QIcon, QImageReader, QPixmap, QPixmapCache, QTransform
 from PySide6.QtWidgets import QAbstractItemView, QGraphicsView, QListWidgetItem
 
 from gui.styles import BaseStyles
@@ -14,6 +14,42 @@ from gui.styles.typography import FontRole
 MIN_ZOOM = 0.10
 MAX_ZOOM = 5.00
 ZOOM_STEP = 0.10
+
+THUMB_W = 86
+THUMB_H = 58
+
+
+def _image_cache_key(path: str, kind: str) -> str:
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0
+    return f"adblab:screenshot:{kind}:{path}:{mtime}"
+
+
+def _load_pixmap(path: str, *, kind: str, max_size: QSize | None = None) -> QPixmap:
+    """按 (path, mtime) 缓存解码结果；缩略图用 QImageReader 直接降采样。"""
+    key = _image_cache_key(path, kind)
+    cached = QPixmapCache.find(key)
+    if cached is not None and not cached.isNull():
+        return cached
+    if max_size is not None:
+        reader = QImageReader(path)
+        native = reader.size()
+        if native.isValid() and not native.isEmpty():
+            reader.setScaledSize(
+                native.scaled(
+                    max_size.width(),
+                    max_size.height(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                )
+            )
+        pixmap = QPixmap.fromImage(reader.read())
+    else:
+        pixmap = QPixmap(path)
+    if not pixmap.isNull():
+        QPixmapCache.insert(key, pixmap)
+    return pixmap
 
 
 class ScreenshotViewerNav:
@@ -41,7 +77,7 @@ class ScreenshotViewerNav:
                 del self._frame._image_paths[self._frame._current_idx]
                 paths_changed = True
             else:
-                pixmap = QPixmap(path)
+                pixmap = _load_pixmap(path, kind="main")
                 if not pixmap.isNull():
                     if paths_changed:
                         self._rebuild_thumbnails()
@@ -113,15 +149,9 @@ class ScreenshotViewerNav:
         self._update_nav_visibility()
 
     def _thumbnail_icon(self, path: str) -> QIcon:
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
+        thumb = _load_pixmap(path, kind="thumb", max_size=QSize(THUMB_W, THUMB_H))
+        if thumb.isNull():
             return get_themed_icon("image-broken.svg")
-        thumb = pixmap.scaled(
-            86,
-            58,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
         return QIcon(thumb)
 
     def _on_thumbnail_clicked(self, item: QListWidgetItem):

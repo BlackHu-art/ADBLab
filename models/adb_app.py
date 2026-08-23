@@ -109,10 +109,12 @@ class ADBApp(ADBModelCore):
     def get_current_activity_async(self, device_ip: str, index: int = 0) -> dict:
         r1 = self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
+            timeout=10,
             device_ip=device_ip,
         )
         r2 = self._run(
             ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "activities"],
+            timeout=10,
             device_ip=device_ip,
         )
         current_focus = ""

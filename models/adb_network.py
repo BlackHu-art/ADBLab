@@ -1,9 +1,11 @@
-"""提供端口映射、无线调试、Ping 和网络状态等 ADB 网络操作。
+"""提供端口映射（forward/reverse）与无线调试（tcpip/pair）等 ADB 网络操作。
 
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
 from typing import Any
+
+from utils.adb_values import normalize_tcp_port
 
 from .adb_model import async_command
 
@@ -68,6 +70,10 @@ class ADBNetworkMixin:
 
     @async_command
     def tcpip_mode_async(self, device_ip: str, port: str = "5555") -> dict:
+        try:
+            port = normalize_tcp_port(port)
+        except ValueError as exc:
+            return {"success": False, "device_ip": device_ip, "error": str(exc)}
         return self._run(
             ["adb", "-s", device_ip, "tcpip", port],
             device_ip=device_ip,
@@ -76,6 +82,12 @@ class ADBNetworkMixin:
 
     @async_command
     def pair_device_async(self, ip_address: str, port: str, pairing_code: str) -> dict:
+        if not ip_address.strip():
+            return {"success": False, "ip": ip_address, "error": "IP address cannot be empty"}
+        try:
+            port = normalize_tcp_port(port)
+        except ValueError as exc:
+            return {"success": False, "ip": ip_address, "error": str(exc)}
         return self._run(
             ["adb", "pair", f"{ip_address}:{port}", pairing_code],
             timeout=15,

@@ -56,6 +56,8 @@ def _record_device_batch_result(controller, operation: str, device_ip: str, succ
     if unit is not None:
         outcome = controller.device_batches.record_unit_result(unit.unit_id, device_ip, success)
         if outcome is not None:
+            with controller._pending_lock:
+                controller._batch_starts.pop(operation, None)
             controller._emit_operation(operation, outcome.success, outcome.message)
     return controller.device_batches.progress(start.operation_id)
 

@@ -165,6 +165,25 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
     assert runner.run.call_count == 5
 
 
+def test_scrcpy_service_device_info_prefers_override_size():
+    runner = Mock()
+    runner.run.return_value = CommandResult(
+        success=True,
+        output="Physical size: 1080x2400\nOverride size: 1080x1920\n",
+    )
+    service = ScrcpyService(command_runner=runner)
+
+    assert service.device_info("adb.exe", "device-1") == "1080x1920"
+
+
+def test_scrcpy_service_device_info_falls_back_to_physical_size():
+    runner = Mock()
+    runner.run.return_value = CommandResult(success=True, output="Physical size: 1080x2400\n")
+    service = ScrcpyService(command_runner=runner)
+
+    assert service.device_info("adb.exe", "device-1") == "1080x2400"
+
+
 def test_scrcpy_service_launch_plan_warns_and_skips_device_info_when_preflight_fails():
     runner = Mock()
     runner.run.side_effect = [
@@ -453,6 +472,24 @@ def test_remote_window_manager_focus_accepts_already_foreground_window():
 
     user32.ShowWindow.assert_called_once()
     user32.SetForegroundWindow.assert_not_called()
+
+
+def test_remote_window_manager_focus_retries_after_set_foreground():
+    manager = RemoteWindowManager(poll_interval_seconds=0.01)
+    user32 = Mock()
+    user32.GetForegroundWindow.side_effect = [999, 123]
+
+    with (
+        patch("services.remote.window_manager.sys.platform", "win32"),
+        patch("services.remote.window_manager.ctypes.windll") as windll,
+        patch.object(manager, "_find_window", return_value=123),
+    ):
+        windll.user32 = user32
+
+        assert manager.focus("ADBLab Remote - device-1", timeout_seconds=1.0) is True
+
+    user32.SetForegroundWindow.assert_called_once_with(123)
+    assert user32.GetForegroundWindow.call_count == 2
 
 
 def test_remote_panel_launch_ready_uses_scrcpy_service_start():
