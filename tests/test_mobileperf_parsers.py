@@ -52,3 +52,18 @@ def test_pck_cpuinfo_short_line_without_cpu_column_does_not_crash():
 
     assert info.pid == "123"
     assert info.total_pid_cpu == 0
+
+
+def test_netdev_info_short_wlan0_line_does_not_crash():
+    # wlan0 行字段不足 10 时跳过，不再 items[9] IndexError。
+    info = NetDevInfo("wlan0: 100 0 0 0\n")
+
+    assert info.wifi_total == 0
+    assert info.total == 0
+
+
+def test_meminfo_package_short_or_non_numeric_total_is_skipped():
+    from mobileperf.android.meminfos import MemInfoPackage
+
+    assert MemInfoPackage("TOTAL\n").totalAllocHeap == 0
+    assert MemInfoPackage("TOTAL abc\n").totalAllocHeap == 0

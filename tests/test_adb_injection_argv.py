@@ -76,21 +76,6 @@ class _Probe:
 
 
 class TestModelShellCommandQuoting:
-    def test_reset_permissions_quotes_package(self):
-        from models.adb_system import ADBSystemMixin
-
-        probe = _Probe()
-        ADBSystemMixin.reset_permissions_async.__wrapped__(
-            probe, "device-1", "com.example;rm"
-        )
-
-        cmd = probe._run.call_args.args[0]
-        assert cmd == [
-            "adb", "-s", "device-1", "shell", "pm", "reset-permissions",
-            shlex.quote("com.example;rm"),
-        ]
-        assert cmd[-1] == "'com.example;rm'"
-
     def test_settings_put_quotes_namespace_key_and_value(self):
         from models.adb_advanced import ADBAdvanced
 

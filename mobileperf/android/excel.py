@@ -41,30 +41,6 @@ class Excel:
             logger.debug(f"worksheet name normalized: {raw_name} -> {candidate}")
         return candidate
 
-    def add_sheet(self, sheet_name, x_axis, y_axis, headings, lines):
-        """写入二维数据，并在数据量足够时插入折线图。"""
-        worksheet_name = self._safe_sheet_name(sheet_name)
-        worksheet = self.workbook.add_worksheet(worksheet_name)
-        worksheet.write_row("A1", headings)
-        for i, line in enumerate(lines, 2):
-            worksheet.write_row(f"A{i:d}", line)
-        columns = len(headings)
-        rows = len(lines)
-        if columns > 1 and rows > 1:
-            chart = self.workbook.add_chart({"type": "line"})
-            for j in range(1, columns):
-                chart.add_series(
-                    {
-                        "name": [worksheet_name, 0, j],
-                        "categories": [worksheet_name, 1, 0, rows, 0],
-                        "values": [worksheet_name, 1, j, rows, j],
-                    }
-                )
-            chart.set_title({"name": sheet_name.replace(".", " ").title()})
-            chart.set_x_axis({"name": x_axis})
-            chart.set_y_axis({"name": y_axis})
-            worksheet.insert_chart("B3", chart, {"x_scale": 2, "y_scale": 2})
-
     def save(self):
         """关闭工作簿并将内容保存到目标文件。"""
         self.workbook.close()

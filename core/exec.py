@@ -305,13 +305,23 @@ class ProcessRunner:
             creationflags=creationflags,
             env=env,
         )
+
+        # spawn 在锁外进行，此处用一次原子 compare-and-swap 决定唯一获胜者：
+        # 只有 key 仍为空的一方完成注册并返回新进程；并发失败方停掉自己刚
+        # spawn 的进程并返回当前占用者，避免向调用方返回已被替换的句柄。
         with self._lock:
-            old_proc = self._procs.pop(key, None)
-            self._procs[key] = proc
-        self._unregister_global(key, old_proc)
-        self._stop_proc(old_proc)
-        self._register_global(key, proc)
-        return proc
+            incumbent = self._procs.get(key)
+            if incumbent is None:
+                self._procs[key] = proc
+                winner = True
+            else:
+                winner = False
+        if winner:
+            self._register_global(key, proc)
+            return proc
+        self._stop_proc(proc)
+        with self._lock:
+            return self._procs.get(key, proc)
 
     def spawn(
         self,
@@ -500,7 +510,15 @@ class ProcessRunner:
     @property
     def active_keys(self) -> list[str]:
         with self._lock:
-            return [k for k, p in self._procs.items() if p.poll() is None]
+            keys = []
+            for k, p in self._procs.items():
+                try:
+                    if p.poll() is None:
+                        keys.append(k)
+                except OSError:
+                    # 句柄失效视为存活，与 tracked_active_count 的容错保持一致。
+                    keys.append(k)
+            return keys
 
     def stop_all(self):
         """停止当前实例跟踪的所有进程。"""

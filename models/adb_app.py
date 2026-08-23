@@ -127,13 +127,22 @@ class ADBApp(ADBModelCore):
                 if "mResumedActivity" in line:
                     resumed_activity = line.strip()
                     break
-        return {
-            "success": True,
+        success = r1["success"] and r2["success"]
+        error = ""
+        if not r1["success"]:
+            error = r1.get("error", "dumpsys window failed")
+        elif not r2["success"]:
+            error = r2.get("error", "dumpsys activity failed")
+        result = {
+            "success": success,
             "device_ip": device_ip,
             "index": index,
             "current_focus": current_focus,
             "resumed_activity": resumed_activity,
         }
+        if error:
+            result["error"] = error
+        return result
 
     @async_command
     def parse_apk_info_async(self, apk_path: str) -> dict:

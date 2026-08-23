@@ -406,23 +406,6 @@ def test_mobileperf_excel_truncates_long_csv_sheet_names_for_report(tmp_path):
     assert all(len(name) <= 31 for name in excel._worksheet_names)
 
 
-def test_mobileperf_excel_generates_unique_valid_sheet_names(tmp_path):
-    from mobileperf.android.excel import Excel
-
-    excel = Excel(str(tmp_path / "summary.xlsx"))
-    sheet_name = "bad:name?with/slash\\andaverylongworksheetname"
-
-    excel.add_sheet(sheet_name, "time", "value", ["time", "value"], [["1", "2"], ["2", "3"]])
-    excel.add_sheet(sheet_name, "time", "value", ["time", "value"], [["1", "2"], ["2", "3"]])
-    excel.save()
-
-    names = sorted(excel._worksheet_names)
-    assert len(names) == 2
-    assert names[0] != names[1]
-    assert all(len(name) <= 31 for name in names)
-    assert all(not any(char in name for char in "[]:*?/\\") for name in names)
-
-
 def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
     runner_process = Mock(spec=ProcessRunner)
     proc = Mock()
@@ -749,21 +732,3 @@ def test_mobileperf_startup_uses_default_monkey_options_for_legacy_config():
     assert options["ignore_crashes"] is True
     assert options["pct_touch"] == 15
     assert options["pct_nav"] == 40
-
-
-def test_mobileperf_runner_batches_subprocess_log_lines_and_notifies_finish():
-    runner = MobilePerfRunner(process_runner=Mock(spec=ProcessRunner))
-    runner.LOG_BATCH_SIZE = 3
-    runner.LOG_BATCH_INTERVAL_SECONDS = 60
-    proc = Mock()
-    proc.stdout = iter(["one\n", "two\n", "three\n", "four\n"])
-    proc.poll.return_value = 0
-    runner._proc = proc
-    received = []
-    runner._on_log = received.append
-    runner._on_finished = Mock()
-
-    runner._read_logs()
-
-    assert received == ["one\ntwo\nthree", "four"]
-    runner._on_finished.assert_called_once()

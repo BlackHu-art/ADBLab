@@ -126,18 +126,6 @@ def test_mobileperf_result_lookup_excludes_artifacts_that_predate_current_start(
         runner.stop(timeout=0)
 
 
-def test_mobileperf_runner_records_natural_nonzero_exit_code():
-    runner = MobilePerfRunner(process_runner=Mock(spec=ProcessRunner))
-    proc = Mock()
-    proc.stdout = iter([])
-    proc.poll.return_value = 7
-    runner._proc = proc
-
-    runner._read_logs()
-
-    assert runner.last_exit_code == 7
-
-
 @pytest.mark.parametrize(
     ("exit_code", "report_path", "expected_status", "expected_progress"),
     [

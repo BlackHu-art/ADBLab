@@ -37,6 +37,10 @@ def _primary_package(value: str) -> str:
     return parts[0] if parts else value.strip()
 
 
+# 结果目录中的包名片段仅允许字母数字、点、下划线和连字符，其余字符替换为下划线。
+_RESULT_SEGMENT_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
 def normalize_local_path(path: str) -> str:
     value = str(path or "").strip()
     if not value:
@@ -139,7 +143,7 @@ class MobilePerfRunConfig:
         return normalize_local_path(self.save_path)
 
     def to_config_parser(self) -> configparser.ConfigParser:
-        parser = configparser.ConfigParser()
+        parser = configparser.ConfigParser(interpolation=None)
         common = {
             "package": self.package,
             "frequency": str(max(1, int(self.frequency_seconds))),
@@ -276,27 +280,27 @@ class MobilePerfRunner:
             self._finished_notified = False
             config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
             self._config_dir = config_dir
-            self._config_path = config.write_config(config_dir.name)
-            self._stop_path = os.path.join(config_dir.name, "mobileperf.stop")
-            cmd = self._build_command()
-            env = os.environ.copy()
-            adb_path = self._resolve_adb_path()
-            if adb_path:
-                env["ADB_PATH"] = adb_path
-            env["MOBILEPERF_STOP_FILE"] = self._stop_path
-            env["MOBILEPERF_LOG_DIR"] = str(user_data_root() / "logs")
-            redaction_values = tuple(
-                self._sensitive_runtime_values(
-                    config,
-                    config_path=self._config_path,
-                    stop_path=self._stop_path,
-                )
-            )
-            env["MOBILEPERF_REDACT_VALUES"] = json.dumps(
-                redaction_values,
-                ensure_ascii=True,
-            )
             try:
+                self._config_path = config.write_config(config_dir.name)
+                self._stop_path = os.path.join(config_dir.name, "mobileperf.stop")
+                cmd = self._build_command()
+                env = os.environ.copy()
+                adb_path = self._resolve_adb_path()
+                if adb_path:
+                    env["ADB_PATH"] = adb_path
+                env["MOBILEPERF_STOP_FILE"] = self._stop_path
+                env["MOBILEPERF_LOG_DIR"] = str(user_data_root() / "logs")
+                redaction_values = tuple(
+                    self._sensitive_runtime_values(
+                        config,
+                        config_path=self._config_path,
+                        stop_path=self._stop_path,
+                    )
+                )
+                env["MOBILEPERF_REDACT_VALUES"] = json.dumps(
+                    redaction_values,
+                    ensure_ascii=True,
+                )
                 proc = self._process_runner.start(
                     process_key,
                     cmd,
@@ -312,6 +316,7 @@ class MobilePerfRunner:
             except Exception:
                 config_dir.cleanup()
                 self._config_dir = None
+                self._config_path = ""
                 self._stop_path = ""
                 raise
             context = _MobilePerfRunContext(
@@ -465,15 +470,14 @@ class MobilePerfRunner:
             return ""
         return max(reports, key=os.path.getmtime)
 
-    def _read_logs(self, context: _MobilePerfRunContext | None = None):
+    def _read_logs(self, context: _MobilePerfRunContext):
         """排空所属运行的 stdout，并按批次转发业务输出。"""
-        proc = context.proc if context is not None else self._proc
-        stream = getattr(proc, "stdout", None) if proc is not None else None
+        proc = context.proc
+        stream = getattr(proc, "stdout", None)
         if stream is None:
-            if context is not None:
-                self._mark_reader_done(context, context.stdout_done)
+            self._mark_reader_done(context, context.stdout_done)
             return
-        on_log = context.on_log if context is not None else self._on_log
+        on_log = context.on_log
         pending: list[str] = []
         last_flush = time.monotonic()
 
@@ -518,22 +522,14 @@ class MobilePerfRunner:
                 stream.close()
             except Exception:
                 pass
-            if context is not None:
-                self._mark_reader_done(context, context.stdout_done)
-            elif proc is not None:
-                exit_code = proc.poll()
-                if exit_code is not None:
-                    self._last_exit_code = exit_code
-                    self._cleanup_config_dir()
-                    self._notify_finished()
+            self._mark_reader_done(context, context.stdout_done)
 
-    def _read_diagnostics(self, context: _MobilePerfRunContext | None = None) -> None:
+    def _read_diagnostics(self, context: _MobilePerfRunContext) -> None:
         """持续排空子进程 stderr，源码模式转发到 IDE，打包模式直接丢弃。"""
-        proc = context.proc if context is not None else self._proc
-        stream = getattr(proc, "stderr", None) if proc is not None else None
+        proc = context.proc
+        stream = getattr(proc, "stderr", None)
         if stream is None:
-            if context is not None:
-                self._mark_reader_done(context, context.stderr_done)
+            self._mark_reader_done(context, context.stderr_done)
             return
         try:
             for line in stream:
@@ -550,8 +546,7 @@ class MobilePerfRunner:
                 stream.close()
             except Exception:
                 pass
-            if context is not None:
-                self._mark_reader_done(context, context.stderr_done)
+            self._mark_reader_done(context, context.stderr_done)
 
     def _safe_write_diagnostic(
         self,
@@ -722,19 +717,6 @@ class MobilePerfRunner:
                 continue
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
-    def _notify_finished(self):
-        """保留旧测试和直接调用方使用的无上下文完成通知。"""
-        if self._finished_notified:
-            return
-        self._finished_notified = True
-        if self._on_finished:
-            try:
-                self._on_finished()
-            except Exception as exc:
-                self._safe_write_diagnostic(
-                    f"MobilePerf on_finished callback failed: {type(exc).__name__}"
-                )
-
     def _cleanup_run_context(self, context: _MobilePerfRunContext) -> None:
         with context.finish_lock:
             if context.config_cleaned:
@@ -808,7 +790,10 @@ class MobilePerfRunner:
     def _package_result_root(self, config: MobilePerfRunConfig | None) -> Path:
         root = Path(self.expected_result_root(config))
         if config and config.package:
-            root = root / _primary_package(config.package)
+            primary = _primary_package(config.package)
+            segment = _RESULT_SEGMENT_UNSAFE_RE.sub("_", primary).strip(".")
+            if segment:
+                root = root / segment
         return root
 
     @staticmethod

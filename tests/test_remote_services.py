@@ -270,6 +270,26 @@ def test_remote_control_service_sends_keyevent_and_directional_swipe():
     adb.shell_input.assert_any_call("swipe 540 2160 540 240 200", device_id="device-1")
 
 
+def test_remote_control_service_send_keyevent_rejects_injection():
+    adb = Mock()
+    service = RemoteControlService(adb)
+
+    # 白名单键名 -> 映射 keycode
+    service.send_keyevent("device-1", "HOME")
+    adb.shell_input.assert_called_once_with("keyevent 3", device_id="device-1")
+    adb.shell_input.reset_mock()
+
+    # 显式数字 keycode -> 允许
+    service.send_keyevent("device-1", "123")
+    adb.shell_input.assert_called_once_with("keyevent 123", device_id="device-1")
+    adb.shell_input.reset_mock()
+
+    # 注入负载 / 未知键名 -> 拒绝，不调用 shell_input
+    assert service.send_keyevent("device-1", "3; rm -rf /data") is None
+    assert service.send_keyevent("device-1", "abc") is None
+    adb.shell_input.assert_not_called()
+
+
 def test_adb_bridge_warm_input_session_prepares_persistent_session():
     bridge = ADBBridge(path="adb.exe")
     session = Mock()

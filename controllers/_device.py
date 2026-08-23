@@ -77,6 +77,8 @@ class ADBDeviceMixin(_ADBControllerBase):
         self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
+        if getattr(self, "_shutting_down", False):
+            return
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:

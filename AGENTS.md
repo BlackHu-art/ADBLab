@@ -19,13 +19,14 @@ ADBLab 是基于 PySide6 的 Android 设备管理、测试、Remote 和 MobilePe
 - 解压外部 ZIP 必须使用 `utils.archive.safe_extract_zip()`。
 - 应用版本只在 `utils/app_metadata.py` 修改。
 - `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地提交与 dev
-  分支上的提交都不修改版本号；主版本或次版本仅按用户要求或发布计划调整。当前基线：3.2.0。
+  分支上的提交都不修改版本号；主版本或次版本仅按用户要求或发布计划调整。当前基线：3.2.1。
 
 常用门禁：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe -m ruff check .
 git diff --check
 ```
 

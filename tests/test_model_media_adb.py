@@ -200,6 +200,46 @@ def test_pull_recorded_video_reports_pull_failure():
     run.assert_called_once()
 
 
+def test_start_screen_record_starts_with_devnull_stderr():
+    model = ADBAdvanced()
+    fake_proc = SimpleNamespace(pid=4321, poll=lambda: None)
+
+    with (
+        patch.object(model, "_rec_procs") as procs,
+        patch("models.adb_advanced.time.sleep"),
+    ):
+        procs.start.return_value = fake_proc
+        result = ADBAdvanced.start_screen_record_async.__wrapped__(
+            model, "device-1", "C:/tmp", duration=10, batch_id="b1"
+        )
+
+    assert result["success"] is True
+    assert result["device_ip"] == "device-1"
+    assert result["proc_pid"] == 4321
+    assert result["filename"].startswith("record_device_1_")
+    assert result["filename"].endswith(".mp4")
+    assert result["remote_path"] == f"/sdcard/{result['filename']}"
+    assert result["batch_id"] == "b1"
+    procs.start.assert_called_once()
+    assert procs.start.call_args.kwargs.get("stderr") == subprocess.DEVNULL
+
+
+def test_start_screen_record_reports_immediate_exit():
+    model = ADBAdvanced()
+    fake_proc = SimpleNamespace(pid=123, poll=lambda: 1)
+
+    with (
+        patch.object(model, "_rec_procs") as procs,
+        patch("models.adb_advanced.time.sleep"),
+    ):
+        procs.start.return_value = fake_proc
+        result = ADBAdvanced.start_screen_record_async.__wrapped__(model, "device-1", "C:/tmp")
+
+    assert result["success"] is False
+    assert result["device_ip"] == "device-1"
+    assert "exited immediately" in result["error"]
+
+
 def test_settings_get_async_returns_value_alias():
     model = ADBAdvanced()
 
@@ -736,7 +776,10 @@ def test_adb_advanced_input_failure_is_reported():
 
     result = ADBAdvanced.input_keyevent_async.__wrapped__(model, "device-1", "3")
 
-    assert result == {"success": False, "device_ip": "device-1", "keycode": "3"}
+    assert result["success"] is False
+    assert result["device_ip"] == "device-1"
+    assert result["keycode"] == "3"
+    assert result["error"] == "adb died"
 
 
 def test_adb_advanced_shutdown_stops_recording_and_input_sessions():
@@ -785,31 +828,6 @@ def test_quick_setting_batches_animation_commands_into_one_shell():
         device_ip="device-1",
         action="anim_off",
     )
-
-
-def test_content_insert_rejects_invalid_bind_keys_or_values():
-    model = ADBAdvanced()
-
-    with patch.object(model, "_run") as run:
-        run.return_value = {"success": True, "device_ip": "device-1"}
-        result = ADBSystemMixin.content_insert_async.__wrapped__(
-            model,
-            "device-1",
-            "content://demo",
-            {"title": "hello"},
-        )
-        assert result == {"success": True, "device_ip": "device-1"}
-        run.assert_called_once_with(
-            ["adb", "-s", "device-1", "shell", "content", "insert", "--uri", "content://demo"]
-            + ["--bind", "title:s:hello"],
-            timeout=15,
-            device_ip="device-1",
-        )
-
-    for bad_binds in ({"": "v"}, {"k": ""}, {"a:b": "v"}, {"k": "a:b"}):
-        with patch.object(model, "_run") as run, pytest.raises(ValueError):
-            ADBSystemMixin.content_insert_async.__wrapped__(model, "device-1", "uri", bad_binds)
-        run.assert_not_called()
 
 
 def test_disable_package_commands_keep_global_and_user_scopes_distinct():

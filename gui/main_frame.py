@@ -150,7 +150,6 @@ class MainFrame(QMainWindow):
         self._shutdown_finalizer_started = False
         self._close_started = False
         self._close_ready = False
-        self._guarded_signal_handlers = []
         self._drag_pos = None
         self._layout_ready = False
         self._resize_controller = None
@@ -826,17 +825,9 @@ class MainFrame(QMainWindow):
             + self._system_signal_map(LP, AC)
         )
         for signal_, handler in signal_map:
-            guarded_handler = self._guard_dangerous_handler(handler)
-            self._guarded_signal_handlers.append(guarded_handler)
-            signal_.connect(guarded_handler)
+            signal_.connect(handler)
         self.left_panel.selected_devices_changed.connect(self._update_device_toolbar_actions)
         self._update_device_toolbar_actions()
-
-    def _guard_dangerous_handler(self, handler):
-        """兼容占位：危险操作不再弹窗确认，信号直接透传处理器。"""
-
-        del self
-        return handler
 
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)

@@ -147,28 +147,6 @@ def test_initialization_preserves_root_logger_handlers(
         root_logger.removeHandler(existing_handler)
 
 
-def test_file_logging_uses_user_directory_and_excludes_debug(
-    create_log_service: Callable[[], LogService],
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path,
-) -> None:
-    stream = io.StringIO()
-    monkeypatch.setattr("core.log_service.user_data_root", lambda: tmp_path)
-    monkeypatch.setattr(sys, "stderr", stream)
-    service = create_log_service()
-
-    service.enable_file_logging(True)
-    service.log(LogLevel.DEBUG, "不可落盘")
-    service.log(LogLevel.INFO, "允许落盘")
-    service._flush_buffer()
-    service.enable_file_logging(False)
-
-    log_path = tmp_path / "logs" / "app.log"
-    content = log_path.read_text(encoding="utf-8")
-    assert "允许落盘" in content
-    assert "不可落盘" not in content
-
-
 def test_log_panel_renders_records_verbatim(
     create_log_service: Callable[[], LogService],
 ) -> None:

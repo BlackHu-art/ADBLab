@@ -292,31 +292,6 @@ def test_mobileperf_runner_separates_child_stderr_from_ui_stream(tmp_path):
     assert "mail@example.test" in redacted_values
 
 
-def test_mobileperf_runner_never_forwards_debug_records_as_raw_ui():
-    runner = MobilePerfRunner(process_runner=Mock(spec=ProcessRunner))
-    proc = Mock()
-    proc.stdout = iter(
-        [
-            "[2026-07-25 10:00:00]DEBUG:mobileperf:startup:diagnostic\n",
-            "[2026-07-25 10:00:00]INFO:mobileperf:startup:progress\n",
-            "functional raw line\n",
-        ]
-    )
-    proc.poll.return_value = 0
-    runner._proc = proc
-    received: list[str] = []
-    diagnostics: list[str] = []
-    runner._on_log = received.append
-    runner._write_diagnostic = diagnostics.append
-
-    runner._read_logs()
-
-    assert diagnostics == ["[2026-07-25 10:00:00]DEBUG:mobileperf:startup:diagnostic"]
-    assert received == [
-        "[2026-07-25 10:00:00]INFO:mobileperf:startup:progress\nfunctional raw line"
-    ]
-
-
 def test_mobileperf_diagnostic_stream_is_redacted_before_ide_output(monkeypatch):
     stderr = io.StringIO()
     runner = MobilePerfRunner(process_runner=Mock(spec=ProcessRunner))

@@ -1,11 +1,14 @@
 """提供 Remote 面板的输入队列执行与队列状态回写。"""
 
+import threading
+
 
 class RemotePanelInput:
     """组合进 RemotePanel 的输入执行控制器，通过 ``self._frame`` 访问面板。"""
 
     def __init__(self, frame):
         self._frame = frame
+        self._lock = threading.Lock()
 
     def _submit_remote_input(self, task):
         """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
@@ -37,40 +40,34 @@ class RemotePanelInput:
         try:
             executor.submit(_wrapped)
         except RuntimeError as exc:
-            self._frame._remote_submitted = max(
-                getattr(self._frame, "_remote_completed", 0),
-                getattr(self._frame, "_remote_submitted", 0) - 1,
-            )
-            self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
-            self._frame._emit_remote_queue_status(
-                self._frame._remote_submitted,
-                getattr(self._frame, "_remote_completed", 0),
-                "failed",
-            )
+            with self._lock:
+                self._frame._remote_submitted = max(
+                    getattr(self._frame, "_remote_completed", 0),
+                    getattr(self._frame, "_remote_submitted", 0) - 1,
+                )
+                self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
+                submitted = self._frame._remote_submitted
+                completed = getattr(self._frame, "_remote_completed", 0)
+            self._frame._emit_remote_queue_status(submitted, completed, "failed")
             self._frame._log("ERROR", f"remote executor stopped: {type(exc).__name__}")
 
     def _mark_remote_submitted(self):
-        self._frame._remote_submitted = getattr(self._frame, "_remote_submitted", 0) + 1
-        self._frame._emit_remote_queue_status(
-            self._frame._remote_submitted,
-            getattr(self._frame, "_remote_completed", 0),
-            "queued",
-        )
+        with self._lock:
+            submitted = getattr(self._frame, "_remote_submitted", 0) + 1
+            self._frame._remote_submitted = submitted
+            completed = getattr(self._frame, "_remote_completed", 0)
+        self._frame._emit_remote_queue_status(submitted, completed, "queued")
 
     def _mark_remote_completed(self, result: str):
-        self._frame._remote_completed = min(
-            getattr(self._frame, "_remote_submitted", 0),
-            getattr(self._frame, "_remote_completed", 0) + 1,
-        )
-        if result == "sent":
-            self._frame._remote_sent = getattr(self._frame, "_remote_sent", 0) + 1
-        elif result == "failed":
-            self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
-        self._frame._emit_remote_queue_status(
-            getattr(self._frame, "_remote_submitted", 0),
-            self._frame._remote_completed,
-            result,
-        )
+        with self._lock:
+            submitted = getattr(self._frame, "_remote_submitted", 0)
+            completed = min(submitted, getattr(self._frame, "_remote_completed", 0) + 1)
+            self._frame._remote_completed = completed
+            if result == "sent":
+                self._frame._remote_sent = getattr(self._frame, "_remote_sent", 0) + 1
+            elif result == "failed":
+                self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
+        self._frame._emit_remote_queue_status(submitted, completed, result)
 
     @staticmethod
     def _remote_input_succeeded(result) -> bool:
@@ -94,10 +91,10 @@ class RemotePanelInput:
         queued = max(0, submitted - completed)
         label = getattr(self._frame, "_remote_queue_label", None)
         if label is not None:
-            label.setText(
-                f"Queue: {queued} queued · {getattr(self._frame, '_remote_sent', 0)} sent · "
-                f"{getattr(self._frame, '_remote_failed', 0)} failed"
-            )
+            with self._lock:
+                sent = getattr(self._frame, "_remote_sent", 0)
+                failed = getattr(self._frame, "_remote_failed", 0)
+            label.setText(f"Queue: {queued} queued · {sent} sent · {failed} failed")
 
     def _send_keyevent(self, key_name: str):
         device = self._frame._selected_remote_device()

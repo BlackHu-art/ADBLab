@@ -66,7 +66,12 @@ class MemInfoPackage:
         for line in result:
             if "TOTAL" in line and ":" not in line:
                 tmp = line.split()
-                self.totalAllocHeap = round(float(tmp[-2]) / 1024, 2)
+                if len(tmp) < 2:
+                    continue
+                try:
+                    self.totalAllocHeap = round(float(tmp[-2]) / 1024, 2)
+                except ValueError:
+                    continue
 
 
 class MemInfoDevice:
@@ -250,8 +255,8 @@ class MemInfoPackageCollector:
         # 部分系统禁止 system_server 访问应用目录，因此使用公共临时目录。
         hprof_path = "/data/local/tmp"
         self.device.adb.run_shell_cmd("mkdir " + hprof_path)
-        # 某些系统在共享存储中生成 heapdump 前需要调整 SELinux 模式。
-        self.device.adb.run_shell_cmd("setenforce 0")
+        # heapdump 与 dumpsys meminfo 均走 /data/local/tmp（shell 可写）或系统接口，
+        # 无需 SELinux permissive；不执行 setenforce 0，避免整机级且不可逆的安全降级。
         first_dump = True
         while not self._stop_event.is_set() and time.time() < end_time:
             try:
@@ -442,12 +447,6 @@ class MemMonitor:
 
     def stop(self):
         self.meminfo_package_collector.stop()
-
-    def get_meminfo_collector(self):
-        return self.meminfo_collector
-
-    def get_meminfo_package_collector(self):
-        return self.meminfo_package_collector
 
     def save(self):
         pass

@@ -29,7 +29,6 @@ def test_androiddevice_logs_only_safe_metadata_for_devices_commands_and_apps(mon
     monkeypatch.setattr(androiddevice.subprocess, "run", lambda *_args, **_kwargs: completed)
 
     assert ADB.list_device() == [serial_one, serial_two]
-    assert ADB.checkAdbNormal() is True
 
     launched_commands = []
 

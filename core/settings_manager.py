@@ -420,7 +420,10 @@ class AppSettings:
             pending_timer = self._save_timer
             self._save_timer = None
             if key:
-                self._data[key] = deepcopy(DEFAULTS.get(key, ""))
+                if key in DEFAULTS:
+                    self._data[key] = deepcopy(DEFAULTS[key])
+                else:
+                    self._data.pop(key, None)
             else:
                 self._data = deepcopy(DEFAULTS)
         if pending_timer is not None:

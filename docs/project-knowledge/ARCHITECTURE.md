@@ -77,7 +77,7 @@ flowchart LR
 
 ### 4. Model 与 Service 层
 
-- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。
+- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/push/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。
   operation 相关的 `_operation_id/_operation_owner_token/_operation_generation_token` 等关键字参数
   只用于构造 `OperationMetadata` 信封（`adblab/application/envelope.py`），不会转发给底层 model 方法。
 - `models/adb_device.py`、`adb_app.py`、`adb_advanced.py`、`adb_testing.py` 提供主要 ADB 能力；`adb_network.py` 和 `adb_system.py` 作为 mixin 复用。
@@ -136,11 +136,9 @@ flowchart LR
   不渲染；条目 HTML 按 (级别, 消息) 缓存，主题切换重建缓存并整份重绘；
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
-  不进入 Qt 信号、界面缓存或文件日志。windowed 环境没有 `stderr` 时静默丢弃。
+  不进入 Qt 信号、界面缓存。windowed 环境没有 `stderr` 时静默丢弃。
 - 顶部工具栏和二级窗口生命周期使用 `ui.toolbar`、`ui.secondary_window` 结构化 DEBUG
   事件，字段只包含动作、阶段、窗口类型、布尔状态和数量，不记录设备标识、包名或真实路径。
-- 可选文件日志只记录 INFO 及以上级别，写入 `user_data_root()/logs/app.log`；命名 logger
-  仅管理自己的 handler，不修改 root logger。
 - MobilePerf 子进程使用 stdout 传递 INFO 和功能 RAW 数据，源码 DEBUG 单独写 stderr；
   父进程按运行代次固化回调和脱敏值，分别排空两个流并在双管道收口后通知完成，DEBUG
   不进入性能窗口。动态设备、包、邮箱和本地路径在输出前脱敏。

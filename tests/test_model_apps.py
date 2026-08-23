@@ -496,6 +496,7 @@ def test_app_controller_direct_async_paths_skip_python_executor():
     controller._batch_starts = {}
     controller.device_batches = DeviceBatchUseCase(OperationManager())
     controller._emit_operation = Mock()
+    controller._reject_concurrent_batch = Mock(return_value=False)
     controller.app_model = Mock()
     controller.executor = Mock()
 
@@ -507,3 +508,24 @@ def test_app_controller_direct_async_paths_skip_python_executor():
     controller.app_model.clear_app_data_async.assert_called_once_with("device-1", "com.example", 1)
     controller.app_model.restart_app_async.assert_called_once_with("device-1", "com.example", 1)
     controller.app_model.get_current_activity_async.assert_called_once_with("device-1", 1)
+
+
+def test_parse_apk_info_reports_missing_file():
+    model = ADBApp()
+    with patch("models.adb_app.os.path.isfile", return_value=False):
+        result = ADBApp.parse_apk_info_async.__wrapped__(model, "missing.apk")
+
+    assert result["success"] is False
+    assert "APK file not found" in result["error"]
+
+
+def test_parse_apk_info_reports_missing_aapt():
+    model = ADBApp()
+    with (
+        patch("models.adb_app.os.path.isfile", return_value=True),
+        patch("models.adb_app.shutil.which", return_value=None),
+    ):
+        result = ADBApp.parse_apk_info_async.__wrapped__(model, "demo.apk")
+
+    assert result["success"] is False
+    assert "aapt executable not found" in result["error"]

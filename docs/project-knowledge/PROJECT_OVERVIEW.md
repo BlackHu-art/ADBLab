@@ -8,7 +8,7 @@ related: [glossary.md, ARCHITECTURE.md, RISKS_AND_DEBT.md]
 
 ## 项目目标
 
-ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 桌面工具。它把 ADB、scrcpy、logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，主入口为 `main.py::_run_gui()`，当前版本由 `utils/app_metadata.py::APP_VERSION` 定义为 3.2.0。
+ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 桌面工具。它把 ADB、scrcpy、logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，主入口为 `main.py::_run_gui()`，当前版本由 `utils/app_metadata.py::APP_VERSION` 定义为 3.2.1。
 
 ## 核心用户
 
@@ -60,7 +60,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 ## 当前状态
 
-- 活跃版本：3.2.0；2026-08-21 扫描 `dev` 当前工作树，Git HEAD 锚点为 `a0344f3`，
+- 活跃版本：3.2.1；2026-08-21 扫描 `dev` 当前工作树，Git HEAD 锚点为 `a0344f3`，
   main 历史基线为 `8b84f8d`。
 - 2026-08-18 在 Python 3.11 下实际执行 `py -3.11 -m pytest -q`，930 项全部通过（约 11 分钟）；
   `py -3.11 main.py --self-check packaging` 与 `ruff check .`（0 错误）通过。

@@ -179,5 +179,7 @@ class ADBBridge:
     def devices(self) -> list[list[str]]:
         """返回由设备序列号和连接状态组成的设备列表。"""
         result = CommandRunner.run([self.path, "devices"], timeout=15)
-        out = result.output if result.success else result.error
+        if not result.success:
+            return []
+        out = result.output
         return [line.split("\t") for line in out.strip().splitlines()[1:] if line.strip()]

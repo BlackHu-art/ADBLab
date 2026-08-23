@@ -276,6 +276,12 @@ class ADBSystemControllerMixin(_ADBControllerBase):
     def emu_sms(self, devices: list, sender: str, text: str):
         if not self._require_devices(devices, "emu_sms"):
             return
+        if not sender or "\n" in sender or "\r" in sender:
+            self._emit_operation("emu_sms", False, "⚠️ Invalid sender number")
+            return
+        if "\n" in text or "\r" in text:
+            self._emit_operation("emu_sms", False, "⚠️ SMS text cannot contain line breaks")
+            return
         for ip in devices:
             self.advanced_model.emu_sms_send_async(ip, sender, text)
 
@@ -288,6 +294,9 @@ class ADBSystemControllerMixin(_ADBControllerBase):
 
     def emu_call(self, devices: list, number: str):
         if not self._require_devices(devices, "emu_call"):
+            return
+        if not number or "\n" in number or "\r" in number:
+            self._emit_operation("emu_call", False, "⚠️ Invalid phone number")
             return
         for ip in devices:
             self.advanced_model.emu_call_async(ip, number)

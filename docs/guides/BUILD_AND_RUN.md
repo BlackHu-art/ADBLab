@@ -11,7 +11,7 @@
 | 语法兼容目标 | Ruff/Black 配置为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6 6.8.1.1 | `requirements.txt` |
-| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器当前无平台门控，见下文风险 | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器已按平台门控（Windows 用内置 adb.exe、非 Windows 走 PATH） | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
 ## 安装
@@ -44,9 +44,8 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
-- ADB 解析器当前不区分平台：先检查 `scrcpy-win64-v3.3.1/adb.exe`，不存在时才查找
-  PATH 中的 adb。因此非 Windows 源码 checkout 只要保留该目录，也会误选 Windows PE；
-  未收集该目录的非 Windows 打包产物才会回退 PATH。此缺口已记入风险账本。
+- ADB 解析器已按平台门控：Windows 优先内置 `scrcpy-win64-v3.3.1/adb.exe`，不存在时回退
+  PATH；非 Windows 直接解析 PATH 中的 adb，避免把仓库内 Windows PE 当成 adb 执行。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
@@ -151,7 +150,7 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 
 - `utils/app_metadata.py` 是版本号唯一事实来源。
 - `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号。
-- 主版本和次版本只按明确的发布计划调整；当前基线为 3.2.0。
+- 主版本和次版本只按明确的发布计划调整；当前基线为 3.2.1。
 - 不允许把多次推送共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
 - 推送前应先比较上次推送时的版本，确认本次版本已递增，再执行测试、打包自检和差异检查。
 

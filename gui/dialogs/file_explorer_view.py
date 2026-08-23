@@ -71,6 +71,15 @@ class FileExplorerView:
             w.start()
 
     def _view_image(self, name: str, full_path: str):
+        if not explorer_service.safe_name(name):
+            QMessageBox.critical(
+                self._frame,
+                "Invalid file name",
+                f"Refusing to open image with unsafe name: {name}",
+                QMessageBox.StandardButton.Ok,
+                QMessageBox.StandardButton.NoButton,
+            )
+            return
         dlg = _ImageViewerDialog(self._frame)
         dlg.setWindowTitle(name)
         dlg.setMinimumSize(750, 550)
@@ -135,7 +144,7 @@ class FileExplorerView:
 
     def _show_image(self, dlg, name, tmp_path, dev_tmp):
         if dev_tmp:
-            self._frame._run_adb("shell", f'rm "{dev_tmp}"').start()
+            self._frame._run_adb("shell", explorer_service.delete_command(dev_tmp)).start()
         dlg.set_image_source(QPixmap(tmp_path), name)
 
     def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
@@ -183,6 +192,7 @@ class FileExplorerView:
         )
         fit_secondary_window_to_owner_screen(dlg, self._frame)
         dlg.exec()
+        dlg.deleteLater()
 
     @staticmethod
     def _apply_text_dialog_fonts(dialog, editor, role: FontRole) -> None:

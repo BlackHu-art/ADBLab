@@ -35,6 +35,26 @@ def _load_svg(name: str) -> str:
     return _SVG[name]
 
 
+# 已按 (图标名, 色键, 色值) 缓存的 QSvgRenderer，避免每次 paint 重新解析 SVG。
+# 色值随主题变化，因此主题切换后自然生成新缓存项，图标颜色自动更新。
+_RENDERERS: dict[tuple[str, str, str], QSvgRenderer] = {}
+
+
+def _renderer_for(name: str, color_key: str) -> QSvgRenderer | None:
+    """返回注入指定主题色后的渲染器；SVG 缺失时返回 None。"""
+
+    color = _tc(color_key)
+    key = (name, color_key, color)
+    renderer = _RENDERERS.get(key)
+    if renderer is None:
+        svg = _load_svg(name)
+        if not svg:
+            return None
+        renderer = QSvgRenderer(svg.replace("currentColor", color).encode("utf-8"))
+        _RENDERERS[key] = renderer
+    return renderer
+
+
 class _ThemedIconEngine(QIconEngine):
     """每次 paint() 时渲染 SVG，并注入当前主题颜色。"""
 
@@ -43,18 +63,15 @@ class _ThemedIconEngine(QIconEngine):
         self._name = name
 
     def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State):
-        svg = _load_svg(self._name)
-        if not svg:
-            return
         if mode == QIcon.Mode.Disabled:
             color_key = "TEXT_DISABLED"
         elif mode in (QIcon.Mode.Active, QIcon.Mode.Selected) or state == QIcon.State.On:
             color_key = "BUTTON_ACCENT"
         else:
             color_key = "TEXT_PRIMARY"
-        svg = svg.replace("currentColor", _tc(color_key))
-        renderer = QSvgRenderer(svg.encode("utf-8"))
-        renderer.render(painter, rect)
+        renderer = _renderer_for(self._name, color_key)
+        if renderer is not None:
+            renderer.render(painter, rect)
 
     def clone(self) -> _ThemedIconEngine:
         return _ThemedIconEngine(self._name)

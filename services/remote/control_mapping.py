@@ -13,23 +13,14 @@ KEYCODES: dict[str, str] = {
     "MENU": "82",
     "VOL_UP": "24",
     "VOL_DOWN": "25",
-    "DPAD_UP": "19",
-    "DPAD_DOWN": "20",
-    "DPAD_LEFT": "21",
-    "DPAD_RIGHT": "22",
-    "DPAD_CENTER": "23",
     "ENTER": "66",
     "DEL": "67",
-    "APP_SWITCH": "187",
-    "NOTIFICATION": "83",
     "SETTINGS": "176",
     "CAMERA": "27",
     "SEARCH": "84",
     "MEDIA_PLAY": "85",
     "MEDIA_NEXT": "87",
     "MEDIA_PREV": "88",
-    "CH_UP": "166",
-    "CH_DOWN": "167",
 }
 
 

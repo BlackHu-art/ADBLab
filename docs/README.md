@@ -22,7 +22,7 @@
 | 项目 | 当前记录 |
 | --- | --- |
 | 事实基线 | `dev` 当前工作树，扫描日期 2026-08-21；Git HEAD 锚点 `a0344f3` |
-| 本次整理 | 2026-08-21，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.0 |
+| 本次整理 | 2026-08-21，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.1 |
 | 历史锚点 | main 基线 `8b84f8d`（3.1.14）；不再手工维护易漂移的提交清单，按需运行 `git log 8b84f8d..HEAD` 获取当前变更 |
 | 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
@@ -58,7 +58,7 @@
 
 - [0001-incremental-vnext](architecture/adr/0001-incremental-vnext.md)：vNext 增量迁移决策。
 - [0002-operation-contract](architecture/adr/0002-operation-contract.md)：OperationManager 契约决策。
-- [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化四阶段计划（3.2.0 基线）。
+- [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化四阶段计划（3.2.1 基线）。
 - [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
 - [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
 - [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。

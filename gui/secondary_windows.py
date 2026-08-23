@@ -33,6 +33,7 @@ class SecondaryWindowHost:
         """显示关于对话框。"""
         _debug_log(self._frame, "ui.toolbar", action="about", phase="requested")
         dialog = AboutDialog(self._frame)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.installEventFilter(self._frame)
         _debug_log(self._frame, "ui.secondary_window", dialog="AboutDialog", phase="opened")
         result = dialog.exec_()

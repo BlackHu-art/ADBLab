@@ -113,7 +113,7 @@ class ADBTesting(ADBModelCore):
 
     # 截图
 
-    @async_command
+    @async_command(long_running=True)
     def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
         direct = CommandRunner.run_to_file(
             ["adb", "-s", device_ip, "exec-out", "screencap", "-p"],
@@ -150,7 +150,7 @@ class ADBTesting(ADBModelCore):
 
     # 设备日志
 
-    @async_command
+    @async_command(long_running=True)
     def retrieve_device_logs_async(self, device_ip: str, log_path: str) -> dict:
         try:
             r = self._run(["adb", "-s", device_ip, "logcat", "-d"])

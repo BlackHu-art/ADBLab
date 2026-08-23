@@ -69,9 +69,12 @@ class RemoteControlService:
 
     def send_keyevent(self, device_id: str, key_name: str):
         """把逻辑按键名转换为 Android keyevent 并发送到指定设备。"""
-        code = KEYCODES.get(key_name, key_name)
-        if not code:
-            return None
+        code = KEYCODES.get(key_name)
+        if code is None:
+            # 只接受显式数字 keycode，其余一律拒绝，避免未校验字符串进入设备 shell。
+            if not (isinstance(key_name, str) and key_name.isascii() and key_name.isdigit()):
+                return None
+            code = key_name
         return self.adb.shell_input(f"keyevent {code}", device_id=device_id)
 
     def perform_action(self, device_id: str, action: str):

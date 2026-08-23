@@ -42,22 +42,6 @@ class ADBSystemMixin:
             permission=permission,
         )
 
-    @async_command
-    def reset_permissions_async(self, device_ip: str, package: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "reset-permissions", shlex.quote(package)],
-            device_ip=device_ip,
-            package=package,
-        )
-
-    @async_command
-    def list_permissions_async(self, device_ip: str, package: str = "") -> dict:
-        if package:
-            cmd = ["adb", "-s", device_ip, "shell", "pm", "dump", shlex.quote(package)]
-        else:
-            cmd = ["adb", "-s", device_ip, "shell", "pm", "list", "permissions"]
-        return self._run(cmd, timeout=15, device_ip=device_ip, package=package)
-
     # 应用启用与停用
 
     @async_command
@@ -214,24 +198,6 @@ class ADBSystemMixin:
             cmd.extend(["--sort", shlex.quote(sort)])
         return self._run(cmd, timeout=15, device_ip=device_ip)
 
-    @async_command
-    def content_insert_async(self, device_ip: str, uri: str, binds: dict | None = None) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "content", "insert", "--uri", shlex.quote(uri)]
-        for k, v in (binds or {}).items():
-            key, value = str(k), str(v)
-            # bind 语法为 key:type:value，冒号或空值会破坏解析并污染命令结构。
-            if not key or not value or ":" in key or ":" in value:
-                raise ValueError(f"invalid content insert bind: {k!r}={v!r}")
-            cmd.extend(["--bind", f"{key}:s:{value}"])
-        return self._run(cmd, timeout=15, device_ip=device_ip)
-
-    @async_command
-    def content_delete_async(self, device_ip: str, uri: str, where: str = "") -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "content", "delete", "--uri", shlex.quote(uri)]
-        if where:
-            cmd.extend(["--where", shlex.quote(where)])
-        return self._run(cmd, timeout=15, device_ip=device_ip)
-
     # 电池状态模拟
 
     @async_command
@@ -244,8 +210,26 @@ class ADBSystemMixin:
 
     @async_command
     def battery_set_status_async(self, device_ip: str, status: str) -> dict:
+        try:
+            status_value = int(status)
+        except (TypeError, ValueError):
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": f"Invalid battery status: {status!r} (expected integer 1..5)",
+            }
+        if not 1 <= status_value <= 5:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "status": status,
+                "error": f"Battery status must be between 1 and 5, got {status_value}",
+            }
         return self._run(
-            ["adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "status", str(status)],
+            [
+                "adb", "-s", device_ip, "shell", "dumpsys", "battery", "set", "status",
+                str(status_value),
+            ],
             device_ip=device_ip,
             status=status,
         )
@@ -260,58 +244,6 @@ class ADBSystemMixin:
     # svc 系统服务开关
 
     @async_command
-    def cmd_wifi_enable_async(self, device_ip: str, enable: bool) -> dict:
-        action = "enable" if enable else "disable"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "svc", "wifi", action],
-            device_ip=device_ip,
-            action=action,
-        )
-
-    @async_command
-    def cmd_data_enable_async(self, device_ip: str, enable: bool) -> dict:
-        action = "enable" if enable else "disable"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "svc", "data", action],
-            device_ip=device_ip,
-            action=action,
-        )
-
-    @async_command
-    def cmd_bluetooth_enable_async(self, device_ip: str, enable: bool) -> dict:
-        action = "enable" if enable else "disable"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "svc", "bluetooth", action],
-            device_ip=device_ip,
-            action=action,
-        )
-
-    @async_command
-    def cmd_nfc_enable_async(self, device_ip: str, enable: bool) -> dict:
-        action = "enable" if enable else "disable"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "svc", "nfc", action],
-            device_ip=device_ip,
-            action=action,
-        )
-
-    @async_command
-    def cmd_statusbar_expand_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "cmd", "statusbar", "expand-settings"],
-            device_ip=device_ip,
-        )
-
-    @async_command
-    def cmd_uimode_night_async(self, device_ip: str, enable: bool) -> dict:
-        mode = "yes" if enable else "no"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "cmd", "uimode", "night", mode],
-            device_ip=device_ip,
-            mode=mode,
-        )
-
-    @async_command
     def cmd_dumpsys_service_async(self, device_ip: str, service: str = "") -> dict:
         service = normalize_dumpsys_service(service)
         if service:
@@ -322,17 +254,22 @@ class ADBSystemMixin:
             timeout = 10
         return self._run(cmd, timeout=timeout, device_ip=device_ip, service=service)
 
-    @async_command
-    def cmd_launcher_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "cmd", "shortcut", "get-default-launcher"],
-            device_ip=device_ip,
-        )
-
     # 模拟器控制
 
     @async_command
     def emu_sms_send_async(self, device_ip: str, sender: str, text: str) -> dict:
+        if "\n" in text or "\r" in text:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": "SMS text cannot contain line breaks",
+            }
+        if "\n" in sender or "\r" in sender:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": "Invalid sender number",
+            }
         return self._run(
             ["adb", "-s", device_ip, "emu", "sms", "send", sender, text],
             device_ip=device_ip,
@@ -341,6 +278,12 @@ class ADBSystemMixin:
 
     @async_command
     def emu_call_async(self, device_ip: str, number: str) -> dict:
+        if "\n" in number or "\r" in number:
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "error": "Invalid phone number",
+            }
         return self._run(
             ["adb", "-s", device_ip, "emu", "call", number],
             device_ip=device_ip,
@@ -355,13 +298,6 @@ class ADBSystemMixin:
         if altitude:
             cmd.append(altitude)
         return self._run(cmd, device_ip=device_ip, longitude=longitude, latitude=latitude)
-
-    @async_command
-    def emu_rotate_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "emu", "rotate"],
-            device_ip=device_ip,
-        )
 
     # 输入法管理
 
@@ -382,21 +318,6 @@ class ADBSystemMixin:
     # 扩展包信息
 
     @async_command
-    def pm_path_async(self, device_ip: str, package: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "path", shlex.quote(package)],
-            device_ip=device_ip,
-        )
-
-    @async_command
-    def pm_dump_async(self, device_ip: str, package: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "dump", shlex.quote(package)],
-            timeout=15,
-            device_ip=device_ip,
-        )
-
-    @async_command
     def pm_list_features_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "pm", "list", "features"],
@@ -404,24 +325,7 @@ class ADBSystemMixin:
             device_ip=device_ip,
         )
 
-    @async_command
-    def pm_list_users_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "pm", "list", "users"],
-            device_ip=device_ip,
-        )
-
     # 应用待机与强制停止
-
-    @async_command
-    def set_inactive_async(self, device_ip: str, package: str, inactive: bool) -> dict:
-        state = "true" if inactive else "false"
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "am", "set-inactive", shlex.quote(package), state],
-            device_ip=device_ip,
-            package=package,
-            inactive=state,
-        )
 
     @async_command
     def force_stop_async(self, device_ip: str, package: str) -> dict:

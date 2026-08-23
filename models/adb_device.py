@@ -105,11 +105,11 @@ class ADBDevice(ADBModelCore):
         }
 
     @async_command
-    def get_connected_devices_async(self):
+    def get_connected_devices_async(self) -> dict:
         r = self._run(["adb", "devices"])
         if not r["success"]:
-            return []
-        return parse_connected_devices(r["output"])
+            return {"success": False, "error": r["error"], "devices": []}
+        return {"success": True, "devices": parse_connected_devices(r["output"])}
 
     @async_command
     def disconnect_device_async(self, device: str) -> dict:
@@ -147,7 +147,9 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def restart_adb_async(self) -> dict:
-        self._run(["adb", "kill-server"])
+        kill = self._run(["adb", "kill-server"])
+        if not kill["success"]:
+            return {"success": False, "error": f"kill-server: {kill['error']}"}
         time.sleep(1)
         r = self._run(["adb", "start-server"], timeout=5)
         return {"success": r["success"], "error": r["error"] if not r["success"] else ""}
@@ -158,10 +160,6 @@ class ADBDevice(ADBModelCore):
         info["device_ip"] = device
         info["ip"] = device
         return info
-
-    @async_command
-    def get_devices_basic_info_async(self, device: str) -> dict[str, str]:
-        return self._fetch_properties(device, BASIC_PROP_FIELDS)
 
     @staticmethod
     def get_devices_basic_info(device):

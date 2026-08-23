@@ -618,11 +618,25 @@ class ADBAppInstallMixin(_ADBControllerBase):
             ),
         )
 
+    def _reject_concurrent_batch(self, operation: str) -> bool:
+        """同类批次尚未收口时拒绝新批次，避免 _batch_starts 按操作名覆盖导致结果串台。"""
+
+        with self._pending_lock:
+            start = self._batch_starts.get(operation)
+        if start is not None and self.device_batches.active_start(start.operation_id) is not None:
+            self._emit_operation(
+                operation, False, f"Another {operation} batch is already in progress"
+            )
+            return True
+        return False
+
     def uninstall_apk(self, devices: list, package_name: str):
         if not self._require_devices(devices, "uninstall"):
             return
         if not package_name:
             self._emit_operation("uninstall", False, "⚠️ No package name provided")
+            return
+        if self._reject_concurrent_batch("uninstall"):
             return
         start = self.device_batches.start("uninstall", devices, label="Uninstall App")
         with self._pending_lock:
@@ -640,7 +654,6 @@ class ADBAppInstallMixin(_ADBControllerBase):
         self.app_model.uninstall_app_async(device_ip, package_name, idx)
 
     def _process_uninstall_apk_result(self, result: dict):
-        result.get("index", 1)
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
@@ -660,6 +673,8 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not package_name:
             self._emit_operation("clear_data", False, "⚠️ No package name provided")
             return
+        if self._reject_concurrent_batch("clear_data"):
+            return
         start = self.device_batches.start("clear_data", devices, label="Clear App Data")
         with self._pending_lock:
             self._batch_starts["clear_data"] = start
@@ -672,7 +687,6 @@ class ADBAppInstallMixin(_ADBControllerBase):
             self.app_model.clear_app_data_async(device_ip, package_name, idx)
 
     def _process_clear_app_data_result(self, result: dict):
-        result.get("index", 1)
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         success = result.get("success")
@@ -692,6 +706,8 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not package_name:
             self._emit_operation("restart_app", False, "⚠️ No package name provided")
             return
+        if self._reject_concurrent_batch("restart_app"):
+            return
         start = self.device_batches.start("restart_app", devices, label="Restart App")
         with self._pending_lock:
             self._batch_starts["restart_app"] = start
@@ -704,7 +720,6 @@ class ADBAppInstallMixin(_ADBControllerBase):
             self.app_model.restart_app_async(device_ip, package_name, idx)
 
     def _process_restart_app_result(self, result: dict):
-        result.get("index", 1)
         ip = result.get("device_ip", "unknown")
         pkg = result.get("package_name", "unknown")
         output = result.get("output", "").strip()
@@ -728,6 +743,8 @@ class ADBAppInstallMixin(_ADBControllerBase):
     def get_current_activity(self, devices: list[str]):
         if not devices:
             self._emit_operation("current_activity", False, "⚠️ No device selected")
+            return
+        if self._reject_concurrent_batch("current_activity"):
             return
         start = self.device_batches.start("current_activity", devices, label="Activity Info")
         with self._pending_lock:

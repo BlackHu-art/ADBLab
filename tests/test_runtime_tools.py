@@ -84,3 +84,20 @@ def test_resolve_adb_path_prefers_runtime_tool_path(monkeypatch):
     monkeypatch.setattr(adb_resolver.os.path, "isfile", lambda path: True)
 
     assert adb_resolver.resolve_adb_path() == "C:/runtime/scrcpy-win64-v3.3.1/adb.exe"
+
+
+def test_resolve_adb_path_uses_path_on_non_windows(monkeypatch):
+    from utils import adb_resolver
+
+    monkeypatch.setattr(adb_resolver, "_adb_path", None)
+    monkeypatch.setattr(adb_resolver, "_resolved", False)
+    monkeypatch.setattr(adb_resolver.sys, "platform", "linux")
+    monkeypatch.setattr(
+        adb_resolver.shutil, "which", lambda name: "/usr/bin/adb" if name == "adb" else None
+    )
+    # 非 Windows 下不得回退到仓库内 Windows adb.exe。
+    monkeypatch.setattr(
+        adb_resolver, "bundled_tool_path", lambda bundle, name: f"/repo/{bundle}/{name}"
+    )
+
+    assert adb_resolver.resolve_adb_path() == "/usr/bin/adb"

@@ -96,7 +96,7 @@ class AppManagerViews:
             item.setToolTip(f"{pkg}\nType: {at} | Status: {st}")
             item.setSizeHint(QSize(106, 72))
             if st == "Disabled":
-                item.setForeground(QColor("#999999"))
+                item.setForeground(BaseStyles.get_color("TEXT_DISABLED"))
             self._frame.icon_list.addItem(item)
             self._frame._detail_icon_by_pkg[pkg] = item
         self._frame._syncing_selection = False

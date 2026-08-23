@@ -137,7 +137,8 @@ class StartUp:
         # 显式使用 UTF-8，避免 Windows 默认编码导致配置解析失败。
         with open(configpath, encoding="utf-8") as f:
             content = _remove_config_bom_prefix(f.read())
-        paser = ConfigParser()
+        # interpolation=None 关闭 % 插值，避免配置值含 % 时被当作插值语法抛错。
+        paser = ConfigParser(interpolation=None)
         paser.read_string(content, source=configpath)
         config_dic = self.check_config_option(config_dic, paser, "Common", "package")
         config_dic = self.check_config_option(
@@ -467,10 +468,6 @@ class StartUp:
         # 结构化收口：采集线程均为 daemon，stop 完成后进程随 run 返回正常退出，
         # 由父进程 MobilePerfRunner 按退出码与报告存在性判定结果（ADR-0004）。
         RuntimeData.end_run()
-
-    def memory_analyse(self):
-        """保留内存分析兼容入口，当前未启用具体实现。"""
-        pass
 
     def pull_heapdump(self):
         """将目标应用的设备侧堆转储拉取到本次结果目录。"""

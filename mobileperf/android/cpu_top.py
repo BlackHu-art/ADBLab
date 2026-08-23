@@ -149,41 +149,9 @@ class PckCpuinfo:
                 )
                 logger.debug(f"idle_rate: {self.idle_rate}")
 
-    def sum_procs_cpurate(self):
-        """累计同一 UID 下所有进程的 CPU 使用率。"""
-        summ = 0
-        if self.source:
-            sp_lines = self.source.split("\n")
-            for line in sp_lines:
-                if self.uid != "" and self.uid in line:  # 先筛选 UID 相同的进程行。
-                    tmp = line.split()
-                    cpu_index = self.get_cpucol_index()
-                    summ = summ + int(tmp[cpu_index].replace("%", ""))
-            self.uid_cpu_rate = str(summ) + "%"
-            for i in range(len(self.package_list)):
-                self.package_list[i].append(self.uid_cpu_rate)
-                logger.debug(
-                    "cpuinfos, sum_procs_cpurate , afer append uid cpu rate, the package list is : "
-                    + str(self.package_list)
-                )
-
     def get_cpucol_index(self):
         """返回 CPU 百分比字段在当前 top 输出中的列索引。"""
         return self.get_col_index(self.source, ["CPU]", "CPU%"], 2)
-
-    def get_pcycol_index(self):
-        """返回 top 输出中 PCY 字段的列索引。"""
-        return self.get_col_index(self.source, ["PCY"], -1)
-
-    def get_packagenamecol_index(self):
-        """返回 top 输出中进程名字段的列索引。"""
-        return self.get_col_index(self.source, ["ARGS"], -1)
-
-    def get_vsscol_index(self):
-        return self.get_col_index(self.source, ["VSS"], -1)
-
-    def get_rss_col_index(self):
-        return self.get_col_index(self.source, ["RSS"], -1)
 
     def get_uidcol_index(self):
         """兼容 UID 和 USER 两种表头并返回对应列索引。"""
@@ -276,8 +244,14 @@ class CpuCollector:
         if error:
             logger.error("into cpuinfos error : " + str(error))
             return
-        out = str(out, "utf-8")
-        out.replace("\r", "")
+        if isinstance(out, bytes):
+            out = out.decode("utf-8", errors="ignore")
+        elif not isinstance(out, str):
+            out = str(out)
+        out = out.replace("\r", "")
+        if not out.strip():
+            logger.debug("top output is empty")
+            return
         top_file = os.path.join(RuntimeData.package_save_path, "top.txt")
         with open(top_file, "a+", encoding="utf-8") as writer:
             writer.write(TimeUtils.getCurrentTime() + " top info:\n")
@@ -286,16 +260,6 @@ class CpuCollector:
         if FileUtils.get_FileSize(top_file) > 100:
             os.remove(top_file)
         return PckCpuinfo(self.packages, out, self.sdkversion)
-
-    def get_max_freq(self):
-        out = self.device.adb.run_shell_cmd(
-            "cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"
-        )
-        out.replace("\r", "")
-        max_freq_file = os.path.join(RuntimeData.package_save_path, "scaling_max_freq.txt")
-        with open(max_freq_file, "a+", encoding="utf-8") as writer:
-            writer.write(TimeUtils.getCurrentTime() + " scaling_max_freq:\n")
-            writer.write(out + "\n\n")
 
     def _collect_package_cpu_thread(self, start_time):
         """按指定间隔循环采集并保存 CPU 信息。"""
@@ -394,9 +358,6 @@ class CpuMonitor:
     def stop(self):
         self.cpu_collector.stop()
         logger.debug("INFO: CpuMonitor has stopped...")
-
-    def _get_cpu_collector(self):
-        return self.cpu_collector
 
     def save(self):
         pass

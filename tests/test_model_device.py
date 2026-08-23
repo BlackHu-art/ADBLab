@@ -198,3 +198,41 @@ def test_get_device_info_batches_properties_and_probe_commands():
     assert info["ip"] == "device-1"
     run.assert_called_once()
     assert run.call_args.args[0][:4] == ["adb", "-s", "device-1", "shell"]
+
+
+def test_restart_device_reports_abnormal_status():
+    model = ADBDevice()
+    with patch.object(model, "_run") as run:
+        run.return_value = {"success": False, "error": "offline"}
+        result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
+
+    assert result["success"] is False
+    assert "Abnormal device status" in result["error"]
+    assert result["requires_refresh"] is False
+
+
+def test_restart_device_treats_reboot_timeout_as_success():
+    model = ADBDevice()
+    with patch.object(model, "_run") as run:
+        run.side_effect = [
+            {"success": True, "output": "device"},
+            {"success": False, "error": "Timeout(3s)"},
+        ]
+        result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
+
+    assert result["success"] is True
+    assert result["requires_refresh"] is True
+
+
+def test_restart_device_reports_other_reboot_failure():
+    model = ADBDevice()
+    with patch.object(model, "_run") as run:
+        run.side_effect = [
+            {"success": True, "output": "device"},
+            {"success": False, "error": "adb died"},
+        ]
+        result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
+
+    assert result["success"] is False
+    assert result["requires_refresh"] is False
+    assert "adb died" in result["error"]

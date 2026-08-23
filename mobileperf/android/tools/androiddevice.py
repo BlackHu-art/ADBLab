@@ -12,15 +12,19 @@ import time
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
-from mobileperf.common.utils import FileUtils, TimeUtils
+from mobileperf.common.utils import TimeUtils
 
 _BACKTICK = chr(96)
-_SHELL_META_RE = re.compile(r"[;&|$()<>\s]")
+_SHELL_META_RE = re.compile(r"[;&|$()<>\s*?#~]")
 
 
 def _is_safe_shell_path(value: str) -> bool:
-    """拒绝包含 shell 元字符的路径，防止 rm/mkdir 等命令注入。"""
-    return not _SHELL_META_RE.search(value) and _BACKTICK not in value
+    """拒绝 shell 元字符、通配符、注释符与父目录，防止 rm/mkdir 等命令注入或误删。"""
+    return (
+        not _SHELL_META_RE.search(value)
+        and _BACKTICK not in value
+        and ".." not in value
+    )
 
 
 def _shq(value: object) -> str:
@@ -185,46 +189,6 @@ class ADB:
         return device_list
 
     @staticmethod
-    def recover():
-        if ADB.checkAdbNormal():
-            logger.debug("adb is normal")
-            return
-        else:
-            logger.error("adb is not normal")
-            ADB.kill_server()
-            ADB.start_server()
-
-    @staticmethod
-    def checkAdbNormal():
-        sub = subprocess.run(
-            [ADB.get_adb_path(), "devices"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        adbRet = sub.stdout or sub.stderr or ""
-        logger.debug(
-            "adb health check completed: returncode=%s output_length=%s",
-            sub.returncode,
-            len(adbRet),
-        )
-        if not adbRet:
-            logger.debug("devices list maybe is empty")
-            return True
-        else:
-            if "daemon not running." in adbRet:
-                logger.warning("daemon not running.")
-                return False
-            elif "ADB server didn't ACK" in adbRet:
-                logger.warning("error: ADB server didn't ACK,kill occupy 5037 port process")
-                return False
-            else:
-                return True
-
-    @staticmethod
     def kill_server():
         logger.warning("kill-server")
         subprocess.run(
@@ -274,20 +238,6 @@ class ADB:
                 logger.warning(
                     "adb port conflict process termination failed: pid=%s detail=%s", pid, detail
                 )
-
-    def _timer(self, process, timeout):
-        """进程超时器，监控adb同步命令执行是否超时，超时强制结束执行。当timeout<=0时，永不超时
-
-        :param Popen process: 子进程对象
-        :param int timeout: 超时时间
-        """
-        num = 0
-        while process.poll() is None and num < timeout * 10:
-            num += 1
-            time.sleep(0.1)
-        if process.poll() is None:
-            logger.warning("adb process timeout: timeout_seconds=%s", timeout)
-            process.terminate()
 
     def _run_cmd_once(self, cmd, *argv, **kwds):
         """执行一次adb命令：cmd
@@ -402,7 +352,7 @@ class ADB:
                     command_verb,
                     process.poll(),
                 )
-        if str(out, "utf-8") == "":
+        if not out:  # bytes 空串即取 stderr，避免对非 UTF-8 输出硬解码崩溃
             out = error
         self.after_connect = True
         after = time.time()
@@ -434,15 +384,10 @@ class ADB:
         :return: 执行adb命令的子进程或执行的结果
         :rtype: Popen or str
         """
-        retry_count = 3  # 默认最多重试3次
-        if "retry_count" in kwds:
-            retry_count = kwds["retry_count"]
-        while retry_count > 0:
-            ret = self._run_cmd_once(cmd, *argv, **kwds)
-            if ret is not None:
-                break
-            retry_count = retry_count - 1
-        return ret
+        # 历史遗留的 retry_count 语义从未真正生效（_run_cmd_once 永不返回 None），
+        # 移除该死循环，避免把未知 kwarg 透传给 _run_cmd_once。
+        kwds.pop("retry_count", None)
+        return self._run_cmd_once(cmd, *argv, **kwds)
 
     def run_shell_cmd(self, cmd, **kwds):
         """执行 adb shell 命令"""
@@ -462,14 +407,6 @@ class ADB:
         if ret is None:
             logger.error("adb shell command failed")
         return ret
-
-    def _check_need_quote(self):
-        cmd = "su -c ls -l /data/data"
-        result = self.run_shell_cmd(cmd)
-        if result.find("com.android.phone") >= 0:
-            self._need_quote = False
-        else:
-            self._need_quote = True
 
     def _logcat_thread_func(self, save_dir, process_list, params=""):
         """获取logcat线程"""
@@ -583,18 +520,6 @@ class ADB:
             if self._log_pipe.poll() is None:  # 判断logcat进程是否存在
                 self._log_pipe.terminate()
 
-    def wait_for_device(self, timeout=180):
-        """等待设备连接"""
-        if not self.run_adb_cmd("wait-for-device", timeout=180):
-            logger.warning("adb wait-for-device timeout")
-            return False
-        return True
-
-    def bugreport(self, save_path):
-        """adb bugreport ~/Downloads/bugreport.zip"""
-        result = self.run_adb_cmd("bugreport", save_path, timeout=180)
-        return result
-
     def push_file(self, src_path, dst_path):
         """拷贝文件到手机中
 
@@ -625,65 +550,19 @@ class ADB:
             logger.error("adb pull failed: output_length=%s", _payload_length(result))
         return result
 
-    def pull_file_between_time(self, src_path, dst_path, start_timestamp, end_timestamp):
-        """
-        提取/data/anr 目录下 在起止时间戳之间的文件
-        :return:
-        """
-        # 在PC上创建目录
-        dst_path = os.path.join(dst_path, src_path.split("/")[-1])
-        FileUtils.makedir(dst_path)
-        for src_file_path in self.list_dir_between_time(src_path, start_timestamp, end_timestamp):
-            self.pull_file(src_file_path, dst_path)
-
-    def screencap_out(self, pc_save_path):
-        result = self.run_adb_cmd(f"exec-out screencap -p {pc_save_path}", timeout=20)
-        return result
-
-    def screencap(self, save_path):
-        result = self.run_shell_cmd(f"screencap -p {_shq(save_path)}", timeout=20)
-        return result
-
     def delete_file(self, file_path):
         """删除手机上文件；拒绝含 shell 元字符的路径以防命令注入。"""
         if not _is_safe_shell_path(file_path):
             logger.error("skip delete of unsafe device path: %s", file_path)
             return
-        self.run_shell_cmd(f"rm {file_path}")
+        self.run_shell_cmd(f"rm {_shq(file_path)}")
 
     def delete_folder(self, folder_path):
         """删除手机上的目录；拒绝含 shell 元字符的路径以防命令注入。"""
         if not _is_safe_shell_path(folder_path):
             logger.error("skip delete of unsafe device path: %s", folder_path)
             return
-        self.run_shell_cmd(f"rm -R {folder_path}")
-
-    def check_path_size(self, folder_path, ratio):
-        """检测手机上目录空间占比，超过多少比例"""
-        out = self.run_shell_cmd(f"df {_shq(folder_path)}")
-        logger.debug("device storage query completed: output_length=%s", _payload_length(out))
-        if out:
-            lines = out.replace("\r", "").splitlines()
-            occupy_ratio = lines[1].split()[4].replace("%", "")
-            logger.debug("device storage occupancy parsed: percent=%s", occupy_ratio)
-            if int(occupy_ratio) > ratio:
-                return True
-        # 解析 df 返回的挂载点占用百分比。
-        return False
-
-    def is_exist(self, path):
-        """
-        判断文件或文件夹是否存在
-        :param path:
-        :return:
-        """
-        result = self.run_shell_cmd(f"ls -l {_shq(path)}")
-        if not result:
-            return False
-        result = result.replace("\r\r\n", "\n")
-        if "No such file or directory" in result:
-            return False
-        return True
+        self.run_shell_cmd(f"rm -R {_shq(folder_path)}")
 
     def mkdir(self, folder_path):
         """
@@ -706,41 +585,12 @@ class ADB:
         file_list = []
         for line in result.split("\n"):
             items = line.split()
+            if not items:
+                continue
             # total 180 去掉total这行
             if items[0] != "total" and len(items) != 2:
                 if _is_safe_basename(items[-1]):
                     file_list.append(items[-1])
-        return file_list
-
-    def list_dir_between_time(self, dir_path, start_time, end_time):
-        """列取目录下 起止时间点之间的文件
-        start_time end_time 时间戳
-        返回文件绝对路径 列表
-        """
-        # 通过详细目录列表读取文件修改时间。
-        result = self.run_shell_cmd(f"ls -l {_shq(dir_path)}")
-        if not result:
-            return ""
-        result = result.replace("\r\r\n", "\n")
-        if "No such file or directory" in result:
-            logger.error("设备目录不存在")
-        file_list = []
-
-        re_time = re.compile(r"\S*\s+(\d+-\d+-\d+\s+\d+:\d+)\s+\S+")
-
-        for line in result.split("\n"):
-            items = line.split()
-            match = re_time.search(line)
-            if match:
-                last_modify_time = match.group(1)
-                last_modify_timestamp = TimeUtils.getTimeStamp(last_modify_time, "%Y-%m-%d %H:%M")
-                if start_time < last_modify_timestamp and last_modify_timestamp < end_time:
-                    if _is_safe_basename(items[-1]):
-                        file_list.append(f"{dir_path}/{items[-1]}")
-        logger.debug(
-            "device directory time filter completed: matched_count=%s",
-            len(file_list),
-        )
         return file_list
 
     def is_overtime_days(self, filepath, days=7):
@@ -916,15 +766,6 @@ class ADB:
                 pck_list.append(item)
         return pck_list
 
-    def get_process_stack(self, package_name, save_path):
-        """
-        :param package_name: 进程名
-        :param save_path: 堆栈文件保持路径
-        :return: 无
-        """
-        pid = self.get_pid_from_pck(package_name)
-        return self.run_shell_cmd(f"debuggerd -b {pid} > {_shq(save_path)}")
-
     def get_process_stack_from_pid(self, pid, save_path):
         """
         :param package_name: 进程名
@@ -941,47 +782,11 @@ class ADB:
         time.sleep(10)
         self.pull_file(heapfile, save_path)
 
-    def dump_native_heap(self, package, save_path):
-        native_heap_file = (
-            f"/data/local/tmp/{package}_native_heap_{TimeUtils.getCurrentTimeUnderline()}.txt"
-        )
-        self.run_shell_cmd(f"am dumpheap -n {_shq(package)} {_shq(native_heap_file)}")
-
-    def clear_data(self, packagename):
-        """清除指定包的 用户数据"""
-        return self.run_shell_cmd(f"pm clear {_shq(packagename)}")
-
-    def stop_package(self, packagename):
-        """杀死指定包的进程"""
-        return self.run_shell_cmd(f"am force-stop {_shq(packagename)}")
-
-    def input(self, string):
-        return self.run_shell_cmd(f"input text {_shq(string)}")
-
-    def ping(self, address, count):
-        return self.run_shell_cmd(f"shell ping -c {count:d} {_shq(address)}", timeout=None)
-
     def get_system_version(self):
         """获取系统版本，如：4.1.2"""
         if not self._system_version:
             self._system_version = self.run_shell_cmd("getprop ro.build.version.release")
         return self._system_version
-
-    def get_genie_uuid(self):
-        """获取设备 UUID。"""
-        uuid = self.run_shell_cmd("getprop ro.genie.uuid")
-        if uuid:
-            return uuid
-        else:
-            return ""
-
-    def get_genie_wifi(self):
-        """获取设备 Wi-Fi MAC 地址。"""
-        wifi_mac = self.run_shell_cmd("cat /sys/class/net/wlan0/address")
-        if wifi_mac:
-            return wifi_mac
-        else:
-            return ""
 
     def get_package_ver(self, package):
         """获取应用版本信息"""
@@ -1012,14 +817,6 @@ class ADB:
             self._phone_model = self.run_shell_cmd("getprop ro.product.model")
         return self._phone_model
 
-    def get_screen_size(self):
-        """获取屏幕大小  如：5.5 可能获取不到"""
-        return self.run_shell_cmd("getprop ro.product.screensize")
-
-    def get_wm_size(self):
-        """获取屏幕分辨率  如：Physical size:1080*1920"""
-        return self.run_shell_cmd("wm size")
-
     def get_cpu_abi(self):
         """获取系统的CPU架构信息
 
@@ -1027,28 +824,6 @@ class ADB:
         :rtype: str
         """
         return self.run_shell_cmd("getprop ro.product.cpu.abi")
-
-    def find_tag_index(self, tag, line):
-        """查找指定的 tag 在一行中以空白分隔的下标"""
-        tag = tag.strip()
-        data = line.split()
-        index = 0
-        for item in data:
-            if tag.lower() == item.lower():
-                return index
-            index = index + 1
-
-    def get_device_imei(self):
-        """获取手机串号"""
-        result = self.run_shell_cmd("dumpsys iphonesubinfo")
-        result = result.replace("\r\r\n", "\n")
-        for line in result.split("\n"):
-            if line.find("Device ID") >= 0:
-                return line.split("=")[1].strip()
-        logger.error(
-            "获取设备标识失败：output_length=%s",
-            _payload_length(result),
-        )
 
     def get_process_pids(self, process_name):
         """查找包含指定进程名的进程PID"""
@@ -1066,38 +841,6 @@ class ADB:
             if process["proc_name"] == process_name:
                 return True
         return False
-
-    def get_uid(self, app_name):
-        """获取APP的uid"""
-        result = self.run_shell_cmd("cat /data/system/packages.list")
-        result = result.replace("\r\r\n", "\n")
-        for line in result.split("\n"):
-            items = line.split(" ")
-            if items[0] == app_name:
-                return items[1]
-        return None
-
-    def getUID(self, pkg):
-        """
-        获取app的uid
-        :param pkg:
-        :return:
-        """
-        uid = None
-        _cmd = f"dumpsys package {_shq(pkg)}"
-        out = self.run_shell_cmd(_cmd)
-        lines = out.replace("\r", "").splitlines()
-        if len(lines) > 0:
-            for line in lines:
-                if "Unable to find package:" in line:
-                    return None
-            adb_result = re.findall(r"userId=(\d+)", out)
-            if len(adb_result) > 0:
-                uid = adb_result[0]
-                logger.debug("应用 UID 查询完成：found=True")
-        else:
-            return None
-        return uid
 
     def is_app_installed(self, package):
         """
@@ -1133,69 +876,82 @@ class ADB:
     def list_process(self):
         """获取进程列表"""
         # <= 7.0 用ps, >=8.0 用ps -A android8.0 api level 26
-        result = None
         if self.get_sdk_version() < 26:
             result = self.run_shell_cmd("ps")  # 不能使用grep
         else:
             result = self.run_shell_cmd("ps -A")  # 不能使用grep
+        if not result:
+            return []
         result = result.replace("\r", "")
         lines = result.split("\n")
+        if not lines:
+            return []
         busybox = False
         if lines[0].startswith("PID"):
             busybox = True
 
         result_list = []
         for i in range(1, len(lines)):
-            items = lines[i].split()
-            if not busybox:
-                if len(items) < 9:
-                    if len(items) == 8:
+            line = lines[i]
+            if not line.strip():
+                continue
+            try:
+                items = line.split()
+                if not busybox:
+                    if len(items) < 9:
+                        if len(items) == 8:
+                            result_list.append(
+                                {
+                                    "uid": items[0],
+                                    "pid": int(items[1]),
+                                    "ppid": int(items[2]),
+                                    "proc_name": items[7],
+                                    "status": items[-2],
+                                }
+                            )
+                        else:
+                            logger.error(
+                                "进程列表行解析失败：line_index=%s token_count=%s",
+                                i,
+                                len(items),
+                            )
+                    else:
                         result_list.append(
                             {
                                 "uid": items[0],
                                 "pid": int(items[1]),
                                 "ppid": int(items[2]),
-                                "proc_name": items[7],
+                                "proc_name": items[8],
                                 "status": items[-2],
                             }
                         )
-                    else:
-                        logger.error(
-                            "进程列表行解析失败：line_index=%s token_count=%s",
-                            i,
-                            len(items),
-                        )
                 else:
+                    idx = 4
+                    cmd = items[idx]
+                    if len(cmd) == 1:
+                        # 有时候发现此处会有“N”
+                        idx += 1
+                        cmd = items[idx]
+                    idx += 1
+                    if cmd[0] == "{" and cmd[-1] == "}":
+                        cmd = items[idx]
+                    ppid = 0
+                    if items[1].isdigit():
+                        ppid = int(items[1])  # 有些版本中没有ppid
                     result_list.append(
                         {
-                            "uid": items[0],
-                            "pid": int(items[1]),
-                            "ppid": int(items[2]),
-                            "proc_name": items[8],
+                            "pid": int(items[0]),
+                            "uid": items[1],
+                            "ppid": ppid,
+                            "proc_name": cmd,
                             "status": items[-2],
                         }
                     )
-            else:
-                idx = 4
-                cmd = items[idx]
-                if len(cmd) == 1:
-                    # 有时候发现此处会有“N”
-                    idx += 1
-                    cmd = items[idx]
-                idx += 1
-                if cmd[0] == "{" and cmd[-1] == "}":
-                    cmd = items[idx]
-                ppid = 0
-                if items[1].isdigit():
-                    ppid = int(items[1])  # 有些版本中没有ppid
-                result_list.append(
-                    {
-                        "pid": int(items[0]),
-                        "uid": items[1],
-                        "ppid": ppid,
-                        "proc_name": cmd,
-                        "status": items[-2],
-                    }
+            except (IndexError, ValueError) as exc:
+                logger.warning(
+                    "进程列表行解析失败：line_index=%s exception=%s",
+                    i,
+                    type(exc).__name__,
                 )
         return result_list
 
@@ -1205,25 +961,6 @@ class ADB:
         if pids:
             self.run_shell_cmd("kill " + " ".join([str(pid) for pid in pids]))
         return len(pids)
-
-    def wait_proc_exit(self, proc_list, timeout=10):
-        """等待指定进程退出
-        :param proc_list: 进程名列表
-        """
-        if not isinstance(proc_list, list):
-            logger.error("proc_list参数要求list类型")
-        time0 = time.time()
-        while time.time() - time0 < timeout:
-            flag = True
-            proc_list = self.list_process()
-            for proc in proc_list:
-                if proc["proc_name"] in proc_list:
-                    flag = False
-                    break
-            if flag:
-                return True
-            time.sleep(1)
-        return False
 
     def forward(self, port1, port2, type="tcp"):
         """端口转发
@@ -1244,106 +981,6 @@ class ADB:
         boot_type: "bootloader", "recovery", or "None".
         """
         self.run_adb_cmd("reboot" + (f" {boot_type}" if boot_type else ""))
-
-    def _copy_set_propex(self):
-        cpu_abi = self.get_cpu_abi()
-        dstpath = r"/data/local/tmp/setpropex"
-        srcpath = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "tools", cpu_abi, "setpropex"
-        )
-        self.push_file(srcpath, dstpath)
-
-    def set_secure_property(self):
-        """通过setpropex设置手机安全属性(发布版手机默认安全属性无法打开ViewServer)"""
-        self._copy_set_propex()
-        self.run_shell_cmd("chmod 777 /data/local/tmp/setpropex", timeout=10)
-        self.run_shell_cmd("./data/local/tmp/setpropex ro.secure 0", timeout=10)
-        self.run_shell_cmd("./data/local/tmp/setpropex ro.debuggable 1", timeout=10)
-
-    def _install_apk(self, apk_path, over_install=True, downgrade=False):
-        """ """
-        timeout = 3 * 60  # TODO: 确认3分钟是否足够
-        tmp_path = "/data/local/tmp/" + os.path.split(apk_path)[-1]
-        # push 是 host 侧动词，目标路径保持裸值；进入设备 shell 的 pm 命令需 quote。
-        self.push_file(apk_path, tmp_path)
-        cmdline = (
-            f"pm install {'-r -t' if over_install else ''} "
-            f"{'-d' if downgrade else ''} {_shq(tmp_path)}"
-        )
-        ret = ""
-        for i in range(3):
-            # TODO: 处理一些必然会失败的情况，如方法数超标之类的问题
-            try:
-                ret = self.run_shell_cmd(
-                    cmdline, retry_count=1, timeout=timeout
-                )  # 使用root权限安装，可以在小米2S上不弹出确认对话框
-                logger.debug(
-                    "应用安装尝试完成：attempt=%s output_length=%s",
-                    i + 1,
-                    _payload_length(ret),
-                )
-                if i > 1 and "INSTALL_FAILED_ALREADY_EXISTS" in ret:
-                    # 出现至少一次超时，认为安装完成
-                    ret = "Success"
-                    break
-
-                if (
-                    "INSTALL_PARSE_FAILED_NO_CERTIFICATES" in ret
-                    or "INSTALL_FAILED_INSUFFICIENT_STORAGE" in ret
-                ):
-                    raise RuntimeError(f"安装应用失败：{ret}")
-
-                if "INSTALL_FAILED_UID_CHANGED" in ret:
-                    logger.error("应用安装失败：reason=uid_changed")
-                    continue
-                if (
-                    "Success" in ret
-                    or "INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES" in ret
-                    or "INSTALL_FAILED_ALREADY_EXISTS" in ret
-                ):
-                    break
-            except Exception:
-                if i >= 2:
-                    exc = sys.exc_info()[1]
-                    logger.warning(
-                        "应用安装失败：exception_type=%s",
-                        type(exc).__name__,
-                    )
-                    ret = self.run_shell_cmd(cmdline, timeout=timeout)  # 改用非root权限安装
-                    logger.debug(
-                        "应用安装降级尝试完成：output_length=%s",
-                        _payload_length(ret),
-                    )
-                    if ret and "INSTALL_FAILED_ALREADY_EXISTS" in ret:
-                        ret = "Success"
-        try:
-            self.delete_file("/data/local/tmp/*.apk")
-        except Exception:
-            pass
-        return ret
-
-    def install_apk(self, apk_path, over_install=True, downgrade=False):
-        """安装应用
-        apk_path 安装包路径
-        over_install:是否覆盖暗账
-        downgrade:是否允许降版本安装
-        """
-        if not over_install:
-            result = self._install_apk(apk_path, over_install, downgrade)
-        else:
-            result = self._install_apk(apk_path, over_install, downgrade)
-        if "INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES" in result:
-            # 必须卸载安装
-            return self.install_apk(apk_path, False, False)
-        elif "INSTALL_FAILED_ALREADY_EXISTS" in result:
-            # 卸载成功依然有可能在安装时报这个错误
-            return self.install_apk(apk_path, False, True)
-        return result.find("Success") >= 0
-
-    def uninstall_apk(self, pkg_name):
-        """卸载应用"""
-        result = self.run_adb_cmd(f"uninstall {pkg_name}", timeout=30)
-        return result.find("Success") >= 0
 
 
 class AndroidDevice:
@@ -1373,8 +1010,3 @@ class AndroidDevice:
             return True
         else:
             return False
-
-    @staticmethod
-    def list_local_devices():
-        """获取设备列表"""
-        return ADB.list_device()

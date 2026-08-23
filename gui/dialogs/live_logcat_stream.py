@@ -1,6 +1,7 @@
 """提供 Logcat 过滤、内容更新、采集与日志摄入的流式控制器。"""
 
 import os
+import tempfile
 import uuid
 from collections import deque
 from datetime import datetime
@@ -186,8 +187,20 @@ class LiveLogcatStream:
         )
         if fp:
             try:
-                with open(fp, "w", encoding="utf-8") as f:
-                    f.write(self._frame.output.toPlainText())
+                text = self._frame.output.toPlainText()
+                # 先写临时文件再原子替换，避免中途失败留下半截日志文件。
+                directory = os.path.dirname(os.path.abspath(fp))
+                fd, tmp_path = tempfile.mkstemp(prefix=".logcat_", suffix=".tmp", dir=directory)
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(text)
+                    os.replace(tmp_path, fp)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                    raise
                 self._frame.status_bar.showMessage(f"Exported to {fp}")
             except OSError as e:
                 QMessageBox.critical(

@@ -101,30 +101,6 @@ class DeviceMonitor:
                 if self.activity_queue:
                     self.activity_queue.task_done()
 
-    # 安装状态变化频率较低，使用十倍采样间隔减少 ADB 查询。
-    def _uninstaller_checker_thread(self):
-        """轮询目标应用是否已卸载，并通过事件通知上层结束采集。"""
-        while not self.stop_event.is_set():
-            before = time.time()
-            is_installed = self.device.adb.is_app_installed(self.packagename)
-            if not is_installed:
-                if self.uninstall_flag and isinstance(self.uninstall_flag, threading._Event):
-                    logger.debug("uninstall flag is set, as the app has checked uninstalled!")
-                    self.uninstall_flag.set()
-            time_consume = time.time() - before
-            delta_inter = self.interval * 10 - time_consume
-            logger.debug(
-                "check installed app: "
-                + self.packagename
-                + ", time consumed: "
-                + str(time_consume)
-                + ", is installed: "
-                + str(is_installed)
-            )
-            if delta_inter > 0:
-                time.sleep(delta_inter)
-
-
 if __name__ == "__main__":
     monitor = DeviceMonitor("NVGILZSO99999999", "com.taobao.taobao", 2)
     monitor.start(time.time())

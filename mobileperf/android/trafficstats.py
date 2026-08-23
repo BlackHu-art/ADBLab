@@ -123,6 +123,8 @@ class NetDevInfo:
             # wlan0 的第 1、9 个数值字段分别表示接收和发送字节数。
             if "wlan0:" in line:
                 items = line.split()
+                if len(items) < 10:
+                    continue
                 self.wifi_rx = int(items[1])
                 self.wifi_tx = int(items[9])
                 self.wifi_total = self.wifi_rx + self.wifi_tx
@@ -137,6 +139,8 @@ class NetDevInfo:
                 # rmnet0 表示移动网络接口流量。
             if "rmnet0:" in line:
                 items = line.split()
+                if len(items) < 10:
+                    continue
                 self.mobile_rx = int(items[1])
                 self.mobile_tx = int(items[9])
                 self.mobile_total = self.mobile_rx + self.mobile_tx

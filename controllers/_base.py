@@ -5,7 +5,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
-from PySide6.QtCore import QThreadPool, Slot
+from PySide6.QtCore import QThreadPool
 
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
@@ -61,7 +61,6 @@ class _ADBControllerBase:
         self._install_result_callbacks = {}
         self._install_deferred_terminals = {}
         self._install_orphaned_operations = {}
-        self._operation_handler_map = {}
         self._connect_model_signals()
         # 由界面组装根注入，只负责生命周期托管，不建立 Qt 原生父子关系。
         self.window_owner = None
@@ -80,6 +79,8 @@ class _ADBControllerBase:
             DeviceStore.initialize_empty()
 
     def _connect_model_signals(self):
+        # command_finished 由各 model 在工作线程发出；此处不指定连接类型，
+        # Qt 的 AutoConnection 会把 _handle_async_response 调度回 GUI 线程执行。
         self.device_model.command_finished.connect(self._handle_async_response)
         self.app_model.command_finished.connect(self._handle_async_response)
         self.testing_model.command_finished.connect(self._handle_async_response)
@@ -125,8 +126,9 @@ class _ADBControllerBase:
             raise TypeError("handler must be callable")
         self._operation_handler_map[op_type.strip()] = handler
 
-    @Slot(str, bool, str)  # pyright: ignore[reportArgumentType]
     def _emit_operation(self, operation: str, success: bool, message: str):
+        if getattr(self, "_shutting_down", False):
+            return
         level = "INFO" if success else "ERROR"
         if not message.strip():
             return
@@ -183,8 +185,14 @@ class _ADBControllerBase:
                 return
 
             if op_type == "get_connected_devices":
-                if isinstance(result, list):
-                    getattr(self, "_process_device_list")(result)
+                if isinstance(result, dict) and "devices" in result:
+                    if result.get("success", False):
+                        getattr(self, "_process_device_list")(result["devices"])
+                    else:
+                        self._emit_operation(
+                            op_type, False, result.get("error", "Failed to list devices")
+                        )
+                        self.signals.devices_updated.emit([])
                 else:
                     self._emit_operation(op_type, False, "Invalid device list format")
                 return

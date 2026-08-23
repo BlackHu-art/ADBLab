@@ -436,6 +436,8 @@ class ADBMediaMixin(_ADBControllerBase):
             )
 
     def _show_screenshot_viewer(self, image_paths: list):
+        if getattr(self, "_shutting_down", False):
+            return
         viewer = ScreenshotViewer(image_paths)
         configure_independent_secondary_window(viewer)
         viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -592,6 +594,8 @@ class ADBMediaMixin(_ADBControllerBase):
             return False
 
     def _auto_pull(self, device_ip: str, batch_id: str = ""):
+        if getattr(self, "_shutting_down", False):
+            return
         info = self.screen_records.active(device_ip) or {}
         if batch_id and info.get("batch_id") != batch_id:
             return

@@ -63,39 +63,22 @@ class SurfaceStatsCollector:
 
     def stop(self):
         """停止 Surface 统计数据采集线程。"""
-        if self.collector_thread:
+        if hasattr(self, "collector_thread") and self.collector_thread:
             self.stop_event.set()
-            self.collector_thread.join()
+            self.collector_thread.join(timeout=2)
             self.collector_thread = None
             if self.fps_queue:
                 self.fps_queue.task_done()
+        # 计算线程依赖采集线程写入的 "Stop" 哨兵退出；采集线程异常或未启动时补发，
+        # 避免计算线程在 data_queue.get() 上无限阻塞。
+        self.data_queue.put("Stop")
+        if hasattr(self, "calculator_thread") and self.calculator_thread:
+            self.calculator_thread.join(timeout=2)
+            self.calculator_thread = None
 
     def get_focus_activity(self):
         """通过 dumpsys window windows 获取当前焦点 Activity 的窗口名。"""
         return self.device.adb.get_focus_activity()
-
-    def _calculate_results(self, refresh_period, timestamps):
-        """根据帧时间戳计算 FPS 和卡顿次数。
-
-        部分设备返回的第一列和第三列时间戳完全相同，因此使用第二列计算。
-        """
-
-        frame_count = len(timestamps)
-        if frame_count == 0:
-            fps = 0
-            jank = 0
-        elif frame_count == 1:
-            fps = 1
-            jank = 0
-        else:
-            seconds = timestamps[-1][1] - timestamps[0][1]
-            if seconds > 0:
-                fps = int(round((frame_count - 1) / seconds))
-                jank = self._calculate_janky(timestamps)
-            else:
-                fps = 1
-                jank = 0
-        return fps, jank
 
     def _calculate_results_new(self, refresh_period, timestamps):
         """根据帧数量选择对应算法计算 FPS 和卡顿次数。"""
@@ -482,11 +465,3 @@ class FPSMonitor(Monitor):
 
     def save(self):
         pass
-
-    def parse(self, file_path):
-        """解析指定的 FPS 数据文件。"""
-        pass
-
-    def get_fps_collector(self):
-        """返回保存时间、FPS 和卡顿数据的采集器。"""
-        return self.fpscollector

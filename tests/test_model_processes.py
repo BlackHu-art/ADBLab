@@ -167,24 +167,42 @@ def test_process_runner_start_replaces_existing_process_without_deadlock():
     assert runner._procs["device_logcat"] is new_proc
 
 
-def test_process_runner_start_stops_process_registered_during_start():
+def test_process_runner_start_stops_own_proc_when_key_claimed_during_spawn():
     ProcessRunner._global_procs.clear()
     runner = ProcessRunner()
     displaced_proc = Mock()
     displaced_proc.poll.return_value = None
     displaced_proc.wait.return_value = 0
     new_proc = Mock()
+    new_proc.poll.return_value = None
+    new_proc.wait.return_value = 0
 
     def popen_side_effect(*args, **kwargs):
+        # 模拟并发 start 在本次 spawn 期间抢先注册了同名 key。
         runner._procs["device_logcat"] = displaced_proc
         return new_proc
 
     with patch("core.exec.subprocess.Popen", side_effect=popen_side_effect):
         started = runner.start("device_logcat", ["adb", "logcat"])
 
-    assert started is new_proc
-    displaced_proc.terminate.assert_called_once()
-    assert runner._procs["device_logcat"] is new_proc
+    # 本次 start 成为失败方：停掉自己刚 spawn 的进程，返回并发获胜者。
+    assert started is displaced_proc
+    new_proc.terminate.assert_called_once()
+    displaced_proc.terminate.assert_not_called()
+    assert runner._procs["device_logcat"] is displaced_proc
+
+
+def test_process_runner_active_keys_tolerates_poll_oserror():
+    runner = ProcessRunner()
+    good = Mock()
+    good.poll.return_value = None
+    broken = Mock()
+    broken.poll.side_effect = OSError("bad handle")
+
+    runner._procs["good"] = good
+    runner._procs["broken"] = broken
+
+    assert set(runner.active_keys) == {"good", "broken"}
 
 
 def test_process_runner_start_forwards_stream_kwargs():
@@ -412,4 +430,105 @@ def test_process_runner_force_stop_removes_tracking_when_killed():
         assert runner.force_stop("key", timeout=2) is True
 
     assert "key" not in runner._procs
-    proc.wait.assert_called()
+
+
+def test_process_runner_stop_proc_returns_returncode_when_already_exited():
+    proc = Mock()
+    proc.poll.return_value = 0
+    proc.returncode = 0
+
+    assert ProcessRunner._stop_proc(proc) == 0
+    proc.terminate.assert_not_called()
+
+
+def test_process_runner_stop_proc_returns_none_on_terminate_oserror():
+    proc = Mock()
+    proc.poll.return_value = None
+    proc.terminate.side_effect = OSError("denied")
+    proc.returncode = None
+
+    assert ProcessRunner._stop_proc(proc) is None
+
+
+def test_process_runner_stop_proc_kills_when_tree_kill_fails():
+    proc = Mock()
+    proc.poll.return_value = None
+    proc.wait.side_effect = subprocess.TimeoutExpired("adb", 1)
+    proc.returncode = None
+
+    with patch.object(ProcessRunner, "_kill_process_tree_bounded", return_value=False):
+        assert ProcessRunner._stop_proc(proc, timeout=0.1) is None
+
+    proc.kill.assert_called()
+
+
+def test_process_runner_tracked_active_count_counts_and_cleans_exited():
+    ProcessRunner._global_procs.clear()
+    active = Mock()
+    active.poll.return_value = None
+    exited = Mock()
+    exited.poll.return_value = 0
+    ProcessRunner._global_procs[(1, "a")] = active
+    ProcessRunner._global_procs[(1, "b")] = exited
+
+    assert ProcessRunner.tracked_active_count() == 1
+    assert (1, "b") not in ProcessRunner._global_procs
+    assert (1, "a") in ProcessRunner._global_procs
+    ProcessRunner._global_procs.clear()
+
+
+def test_process_runner_tracked_active_count_treats_oserror_as_active():
+    ProcessRunner._global_procs.clear()
+    proc = Mock()
+    proc.poll.side_effect = OSError("gone")
+    ProcessRunner._global_procs[(1, "a")] = proc
+
+    assert ProcessRunner.tracked_active_count() == 1
+    ProcessRunner._global_procs.clear()
+
+
+def test_process_runner_force_all_tracked_kills_running_process():
+    ProcessRunner._global_procs.clear()
+    proc = Mock()
+    proc.pid = 12345
+    proc.poll.side_effect = [None, 0]
+    ProcessRunner._global_procs[(1, "a")] = proc
+
+    with patch.object(ProcessRunner, "_kill_process_tree_bounded", return_value=True):
+        assert ProcessRunner.force_all_tracked(2.0) is True
+
+    assert ProcessRunner._global_procs == {}
+
+
+def test_command_runner_run_reports_nonzero_returncode():
+    from core.exec import CommandRunner
+
+    completed = Mock()
+    completed.returncode = 1
+    completed.stderr = "adb: device not found\n"
+    completed.stdout = ""
+    with patch("core.exec.subprocess.run", return_value=completed):
+        r = CommandRunner.run(["adb", "devices"])
+
+    assert r.success is False
+    assert "device not found" in r.error
+
+
+def test_command_runner_run_reports_timeout():
+    from core.exec import CommandRunner
+
+    with patch("core.exec.subprocess.run", side_effect=subprocess.TimeoutExpired("adb", 5)):
+        r = CommandRunner.run(["adb", "devices"], timeout=5)
+
+    assert r.success is False
+    assert "Timeout" in r.error
+
+
+def test_command_runner_run_reports_exception():
+    from core.exec import CommandRunner
+
+    with patch("core.exec.subprocess.run", side_effect=OSError("boom")):
+        r = CommandRunner.run(["adb", "devices"])
+
+    assert r.success is False
+    assert "boom" in r.error

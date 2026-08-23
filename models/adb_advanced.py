@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import threading
 import time
 from datetime import datetime
 
@@ -26,6 +27,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         super().__init__()
         self._rec_procs = ProcessRunner()
         self._adb_bridge = None
+        self._adb_bridge_lock = threading.Lock()
 
     # 屏幕录制
 
@@ -62,19 +64,14 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             proc = self._rec_procs.start(
                 f"record_{device_ip}",
                 cmd,
-                stderr=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
             )
             time.sleep(0.3)
             if proc.poll() is not None:
-                err = (
-                    proc.stderr.read().decode(errors="ignore").strip()
-                    if proc.stderr is not None
-                    else ""
-                )
                 return {
                     "success": False,
                     "device_ip": device_ip,
-                    "error": err or "screenrecord exited immediately",
+                    "error": "screenrecord exited immediately",
                     "batch_id": batch_id,
                 }
             return {
@@ -136,20 +133,15 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                     "batch_id": batch_id,
                 }
             cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", shlex.quote(remote_path)])
-            if not cleanup["success"]:
-                return {
-                    "success": False,
-                    "device_ip": device_ip,
-                    "local_path": local_path,
-                    "error": f"cleanup failed: {cleanup.get('error', 'unknown error')}",
-                    "batch_id": batch_id,
-                }
-            return {
+            result = {
                 "success": True,
                 "device_ip": device_ip,
                 "local_path": local_path,
                 "batch_id": batch_id,
             }
+            if not cleanup["success"]:
+                result["cleanup_error"] = cleanup.get("error", "unknown error")
+            return result
         except Exception as exc:
             return {
                 "success": False,
@@ -163,18 +155,21 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def input_tap_async(self, device_ip: str, x: int, y: int) -> dict:
-        sent = self._send_input(device_ip, f"tap {int(x)} {int(y)}")
-        return {"success": sent, "device_ip": device_ip, "x": x, "y": y}
+        sent, error = self._send_input(device_ip, f"tap {int(x)} {int(y)}")
+        result = {"success": sent, "device_ip": device_ip, "x": x, "y": y}
+        if error:
+            result["error"] = error
+        return result
 
     @async_command
     def input_swipe_async(
         self, device_ip: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
     ) -> dict:
-        sent = self._send_input(
+        sent, error = self._send_input(
             device_ip,
             f"swipe {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
         )
-        return {
+        result = {
             "success": sent,
             "device_ip": device_ip,
             "x1": x1,
@@ -183,39 +178,36 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             "y2": y2,
             "duration_ms": duration_ms,
         }
+        if error:
+            result["error"] = error
+        return result
 
     @async_command
     def input_keyevent_async(self, device_ip: str, keycode: str) -> dict:
-        sent = self._send_input(device_ip, f"keyevent {keycode}")
-        return {"success": sent, "device_ip": device_ip, "keycode": keycode}
+        sent, error = self._send_input(device_ip, f"keyevent {int(keycode)}")
+        result = {"success": sent, "device_ip": device_ip, "keycode": keycode}
+        if error:
+            result["error"] = error
+        return result
 
-    @async_command
-    def input_longpress_async(self, device_ip: str, keycode: str) -> dict:
-        sent = self._send_input(device_ip, f"keyevent --longpress {keycode}")
-        return {"success": sent, "device_ip": device_ip, "keycode": keycode}
+    def _send_input(self, device_ip: str, input_args: str) -> tuple[bool, str]:
+        """复用持久 adb shell input 通道；失败时降级为有界同步命令并校验结果。
 
-    @async_command
-    def input_drag_async(
-        self, device_ip: str, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300
-    ) -> dict:
-        sent = self._send_input(
-            device_ip,
-            f"draganddrop {int(x1)} {int(y1)} {int(x2)} {int(y2)} {int(duration_ms)}",
-        )
-        return {"success": sent, "device_ip": device_ip}
-
-    def _send_input(self, device_ip: str, input_args: str) -> bool:
-        """复用持久 adb shell input 通道；失败时降级为有界同步命令并校验结果。"""
+        返回 (是否成功, 错误信息)；成功时错误信息为空字符串。
+        """
         try:
-            return self._input_bridge().shell_input(input_args, device_id=device_ip)
-        except Exception:
-            return False
+            sent = self._input_bridge().shell_input(input_args, device_id=device_ip)
+            return sent, "" if sent else "input command failed"
+        except Exception as exc:
+            return False, str(exc)
 
     def _input_bridge(self):
         if self._adb_bridge is None:
-            from core.adb_bridge import ADBBridge
+            with self._adb_bridge_lock:
+                if self._adb_bridge is None:
+                    from core.adb_bridge import ADBBridge
 
-            self._adb_bridge = ADBBridge()
+                    self._adb_bridge = ADBBridge()
         return self._adb_bridge
 
     def close_input_sessions(self, device_ip: str | None = None):
@@ -233,7 +225,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def dumpsys_meminfo_async(self, device_ip: str, package: str = "") -> dict:
         cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "meminfo"]
         if package:
-            cmd.append(package)
+            cmd.append(shlex.quote(package))
         return self._run(cmd, timeout=15, device_ip=device_ip, package=package)
 
     @async_command
@@ -254,7 +246,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     # Logcat 过滤
 
-    @async_command
+    @async_command(long_running=True)
     def logcat_filtered_async(
         self,
         device_ip: str,
@@ -284,10 +276,6 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 "line_count": len(r["output"].splitlines()),
             }
         return r
-
-    @async_command
-    def logcat_buffer_sizes_async(self, device_ip: str) -> dict:
-        return self._run(["adb", "-s", device_ip, "logcat", "-g"], device_ip=device_ip)
 
     # 系统设置
 
@@ -362,22 +350,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             path=path,
         )
 
-    @async_command
-    def shell_rm_async(self, device_ip: str, path: str, recursive: bool = False) -> dict:
-        cmd = ["adb", "-s", device_ip, "shell", "rm"]
-        if recursive:
-            cmd.append("-r")
-        cmd.append(shlex.quote(path))
-        return self._run(cmd, device_ip=device_ip)
-
-    @async_command
-    def shell_mkdir_async(self, device_ip: str, path: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "mkdir", "-p", shlex.quote(path)],
-            device_ip=device_ip,
-        )
-
-    @async_command
+    @async_command(long_running=True)
     def push_file_async(self, device_ip: str, local_path: str, remote_path: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "push", local_path, remote_path],
@@ -393,21 +366,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             device_ip=device_ip,
         )
 
-    @async_command
-    def shell_df_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "df", "-h"],
-            device_ip=device_ip,
-        )
-
     # 扩展系统信息
-
-    @async_command
-    def get_device_date_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "date"],
-            device_ip=device_ip,
-        )
 
     @async_command
     def get_device_uptime_async(self, device_ip: str) -> dict:
@@ -427,23 +386,5 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def get_kernel_version_async(self, device_ip: str) -> dict:
         return self._run(
             ["adb", "-s", device_ip, "shell", "cat", "/proc/version"],
-            device_ip=device_ip,
-        )
-
-    @async_command
-    def getprop_all_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "getprop"],
-            timeout=15,
-            device_ip=device_ip,
-        )
-
-    # 应用备份
-
-    @async_command(long_running=True)
-    def backup_app_async(self, device_ip: str, package: str, save_path: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "backup", "-f", save_path, "-noapk", package],
-            timeout=60,
             device_ip=device_ip,
         )

@@ -61,6 +61,11 @@ def _finalize_monkey_target(controller, batch_id: str, device: str) -> bool:
 class ADBAppMonkeyMixin(_ADBControllerBase):
     """协调 Monkey 压测的启动、停止与批次状态。"""
 
+    # Monkey 状态（含 _monkey_stop_requests/_monkey_stop_acks/_monkey_run_terminals 与
+    # _monkey_batch_by_device/_monkey_running）均为 GUI 线程读写：启动/停止入口来自 UI 信号，
+    # 结果经 command_finished 的 AutoConnection 调度回 GUI 线程。_monkey_lock 仅覆盖启动占位
+    # 与回滚的原子段，未覆盖其余字典是已知且无害的。
+
     # 以下属性由 _ADBControllerBase 提供。
     testing_model: ADBTesting
     signals: ADBControllerSignals

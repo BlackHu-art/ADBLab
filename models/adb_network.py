@@ -3,7 +3,6 @@
 该 mixin 应与 ADBModelCore 子类组合使用，公开操作均通过 @async_command 异步执行。
 """
 
-import shlex
 from typing import Any
 
 from .adb_model import async_command
@@ -32,13 +31,6 @@ class ADBNetworkMixin:
     @async_command
     def list_forwards_async(self, device_ip: str) -> dict:
         return self._run(["adb", "forward", "--list"], device_ip=device_ip)
-
-    @async_command
-    def remove_forward_async(self, device_ip: str, local_spec: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "forward", "--remove", local_spec],
-            device_ip=device_ip,
-        )
 
     @async_command
     def remove_all_forwards_async(self, device_ip: str) -> dict:
@@ -88,22 +80,4 @@ class ADBNetworkMixin:
             ["adb", "pair", f"{ip_address}:{port}", pairing_code],
             timeout=15,
             ip=ip_address,
-        )
-
-    # 网络诊断
-
-    @async_command
-    def shell_ping_async(self, device_ip: str, host: str, count: str = "4") -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "ping", "-c", shlex.quote(count), shlex.quote(host)],
-            timeout=30,
-            device_ip=device_ip,
-        )
-
-    @async_command
-    def shell_netstat_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "shell", "netstat"],
-            timeout=10,
-            device_ip=device_ip,
         )
