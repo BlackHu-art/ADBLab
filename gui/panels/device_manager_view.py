@@ -209,6 +209,9 @@ class DeviceManagerView:
         tv.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         tv.setFont(self._frame._font_mono)
         tv.horizontalHeader().setFont(self._frame._font_mono)
+        tv.horizontalHeader().setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         tv.verticalHeader().setDefaultSectionSize(20)
         tv.setMaximumHeight(240)
         tv.setStyleSheet(

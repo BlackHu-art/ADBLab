@@ -3,6 +3,7 @@
 import uuid
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QCompleter,
     QVBoxLayout,
@@ -205,6 +206,14 @@ class AppPanel(BasePanel):
             self._monkey_pct_labels[key] = lbl
             self._monkey_pct_combos[key] = c
             pct_widgets.extend((lbl, c))
+        # 统一标签列宽，使上排 Events/Throttle/ms 与下方百分比标签对齐。
+        label_width = QFontMetrics(BaseStyles.font_for_role(FontRole.UI)).horizontalAdvance(
+            "Trackball:"
+        ) + 4
+        for _lbl in (self.monkey_events_label, self.monkey_throttle_label, self.monkey_ms_label):
+            _lbl.setMinimumWidth(label_width)
+        for _lbl in self._monkey_pct_labels.values():
+            _lbl.setMinimumWidth(label_width)
         parameter_modes = (
             GridMode(
                 "wide",

@@ -114,10 +114,16 @@ class RemotePanelForm:
         self._frame.chk_record.setToolTip("Record mirroring to file")
         self._frame.chk_record.toggled.connect(self._frame._on_record_toggled)
         self._frame.record_path = self._frame._status_text("")
+        # 记录路径是状态提示，禁止换行且不参与最小宽度计算，避免文本出现时挤压其它按钮。
+        self._frame.record_path.setWordWrap(False)
+        self._frame.record_path.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self._frame.record_path.setMinimumWidth(0)
         self._frame._add_responsive_row(
             gl,
-            self._frame.chk_record,
-            self._frame.record_path,
+            (self._frame.chk_record, 1),
+            (self._frame.record_path, 3),
             spacing=8,
             compact_columns=1,
             medium_columns=2,
