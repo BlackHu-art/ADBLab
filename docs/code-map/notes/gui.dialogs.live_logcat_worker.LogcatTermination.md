@@ -1,9 +1,0 @@
----
-kind: class
----
-
-# LogcatTermination
-
-- 模块：[[gui.dialogs.live_logcat_worker]]
-- 全名：gui.dialogs.live_logcat_worker.LogcatTermination
-

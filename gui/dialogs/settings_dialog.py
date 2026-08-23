@@ -43,7 +43,7 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setWindowIcon(get_themed_icon("gear.svg"))
         self.setMinimumSize(520, 420)
-        self.resize(680, 560)
+        self.resize(700, 600)
         self.setModal(False)
 
         self._build_ui()

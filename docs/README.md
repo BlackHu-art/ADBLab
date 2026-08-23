@@ -22,7 +22,7 @@
 | 项目 | 当前记录 |
 | --- | --- |
 | 事实基线 | `dev` 当前工作树，扫描日期 2026-08-23；Git HEAD 锚点 `5cee5ca` |
-| 本次整理 | 2026-08-23，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.1 |
+| 本次整理 | 2026-08-23，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.1；同日移除自动生成代码图谱 `docs/code-map/`（3,969 个生成文件）及其生成脚本，并把已收口的 vNext 实施计划移入归档 |
 | 历史锚点 | main 基线 `8b84f8d`（3.1.14）；不再手工维护易漂移的提交清单，按需运行 `git log 8b84f8d..HEAD` 获取当前变更 |
 | 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
@@ -62,17 +62,12 @@
 - [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
 - [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
 - [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。
-- [IMPLEMENTATION_PLAN](architecture/IMPLEMENTATION_PLAN.md)：vNext 实施计划。
-- [agent_contract](architecture/agent_contract.md)：统一技能调用契约。
+- [agent_contract](architecture/agent_contract.md)：统一技能调用契约（已由 `utils/agent_skill_gateway.py` 实现）。
 
 ### 操作指南（guides/）
 
 - [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
 - [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口、提交前门禁，以及中文注释与文档风格规范。
-
-### 代码地图（code-map/）
-
-- [CODE_MAP](code-map/CODE_MAP.md)：全量第一方代码的 Obsidian 知识图谱（MOC），文件/类/方法节点用 wikilink 互链（导入/继承/调用/实例化），自动生成。
 
 ## 维护热点
 
@@ -99,9 +94,10 @@
 
 ## 归档
 
-过程记录与历史检查已移入 [archive/](archive/README.md)：Phase 0/1/2 实施账本、Agent 技能评审和
-2026-08-18 知识库卫生检查。归档文档不再更新，现状事实一律以 `project-knowledge/` 与
-[architecture/](architecture/) 的 ADR/实施计划为准。
+过程记录与历史检查已移入 [archive/](archive/README.md)：Phase 0/1/2 实施账本、Agent 技能评审、
+2026-08-18 知识库卫生检查和已收口的 vNext 实施计划（[IMPLEMENTATION_PLAN](archive/plans/IMPLEMENTATION_PLAN.md)，
+各阶段结论已并入 ARCHITECTURE 与 ADR-0001~0006）。归档文档不再更新，现状事实一律以
+`project-knowledge/` 与 [architecture/](architecture/) 的 ADR 为准。
 
 ## 明确排除
 

@@ -19,6 +19,7 @@ docs/.obsidian/
 
 logs/
 resources/app.log
-
+Excalidraw/
 *.tmp.py
 .obsidian/
+.claudian/

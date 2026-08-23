@@ -1,4 +1,8 @@
-# ADBLab Agent Skill Contract v0.1 (Draft)
+# ADBLab Agent Skill Contract v0.1（已实现）
+
+- 实现：`utils/agent_skill_gateway.py::AgentSkillGateway`（`run_skill` / `run_skill_async` / `register` /
+  `cancel` / `shutdown`，错误码含 `SKILL_NOT_FOUND` 等），内置技能见
+  `utils/agent_builtin_skills.py`；契约测试见 `tests/test_agent_skill_gateway.py`。
 
 ## 1) Purpose
 Define a stable internal contract for integrating external / third-party skills into ADBLab.

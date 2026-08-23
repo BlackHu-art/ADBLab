@@ -1,7 +1,7 @@
 # 归档区
 
-本目录存放 ADBLab 知识库的**过程记录**：实施账本、阶段性评审和历史卫生检查。归档文档是
-当时决策与验证的留痕，**不再更新**，也不作为当前实现的事实来源。
+本目录存放 ADBLab 知识库的**过程记录**：实施账本、阶段性评审、已收口的实施计划和历史
+卫生检查。归档文档是当时决策与验证的留痕，**不再更新**，也不作为当前实现的事实来源。
 
 ## 归档政策
 
@@ -18,3 +18,6 @@
 - `ledgers/`：Phase 0/1、Phase 2 Gate A/B 实施账本（含 Go/No-Go 结论）。
 - `reviews/`：阶段性评审报告（如 Agent 技能评审）。
 - `hygiene/`：历史知识库卫生检查报告。
+- `plans/`：已收口、结论已并入当前知识文档的实施计划（如 vNext IMPLEMENTATION_PLAN，
+  Gate A/B/C 与 Phase 0–4 均已落地，对应结论见 `../architecture/adr/` 与
+  `../project-knowledge/ARCHITECTURE.md`）。

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize
 
-DEFAULT_WINDOW_SIZE = QSize(1120, 640)
+DEFAULT_WINDOW_SIZE = QSize(1250, 700)
 MINIMUM_WINDOW_SIZE = QSize(860, 500)
 DEFAULT_PANEL_RATIO = 0.40
 DEFAULT_DEVICE_LOG_RATIO = 0.60

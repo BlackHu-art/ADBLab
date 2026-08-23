@@ -8,7 +8,12 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QCheckBox, QSizePolicy, QVBoxLayout, QWidget
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
-from gui.widgets.responsive_layout import WidthPolicy, paired_mode, row_major_mode, span_tail_mode
+from gui.widgets.responsive_layout import (
+    GridMode,
+    GridPlacement,
+    WidthPolicy,
+    span_tail_mode,
+)
 
 
 class RemotePanelForm:
@@ -34,6 +39,9 @@ class RemotePanelForm:
         gl.setSpacing(4)
 
         preset_label = self._frame._label("Preset:")
+        preset_label.setMinimumWidth(56)
+        preset_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
+        preset_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         self._frame.preset = self._frame._combo(self._frame._PRESET_NAMES)
         saved_preset = self._frame._load("preset")
@@ -47,31 +55,6 @@ class RemotePanelForm:
         )
         self._frame._remote_queue_label.setAccessibleName("Remote input queue status")
         self._frame._device_info = self._frame._status_text("")
-
-        self._frame.preset_binding = self._frame._add_responsive_row(
-            gl,
-            preset_label,
-            self._frame.preset,
-            spacing=6,
-            policies=(WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE),
-            modes=(paired_mode("one", 1, 0),),
-        )
-        self._frame.status_binding = self._frame._add_responsive_row(
-            gl,
-            self._frame._status_label,
-            self._frame._remote_queue_label,
-            self._frame._device_info,
-            spacing=6,
-            policies=(
-                WidthPolicy.WRAPPING,
-                WidthPolicy.WRAPPING,
-                WidthPolicy.WRAPPING,
-            ),
-            modes=(
-                row_major_mode("three", 3, 0, column_stretches=(1, 1, 1)),
-                row_major_mode("one", 1, 1, column_stretches=(1,)),
-            ),
-        )
 
         settings = [
             ("Size:", "maxsize", self._frame._SIZES),
@@ -93,23 +76,122 @@ class RemotePanelForm:
             setattr(self._frame, attr, combo)
             self._frame._parameter_labels.append(label)
             setting_widgets.extend((label, combo))
-        self._frame.parameter_binding = self._frame._add_responsive_row(
-            gl,
+        self._frame.orientation.setToolTip("Lock orientation (0=auto)")
+
+        # Preset、Status、Queue 与六个参数必须共享同一个响应式网格。
+        # 分属两个 binding 时，上下两行会各自计算列宽和断点（尤其 medium
+        # 宽度下一个是 6 列、另一个是 4 列），导致三组状态与下方选项错位。
+        mirroring_widgets = (
+            preset_label,
+            self._frame.preset,
             *setting_widgets,
-            spacing=5,
-            policies=tuple(
+            self._frame._status_label,
+            self._frame._remote_queue_label,
+            self._frame._device_info,
+        )
+        mirroring_policies = (
+            WidthPolicy.NATURAL,      # Preset 标签
+            WidthPolicy.SHRINKABLE,   # Preset 下拉
+            *tuple(
                 policy
                 for _setting in settings
                 for policy in (WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE)
             ),
-            modes=(
-                paired_mode("three", 3, 0),
-                paired_mode("two", 2, 1),
-                paired_mode("one", 1, 2),
+            WidthPolicy.WRAPPING,     # Status
+            WidthPolicy.WRAPPING,     # Queue
+            WidthPolicy.WRAPPING,     # Device info
+        )
+        # 顺序：0 Preset 标签、1 Preset 下拉、2..13 六组参数、14 Status、
+        # 15 Queue、16 Device info。状态标签放在最后可避免 _link_form_labels
+        # 把 Status/Queue 误绑到参数下拉框。
+        mirroring_modes = (
+            GridMode(
+                "three",
+                6,
+                0,
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(14, 0, 2, column_span=2),
+                    GridPlacement(15, 0, 4, column_span=2),
+                    GridPlacement(16, 1, 0, column_span=6),
+                    GridPlacement(2, 2, 0),
+                    GridPlacement(3, 2, 1),
+                    GridPlacement(4, 2, 2),
+                    GridPlacement(5, 2, 3),
+                    GridPlacement(6, 2, 4),
+                    GridPlacement(7, 2, 5),
+                    GridPlacement(8, 3, 0),
+                    GridPlacement(9, 3, 1),
+                    GridPlacement(10, 3, 2),
+                    GridPlacement(11, 3, 3),
+                    GridPlacement(12, 3, 4),
+                    GridPlacement(13, 3, 5),
+                ),
+                column_stretches=(0, 1, 0, 1, 0, 1),
+            ),
+            GridMode(
+                "two",
+                4,
+                1,
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(14, 0, 2, column_span=2),
+                    GridPlacement(15, 1, 0, column_span=2),
+                    GridPlacement(16, 1, 2, column_span=2),
+                    GridPlacement(2, 2, 0),
+                    GridPlacement(3, 2, 1),
+                    GridPlacement(4, 2, 2),
+                    GridPlacement(5, 2, 3),
+                    GridPlacement(6, 3, 0),
+                    GridPlacement(7, 3, 1),
+                    GridPlacement(8, 3, 2),
+                    GridPlacement(9, 3, 3),
+                    GridPlacement(10, 4, 0),
+                    GridPlacement(11, 4, 1),
+                    GridPlacement(12, 4, 2),
+                    GridPlacement(13, 4, 3),
+                ),
+                column_stretches=(0, 1, 0, 1),
+            ),
+            GridMode(
+                "one",
+                2,
+                2,
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(14, 1, 0, column_span=2),
+                    GridPlacement(15, 2, 0, column_span=2),
+                    GridPlacement(16, 3, 0, column_span=2),
+                    GridPlacement(2, 4, 0),
+                    GridPlacement(3, 4, 1),
+                    GridPlacement(4, 5, 0),
+                    GridPlacement(5, 5, 1),
+                    GridPlacement(6, 6, 0),
+                    GridPlacement(7, 6, 1),
+                    GridPlacement(8, 7, 0),
+                    GridPlacement(9, 7, 1),
+                    GridPlacement(10, 8, 0),
+                    GridPlacement(11, 8, 1),
+                    GridPlacement(12, 9, 0),
+                    GridPlacement(13, 9, 1),
+                ),
+                column_stretches=(0, 1),
             ),
         )
-        self._frame.orientation.setToolTip("Lock orientation (0=auto)")
-
+        self._frame.mirroring_binding = self._frame._add_responsive_row(
+            gl,
+            *mirroring_widgets,
+            spacing=6,
+            policies=mirroring_policies,
+            modes=mirroring_modes,
+        )
+        # 保留旧属性名，让表单状态与参数绑定指向同一份布局计划。
+        self._frame.status_binding = self._frame.mirroring_binding
+        self._frame.parameter_binding = self._frame.mirroring_binding
+        self._frame.preset_binding = self._frame.mirroring_binding
         self._frame.chk_record = self._frame._create_checkbox("Record")
         self._frame.chk_record.setToolTip("Record mirroring to file")
         self._frame.chk_record.toggled.connect(self._frame._on_record_toggled)

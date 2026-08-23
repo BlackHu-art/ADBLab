@@ -1,9 +1,0 @@
----
-kind: method
----
-
-# disable_package_async(self, device_ip, package)
-
-- 定义于：[[models.adb_system.ADBSystemMixin]]
-- 全名：models.adb_system.ADBSystemMixin.disable_package_async
-

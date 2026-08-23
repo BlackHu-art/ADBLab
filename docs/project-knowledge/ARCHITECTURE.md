@@ -4,7 +4,7 @@ last_verified: 2026-08-21
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
-  - ../architecture/IMPLEMENTATION_PLAN.md
+  - ../archive/plans/IMPLEMENTATION_PLAN.md
   - ../architecture/adr/0001-incremental-vnext.md
 ---
 
@@ -218,7 +218,7 @@ sequenceDiagram
    OperationManager/TaskSupervisor 能力，再按 Screenshot、LiveLogcat、Install batch 三个门逐项迁移；
    不先移动目录，也不引入 asyncio/qasync 或全局重型 EventBus。决策和阶段定义见
    `docs/architecture/adr/0001-incremental-vnext.md` 与
-   `docs/architecture/IMPLEMENTATION_PLAN.md`。
+   `docs/archive/plans/IMPLEMENTATION_PLAN.md`。
 9. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸与分栏比例
    使用纯函数校验和公开恢复接口；面板通过断点重排既有控件，避免为缩放复制业务控件和信号接线。
 

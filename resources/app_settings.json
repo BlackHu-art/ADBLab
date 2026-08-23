@@ -27,8 +27,8 @@
     "pinch": 2
   },
   "theme": "Light",
-  "window_width": 1120,
-  "window_height": 640,
+  "window_width": 1250,
+  "window_height": 700,
   "panel_split_ratio": 0.4,
   "device_log_split_ratio": 0.6,
   "scrcpy_preset": "Smooth",

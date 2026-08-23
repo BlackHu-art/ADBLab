@@ -2214,10 +2214,43 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
         assert remote.parameter_binding.applied_plan.mode.name in {"one", "two", "three"}
         status_plan = remote.status_binding.applied_plan
         assert status_plan is not None and status_plan.mode.name == "one"
-        assert len({placement.row for placement in status_plan.placements}) == 3
+        assert len({placement.row for placement in status_plan.placements}) == 10
     finally:
         _close_feature_panel(panel)
 
+
+def test_remote_preset_status_queue_align_with_mirroring_options(
+    qt_application,
+    monkeypatch,
+):
+    """Preset/Status/Queue 与下方参数选项共享列边界，不会出现组间错位。"""
+
+    panel, remote, scroll, _content = _show_feature_panel(
+        "remote",
+        292,
+        12,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        widgets = remote.mirroring_binding.widgets()
+        preset_label, preset, size_label, size = widgets[0], widgets[1], widgets[2], widgets[3]
+        status, queue, fps_label, codec_label = (
+            widgets[14],
+            widgets[15],
+            widgets[4],
+            widgets[6],
+        )
+        for width in (292, 420, 700):
+            _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+            assert preset_label.geometry().x() == size_label.geometry().x()
+            assert preset_label.geometry().width() == size_label.geometry().width()
+            assert preset.geometry().x() == size.geometry().x()
+            assert preset.geometry().width() == size.geometry().width()
+            assert status.geometry().x() == fps_label.geometry().x()
+            assert queue.geometry().x() == codec_label.geometry().x()
+    finally:
+        _close_feature_panel(panel)
 
 def test_remote_key_and_action_each_submit_once_after_real_reflow(
     qt_application,
