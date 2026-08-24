@@ -140,7 +140,11 @@ class DeviceManagerLayout:
             - margins[2]
             - connect_action_plan.spacing * max(0, connect_action_plan.mode.columns - 1),
         )
-        connect_width = max(1, usable_width // connect_action_plan.mode.columns)
+        connect_width = (
+            max(1, connect_viewport_width - margins[0] - margins[2])
+            if mode == "medium"
+            else max(1, usable_width // connect_action_plan.mode.columns)
+        )
         body_minimum_height = self._frame._device_body_minimum_height(action_plan, body_mode)
         return _DeviceCompositePlan(
             mode,
@@ -175,14 +179,9 @@ class DeviceManagerLayout:
             connect_layout.setColumnStretch(0, 1)
             connect_layout.setColumnStretch(1, 1)
         elif plan.mode == "medium":
-            # 中等宽度保留地址整行，Connect 与下方两列动作的右侧单元格对齐。
+            # 中等宽度保留地址与 Connect 各自整行，避免两列动作布局留下半行空白。
             connect_layout.addWidget(self._frame.ip_entry, 0, 0, 1, 2)
-            connect_layout.addWidget(
-                self._frame.btn_connect_devices,
-                1,
-                1,
-                alignment=Qt.AlignmentFlag.AlignRight,
-            )
+            connect_layout.addWidget(self._frame.btn_connect_devices, 1, 0, 1, 2)
             connect_layout.setColumnStretch(0, 1)
             connect_layout.setColumnStretch(1, 1)
         else:

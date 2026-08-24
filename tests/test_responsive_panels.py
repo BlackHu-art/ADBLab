@@ -841,7 +841,7 @@ def test_medium_connect_width_is_independent_of_body_height_and_fallback(
     monkeypatch,
     font_size,
 ):
-    """medium 的 Connect 宽度和宿主只能由宽度计划决定。"""
+    """medium 的 Connect 保持整行，且宽度和宿主只能由宽度计划决定。"""
 
     def font_for_role(_cls, _role, size=None):
         return QFont("Arial", size if size is not None else font_size)
@@ -900,7 +900,8 @@ def test_medium_connect_width_is_independent_of_body_height_and_fallback(
         assert _grid_item_position(
             manager._connect_layout,
             manager.btn_connect_devices,
-        ) == (1, 1, 1, 1)
+        ) == (1, 0, 1, 2)
+        assert abs(manager.ip_entry.width() - manager.btn_connect_devices.width()) <= 1
     finally:
         _close_device_test_ui(panel)
 
@@ -2756,14 +2757,13 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
 
             mode = manager._device_layout_mode
             observed_modes.add(mode)
-            if mode == "compact":
+            if mode in {"compact", "medium"}:
                 assert connect.left() == available.left()
                 assert connect.right() == available.right()
-            elif mode == "medium":
-                assert connect.right() == available.right()
-                assert manager.btn_connect_devices.width() == (
-                    manager.btn_connect_devices.minimumWidth()
-                )
+                if mode == "medium":
+                    assert manager.btn_connect_devices.width() == (
+                        manager.btn_connect_devices.minimumWidth()
+                    )
 
             horizontal_state = (
                 mode,
@@ -3112,11 +3112,7 @@ def test_device_manager_keeps_connection_and_device_columns_aligned_after_show(
             )
         elif mode == "medium":
             _assert_near(manager.ip_entry.width(), manager._connect_layout.geometry().width())
-            _assert_near(manager.btn_connect_devices.width(), manager.btn_refresh.width())
-            assert (
-                manager.btn_connect_devices.geometry().right()
-                == manager.ip_entry.geometry().right()
-            )
+            _assert_near(manager.btn_connect_devices.width(), manager.ip_entry.width())
         else:
             _assert_near(manager.ip_entry.width(), manager.listbox_devices.width())
             _assert_near(
