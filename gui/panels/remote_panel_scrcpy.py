@@ -39,6 +39,9 @@ class RemotePanelScrcpy:
             self._frame._update_action_states()
             return
 
+        status_label = getattr(self._frame, "_status_label", None)
+        if status_label is not None:
+            status_label.setToolTip("")
         self._frame._set_session_state(self._frame._SESSION_STARTING)
         self._frame._update_status("Checking...", None)
         self._frame._active_device = devices[0]
@@ -76,7 +79,9 @@ class RemotePanelScrcpy:
             return
         if self._frame._launch_worker and self._frame._launch_worker.isInterruptionRequested():
             return
-        self._frame._device_info.setText(device_info)
+        status_label = getattr(self._frame, "_status_label", None)
+        if status_label is not None:
+            status_label.setToolTip(f"Device: {device_info}" if device_info else "")
         active_device = getattr(self._frame, "_active_device", None)
         if active_device and device_info:
             self._frame._remote_control.remember_dimensions(active_device, device_info.split("x"))

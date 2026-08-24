@@ -496,7 +496,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel = RemotePanel.__new__(RemotePanel)
     panel._launch_worker = None
     panel._active_device = "device-1"
-    panel._device_info = Mock()
+    panel._status_label = Mock()
     panel._update_status = Mock()
     panel._log = Mock()
     panel._scrcpy_service = Mock()
@@ -515,7 +515,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     with patch("gui.panels.remote_panel.threading.Thread") as thread_cls:
         RemotePanel._on_launch_ready(panel, ["scrcpy.exe", "-s", "device-1"], "1080x2400")
 
-    panel._device_info.setText.assert_called_once_with("1080x2400")
+    panel._status_label.setToolTip.assert_called_once_with("Device: 1080x2400")
     panel._remote_control.remember_dimensions.assert_called_once_with("device-1", ["1080", "2400"])
     panel._scrcpy_service.start.assert_called_once_with(
         "scrcpy_test",
@@ -533,7 +533,7 @@ def test_remote_panel_launch_failure_returns_controls_to_idle():
     panel._closing = False
     panel._launch_worker = None
     panel._active_device = "device-1"
-    panel._device_info = Mock()
+    panel._status_label = Mock()
     panel._update_status = Mock()
     panel._log = Mock()
     panel._scrcpy_service = Mock()
@@ -1647,6 +1647,29 @@ def test_remote_panel_remote_action_uses_executor_when_available():
 
     panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
     panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
+
+
+def test_remote_panel_queue_status_keeps_primary_text_compact_and_details_in_tooltip():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._remote_queue_label = Mock()
+    panel._remote_sent = 7
+    panel._remote_failed = 0
+
+    RemotePanel._update_remote_queue_status(panel, 8, 7, "queued")
+
+    panel._remote_queue_label.setText.assert_called_once_with("Queue: 1")
+    panel._remote_queue_label.setToolTip.assert_called_once_with(
+        "Queued: 1 · Sent: 7 · Failed: 0"
+    )
+
+    panel._remote_queue_label.reset_mock()
+    panel._remote_failed = 2
+    RemotePanel._update_remote_queue_status(panel, 9, 9, "failed")
+
+    panel._remote_queue_label.setText.assert_called_once_with("Queue: 0 · Failed: 2")
+    panel._remote_queue_label.setToolTip.assert_called_once_with(
+        "Queued: 0 · Sent: 7 · Failed: 2"
+    )
 
 
 def test_remote_panel_ignores_known_scrcpy_noise_lines():

@@ -147,7 +147,7 @@ def test_remote_launch_log_does_not_expose_command_arguments():
         _closing=False,
         _launch_worker=None,
         _active_device="device-secret",
-        _device_info=Mock(),
+        _status_label=Mock(),
         _update_status=Mock(),
         _set_running=Mock(),
         _log=Mock(),

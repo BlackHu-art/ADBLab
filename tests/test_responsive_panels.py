@@ -1582,7 +1582,11 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
             ),
         )
         wait_for_stable_geometry(qt_application, (panel, scroll, content))
-        assert scroll.viewport().contentsRect().width() == 900
+        # 页面变宽后纵向滚动条可能消失，viewport 会额外获得滚动条占用的宽度；
+        # 这属于同一次顶层缩放的稳定几何，不应被误判为额外响应式代次。
+        final_viewport_width = scroll.viewport().contentsRect().width()
+        scrollbar_width = scroll.verticalScrollBar().sizeHint().width()
+        assert 900 <= final_viewport_width <= 900 + scrollbar_width
         wide_overflow = _assert_feature_binding_geometry(feature_panel, scroll, content)
         assert panel._responsive_coordinator.diagnostics.generation == before_resize + 1
         assert panel._responsive_coordinator.diagnostics.fallback_reason is None
@@ -2214,7 +2218,7 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
         assert remote.parameter_binding.applied_plan.mode.name in {"one", "two", "three"}
         status_plan = remote.status_binding.applied_plan
         assert status_plan is not None and status_plan.mode.name == "one"
-        assert len({placement.row for placement in status_plan.placements}) == 10
+        assert len({placement.row for placement in status_plan.placements}) == 9
     finally:
         _close_feature_panel(panel)
 
@@ -2234,6 +2238,7 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
     )
     try:
         widgets = remote.mirroring_binding.widgets()
+        assert len(widgets) == 16
         preset_label, preset, size_label, size = widgets[0], widgets[1], widgets[2], widgets[3]
         status, queue, fps_label, codec_label = (
             widgets[14],
@@ -2241,6 +2246,8 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
             widgets[4],
             widgets[6],
         )
+        assert status.wordWrap() is False
+        assert queue.wordWrap() is False
         for width in (292, 420, 700):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             assert preset_label.geometry().x() == size_label.geometry().x()
@@ -2249,6 +2256,12 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
             assert preset.geometry().width() == size.geometry().width()
             assert status.geometry().x() == fps_label.geometry().x()
             assert queue.geometry().x() == codec_label.geometry().x()
+            if width == 700:
+                assert preset_label.geometry().center().y() == status.geometry().center().y()
+                assert status.geometry().center().y() == queue.geometry().center().y()
+                plan = remote.mirroring_binding.applied_plan
+                assert plan is not None and plan.mode.name == "three"
+                assert len({placement.row for placement in plan.placements}) == 3
     finally:
         _close_feature_panel(panel)
 

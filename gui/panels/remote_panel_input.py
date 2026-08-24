@@ -94,7 +94,11 @@ class RemotePanelInput:
             with self._lock:
                 sent = getattr(self._frame, "_remote_sent", 0)
                 failed = getattr(self._frame, "_remote_failed", 0)
-            label.setText(f"Queue: {queued} queued · {sent} sent · {failed} failed")
+            text = f"Queue: {queued}"
+            if failed:
+                text += f" · Failed: {failed}"
+            label.setText(text)
+            label.setToolTip(f"Queued: {queued} · Sent: {sent} · Failed: {failed}")
 
     def _send_keyevent(self, key_name: str):
         device = self._frame._selected_remote_device()

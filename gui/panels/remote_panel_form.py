@@ -50,11 +50,13 @@ class RemotePanelForm:
             self._frame.preset.setCurrentIndex(-1)  # 自定义值不对应任何预设。
 
         self._frame._status_label = self._frame._status_text("Status: Idle")
-        self._frame._remote_queue_label = self._frame._status_text(
-            "Queue: 0 queued · 0 sent · 0 failed"
-        )
+        self._frame._remote_queue_label = self._frame._status_text("Queue: 0")
         self._frame._remote_queue_label.setAccessibleName("Remote input queue status")
-        self._frame._device_info = self._frame._status_text("")
+        self._frame._remote_queue_label.setToolTip("Queued: 0 · Sent: 0 · Failed: 0")
+        for label in (self._frame._status_label, self._frame._remote_queue_label):
+            label.setWordWrap(False)
+            label.setMinimumWidth(0)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         settings = [
             ("Size:", "maxsize", self._frame._SIZES),
@@ -87,7 +89,6 @@ class RemotePanelForm:
             *setting_widgets,
             self._frame._status_label,
             self._frame._remote_queue_label,
-            self._frame._device_info,
         )
         mirroring_policies = (
             WidthPolicy.NATURAL,      # Preset 标签
@@ -99,11 +100,9 @@ class RemotePanelForm:
             ),
             WidthPolicy.WRAPPING,     # Status
             WidthPolicy.WRAPPING,     # Queue
-            WidthPolicy.WRAPPING,     # Device info
         )
-        # 顺序：0 Preset 标签、1 Preset 下拉、2..13 六组参数、14 Status、
-        # 15 Queue、16 Device info。状态标签放在最后可避免 _link_form_labels
-        # 把 Status/Queue 误绑到参数下拉框。
+        # 顺序：0 Preset 标签、1 Preset 下拉、2..13 六组参数、14 Status、15 Queue。
+        # 状态标签放在最后可避免 _link_form_labels 把它们误绑到参数下拉框。
         mirroring_modes = (
             GridMode(
                 "three",
@@ -114,19 +113,18 @@ class RemotePanelForm:
                     GridPlacement(1, 0, 1),
                     GridPlacement(14, 0, 2, column_span=2),
                     GridPlacement(15, 0, 4, column_span=2),
-                    GridPlacement(16, 1, 0, column_span=6),
-                    GridPlacement(2, 2, 0),
-                    GridPlacement(3, 2, 1),
-                    GridPlacement(4, 2, 2),
-                    GridPlacement(5, 2, 3),
-                    GridPlacement(6, 2, 4),
-                    GridPlacement(7, 2, 5),
-                    GridPlacement(8, 3, 0),
-                    GridPlacement(9, 3, 1),
-                    GridPlacement(10, 3, 2),
-                    GridPlacement(11, 3, 3),
-                    GridPlacement(12, 3, 4),
-                    GridPlacement(13, 3, 5),
+                    GridPlacement(2, 1, 0),
+                    GridPlacement(3, 1, 1),
+                    GridPlacement(4, 1, 2),
+                    GridPlacement(5, 1, 3),
+                    GridPlacement(6, 1, 4),
+                    GridPlacement(7, 1, 5),
+                    GridPlacement(8, 2, 0),
+                    GridPlacement(9, 2, 1),
+                    GridPlacement(10, 2, 2),
+                    GridPlacement(11, 2, 3),
+                    GridPlacement(12, 2, 4),
+                    GridPlacement(13, 2, 5),
                 ),
                 column_stretches=(0, 1, 0, 1, 0, 1),
             ),
@@ -139,7 +137,6 @@ class RemotePanelForm:
                     GridPlacement(1, 0, 1),
                     GridPlacement(14, 0, 2, column_span=2),
                     GridPlacement(15, 1, 0, column_span=2),
-                    GridPlacement(16, 1, 2, column_span=2),
                     GridPlacement(2, 2, 0),
                     GridPlacement(3, 2, 1),
                     GridPlacement(4, 2, 2),
@@ -164,19 +161,18 @@ class RemotePanelForm:
                     GridPlacement(1, 0, 1),
                     GridPlacement(14, 1, 0, column_span=2),
                     GridPlacement(15, 2, 0, column_span=2),
-                    GridPlacement(16, 3, 0, column_span=2),
-                    GridPlacement(2, 4, 0),
-                    GridPlacement(3, 4, 1),
-                    GridPlacement(4, 5, 0),
-                    GridPlacement(5, 5, 1),
-                    GridPlacement(6, 6, 0),
-                    GridPlacement(7, 6, 1),
-                    GridPlacement(8, 7, 0),
-                    GridPlacement(9, 7, 1),
-                    GridPlacement(10, 8, 0),
-                    GridPlacement(11, 8, 1),
-                    GridPlacement(12, 9, 0),
-                    GridPlacement(13, 9, 1),
+                    GridPlacement(2, 3, 0),
+                    GridPlacement(3, 3, 1),
+                    GridPlacement(4, 4, 0),
+                    GridPlacement(5, 4, 1),
+                    GridPlacement(6, 5, 0),
+                    GridPlacement(7, 5, 1),
+                    GridPlacement(8, 6, 0),
+                    GridPlacement(9, 6, 1),
+                    GridPlacement(10, 7, 0),
+                    GridPlacement(11, 7, 1),
+                    GridPlacement(12, 8, 0),
+                    GridPlacement(13, 8, 1),
                 ),
                 column_stretches=(0, 1),
             ),
