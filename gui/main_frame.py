@@ -1554,6 +1554,28 @@ class MainFrame(QMainWindow):
                 timer.stop()
                 callback(self)
 
+        # 原生无边框缩放在部分窗口系统上可能只产生 resizeEvent，而没有回到热区的
+        # 事务完成回调。关闭前以最终可见状态兜底，确保尺寸和主题不会跨会话丢失。
+        if (
+            not self.isMaximized()
+            and not self.isMinimized()
+            and not self.isFullScreen()
+            and not self._restricted_workspace
+        ):
+            preferred_size = normalize_window_size(self.width(), self.height())
+        else:
+            preferred_size = QSize(self._preferred_window_size)
+        self._preferred_window_size = QSize(preferred_size)
+        self._normal_window_size = QSize(preferred_size)
+        MainFrame._update_settings(
+            AppSettings.instance(),
+            {
+                "window_width": int(preferred_size.width()),
+                "window_height": int(preferred_size.height()),
+                "theme": BaseStyles.current_theme(),
+            },
+        )
+
     # ── 全局保存路径 ────────────────────────────────────────────────────
 
     def _sync_save_path_action(self, path: str) -> None:

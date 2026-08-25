@@ -660,7 +660,7 @@ def test_current_package_probe_cancellation_skips_remaining_fallback_commands():
         release_first_probe.set()
         assert worker.wait(500)
 
-    assert command_timeouts == [1]
+    assert command_timeouts == [5]
 
 
 def test_current_package_probe_bounds_every_compatibility_fallback():
@@ -675,8 +675,43 @@ def test_current_package_probe_bounds_every_compatibility_fallback():
         worker.run()
 
     assert run_command.call_count == 3
-    assert [call.kwargs["timeout"] for call in run_command.call_args_list] == [1] * 3
+    assert [call.kwargs["timeout"] for call in run_command.call_args_list] == [5] * 3
     assert statuses == ["No foreground app found"]
+
+
+def test_logcat_pid_probe_uses_device_tolerant_timeout():
+    """周期 PID 查询沿用实机可用的五秒边界，避免慢设备清空有效过滤状态。"""
+
+    worker = LogcatWorker("target", package="com.example.app")
+    with patch(
+        "gui.dialogs.live_logcat_worker.CommandRunner.run",
+        return_value=CommandResult(True, output="321\n", returncode=0),
+    ) as run_command:
+        worker._refresh_filter_pids("com.example.app", worker.filter_generation)
+
+    run_command.assert_called_once_with(
+        ["adb", "-s", "target", "shell", "pidof", "com.example.app"],
+        timeout=5,
+    )
+    assert worker._package_snapshot()[2] == frozenset({321})
+
+
+def test_logcat_clearing_package_filter_accepts_all_device_pids():
+    """空包名提交后解除 PID 限制，后续任意设备进程日志都可通过。"""
+
+    worker = LogcatWorker("target", package="com.example.app")
+    generation = worker.filter_generation
+    assert worker._commit_filter_pids(
+        "com.example.app", generation, frozenset({321})
+    )
+    other_process_line = "08-25 12:00:00.000 999 999 I Other: visible after clear"
+
+    assert worker._filtered_line(other_process_line, generation) is None
+    assert worker.update_package("") is True
+
+    cleared_generation = worker.filter_generation
+    accepted = worker._filtered_line(other_process_line, cleared_generation)
+    assert accepted == (other_process_line, "I", 999)
 
 
 def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():

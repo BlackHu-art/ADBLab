@@ -59,6 +59,7 @@ class LogcatWorker(QThread):
     BATCH_INTERVAL_SECONDS = 0.075
     MAX_INFLIGHT_BATCHES = 8
     PID_REFRESH_SECONDS = 1.0
+    PID_PROBE_TIMEOUT_SECONDS = 5
     RAW_QUEUE_SIZE = 2048
     QUEUE_POLL_SECONDS = 0.05
 
@@ -76,11 +77,10 @@ class LogcatWorker(QThread):
     _dialog_finished_handler: Callable[..., Any] | None
     _supervisor_task_id: str | None
 
-    def __init__(self, device_ip: str, package: str = "", tag: str = ""):
+    def __init__(self, device_ip: str, package: str = ""):
         super().__init__()
         self.device_ip = device_ip
         self.package = package.strip()
-        self.tag = tag.strip()
         self._process_key = f"logcat_{id(self)}"
         self._process_runner = ProcessRunner()
         self._proc = None
@@ -211,13 +211,13 @@ class LogcatWorker(QThread):
                     package,
                     generation,
                     frozenset(),
-                    "Logcat running; package filter cleared",
+                    "Logcat running; showing all device logs",
                 )
             return
         try:
             result = CommandRunner.run(
                 ["adb", "-s", self.device_ip, "shell", "pidof", package],
-                timeout=2,
+                timeout=self.PID_PROBE_TIMEOUT_SECONDS,
             )
         except Exception:
             result = None
@@ -532,7 +532,8 @@ class _InterruptiblePackageRunner:
 
 
 class CurrentPackageWorker(QThread):
-    PROBE_COMMAND_TIMEOUT_SECONDS = 1
+    # 与共享前台包探测器保持一致；真实设备首次 ADB 查询常超过 1 秒。
+    PROBE_COMMAND_TIMEOUT_SECONDS = 5
 
     package_ready = Signal(str)
     status_changed = Signal(str)
@@ -540,6 +541,7 @@ class CurrentPackageWorker(QThread):
     # 对话框连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
     _dialog_finished_handler: Callable[..., Any] | None
     _supervisor_task_id: str | None
+    _package_filter_revision: int
 
     def __init__(self, device_ip: str):
         super().__init__()

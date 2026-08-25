@@ -54,14 +54,11 @@ class LiveLogcatDialog(QDialog):
         self._owner_cleanup_requested = False
         self._owner_cleanup_completed = False
         self._logcat_stopping = False
+        self._package_filter_revision = 0
         self._reflowing_filters = False
         self._line_flush_timer = QTimer(self)
         self._line_flush_timer.setSingleShot(True)
         self._line_flush_timer.timeout.connect(self._flush_pending_lines)
-        self._filter_rebuild_timer = QTimer(self)
-        self._filter_rebuild_timer.setSingleShot(True)
-        self._filter_rebuild_timer.setInterval(120)
-        self._filter_rebuild_timer.timeout.connect(self._rebuild)
         self._filter_reflow_timer = QTimer(self)
         self._filter_reflow_timer.setSingleShot(True)
         self._filter_reflow_timer.timeout.connect(self._reflow_filters)
@@ -140,23 +137,28 @@ class LiveLogcatDialog(QDialog):
     def _min_level(self):
         return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._min_level()
 
-    def _passes(self, level: str, tag_part: str) -> bool:
+    def _passes(self, level: str) -> bool:
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
-        )._passes(level, tag_part)
+        )._passes(level)
 
     def _rebuild(self):
         return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._rebuild()
-
-    def _schedule_filter_rebuild(self, _text: str = ""):
-        return (
-            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
-        )._schedule_filter_rebuild(_text)
 
     def _update_content_actions(self, has_visible_content: bool | None = None):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._update_content_actions(has_visible_content)
+
+    def _submit_package_filter(self):
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._submit_package_filter()
+
+    def _apply_package_filter(self, package: str):
+        return (
+            getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
+        )._apply_package_filter(package)
 
     def _fetch_current_pkg(self):
         return (
@@ -213,10 +215,6 @@ class LiveLogcatDialog(QDialog):
         return (
             getattr(self, "_stream_controller", None) or LiveLogcatStream(self)
         )._on_pkg_worker_finished_signal()
-
-    @staticmethod
-    def _extract_tag(line: str) -> str:
-        return LiveLogcatStream._extract_tag(line)
 
     def _on_line(self, text: str, level: str, pid: int = 0):
         return (getattr(self, "_stream_controller", None) or LiveLogcatStream(self))._on_line(
@@ -360,7 +358,6 @@ class LiveLogcatDialog(QDialog):
         self._closing = True
         should_stop_owner = False
         self._line_flush_timer.stop()
-        self._filter_rebuild_timer.stop()
         self._worker_release_timer.stop()
         self._pending_visible_lines.clear()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)

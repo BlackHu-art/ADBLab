@@ -159,6 +159,64 @@ def build_main_frame(*, screen_adapter=None, settings=None, mouse_buttons_provid
         )
 
 
+def test_shutdown_flush_captures_visible_window_size_and_theme_without_resize_transaction(
+    qt_application,
+):
+    """关闭时兜底保存最终 UI 状态，避免原生缩放回调缺失后丢失用户设置。"""
+
+    settings = _MainFrameSettings()
+    adapter = _FakeScreenAdapter(_FakeScreen("large", QSize(1600, 1000)))
+    frame = build_main_frame(screen_adapter=adapter, settings=settings)
+    frame.show()
+    qt_application.processEvents()
+    frame.resize(1000, 600)
+    qt_application.processEvents()
+    settings.writes.clear()
+
+    try:
+        with (
+            patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
+            patch.object(BaseStyles, "current_theme", return_value="Dark"),
+        ):
+            frame._flush_pending_layout_state()
+
+        assert {
+            "window_width": 1000,
+            "window_height": 600,
+            "theme": "Dark",
+        } in settings.writes
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_shutdown_flush_preserves_preferred_size_when_screen_is_restricted(qt_application):
+    """小屏幕只限制本次显示尺寸，关闭时不得覆盖用户保存的大屏首选尺寸。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update({"window_width": 1400, "window_height": 800})
+    adapter = _FakeScreenAdapter(_FakeScreen("small", QSize(720, 420)))
+    frame = build_main_frame(screen_adapter=adapter, settings=settings)
+    frame.show()
+    qt_application.processEvents()
+    settings.writes.clear()
+
+    try:
+        with patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)):
+            frame._flush_pending_layout_state()
+
+        assert frame.size() == QSize(720, 420)
+        assert any(
+            values.get("window_width") == 1400 and values.get("window_height") == 800
+            for values in settings.writes
+        )
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
 def begin_native_user_resize(frame, qt_application):
     handle = Mock()
     handle.startSystemResize.return_value = True

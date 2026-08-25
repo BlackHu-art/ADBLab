@@ -10,6 +10,7 @@ from math import ceil
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QPlainTextEdit
 
+from gui.dialogs.lifecycle import safe_disconnect
 from gui.dialogs.live_logcat_worker import (
     LEVEL_ORDER,
     CurrentPackageWorker,
@@ -18,6 +19,7 @@ from gui.dialogs.live_logcat_worker import (
     LogcatTerminationKind,
     LogcatWorker,
 )
+from utils.adb_values import normalize_android_package
 
 
 class LiveLogcatStream:
@@ -32,12 +34,9 @@ class LiveLogcatStream:
         code = self._frame.level_combo.currentData()
         return LEVEL_ORDER.get(code, -1) if code else None
 
-    def _passes(self, level: str, tag_part: str) -> bool:
+    def _passes(self, level: str) -> bool:
         minimum = self._min_level()
         if minimum is not None and LEVEL_ORDER.get(level, -1) < minimum:
-            return False
-        tag_filter = self._frame.tag_input.text().strip()
-        if tag_filter and tag_filter.lower() not in tag_part.lower():
             return False
         return True
 
@@ -45,15 +44,12 @@ class LiveLogcatStream:
         self._frame._line_flush_timer.stop()
         self._frame._pending_visible_lines.clear()
         self._frame.output.clear()
-        visible = [t for t, lv, tg, _ in self._frame.entries if self._passes(lv, tg)]
+        visible = [
+            text for text, level, _pid in self._frame.entries if self._passes(level)
+        ]
         if visible:
             self._frame.output.setPlainText("\n".join(visible) + "\n")
         self._update_content_actions(bool(visible))
-
-    def _schedule_filter_rebuild(self, _text: str = ""):
-        """合并连续输入，避免每个按键都完整重建日志文档。"""
-
-        self._frame._filter_rebuild_timer.start()
 
     def _update_content_actions(self, has_visible_content: bool | None = None):
         """按已知可见状态更新动作，避免复制整份日志文档。"""
@@ -62,6 +58,57 @@ class LiveLogcatStream:
             has_visible_content = not self._frame.output.document().isEmpty()
         self._frame.clear_btn.setEnabled(bool(self._frame.entries) or has_visible_content)
         self._frame.export_btn.setEnabled(has_visible_content)
+
+    def _submit_package_filter(self):
+        """只在用户按 Enter 后提交输入框内容，并使手动输入覆盖未完成的自动查询。"""
+
+        self._frame._package_filter_revision += 1
+        package_worker = self._frame._pkg_worker
+        if package_worker is not None and package_worker.isRunning():
+            package_worker.requestInterruption()
+            # package_ready 可能已经进入 GUI 事件队列；主动断开可防止晚到结果覆盖手动输入。
+            safe_disconnect(package_worker.package_ready, self._frame._on_current_pkg)
+        self._apply_package_filter(self._frame.pkg_input.text())
+
+    def _apply_package_filter(self, package: str):
+        """把已提交的包名应用到当前 worker，或记录为下次启动配置。"""
+
+        if self._frame._closing:
+            return
+        requested = package.strip()
+        if requested:
+            try:
+                requested = normalize_android_package(requested)
+            except ValueError:
+                self._frame.status_bar.showMessage("Invalid package name for logcat filter")
+                return
+        if self._frame._logcat_stopping:
+            message = (
+                f"Package: {requested} (applies on next start)"
+                if requested
+                else "All device logs will be shown on next start"
+            )
+            self._frame.status_bar.showMessage(message)
+            return
+        worker = self._frame.worker
+        if worker is not None and worker.is_active():
+            if worker.update_package(requested):
+                # 旧代次尚未落屏的内容不能越过 Enter 提交形成的过滤边界。
+                self._frame._line_flush_timer.stop()
+                self._frame._pending_visible_lines.clear()
+                message = (
+                    f"Switching package filter: {requested}"
+                    if requested
+                    else "Showing all device logs"
+                )
+                self._frame.status_bar.showMessage(message)
+            return
+        message = (
+            f"Package filter ready: {requested}"
+            if requested
+            else "All device logs will be shown"
+        )
+        self._frame.status_bar.showMessage(message)
 
     # ── 操作 ────────────────────────────────────────────────────────────
 
@@ -73,6 +120,7 @@ class LiveLogcatStream:
         self._frame.status_bar.showMessage("Fetching current package...")
         self._frame.btn_get_pkg.setEnabled(False)
         worker = CurrentPackageWorker(self._frame.device_ip)
+        worker._package_filter_revision = self._frame._package_filter_revision
         worker.package_ready.connect(self._frame._on_current_pkg)
         worker.status_changed.connect(self._frame._on_status)
         finished_handler = self._frame._on_pkg_worker_finished_signal
@@ -110,8 +158,7 @@ class LiveLogcatStream:
         self._frame.output.clear()
         self._update_content_actions(False)
         pkg = self._frame.pkg_input.text().strip()
-        tag = self._frame.tag_input.text().strip()
-        worker = _live_logcat.LogcatWorker(self._frame.device_ip, package=pkg, tag=tag)
+        worker = _live_logcat.LogcatWorker(self._frame.device_ip, package=pkg)
         task_id = f"live-logcat-{uuid.uuid4()}"
         lines_handler = self._frame._on_lines_signal
         dropped_handler = self._frame._on_dropped_signal
@@ -250,24 +297,13 @@ class LiveLogcatStream:
         if worker is not None:
             self._frame._on_pkg_worker_finished(worker)
 
-    @staticmethod
-    def _extract_tag(line: str) -> str:
-        """从 threadtime 格式日志中提取 TAG 字段。"""
-        parts = line.split(None, 6)
-        if len(parts) >= 6:
-            tag_raw = parts[5]
-            if tag_raw.endswith(":"):
-                return tag_raw[:-1]
-        return ""
-
     def _on_line(self, text: str, level: str, pid: int = 0):
         if self._frame._closing:
             return
-        tag_part = self._extract_tag(text)
         if not isinstance(self._frame.entries, deque):
             self._frame.entries = deque(self._frame.entries, maxlen=self._frame.MAX_BUFFER)
-        self._frame.entries.append((text, level, tag_part, pid))
-        if self._passes(level, tag_part):
+        self._frame.entries.append((text, level, pid))
+        if self._passes(level):
             self._frame._pending_visible_lines.append(text)
             self._schedule_line_flush()
         self._frame.clear_btn.setEnabled(True)

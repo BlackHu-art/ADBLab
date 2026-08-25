@@ -50,6 +50,8 @@ class LiveLogcatForm:
         self._frame.pkg_input.setPlaceholderText("com.example.app")
         self._frame._package_label.setBuddy(self._frame.pkg_input)
         self._frame.pkg_input.setAccessibleName("Package filter")
+        self._frame.pkg_input.setToolTip("Enter a package name, then press Enter to apply")
+        self._frame.pkg_input.returnPressed.connect(self._frame._submit_package_filter)
         self._frame.btn_get_pkg = QPushButton("Current Package")
         self._frame.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
         self._frame.btn_get_pkg.setProperty("iconName", "target.svg")
@@ -57,20 +59,12 @@ class LiveLogcatForm:
         self._frame.btn_get_pkg.setToolTip("Fetch current foreground app package")
         self._frame.btn_get_pkg.setMinimumWidth(120)
         self._frame.btn_get_pkg.clicked.connect(self._frame._fetch_current_pkg)
-        self._frame._tag_label = QLabel("Tag:")
-        self._frame.tag_input = QLineEdit()
-        self._frame.tag_input.setPlaceholderText("ActivityManager")
-        self._frame.tag_input.textChanged.connect(self._frame._schedule_filter_rebuild)
-        self._frame._tag_label.setBuddy(self._frame.tag_input)
-        self._frame.tag_input.setAccessibleName("Tag filter")
         self._frame._filter_controls = (
             self._frame._level_label,
             self._frame.level_combo,
             self._frame._package_label,
             self._frame.pkg_input,
             self._frame.btn_get_pkg,
-            self._frame._tag_label,
-            self._frame.tag_input,
         )
         self._reflow_filters()
         layout.addLayout(filters)
@@ -116,6 +110,11 @@ class LiveLogcatForm:
             self._frame.export_btn,
             self._frame.wrap_btn,
         )
+        # QDialog 默认会让 QPushButton 响应 Enter；包名输入框已独占 Enter 提交，
+        # 所有动作按钮必须关闭默认按钮语义，避免随后再次触发 Current Package 等操作。
+        for button in (self._frame.btn_get_pkg, *action_buttons):
+            button.setAutoDefault(False)
+            button.setDefault(False)
         for button in action_buttons:
             btn_row.addWidget(button)
 
@@ -158,16 +157,15 @@ class LiveLogcatForm:
 
         while layout.count():
             layout.takeAt(0)
-        for column in range(7):
+        for column in range(5):
             layout.setColumnStretch(column, 0)
-        for row in range(5):
+        for row in range(4):
             layout.setRowStretch(row, 0)
 
         if wide:
             for column, control in enumerate(controls):
                 layout.addWidget(control, 0, column)
             layout.setColumnStretch(3, 2)
-            layout.setColumnStretch(6, 2)
             self._frame.layout().activate()
             self._frame._reflowing_filters = False
             return
@@ -177,8 +175,6 @@ class LiveLogcatForm:
         layout.addWidget(self._frame._package_label, 2, 0)
         layout.addWidget(self._frame.pkg_input, 2, 1)
         layout.addWidget(self._frame.btn_get_pkg, 3, 0, 1, 2)
-        layout.addWidget(self._frame._tag_label, 4, 0)
-        layout.addWidget(self._frame.tag_input, 4, 1)
         layout.setColumnStretch(1, 1)
         self._frame.layout().activate()
         self._frame._reflowing_filters = False
@@ -203,8 +199,7 @@ class LiveLogcatForm:
         log_font = BS.font_for_role(FontRole.LOG)
         self._frame.setStyleSheet(BS.PANEL_BASE_STYLE())
         self._frame.setFont(ui_font)
-        for field in (self._frame.pkg_input, self._frame.tag_input):
-            field.setFont(mono_font)
+        self._frame.pkg_input.setFont(mono_font)
         fg = BS.color("TEXT_PRIMARY")
         border = BS.color("BORDER_COLOR")
         self._frame.output.setStyleSheet(

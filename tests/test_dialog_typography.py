@@ -86,7 +86,6 @@ def test_secondary_dialogs_use_semantic_font_roles(qt_application):
             details.detail_text,
             files.path_field,
             logcat.pkg_input,
-            logcat.tag_input,
             performance.package_edit,
             performance.exception_edit,
             performance.phone_log_edit,
