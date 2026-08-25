@@ -11,15 +11,17 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QPixmap
+from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtGui import QCloseEvent, QIcon, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QApplication
 
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult
 from core.log_service import LogService
 from gui.dialogs.file_explorer import FileExplorerDialog
+from gui.dialogs.file_explorer_view import _load_image_preview
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
+from gui.dialogs.screenshot_viewer_nav import _load_pixmap
 from gui.panels.log_panel import LogPanel
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
@@ -43,6 +45,60 @@ def test_screenshot_viewer_opens_folder_via_process_runner():
 
     runner.spawn.assert_called_once()
     assert runner.spawn.call_args.args[0][0] == "explorer"
+
+
+def test_file_explorer_image_preview_reuses_qpixmap_cache(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    image_path = tmp_path / "preview.png"
+    pixmap = QPixmap(40, 30)
+    pixmap.fill(Qt.GlobalColor.red)
+    assert pixmap.save(str(image_path))
+
+    QPixmapCache.clear()
+    try:
+        first = _load_image_preview(str(image_path))
+        assert not first.isNull()
+
+        with patch(
+            "gui.dialogs.file_explorer_view.QImageReader",
+            side_effect=AssertionError("cache hit must not decode the image again"),
+        ):
+            cached = _load_image_preview(str(image_path))
+
+        assert cached.cacheKey() == first.cacheKey()
+    finally:
+        QPixmapCache.clear()
+
+
+def test_screenshot_thumbnail_reuses_qpixmap_cache(tmp_path):
+    _app = QApplication.instance() or QApplication([])
+    image_path = tmp_path / "thumbnail.png"
+    pixmap = QPixmap(80, 60)
+    pixmap.fill(Qt.GlobalColor.blue)
+    assert pixmap.save(str(image_path))
+
+    QPixmapCache.clear()
+    try:
+        first = _load_pixmap(
+            str(image_path),
+            kind="thumb",
+            max_size=QSize(20, 20),
+        )
+        assert not first.isNull()
+
+        with patch(
+            "gui.dialogs.screenshot_viewer_nav.QImageReader",
+            side_effect=AssertionError("cache hit must not decode the image again"),
+        ):
+            cached = _load_pixmap(
+                str(image_path),
+                kind="thumb",
+                max_size=QSize(20, 20),
+            )
+
+        assert cached.cacheKey() == first.cacheKey()
+    finally:
+        QPixmapCache.clear()
 
 
 def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
@@ -417,6 +473,19 @@ def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
     )
 
 
+def test_file_explorer_worker_pre_aborted_does_not_run_dangerous_command():
+    worker = ADBWorker("device-1", ["shell", "rm -rf '/sdcard/victim'"])
+    emitted = []
+    worker.result_ready.connect(lambda output, failed: emitted.append((output, failed)))
+    worker.abort()
+
+    with patch("models.file_explorer_worker.CommandRunner.run") as run:
+        worker.run()
+
+    run.assert_not_called()
+    assert emitted == []
+
+
 def test_file_explorer_worker_keeps_result_separate_from_thread_completion(qt_application):
     worker = ADBWorker("device-1", ["shell", "ls", "/sdcard"])
     results = []
@@ -631,6 +700,28 @@ def test_transfer_worker_uses_process_runner_for_streaming_transfer(tmp_path):
     stop.assert_called_once_with(worker._process_key, timeout=0)
     assert progress == ["pulled file"]
     assert finished == [("pulled file", False, "demo.txt")]
+
+
+def test_transfer_worker_pre_aborted_does_not_start_process(tmp_path):
+    worker = TransferWorker(
+        "device-1",
+        ["push", "local.apk", "/sdcard/target.apk"],
+        cwd=str(tmp_path),
+    )
+    progress = []
+    finished = []
+    worker.progress.connect(progress.append)
+    worker.result_ready.connect(
+        lambda message, failed, local: finished.append((message, failed, local))
+    )
+    worker.abort()
+
+    with patch.object(worker._process_runner, "start") as start:
+        worker.run()
+
+    start.assert_not_called()
+    assert progress == []
+    assert finished == []
 
 
 def test_file_explorer_ls_result_prefills_rows_without_insert_loop():

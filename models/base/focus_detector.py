@@ -1,11 +1,23 @@
 """通过多种 Android 系统输出尽力识别设备当前前台应用。"""
 
 import re
+from typing import Protocol
 
-from core.exec import CommandRunner
+from core.exec import CommandResult, CommandRunner
 
 _PACKAGE_RE = re.compile(r"([\w.]+(?:\.[\w.]+)+)/")
 _TOP_ACTIVITY_RE = re.compile(r"topActivity=ComponentInfo\{([\w.]+(?:\.[\w.]+)+)/")
+
+
+class CommandRunnerLike(Protocol):
+    """前台包探测所需的最小命令执行接口。"""
+
+    def run(
+        self,
+        command: list[str],
+        /,
+        timeout: int = 30,
+    ) -> CommandResult: ...
 
 
 def extract_package_name(output: str) -> str:
@@ -34,7 +46,10 @@ def extract_package_name(output: str) -> str:
     return ""
 
 
-def detect_current_package(device_ip: str, runner=CommandRunner) -> dict:
+def detect_current_package(
+    device_ip: str,
+    runner: CommandRunnerLike = CommandRunner,
+) -> dict:
     """依次执行兼容性探测命令，任一命令识别成功即返回前台包名。"""
     commands = [
         ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],

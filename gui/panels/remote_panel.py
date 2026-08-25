@@ -3,7 +3,8 @@
 import os  # noqa: F401  测试通过 remote_panel 命名空间补丁 os.path.isfile。
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import cast
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal
@@ -22,6 +23,122 @@ from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
+
+
+class _RemoteInputShutdown:
+    """在 GUI 线程外按 producer → session 的顺序收口 Remote 输入资源。"""
+
+    def __init__(
+        self,
+        *,
+        executor: ThreadPoolExecutor | None,
+        warmup_threads: tuple[threading.Thread, ...],
+        close_input: Callable[[], object] | None,
+        has_running_future: Callable[[], bool],
+    ) -> None:
+        self._executor = executor
+        self._warmup_threads = warmup_threads
+        self._close_input = close_input
+        self._has_running_future = has_running_future
+        self._lock = threading.Lock()
+        self._run_lock = threading.Lock()
+        self._finished = threading.Event()
+        self._started = False
+        self._thread: threading.Thread | None = None
+        self._error: Exception | None = None
+
+    @property
+    def has_resources(self) -> bool:
+        return (
+            self._executor is not None
+            or bool(self._warmup_threads)
+            or self._close_input is not None
+        )
+
+    def _record_error(self, exc: Exception) -> None:
+        with self._lock:
+            if self._error is None:
+                self._error = exc
+
+    def _warmup_running(self) -> bool:
+        for thread in self._warmup_threads:
+            try:
+                if thread.is_alive():
+                    return True
+            except (AttributeError, RuntimeError):
+                continue
+        return False
+
+    def _producer_running(self) -> bool:
+        return self._has_running_future() or self._warmup_running()
+
+    def _run(self) -> None:
+        with self._run_lock:
+            if self._finished.is_set():
+                return
+            executor = self._executor
+            if executor is not None:
+                try:
+                    executor.shutdown(wait=True, cancel_futures=True)
+                except Exception as exc:
+                    self._record_error(exc)
+            for warmup_thread in self._warmup_threads:
+                if warmup_thread is threading.current_thread():
+                    continue
+                try:
+                    warmup_thread.join()
+                except (AttributeError, RuntimeError) as exc:
+                    self._record_error(exc)
+            close_input = self._close_input
+            if close_input is not None:
+                try:
+                    close_input()
+                except Exception as exc:
+                    self._record_error(exc)
+            self._finished.set()
+
+    def start(self) -> None:
+        """幂等启动后台清理；仅在线程无法启动且没有 producer 时同步兜底。"""
+
+        start_error: Exception | None = None
+        with self._lock:
+            if self._started or self._finished.is_set():
+                return
+            self._started = True
+            try:
+                thread = threading.Thread(
+                    target=self._run,
+                    name="adblab-remote-input-shutdown",
+                    daemon=True,
+                )
+                self._thread = thread
+                thread.start()
+                return
+            except Exception as exc:
+                start_error = exc
+                self._thread = None
+                self._started = False
+
+        # 线程资源耗尽时不能在 GUI 线程等待仍运行的 producer；让 supervisor
+        # 保留 residual。没有 producer 时同步收口，维持故障注入场景的清理保证。
+        if not self._producer_running():
+            self._run()
+            with self._lock:
+                completion_error = self._error
+            if completion_error is not None:
+                raise completion_error
+        assert start_error is not None
+        raise start_error
+
+    def wait(self, timeout: float) -> bool:
+        return self._finished.wait(max(0.0, float(timeout)))
+
+    def is_running(self) -> bool:
+        return not self._finished.is_set()
+
+    def error_type(self) -> str:
+        with self._lock:
+            return type(self._error).__name__ if self._error is not None else ""
 
 
 class ScrcpyLaunchWorker(QThread):
@@ -155,6 +272,12 @@ class RemotePanel(BasePanel):
         self._remote_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="adblab-remote"
         )
+        self._remote_futures: set[Future] = set()
+        self._remote_futures_lock = threading.Lock()
+        self._warmup_threads: set[threading.Thread] = set()
+        self._warmup_threads_lock = threading.Lock()
+        self._remote_input_closing = False
+        self._remote_input_shutdown: _RemoteInputShutdown | None = None
         self._remote_submitted = 0
         self._remote_completed = 0
         self._remote_sent = 0
@@ -270,37 +393,19 @@ class RemotePanel(BasePanel):
             self._stop_launch_worker(wait_ms=0)
         except Exception:
             pass
-        executor = getattr(self, "_remote_executor", None)
-        if executor is not None:
-            self._remote_executor = None
+        input_shutdown = self._remote_input_shutdown_handle()
+        if not getattr(self, "_shutdown_task_registered", False):
             try:
-                executor.shutdown(wait=False, cancel_futures=True)
+                input_shutdown.start()
             except Exception:
+                # direct close 无可用后台线程时不得改为等待仍运行 producer
+                # 的同步阻塞；已注册路径统一由 supervisor 记录失败。
                 pass
-        adb = getattr(self, "_adb", None)
-        if (
-            not getattr(self, "_shutdown_task_registered", False)
-            and adb is not None
-            and hasattr(adb, "close_input_sessions")
-        ):
-            close_input = adb.close_input_sessions
-            try:
-                threading.Thread(
-                    target=close_input,
-                    name="adblab-remote-input-shutdown",
-                    daemon=True,
-                ).start()
-            except Exception:
-                try:
-                    close_input()
-                except Exception:
-                    pass
 
     def register_shutdown_task(self, supervisor, *, owner_id: str, task_id: str) -> bool:
         """在界面断开引用前注册 scrcpy、启动 worker 和输入会话清理任务。"""
         worker = getattr(self, "_launch_worker", None)
-        adb = getattr(self, "_adb", None)
-        close_input = getattr(adb, "close_input_sessions", None)
+        input_shutdown = self._remote_input_shutdown_handle()
         scrcpy_service = getattr(self, "_scrcpy_service", None)
         process_key = getattr(self, "_process_key", "")
         process_terminal = threading.Event()
@@ -321,22 +426,11 @@ class RemotePanel(BasePanel):
                 process_terminal.set()
             return running
 
-        if worker is None and not callable(close_input) and not process_running():
+        if worker is None and not input_shutdown.has_resources and not process_running():
             return False
         self._shutdown_task_registered = True
-        input_finished = threading.Event()
-        input_started = threading.Event()
-        input_error_lock = threading.Lock()
-        input_error_type = [""]
-
-        def record_input_error(exc: Exception) -> None:
-            with input_error_lock:
-                if not input_error_type[0]:
-                    input_error_type[0] = type(exc).__name__
-
         def completion_error_type() -> str:
-            with input_error_lock:
-                return input_error_type[0]
+            return input_shutdown.error_type()
 
         def worker_running() -> bool:
             if worker is None:
@@ -347,7 +441,7 @@ class RemotePanel(BasePanel):
                 return False
 
         def is_running() -> bool:
-            return worker_running() or not input_finished.is_set() or process_running()
+            return worker_running() or input_shutdown.is_running() or process_running()
 
         def request_stop() -> None:
             request_error = None
@@ -368,34 +462,11 @@ class RemotePanel(BasePanel):
                 except Exception as exc:
                     if request_error is None:
                         request_error = exc
-            if callable(close_input) and not input_started.is_set():
-                input_started.set()
-
-                def close_sessions():
-                    try:
-                        assert close_input is not None  # 上游 callable 守卫收窄
-                        close_input()
-                    except Exception as exc:
-                        record_input_error(exc)
-                        return exc
-                    finally:
-                        input_finished.set()
-                    return None
-
-                try:
-                    threading.Thread(
-                        target=close_sessions,
-                        name="adblab-remote-input-shutdown",
-                        daemon=True,
-                    ).start()
-                except Exception as exc:
-                    close_error = close_sessions()
-                    if close_error is not None:
-                        request_error = close_error
-                    elif request_error is None:
-                        request_error = exc
-            elif not callable(close_input):
-                input_finished.set()
+            try:
+                input_shutdown.start()
+            except Exception as exc:
+                if request_error is None:
+                    request_error = exc
             if request_error is not None:
                 raise request_error
 
@@ -408,6 +479,8 @@ class RemotePanel(BasePanel):
                 if worker_running():
                     assert worker is not None  # worker_running() 已排除 None
                     worker.wait(max(0, min(50, int(remaining * 1000))))
+                elif input_shutdown.is_running():
+                    input_shutdown.wait(min(remaining, 0.05))
                 else:
                     time.sleep(min(remaining, 0.05))
             return True
@@ -432,6 +505,66 @@ class RemotePanel(BasePanel):
             error_type=completion_error_type,
         )
         return True
+
+    def _remote_future_lock(self) -> threading.Lock:
+        lock = getattr(self, "_remote_futures_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._remote_futures_lock = lock
+        return lock
+
+    def _track_remote_future(self, future: Future) -> None:
+        """持有 Remote future 到完成，供关闭故障注入和诊断读取。"""
+
+        lock = self._remote_future_lock()
+        futures = getattr(self, "_remote_futures", None)
+        if futures is None:
+            futures = set()
+            self._remote_futures = futures
+        with lock:
+            futures.add(future)
+
+        def release(completed: Future) -> None:
+            with lock:
+                futures.discard(completed)
+
+        future.add_done_callback(release)
+
+    def _has_running_remote_future(self) -> bool:
+        lock = self._remote_future_lock()
+        futures = getattr(self, "_remote_futures", set())
+        with lock:
+            return any(not future.done() for future in futures)
+
+    def _remote_input_shutdown_handle(self) -> _RemoteInputShutdown:
+        """捕获一次 Remote producer 集合，并关闭后续 executor 准入。"""
+
+        lock = self._shutdown_lifecycle_lock()
+        with lock:
+            handle = getattr(self, "_remote_input_shutdown", None)
+            if handle is not None:
+                return handle
+            # 注册 shutdown task 时主面板尚未调用 shutdown()；必须先单独关闭
+            # Remote 输入准入，再摘除 executor，避免晚到输入走同步降级路径。
+            self._remote_input_closing = True
+            executor = getattr(self, "_remote_executor", None)
+            self._remote_executor = None
+            warmup_lock = getattr(self, "_warmup_threads_lock", None)
+            if warmup_lock is None:
+                warmup_lock = threading.Lock()
+                self._warmup_threads_lock = warmup_lock
+            with warmup_lock:
+                warmup_threads = tuple(getattr(self, "_warmup_threads", ()))
+            adb = getattr(self, "_adb", None)
+            close_input = getattr(adb, "close_input_sessions", None)
+            handle = _RemoteInputShutdown(
+                executor=executor,
+                warmup_threads=warmup_threads,
+                close_input=close_input if callable(close_input) else None,
+                has_running_future=self._has_running_remote_future,
+            )
+            self._remote_input_shutdown = handle
+            return handle
 
     def _shutdown_lifecycle_lock(self):
         """兼容轻量测试实例，并为直接关闭与 supervisor 提供同一把锁。"""
@@ -785,6 +918,11 @@ class RemotePanel(BasePanel):
         return (
             getattr(self, "_input_controller", None) or RemotePanelInput(self)
         )._submit_remote_input(task)
+
+    def _start_warm_remote_input_session(self):
+        return (
+            getattr(self, "_input_controller", None) or RemotePanelInput(self)
+        )._start_warm_remote_input_session()
 
     def _mark_remote_submitted(self):
         return (

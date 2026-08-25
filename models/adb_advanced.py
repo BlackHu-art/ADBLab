@@ -26,6 +26,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     def __init__(self):
         super().__init__()
         self._rec_procs = ProcessRunner()
+        self._record_lifecycle_lock = threading.Lock()
         self._adb_bridge = None
         self._adb_bridge_lock = threading.Lock()
 
@@ -61,11 +62,20 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             if width and height:
                 cmd.extend(["--size", f"{width}x{height}"])
             cmd.append(remote_path)
-            proc = self._rec_procs.start(
-                f"record_{device_ip}",
-                cmd,
-                stderr=subprocess.DEVNULL,
-            )
+            with self._record_lifecycle_lock:
+                if self.is_shutting_down():
+                    return {
+                        "success": False,
+                        "cancelled": True,
+                        "device_ip": device_ip,
+                        "error": "Model is shutting down",
+                        "batch_id": batch_id,
+                    }
+                proc = self._rec_procs.start(
+                    f"record_{device_ip}",
+                    cmd,
+                    stderr=subprocess.DEVNULL,
+                )
             time.sleep(0.3)
             if proc.poll() is not None:
                 return {
@@ -227,7 +237,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     def shutdown(self):
         """关闭高级功能持有的长生命周期进程，防止主窗口退出后残留。"""
-        self._rec_procs.stop_all()
+        self.begin_shutdown()
+        with self._record_lifecycle_lock:
+            self._rec_procs.stop_all()
         self.close_input_sessions()
 
     # 性能诊断

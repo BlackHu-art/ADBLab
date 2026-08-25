@@ -843,7 +843,7 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
     ("width", "height", "available", "expected"),
     [
         (1120, 640, QSize(1920, 1040), QSize(1120, 640)),
-        ("bad", None, QSize(1920, 1040), QSize(1120, 640)),
+        ("bad", None, QSize(1920, 1040), QSize(1250, 700)),
         (-1, 200, QSize(1920, 1040), QSize(860, 500)),
         (4000, 3000, QSize(1366, 728), QSize(1366, 728)),
     ],
@@ -1040,7 +1040,7 @@ def test_restore_default_window_size_leaves_maximized_state():
     MainFrame.restore_default_window_size(frame)
 
     frame.showNormal.assert_called_once_with()
-    frame.apply_window_size.assert_called_once_with(1120, 640)
+    frame.apply_window_size.assert_called_once_with(1250, 700)
 
 
 def test_settings_dialog_opens_as_reusable_non_modal_window():

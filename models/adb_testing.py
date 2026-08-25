@@ -32,13 +32,24 @@ class ADBTesting(ADBModelCore):
         self._abort_lock = threading.Lock()
         self._abort_condition = threading.Condition(self._abort_lock)
         self._procs = ProcessRunner()
+        self._process_lifecycle_lock = threading.Lock()
 
     def shutdown(self):
         """终止 Monkey/logcat 等测试诊断进程，供应用退出时统一调用。"""
+        self.begin_shutdown()
         with self._abort_condition:
             self._aborted_devices.add("*")
             self._abort_condition.notify_all()
-        self._procs.stop_all()
+        with self._process_lifecycle_lock:
+            self._procs.stop_all()
+
+    def _start_testing_process(self, key: str, cmd: list[str], *, stdout=None):
+        """按 model 终态与 shutdown 原子排序启动测试长进程。"""
+
+        with self._process_lifecycle_lock:
+            if self.is_shutting_down():
+                raise RuntimeError("Model is shutting down")
+            return self._procs.start(key, cmd, stdout=stdout)
 
     def _wait_for_monkey_abort(self, device_ip: str, timeout: float) -> bool:
         """可中断等待监控间隔，并在停止请求到达时立即唤醒。"""
@@ -224,7 +235,7 @@ class ADBTesting(ADBModelCore):
 
             log(f"Starting logcat collection -> {logcat_log_path}")
             logcat_fh = open(logcat_log_path, "w", encoding="utf-8")
-            self._procs.start(
+            self._start_testing_process(
                 f"{device_ip}_logcat",
                 ["adb", "-s", device_ip, "logcat", "-v", "time"],
                 stdout=logcat_fh,
@@ -275,7 +286,7 @@ class ADBTesting(ADBModelCore):
             log(f"Monkey: {' '.join(monkey_cmd)}")
 
             monkey_fh = open(monkey_log_path, "w", encoding="utf-8")
-            monkey_proc = self._procs.start(
+            monkey_proc = self._start_testing_process(
                 f"{device_ip}_monkey",
                 monkey_cmd,
                 stdout=monkey_fh,
@@ -401,7 +412,7 @@ class ADBTesting(ADBModelCore):
                                     restart_cmd[i + 1] = "2"
 
                             log(f"Restart monkey: {' '.join(restart_cmd)}")
-                            monkey_proc = self._procs.start(
+                            monkey_proc = self._start_testing_process(
                                 f"{device_ip}_monkey",
                                 restart_cmd,
                                 stdout=monkey_fh,

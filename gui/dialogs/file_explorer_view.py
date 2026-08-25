@@ -47,8 +47,8 @@ def _load_image_preview(path: str) -> QPixmap:
     except OSError:
         mtime = 0
     key = f"adblab:explorer:image:{path}:{mtime}"
-    cached = QPixmapCache.find(key)
-    if cached is not None and not cached.isNull():
+    cached = QPixmap()
+    if QPixmapCache.find(key, cached) and not cached.isNull():
         return cached
     reader = QImageReader(path)
     native = reader.size()

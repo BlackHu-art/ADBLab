@@ -29,6 +29,8 @@ class ADBWorker(QThread):
 
     def run(self):
         """执行一次短命令，并将失败状态作为信号参数传播。"""
+        if self._aborted.is_set() or self.isInterruptionRequested():
+            return
         result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=self.timeout)
         if self._aborted.is_set():
             return
@@ -62,6 +64,8 @@ class TransferWorker(QThread):
 
     def run(self):
         """启动传输进程；无论成功、失败或异常都取消进程注册。"""
+        if self._aborted.is_set() or self.isInterruptionRequested():
+            return
         try:
             cmd = ["adb", "-s", self.device_ip] + self.args
             self._proc = self._process_runner.start(

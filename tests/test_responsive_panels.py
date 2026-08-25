@@ -1838,7 +1838,7 @@ def test_queued_remote_reflow_unregisters_bindings_and_keeps_shutdown_once(
         worker.requestInterruption.assert_called_once_with()
         worker.wait.assert_called_once_with(0)
         worker.deleteLater.assert_called_once_with()
-        executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
         assert panel._responsive_coordinator.target_count == count_before - len(bindings)
         assert all(binding.widgets() == () for binding in bindings)
     finally:
@@ -1996,7 +1996,7 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
         )
         assert worker.delete_calls == 1
         assert worker not in RemotePanel._orphaned_launch_workers
-        executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+        executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
         assert len(adb_close_calls) == 1
         assert remote._process is None
         assert remote._launch_worker is None

@@ -8,7 +8,6 @@ from datetime import datetime
 from math import ceil
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QFileDialog, QMessageBox, QPlainTextEdit
 
 from gui.dialogs.live_logcat_worker import (
@@ -67,6 +66,8 @@ class LiveLogcatStream:
     # ── 操作 ────────────────────────────────────────────────────────────
 
     def _fetch_current_pkg(self):
+        if self._frame._closing or self._frame._logcat_stopping:
+            return
         if self._frame._pkg_worker and self._frame._pkg_worker.isRunning():
             return
         self._frame.status_bar.showMessage("Fetching current package...")
@@ -275,6 +276,8 @@ class LiveLogcatStream:
         try:
             if self._frame._closing or self._frame.worker is not worker:
                 return
+            if batch.generation != worker.filter_generation:
+                return
             if batch.dropped_before:
                 self._frame.status_bar.showMessage(
                     f"Logcat running; {batch.dropped_before} lines dropped under load"
@@ -298,9 +301,13 @@ class LiveLogcatStream:
         lines = self._frame._pending_visible_lines
         self._frame._pending_visible_lines = deque(maxlen=self._frame.MAX_BUFFER)
         # 高频 logcat 输出合并成一次 QTextDocument 更新，Stop/过滤按钮会更容易抢到事件循环。
-        self._frame.output.appendPlainText("\n".join(lines))
-        self._frame.output.moveCursor(QTextCursor.MoveOperation.End)
-        self._frame.output.ensureCursorVisible()
+        output = self._frame.output
+        horizontal_scroll = output.horizontalScrollBar()
+        horizontal_position = horizontal_scroll.value()
+        output.appendPlainText("\n".join(lines))
+        vertical_scroll = output.verticalScrollBar()
+        vertical_scroll.setValue(vertical_scroll.maximum())
+        horizontal_scroll.setValue(horizontal_position)
         self._update_content_actions(True)
 
     def _on_status(self, msg: str):

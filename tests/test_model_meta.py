@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
 
+from gui.dialogs import live_logcat_form
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.styles import BaseStyles, theme
 from main import windows_app_user_model_id
@@ -183,4 +184,107 @@ def test_live_logcat_batches_visible_line_appends():
         ]
         assert len(dialog.entries) == 2
     finally:
+        dialog.close()
+
+
+def test_live_logcat_current_package_updates_the_running_filter_generation():
+    _app = QApplication.instance() or QApplication([])
+    dialog = LiveLogcatDialog(device_ip="device-1")
+    worker = Mock()
+    worker.is_active.return_value = True
+    dialog.worker = worker
+
+    try:
+        dialog._on_current_pkg("com.example.current")
+
+        assert dialog.pkg_input.text() == "com.example.current"
+        worker.update_package.assert_called_once_with("com.example.current")
+    finally:
+        dialog.worker = None
+        dialog.close()
+
+
+def test_live_logcat_stopping_rejects_new_or_late_package_switches():
+    _app = QApplication.instance() or QApplication([])
+    dialog = LiveLogcatDialog(device_ip="device-1")
+    worker = Mock()
+    worker.is_active.return_value = True
+    dialog.worker = worker
+
+    try:
+        dialog._set_running_actions(True, stopping=True)
+        assert not dialog.btn_get_pkg.isEnabled()
+
+        with patch("gui.dialogs.live_logcat_stream.CurrentPackageWorker") as package_worker:
+            dialog._fetch_current_pkg()
+        package_worker.assert_not_called()
+
+        dialog._on_current_pkg("com.example.next")
+        assert dialog.pkg_input.text() == "com.example.next"
+        worker.update_package.assert_not_called()
+    finally:
+        dialog.worker = None
+        dialog.close()
+
+
+def test_live_logcat_no_wrap_flush_preserves_horizontal_position_and_follows_tail():
+    app = QApplication.instance() or QApplication([])
+    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog.show()
+    app.processEvents()
+
+    try:
+        dialog.wrap_btn.setChecked(False)
+        dialog._toggle_wrap()
+        long_line = "0123456789" * 120
+        dialog.output.setPlainText("\n".join(f"{index:03d} {long_line}" for index in range(100)))
+        app.processEvents()
+        horizontal = dialog.output.horizontalScrollBar()
+        vertical = dialog.output.verticalScrollBar()
+        assert horizontal.maximum() > 3
+        preserved_position = horizontal.maximum() // 3
+        horizontal.setValue(preserved_position)
+        vertical.setValue(vertical.maximum())
+
+        dialog._on_line(
+            f"08-25 12:00:00.000 111 111 I Demo: {long_line}",
+            "I",
+            111,
+        )
+        dialog._line_flush_timer.stop()
+        dialog._flush_pending_lines()
+        app.processEvents()
+
+        assert horizontal.value() == preserved_position
+        assert vertical.value() == vertical.maximum()
+    finally:
+        dialog.close()
+
+
+def test_live_logcat_theme_refresh_explicitly_rebinds_action_icons():
+    _app = QApplication.instance() or QApplication([])
+    dialog = LiveLogcatDialog(device_ip="device-1")
+    current_theme = BaseStyles.current_theme()
+    next_theme = "Dark" if current_theme != "Dark" else "Light"
+
+    try:
+        with patch.object(
+            live_logcat_form,
+            "get_themed_icon",
+            wraps=live_logcat_form.get_themed_icon,
+        ) as load_icon:
+            BaseStyles.switch_theme(next_theme)
+
+        rebound = {call.args[0] for call in load_icon.call_args_list}
+        assert {
+            "scroll.svg",
+            "target.svg",
+            "play.svg",
+            "stop-circle.svg",
+            "broom.svg",
+            "file-arrow-down.svg",
+            "arrows-left-right.svg",
+        } <= rebound
+    finally:
+        BaseStyles.switch_theme(current_theme)
         dialog.close()

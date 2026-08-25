@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-21
+last_verified: 2026-08-25
 related: [MODULE_MAP.md, DATA_FLOW.md]
 ---
 
@@ -108,7 +108,7 @@ sequenceDiagram
 | 触发条件 | 用户在 Apps 面板或 App Manager 选择安装、卸载、启停、清数据、权限、备份/恢复等操作 |
 | 前置条件 | 已选择设备；包名/APK/备份文件存在且相关系统工具可用 |
 | 主流程 | 危险动作不再弹窗确认（2026-08-19 全局移除），直接走 SidePanel signal → ADBController → ADBApp/Advanced/System model；复杂列表/详情/备份走 AppManagerWorker QThread → ADB → signal 更新对话框 |
-| 异常流程 | 目标或参数校验失败时不调用 Controller/worker；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
+| 异常流程 | 目标或参数校验失败时不调用 Controller/worker；AppManagerWorker 在执行入口发现已 abort/interruption 时不再分派操作；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
 | 涉及模块 | `gui/panels/app_panel.py`、`gui/dialogs/app_manager.py`、`controllers/_app.py`、`models/adb_app.py`、`models/app_manager_worker.py` |
 | 涉及数据 | 包名、APK 路径、权限、应用详情、预设 JSON、备份 ZIP |
 | 代码位置 | `ADBAppMixin`、`ADBApp`、`AppManagerWorker.run` 及 `_backup_app/_restore_apps/_modify_permission` 路径 |
@@ -165,6 +165,12 @@ Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次�
 录屏批次已接入 batch id 与 `record_target_finished` 终态信号，原 `_record_info`/
 `_record_stop_requests` 共享字典已收敛到线程安全的 `ScreenRecordUseCase`，未并入 OperationManager。
 
+LiveLogcat 启动单一 `threadtime` 流；未指定包名时显示全设备日志，指定包名后 Worker 周期执行
+`pidof` 获取该包全部进程，并只把匹配 PID 的日志送入界面。包未运行或 PID 探测失败时保持
+fail-closed 并后台重试，不退化为展示其他应用日志；运行中再次获取前台包名会递增过滤 generation、
+清空旧 PID 并立即切换目标。阻塞 stdout 由 Worker 所属 reader 读取，协调循环通过超时队列发送
+稀疏尾批；停止时 Logcat 进程、reader 和 PID 刷新线程一并回收。
+
 ## 6. 设备文件浏览与传输
 
 | 项目 | 内容 |
@@ -172,7 +178,7 @@ Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次�
 | 触发条件 | 用户打开 File Explorer，浏览目录或执行 pull/push/edit/copy/move/delete/chmod/install/execute |
 | 前置条件 | 已选择设备；路径和文件名可被服务层接受；本地目标目录可写 |
 | 主流程 | Dialog 构造规范化设备路径 → `services.file_explorer` 模块级纯函数安全引用/构造命令 → 短操作由 `ADBWorker`/CommandRunner 执行，传输由 `TransferWorker`/ProcessRunner 执行 → 成功后刷新列表 |
-| 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除操作不再弹窗，但仍校验目标并排除 `..`；关闭对话框时中止 worker；root 包装或设备权限不足会失败 |
+| 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除操作不再弹窗，但仍校验目标并排除 `..`；关闭对话框时中止 worker，尚未进入 `run()` 的短命令或传输不会再启动；root 包装或设备权限不足会失败 |
 | 涉及模块 | `gui/dialogs/file_explorer.py`、`services/file_explorer.py`、`models/file_explorer_worker.py` |
 | 涉及数据 | 目录项、文件内容、临时设备/本地文件、权限模式 |
 | 代码位置 | `services/file_explorer.py` 的 `safe_name/shell_quote/parse_ls_output/*_command`、`FileExplorerDialog._navigate/_pull_file/_delete_selected/_paste_items/closeEvent` |
@@ -206,7 +212,7 @@ sequenceDiagram
 | 触发条件 | 用户在 Remote 页选择设备和 scrcpy 参数并启动 |
 | 前置条件 | scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
 | 主流程 | RemotePanel 将启动选择绑定为 `_active_device` → 创建 launch worker → ScrcpyService 检查版本/设备/编码器并生成 LaunchPlan → ProcessRunner 启动 scrcpy → stderr/FPS reader 和 watchdog 更新状态 → 输入只向活动会话设备发送 |
-| 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭页签停止 scrcpy、worker、executor 和 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
+| 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭页签先关闭输入准入，再在后台等待 executor 和全部 warmup producer，最后关闭 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
 | 涉及模块 | `gui/panels/remote_panel.py`、`services/remote/*`、`core/adb_bridge.py` |
 | 涉及数据 | `ScrcpyConfig`、`PreflightResult`、`ScrcpyLaunchPlan`、设备尺寸缓存、FPS 文本 |
 | 代码位置 | `ScrcpyService.build_launch_plan/start/stop`、`RemoteControlService.perform_action`、`RemotePanel.shutdown` |
@@ -269,8 +275,7 @@ Settings 作为非模态独立窗口打开。用户关闭任一非模态二级�
 应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
 DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
 
-MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸和分栏状态，再停止扫描、关闭对话框、shutdown 已加载面板、停止 Controller 的
-testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。
+MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸和分栏状态，再停止扫描、关闭对话框、shutdown 已加载面板；Controller 收口时先永久关闭四个 model 的异步命令准入，再停止 testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。已排队但尚未开始的方法体返回取消结果；录屏与 Monkey/logcat 的长进程启动和 stop-all 使用各自同一生命周期锁排序，避免清理快照之后再启动新进程。
 LiveLogcat 对话框已将 worker/process 注册到 MainFrame 注入的 TaskSupervisor：Stop 只广播
 后台清理；运行中关闭窗口时先隐藏并断开数据界面信号，保留 `finished` 槽作为线程屏障。
 `owner_stopped` 仅表示停止流程已返回，对话框还会复核工作对象与 owner residual；只有两者

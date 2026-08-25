@@ -30,11 +30,15 @@ py -3.11 -m venv .venv
 `requirements-dev.txt` 再增加测试、lint、类型检查和 pre-commit 工具。开发环境统一使用根目录
 `.venv`，不要直接向系统 Python 安装项目依赖。
 
-常用验证命令：
+日常修复按 [增量验证策略](docs/guides/TESTING_GUIDE.md#增量验证策略) 运行直接和受影响模块测试。
+以下完整门禁仅用于发布验收、CI、用户明确要求或影响范围无法可靠界定的改动：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pyright
 .\.venv\Scripts\python.exe main.py --self-check packaging
+git diff --check
 ```
 
 ---
@@ -266,14 +270,18 @@ ADBLab/
 - `tests/test_file_explorer_service.py`：文件浏览器路径、quoting、`ls` 解析、权限模式。
 - MobilePerf/Performance 入口、置顶切换、Monkey/Remote 字体主题刷新等 UI 行为集中在 `tests/test_model_*.py` 中做轻量回归。
 
-建议改动后至少执行：
+日常改动先选择直接测试和受影响模块测试，再检查修改文件；不要默认运行 `compileall`、全量
+pytest 或 packaging self-check。例如：
 
 ```powershell
-.\.venv\Scripts\python.exe -m compileall -q main.py utils models mobileperf gui controllers core
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe main.py --self-check packaging
+.\.venv\Scripts\python.exe -m pytest -q tests/test_affected_module.py -k "affected_behavior"
+.\.venv\Scripts\python.exe -m ruff check path/to/changed_file.py tests/test_affected_module.py
 git diff --check
 ```
+
+完整测试、Pyright、packaging self-check 和 PyInstaller 的触发条件见
+[TESTING_GUIDE](docs/guides/TESTING_GUIDE.md#增量验证策略) 与
+[BUILD_AND_RUN](docs/guides/BUILD_AND_RUN.md#测试与检查)。
 
 打包验证：
 
@@ -316,7 +324,7 @@ dev 分支提交都不修改版本号。默认只递增补丁版本；主版本�
 
 GitHub Actions 构建流程：
 
-- Windows 安装开发依赖后依次运行 Ruff、`pytest -m "not ui"` 快速子集和完整 pytest；
+- Windows 安装开发依赖后依次运行 Ruff、Pyright、`pytest -m "not ui"` 快速子集和完整 pytest；
   macOS/Linux 只运行源码模式 packaging self-check。
 - Windows 使用 onedir 产物并打包成 zip，避免 onefile 临时目录被 adb/scrcpy 长进程锁住。
 - PyInstaller 显式收集 `mobileperf` 子模块和资源。

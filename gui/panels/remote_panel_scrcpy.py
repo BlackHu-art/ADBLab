@@ -97,7 +97,7 @@ class RemotePanelScrcpy:
             self._frame._set_running(True)
             self._frame._update_status("Running", None)
             threading.Thread(target=self._frame._focus_scrcpy_window, daemon=True).start()
-            threading.Thread(target=self._frame._warm_remote_input_session, daemon=True).start()
+            self._frame._start_warm_remote_input_session()
             threading.Thread(target=self._frame._read_stderr, daemon=True).start()
             self._frame._watchdog.start(500)
         except Exception as exc:

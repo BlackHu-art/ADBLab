@@ -102,6 +102,22 @@ def test_app_manager_simple_command_failure_never_reports_success(method_name, a
     )
 
 
+def test_app_manager_pre_aborted_worker_does_not_run_dangerous_command():
+    worker = AppManagerWorker("device-1", "clear_app", package_name="com.example.app")
+    logs = []
+    completed = []
+    worker.log_message.connect(logs.append)
+    worker.operation_done.connect(completed.append)
+    worker.abort()
+
+    with patch("models.app_manager_worker.CommandRunner.run") as run:
+        worker.run()
+
+    run.assert_not_called()
+    assert logs == []
+    assert completed == []
+
+
 def test_app_manager_backup_pull_failure_does_not_create_success_zip(tmp_path):
     worker = AppManagerWorker("device-1", "unused")
     logs = []

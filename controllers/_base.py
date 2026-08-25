@@ -447,12 +447,21 @@ class _ADBControllerBase:
 
     def shutdown(self):
         """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""
+        self._shutting_down = True
+        for model in (
+            self.device_model,
+            self.app_model,
+            self.testing_model,
+            self.advanced_model,
+        ):
+            begin_shutdown = getattr(model, "begin_shutdown", None)
+            if callable(begin_shutdown):
+                begin_shutdown()
         self.log_service.log("DEBUG", "controller shutdown started")
         for model in (self.testing_model, self.advanced_model):
             shutdown = getattr(model, "shutdown", None)
             if callable(shutdown):
                 shutdown()
-        self._shutting_down = True
         ProcessRunner.stop_all_tracked()
         self.executor.shutdown(wait=False, cancel_futures=True)
         self.log_service.log("DEBUG", "controller shutdown completed")

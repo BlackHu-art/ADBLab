@@ -10,22 +10,14 @@ class RemotePanelInput:
         self._frame = frame
         self._lock = threading.Lock()
 
+    def _input_closing(self) -> bool:
+        return bool(
+            getattr(self._frame, "_closing", False)
+            or getattr(self._frame, "_remote_input_closing", False)
+        )
+
     def _submit_remote_input(self, task):
         """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
-        executor = getattr(self._frame, "_remote_executor", None)
-        if executor is None:
-            self._frame._mark_remote_submitted()
-            try:
-                result = task()
-                state = "sent" if self._frame._remote_input_succeeded(result) else "failed"
-            except Exception:
-                state = "failed"
-            if state == "failed":
-                self._frame._log("WARNING", "Remote input was not sent")
-            self._frame._mark_remote_completed(state)
-            return
-        self._frame._mark_remote_submitted()
-
         def _wrapped():
             try:
                 service_result = task()
@@ -37,19 +29,30 @@ class RemotePanelInput:
                 self._frame._log("WARNING", "Remote input was not sent")
             self._frame._mark_remote_completed(result)
 
-        try:
-            executor.submit(_wrapped)
-        except RuntimeError as exc:
-            with self._lock:
-                self._frame._remote_submitted = max(
-                    getattr(self._frame, "_remote_completed", 0),
-                    getattr(self._frame, "_remote_submitted", 0) - 1,
-                )
-                self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
-                submitted = self._frame._remote_submitted
-                completed = getattr(self._frame, "_remote_completed", 0)
-            self._frame._emit_remote_queue_status(submitted, completed, "failed")
-            self._frame._log("ERROR", f"remote executor stopped: {type(exc).__name__}")
+        lifecycle_lock = self._frame._shutdown_lifecycle_lock()
+        with lifecycle_lock:
+            if self._input_closing():
+                return
+            executor = getattr(self._frame, "_remote_executor", None)
+            if executor is None:
+                return
+            self._frame._mark_remote_submitted()
+            try:
+                future = executor.submit(_wrapped)
+                track_future = getattr(self._frame, "_track_remote_future", None)
+                if callable(track_future):
+                    track_future(future)
+            except RuntimeError as exc:
+                with self._lock:
+                    self._frame._remote_submitted = max(
+                        getattr(self._frame, "_remote_completed", 0),
+                        getattr(self._frame, "_remote_submitted", 0) - 1,
+                    )
+                    self._frame._remote_failed = getattr(self._frame, "_remote_failed", 0) + 1
+                    submitted = self._frame._remote_submitted
+                    completed = getattr(self._frame, "_remote_completed", 0)
+                self._frame._emit_remote_queue_status(submitted, completed, "failed")
+                self._frame._log("ERROR", f"remote executor stopped: {type(exc).__name__}")
 
     def _mark_remote_submitted(self):
         with self._lock:
@@ -123,6 +126,8 @@ class RemotePanelInput:
         self._frame._submit_remote_input(_run)
 
     def _warm_remote_input_session(self):
+        if self._input_closing():
+            return
         active_device = getattr(self._frame, "_active_device", None)
         if not active_device:
             return
@@ -134,3 +139,43 @@ class RemotePanelInput:
                 "DEBUG",
                 f"remote input session warmup skipped: error_type={type(exc).__name__}",
             )
+
+    def _start_warm_remote_input_session(self):
+        """启动并保留 warmup producer，供 Remote 关闭屏障等待。"""
+
+        if self._input_closing():
+            return None
+        lock = getattr(self._frame, "_warmup_threads_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._frame._warmup_threads_lock = lock
+        threads = getattr(self._frame, "_warmup_threads", None)
+        if threads is None:
+            threads = set()
+            self._frame._warmup_threads = threads
+
+        def warmup() -> None:
+            try:
+                self._frame._warm_remote_input_session()
+            finally:
+                current = threading.current_thread()
+                with lock:
+                    threads.discard(current)
+
+        thread = threading.Thread(
+            target=warmup,
+            name="adblab-remote-input-warmup",
+            daemon=True,
+        )
+        with lock:
+            if self._input_closing():
+                return None
+            threads.add(thread)
+            try:
+                # 发布句柄与 start 保持同一锁域；shutdown 捕获到的 thread
+                # 必然已经启动，因此 join 不会先于 warmup 执行。
+                thread.start()
+            except Exception:
+                threads.discard(thread)
+                raise
+        return thread

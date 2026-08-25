@@ -24,8 +24,8 @@ class _FakeSettings:
         "continuous_device_scan": True,
         "log_max_lines": 2000,
         "save_directory": "",
-        "window_width": 1120,
-        "window_height": 640,
+        "window_width": 1250,
+        "window_height": 700,
         "left_panel_width": 400,
         "right_panel_width": 600,
         "panel_split_ratio": 0.4,
@@ -65,7 +65,7 @@ class _MainWindowStub(QMainWindow):
 
     def restore_default_window_size(self):
         self.actions.append("window")
-        self.snapshot.update(width=1120, height=640)
+        self.snapshot.update(width=1250, height=700)
 
     def reset_panel_split(self):
         self.actions.append("split")
@@ -112,7 +112,7 @@ def test_window_section_uses_public_layout_api(monkeypatch, qt_application):
         dialog._btn_reset_panel_split.click()
 
         assert main_window.actions == ["window", "split"]
-        assert dialog._window_size_value.text() == "1120 × 640 px"
+        assert dialog._window_size_value.text() == "1250 × 700 px"
         assert dialog._panel_split_value.text() == "40% / 60%"
     finally:
         dialog.close()
@@ -182,8 +182,8 @@ def test_settings_default_size_is_compact_and_content_remains_scrollable(
     dialog.show()
     qt_application.processEvents()
     try:
-        assert dialog.size().width() == 680
-        assert dialog.size().height() == 560
+        assert dialog.size().width() == 700
+        assert dialog.size().height() == 600
         assert dialog._settings_scroll.horizontalScrollBar().maximum() == 0
         assert dialog._settings_scroll.verticalScrollBar().maximum() > 0
         assert dialog._btn_save.isVisible()

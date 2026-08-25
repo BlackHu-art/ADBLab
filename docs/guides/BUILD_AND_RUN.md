@@ -71,13 +71,16 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
 ## 测试与检查
 
-标准门禁命令：
+以下是发布验收或 CI 使用的完整门禁命令，不是每次本地代码修改后的默认动作；dev 推送 main
+本身不触发本地全量测试。
+日常修复应先按 [TESTING_GUIDE](TESTING_GUIDE.md#增量验证策略) 选择直接和受影响模块测试：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest --collect-only -q
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe main.py --self-check packaging
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pyright
+git diff --check
 ```
 
 2026-08-21 使用 Python 3.11.9 和 `requirements-dev.txt` 实际验证：961 tests collected；
@@ -85,15 +88,14 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 内置 adb/scrcpy 和用户数据目录检查全部通过；Ruff 0 错误。验证环境已卸载 Pillow，证明当前
 源码、测试和 packaging self-check 不依赖它。
 
-仓库 README 还建议：
+`pytest --collect-only` 只用于发现和选择测试，不属于完整门禁：
 
 ```powershell
-.\.venv\Scripts\python.exe -m compileall -q main.py utils models mobileperf gui controllers core
-git diff --check
+.\.venv\Scripts\python.exe -m pytest --collect-only -q
 ```
 
-`compileall` 会生成 `__pycache__`，执行后应检查并清理意外生成物；
-`git diff --check` 应在本次修改全部完成后执行。
+`compileall` 与 Ruff、测试导入和 Pyright 的职责重复，还会生成 `__pycache__`，不属于默认门禁；
+只有排查明确的解释器编译问题时才对具体目标临时运行。`git diff --check` 应在本次修改全部完成后执行。
 
 Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集）；
 `mobileperf/**` 的 E402/UP031 豁免已移除，当前仅保留 `tests/live_logcat_close_probe.py` 的 E402
@@ -152,7 +154,8 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 - `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号。
 - 主版本和次版本只按明确的发布计划调整；当前基线为 3.2.1。
 - 不允许把多次推送共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
-- 推送前应先比较上次推送时的版本，确认本次版本已递增，再执行测试、打包自检和差异检查。
+- 推送前应先比较上次推送时的版本，确认本次版本已递增；本地验证继续按增量策略选择，推送 main
+  本身不触发全量测试或 packaging self-check，发布验收和 CI 按完整门禁执行。
 
 ### Auto-Clean 工作流
 

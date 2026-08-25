@@ -4,6 +4,7 @@
 ADBModelCore，再由控制器独立组合使用，从而避免循环依赖。
 """
 
+import threading
 import uuid
 from collections.abc import Callable
 from functools import wraps
@@ -14,6 +15,23 @@ from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 from adblab.application.envelope import OperationMetadata, attach_operation_metadata
 from core.exec import CommandRunner
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
+
+
+def _model_is_shutting_down(model) -> bool:
+    """兼容轻量测试替身，并统一读取 model 的终态准入栅栏。"""
+
+    probe = getattr(model, "is_shutting_down", None)
+    return bool(probe()) if callable(probe) else False
+
+
+def _shutdown_cancelled_result() -> dict[str, object]:
+    """返回仍可进入既有结果 envelope 的终态取消结果。"""
+
+    return {
+        "success": False,
+        "cancelled": True,
+        "error": "Model is shutting down",
+    }
 
 
 class CommandTask(QRunnable):
@@ -32,10 +50,13 @@ class CommandTask(QRunnable):
         import shiboken6
 
         started_at = perf_counter()
-        try:
-            result = self.method_ref(self.model, *self.args, **self.kwargs)
-        except Exception as e:
-            result = {"success": False, "error": str(e)}
+        if _model_is_shutting_down(self.model):
+            result = _shutdown_cancelled_result()
+        else:
+            try:
+                result = self.method_ref(self.model, *self.args, **self.kwargs)
+            except Exception as e:
+                result = {"success": False, "error": str(e)}
         finished_at = perf_counter()
         perf = build_async_perf(
             self.method_ref.__name__, self.queued_at, started_at, finished_at
@@ -73,6 +94,8 @@ def async_command(method=None, *, long_running: bool = False) -> Any:
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
+        if _model_is_shutting_down(self):
+            return
         queued_at = perf_counter()
         operation_id = kwargs.pop("_operation_id", None)
         operation_kind = kwargs.pop("_operation_kind", None)
@@ -122,9 +145,20 @@ class ADBModelCore(QObject):
 
     def __init__(self):
         super().__init__()
+        self._shutdown_started = threading.Event()
         self.thread_pool = QThreadPool.globalInstance()
         self.long_pool = QThreadPool()
         self.long_pool.setMaxThreadCount(max(2, QThread.idealThreadCount() // 2))
+
+    def begin_shutdown(self) -> None:
+        """永久关闭异步命令准入；model 实例进入终态后不得复用。"""
+
+        self._shutdown_started.set()
+
+    def is_shutting_down(self) -> bool:
+        """返回终态准入栅栏是否已经关闭。"""
+
+        return self._shutdown_started.is_set()
 
     @classmethod
     def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:

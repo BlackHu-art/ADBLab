@@ -89,7 +89,10 @@
 3. 新增功能时至少更新 [MODULE_MAP](project-knowledge/MODULE_MAP.md) 和相关业务/数据/边界文档；新增风险时同步 [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)。
 4. 新增术语或缩写时同步 [glossary](project-knowledge/glossary.md)，避免同一词在不同文档中漂移。
 5. `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号且不得复用历史版本。
-6. 提交前至少运行 `.\.venv\Scripts\python.exe -m pytest -q`、`.\.venv\Scripts\python.exe main.py --self-check packaging`、`.\.venv\Scripts\python.exe -m ruff check .`、`git diff --check`；修改打包/资源/ADB/Remote/MobilePerf 时按 [TESTING_GUIDE](guides/TESTING_GUIDE.md) 扩展验证。
+6. 日常修复默认运行直接与受影响模块测试，不在每批修改后执行全量测试；只有用户明确要求、
+   发布验收、影响范围无法可靠界定或 CI 门禁时才运行全量 `pytest -q`。dev 推送 main 本身不
+   触发本地全量测试；测试选择、静态检查和打包自检的触发条件见
+   [TESTING_GUIDE](guides/TESTING_GUIDE.md)。
 7. 文档类提交前运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py`，确保链接与 frontmatter 通过。
 
 ## 归档

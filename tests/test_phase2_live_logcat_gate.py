@@ -1,5 +1,6 @@
 import json
 import os
+import queue
 import subprocess
 import sys
 import threading
@@ -7,9 +8,11 @@ import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QMainWindow
 
 from adblab.application.supervision import (
@@ -20,12 +23,23 @@ from adblab.application.supervision import (
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from core.exec import CommandResult, ProcessRunner
 from gui.dialogs.live_logcat import (
+    CurrentPackageWorker,
     LiveLogcatDialog,
     LogcatBatch,
     LogcatTerminationKind,
     LogcatWorker,
 )
 from gui.main_frame import MainFrame
+
+
+@pytest.fixture(scope="module", autouse=True)
+def drain_live_logcat_deferred_deletes(qt_application):
+    """在 QApplication 存活时收口本模块积累的 Qt 延迟销毁事件。"""
+
+    yield
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    qt_application.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 class FakeQtTaskSupervisor(QObject):
@@ -129,6 +143,66 @@ class BlockingProcess:
 
     def close(self):
         self.closed = True
+
+
+class StreamingStdout:
+    """提供可从测试线程逐行喂入、并能被 terminate 解锁的阻塞 stdout。"""
+
+    def __init__(self):
+        self._lines = queue.Queue()
+        self.closed = False
+
+    def feed(self, line: str) -> None:
+        self._lines.put(line)
+
+    def finish(self) -> None:
+        self._lines.put(None)
+
+    def readline(self):
+        item = self._lines.get(timeout=2)
+        return "" if item is None else item
+
+    def close(self):
+        self.closed = True
+        self.finish()
+
+
+class StreamingProcess:
+    """保持存活直到显式停止，便于验证稀疏流和运行中筛选切换。"""
+
+    def __init__(self):
+        self.stdout = StreamingStdout()
+        self.returncode = None
+        self._stopped = threading.Event()
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        if self.returncode is None:
+            self.returncode = 0
+            self._stopped.set()
+            self.stdout.finish()
+
+    def kill(self):
+        if self.returncode is None:
+            self.returncode = -9
+            self._stopped.set()
+            self.stdout.finish()
+
+    def wait(self, timeout=None):
+        if not self._stopped.wait(timeout):
+            raise subprocess.TimeoutExpired("fake-logcat", timeout)
+        return self.returncode
+
+
+def _wait_until(predicate, timeout=1.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return bool(predicate())
 
 
 def test_task_supervisor_distinguishes_graceful_and_forced_stop():
@@ -564,24 +638,340 @@ def test_logcat_cancel_before_run_never_spawns_process():
     assert worker.wait_for_stop(0)
 
 
-def test_logcat_pid_probe_failure_is_start_failure_without_spawn():
-    worker = LogcatWorker("target", package="com.example.app")
-    terminations = []
-    worker.terminated.connect(terminations.append)
+def test_current_package_probe_cancellation_skips_remaining_fallback_commands():
+    worker = CurrentPackageWorker("target")
+    first_probe_started = threading.Event()
+    release_first_probe = threading.Event()
+    command_timeouts = []
 
-    with (
-        patch(
-            "gui.dialogs.live_logcat.CommandRunner.run",
-            return_value=CommandResult(False, error="offline", returncode=1),
-        ),
-        patch.object(worker._process_runner, "start") as start,
-        patch.object(worker._process_runner, "stop"),
+    def slow_failed_probe(_command, *, timeout):
+        command_timeouts.append(timeout)
+        first_probe_started.set()
+        assert release_first_probe.wait(1)
+        return CommandResult(False, error="timeout", returncode=1)
+
+    with patch(
+        "gui.dialogs.live_logcat_worker.CommandRunner.run",
+        side_effect=slow_failed_probe,
+    ):
+        worker.start()
+        assert first_probe_started.wait(1)
+        worker.requestInterruption()
+        release_first_probe.set()
+        assert worker.wait(500)
+
+    assert command_timeouts == [1]
+
+
+def test_current_package_probe_bounds_every_compatibility_fallback():
+    worker = CurrentPackageWorker("target")
+    statuses = []
+    worker.status_changed.connect(statuses.append, Qt.ConnectionType.DirectConnection)
+
+    with patch(
+        "gui.dialogs.live_logcat_worker.CommandRunner.run",
+        return_value=CommandResult(False, error="timeout", returncode=1),
+    ) as run_command:
+        worker.run()
+
+    assert run_command.call_count == 3
+    assert [call.kwargs["timeout"] for call in run_command.call_args_list] == [1] * 3
+    assert statuses == ["No foreground app found"]
+
+
+def test_logcat_pid_probe_failure_remains_fail_closed_and_recovers_on_retry():
+    worker = LogcatWorker("target", package="com.example.app")
+    worker.PID_REFRESH_SECONDS = 0.02
+    process = StreamingProcess()
+    process_started = threading.Event()
+    failed_probe = threading.Event()
+    recovered_probe = threading.Event()
+    allow_recovery = threading.Event()
+    commands = []
+    emitted = []
+
+    def start_process(key, command, **_kwargs):
+        worker._process_runner._procs[key] = process
+        commands.append(tuple(command))
+        process_started.set()
+        return process
+
+    def probe_pid(*_args, **_kwargs):
+        if not allow_recovery.is_set():
+            failed_probe.set()
+            return CommandResult(False, error="offline", returncode=1)
+        recovered_probe.set()
+        return CommandResult(True, output="321\n", returncode=0)
+
+    def collect(batch):
+        emitted.extend(text for text, _level, _pid in batch.lines)
+        worker.acknowledge_batch()
+
+    worker._process_runner.start = Mock(side_effect=start_process)
+    worker.lines_ready.connect(collect, Qt.ConnectionType.DirectConnection)
+    producer = threading.Thread(target=worker.run, name="logcat-probe-retry-producer")
+
+    with patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid):
+        producer.start()
+        try:
+            assert process_started.wait(1)
+            assert failed_probe.wait(1)
+            assert "--pid" not in commands[0]
+            process.stdout.feed("08-25 12:00:00.000 999 999 I Other: must-not-leak\n")
+            time.sleep(worker.BATCH_INTERVAL_SECONDS * 2 + 0.05)
+            assert emitted == []
+
+            allow_recovery.set()
+            assert worker.update_package("com.example.app") is True
+            assert recovered_probe.wait(1)
+            process.stdout.feed("08-25 12:00:01.000 321 321 I App: recovered\n")
+            assert _wait_until(lambda: any("App: recovered" in line for line in emitted))
+        finally:
+            worker.request_stop()
+            producer.join(1)
+
+    assert not producer.is_alive()
+    assert not any("must-not-leak" in line for line in emitted)
+
+
+def test_logcat_sparse_tail_flushes_while_process_is_still_running():
+    worker = LogcatWorker("target")
+    process = StreamingProcess()
+    process_started = threading.Event()
+    batch_ready = threading.Event()
+    batches = []
+
+    def start_process(key, *_args, **_kwargs):
+        worker._process_runner._procs[key] = process
+        process_started.set()
+        return process
+
+    def collect(batch):
+        batches.append(batch)
+        worker.acknowledge_batch()
+        batch_ready.set()
+
+    worker._process_runner.start = Mock(side_effect=start_process)
+    worker.lines_ready.connect(collect, Qt.ConnectionType.DirectConnection)
+    producer = threading.Thread(target=worker.run, name="logcat-sparse-producer")
+    producer.start()
+    try:
+        assert process_started.wait(1)
+        started = time.monotonic()
+        process.stdout.feed("08-25 12:00:00.000 111 111 I Demo: sparse\n")
+
+        assert batch_ready.wait(0.4)
+        assert time.monotonic() - started < 0.4
+        assert process.poll() is None
+        assert [line[0] for batch in batches for line in batch.lines] == [
+            "08-25 12:00:00.000 111 111 I Demo: sparse"
+        ]
+        assert batches[0].lines[0][1] == "I"
+    finally:
+        worker.request_stop()
+        producer.join(1)
+    assert not producer.is_alive()
+
+
+def test_logcat_helper_start_failure_still_finishes_and_reaps_started_reader():
+    worker = LogcatWorker("target")
+    process = StreamingProcess()
+    terminations = []
+    real_thread_start = threading.Thread.start
+
+    def start_process(key, *_args, **_kwargs):
+        worker._process_runner._procs[key] = process
+        return process
+
+    def fail_pid_helper_start(thread):
+        if thread.name.startswith("live-logcat-pid-"):
+            raise RuntimeError("pid helper failed to start")
+        return real_thread_start(thread)
+
+    worker._process_runner.start = Mock(side_effect=start_process)
+    worker.terminated.connect(terminations.append, Qt.ConnectionType.DirectConnection)
+    with patch(
+        "gui.dialogs.live_logcat_worker.threading.Thread.start",
+        new=fail_pid_helper_start,
     ):
         worker.run()
 
-    start.assert_not_called()
-    assert terminations[0].kind is LogcatTerminationKind.START_FAILED
-    assert terminations[0].error_type == "PidProbeFailed"
+    assert worker._finished_event.is_set()
+    assert worker._reader_thread is not None
+    assert not worker._reader_thread.is_alive()
+    assert process.poll() == 0
+    assert terminations[0].kind is LogcatTerminationKind.UNEXPECTED_EXIT
+    assert terminations[0].error_type == "RuntimeError"
+
+
+def test_logcat_package_filter_switches_atomically_and_tracks_all_current_pids():
+    package_a = "com.example.alpha"
+    package_b = "com.example.beta"
+    package_failed = "com.example.failed"
+    pid_answers = {
+        package_a: CommandResult(True, output="111 112\n", returncode=0),
+        package_b: CommandResult(True, output="222\n", returncode=0),
+        package_failed: CommandResult(False, error="offline", returncode=1),
+    }
+    pid_probes = []
+    probe_events = {package: threading.Event() for package in pid_answers}
+    package_a_rotated = threading.Event()
+    rotated_probe = threading.Event()
+    worker = LogcatWorker("target", package=package_a)
+    worker.PID_REFRESH_SECONDS = 0.02
+    process = StreamingProcess()
+    process_started = threading.Event()
+    started_commands = []
+    emitted = []
+
+    def probe_pid(command, **_kwargs):
+        package = command[-1]
+        pid_probes.append(package)
+        probe_events[package].set()
+        if package == package_a and package_a_rotated.is_set():
+            rotated_probe.set()
+        return pid_answers[package]
+
+    def start_process(key, command, **_kwargs):
+        worker._process_runner._procs[key] = process
+        started_commands.append(tuple(command))
+        process_started.set()
+        return process
+
+    def collect(batch):
+        emitted.extend(text for text, _level, _pid in batch.lines)
+        worker.acknowledge_batch()
+
+    worker._process_runner.start = Mock(side_effect=start_process)
+    worker.lines_ready.connect(collect, Qt.ConnectionType.DirectConnection)
+    producer = threading.Thread(target=worker.run, name="logcat-filter-producer")
+    with patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=probe_pid):
+        producer.start()
+        try:
+            assert process_started.wait(1)
+            assert probe_events[package_a].wait(1)
+            assert "--pid" not in started_commands[0]
+
+            process.stdout.feed("08-25 12:00:00.000 999 999 I Other: hidden\n")
+            process.stdout.feed("08-25 12:00:00.001 111 111 I Alpha: main\n")
+            process.stdout.feed("08-25 12:00:00.002 112 112 I Alpha: child\n")
+            assert _wait_until(lambda: any("Alpha: child" in line for line in emitted))
+            assert any("Alpha: main" in line for line in emitted)
+            assert not any("Other: hidden" in line for line in emitted)
+
+            before_pid_rotation = len(emitted)
+            pid_answers[package_a] = CommandResult(True, output="113\n", returncode=0)
+            package_a_rotated.set()
+            assert rotated_probe.wait(1)
+            assert _wait_until(lambda: worker._package_snapshot()[2] == frozenset({113}))
+            process.stdout.feed("08-25 12:00:00.003 111 111 I Alpha: stale-pid\n")
+            process.stdout.feed("08-25 12:00:00.004 113 113 I Alpha: restarted\n")
+            assert _wait_until(lambda: any("Alpha: restarted" in line for line in emitted))
+            rotated_lines = emitted[before_pid_rotation:]
+            assert not any("Alpha: stale-pid" in line for line in rotated_lines)
+
+            worker.update_package(package_b)
+            process.stdout.feed("08-25 12:00:01.000 999 999 I Other: wake probe\n")
+            assert probe_events[package_b].wait(1)
+            process.stdout.feed("08-25 12:00:01.001 111 111 I Alpha: old-after-switch\n")
+            process.stdout.feed("08-25 12:00:01.002 222 222 I Beta: new-after-switch\n")
+            assert _wait_until(lambda: any("Beta: new-after-switch" in line for line in emitted))
+            assert not any("Alpha: old-after-switch" in line for line in emitted)
+
+            before_failed_switch = len(emitted)
+            worker.update_package(package_failed)
+            process.stdout.feed("08-25 12:00:02.000 999 999 I Other: retry probe\n")
+            assert probe_events[package_failed].wait(1)
+            process.stdout.feed("08-25 12:00:02.001 222 222 I Beta: stale-pid\n")
+            process.stdout.feed("08-25 12:00:02.002 333 333 I Failed: must-not-leak\n")
+            time.sleep(worker.BATCH_INTERVAL_SECONDS * 2 + 0.05)
+            assert emitted[before_failed_switch:] == []
+        finally:
+            worker.request_stop()
+            producer.join(1)
+
+    assert not producer.is_alive()
+    assert package_a in pid_probes
+    assert package_b in pid_probes
+    assert package_failed in pid_probes
+
+
+def test_logcat_package_switch_drops_unattributed_lines_and_stale_batches():
+    worker = LogcatWorker("target", package="com.example.alpha")
+    package, generation, _pids = worker._package_snapshot()
+    assert worker._commit_filter_pids(package, generation, frozenset({111}))
+    accepted = worker._filtered_line(
+        "08-25 12:00:00.000 111 111 I Alpha: before-switch",
+        generation,
+    )
+
+    assert accepted is not None
+    assert worker._filtered_line("    unrelated output without PID", generation) is None
+
+    emitted = []
+    worker.lines_ready.connect(emitted.append, Qt.ConnectionType.DirectConnection)
+    assert worker.update_package("com.example.beta") is True
+    worker._emit_batch([accepted], generation=generation)
+
+    assert emitted == []
+
+
+def test_live_logcat_dialog_acknowledges_but_ignores_stale_filter_batch():
+    _app = QApplication.instance() or QApplication([])
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    worker = LogcatWorker("target", package="com.example.alpha")
+    stale_generation = worker.filter_generation
+    assert worker.update_package("com.example.beta") is True
+    worker._inflight_batches = 1
+    dialog.worker = worker
+
+    try:
+        dialog._on_lines(
+            worker,
+            LogcatBatch(
+                (("08-25 12:00:00.000 111 111 I Alpha: stale", "I", 111),),
+                generation=stale_generation,
+            ),
+        )
+
+        assert worker._inflight_batches == 0
+        assert not dialog.entries
+    finally:
+        worker._finished_event.set()
+        dialog.worker = None
+        dialog.close()
+
+
+def test_live_logcat_package_switch_discards_old_generation_pending_ui_lines():
+    _app = QApplication.instance() or QApplication([])
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    worker = LogcatWorker("target", package="com.example.alpha")
+    dialog.worker = worker
+
+    try:
+        dialog._on_lines(
+            worker,
+            LogcatBatch(
+                (("08-25 12:00:00.000 111 111 I Alpha: pending-old", "I", 111),),
+                generation=worker.filter_generation,
+            ),
+        )
+        assert dialog._pending_visible_lines
+        assert dialog._line_flush_timer.isActive()
+
+        dialog._on_current_pkg("com.example.beta")
+
+        assert worker.package == "com.example.beta"
+        assert not dialog._pending_visible_lines
+        assert not dialog._line_flush_timer.isActive()
+        dialog._flush_pending_lines()
+        assert "pending-old" not in dialog.output.toPlainText()
+    finally:
+        worker._finished_event.set()
+        dialog.worker = None
+        dialog.close()
 
 
 def test_logcat_producer_batches_lines_and_bounds_each_transport_message():
@@ -612,8 +1002,8 @@ def test_cross_thread_burst_keeps_transport_bounded():
     observed_inflight = []
     original_emit_batch = worker._emit_batch
 
-    def emit_batch(lines):
-        original_emit_batch(lines)
+    def emit_batch(lines, *, generation=None):
+        original_emit_batch(lines, generation=generation)
         observed_inflight.append(worker._inflight_batches)
         worker.acknowledge_batch()
 

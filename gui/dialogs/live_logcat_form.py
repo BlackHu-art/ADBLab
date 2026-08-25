@@ -52,6 +52,7 @@ class LiveLogcatForm:
         self._frame.pkg_input.setAccessibleName("Package filter")
         self._frame.btn_get_pkg = QPushButton("Current Package")
         self._frame.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
+        self._frame.btn_get_pkg.setProperty("iconName", "target.svg")
         self._frame.btn_get_pkg.setIconSize(QSize(14, 14))
         self._frame.btn_get_pkg.setToolTip("Fetch current foreground app package")
         self._frame.btn_get_pkg.setMinimumWidth(120)
@@ -79,21 +80,26 @@ class LiveLogcatForm:
         self._frame.start_btn = QPushButton("Start")
         self._frame.start_btn.setToolTip("Start streaming device log messages")
         self._frame.start_btn.setIcon(get_themed_icon("play.svg"))
+        self._frame.start_btn.setProperty("iconName", "play.svg")
         self._frame.start_btn.setIconSize(QSize(14, 14))
         self._frame.stop_btn = QPushButton("Stop")
         self._frame.stop_btn.setToolTip("Stop the active log stream")
         self._frame.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
+        self._frame.stop_btn.setProperty("iconName", "stop-circle.svg")
         self._frame.stop_btn.setIconSize(QSize(14, 14))
         self._frame.clear_btn = QPushButton("Clear")
         self._frame.clear_btn.setToolTip("Remove all displayed log messages")
         self._frame.clear_btn.setIcon(get_themed_icon("broom.svg"))
+        self._frame.clear_btn.setProperty("iconName", "broom.svg")
         self._frame.clear_btn.setIconSize(QSize(14, 14))
         self._frame.export_btn = QPushButton("Export")
         self._frame.export_btn.setToolTip("Save the displayed log messages to a file")
         self._frame.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
+        self._frame.export_btn.setProperty("iconName", "file-arrow-down.svg")
         self._frame.export_btn.setIconSize(QSize(14, 14))
         self._frame.wrap_btn = QPushButton("Wrap")
         self._frame.wrap_btn.setIcon(get_themed_icon("arrows-left-right.svg"))
+        self._frame.wrap_btn.setProperty("iconName", "arrows-left-right.svg")
         self._frame.wrap_btn.setIconSize(QSize(14, 14))
         self._frame.wrap_btn.setCheckable(True)
         self._frame.wrap_btn.setChecked(True)
@@ -180,6 +186,18 @@ class LiveLogcatForm:
     def _apply_theme(self, _value=None):
         apply_dark_title_bar(self._frame)
         BS = BaseStyles
+        self._frame.setWindowIcon(get_themed_icon(self._frame._window_icon_name))
+        for button in (
+            self._frame.btn_get_pkg,
+            self._frame.start_btn,
+            self._frame.stop_btn,
+            self._frame.clear_btn,
+            self._frame.export_btn,
+            self._frame.wrap_btn,
+        ):
+            icon_name = button.property("iconName")
+            if icon_name:
+                button.setIcon(get_themed_icon(str(icon_name)))
         ui_font = BS.font_for_role(FontRole.UI)
         mono_font = BS.font_for_role(FontRole.MONO)
         log_font = BS.font_for_role(FontRole.LOG)
@@ -255,6 +273,11 @@ class LiveLogcatForm:
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
         """统一维护日志采集按钮状态，避免异步路径出现状态分叉。"""
 
+        self._frame._logcat_stopping = stopping
         self._frame.start_btn.setEnabled(not running)
         self._frame.stop_btn.setEnabled(running and not stopping)
+        package_lookup_active = bool(
+            self._frame._pkg_worker is not None and self._frame._pkg_worker.isRunning()
+        )
+        self._frame.btn_get_pkg.setEnabled(not stopping and not package_lookup_active)
         self._apply_action_button_styles()

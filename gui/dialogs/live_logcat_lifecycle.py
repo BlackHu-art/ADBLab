@@ -43,6 +43,17 @@ class LiveLogcatLifecycle:
         if self._frame._closing:
             return
         self._frame.pkg_input.setText(package)
+        if self._frame._logcat_stopping:
+            self._frame.status_bar.showMessage(f"Package: {package} (applies on next start)")
+            return
+        worker = self._frame.worker
+        if worker is not None and worker.is_active():
+            if worker.update_package(package):
+                # 已通过旧 generation 校验、但尚未落屏的行不能跨越包切换边界。
+                self._frame._line_flush_timer.stop()
+                self._frame._pending_visible_lines.clear()
+                self._frame.status_bar.showMessage(f"Switching package filter: {package}")
+            return
         self._frame.status_bar.showMessage(f"Package: {package}")
 
     def _release_pkg_worker(self, worker: CurrentPackageWorker) -> bool:
@@ -70,7 +81,7 @@ class LiveLogcatLifecycle:
         if self._frame._closing:
             self._try_finalize_close("package_worker_finished")
         elif was_current:
-            self._frame.btn_get_pkg.setEnabled(True)
+            self._frame.btn_get_pkg.setEnabled(not self._frame._logcat_stopping)
 
     def _release_logcat_worker(self, worker: LogcatWorker) -> bool:
         """仅在线程和受跟踪进程都停止后释放 Logcat 工作对象。"""

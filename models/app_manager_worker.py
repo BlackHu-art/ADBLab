@@ -73,6 +73,8 @@ class AppManagerWorker(QThread):
 
     def run(self):
         """按 operation 分派后台操作；未知操作不执行任何任务。"""
+        if self._aborted.is_set() or self.isInterruptionRequested():
+            return
         ops = {
             "load_apps": self._load_apps,
             "load_detail_batch": lambda: self._load_detail_batch(self.kwargs.get("packages", [])),

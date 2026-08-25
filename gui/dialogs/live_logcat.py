@@ -53,6 +53,7 @@ class LiveLogcatDialog(QDialog):
         self._close_ready = False
         self._owner_cleanup_requested = False
         self._owner_cleanup_completed = False
+        self._logcat_stopping = False
         self._reflowing_filters = False
         self._line_flush_timer = QTimer(self)
         self._line_flush_timer.setSingleShot(True)
@@ -72,7 +73,8 @@ class LiveLogcatDialog(QDialog):
         self._worker_release_timer.timeout.connect(self._poll_worker_release)
 
         self.setWindowTitle(f"Live Logcat - {device_ip}")
-        self.setWindowIcon(get_themed_icon("scroll.svg"))
+        self._window_icon_name = "scroll.svg"
+        self.setWindowIcon(get_themed_icon(self._window_icon_name))
         self.setMinimumSize(640, 420)
         self.resize(1000, 650)
         self.setModal(False)

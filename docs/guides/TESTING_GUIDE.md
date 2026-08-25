@@ -13,6 +13,8 @@
 - 历史执行记录：2026-08-21 使用 Python 3.11.9、pytest 9.1.1 和当时的 dev 依赖验证
   **961 项通过**，耗时 350.61 秒；同一环境已卸载 Pillow，测试收集、全量回归和 packaging
   self-check 均通过。该记录不替代后续工作树的重新验证。
+- 2026-08-25 当前修复工作树离屏全量复跑为 **1107 项通过**，耗时 331.12 秒；本轮
+  LiveLogcat 相关扩展集 94 项通过，9 项关键并发/过滤用例连续重复 5 轮均通过。
 - 测试主要使用 monkeypatch、临时目录、轻量 fake/stub 和通过 `__new__` 构造的最小 Qt 对象；不要求真实 Android 设备。
 - `pyproject.toml` 已配置 coverage 范围，2026-08-19 快速子集记录了 adblab + services 88%
   语句覆盖率；全量用例数量仍不能直接推导语句或分支覆盖率。
@@ -40,8 +42,9 @@
 | `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
 | `tests/test_ci_contracts.py` | 最小权限、固定 SHA、同版本不可变、保留最新 5 个版本 tag、只读保留审计、CI lint 步骤 | CI 安全契约 |
 | `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope、单元接口（`cancel_pending_units` 等）与 Controller 路由 | 架构契约 |
+| `tests/test_model_shutdown_admission.py` | model 终态准入、Controller 栅栏顺序、录屏与 Monkey/logcat 进程启停的确定性竞态 | 生命周期并发契约 |
 | `tests/test_phase2_screenshot_gate.py` | 重叠截图、乱序/部分失败、artifact、提交异常、取消（generation 原子化）、重复/晚到和兼容 signal | 架构 Gate A |
-| `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、超时保活和独立进程关闭压力 | 架构 Gate B1 |
+| `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、稀疏尾批、动态包/PID 过滤、超时保活和独立进程关闭压力 | 架构 Gate B1 |
 | `tests/test_phase2_install_batch_use_case.py` | `InstallBatchUseCase` 状态机：start/complete/fail/cancel/retry、部分失败、owner/generation 边界 | 架构 Gate C 用例 |
 | `tests/test_phase2_install_batch_gate.py` | 安装批次 Controller 集成：提交预留、所有权、协作取消、失败项 retry、晚到结果 | 架构 Gate C 门禁 |
 | `tests/test_phase2_mainframe_shutdown_gate.py` | 主窗口两阶段异步关闭：广播-first deadline、非阻塞/幂等、资源归零与 residual snapshot | 架构 Gate B2 契约 |
@@ -63,6 +66,37 @@
 旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
 
 ## 执行命令
+
+### 增量验证策略
+
+本地修复和日常开发必须优先选择“最小但充分”的测试集，不把全量测试作为每次代码修改后的
+默认动作：
+
+1. 先运行直接覆盖修改行为的测试节点或测试文件。
+2. 根据入口、调用链、共享数据结构、线程/进程生命周期和失败路径，补充受影响模块测试。
+3. 只有关联测试无法界定影响范围时才扩大测试集；不得仅因“可能有用”而运行无关模块。
+4. 代码、测试或方案仍可能继续变化时不得启动全量测试。确需全量时，在代码冻结后集中执行。
+5. 全量测试只由以下条件触发：用户明确要求；发布验收；改动横跨多个共享核心边界且无法可靠
+   界定影响范围；CI 固定门禁。dev 推送 main 本身不触发本地全量测试；若缺少合并前 CI，只
+   报告 main 可能先进入失败提交的风险，不以此为由擅自运行本地全量。
+6. 全量测试后若又发生局部修改，先重跑该修改的直接与关联测试；仅当发布/合并仍要求完整快照时
+   才重新执行全量测试。
+7. 纯文档修改不运行 pytest；只执行 `scripts/check_doc_links.py`、适用的文档规范检查和
+   `git diff --check`。
+
+例如，只修改 LiveLogcat 包过滤时，优先执行：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q `
+  tests/test_phase2_live_logcat_gate.py `
+  tests/test_model_meta.py `
+  tests/test_model_apps.py
+```
+
+最终报告必须列出实际运行的关联测试及结果，并明确说明是否执行全量测试；未满足全量触发条件而
+未运行全量测试，不应标记为验证缺失。
+
+### 完整门禁命令
 
 实际验证过（Python 3.11）：
 
@@ -87,7 +121,8 @@ UI 的项目（包含 integration 和未标 marker 的项目），不能把它�
 .\.venv\Scripts\python.exe -m pytest -q -m "not ui"
 ```
 
-新增 UI 类测试文件时同步登记 conftest 映射；在 CI/提交前仍应执行完整命令。
+新增 UI 类测试文件时同步登记 conftest 映射；CI 固定运行完整命令，本地仅在上述全量触发条件
+成立时执行。
 
 ## 覆盖分层
 
@@ -158,7 +193,7 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 1. MainFrame 异步关闭（Gate B2）契约已落地：`test_phase2_mainframe_shutdown_gate.py` 11 项测试
    覆盖首次关闭不阻塞事件循环、所有 owner 广播停止、资源归零或保留 residual snapshot；剩余
    为真实设备 helper 进程树集成验证。
-2. 补充 `ScreenRecordUseCase` 与 Controller 之间的并发、取消和关闭契约测试。
+2. 录屏 model 与 Controller 的基础关闭竞态已覆盖；仍需补充 `ScreenRecordUseCase` 的跨批次取消、结果回传和真实进程树集成契约。
 3. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
 4. PyInstaller Windows 打包能力检查；macOS/Linux 加 scrcpy 缺失的明确降级测试。
 5. 持续维护按层/按模块的 fast 子集与耗时预算，控制当前约 6 分钟的全量门禁。
@@ -214,17 +249,20 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 门禁只解决可自动判断的语言一致性问题。注释是否准确、是否提供必要的生命周期和失败语义，仍需
 代码评审结合入口、调用链、失败路径和清理路径确认。
 
-## 提交前门禁
+## 提交与发布门禁
 
 dev 推送到 main 前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对上次发布已递增（默认补丁 +1），
 并确保没有复用历史版本；本地与 dev 提交不修改版本号。
 
-最低门禁：
+普通本地修改的最低门禁是关联测试、修改文件的 Ruff/适用静态检查以及 `git diff --check`。
+纯文档修改按增量策略只运行文档检查。以下完整门禁仅用于发布验收、用户明确要求、无法可靠
+界定影响范围的共享核心改动或 CI；dev 推送 main 本身不触发本地全量测试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe main.py --self-check packaging
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pyright
 git diff --check
 ```
 

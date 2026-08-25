@@ -30,8 +30,8 @@ def _image_cache_key(path: str, kind: str) -> str:
 def _load_pixmap(path: str, *, kind: str, max_size: QSize | None = None) -> QPixmap:
     """按 (path, mtime) 缓存解码结果；缩略图用 QImageReader 直接降采样。"""
     key = _image_cache_key(path, kind)
-    cached = QPixmapCache.find(key)
-    if cached is not None and not cached.isNull():
+    cached = QPixmap()
+    if QPixmapCache.find(key, cached) and not cached.isNull():
         return cached
     if max_size is not None:
         reader = QImageReader(path)

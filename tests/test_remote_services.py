@@ -1,5 +1,6 @@
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
 
 import pytest
@@ -852,7 +853,7 @@ def test_remote_shutdown_request_exception_allows_supervisor_retry_and_input_cle
     RemotePanel.shutdown(panel)
     results = supervisor.stop_all(deadline=1.0)
 
-    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+    executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
     panel._adb.close_input_sessions.assert_called_once_with()
     assert panel._scrcpy_service.request_calls == 2
     assert panel._scrcpy_service.force_calls == 0
@@ -877,12 +878,13 @@ def test_remote_shutdown_worker_exception_does_not_skip_executor_or_adb_cleanup(
 
     RemotePanel.shutdown(panel)
 
+    assert panel._remote_input_shutdown.wait(1.0)
     assert panel._launch_worker is None
     assert worker.request_calls == 1
     assert worker.wait_calls == [0]
     assert worker.delete_calls == 1
     assert worker not in RemotePanel._orphaned_launch_workers
-    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+    executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
     assert input_closed.wait(1.0)
 
 
@@ -1066,6 +1068,383 @@ def test_remote_shutdown_executor_exception_does_not_skip_adb_cleanup():
 
     assert panel._remote_executor is None
     assert input_closed.wait(1.0)
+
+
+def test_registered_remote_shutdown_defers_fast_input_error_to_supervisor():
+    """注册后的 UI shutdown 不抢跑清理，确保快速失败仍由 supervisor 上报。"""
+
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._process = None
+    panel._launch_worker = None
+    panel._remote_executor = None
+    panel._remote_input_closing = False
+    panel._remote_input_shutdown = None
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._adb = Mock()
+    panel._adb.close_input_sessions.side_effect = OSError("input close failed")
+    supervisor = TaskSupervisor()
+
+    assert RemotePanel.register_shutdown_task(
+        panel,
+        supervisor,
+        owner_id="remote-owner",
+        task_id="remote-session",
+    )
+
+    RemotePanel.shutdown(panel)
+
+    panel._adb.close_input_sessions.assert_not_called()
+    results = supervisor.stop_all(deadline=0.5)
+    assert len(results) == 1
+    assert results[0].disposition is StopDisposition.FAILED
+    assert results[0].error_type == "OSError"
+    panel._adb.close_input_sessions.assert_called_once_with()
+    assert supervisor.active_count == 1
+
+
+def test_remote_shutdown_waits_for_running_input_before_closing_session_and_reports_timeout():
+    """direct close 不阻塞 GUI；supervisor 能看到仍在执行的输入 producer。"""
+
+    input_started = threading.Event()
+    release_input = threading.Event()
+    input_finished = threading.Event()
+    session_closed = threading.Event()
+    order = []
+
+    def input_task():
+        input_started.set()
+        try:
+            assert release_input.wait(2.0)
+        finally:
+            order.append("input-finished")
+            input_finished.set()
+
+    def close_input_sessions():
+        order.append("session-closed")
+        session_closed.set()
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="remote-shutdown-test")
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._process = None
+    panel._launch_worker = None
+    panel._remote_executor = executor
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._remote_input_shutdown = None
+    panel._adb = Mock()
+    panel._adb.close_input_sessions.side_effect = close_input_sessions
+    future = executor.submit(input_task)
+    RemotePanel._track_remote_future(panel, future)
+    supervisor = TaskSupervisor()
+
+    try:
+        assert input_started.wait(1.0)
+        assert RemotePanel.register_shutdown_task(
+            panel,
+            supervisor,
+            owner_id="remote-owner",
+            task_id="remote-session",
+        )
+
+        RemotePanel.shutdown(panel)
+
+        assert not session_closed.is_set()
+        results = supervisor.stop_all(deadline=0.0)
+        assert len(results) == 1
+        assert results[0].disposition is StopDisposition.TIMED_OUT
+        assert supervisor.active_count == 1
+
+        release_input.set()
+        assert panel._remote_input_shutdown.wait(2.0)
+        assert input_finished.is_set()
+        assert session_closed.is_set()
+        assert order == ["input-finished", "session-closed"]
+        assert future.done()
+
+        completed = supervisor.stop_all(deadline=1.0)
+        assert len(completed) == 1
+        assert completed[0].disposition is StopDisposition.ALREADY_STOPPED
+        assert supervisor.active_count == 0
+    finally:
+        release_input.set()
+        executor.shutdown(wait=True, cancel_futures=True)
+
+
+def test_remote_shutdown_capture_rejects_late_input_without_sync_fallback():
+    """注册关闭资源后立即拒绝输入，不因 executor 已摘除而同步执行。"""
+
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._closing = False
+    panel._remote_input_closing = False
+    panel._remote_executor = Mock()
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._remote_input_shutdown = None
+    panel._adb = Mock()
+    panel._mark_remote_submitted = Mock()
+    panel._mark_remote_completed = Mock()
+    task = Mock(return_value=True)
+
+    RemotePanel._remote_input_shutdown_handle(panel)
+    RemotePanel._submit_remote_input(panel, task)
+
+    assert panel._remote_input_closing is True
+    task.assert_not_called()
+    panel._mark_remote_submitted.assert_not_called()
+    panel._mark_remote_completed.assert_not_called()
+
+
+def test_remote_submit_registration_is_atomic_with_shutdown_capture():
+    """executor 已读出后，shutdown 必须等待 submit 与 future 注册完成。"""
+
+    submit_entered = threading.Event()
+    allow_submit = threading.Event()
+    capture_attempted = threading.Event()
+    capture_finished = threading.Event()
+    task_running = threading.Event()
+    release_task = threading.Event()
+    session_closed = threading.Event()
+    order = []
+    captured = []
+    underlying = ThreadPoolExecutor(max_workers=1, thread_name_prefix="remote-admission-test")
+
+    class GatedExecutor:
+        def submit(self, task):
+            submit_entered.set()
+            assert allow_submit.wait(2.0)
+            return underlying.submit(task)
+
+        def shutdown(self, *, wait, cancel_futures):
+            return underlying.shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._closing = False
+    panel._remote_input_closing = False
+    panel._remote_executor = GatedExecutor()
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._remote_input_shutdown = None
+    panel._shutdown_request_lock = threading.Lock()
+    panel._adb = Mock()
+    panel._mark_remote_submitted = Mock()
+    panel._mark_remote_completed = Mock()
+
+    def input_task():
+        task_running.set()
+        assert release_task.wait(2.0)
+        order.append("input-finished")
+        return True
+
+    def close_input_sessions():
+        order.append("session-closed")
+        session_closed.set()
+
+    panel._adb.close_input_sessions.side_effect = close_input_sessions
+
+    def submit_input():
+        RemotePanel._submit_remote_input(panel, input_task)
+
+    def capture_shutdown_resources():
+        capture_attempted.set()
+        captured.append(RemotePanel._remote_input_shutdown_handle(panel))
+        capture_finished.set()
+
+    submitter = threading.Thread(target=submit_input)
+    capturer = threading.Thread(target=capture_shutdown_resources)
+    submitter.start()
+    try:
+        assert submit_entered.wait(1.0)
+        capturer.start()
+        assert capture_attempted.wait(1.0)
+        lock_acquired = panel._shutdown_request_lock.acquire(blocking=False)
+        if lock_acquired:
+            panel._shutdown_request_lock.release()
+        assert not lock_acquired
+        assert not capture_finished.is_set()
+
+        allow_submit.set()
+        submitter.join(2.0)
+        capturer.join(2.0)
+        assert not submitter.is_alive()
+        assert not capturer.is_alive()
+        assert task_running.wait(1.0)
+        assert len(captured) == 1
+        assert len(panel._remote_futures) == 1
+
+        handle = captured[0]
+        handle.start()
+        assert not session_closed.is_set()
+        release_task.set()
+        assert handle.wait(2.0)
+        assert order == ["input-finished", "session-closed"]
+    finally:
+        allow_submit.set()
+        release_task.set()
+        submitter.join(2.0)
+        if capturer.ident is not None:
+            capturer.join(2.0)
+        if captured:
+            captured[0].start()
+            captured[0].wait(2.0)
+        else:
+            underlying.shutdown(wait=True, cancel_futures=True)
+
+
+def test_remote_warmup_publish_and_start_are_atomic_for_shutdown_capture():
+    """shutdown 不能捕获尚未 start 的 warmup Thread 后提前关闭会话。"""
+
+    real_thread = threading.Thread
+    start_entered = threading.Event()
+    allow_start = threading.Event()
+    warmup_running = threading.Event()
+    release_warmup = threading.Event()
+    capture_attempted = threading.Event()
+    capture_finished = threading.Event()
+    session_closed = threading.Event()
+    captured = []
+
+    class StartGatedThread(real_thread):
+        def start(self):
+            start_entered.set()
+            assert allow_start.wait(2.0)
+            super().start()
+
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._closing = False
+    panel._remote_executor = None
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._remote_input_shutdown = None
+    panel._adb = Mock()
+    panel._adb.close_input_sessions.side_effect = session_closed.set
+
+    def warmup():
+        warmup_running.set()
+        assert release_warmup.wait(2.0)
+
+    panel._warm_remote_input_session = warmup
+
+    def launch_warmup():
+        RemotePanel._start_warm_remote_input_session(panel)
+
+    def capture_shutdown_resources():
+        capture_attempted.set()
+        captured.append(RemotePanel._remote_input_shutdown_handle(panel))
+        capture_finished.set()
+
+    launcher = real_thread(target=launch_warmup)
+    capturer = real_thread(target=capture_shutdown_resources)
+    with patch("gui.panels.remote_panel_input.threading.Thread", StartGatedThread):
+        launcher.start()
+        try:
+            assert start_entered.wait(1.0)
+            capturer.start()
+            assert capture_attempted.wait(1.0)
+            lock_acquired = panel._warmup_threads_lock.acquire(blocking=False)
+            if lock_acquired:
+                panel._warmup_threads_lock.release()
+            assert not lock_acquired
+            assert not capture_finished.is_set()
+            allow_start.set()
+            launcher.join(2.0)
+            capturer.join(2.0)
+        finally:
+            allow_start.set()
+            launcher.join(2.0)
+            if capturer.ident is not None:
+                capturer.join(2.0)
+
+    assert not launcher.is_alive()
+    assert not capturer.is_alive()
+    assert warmup_running.wait(1.0)
+    assert len(captured) == 1
+    handle = captured[0]
+    assert len(handle._warmup_threads) == 1
+
+    handle.start()
+    assert not session_closed.is_set()
+    release_warmup.set()
+    assert handle.wait(2.0)
+    assert session_closed.is_set()
+
+
+def test_remote_shutdown_joins_all_overlapping_warmups_before_closing_sessions():
+    """两个并发 warmup 都必须进入 shutdown 快照并先于 session close 完成。"""
+
+    started = (threading.Event(), threading.Event())
+    release = (threading.Event(), threading.Event())
+    finished = (threading.Event(), threading.Event())
+    assignment_lock = threading.Lock()
+    assigned = 0
+    order = []
+    session_closed = threading.Event()
+
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._closing = False
+    panel._remote_input_closing = False
+    panel._remote_executor = None
+    panel._remote_futures = set()
+    panel._remote_futures_lock = threading.Lock()
+    panel._warmup_threads = set()
+    panel._warmup_threads_lock = threading.Lock()
+    panel._remote_input_shutdown = None
+    panel._shutdown_request_lock = threading.Lock()
+    panel._adb = Mock()
+
+    def warmup():
+        nonlocal assigned
+        with assignment_lock:
+            index = assigned
+            assigned += 1
+        started[index].set()
+        assert release[index].wait(2.0)
+        order.append(f"warmup-{index}-finished")
+        finished[index].set()
+
+    def close_input_sessions():
+        order.append("session-closed")
+        session_closed.set()
+
+    panel._warm_remote_input_session = warmup
+    panel._adb.close_input_sessions.side_effect = close_input_sessions
+
+    warmup_threads = [
+        RemotePanel._start_warm_remote_input_session(panel),
+        RemotePanel._start_warm_remote_input_session(panel),
+    ]
+    try:
+        assert started[0].wait(1.0)
+        assert started[1].wait(1.0)
+        handle = RemotePanel._remote_input_shutdown_handle(panel)
+        assert len(handle._warmup_threads) == 2
+
+        handle.start()
+        release[0].set()
+        assert finished[0].wait(1.0)
+        assert not session_closed.is_set()
+
+        release[1].set()
+        assert handle.wait(2.0)
+        assert finished[1].is_set()
+        assert order[-1] == "session-closed"
+        assert set(order[:-1]) == {"warmup-0-finished", "warmup-1-finished"}
+    finally:
+        release[0].set()
+        release[1].set()
+        for thread in warmup_threads:
+            if thread is not None:
+                thread.join(2.0)
 
 
 def test_remote_supervisor_process_probe_exception_still_requests_all_cleanup():
@@ -1551,10 +1930,11 @@ def test_remote_panel_close_requests_scrcpy_stop_without_waiting():
     with patch("gui.panels.remote_panel.QWidget.closeEvent"):
         RemotePanel.closeEvent(panel, Mock())
 
+    assert panel._remote_input_shutdown.wait(1.0)
     panel._watchdog.stop.assert_called_once()
     panel._scrcpy_service.request_stop.assert_called_once_with("scrcpy_test")
     panel._scrcpy_service.stop.assert_not_called()
-    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+    executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
     panel._adb.close_input_sessions.assert_called_once()
 
 
@@ -1576,10 +1956,11 @@ def test_remote_panel_shutdown_detaches_launch_worker_without_blocking():
 
     RemotePanel.shutdown(panel)
 
+    assert panel._remote_input_shutdown.wait(1.0)
     worker.requestInterruption.assert_called_once()
     worker.wait.assert_called_once_with(0)
     worker.deleteLater.assert_called_once()
-    executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+    executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
     panel._adb.close_input_sessions.assert_called_once()
 
 
@@ -1614,7 +1995,7 @@ def test_remote_panel_start_ignores_shortcut_while_stopping_after_worker_exits()
     worker_cls.assert_not_called()
 
 
-def test_remote_panel_remote_action_delegates_to_control_service():
+def test_remote_panel_remote_action_rejects_when_executor_is_unavailable():
     panel = RemotePanel.__new__(RemotePanel)
     panel.panel = Mock(selected_devices=["device-1"])
     panel._remote_control = Mock()
@@ -1622,7 +2003,7 @@ def test_remote_panel_remote_action_delegates_to_control_service():
 
     RemotePanel._send_remote_action(panel, "swipe_up")
 
-    panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
+    panel._remote_control.perform_action.assert_not_called()
     panel._log.assert_not_called()
 
 
@@ -1647,6 +2028,20 @@ def test_remote_panel_remote_action_uses_executor_when_available():
 
     panel._remote_control.perform_action.assert_called_once_with("device-1", "swipe_up")
     panel._emit_remote_queue_status.assert_any_call(1, 1, "sent")
+
+
+def test_remote_panel_rejects_new_input_after_shutdown_admission_closes():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel._closing = True
+    panel._remote_executor = Mock()
+    panel._mark_remote_submitted = Mock()
+    task = Mock()
+
+    RemotePanel._submit_remote_input(panel, task)
+
+    panel._remote_executor.submit.assert_not_called()
+    panel._mark_remote_submitted.assert_not_called()
+    task.assert_not_called()
 
 
 def test_remote_panel_queue_status_keeps_primary_text_compact_and_details_in_tooltip():

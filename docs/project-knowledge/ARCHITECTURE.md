@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-21
+last_verified: 2026-08-25
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
@@ -77,7 +77,7 @@ flowchart LR
 
 ### 4. Model 与 Service 层
 
-- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/push/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。
+- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/push/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。Controller 关闭时先永久关闭四个 model 的新任务准入；已经排队但尚未执行的方法体会返回取消结果，并保留原有 metadata/perf 信封。
   operation 相关的 `_operation_id/_operation_owner_token/_operation_generation_token` 等关键字参数
   只用于构造 `OperationMetadata` 信封（`adblab/application/envelope.py`），不会转发给底层 model 方法。
 - `models/adb_device.py`、`adb_app.py`、`adb_advanced.py`、`adb_testing.py` 提供主要 ADB 能力；`adb_network.py` 和 `adb_system.py` 作为 mixin 复用。
@@ -182,6 +182,7 @@ sequenceDiagram
     OS->>MF: 关闭窗口
     MF->>Scan: 停止并等待
     MF->>C: shutdown()
+    C->>C: 关闭四个 model 准入栅栏
     C->>C: 停止测试/录屏/输入/进程/Executor
     MF->>MF: 停止已加载面板与对话框 worker
     MF->>MF: 保存设置
@@ -192,13 +193,13 @@ sequenceDiagram
 | 执行单元 | 用途 | 生命周期管理 |
 | --- | --- | --- |
 | Qt 主线程 | UI、信号槽、定时器、日志呈现 | QApplication 事件循环 |
-| 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | model 信号 + Controller shutdown；不统一等待所有 QRunnable |
-| 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/backup）| `@async_command(long_running=True)` 分流，与全局池隔离 |
+| 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | Controller 先关闭 model 终态栅栏；未开始的 QRunnable 在执行入口取消，已运行任务仍不统一等待 |
+| 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/backup）| 与全局池隔离并受同一 model 终态栅栏约束；已运行任务仍按各命令超时收口 |
 | `_ScanThread` | 设备列表轮询 | MainFrame 显式停止/等待 |
 | 对话框 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | LiveLogcat 已由 TaskSupervisor 后台治理；其余仍由各 closeEvent abort/延后等待 |
 | 应用自有 cleanup QThreadPool | LiveLogcat 资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor，dialog 注入；不使用 global pool |
 | Controller ThreadPoolExecutor | 并行设备信息等 Python 任务 | `_ADBControllerBase.shutdown()` |
-| Remote ThreadPoolExecutor(1) | 串行发送 Remote 输入 | `RemotePanel.shutdown()` |
+| Remote ThreadPoolExecutor(1) | 串行发送 Remote 输入 | Remote 自有关闭路径先关闭输入准入，再在后台等待 executor 与全部 warmup，最后关闭持久输入会话；TaskSupervisor 观察完成/错误 |
 | 外部进程 | adb、scrcpy、logcat、Monkey、终端 | CommandRunner/ProcessRunner；部分例外见风险 |
 | MobilePerf 子进程与内部线程 | 指标采集和报告 | stop 文件、最长等待、必要时强制终止；采集线程 daemon 化，stop 完成后结构化收口（ADR-0004） |
 
@@ -262,6 +263,9 @@ sequenceDiagram
   Monkey 停止映射等编排状态，不能概括为“不再持有批次/单发共享状态”。
 - 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；调用层
   已无 `shell=True`（API 参数 `shell` 默认 False 仍保留），`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
+- 应用级关闭会并发广播 Remote 与 Controller 任务；Controller 的全局 tracked-process 兜底可能在
+  Remote producer 排空前终止底层输入 Shell。Remote 自有关闭仍会在 producer 结束后移除并关闭
+  逻辑 session，避免晚到 producer 重建的会话残留；真实设备上的跨任务终止顺序仍待验证。
 - 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher
   与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止）；
   LiveLogcat 直接连接 `task_supervisor.task_stopped/owner_stopped` 并调用 `stop_owner_async`。
