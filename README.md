@@ -12,7 +12,7 @@
 | 开发语言 | Python，建议使用 Python 3.11 |
 | GUI 框架 | PySide6 / Qt 6 |
 | 主要平台 | Windows（精确版本兼容矩阵待确认） |
-| 内置工具 | `scrcpy-win64-v3.3.1/`，包含 `adb.exe` 与 `scrcpy.exe` |
+| 内置工具 | `scrcpy-win64/`，包含 `adb.exe` 与 `scrcpy.exe` |
 | 作者 | Frankie Hu (Copyright (c) 2026) |
 
 ---
@@ -63,7 +63,7 @@ git diff --check
 
 ### Remote 投屏控制
 
-- 内置 scrcpy v3.3.1，支持流畅/均衡/画质/低延迟预设。
+- 内置 scrcpy v4.1，支持流畅/均衡/画质/低延迟预设。
 - 自定义分辨率、FPS、码率、codec、buffer、方向锁定、录制文件。
 - 支持全屏、置顶、显示触摸、保持唤醒、关闭设备屏幕、无窗口、无音频。
 - `services/remote/` 提供原生无界面服务层：
@@ -184,7 +184,7 @@ ADBLab/
 │   └── test_file_explorer_service.py
 │
 ├── resources/                      # 设置、历史、预览图、二维码、图标、Bugreport 转换器
-└── scrcpy-win64-v3.3.1/            # Windows 版 adb/scrcpy 运行时
+└── scrcpy-win64/                   # Windows 版 adb/scrcpy 运行时
 ```
 
 ---
@@ -254,7 +254,7 @@ ADBLab/
 系统侧依赖：
 
 - Windows 是主要支持目标；Windows 10/11 的精确兼容范围尚无仓库内验证矩阵。
-- ADB：已内置在 `scrcpy-win64-v3.3.1/`。
+- ADB：已内置在 `scrcpy-win64/`。
 - scrcpy：已内置 Windows 版 `scrcpy.exe`。
 - aapt：用于本地 APK 解析，需要外部提供。
 - Java JRE：用于运行 `resources/chkbugreport-0.5-215.jar`。

@@ -148,7 +148,7 @@ def _scrcpy_config(**overrides):
 def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
     runner = Mock()
     runner.run.side_effect = [
-        CommandResult(success=True, output="scrcpy 3.3.1"),
+        CommandResult(success=True, output="scrcpy 4.1"),
         CommandResult(success=True, output="ok"),
         CommandResult(success=True, output="1024 bytes copied"),
         CommandResult(success=True, output="Physical size: 1080x2400"),
@@ -158,7 +158,7 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
 
     plan = service.build_launch_plan(_scrcpy_config(hw_encoder=True))
 
-    assert plan.version == "3.3.1"
+    assert plan.version == "4.1"
     assert plan.device_info == "1080x2400"
     assert plan.encoder == "OMX.qcom.video.encoder.avc"
     assert "--video-encoder" in plan.args
@@ -188,7 +188,7 @@ def test_scrcpy_service_device_info_falls_back_to_physical_size():
 def test_scrcpy_service_launch_plan_warns_and_skips_device_info_when_preflight_fails():
     runner = Mock()
     runner.run.side_effect = [
-        CommandResult(success=True, output="scrcpy 3.3.1"),
+        CommandResult(success=True, output="scrcpy 4.1"),
         CommandResult(success=False, error="device offline"),
     ]
     service = ScrcpyService(command_runner=runner)
@@ -204,11 +204,11 @@ def test_scrcpy_service_launch_plan_warns_and_skips_device_info_when_preflight_f
 
 def test_scrcpy_service_caches_version_per_executable():
     runner = Mock()
-    runner.run.return_value = CommandResult(success=True, output="scrcpy 3.3.1")
+    runner.run.return_value = CommandResult(success=True, output="scrcpy 4.1")
     service = ScrcpyService(command_runner=runner)
 
-    assert service.version("scrcpy.exe") == "3.3.1"
-    assert service.version("scrcpy.exe") == "3.3.1"
+    assert service.version("scrcpy.exe") == "4.1"
+    assert service.version("scrcpy.exe") == "4.1"
 
     runner.run.assert_called_once_with(["scrcpy.exe", "--version"], timeout=3)
 
@@ -216,14 +216,16 @@ def test_scrcpy_service_caches_version_per_executable():
 def test_scrcpy_service_resolves_bundled_windows_executable():
     service = ScrcpyService()
 
+    bundled_tool = Mock(return_value="C:/ADBLab/scrcpy.exe")
     with (
         patch("services.remote.scrcpy_service.platform.system", return_value="Windows"),
         patch(
             "services.remote.scrcpy_service.bundled_tool_path",
-            return_value="C:/ADBLab/scrcpy.exe",
+            bundled_tool,
         ),
     ):
         assert service.resolve_executable() == "C:/ADBLab/scrcpy.exe"
+    bundled_tool.assert_called_once_with("scrcpy-win64", "scrcpy.exe")
 
 
 def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():

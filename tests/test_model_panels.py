@@ -116,6 +116,21 @@ def _build_connect_device_manager():
     return manager, widget, panel
 
 
+def test_device_manager_shows_adb_recovery_state():
+    _app = QApplication.instance() or QApplication([])
+    manager, widget, _panel = _build_connect_device_manager()
+
+    try:
+        manager.set_discovery_state("recovering")
+
+        assert manager._discovery_state == "recovering"
+        assert "Restarting ADB" in manager._device_group.title()
+        assert "bundled ADB server" in manager._device_group.toolTip()
+    finally:
+        widget.close()
+        manager.close()
+
+
 def test_adb_connect_target_validation_requires_complete_ip_and_port():
     assert normalize_adb_connect_target(" 10.0.0.195 : 5555 ") == (
         "10.0.0.195:5555",

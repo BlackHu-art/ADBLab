@@ -107,7 +107,7 @@
 - `.git/`：版本数据库，不属于运行时代码。
 - `.idea/`、`.pytest_cache/`、`__pycache__/`、`logs/`：IDE、缓存或运行产物。
 - `resources/icons/`：大量图标资源，只验证加载机制与打包关系。
-- `scrcpy-win64-v3.3.1/`：第三方可执行文件、DLL 和脚本，只验证调用与打包关系。
+- `scrcpy-win64/`：第三方可执行文件、DLL 和脚本，只验证调用与打包关系。
 - `mobileperf/extlib/xlsxwriter/`：随项目携带的第三方实现，只验证报告模块对它的依赖。
 - `mobileperf/android/tools/` 内各平台 ADB 二进制，以及仓库中的 JAR、图片、GIF、日志和其他媒体/生成文件：只验证调用位置与用途，不作为核心源码分析对象。
 - `pyright_output.json`：静态分析输出产物，不作为实现事实来源。

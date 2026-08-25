@@ -54,7 +54,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 
 - CI 和 README 的标准解释器为 Python 3.11；仓库内开发环境统一为 `.venv`，完整工具链由
   `requirements-dev.txt` 安装；`pyproject.toml` 的格式/静态检查目标是 Python 3.10 语法兼容。
-- Windows 开发运行可使用仓库内 `scrcpy-win64-v3.3.1/adb.exe` 和 `scrcpy.exe`。
+- Windows 开发运行使用仓库内 `scrcpy-win64/adb.exe` 和 `scrcpy.exe`（scrcpy 4.1、ADB 37.0.0）。
 - 用户可写数据根目录由 `utils/user_data.py::user_data_root()` 决定：Windows 默认 `%LOCALAPPDATA%/ADBLab`；非 Windows 使用 XDG 配置目录或 `~/.config/ADBLab`。
 - 开发模式直接引用仓库资源；PyInstaller onefile 场景由 `utils/runtime_tools.py::bundled_tool_path()` 把长生命周期工具复制到稳定的用户运行时缓存。
 

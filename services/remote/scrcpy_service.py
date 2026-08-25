@@ -7,7 +7,7 @@ import subprocess
 import time
 
 from core.exec import CommandRunner, ExecHandle, ProcessRunner
-from utils.runtime_tools import bundled_tool_path
+from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
 
 from .scrcpy_args import build_scrcpy_args
 from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
@@ -34,7 +34,7 @@ class ScrcpyService:
     def resolve_executable(self) -> str:
         """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
         if platform.system() == "Windows":
-            return bundled_tool_path("scrcpy-win64-v3.3.1", "scrcpy.exe")
+            return bundled_tool_path(WINDOWS_TOOL_BUNDLE, "scrcpy.exe")
         return shutil.which("scrcpy") or "scrcpy"
 
     def version(self, exe: str) -> str:

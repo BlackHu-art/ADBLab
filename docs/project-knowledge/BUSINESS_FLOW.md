@@ -13,7 +13,7 @@ related: [MODULE_MAP.md, DATA_FLOW.md]
 | 触发条件 | 用户运行 `main.py`/ADBLab 可执行文件且未指定 worker/self-check 子命令 |
 | 前置条件 | Python 依赖可导入；资源可定位；ADB 可从内置目录或 PATH 解析 |
 | 主流程 | 创建 QApplication → 批量读取并校验字体设置 → 设置应用级 UI 字体 → 加载主题 → 创建 MainFrame/Controller/Models → 校验并恢复普通窗口尺寸和分栏比例 → 构建界面、原生缩放热区和信号 → 延后首次刷新 → 可选启动持续扫描 |
-| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号、窗口尺寸或分栏比例回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；ADB 不可用时设备刷新返回失败并写日志；关闭时取消尚未触发的刷新和扫描 |
+| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号、窗口尺寸或分栏比例回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；连续六次自动扫描失败且没有受管后台任务时，尝试恢复项目解析到的 ADB Server；协议已卡死时只终止可执行路径与项目 ADB 完全一致的 5037 监听进程，外部监听进程不自动终止；恢复失败写日志并按冷却时间重试；关闭时取消尚未触发的刷新和扫描 |
 | 涉及模块 | `main.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/styles/typography.py`、`core/settings_manager.py`、`controllers/`、`models/adb_device.py` |
 | 涉及数据 | AppSettings、FontConfig、设备列表、窗口尺寸/分栏比例、日志 |
 | 代码位置 | `main.py::_run_gui`、`MainFrame.__init__/_start_device_discovery/closeEvent`、`_ScanThread.run` |
@@ -29,7 +29,12 @@ flowchart TD
     Frame --> Initial["定时器触发首次设备刷新"]
     Frame --> Scan{"continuous_device_scan"}
     Scan -->|"开启"| Poll["周期 adb devices"]
-    Poll --> Changed{"设备集合变化"}
+    Poll --> Healthy{"ADB 查询成功"}
+    Healthy -->|"连续失败"| Recover{"无受管后台任务且冷却结束"}
+    Recover -->|"是"| Restart["受限恢复项目 ADB Server"]
+    Restart --> Poll
+    Recover -->|"否"| Poll
+    Healthy -->|"成功"| Changed{"设备集合变化"}
     Changed -->|"是"| Refresh["刷新设备信息与 UI"]
     Changed -->|"否"| Poll
 ```

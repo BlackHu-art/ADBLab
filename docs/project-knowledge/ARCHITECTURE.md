@@ -176,6 +176,11 @@ sequenceDiagram
                 ADB-->>Scan: 设备集合
                 Scan-->>MF: 集合变化信号
             end
+            opt 连续失败且没有受管后台进程
+                Scan->>ADB: kill-server / start-server
+                Note over Scan,ADB: 卡死时只终止路径与项目 ADB 一致的 5037 监听进程
+                Scan->>ADB: 立即重试 adb devices
+            end
         end
         Main->>Qt: app.exec()
     end

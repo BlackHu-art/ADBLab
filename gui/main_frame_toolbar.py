@@ -3,7 +3,7 @@
 import os
 from collections.abc import Callable
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -229,6 +229,13 @@ class ToolbarController:
         layout.addWidget(self._frame.tb_minimize)
         layout.addWidget(self._frame.tb_maximize)
         layout.addWidget(self._frame.tb_exit)
+
+        self._frame._toolbar_path_layout_timer = QTimer(self._frame)
+        self._frame._toolbar_path_layout_timer.setSingleShot(True)
+        self._frame._toolbar_path_layout_timer.timeout.connect(
+            self._frame._update_toolbar_path_display
+        )
+        bar.installEventFilter(self._frame)
 
         self._frame._refresh_toolbar_metrics()
         self._frame._refresh_save_path()

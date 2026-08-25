@@ -44,7 +44,7 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
-- ADB 解析器已按平台门控：Windows 优先内置 `scrcpy-win64-v3.3.1/adb.exe`，不存在时回退
+- ADB 解析器已按平台门控：Windows 优先内置 `scrcpy-win64/adb.exe`，不存在时回退
   PATH；非 Windows 直接解析 PATH 中的 adb，避免把仓库内 Windows PE 当成 adb 执行。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
@@ -115,7 +115,7 @@ README 提供的 Windows spec 构建命令：
 `ADBLab.spec`：
 
 - 入口为 `main.py`。
-- 收集 `resources/`、`icon.ico`、`scrcpy-win64-v3.3.1/`、`mobileperf/`。
+- 收集 `resources/`、`icon.ico`、`scrcpy-win64/`、`mobileperf/`。
 - 收集全部 `mobileperf` 子模块。
 - 生成 windowed、onedir 的 `ADBLab`。
 - 邮件服务已移除，spec 不再涉及任何 `mail.yaml` 收集项。

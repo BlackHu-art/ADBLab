@@ -8,6 +8,7 @@ from pathlib import Path
 
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
 from utils.resource_path import resource_path, setup_qt_search_paths
+from utils.runtime_tools import WINDOWS_TOOL_BUNDLE
 from utils.user_data import user_data_root
 
 
@@ -73,11 +74,11 @@ def _self_check_packaging() -> int:
     if sys.platform == "win32":
         check(
             "resource:scrcpy.exe",
-            Path(resource_path("scrcpy-win64-v3.3.1/scrcpy.exe")).is_file(),
+            Path(resource_path(f"{WINDOWS_TOOL_BUNDLE}/scrcpy.exe")).is_file(),
         )
         check(
             "resource:adb.exe",
-            Path(resource_path("scrcpy-win64-v3.3.1/adb.exe")).is_file(),
+            Path(resource_path(f"{WINDOWS_TOOL_BUNDLE}/adb.exe")).is_file(),
         )
 
     try:

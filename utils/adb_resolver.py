@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 
-from utils.runtime_tools import bundled_tool_path
+from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
 
 _adb_path: str | None = None
 _resolved: bool = False
@@ -25,7 +25,7 @@ def resolve_adb_path() -> str | None:
         return _adb_path
 
     if sys.platform == "win32":
-        bundled = bundled_tool_path("scrcpy-win64-v3.3.1", "adb.exe")
+        bundled = bundled_tool_path(WINDOWS_TOOL_BUNDLE, "adb.exe")
         if os.path.isfile(bundled):
             _adb_path = bundled
             _resolved = True

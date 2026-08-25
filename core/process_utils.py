@@ -43,6 +43,15 @@ def process_name(pid: int) -> str:
         return ""
 
 
+def process_executable(pid: int) -> str:
+    """返回进程可执行文件绝对路径；进程不存在或不可读时返回空字符串。"""
+
+    try:
+        return psutil.Process(pid).exe() or ""
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        return ""
+
+
 def kill_process_tree(
     pid: int,
     *,

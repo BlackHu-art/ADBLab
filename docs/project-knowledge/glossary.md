@@ -40,7 +40,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | ResponsiveCoordinator | 响应式重排的单一协调入口：度量 → 布局计划 → 溢出收敛（最多 3 轮、40ms 防抖） | `gui/widgets/responsive_controller.py` |
 | ScreenAdapter / QtScreenAdapter | 屏幕适配协议与 Qt 实现：所在屏幕、可用几何、逻辑 DPI 与变更订阅 | `gui/screen_adapter.py` |
 | Remote | scrcpy 投屏与 ADB 远程输入功能 | `gui/panels/remote_panel.py`、`services/remote/` |
-| scrcpy | Android 投屏/控制外部工具 | `scrcpy-win64-v3.3.1/`、`ScrcpyService` |
+| scrcpy | Android 投屏/控制外部工具 | `scrcpy-win64/`、`ScrcpyService` |
 | ScrcpyConfig | scrcpy 用户配置数据类 | `services/remote/types.py` |
 | PreflightResult | scrcpy 启动前设备可达性和详情检查结果 | `services/remote/types.py` |
 | ScrcpyLaunchPlan | 可执行文件、参数、预检结果的启动计划 | `services/remote/types.py` |

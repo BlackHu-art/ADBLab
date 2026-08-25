@@ -4,6 +4,7 @@ from pathlib import Path
 WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
 RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
+PYINSTALLER_SPEC = Path("ADBLab.spec")
 
 PINNED_ACTIONS = {
     "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "v5"),
@@ -55,6 +56,16 @@ def test_build_workflow_does_not_run_pytest_during_packaging():
     assert "python -m pytest" not in workflow
     assert "Run fast tests" not in workflow
     assert "Run tests" not in workflow
+
+
+def test_windows_build_collects_current_scrcpy_bundle():
+    """本地 spec 与 CI 必须收集同一个无版本号的 Windows 工具目录。"""
+
+    packaging_configs = (_read(PYINSTALLER_SPEC), _read(BUILD_WORKFLOW))
+
+    for config in packaging_configs:
+        assert "scrcpy-win64-v3.3.1" not in config
+        assert "scrcpy-win64" in config
 
 
 def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():

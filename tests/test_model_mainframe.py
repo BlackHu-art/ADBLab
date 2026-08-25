@@ -77,6 +77,30 @@ def test_scan_thread_skips_polling_while_command_runner_is_busy():
     run.assert_not_called()
 
 
+def test_scan_thread_rechecks_shortly_after_command_runner_becomes_idle():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=15000)
+    waits = []
+
+    def stop_after_first_normal_wait(delay_ms):
+        waits.append(delay_ms)
+        if len(waits) >= 51:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", side_effect=[1, 0]),
+        patch(
+            "gui.main_frame.CommandRunner.run",
+            return_value=CommandResult(success=True, output="List of devices attached\n"),
+        ) as run,
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_first_normal_wait),
+    ):
+        thread.run()
+
+    run.assert_called_once_with(["adb", "devices"], timeout=5)
+    assert waits[:50] == [100] * 50
+
+
 def test_scan_thread_emits_when_device_set_changes_with_same_count():
     _app = QApplication.instance() or QApplication([])
     thread = _ScanThread(interval_ms=3000)
@@ -108,11 +132,14 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
     frame._scan_thread = None
     frame.adb_controller = Mock()
     frame._schedule_scan_refresh = Mock()
+    frame._on_scan_diagnostic = Mock()
 
     class FakeScanThread:
         def __init__(self, interval_ms=15000):
             self.interval_ms = interval_ms
             self.devices_changed = Mock()
+            self.discovery_state_changed = Mock()
+            self.diagnostic = Mock()
             self.started = False
 
         def isRunning(self):
@@ -129,9 +156,90 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
         MainFrame._start_scan_thread(frame)
 
     frame._scan_thread.devices_changed.connect.assert_called_once_with(frame._schedule_scan_refresh)
+    frame._scan_thread.diagnostic.connect.assert_called_once_with(frame._on_scan_diagnostic)
     frame.adb_controller.refresh_devices.assert_not_called()
     assert frame._scan_thread.interval_ms == 12000
     assert frame._scan_thread.started is True
+
+
+def test_scan_thread_recovers_after_repeated_failures_and_retries_immediately():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+    thread._interval_ms = 100
+    emitted = []
+    diagnostics = []
+    thread.devices_changed.connect(emitted.append)
+    thread.diagnostic.connect(diagnostics.append)
+    sleeps = {"count": 0}
+
+    def stop_after_retry(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] >= 6:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch("gui.main_frame.CommandRunner.run") as run,
+        patch("gui.main_frame.ProcessRunner.tracked_active_count", return_value=0),
+        patch("services.adb_recovery.recover_adb_server") as recover,
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_retry),
+    ):
+        run.side_effect = [
+            *[CommandResult(success=False, error="Timeout(5s)") for _ in range(6)],
+            CommandResult(
+                success=True,
+                output="List of devices attached\ndevice-1\tdevice\n",
+            ),
+        ]
+        recover.return_value = SimpleNamespace(success=True, forced=True, detail="forced-restart")
+
+        thread.run()
+
+    recover.assert_called_once_with()
+    assert emitted == [["device-1"]]
+    assert diagnostics == ["scan_failed", "recovery_started", "recovery_forced"]
+
+
+def test_scan_thread_defers_recovery_while_managed_process_is_active():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+    thread._interval_ms = 100
+    diagnostics = []
+    thread.diagnostic.connect(diagnostics.append)
+    sleeps = {"count": 0}
+
+    def stop_after_six_failures(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] >= 6:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch(
+            "gui.main_frame.CommandRunner.run",
+            return_value=CommandResult(success=False, error="Timeout(5s)"),
+        ),
+        patch("gui.main_frame.ProcessRunner.tracked_active_count", return_value=1),
+        patch("services.adb_recovery.recover_adb_server") as recover,
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_six_failures),
+    ):
+        thread.run()
+
+    recover.assert_not_called()
+    assert diagnostics == ["scan_failed", "recovery_deferred"]
+
+
+def test_main_frame_scan_diagnostic_logs_fixed_user_message():
+    frame = SimpleNamespace(log_service=Mock())
+
+    with patch("gui.main_frame._debug_log") as debug_log:
+        MainFrame._on_scan_diagnostic(frame, "recovery_forced")
+
+    frame.log_service.log.assert_called_once_with(
+        "WARNING",
+        "Unresponsive bundled ADB server was terminated and restarted",
+    )
+    debug_log.assert_called_once_with(frame, "adb.discovery", phase="recovery_forced")
 
 
 def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():

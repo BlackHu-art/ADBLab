@@ -19,7 +19,7 @@ def test_scrcpy_launch_args_include_selected_ui_options():
         "bitrate": "12",
         "codec": "h265",
         "buffer": "50",
-        "orientation": "1",
+        "orientation": "90",
         "fullscreen": True,
         "always_on_top": True,
         "no_audio": True,
@@ -42,6 +42,7 @@ def test_scrcpy_launch_args_include_selected_ui_options():
     assert "C:/tmp/out.mp4" in args
     assert "--no-playback" in args
     assert "--no-window" in args
+    assert "--capture-orientation=@90" in args
     assert args[-1] == "--print-fps"
 
 
@@ -71,7 +72,7 @@ def test_scrcpy_launch_args_omit_defaults():
     assert "--video-codec" not in args
     assert "--video-encoder" not in args
     assert "--video-buffer=0" not in args
-    assert not any(arg.startswith("--lock-video-orientation") for arg in args)
+    assert not any(arg.startswith("--capture-orientation") for arg in args)
     assert "--record" not in args
     assert "--no-window" not in args
     assert args[-1] == "--print-fps"

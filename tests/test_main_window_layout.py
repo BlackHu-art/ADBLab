@@ -360,6 +360,29 @@ def test_toolbar_resize_does_not_toggle_stable_action_buttons(qt_application):
         frame.close()
 
 
+def test_save_path_reflows_after_toolbar_finishes_resizing(qt_application):
+    """子工具栏晚于主窗口完成布局时，也必须重新计算保存路径宽度。"""
+
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900)))
+    )
+    try:
+        frame.show()
+        wait_until(qt_application, lambda: frame._toolbar.width() > 0)
+        frame._save_path_label.setMaximumWidth(1)
+
+        frame._toolbar.resize(frame._toolbar.width() - 1, frame._toolbar.height())
+        qt_application.processEvents()
+        qt_application.processEvents()
+
+        assert frame._save_path_label.maximumWidth() > 1
+        assert frame._save_path_label.text().startswith("GlobalSavePath:")
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
 def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
     qt_application,
 ):

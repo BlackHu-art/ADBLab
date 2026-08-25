@@ -38,7 +38,7 @@ EXCLUDED_PARTS = frozenset(
         "generated",
         "logs",
         "resources",
-        "scrcpy-win64-v3.3.1",
+        "scrcpy-win64",
     }
 )
 

@@ -44,7 +44,7 @@
 - 生产代码注释和 docstring 使用规范中文，技术标识保留原文。注释解释业务原因、约束、不变量、
   失败语义和资源归属，不复述显然代码；公共边界及并发、取消、危险操作、持久化、清理接口应有
   契约说明。详细规则见 `docs/guides/TESTING_GUIDE.md`。
-- 只在任务明确涉及且来源已确认时修改 `resources/icons/`、`scrcpy-win64-v3.3.1/`、
+- 只在任务明确涉及且来源已确认时修改 `resources/icons/`、`scrcpy-win64/`、
   `mobileperf/extlib/` 或平台二进制。外部 ZIP 必须使用 `utils.archive.safe_extract_zip()`。
 - 应用版本只在 `utils/app_metadata.py` 修改。普通本地/dev 任务不改版本；明确准备 dev 推 main
   或发布时按既有版本规则处理，主/次版本仅按用户要求或发布计划调整。

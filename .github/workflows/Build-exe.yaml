@@ -48,7 +48,7 @@ jobs:
             package_mode: --onedir
             windowed: --windowed
             icon: --icon icon.ico
-            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64-v3.3.1;scrcpy-win64-v3.3.1" --add-data "mobileperf;mobileperf"
+            datas: --add-data "resources;resources" --add-data "icon.ico;." --add-data "scrcpy-win64;scrcpy-win64" --add-data "mobileperf;mobileperf"
             pip_cache: ~\AppData\Local\pip\Cache
 
           - os: macos-latest

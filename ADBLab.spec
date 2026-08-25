@@ -13,7 +13,7 @@ a = Analysis(
     datas=[
         ('resources', 'resources'),
         ('icon.ico', '.'),
-        ('scrcpy-win64-v3.3.1', 'scrcpy-win64-v3.3.1'),
+        ('scrcpy-win64', 'scrcpy-win64'),
         ('mobileperf', 'mobileperf'),
     ],
     hiddenimports=collect_submodules('mobileperf'),

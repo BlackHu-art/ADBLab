@@ -12,6 +12,7 @@ from utils.app_metadata import APP_NAME, APP_VERSION
 from utils.resource_path import resource_path
 
 _copy_lock = threading.Lock()
+WINDOWS_TOOL_BUNDLE = "scrcpy-win64"
 
 
 def bundled_tool_path(bundle_dir: str, *relative_parts: str) -> str:

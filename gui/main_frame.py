@@ -3,6 +3,7 @@
 import os
 import shutil
 import threading
+import time
 from collections.abc import Callable
 from typing import cast
 
@@ -63,13 +64,21 @@ def _debug_log(owner, event: str, **fields) -> None:
 class _ScanThread(QThread):
     """以低频率轮询 ``adb devices`` 的长生命周期线程。"""
 
+    RECOVERY_FAILURE_THRESHOLD = 6
+    RECOVERY_COOLDOWN_SECONDS = 180.0
+    BUSY_RETRY_MS = 6000
+
     devices_changed = Signal(list)
     discovery_state_changed = Signal(str)
+    diagnostic = Signal(str)
 
     def __init__(self, parent=None, interval_ms: int = 15000):
         super().__init__(parent)
         self._stop_flag = False
         self._interval_ms = max(3000, int(interval_ms))
+        self._consecutive_failures = 0
+        self._last_recovery_at = float("-inf")
+        self._recovery_deferred_notified = False
 
     def stop(self):
         self._stop_flag = True
@@ -79,25 +88,89 @@ class _ScanThread(QThread):
 
         last_devices = None  # 首次轮询必须发布设备列表。
         while not self._stop_flag:
+            recovered = False
             try:
-                if CommandRunner.active_count() == 0:
-                    result = CommandRunner.run(["adb", "devices"], timeout=5)
-                    if not result.success:
-                        self.discovery_state_changed.emit("unavailable")
-                    else:
-                        devices = parse_connected_devices(result.output)
-                        device_set = tuple(sorted(devices))
-                        if device_set != last_devices:
-                            last_devices = device_set
-                            self.devices_changed.emit(devices)
-                        self.discovery_state_changed.emit("ready" if devices else "empty")
+                if CommandRunner.active_count() > 0:
+                    if self._wait_interruptibly(self.BUSY_RETRY_MS):
+                        return
+                    continue
+                result = CommandRunner.run(["adb", "devices"], timeout=5)
+                if not result.success:
+                    recovered = self._handle_scan_failure()
+                else:
+                    self._consecutive_failures = 0
+                    self._recovery_deferred_notified = False
+                    devices = parse_connected_devices(result.output)
+                    device_set = tuple(sorted(devices))
+                    if device_set != last_devices:
+                        last_devices = device_set
+                        self.devices_changed.emit(devices)
+                    self.discovery_state_changed.emit("ready" if devices else "empty")
             except Exception:
-                self.discovery_state_changed.emit("unavailable")
-            # 将轮询间隔拆成短等待，使关闭请求能够及时中断线程。
-            for _ in range(max(1, self._interval_ms // 100)):
-                if self._stop_flag:
-                    return
-                self.msleep(100)
+                recovered = self._handle_scan_failure()
+            if recovered:
+                # Server 已重启时立即验证，不额外等待一个完整扫描周期。
+                continue
+            if self._wait_interruptibly(self._interval_ms):
+                return
+
+    def _wait_interruptibly(self, delay_ms: int) -> bool:
+        """把等待拆成 100ms 小段，返回是否收到停止请求。"""
+
+        remaining_ms = max(0, int(delay_ms))
+        while remaining_ms > 0:
+            if self._stop_flag:
+                return True
+            wait_ms = min(100, remaining_ms)
+            self.msleep(wait_ms)
+            remaining_ms -= wait_ms
+        return self._stop_flag
+
+    def _handle_scan_failure(self) -> bool:
+        """记录连续失败，并在安全条件满足时恢复项目自带的 ADB Server。"""
+
+        self._consecutive_failures += 1
+        self.discovery_state_changed.emit("unavailable")
+        if self._consecutive_failures == 1:
+            self.diagnostic.emit("scan_failed")
+        if self._consecutive_failures < self.RECOVERY_FAILURE_THRESHOLD:
+            return False
+
+        now = time.monotonic()
+        if now - self._last_recovery_at < self.RECOVERY_COOLDOWN_SECONDS:
+            return False
+        if CommandRunner.active_count() > 0 or ProcessRunner.tracked_active_count() > 0:
+            if not self._recovery_deferred_notified:
+                self._recovery_deferred_notified = True
+                self.diagnostic.emit("recovery_deferred")
+            return False
+
+        from services.adb_recovery import recover_adb_server
+
+        self._recovery_deferred_notified = False
+        self._last_recovery_at = now
+        self.discovery_state_changed.emit("recovering")
+        self.diagnostic.emit("recovery_started")
+        try:
+            result = recover_adb_server()
+        except Exception:
+            self.discovery_state_changed.emit("unavailable")
+            self.diagnostic.emit("recovery_failed")
+            return False
+        if not result.success:
+            self.discovery_state_changed.emit("unavailable")
+            event = (
+                "recovery_blocked_foreign_listener"
+                if result.detail == "foreign-listener"
+                else "recovery_failed"
+            )
+            self.diagnostic.emit(event)
+            return False
+
+        self._consecutive_failures = 0
+        self.discovery_state_changed.emit("scanning")
+        self.diagnostic.emit("recovery_forced" if result.forced else "recovery_succeeded")
+        return True
 
 
 class MainFrame(QMainWindow):
@@ -248,7 +321,48 @@ class MainFrame(QMainWindow):
         )
         if discovery_state_changed is not None and callable(set_discovery_state):
             discovery_state_changed.connect(set_discovery_state)
+        self._scan_thread.diagnostic.connect(self._on_scan_diagnostic)
         self._scan_thread.start()
+
+    def _on_scan_diagnostic(self, event: str) -> None:
+        """把扫描线程的固定诊断事件转换为不含设备标识的用户日志。"""
+
+        messages = {
+            "scan_failed": (
+                "WARNING",
+                "Automatic device scan failed; ADB recovery will follow repeated failures",
+            ),
+            "recovery_deferred": (
+                "WARNING",
+                "Automatic ADB recovery is deferred while a managed background task is active",
+            ),
+            "recovery_started": (
+                "WARNING",
+                "ADB is not responding; restarting the bundled ADB server",
+            ),
+            "recovery_succeeded": (
+                "INFO",
+                "ADB server restarted; retrying device discovery",
+            ),
+            "recovery_forced": (
+                "WARNING",
+                "Unresponsive bundled ADB server was terminated and restarted",
+            ),
+            "recovery_blocked_foreign_listener": (
+                "ERROR",
+                "Automatic ADB recovery was skipped because port 5037 belongs to another program",
+            ),
+            "recovery_failed": (
+                "ERROR",
+                "Automatic ADB recovery failed; use Restart ADB after background tasks stop",
+            ),
+        }
+        level, message = messages.get(
+            event,
+            ("WARNING", "Automatic device discovery reported an unknown recovery state"),
+        )
+        self.log_service.log(level, message)
+        _debug_log(self, "adb.discovery", phase=event)
 
     def _stop_scan_thread(self, *, blocking: bool = False):
         initial_timer = getattr(self, "_initial_refresh_timer", None)
@@ -1064,6 +1178,14 @@ class MainFrame(QMainWindow):
         )._on_dialog_destroyed(dialog, dialog_name)
 
     def eventFilter(self, watched, event):
+        if watched is getattr(self, "_toolbar", None) and event.type() in (
+            QEvent.Type.Resize,
+            QEvent.Type.Show,
+        ):
+            timer = getattr(self, "_toolbar_path_layout_timer", None)
+            if timer is not None:
+                # 子工具栏通常晚于主窗口完成几何更新，下一轮再按最终宽度省略路径。
+                timer.start(0)
         host = getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
         handled = host.eventFilter(watched, event)
         if handled is not None:

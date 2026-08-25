@@ -22,7 +22,8 @@ def build_scrcpy_args(config: ScrcpyConfig, encoder: str | None = None) -> list[
     if config.buffer != "0":
         args.append(f"--video-buffer={config.buffer}")
     if config.orientation != "0":
-        args.append(f"--lock-video-orientation={config.orientation}")
+        # scrcpy 4 使用带 @ 的 capture orientation 表达相对设备自然方向的锁定。
+        args.append(f"--capture-orientation=@{config.orientation}")
     if config.prefer_text:
         args.append("--prefer-text")
     if config.window_title:

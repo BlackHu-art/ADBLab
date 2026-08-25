@@ -6,7 +6,12 @@ from unittest.mock import MagicMock, patch
 import psutil
 import pytest
 
-from core.process_utils import find_pids_listening_on, kill_process_tree, process_name
+from core.process_utils import (
+    find_pids_listening_on,
+    kill_process_tree,
+    process_executable,
+    process_name,
+)
 
 
 def _conn(status, port, pid):
@@ -40,6 +45,15 @@ def test_find_pids_listening_on_rejects_invalid_port():
 def test_process_name_returns_empty_on_missing_process():
     with patch("psutil.Process", side_effect=psutil.NoSuchProcess(123)):
         assert process_name(123) == ""
+
+
+def test_process_executable_returns_path_or_empty_for_unreadable_process():
+    process = MagicMock()
+    process.exe.return_value = "C:/tools/adb.exe"
+    with patch("psutil.Process", return_value=process):
+        assert process_executable(123) == "C:/tools/adb.exe"
+    with patch("psutil.Process", side_effect=psutil.AccessDenied(123, "denied")):
+        assert process_executable(123) == ""
 
 
 def test_kill_process_tree_terminates_children_then_parent():
