@@ -101,6 +101,9 @@ def _frame(controller_shutdown, *, scan_thread=None, deadline=0.5, left_panel=No
     frame._panel_size_save_timer = Mock()
     frame._panel_size_save_timer.isActive.return_value = False
     frame._save_pending_panel_sizes = Mock()
+    # 此工厂绕过 QMainWindow.__init__，只验证应用关闭编排；真实窗口布局快照由
+    # test_main_window_layout.py 使用完整 MainFrame 独立覆盖。
+    frame._flush_pending_layout_state = Mock()
     frame.left_panel = left_panel or FakeLeftPanel()
     frame.adb_controller = Mock()
     frame.adb_controller.shutdown.side_effect = controller_shutdown
