@@ -71,7 +71,7 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
 ## 测试与检查
 
-以下是发布验收或 CI 使用的完整门禁命令，不是每次本地代码修改后的默认动作；dev 推送 main
+以下是发布验收或人工质量验收使用的完整门禁命令，不是每次本地代码修改后的默认动作；dev 推送 main
 本身不触发本地全量测试。
 日常修复应先按 [TESTING_GUIDE](TESTING_GUIDE.md#增量验证策略) 选择直接和受影响模块测试：
 
@@ -135,9 +135,8 @@ packaging self-check，均以退出码 0 完成；递归检查产物归档未发
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。
-3. Windows 额外安装 `requirements-dev.txt`，依次运行 `python -m ruff check .`、
-   `python -m pyright`、`python -m pytest -q -m "not ui"` 快速子集和 `python -m pytest -q` 完整套件；macOS/Linux
-   只运行 source packaging self-check。
+3. Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
+   `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
 5. Windows 运行打包后 self-check。
 6. 压缩并上传三平台制品。
@@ -155,7 +154,7 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 - 主版本和次版本只按明确的发布计划调整；当前基线为 3.2.1。
 - 不允许把多次推送共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
 - 推送前应先比较上次推送时的版本，确认本次版本已递增；本地验证继续按增量策略选择，推送 main
-  本身不触发全量测试或 packaging self-check，发布验收和 CI 按完整门禁执行。
+  本身不触发本地全量测试。发布验收按完整门禁执行；CI Build 只执行静态检查、打包和产物自检。
 
 ### Auto-Clean 工作流
 

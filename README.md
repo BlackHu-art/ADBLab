@@ -324,8 +324,8 @@ dev 分支提交都不修改版本号。默认只递增补丁版本；主版本�
 
 GitHub Actions 构建流程：
 
-- Windows 安装开发依赖后依次运行 Ruff、Pyright、`pytest -m "not ui"` 快速子集和完整 pytest；
-  macOS/Linux 只运行源码模式 packaging self-check。
+- Windows 安装开发工具后运行 Ruff、Pyright；pytest 不在编译发布工作流中执行。
+  macOS/Linux 运行源码模式 packaging self-check。
 - Windows 使用 onedir 产物并打包成 zip，避免 onefile 临时目录被 adb/scrcpy 长进程锁住。
 - PyInstaller 显式收集 `mobileperf` 子模块和资源。
 - Windows 产物上传前执行 `--self-check packaging`。

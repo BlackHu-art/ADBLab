@@ -47,6 +47,16 @@ def test_build_uses_read_only_default_permissions_and_scoped_release_write():
     assert "actions: write" not in workflow
 
 
+def test_build_workflow_does_not_run_pytest_during_packaging():
+    """打包发布只执行静态检查和产物自检，pytest 留在独立的开发验证流程。"""
+
+    workflow = _read(BUILD_WORKFLOW)
+
+    assert "python -m pytest" not in workflow
+    assert "Run fast tests" not in workflow
+    assert "Run tests" not in workflow
+
+
 def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():
     workflow = _read(BUILD_WORKFLOW)
 

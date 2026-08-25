@@ -77,8 +77,9 @@
 3. 只有关联测试无法界定影响范围时才扩大测试集；不得仅因“可能有用”而运行无关模块。
 4. 代码、测试或方案仍可能继续变化时不得启动全量测试。确需全量时，在代码冻结后集中执行。
 5. 全量测试只由以下条件触发：用户明确要求；发布验收；改动横跨多个共享核心边界且无法可靠
-   界定影响范围；CI 固定门禁。dev 推送 main 本身不触发本地全量测试；若缺少合并前 CI，只
-   报告 main 可能先进入失败提交的风险，不以此为由擅自运行本地全量。
+   界定影响范围；专门测试工作流的固定门禁。dev 推送 main 本身不触发本地全量测试；当前 Build
+   工作流不执行 pytest。若缺少合并前测试门禁，只报告 main 可能先进入失败提交的风险，不以此
+   为由擅自运行本地全量。
 6. 全量测试后若又发生局部修改，先重跑该修改的直接与关联测试；仅当发布/合并仍要求完整快照时
    才重新执行全量测试。
 7. 纯文档修改不运行 pytest；只执行 `scripts/check_doc_links.py`、适用的文档规范检查和
@@ -114,15 +115,15 @@ Qt 延迟删除事件累积会拖慢单次 `processEvents`，1500ms 曾在顺序
 该文件不复现），放宽后顺序无关且历史全量记录稳定。测试分层 marker 由
 ADR-0003 Phase 0 注册了 `unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针）
 三个 marker；当前 `tests/conftest.py::pytest_collection_modifyitems` 只按文件附加 `ui` 和
-`integration`，尚未给测试附加 `unit`。CI 在完整测试前先跑 `not ui` 快速子集，即所有未标记为
-UI 的项目（包含 integration 和未标 marker 的项目），不能把它等同为显式的“unit + integration”：
+`integration`，尚未给测试附加 `unit`。`not ui` 快速子集会选择所有未标记为 UI 的项目
+（包含 integration 和未标 marker 的项目），不能把它等同为显式的“unit + integration”：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q -m "not ui"
 ```
 
-新增 UI 类测试文件时同步登记 conftest 映射；CI 固定运行完整命令，本地仅在上述全量触发条件
-成立时执行。
+新增 UI 类测试文件时同步登记 conftest 映射。Build 工作流不执行 pytest；开发和发布验收仅在
+上述全量触发条件成立时执行完整命令。
 
 ## 覆盖分层
 
@@ -182,7 +183,7 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
 6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
 7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
-8. 最近一次全量记录约 6 分钟，响应式几何扫描占比较高；CI 快速子集使用 `not ui`，
+8. 最近一次全量记录约 6 分钟，响应式几何扫描占比较高；`not ui` 快速子集的
    2026-08-21 collect-only 快照为 478/961 项。当前只自动附加 ui/integration marker，unit marker
    尚未实际分配；`test_model_execution.py` 已按 Phase 2 拆为 10 个主题文件。
 
@@ -255,8 +256,8 @@ dev 推送到 main 前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 
 并确保没有复用历史版本；本地与 dev 提交不修改版本号。
 
 普通本地修改的最低门禁是关联测试、修改文件的 Ruff/适用静态检查以及 `git diff --check`。
-纯文档修改按增量策略只运行文档检查。以下完整门禁仅用于发布验收、用户明确要求、无法可靠
-界定影响范围的共享核心改动或 CI；dev 推送 main 本身不触发本地全量测试：
+纯文档修改按增量策略只运行文档检查。以下完整门禁仅用于发布验收、用户明确要求或无法可靠
+界定影响范围的共享核心改动；Build 工作流不执行 pytest，dev 推送 main 本身不触发本地全量测试：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -280,7 +281,7 @@ git diff --check
   基线（2026-08-19，快速子集）：adblab + services 合计 88%（2301 语句，279 未覆盖）。
 - **pytest-xdist**（并行）：`.\.venv\Scripts\python.exe -m pytest -q -n auto`。注意：含子进程探针的
   `test_phase2_live_logcat_gate.py` 在并行 worker 下不稳定，并行运行请限定纯逻辑子集
-  （如 `-n 4 -m "not ui" --ignore=tests/test_phase2_live_logcat_gate.py`）；CI 仍保持串行全量。
+  （如 `-n 4 -m "not ui" --ignore=tests/test_phase2_live_logcat_gate.py`）；人工全量验证仍建议串行执行。
 - **pre-commit**（本地钩子）：`.pre-commit-config.yaml` 已配置 ruff、中文注释门禁与
   文档链接校验三个本地钩子；首次使用执行
   `.\.venv\Scripts\python.exe -m pre_commit install`。
