@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QPushButton, QWidget
 
-from core.exec import CREATE_NEW_CONSOLE, CommandResult
+from core.exec import CREATE_NEW_CONSOLE
 from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.main_frame import MainFrame, _ScanThread
@@ -40,24 +40,47 @@ def test_main_frame_open_cmd_launches_terminal_via_process_runner():
     assert runner.spawn.call_args.kwargs["creationflags"] == CREATE_NEW_CONSOLE
 
 
+class _FakeScanProc:
+    def __init__(self, output: str):
+        self._output = output
+
+    def poll(self):
+        return 0
+
+    def communicate(self):
+        return self._output, ""
+
+
+class _FakeScanRunner:
+    def __init__(self, outputs):
+        self._outputs = list(outputs)
+        self.started = []
+        self.stopped = []
+
+    def start(self, key, cmd, **kwargs):
+        self.started.append(cmd)
+        return _FakeScanProc(self._outputs.pop(0) if self._outputs else "")
+
+    def stop(self, key, timeout=5.0):
+        self.stopped.append(key)
+
+
 def test_scan_thread_uses_command_runner_for_device_polling():
     _app = QApplication.instance() or QApplication([])
     thread = _ScanThread()
     emitted = []
     thread.devices_changed.connect(emitted.append)
+    runner = _FakeScanRunner(["List of devices attached\ndevice-1\tdevice\n"])
 
     with (
-        patch("gui.main_frame.CommandRunner.run") as run,
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
         patch.object(
             _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
         ),
     ):
-        run.return_value = CommandResult(
-            success=True, output="List of devices attached\ndevice-1\tdevice\n"
-        )
         thread.run()
 
-    run.assert_called_once_with(["adb", "devices"], timeout=15)
+    assert runner.started == [["adb", "devices"]]
     assert emitted == [["device-1"]]
 
 
@@ -67,20 +90,21 @@ def test_scan_thread_skips_polling_while_command_runner_is_busy():
 
     with (
         patch("gui.main_frame.CommandRunner.active_count", return_value=1),
-        patch("gui.main_frame.CommandRunner.run") as run,
+        patch("gui.main_frame.ProcessRunner") as runner_cls,
         patch.object(
             _ScanThread, "msleep", side_effect=lambda _ms: setattr(thread, "_stop_flag", True)
         ),
     ):
         thread.run()
 
-    run.assert_not_called()
+    runner_cls.assert_not_called()
 
 
 def test_scan_thread_rechecks_shortly_after_command_runner_becomes_idle():
     _app = QApplication.instance() or QApplication([])
     thread = _ScanThread(interval_ms=15000)
     waits = []
+    runner = _FakeScanRunner(["List of devices attached\n"])
 
     def stop_after_first_normal_wait(delay_ms):
         waits.append(delay_ms)
@@ -91,15 +115,12 @@ def test_scan_thread_rechecks_shortly_after_command_runner_becomes_idle():
 
     with (
         patch("gui.main_frame.CommandRunner.active_count", side_effect=[1, 0]),
-        patch(
-            "gui.main_frame.CommandRunner.run",
-            return_value=CommandResult(success=True, output="List of devices attached\n"),
-        ) as run,
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=stop_after_first_normal_wait),
     ):
         thread.run()
 
-    run.assert_called_once_with(["adb", "devices"], timeout=15)
+    assert runner.started == [["adb", "devices"]]
     assert waits[:150] == [100] * 150
 
 
@@ -109,6 +130,12 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
     emitted = []
     sleeps = {"count": 0}
     thread.devices_changed.connect(emitted.append)
+    runner = _FakeScanRunner(
+        [
+            "List of devices attached\ndevice-a\tdevice\n",
+            "List of devices attached\ndevice-b\tdevice\n",
+        ]
+    )
 
     def stop_after_two_polls(_ms):
         sleeps["count"] += 1
@@ -117,16 +144,50 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
 
     with (
         patch("gui.main_frame.CommandRunner.active_count", return_value=0),
-        patch("gui.main_frame.CommandRunner.run") as run,
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
         patch.object(_ScanThread, "msleep", side_effect=stop_after_two_polls),
     ):
-        run.side_effect = [
-            CommandResult(success=True, output="List of devices attached\ndevice-a\tdevice\n"),
-            CommandResult(success=True, output="List of devices attached\ndevice-b\tdevice\n"),
-        ]
         thread.run()
 
     assert emitted == [["device-a"], ["device-b"]]
+
+
+def test_scan_thread_stop_terminates_inflight_scan():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+
+    class _RunningProc:
+        def poll(self):
+            return None
+
+    class _RunningRunner:
+        def __init__(self):
+            self.stopped = []
+
+        def start(self, key, cmd, **kwargs):
+            return _RunningProc()
+
+        def stop(self, key, timeout=5.0):
+            self.stopped.append(key)
+
+    runner = _RunningRunner()
+    sleeps = {"count": 0}
+
+    def stop_after_first_poll(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_first_poll),
+    ):
+        thread.run()
+
+    # 停止请求必须终止在途的 adb 子进程，保证线程及时退出，
+    # 避免关闭窗口时 QThread 仍在运行被销毁。
+    assert runner.stopped == ["device_scan"]
 
 
 def test_main_frame_starts_scan_thread_with_debounced_refresh():

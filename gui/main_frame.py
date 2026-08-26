@@ -2,7 +2,9 @@
 
 import os
 import shutil
+import subprocess
 import threading
+import time
 from collections.abc import Callable
 from typing import cast
 
@@ -61,7 +63,14 @@ def _debug_log(owner, event: str, **fields) -> None:
 
 
 class _ScanThread(QThread):
-    """以低频率轮询 ``adb devices`` 的长生命周期线程。"""
+    """以低频率轮询 ``adb devices`` 的长生命周期线程。
+
+    扫描调用走 ProcessRunner 并以 100ms 轮询推进：停止请求可在任意时刻
+    终止正在执行的 adb 子进程，保证线程在关闭窗口的等待预算内退出，
+    避免 Qt 在 QThread 运行中销毁对象导致进程崩溃。
+    """
+
+    SCAN_CALL_TIMEOUT_S = 15.0
 
     devices_changed = Signal(list)
     discovery_state_changed = Signal(str)
@@ -77,29 +86,84 @@ class _ScanThread(QThread):
     def run(self):
         from models.adb_device import parse_connected_devices
 
+        runner: ProcessRunner | None = None
         last_devices = None  # 首次轮询必须发布设备列表。
         while not self._stop_flag:
+            if CommandRunner.active_count() != 0:
+                # 有受管命令在执行时跳过本轮，等待完整间隔后再试。
+                if self._sleep_interruptibly(self._interval_ms):
+                    return
+                continue
             try:
-                if CommandRunner.active_count() == 0:
-                    # 端点防护会拖慢每次 adb 进程启动（实测约 7 秒），
-                    # 超时按此放宽，避免瞬时干扰导致误报 unavailable。
-                    result = CommandRunner.run(["adb", "devices"], timeout=15)
-                    if not result.success:
-                        self.discovery_state_changed.emit("unavailable")
-                    else:
-                        devices = parse_connected_devices(result.output)
-                        device_set = tuple(sorted(devices))
-                        if device_set != last_devices:
-                            last_devices = device_set
-                            self.devices_changed.emit(devices)
-                        self.discovery_state_changed.emit("ready" if devices else "empty")
-            except Exception:
-                self.discovery_state_changed.emit("unavailable")
-            # 将轮询间隔拆成短等待，使关闭请求能够及时中断线程。
-            for _ in range(max(1, self._interval_ms // 100)):
+                if runner is None:
+                    runner = ProcessRunner()
+                output = self._run_devices_scan(runner)
                 if self._stop_flag:
                     return
+                if output is None:
+                    self.discovery_state_changed.emit("unavailable")
+                else:
+                    devices = parse_connected_devices(output)
+                    device_set = tuple(sorted(devices))
+                    if device_set != last_devices:
+                        last_devices = device_set
+                        self.devices_changed.emit(devices)
+                    self.discovery_state_changed.emit("ready" if devices else "empty")
+            except Exception:
+                if not self._stop_flag:
+                    self.discovery_state_changed.emit("unavailable")
+            if self._sleep_interruptibly(self._interval_ms):
+                return
+
+    def _run_devices_scan(self, runner: ProcessRunner) -> str | None:
+        """执行一次 ``adb devices`` 并返回 stdout 文本。
+
+        端点防护会拖慢每次 adb 进程启动（实测约 7 秒），超时按 15 秒
+        设置；停止请求到来时立即终止子进程并返回 None，使线程可及时退出。
+        """
+        try:
+            proc = runner.start(
+                "device_scan",
+                ["adb", "devices"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+            )
+        except Exception:
+            return None
+        deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
+        try:
+            while True:
+                if self._stop_flag:
+                    runner.stop("device_scan", timeout=2.0)
+                    return None
+                try:
+                    if proc.poll() is not None:
+                        break
+                except OSError:
+                    return None
+                if time.monotonic() >= deadline:
+                    runner.stop("device_scan", timeout=2.0)
+                    return None
                 self.msleep(100)
+            stdout, _stderr = proc.communicate()
+            return stdout
+        except Exception:
+            return None
+
+    def _sleep_interruptibly(self, delay_ms: int) -> bool:
+        """把等待拆成 100ms 小段，返回是否收到停止请求。"""
+
+        remaining = max(0, int(delay_ms))
+        while remaining > 0:
+            if self._stop_flag:
+                return True
+            wait_ms = min(100, remaining)
+            self.msleep(wait_ms)
+            remaining -= wait_ms
+        return bool(self._stop_flag)
 
 
 class MainFrame(QMainWindow):
