@@ -4,6 +4,7 @@ import copy
 import os
 import shutil
 import tempfile
+import time
 from datetime import datetime
 from threading import RLock
 
@@ -25,44 +26,136 @@ class DeviceStore:
     _devices = {}
     _file_path = user_config_path("connected_devices.yaml")
     _legacy_file_path = resource_path("resources/connected_devices.yaml")
+    # 端点防护（如火绒企业版）会瞬时锁定或在文件尾部附加扫描块：读取按瞬态
+    # 错误重试，写入失败重试一次，避免设备列表因监控拦截被清空。
+    _LOAD_RETRIES = 2
+    _LOAD_RETRY_DELAY_S = 0.3
+    _SAVE_RETRIES = 1
+    _SAVE_RETRY_DELAY_S = 0.2
 
     @classmethod
     def load(cls):
-        """加载用户设备文件，并在首次使用时迁移有效的旧版数据。"""
+        """加载用户设备文件；加载失败保留内存快照并备份损坏文件。
+
+        端点防护可能瞬时锁文件或在文件尾部附加扫描块，因此读取失败按瞬态
+        错误重试，解析失败先尝试仅取第一个 YAML 文档；所有失败路径都不清
+        空已有内存快照，避免打包环境下设备列表被清空。
+        """
         with cls._lock:
             source_path = cls._file_path
             if not os.path.exists(source_path) and os.path.exists(cls._legacy_file_path):
                 source_path = cls._legacy_file_path
             if not os.path.exists(source_path):
-                cls._devices = {}
                 return
+            loaded = cls._read_snapshot(source_path)
+            if loaded is None:
+                return
+            if source_path != cls._file_path and loaded:
+                try:
+                    cls._persist_snapshot(copy.deepcopy(loaded))
+                except OSError:
+                    # 旧版数据迁移写入失败不阻断本次加载结果。
+                    cls._note_load_failure("OSError")
+            cls._devices = loaded
+
+    @classmethod
+    def _read_snapshot(cls, source_path: str) -> dict | None:
+        """读取并解析设备快照；失败返回 None，绝不修改内存快照。"""
+        raw = cls._read_text_with_retry(source_path)
+        if raw is None:
+            return None
+        try:
+            return cls._parse_snapshot(raw, strict=True)
+        except (yaml.YAMLError, ValueError) as exc:
+            cls._note_load_failure(type(exc).__name__)
             try:
-                with open(source_path, encoding="utf-8") as f:
-                    content = yaml.safe_load(f) or {}
-                if not isinstance(content, dict):
-                    raise ValueError("device store is not a YAML mapping")
-                loaded = {
-                    str(device_id): copy.deepcopy(info)
-                    for device_id, info in content.items()
-                    if isinstance(info, dict)
-                }
-                cls._devices = loaded
-                if source_path != cls._file_path and loaded:
-                    cls._write_snapshot_atomic(copy.deepcopy(loaded))
-            except Exception as exc:
+                tolerant = cls._parse_snapshot(raw, strict=False)
+            except (yaml.YAMLError, ValueError):
+                tolerant = None
+            if tolerant is None:
                 if source_path == cls._file_path and os.path.isfile(source_path):
                     cls._backup_corrupt_file(source_path)
-                cls._devices = {}
-                LogService.write_developer_console(
-                    "ERROR",
-                    f"DeviceStore 加载失败：{type(exc).__name__}",
-                )
+                return None
+            # 文件尾部带监控附加块但首个文档合法：采用数据并回写规范化文件，
+            # 不产生 corrupt 备份，避免干扰反复出现时备份文件堆积。
+            try:
+                cls._persist_snapshot(copy.deepcopy(tolerant))
+            except OSError:
+                pass
+            return tolerant
+
+    @classmethod
+    def _read_text_with_retry(cls, path: str) -> str | None:
+        """按瞬态错误重试读取文本；持续失败时备份并记录原因。"""
+        last_error: BaseException | None = None
+        for attempt in range(cls._LOAD_RETRIES + 1):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    return f.read()
+            except OSError as exc:
+                last_error = exc
+                if attempt < cls._LOAD_RETRIES:
+                    time.sleep(cls._LOAD_RETRY_DELAY_S)
+            except UnicodeDecodeError as exc:
+                last_error = exc
+                break
+        cls._note_load_failure(type(last_error).__name__ if last_error is not None else "Unknown")
+        if path == cls._file_path and os.path.isfile(path):
+            cls._backup_corrupt_file(path)
+        return None
+
+    @staticmethod
+    def _parse_snapshot(raw: str, *, strict: bool) -> dict:
+        """解析设备快照；strict 失败时按非严格模式只取第一个合法文档。"""
+        if strict:
+            content = yaml.safe_load(raw) or {}
+        else:
+            # 端点防护附加的扫描块常以 NUL 字节开始；先截断再按多文档解析，
+            # 只采用第一个映射文档，忽略其余内容。
+            text = raw.split("\x00", 1)[0]
+            content = None
+            for doc in yaml.safe_load_all(text):
+                if isinstance(doc, dict):
+                    content = doc
+                    break
+            if content is None:
+                raise ValueError("no YAML mapping document in device store")
+        if not isinstance(content, dict):
+            raise ValueError("device store is not a YAML mapping")
+        return {
+            str(device_id): copy.deepcopy(info)
+            for device_id, info in content.items()
+            if isinstance(info, dict)
+        }
+
+    @classmethod
+    def _note_load_failure(cls, error_type: str) -> None:
+        """记录加载失败原因；打包模式下也通过 UI 日志面板可见。"""
+        message = f"DeviceStore 加载失败：{error_type}，已保留内存中的设备列表"
+        try:
+            LogService().log("WARNING", message)
+        except Exception:
+            pass
+        LogService.write_developer_console("ERROR", message)
 
     @classmethod
     def save(cls):
         """在线程锁内保存当前设备快照。"""
         with cls._lock:
-            cls._write_snapshot_atomic(copy.deepcopy(cls._devices))
+            cls._persist_snapshot(copy.deepcopy(cls._devices))
+
+    @classmethod
+    def _persist_snapshot(cls, snapshot: dict) -> None:
+        """按瞬态错误重试一次原子写盘；仍失败时向调用方抛出。"""
+        for attempt in range(cls._SAVE_RETRIES + 1):
+            try:
+                cls._write_snapshot_atomic(snapshot)
+                return
+            except OSError:
+                if attempt < cls._SAVE_RETRIES:
+                    time.sleep(cls._SAVE_RETRY_DELAY_S)
+                else:
+                    raise
 
     @classmethod
     def initialize_empty(cls):
@@ -141,7 +234,7 @@ class DeviceStore:
                 }
                 changed = True
             if changed:
-                cls._write_snapshot_atomic(copy.deepcopy(cls._devices))
+                cls._persist_snapshot(copy.deepcopy(cls._devices))
 
     @classmethod
     def get_all(cls):

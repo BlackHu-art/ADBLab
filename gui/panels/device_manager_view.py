@@ -61,7 +61,6 @@ class DeviceManagerView:
         device_count = device_list.count() if device_list is not None else 0
         descriptions = {
             "scanning": ("Scanning…", "ADB device discovery is in progress"),
-            "recovering": ("Restarting ADB…", "The bundled ADB server is being restarted"),
             "empty": ("No devices", "No Android devices are currently connected"),
             "unavailable": (
                 "ADB unavailable",

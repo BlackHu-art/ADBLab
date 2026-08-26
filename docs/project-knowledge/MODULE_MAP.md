@@ -47,12 +47,12 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **职责/接口**：`MainFrame` 构建工具栏、左右分栏、Device/Apps/System/Remote 页签和对话框；
   `FramelessResizeController` 通过四边四角共八个透明热区调用原生缩放；
   `window_layout_snapshot/restore_default_window_size/reset_panel_split` 是 Settings 使用的公开布局接口；
-  `_ScanThread` 周期执行设备发现，并在连续失败且没有受管后台任务时调用
-  `services/adb_recovery.py` 受限恢复项目 ADB Server；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口；
+  `_ScanThread` 周期执行设备发现（扫描超时 15 秒以兼容端点防护拖慢的 adb 启动），失败仅更新
+  发现状态为 unavailable，不再自动恢复 ADB Server；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口；
   主窗口通过 `QtScreenAdapter` 获取所在屏幕、可用几何和逻辑 DPI，并据此约束工作区（工具栏溢出、
   保存路径省略、日志区最小高度、二级窗口按 owner 屏幕适配）。
 - **输入/输出**：Qt 事件、选中设备和表单值；输出控制信号、日志、状态栏和对话框。
-- **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`services/adb_recovery.py`、`AppSettings`、`gui/screen_adapter.py`。
+- **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`AppSettings`、`gui/screen_adapter.py`。
 - **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸、
   `panel_split_ratio`、主题、字体、保存目录；通过 ADB 扫描设备。普通窗口尺寸限制为不小于
   860×500；屏幕可用范围不小于该最小值时再裁剪到可用范围内，最小尺寸优先；左栏比例限制为

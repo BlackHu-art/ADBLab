@@ -138,15 +138,9 @@ class CloseController:
                 "discovery_state_changed",
                 None,
             )
-            diagnostic = getattr(self._frame._scan_thread, "diagnostic", None)
             try:
                 if devices_changed is not None:
                     devices_changed.disconnect(self._frame._schedule_scan_refresh)
-            except (TypeError, RuntimeError, AttributeError):
-                pass
-            try:
-                if diagnostic is not None:
-                    diagnostic.disconnect(self._frame._on_scan_diagnostic)
             except (TypeError, RuntimeError, AttributeError):
                 pass
             try:

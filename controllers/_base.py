@@ -72,8 +72,9 @@ class _ADBControllerBase:
         try:
             DeviceStore.load()
         except Exception as e:
+            # load 失败时 DeviceStore 内部已保留内存快照并记录原因，
+            # 这里只补一条控制器可见日志，不再清空设备列表。
             self.log_service.log("ERROR", f"Failed to load DeviceStore: {str(e)}")
-            DeviceStore.initialize_empty()
 
     def _connect_model_signals(self):
         # command_finished 由各 model 在工作线程发出；此处不指定连接类型，
