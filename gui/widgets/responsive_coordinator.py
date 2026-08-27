@@ -52,6 +52,7 @@ class ResponsiveCoordinator:
         self._context_sync_rounds = 0
         self._settling_barrier_fingerprint: object | None = None
         self._in_apply = False
+        self._finishing = False
         self._internal_layout_feedback: dict[int, int] = {}
         self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
@@ -269,7 +270,7 @@ class ResponsiveCoordinator:
                 self.unregister(target)
 
     def _run_round(self, generation: int) -> None:
-        if generation != self._generation or self._state == "idle":
+        if generation != self._generation or self._state == "idle" or self._finishing:
             return
         self._state = "settling"
         if self._fallback_locked:
@@ -363,6 +364,19 @@ class ResponsiveCoordinator:
     def _finish_generation(self, generation: int) -> None:
         if generation != self._generation:
             return
+        # 收尾窗口：再留出一次布局/滚动条事件窗口，期间仍按 settling 处理事件——
+        # apply 引发的几何变化要到后续事件循环轮次才会发出 LayoutRequest，
+        # 若此刻已转 idle，这批内部反馈会立刻多开一代。0ms 定时器先于 posted
+        # 事件触发，窗口会过早关闭，因此与 settling verification 一致使用 1ms。
+        # 窗口内 LAYOUT_REQUEST 被丢弃，其余原因进入 pending，窗口结束后
+        # 统一链式处理。
+        self._finishing = True
+        QTimer.singleShot(1, partial(self._finalize_generation, generation))
+
+    def _finalize_generation(self, generation: int) -> None:
+        if generation != self._generation or not self._finishing:
+            return
+        self._finishing = False
         self._state = "idle"
         self._schedule_internal_layout_feedback_clear(generation)
         if not self._pending_reasons:
