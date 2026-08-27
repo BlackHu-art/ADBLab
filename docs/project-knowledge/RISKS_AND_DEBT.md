@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-25
+last_verified: 2026-08-27
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -33,13 +33,13 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | MobilePerf 曾使用类级 RuntimeData、多原生线程、`os.chdir` 和 `os._exit`，停止/落盘边界脆弱 | `mobileperf/android/globaldata.py`、`report.py::Report.__init__`、`startup.py::stop` | 报告不完整、线程来不及退出、全局状态污染；当前靠子进程隔离 | 已按 ADR-0004 实例化：RuntimeData 改每运行实例（元类代理兼容既有调用点）、12 处采集线程 daemon 化、移除 `os.chdir`（报告路径显式拼接）与两处 `os._exit`（结构化收口）；长跑/断线故障测试与实机验证待确认 | Closed |
 | Medium | 结果目录可能保存设备标识、日志、bugreport、heapdump、截图等，未见加密/保留策略 | `StartUp.save_device_info/pull_*`、各媒体/诊断导出、LogService | 隐私、商业数据和设备数据在本机长期残留 | 数据分类、导出告知、默认保留期/清理、最小日志、目录权限与可选加密 | 待确认 |
 | Medium | 响应式重做后 `gui/main_frame.py` 曾约 2,500 行 | `gui/main_frame.py`（拆分前 2,489 行） | 组合根继续膨胀，信号接线/关闭清理难以审查，回归成本高 | 已按 ADR-0003 Phase 2 拆出 `gui/main_frame_toolbar.py`（工具栏）、`gui/secondary_windows.py`（二级窗口托管）、`gui/close_controller.py`（异步关闭状态机），MainFrame 降至约 1,700 行并保留同名委托 wrapper；最近一次历史全量记录为 2026-08-21 的 961 项通过 | Closed |
-| Medium | 最近一次全量记录为 961 项、约 6 分钟，门禁时长偏高 | `tests/`；`tests/test_responsive_panels.py` 等几何扫描文件 | 提交/CI 反馈慢，降低门禁执行意愿 | 已把响应式几何扫描防抖降到 1ms（单文件 6min→1.5min）；CI `-m "not ui"` 快速子集在 2026-08-21 collect-only 为 478/961 项，unit marker 当前选择 0 项；`wait_until` deadline 放宽到 6000ms；最近一次历史全量记录用时 350.61 秒，后续工作树仍需重跑验证 | Partial |
-| Medium | CI 仅 Windows 跑完整 pytest，macOS/Linux 不验证 GUI/Remote 实际功能 | `.github/workflows/Build-exe.yaml` | 跨平台制品可能构建成功但运行/功能失败 | 至少跑非 GUI 全套单测、启动冒烟和 PATH scrcpy 降级测试；保留平台声明 | Open |
+| Medium | 最近一次全量记录为 961 项、约 6 分钟，门禁时长偏高 | `tests/`；`tests/test_responsive_panels.py` 等几何扫描文件 | 提交/CI 反馈慢，降低门禁执行意愿 | 已把响应式几何扫描防抖降到 1ms（单文件 6min→1.5min）；`wait_until` deadline 放宽到 6000ms；打包 CI 已移除 pytest 步骤（Windows 仅 ruff/pyright），CI 时长压力解除，但本地全量仍是负担（历史记录 350.61 秒、2026-08-25 离屏 331.12 秒），后续工作树仍需重跑验证 | Partial |
+| Medium | 打包 CI 已在全平台移除 pytest：Windows 仅 ruff/pyright，macOS/Linux 仅源码打包自检，三平台都缺少自动化测试门禁 | `.github/workflows/Build-exe.yaml`（`a0d9711` 起不运行 pytest） | 跨平台制品可能构建成功但运行/功能失败；Windows 也失去 CI 自动化回归 | 至少恢复 Windows 非 GUI 单测或完整 pytest 门禁；macOS/Linux 跑非 GUI 单测、启动冒烟和 PATH scrcpy 降级测试；保留平台声明 | Open |
 | Low | `BatchOperationTracker` 没有内部锁 | 已删除的 `utils/batch_tracker.py` | 与 Controller 共享 tracker 并发更新时计数可能不一致 | 批次计数与汇总已迁入带锁的 `DeviceBatchUseCase`（OperationManager 之上，ADR-0003 Phase 3），旧 tracker 模块与测试已删除 | Closed |
 | Low | `ProcessRunner` 模块说明曾让维护者误以为所有 Popen 已统一 | `core/exec.py`、`README.md`、`core/adb_bridge.py`、`models/file_explorer_worker.py`、MobilePerf | 维护者误以为 shutdown 能覆盖全部进程 | ADR-0005 已把 ProcessRunner 迁入 `core/exec.py` 并统一树杀；ADBInputSession 与文件传输均已进入 ProcessRunner 跟踪，README 已收紧为主应用优先原则。剩余例外仅为 MobilePerf 内核的独立 Popen/ADB 执行边界 | Partial |
 | Low | ruff.toml 为 `mobileperf/**` 豁免 E402/UP031、`tests/live_logcat_close_probe.py` 豁免 E402 | `ruff.toml::[lint.per-file-ignores]` | 豁免区域脱离 lint 门禁，违规样式会继续积累 | Phase 1 已删除 14 个文件的 sys.path 引导块（E402 清零）并转换 %-格式化（UP031 清零），`mobileperf/**` 豁免已移除；仅保留探针脚本 E402 豁免 | Closed |
 | Low | 本地环境命名和依赖作用域不一致：遗留 `venv` 自行忽略，工具链固定 `.venv`，运行/构建依赖混装且测试目录可被外部同名包遮蔽 | `.gitignore`、`.pre-commit-config.yaml`、`requirements*.txt`、`tests/__init__.py` | 开发者误用系统 Python、测试收集失败、运行环境安装不必要构建包 | 根级忽略 `.venv/venv/env`，统一 `.venv`；拆分 runtime/build/dev 依赖、移除无引用 Pillow、显式声明 shiboken6，并增加测试包标记 | Closed |
-| Low | 全量 pytest 偶发"测试全绿但进程退出异常"（退出挂起或 0xC0000005，约 10 次全量中出现 3 次） | `pytest` 全量套件收尾阶段 | 本地/CI 误报失败，浪费重跑时间 | 测试结果本身不受影响（进度条全绿）；怀疑为 Qt 延迟删除在解释器关闭期的环境级竞态；建议后续用 `-p no:cacheprovider` 对照或最小化探针定位后修复 | Open |
+| Low | 全量 pytest 偶发"测试全绿但进程退出异常"（退出挂起或 0xC0000005，约 10 次全量中出现 3 次） | `pytest` 全量套件收尾阶段 | 本地误报失败，浪费重跑时间 | 测试结果本身不受影响（进度条全绿）；怀疑为 Qt 延迟删除在解释器关闭期的环境级竞态；建议后续用 `-p no:cacheprovider` 对照或最小化探针定位后修复 | Open |
 | Low | Git 历史作者标识较少，核心热点可能存在知识集中 | 2026-08-21、HEAD `a0344f3`：318 提交、4 个作者标识，近三个月 2 个标识活跃；`main_frame.py` 等 | 维护连续性和评审独立性降低 | 动态指标仅作快照；结合模块所有权确认风险，并使用知识库、CODEOWNERS/双人评审、模块化测试与交接 | 待确认 |
 | High | 邮件服务（`core/mail/`、邮件获取入口、邮件/验证码信号、顶层 requests/ruamel 依赖）已整体移除 | `git show 70be33e`；`requirements.txt` | 不再有外部邮箱 API 面、凭据处理或日志扩散面 | 主应用代码侧已闭环，`mobileperf/setup.py` 的 requests/urllib3 遗留声明也已移除。Git 历史中曾跟踪的邮件配置仍须由仓库所有者轮换、停止跟踪并审查历史（保留提醒） | Closed |
 | High | 设备 shell 动态值（path/host/uri/package/permission/action/component/ime/settings key/value/text）直接作为 `adb shell` 参数未 quote，任一值含 `;`/`$(…)`/`\|`/`&` 即触发设备端命令注入 | `models/adb_advanced.py`；`models/adb_network.py`；`models/adb_system.py`；`models/adb_app.py`；`controllers/_file.py`；`controllers/_system.py`；`controllers/_input.py` | 设备端命令注入、误操作设备；白名单 `utils/adb_values.py` 仅覆盖 package/dumpsys-service/tcp-port/geo | 已部分落地：model 层统一 `shlex.quote`（package/permission/settings/text 等）、`dumpsys_meminfo` package 已 quote、file_explorer 的 rm 复用 `shell_quote` 且 `_view_image` 校验文件名、`emu_sms/emu_call` 控制器拒绝换行；授权真机最小验证待做 | Partial |

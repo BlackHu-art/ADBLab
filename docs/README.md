@@ -21,8 +21,8 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 事实基线 | `dev` 当前工作树，扫描日期 2026-08-23；Git HEAD 锚点 `5cee5ca` |
-| 本次整理 | 2026-08-23，依据当前代码、配置、测试收集与 Git 历史校准，版本 3.2.1；同日移除自动生成代码图谱 `docs/code-map/`（3,969 个生成文件）及其生成脚本，并把已收口的 vNext 实施计划移入归档 |
+| 事实基线 | `dev` 当前工作树，扫描日期 2026-08-27；Git HEAD 锚点 `adfd254` |
+| 本次整理 | 2026-08-27，以当前代码为基准重校基线：版本 3.2.10；同步打包 CI 移除 pytest 后的契约描述（PROJECT_OVERVIEW/ARCHITECTURE/RISKS_AND_DEBT/DEPENDENCY_MAP/BUILD_AND_RUN/README） |
 | 历史锚点 | main 基线 `8b84f8d`（3.1.14）；不再手工维护易漂移的提交清单，按需运行 `git log 8b84f8d..HEAD` 获取当前变更 |
 | 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
 | 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |

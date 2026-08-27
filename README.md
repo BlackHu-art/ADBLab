@@ -31,7 +31,7 @@ py -3.11 -m venv .venv
 `.venv`，不要直接向系统 Python 安装项目依赖。
 
 日常修复按 [增量验证策略](docs/guides/TESTING_GUIDE.md#增量验证策略) 运行直接和受影响模块测试。
-以下完整门禁仅用于发布验收、CI、用户明确要求或影响范围无法可靠界定的改动：
+以下完整门禁仅用于发布验收、用户明确要求或影响范围无法可靠界定的改动：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q

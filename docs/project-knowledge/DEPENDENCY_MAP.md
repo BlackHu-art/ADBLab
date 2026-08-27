@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-21
+last_verified: 2026-08-27
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -70,8 +70,8 @@ Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出�
 
 依赖文件按用途逐层包含：`requirements.txt` 是运行时集合；`requirements-build.txt` 增加
 PyInstaller；`requirements-dev.txt` 再增加 pytest 9.1.1、Ruff 0.16.3、覆盖率、并行测试、
-pre-commit 和 pyright。CI 全平台安装 build 集合，Windows 再安装 dev 集合并运行 Ruff、pyright 与
-pytest；Ruff 门禁配置以
+pre-commit 和 pyright。CI 全平台安装 build 集合，Windows 再安装 dev 集合并运行 Ruff、pyright
+（不运行 pytest）；Ruff 门禁配置以
 `ruff.toml` 为准（Ruff 配置已收敛到 `ruff.toml`，`pyproject.toml` 仅保留 `[tool.black]` 与 pytest/coverage 配置）。
 
 ## 外部系统与工具依赖

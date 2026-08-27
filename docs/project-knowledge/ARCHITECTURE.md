@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-25
+last_verified: 2026-08-27
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
@@ -284,7 +284,8 @@ sequenceDiagram
 - 没有真正的鉴权/权限分层；危险入口不再弹窗确认（按产品决定全局移除，`confirm_dangerous_ops`
   键和设置控件仅兼容保留，不驱动弹窗），误操作防护依赖目标校验、失败结果传播与审计日志。
   本地用户通过目标校验后可直接执行 shell、文件删除、应用清除等高影响操作。
-- 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；CI 只在 Windows 运行完整 pytest。
+- 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；打包 CI 不运行 pytest（Windows
+  仅 ruff/pyright 静态检查，macOS/Linux 仅源码打包自检）。
 - 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与顶层
   requests/ruamel 依赖均已删除，主应用运行时不再发起外部 HTTP 调用）；`mobileperf/setup.py`
   仍保留 `requests`/`urllib3` 的遗留工程声明，但不属于顶层运行依赖。仓库历史中曾跟踪的邮件配置仍需
