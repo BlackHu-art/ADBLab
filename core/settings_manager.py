@@ -94,7 +94,7 @@ DEFAULTS = {
     "window_height": 700,
     "left_panel_width": 400,
     "right_panel_width": 600,
-    "panel_split_ratio": 0.4,
+    "panel_split_ratio": 0.5,
     "device_log_split_ratio": 0.6,
     **SCRCPY_SETTING_DEFAULTS,
 }
