@@ -36,6 +36,7 @@ flowchart TD
     MobileAdapter --> MobileCore["mobileperf/android"]
     Base --> Utils["utils/adb_resolver.py<br/>utils/runtime_tools.py"]
     MobileCore --> MobileADB["mobileperf/android/tools/androiddevice.py"]
+    MobileADB --> Utils
 ```
 
 ## 主要内部模块依赖
@@ -152,13 +153,17 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 - 长进程应注册到 ProcessRunner；带 UI 生命周期的复合 worker/process task 还应注册到
   TaskSupervisor。只有确认退出后才能移除 tracking，timeout 必须保留 residual snapshot。
 - MobilePerf 内核仍保留独立的直接 Popen/ADB 执行边界，但当前使用参数数组和 `shell=False`；
-  5037 端口清理由 `core.process_utils` 负责。详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
+  5037 端口清理由 `core.process_utils` 负责；ADB 可执行路径已统一：`get_adb_path()` 的
+  最终回退走 `utils.adb_resolver`（内置平台二进制已移除），与主应用共用同一 ADB 事实来源。
+  详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
 
 ## 循环依赖与方向风险
 
 - 未发现明显的 Python import 闭环，但 `core` 中仅 `log_service.py` 依赖 Qt；`settings_manager` 的错误日志已改为可注入 sink（`set_error_sink`，MainFrame 组合根注入 LogService，ADR-0003 Phase 3），core 其余模块可在无 Qt 环境下导入与单测。
 - GUI 直接依赖 model worker/service 形成多条平行编排路径；新功能若同时在 Controller 和 Dialog 内实现，容易产生行为分叉。
-- MobilePerf 保留独立 ADB 层，没有复用 CommandRunner/ProcessRunner；修复超时、编码、日志脱敏时需要同时维护两套实现。
+- MobilePerf 保留独立 ADB 执行层，没有复用 CommandRunner/ProcessRunner；ADB 可执行路径已
+  通过 `utils.adb_resolver` 与主应用统一（内置 1.0.39 二进制已移除），修复超时、编码、
+  日志脱敏时仍需同时维护两套实现。
 - 主应用长进程优先走 ProcessRunner；`ADBInputSession` 已通过实例 ProcessRunner 进入实例与全局跟踪，
   MobilePerf 内核仍是独立执行边界。
 - ADR-0005 已把 `CommandRunner`/`ProcessRunner` 物理迁入 `core/exec.py`，旧

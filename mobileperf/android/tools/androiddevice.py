@@ -107,10 +107,11 @@ class ADB:
 
     @staticmethod
     def get_adb_path():
-        """返回adb.exe的绝对路径。优先使用指定的adb，若环境变量未指定，则返回当前脚本tools目录下的adb
+        """返回 ADB 可执行文件路径，并按 环境变量、系统 PATH、项目统一解析器 的顺序回退。
 
-        :return: 返回adb.exe的绝对路径
-        :rtype: str
+        内置的独立 ADB 二进制已移除（原 1.0.39 与主应用 1.0.41 协议不一致，
+        混用会互相重启 5037 Server）；最终回退统一走
+        :func:`utils.adb_resolver.adb_path`，与主应用保持同一 ADB 事实来源。
         """
         if ADB.adb_path:
             return ADB.adb_path
@@ -122,20 +123,10 @@ class ADB:
             ADB.adb_path = system_adb
             logger.debug("system have adb")
             return ADB.adb_path
-        logger.debug("system have no adb")
-        cur_path = os.path.dirname(os.path.abspath(__file__))
-        ADB.os_name = platform.system()
-        logger.debug("platform :" + ADB.os_name)
-        if ADB.os_name == "Windows":
-            ADB.adb_path = os.path.join(cur_path, "adb.exe")
-        elif ADB.os_name == "Darwin":
-            ADB.adb_path = os.path.join(
-                cur_path, "platform-tools-latest-darwin", "platform-tools", "adb"
-            )
-        else:
-            ADB.adb_path = os.path.join(
-                cur_path, "platform-tools-latest-linux", "platform-tools", "adb"
-            )
+        logger.debug("system have no adb, fallback to project adb resolver")
+        from utils.adb_resolver import adb_path
+
+        ADB.adb_path = adb_path()
         return ADB.adb_path
 
     @staticmethod

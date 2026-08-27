@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from mobileperf.android.tools import androiddevice
 from mobileperf.android.tools.androiddevice import ADB
@@ -11,6 +11,19 @@ def _all_log_arguments(mock_logger: Mock) -> str:
     for level in ("debug", "info", "warning", "error", "critical"):
         calls.extend(getattr(mock_logger, level).call_args_list)
     return "\n".join(str(call) for call in calls)
+
+
+def test_get_adb_path_falls_back_to_project_resolver(monkeypatch):
+    monkeypatch.delenv("ADB_PATH", raising=False)
+    ADB.adb_path = None
+    try:
+        with (
+            patch("mobileperf.android.tools.androiddevice.shutil.which", return_value=None),
+            patch("utils.adb_resolver.adb_path", return_value="C:/resolved/adb.exe"),
+        ):
+            assert ADB.get_adb_path() == "C:/resolved/adb.exe"
+    finally:
+        ADB.adb_path = None
 
 
 def test_androiddevice_logs_only_safe_metadata_for_devices_commands_and_apps(monkeypatch):
