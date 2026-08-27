@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.responsive_layout import (
+    RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY,
     GridMode,
     GridPlacement,
     WidthPolicy,
@@ -183,6 +184,12 @@ class AppPanel(BasePanel):
         self._set_combo_int_validator(self.monkey_throttle, 0, 60_000)
         self.monkey_ms_label = self._label("ms")
         self._pct_total_lbl = self._status_text("Total: --")
+        # Events/Throttle 值为最多 6 位数字，字段下限取 8em，保证并排档下
+        # 组合框内完整显示选项值而不是只剩下拉箭头（截图确认 2em 下限时
+        # wide 档字段宽仅为箭头宽度，值不可见）。
+        for field in (self.monkey_events, self.monkey_throttle):
+            field.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 8)
+            self._refresh_responsive_widget_minimum(field)
 
         pct_configs = [
             ("Touch", "touch"),
@@ -203,6 +210,9 @@ class AppPanel(BasePanel):
             c = _mk_combo(PCT_OPTS)
             self._set_combo_int_validator(c, 0, 100)
             c.currentTextChanged.connect(self._update_pct_total)
+            # 百分比字段保持 6em 稳定下限，避免窄宽度下并排小字段挤到不可读。
+            c.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 6)
+            self._refresh_responsive_widget_minimum(c)
             self._monkey_pct_labels[key] = lbl
             self._monkey_pct_combos[key] = c
             pct_widgets.extend((lbl, c))
@@ -214,6 +224,14 @@ class AppPanel(BasePanel):
             _lbl.setMinimumWidth(label_width)
         for _lbl in self._monkey_pct_labels.values():
             _lbl.setMinimumWidth(label_width)
+        parameter_widgets = (
+            self.monkey_events_label,
+            self.monkey_events,
+            self.monkey_throttle_label,
+            self.monkey_throttle,
+            self.monkey_ms_label,
+            self._pct_total_lbl,
+        )
         parameter_modes = (
             GridMode(
                 "wide",
@@ -224,17 +242,17 @@ class AppPanel(BasePanel):
             ),
             GridMode(
                 "medium",
-                4,
+                5,
                 1,
                 placements=(
                     GridPlacement(0, 0, 0),
                     GridPlacement(1, 0, 1),
                     GridPlacement(2, 0, 2),
                     GridPlacement(3, 0, 3),
-                    GridPlacement(4, 1, 0, column_span=2),
-                    GridPlacement(5, 1, 2, column_span=2),
+                    GridPlacement(4, 0, 4),
+                    GridPlacement(5, 1, 0, column_span=5),
                 ),
-                column_stretches=(0, 1, 0, 1),
+                column_stretches=(0, 1, 0, 1, 0),
             ),
             GridMode(
                 "compact",
@@ -250,15 +268,22 @@ class AppPanel(BasePanel):
                 ),
                 column_stretches=(0, 1),
             ),
+            # 极窄宽度下标签与字段上下堆叠：行最小宽从"标签+字段"降为
+            # max(标签, 字段)，保证字段值在最小面板宽度下仍贴左可见，
+            # 而不是被并排布局推到视口右侧外。
+            GridMode(
+                "stacked",
+                1,
+                3,
+                placements=tuple(
+                    GridPlacement(index, index, 0) for index in range(len(parameter_widgets))
+                ),
+                column_stretches=(1,),
+            ),
         )
         self.monkey_parameter_binding = self._add_responsive_row(
             gm_l,
-            self.monkey_events_label,
-            self.monkey_events,
-            self.monkey_throttle_label,
-            self.monkey_throttle,
-            self.monkey_ms_label,
-            self._pct_total_lbl,
+            *parameter_widgets,
             spacing=3,
             policies=(
                 WidthPolicy.NATURAL,
@@ -283,6 +308,17 @@ class AppPanel(BasePanel):
                 paired_mode("three", 3, 0),
                 paired_mode("two", 2, 1),
                 paired_mode("one", 1, 2),
+                # 同参数行：极窄宽度下每个标签/字段对独立成行、上下堆叠，
+                # 字段值贴左可见。
+                GridMode(
+                    "stacked",
+                    1,
+                    3,
+                    placements=tuple(
+                        GridPlacement(index, index, 0) for index in range(len(pct_widgets))
+                    ),
+                    column_stretches=(1,),
+                ),
             ),
         )
         self._monkey_config_layout = self.monkey_percentage_binding

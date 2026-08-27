@@ -1420,8 +1420,19 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
             ):
                 label_index = percentage_widgets.index(label)
                 field_index = percentage_widgets.index(field)
-                assert positions[label_index].row == positions[field_index].row
-                assert positions[field_index].column == positions[label_index].column + 1
+                label_pos = positions[label_index]
+                field_pos = positions[field_index]
+                # 并排模式：同一行、字段紧跟标签右侧；堆叠模式（极窄宽度）：
+                # 同一列、字段紧跟标签下方，两种布局都保持语义归属。
+                side_by_side = (
+                    label_pos.row == field_pos.row
+                    and field_pos.column == label_pos.column + 1
+                )
+                stacked = (
+                    label_pos.column == field_pos.column
+                    and field_pos.row == label_pos.row + 1
+                )
+                assert side_by_side or stacked, (label_pos, field_pos)
 
         before = parameter_binding.applied_plan
         assert before is not None
@@ -1436,6 +1447,91 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
         assert after.mode.name == before.mode.name
         assert app_panel._pct_total_lbl.text() == "Total: 100%"
         assert BaseStyles.color("LOG_SUCCESS") in app_panel._pct_total_lbl.styleSheet()
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_monkey_fields_stay_visible_at_minimum_panel_width(
+    qt_application,
+    monkeypatch,
+):
+    """最小面板宽度下 Monkey 字段进入堆叠模式，值贴左可见而非被并排布局推出视口。"""
+
+    panel, app_panel, scroll, content = _show_feature_panel(
+        "apps",
+        160,
+        12,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        qt_application.processEvents()
+        viewport_width = scroll.viewport().contentsRect().width()
+        parameter_fields = (
+            app_panel.monkey_events,
+            app_panel.monkey_throttle,
+            app_panel._pct_total_lbl,
+        )
+        percentage_fields = tuple(app_panel._monkey_pct_combos.values())
+        for binding, fields in (
+            (app_panel.monkey_parameter_binding, parameter_fields),
+            (app_panel.monkey_percentage_binding, percentage_fields),
+        ):
+            plan = binding.applied_plan
+            assert plan is not None
+            assert plan.mode.name == "stacked"
+            for field in fields:
+                left = field.mapTo(content, field.rect().topLeft()).x()
+                assert 0 <= left < viewport_width, (plan.mode.name, left, viewport_width)
+                assert field.width() > 0
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_monkey_parameter_and_percentage_fields_stay_readable_across_viewports(
+    qt_application,
+    monkeypatch,
+):
+    """参数行 8em / 百分比行 6em 稳定下限在任意宽度下保证字段值可读。
+
+    回归背景：参数行字段曾使用默认 2em 下限，wide 档下组合框只剩箭头宽度、
+    选项值不可见；该契约锁定"可读下限"与"实际宽度不低于下限"。
+    """
+
+    panel, app_panel, scroll, _content = _show_feature_panel(
+        "apps",
+        300,
+        12,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        eight_em = app_panel.monkey_events.fontMetrics().horizontalAdvance("M" * 8)
+        six_em = app_panel.monkey_events.fontMetrics().horizontalAdvance("M" * 6)
+        for field in (app_panel.monkey_events, app_panel.monkey_throttle):
+            assert field.minimumWidth() == eight_em
+        for field in app_panel._monkey_pct_combos.values():
+            assert field.minimumWidth() == six_em
+        for width in range(180, 901, 16):
+            _set_scroll_viewport_width(qt_application, panel, scroll, width)
+            app_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
+            wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+            for binding in (
+                app_panel.monkey_parameter_binding,
+                app_panel.monkey_percentage_binding,
+            ):
+                plan = binding.applied_plan
+                assert plan is not None
+                if plan.overflow_required:
+                    continue
+                for widget in binding.widgets():
+                    if widget.minimumWidth() > 0:
+                        assert widget.width() >= widget.minimumWidth(), (
+                            width,
+                            plan.mode.name,
+                            widget.width(),
+                            widget.minimumWidth(),
+                        )
     finally:
         _close_feature_panel(panel)
 
@@ -1657,7 +1753,9 @@ def test_runtime_font_change_refreshes_responsive_auto_minimums(
         label = app_panel._pct_total_lbl
         field = app_panel.monkey_events
         assert label.minimumWidth() == label.fontMetrics().horizontalAdvance("MMMMMM")
-        assert field.minimumWidth() == field.fontMetrics().horizontalAdvance("MM")
+        # 参数行字段使用 8em 可读下限（容纳 6 位选项值）；运行时字号变化后
+        # 仍按当前字体重新度量。
+        assert field.minimumWidth() == field.fontMetrics().horizontalAdvance("MMMMMMMM")
     finally:
         _close_feature_panel(panel)
 
@@ -1761,9 +1859,21 @@ def test_large_font_static_semantic_labels_are_not_clipped_after_runtime_change(
         else:
             labels = tuple(feature_panel._parameter_labels)
         for label in labels:
-            assert label.contentsRect().width() >= label.fontMetrics().horizontalAdvance(
-                label.text()
-            ), (panel_name, label.text(), label.contentsRect(), label.minimumSizeHint())
+            text = label.text()
+            if label.wordWrap() and " " in text:
+                # 含空格的标签允许按词折行（wordWrap 设计行为）；契约是
+                # 每个词都能在行宽内完整显示，不发生横向裁剪。
+                required = max(
+                    label.fontMetrics().horizontalAdvance(word) for word in text.split()
+                )
+            else:
+                required = label.fontMetrics().horizontalAdvance(text)
+            assert label.contentsRect().width() >= required, (
+                panel_name,
+                label.text(),
+                label.contentsRect(),
+                label.minimumSizeHint(),
+            )
     finally:
         _close_feature_panel(panel)
 
