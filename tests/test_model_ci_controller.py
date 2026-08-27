@@ -25,8 +25,14 @@ def test_performance_monitor_page_code_is_not_bundled():
 def test_cross_platform_builds_do_not_run_full_gui_test_suite():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 
-    assert "name: Install test dependencies\n        if: runner.os == 'Windows'" in workflow
-    assert "name: Run tests\n        if: runner.os == 'Windows'" in workflow
+    # a0d9711 起打包流程不再运行 pytest：Windows 只安装静态分析依赖并跑
+    # ruff/pyright，非 Windows 只跑源码自检；pytest 留在独立的开发验证流程。
+    assert (
+        "name: Install static analysis dependencies\n        if: runner.os == 'Windows'"
+        in workflow
+    )
+    assert "name: Run tests" not in workflow
+    assert "python -m pytest" not in workflow
     assert "name: Source self-check\n        if: runner.os != 'Windows'" in workflow
 
 
