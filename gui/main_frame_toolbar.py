@@ -631,15 +631,17 @@ class ToolbarController:
         if action is None:
             return
         label = "Change default save directory"
-        # QAction 会在窄窗口中复用到 More 菜单；文案若拼入完整路径会把菜单
-        # 撑出屏幕。完整值由 tooltip、statusTip 和辅助描述承载。
-        action.setText(label)
+        # 动作文本保持简短（窄窗口 More 菜单不得被完整路径撑出屏幕）；
+        # 路径上下文经 toolTip/statusTip/accessibleDescription 承载，
+        # `&` 无需转义（不进入菜单文本）。可访问名保持简短标签。
         if path:
             current_path = f"Current save directory: {path}"
+            action.setText(label)
             action.setToolTip(f"Choose a different default output directory\n{current_path}")
             action.setStatusTip(current_path)
             action.setProperty("accessibleDescription", current_path)
         else:
+            action.setText(label)
             action.setToolTip("Choose the default output directory")
             action.setStatusTip("")
             action.setProperty("accessibleDescription", "")

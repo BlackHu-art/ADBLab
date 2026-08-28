@@ -129,7 +129,15 @@ def test_detached_devices_theme_and_font_bursts_each_settle_once(
             ),
         )
         assert marker in panel._devices_tab.listbox_devices.styleSheet()
-        assert device_widget.findChildren(QScrollArea) == []
+        # 响应式布局有意为动作区引入 _ShrinkableActionScroll（QScrollArea 子类），
+        # 用于承接横向溢出的滚动；主题/字体 burst 不应产生其他滚动容器。
+        # 因此这里只断言不存在除该预期动作滚动容器之外的 QScrollArea。
+        expected_scroll = panel._devices_tab._device_action_scroll
+        assert [
+            scroll
+            for scroll in device_widget.findChildren(QScrollArea)
+            if scroll is not expected_scroll
+        ] == []
         assert panel._responsive_coordinator.diagnostics.generation == before + 1
         assert theme_settled.count() == 1
         assert ReflowReason.THEME in panel._responsive_coordinator.diagnostics.reasons

@@ -108,6 +108,7 @@ _UI_TEST_FILES = frozenset(
         "test_app_manager_selection.py",
         "test_button_tooltips.py",
         "test_dialog_typography.py",
+        "test_fluent_components.py",
         "test_main_window_layout.py",
         # test_model_execution.py 已按主题拆分为以下文件（ADR-0003 Phase 2）。
         # 纯逻辑（runner/parser/配置类）文件不在此列，进入 CI 快速子集。

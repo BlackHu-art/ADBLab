@@ -29,24 +29,6 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     return (values[1] + 0.05) / (values[0] + 0.05)
 
 
-def _decode_qt_mnemonic_text(text: str) -> str:
-    """按 Qt 菜单文本规则还原最终可见的字面文本。"""
-
-    decoded = []
-    index = 0
-    while index < len(text):
-        if text[index] != "&":
-            decoded.append(text[index])
-            index += 1
-            continue
-        if index + 1 < len(text) and text[index + 1] == "&":
-            decoded.append("&")
-            index += 2
-            continue
-        index += 1
-    return "".join(decoded)
-
-
 def test_shared_styles_expose_keyboard_focus():
     button_qss = BaseStyles.BUTTON_QSS()
     panel_qss = BaseStyles.PANEL_BASE_STYLE()
@@ -131,8 +113,9 @@ def test_toolbar_save_button_is_keyboard_reachable_and_keeps_path_context(
         save_action = frame._toolbar_actions["save_path"]
         action_label = "Change default save directory"
         escaped_path = expected_path.replace("&", "&&")
-        assert save_action.text() == f"{action_label} — {escaped_path}"
-        assert _decode_qt_mnemonic_text(save_action.text()) == (f"{action_label} — {expected_path}")
+        # 动作文本保持简短（窄窗口 More 菜单不得溢出）；路径上下文经
+        # toolTip/statusTip/accessibleDescription 可达，契约不变。
+        assert save_action.text() == action_label
         assert expected_path in save_action.toolTip()
         assert expected_path in save_action.statusTip()
         assert expected_path in save_action.property("accessibleDescription")
