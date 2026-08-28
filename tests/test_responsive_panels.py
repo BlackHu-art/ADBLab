@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyle,
+    QStyleOptionComboBox,
     QStyleOptionGroupBox,
     QStyleOptionViewItem,
     QWidget,
@@ -37,6 +38,8 @@ from gui.widgets.responsive_controller import (
     ResponsiveGridBinding,
 )
 from gui.widgets.responsive_layout import (
+    RESPONSIVE_MINIMUM_TEXT_PROPERTY,
+    RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     LayoutContext,
     WidthPolicy,
     adaptive_layout_spacing,
@@ -47,6 +50,7 @@ from tests.ui_geometry_helpers import (
     assert_non_overlapping,
     assert_positive_geometry,
     assert_scroll_target_reachable,
+    assert_text_fits,
     wait_for_stable_geometry,
     wait_until,
 )
@@ -150,6 +154,9 @@ def _resize_feature_viewport(
     requested = int(width)
     for _attempt in range(4):
         _set_scroll_viewport_width(qt_application, panel, scroll, requested)
+        # resize 已经处于目标宽度但上一代因 Qt 高度反馈触及轮次上限时，
+        # 再走一次兼容门面才能启动下一代并收敛到最终行高。
+        feature_panel.apply_responsive_width(requested)
         wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
         wait_for_stable_geometry(
             qt_application,
@@ -348,6 +355,49 @@ def _grid_item_position(layout, widget) -> tuple[int, int, int, int]:
     index = layout.indexOf(widget)
     assert index >= 0
     return layout.getItemPosition(index)
+
+
+def _group_title_rect(group: QGroupBox) -> QRect:
+    """返回当前样式实际绘制的分组标题矩形。"""
+
+    option = QStyleOptionGroupBox()
+    group.initStyleOption(option)
+    return group.style().subControlRect(
+        QStyle.ComplexControl.CC_GroupBox,
+        option,
+        QStyle.SubControl.SC_GroupBoxLabel,
+        group,
+    )
+
+
+def _combo_edit_field_rect(combo: QComboBox, *, width: int | None = None) -> QRect:
+    """返回当前原生样式为 ComboBox 闭合态分配的文本区域。"""
+
+    option = QStyleOptionComboBox()
+    combo.initStyleOption(option)
+    if width is not None:
+        option.rect = QRect(
+            0,
+            0,
+            max(1, int(width)),
+            max(1, combo.sizeHint().height()),
+        )
+    return combo.style().subControlRect(
+        QStyle.ComplexControl.CC_ComboBox,
+        option,
+        QStyle.SubControl.SC_ComboBoxEditField,
+        combo,
+    )
+
+
+def _groups_with_titles_wider_than_viewport(content: QWidget, viewport_width: int) -> tuple:
+    """返回标题本身需要 SidePanel 横向滚动才能完整到达的直接分组。"""
+
+    return tuple(
+        group
+        for group in content.findChildren(QGroupBox, options=Qt.FindDirectChildrenOnly)
+        if group.fontMetrics().horizontalAdvance(group.title()) + 32 > viewport_width
+    )
 
 
 def _visible_device_layout_members(manager):
@@ -693,7 +743,8 @@ def test_devices_real_geometry_never_overlaps_at_restricted_height(
         )
 
         assert device_widget.contentsRect().size() == QSize(safe_width, target_height)
-        assert device_widget.findChildren(QScrollArea) == []
+        assert device_widget.findChildren(QScrollArea) == [manager._device_action_scroll]
+        assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
         assert diagnostics.fallback_reason is None
         assert manager._device_body_mode == "stacked"
         assert manager._device_action_frame.minimumWidth() == 0
@@ -827,8 +878,9 @@ def test_device_body_height_boundary_switches_both_directions_without_fallback(
             ) == (0, 0, 1, 2)
             assert _grid_item_position(
                 manager._device_body_layout,
-                manager._device_action_frame,
+                manager._device_action_scroll,
             ) == (1, 0, 1, 2)
+            assert manager._device_action_scroll.widget() is manager._device_action_frame
 
         assert observed_modes == ["stacked"] * len(transitions)
     finally:
@@ -1147,6 +1199,10 @@ def test_feature_panel_real_geometry_and_scroll_contract(
             for binding_index, binding in enumerate(bindings)
             if binding.applied_plan is not None and binding.applied_plan.overflow_required
         ]
+        title_overflowing = _groups_with_titles_wider_than_viewport(
+            content_widget,
+            scroll.viewport().contentsRect().width(),
+        )
         scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().minimum())
         qt_application.processEvents()
         viewport_rect = scroll.viewport().rect()
@@ -1201,6 +1257,12 @@ def test_feature_panel_real_geometry_and_scroll_contract(
                             ),
                         )
                     ) from error
+        elif title_overflowing:
+            assert scroll.horizontalScrollBar().maximum() > 0
+            for group in title_overflowing:
+                title_rect = _group_title_rect(group)
+                assert group.rect().contains(title_rect), (group.title(), group.rect(), title_rect)
+                assert_scroll_target_reachable(scroll, group)
         else:
             assert scroll.horizontalScrollBar().maximum() == 0, (
                 panel_name,
@@ -1255,7 +1317,12 @@ def test_feature_panel_geometry_is_stable_in_light_and_dark_themes(
             for widget in widgets:
                 assert_positive_geometry(widget, content_widget)
             assert_non_overlapping(widgets, content_widget)
-        has_overflow = any(binding.applied_plan.overflow_required for binding in bindings)
+        has_overflow = any(binding.applied_plan.overflow_required for binding in bindings) or bool(
+            _groups_with_titles_wider_than_viewport(
+                content_widget,
+                scroll.viewport().contentsRect().width(),
+            )
+        )
         assert (scroll.horizontalScrollBar().maximum() > 0) is has_overflow
     finally:
         _close_feature_panel(panel)
@@ -1394,7 +1461,7 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
     qt_application,
     monkeypatch,
 ):
-    """Monkey 参数、九组比例和独立单位/Total 在各模式中保持语义归属。"""
+    """Monkey 参数、九组比例和内嵌单位/Total 在各模式中保持语义归属。"""
 
     panel, app_panel, scroll, _content = _show_feature_panel(
         "apps",
@@ -1492,10 +1559,10 @@ def test_monkey_parameter_and_percentage_fields_stay_readable_across_viewports(
     qt_application,
     monkeypatch,
 ):
-    """参数行 8em / 百分比行 6em 稳定下限在任意宽度下保证字段值可读。
+    """按原生文本区计算 Monkey 合法上限，兼顾字段可读和正常布局档位。
 
-    回归背景：参数行字段曾使用默认 2em 下限，wide 档下组合框只剩箭头宽度、
-    选项值不可见；该契约锁定"可读下限"与"实际宽度不低于下限"。
+    回归背景：2em 会让字段只剩下拉箭头，固定的大 em 又会让布局过早降级；
+    稳定下限必须同时覆盖原生按钮宽度和未列入预设项的业务合法上限。
     """
 
     panel, app_panel, scroll, _content = _show_feature_panel(
@@ -1506,12 +1573,17 @@ def test_monkey_parameter_and_percentage_fields_stay_readable_across_viewports(
         monkeypatch,
     )
     try:
-        eight_em = app_panel.monkey_events.fontMetrics().horizontalAdvance("M" * 8)
-        six_em = app_panel.monkey_events.fontMetrics().horizontalAdvance("M" * 6)
-        for field in (app_panel.monkey_events, app_panel.monkey_throttle):
-            assert field.minimumWidth() == eight_em
-        for field in app_panel._monkey_pct_combos.values():
-            assert field.minimumWidth() == six_em
+        maximum_texts = {
+            app_panel.monkey_events: "1000000",
+            app_panel.monkey_throttle: "60000 ms",
+            **{field: "100" for field in app_panel._monkey_pct_combos.values()},
+        }
+        for field, maximum_text in maximum_texts.items():
+            assert bool(field.property(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY))
+            assert field.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY) == maximum_text
+            assert field.minimumWidth() >= field.sizeHint().width()
+            edit_rect = _combo_edit_field_rect(field, width=field.minimumWidth())
+            assert edit_rect.width() >= field.fontMetrics().horizontalAdvance(maximum_text)
         for width in range(180, 901, 16):
             _set_scroll_viewport_width(qt_application, panel, scroll, width)
             app_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
@@ -1532,6 +1604,79 @@ def test_monkey_parameter_and_percentage_fields_stay_readable_across_viewports(
                             widget.width(),
                             widget.minimumWidth(),
                         )
+    finally:
+        _close_feature_panel(panel)
+
+
+@pytest.mark.parametrize("viewport_width", (240, 420))
+def test_monkey_maximum_valid_values_fit_editors_at_small_font(
+    qt_application,
+    monkeypatch,
+    viewport_width,
+):
+    """8pt 窄宽度下合法上限必须完整显示，不能被下拉箭头挤掉末位。"""
+
+    panel, app_panel, scroll, _content = _show_feature_panel(
+        "apps",
+        viewport_width,
+        8,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        app_panel.monkey_events.setCurrentText("1000000")
+        app_panel.monkey_throttle.setCurrentText("60000 ms")
+        for combo in app_panel._monkey_pct_combos.values():
+            combo.setCurrentText("100")
+        app_panel._update_pct_total()
+        qt_application.processEvents()
+
+        fields = (
+            app_panel.monkey_events,
+            app_panel.monkey_throttle,
+            *app_panel._monkey_pct_combos.values(),
+        )
+        for field in fields:
+            editor = field.lineEdit()
+            assert editor is not None
+            assert_text_fits(editor)
+        assert scroll.viewport().contentsRect().width() == viewport_width
+        assert app_panel._pct_total_lbl.text() == "Total: 900%"
+        assert app_panel._collect_monkey_params()["throttle"] == 60_000
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_monkey_throttle_unit_is_visual_only_and_persists_numeric_value(
+    qt_application,
+    monkeypatch,
+):
+    """Throttle 在控件内显示 ms，但 validator 和业务参数仍使用毫秒整数。"""
+
+    panel, app_panel, _scroll, _content = _show_feature_panel(
+        "apps",
+        420,
+        12,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        assert app_panel.monkey_throttle.currentText().endswith(" ms")
+        editor = app_panel.monkey_throttle.lineEdit()
+        assert editor is not None
+        for text, expected in (("60000 ms", 60_000), ("321", 321)):
+            app_panel.monkey_throttle.setCurrentText(text)
+            assert editor.hasAcceptableInput()
+            params = app_panel._collect_monkey_params()
+            assert params is not None and params["throttle"] == expected
+
+        app_panel.monkey_throttle.setCurrentText("60001 ms")
+        assert not editor.hasAcceptableInput()
+        assert not app_panel._validate_fields(app_panel.monkey_throttle, focus_invalid=False)
+
+        app_panel.monkey_throttle.setCurrentText("60,000 ms")
+        assert not editor.hasAcceptableInput()
+        assert app_panel._collect_monkey_params() is None
     finally:
         _close_feature_panel(panel)
 
@@ -1562,9 +1707,7 @@ def test_feature_binding_breakpoint_is_stable_at_b_minus_one_b_and_b_plus_one(
         previous = None
         bracket = None
         for width in range(180, 901, 8):
-            _set_scroll_viewport_width(qt_application, panel, scroll, width)
-            feature_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
-            wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+            _resize_feature_viewport(qt_application, panel, feature_panel, scroll, width)
             mode = binding.applied_plan.mode.name
             sampled.append((width, mode))
             if previous is not None and previous[1] != mode:
@@ -1575,9 +1718,7 @@ def test_feature_binding_breakpoint_is_stable_at_b_minus_one_b_and_b_plus_one(
         lower, upper, narrow_mode, wide_mode = bracket
         boundary = None
         for width in range(lower + 1, upper + 1):
-            _set_scroll_viewport_width(qt_application, panel, scroll, width)
-            feature_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
-            wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+            _resize_feature_viewport(qt_application, panel, feature_panel, scroll, width)
             if binding.applied_plan.mode.name == wide_mode:
                 boundary = width
                 break
@@ -1587,9 +1728,13 @@ def test_feature_binding_breakpoint_is_stable_at_b_minus_one_b_and_b_plus_one(
             (boundary, wide_mode),
             (boundary + 1, wide_mode),
         ):
-            actual = _set_scroll_viewport_width(qt_application, panel, scroll, width)
-            feature_panel.apply_responsive_width(actual)
-            wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+            actual = _resize_feature_viewport(
+                qt_application,
+                panel,
+                feature_panel,
+                scroll,
+                width,
+            )
             assert actual == width
             assert binding.applied_plan.mode.name == expected
     finally:
@@ -1742,6 +1887,7 @@ def test_runtime_font_change_refreshes_responsive_auto_minimums(
         monkeypatch,
     )
     try:
+        small_minimum = app_panel.monkey_events.minimumWidth()
 
         def large_font_for_role(_cls, _role, size=None):
             return QFont("Arial", size if size is not None else 22)
@@ -1753,9 +1899,10 @@ def test_runtime_font_change_refreshes_responsive_auto_minimums(
         label = app_panel._pct_total_lbl
         field = app_panel.monkey_events
         assert label.minimumWidth() == label.fontMetrics().horizontalAdvance("MMMMMM")
-        # 参数行字段使用 8em 可读下限（容纳 6 位选项值）；运行时字号变化后
-        # 仍按当前字体重新度量。
-        assert field.minimumWidth() == field.fontMetrics().horizontalAdvance("MMMMMMMM")
+        assert field.minimumWidth() > small_minimum
+        assert field.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY) == "1000000"
+        edit_rect = _combo_edit_field_rect(field, width=field.minimumWidth())
+        assert edit_rect.width() >= field.fontMetrics().horizontalAdvance("1000000")
     finally:
         _close_feature_panel(panel)
 
@@ -1803,6 +1950,18 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
             (binding.applied_plan.mode.name, binding.applied_plan.metrics)
             for binding in (remote.status_binding, remote.parameter_binding)
         )
+        runtime_combo_minimums = tuple(
+            combo.minimumWidth()
+            for combo in (
+                remote.preset,
+                remote.maxsize,
+                remote.fps,
+                remote.codec,
+                remote.buffer,
+                remote.bitrate,
+                remote.orientation,
+            )
+        )
     finally:
         _close_feature_panel(panel)
 
@@ -1820,6 +1979,17 @@ def test_runtime_12_to_22_font_metrics_match_fresh_remote_panel(
             for binding in (fresh_remote.status_binding, fresh_remote.parameter_binding)
         )
         assert runtime_snapshot == fresh_snapshot
+        fresh_combos = (
+            fresh_remote.preset,
+            fresh_remote.maxsize,
+            fresh_remote.fps,
+            fresh_remote.codec,
+            fresh_remote.buffer,
+            fresh_remote.bitrate,
+            fresh_remote.orientation,
+        )
+        assert runtime_combo_minimums == tuple(combo.minimumWidth() for combo in fresh_combos)
+        assert all(combo.minimumWidth() >= combo.sizeHint().width() for combo in fresh_combos)
     finally:
         _close_feature_panel(fresh_panel)
 
@@ -1853,7 +2023,6 @@ def test_large_font_static_semantic_labels_are_not_clipped_after_runtime_change(
             labels = (
                 feature_panel.monkey_events_label,
                 feature_panel.monkey_throttle_label,
-                feature_panel.monkey_ms_label,
                 *feature_panel._monkey_pct_labels.values(),
             )
         else:
@@ -1893,8 +2062,22 @@ def test_remote_overflow_row_constraints_clear_when_viewport_grows(
     )
     try:
         binding = remote._remote_action_binding
+        target = remote._remote_action_buttons[0]
+        target.setMinimumWidth(scroll.viewport().contentsRect().width() + 120)
+        before_generation = panel._responsive_coordinator.diagnostics.generation
+        panel.request_responsive_reflow(ReflowReason.EXPLICIT)
+        wait_until(
+            qt_application,
+            lambda: (
+                panel._responsive_coordinator.diagnostics.stable
+                and panel._responsive_coordinator.diagnostics.generation > before_generation
+                and binding.applied_plan is not None
+                and binding.applied_plan.overflow_required
+            ),
+        )
         narrow_plan = binding.applied_plan
         assert narrow_plan is not None and narrow_plan.overflow_required
+        assert narrow_plan.required_width > narrow_plan.available_width
         container = binding._container_ref()
         assert container is not None
         assert container.minimumWidth() == narrow_plan.required_width
@@ -2191,7 +2374,7 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
 ):
     """Remote 292→900→292 只移动既有控件，不改变完整配置与会话状态。"""
 
-    panel, remote, scroll, _content = _show_feature_panel(
+    panel, remote, scroll, content = _show_feature_panel(
         "remote",
         292,
         18,
@@ -2247,6 +2430,26 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
         binding_widgets = tuple(
             widget for binding in remote._responsive_rows for widget in binding.widgets()
         )
+
+        _resize_feature_viewport(qt_application, panel, remote, scroll, 292)
+        initial_plan = remote.status_binding.applied_plan
+        assert initial_plan is not None
+        assert initial_plan.mode.name in {"one", "two", "three"}
+        assert sorted(placement.item_index for placement in initial_plan.placements) == list(
+            range(len(remote.status_binding.widgets()))
+        )
+
+        def plan_structure(plan):
+            assert plan is not None
+            return (
+                plan.mode.fingerprint,
+                tuple(placement.fingerprint for placement in plan.placements),
+                plan.column_widths,
+                plan.column_stretches,
+                plan.overflow_required,
+            )
+
+        initial_plan_structure = plan_structure(initial_plan)
 
         def snapshot():
             return {
@@ -2326,10 +2529,8 @@ def test_remote_reflow_preserves_session_values_identity_and_single_action(
             assert after == before
             assert remote._session_config is session_config
             assert remote._process is process
-        assert remote.parameter_binding.applied_plan.mode.name in {"one", "two", "three"}
-        status_plan = remote.status_binding.applied_plan
-        assert status_plan is not None and status_plan.mode.name == "one"
-        assert len({placement.row for placement in status_plan.placements}) == 9
+            assert plan_structure(remote.status_binding.applied_plan) == initial_plan_structure
+            assert_non_overlapping(remote.status_binding.widgets(), content)
     finally:
         _close_feature_panel(panel)
 
@@ -2357,22 +2558,241 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
             widgets[4],
             widgets[6],
         )
-        assert status.wordWrap() is False
-        assert queue.wordWrap() is False
-        for width in (292, 420, 700):
+        assert status.wordWrap() is True
+        assert queue.wordWrap() is True
+        assert status.accessibleName() == "Remote session status"
+        assert status.toolTip() == "Status: Idle"
+        assert status.accessibleDescription() == "Status: Idle"
+        assert queue.accessibleDescription() == "Queued: 0 · Sent: 0 · Failed: 0"
+        three_column_width = None
+        observed_modes = set()
+        for width in (292, 420, 700, 900):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+            plan = remote.mirroring_binding.applied_plan
+            assert plan is not None
+            observed_modes.add(plan.mode.name)
             assert preset_label.geometry().x() == size_label.geometry().x()
             assert preset_label.geometry().width() == size_label.geometry().width()
             assert preset.geometry().x() == size.geometry().x()
             assert preset.geometry().width() == size.geometry().width()
             assert status.geometry().x() == fps_label.geometry().x()
             assert queue.geometry().x() == codec_label.geometry().x()
-            if width == 700:
+            if plan.mode.name == "three":
+                three_column_width = width
                 assert preset_label.geometry().center().y() == status.geometry().center().y()
                 assert status.geometry().center().y() == queue.geometry().center().y()
-                plan = remote.mirroring_binding.applied_plan
-                assert plan is not None and plan.mode.name == "three"
                 assert len({placement.row for placement in plan.placements}) == 3
+        assert three_column_width is not None, observed_modes
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_remote_status_wraps_or_keeps_full_accessible_text_at_large_font(
+    qt_application,
+    monkeypatch,
+):
+    """292px/22pt 下状态可换行；若行高受限，完整文本仍可直接访问。"""
+
+    panel, remote, scroll, _content = _show_feature_panel(
+        "remote",
+        292,
+        22,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        for state in ("Disconnected", "Stop Failed"):
+            remote._update_status(state, None)
+            qt_application.processEvents()
+            text = f"Status: {state}"
+            assert remote._status_label.text() == text
+            assert remote._status_label.toolTip() == text
+            assert remote._status_label.accessibleDescription() == text
+
+        label = remote._status_label
+        wrapped = label.fontMetrics().boundingRect(
+            QRect(0, 0, label.contentsRect().width(), 10000),
+            Qt.TextFlag.TextWordWrap,
+            label.text(),
+        )
+        if label.contentsRect().height() < wrapped.height():
+            assert label.toolTip() == label.text()
+            assert label.accessibleDescription() == label.text()
+        assert scroll.viewport().contentsRect().width() == 292
+    finally:
+        _close_feature_panel(panel)
+
+
+@pytest.mark.parametrize("font_size", (8, 12, 18, 22))
+def test_remote_combo_closed_values_stay_readable_across_viewports(
+    qt_application,
+    monkeypatch,
+    font_size,
+):
+    """七个 Remote 下拉框在窄宽与大字下可横滚，但闭合态文本区不被压窄。"""
+
+    panel, remote, scroll, content = _show_feature_panel(
+        "remote",
+        180,
+        font_size,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        representatives = (
+            (remote.preset, "Low Latency"),
+            (remote.maxsize, "Default"),
+            (remote.fps, "120"),
+            (remote.codec, "h265"),
+            (remote.buffer, "200"),
+            (remote.bitrate, "32"),
+            (remote.orientation, "270"),
+        )
+        for combo, text in representatives:
+            blocked = combo.blockSignals(True)
+            try:
+                combo.setCurrentText(text)
+            finally:
+                combo.blockSignals(blocked)
+            assert combo.currentText() == text
+
+        expected_state = tuple(
+            (id(combo), combo.currentIndex(), combo.currentText())
+            for combo, _text in representatives
+        )
+        for width in (180, 240, 292, 420, 560, 700, 900):
+            _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+            plan = remote.mirroring_binding.applied_plan
+            assert plan is not None and plan.mode.name in {"one", "two", "three"}
+            for combo, text in representatives:
+                edit_rect = _combo_edit_field_rect(combo)
+                required_width = combo.fontMetrics().horizontalAdvance(text)
+                assert edit_rect.width() > 0, (
+                    font_size,
+                    width,
+                    text,
+                    combo.geometry(),
+                    edit_rect,
+                )
+                assert required_width <= edit_rect.width(), (
+                    font_size,
+                    width,
+                    text,
+                    required_width,
+                    edit_rect,
+                    combo.minimumWidth(),
+                    combo.sizeHint(),
+                    plan.mode.name,
+                )
+                assert combo.width() >= combo.minimumWidth()
+                assert combo.minimumWidth() >= combo.sizeHint().width()
+                assert_positive_geometry(combo, content)
+                assert_scroll_target_reachable(scroll, combo)
+            assert tuple(
+                (id(combo), combo.currentIndex(), combo.currentText())
+                for combo, _text in representatives
+            ) == expected_state
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_remote_record_text_keeps_full_help_at_large_font(
+    qt_application,
+    monkeypatch,
+):
+    """292px/22pt 下录制提示与省略路径不得静默丢失完整文本。"""
+
+    panel, remote, scroll, content = _show_feature_panel(
+        "remote",
+        292,
+        22,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        hint = "Recording path will be created on Start"
+        remote._on_record_toggled(True)
+        wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+        wait_for_stable_geometry(qt_application, (panel, scroll, content))
+
+        label = remote.record_path
+        assert label.wordWrap() is False
+        assert label.accessibleName() == "Recording path"
+        assert label.text() == hint
+        assert label.toolTip() == hint
+        assert label.accessibleDescription() == hint
+        assert_positive_geometry(label, content)
+        assert_scroll_target_reachable(scroll, label)
+
+        full_path = "C:\\captures\\" + "device_" + "x" * 90 + ".mp4"
+        normalized = full_path.replace("\\", "/")
+        remote._display_record_path(full_path)
+        qt_application.processEvents()
+
+        assert label.text() != normalized
+        assert label.text().startswith("…/")
+        assert label.toolTip() == normalized
+        assert label.accessibleDescription() == normalized
+
+        remote._on_record_toggled(False)
+        assert label.text() == ""
+        assert label.toolTip() == ""
+        assert label.accessibleDescription() == ""
+    finally:
+        _close_feature_panel(panel)
+
+
+def test_long_group_title_sets_reachable_scroll_minimum_at_large_font(
+    qt_application,
+    monkeypatch,
+):
+    """长标题进入分组最小宽度，并可通过 SidePanel 横向滚动完整到达。"""
+
+    panel, _system, scroll, content = _show_feature_panel(
+        "system",
+        292,
+        22,
+        qt_application,
+        monkeypatch,
+    )
+    try:
+        groups = _groups_with_titles_wider_than_viewport(
+            content,
+            scroll.viewport().contentsRect().width(),
+        )
+        assert groups
+        target = max(
+            groups,
+            key=lambda group: group.fontMetrics().horizontalAdvance(group.title()),
+        )
+        title_rect = _group_title_rect(target)
+        assert target.minimumSizeHint().width() >= (
+            target.fontMetrics().horizontalAdvance(target.title()) + 32
+        )
+        assert target.rect().contains(title_rect)
+        assert scroll.horizontalScrollBar().maximum() > 0
+        assert_scroll_target_reachable(scroll, target)
+
+        probe = type(target)("Devices")
+        probe.setFont(target.font())
+        probe.setStyleSheet(target.styleSheet())
+        probe_scroll = QScrollArea()
+        probe_scroll.setWidgetResizable(False)
+        probe_scroll.setWidget(probe)
+        probe.resize(640, 120)
+        probe_scroll.show()
+        qt_application.processEvents()
+        wide_hint = probe.minimumSizeHint().width()
+        assert wide_hint < 300
+        probe.resize(300, 120)
+        qt_application.processEvents()
+        assert probe.width() == 300
+        narrow_hint = probe.minimumSizeHint().width()
+        assert narrow_hint == wide_hint
+        assert wide_hint == probe.fontMetrics().horizontalAdvance(probe.title()) + 32
+        probe_scroll.close()
+        probe_scroll.deleteLater()
+        probe.deleteLater()
     finally:
         _close_feature_panel(panel)
 
@@ -2723,7 +3143,8 @@ def test_device_width_scan_only_reflows_for_fitting_columns_or_spacing(qt_applic
             assert plan.required_width <= plan.available_width
             assert plan.mode.columns in (1, 2)
             assert plan.spacing in (2, 4, 6)
-            assert device_widget.findChildren(QScrollArea) == []
+            assert device_widget.findChildren(QScrollArea) == [manager._device_action_scroll]
+            assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
             assert_non_overlapping(manager._device_action_buttons, manager._device_action_frame)
             for button in manager._device_action_buttons:
                 assert_contained(button, manager._device_action_frame)
@@ -2772,6 +3193,62 @@ def test_device_width_scan_only_reflows_for_fitting_columns_or_spacing(qt_applic
         for previous, current in zip(states, states[1:]):
             if previous[-1] != current[-1]:
                 assert previous[:3] != current[:3]
+    finally:
+        _close_device_test_ui(panel)
+
+
+def test_device_action_overflow_has_reachable_horizontal_scroll_fallback(qt_application):
+    """规划器报告动作溢出时，固定内容宽必须落实为真实可操作滚动范围。"""
+
+    with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
+        panel = SidePanel()
+    manager = panel._devices_tab
+    widget = panel.device_widget
+    try:
+        requested_width = max(360, widget.minimumSizeHint().width())
+        _show_device_layout(widget, manager, requested_width, qt_application)
+        scroll = manager._device_action_scroll
+        assert scroll.horizontalScrollBar().maximum() == 0
+
+        manager.btn_batch.setMinimumWidth(requested_width + 240)
+        before = panel._responsive_coordinator.diagnostics.generation
+        panel.request_responsive_reflow(ReflowReason.EXPLICIT)
+        wait_until(
+            qt_application,
+            lambda: (
+                panel._responsive_coordinator.diagnostics.stable
+                and panel._responsive_coordinator.diagnostics.generation > before
+                and manager.action_binding.applied_plan is not None
+                and manager.action_binding.applied_plan.overflow_required
+                and scroll.horizontalScrollBar().maximum() > 0
+            ),
+        )
+
+        plan = manager.action_binding.applied_plan
+        assert plan is not None
+        assert manager._device_action_overflow_required is True
+        assert manager._device_action_frame.minimumWidth() == plan.required_width
+        assert tuple(
+            button for button in manager._device_action_buttons if button.parentWidget() is not None
+        ) == manager._device_action_buttons
+        scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().maximum())
+        qt_application.processEvents()
+        assert scroll.horizontalScrollBar().value() == scroll.horizontalScrollBar().maximum()
+
+        manager.btn_batch.setMinimumWidth(0)
+        before = panel._responsive_coordinator.diagnostics.generation
+        panel.request_responsive_reflow(ReflowReason.EXPLICIT)
+        wait_until(
+            qt_application,
+            lambda: (
+                panel._responsive_coordinator.diagnostics.stable
+                and panel._responsive_coordinator.diagnostics.generation > before
+                and manager.action_binding.applied_plan is not None
+                and not manager.action_binding.applied_plan.overflow_required
+                and scroll.horizontalScrollBar().maximum() == 0
+            ),
+        )
+        assert manager._device_action_frame.minimumWidth() == 0
     finally:
         _close_device_test_ui(panel)
 
@@ -2851,7 +3328,8 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
             assert plan is not None
             assert not plan.overflow_required
             assert plan.required_width <= plan.available_width
-            assert widget.findChildren(QScrollArea) == []
+            assert widget.findChildren(QScrollArea) == [manager._device_action_scroll]
+            assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
 
             available = manager._connect_layout.geometry()
             connect = manager.btn_connect_devices.geometry()
@@ -3230,7 +3708,8 @@ def test_device_manager_keeps_connection_and_device_columns_aligned_after_show(
                 manager._device_action_frame.width(),
             )
             _assert_near(manager.btn_connect_devices.width(), manager.btn_refresh.width())
-        assert widget.findChildren(QScrollArea) == []
+        assert widget.findChildren(QScrollArea) == [manager._device_action_scroll]
+        assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
         for button in manager._device_action_buttons:
             assert_contained(button, manager._device_action_frame)
     finally:
@@ -3338,7 +3817,8 @@ def test_device_actions_stay_directly_visible_and_long_ip_is_layout_neutral(
         plan = manager.action_binding.applied_plan
         assert plan is not None and plan.mode.columns == 1
         assert not plan.overflow_required
-        assert widget.findChildren(QScrollArea) == []
+        assert widget.findChildren(QScrollArea) == [manager._device_action_scroll]
+        assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
         assert_non_overlapping(manager._device_action_buttons, manager._device_action_frame)
         for button in manager._device_action_buttons:
             assert_contained(button, manager._device_action_frame)

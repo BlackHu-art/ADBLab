@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import QScrollArea, QStyle, QStyleOptionViewItem, QWidget
 
 from gui.panels.device_manager_responsive import _DeviceCompositePlan, _DeviceResponsiveBinding
 from gui.widgets.responsive_controller import ReflowReason
@@ -27,10 +27,12 @@ class DeviceManagerLayout:
     def _responsive_context(self, container: QWidget) -> LayoutContext:
         """提供 SidePanel 状态；binding 会用视觉根真实几何和字体覆盖本地字段。"""
 
-        font = container.font()
+        del container
+        root = self._frame.device_widget
+        font = root.font()
         return LayoutContext(
-            container.contentsRect().width(),
-            container.contentsRect().height(),
+            root.contentsRect().width(),
+            root.contentsRect().height(),
             self._frame.panel._restricted_width_mode,
             (font.family(), font.pointSizeF()),
             self._frame.panel._responsive_style_generation,
@@ -42,9 +44,9 @@ class DeviceManagerLayout:
         mode: str,
         body_mode: str,
     ) -> int:
-        """优先读取真实动作 frame，首次换态时使用单调的保守估算。"""
+        """优先读取真实动作 viewport，首次换态时使用单调的保守估算。"""
 
-        action_rect = self._frame._device_action_frame.contentsRect()
+        action_rect = self._frame._device_action_scroll.viewport().contentsRect()
         if (
             self._frame._device_layout_mode == mode
             and self._frame._device_body_mode == body_mode
@@ -198,7 +200,7 @@ class DeviceManagerLayout:
 
         body = self._frame._device_body_layout
         body.removeWidget(self._frame.listbox_devices)
-        body.removeWidget(self._frame._device_action_frame)
+        body.removeWidget(self._frame._device_action_scroll)
         for column in range(max(3, body.columnCount())):
             body.setColumnStretch(column, 0)
             body.setColumnMinimumWidth(column, 0)
@@ -208,14 +210,14 @@ class DeviceManagerLayout:
 
         if plan.body_mode == "stacked":
             body.addWidget(self._frame.listbox_devices, 0, 0, 1, 2)
-            body.addWidget(self._frame._device_action_frame, 1, 0, 1, 2)
+            body.addWidget(self._frame._device_action_scroll, 1, 0, 1, 2)
             body.setColumnStretch(0, 1)
             body.setColumnStretch(1, 1)
             body.setRowStretch(0, 1)
             body.setRowStretch(1, 0)
         else:
             body.addWidget(self._frame.listbox_devices, 0, 0)
-            body.addWidget(self._frame._device_action_frame, 0, 1)
+            body.addWidget(self._frame._device_action_scroll, 0, 1)
             body.setColumnStretch(0, 3)
             body.setColumnStretch(1, 1)
             body.setRowStretch(0, 1)
@@ -331,6 +333,12 @@ class DeviceManagerLayout:
         )
         action_height = self._frame._device_action_minimum_height(action_plan)
         self._frame._device_action_frame.setMinimumHeight(action_height)
+        action_host_height = action_height
+        if action_plan is not None and action_plan.overflow_required:
+            action_host_height += (
+                self._frame._device_action_scroll.horizontalScrollBar().sizeHint().height()
+            )
+        self._frame._device_action_scroll.setMinimumHeight(action_host_height)
         if body_minimum_height is None:
             body_minimum_height = self._frame._device_body_minimum_height(
                 action_plan,
@@ -339,12 +347,31 @@ class DeviceManagerLayout:
         self._frame._device_body_host.setMinimumHeight(body_minimum_height)
         if self._frame._device_body_mode == "stacked":
             self._frame._device_body_layout.setRowMinimumHeight(0, list_height)
-            self._frame._device_body_layout.setRowMinimumHeight(1, action_height)
+            self._frame._device_body_layout.setRowMinimumHeight(1, action_host_height)
         else:
             self._frame._device_body_layout.setRowMinimumHeight(
                 0,
                 body_minimum_height,
             )
+        root = self._frame.device_widget
+        root_layout = root.layout()
+        if root_layout is not None:
+            root_layout.invalidate()
+            root_layout.activate()
+            root_height = max(
+                0,
+                root_layout.minimumSize().height(),
+                root.minimumSizeHint().height(),
+            )
+            if root.minimumHeight() != root_height:
+                root.setMinimumHeight(root_height)
+            viewport = root.parentWidget()
+            scroll = viewport.parentWidget() if viewport is not None else None
+            if isinstance(scroll, QScrollArea) and scroll.objectName() == "deviceScrollArea":
+                preserve_height = bool(scroll.property("preserveDeviceContentHeight"))
+                scroll_height = root_height if preserve_height else 0
+                if scroll.minimumHeight() != scroll_height:
+                    scroll.setMinimumHeight(scroll_height)
         self._frame._device_body_host.updateGeometry()
         self._frame._device_group.updateGeometry()
         self._frame.device_widget.updateGeometry()
@@ -394,6 +421,10 @@ class DeviceManagerLayout:
         margins = self._frame._device_body_layout.contentsMargins()
         list_height = self._frame.device_list_minimum_height()
         action_height = self._frame._device_action_minimum_height(action_plan)
+        if action_plan is not None and action_plan.overflow_required:
+            action_height += (
+                self._frame._device_action_scroll.horizontalScrollBar().sizeHint().height()
+            )
         if body_mode == "stacked":
             content_height = (
                 list_height

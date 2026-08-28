@@ -2,7 +2,7 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QLocale, QRect, QSize, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyleOptionComboBox,
     QWidget,
 )
 
@@ -28,6 +30,8 @@ from gui.widgets.responsive_controller import (
 )
 from gui.widgets.responsive_layout import (
     RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY,
+    RESPONSIVE_MINIMUM_TEXT_PROPERTY,
+    RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
     LayoutContext,
     WidthPolicy,
@@ -36,8 +40,46 @@ from gui.widgets.responsive_layout import (
 )
 
 
+class _SuffixedIntValidator(QIntValidator):
+    """接受纯整数或带固定单位后缀的同一整数范围。"""
+
+    def __init__(self, minimum: int, maximum: int, suffix: str, parent=None):
+        super().__init__(minimum, maximum, parent)
+        self._suffix = str(suffix).strip()
+        locale = self.locale()
+        locale.setNumberOptions(
+            locale.numberOptions() | QLocale.NumberOption.RejectGroupSeparator
+        )
+        self.setLocale(locale)
+
+    def validate(self, input_text: str, position: int):
+        numeric_text = input_text.strip()
+        if self._suffix and numeric_text.casefold().endswith(self._suffix.casefold()):
+            numeric_text = numeric_text[: -len(self._suffix)].rstrip()
+        state = cast(Any, super().validate(numeric_text, position))[0]
+        return state, input_text, position
+
+
 class _ResponsiveGroupBox(QGroupBox):
-    """只让真实溢出行撑宽分组，标题和普通尺寸提示不得制造横向滚动。"""
+    """只让真实溢出行或可滚动标题撑宽分组，忽略普通子控件尺寸提示。"""
+
+    _HORIZONTAL_CONTENT_MARGIN = 32
+
+    def _title_minimum_width(self) -> int:
+        """返回滚动容器中完整绘制标题所需的稳定分组宽度。"""
+
+        ancestor = self.parentWidget()
+        while ancestor is not None and not isinstance(ancestor, QScrollArea):
+            ancestor = ancestor.parentWidget()
+        if not self.title() or ancestor is None:
+            return 0
+        # sub-control 的位置和宽度会随控件当前几何变化，不能进入最小宽度；
+        # 固定边距覆盖项目 QSS 的 10px 偏移、左右 8px padding、边框及留白。
+        return max(
+            0,
+            self.fontMetrics().horizontalAdvance(self.title())
+            + self._HORIZONTAL_CONTENT_MARGIN,
+        )
 
     def minimumSizeHint(self) -> QSize:
         hint = super().minimumSizeHint()
@@ -51,7 +93,11 @@ class _ResponsiveGroupBox(QGroupBox):
             ),
             default=0,
         )
-        minimum_width = overflow_width + 32 if overflow_width else self.minimumWidth()
+        minimum_width = max(
+            self.minimumWidth(),
+            overflow_width + self._HORIZONTAL_CONTENT_MARGIN if overflow_width else 0,
+            self._title_minimum_width(),
+        )
         return QSize(max(0, minimum_width), max(0, hint.height()))
 
 
@@ -325,24 +371,72 @@ class BasePanel(QWidget):
     def _refresh_responsive_widget_minimum(widget: QWidget) -> None:
         """按控件当前字体刷新由响应布局托管的稳定最小宽度。"""
 
+        if bool(widget.property(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY)):
+            # 以当前字体和原生样式的 sizeHint 为起点，比固定 em
+            # 更适合作为可读下限；ComboBox 再按真实文本区补足净宽。
+            minimum_width = max(1, widget.sizeHint().width())
+            if isinstance(widget, QComboBox):
+                texts = [widget.itemText(index) for index in range(widget.count())]
+                minimum_text = widget.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY)
+                if minimum_text not in (None, ""):
+                    # 业务合法上限未必属于预设项；显式文本只参与稳定下限，
+                    # 不把用户当前输入带入响应式断点。
+                    texts.append(str(minimum_text))
+                elif widget.currentText():
+                    texts.append(widget.currentText())
+                required_text_width = max(
+                    (widget.fontMetrics().horizontalAdvance(text) for text in texts),
+                    default=0,
+                )
+                # PySide6 类型桩未暴露继承自 QStyleOption 的 rect，运行时接口存在。
+                option = cast(Any, QStyleOptionComboBox())
+                widget.initStyleOption(option)
+                option.rect = QRect(
+                    0,
+                    0,
+                    minimum_width,
+                    max(1, widget.sizeHint().height()),
+                )
+                edit_rect = widget.style().subControlRect(
+                    QStyle.ComplexControl.CC_ComboBox,
+                    option,
+                    QStyle.SubControl.SC_ComboBoxEditField,
+                    widget,
+                )
+                minimum_width += max(0, required_text_width - edit_rect.width())
+            widget.setMinimumWidth(minimum_width)
+            return
         em_count = int(widget.property(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY) or 0)
         if em_count > 0:
             widget.setMinimumWidth(max(1, widget.fontMetrics().horizontalAdvance("M" * em_count)))
 
-    def refresh_responsive_metrics(self) -> None:
-        """字体变化后刷新所有自动下限，不直接发起新的布局代次。"""
+    def refresh_responsive_metrics(self) -> bool:
+        """刷新所有自动下限，并返回是否有控件宽度实际变化。"""
 
         seen: set[int] = set()
+        changed = False
         for _container, widgets in self._responsive_row_owners:
             for widget in widgets:
                 key = id(widget)
                 if key in seen:
                     continue
                 seen.add(key)
+                previous_width = widget.minimumWidth()
                 self._refresh_responsive_widget_minimum(widget)
+                changed = changed or widget.minimumWidth() != previous_width
+        return changed
+
+    def _uses_visual_size_hint_minimum(self) -> bool:
+        """返回当前页面是否需要在首次视觉 polish 后复测原生尺寸。"""
+
+        return any(
+            bool(widget.property(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY))
+            for _container, widgets in self._responsive_row_owners
+            for widget in widgets
+        )
 
     def responsive_geometry_is_applied(self) -> bool:
-        """返回所有响应行的已应用计划是否覆盖当前真实几何与样式上下文。"""
+        """返回所有响应行的水平计划是否覆盖当前几何与样式。"""
 
         if not self._responsive_bindings_activated or not self._responsive_rows:
             return False
@@ -354,9 +448,16 @@ class BasePanel(QWidget):
                 context = binding.responsive_context()
             except RuntimeError:
                 return False
+            planned_context = plan.context_fingerprint
+            current_context = context.fingerprint
+            # 行高是网格应用后的 Qt 反馈，不参与水平断点决策；
+            # 与 GridPlan.settling_fingerprint 保持一致，避免两帧行高被误判为新宽度。
+            if len(planned_context) == 5 and len(current_context) == 5:
+                planned_context = (planned_context[0], *planned_context[2:])
+                current_context = (current_context[0], *current_context[2:])
             if (
                 plan.available_width != context.width
-                or plan.context_fingerprint != context.fingerprint
+                or planned_context != current_context
             ):
                 return False
         return True
@@ -498,8 +599,29 @@ class BasePanel(QWidget):
 
         if self._responsive_bindings_activated:
             return
+        # 此时祖先 QSS 与原生样式已经生效，基于 sizeHint 的
+        # 可读下限必须在进入最终视觉树后再度量。
+        self.refresh_responsive_metrics()
         self._responsive_bindings_activated = True
         self._request_responsive_reflow(ReflowReason.EXPLICIT)
+        # SidePanel 可能在顶层窗口 show() 前完成懒页挂载；等首轮 polish/QSS
+        # 提交后再量一次原生 sizeHint，避免使用未套用最终样式的下拉框宽度。
+        if self._uses_visual_size_hint_minimum():
+            QTimer.singleShot(0, self._refresh_metrics_after_visual_polish)
+
+    def _refresh_metrics_after_visual_polish(self) -> None:
+        """在首次视觉 polish 后刷新精确控件下限并启动最终布局代次。"""
+
+        if not self._responsive_bindings_activated:
+            return
+        try:
+            if getattr(self.window(), "_closing", False):
+                return
+            changed = self.refresh_responsive_metrics()
+        except RuntimeError:
+            return
+        if changed:
+            self._request_responsive_reflow(ReflowReason.EXPLICIT)
 
     def _request_responsive_reflow(self, reason: ReflowReason) -> None:
         request = getattr(self.panel, "request_responsive_reflow", None)
@@ -609,12 +731,19 @@ class BasePanel(QWidget):
         combo: QComboBox,
         minimum: int,
         maximum: int,
+        *,
+        suffix: str = "",
     ) -> None:
-        """为可编辑整数下拉框安装范围 validator。"""
+        """为可编辑整数下拉框安装范围 validator，可接受固定单位后缀。"""
 
         editor = combo.lineEdit()
         if editor is not None:
-            editor.setValidator(QIntValidator(minimum, maximum, editor))
+            validator = (
+                _SuffixedIntValidator(minimum, maximum, suffix, editor)
+                if suffix
+                else QIntValidator(minimum, maximum, editor)
+            )
+            editor.setValidator(validator)
 
     def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建统一样式的下拉框。"""

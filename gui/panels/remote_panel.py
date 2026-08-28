@@ -283,6 +283,7 @@ class RemotePanel(BasePanel):
         self._remote_sent = 0
         self._remote_failed = 0
         self._session_config = None
+        self._status_device_info = ""
         self._allocated_record_paths = set()
         self._shutdown_request_lock = threading.Lock()
         self._scrcpy_stop_claim = None
@@ -335,7 +336,12 @@ class RemotePanel(BasePanel):
 
     def _update_status(self, text: str, color: str | None):
         self._status_label.setStyleSheet("font-weight: bold;")
-        self._status_label.setText(f"Status: {text}")
+        status = f"Status: {text}"
+        self._status_label.setText(status)
+        device_info = str(getattr(self, "_status_device_info", "") or "").strip()
+        details = f"{status}\nDevice: {device_info}" if device_info else status
+        self._status_label.setToolTip(details)
+        self._status_label.setAccessibleDescription(details)
 
     # ── 按键与输入事件 ──────────────────────────────────────────────────
 

@@ -500,7 +500,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._launch_worker = None
     panel._active_device = "device-1"
     panel._status_label = Mock()
-    panel._update_status = Mock()
+    panel._update_status = lambda text, color: RemotePanel._update_status(panel, text, color)
     panel._log = Mock()
     panel._scrcpy_service = Mock()
     panel._remote_control = Mock()
@@ -518,7 +518,14 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     with patch("gui.panels.remote_panel.threading.Thread") as thread_cls:
         RemotePanel._on_launch_ready(panel, ["scrcpy.exe", "-s", "device-1"], "1080x2400")
 
-    panel._status_label.setToolTip.assert_called_once_with("Device: 1080x2400")
+    panel._status_label.setText.assert_called_once_with("Status: Running")
+    panel._status_label.setToolTip.assert_called_once_with(
+        "Status: Running\nDevice: 1080x2400"
+    )
+    panel._status_label.setAccessibleDescription.assert_called_once_with(
+        "Status: Running\nDevice: 1080x2400"
+    )
+    assert panel._status_device_info == "1080x2400"
     panel._remote_control.remember_dimensions.assert_called_once_with("device-1", ["1080", "2400"])
     panel._scrcpy_service.start.assert_called_once_with(
         "scrcpy_test",
@@ -529,6 +536,15 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._set_running.assert_called_once_with(True)
     assert thread_cls.return_value.start.call_count == 3
     panel._watchdog.start.assert_called_once_with(500)
+
+    panel._status_label.reset_mock()
+    RemotePanel._update_status(panel, "60 fps", None)
+    panel._status_label.setToolTip.assert_called_once_with(
+        "Status: 60 fps\nDevice: 1080x2400"
+    )
+    panel._status_label.setAccessibleDescription.assert_called_once_with(
+        "Status: 60 fps\nDevice: 1080x2400"
+    )
 
 
 def test_remote_panel_launch_failure_returns_controls_to_idle():
@@ -551,6 +567,7 @@ def test_remote_panel_launch_failure_returns_controls_to_idle():
     RemotePanel._on_launch_ready(panel, ["scrcpy.exe", "-s", "device-1"], "1080x2400")
 
     assert panel._active_device is None
+    assert panel._status_device_info == ""
     assert panel._scrcpy_stop_claim is old_stop_claim
     panel._set_running.assert_called_once_with(False)
     panel._update_status.assert_called_once_with("Error", None)
@@ -2058,6 +2075,9 @@ def test_remote_panel_queue_status_keeps_primary_text_compact_and_details_in_too
     panel._remote_queue_label.setToolTip.assert_called_once_with(
         "Queued: 1 · Sent: 7 · Failed: 0"
     )
+    panel._remote_queue_label.setAccessibleDescription.assert_called_once_with(
+        "Queued: 1 · Sent: 7 · Failed: 0"
+    )
 
     panel._remote_queue_label.reset_mock()
     panel._remote_failed = 2
@@ -2065,6 +2085,9 @@ def test_remote_panel_queue_status_keeps_primary_text_compact_and_details_in_too
 
     panel._remote_queue_label.setText.assert_called_once_with("Queue: 0 · Failed: 2")
     panel._remote_queue_label.setToolTip.assert_called_once_with(
+        "Queued: 0 · Sent: 7 · Failed: 2"
+    )
+    panel._remote_queue_label.setAccessibleDescription.assert_called_once_with(
         "Queued: 0 · Sent: 7 · Failed: 2"
     )
 

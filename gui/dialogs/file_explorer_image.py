@@ -2,7 +2,14 @@
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QScrollArea, QVBoxLayout
+from PySide6.QtWidgets import (
+    QDialog,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+)
 
 from gui.styles.icon_loader import get_themed_icon
 
@@ -29,6 +36,11 @@ class _ImageViewerDialog(QDialog):
 
         self.image_info = QLabel()
         self.image_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_info.setWordWrap(True)
+        self.image_info.setMinimumWidth(0)
+        self.image_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.image_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.image_info.setAccessibleName("Image details")
         layout.addWidget(self.image_info)
 
         self.image_close = QPushButton("Close")
@@ -40,7 +52,10 @@ class _ImageViewerDialog(QDialog):
 
     def set_image_source(self, source: QPixmap, name: str) -> None:
         self._source_pixmap = QPixmap(source)
-        self.image_info.setText(f"{source.width()}x{source.height()}  |  {name}")
+        details = f"{source.width()}x{source.height()}  |  {name}"
+        self.image_info.setText(details)
+        self.image_info.setToolTip(details)
+        self.image_info.setAccessibleDescription(details)
         self._schedule_fit()
 
     def _fit_image_to_viewport(self, source: QPixmap) -> QPixmap:

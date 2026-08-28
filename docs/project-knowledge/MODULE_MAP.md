@@ -49,19 +49,21 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   `window_layout_snapshot/restore_default_window_size/reset_panel_split` 是 Settings 使用的公开布局接口；
   `_ScanThread` 周期执行设备发现（扫描超时 15 秒以兼容端点防护拖慢的 adb 启动），失败仅更新
   发现状态为 unavailable，不再自动恢复 ADB Server；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口；
-  主窗口通过 `QtScreenAdapter` 获取所在屏幕、可用几何和逻辑 DPI，并据此约束工作区（工具栏溢出、
-  保存路径省略、日志区最小高度、二级窗口按 owner 屏幕适配）。
+  主窗口通过 `QtScreenAdapter` 获取所在屏幕、可用几何和逻辑 DPI，并据此约束工作区（窄宽工具栏
+  把放不下的共享 `QAction` 收入 More 菜单，Devices 以局部双向滚动承接短屏/窄栏，保存路径省略、
+  日志区软最小高度、二级窗口按 owner 屏幕适配）。
 - **输入/输出**：Qt 事件、选中设备和表单值；输出控制信号、日志、状态栏和对话框。
 - **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`AppSettings`、`gui/screen_adapter.py`。
 - **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸、
-  `panel_split_ratio`、主题、字体、保存目录；通过 ADB 扫描设备。普通窗口尺寸限制为不小于
-  860×500；屏幕可用范围不小于该最小值时再裁剪到可用范围内，最小尺寸优先；左栏比例限制为
-  0.20–0.70。
+  `panel_split_ratio`、主题、字体、保存目录；通过 ADB 扫描设备。常规屏幕保留不小于 860×500
+  的字体感知设计下限；屏幕可用范围更小时，有效窗口尺寸和最小尺寸裁到可用范围内，由 Devices
+  滚动区保持内容可达并为 Log 保留一行软下限；左栏比例限制为 0.20–0.70。
 - **测试/风险/待确认**：原生缩放热区、尺寸/比例校验、批量设置适配和响应式断点有单测；
   MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
   同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一生命周期 owner；
   这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
-  原生缩放在不同窗口管理器下的实际手感、窄屏及高 DPI 布局仍需人工验证；主窗口 close 已改为
+  自动测试覆盖窄工具栏 More、Devices 双向滚动、12/22pt 短屏边界和字号往返恢复；原生缩放在
+  不同窗口管理器下的实际手感及真实跨屏高 DPI 视觉仍需人工验证；主窗口 close 已改为
   两阶段异步关闭（broadcast-first deadline，Gate B2 通过，契约测试见
   `test_phase2_mainframe_shutdown_gate.py`）；`main_frame.py` 已按 ADR-0003 Phase 2 拆出
   `main_frame_toolbar.py`/`secondary_windows.py`/`close_controller.py` 三个组合模块
@@ -77,8 +79,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **上下游**：上游为 MainFrame/用户；下游为专用 QThread、model service、ProcessRunner、文件系统。
 - **配置/数据/外部服务**：保存目录、日志上限、主题、字体、窗口布局、MobilePerf 参数；
   SettingsDialog 通过 MainFrame 公开接口展示/恢复窗口尺寸和分栏，并用纵向滚动区及字号感知
-  断点重排外观、窗口、保存目录和日志设置；保存目录选择入口与页脚始终可见，其他对话框按
-  字体角色刷新。调用 ADB、scrcpy、Perfetto URL。
+  断点重排外观、窗口、保存目录和日志设置；ScreenshotViewer 的元数据按宽度横/纵重排并为省略
+  文件名保留完整辅助文本，文件预览信息允许换行；保存目录选择入口与页脚始终可见，其他对话框
+  按字体角色刷新。调用 ADB、scrcpy、Perfetto URL。
 - **测试/风险/待确认**：Gate B1 覆盖 LiveLogcat heartbeat、停止语义、背压、稀疏尾批、动态包/PID
   过滤、超时保活和晚到信号；
   独立子进程还以真实 `WA_DeleteOnClose` 连续压力覆盖日志输出期间的窗口销毁、主窗口 Close
@@ -157,8 +160,9 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   QApplication、主窗口、面板和对话框。
 - **配置/数据/外部服务**：空字体族表示系统默认；不可用字体回退到 Qt 系统字体；UI 字号
   8–22、日志字号 7–16；通用面板断点为 420/560 逻辑像素，Device 按控件最小宽度动态切换列表/网格布局，
-  Settings 紧凑断点为 `640 + max(0, UI 字号 - 12) × 18`，工具栏保存路径在最小窗口宽度起显示
-  末级目录，并按工具栏剩余宽度动态省略。无网络或设备依赖。
+  Settings 紧凑断点为 `640 + max(0, UI 字号 - 12) × 18`；工具栏保存路径按剩余宽度动态省略，
+  固定动作放不下时复用原 `QAction` 进入 More 菜单；可滚动面板的长分组标题进入稳定最小宽度，
+  Remote 状态允许换行并同步完整 tooltip/accessibility。无网络或设备依赖。
 - **测试/风险/待确认**：`ui_font_changed`、`log_font_changed`、`fonts_changed` 与
   `theme_changed` 相互独立；日志字号变化不会触发界面字体订阅者，主题变化不会伪装成字体变化。
   单测覆盖信号、字体回退、面板/对话框刷新、控件身份保持、最大字号无横向溢出及分组标题净空、

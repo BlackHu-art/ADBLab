@@ -201,6 +201,41 @@ def test_plan_distributes_spanning_item_deficit_across_covered_columns():
     assert plan.required_width == 130
 
 
+def test_plan_equalizes_declared_column_groups_after_span_constraints():
+    mode = GridMode(
+        name="aligned-pairs",
+        columns=6,
+        conservatism_rank=0,
+        placements=(
+            GridPlacement(0, 0, 0),
+            GridPlacement(1, 0, 1),
+            GridPlacement(2, 0, 2),
+            GridPlacement(3, 0, 3),
+            GridPlacement(4, 0, 4, column_span=2),
+        ),
+        column_stretches=(0, 1, 0, 1, 0, 1),
+        equal_column_groups=((0, 2, 4), (1, 3, 5)),
+    )
+
+    plan = choose_grid_plan(
+        (
+            ItemMetric(68, 68, WidthPolicy.NATURAL),
+            ItemMetric(102, 102, WidthPolicy.SHRINKABLE),
+            ItemMetric(68, 68, WidthPolicy.NATURAL),
+            ItemMetric(84, 84, WidthPolicy.SHRINKABLE),
+            ItemMetric(90, 90, WidthPolicy.WRAPPING),
+        ),
+        (mode,),
+        600,
+        QMargins(),
+        6,
+        ("aligned",),
+    )
+
+    assert plan.column_widths == (68, 102, 68, 102, 68, 102)
+    assert plan.required_width == 540
+
+
 @pytest.mark.parametrize(
     ("column_stretches", "minimum_width", "expected_widths"),
     [
@@ -307,6 +342,29 @@ def test_plan_reports_fit_and_minimum_column_overflow():
                 )
             ],
             "bounds",
+        ),
+        (
+            [
+                GridMode(
+                    "repeated-equal-column",
+                    2,
+                    0,
+                    equal_column_groups=((0, 1), (1, 0)),
+                )
+            ],
+            "equal_column_groups",
+        ),
+        (
+            [
+                GridMode(
+                    "unequal-stretch-column-group",
+                    2,
+                    0,
+                    column_stretches=(1, 2),
+                    equal_column_groups=((0, 1),),
+                )
+            ],
+            "matching column_stretches",
         ),
         (
             [row_major_mode("first", 1, 0), row_major_mode("duplicate", 1, 0)],

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QListWidget, QWidget
+from PySide6.QtWidgets import QListWidget, QScrollArea, QWidget
 
 from gui.widgets.responsive_controller import ResponsiveGridBinding
 from gui.widgets.responsive_layout import (
@@ -69,7 +69,7 @@ class _DeviceResponsiveBinding(ResponsiveGridBinding):
     def __init__(self, manager: DeviceManager) -> None:
         self._manager_ref = weakref.ref(manager)
         super().__init__(
-            manager.device_widget,
+            manager._device_action_frame,
             manager._device_actions_layout,
             manager._device_action_buttons,
             (WidthPolicy.NATURAL,) * len(manager._device_action_buttons),
@@ -79,6 +79,7 @@ class _DeviceResponsiveBinding(ResponsiveGridBinding):
             ),
             manager.panel._responsive_coordinator,
             context_provider=manager._responsive_context,
+            use_provided_geometry=True,
             adaptive_spacing=True,
         )
 
@@ -126,6 +127,16 @@ class _ShrinkableDeviceList(QListWidget):
 
 class _ShrinkableDeviceBody(QWidget):
     """只向外层传播当前计划的一行安全高度，内部仍可按计划堆叠。"""
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, max(0, self.minimumHeight()))
+
+
+class _ShrinkableActionScroll(QScrollArea):
+    """只传播动作区安全高度，横向不足由自身滚动条承接。"""
+
+    def sizeHint(self) -> QSize:
+        return QSize(0, max(0, self.minimumHeight()))
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, max(0, self.minimumHeight()))

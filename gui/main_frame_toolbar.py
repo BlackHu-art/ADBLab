@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QSizePolicy,
     QToolButton,
 )
@@ -29,6 +30,21 @@ def _debug_log(owner, event: str, **fields) -> None:
 
 class ToolbarController:
     """组合进 MainFrame 的顶部工具栏控制器，通过 ``self._frame`` 访问主窗口。"""
+
+    _OVERFLOW_PRIORITY = (
+        "save_path",
+        "cmd",
+        "performance",
+        "logcat",
+        "file_explorer",
+        "app_mgr",
+        "clear",
+        "about",
+        "theme",
+        "always_on_top",
+        "settings",
+    )
+    _WINDOW_CONTROL_PRIORITY = ("minimize", "maximize", "exit")
 
     def __init__(self, frame):
         self._frame = frame
@@ -176,6 +192,8 @@ class ToolbarController:
                 checkable=checkable,
                 checked=self._frame._always_on_top if key == "always_on_top" else False,
             )
+        self._frame._toolbar_action_order = tuple(spec[0] for spec in action_specs)
+        self._frame._toolbar_overflow_keys = ()
 
         self._frame.tb_app_mgr = self._frame._create_toolbar_action_button("app_mgr")
         self._frame.tb_file_explorer = self._frame._create_toolbar_action_button("file_explorer")
@@ -387,6 +405,164 @@ class ToolbarController:
         for button in toolbar.findChildren(QAbstractButton):
             button.setFixedSize(size)
         toolbar.updateGeometry()
+        timer = getattr(self._frame, "_toolbar_path_layout_timer", None)
+        if toolbar.isVisible() and timer is not None:
+            timer.start(0)
+
+    @staticmethod
+    def _toolbar_widget_width(widget) -> int:
+        """返回布局计算使用的稳定控件宽度。"""
+
+        if widget.minimumWidth() == widget.maximumWidth():
+            return max(0, widget.minimumWidth())
+        return max(0, widget.minimumWidth(), widget.minimumSizeHint().width())
+
+    def _toolbar_required_width(
+        self,
+        visible_keys: set[str],
+        *,
+        include_more: bool,
+        include_title: bool,
+    ) -> int:
+        """估算不含可省略路径文本时所有固定入口所需的宽度。"""
+
+        toolbar = self._frame._toolbar
+        layout = toolbar.layout()
+        margins = layout.contentsMargins()
+        widgets = []
+        if include_title:
+            widgets.append(self._frame._toolbar_title)
+        widgets.extend(
+            self._frame._toolbar_action_buttons[key]
+            for key in self._frame._toolbar_action_order
+            if key in visible_keys
+        )
+        more_button = getattr(self._frame, "_toolbar_more_button", None)
+        if include_more and more_button is not None:
+            widgets.append(more_button)
+        # 中间 stretch 在左右两组之间同样保留一处布局间距，按一格保守计入。
+        gap_count = len(widgets) if widgets else 0
+        return (
+            margins.left()
+            + margins.right()
+            + sum(self._toolbar_widget_width(widget) for widget in widgets)
+            + max(0, layout.spacing()) * gap_count
+        )
+
+    def _ensure_toolbar_more(self) -> tuple[QToolButton, QMenu]:
+        """按需创建共享 QAction 的 More 入口。"""
+
+        button = getattr(self._frame, "_toolbar_more_button", None)
+        menu = getattr(self._frame, "_toolbar_more_menu", None)
+        if button is not None and menu is not None:
+            return button, menu
+
+        toolbar = self._frame._toolbar
+        layout = toolbar.layout()
+        button = self._frame._create_toolbar_btn("More actions", "dots-three.svg")
+        button.setObjectName("toolbarMoreButton")
+        button.setAccessibleName("More actions")
+        button.setAccessibleDescription("Open toolbar actions that do not fit in the window")
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(toolbar)
+        menu.setObjectName("toolbarMoreMenu")
+        menu.setAccessibleName("More toolbar actions")
+        button.setMenu(menu)
+        exit_button = self._frame.tb_exit
+        if exit_button.width() > 0 and exit_button.height() > 0:
+            button.setFixedSize(exit_button.size())
+        insert_index = layout.indexOf(self._frame.tb_minimize)
+        layout.insertWidget(insert_index if insert_index >= 0 else layout.count(), button)
+        button.hide()
+        self._frame._toolbar_more_button = button
+        self._frame._toolbar_more_menu = menu
+        return button, menu
+
+    def _update_toolbar_overflow(self) -> tuple[str, ...]:
+        """在窄窗口隐藏直显按钮，并把同一 QAction 放入 More 菜单。"""
+
+        toolbar = getattr(self._frame, "_toolbar", None)
+        if toolbar is None or not toolbar.isVisible():
+            return tuple(getattr(self._frame, "_toolbar_overflow_keys", ()))
+        order = tuple(self._frame._toolbar_action_order)
+        visible_keys = set(order)
+        available_width = max(0, toolbar.contentsRect().width())
+        direct_width = self._toolbar_required_width(
+            visible_keys,
+            include_more=False,
+            include_title=True,
+        )
+        if direct_width <= available_width:
+            for key in order:
+                button = self._frame._toolbar_action_buttons[key]
+                if button.isHidden():
+                    button.show()
+            self._frame._toolbar_title.show()
+            more_button = getattr(self._frame, "_toolbar_more_button", None)
+            more_menu = getattr(self._frame, "_toolbar_more_menu", None)
+            if more_button is not None:
+                more_button.hide()
+            if more_menu is not None and more_menu.actions():
+                more_menu.clear()
+            self._frame._toolbar_overflow_keys = ()
+            toolbar.layout().invalidate()
+            toolbar.layout().activate()
+            return ()
+
+        more_button, more_menu = self._ensure_toolbar_more()
+        include_title = True
+        for key in self._OVERFLOW_PRIORITY:
+            if (
+                self._toolbar_required_width(
+                    visible_keys,
+                    include_more=True,
+                    include_title=include_title,
+                )
+                <= available_width
+            ):
+                break
+            visible_keys.discard(key)
+        if (
+            self._toolbar_required_width(
+                visible_keys,
+                include_more=True,
+                include_title=include_title,
+            )
+            > available_width
+        ):
+            include_title = False
+        for key in self._WINDOW_CONTROL_PRIORITY:
+            if (
+                self._toolbar_required_width(
+                    visible_keys,
+                    include_more=True,
+                    include_title=include_title,
+                )
+                <= available_width
+            ):
+                break
+            visible_keys.discard(key)
+
+        hidden_keys = tuple(key for key in order if key not in visible_keys)
+        for key in order:
+            button = self._frame._toolbar_action_buttons[key]
+            should_show = key in visible_keys
+            if button.isHidden() == should_show:
+                button.setVisible(should_show)
+        self._frame._toolbar_title.setVisible(include_title)
+        more_button.show()
+        if hidden_keys != tuple(getattr(self._frame, "_toolbar_overflow_keys", ())):
+            more_menu.clear()
+            for key in hidden_keys:
+                more_menu.addAction(self._frame._toolbar_actions[key])
+        more_button.setToolTip(f"More actions ({len(hidden_keys)})")
+        more_button.setAccessibleDescription(
+            f"Open {len(hidden_keys)} toolbar actions that do not fit in the window"
+        )
+        self._frame._toolbar_overflow_keys = hidden_keys
+        toolbar.layout().invalidate()
+        toolbar.layout().activate()
+        return hidden_keys
 
     def _toggle_theme(self):
         """记录工具栏主题切换请求并交给主题服务执行。"""
@@ -455,14 +631,15 @@ class ToolbarController:
         if action is None:
             return
         label = "Change default save directory"
+        # QAction 会在窄窗口中复用到 More 菜单；文案若拼入完整路径会把菜单
+        # 撑出屏幕。完整值由 tooltip、statusTip 和辅助描述承载。
+        action.setText(label)
         if path:
             current_path = f"Current save directory: {path}"
-            action.setText(f"{label} — {path.replace('&', '&&')}")
             action.setToolTip(f"Choose a different default output directory\n{current_path}")
             action.setStatusTip(current_path)
             action.setProperty("accessibleDescription", current_path)
         else:
-            action.setText(label)
             action.setToolTip("Choose the default output directory")
             action.setStatusTip("")
             action.setProperty("accessibleDescription", "")
@@ -493,6 +670,7 @@ class ToolbarController:
     def _update_toolbar_path_display(self):
         """按工具栏扣除其余控件后的真实剩余宽度省略保存路径。"""
 
+        self._update_toolbar_overflow()
         label = getattr(self._frame, "_save_path_label", None)
         if label is None:
             return

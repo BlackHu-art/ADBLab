@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QMainWindow,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QVBoxLayout,
@@ -196,6 +197,14 @@ class MainFrame(QMainWindow):
         self._user_resize_transaction_active = False
         self._restricted_workspace = None
         self._device_layout_ready_for_constraints = False
+        self._workspace_forced_size = None
+        self._last_workspace_minimum_size = QSize(MINIMUM_WINDOW_SIZE)
+        self._initial_device_width_fit_complete = False
+        self._workspace_constraint_refresh_timer = QTimer(self)
+        self._workspace_constraint_refresh_timer.setSingleShot(True)
+        self._workspace_constraint_refresh_timer.timeout.connect(
+            self._refresh_workspace_after_responsive_layout
+        )
         self.log_service = LogService()
         set_error_sink(self.log_service.log)
         self.log_panel = LogPanel()
@@ -384,9 +393,36 @@ class MainFrame(QMainWindow):
             }}
         """)
 
+    def _screen_is_valid(self, screen) -> bool:
+        """通过适配器判断 QScreen 底层对象是否仍然存活。"""
+
+        if screen is None:
+            return False
+        validator = getattr(self._screen_adapter, "is_valid_screen", None)
+        if not callable(validator):
+            # 测试替身和第三方适配器没有 Qt 包装器生命周期，非空即视为有效。
+            return True
+        try:
+            return bool(validator(screen))
+        except (AttributeError, RuntimeError, TypeError):
+            return False
+
+    def _resolve_window_screen(self, screen=None):
+        """返回仍存活的候选屏幕；失效缓存必须重新查询当前窗口。"""
+
+        if self._screen_is_valid(screen):
+            return screen
+        try:
+            current = self._screen_adapter.window_screen(self)
+        except (AttributeError, RuntimeError, TypeError):
+            current = None
+        return current if self._screen_is_valid(current) else None
+
     def _bind_window_screen(self) -> None:
         """在 window handle 可用后绑定窗口与当前屏幕的变化信号。"""
 
+        if getattr(self, "_closing", False):
+            return
         handle = self.windowHandle()
         rebound_window = handle is not None and (
             handle is not self._bound_window_handle or self._window_screen_token is None
@@ -399,14 +435,18 @@ class MainFrame(QMainWindow):
             )
             self._bound_window_handle = handle
 
-        screen = self._screen_adapter.window_screen(self)
+        screen = self._resolve_window_screen()
         rebound_screen = self._bind_screen_metrics(screen)
         self._apply_workspace_constraints(screen, request_reflow=False)
         if rebound_window or rebound_screen:
             self._request_side_panel_reflow(self, ReflowReason.SCREEN)
 
     def _bind_screen_metrics(self, screen) -> bool:
-        if screen is self._bound_screen and len(self._screen_metric_tokens) == 2:
+        screen = self._resolve_window_screen(screen)
+        if screen is self._bound_screen and (
+            (screen is None and not self._screen_metric_tokens)
+            or (self._screen_is_valid(screen) and len(self._screen_metric_tokens) == 2)
+        ):
             return False
         for token in self._screen_metric_tokens:
             self._disconnect_screen_token(token)
@@ -439,25 +479,35 @@ class MainFrame(QMainWindow):
     def _unbind_window_screen(self) -> None:
         """断开全部屏幕 token，使关闭后的信号不再访问 MainFrame。"""
 
-        self._disconnect_screen_token(getattr(self, "_window_screen_token", None))
+        refresh_timer = getattr(self, "_workspace_constraint_refresh_timer", None)
+        if refresh_timer is not None and refresh_timer.isActive():
+            refresh_timer.stop()
+        window_token = getattr(self, "_window_screen_token", None)
+        metric_tokens = tuple(getattr(self, "_screen_metric_tokens", ()))
         self._window_screen_token = None
-        for token in getattr(self, "_screen_metric_tokens", ()):
-            self._disconnect_screen_token(token)
         self._screen_metric_tokens = []
         self._bound_window_handle = None
         self._bound_screen = None
+        self._disconnect_screen_token(window_token)
+        for token in metric_tokens:
+            self._disconnect_screen_token(token)
 
-    def _on_window_screen_changed(self, screen=None) -> None:
-        if screen is None:
-            screen = self._screen_adapter.window_screen(self)
+    def _on_window_screen_changed(self, _screen=None) -> None:
+        if getattr(self, "_closing", False):
+            return
+        # queued screenChanged 可能携带已过期的旧 wrapper，以窗口当前值为准。
+        screen = self._resolve_window_screen()
         self._bind_screen_metrics(screen)
         self._apply_workspace_constraints(
-            screen,
+            self._bound_screen,
             request_reflow=True,
             reason=ReflowReason.SCREEN,
         )
 
     def _on_screen_available_geometry_changed(self, _geometry=None) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self._bind_screen_metrics(self._resolve_window_screen())
         self._apply_workspace_constraints(
             self._bound_screen,
             request_reflow=True,
@@ -465,6 +515,9 @@ class MainFrame(QMainWindow):
         )
 
     def _on_screen_logical_dpi_changed(self, _dpi=None) -> None:
+        if getattr(self, "_closing", False):
+            return
+        self._bind_screen_metrics(self._resolve_window_screen())
         self._apply_workspace_constraints(
             self._bound_screen,
             request_reflow=True,
@@ -481,29 +534,96 @@ class MainFrame(QMainWindow):
     ):
         """应用当前屏幕约束，同时保留独立的用户首选尺寸。"""
 
-        if screen is None:
-            screen = self._screen_adapter.window_screen(self)
+        requested_screen = screen
+        screen = self._resolve_window_screen(screen)
+        if (
+            requested_screen is not None
+            and requested_screen is self._bound_screen
+            and screen is not requested_screen
+        ):
+            self._bind_screen_metrics(screen)
+            screen = self._bound_screen
         available_size = self._screen_adapter.available_size(screen)
         design_minimum = self._workspace_design_minimum()
         constraints = compute_workspace_constraints(
             available_size,
             self._preferred_window_size,
             design_minimum=design_minimum,
-            allow_vertical_overflow=(design_minimum.height() > MINIMUM_WINDOW_SIZE.height()),
+        )
+        previous_minimum = QSize(self._last_workspace_minimum_size)
+        forced_size = self._workspace_forced_size
+        minimum_relaxed = (
+            constraints.minimum_window_size.width() < previous_minimum.width()
+            or constraints.minimum_window_size.height() < previous_minimum.height()
+        )
+        restore_relaxed_minimum = bool(
+            not restore_preferred_size
+            and forced_size is not None
+            and self.size() == forced_size
+            and minimum_relaxed
+            and (
+                constraints.effective_window_size.width() < forced_size.width()
+                or constraints.effective_window_size.height() < forced_size.height()
+            )
+        )
+        apply_effective_size = restore_preferred_size or restore_relaxed_minimum
+        size_before_constraints = QSize(self.size())
+        minimum_forced_size = QSize(
+            max(size_before_constraints.width(), constraints.minimum_window_size.width()),
+            max(size_before_constraints.height(), constraints.minimum_window_size.height()),
         )
         previous_restricted = self._restricted_workspace
         self._restricted_workspace = constraints.restricted
-        if restore_preferred_size:
+        if constraints.restricted and not previous_restricted:
+            self._initial_device_width_fit_complete = False
+        device_scroll = getattr(self, "_device_scroll_area", None)
+        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
+        if device_scroll is not None and device_panel is not None:
+            vertical_restricted = bool(
+                available_size.isValid()
+                and available_size.height() < design_minimum.height()
+            )
+            device_scroll.setProperty(
+                "preserveDeviceContentHeight",
+                not vertical_restricted,
+            )
+            device_scroll_minimum = 0 if vertical_restricted else device_panel.minimumHeight()
+            if device_scroll.minimumHeight() != device_scroll_minimum:
+                device_scroll.setMinimumHeight(device_scroll_minimum)
+        if apply_effective_size:
             self._effective_window_size = QSize(constraints.effective_window_size)
+        elif minimum_forced_size != size_before_constraints:
+            self._effective_window_size = QSize(minimum_forced_size)
         self._logical_dpi = self._screen_adapter.logical_dpi(screen)
         self._applying_workspace_constraints = True
         try:
             if self.minimumSize() != constraints.minimum_window_size:
                 self.setMinimumSize(constraints.minimum_window_size)
-            if restore_preferred_size and self.size() != constraints.effective_window_size:
+            if apply_effective_size and self.size() != constraints.effective_window_size:
                 self.resize(constraints.effective_window_size)
         finally:
             self._applying_workspace_constraints = False
+        applied_size = (
+            QSize(constraints.effective_window_size)
+            if apply_effective_size
+            else QSize(minimum_forced_size)
+        )
+        preferred = self._preferred_window_size
+        forced_by_design = bool(
+            apply_effective_size
+            and (
+                applied_size.width() > preferred.width()
+                or applied_size.height() > preferred.height()
+            )
+        )
+        forced_by_new_minimum = bool(
+            not apply_effective_size and minimum_forced_size != size_before_constraints
+        )
+        if forced_by_design or forced_by_new_minimum:
+            self._workspace_forced_size = QSize(applied_size)
+        elif apply_effective_size or size_before_constraints != forced_size:
+            self._workspace_forced_size = None
+        self._last_workspace_minimum_size = QSize(constraints.minimum_window_size)
         if previous_restricted != constraints.restricted:
             self._sync_workspace_restriction(force=True)
         if request_reflow:
@@ -580,12 +700,60 @@ class MainFrame(QMainWindow):
     def _on_side_panel_responsive_layout_settled(self, _generation: int) -> None:
         """在 Devices 计划稳定后更新字体感知窗口边界。"""
 
+        if getattr(self, "_closing", False):
+            return
         self._device_layout_ready_for_constraints = True
+        self._workspace_constraint_refresh_timer.start(0)
+
+    def _refresh_workspace_after_responsive_layout(self) -> None:
+        """等待 Qt 提交布局提示后，再同步 Devices 滚动高度和窗口边界。"""
+
+        if getattr(self, "_closing", False):
+            return
+        self._bind_screen_metrics(self._resolve_window_screen())
+        self._sync_device_scroll_content_minimum()
         self._apply_workspace_constraints(
             self._bound_screen,
             request_reflow=False,
             restore_preferred_size=False,
         )
+        self._fit_initial_device_width()
+
+    def _sync_device_scroll_content_minimum(self) -> int:
+        """同步 Devices 当前计划的完整高度，让短屏由局部滚动承接。"""
+
+        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
+        if device_panel is None:
+            return 0
+        layout = device_panel.layout()
+        layout_height = max(0, layout.minimumSize().height()) if layout is not None else 0
+        content_height = max(layout_height, device_panel.minimumSizeHint().height())
+        minimum_changed = device_panel.minimumHeight() != content_height
+        if minimum_changed:
+            device_panel.setMinimumHeight(content_height)
+        scroll = getattr(self, "_device_scroll_area", None)
+        if scroll is not None and minimum_changed:
+            scroll.updateGeometry()
+        return content_height
+
+    def _fit_initial_device_width(self) -> None:
+        """常规工作区首次显示时微调左栏，避免只差数像素便出现滚动条。"""
+
+        if self._restricted_workspace or self._initial_device_width_fit_complete:
+            return
+        splitter = getattr(self, "_panel_splitter", None)
+        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
+        if splitter is None or device_panel is None:
+            return
+        sizes = splitter.sizes()
+        if len(sizes) != 2 or sum(sizes) <= 0:
+            return
+        total = int(sizes[0]) + int(sizes[1])
+        content_width = max(0, device_panel.minimumSizeHint().width())
+        right_minimum = max(0, self.left_panel.minimumWidth())
+        if sizes[0] < content_width <= total - right_minimum:
+            splitter.setSizes([content_width, total - content_width])
+        self._initial_device_width_fit_complete = True
 
     def _sync_workspace_restriction(self, *, force: bool = False) -> None:
         del force
@@ -628,6 +796,23 @@ class MainFrame(QMainWindow):
         dw.setMinimumHeight(0)
         self._apply_log_soft_minimum()
 
+        device_scroll = QScrollArea()
+        device_scroll.setObjectName("deviceScrollArea")
+        device_scroll.setAccessibleName("Devices")
+        device_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        device_scroll.setWidgetResizable(True)
+        device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        device_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        device_scroll.setProperty(
+            "preserveDeviceContentHeight",
+            not bool(self._restricted_workspace),
+        )
+        device_scroll.setMinimumSize(0, 0)
+        device_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
+        device_scroll.setWidget(dw)
+        self._device_scroll_area = device_scroll
+        self._sync_device_scroll_content_minimum()
+
         left_wrapper = QWidget()
         left_wrapper.setObjectName("leftPanelWrapper")
         left_wrapper.setLayout(left_col)
@@ -652,12 +837,12 @@ class MainFrame(QMainWindow):
         self._device_log_splitter.setObjectName("deviceLogSplitter")
         self._device_log_splitter.setAccessibleName("Devices and operation log splitter")
         self._device_log_splitter.setHandleWidth(8)
-        self._device_log_splitter.addWidget(dw)
+        self._device_log_splitter.addWidget(device_scroll)
         self._device_log_splitter.addWidget(self.log_panel)
         device_height, log_height = split_sizes_for_constraints(
             1000,
             self._device_log_ratio,
-            left_minimum=MainFrame._minimum_splitter_height(dw),
+            left_minimum=MainFrame._minimum_splitter_height(device_scroll),
             right_minimum=MainFrame._minimum_splitter_height(self.log_panel),
         )
         self._device_log_splitter.setSizes([device_height, log_height])
@@ -1673,6 +1858,11 @@ class MainFrame(QMainWindow):
             getattr(self, "_toolbar_controller", None) or ToolbarController(self)
         )._update_toolbar_path_display()
 
+    def _update_toolbar_overflow(self) -> tuple[str, ...]:
+        return (
+            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
+        )._update_toolbar_overflow()
+
     def _on_save_path_clicked(self):
         return (
             getattr(self, "_toolbar_controller", None) or ToolbarController(self)
@@ -1720,6 +1910,13 @@ class MainFrame(QMainWindow):
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
+        forced_size = getattr(self, "_workspace_forced_size", None)
+        if (
+            not getattr(self, "_applying_workspace_constraints", False)
+            and forced_size is not None
+            and event.size() != forced_size
+        ):
+            self._workspace_forced_size = None
         controller = getattr(self, "_resize_controller", None)
         if controller is not None:
             controller.update_geometry()

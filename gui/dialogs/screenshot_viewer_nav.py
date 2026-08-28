@@ -118,6 +118,7 @@ class ScreenshotViewerNav:
             (420 - bounds.width()) / 2, (240 - bounds.height()) / 2
         )
         self._refresh_placeholder_color()
+        self._frame._path_label.setProperty("screenshotFullFileName", "")
         self._frame._path_label.setText("")
         self._frame._path_label.setToolTip("")
         self._frame._path_label.setAccessibleDescription("")
@@ -125,6 +126,7 @@ class ScreenshotViewerNav:
         self._frame._info_label.setToolTip(text)
         self._frame._info_label.setAccessibleDescription(text)
         self._frame._zoom_label.setText("Fit")
+        self._frame._schedule_bottom_bar_reflow()
         self._update_nav_visibility()
 
     def _refresh_placeholder_color(self):
@@ -259,13 +261,17 @@ class ScreenshotViewerNav:
         ph = self._frame._original_pixmap.height()
         size_str = self._format_size(path)
         modified = self._format_modified_time(path)
-        self._frame._path_label.setText(os.path.basename(path))
-        self._frame._path_label.setToolTip(os.path.abspath(path))
-        self._frame._path_label.setAccessibleDescription(os.path.abspath(path))
+        file_name = os.path.basename(path)
+        absolute_path = os.path.abspath(path)
+        self._frame._path_label.setProperty("screenshotFullFileName", file_name)
+        self._frame._path_label.setText(file_name)
+        self._frame._path_label.setToolTip(absolute_path)
+        self._frame._path_label.setAccessibleDescription(absolute_path)
         metadata = f"{pw} x {ph} | {size_str} | {modified}"
         self._frame._info_label.setText(metadata)
         self._frame._info_label.setToolTip(metadata)
         self._frame._info_label.setAccessibleDescription(metadata)
+        self._frame._schedule_bottom_bar_reflow()
         self._update_nav_label()
 
     @staticmethod

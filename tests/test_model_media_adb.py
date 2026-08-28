@@ -12,17 +12,19 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QIcon, QPixmap, QPixmapCache
+from PySide6.QtGui import QCloseEvent, QFont, QIcon, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QApplication
 
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult
 from core.log_service import LogService
 from gui.dialogs.file_explorer import FileExplorerDialog
+from gui.dialogs.file_explorer_image import _ImageViewerDialog
 from gui.dialogs.file_explorer_view import _load_image_preview
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.dialogs.screenshot_viewer_nav import _load_pixmap
 from gui.panels.log_panel import LogPanel
+from gui.styles import BaseStyles
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 from models.adb_system import ADBSystemMixin
@@ -137,6 +139,72 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
         assert all(button.toolTip() == tooltip for button, tooltip in expected_tips.items())
     finally:
         viewer.close()
+
+
+def test_screenshot_metadata_reflows_and_long_name_stays_accessible(
+    tmp_path,
+    monkeypatch,
+):
+    _app = QApplication.instance() or QApplication([])
+
+    def large_font(_cls, _role, size=None):
+        return QFont("Arial", size if size is not None else 22)
+
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(large_font))
+    file_name = f"{'very-long-screenshot-name-' * 5}shot.png"
+    image_path = tmp_path / file_name
+    pixmap = QPixmap(120, 80)
+    pixmap.fill(Qt.GlobalColor.red)
+    assert pixmap.save(str(image_path))
+
+    viewer = ScreenshotViewer([str(image_path)])
+    try:
+        viewer.resize(760, 520)
+        viewer.show()
+        for _attempt in range(4):
+            _app.processEvents()
+        viewer._reflow_bottom_bar()
+        _app.processEvents()
+
+        assert viewer.size() == QSize(760, 520)
+        assert viewer._metadata_layout_mode == "stacked"
+        assert viewer._info_label.wordWrap() is True
+        assert viewer._path_label.text() != file_name
+        assert "…" in viewer._path_label.text()
+        assert viewer._path_label.toolTip() == os.path.abspath(image_path)
+        assert viewer._path_label.accessibleDescription() == os.path.abspath(image_path)
+        assert viewer._info_label.toolTip() == viewer._info_label.text()
+        assert viewer._info_label.accessibleDescription() == viewer._info_label.text()
+        wrapped = viewer._info_label.fontMetrics().boundingRect(
+            viewer._info_label.contentsRect(),
+            Qt.TextFlag.TextWordWrap,
+            viewer._info_label.text(),
+        )
+        assert viewer._info_label.contentsRect().height() >= wrapped.height()
+    finally:
+        viewer.close()
+
+
+def test_file_explorer_image_name_wraps_and_keeps_full_help_text():
+    _app = QApplication.instance() or QApplication([])
+    dialog = _ImageViewerDialog()
+    pixmap = QPixmap(120, 80)
+    pixmap.fill(Qt.GlobalColor.blue)
+    name = f"{'very-long-image-name-' * 8}preview.png"
+    try:
+        dialog.resize(320, 240)
+        dialog.set_image_source(pixmap, name)
+        dialog.show()
+        _app.processEvents()
+
+        details = f"120x80  |  {name}"
+        assert dialog.image_info.wordWrap() is True
+        assert dialog.image_info.text() == details
+        assert dialog.image_info.toolTip() == details
+        assert dialog.image_info.accessibleDescription() == details
+        assert dialog.image_info.accessibleName() == "Image details"
+    finally:
+        dialog.close()
 
 
 def test_screenshot_viewer_thumbnail_and_navigation_update_current_image(tmp_path):

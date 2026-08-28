@@ -4,19 +4,22 @@ import os
 import subprocess
 import sys
 import textwrap
+import warnings
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QEvent, QObject, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QGridLayout, QPushButton, QToolButton, QWidget
+from shiboken6 import invalidate, isValid
 
 from core.settings_manager import AppSettings
 from gui import window_layout
 from gui.main_frame import MainFrame
+from gui.screen_adapter import QtScreenAdapter
 from gui.styles import BaseStyles
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
@@ -28,7 +31,7 @@ from gui.window_layout import (
     ratio_from_sizes,
     split_sizes_for_ratio,
 )
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import assert_text_fits, wait_until
 
 
 @dataclass
@@ -508,6 +511,134 @@ def test_toolbar_action_identity_and_single_trigger_survive_resize(qt_applicatio
             frame.close()
 
 
+def test_narrow_toolbar_moves_shared_actions_into_more_without_overlap(
+    qt_application,
+    monkeypatch,
+):
+    """极窄大字体工具栏只收纳展示入口，不能复制 QAction 或丢失动作。"""
+
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(
+            lambda _cls, _role, size=None: QFont("Arial", 22 if size is None else size)
+        ),
+    )
+    screen = _FakeScreen("narrow", QSize(500, 700))
+    adapter = _FakeScreenAdapter(screen)
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=860, window_height=500)
+    with patch.object(MainFrame, "_on_save_path_clicked", autospec=True) as business:
+        frame = build_main_frame(screen_adapter=adapter, settings=settings)
+        try:
+            frame.show()
+            wait_until(
+                qt_application,
+                lambda: (
+                    (button := frame.findChild(QToolButton, "toolbarMoreButton")) is not None
+                    and button.isVisibleTo(frame._toolbar)
+                    and bool(frame._toolbar_overflow_keys)
+                ),
+            )
+
+            more_button = frame._toolbar_more_button
+            menu = frame._toolbar_more_menu
+            hidden_keys = frame._toolbar_overflow_keys
+            assert "save_path" in hidden_keys
+            assert tuple(menu.actions()) == tuple(
+                frame._toolbar_actions[key] for key in hidden_keys
+            )
+            visible_buttons = tuple(
+                button
+                for button in frame._toolbar_action_buttons.values()
+                if button.isVisibleTo(frame._toolbar)
+            ) + (more_button,)
+            assert_non_overlapping(visible_buttons, frame._toolbar)
+
+            save_action = frame._toolbar_actions["save_path"]
+            assert frame._toolbar_action_buttons["save_path"].defaultAction() is save_action
+            save_spy = QSignalSpy(save_action.triggered)
+            save_action.trigger()
+            assert save_spy.count() == 1
+            business.assert_called_once_with(frame)
+            save_action.setEnabled(False)
+            assert not menu.actions()[hidden_keys.index("save_path")].isEnabled()
+            assert not frame._toolbar_action_buttons["save_path"].isEnabled()
+            save_action.setEnabled(True)
+
+            screen.available_size = QSize(1600, 900)
+            adapter.emit_available_geometry_changed(screen)
+            wait_until(
+                qt_application,
+                lambda: frame._toolbar.width() == 860
+                and not more_button.isVisibleTo(frame._toolbar)
+                and all(
+                    button.isVisibleTo(frame._toolbar)
+                    for button in frame._toolbar_action_buttons.values()
+                ),
+            )
+            assert frame._toolbar_overflow_keys == ()
+            assert_non_overlapping(tuple(frame._toolbar_action_buttons.values()), frame._toolbar)
+        finally:
+            frame._unbind_window_screen()
+            frame._close_ready = True
+            frame.close()
+
+
+def test_narrow_toolbar_long_save_path_keeps_more_menu_bounded_and_action_reachable(
+    qt_application,
+    monkeypatch,
+):
+    """完整保存路径留在帮助文本中，不能把窄屏 More 菜单撑出工作区。"""
+
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(
+            lambda _cls, _role, size=None: QFont("Arial", 22 if size is None else size)
+        ),
+    )
+    available = QSize(500, 700)
+    settings = _MainFrameSettings()
+    settings.save_directory = os.path.join(
+        "C:\\",
+        *("very-long-save-directory-segment" for _index in range(20)),
+    )
+    expected_path = os.path.normpath(settings.save_directory)
+    with patch.object(MainFrame, "_on_save_path_clicked", autospec=True) as business:
+        frame = build_main_frame(
+            screen_adapter=_FakeScreenAdapter(_FakeScreen("narrow", available)),
+            settings=settings,
+        )
+        try:
+            frame.show()
+            wait_until(
+                qt_application,
+                lambda: (
+                    hasattr(frame, "_toolbar_more_menu")
+                    and "save_path" in frame._toolbar_overflow_keys
+                ),
+            )
+
+            action = frame._toolbar_actions["save_path"]
+            menu = frame._toolbar_more_menu
+            assert action in menu.actions()
+            assert action.text() == "Change default save directory"
+            assert expected_path in action.toolTip()
+            assert action.statusTip() == f"Current save directory: {expected_path}"
+            assert action.property("accessibleDescription") == action.statusTip()
+            assert menu.sizeHint().width() <= available.width()
+
+            action_spy = QSignalSpy(action.triggered)
+            action.trigger()
+            assert action_spy.count() == 1
+            business.assert_called_once_with(frame)
+        finally:
+            frame._unbind_window_screen()
+            frame._close_ready = True
+            frame.close()
+
+
 def test_toolbar_buttons_are_excluded_from_window_drag_target(qt_application):
     frame = build_main_frame()
     try:
@@ -535,6 +666,303 @@ def test_small_screen_clamp_does_not_replace_preferred_window_size():
     assert constraints.restricted is True
 
 
+def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
+    qt_application,
+):
+    """Windows 主界面三档宽度保持 Monkey 每行 3/2/1 组且最大值完整。"""
+
+    if qt_application.platformName() != "windows":
+        pytest.skip("Exact main-window breakpoint contract targets the Windows platform plugin")
+
+    settings = _MainFrameSettings()
+    settings.values.update(
+        window_width=1250,
+        window_height=700,
+        panel_split_ratio=0.5,
+    )
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+
+    try:
+        frame.show()
+        app_panel = frame.left_panel._ensure_tab_loaded(0)
+        frame.left_panel.tabs.setCurrentIndex(0)
+        coordinator = frame.left_panel._responsive_coordinator
+        wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+        flag_binding = next(
+            binding
+            for binding in app_panel._responsive_rows
+            if app_panel.monkey_chk_crashes in binding.widgets()
+        )
+        app_panel.monkey_events.setCurrentText("1000000")
+        app_panel.monkey_throttle.setCurrentText("60000 ms")
+        for field in app_panel._monkey_pct_combos.values():
+            field.setCurrentText("100")
+
+        def snapshot(size: QSize, *, right_width: int | None = None):
+            frame.resize(size)
+            qt_application.processEvents()
+            total = sum(frame._panel_splitter.sizes())
+            if right_width is None:
+                left_width = total // 2
+                target_sizes = (left_width, total - left_width)
+            else:
+                target_sizes = (total - right_width, right_width)
+            frame._panel_splitter.setSizes(list(target_sizes))
+            qt_application.processEvents()
+            app_panel.apply_responsive_width(0)
+            wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+            plans = (
+                app_panel.monkey_parameter_binding.applied_plan,
+                app_panel.monkey_percentage_binding.applied_plan,
+                flag_binding.applied_plan,
+            )
+            assert all(plan is not None and not plan.overflow_required for plan in plans)
+            for field in (
+                app_panel.monkey_events,
+                app_panel.monkey_throttle,
+                *app_panel._monkey_pct_combos.values(),
+            ):
+                editor = field.lineEdit()
+                assert editor is not None
+                assert_text_fits(editor)
+            parameter_starts = tuple(
+                widget.mapTo(
+                    app_panel.monkey_parameter_binding._container_ref(),
+                    QPoint(0, 0),
+                ).x()
+                for widget in (
+                    app_panel.monkey_events_label,
+                    app_panel.monkey_throttle_label,
+                    app_panel._pct_total_lbl,
+                )
+            )
+            percentage_starts = tuple(
+                app_panel._monkey_pct_labels[key]
+                .mapTo(
+                    app_panel.monkey_percentage_binding._container_ref(),
+                    QPoint(0, 0),
+                )
+                .x()
+                for key in ("touch", "motion", "trackball")
+            )
+            flag_starts = tuple(
+                widget.mapTo(flag_binding._container_ref(), QPoint(0, 0)).x()
+                for widget in (
+                    app_panel.monkey_chk_crashes,
+                    app_panel.monkey_chk_timeouts,
+                    app_panel.monkey_chk_security,
+                )
+            )
+            return (
+                tuple(plan.mode.name for plan in plans if plan is not None),
+                tuple(frame._panel_splitter.sizes()),
+                (parameter_starts, percentage_starts, flag_starts),
+            )
+
+        default_modes, default_sizes, default_starts = snapshot(QSize(1250, 700))
+        minimum_modes, minimum_sizes, minimum_starts = snapshot(QSize(860, 500))
+        right_minimum = frame.left_panel.minimumWidth()
+        assert right_minimum > 0
+        narrow_modes, narrow_sizes, narrow_starts = snapshot(
+            QSize(860, 500),
+            right_width=right_minimum,
+        )
+
+        assert default_modes == ("wide", "three", "three")
+        assert minimum_modes == ("medium", "two", "two")
+        assert narrow_modes == ("compact", "one", "one")
+
+        def assert_tracks_aligned(track_sets):
+            for positions in zip(*track_sets):
+                # 6 列表单与 3 列选项的像素余数分配最多相差 2px。
+                assert max(positions) - min(positions) <= 2, track_sets
+
+        assert_tracks_aligned(default_starts)
+        assert_tracks_aligned(minimum_starts)
+        assert_tracks_aligned(narrow_starts)
+        assert abs(default_sizes[0] - default_sizes[1]) <= 1
+        assert abs(minimum_sizes[0] - minimum_sizes[1]) <= 1
+        assert narrow_sizes[1] == right_minimum
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_default_supported_workspace_needs_no_device_scrollbars(qt_application):
+    """常规字体的 860x500 工作区保持既有直接布局，不出现 Devices 滚动。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=860, window_height=500)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        wait_until(
+            qt_application,
+            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
+            and not frame._workspace_constraint_refresh_timer.isActive()
+            and frame._initial_device_width_fit_complete
+            and frame._device_scroll_area.horizontalScrollBar().maximum() == 0
+            and frame._device_scroll_area.verticalScrollBar().maximum() == 0,
+        )
+        qt_application.processEvents()
+
+        scroll = frame._device_scroll_area
+        assert frame.size() == QSize(860, 500)
+        assert scroll.horizontalScrollBar().maximum() == 0
+        assert scroll.verticalScrollBar().maximum() == 0
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+@pytest.mark.parametrize("font_size", (12, 22))
+def test_short_workspace_scrolls_devices_without_exceeding_available_height(
+    qt_application,
+    monkeypatch,
+    font_size,
+):
+    """短屏把完整 Devices 内容交给局部双向滚动，窗口本身不得越出工作区。"""
+
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(
+            lambda _cls, _role, size=None: QFont(
+                "Arial",
+                font_size if size is None else size,
+            )
+        ),
+    )
+    available = QSize(720, 420)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("short", available))
+    )
+    try:
+        frame.show()
+        wait_until(
+            qt_application,
+            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
+            and frame._device_scroll_area.verticalScrollBar().maximum() > 0,
+        )
+
+        scroll = frame._device_scroll_area
+        manager = frame.left_panel._devices_tab
+        assert frame.size() == available
+        assert frame.height() <= available.height()
+        assert frame.minimumHeight() <= available.height()
+        assert scroll.horizontalScrollBar().maximum() > 0
+        assert scroll.widget().minimumSizeHint().width() > scroll.viewport().width()
+        log_minimum = frame._log_soft_minimum_height(frame.log_panel)
+        assert frame.log_panel.isVisible()
+        assert frame.log_panel.height() >= log_minimum
+        QTest.qWait(50)
+        content_center = manager.btn_none.mapTo(scroll.widget(), manager.btn_none.rect().center())
+        horizontal = scroll.horizontalScrollBar()
+        vertical = scroll.verticalScrollBar()
+        horizontal.setValue(
+            min(
+                horizontal.maximum(),
+                max(0, content_center.x() - scroll.viewport().width() // 2),
+            )
+        )
+        vertical.setValue(
+            min(
+                vertical.maximum(),
+                max(0, content_center.y() - scroll.viewport().height() // 2),
+            )
+        )
+        QTest.qWait(10)
+        button_center = manager.btn_none.mapTo(scroll.viewport(), manager.btn_none.rect().center())
+        assert scroll.viewport().rect().contains(button_center)
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_font_minimum_round_trip_restores_only_untouched_forced_size(
+    qt_application,
+    monkeypatch,
+):
+    """字号放大造成的自动扩高可恢复，但不得覆盖其后的普通用户尺寸。"""
+
+    current_font_size = {"value": 12}
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(
+            lambda _cls, _role, size=None: QFont(
+                "Arial",
+                current_font_size["value"] if size is None else size,
+            )
+        ),
+    )
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=860, window_height=500)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900))),
+        settings=settings,
+    )
+
+    def apply_font(size: int) -> None:
+        before_generation = frame.left_panel._responsive_coordinator.diagnostics.generation
+        current_font_size["value"] = size
+        frame.left_panel._on_fonts_changed(None)
+        frame._on_ui_font_changed(None)
+        wait_until(
+            qt_application,
+            lambda: (
+                frame.left_panel._responsive_coordinator.diagnostics.stable
+                and frame.left_panel._responsive_coordinator.diagnostics.generation
+                > before_generation
+                and not frame._workspace_constraint_refresh_timer.isActive()
+            ),
+        )
+        QTest.qWait(50)
+        wait_until(
+            qt_application,
+            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
+            and not frame._workspace_constraint_refresh_timer.isActive(),
+        )
+
+    try:
+        frame.show()
+        apply_font(12)
+        assert frame.size() == QSize(860, 500)
+
+        apply_font(22)
+        forced_size = QSize(frame.size())
+        assert forced_size.height() > 500
+        assert frame.minimumHeight() == forced_size.height()
+        assert frame._workspace_forced_size == forced_size
+
+        apply_font(12)
+        assert frame.size() == QSize(860, 500)
+        assert frame._workspace_forced_size is None
+
+        apply_font(22)
+        frame.resize(860, 660)
+        qt_application.processEvents()
+        assert frame._workspace_forced_size is None
+        apply_font(12)
+        assert frame.minimumHeight() == 500
+        assert frame.height() == 660
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
 def test_show_binds_screen_once_after_window_handle_exists(qt_application):
     adapter = _FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900)))
     frame = build_main_frame(screen_adapter=adapter)
@@ -553,6 +981,86 @@ def test_show_binds_screen_once_after_window_handle_exists(qt_application):
         assert adapter.token_count() == 3
         assert coordinator.diagnostics.generation == generation
     finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_qt_screen_adapter_treats_invalidated_screen_as_missing(qt_application):
+    adapter = QtScreenAdapter()
+    screen = qt_application.primaryScreen()
+    assert screen is not None
+
+    def callback(*_args):
+        pass
+
+    tokens = (
+        adapter.connect_available_geometry_changed(screen, callback),
+        adapter.connect_logical_dpi_changed(screen, callback),
+    )
+    assert all(token is not None for token in tokens)
+    tokens_disconnected = False
+
+    try:
+        invalidate(screen)
+        assert not isValid(screen)
+        assert not adapter.is_valid_screen(screen)
+        assert adapter.available_size(screen) == QSize()
+        assert adapter.logical_dpi(screen) == 96.0
+        assert adapter.connect_available_geometry_changed(screen, callback) is None
+        assert adapter.connect_logical_dpi_changed(screen, callback) is None
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            for token in tokens:
+                adapter.disconnect(token)
+        tokens_disconnected = True
+
+        runtime_warnings = [
+            item for item in caught if issubclass(item.category, RuntimeWarning)
+        ]
+        assert runtime_warnings == []
+    finally:
+        if not tokens_disconnected:
+            for token in tokens:
+                adapter.disconnect(token)
+        replacement = qt_application.primaryScreen()
+
+    assert replacement is not None
+    assert replacement is not screen
+    assert isValid(replacement)
+
+
+def test_responsive_refresh_rebinds_invalidated_native_screen(qt_application):
+    frame = build_main_frame()
+
+    try:
+        frame.show()
+        wait_until(
+            qt_application,
+            lambda: frame._bound_screen is not None
+            and isValid(frame._bound_screen)
+            and len(frame._screen_metric_tokens) == 2
+            and not frame._workspace_constraint_refresh_timer.isActive(),
+        )
+        stale_screen = frame._bound_screen
+        invalidate(stale_screen)
+        assert not isValid(stale_screen)
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            frame._refresh_workspace_after_responsive_layout()
+
+        assert frame._bound_screen is not stale_screen
+        assert frame._bound_screen is not None
+        assert isValid(frame._bound_screen)
+        assert len(frame._screen_metric_tokens) == 2
+        runtime_warnings = [
+            item for item in caught if issubclass(item.category, RuntimeWarning)
+        ]
+        assert runtime_warnings == []
+    finally:
+        qt_application.primaryScreen()
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
@@ -1398,7 +1906,12 @@ def test_minimum_window_keeps_log_panel_visible_with_large_font():
             passed = all(
                 (
                     device_widget.sizePolicy().verticalPolicy() == QSizePolicy.Preferred,
-                    not device_widget.findChildren(QScrollArea),
+                    device_widget.findChildren(QScrollArea)
+                    == [window.left_panel._devices_tab._device_action_scroll],
+                    window.left_panel._devices_tab._device_action_scroll
+                    .horizontalScrollBar()
+                    .maximum()
+                    == 0,
                     window.log_panel.minimumHeight() == log_soft_minimum,
                     window.log_panel.height() >= log_soft_minimum,
                     window.log_panel.isVisible(),

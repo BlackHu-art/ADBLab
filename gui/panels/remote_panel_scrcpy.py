@@ -39,9 +39,7 @@ class RemotePanelScrcpy:
             self._frame._update_action_states()
             return
 
-        status_label = getattr(self._frame, "_status_label", None)
-        if status_label is not None:
-            status_label.setToolTip("")
+        self._frame._status_device_info = ""
         self._frame._set_session_state(self._frame._SESSION_STARTING)
         self._frame._update_status("Checking...", None)
         self._frame._active_device = devices[0]
@@ -79,9 +77,7 @@ class RemotePanelScrcpy:
             return
         if self._frame._launch_worker and self._frame._launch_worker.isInterruptionRequested():
             return
-        status_label = getattr(self._frame, "_status_label", None)
-        if status_label is not None:
-            status_label.setToolTip(f"Device: {device_info}" if device_info else "")
+        self._frame._status_device_info = str(device_info or "").strip()
         active_device = getattr(self._frame, "_active_device", None)
         if active_device and device_info:
             self._frame._remote_control.remember_dimensions(active_device, device_info.split("x"))
@@ -103,6 +99,7 @@ class RemotePanelScrcpy:
         except Exception as exc:
             self._frame._log("ERROR", f"scrcpy start failed: {type(exc).__name__}")
             self._frame._active_device = None
+            self._frame._status_device_info = ""
             self._frame._set_running(False)
             self._frame._update_status("Error", None)
 
@@ -117,6 +114,7 @@ class RemotePanelScrcpy:
             return
         if not self._frame._process:
             self._frame._active_device = None
+            self._frame._status_device_info = ""
             self._frame._set_running(False)
             if interrupted:
                 self._frame._update_status("Idle", None)
@@ -152,6 +150,7 @@ class RemotePanelScrcpy:
             self._frame._watchdog.stop()
             self._frame._process = None
             self._frame._active_device = None
+            self._frame._status_device_info = ""
             self._frame._set_running(False)
             self._frame._update_status("Disconnected", None)
             if rc != 0:
@@ -206,6 +205,7 @@ class RemotePanelScrcpy:
         if stopped:
             self._frame._process = None
             self._frame._active_device = None
+            self._frame._status_device_info = ""
             self._frame._set_running(False)
             self._frame._update_status("Idle", None)
             self._frame._log("INFO", "scrcpy stopped")
@@ -222,6 +222,7 @@ class RemotePanelScrcpy:
         else:
             self._frame._process = None
             self._frame._active_device = None
+            self._frame._status_device_info = ""
             self._frame._set_running(False)
         self._frame._update_status("Stop Failed", None)
 

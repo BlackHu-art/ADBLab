@@ -6,6 +6,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QFrame,
     QGraphicsScene,
     QGridLayout,
@@ -250,6 +251,7 @@ class ScreenshotViewerUI:
         )
         self._frame._path_label.setToolTip("Screenshot file path")
         self._frame._path_label.setAccessibleName("Screenshot file path")
+        self._frame._path_label.setProperty("screenshotFullFileName", "")
         self._frame._path_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
@@ -262,6 +264,7 @@ class ScreenshotViewerUI:
         self._frame._info_label.setMinimumWidth(150)
         self._frame._info_label.setToolTip("Image size, file size, and modified time")
         self._frame._info_label.setAccessibleName("Screenshot metadata")
+        self._frame._info_label.setWordWrap(True)
         self._frame._info_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
@@ -311,9 +314,12 @@ class ScreenshotViewerUI:
         self._frame._delete_btn.clicked.connect(self._frame._delete_file)
 
         self._frame._metadata_group = self._bottom_bar_group("screenshotMetadataGroup")
-        metadata_layout = cast(QHBoxLayout, self._frame._metadata_group.layout())
-        metadata_layout.addWidget(self._frame._path_label, 1)
+        metadata_layout = cast(QBoxLayout, self._frame._metadata_group.layout())
+        metadata_layout.addWidget(self._frame._path_label)
         metadata_layout.addWidget(self._frame._info_label, 1)
+        metadata_layout.setDirection(QBoxLayout.Direction.TopToBottom)
+        self._frame._metadata_layout = metadata_layout
+        self._frame._metadata_layout_mode = "stacked"
 
         self._frame._navigation_group = self._bottom_bar_group("screenshotNavigationGroup")
         navigation_layout = cast(QHBoxLayout, self._frame._navigation_group.layout())
@@ -376,6 +382,63 @@ class ScreenshotViewerUI:
         layout_minimum = layout.minimumSize() if layout is not None else QSize()
         return group.minimumSizeHint().expandedTo(layout_minimum)
 
+    def _metadata_required_width(self) -> int:
+        """返回元数据两项保持单行横排所需的组内宽度。"""
+
+        path_label = self._frame._path_label
+        info_label = self._frame._info_label
+        full_name = str(path_label.property("screenshotFullFileName") or path_label.text())
+        path_width = max(
+            path_label.minimumWidth(),
+            path_label.fontMetrics().horizontalAdvance(full_name),
+        )
+        info_width = max(
+            info_label.minimumWidth(),
+            info_label.fontMetrics().horizontalAdvance(info_label.text()),
+        )
+        return path_width + info_width + max(0, self._frame._metadata_layout.spacing())
+
+    def _reflow_metadata_group(self) -> str:
+        """按元数据组的真实宽度在横排和纵排之间切换。"""
+
+        layout = self._frame._metadata_layout
+        available_width = self._frame._metadata_group.contentsRect().width()
+        mode = (
+            "inline"
+            if available_width > 0 and available_width >= self._metadata_required_width()
+            else "stacked"
+        )
+        if mode == self._frame._metadata_layout_mode:
+            return mode
+        layout.setDirection(
+            QBoxLayout.Direction.LeftToRight
+            if mode == "inline"
+            else QBoxLayout.Direction.TopToBottom
+        )
+        layout.setStretch(0, 0)
+        layout.setStretch(1, 1 if mode == "inline" else 0)
+        self._frame._metadata_layout_mode = mode
+        self._frame._metadata_group.updateGeometry()
+        return mode
+
+    def _refresh_path_label_elision(self) -> None:
+        """显式省略超长文件名，完整内容由 tooltip 与无障碍文本保留。"""
+
+        label = self._frame._path_label
+        full_name = str(label.property("screenshotFullFileName") or "")
+        available_width = label.contentsRect().width()
+        visible_text = (
+            label.fontMetrics().elidedText(
+                full_name,
+                Qt.TextElideMode.ElideMiddle,
+                available_width,
+            )
+            if full_name and available_width > 0
+            else full_name
+        )
+        if label.text() != visible_text:
+            label.setText(visible_text)
+
     def _reflow_bottom_bar(self) -> None:
         if self._frame._reflowing_bottom_bar:
             return
@@ -383,6 +446,8 @@ class ScreenshotViewerUI:
         try:
             layout = self._frame._bottom_bar_layout
             spacing = max(0, layout.spacing())
+            metadata_mode = self._reflow_metadata_group()
+            self._refresh_path_label_elision()
             group_sizes = tuple(
                 self._group_minimum_size(group) for group in self._frame._bottom_bar_groups
             )
@@ -410,6 +475,8 @@ class ScreenshotViewerUI:
                 mode = "stacked"
             fingerprint = (
                 mode,
+                metadata_mode,
+                available_width,
                 spacing,
                 tuple((size.width(), size.height()) for size in group_sizes),
             )
@@ -473,7 +540,24 @@ class ScreenshotViewerUI:
 
             self._frame._bottom_bar.setMinimumHeight(0)
             layout.activate()
-            self._frame._bottom_bar.setMinimumHeight(layout.minimumSize().height())
+            final_metadata_mode = self._reflow_metadata_group()
+            if final_metadata_mode != metadata_mode:
+                layout.activate()
+            self._refresh_path_label_elision()
+            minimum_height = layout.minimumSize().height()
+            if layout.hasHeightForWidth() and available_width > 0:
+                minimum_height = max(minimum_height, layout.heightForWidth(available_width))
+            self._frame._bottom_bar.setMinimumHeight(minimum_height)
+            final_group_sizes = tuple(
+                self._group_minimum_size(group) for group in self._frame._bottom_bar_groups
+            )
+            fingerprint = (
+                mode,
+                final_metadata_mode,
+                available_width,
+                spacing,
+                tuple((size.width(), size.height()) for size in final_group_sizes),
+            )
             self._frame._bottom_bar_plan_fingerprint = fingerprint
             self._frame._bottom_bar.updateGeometry()
             if hasattr(self._frame, "_bottom_dock"):

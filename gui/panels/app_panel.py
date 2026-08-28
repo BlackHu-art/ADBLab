@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.responsive_layout import (
-    RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY,
+    RESPONSIVE_MINIMUM_TEXT_PROPERTY,
+    RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
     GridPlacement,
     WidthPolicy,
@@ -170,7 +171,15 @@ class AppPanel(BasePanel):
         gm_l.setSpacing(3)
 
         EVENTS_OPTS = ["100", "500", "1000", "5000", "10000", "50000", "100000", "500000"]
-        THROTTLE_OPTS = ["0", "100", "200", "300", "500", "1000", "2000"]
+        THROTTLE_OPTS = [
+            "0 ms",
+            "100 ms",
+            "200 ms",
+            "300 ms",
+            "500 ms",
+            "1000 ms",
+            "2000 ms",
+        ]
         PCT_OPTS = ["0", "5", "10", "15", "20", "25", "30", "40", "50"]
 
         def _mk_combo(items):
@@ -181,14 +190,16 @@ class AppPanel(BasePanel):
         self._set_combo_int_validator(self.monkey_events, 1, 1_000_000)
         self.monkey_throttle_label = self._label("Throttle:")
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
-        self._set_combo_int_validator(self.monkey_throttle, 0, 60_000)
-        self.monkey_ms_label = self._label("ms")
+        self._set_combo_int_validator(self.monkey_throttle, 0, 60_000, suffix="ms")
         self._pct_total_lbl = self._status_text("Total: --")
-        # Events/Throttle 值为最多 6 位数字，字段下限取 8em，保证并排档下
-        # 组合框内完整显示选项值而不是只剩下拉箭头（截图确认 2em 下限时
-        # wide 档字段宽仅为箭头宽度，值不可见）。
-        for field in (self.monkey_events, self.monkey_throttle):
-            field.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 8)
+        # 使用原生 ComboBox 文本区精确覆盖合法上限；固定 em 会把下拉按钮
+        # 留白重复计入，导致 Monkey 在仍有空间时过早从三组降成两组或一组。
+        for field, maximum_text in (
+            (self.monkey_events, "1000000"),
+            (self.monkey_throttle, "60000 ms"),
+        ):
+            field.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+            field.setProperty(RESPONSIVE_MINIMUM_TEXT_PROPERTY, maximum_text)
             self._refresh_responsive_widget_minimum(field)
 
         pct_configs = [
@@ -210,17 +221,20 @@ class AppPanel(BasePanel):
             c = _mk_combo(PCT_OPTS)
             self._set_combo_int_validator(c, 0, 100)
             c.currentTextChanged.connect(self._update_pct_total)
-            # 百分比字段保持 6em 稳定下限，避免窄宽度下并排小字段挤到不可读。
-            c.setProperty(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY, 6)
+            # 100 未列入常用预设，但仍是合法值；精确文本下限既保证可读，
+            # 又保留默认三组、最小 1:1 两组、继续压窄一组的视觉节奏。
+            c.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+            c.setProperty(RESPONSIVE_MINIMUM_TEXT_PROPERTY, "100")
             self._refresh_responsive_widget_minimum(c)
             self._monkey_pct_labels[key] = lbl
             self._monkey_pct_combos[key] = c
             pct_widgets.extend((lbl, c))
-        # 统一标签列宽，使上排 Events/Throttle/ms 与下方百分比标签对齐。
+        # 参数行和百分比行共享标签轨道；Throttle 的单位已进入下拉值，
+        # 不再占用第三组的标签列。
         label_width = QFontMetrics(BaseStyles.font_for_role(FontRole.UI)).horizontalAdvance(
             "Trackball:"
         ) + 4
-        for _lbl in (self.monkey_events_label, self.monkey_throttle_label, self.monkey_ms_label):
+        for _lbl in (self.monkey_events_label, self.monkey_throttle_label):
             _lbl.setMinimumWidth(label_width)
         for _lbl in self._monkey_pct_labels.values():
             _lbl.setMinimumWidth(label_width)
@@ -229,7 +243,6 @@ class AppPanel(BasePanel):
             self.monkey_events,
             self.monkey_throttle_label,
             self.monkey_throttle,
-            self.monkey_ms_label,
             self._pct_total_lbl,
         )
         parameter_modes = (
@@ -237,22 +250,29 @@ class AppPanel(BasePanel):
                 "wide",
                 6,
                 0,
-                placements=tuple(GridPlacement(index, 0, index) for index in range(6)),
+                placements=(
+                    GridPlacement(0, 0, 0),
+                    GridPlacement(1, 0, 1),
+                    GridPlacement(2, 0, 2),
+                    GridPlacement(3, 0, 3),
+                    GridPlacement(4, 0, 4, column_span=2),
+                ),
                 column_stretches=(0, 1, 0, 1, 0, 1),
+                equal_column_groups=((0, 2, 4), (1, 3, 5)),
             ),
             GridMode(
                 "medium",
-                5,
+                4,
                 1,
                 placements=(
                     GridPlacement(0, 0, 0),
                     GridPlacement(1, 0, 1),
                     GridPlacement(2, 0, 2),
                     GridPlacement(3, 0, 3),
-                    GridPlacement(4, 0, 4),
-                    GridPlacement(5, 1, 0, column_span=5),
+                    GridPlacement(4, 1, 0, column_span=4),
                 ),
-                column_stretches=(0, 1, 0, 1, 0),
+                column_stretches=(0, 1, 0, 1),
+                equal_column_groups=((0, 2), (1, 3)),
             ),
             GridMode(
                 "compact",
@@ -263,8 +283,7 @@ class AppPanel(BasePanel):
                     GridPlacement(1, 0, 1),
                     GridPlacement(2, 1, 0),
                     GridPlacement(3, 1, 1),
-                    GridPlacement(4, 2, 0),
-                    GridPlacement(5, 2, 1),
+                    GridPlacement(4, 2, 0, column_span=2),
                 ),
                 column_stretches=(0, 1),
             ),
@@ -290,7 +309,6 @@ class AppPanel(BasePanel):
                 WidthPolicy.SHRINKABLE,
                 WidthPolicy.NATURAL,
                 WidthPolicy.SHRINKABLE,
-                WidthPolicy.NATURAL,
                 WidthPolicy.WRAPPING,
             ),
             modes=parameter_modes,
@@ -446,6 +464,21 @@ class AppPanel(BasePanel):
 
     # ── Monkey 参数持久化 ───────────────────────────────────────────────
 
+    @staticmethod
+    def _parse_monkey_throttle(text: object) -> int:
+        """把下拉框中可见的毫秒单位还原为持久化和命令使用的整数。"""
+
+        normalized = str(text).strip()
+        if normalized.casefold().endswith("ms"):
+            normalized = normalized[:-2].rstrip()
+        return int(normalized)
+
+    @classmethod
+    def _format_monkey_throttle(cls, value: object) -> str:
+        """用带单位的稳定形式显示 Monkey 节流间隔。"""
+
+        return f"{cls._parse_monkey_throttle(value)} ms"
+
     def _load_monkey_params(self):
         from core.settings_manager import AppSettings
 
@@ -453,7 +486,11 @@ class AppPanel(BasePanel):
 
         _events = int(p.get("events", 10000))
         self.monkey_events.setCurrentText(str(_events))
-        self.monkey_throttle.setCurrentText(str(p.get("throttle", 300)))
+        try:
+            throttle_text = self._format_monkey_throttle(p.get("throttle", 300))
+        except (TypeError, ValueError):
+            throttle_text = "300 ms"
+        self.monkey_throttle.setCurrentText(throttle_text)
         # 针对各事件类型的默认值优化，从源头减少跳出
         _pct_defaults = {
             "touch": 40,
@@ -486,7 +523,7 @@ class AppPanel(BasePanel):
             return None
         p = {
             "events": int(self.monkey_events.currentText().strip()),
-            "throttle": int(self.monkey_throttle.currentText().strip()),
+            "throttle": self._parse_monkey_throttle(self.monkey_throttle.currentText()),
             "ignore_crashes": self.monkey_chk_crashes.isChecked(),
             "ignore_timeouts": self.monkey_chk_timeouts.isChecked(),
             "ignore_security": self.monkey_chk_security.isChecked(),

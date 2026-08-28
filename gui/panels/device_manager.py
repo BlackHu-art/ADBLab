@@ -21,6 +21,7 @@ from gui.panels.device_manager_layout import DeviceManagerLayout
 from gui.panels.device_manager_responsive import (
     _DeviceCompositePlan,  # noqa: F401  兼容测试按名导入。
     _DeviceResponsiveBinding,
+    _ShrinkableActionScroll,
     _ShrinkableDeviceBody,
     _ShrinkableDeviceList,
 )
@@ -172,8 +173,20 @@ class DeviceManager(BasePanel):
         side.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         for button in self._device_action_buttons:
             button.setMinimumWidth(0)
+
+        action_scroll = _ShrinkableActionScroll()
+        action_scroll.setObjectName("deviceActionScroll")
+        action_scroll.setAccessibleName("Device actions")
+        action_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        action_scroll.setWidgetResizable(True)
+        action_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        action_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        action_scroll.setMinimumSize(0, 0)
+        action_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        action_scroll.setWidget(side)
+        self._device_action_scroll = action_scroll
         body.addWidget(self.listbox_devices, 0, 0)
-        body.addWidget(side, 0, 1)
+        body.addWidget(action_scroll, 0, 1)
         body.setColumnStretch(0, 3)
         body.setColumnStretch(1, 1)
         self._device_layout_mode = None

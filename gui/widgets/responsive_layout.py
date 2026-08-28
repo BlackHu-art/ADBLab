@@ -12,6 +12,8 @@ from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QSizePolicy, QWi
 
 Fingerprint: TypeAlias = tuple[object, ...]
 RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY = "responsiveAutoMinimumEm"
+RESPONSIVE_MINIMUM_TEXT_PROPERTY = "responsiveMinimumText"
+RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY = "responsiveSizeHintMinimum"
 
 
 class WidthPolicy(Enum):
@@ -85,6 +87,7 @@ class GridMode:
     row_stretches: tuple[int, ...] = ()
     span_tail: bool = False
     paired: bool = False
+    equal_column_groups: tuple[tuple[int, ...], ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "columns", int(self.columns))
@@ -95,6 +98,14 @@ class GridMode:
             self,
             "column_stretches",
             tuple(max(0, int(value)) for value in self.column_stretches),
+        )
+        object.__setattr__(
+            self,
+            "equal_column_groups",
+            tuple(
+                tuple(int(column) for column in group)
+                for group in self.equal_column_groups
+            ),
         )
         object.__setattr__(
             self,
@@ -115,6 +126,7 @@ class GridMode:
             self.conservatism_rank,
             placements,
             self.column_stretches,
+            self.equal_column_groups,
             self.row_stretches,
             self.span_tail,
             self.paired,
@@ -332,11 +344,26 @@ def _generated_placements(item_count: int, mode: GridMode) -> tuple[GridPlacemen
 def _validated_mode(
     mode: GridMode,
     item_count: int,
-) -> tuple[tuple[GridPlacement, ...], tuple[int, ...], tuple[int, ...]]:
+) -> tuple[
+    tuple[GridPlacement, ...],
+    tuple[int, ...],
+    tuple[tuple[int, ...], ...],
+    tuple[int, ...],
+]:
     if mode.columns < 1:
         raise ValueError("mode columns must be positive")
     if mode.column_stretches and len(mode.column_stretches) != mode.columns:
         raise ValueError("column_stretches must match mode columns")
+    column_stretches = mode.column_stretches or (1,) * mode.columns
+    linked_columns: set[int] = set()
+    for group in mode.equal_column_groups:
+        if len(group) < 2 or any(column < 0 or column >= mode.columns for column in group):
+            raise ValueError("equal_column_groups must contain valid column groups")
+        if len(set(group)) != len(group) or linked_columns.intersection(group):
+            raise ValueError("equal_column_groups must not repeat columns")
+        if len({column_stretches[column] for column in group}) != 1:
+            raise ValueError("equal_column_groups must use matching column_stretches")
+        linked_columns.update(group)
     if mode.paired and (mode.columns % 2 or item_count % 2):
         raise ValueError("paired modes require complete label-field pairs")
 
@@ -388,9 +415,8 @@ def _validated_mode(
                 raise ValueError("paired modes must keep each label next to its field")
     if mode.row_stretches and len(mode.row_stretches) != row_count:
         raise ValueError("row_stretches must match mode rows")
-    column_stretches = mode.column_stretches or (1,) * mode.columns
     row_stretches = mode.row_stretches or (0,) * row_count
-    return placements, column_stretches, row_stretches
+    return placements, column_stretches, mode.equal_column_groups, row_stretches
 
 
 def _required_column_widths(
@@ -399,6 +425,7 @@ def _required_column_widths(
     columns: int,
     spacing: int,
     column_stretches: tuple[int, ...],
+    equal_column_groups: tuple[tuple[int, ...], ...],
 ) -> tuple[int, ...]:
     widths = [0] * columns
     for placement in placements:
@@ -432,6 +459,10 @@ def _required_column_widths(
             allocations[offset] += 1
         for offset, column in enumerate(covered_columns):
             widths[column] += allocations[offset]
+    for group in equal_column_groups:
+        shared_width = max(widths[column] for column in group)
+        for column in group:
+            widths[column] = shared_width
     return tuple(widths)
 
 
@@ -472,13 +503,17 @@ def choose_grid_plan(
     context_values = tuple(context_fingerprint)
     plans: list[GridPlan] = []
     for mode in mode_items:
-        placements, column_stretches, row_stretches = _validated_mode(mode, len(metric_items))
+        placements, column_stretches, equal_column_groups, row_stretches = _validated_mode(
+            mode,
+            len(metric_items),
+        )
         column_widths = _required_column_widths(
             metric_items,
             placements,
             mode.columns,
             spacing,
             column_stretches,
+            equal_column_groups,
         )
         required_width = (
             margin_values[0]

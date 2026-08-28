@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QSizePolicy, QVBoxLayout, QWidget
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.widgets.responsive_layout import (
+    RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
     GridPlacement,
     WidthPolicy,
@@ -48,13 +49,21 @@ class RemotePanelForm:
         self._frame.preset.setCurrentText(saved_preset)
         if self._frame.preset.currentText() != saved_preset:
             self._frame.preset.setCurrentIndex(-1)  # 自定义值不对应任何预设。
+        self._frame.preset.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+        self._frame._refresh_responsive_widget_minimum(self._frame.preset)
 
         self._frame._status_label = self._frame._status_text("Status: Idle")
         self._frame._remote_queue_label = self._frame._status_text("Queue: 0")
+        self._frame._status_label.setAccessibleName("Remote session status")
+        initial_status = "Status: Idle"
+        self._frame._status_label.setToolTip(initial_status)
+        self._frame._status_label.setAccessibleDescription(initial_status)
         self._frame._remote_queue_label.setAccessibleName("Remote input queue status")
-        self._frame._remote_queue_label.setToolTip("Queued: 0 · Sent: 0 · Failed: 0")
+        queue_details = "Queued: 0 · Sent: 0 · Failed: 0"
+        self._frame._remote_queue_label.setToolTip(queue_details)
+        self._frame._remote_queue_label.setAccessibleDescription(queue_details)
         for label in (self._frame._status_label, self._frame._remote_queue_label):
-            label.setWordWrap(False)
+            label.setWordWrap(True)
             label.setMinimumWidth(0)
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
@@ -75,6 +84,8 @@ class RemotePanelForm:
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             combo = self._frame._combo(items)
             combo.setCurrentText(self._frame._load(attr))
+            combo.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+            self._frame._refresh_responsive_widget_minimum(combo)
             setattr(self._frame, attr, combo)
             self._frame._parameter_labels.append(label)
             setting_widgets.extend((label, combo))
@@ -192,7 +203,9 @@ class RemotePanelForm:
         self._frame.chk_record.setToolTip("Record mirroring to file")
         self._frame.chk_record.toggled.connect(self._frame._on_record_toggled)
         self._frame.record_path = self._frame._status_text("")
-        # 记录路径是状态提示，禁止换行且不参与最小宽度计算，避免文本出现时挤压其它按钮。
+        self._frame.record_path.setAccessibleName("Recording path")
+        # 录制路径保持单行，避免长文件名无限拉高启动选项；
+        # 完整内容由 tooltip 与辅助描述提供。
         self._frame.record_path.setWordWrap(False)
         self._frame.record_path.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
@@ -464,9 +477,12 @@ class RemotePanelForm:
         if not checked:
             self._frame.record_path.setText("")
             self._frame.record_path.setToolTip("")
+            self._frame.record_path.setAccessibleDescription("")
             return
-        self._frame.record_path.setText("Recording path will be created on Start")
-        self._frame.record_path.setToolTip("")
+        details = "Recording path will be created on Start"
+        self._frame.record_path.setText(details)
+        self._frame.record_path.setToolTip(details)
+        self._frame.record_path.setAccessibleDescription(details)
 
     def _allocate_record_path(self, device: str) -> str:
         """为一次 Start 分配不会与本进程既有会话冲突的录制路径。"""
@@ -488,6 +504,7 @@ class RemotePanelForm:
     def _display_record_path(self, path: str) -> None:
         display_path = path.replace("\\", "/")
         self._frame.record_path.setToolTip(display_path)
+        self._frame.record_path.setAccessibleDescription(display_path)
         if len(display_path) > 72:
             display_path = f"…/{os.path.basename(display_path)}"
         self._frame.record_path.setText(display_path)
