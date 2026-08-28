@@ -127,6 +127,14 @@ _UI_TEST_FILES = frozenset(
         "test_typography_core.py",
         "test_ui_geometry_helpers.py",
         "test_window_lifecycle.py",
+        # 以下文件 import 并实例化 GUI（2026-08-28 基线核实补登，避免漏出 ui 子集）。
+        "test_logging_contract.py",
+        "test_logging_routing_mobileperf.py",
+        "test_model_processes.py",
+        "test_phase0_remote_mobileperf.py",
+        "test_phase2_live_logcat_gate.py",
+        "test_phase2_mainframe_shutdown_gate.py",
+        "test_remote_services.py",
     }
 )
 
