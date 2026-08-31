@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QFrame,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -100,6 +101,12 @@ class PerformanceLauncherDialog(QDialog):
     monkey_pct_combos: dict[str, StrictIntComboBox]
     perfetto_action: QAction
     serialnum_label: QLabel
+    # 页头控件由 PerformanceLauncherForm 注入；此处声明类型供 pyright 与
+    # 主题刷新方法稳定引用（视觉重设计新增，不影响任何既有契约）。
+    header_card: QFrame
+    dialog_title: QLabel
+    dialog_subtitle: QLabel
+    status_badge: QLabel
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
         super().__init__(parent)
@@ -424,6 +431,26 @@ class PerformanceLauncherDialog(QDialog):
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
+        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        if hasattr(self, "header_card"):
+            self.header_card.setStyleSheet(
+                f"QFrame#dialogHeaderCard {{ background-color: {c('PANEL_BG')};"
+                f" border: 1px solid {c('BORDER_COLOR')};"
+                f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+            )
+            self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+            self.dialog_title.setStyleSheet(f"color: {c('TITLE_COLOR')};")
+            self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+            self.dialog_subtitle.setStyleSheet(f"color: {c('TEXT_SECONDARY')};")
+            self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+            has_device = bool(self.device_ip)
+            self.status_badge.setText("Ready" if has_device else "No device")
+            background = c("LOG_SUCCESS") if has_device else c("TEXT_SECONDARY")
+            self.status_badge.setStyleSheet(
+                f"QLabel#dialogStatusBadge {{ background-color: {background};"
+                f" color: {c('PANEL_BG')};"
+                f" border-radius: 7px; padding: 1px 8px; }}"
+            )
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
             BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
