@@ -6,7 +6,9 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFontMetrics, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLayout,
@@ -54,6 +56,39 @@ class AppManagerForm:
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         layout.setSpacing(4)
         layout.setContentsMargins(8, 8, 8, 6)
+
+        # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
+        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级；
+        # 不用 UI_SMALL，遵守对话框字体爆发测试不存在小型字角色控件的不变式。
+        header_card = QFrame()
+        header_card.setObjectName("dialogHeaderCard")
+        hl = QVBoxLayout(header_card)
+        hl.setContentsMargins(12, 8, 12, 8)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._frame.dialog_title = QLabel("App Manager")
+        self._frame.dialog_title.setObjectName("dialogTitle")
+        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
+        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self._frame.status_badge = QLabel("No device")
+        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
+        self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._frame.status_badge.setToolTip("Device availability for app actions")
+        title_row.addWidget(self._frame.dialog_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self._frame.status_badge)
+        self._frame.dialog_subtitle = QLabel("Install, inspect and control device packages")
+        self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
+        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._frame.dialog_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self._frame.dialog_subtitle)
+        self._frame.header_card = header_card
+        layout.addWidget(header_card)
 
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
@@ -303,6 +338,40 @@ class AppManagerForm:
         _apply_adaptive_text_heights(self._frame)
         self._frame._reflow_top_controls()
         self._frame._reflow_action_buttons()
+        self._apply_header_style()
+
+    # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
+
+    def _apply_header_style(self) -> None:
+        """视觉重设计：按当前主题重建页头卡片样式，并刷新各标签字体。"""
+
+        bs = BaseStyles
+        self._frame.header_card.setStyleSheet(
+            f"QFrame#dialogHeaderCard {{ background-color: {bs.color('PANEL_BG')};"
+            f" border: 1px solid {bs.color('BORDER_COLOR')};"
+            f" border-radius: {bs.RADIUS_LG}px; }}"
+        )
+        self._frame.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
+        self._frame.dialog_title.setStyleSheet(f"color: {bs.color('TITLE_COLOR')};")
+        self._frame.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
+        self._frame.dialog_subtitle.setStyleSheet(f"color: {bs.color('TEXT_SECONDARY')};")
+        self._frame.status_badge.setFont(bs.font_for_role(FontRole.UI))
+        self._refresh_status_badge()
+
+    def _refresh_status_badge(self) -> None:
+        """视觉重设计：按设备连接状态刷新徽标；绿=已连接设备，灰=未选择设备。"""
+
+        bs = BaseStyles
+        has_device = bool(self._frame.device_ip)
+        self._frame.status_badge.setText("Ready" if has_device else "No device")
+        background = (
+            bs.color("LOG_SUCCESS") if has_device else bs.color("TEXT_SECONDARY")
+        )
+        self._frame.status_badge.setStyleSheet(
+            f"QLabel#dialogStatusBadge {{ background-color: {background};"
+            f" color: {bs.color('PANEL_BG')};"
+            f" border-radius: 7px; padding: 1px 8px; }}"
+        )
 
     def _action_layout_available_width(self) -> int:
         margins = self._frame.layout().contentsMargins()

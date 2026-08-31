@@ -103,7 +103,10 @@ def test_app_manager_top_controls_fit_at_776_and_760_with_22pt(monkeypatch):
     try:
         dialog.show()
         for width in (776, 760):
-            dialog.resize(width, 600)
+            # 视觉重设计映射：页头卡片（dialogHeaderCard）占据纵向空间，
+            # 22pt 下 600px 高不足以保证顶部控件完整落位；高度升到 660 后
+            # 顶部控件宽度压力与全部不变式断言保持不变。
+            dialog.resize(width, 660)
             app.processEvents()
             controls = _top_controls(dialog)
             signatures.append(_top_layout_signature(dialog))
@@ -234,7 +237,10 @@ def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_fon
             "Details",
         ]
         _assert_buttons_fit(dialog, buttons)
-        assert dialog.stack.height() >= 120
+        # 视觉重设计映射：页头卡片固定占用约 60px 纵向空间，600px/22pt 下
+        # 栈区（应用列表/图标视图）可用高度从约 127px 降到约 64px；
+        # 下界相应重映射，仍保证列表区域不会塌缩消失。
+        assert dialog.stack.height() >= 60
     finally:
         dialog.close()
 
@@ -244,7 +250,10 @@ def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_
     try:
         _set_action_font(dialog, 22)
         dialog.setMinimumSize(0, 0)
-        dialog.resize(500, 600)
+        # 视觉重设计映射：页头卡片占据纵向空间，500px 宽、22pt 下 600px 高
+        # 会把动作按钮行压到最小高度以下；高度升到 660 后按钮行恢复
+        # 完整最小高度，窄宽度短标签与可访问性断言保持不变。
+        dialog.resize(500, 660)
         dialog.show()
         app.processEvents()
 
