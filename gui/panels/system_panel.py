@@ -4,9 +4,10 @@ from typing import Any, cast
 
 from PySide6.QtCore import QRegularExpression
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
-from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from gui.panels.base_panel import BasePanel
+from gui.styles import BaseStyles, FontRole
 from gui.widgets.responsive_layout import WidthPolicy
 
 
@@ -18,8 +19,10 @@ class SystemPanel(BasePanel):
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
+        self._system_section_groups: list[QWidget] = []
+        self._build_system_header(lo)
 
-        g1 = self._g("Shell Command")
+        g1 = self._card_group("Shell Command")
         gl1 = QVBoxLayout(g1)
         gl1.setSpacing(2)
         self.shell_cmd_input = self._in("adb shell <command> ...")
@@ -36,7 +39,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g1)
 
-        g_rb = self._g("Reboot & Modes")
+        g_rb = self._card_group("Reboot & Modes")
         gl_rb = QVBoxLayout(g_rb)
         gl_rb.setSpacing(2)
         self.reboot_mode_combo = self._combo(["System", "Bootloader", "Recovery", "Fastboot"])
@@ -60,7 +63,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g_rb)
 
-        gb = self._g("Broadcast & Intents")
+        gb = self._card_group("Broadcast & Intents")
         glb = QVBoxLayout(gb)
         glb.setSpacing(2)
         self.broadcast_action = self._in("Broadcast action")
@@ -104,7 +107,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(gb)
 
-        g3 = self._g("Port Forwarding")
+        g3 = self._card_group("Port Forwarding")
         gl3 = QVBoxLayout(g3)
         gl3.setSpacing(2)
         self.fwd_local = self._in_int("Local port", 1, 65535, 96)
@@ -149,7 +152,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g3)
 
-        gs = self._g("Service Toggles (svc)")
+        gs = self._card_group("Service Toggles (svc)")
         gsl = QVBoxLayout(gs)
         gsl.setSpacing(2)
         _toggle_icons = {
@@ -189,7 +192,7 @@ class SystemPanel(BasePanel):
             )
         lo.addWidget(gs)
 
-        g4 = self._g("Android Settings")
+        g4 = self._card_group("Android Settings")
         gl4 = QVBoxLayout(g4)
         gl4.setSpacing(2)
         self.settings_ns = self._combo(["system", "global", "secure"])
@@ -224,7 +227,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g4)
 
-        g5 = self._g("System Tools")
+        g5 = self._card_group("System Tools")
         gl5 = QVBoxLayout(g5)
         gl5.setSpacing(2)
         self.content_uri = self._in("Content URI")
@@ -299,7 +302,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g5)
 
-        g6 = self._g("Battery & Quick Settings")
+        g6 = self._card_group("Battery & Quick Settings")
         gl6 = QVBoxLayout(g6)
         gl6.setSpacing(2)
         self.battery_param = self._combo(["level", "status"])
@@ -348,7 +351,7 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g6)
 
-        g7 = self._g("IME & Emulator Control")
+        g7 = self._card_group("IME & Emulator Control")
         gl7 = QVBoxLayout(g7)
         gl7.setSpacing(2)
         self.btn_ime_list = self._b(
@@ -435,7 +438,92 @@ class SystemPanel(BasePanel):
         ):
             field.textChanged.connect(lambda _text: self._update_action_states())
         self._action_buttons = tuple(w.findChildren(QPushButton))
+        BaseStyles.theme_changed.connect(self._on_theme_changed_system)
         return w
+
+    # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
+
+    def _card_group(self, t: str) -> QWidget:
+        """在既有分组样式上叠加卡片视觉；保持 QGroupBox 类型与标题语义不变。"""
+
+        g = self._g(t)
+        g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + self._section_card_qss())
+        self._system_section_groups.append(g)
+        return g
+
+    def _section_card_qss(self) -> str:
+        """分区卡片 QSS：面板底色 + 细边框 + 圆角，标题间隙由 GROUP_BOX_STYLE 决定。"""
+
+        c = BaseStyles.color
+        return (
+            f"QGroupBox {{ background-color: {c('PANEL_BG')};"
+            f" border: 1px solid {c('BORDER_COLOR')};"
+            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+        )
+
+    def _build_system_header(self, lo) -> None:
+        """构建页头：标题、副标题与设备可用性状态徽标。"""
+
+        header = QWidget()
+        header.setObjectName("systemHeader")
+        hl = QVBoxLayout(header)
+        hl.setContentsMargins(0, 0, 0, 4)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self.system_title = QLabel("System")
+        self.system_title.setProperty("fontRole", FontRole.TITLE.value)
+        self.system_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self.system_status_badge = QLabel("No device")
+        self.system_status_badge.setObjectName("systemStatusBadge")
+        self.system_status_badge.setProperty("fontRole", FontRole.UI.value)
+        self.system_status_badge.setFont(self._font_sm)
+        self.system_status_badge.setToolTip("Device availability for system actions")
+        title_row.addWidget(self.system_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.system_status_badge)
+        self.system_subtitle = QLabel("Shell, settings, forwarding and emulator tools")
+        # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
+        # 副标题用 UI 角色 + 次级文字色维持视觉层级。
+        self.system_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self.system_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.system_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self.system_subtitle)
+        lo.addWidget(header)
+        self._apply_system_header_style()
+
+    def _apply_system_header_style(self) -> None:
+        """按当前主题重建页头与徽标颜色。"""
+
+        if not hasattr(self, "system_title"):
+            return
+        self.system_title.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
+        self.system_subtitle.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
+        self._refresh_system_status_badge()
+
+    def _refresh_system_status_badge(self) -> None:
+        """按设备选中状态刷新徽标；绿=可用，灰=未选择设备。"""
+
+        if not hasattr(self, "system_status_badge"):
+            return
+        has_device = bool(self.selected_devices)
+        self.system_status_badge.setText("Ready" if has_device else "No device")
+        background = (
+            BaseStyles.color("LOG_SUCCESS") if has_device else BaseStyles.color("TEXT_SECONDARY")
+        )
+        self.system_status_badge.setStyleSheet(
+            f"QLabel#systemStatusBadge {{ background-color: {background};"
+            f" color: {BaseStyles.color('PANEL_BG')};"
+            f" border-radius: 7px; padding: 1px 8px; }}"
+        )
+
+    def _on_theme_changed_system(self, _name: str) -> None:
+        """主题切换时重建页头与分区卡片样式。"""
+
+        self._apply_system_header_style()
+        for group in getattr(self, "_system_section_groups", ()):
+            group.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + self._section_card_qss())
 
     def connect_signals(self):
         LP = self.signals
@@ -624,6 +712,7 @@ class SystemPanel(BasePanel):
     def _update_action_states(self) -> None:
         """按设备和字段有效性更新 System 页动作状态。"""
 
+        self._refresh_system_status_badge()
         if not hasattr(self, "btn_shell_run"):
             return
         has_device = bool(self.selected_devices)
