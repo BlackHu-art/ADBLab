@@ -3,6 +3,7 @@
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -31,6 +32,37 @@ class LiveLogcatForm:
         layout = QVBoxLayout(self._frame)
         layout.setSpacing(4)
         layout.setContentsMargins(6, 6, 6, 6)
+
+        # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
+        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
+        self._frame.header_card = QFrame()
+        self._frame.header_card.setObjectName("dialogHeaderCard")
+        hl = QVBoxLayout(self._frame.header_card)
+        hl.setContentsMargins(12, 8, 12, 8)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._frame.dialog_title = QLabel("Live Logcat")
+        self._frame.dialog_title.setObjectName("dialogTitle")
+        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
+        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self._frame.status_badge = QLabel("No device")
+        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
+        self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._frame.status_badge.setToolTip("Device availability for log streaming")
+        title_row.addWidget(self._frame.dialog_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self._frame.status_badge)
+        self._frame.dialog_subtitle = QLabel("Stream and filter device log messages")
+        self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
+        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._frame.dialog_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self._frame.dialog_subtitle)
+        layout.addWidget(self._frame.header_card)
 
         filters = QGridLayout()
         filters.setHorizontalSpacing(6)
@@ -183,6 +215,30 @@ class LiveLogcatForm:
         apply_dark_title_bar(self._frame)
         BS = BaseStyles
         self._frame.setWindowIcon(get_themed_icon(self._frame._window_icon_name))
+        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        if hasattr(self._frame, "header_card"):
+            self._frame.header_card.setStyleSheet(
+                f"QFrame#dialogHeaderCard {{ background-color: {BS.color('PANEL_BG')};"
+                f" border: 1px solid {BS.color('BORDER_COLOR')};"
+                f" border-radius: {BS.RADIUS_LG}px; }}"
+            )
+            self._frame.dialog_title.setFont(BS.font_for_role(FontRole.TITLE))
+            self._frame.dialog_title.setStyleSheet(f"color: {BS.color('TITLE_COLOR')};")
+            self._frame.dialog_subtitle.setFont(BS.font_for_role(FontRole.UI))
+            self._frame.dialog_subtitle.setStyleSheet(
+                f"color: {BS.color('TEXT_SECONDARY')};"
+            )
+            self._frame.status_badge.setFont(BS.font_for_role(FontRole.UI))
+            has_device = bool(self._frame.device_ip)
+            self._frame.status_badge.setText("Ready" if has_device else "No device")
+            background = (
+                BS.color("LOG_SUCCESS") if has_device else BS.color("TEXT_SECONDARY")
+            )
+            self._frame.status_badge.setStyleSheet(
+                f"QLabel#dialogStatusBadge {{ background-color: {background};"
+                f" color: {BS.color('PANEL_BG')};"
+                f" border-radius: 7px; padding: 1px 8px; }}"
+            )
         for button in (
             self._frame.btn_get_pkg,
             self._frame.start_btn,
