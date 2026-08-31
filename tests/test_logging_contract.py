@@ -13,6 +13,7 @@ import pytest
 
 from core.log_service import LogLevel, LogService
 from gui.panels.log_panel import LogPanel
+from gui.styles import BaseStyles
 
 
 @pytest.fixture
@@ -209,6 +210,88 @@ def test_log_panel_applies_new_line_limit_immediately(
         assert panel._max_lines == 100
         assert panel._entries[0][2] == "line-5"
         assert "line-0" not in panel.text_output.toPlainText()
+    finally:
+        panel.close()
+
+
+def test_log_panel_text_output_is_wrapped_in_card_container(
+    create_log_service: Callable[[], LogService],
+) -> None:
+    """视觉重设计最小化：正文外包卡片容器，text_output 公开契约保持不变。"""
+
+    create_log_service()
+    panel = LogPanel()
+    try:
+        assert panel.logViewCard.objectName() == "logViewCard"
+        assert panel.text_output.parent() is panel.logViewCard
+        assert panel.text_output.accessibleName() == "Operation log"
+        # 主题钩子：卡片样式随当前主题色重建。
+        assert BaseStyles.color("PANEL_BG") in panel.logViewCard.styleSheet()
+        assert BaseStyles.color("BORDER_COLOR") in panel.logViewCard.styleSheet()
+        # 正文渲染契约不受包壳影响。
+        panel._append_logs([("12:00:00", LogLevel.INFO, "卡片内渲染")])
+        panel._flush_pending_rows()
+        assert "卡片内渲染" in panel.text_output.toPlainText()
+    finally:
+        panel.close()
+
+
+def test_log_panel_toolbar_clear_button_wipes_entries(
+    create_log_service: Callable[[], LogService],
+) -> None:
+    """工具条卡片化：清空图标按钮保留 objectName 契约并复用既有 clear()。"""
+
+    create_log_service()
+    panel = LogPanel()
+    try:
+        panel._append_logs([("12:00:00", LogLevel.INFO, "待清空")])
+        panel._flush_pending_rows()
+        assert "待清空" in panel.text_output.toPlainText()
+
+        assert panel.logToolbarCard.objectName() == "logToolbarCard"
+        assert panel.logClearButton.objectName() == "logClearButton"
+        assert panel.logClearButton.property("iconName") == "broom.svg"
+        assert panel.logClearButton.toolTip() == "Clear Log"
+
+        panel.logClearButton.click()
+
+        assert panel._entries == []
+        assert panel.text_output.toPlainText() == ""
+    finally:
+        panel.close()
+
+
+def test_log_panel_level_filter_badge_tracks_selection_and_filters_intake(
+    create_log_service: Callable[[], LogService],
+) -> None:
+    """彩色徽标映射 LOG_* 级别色；级别过滤只作用于新到达批次，历史行保留。"""
+
+    create_log_service()
+    panel = LogPanel()
+    try:
+        panel._append_logs([("12:00:00", LogLevel.INFO, "过滤前历史行")])
+        panel._flush_pending_rows()
+
+        assert panel.logLevelBadge.objectName() == "logLevelBadge"
+        assert panel.logLevelBadge.text() == "ALL"
+
+        # 选中 ERROR 项（All/DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL 的第 5 项）。
+        panel.logLevelFilter.setCurrentIndex(5)
+
+        assert panel.logLevelBadge.text() == "ERROR"
+        assert BaseStyles.color("LOG_ERROR") in panel.logLevelBadge.styleSheet()
+        assert "过滤前历史行" in panel.text_output.toPlainText()  # 历史行不回溯隐藏
+
+        panel._append_logs(
+            [
+                ("12:00:01", LogLevel.INFO, "被级别过滤拦截"),
+                ("12:00:02", LogLevel.ERROR, "保留错误"),
+            ]
+        )
+        panel._flush_pending_rows()
+
+        assert "保留错误" in panel.text_output.toPlainText()
+        assert "被级别过滤拦截" not in panel.text_output.toPlainText()
     finally:
         panel.close()
 

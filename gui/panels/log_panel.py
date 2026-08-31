@@ -7,7 +7,16 @@
 - 每行采用块级悬挂缩进：`margin-left` 为当前级别标签的实际像素宽（按日志字体
   度量，字号变化自动适配），`text-indent` 负等值——自动折行与显式换行都对齐到
   消息列起点，级别与消息间只保留一个空格；
-- ERROR/CRITICAL 加粗；条目内容 HTML 按 (级别, 消息) 缓存，主题切换时重建。
+- ERROR/CRITICAL 加粗；条目内容 HTML 按 (级别, 消息) 缓存，主题切换时重建；
+- 正文外包卡片视觉容器（``logViewCard``，QFrame 圆角+边框）：纯外围包壳，
+  ``text_output`` 的属性与渲染契约保持不变，主题切换经 ``_apply_style``
+  重建卡片样式；
+- ``logViewCard`` 上方为卡片化工具条（``logToolbarCard``）：级别过滤下拉
+  （``logLevelFilter``）、当前过滤级别彩色徽标（``logLevelBadge``，复用
+  LOG_* 级别色）与清空图标按钮（``logClearButton``）。objectName 为公开
+  契约，供测试与 QSS 稳定引用；
+- 级别过滤只作用于新到达的批次（默认 ``All Levels`` 与历史行为完全一致），
+  已渲染的历史行不回溯隐藏——正文渲染、裁剪、防抖与背压管线保持一字不动。
 """
 
 from collections import OrderedDict
@@ -15,18 +24,49 @@ from html import escape
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QTextBlockFormat, QTextCursor
-from PySide6.QtWidgets import QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
 
 from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.fluent import FluentComboBox, IconButton
 
 _HTML_CACHE_LIMIT = 2048
 
 
 class LogPanel(QWidget):
+    """用户日志面板：批量渲染核心 + 卡片容器与卡片化工具条外围。
+
+    公开契约：
+    - 渲染/裁剪/防抖/背压行为由 ADR-0005 测试固定，本类只在其外围换肤；
+    - 正文 ``text_output`` 外包 ``logViewCard`` 卡片容器（objectName 稳定，
+      供测试与 QSS 引用）；
+    - 工具条控件 objectName 稳定：``logToolbarCard`` / ``logLevelFilter`` /
+      ``logLevelBadge`` / ``logClearButton``；
+    - 级别过滤默认 ``All Levels``（空 UserRole 数据），只过滤新到达批次，
+      已渲染历史行不回溯隐藏。
+    """
+
     RENDER_DEBOUNCE_MS = 16
     FRAME_BATCH_SIZE = 100
     IMMEDIATE_BATCH_SIZE = FRAME_BATCH_SIZE
+
+    # 级别过滤下拉项：(显示文本, UserRole 数据)；空数据代表 All Levels。
+    _LEVEL_FILTER_OPTIONS: tuple[tuple[str, str], ...] = (
+        ("All Levels", ""),
+        ("DEBUG", "DEBUG"),
+        ("INFO", "INFO"),
+        ("SUCCESS", "SUCCESS"),
+        ("WARNING", "WARNING"),
+        ("ERROR", "ERROR"),
+        ("CRITICAL", "CRITICAL"),
+    )
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +86,7 @@ class LogPanel(QWidget):
         self._connect_services()
         BaseStyles.theme_changed.connect(self._on_theme_changed)
         BaseStyles.log_font_changed.connect(self._on_log_font_changed)
+        BaseStyles.ui_font_changed.connect(self._on_ui_font_changed)
 
     # ------------------------------------------------------------------
     # 样式与主题
@@ -63,6 +104,23 @@ class LogPanel(QWidget):
             }}
             {BaseStyles.SCROLLBAR_STYLE()}
         """)
+        # 卡片容器包壳：圆角边框 + 面板底色，与 Fluent Card 视觉一致。
+        self.logViewCard.setStyleSheet(
+            f"QFrame#logViewCard {{"
+            f" background-color: {c('PANEL_BG')};"
+            f" border: 1px solid {c('BORDER_COLOR')};"
+            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+        )
+        # 卡片化工具条：与卡片容器一致的圆角边框，内嵌级别徽标/过滤/清空。
+        self.logToolbarCard.setStyleSheet(
+            f"QFrame#logToolbarCard {{"
+            f" background-color: {c('PANEL_BG')};"
+            f" border: 1px solid {c('BORDER_COLOR')};"
+            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+        )
+        self._refresh_level_badge()
+        self.logLevelFilter._sync_theme_state()
+        self.logClearButton._sync_theme_state()
 
     def _on_theme_changed(self, _name: str):
         from core.settings_manager import AppSettings
@@ -81,6 +139,13 @@ class LogPanel(QWidget):
         self._consume_pending_without_render()
         self._rerender_all()
 
+    def _on_ui_font_changed(self, _config):
+        """界面字体变化时刷新工具条控件字体（正文走独立 LOG 字体角色）。"""
+
+        ui_font = BaseStyles.font_for_role(FontRole.UI)
+        for widget in (self.logLevelBadge, self.logLevelFilter, self.logClearButton):
+            widget.setFont(ui_font)
+
     def _init_ui(self):
         self.text_output = QTextEdit(self)
         self.text_output.setReadOnly(True)
@@ -90,13 +155,93 @@ class LogPanel(QWidget):
 
         self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
+        self._build_toolbar()
+
+        # 正文外包卡片视觉容器：只换肤，正文属性与渲染契约不变。
+        self.logViewCard = QFrame(self)
+        self.logViewCard.setObjectName("logViewCard")
+        card_layout = QVBoxLayout(self.logViewCard)
+        card_layout.setContentsMargins(8, 8, 8, 8)
+        card_layout.addWidget(self.text_output)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.text_output)
+        layout.addWidget(self.logToolbarCard)
+        layout.addWidget(self.logViewCard)
         self._apply_style()
 
     def _connect_services(self):
         LogService().logs_received.connect(self._append_logs, Qt.ConnectionType.AutoConnection)
+
+    # ------------------------------------------------------------------
+    # 卡片化工具条与级别过滤
+    # ------------------------------------------------------------------
+
+    def _build_toolbar(self):
+        """构建卡片化工具条：级别徽标、过滤下拉与清空图标按钮。"""
+
+        self.logToolbarCard = QFrame(self)
+        self.logToolbarCard.setObjectName("logToolbarCard")
+
+        self.logLevelBadge = QLabel("ALL", self.logToolbarCard)
+        self.logLevelBadge.setObjectName("logLevelBadge")
+        self.logLevelBadge.setProperty("fontRole", FontRole.UI.value)
+        self.logLevelBadge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.logLevelBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.logLevelFilter = FluentComboBox(parent=self.logToolbarCard)
+        self.logLevelFilter.setObjectName("logLevelFilter")
+        self.logLevelFilter.setAccessibleName("Log level filter")
+        self.logLevelFilter.set_items(
+            [label for label, _data in self._LEVEL_FILTER_OPTIONS],
+            data=[data for _label, data in self._LEVEL_FILTER_OPTIONS],
+        )
+        self.logLevelFilter.setMinimumWidth(110)
+        # 先填项再连接：避免 set_items 清空动作触发未初始化的槽。
+        self.logLevelFilter.currentIndexChanged.connect(self._on_level_filter_changed)
+
+        self.logClearButton = IconButton("broom.svg", "Clear Log", parent=self.logToolbarCard)
+        self.logClearButton.setObjectName("logClearButton")
+        self.logClearButton.clicked.connect(self.clear)
+
+        row = QHBoxLayout(self.logToolbarCard)
+        row.setContentsMargins(8, 4, 4, 4)
+        row.setSpacing(8)
+        row.addWidget(self.logLevelBadge)
+        row.addWidget(self.logLevelFilter)
+        row.addStretch(1)
+        row.addWidget(self.logClearButton)
+
+    def _current_filter_level(self) -> str:
+        """返回当前过滤级别；``All Levels`` 返回空字符串（不过滤）。"""
+
+        data = self.logLevelFilter.currentData()
+        return str(data or "").upper()
+
+    def _passes_filter(self, level: str) -> bool:
+        wanted = self._current_filter_level()
+        return not wanted or level == wanted
+
+    def _on_level_filter_changed(self, _index: int):
+        """级别过滤变化时刷新徽标；历史已渲染行不回溯隐藏。"""
+
+        self._refresh_level_badge()
+
+    def _refresh_level_badge(self):
+        """按当前过滤级别重绘彩色徽标（复用 LOG_* 级别色，文本用面板底色对比）。"""
+
+        level = self._current_filter_level()
+        background = (
+            BaseStyles.color(f"LOG_{level}") if level else BaseStyles.color("TEXT_SECONDARY")
+        )
+        self.logLevelBadge.setText(level or "ALL")
+        self.logLevelBadge.setStyleSheet(
+            f"QLabel#logLevelBadge {{"
+            f" background-color: {background};"
+            f" color: {BaseStyles.color('PANEL_BG')};"
+            f" border-radius: {BaseStyles.RADIUS_MD + 3}px;"
+            f" padding: 2px 10px; }}"
+        )
 
     # ------------------------------------------------------------------
     # 缓冲与防抖
@@ -106,12 +251,17 @@ class LogPanel(QWidget):
         self._append_logs([("", level, message)])
 
     def _append_logs(self, records: list[tuple[str, str, str]]):
-        """接收三元组批次；DEBUG 已由 LogService 在源头过滤，此处不再重复。"""
+        """接收三元组批次；DEBUG 已由 LogService 在源头过滤，此处不再重复。
+
+        级别过滤（工具条）只作用于新到达批次：默认 All Levels 时与历史行为
+        完全一致；已渲染的历史行不回溯隐藏，正文渲染管线保持不变。
+        """
 
         rows = [
             (str(timestamp), str(level).upper(), str(message))
             for timestamp, level, message in records
         ]
+        rows = [row for row in rows if self._passes_filter(row[1])]
         if not rows:
             return
         sb = self.text_output.verticalScrollBar()
@@ -335,6 +485,7 @@ class LogPanel(QWidget):
         self._cancel_pending_render()
         BaseStyles.theme_changed.disconnect(self._on_theme_changed)
         BaseStyles.log_font_changed.disconnect(self._on_log_font_changed)
+        BaseStyles.ui_font_changed.disconnect(self._on_ui_font_changed)
         super().closeEvent(event)
 
     def clear(self):
