@@ -22,6 +22,7 @@ from gui.panels.base_panel import BasePanel
 from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
+from gui.styles import BaseStyles
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -189,6 +190,12 @@ class RemotePanel(BasePanel):
     _SESSION_STARTING = "starting"
     _SESSION_RUNNING = "running"
     _SESSION_STOPPING = "stopping"
+    # 页头控件由 RemotePanelForm 通过 _frame 注入；此处声明类型供 pyright 与
+    # 状态刷新方法稳定引用（视觉重设计新增，不影响任何既有契约）。
+    remote_title: QLabel
+    remote_subtitle: QLabel
+    remote_status_badge: QLabel
+    _remote_section_groups: list[QWidget]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
         "Could not inject char u+",
         "libpng warning: iCCP: known incorrect sRGB profile",
@@ -319,12 +326,48 @@ class RemotePanel(BasePanel):
     # ── 运行态与状态方法 ────────────────────────────────────────────────
 
     def _update_action_states(self) -> None:
+        self._refresh_remote_status_badge()
         self._set_session_state(getattr(self, "_session_state", self._SESSION_IDLE))
 
     def update_action_states(self) -> None:
         """供设备选择协调层刷新 Remote Start 的可用状态。"""
 
         self._update_action_states()
+
+    # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
+
+    def _apply_remote_header_style(self) -> None:
+        """按当前主题重建页头与徽标颜色。"""
+
+        if not hasattr(self, "remote_title"):
+            return
+        self.remote_title.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
+        self.remote_subtitle.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
+        self._refresh_remote_status_badge()
+
+    def _refresh_remote_status_badge(self) -> None:
+        """按设备选中状态刷新徽标；绿=可用，灰=未选择设备。"""
+
+        if not hasattr(self, "remote_status_badge"):
+            return
+        has_device = bool(self.selected_devices)
+        self.remote_status_badge.setText("Ready" if has_device else "No device")
+        background = (
+            BaseStyles.color("LOG_SUCCESS") if has_device else BaseStyles.color("TEXT_SECONDARY")
+        )
+        self.remote_status_badge.setStyleSheet(
+            f"QLabel#remoteStatusBadge {{ background-color: {background};"
+            f" color: {BaseStyles.color('PANEL_BG')};"
+            f" border-radius: 7px; padding: 1px 8px; }}"
+        )
+
+    def _on_theme_changed_remote(self, _name: str) -> None:
+        """主题切换时重建页头与分区卡片样式。"""
+
+        self._apply_remote_header_style()
+        form = getattr(self, "_form_controller", None) or RemotePanelForm(self)
+        for group in getattr(self, "_remote_section_groups", ()):
+            group.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + form._section_card_qss())
 
     def _set_running(self, running: bool):
         RemotePanel._set_session_state(

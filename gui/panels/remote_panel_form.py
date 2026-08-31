@@ -5,9 +5,10 @@ import re
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QCheckBox, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
+from gui.styles import BaseStyles, FontRole
 from gui.widgets.responsive_layout import (
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
@@ -28,11 +29,67 @@ class RemotePanelForm:
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.addWidget(self._frame._build_mirroring())
-        lo.addWidget(self._frame._build_control())
+        self._frame._remote_section_groups = []
+        self._build_header(lo)
+        mirroring = self._frame._build_mirroring()
+        control = self._frame._build_control()
+        self._frame._remote_section_groups.extend((mirroring, control))
+        self._frame._on_theme_changed_remote("")
         self._frame._set_session_state(self._frame._SESSION_IDLE)
+        BaseStyles.theme_changed.connect(self._on_theme_changed_remote)
+        lo.addWidget(mirroring)
+        lo.addWidget(control)
         lo.addStretch()
         return w
+
+    # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
+
+    def _section_card_qss(self) -> str:
+        """分区卡片 QSS：面板底色 + 细边框 + 圆角，标题间隙由 GROUP_BOX_STYLE 决定。"""
+
+        c = BaseStyles.color
+        return (
+            f"QGroupBox {{ background-color: {c('PANEL_BG')};"
+            f" border: 1px solid {c('BORDER_COLOR')};"
+            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+        )
+
+    def _build_header(self, lo) -> None:
+        """构建页头：标题、副标题与设备可用性状态徽标。"""
+
+        header = QWidget()
+        header.setObjectName("remoteHeader")
+        hl = QVBoxLayout(header)
+        hl.setContentsMargins(0, 0, 0, 4)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._frame.remote_title = QLabel("Remote Control")
+        self._frame.remote_title.setProperty("fontRole", FontRole.TITLE.value)
+        self._frame.remote_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self._frame.remote_status_badge = QLabel("No device")
+        self._frame.remote_status_badge.setObjectName("remoteStatusBadge")
+        self._frame.remote_status_badge.setProperty("fontRole", FontRole.UI.value)
+        self._frame.remote_status_badge.setFont(self._frame._font_sm)
+        self._frame.remote_status_badge.setToolTip("Device availability for remote actions")
+        title_row.addWidget(self._frame.remote_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self._frame.remote_status_badge)
+        self._frame.remote_subtitle = QLabel("Screen mirroring and input control")
+        # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
+        # 副标题用 UI 角色 + 次级文字色维持视觉层级。
+        self._frame.remote_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self._frame.remote_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._frame.remote_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self._frame.remote_subtitle)
+        lo.addWidget(header)
+        self._frame._apply_remote_header_style()
+
+    def _on_theme_changed_remote(self, _name: str) -> None:
+        """主题切换时重建页头与分区卡片样式（委托给面板持有者）。"""
+
+        self._frame._on_theme_changed_remote(_name)
 
     def _build_mirroring(self) -> QWidget:
         g = self._frame._g("Screen Mirroring")
