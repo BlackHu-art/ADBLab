@@ -158,6 +158,17 @@ class BasePanel(QWidget):
 
     # ── 界面控件工厂 ────────────────────────────────────────────────────
 
+    def _card(self, title: str, *, parent=None):
+        """创建 Fluent Card 容器（P2 组件体系接入：新工厂，不改既有方法契约）。"""
+
+        from gui.widgets.fluent.card import Card
+
+        card = Card(title=title, parent=parent)
+        card.setProperty("fontRole", FontRole.UI.value)
+        card.setToolTip(title)
+        card.setAccessibleName(title)
+        return card
+
     def _g(self, t):
         """创建统一样式的 QGroupBox。"""
         g = _ResponsiveGroupBox(t)

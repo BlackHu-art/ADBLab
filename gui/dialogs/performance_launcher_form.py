@@ -17,12 +17,14 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
+from gui.widgets.fluent.segmented_control import SegmentedControl
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 
@@ -81,7 +83,12 @@ class PerformanceLauncherForm:
         root.addWidget(self._frame._config_group, 1)
         self._frame.log_view = self._build_log_view()
         self._frame.log_view.setFixedHeight(96)
-        root.addWidget(self._frame.log_view)
+        # P3 图表双视图：日志/图表用可折叠容器承载，SegmentedControl 切换（集成契约：
+        # _build_chart_toggle 由对话框注入切换回调，默认隐藏图表视图）。
+        self._frame._chart_toggle, self._frame._chart_stack = self._build_chart_toggle()
+        self._frame._chart_stack.addWidget(self._frame.log_view)
+        root.addWidget(self._frame._chart_toggle)
+        root.addWidget(self._frame._chart_stack)
         self._frame._action_row = self._build_actions()
         root.addWidget(self._frame._action_row)
 
@@ -508,6 +515,25 @@ class PerformanceLauncherForm:
         log_view.setUndoRedoEnabled(False)
         log_view.document().setMaximumBlockCount(self._frame._max_log_lines)
         return log_view
+
+    def _build_chart_toggle(self) -> tuple[QWidget, QStackedWidget]:
+        """构建日志/图表切换条与承载栈（P3）：图表视图由对话框注入到栈内。"""
+
+        toggle = QWidget()
+        toggle_layout = QHBoxLayout(toggle)
+        toggle_layout.setContentsMargins(0, 0, 0, 0)
+        segmented = SegmentedControl(parent=toggle)
+        segmented.set_items(["日志", "图表"], data=["log", "chart"])
+        # 功能提示契约：分段按钮提供英文短描述（tooltip 契约测试）。
+        for button, tip in zip(segmented.buttons(), ("Show run logs", "Show result charts")):
+            button.setToolTip(tip)
+            button.setProperty("functionalToolTip", tip)
+        toggle_layout.addWidget(segmented)
+        stack = QStackedWidget()
+        segmented.currentChanged.connect(
+            lambda value: stack.setCurrentIndex(1 if value == "chart" else 0)
+        )
+        return toggle, stack
 
     def _build_actions(self) -> QWidget:
         container = QWidget()

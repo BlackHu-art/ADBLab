@@ -111,6 +111,13 @@ class PerformanceLauncherRun:
         self._frame._run_started_at = None
         result_dir = self._frame._runner.latest_result_dir() or ""
         self._frame._last_result_root = result_dir
+        # P3：加载静态 CSV 指标到图表视图（空结果保持空态，不阻塞完成流程）。
+        loader = getattr(self._frame, "_load_chart_metrics", None)
+        if loader is not None:
+            try:
+                loader(result_dir)
+            except Exception:
+                pass
         self._frame._update_result_action()
         report_file = self._frame._runner.latest_report_file()
         last_config = getattr(self._frame._runner, "last_config", None)

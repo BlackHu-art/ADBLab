@@ -141,6 +141,13 @@ class PerformanceLauncherDialog(QDialog):
         self.runner_finished.connect(self._on_runner_finished)
 
         self._build_ui(package_name)
+        # P3 图表视图：注入到双视图栈，运行结束后由 _mark_runner_finished 加载指标。
+        from gui.widgets.perf_chart_view import PerfChartView
+
+        self.chart_view = PerfChartView(self)
+        chart_stack = getattr(self, "_chart_stack", None)
+        if chart_stack is not None:
+            chart_stack.addWidget(self.chart_view)
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
@@ -150,6 +157,19 @@ class PerformanceLauncherDialog(QDialog):
 
     def _build_ui(self, package_name):
         return self._form_controller._build_ui(package_name)
+
+    def _load_chart_metrics(self, result_dir: str) -> None:
+        """解析结果目录 CSV 并全量替换图表曲线（P3）。"""
+
+        from services.perf_chart_data import load_result_metrics
+
+        if not result_dir:
+            self.chart_view.clear()
+            return
+        metrics = load_result_metrics(result_dir)
+        self.chart_view.set_series(
+            {name: series.values for name, series in metrics.items()}
+        )
 
     def _build_config_section(self, package_name):
         return self._form_controller._build_config_section(package_name)

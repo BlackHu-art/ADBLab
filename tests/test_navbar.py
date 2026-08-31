@@ -129,3 +129,19 @@ def test_shell_routes_pages_and_settings_callback(qt_application):
     shell.set_page("settings")
     assert opened == [True]
     assert shell.current_page == "tasks"
+
+
+def test_base_panel_card_factory_contract():
+    """P2 组件接入：BasePanel._card 产出 Fluent Card 并带契约属性。"""
+
+    from gui.panels.base_panel import BasePanel
+    from gui.widgets.fluent.card import Card
+
+    panel = BasePanel.__new__(BasePanel)
+    card = panel._card("测试卡片")
+    assert isinstance(card, Card)
+    assert card.accessibleName() == "测试卡片"
+    assert card.toolTip() == "测试卡片"
+    from gui.styles import FontRole
+
+    assert card.property("fontRole") == FontRole.UI.value
