@@ -8,6 +8,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QScrollArea, QStyle, QStyleOptionViewItem, QWidget
 
 from gui.panels.device_manager_responsive import _DeviceCompositePlan, _DeviceResponsiveBinding
+from gui.panels.device_manager_view import _CONNECT_CARD_BORDER, _CONNECT_CARD_PADDING_H
 from gui.widgets.responsive_controller import ReflowReason
 from gui.widgets.responsive_layout import GridPlan, LayoutContext
 
@@ -142,8 +143,14 @@ class DeviceManagerLayout:
             - margins[2]
             - connect_action_plan.spacing * max(0, connect_action_plan.mode.columns - 1),
         )
+        # medium 的连接卡片有 1px 边框 + 8px 内边距水平占位；Connect 固定宽度必须
+        # 扣除该占位，否则按钮最小宽度会反向顶宽卡片与视觉根。常量与卡片 QSS 同源，
+        # 不读取实时 contentsMargins，避免模式切换瞬间套用上一形态样式造成断点滞后。
+        connect_card_insets = 0
+        if mode == "medium":
+            connect_card_insets = (_CONNECT_CARD_BORDER + _CONNECT_CARD_PADDING_H) * 2
         connect_width = (
-            max(1, connect_viewport_width - margins[0] - margins[2])
+            max(1, connect_viewport_width - margins[0] - margins[2] - connect_card_insets)
             if mode == "medium"
             else max(1, usable_width // connect_action_plan.mode.columns)
         )
@@ -256,6 +263,10 @@ class DeviceManagerLayout:
         self._frame._sync_device_control_heights()
         self._frame._update_device_minimum_heights(plan.body_minimum_height)
         self._frame._sync_address_popup_width()
+        # 连接卡片样式随模式切换；相同模式内由视图控制器去重，不重复抛光。
+        apply_card_style = getattr(self._frame, "_apply_connect_card_style", None)
+        if callable(apply_card_style):
+            apply_card_style(plan.mode)
 
     def device_list_minimum_height(self) -> int:
         """返回当前内容下可完整显示一行设备所需的列表高度。"""

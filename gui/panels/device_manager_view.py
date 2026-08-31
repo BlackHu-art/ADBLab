@@ -8,15 +8,90 @@ from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHBoxLayout,
     QHeaderView,
+    QLabel,
     QListWidgetItem,
     QTableView,
+    QWidget,
 )
 
 from gui.panels.side_panel_signals import BlockSignals
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.responsive_controller import ReflowReason
 from models.device_store import DeviceStore
+
+# 连接卡片在 compact/medium 形态下的水平占位常量：左右各 1px 边框 + 8px 内边距。
+# 布局控制器按该常量扣除 Connect 固定宽度，避免模式切换瞬间读取上一形态的实时
+# contentsMargins 造成断点滞后（wide 形态卡片保持零占位，见 _connect_card_style）。
+_CONNECT_CARD_BORDER = 1
+_CONNECT_CARD_PADDING_H = 8
+
+# 发现状态徽标按状态键映射主题 token；徽标文本只补充标题区视觉，
+# set_discovery_state 的状态字符串与标题文本契约保持不变。
+_DISCOVERY_BADGE_COLORS = {
+    "scanning": "BUTTON_ACCENT",
+    "empty": "TEXT_SECONDARY",
+    "unavailable": "BUTTON_DANGER",
+    "ready": "LOG_SUCCESS",
+}
+
+
+class _DeviceCardRow(QWidget):
+    """设备行卡片：信息文本 + 状态徽标；鼠标事件全部透传给列表原生处理。"""
+
+    def __init__(
+        self,
+        text: str,
+        badge_text: str,
+        badge_kind: str,
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self.setObjectName("deviceCard")
+        self.setProperty("cardHovered", "false")
+        self._badge_kind = badge_kind
+        # 行卡片对鼠标透明：勾选、双击、悬停全部由 QListWidget 原生路径处理。
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._info_label = QLabel(text, self)
+        self._info_label.setObjectName("deviceCardText")
+        self._badge = QLabel(badge_text, self)
+        self._badge.setObjectName("deviceBadge")
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+        layout.addWidget(self._info_label, 1)
+        layout.addWidget(self._badge, 0)
+        self._sync_card_style()
+
+    def set_device_text(self, text: str) -> None:
+        """更新卡片信息文本（与条目文本保持同源）。"""
+
+        self._info_label.setText(text)
+
+    def set_badge(self, text: str, kind: str) -> None:
+        """更新状态徽标文本与配色。"""
+
+        self._badge.setText(text)
+        self._badge_kind = kind
+        self._sync_card_style()
+
+    def _sync_card_style(self) -> None:
+        """按当前主题重建行卡片与徽标样式。"""
+
+        bs = BaseStyles
+        self.setStyleSheet(
+            f"QWidget#deviceCard {{ background-color: {bs.color('PANEL_BG')};"
+            f" border-radius: {bs.RADIUS_SM}px; }}"
+            f"QWidget#deviceCard[cardHovered=\"true\"] {{"
+            f" background-color: {bs.color('BUTTON_HOVER')}; }}"
+        )
+        badge_bg = bs.color("LOG_SUCCESS" if self._badge_kind == "ready" else "LOG_WARNING")
+        self._badge.setStyleSheet(
+            f"QLabel#deviceBadge {{ background-color: {badge_bg}; color: #ffffff;"
+            f" border-radius: 7px; padding: 0 6px; }}"
+        )
 
 
 class DeviceManagerView:
@@ -35,6 +110,10 @@ class DeviceManagerView:
             item = self._frame.listbox_devices.item(i)
             if item:
                 item.setFont(font)
+                card = self._frame.listbox_devices.itemWidget(item)
+                if card is not None:
+                    # 行卡片跟随列表等宽字体；字号变化后徽标几何同步重算。
+                    card.setFont(font)
         view = self._frame.ip_entry.view()
         if view is not None:
             view.setFont(font)
@@ -48,10 +127,125 @@ class DeviceManagerView:
             sync_heights()
         if callable(update_minimums) and hasattr(self._frame, "_device_action_frame"):
             update_minimums()
+        self._sync_discovery_badge_geometry()
 
     def _apply_device_list_style(self):
         self._frame.apply_fonts()
         self._frame.listbox_devices.setStyleSheet(BaseStyles.DEVICE_LIST_STYLE())
+        self._apply_device_card_styles()
+
+    def _apply_device_card_styles(self) -> None:
+        """刷新设备行卡片、连接卡片、动作区卡片与发现状态徽标的主题样式。"""
+
+        frame = self._frame
+        listbox = getattr(frame, "listbox_devices", None)
+        if listbox is not None:
+            for row in range(listbox.count()):
+                item = listbox.item(row)
+                card = listbox.itemWidget(item) if item is not None else None
+                if card is not None and hasattr(card, "_sync_card_style"):
+                    card._sync_card_style()
+        connect_card = getattr(frame, "_connect_card", None)
+        if connect_card is not None:
+            connect_card.setStyleSheet(
+                self._connect_card_style(getattr(frame, "_device_layout_mode", None))
+            )
+        action_frame = getattr(frame, "_device_action_frame", None)
+        if action_frame is not None:
+            action_frame.setStyleSheet(self._action_card_style())
+        badge = getattr(frame, "_discovery_badge", None)
+        if badge is not None and badge.text():
+            badge.setStyleSheet(
+                self._discovery_badge_style(
+                    getattr(frame, "_discovery_badge_kind", "empty")
+                )
+            )
+            self._sync_discovery_badge_geometry()
+
+    def _apply_connect_card_style(self, mode: str) -> None:
+        """按响应式模式切换连接卡片样式；相同模式不重复抛光，避免额外布局代次。"""
+
+        frame = self._frame
+        card = getattr(frame, "_connect_card", None)
+        if card is None or getattr(frame, "_connect_card_mode", None) == mode:
+            return
+        frame._connect_card_mode = mode
+        card.setStyleSheet(self._connect_card_style(mode))
+
+    def _connect_card_style(self, mode) -> str:
+        """连接区卡片 QSS；wide 保持零几何占位以维持与主体列宽对齐契约。"""
+
+        bs = BaseStyles
+        if mode == "wide":
+            return "QFrame#connectCard { background: transparent; border: none; }"
+        return (
+            f"QFrame#connectCard {{"
+            f" background-color: {bs.color('INPUT_BG')};"
+            f" border: {_CONNECT_CARD_BORDER}px solid {bs.color('BORDER_COLOR')};"
+            f" border-radius: {bs.RADIUS_LG}px;"
+            f" padding: 6px {_CONNECT_CARD_PADDING_H}px; }}"
+        )
+
+    def _action_card_style(self) -> str:
+        """动作区卡片 QSS：零边框零内边距，不改变动作网格度量契约。"""
+
+        bs = BaseStyles
+        return (
+            f"QFrame#deviceActionCard {{"
+            f" background-color: {bs.color('INPUT_BG')};"
+            f" border: none;"
+            f" border-radius: {bs.RADIUS_LG}px; }}"
+        )
+
+    def _discovery_badge_style(self, kind: str) -> str:
+        """发现状态徽标 QSS；配色取自主题 token，文本统一白字。"""
+
+        color_key = _DISCOVERY_BADGE_COLORS.get(kind, "TEXT_SECONDARY")
+        return (
+            f"QLabel#discoveryBadge {{ background-color: {BaseStyles.color(color_key)};"
+            f" color: #ffffff; border-radius: 6px; padding: 0 6px; }}"
+        )
+
+    def _sync_discovery_badge_geometry(self) -> None:
+        """把发现状态徽标对齐到分组标题净空带右上角（浮层，不参与布局）。"""
+
+        frame = self._frame
+        badge = getattr(frame, "_discovery_badge", None)
+        group = getattr(frame, "_device_group", None)
+        # 仅对真实 QLabel 徽标做几何对齐：测试用 Mock 桩不应进入尺寸数学。
+        if not isinstance(badge, QLabel) or group is None or not badge.text():
+            return
+        hint = badge.sizeHint()
+        title_margin = BaseStyles.group_box_title_margin()
+        badge_height = max(6, min(max(1, hint.height()), max(6, title_margin - 2)))
+        badge_width = max(1, hint.width())
+        badge.setGeometry(
+            max(0, group.width() - badge_width - 12),
+            max(1, (title_margin - badge_height) // 2),
+            badge_width,
+            badge_height,
+        )
+        badge.raise_()
+
+    def _sync_device_card(self, item: QListWidgetItem, txt: str, info: dict) -> None:
+        """创建或更新行卡片；条目文本仍是数据、提示与滚动契约的单一真源。"""
+
+        listbox = self._frame.listbox_devices
+        placeholder = str(info.get("Brand", "")) == "ADB" and str(
+            info.get("Model", "")
+        ) == "Detecting"
+        badge_kind = "detecting" if placeholder else "ready"
+        badge_text = "Detecting" if placeholder else "Ready"
+        card = listbox.itemWidget(item)
+        if card is None:
+            card = _DeviceCardRow(txt, badge_text, badge_kind)
+            card.setProperty("fontRole", FontRole.MONO.value)
+            card.setFont(BaseStyles.font_for_role(FontRole.MONO))
+            listbox.setItemWidget(item, card)
+        else:
+            card.set_device_text(txt)
+            card.set_badge(badge_text, badge_kind)
+        self._apply_device_card_styles()
 
     def set_discovery_state(self, state: str) -> None:
         """在设备分组标题中紧凑显示发现状态。"""
@@ -80,6 +274,20 @@ class DeviceManagerView:
         self._frame._device_group.setAccessibleName(title)
         self._frame._device_group.setAccessibleDescription(description)
         self._frame._device_group.setToolTip(description)
+        # 徽标只补充标题区视觉；状态字符串、标题与可访问文本契约均保持不变。
+        badge_labels = {
+            "scanning": ("Scanning", "scanning"),
+            "empty": ("Empty", "empty"),
+            "unavailable": ("Unavailable", "unavailable"),
+            "ready": ("Connected", "ready"),
+        }
+        badge_text, badge_kind = badge_labels[state]
+        badge = getattr(self._frame, "_discovery_badge", None)
+        if badge is not None:
+            badge.setText(badge_text)
+            self._frame._discovery_badge_kind = badge_kind
+            badge.setStyleSheet(self._discovery_badge_style(badge_kind))
+            self._sync_discovery_badge_geometry()
 
     def update_device_list(self, devices: list[str] | None = None):
         if devices is None:
@@ -124,6 +332,7 @@ class DeviceManagerView:
                         Qt.CheckState.Checked if ip_addr in prev else Qt.CheckState.Unchecked
                     )
                     item.setToolTip(txt)
+                    self._sync_device_card(item, txt, info)
         finally:
             del blocker
         self._frame.panel._connected_device_cache = devices

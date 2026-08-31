@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import weakref
+from typing import cast
 
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import (
     QCompleter,  # noqa: F401  供测试通过本模块命名空间补丁 QCompleter。
     QFrame,
     QGridLayout,
+    QLabel,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -25,7 +27,7 @@ from gui.panels.device_manager_responsive import (
     _ShrinkableDeviceBody,
     _ShrinkableDeviceList,
 )
-from gui.panels.device_manager_view import DeviceManagerView
+from gui.panels.device_manager_view import DeviceManagerView, _DeviceCardRow
 from gui.styles import FontRole
 from gui.widgets.responsive_controller import ReflowReason
 from models.device_store import DeviceStore  # noqa: F401  供测试通过本模块命名空间补丁。
@@ -62,6 +64,13 @@ class DeviceManager(BasePanel):
         self._device_group = g_dev
         g_dev.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         g_dev.setAccessibleName("Devices")
+        g_dev.installEventFilter(self)
+        # 发现状态徽标：浮层 QLabel 对齐分组标题净空带右上角，不进入任何布局。
+        # 仅补充标题区视觉；状态字符串与标题文本仍由 set_discovery_state 维护。
+        self._discovery_badge = QLabel("", w)
+        self._discovery_badge.setObjectName("discoveryBadge")
+        self._discovery_badge.setProperty("fontRole", FontRole.UI.value)
+        self._discovery_badge_kind = "empty"
         gd_l = QVBoxLayout(g_dev)
         # 与分组标题保留固定净空；连接区形态保持固定，极限尺寸由局部滚动承接。
         gd_l.setContentsMargins(4, 9, 4, 4)
@@ -91,7 +100,15 @@ class DeviceManager(BasePanel):
         rc.addWidget(self.btn_connect_devices, 0, 1)
         rc.setColumnStretch(0, 3)
         rc.setColumnStretch(1, 1)
-        gd_l.addLayout(rc)
+        # 连接区卡片：仅视觉包壳，ip_entry / btn_connect_devices 与网格结构不变。
+        connect_card = QFrame()
+        connect_card.setObjectName("connectCard")
+        card_lo = QVBoxLayout(connect_card)
+        card_lo.setContentsMargins(0, 0, 0, 0)
+        card_lo.setSpacing(0)
+        card_lo.addLayout(rc)
+        gd_l.addWidget(connect_card)
+        self._connect_card = connect_card
 
         self.set_discovery_state("scanning")
 
@@ -122,6 +139,7 @@ class DeviceManager(BasePanel):
         self._apply_device_list_style()
 
         side = QFrame()
+        side.setObjectName("deviceActionCard")
         sl = QGridLayout(side)
         # medium 状态下 Connect 与两列动作共用水平列宽，间距也必须一致。
         sl.setHorizontalSpacing(rc.horizontalSpacing())
@@ -137,7 +155,10 @@ class DeviceManager(BasePanel):
             tooltip="Show selected device details in the operation log",
         )
         self.btn_disconnect = self._b(
-            "Disconnect", "link-break.svg", tooltip="Disconnect the selected devices"
+            "Disconnect",
+            "link-break.svg",
+            variant="danger",
+            tooltip="Disconnect the selected devices",
         )
         self.btn_restart_dev = self._b(
             "Restart", "arrow-counter-clockwise.svg", tooltip="Restart the selected devices"
@@ -196,6 +217,7 @@ class DeviceManager(BasePanel):
         self._sync_device_control_heights()
         self._update_device_minimum_heights()
         self._update_action_states()
+        self._apply_device_card_styles()
         gd_l.addWidget(body_host)
         lo.addWidget(g_dev)
         self.panel.request_responsive_reflow(ReflowReason.EXPLICIT)
@@ -300,6 +322,21 @@ class DeviceManager(BasePanel):
             self, "_view_controller", DeviceManagerView
         )._apply_device_list_style()
 
+    def _apply_device_card_styles(self):
+        return _resolve_device_controller(
+            self, "_view_controller", DeviceManagerView
+        )._apply_device_card_styles()
+
+    def _apply_connect_card_style(self, mode):
+        return _resolve_device_controller(
+            self, "_view_controller", DeviceManagerView
+        )._apply_connect_card_style(mode)
+
+    def _sync_discovery_badge_geometry(self):
+        return _resolve_device_controller(
+            self, "_view_controller", DeviceManagerView
+        )._sync_discovery_badge_geometry()
+
     def set_discovery_state(self, state):
         return _resolve_device_controller(
             self, "_view_controller", DeviceManagerView
@@ -346,8 +383,12 @@ class DeviceManager(BasePanel):
         )._on_device_double_click(item)
 
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "ip_entry", None) and event.type() == QEvent.Type.Resize:
-            self._sync_address_popup_width()
+        if event.type() == QEvent.Type.Resize:
+            if watched is getattr(self, "ip_entry", None):
+                self._sync_address_popup_width()
+            if watched is getattr(self, "_device_group", None):
+                # 分组宽度变化时让浮层发现徽标跟随标题区右上角。
+                self._sync_discovery_badge_geometry()
         return super().eventFilter(watched, event)
 
     # ── 选择状态 ────────────────────────────────────────────────────────
@@ -380,7 +421,12 @@ class DeviceManager(BasePanel):
                 item = frame.listbox_devices.item(i)
                 info = item.data(Qt.ItemDataRole.UserRole)
                 if info and info.get("ip") == device_ip:
-                    item.setText(f"{device_ip}  |  {package_name}")
+                    text = f"{device_ip}  |  {package_name}"
+                    item.setText(text)
+                    card = frame.listbox_devices.itemWidget(item)
+                    if card is not None:
+                        # 行卡片文本与条目文本保持同源显示。
+                        cast(_DeviceCardRow, card).set_device_text(text)
                     apps_tab = getattr(frame.panel, "_apps_tab", None)
                     if apps_tab:
                         apps_tab.add_package_to_history(package_name)

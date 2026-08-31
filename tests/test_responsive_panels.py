@@ -537,7 +537,7 @@ def test_grid_plan_fingerprint_includes_spacing(qt_application, monkeypatch):
 
 
 def test_responsive_binding_does_not_rewrite_an_identical_grid_plan(qt_application):
-    """Applying an identical plan twice must not detach and re-add every widget."""
+    """重复应用完全相同的计划不得先摘除再重挂全部控件。"""
 
     class CountingGridLayout(QGridLayout):
         def __init__(self, parent):
@@ -3694,8 +3694,14 @@ def test_device_manager_keeps_connection_and_device_columns_aligned_after_show(
         assert manager._device_layout_mode == mode, (actual_width, manager._device_layout_limits())
         if mode == "compact":
             _assert_near(manager.ip_entry.width(), manager.btn_connect_devices.width())
+            # 卡片化映射：compact 连接区包在 1px 边框 + 8px 内边距的 connectCard
+            # 内，Connect 按钮与动作帧的列宽差恒等于该卡片水平占位，列宽语义不变。
+            connect_card = manager._connect_card
+            card_insets = (
+                connect_card.contentsMargins().left() + connect_card.contentsMargins().right()
+            )
             _assert_near(
-                manager.btn_connect_devices.width(),
+                manager.btn_connect_devices.width() + card_insets,
                 manager._device_action_frame.width(),
             )
         elif mode == "medium":

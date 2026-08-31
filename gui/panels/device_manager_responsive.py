@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import weakref
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QListWidget, QScrollArea, QWidget
+from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt
+from PySide6.QtWidgets import QListWidget, QScrollArea, QStyle, QStyleOptionViewItem, QWidget
 
+from gui.widgets.fluent._base import repolish
 from gui.widgets.responsive_controller import ResponsiveGridBinding
 from gui.widgets.responsive_layout import (
     GridPlan,
@@ -116,13 +117,78 @@ class _DeviceResponsiveBinding(ResponsiveGridBinding):
 
 
 class _ShrinkableDeviceList(QListWidget):
-    """只向布局声明一行的安全高度，剩余空间仍可由伸展因子分配。"""
+    """只向布局声明一行的安全高度；行卡片透传鼠标，勾选/悬停由列表原生驱动。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._card_hovered_row = -1
+        # 行卡片对鼠标透明，悬停高亮由列表 viewport 的 hover 事件统一维护。
+        self.viewport().installEventFilter(self)
 
     def sizeHint(self) -> QSize:
         return QSize(0, max(0, self.minimumHeight()))
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, max(0, self.minimumHeight()))
+
+    def eventFilter(self, watched, event):
+        if watched is self.viewport() and event.type() in (
+            QEvent.Type.HoverMove,
+            QEvent.Type.HoverLeave,
+        ):
+            position = (
+                event.position().toPoint()
+                if event.type() == QEvent.Type.HoverMove
+                else None
+            )
+            self._sync_card_hover(position)
+        return super().eventFilter(watched, event)
+
+    def _sync_card_hover(self, position) -> None:
+        """把悬停行映射为行卡片的 cardHovered property，驱动其 QSS 高亮。"""
+
+        index = self.indexAt(position) if position is not None else QModelIndex()
+        hovered_row = index.row() if index.isValid() else -1
+        if hovered_row == self._card_hovered_row:
+            return
+        self._card_hovered_row = hovered_row
+        for row in range(self.count()):
+            item = self.item(row)
+            widget = self.itemWidget(item) if item is not None else None
+            if widget is None:
+                continue
+            value = "true" if row == hovered_row else "false"
+            if widget.property("cardHovered") != value:
+                widget.setProperty("cardHovered", value)
+                repolish(widget)
+
+    def mouseReleaseEvent(self, event) -> None:
+        """itemWidget 行不再经过 QStyledItemDelegate 点击处理，这里按相同坐标
+        判定复制勾选指示器切换，保持复选交互契约不变。"""
+
+        position = event.position().toPoint()
+        index = self.indexAt(position)
+        item = self.item(index.row()) if index.isValid() else None
+        if item is not None and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+            option = QStyleOptionViewItem()
+            self.initViewItemOption(option)
+            # PySide6 类型桩未暴露 ViewItem 选项字段，运行时接口存在（与布局
+            # 控制器 _empty_device_row_height 的收窄写法一致）。
+            cast(Any, option).rect = self.visualItemRect(item)
+            cast(Any, option).features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+            cast(Any, option).checkState = item.checkState()
+            check_rect = self.style().subElementRect(
+                QStyle.SubElement.SE_ItemViewItemCheckIndicator, option, self
+            )
+            if check_rect.contains(position):
+                item.setCheckState(
+                    Qt.CheckState.Unchecked
+                    if item.checkState() == Qt.CheckState.Checked
+                    else Qt.CheckState.Checked
+                )
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
 
 
 class _ShrinkableDeviceBody(QWidget):
