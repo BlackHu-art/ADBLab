@@ -62,8 +62,8 @@ class AboutDialog(QDialog):
         self._header = QFrame()
         self._header.setObjectName("aboutHeader")
         header_layout = QVBoxLayout(self._header)
-        header_layout.setContentsMargins(0, 8, 0, 0)
-        header_layout.setSpacing(0)
+        header_layout.setContentsMargins(8, 8, 8, 8)
+        header_layout.setSpacing(4)
 
         self._title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
         self._title.setObjectName("aboutTitle")
@@ -83,6 +83,16 @@ class AboutDialog(QDialog):
         self._version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._version.setWordWrap(True)
         header_layout.addWidget(self._version)
+
+        # ── 页头统一：状态徽标（开源许可）────────────────────────────────
+        # 视觉重设计：与其他对话框页头卡片（dialogHeaderCard/dialogStatusBadge）
+        # 视觉一致；aboutHeader 升级为卡片底色+细边框+圆角，标题/版本语义不变。
+        self._status_badge = QLabel("Open Source")
+        self._status_badge.setObjectName("dialogStatusBadge")
+        self._status_badge.setProperty("fontRole", FontRole.UI.value)
+        self._status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._status_badge.setToolTip("Licensed for open source use")
+        header_layout.addWidget(self._status_badge, 0, Qt.AlignmentFlag.AlignHCenter)
 
         self._content_layout.addWidget(self._header)
 
@@ -225,20 +235,28 @@ class AboutDialog(QDialog):
         self._hint.setFont(ui_font)
         self._footer.setFont(footer_font)
         self._close_btn.setFont(close_font)
+        if hasattr(self, "_status_badge"):
+            self._status_badge.setFont(ui_font)
 
         def c(key):
             return BaseStyles.color(key)
 
         accent = c("BUTTON_ACCENT")
         radius = BaseStyles.RADIUS_MD
+        if hasattr(self, "_status_badge"):
+            self._status_badge.setStyleSheet(
+                f"QLabel#dialogStatusBadge {{ background-color: {c('LOG_SUCCESS')};"
+                f" color: {c('PANEL_BG')}; border-radius: 7px; padding: 1px 8px; }}"
+            )
 
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {c("PANEL_BG")};
             }}
             QFrame#aboutHeader {{
-                background-color: transparent;
-                border: none;
+                background-color: {c("PANEL_BG")};
+                border: 1px solid {c("BORDER_COLOR")};
+                border-radius: {BaseStyles.RADIUS_LG}px;
             }}
             QLabel#aboutTitle {{
                 color: {c("TITLE_COLOR")};
