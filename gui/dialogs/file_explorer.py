@@ -7,7 +7,9 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -115,6 +117,37 @@ class FileExplorerDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
         layout.setContentsMargins(6, 6, 6, 6)
+
+        # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
+        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
+        self.header_card = QFrame()
+        self.header_card.setObjectName("dialogHeaderCard")
+        hl = QVBoxLayout(self.header_card)
+        hl.setContentsMargins(12, 8, 12, 8)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self.dialog_title = QLabel("File Explorer")
+        self.dialog_title.setObjectName("dialogTitle")
+        self.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
+        self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self.status_badge = QLabel("No device")
+        self.status_badge.setObjectName("dialogStatusBadge")
+        self.status_badge.setProperty("fontRole", FontRole.UI.value)
+        self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.status_badge.setToolTip("Device availability for file operations")
+        title_row.addWidget(self.dialog_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.status_badge)
+        self.dialog_subtitle = QLabel("Browse and manage device files")
+        self.dialog_subtitle.setObjectName("dialogSubtitle")
+        self.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.dialog_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self.dialog_subtitle)
+        layout.addWidget(self.header_card)
 
         self._path_layout = QGridLayout()
         self.path_layout = self._path_layout
@@ -284,6 +317,28 @@ class FileExplorerDialog(QDialog):
         sel_bg = bs.color("SELECTION_BG")
         sel_fg = bs.color("SELECTION_TEXT")
         btn_bg = bs.color("BUTTON_BG")
+        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        if hasattr(self, "header_card"):
+            self.header_card.setStyleSheet(
+                f"QFrame#dialogHeaderCard {{ background-color: {bs.color('PANEL_BG')};"
+                f" border: 1px solid {bs.color('BORDER_COLOR')};"
+                f" border-radius: {bs.RADIUS_LG}px; }}"
+            )
+            self.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
+            self.dialog_title.setStyleSheet(f"color: {bs.color('TITLE_COLOR')};")
+            self.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
+            self.dialog_subtitle.setStyleSheet(f"color: {bs.color('TEXT_SECONDARY')};")
+            self.status_badge.setFont(bs.font_for_role(FontRole.UI))
+            has_device = bool(self.device_ip)
+            self.status_badge.setText("Ready" if has_device else "No device")
+            background = (
+                bs.color("LOG_SUCCESS") if has_device else bs.color("TEXT_SECONDARY")
+            )
+            self.status_badge.setStyleSheet(
+                f"QLabel#dialogStatusBadge {{ background-color: {background};"
+                f" color: {bs.color('PANEL_BG')};"
+                f" border-radius: 7px; padding: 1px 8px; }}"
+            )
         self.table.setStyleSheet(f"""
             QTableWidget {{ background-color: {bg}; color: {fg};
                 border: 1px solid {border}; border-radius: {bs.RADIUS_MD}px;
