@@ -6,6 +6,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QCompleter,
+    QHBoxLayout,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
@@ -31,8 +33,10 @@ class AppPanel(BasePanel):
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
+        self._apps_section_groups: list[QWidget] = []
+        self._build_apps_header(lo)
 
-        g_ts = self._g("Text & Screen Capture")
+        g_ts = self._card_group("Text & Screen Capture")
         gts_l = QVBoxLayout(g_ts)
         gts_l.setSpacing(2)
         self.email_text_sender = self._in("Email, verification code, or text...")
@@ -72,7 +76,7 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_ts)
 
-        g_pm = self._g("Package Manager")
+        g_pm = self._card_group("Package Manager")
         gl_pm = QVBoxLayout(g_pm)
         gl_pm.setSpacing(2)
         self.program_edit = self._combo_editable(font_role=FontRole.MONO)
@@ -166,7 +170,7 @@ class AppPanel(BasePanel):
         self.package_action_binding = first_package_binding
         lo.addWidget(g_pm)
 
-        g_m = self._g("Monkey")
+        g_m = self._card_group("Monkey")
         gm_l = QVBoxLayout(g_m)
         gm_l.setSpacing(3)
 
@@ -370,7 +374,7 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_m)
 
-        g_r = self._g("Reports")
+        g_r = self._card_group("Reports")
         gr_l = QVBoxLayout(g_r)
         gr_l.setSpacing(2)
         self.get_bugreport_btn = self._b(
@@ -399,7 +403,7 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_r)
 
-        g_perf = self._g("Performance Diagnostics")
+        g_perf = self._card_group("Performance Diagnostics")
         gl_perf = QVBoxLayout(g_perf)
         gl_perf.setSpacing(2)
 
@@ -459,8 +463,93 @@ class AppPanel(BasePanel):
         self._monkey_pending_devices = set()
         self._monkey_batch_id = ""
         self._monkey_stopping = False
+        BaseStyles.theme_changed.connect(self._on_theme_changed_apps)
         self._update_action_states()
         return w
+
+    # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
+
+    def _card_group(self, t: str) -> QWidget:
+        """在既有分组样式上叠加卡片视觉；保持 QGroupBox 类型与标题语义不变。"""
+
+        g = self._g(t)
+        g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + self._section_card_qss())
+        self._apps_section_groups.append(g)
+        return g
+
+    def _section_card_qss(self) -> str:
+        """分区卡片 QSS：面板底色 + 细边框 + 圆角，标题间隙由 GROUP_BOX_STYLE 决定。"""
+
+        c = BaseStyles.color
+        return (
+            f"QGroupBox {{ background-color: {c('PANEL_BG')};"
+            f" border: 1px solid {c('BORDER_COLOR')};"
+            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
+        )
+
+    def _build_apps_header(self, lo) -> None:
+        """构建页头：标题、副标题与设备可用性状态徽标。"""
+
+        header = QWidget()
+        header.setObjectName("appsHeader")
+        hl = QVBoxLayout(header)
+        hl.setContentsMargins(0, 0, 0, 4)
+        hl.setSpacing(2)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self.apps_title = QLabel("Applications")
+        self.apps_title.setProperty("fontRole", FontRole.TITLE.value)
+        self.apps_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self.apps_status_badge = QLabel("No device")
+        self.apps_status_badge.setObjectName("appsStatusBadge")
+        self.apps_status_badge.setProperty("fontRole", FontRole.UI.value)
+        self.apps_status_badge.setFont(self._font_sm)
+        self.apps_status_badge.setToolTip("Device availability for app actions")
+        title_row.addWidget(self.apps_title)
+        title_row.addStretch(1)
+        title_row.addWidget(self.apps_status_badge)
+        self.apps_subtitle = QLabel("Package, Monkey and diagnostics tools")
+        # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
+        # 副标题用 UI 角色 + 次级文字色维持视觉层级。
+        self.apps_subtitle.setProperty("fontRole", FontRole.UI.value)
+        self.apps_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self.apps_subtitle.setWordWrap(True)
+        hl.addLayout(title_row)
+        hl.addWidget(self.apps_subtitle)
+        lo.addWidget(header)
+        self._apply_apps_header_style()
+
+    def _apply_apps_header_style(self) -> None:
+        """按当前主题重建页头与徽标颜色。"""
+
+        if not hasattr(self, "apps_title"):
+            return
+        self.apps_title.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
+        self.apps_subtitle.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
+        self._refresh_apps_status_badge()
+
+    def _refresh_apps_status_badge(self) -> None:
+        """按设备选中状态刷新徽标；绿=可用，灰=未选择设备。"""
+
+        if not hasattr(self, "apps_status_badge"):
+            return
+        has_device = bool(self.selected_devices)
+        self.apps_status_badge.setText("Ready" if has_device else "No device")
+        background = (
+            BaseStyles.color("LOG_SUCCESS") if has_device else BaseStyles.color("TEXT_SECONDARY")
+        )
+        self.apps_status_badge.setStyleSheet(
+            f"QLabel#appsStatusBadge {{ background-color: {background};"
+            f" color: {BaseStyles.color('PANEL_BG')};"
+            f" border-radius: 7px; padding: 1px 8px; }}"
+        )
+
+    def _on_theme_changed_apps(self, _name: str) -> None:
+        """主题切换时重建页头与分区卡片样式。"""
+
+        self._apply_apps_header_style()
+        for group in getattr(self, "_apps_section_groups", ()):
+            group.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + self._section_card_qss())
 
     # ── Monkey 参数持久化 ───────────────────────────────────────────────
 
@@ -550,7 +639,10 @@ class AppPanel(BasePanel):
             self._pct_total_lbl.setAccessibleDescription(
                 f"Event percentages total {total} percent; 100 percent is recommended"
             )
-        self._pct_total_lbl.setStyleSheet(f"color: {color}; font-weight: 600;")
+        self._pct_total_lbl.setStyleSheet(
+            f"color: {color}; font-weight: 600;"
+            f" border: 1px solid {color}; border-radius: 7px; padding: 0 8px;"
+        )
 
     def _on_record_start(self):
         if getattr(self, "_recording_running", False):
@@ -716,6 +808,7 @@ class AppPanel(BasePanel):
     def _update_action_states(self) -> None:
         """根据设备、包名和任务状态统一更新应用页操作可用性。"""
 
+        self._refresh_apps_status_badge()
         if not hasattr(self, "program_edit"):
             return
         has_device = bool(self.selected_devices)
