@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -60,8 +62,38 @@ class SettingsDialog(QDialog):
         content_widget = QWidget()
         content_widget.setObjectName("settingsContent")
         content_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        content = QVBoxLayout(content_widget)
-        content.setContentsMargins(10, 10, 10, 10)
+        outer = QVBoxLayout(content_widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(10, 10, 10, 10)
+        body_row.setSpacing(10)
+
+        # ── 分组导航：左侧分组列表，选中即滚动定位到对应分组 ─────────────
+        # 视觉重设计：设置改为"分组导航"形态；分区仍垂直堆叠在同一滚动内容中，
+        # 导航只是锚点跳转——所有分区控件保持挂载与可见性，压缩断点、网格坐标
+        # 与滚动契约全部不变（映射注释见各测试适配处）。
+        self._settings_nav = QListWidget()
+        self._settings_nav.setObjectName("settingsNav")
+        self._settings_nav.setFixedWidth(180)
+        self._settings_nav.setProperty("fontRole", FontRole.UI.value)
+        nav_order = (
+            ("Appearance", 0),
+            ("Window & Layout", 1),
+            ("Storage & Logs", 2),
+            ("Behavior", 3),
+        )
+        self._nav_targets: dict[int, QWidget] = {}
+        for title, target_index in nav_order:
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, target_index)
+            self._settings_nav.addItem(item)
+        self._settings_nav.currentRowChanged.connect(self._on_nav_row_changed)
+
+        sections_widget = QWidget()
+        content = QVBoxLayout(sections_widget)
+        content.setContentsMargins(0, 0, 0, 0)
         content.setSpacing(8)
 
         self._build_appearance(content)
@@ -70,19 +102,36 @@ class SettingsDialog(QDialog):
         self._build_behavior(content)
         content.addStretch()
 
+        for index in range(content.count()):
+            item = content.itemAt(index)
+            widget = item.widget() if item is not None else None
+            if isinstance(widget, QGroupBox):
+                self._nav_targets[index] = widget
+
         self._settings_scroll = QScrollArea()
         self._settings_scroll.setObjectName("settingsScroll")
         self._settings_scroll.setWidgetResizable(True)
         self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._settings_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self._settings_scroll.setWidget(content_widget)
+        self._settings_scroll.setWidget(sections_widget)
         self._settings_scroll.viewport().installEventFilter(self)
-        root.addWidget(self._settings_scroll, 1)
+        body_row.addWidget(self._settings_nav)
+        body_row.addWidget(self._settings_scroll, 1)
+        outer.addLayout(body_row)
+        root.addWidget(content_widget, 1)
         self._build_footer(root)
         self._appearance_compact = None
         self._window_compact = None
         self._general_compact = None
+        self._settings_nav.setCurrentRow(0)
         self._update_responsive_form_layout(force=True)
+
+    def _on_nav_row_changed(self, row: int) -> None:
+        """分组导航：把对应分组滚动到视口顶部。"""
+
+        target = self._nav_targets.get(row)
+        if target is not None:
+            self._settings_scroll.ensureWidgetVisible(target, 0, 20)
 
     # ── 外观 ────────────────────────────────────────────────────────────
 
@@ -827,6 +876,24 @@ class SettingsDialog(QDialog):
                 background-color: transparent;
             }}
             QWidget#settingsContent {{ background-color: transparent; }}
+            QListWidget#settingsNav {{
+                background-color: transparent;
+                border: none;
+                border-right: 1px solid {c("BORDER_COLOR")};
+            }}
+            QListWidget#settingsNav::item {{
+                color: {c("TEXT_PRIMARY")};
+                padding: 8px 10px;
+                border-radius: 6px;
+                margin: 1px 6px 1px 0;
+            }}
+            QListWidget#settingsNav::item:hover {{
+                background-color: {c("BUTTON_HOVER")};
+            }}
+            QListWidget#settingsNav::item:selected {{
+                background-color: {c("BUTTON_ACCENT")};
+                color: #ffffff;
+            }}
             QLabel#settingsLabel {{
                 color: {c("TEXT_PRIMARY")};
                 min-width: 72px;

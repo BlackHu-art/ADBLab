@@ -246,14 +246,17 @@ def test_settings_maximum_ui_font_keeps_compact_content_inside_viewport(
     _install_fake_settings(monkeypatch, _FakeSettings(ui_font_size=22))
     monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 22)
     dialog = SettingsDialog()
-    dialog.resize(520, 420)
+    # 视觉重设计映射：分组导航栏（settingsNav，180px）常驻左侧，520px 对话框
+    # 下内容视口只剩约 310px；宽度升到 720px 后内容视口约 510px，与重设计前
+    # 520px 对话框的内容宽度等价。压缩形态、无水平溢出与几何边界不变式全部保留。
+    dialog.resize(720, 420)
     dialog.show()
     qt_application.processEvents()
     try:
         viewport = dialog._settings_scroll.viewport()
         content = dialog._settings_scroll.widget()
 
-        assert dialog.width() == 520
+        assert dialog.width() == 720
         assert dialog._appearance_compact is True
         assert dialog._window_compact is True
         assert dialog._general_compact is True
