@@ -6,9 +6,11 @@ from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QGroupBox,
+    QHBoxLayout,
     QPushButton,
     QScrollArea,
-    QTabWidget,
+    QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -81,9 +83,15 @@ class SidePanel(QWidget):
         self._devices_tab = DeviceManager(self)
         self._device_widget = self._devices_tab.build_ui()
 
-        self.tabs = QTabWidget()
+        self.tabs = QStackedWidget()
         self.tabs.setFont(self._font_tab)
-        self._apply_tab_style()
+        # P1 页面栈迁移：QTabWidget → QStackedWidget + 自绘页签头（QToolButton 组）；
+        # 保持 currentChanged/count/setCurrentIndex/widget/font 等价契约与懒加载语义。
+        self._tab_header = QWidget()
+        self._tab_header_layout = QHBoxLayout(self._tab_header)
+        self._tab_header_layout.setContentsMargins(0, 0, 0, 0)
+        self._tab_header_layout.setSpacing(1)
+        self._tab_buttons: dict[int, QToolButton] = {}
 
         self._apps_tab = None
         self._advanced_tab = None
@@ -100,10 +108,30 @@ class SidePanel(QWidget):
             self._tab_scroll_areas[index] = scroll
             self._responsive_viewports[scroll.viewport()] = index
             scroll.viewport().installEventFilter(self)
-            self.tabs.addTab(scroll, name)
+            self.tabs.addWidget(scroll)
+            button = QToolButton(self._tab_header)
+            button.setText(name)
+            button.setObjectName(f"tabHeader_{name}")
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
+            button.setProperty("tabHeader", index)
+            button.setProperty("fontRole", FontRole.UI.value)
+            button.setFont(self._font_tab)
+            # 功能提示契约：英文短描述避免归一化后与标签重复（tooltip 契约测试）。
+            button.setToolTip(f"Switch to the {name} tab")
+            button.setProperty("functionalToolTip", f"Switch to the {name} tab")
+            button.clicked.connect(
+                lambda _checked=False, i=index: self.tabs.setCurrentIndex(i)
+            )
+            self._tab_header_layout.addWidget(button)
+            self._tab_buttons[index] = button
         self.tabs.currentChanged.connect(self._ensure_tab_loaded)
+        self.tabs.currentChanged.connect(self._sync_tab_buttons)
+        self._tab_buttons[0].setChecked(True)
         self._ensure_tab_loaded(0)
+        self._apply_tab_style()
 
+        lo.addWidget(self._tab_header, stretch=0)
         lo.addWidget(self.tabs, stretch=1)
 
     def _create_tab_scroll_area(self) -> QScrollArea:
@@ -111,7 +139,10 @@ class SidePanel(QWidget):
         scroll.setWidgetResizable(True)
         # 响应式重排优先；极窄宽度或超大字体下保留可访问的横向兜底。
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # 纵向滚动条预留（AlwaysOn）：页面栈迁移后页签头占用少量高度，内容溢出时
+        # 滚动条若在 settle 后弹出会吃掉 viewport 宽度，破坏"一次 settle 即最终几何"
+        # 契约；预留空间后滚动条出现与否都不改变内容宽度（P1 页面栈迁移）。
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         scroll.setStyleSheet(
             "QScrollArea { border: none; background: transparent; }\n"
             f"{BaseStyles.SCROLLBAR_STYLE()}"
@@ -337,20 +368,31 @@ class SidePanel(QWidget):
     def _apply_tab_style(self):
         bs = BaseStyles
         self.tabs.setStyleSheet(
-            "QTabWidget::pane{border:1px solid "
+            "QStackedWidget{border:1px solid "
             f"{bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;"
             f"background:{bs.color('WINDOW_BG')}"
-            ";}QTabBar::tab{background:"
-            f"{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};"
-            "border:1px solid "
-            f"{bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;"
-            f"border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px"
-            ";}QTabBar::tab:selected{background:"
-            f"{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')}"
-            ";}QTabBar::tab:hover{background:"
-            f"{bs.color('BUTTON_HOVER')}"
             ";}"
         )
+        for index, button in self._tab_buttons.items():
+            _ = index
+            button.setStyleSheet(
+                "QToolButton{background:"
+                f"{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};"
+                "border:1px solid "
+                f"{bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;"
+                f"border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px"
+                ";}QToolButton:checked{background:"
+                f"{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')}"
+                ";}QToolButton:hover{background:"
+                f"{bs.color('BUTTON_HOVER')}"
+                ";}"
+            )
+
+    def _sync_tab_buttons(self, index: int) -> None:
+        """程序化 setCurrentIndex 后同步页签头按钮选中态。"""
+
+        for button_index, button in self._tab_buttons.items():
+            button.setChecked(button_index == index)
 
     def _apply_completer_style(self, c):
         """为 Devices/Apps 标签页的 QCompleter 弹窗应用样式。"""

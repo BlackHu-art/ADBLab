@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -31,10 +32,12 @@ from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
 from gui.main_frame_toolbar import ToolbarController
+from gui.pages.tasks_page import TaskCenterPage
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.secondary_windows import SecondaryWindowHost
+from gui.widgets.fluent.nav import NavBar
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
@@ -48,6 +51,7 @@ from gui.window_layout import (
     ratio_from_sizes,
     split_sizes_for_constraints,
 )
+from services.task_history import TaskHistoryEntry, TaskHistoryStore
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole
@@ -574,8 +578,9 @@ class MainFrame(QMainWindow):
         )
         previous_restricted = self._restricted_workspace
         self._restricted_workspace = constraints.restricted
-        if constraints.restricted and not previous_restricted:
-            self._initial_device_width_fit_complete = False
+        # P1 修复：进入受限模式时不再重置初始 fit 标志——fit 是一次性初始调整，
+        # 重置会在后续 settle 后再次搬动分栏，破坏"一次 settle 即最终几何"契约
+        # （页签→页面栈迁移后 860px 缩窗路径触发了该回归）。
         device_scroll = getattr(self, "_device_scroll_area", None)
         device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
         if device_scroll is not None and device_panel is not None:
@@ -737,9 +742,17 @@ class MainFrame(QMainWindow):
         return content_height
 
     def _fit_initial_device_width(self) -> None:
-        """常规工作区首次显示时微调左栏，避免只差数像素便出现滚动条。"""
+        """常规工作区首次显示时微调左栏，避免只差数像素便出现滚动条。
 
-        if self._restricted_workspace or self._initial_device_width_fit_complete:
+        仅在首个非受限 settle 后执行一次；受限工作区跳过时同样标记完成，
+        避免后续 settle 后再次搬动分栏破坏"一次 settle 即最终几何"契约
+        （P1 页面栈迁移后该路径被 860px 缩窗触发）。
+        """
+
+        if self._restricted_workspace:
+            self._initial_device_width_fit_complete = True
+            return
+        if self._initial_device_width_fit_complete:
             return
         splitter = getattr(self, "_panel_splitter", None)
         device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
@@ -879,7 +892,9 @@ class MainFrame(QMainWindow):
         self._panel_splitter.setStretchFactor(1, 1)
         self._panel_splitter.setChildrenCollapsible(False)
         self._panel_splitter.splitterMoved.connect(self._on_splitter_moved)
-        panel_row.addWidget(self._panel_splitter)
+        # P1 信息架构：NavBar 导航栏 + 主内容栈（首页=设备/功能分栏，任务页=任务中心）。
+        self._nav_host = self._build_nav_host()
+        panel_row.addWidget(self._nav_host)
         main_layout.addLayout(panel_row, stretch=1)
 
         self.setCentralWidget(central_widget)
@@ -892,6 +907,40 @@ class MainFrame(QMainWindow):
         BaseStyles.ui_font_changed.connect(self._on_ui_font_changed)
 
     # ── 顶部工具栏 ──────────────────────────────────────────────────────
+
+    def _build_nav_host(self) -> QWidget:
+        """构建左侧导航栏与主内容栈（首页=设备/功能分栏，任务页=任务中心）。"""
+
+        host = QWidget()
+        layout = QHBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._nav_bar = NavBar(host)
+        self._nav_stack = QStackedWidget(host)
+        self._nav_stack.addWidget(self._panel_splitter)
+        self._task_history = TaskHistoryStore()
+        self._task_page = TaskCenterPage(
+            self.adb_controller.operation_manager,
+            history_store=self._task_history,
+        )
+        self._nav_stack.addWidget(self._task_page)
+        layout.addWidget(self._nav_bar)
+        layout.addWidget(self._nav_stack, stretch=1)
+        self._nav_bar.navigate_requested.connect(self._on_nav_requested)
+        self._nav_bar.apply_width_budget(self.width())
+        return host
+
+    def _on_nav_requested(self, key: str) -> None:
+        """导航分发：devices/logs 回首页，tasks 切任务页，settings 打开设置。"""
+
+        if key == "tasks":
+            self._nav_stack.setCurrentWidget(self._task_page)
+            self._task_page.refresh()
+        elif key == "settings":
+            self._show_settings()
+            self._nav_bar.set_page("devices")
+        else:
+            self._nav_stack.setCurrentWidget(self._panel_splitter)
 
     def _create_toolbar(self) -> QFrame:
         return (
@@ -1013,6 +1062,12 @@ class MainFrame(QMainWindow):
                 g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
             self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
+        nav_bar = getattr(self, "_nav_bar", None)
+        if nav_bar is not None:
+            nav_bar._sync_theme_state()
+        task_page = getattr(self, "_task_page", None)
+        if task_page is not None:
+            task_page._sync_theme_state()
 
     def _on_ui_font_changed(self, _config) -> None:
         """应用新的界面字体并重新计算工具栏文字相关尺寸。"""
@@ -1109,6 +1164,20 @@ class MainFrame(QMainWindow):
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""
 
         self.left_panel.on_operation_completed(operation, success, message)
+        task_history = getattr(self, "_task_history", None)
+        if task_history is not None:
+            task_history.record(
+                TaskHistoryEntry(
+                    task_id=operation,
+                    kind="legacy",
+                    label=operation,
+                    success=success,
+                    detail=message,
+                )
+            )
+        task_page = getattr(self, "_task_page", None)
+        if task_page is not None and task_page.isVisible():
+            task_page.refresh()
         if operation == "refresh" and not success:
             QTimer.singleShot(
                 0,
@@ -1920,6 +1989,9 @@ class MainFrame(QMainWindow):
         controller = getattr(self, "_resize_controller", None)
         if controller is not None:
             controller.update_geometry()
+        nav_bar = getattr(self, "_nav_bar", None)
+        if nav_bar is not None:
+            nav_bar.apply_width_budget(event.size().width())
         self._update_toolbar_path_display()
         self._schedule_window_size_save(event.size())
 
