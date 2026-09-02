@@ -5,11 +5,10 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QDialog,
     QLabel,
-    QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
 )
+from qfluentwidgets import PushButton, SmoothScrollArea
 
 from gui.styles.icon_loader import get_themed_icon
 
@@ -26,7 +25,7 @@ class _ImageViewerDialog(QDialog):
         self._fit_timer.timeout.connect(self._refit_image)
 
         layout = QVBoxLayout(self)
-        self.image_viewport = QScrollArea()
+        self.image_viewport = SmoothScrollArea()
         self.image_viewport.setWidgetResizable(False)
         self.image_viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label = QLabel()
@@ -43,7 +42,8 @@ class _ImageViewerDialog(QDialog):
         self.image_info.setAccessibleName("Image details")
         layout.addWidget(self.image_info)
 
-        self.image_close = QPushButton("Close")
+        self.image_close = PushButton()
+        self.image_close.setText("Close")
         self.image_close.setToolTip("Close the image preview")
         self.image_close.setIcon(get_themed_icon("x.svg"))
         self.image_close.setIconSize(QSize(14, 14))

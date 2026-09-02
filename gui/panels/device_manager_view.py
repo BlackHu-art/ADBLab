@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QTableView,
     QWidget,
 )
+from qfluentwidgets import InfoBadge, InfoLevel
 
 from gui.panels.side_panel_signals import BlockSignals
 from gui.styles import BaseStyles, FontRole
@@ -29,11 +30,11 @@ _CONNECT_CARD_PADDING_H = 8
 
 # 发现状态徽标按状态键映射主题 token；徽标文本只补充标题区视觉，
 # set_discovery_state 的状态字符串与标题文本契约保持不变。
-_DISCOVERY_BADGE_COLORS = {
-    "scanning": "BUTTON_ACCENT",
-    "empty": "TEXT_SECONDARY",
-    "unavailable": "BUTTON_DANGER",
-    "ready": "LOG_SUCCESS",
+_DISCOVERY_BADGE_LEVELS = {
+    "scanning": InfoLevel.INFOAMTION,
+    "empty": InfoLevel.INFOAMTION,
+    "unavailable": InfoLevel.ERROR,
+    "ready": InfoLevel.SUCCESS,
 }
 
 
@@ -56,8 +57,8 @@ class _DeviceCardRow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._info_label = QLabel(text, self)
         self._info_label.setObjectName("deviceCardText")
-        self._badge = QLabel(badge_text, self)
-        self._badge.setObjectName("deviceBadge")
+        self._badge = InfoBadge(self)
+        self._badge.setText(badge_text)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
@@ -87,10 +88,8 @@ class _DeviceCardRow(QWidget):
             f"QWidget#deviceCard[cardHovered=\"true\"] {{"
             f" background-color: {bs.color('BUTTON_HOVER')}; }}"
         )
-        badge_bg = bs.color("LOG_SUCCESS" if self._badge_kind == "ready" else "LOG_WARNING")
-        self._badge.setStyleSheet(
-            f"QLabel#deviceBadge {{ background-color: {badge_bg}; color: #ffffff;"
-            f" border-radius: 7px; padding: 0 6px; }}"
+        self._badge.setLevel(
+            InfoLevel.SUCCESS if self._badge_kind == "ready" else InfoLevel.WARNING
         )
 
 
@@ -130,8 +129,8 @@ class DeviceManagerView:
         self._sync_discovery_badge_geometry()
 
     def _apply_device_list_style(self):
+        # 列表样式由 ScalableListWidget 自维护（随主题重建），这里只刷新字体与卡片。
         self._frame.apply_fonts()
-        self._frame.listbox_devices.setStyleSheet(BaseStyles.DEVICE_LIST_STYLE())
         self._apply_device_card_styles()
 
     def _apply_device_card_styles(self) -> None:
@@ -155,9 +154,9 @@ class DeviceManagerView:
             action_frame.setStyleSheet(self._action_card_style())
         badge = getattr(frame, "_discovery_badge", None)
         if badge is not None and badge.text():
-            badge.setStyleSheet(
-                self._discovery_badge_style(
-                    getattr(frame, "_discovery_badge_kind", "empty")
+            badge.setLevel(
+                _DISCOVERY_BADGE_LEVELS.get(
+                    getattr(frame, "_discovery_badge_kind", "empty"), InfoLevel.INFOAMTION
                 )
             )
             self._sync_discovery_badge_geometry()
@@ -195,15 +194,6 @@ class DeviceManagerView:
             f" background-color: {bs.color('INPUT_BG')};"
             f" border: none;"
             f" border-radius: {bs.RADIUS_LG}px; }}"
-        )
-
-    def _discovery_badge_style(self, kind: str) -> str:
-        """发现状态徽标 QSS；配色取自主题 token，文本统一白字。"""
-
-        color_key = _DISCOVERY_BADGE_COLORS.get(kind, "TEXT_SECONDARY")
-        return (
-            f"QLabel#discoveryBadge {{ background-color: {BaseStyles.color(color_key)};"
-            f" color: #ffffff; border-radius: 6px; padding: 0 6px; }}"
         )
 
     def _sync_discovery_badge_geometry(self) -> None:
@@ -286,7 +276,7 @@ class DeviceManagerView:
         if badge is not None:
             badge.setText(badge_text)
             self._frame._discovery_badge_kind = badge_kind
-            badge.setStyleSheet(self._discovery_badge_style(badge_kind))
+            badge.setLevel(_DISCOVERY_BADGE_LEVELS.get(badge_kind, InfoLevel.INFOAMTION))
             self._sync_discovery_badge_geometry()
 
     def update_device_list(self, devices: list[str] | None = None):

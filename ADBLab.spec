@@ -16,7 +16,7 @@ a = Analysis(
         ('scrcpy-win64', 'scrcpy-win64'),
         ('mobileperf', 'mobileperf'),
     ],
-    hiddenimports=collect_submodules('mobileperf'),
+    hiddenimports=collect_submodules('mobileperf') + collect_submodules('qfluentwidgets'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

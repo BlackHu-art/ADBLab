@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Iterator
 
 import pytest
+from qfluentwidgets import CardWidget, InfoLevel
 
 from core.log_service import LogLevel, LogService
 from gui.panels.log_panel import LogPanel
@@ -225,9 +226,9 @@ def test_log_panel_text_output_is_wrapped_in_card_container(
         assert panel.logViewCard.objectName() == "logViewCard"
         assert panel.text_output.parent() is panel.logViewCard
         assert panel.text_output.accessibleName() == "Operation log"
-        # 主题钩子：卡片样式随当前主题色重建。
-        assert BaseStyles.color("PANEL_BG") in panel.logViewCard.styleSheet()
-        assert BaseStyles.color("BORDER_COLOR") in panel.logViewCard.styleSheet()
+        # 主题钩子：卡片容器已收敛为 CardWidget（自绘制圆角背景，随 qfluentwidgets 主题切换）。
+        assert isinstance(panel.logViewCard, CardWidget)
+        assert panel.logViewCard.borderRadius == BaseStyles.RADIUS_LG
         # 正文渲染契约不受包壳影响。
         panel._append_logs([("12:00:00", LogLevel.INFO, "卡片内渲染")])
         panel._flush_pending_rows()
@@ -279,7 +280,7 @@ def test_log_panel_level_filter_badge_tracks_selection_and_filters_intake(
         panel.logLevelFilter.setCurrentIndex(5)
 
         assert panel.logLevelBadge.text() == "ERROR"
-        assert BaseStyles.color("LOG_ERROR") in panel.logLevelBadge.styleSheet()
+        assert panel.logLevelBadge.property("level") == InfoLevel.ERROR.value
         assert "过滤前历史行" in panel.text_output.toPlainText()  # 历史行不回溯隐藏
 
         panel._append_logs(

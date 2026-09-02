@@ -42,7 +42,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 | 类别 | 技术 | 证据 |
 | --- | --- | --- |
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
-| GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool | `requirements.txt`、`gui/`、`models/adb_model.py` |
+| GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool；qfluentwidgets（PySide6-Fluent-Widgets 1.11.3）Fluent 风格组件与主题 | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
 | 外部命令 | ADB、scrcpy、aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`services/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |

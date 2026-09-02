@@ -71,7 +71,6 @@ def test_main_frame_local_status_messages_use_log_service():
 def test_main_frame_toolbar_window_controls_emit_structured_debug():
     frame = SimpleNamespace(
         log_service=Mock(),
-        showMinimized=Mock(),
         close=Mock(),
     )
 
@@ -80,7 +79,6 @@ def test_main_frame_toolbar_window_controls_emit_structured_debug():
         patch("gui.main_frame.BaseStyles.toggle_theme") as toggle_theme,
     ):
         MainFrame._toggle_theme(frame)
-    MainFrame._minimize_window(frame)
     MainFrame._request_application_close(frame)
 
     assert [call.args for call in frame.log_service.log.call_args_list] == [
@@ -88,11 +86,9 @@ def test_main_frame_toolbar_window_controls_emit_structured_debug():
             "DEBUG",
             "ui.toolbar action=theme current_theme=Light phase=requested",
         ),
-        ("DEBUG", "ui.toolbar action=minimize phase=requested"),
         ("DEBUG", "ui.toolbar action=exit phase=requested"),
     ]
     toggle_theme.assert_called_once_with()
-    frame.showMinimized.assert_called_once_with()
     frame.close.assert_called_once_with()
 
 

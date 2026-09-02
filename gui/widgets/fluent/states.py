@@ -7,15 +7,16 @@ from collections.abc import Callable
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QLabel,
-    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import IndeterminateProgressBar
 
-from gui.styles import BaseStyles, FontRole
+from gui.styles import FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.fluent._base import apply_font_role_to, repolish
 from gui.widgets.fluent.button import FluentButton
+from gui.widgets.fluent.label import FluentLabel
 
 __all__ = ["EmptyState", "LoadingState"]
 
@@ -48,14 +49,14 @@ class EmptyState(QWidget):
         self._icon_label = QLabel()
         self._icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._title_label = QLabel(title)
-        self._title_label.setProperty("fontRole", FontRole.TITLE.value)
-        self._title_label.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self._title_label = FluentLabel(
+            title, role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self._description_label = QLabel(description)
-        self._description_label.setProperty("fontRole", FontRole.UI_SMALL.value)
-        self._description_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        self._description_label = FluentLabel(
+            description, role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._description_label.setWordWrap(True)
 
@@ -145,13 +146,9 @@ class EmptyState(QWidget):
             )
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建图标与文字颜色。"""
+        """按当前主题重建图标（文字颜色已由 FluentLabel 随 qfluentwidgets 主题切换）。"""
 
         self._refresh_icon_pixmap()
-        self._title_label.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
-        self._description_label.setStyleSheet(
-            f"color: {BaseStyles.color('TEXT_SECONDARY')};"
-        )
         repolish(self)
 
 
@@ -171,13 +168,9 @@ class LoadingState(QWidget):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self._spinner = QProgressBar()
-        self._spinner.setTextVisible(False)
-        self._spinner.setRange(0, 0)  # 0~0 表示不确定进度
+        self._spinner = IndeterminateProgressBar(self, start=False)
 
-        self._label = QLabel(message)
-        self._label.setProperty("fontRole", FontRole.UI.value)
-        self._label.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._label = FluentLabel(message, role=FontRole.UI, color_key="TEXT_SECONDARY")
         self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         layout = QVBoxLayout(self)
@@ -199,12 +192,16 @@ class LoadingState(QWidget):
         return self._label.text()
 
     def set_spinning(self, spinning: bool) -> None:
-        """切换 spinner 可见性。"""
+        """切换 spinner 可见性与动画。"""
 
         self._spinner.setVisible(bool(spinning))
+        if spinning:
+            self._spinner.start()
+        else:
+            self._spinner.stop()
 
     def is_spinning(self) -> bool:
-        return not self._spinner.isHidden()
+        return self._spinner.isStarted()
 
     # ── 字体与主题 ──────────────────────────────────────────────────────
 
@@ -214,20 +211,6 @@ class LoadingState(QWidget):
         apply_font_role_to(self._label, role)
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建进度条与文字样式。"""
+        """文字颜色已由 FluentLabel 随主题切换（spinner 由 IndeterminateProgressBar 自绘跟随）。"""
 
-        self._label.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
-        self._spinner.setStyleSheet(self._progress_style())
         repolish(self)
-
-    def _progress_style(self) -> str:
-        radius = BaseStyles.RADIUS_SM
-        return (
-            f"QProgressBar {{"
-            f" background-color: {BaseStyles.color('INPUT_BG')};"
-            f" border: 1px solid {BaseStyles.color('BORDER_COLOR')};"
-            f" border-radius: {radius}px; }}"
-            f"QProgressBar::chunk {{"
-            f" background-color: {BaseStyles.color('BUTTON_ACCENT')};"
-            f" border-radius: {radius}px; }}"
-        )

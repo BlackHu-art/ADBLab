@@ -4,9 +4,9 @@ import os
 import sys
 
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox
 
-from gui.styles import BaseStyles
+from gui.widgets.fluent.menu import FluentMenu
 
 
 class ScreenshotViewerActions:
@@ -76,28 +76,27 @@ class ScreenshotViewerActions:
     def _on_context_menu(self, pos):
         path = self._frame._current_path()
         has_file = bool(path and os.path.exists(path))
-        menu = QMenu(self._frame)
-        menu.setStyleSheet(BaseStyles.MENU_STYLE())
+        menu = FluentMenu(parent=self._frame)
 
-        copy_action = menu.addAction("Copy Image\tCtrl+C")
+        copy_action = menu.add_action("Copy Image\tCtrl+C")
         copy_action.triggered.connect(self._frame.copy_to_clipboard)
         copy_action.setEnabled(has_file)
 
         menu.addSeparator()
 
-        folder_action = menu.addAction("Open File Location")
+        folder_action = menu.add_action("Open File Location")
         folder_action.triggered.connect(self._frame._open_file_location)
         folder_action.setEnabled(has_file)
 
-        delete_action = menu.addAction("Delete Screenshot")
+        delete_action = menu.add_action("Delete Screenshot")
         delete_action.triggered.connect(self._frame._delete_file)
         delete_action.setEnabled(has_file)
 
         menu.addSeparator()
 
-        menu.addAction("Zoom In\tCtrl+=").triggered.connect(self._frame.zoom_in)
-        menu.addAction("Zoom Out\tCtrl+-").triggered.connect(self._frame.zoom_out)
-        menu.addAction("Fit to Window\tCtrl+0").triggered.connect(self._frame._reset_zoom)
-        menu.addAction("Actual Size\tCtrl+1").triggered.connect(self._frame._actual_size)
+        menu.add_action("Zoom In\tCtrl+=").triggered.connect(self._frame.zoom_in)
+        menu.add_action("Zoom Out\tCtrl+-").triggered.connect(self._frame.zoom_out)
+        menu.add_action("Fit to Window\tCtrl+0").triggered.connect(self._frame._reset_zoom)
+        menu.add_action("Actual Size\tCtrl+1").triggered.connect(self._frame._actual_size)
 
         menu.exec(self._frame._view.mapToGlobal(pos))

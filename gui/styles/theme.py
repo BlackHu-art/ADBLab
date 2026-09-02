@@ -132,6 +132,59 @@ def _tc(key: str) -> str:
     return THEMES[_current_theme].get(key, THEMES["Light"].get(key, "#000000"))
 
 
+def _sync_qfluentwidgets_theme() -> None:
+    """把当前主题与强调色同步给 qfluentwidgets（UI 重做迁移桥接）。
+
+    qfluentwidgets 组件在 Phase 2/3 才逐步接入，本函数先把 ADBLab 的明暗主题与
+    ``BUTTON_ACCENT`` 强调色映射到其全局 ``setTheme``/``setThemeColor``，使后续接入的
+    组件自动跟随主题切换。采用局部导入，避免所有仅读样式或跑测试的代码在 import 期
+    加载整个 qfluentwidgets 包。
+    """
+    from qfluentwidgets import Theme, setTheme, setThemeColor
+
+    qfw_theme = Theme.DARK if _current_theme == "Dark" else Theme.LIGHT
+    setTheme(qfw_theme)
+    setThemeColor(_tc("BUTTON_ACCENT"))
+
+
+def _application_palette():
+    """由当前主题 token 构建全局 QPalette，用于主题化纯 Qt 控件。
+
+    qfluentwidgets 只主题化它自己的控件，原生 ``QWidget``/``QDialog``/``QHeaderView``
+    等纯 Qt 控件的文字色/背景/选区仍需由全局调色板提供。此调色板按 token 语义映射，
+    与 ``PANEL_BASE_STYLE`` 旧 QSS 的文字色/背景色同源，替换后保持视觉一致。
+    """
+    from PySide6.QtGui import QColor, QPalette
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor(_tc("WINDOW_BG")))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor(_tc("TEXT_PRIMARY")))
+    palette.setColor(QPalette.ColorRole.Base, QColor(_tc("INPUT_BG")))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor(_tc("PANEL_BG")))
+    palette.setColor(QPalette.ColorRole.Text, QColor(_tc("TEXT_PRIMARY")))
+    palette.setColor(QPalette.ColorRole.Button, QColor(_tc("BUTTON_BG")))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor(_tc("TEXT_PRIMARY")))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor(_tc("SELECTION_BG")))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(_tc("SELECTION_TEXT")))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(_tc("TEXT_PLACEHOLDER")))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor(_tc("PANEL_BG")))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor(_tc("TEXT_PRIMARY")))
+    disabled = QPalette.ColorGroup.Disabled
+    palette.setColor(disabled, QPalette.ColorRole.Text, QColor(_tc("TEXT_DISABLED")))
+    palette.setColor(disabled, QPalette.ColorRole.WindowText, QColor(_tc("TEXT_DISABLED")))
+    palette.setColor(disabled, QPalette.ColorRole.ButtonText, QColor(_tc("TEXT_DISABLED")))
+    return palette
+
+
+def _sync_application_palette() -> None:
+    """把全局 QPalette 同步到 QApplication（主题化纯 Qt 控件的文字色/背景/选区）。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        app.setPalette(_application_palette())
+
+
 # ── 主题管理混入类 ──────────────────────────────────────────────────────
 
 
@@ -160,7 +213,9 @@ class ThemeMixin:
         global _current_theme
         if name in THEMES:
             _current_theme = name
+            _sync_application_palette()
             _theme_signal.changed.emit(name)
+            _sync_qfluentwidgets_theme()
 
     @classmethod
     def toggle_theme(cls) -> str:
@@ -171,6 +226,18 @@ class ThemeMixin:
     @classmethod
     def color(cls, key: str) -> str:
         return _tc(key)
+
+    @classmethod
+    def color_for(cls, theme: str, key: str) -> str:
+        """按指定主题（``Light``/``Dark``）读取 token 颜色。
+
+        供需要同时固化明暗两套颜色的控件（如 qfluentwidgets 标签的
+        ``setTextColor(light, dark)``）使用，避免跨主题读取当前主题色。
+        """
+
+        from .tokens import color_token_for
+
+        return color_token_for(theme, key)
 
     @classmethod
     def get_color(cls, color_name: str) -> QColor:

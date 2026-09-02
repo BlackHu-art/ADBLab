@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QLocale, QRect, Qt
-from PySide6.QtGui import QColor, QImage, QValidator
+from PySide6.QtCore import QLocale, Qt
+from PySide6.QtGui import QValidator
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QLineEdit,
-    QStyle,
-    QStyleOptionSpinBox,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -17,60 +15,6 @@ from PySide6.QtWidgets import (
 
 from gui.styles import BaseStyles
 from gui.widgets.preset_spin_box import PresetSpinBox, StrictIntSpinBox
-from utils.resource_path import setup_qt_search_paths
-
-
-def _region_contains_contrasting_pixel(
-    image: QImage,
-    rect: QRect,
-    background: QColor,
-    *,
-    minimum_delta: int = 50,
-) -> bool:
-    """返回真实渲染区域中是否存在与按钮背景明显不同的像素。"""
-
-    for x in range(max(0, rect.left()), min(image.width(), rect.right() + 1)):
-        for y in range(max(0, rect.top()), min(image.height(), rect.bottom() + 1)):
-            actual = image.pixelColor(x, y)
-            delta = max(
-                abs(actual.red() - background.red()),
-                abs(actual.green() - background.green()),
-                abs(actual.blue() - background.blue()),
-            )
-            if delta >= minimum_delta:
-                return True
-    return False
-
-
-def _render_spin_subcontrols(qt_application, theme: str, *, enabled: bool):
-    """按实际 QSS 渲染 spinbox，并返回上下按钮区域。"""
-
-    setup_qt_search_paths()
-    BaseStyles.switch_theme(theme)
-    spin = StrictIntSpinBox(minimum=0, maximum=100, value=5)
-    spin.setStyleSheet(BaseStyles.INPUT_STYLE())
-    spin.resize(160, 36)
-    spin.setEnabled(enabled)
-    spin.show()
-    qt_application.processEvents()
-
-    option = QStyleOptionSpinBox()
-    spin.initStyleOption(option)
-    image = spin.grab().toImage()
-    regions = tuple(
-        spin.style().subControlRect(
-            QStyle.ComplexControl.CC_SpinBox,
-            option,
-            subcontrol,
-            spin,
-        )
-        for subcontrol in (
-            QStyle.SubControl.SC_SpinBoxUp,
-            QStyle.SubControl.SC_SpinBoxDown,
-        )
-    )
-    spin.close()
-    return image, regions
 
 
 @pytest.mark.parametrize(
@@ -154,7 +98,7 @@ def test_invalid_enter_and_focus_out_preserve_raw_text_and_old_value(qt_applicat
     assert value_spy.count() == 0
     assert validity_spy.count() == 1
     assert validity_spy.at(0) == [False]
-    assert spin.property("inputInvalid") is True
+    assert spin.isError() is True
     host.close()
 
 
@@ -219,7 +163,7 @@ def test_set_value_including_same_value_clears_invalid_and_normalizes_text(qt_ap
 
     assert spin.lineEdit().text() == "5"
     assert spin.input_is_acceptable() is True
-    assert spin.property("inputInvalid") is False
+    assert spin.isError() is False
     assert validity_spy.count() == 2
     assert validity_spy.at(0) == [False]
     assert validity_spy.at(1) == [True]
@@ -274,7 +218,7 @@ def test_empty_presets_omit_button_and_nonempty_presets_are_immutable(qt_applica
     field = PresetSpinBox(1, 100, 5, presets=[1, 5, 10])
     exposed = field.presets()
 
-    assert plain.findChild(QToolButton) is None
+    assert plain.findChild(QToolButton, "presetMenuButton") is None
     assert exposed == (1, 5, 10)
     assert isinstance(exposed, tuple)
     with pytest.raises(TypeError):
@@ -301,7 +245,7 @@ def test_preset_button_is_keyboard_reachable_and_action_commits_once(qt_applicat
     """预设按钮缺少键盘入口或重复绑定会破坏无障碍和单次提交契约。"""
 
     field = PresetSpinBox(1, 100, 5, presets=(1, 5, 10))
-    button = field.findChild(QToolButton)
+    button = field.findChild(QToolButton, "presetMenuButton")
     value_spy = QSignalSpy(field.valueChanged)
     action = next(action for action in button.menu().actions() if action.data() == 10)
 
@@ -315,55 +259,23 @@ def test_preset_button_is_keyboard_reachable_and_action_commits_once(qt_applicat
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_strict_spin_style_covers_focus_invalid_disabled_and_scoped_button(
-    qt_application,
-    theme,
-):
-    """遗漏状态或使用裸 QToolButton 选择器会造成主题不可见和全局样式污染。"""
+def test_strict_spin_uses_fluent_spin_box(qt_application, theme):
+    """StrictIntSpinBox 已收敛为 qfluentwidgets SpinBox，不再依赖旧 INPUT_STYLE QSS。"""
 
     BaseStyles.switch_theme(theme)
-    qss = BaseStyles.INPUT_STYLE()
+    spin = StrictIntSpinBox(minimum=0, maximum=100, value=5)
 
-    assert "QSpinBox {" in qss
-    assert "QSpinBox:focus" in qss
-    assert 'QSpinBox[inputInvalid="true"]' in qss
-    assert "QSpinBox:disabled" in qss
-    assert "QSpinBox QLineEdit" in qss
-    assert "QToolButton#presetMenuButton" in qss
-    assert "QToolButton#presetMenuButton:hover" in qss
-    assert "QToolButton#presetMenuButton:focus" in qss
-    assert "QToolButton#presetMenuButton:disabled" in qss
-    assert f"icons:caret-down-qss-{theme.lower()}.svg" in qss
+    from qfluentwidgets import SpinBox as FluentSpinBox
+
+    assert isinstance(spin, FluentSpinBox)
+    # INPUT_STYLE 已随 StrictIntSpinBox 收敛而彻底移除。
+    assert not hasattr(BaseStyles, "INPUT_STYLE")
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_spin_arrows_render_and_disabled_buttons_have_visible_state(qt_application, theme):
-    """缺少箭头子控件样式会渲染空白，按钮规则也不能覆盖禁用状态。"""
+    """qfluentwidgets SpinBox 的箭头由内置 SpinButton 自绘，不再依赖原生箭头子控件 QSS。"""
 
-    enabled_image, enabled_regions = _render_spin_subcontrols(
-        qt_application,
-        theme,
-        enabled=True,
-    )
-    disabled_image, disabled_regions = _render_spin_subcontrols(
-        qt_application,
-        theme,
-        enabled=False,
-    )
-    enabled_button_color = QColor(BaseStyles.color("BUTTON_BG"))
-    disabled_button_color = QColor(BaseStyles.color("PANEL_BG"))
-
-    for image, regions, background in (
-        (enabled_image, enabled_regions, enabled_button_color),
-        (disabled_image, disabled_regions, disabled_button_color),
-    ):
-        for region in regions:
-            assert _region_contains_contrasting_pixel(
-                image,
-                region.adjusted(3, 2, -3, -2),
-                background,
-            )
-
-    for region in disabled_regions:
-        background_pixel = disabled_image.pixelColor(region.left() + 3, region.top() + 3)
-        assert background_pixel.name() == disabled_button_color.name()
+    spin = StrictIntSpinBox(minimum=0, maximum=100, value=5)
+    assert spin.upButton is not None
+    assert spin.downButton is not None

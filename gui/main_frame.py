@@ -13,16 +13,15 @@ from PySide6.QtGui import QIcon, QMouseEvent, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
-    QMainWindow,
-    QScrollArea,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import NavigationInterface, NavigationItemPosition, SmoothScrollArea
+from qfluentwidgets.window.fluent_window import FluentWindowBase
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -37,7 +36,7 @@ from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.secondary_windows import SecondaryWindowHost
-from gui.widgets.fluent.nav import NavBar
+from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
@@ -171,7 +170,7 @@ class _ScanThread(QThread):
         return bool(self._stop_flag)
 
 
-class MainFrame(QMainWindow):
+class MainFrame(FluentWindowBase):
     SHUTDOWN_DEADLINE_SECONDS = 6.0
     SHUTDOWN_FINALIZER_RESERVE_SECONDS = 1.0
     DEVICE_SCAN_DEBOUNCE_MS = 300
@@ -374,12 +373,12 @@ class MainFrame(QMainWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
         self._always_on_top = bool(s.get("always_on_top", False))
-        self._apply_window_flags()
+        if self._always_on_top:
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         configured_width = s.get("window_width", DEFAULT_WINDOW_SIZE.width())
         configured_height = s.get("window_height", DEFAULT_WINDOW_SIZE.height())
         configured_size = normalize_window_size(configured_width, configured_height)
@@ -390,12 +389,6 @@ class MainFrame(QMainWindow):
             request_reflow=False,
         )
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self.setStyleSheet(f"""
-            QMainWindow {{
-                background-color: transparent;
-                border-radius: {BaseStyles.RADIUS_XL}px;
-            }}
-        """)
 
     def _screen_is_valid(self, screen) -> bool:
         """通过适配器判断 QScreen 底层对象是否仍然存活。"""
@@ -666,18 +659,20 @@ class MainFrame(QMainWindow):
         return soft_minimum
 
     def _workspace_vertical_chrome_height(self) -> int:
-        """返回 splitter 之外由 toolbar 与布局 margins 占用的真实高度。"""
+        """返回 splitter 之外由标题栏、toolbar 与布局 margins 占用的真实高度。"""
 
         splitter = getattr(self, "_device_log_splitter", None)
         if self.isVisible() and splitter is not None and splitter.height() > 0:
             return max(0, self.height() - splitter.height())
+        title_bar = getattr(self, "titleBar", None)
+        title_bar_height = title_bar.height() if title_bar is not None else 0
         toolbar = getattr(self, "_toolbar", None)
         toolbar_height = 0
         if toolbar is not None:
             toolbar_height = max(toolbar.minimumHeight(), toolbar.minimumSizeHint().height())
         panel_layout = getattr(self, "_panel_row_layout", None)
         panel_margins = panel_layout.contentsMargins() if panel_layout is not None else None
-        return toolbar_height + (
+        return title_bar_height + toolbar_height + (
             panel_margins.top() + panel_margins.bottom() if panel_margins is not None else 0
         )
 
@@ -785,13 +780,7 @@ class MainFrame(QMainWindow):
         """构建工具栏和左右功能面板。"""
         central_widget = QWidget()
         central_widget.setObjectName("centralWidget")
-        central_widget.setStyleSheet(f"""
-            #centralWidget {{
-                background-color: {BaseStyles.color("WINDOW_BG")};
-                border-radius: {BaseStyles.RADIUS_XL}px;
-                border: 1px solid {BaseStyles.color("BORDER_COLOR")};
-            }}
-        """)
+        self._central_widget = central_widget
 
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -809,7 +798,7 @@ class MainFrame(QMainWindow):
         dw.setMinimumHeight(0)
         self._apply_log_soft_minimum()
 
-        device_scroll = QScrollArea()
+        device_scroll = SmoothScrollArea()
         device_scroll.setObjectName("deviceScrollArea")
         device_scroll.setAccessibleName("Devices")
         device_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -831,7 +820,6 @@ class MainFrame(QMainWindow):
         left_wrapper.setLayout(left_col)
         left_wrapper.setMinimumWidth(120 if self._restricted_workspace else 280)
         self._left_panel_wrapper = left_wrapper
-        left_wrapper.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
 
         panel_row = QHBoxLayout()
         panel_row.setContentsMargins(3, 3, 3, 3)
@@ -897,7 +885,9 @@ class MainFrame(QMainWindow):
         panel_row.addWidget(self._nav_host)
         main_layout.addLayout(panel_row, stretch=1)
 
-        self.setCentralWidget(central_widget)
+        # FluentWindowBase 的标题栏为覆盖层，内容区需预留顶部净空避免重叠。
+        self.hBoxLayout.setContentsMargins(0, self.titleBar.height(), 0, 0)
+        self.hBoxLayout.addWidget(central_widget, 1)
 
         self._connect_all_signals()
         self.left_panel.responsive_layout_settled.connect(
@@ -915,7 +905,10 @@ class MainFrame(QMainWindow):
         layout = QHBoxLayout(host)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self._nav_bar = NavBar(host)
+        self._nav_bar = NavigationInterface(host)
+        # 与旧自研 NavBar 保持一致的展开宽度（120px）与折叠阈值（720px 窗口宽）。
+        self._nav_bar.setExpandWidth(120)
+        self._nav_bar.setMinimumExpandWidth(720)
         self._nav_stack = QStackedWidget(host)
         self._nav_stack.addWidget(self._panel_splitter)
         self._task_history = TaskHistoryStore()
@@ -924,10 +917,23 @@ class MainFrame(QMainWindow):
             history_store=self._task_history,
         )
         self._nav_stack.addWidget(self._task_page)
+        for key, icon_name, label in (
+            ("devices", "devices.svg", "Devices"),
+            ("tasks", "list-checks.svg", "Tasks"),
+            ("logs", "log.svg", "Logs"),
+            ("settings", "gear.svg", "Settings"),
+        ):
+            self._nav_bar.addItem(
+                key,
+                get_themed_icon(icon_name),
+                label,
+                onClick=lambda _checked=False, k=key: self._on_nav_requested(k),
+                selectable=True,
+                position=NavigationItemPosition.TOP,
+            )
+        self._nav_bar.setCurrentItem("devices")
         layout.addWidget(self._nav_bar)
         layout.addWidget(self._nav_stack, stretch=1)
-        self._nav_bar.navigate_requested.connect(self._on_nav_requested)
-        self._nav_bar.apply_width_budget(self.width())
         return host
 
     def _on_nav_requested(self, key: str) -> None:
@@ -936,11 +942,13 @@ class MainFrame(QMainWindow):
         if key == "tasks":
             self._nav_stack.setCurrentWidget(self._task_page)
             self._task_page.refresh()
+            self._nav_bar.setCurrentItem("tasks")
         elif key == "settings":
             self._show_settings()
-            self._nav_bar.set_page("devices")
+            self._nav_bar.setCurrentItem("devices")
         else:
             self._nav_stack.setCurrentWidget(self._panel_splitter)
+            self._nav_bar.setCurrentItem(key)
 
     def _create_toolbar(self) -> QFrame:
         return (
@@ -1042,29 +1050,18 @@ class MainFrame(QMainWindow):
 
         AppSettings.instance().set("theme", _name)
 
-        self.centralWidget().setStyleSheet(f"""
-            #centralWidget {{
-                background-color: {BaseStyles.color("WINDOW_BG")};
-                border-radius: {BaseStyles.RADIUS_XL}px;
-                border: 1px solid {BaseStyles.color("BORDER_COLOR")};
-            }}
-        """)
-        for bar in self.findChildren(QFrame, "toolbar"):
-            bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
+        # 工具栏已收敛为 CardWidget，背景/圆角自绘制并随 qfluentwidgets 主题切换，
+        # 无需在此重建 TOOLBAR_STYLE。
         self._refresh_toolbar_icons()
         self._refresh_save_path()
         self._apply_splitter_style()
         # 左侧容器不属于 SidePanel 控件树，需要在此单独刷新分组框和设备列表。
         lw = cast(QWidget | None, self.findChild(QWidget, "leftPanelWrapper"))
         if lw:
-            lw.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
-            for g in lw.findChildren(QGroupBox):
-                g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
+            # 分组框样式由 ScalableGroupBox 自维护（随主题/字体重建）。
             self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
-        nav_bar = getattr(self, "_nav_bar", None)
-        if nav_bar is not None:
-            nav_bar._sync_theme_state()
+        # NavigationInterface 为 qfluentwidgets 组件，主题自动跟随，无需手动重建。
         task_page = getattr(self, "_task_page", None)
         if task_page is not None:
             task_page._sync_theme_state()
@@ -1092,21 +1089,6 @@ class MainFrame(QMainWindow):
         return (
             getattr(self, "_toolbar_controller", None) or ToolbarController(self)
         )._toggle_theme()
-
-    def _minimize_window(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._minimize_window()
-
-    def _toggle_maximize_restore(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._toggle_maximize_restore()
-
-    def _refresh_maximize_button(self) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._refresh_maximize_button()
 
     def _request_application_close(self):
         return (
@@ -1969,12 +1951,6 @@ class MainFrame(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton and self._is_toolbar_drag_target(
-            event.position().toPoint()
-        ):
-            self._toggle_maximize_restore()
-            event.accept()
-            return
         super().mouseDoubleClickEvent(event)
 
     def resizeEvent(self, event: QResizeEvent):
@@ -1989,9 +1965,7 @@ class MainFrame(QMainWindow):
         controller = getattr(self, "_resize_controller", None)
         if controller is not None:
             controller.update_geometry()
-        nav_bar = getattr(self, "_nav_bar", None)
-        if nav_bar is not None:
-            nav_bar.apply_width_budget(event.size().width())
+        # NavigationInterface 依据窗口宽度自动折叠/展开，无需外部预算驱动。
         self._update_toolbar_path_display()
         self._schedule_window_size_save(event.size())
 
@@ -2006,7 +1980,6 @@ class MainFrame(QMainWindow):
             controller = getattr(self, "_resize_controller", None)
             if controller is not None:
                 controller.update_geometry()
-            self._refresh_maximize_button()
 
     def closeEvent(self, event):
         (getattr(self, "_close_controller", None) or CloseController(self)).handle_close_event(

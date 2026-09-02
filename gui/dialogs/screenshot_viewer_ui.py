@@ -11,18 +11,24 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QListView,
     QListWidget,
-    QPushButton,
     QSizePolicy,
     QVBoxLayout,
+)
+from qfluentwidgets import (
+    CardWidget,
+    InfoBadge,
+    InfoLevel,
+    SmoothScrollDelegate,
+    TransparentToolButton,
 )
 
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotBottomBar, ScreenshotGraphicsView
 from gui.styles import BaseStyles
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.label import FluentLabel
 
 
 class ScreenshotViewerUI:
@@ -64,32 +70,21 @@ class ScreenshotViewerUI:
         c = self._theme_color
         r = BaseStyles
 
-        # 视觉重设计：页头卡片样式随主题重建，徽标按已加载截图数量刷新。
+        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按已加载截图数量刷新。
         if hasattr(self._frame, "header_card"):
-            self._frame.header_card.setStyleSheet(
-                f"QFrame#dialogHeaderCard {{ background-color: {c('PANEL_BG')};"
-                f" border: 1px solid {c('BORDER_COLOR')};"
-                f" border-radius: {r.RADIUS_LG}px; }}"
-            )
             self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-            self._frame.dialog_title.setStyleSheet(f"color: {c('TITLE_COLOR')};")
             self._frame.dialog_subtitle.setFont(ui_font)
-            self._frame.dialog_subtitle.setStyleSheet(f"color: {c('TEXT_SECONDARY')};")
             self._frame.status_badge.setFont(ui_font)
             count = len(getattr(self._frame, "_image_paths", ()))
             self._frame.status_badge.setText(
                 f"{count} images" if count else "Empty"
             )
-            background = c("LOG_SUCCESS") if count else c("TEXT_SECONDARY")
-            self._frame.status_badge.setStyleSheet(
-                f"QLabel#dialogStatusBadge {{ background-color: {background};"
-                f" color: {c('PANEL_BG')};"
-                f" border-radius: 7px; padding: 1px 8px; }}"
+            self._frame.status_badge.setLevel(
+                InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION
             )
 
         self._frame.setStyleSheet(
-            BaseStyles.SCROLLBAR_STYLE()
-            + f"""
+            f"""
             QDialog {{
                 background-color: {c("WINDOW_BG")};
                 color: {c("TEXT_PRIMARY")};
@@ -141,48 +136,21 @@ class ScreenshotViewerUI:
                 color: {c("TEXT_PRIMARY")};
                 background: transparent;
             }}
-            QLabel#metaLabel,
-            QLabel#navLabel,
-            QLabel#zoomLabel {{
-                color: {c("TEXT_SECONDARY")};
-            }}
-            QLabel#pathLabel {{
-                color: {c("TEXT_SECONDARY")};
-            }}
-            QPushButton {{
-                background-color: {c("BUTTON_BG")};
-                color: {c("TEXT_PRIMARY")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r.RADIUS_SM}px;
-                padding: 0;
-            }}
-            QPushButton:hover {{
-                background-color: {c("BUTTON_HOVER")};
-                border-color: {c("BORDER_FOCUS")};
-            }}
-            QPushButton:pressed {{
-                background-color: {c("BUTTON_PRESSED")};
-            }}
-            QPushButton:focus {{
-                border: 2px solid {c("BORDER_FOCUS")};
-            }}
-            QPushButton:disabled {{
-                color: {c("TEXT_DISABLED")};
-                background-color: {c("INPUT_BG")};
-                border-color: {c("BORDER_COLOR")};
-            }}
-            QPushButton#danger:hover {{
-                background-color: {c("BUTTON_DANGER")};
-                border-color: {c("BUTTON_DANGER")};
-                color: #ffffff;
-            }}
-            QPushButton#danger:pressed {{
-                background-color: {c("BUTTON_DANGER_HOVER")};
-                border-color: {c("BUTTON_DANGER_HOVER")};
-                color: #ffffff;
-            }}
             """
         )
+        # 图标按钮已收敛为 TransparentToolButton：其 widget 级 QSS 会覆盖父级边框，
+        # 因此键盘焦点指示器（BORDER_FOCUS 边框）需逐按钮以 widget 级 QSS 注入；
+        # 危险删除按钮额外用 ID 选择器覆盖 hover/pressed 背景。
+        focus_qss = f"QToolButton:focus {{ border: 2px solid {c('BORDER_FOCUS')}; }}"
+        danger_qss = (
+            f"QToolButton#danger:hover {{"
+            f" background-color: {c('BUTTON_DANGER')}; color: #ffffff; }}"
+            f"QToolButton#danger:pressed {{"
+            f" background-color: {c('BUTTON_DANGER_HOVER')}; color: #ffffff; }}"
+        )
+        for button in getattr(self._frame, "_icon_buttons", []):
+            qss = focus_qss + (danger_qss if button.objectName() == "danger" else "")
+            button.setStyleSheet(qss)
         self._frame._path_label.setFont(mono_font)
         for label in (self._frame._info_label, self._frame._nav_label, self._frame._zoom_label):
             label.setFont(small_font)
@@ -210,31 +178,33 @@ class ScreenshotViewerUI:
         root.setSpacing(8)
 
         # ── 页头卡片：标题、副标题与截图数量状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
-        self._frame.header_card = QFrame()
+        self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
+        self._frame.header_card.setBorderRadius(BaseStyles.RADIUS_LG)
         hl = QVBoxLayout(self._frame.header_card)
         hl.setContentsMargins(12, 8, 12, 8)
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = QLabel("Screenshot Viewer")
+        self._frame.dialog_title = FluentLabel(
+            "Screenshot Viewer", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
-        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self._frame.status_badge = QLabel("Empty")
-        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge = InfoBadge.info("Empty", self._frame.header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.status_badge.setToolTip("Number of loaded screenshots")
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = QLabel("Inspect captured device screenshots")
+        self._frame.dialog_subtitle = FluentLabel(
+            "Inspect captured device screenshots",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
-        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.dialog_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self._frame.dialog_subtitle)
@@ -277,6 +247,8 @@ class ScreenshotViewerUI:
         self._frame._thumb_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._frame._thumb_list.setIconSize(QSize(86, 58))
         self._frame._thumb_list.setFixedHeight(92)
+        # 缩略图横向条保留原生 QListWidget（IconMode 网格），仅承接 Fluent 平滑滚动条。
+        SmoothScrollDelegate(self._frame._thumb_list)
         self._frame._thumb_list.itemClicked.connect(self._frame._on_thumbnail_clicked)
         layout.addWidget(self._frame._thumb_list)
 
@@ -291,7 +263,9 @@ class ScreenshotViewerUI:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._frame._path_label = QLabel("")
+        self._frame._path_label = FluentLabel(
+            "", role=FontRole.MONO, color_key="TEXT_SECONDARY"
+        )
         self._frame._path_label.setObjectName("pathLabel")
         self._frame._path_label.setAlignment(
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
@@ -310,7 +284,9 @@ class ScreenshotViewerUI:
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
 
-        self._frame._info_label = QLabel("")
+        self._frame._info_label = FluentLabel(
+            "", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._frame._info_label.setObjectName("metaLabel")
         self._frame._info_label.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
@@ -326,7 +302,9 @@ class ScreenshotViewerUI:
         self._frame._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
         self._frame._prev_btn.clicked.connect(self._frame.navigate_prev)
 
-        self._frame._nav_label = QLabel("0 / 0")
+        self._frame._nav_label = FluentLabel(
+            "0 / 0", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._frame._nav_label.setObjectName("navLabel")
         self._frame._nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._nav_label.setMinimumWidth(52)
@@ -340,7 +318,9 @@ class ScreenshotViewerUI:
         )
         self._frame._zoom_out_btn.clicked.connect(self._frame.zoom_out)
 
-        self._frame._zoom_label = QLabel("Fit")
+        self._frame._zoom_label = FluentLabel(
+            "Fit", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._frame._zoom_label.setObjectName("zoomLabel")
         self._frame._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._zoom_label.setMinimumWidth(56)
@@ -628,10 +608,10 @@ class ScreenshotViewerUI:
 
         self._frame._bottom_bar_reflow_timer.start(0)
 
-    def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
+    def _tool_button(self, icon_name: str, tooltip: str) -> TransparentToolButton:
         from gui.dialogs import screenshot_viewer as _sv
 
-        button = QPushButton()
+        button = TransparentToolButton()
         button.setIcon(_sv.get_themed_icon(icon_name))
         button.setIconSize(QSize(14, 14))
         button.setFixedSize(28, 28)
@@ -639,6 +619,7 @@ class ScreenshotViewerUI:
         button.setAccessibleName(tooltip)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setProperty("iconName", icon_name)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self._frame._icon_buttons.append(button)
         return button
 

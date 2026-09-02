@@ -8,19 +8,18 @@ from typing import cast
 from PySide6.QtCore import QEvent, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QFocusEvent, QKeyEvent, QValidator
 from PySide6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
-    QLineEdit,
-    QMenu,
     QSizePolicy,
-    QSpinBox,
     QStyle,
     QToolButton,
     QWidget,
 )
+from qfluentwidgets import EditableComboBox, LineEdit, SpinBox, TransparentToolButton
+
+from gui.widgets.fluent.menu import FluentMenu
 
 
-class StrictIntComboBox(QComboBox):
+class StrictIntComboBox(EditableComboBox):
     """保持原版可编辑下拉外观，并以严格整数作为业务值。"""
 
     valueChanged = Signal(int)
@@ -37,7 +36,7 @@ class StrictIntComboBox(QComboBox):
         presets: Iterable[int] = (),
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(parent=parent)
         if minimum > maximum:
             raise ValueError("minimum 不能大于 maximum")
         preset_values = tuple(presets)
@@ -51,11 +50,8 @@ class StrictIntComboBox(QComboBox):
         self._presets = preset_values
         self._value = int(value)
         self._input_valid = True
-        self.setEditable(True)
-        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.addItems([str(preset) for preset in preset_values])
-        editor = self.lineEdit()
-        assert editor is not None  # stub Optional 收窄
+        editor = self
         editor.setMaxLength(self._MAX_INPUT_LENGTH)
         editor.installEventFilter(self)
         editor.textChanged.connect(self._on_editor_text_changed)
@@ -83,8 +79,7 @@ class StrictIntComboBox(QComboBox):
             raise ValueError("value 必须位于输入范围内")
         changed = value != self._value
         self._value = value
-        editor = self.lineEdit()
-        assert editor is not None  # stub Optional 收窄
+        editor = self
         blocker = QSignalBlocker(editor)
         editor.setText(str(value))
         del blocker
@@ -113,12 +108,10 @@ class StrictIntComboBox(QComboBox):
         return True
 
     def focus_editor(self) -> None:
-        editor = self.lineEdit()
-        assert editor is not None  # stub Optional 收窄
-        editor.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def eventFilter(self, watched, event) -> bool:
-        if watched is self.lineEdit():
+        if watched is self:
             if event.type() == QEvent.Type.FocusOut:
                 self.commit_value()
             elif event.type() == QEvent.Type.KeyPress and cast(QKeyEvent, event).key() in (
@@ -136,18 +129,13 @@ class StrictIntComboBox(QComboBox):
         valid = bool(valid)
         changed = valid != self._input_valid
         self._input_valid = valid
-        invalid = not valid
-        if self.property("inputInvalid") != invalid:
-            self.setProperty("inputInvalid", invalid)
-            style = self.style()
-            style.unpolish(self)
-            style.polish(self)
-            self.update()
+        # EditableComboBox（LineEdit）用 setError 渲染错误态，替代旧 inputInvalid QSS。
+        self.setError(not valid)
         if changed:
             self.validityChanged.emit(valid)
 
 
-class StrictIntLineEdit(QLineEdit):
+class StrictIntLineEdit(LineEdit):
     """保持普通输入框外观，并在提交边界严格校验 ASCII 整数。"""
 
     valueChanged = Signal(int)
@@ -250,7 +238,7 @@ class StrictIntLineEdit(QLineEdit):
             self.validityChanged.emit(valid)
 
 
-class StrictIntSpinBox(QSpinBox):
+class StrictIntSpinBox(SpinBox):
     """只接受指定范围内 ASCII 十进制文本的整数输入框。"""
 
     validityChanged = Signal(bool)
@@ -383,13 +371,8 @@ class StrictIntSpinBox(QSpinBox):
         valid = bool(valid)
         changed = valid != self._input_valid
         self._input_valid = valid
-        invalid = not valid
-        if self.property("inputInvalid") != invalid:
-            self.setProperty("inputInvalid", invalid)
-            style = self.style()
-            style.unpolish(self)
-            style.polish(self)
-            self.update()
+        # qfluentwidgets SpinBox 用 setError 渲染错误态（聚焦红边框），替代旧 inputInvalid QSS。
+        self.setError(not valid)
         if changed:
             self.validityChanged.emit(valid)
 
@@ -441,18 +424,18 @@ class PresetSpinBox(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
     def _add_preset_button(self, layout: QHBoxLayout) -> None:
-        button = QToolButton(self)
+        button = TransparentToolButton(self)
         button.setObjectName("presetMenuButton")
         button.setAccessibleName("Select a preset value")
         button.setToolTip("Select a preset value")
         button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        menu = QMenu(button)
+        menu = FluentMenu(parent=button)
         for preset in self._presets:
-            action = menu.addAction(str(preset))
-            action.setData(preset)
+            action = menu.add_action(str(preset), data=preset)
             action.triggered.connect(
                 lambda _checked=False, selected=preset: self.setValue(selected)
             )

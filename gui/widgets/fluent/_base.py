@@ -6,15 +6,12 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QPushButton, QWidget
+from PySide6.QtWidgets import QWidget
 
 from gui.styles import BaseStyles, FontRole
 
 __all__ = [
-    "apply_button_variant",
     "apply_font_role_to",
-    "button_stylesheet_for",
-    "ghost_button_style",
     "repolish",
     "set_function_tooltip",
 ]
@@ -43,49 +40,6 @@ def repolish(widget: QWidget) -> None:
     # 显式走 QWidget.update：条目视图（QTableWidget 等）会以带索引的
     # update(QModelIndex) 覆盖无参重载，直接调用会因缺参抛 TypeError。
     QWidget.update(widget)
-
-
-def ghost_button_style() -> str:
-    """返回 ghost 变体 QSS：透明底，hover 显示边框，颜色取自 BaseStyles。"""
-
-    radius = BaseStyles.RADIUS_MD
-    return (
-        f"QPushButton#ghost {{"
-        f" border-radius: {radius}px; padding: 3px 8px;"
-        f" background-color: transparent; color: {BaseStyles.color('TEXT_PRIMARY')};"
-        f" border: 1px solid transparent; }}"
-        f"QPushButton#ghost:hover {{"
-        f" background-color: {BaseStyles.color('BUTTON_HOVER')};"
-        f" border-color: {BaseStyles.color('BORDER_COLOR')}; }}"
-        f"QPushButton#ghost:pressed {{"
-        f" background-color: {BaseStyles.color('BUTTON_PRESSED')}; }}"
-        f"QPushButton#ghost:focus {{"
-        f" border: 2px solid {BaseStyles.color('BORDER_FOCUS')}; }}"
-        f"QPushButton#ghost:disabled {{"
-        f" color: {BaseStyles.color('TEXT_DISABLED')}; }}"
-    )
-
-
-def button_stylesheet_for(variant: str) -> str:
-    """返回变体对应样式表；accent/danger 复用 ``BaseStyles.BUTTON_QSS()``。"""
-
-    if variant == "ghost":
-        return ghost_button_style()
-    return BaseStyles.BUTTON_QSS()
-
-
-def apply_button_variant(button: QPushButton, variant: str) -> None:
-    """把变体名路由到 QSS 对象名选择器并设置 ``buttonVariant`` property。
-
-    与 ``BasePanel._apply_button_variant`` 保持一致：``objectName`` 命中
-    ``QPushButton#accent`` / ``QPushButton#danger`` 选择器，``buttonVariant``
-    作为稳定的业务路由 property 供程序读取或后续 QSS 属性选择器使用。
-    """
-
-    button.setObjectName(variant)
-    button.setProperty("buttonVariant", variant)
-    button.setStyleSheet(button_stylesheet_for(variant))
-    repolish(button)
 
 
 def apply_font_role_to(widget: QWidget, role: FontRole | str) -> FontRole:

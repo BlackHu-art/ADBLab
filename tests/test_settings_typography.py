@@ -162,7 +162,9 @@ def test_settings_font_previews_use_distinct_typography_roles(monkeypatch, qt_ap
 
     dialog = SettingsDialog()
     try:
-        assert requested_roles[:2] == [FontRole.UI, FontRole.UI_SMALL]
+        # ScalableGroupBox 构造时会额外请求 UI 角色（group_box_title_margin），
+        # 首两个请求的顺序不再固定；改断言首个请求为 UI 且集合覆盖全部角色。
+        assert requested_roles[0] == FontRole.UI
         assert requested_roles[-2:] == [FontRole.UI, FontRole.LOG]
         assert set(requested_roles) == {FontRole.UI, FontRole.UI_SMALL, FontRole.LOG}
         assert "font-family: 'Arial'" in dialog._ui_font_preview.styleSheet()

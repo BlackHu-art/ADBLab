@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -19,10 +18,22 @@ from PySide6.QtWidgets import (
     QStyleOptionComboBox,
     QWidget,
 )
+from qfluentwidgets import (
+    BodyLabel,
+    CheckBox,
+    ComboBox,
+    LineEdit,
+    PrimaryPushButton,
+    PushButton,
+    TransparentPushButton,
+)
 
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.double_click_button import DoubleClickButton
+from gui.widgets.fluent.button import DangerPushButton
+from gui.widgets.fluent.combo_box import FluentComboBox
+from gui.widgets.fluent.group_box import ScalableGroupBox
 from gui.widgets.responsive_controller import (
     ReflowReason,
     ResponsiveCoordinator,
@@ -60,7 +71,7 @@ class _SuffixedIntValidator(QIntValidator):
         return state, input_text, position
 
 
-class _ResponsiveGroupBox(QGroupBox):
+class _ResponsiveGroupBox(ScalableGroupBox):
     """只让真实溢出行或可滚动标题撑宽分组，忽略普通子控件尺寸提示。"""
 
     _HORIZONTAL_CONTENT_MARGIN = 32
@@ -170,11 +181,10 @@ class BasePanel(QWidget):
         return card
 
     def _g(self, t):
-        """创建统一样式的 QGroupBox。"""
+        """创建统一样式的分组框（样式由 ScalableGroupBox 自维护）。"""
         g = _ResponsiveGroupBox(t)
         g.setFont(self._font_base)
         g.setProperty("fontRole", FontRole.UI.value)
-        g.setStyleSheet(BaseStyles.GROUP_BOX_STYLE())
         g.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         g.setToolTip(t)
         g.setAccessibleName(t)
@@ -182,7 +192,7 @@ class BasePanel(QWidget):
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
         role = FontRole.UI_SMALL if small else FontRole.UI
-        label = QLabel(text)
+        label = BodyLabel(text, self)
         label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base)
         label.setProperty("fontRole", role.value)
         label.setWordWrap(True)
@@ -196,7 +206,8 @@ class BasePanel(QWidget):
         return label
 
     def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
-        cb = QCheckBox(text)
+        cb = CheckBox()
+        cb.setText(text)
         cb.setAccessibleName(text)
         cb.setFont(self._font_base)
         cb.setProperty("fontRole", FontRole.UI.value)
@@ -214,8 +225,19 @@ class BasePanel(QWidget):
         button.setProperty("functionalToolTip", description)
 
     def _b(self, t, i, variant="", tooltip=None):
-        """创建图标按钮；variant 可指定默认、强调或危险样式。"""
-        b = QPushButton(t)
+        """创建图标按钮；accent/ghost 用 qfluentwidgets 按钮，其余用 QSS 变体。"""
+        if variant == "accent":
+            b = PrimaryPushButton()
+            b.setText(t)
+        elif variant == "ghost":
+            b = TransparentPushButton()
+            b.setText(t)
+        elif variant == "danger":
+            b = DangerPushButton()
+            b.setText(t)
+        else:
+            b = PushButton()
+            b.setText(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
@@ -226,8 +248,6 @@ class BasePanel(QWidget):
         self._set_button_help(b, tooltip)
         b.setProperty("iconName", i)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        if variant:
-            self._apply_button_variant(b, variant)
         return b
 
     def _db(self, t, i, tooltip=None):
@@ -246,8 +266,19 @@ class BasePanel(QWidget):
         return b
 
     def _qb(self, t, variant="", tooltip=None):
-        """创建纯文本按钮；variant 可指定默认、强调或危险样式。"""
-        b = QPushButton(t)
+        """创建纯文本按钮；accent/ghost 用 qfluentwidgets 按钮，其余用 QSS 变体。"""
+        if variant == "accent":
+            b = PrimaryPushButton()
+            b.setText(t)
+        elif variant == "ghost":
+            b = TransparentPushButton()
+            b.setText(t)
+        elif variant == "danger":
+            b = DangerPushButton()
+            b.setText(t)
+        else:
+            b = PushButton()
+            b.setText(t)
         b.setFont(self._font_sm)
         b.setProperty("fontRole", FontRole.UI.value)
         b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
@@ -255,15 +286,7 @@ class BasePanel(QWidget):
         b.setAccessibleName(t)
         self._set_button_help(b, tooltip)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
-        if variant:
-            self._apply_button_variant(b, variant)
         return b
-
-    def _apply_button_variant(self, button: QPushButton, variant: str):
-        button.setObjectName(variant)
-        button.setProperty("buttonVariant", variant)
-        button.setStyleSheet(BaseStyles.BUTTON_QSS())
-        self._refresh_button_style(button)
 
     def _refresh_button_style(self, button: QPushButton):
         button.style().unpolish(button)
@@ -415,6 +438,19 @@ class BasePanel(QWidget):
                     widget,
                 )
                 minimum_width += max(0, required_text_width - edit_rect.width())
+            elif isinstance(widget, ComboBox):
+                # qfluentwidgets ComboBox：最小宽度容纳最长项，避免闭合态文本裁剪。
+                texts = [widget.itemText(index) for index in range(widget.count())]
+                minimum_text = widget.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY)
+                if minimum_text not in (None, ""):
+                    texts.append(str(minimum_text))
+                elif widget.currentText():
+                    texts.append(widget.currentText())
+                required_text_width = max(
+                    (widget.fontMetrics().horizontalAdvance(text) for text in texts),
+                    default=0,
+                )
+                minimum_width = max(minimum_width, required_text_width + 44)
             widget.setMinimumWidth(minimum_width)
             return
         em_count = int(widget.property(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY) or 0)
@@ -662,13 +698,12 @@ class BasePanel(QWidget):
         return container
 
     def _in(self, p, w=0):
-        """创建统一样式的输入框。"""
-        i = QLineEdit()
+        """创建 qfluentwidgets 输入框。"""
+        i = LineEdit()
         i.setFont(self._font_sm)
         i.setProperty("fontRole", FontRole.UI.value)
         i.setPlaceholderText(p)
         i.setAccessibleName(p)
-        i.setMinimumHeight(26)
         i.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if w:
             i.setMaximumWidth(w)
@@ -757,26 +792,28 @@ class BasePanel(QWidget):
             editor.setValidator(validator)
 
     def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
-        """创建统一样式的下拉框。"""
+        """创建 qfluentwidgets 只读下拉框。"""
         role = FontRole(font_role)
         role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
-        c = QComboBox()
+        c = ComboBox()
         c.setFont(font or role_font)
         c.setProperty("fontRole", role.value)
         c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if items:
             c.addItems(items)
+            # 最小宽度容纳最长项，避免闭合态文本被响应式网格压窄裁剪。
+            max_text = max(c.fontMetrics().horizontalAdvance(str(item)) for item in items)
+            c.setMinimumWidth(max_text + 44)
         return c
 
     def _combo_editable(self, items=None, font=None, *, font_role=FontRole.UI):
-        """创建样式一致的可编辑下拉框。"""
+        """创建样式一致的可编辑下拉框（FluentComboBox，自维护 COMBO_BOX_STYLE 主题）。"""
         role = FontRole(font_role)
         role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
         resolved_font = font or role_font
-        c = self._combo(items, font=resolved_font, font_role=role)
-        c.setEditable(True)
-        editor = c.lineEdit()
-        if editor is not None:  # stub Optional 收窄
-            editor.setFont(resolved_font)
-            editor.setProperty("fontRole", role.value)
+        c = FluentComboBox(editable=True)
+        c.setFont(resolved_font)
+        c.apply_font_role(role)
+        if items:
+            c.addItems(items)
         return c

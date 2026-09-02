@@ -1,11 +1,12 @@
-"""主题化上下文菜单组件。"""
+"""主题化上下文菜单组件（迁移到 qfluentwidgets ``RoundMenu``）。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu, QWidget
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import RoundMenu
 
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.fluent._base import apply_font_role_to
@@ -13,19 +14,19 @@ from gui.widgets.fluent._base import apply_font_role_to
 __all__ = ["FluentMenu"]
 
 
-class FluentMenu(QMenu):
+class FluentMenu(RoundMenu):
     """主题化上下文菜单，动作可携带业务 data 与可选勾选态。
 
-    契约：
+    契约（沿用自研，调用方无需改动）：
     * ``add_action`` 返回 :class:`QAction`，回调适配 ``triggered(bool)`` 签名；
-    * ``_sync_theme_state()`` 读取当前主题重建菜单样式。
+    * 外观与主题由 ``RoundMenu`` 自动跟随 qfluentwidgets 主题，不再依赖自研
+      ``MENU_STYLE`` QSS。
     """
 
     def __init__(self, title: str = "", *, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.setProperty("fontRole", FontRole.UI.value)
-        self._sync_theme_state()
 
     # ── 动作 ────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ class FluentMenu(QMenu):
     ) -> QAction:
         """追加动作；``callback`` 会被包装以适配 ``triggered(bool)``。"""
 
-        action = self.addAction(text)
+        action = QAction(text, self)
         if data is not None:
             action.setData(data)
         if checkable:
@@ -50,6 +51,7 @@ class FluentMenu(QMenu):
             action.triggered.connect(
                 lambda _checked=False, fn=callback: fn()
             )
+        self.addAction(action)
         return action
 
     # ── 字体与主题 ──────────────────────────────────────────────────────
@@ -60,6 +62,6 @@ class FluentMenu(QMenu):
         apply_font_role_to(self, role)
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建菜单样式。"""
+        """外观由 RoundMenu 自动跟随主题，无需手动重建。"""
 
-        self.setStyleSheet(BaseStyles.MENU_STYLE())
+        self.update()

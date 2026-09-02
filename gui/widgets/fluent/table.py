@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QWidget,
 )
+from qfluentwidgets import SmoothScrollDelegate
 
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.fluent._base import apply_font_role_to, repolish
@@ -57,6 +58,8 @@ class FluentTable(QTableWidget):
         if columns:
             self.set_columns(columns)
         self.itemSelectionChanged.connect(self._on_selection_changed)
+        # 原生滚动条已随 SCROLLBAR_STYLE 移除，改为 Fluent 平滑滚动条。
+        SmoothScrollDelegate(self)
         self._sync_theme_state()
 
     # ── 列与行 ──────────────────────────────────────────────────────────

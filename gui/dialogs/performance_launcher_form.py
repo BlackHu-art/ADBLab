@@ -5,8 +5,6 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -14,18 +12,27 @@ from PySide6.QtWidgets import (
     QLayout,
     QLineEdit,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
-    QPushButton,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import (
+    CardWidget,
+    CheckBox,
+    InfoBadge,
+    LineEdit,
+    PlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+)
 
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.button import DangerPushButton
+from gui.widgets.fluent.label import FluentLabel
 from gui.widgets.fluent.segmented_control import SegmentedControl
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from services.mobileperf_runner import MobilePerfMonkeyConfig
@@ -82,31 +89,33 @@ class PerformanceLauncherForm:
         self._frame._root_layout = root
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
-        self._frame.header_card = QFrame()
+        self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
+        self._frame.header_card.setBorderRadius(BaseStyles.RADIUS_LG)
         hl = QVBoxLayout(self._frame.header_card)
         hl.setContentsMargins(12, 8, 12, 8)
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = QLabel("Performance Launcher")
+        self._frame.dialog_title = FluentLabel(
+            "Performance Launcher", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
-        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self._frame.status_badge = QLabel("No device")
-        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge = InfoBadge.info("No device", self._frame.header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.status_badge.setToolTip("Device availability for performance capture")
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = QLabel("Configure and launch device performance capture")
+        self._frame.dialog_subtitle = FluentLabel(
+            "Configure and launch device performance capture",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
-        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.dialog_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self._frame.dialog_subtitle)
@@ -136,10 +145,11 @@ class PerformanceLauncherForm:
         grid.setColumnStretch(1, 1)
         self._frame._config_group_layout = grid
 
-        self._frame.package_edit = QLineEdit(package_name)
-        self._frame.package_edit.setObjectName("monoField")
+        self._frame.package_edit = LineEdit()
+        self._frame.package_edit.setText(package_name)
         self._frame.package_edit.setPlaceholderText("com.example.app")
-        self._frame.get_package_btn = QPushButton("Get Current Package")
+        self._frame.get_package_btn = PushButton()
+        self._frame.get_package_btn.setText("Get Current Package")
         self._frame.get_package_btn.setIcon(get_themed_icon("target.svg"))
         self._frame.get_package_btn.setIconSize(QSize(14, 14))
         self._frame.get_package_btn.setProperty("iconName", "target.svg")
@@ -177,17 +187,19 @@ class PerformanceLauncherForm:
             unit_label.setParent(group)
             unit_label.hide()
 
-        self._frame.exception_edit = QLineEdit("fatal exception;has died")
-        self._frame.exception_edit.setObjectName("monoField")
-        self._frame.phone_log_edit = QLineEdit("/data/anr")
-        self._frame.phone_log_edit.setObjectName("monoField")
-        self._frame.monkey_check = QCheckBox("Enable monkey")
+        self._frame.exception_edit = LineEdit()
+        self._frame.exception_edit.setText("fatal exception;has died")
+        self._frame.phone_log_edit = LineEdit()
+        self._frame.phone_log_edit.setText("/data/anr")
+        self._frame.monkey_check = CheckBox()
+        self._frame.monkey_check.setText("Enable monkey")
         self._frame.monkey_check.toggled.connect(self._frame._on_monkey_enabled_changed)
         monkey_row = self._build_monkey_row()
-        self._frame.save_path_edit = QLineEdit(self._frame._default_save_path())
-        self._frame.save_path_edit.setObjectName("monoField")
+        self._frame.save_path_edit = LineEdit()
+        self._frame.save_path_edit.setText(self._frame._default_save_path())
         self._frame.save_path_edit.setPlaceholderText("Result root")
-        self._frame.pick_save_btn = QPushButton("Browse")
+        self._frame.pick_save_btn = PushButton()
+        self._frame.pick_save_btn.setText("Browse")
         self._frame.pick_save_btn.setToolTip("Select the MobilePerf result directory")
         self._frame.pick_save_btn.setIcon(get_themed_icon("folder.svg"))
         self._frame.pick_save_btn.setIconSize(QSize(14, 14))
@@ -195,7 +207,9 @@ class PerformanceLauncherForm:
         self._frame.pick_save_btn.clicked.connect(self._frame._pick_save_path)
         save_row = self._row_widget(self._frame.save_path_edit, self._frame.pick_save_btn)
 
-        self._frame.serialnum_label = QLabel(self._frame.device_ip or "-")
+        self._frame.serialnum_label = FluentLabel(
+            self._frame.device_ip or "-", role=FontRole.MONO, color_key="LOG_SUCCESS", bold=True
+        )
         self._frame.serialnum_label.setObjectName("onlineDeviceLabel")
         self._frame.serialnum_label.setToolTip(
             f"Selected online device: {self._frame.device_ip or '-'}"
@@ -351,10 +365,14 @@ class PerformanceLauncherForm:
             layout.addWidget(self._inline_label(label, tooltip), event_row + 1, column * 3)
             layout.addWidget(field, event_row + 1, column * 3 + 1)
 
-        self._frame.monkey_ignore_crashes = QCheckBox("Ignore crashes")
-        self._frame.monkey_ignore_timeouts = QCheckBox("Ignore timeouts")
-        self._frame.monkey_ignore_security = QCheckBox("Ignore security")
-        self._frame.monkey_kill_after_error = QCheckBox("Kill after error")
+        self._frame.monkey_ignore_crashes = CheckBox()
+        self._frame.monkey_ignore_crashes.setText("Ignore crashes")
+        self._frame.monkey_ignore_timeouts = CheckBox()
+        self._frame.monkey_ignore_timeouts.setText("Ignore timeouts")
+        self._frame.monkey_ignore_security = CheckBox()
+        self._frame.monkey_ignore_security.setText("Ignore security")
+        self._frame.monkey_kill_after_error = CheckBox()
+        self._frame.monkey_kill_after_error.setText("Kill after error")
         monkey_flags = (
             self._frame.monkey_ignore_crashes,
             self._frame.monkey_ignore_timeouts,
@@ -387,8 +405,8 @@ class PerformanceLauncherForm:
         self._frame._apply_monkey_control_widths()
         return container
 
-    def _inline_label(self, text: str, tooltip: str = "") -> QLabel:
-        label = QLabel(text)
+    def _inline_label(self, text: str, tooltip: str = "") -> FluentLabel:
+        label = FluentLabel(text, role=FontRole.UI, color_key="TEXT_PRIMARY")
         label.setObjectName("inlineLabel")
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setMinimumWidth(136)
@@ -488,7 +506,7 @@ class PerformanceLauncherForm:
         field: QWidget,
         hint: str,
     ) -> int:
-        label = QLabel(key)
+        label = FluentLabel(key, role=FontRole.UI, color_key="TEXT_PRIMARY", bold=True)
         label.setObjectName("fieldLabel")
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         buddy = field
@@ -513,7 +531,7 @@ class PerformanceLauncherForm:
                     self._apply_hint(child, hint)
         grid.addWidget(label, row, 0)
         grid.addWidget(field, row, 1)
-        hint_label = QLabel(hint)
+        hint_label = FluentLabel(hint, role=FontRole.UI, color_key="TEXT_SECONDARY")
         hint_label.setObjectName("configHint")
         hint_label.setWordWrap(True)
         hint_label.setAccessibleName(f"{key} help")
@@ -541,8 +559,8 @@ class PerformanceLauncherForm:
             layout.addWidget(widget, 1 if index == 0 else 0)
         return container
 
-    def _build_log_view(self) -> QPlainTextEdit:
-        log_view = QPlainTextEdit()
+    def _build_log_view(self) -> PlainTextEdit:
+        log_view = PlainTextEdit()
         log_view.setObjectName("performanceLog")
         log_view.setReadOnly(True)
         log_view.setUndoRedoEnabled(False)
@@ -576,7 +594,7 @@ class PerformanceLauncherForm:
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        self._frame.status_label = QLabel("Idle")
+        self._frame.status_label = FluentLabel("Idle", role=FontRole.UI, color_key="TEXT_SECONDARY")
         self._frame.status_label.setObjectName("statusLabel")
         self._frame.status_label.setMinimumWidth(92)
         row.addWidget(self._frame.status_label, 0)
@@ -609,7 +627,8 @@ class PerformanceLauncherForm:
         self._frame.result_action.triggered.connect(self._frame._trigger_open_result)
         self._frame.result_action.setEnabled(False)
 
-        self._frame.perfetto_btn = QPushButton("Open Perfetto")
+        self._frame.perfetto_btn = PushButton()
+        self._frame.perfetto_btn.setText("Open Perfetto")
         self._frame.perfetto_btn.setIcon(get_themed_icon("speedometer.svg"))
         self._frame.perfetto_btn.setIconSize(QSize(14, 14))
         self._frame.perfetto_btn.setProperty("iconName", "speedometer.svg")
@@ -617,7 +636,8 @@ class PerformanceLauncherForm:
         self._frame.perfetto_action.changed.connect(self._frame._sync_perfetto_button)
         row.addWidget(self._frame.perfetto_btn)
 
-        self._frame.result_btn = QPushButton("Open Result")
+        self._frame.result_btn = PushButton()
+        self._frame.result_btn.setText("Open Result")
         self._frame.result_btn.setIcon(get_themed_icon("folder-open.svg"))
         self._frame.result_btn.setIconSize(QSize(14, 14))
         self._frame.result_btn.setProperty("iconName", "folder-open.svg")
@@ -625,9 +645,8 @@ class PerformanceLauncherForm:
         self._frame.result_action.changed.connect(self._frame._sync_result_button)
         row.addWidget(self._frame.result_btn)
 
-        self._frame.stop_btn = QPushButton("Stop")
+        self._frame.stop_btn = DangerPushButton("Stop")
         self._frame.stop_btn.setToolTip("Stop the active performance collection")
-        self._frame.stop_btn.setObjectName("danger")
         self._frame.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self._frame.stop_btn.setIconSize(QSize(14, 14))
         self._frame.stop_btn.setProperty("iconName", "stop-circle.svg")
@@ -635,9 +654,9 @@ class PerformanceLauncherForm:
         self._frame.stop_btn.setEnabled(False)
         row.addWidget(self._frame.stop_btn)
 
-        self._frame.start_btn = QPushButton("Start")
+        self._frame.start_btn = PrimaryPushButton()
+        self._frame.start_btn.setText("Start")
         self._frame.start_btn.setToolTip("Start performance collection with this configuration")
-        self._frame.start_btn.setObjectName("accent")
         self._frame.start_btn.setIcon(get_themed_icon("play.svg"))
         self._frame.start_btn.setIconSize(QSize(14, 14))
         self._frame.start_btn.setProperty("iconName", "play.svg")

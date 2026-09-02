@@ -10,13 +10,14 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
-    QLabel,
     QMenu,
     QSizePolicy,
     QToolButton,
 )
+from qfluentwidgets import CardWidget, TransparentToolButton
 
 from gui.styles.icon_loader import get_themed_icon
+from gui.widgets.fluent.label import FluentLabel
 
 from .styles import BaseStyles, FontRole
 
@@ -44,25 +45,26 @@ class ToolbarController:
         "always_on_top",
         "settings",
     )
-    _WINDOW_CONTROL_PRIORITY = ("minimize", "maximize", "exit")
 
     def __init__(self, frame):
         self._frame = frame
 
     def _create_toolbar(self) -> QFrame:
         """创建包含功能入口、主题切换和窗口控制的顶部工具栏。"""
-        bar = QFrame()
+        bar = CardWidget()
         self._frame._toolbar = bar
         bar.setObjectName("toolbar")
+        bar.setBorderRadius(BaseStyles.RADIUS_MD)
         bar.setMinimumHeight(BaseStyles.control_height(minimum=32, padding=8))
         bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        bar.setStyleSheet(BaseStyles.TOOLBAR_STYLE())
 
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(10, 0, 6, 0)
         layout.setSpacing(4)
 
-        self._frame._toolbar_title = QLabel("ADBLab")
+        self._frame._toolbar_title = FluentLabel(
+            "ADBLab", role=FontRole.UI, color_key="TITLE_COLOR", bold=True
+        )
         self._frame._toolbar_title.setObjectName("toolbarTitle")
         layout.addWidget(self._frame._toolbar_title)
 
@@ -157,30 +159,6 @@ class ToolbarController:
                 self._frame.set_always_on_top,
                 True,
             ),
-            (
-                "minimize",
-                "Minimize",
-                "minus.svg",
-                "Hide the main window in the taskbar",
-                self._frame._minimize_window,
-                False,
-            ),
-            (
-                "maximize",
-                "Maximize",
-                "square.svg",
-                "Expand the main window to fill the screen",
-                self._frame._toggle_maximize_restore,
-                False,
-            ),
-            (
-                "exit",
-                "Exit",
-                "x.svg",
-                "Close ADBLab",
-                self._frame._request_application_close,
-                False,
-            ),
         )
         for key, label, icon_name, tooltip, callback, checkable in action_specs:
             self._frame._create_toolbar_action(
@@ -205,8 +183,12 @@ class ToolbarController:
         self._frame._tb_save_btn.setObjectName("savePathBtn")
         self._frame._tb_save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        self._frame._save_path_label = QLabel()
+        self._frame._save_path_label = FluentLabel(
+            "", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._frame._save_path_label.setObjectName("savePathLabel")
+        # 原 QSS `padding: 0 2px` 用内容边距等价表达。
+        self._frame._save_path_label.setContentsMargins(2, 0, 2, 0)
         self._frame._save_path_label.setMinimumWidth(0)
         self._frame._save_path_label.setSizePolicy(
             QSizePolicy.Policy.Preferred,
@@ -231,10 +213,6 @@ class ToolbarController:
         )
         self._frame.tb_always_on_top = self._frame._create_toolbar_action_button("always_on_top")
         self._frame._refresh_always_on_top_button()
-        self._frame.tb_minimize = self._frame._create_toolbar_action_button("minimize")
-        self._frame.tb_maximize = self._frame._create_toolbar_action_button("maximize")
-        self._frame.tb_exit = self._frame._create_toolbar_action_button("exit")
-        self._frame.tb_exit.setObjectName("exit_btn")
 
         for btn in (
             self._frame.tb_clear,
@@ -243,10 +221,6 @@ class ToolbarController:
             self._frame.tb_always_on_top,
         ):
             layout.addWidget(btn)
-
-        layout.addWidget(self._frame.tb_minimize)
-        layout.addWidget(self._frame.tb_maximize)
-        layout.addWidget(self._frame.tb_exit)
 
         self._frame._toolbar_path_layout_timer = QTimer(self._frame)
         self._frame._toolbar_path_layout_timer.setSingleShot(True)
@@ -311,7 +285,7 @@ class ToolbarController:
     ) -> QToolButton:
         """创建带图标和提示文本的扁平工具栏按钮。"""
         icon_name = icon_path.replace("resources/icons/", "")
-        btn = QToolButton()
+        btn = TransparentToolButton()
         if action is not None:
             btn.setDefaultAction(action)
             icon_name = str(action.property("iconName") or "")
@@ -468,11 +442,7 @@ class ToolbarController:
         menu.setObjectName("toolbarMoreMenu")
         menu.setAccessibleName("More toolbar actions")
         button.setMenu(menu)
-        exit_button = self._frame.tb_exit
-        if exit_button.width() > 0 and exit_button.height() > 0:
-            button.setFixedSize(exit_button.size())
-        insert_index = layout.indexOf(self._frame.tb_minimize)
-        layout.insertWidget(insert_index if insert_index >= 0 else layout.count(), button)
+        layout.insertWidget(layout.count(), button)
         button.hide()
         self._frame._toolbar_more_button = button
         self._frame._toolbar_more_menu = menu
@@ -531,18 +501,6 @@ class ToolbarController:
             > available_width
         ):
             include_title = False
-        for key in self._WINDOW_CONTROL_PRIORITY:
-            if (
-                self._toolbar_required_width(
-                    visible_keys,
-                    include_more=True,
-                    include_title=include_title,
-                )
-                <= available_width
-            ):
-                break
-            visible_keys.discard(key)
-
         hidden_keys = tuple(key for key in order if key not in visible_keys)
         for key in order:
             button = self._frame._toolbar_action_buttons[key]
@@ -574,37 +532,6 @@ class ToolbarController:
             current_theme=BaseStyles.current_theme(),
         )
         BaseStyles.toggle_theme()
-
-    def _minimize_window(self):
-        """记录工具栏最小化动作。"""
-        _debug_log(self._frame, "ui.toolbar", action="minimize", phase="requested")
-        self._frame.showMinimized()
-
-    def _toggle_maximize_restore(self):
-        """切换最大化状态，并同步窗口控制按钮的图标和说明。"""
-
-        if self._frame.isMaximized():
-            self._frame.showNormal()
-        else:
-            self._frame.showMaximized()
-        self._frame._refresh_maximize_button()
-
-    def _refresh_maximize_button(self) -> None:
-        maximized = self._frame.isMaximized()
-        label = "Restore" if maximized else "Maximize"
-        tooltip = (
-            "Restore the main window to its previous size"
-            if maximized
-            else "Expand the main window to fill the screen"
-        )
-        icon_name = "corners-in.svg" if maximized else "square.svg"
-        self._set_toolbar_action_state(
-            "maximize",
-            "tb_maximize",
-            tooltip=tooltip,
-            accessible_name=label,
-            icon_name=icon_name,
-        )
 
     def _request_application_close(self):
         """记录工具栏退出动作，实际资源清理由 closeEvent 接管。"""
@@ -663,10 +590,7 @@ class ToolbarController:
             self._frame._save_path_value = ""
             self._frame._save_path_label.setToolTip("")
             self._frame._save_path_label.setAccessibleDescription("")
-        self._frame._save_path_label.setStyleSheet(
-            f"color: {BaseStyles.color('TEXT_SECONDARY')}; padding: 0 2px;"
-        )
-        self._frame._save_path_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        # 保存路径标签颜色/字体已由 FluentLabel 自维护，这里仅刷新省略展示。
         self._frame._update_toolbar_path_display()
 
     def _update_toolbar_path_display(self):

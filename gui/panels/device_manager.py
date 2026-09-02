@@ -12,11 +12,11 @@ from PySide6.QtWidgets import (
     QCompleter,  # noqa: F401  供测试通过本模块命名空间补丁 QCompleter。
     QFrame,
     QGridLayout,
-    QLabel,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import InfoBadge
 
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager_layout import DeviceManagerLayout
@@ -65,10 +65,9 @@ class DeviceManager(BasePanel):
         g_dev.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         g_dev.setAccessibleName("Devices")
         g_dev.installEventFilter(self)
-        # 发现状态徽标：浮层 QLabel 对齐分组标题净空带右上角，不进入任何布局。
+        # 发现状态徽标：浮层 InfoBadge 对齐分组标题净空带右上角，不进入任何布局。
         # 仅补充标题区视觉；状态字符串与标题文本仍由 set_discovery_state 维护。
-        self._discovery_badge = QLabel("", w)
-        self._discovery_badge.setObjectName("discoveryBadge")
+        self._discovery_badge = InfoBadge(w)
         self._discovery_badge.setProperty("fontRole", FontRole.UI.value)
         self._discovery_badge_kind = "empty"
         gd_l = QVBoxLayout(g_dev)

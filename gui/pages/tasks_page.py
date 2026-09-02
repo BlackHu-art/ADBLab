@@ -19,10 +19,11 @@ from datetime import datetime
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
+from qfluentwidgets import InfoBadge, InfoLevel
 
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent import Card, EmptyState, FluentButton, FluentProgressBar
+from gui.widgets.fluent import Card, DangerPushButton, EmptyState, FluentProgressBar
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 
 # 在途视图轮询间隔（毫秒）。
@@ -65,15 +66,16 @@ def _resolve_state(state: str, success: bool) -> OperationState:
     return OperationState.SUCCEEDED if success else OperationState.FAILED
 
 
-class _StatusBadge(QLabel):
+class _StatusBadge(InfoBadge):
     """带语义配色的状态徽标，用于在途状态与历史结果展示。"""
 
-    _TONES = {
-        "neutral": ("BUTTON_BG", "TEXT_PRIMARY"),
-        "accent": ("BUTTON_ACCENT", "#ffffff"),
-        "success": ("LOG_SUCCESS", "#ffffff"),
-        "warning": ("LOG_WARNING", "#ffffff"),
-        "danger": ("BUTTON_DANGER", "#ffffff"),
+    # 语义色调 → InfoBadge 级别（InfoLevel 五级与业务五色一一对应）。
+    _TONE_LEVELS = {
+        "neutral": InfoLevel.INFOAMTION,
+        "accent": InfoLevel.ATTENTION,
+        "success": InfoLevel.SUCCESS,
+        "warning": InfoLevel.WARNING,
+        "danger": InfoLevel.ERROR,
     }
 
     def __init__(
@@ -83,7 +85,10 @@ class _StatusBadge(QLabel):
         tone: str = "neutral",
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(text, parent)
+        # InfoBadge 的 singledispatchmethod 会按 text 分发到 str 重载，该重载又回调
+        # self.__init__，与子类重载冲突；这里走 parent 默认重载后再 setText。
+        super().__init__(parent)
+        self.setText(text)
         self.setObjectName("statusBadge")
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setProperty("fontRole", FontRole.UI_SMALL.value)
@@ -92,26 +97,17 @@ class _StatusBadge(QLabel):
         self.set_status(text, tone)
 
     def set_status(self, text: str, tone: str = "neutral") -> None:
-        """更新徽标文字与配色。"""
+        """更新徽标文字与语义级别。"""
 
-        self._tone = tone if tone in self._TONES else "neutral"
+        self._tone = tone if tone in self._TONE_LEVELS else "neutral"
         self.setText(text)
         self.setAccessibleName(text)
         self._sync_theme_state()
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建徽标配色。"""
+        """按当前语义级别同步 InfoBadge 配色（主题色由 qfluentwidgets 自管理）。"""
 
-        bg_key, fg = self._TONES.get(self._tone, self._TONES["neutral"])
-        fg = fg if fg.startswith("#") else BaseStyles.color(fg)
-        self.setStyleSheet(
-            f"QLabel#statusBadge {{"
-            f" background-color: {BaseStyles.color(bg_key)};"
-            f" color: {fg};"
-            f" border-radius: {BaseStyles.RADIUS_MD}px;"
-            f" padding: 2px 10px;"
-            f" }}"
-        )
+        self.setLevel(self._TONE_LEVELS.get(self._tone, InfoLevel.INFOAMTION))
 
 
 class TaskCenterPage(QWidget):
@@ -224,11 +220,11 @@ class TaskCenterPage(QWidget):
         progress.setFixedWidth(120)
         layout.addWidget(progress)
 
-        cancel = FluentButton(
-            "取消",
-            variant="danger",
-            tooltip=f"取消任务 {snapshot.operation_id}",
-        )
+        cancel = DangerPushButton("取消")
+        cancel.setToolTip(f"取消任务 {snapshot.operation_id}")
+        cancel.setAccessibleName("取消")
+        cancel.setAccessibleDescription(f"取消任务 {snapshot.operation_id}")
+        cancel.setProperty("functionalToolTip", f"取消任务 {snapshot.operation_id}")
         cancel.clicked.connect(
             lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid)
         )

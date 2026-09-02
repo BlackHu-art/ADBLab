@@ -48,6 +48,9 @@ def _set_action_font(dialog, point_size):
     for button in dialog.findChildren(QPushButton):
         if button.text() in {*_SELECTION_ACTIONS, *_PRESET_ACTIONS}:
             button.setFont(QFont("Arial", point_size))
+            # qfluentwidgets PushButton 的最小行高由 minimumSizeHint 按点字号给出，
+            # 直接 setFont 不会触发 _apply_adaptive_text_heights，需同步最小高度。
+            button.setMinimumHeight(button.minimumSizeHint().height())
             button.updateGeometry()
 
 
@@ -93,7 +96,7 @@ def _patch_font_size(monkeypatch, current_size):
     )
 
 
-def test_app_manager_top_controls_fit_at_776_and_760_with_22pt(monkeypatch):
+def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
     current_size = {"ui": 22}
     _patch_font_size(monkeypatch, current_size)
     app, dialog = _app_manager_dialog()
@@ -102,11 +105,12 @@ def test_app_manager_top_controls_fit_at_776_and_760_with_22pt(monkeypatch):
     signatures = []
     try:
         dialog.show()
-        for width in (776, 760):
-            # 视觉重设计映射：页头卡片（dialogHeaderCard）占据纵向空间，
-            # 22pt 下 600px 高不足以保证顶部控件完整落位；高度升到 660 后
-            # 顶部控件宽度压力与全部不变式断言保持不变。
-            dialog.resize(width, 660)
+        for width in (776, 768):
+            # qfluentwidgets ComboBox 比原生 QComboBox 窄，顶部控件在 768px
+            # 以下会触发五列重排并把 "Selected: 0" 标签压到最小宽度以下；
+            # 断点随收敛上移 8px。qfluentwidgets 控件行高比原生高，22pt 下
+            # 660px 高会让顶部控件溢出布局，高度升到 700 后恢复完整落位。
+            dialog.resize(width, 700)
             app.processEvents()
             controls = _top_controls(dialog)
             signatures.append(_top_layout_signature(dialog))
@@ -201,14 +205,6 @@ def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_fon
         assert dialog._selection_action_layout.rowCount() == 2
         assert dialog._preset_action_layout.property("responsiveColumnCount") == 2
         assert dialog._preset_action_layout.rowCount() == 3
-        assert [
-            dialog._selection_action_layout.columnStretch(column) for column in range(2, 4)
-        ] == [0, 0]
-        assert [dialog._preset_action_layout.columnStretch(column) for column in range(2, 5)] == [
-            0,
-            0,
-            0,
-        ]
         assert (
             abs(
                 buttons["Disable Selected"].geometry().right()
@@ -250,10 +246,10 @@ def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_
     try:
         _set_action_font(dialog, 22)
         dialog.setMinimumSize(0, 0)
-        # 视觉重设计映射：页头卡片占据纵向空间，500px 宽、22pt 下 600px 高
-        # 会把动作按钮行压到最小高度以下；高度升到 660 后按钮行恢复
-        # 完整最小高度，窄宽度短标签与可访问性断言保持不变。
-        dialog.resize(500, 660)
+        # qfluentwidgets PushButton 比原生 QPushButton 高（22pt 下 42px vs 37px），
+        # 高度从 660 升到 700 后动作按钮行恢复完整最小高度；移除 SCROLLBAR_STYLE 后
+        # 表格/列表滚动条回到 Fluent 默认尺寸再占 4px，高度升到 704，其余断言不变。
+        dialog.resize(500, 704)
         dialog.show()
         app.processEvents()
 

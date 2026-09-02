@@ -7,15 +7,12 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
-    QTabWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import ListWidget, PushButton, TabWidget, TextEdit
 
 from gui.dialogs.app_manager_form import _apply_adaptive_text_heights
 from gui.dialogs.lifecycle import (
@@ -52,10 +49,10 @@ class AppDetailsDialog(QDialog):
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
-        self.tabs = QTabWidget()
+        self.tabs = TabWidget()
         dw = QWidget()
         dl = QVBoxLayout(dw)
-        self.detail_text = QTextEdit()
+        self.detail_text = TextEdit()
         self.detail_text.setReadOnly(True)
         dl.addWidget(self.detail_text)
         self.tabs.addTab(dw, "App Details")
@@ -66,11 +63,13 @@ class AppDetailsDialog(QDialog):
         self.requested_list = self._ps(pl, "Requested Permissions")
         self.runtime_list = self._ps(pl, "Runtime Permissions (Grant/Revoke)")
         pb = QHBoxLayout()
-        self.grant_btn = QPushButton("Grant Selected")
+        self.grant_btn = PushButton()
+        self.grant_btn.setText("Grant Selected")
         self.grant_btn.setToolTip("Grant the selected runtime permissions")
         self.grant_btn.setIcon(get_themed_icon("check-circle.svg"))
         self.grant_btn.setIconSize(QSize(14, 14))
-        self.revoke_btn = QPushButton("Revoke Selected")
+        self.revoke_btn = PushButton()
+        self.revoke_btn.setText("Revoke Selected")
         self.revoke_btn.setToolTip("Revoke the selected runtime permissions")
         self.revoke_btn.setIcon(get_themed_icon("x-circle.svg"))
         self.revoke_btn.setIconSize(QSize(14, 14))
@@ -81,7 +80,8 @@ class AppDetailsDialog(QDialog):
         pl.addLayout(pb)
         self.tabs.addTab(pw, "Permissions")
         layout.addWidget(self.tabs)
-        close_btn = QPushButton("Close")
+        close_btn = PushButton()
+        close_btn.setText("Close")
         close_btn.setToolTip("Close the application details window")
         close_btn.setIcon(get_themed_icon("x.svg"))
         close_btn.setIconSize(QSize(14, 14))
@@ -90,7 +90,6 @@ class AppDetailsDialog(QDialog):
 
     def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
-        self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
         mono_font = BaseStyles.font_for_role(FontRole.MONO)
         self.detail_text.setFont(mono_font)
@@ -101,7 +100,8 @@ class AppDetailsDialog(QDialog):
         hl = QHBoxLayout()
         hl.addWidget(QLabel(title))
         if checkable:
-            sb = QPushButton("Select All/None")
+            sb = PushButton()
+            sb.setText("Select All/None")
             sb.setToolTip("Toggle every permission in this list")
             sb.setIcon(get_themed_icon("check-square.svg"))
             sb.setIconSize(QSize(14, 14))
@@ -109,12 +109,12 @@ class AppDetailsDialog(QDialog):
             sb.setProperty("adaptiveBaseHeight", 28)
             hl.addWidget(sb)
         parent.addLayout(hl)
-        lw = QListWidget()
+        lw = ListWidget()
         lw.setMinimumHeight(100)
         lw.setSelectionMode(
-            QListWidget.SelectionMode.MultiSelection
+            ListWidget.SelectionMode.MultiSelection
             if checkable
-            else QListWidget.SelectionMode.NoSelection
+            else ListWidget.SelectionMode.NoSelection
         )
         parent.addWidget(lw)
         if checkable:

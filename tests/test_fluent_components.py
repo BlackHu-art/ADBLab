@@ -29,34 +29,13 @@ def _font_size(font) -> int:
     return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
 
 
-# ── FluentButton：变体、tooltip 契约、字体角色、主题钩子 ────────────────
+# ── FluentButton：tooltip 契约、字体角色、主题钩子 ──────────────────────
 
 
-def test_fluent_button_variant_property_and_qss_selector(qt_application):
-    accent = FluentButton("保存", variant="accent", tooltip="保存当前配置")
-    assert accent.property("buttonVariant") == "accent"
-    assert accent.objectName() == "accent"
-    assert "QPushButton#accent" in accent.styleSheet()
-
-    danger = FluentButton("删除", variant="danger", tooltip="删除选中项")
-    assert danger.objectName() == "danger"
-    assert "QPushButton#danger" in danger.styleSheet()
-
-    ghost = FluentButton("取消", variant="ghost", tooltip="取消操作")
-    assert ghost.objectName() == "ghost"
-    assert "QPushButton#ghost" in ghost.styleSheet()
-
+def test_fluent_button_uses_push_button_style(qt_application):
     normal = FluentButton("确定", tooltip="确认操作")
-    assert normal.variant() == ""
-    assert "QPushButton {" in normal.styleSheet()
-
-
-def test_fluent_button_rejects_unknown_variant(qt_application):
-    with pytest.raises(ValueError):
-        FluentButton("x", variant="bogus", tooltip="x")
-    button = FluentButton("x", tooltip="x")
-    with pytest.raises(ValueError):
-        button.set_variant("bogus")
+    # FluentButton 已改用 PushButton 的 FluentStyleSheet（含 PushButton 选择器）。
+    assert "PushButton" in normal.styleSheet()
 
 
 def test_fluent_button_tooltip_contract(qt_application):
@@ -85,18 +64,11 @@ def test_fluent_button_apply_font_role(qt_application):
     assert _font_size(button.font()) == expected.pointSize()
 
 
-def test_fluent_button_sync_theme_state_changes_stylesheet(qt_application):
-    button = FluentButton("保存", variant="accent", tooltip="保存")
-    before = button.styleSheet()
-    assert BaseStyles.color("BUTTON_ACCENT") in before
-    try:
-        BaseStyles.switch_theme("Dark")
-        button._sync_theme_state()
-        after = button.styleSheet()
-        assert after != before
-        assert BaseStyles.color("BUTTON_ACCENT") in after
-    finally:
-        BaseStyles.switch_theme("Light")
+def test_fluent_button_sync_theme_state_refreshes_icon(qt_application):
+    button = FluentButton("保存", tooltip="保存", icon="floppy-disk.svg")
+    button._sync_theme_state()
+    assert not button.icon().isNull()
+    assert button.property("iconName") == "floppy-disk.svg"
 
 
 # ── IconButton ──────────────────────────────────────────────────────────

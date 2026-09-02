@@ -5,21 +5,25 @@ import weakref
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
-    QMenu,
     QMessageBox,
-    QPlainTextEdit,
-    QPushButton,
-    QStatusBar,
     QTableWidget,
     QVBoxLayout,
+)
+from qfluentwidgets import (
+    CardWidget,
+    CheckBox,
+    InfoBadge,
+    InfoLevel,
+    LineEdit,
+    PlainTextEdit,
+    PushButton,
+    TableWidget,
 )
 
 from gui.dialogs.file_explorer_image import _ImageViewerDialog
@@ -37,6 +41,9 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.label import FluentLabel
+from gui.widgets.fluent.menu import FluentMenu
+from gui.widgets.fluent.status_bar import FluentStatusBar
 from gui.widgets.responsive_layout import reflow_widgets
 from models.file_explorer_worker import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
@@ -119,31 +126,33 @@ class FileExplorerDialog(QDialog):
         layout.setContentsMargins(6, 6, 6, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
-        self.header_card = QFrame()
+        self.header_card = CardWidget()
         self.header_card.setObjectName("dialogHeaderCard")
+        self.header_card.setBorderRadius(BaseStyles.RADIUS_LG)
         hl = QVBoxLayout(self.header_card)
         hl.setContentsMargins(12, 8, 12, 8)
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self.dialog_title = QLabel("File Explorer")
+        self.dialog_title = FluentLabel(
+            "File Explorer", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self.dialog_title.setObjectName("dialogTitle")
-        self.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
-        self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self.status_badge = QLabel("No device")
-        self.status_badge.setObjectName("dialogStatusBadge")
+        self.status_badge = InfoBadge.info("No device", self.header_card)
         self.status_badge.setProperty("fontRole", FontRole.UI.value)
         self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.status_badge.setToolTip("Device availability for file operations")
         title_row.addWidget(self.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self.status_badge)
-        self.dialog_subtitle = QLabel("Browse and manage device files")
+        self.dialog_subtitle = FluentLabel(
+            "Browse and manage device files",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         self.dialog_subtitle.setObjectName("dialogSubtitle")
-        self.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.dialog_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self.dialog_subtitle)
@@ -153,13 +162,14 @@ class FileExplorerDialog(QDialog):
         self.path_layout = self._path_layout
         self._path_layout.setSpacing(4)
         self._path_label = QLabel("Path:")
-        self.path_field = QLineEdit(self.current_path)
+        self.path_field = LineEdit()
+        self.path_field.setText(self.current_path)
         self._path_label.setBuddy(self.path_field)
         self.path_field.setAccessibleName("Remote path")
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
-        self.search_field = QLineEdit()
+        self.search_field = LineEdit()
         self.search_field.setPlaceholderText("Search...")
         self.search_field.setAccessibleName("File search")
         self.search_field.textChanged.connect(self._filter)
@@ -167,52 +177,58 @@ class FileExplorerDialog(QDialog):
 
         self._toolbar_layout = QGridLayout()
         self._toolbar_layout.setSpacing(3)
-        self.back_btn = QPushButton()
+        self.back_btn = PushButton()
         self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.setToolTip("Return to the previous folder")
         self.back_btn.setAccessibleName("Back")
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
-        self.fwd_btn = QPushButton()
+        self.fwd_btn = PushButton()
         self.fwd_btn.setIcon(get_themed_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
         self.fwd_btn.setToolTip("Return to the next folder")
         self.fwd_btn.setAccessibleName("Forward")
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
-        self.up_btn = QPushButton()
+        self.up_btn = PushButton()
         self.up_btn.setIcon(get_themed_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
         self.up_btn.setToolTip("Open the parent folder")
         self.up_btn.setAccessibleName("Parent folder")
         self.up_btn.clicked.connect(self._go_parent)
-        self.refresh_btn = QPushButton("Refresh")
+        self.refresh_btn = PushButton()
+        self.refresh_btn.setText("Refresh")
         self.refresh_btn.setToolTip("Reload the current device folder")
         self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._refresh)
-        self.mkdir_btn = QPushButton("New Folder")
+        self.mkdir_btn = PushButton()
+        self.mkdir_btn.setText("New Folder")
         self.mkdir_btn.setToolTip("Create a folder in the current location")
         self.mkdir_btn.setIcon(get_themed_icon("folder-plus.svg"))
         self.mkdir_btn.setIconSize(QSize(14, 14))
         self.mkdir_btn.clicked.connect(self._mkdir)
-        self.touch_btn = QPushButton("New File")
+        self.touch_btn = PushButton()
+        self.touch_btn.setText("New File")
         self.touch_btn.setToolTip("Create an empty file in the current location")
         self.touch_btn.setIcon(get_themed_icon("file-plus.svg"))
         self.touch_btn.setIconSize(QSize(14, 14))
         self.touch_btn.clicked.connect(self._touch)
-        self.pull_btn = QPushButton("Pull")
+        self.pull_btn = PushButton()
+        self.pull_btn.setText("Pull")
         self.pull_btn.setToolTip("Copy selected items to the computer")
         self.pull_btn.setIcon(get_themed_icon("download-simple.svg"))
         self.pull_btn.setIconSize(QSize(14, 14))
         self.pull_btn.clicked.connect(self._pull_selected)
-        self.push_btn = QPushButton("Push")
+        self.push_btn = PushButton()
+        self.push_btn.setText("Push")
         self.push_btn.setToolTip("Copy a local file to the current device folder")
         self.push_btn.setIcon(get_themed_icon("upload-simple.svg"))
         self.push_btn.setIconSize(QSize(14, 14))
         self.push_btn.clicked.connect(self._push_file)
-        self.delete_btn = QPushButton("Delete")
+        self.delete_btn = PushButton()
+        self.delete_btn.setText("Delete")
         self.delete_btn.setToolTip("Remove the selected device items")
         self.delete_btn.setIcon(get_themed_icon("trash.svg"))
         self.delete_btn.setIconSize(QSize(14, 14))
@@ -228,13 +244,15 @@ class FileExplorerDialog(QDialog):
             self.push_btn,
             self.delete_btn,
         )
-        self.root_cb = QCheckBox("Root")
+        self.root_cb = CheckBox()
+        self.root_cb.setText("Root")
         self.root_cb.setToolTip("Use root access (su)")
         self.root_cb.setAccessibleName("Use root access")
         layout.addLayout(self._toolbar_layout)
         self._reflow_top_controls()
 
-        self.table = QTableWidget()
+        self.table = TableWidget()
+        self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
         self.table.verticalHeader().setVisible(False)
@@ -256,7 +274,7 @@ class FileExplorerDialog(QDialog):
         self.table.setColumnWidth(self.MODIFIED_COL, 140)
         layout.addWidget(self.table, 1)
 
-        self.status_bar = QStatusBar()
+        self.status_bar = FluentStatusBar()
         self.status_bar.showMessage("Ready")
         layout.addWidget(self.status_bar)
 
@@ -295,12 +313,10 @@ class FileExplorerDialog(QDialog):
         super().resizeEvent(event)
         self._reflow_top_controls()
 
-    def _create_context_menu(self) -> QMenu:
-        """创建跟随当前主题且由窗口托管的上下文菜单。"""
+    def _create_context_menu(self) -> FluentMenu:
+        """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        menu = QMenu(self)
-        menu.setStyleSheet(BaseStyles.MENU_STYLE())
-        return menu
+        return FluentMenu(parent=self)
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
@@ -309,52 +325,25 @@ class FileExplorerDialog(QDialog):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         mono_font = bs.font_for_role(FontRole.MONO)
-        self.setStyleSheet(bs.PANEL_BASE_STYLE())
+        self.setStyleSheet(
+            f"QTableView:focus {{ border: 2px solid {bs.color('BORDER_FOCUS')}; }}"
+        )
         self.setFont(ui_font)
-        bg = bs.color("INPUT_BG")
-        fg = bs.color("TEXT_PRIMARY")
-        border = bs.color("BORDER_COLOR")
-        sel_bg = bs.color("SELECTION_BG")
-        sel_fg = bs.color("SELECTION_TEXT")
-        btn_bg = bs.color("BUTTON_BG")
-        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
         if hasattr(self, "header_card"):
-            self.header_card.setStyleSheet(
-                f"QFrame#dialogHeaderCard {{ background-color: {bs.color('PANEL_BG')};"
-                f" border: 1px solid {bs.color('BORDER_COLOR')};"
-                f" border-radius: {bs.RADIUS_LG}px; }}"
-            )
             self.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
-            self.dialog_title.setStyleSheet(f"color: {bs.color('TITLE_COLOR')};")
             self.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
-            self.dialog_subtitle.setStyleSheet(f"color: {bs.color('TEXT_SECONDARY')};")
             self.status_badge.setFont(bs.font_for_role(FontRole.UI))
             has_device = bool(self.device_ip)
             self.status_badge.setText("Ready" if has_device else "No device")
-            background = (
-                bs.color("LOG_SUCCESS") if has_device else bs.color("TEXT_SECONDARY")
+            self.status_badge.setLevel(
+                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
             )
-            self.status_badge.setStyleSheet(
-                f"QLabel#dialogStatusBadge {{ background-color: {background};"
-                f" color: {bs.color('PANEL_BG')};"
-                f" border-radius: 7px; padding: 1px 8px; }}"
-            )
-        self.table.setStyleSheet(f"""
-            QTableWidget {{ background-color: {bg}; color: {fg};
-                border: 1px solid {border}; border-radius: {bs.RADIUS_MD}px;
-                gridline-color: {border}; }}
-            QTableWidget::item:selected {{ background-color: {sel_bg}; color: {sel_fg}; }}
-            QHeaderView::section {{ background-color: {btn_bg}; color: {fg};
-                padding: 4px; border: 1px solid {border}; }}
-        """)
-        self.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
-        field_style = (
-            f"background-color: {bg}; color: {fg}; border: 1px solid {border}; "
-            f"border-radius: {bs.RADIUS_SM}px; padding: 2px 4px;"
-        )
-        self.path_field.setStyleSheet(field_style)
+        # 表格样式由 qfluentwidgets TableWidget 自维护（随主题切换），无需在此重建。
+        # 状态栏样式由 FluentStatusBar 自维护（随主题重建），无需在此重复应用。
+        # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
         self.path_field.setFont(mono_font)
-        self.search_field.setStyleSheet(field_style)
+        self.search_field.setFont(ui_font)
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
@@ -641,29 +630,29 @@ class FileExplorerDialog(QDialog):
         is_dir = self._file_type_at(row) == "Folder"
         menu = self._create_context_menu()
         if is_dir:
-            menu.addAction("Open", lambda: self._on_double_click(row, 0))
+            menu.add_action("Open", callback=lambda: self._on_double_click(row, 0))
         else:
             is_image = self._ext(name).lower() in self.IMAGE_EXTS
-            menu.addAction("View", lambda: self._view_file(name, is_image))
+            menu.add_action("View", callback=lambda: self._view_file(name, is_image))
         menu.addSeparator()
-        menu.addAction("Pull", lambda: self._pull_file(name))
+        menu.add_action("Pull", callback=lambda: self._pull_file(name))
         if not is_dir:
-            menu.addAction("Push Here", self._push_file)
+            menu.add_action("Push Here", callback=self._push_file)
         if not is_dir and name.endswith(".apk"):
-            menu.addAction("Install APK", lambda: self._install_apk(name))
+            menu.add_action("Install APK", callback=lambda: self._install_apk(name))
         if not is_dir and name.endswith(".sh"):
-            menu.addAction("Execute Script", lambda: self._exec_script(name))
-        menu.addAction("Permissions", lambda: self._show_chmod(name, is_dir))
+            menu.add_action("Execute Script", callback=lambda: self._exec_script(name))
+        menu.add_action("Permissions", callback=lambda: self._show_chmod(name, is_dir))
         menu.addSeparator()
-        menu.addAction("Rename", lambda: self._rename_item(name))
-        menu.addAction("Delete", lambda: self._request_delete(name))
+        menu.add_action("Rename", callback=lambda: self._rename_item(name))
+        menu.add_action("Delete", callback=lambda: self._request_delete(name))
         menu.addSeparator()
-        menu.addAction("Copy", lambda: self._copy_items(True))
-        menu.addAction("Cut", lambda: self._copy_items(False))
+        menu.add_action("Copy", callback=lambda: self._copy_items(True))
+        menu.add_action("Cut", callback=lambda: self._copy_items(False))
         if self.clipboard:
-            menu.addAction("Paste", self._paste_items)
+            menu.add_action("Paste", callback=self._paste_items)
         menu.addSeparator()
-        menu.addAction("Properties", lambda: self._show_props(name, is_dir))
+        menu.add_action("Properties", callback=lambda: self._show_props(name, is_dir))
         menu.exec(self.table.mapToGlobal(pos))
 
     def _install_apk(self, name: str):
@@ -697,11 +686,12 @@ class FileExplorerDialog(QDialog):
         dlg.setMinimumSize(700, 400)
         dlg.setModal(False)
         lo = QVBoxLayout(dlg)
-        v = QPlainTextEdit()
+        v = PlainTextEdit()
         v.setReadOnly(True)
         v.setPlainText(output)
         lo.addWidget(v)
-        cb = QPushButton("Close")
+        cb = PushButton()
+        cb.setText("Close")
         cb.setToolTip("Close the script output window")
         cb.setIcon(get_themed_icon("x.svg"))
         cb.setIconSize(QSize(14, 14))

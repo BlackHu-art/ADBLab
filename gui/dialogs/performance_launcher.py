@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QWidget,
 )
+from qfluentwidgets import InfoLevel
 
 from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
@@ -431,29 +432,19 @@ class PerformanceLauncherDialog(QDialog):
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
-        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
         if hasattr(self, "header_card"):
-            self.header_card.setStyleSheet(
-                f"QFrame#dialogHeaderCard {{ background-color: {c('PANEL_BG')};"
-                f" border: 1px solid {c('BORDER_COLOR')};"
-                f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
-            )
             self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-            self.dialog_title.setStyleSheet(f"color: {c('TITLE_COLOR')};")
             self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
-            self.dialog_subtitle.setStyleSheet(f"color: {c('TEXT_SECONDARY')};")
             self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
             has_device = bool(self.device_ip)
             self.status_badge.setText("Ready" if has_device else "No device")
-            background = c("LOG_SUCCESS") if has_device else c("TEXT_SECONDARY")
-            self.status_badge.setStyleSheet(
-                f"QLabel#dialogStatusBadge {{ background-color: {background};"
-                f" color: {c('PANEL_BG')};"
-                f" border-radius: 7px; padding: 1px 8px; }}"
+            self.status_badge.setLevel(
+                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
             )
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
-            BaseStyles.INPUT_STYLE() + BaseStyles.BUTTON_QSS() + BaseStyles.SCROLLBAR_STYLE() + f"""
+            f"""
             QDialog {{
                 background-color: {c("PANEL_BG")};
                 color: {c("TEXT_PRIMARY")};
@@ -474,23 +465,6 @@ class PerformanceLauncherDialog(QDialog):
                 left: 10px;
                 color: {c("GROUP_TITLE_COLOR")};
             }}
-            QLabel#fieldLabel {{
-                color: {c("TEXT_PRIMARY")};
-                font-weight: bold;
-            }}
-            QLabel#onlineDeviceLabel {{
-                color: {c("LOG_SUCCESS")};
-                font-weight: bold;
-            }}
-            QLabel#inlineLabel {{
-                color: {c("TEXT_PRIMARY")};
-            }}
-            QLabel#configHint {{
-                color: {c("TEXT_SECONDARY")};
-            }}
-            QLabel#statusLabel {{
-                color: {c("TEXT_SECONDARY")};
-            }}
             QProgressBar#performanceProgress {{
                 background-color: {c("INPUT_BG")};
                 color: {c("TEXT_PRIMARY")};
@@ -502,34 +476,10 @@ class PerformanceLauncherDialog(QDialog):
                 background-color: {c("LOG_SUCCESS")};
                 border-radius: {BaseStyles.RADIUS_MD - 1}px;
             }}
-            QPlainTextEdit#performanceLog {{
-                background-color: {c("LOG_BACKGROUND")};
-                color: {c("LOG_TEXT_COLOR")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {BaseStyles.RADIUS_LG}px;
-                padding: 4px;
-            }}
-            QCheckBox {{
-                color: {c("TEXT_PRIMARY")};
-            }}
             QWidget#inlineRow,
-            QWidget#inlineRow QLabel,
-            QWidget#inlineRow QCheckBox {{
+            QWidget#inlineRow QLabel {{
                 color: {c("TEXT_PRIMARY")};
                 background-color: transparent;
-            }}
-            QLineEdit#monoField {{
-                background-color: {c("INPUT_BG")};
-                color: {c("TEXT_PRIMARY")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {BaseStyles.RADIUS_MD}px;
-                selection-background-color: {c("SELECTION_BG")};
-                selection-color: {c("SELECTION_TEXT")};
-            }}
-            QLineEdit#monoField:disabled,
-            QWidget#inlineRow QCheckBox:disabled {{
-                color: {c("TEXT_DISABLED")};
-                background-color: {c("PANEL_BG")};
             }}
             """
         )
@@ -561,6 +511,12 @@ class PerformanceLauncherDialog(QDialog):
             self.serialnum_label,
         ):
             widget.setFont(mono_font)
+        # 加粗字段标签：字体遍历会覆盖 bold，这里按 objectName 补回。
+        for label in self.findChildren(QWidget):
+            if label.objectName() in ("fieldLabel", "onlineDeviceLabel"):
+                font = label.font()
+                font.setBold(True)
+                label.setFont(font)
         self.log_view.setFont(log_font)
         self.log_view.viewport().setFont(log_font)
         self.log_view.document().setDefaultFont(log_font)

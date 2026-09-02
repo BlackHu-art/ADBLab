@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap, QShortcut
 from PySide6.QtWidgets import QLabel, QPushButton, QToolButton
+from qfluentwidgets import TransparentToolButton
 
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.dialogs.settings_dialog import SettingsDialog
@@ -11,6 +12,7 @@ from gui.main_frame import MainFrame
 from gui.panels.side_panel import SidePanel
 from gui.styles import BaseStyles
 from gui.styles.theme import THEMES
+from gui.widgets.fluent.focus_ring import FocusRing
 from gui.widgets.preset_spin_box import PresetSpinBox
 from tests.ui_geometry_helpers import wait_until
 
@@ -29,14 +31,16 @@ def _contrast_ratio(foreground: str, background: str) -> float:
     return (values[1] + 0.05) / (values[0] + 0.05)
 
 
-def test_shared_styles_expose_keyboard_focus():
-    button_qss = BaseStyles.BUTTON_QSS()
-    panel_qss = BaseStyles.PANEL_BASE_STYLE()
-
-    assert "QPushButton:focus" in button_qss
-    assert "QCheckBox:focus" in panel_qss
-    assert "QListWidget:focus" in panel_qss
-    assert "QTableWidget:focus" in panel_qss
+def test_shared_styles_expose_keyboard_focus(qt_application):
+    # PANEL_BASE_STYLE 已由全局 QPalette 主题化取代并移除；键盘焦点改由
+    # FocusRing（原生控件）或对话框级 QSS（file_explorer 表格）提供。
+    assert not hasattr(BaseStyles, "PANEL_BASE_STYLE")
+    ring = FocusRing(QToolButton(), selector="QToolButton")
+    try:
+        assert "QToolButton:focus" in ring.ring_style()
+        assert BaseStyles.color("BORDER_FOCUS") in ring.ring_style()
+    finally:
+        ring.clear()
 
 
 def test_theme_text_tokens_keep_readable_contrast():
@@ -137,13 +141,12 @@ def test_toolbar_save_button_is_keyboard_reachable_and_keeps_path_context(
         frame.close()
 
 
-def test_toolbar_style_covers_tool_buttons_and_keyboard_focus():
-    qss = BaseStyles.TOOLBAR_STYLE()
+def test_toolbar_uses_cardwidget_container():
+    """工具栏已收敛为 CardWidget，不再依赖 TOOLBAR_STYLE QSS。"""
 
-    assert "QFrame#toolbar QToolButton" in qss
-    assert "QFrame#toolbar QToolButton:hover" in qss
-    assert "QFrame#toolbar QToolButton:focus" in qss
-    assert "QFrame#toolbar QToolButton#exit_btn:hover" in qss
+    assert not hasattr(BaseStyles, "TOOLBAR_STYLE")
+    # 工具栏容器/标题/按钮均已收敛：CardWidget 自绘制背景圆角、FluentLabel 标题、
+    # TransparentToolButton 按钮（透明/hover/focus 由 FluentStyleSheet 提供）。
 
 
 def test_settings_form_labels_have_buddies(monkeypatch, qt_application):
@@ -178,7 +181,12 @@ def test_settings_form_labels_have_buddies(monkeypatch, qt_application):
 def test_screenshot_icon_buttons_have_accessible_names(qt_application):
     viewer = ScreenshotViewer([])
     try:
-        icon_only = [button for button in viewer.findChildren(QPushButton) if not button.text()]
+        # 图标按钮已收敛为 qfluentwidgets TransparentToolButton（QToolButton 子类）；
+        # SmoothScrollDelegate 的内部 ArrowButton 是滚动条子控件，不属于图标按钮，
+        # 故按 TransparentToolButton 精确过滤而非 QToolButton。
+        icon_only = [
+            button for button in viewer.findChildren(TransparentToolButton) if not button.text()
+        ]
 
         assert icon_only
         assert all(button.accessibleName().strip() for button in icon_only)
@@ -229,7 +237,8 @@ def test_adb_server_action_is_keyboard_triggerable(qt_application):
     try:
         button = panel._devices_tab.btn_restart_adb
 
-        assert type(button) is QPushButton
+        # qfluentwidgets PushButton 仍是 QPushButton 子类，保持键盘可触发契约。
+        assert isinstance(button, QPushButton)
         assert button.toolTip() == "Restart the local ADB server"
         assert button.accessibleName() == "ADB Server"
     finally:

@@ -256,7 +256,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     created = {}
 
     def fake_bootstrap(self):
-        created["central_widget_ready"] = self.centralWidget() is not None
+        created["central_widget_ready"] = self._central_widget is not None
         created["scan_thread"] = self._scan_thread
 
     fake_log_panel = QWidget()

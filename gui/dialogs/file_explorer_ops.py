@@ -5,7 +5,6 @@ import os
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
     QDialog,
     QFileDialog,
     QGridLayout,
@@ -13,9 +12,9 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMessageBox,
-    QPushButton,
     QVBoxLayout,
 )
+from qfluentwidgets import CheckBox, PushButton
 
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen
 from gui.styles.icon_loader import get_themed_icon
@@ -379,7 +378,7 @@ class FileExplorerOps:
         for r, (label, key) in enumerate([("Read", "r"), ("Write", "w"), ("Execute", "x")], 1):
             grid.addWidget(QLabel(label), r, 0)
             for c, col in enumerate(["owner", "group", "other"], 1):
-                cb = QCheckBox()
+                cb = CheckBox()
                 grid.addWidget(cb, r, c, alignment=Qt.AlignmentFlag.AlignCenter)
                 cbs[(col, key)] = cb
         lo.addLayout(grid)
@@ -387,17 +386,20 @@ class FileExplorerOps:
         preview = QLabel("chmod: ")
         lo.addWidget(preview)
         btn_row = QHBoxLayout()
-        apply_btn = QPushButton("Apply")
+        apply_btn = PushButton()
+        apply_btn.setText("Apply")
         apply_btn.setToolTip("Apply the selected file permissions")
         apply_btn.setIcon(get_themed_icon("check-circle.svg"))
         apply_btn.setIconSize(QSize(14, 14))
         apply_btn.setEnabled(False)
-        revert_btn = QPushButton("Revert")
+        revert_btn = PushButton()
+        revert_btn.setText("Revert")
         revert_btn.setToolTip("Restore the original file permissions")
         revert_btn.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         revert_btn.setIconSize(QSize(14, 14))
         revert_btn.setEnabled(False)
-        close_btn = QPushButton("Close")
+        close_btn = PushButton()
+        close_btn.setText("Close")
         close_btn.setToolTip("Close the permissions window")
         close_btn.setIcon(get_themed_icon("x.svg"))
         close_btn.setIconSize(QSize(14, 14))

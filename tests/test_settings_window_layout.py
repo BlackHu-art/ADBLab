@@ -131,7 +131,9 @@ def test_settings_content_reflows_and_scrolls_at_narrow_width(
     try:
         assert not dialog.isModal()
         assert dialog._settings_scroll.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
-        assert dialog._settings_scroll.verticalScrollBarPolicy() == Qt.ScrollBarAsNeeded
+        # SmoothScrollArea 用自定义 SmoothScrollBar 承接滚动，原生垂直滚动条
+        # 策略恒为 AlwaysOff（由委托隐藏），按需显隐交给 vScrollBar.setForceHidden。
+        assert dialog._settings_scroll.verticalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
         assert dialog._settings_scroll.verticalScrollBar().maximum() > 0
         assert dialog._settings_scroll.horizontalScrollBar().maximum() == 0
         assert (

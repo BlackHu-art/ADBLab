@@ -5,10 +5,12 @@ import re
 from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import InfoBadge
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.fluent.label import FluentLabel
 from gui.widgets.responsive_layout import (
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
@@ -44,16 +46,6 @@ class RemotePanelForm:
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
-    def _section_card_qss(self) -> str:
-        """分区卡片 QSS：面板底色 + 细边框 + 圆角，标题间隙由 GROUP_BOX_STYLE 决定。"""
-
-        c = BaseStyles.color
-        return (
-            f"QGroupBox {{ background-color: {c('PANEL_BG')};"
-            f" border: 1px solid {c('BORDER_COLOR')};"
-            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
-        )
-
     def _build_header(self, lo) -> None:
         """构建页头：标题、副标题与设备可用性状态徽标。"""
 
@@ -64,22 +56,28 @@ class RemotePanelForm:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.remote_title = QLabel("Remote Control")
-        self._frame.remote_title.setProperty("fontRole", FontRole.TITLE.value)
-        self._frame.remote_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self._frame.remote_status_badge = QLabel("No device")
+        self._frame.remote_title = FluentLabel(
+            "Remote Control", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
+        self._frame.remote_status_badge = InfoBadge("No device", self._frame)
         self._frame.remote_status_badge.setObjectName("remoteStatusBadge")
         self._frame.remote_status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.remote_status_badge.setFont(self._frame._font_sm)
+        # InfoBadge 默认对鼠标透明，会吞掉 tooltip 的悬停事件，这里恢复接收。
+        self._frame.remote_status_badge.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
+        )
         self._frame.remote_status_badge.setToolTip("Device availability for remote actions")
         title_row.addWidget(self._frame.remote_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.remote_status_badge)
-        self._frame.remote_subtitle = QLabel("Screen mirroring and input control")
+        self._frame.remote_subtitle = FluentLabel(
+            "Screen mirroring and input control",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
         # 副标题用 UI 角色 + 次级文字色维持视觉层级。
-        self._frame.remote_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self._frame.remote_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.remote_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self._frame.remote_subtitle)
@@ -92,8 +90,8 @@ class RemotePanelForm:
         self._frame._on_theme_changed_remote(_name)
 
     def _build_mirroring(self) -> QWidget:
-        g = self._frame._g("Screen Mirroring")
-        gl = QVBoxLayout(g)
+        g = self._frame._card("Screen Mirroring")
+        gl = g.body_layout()
         gl.setSpacing(4)
 
         preset_label = self._frame._label("Preset:")
@@ -349,8 +347,8 @@ class RemotePanelForm:
         return self._frame._checkbox(text)
 
     def _build_control(self) -> QWidget:
-        g = self._frame._g("Remote Control")
-        outer = QVBoxLayout(g)
+        g = self._frame._card("Remote Control")
+        outer = g.body_layout()
         outer.setSpacing(6)
         self._frame._remote_control_buttons = []
         self._frame._remote_key_buttons = []

@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWi
     QPushButton,
     QWidget,
 )
+from qfluentwidgets import InfoBadge, InfoLevel
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
@@ -22,7 +23,7 @@ from gui.panels.base_panel import BasePanel
 from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
-from gui.styles import BaseStyles
+from gui.widgets.fluent.label import FluentLabel
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -192,9 +193,9 @@ class RemotePanel(BasePanel):
     _SESSION_STOPPING = "stopping"
     # 页头控件由 RemotePanelForm 通过 _frame 注入；此处声明类型供 pyright 与
     # 状态刷新方法稳定引用（视觉重设计新增，不影响任何既有契约）。
-    remote_title: QLabel
-    remote_subtitle: QLabel
-    remote_status_badge: QLabel
+    remote_title: FluentLabel
+    remote_subtitle: FluentLabel
+    remote_status_badge: InfoBadge
     _remote_section_groups: list[QWidget]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
         "Could not inject char u+",
@@ -337,12 +338,10 @@ class RemotePanel(BasePanel):
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
     def _apply_remote_header_style(self) -> None:
-        """按当前主题重建页头与徽标颜色。"""
+        """按当前主题刷新页头徽标颜色（标题/副标题已由 FluentLabel 自随主题）。"""
 
         if not hasattr(self, "remote_title"):
             return
-        self.remote_title.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
-        self.remote_subtitle.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
         self._refresh_remote_status_badge()
 
     def _refresh_remote_status_badge(self) -> None:
@@ -352,22 +351,14 @@ class RemotePanel(BasePanel):
             return
         has_device = bool(self.selected_devices)
         self.remote_status_badge.setText("Ready" if has_device else "No device")
-        background = (
-            BaseStyles.color("LOG_SUCCESS") if has_device else BaseStyles.color("TEXT_SECONDARY")
-        )
-        self.remote_status_badge.setStyleSheet(
-            f"QLabel#remoteStatusBadge {{ background-color: {background};"
-            f" color: {BaseStyles.color('PANEL_BG')};"
-            f" border-radius: 7px; padding: 1px 8px; }}"
+        self.remote_status_badge.setLevel(
+            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
         )
 
     def _on_theme_changed_remote(self, _name: str) -> None:
-        """主题切换时重建页头与分区卡片样式。"""
+        """主题切换时重建页头样式（分区 Card 自动跟随主题）。"""
 
         self._apply_remote_header_style()
-        form = getattr(self, "_form_controller", None) or RemotePanelForm(self)
-        for group in getattr(self, "_remote_section_groups", ()):
-            group.setStyleSheet(BaseStyles.GROUP_BOX_STYLE() + form._section_card_qss())
 
     def _set_running(self, running: bool):
         RemotePanel._set_session_state(

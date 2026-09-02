@@ -11,10 +11,11 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | 模块 | 路径 | 职责 | 入口 | 上游 | 下游 | 核心文件 | 测试 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 启动与元数据 | `main.py`、`utils/app_metadata.py` | CLI 分派、GUI 启动、打包自检、版本 | `main.py` | 用户、PyInstaller | Qt、MainFrame、MobilePerf | `main.py` | `test_model_*.py` |
-| GUI 壳与接线 | `gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 主窗口、原生无边框移动/缩放、尺寸与分栏恢复、设备扫描、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller、AppSettings | `main_frame.py`、`window_layout.py` | `test_model_*.py`、`test_main_window_layout.py` |
+| GUI 壳与接线 | `gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 主窗口、qfluentwidgets NavigationInterface 左侧导航、原生无边框移动/缩放、尺寸与分栏恢复、设备扫描、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller、AppSettings、qfluentwidgets | `main_frame.py`、`window_layout.py` | `test_model_*.py`、`test_main_window_layout.py` |
 | 面板 | `gui/panels/`、`gui/widgets/responsive_layout.py`、`gui/widgets/responsive_controller.py`（re-export，实体在 `responsive_primitives.py`/`responsive_coordinator.py`/`responsive_binding.py`） | 设备/应用/系统/Remote/日志交互、懒加载滚动容器与响应式重排（`ResponsiveCoordinator` 单一协调入口） | Qt 事件与 `SidePanelSignals` | 用户、MainFrame | controller、remote service | `side_panel.py`、`base_panel.py`、`app_panel.py`、`system_panel.py`、`remote_panel.py`、`device_manager.py`（+ `device_manager_layout.py`/`device_manager_view.py`/`device_manager_responsive.py`）、`responsive_controller.py` | `test_model_*.py`、`test_remote_services.py`、`test_responsive_panels.py`、`test_responsive_layout_controller.py` |
 | 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`（+ `app_manager_details/form/views/batch.py`）、`file_explorer.py`（+ `file_explorer_list/view/ops/image.py`）、`live_logcat.py`（+ `live_logcat_worker/highlighter/form/stream/lifecycle.py`）、`screenshot_viewer.py`（+ `screenshot_viewer_widgets/ui/nav/actions.py`）、`performance_launcher.py`、`settings_dialog.py`、`lifecycle.py` | `test_model_*.py`、`test_settings_typography.py`、`test_settings_window_layout.py`、`test_window_lifecycle.py`、`test_app_manager_selection.py` |
-| 样式与字体 | `gui/styles/` | 主题、QSS、应用级字体配置、字体角色与细粒度变更信号 | `BaseStyles`、`TypographyManager` | 启动入口、SettingsDialog | QApplication、全局 GUI | `typography.py`、`fonts.py`、`theme.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` |
+| 样式与字体 | `gui/styles/` | 主题（桥接 qfluentwidgets setTheme/setThemeColor）、QSS、应用级字体配置、字体角色与细粒度变更信号 | `BaseStyles`、`TypographyManager` | 启动入口、SettingsDialog | QApplication、全局 GUI、qfluentwidgets | `typography.py`、`fonts.py`、`theme.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` |
+| Fluent 组件库 | `gui/widgets/fluent/` | 自研 Fluent 组件；Card/ProgressBar 已迁到 qfluentwidgets（CardWidget/ProgressBar），ComboBox/Button/Segmented/States 因契约不匹配保留自研，NavBar 保留供 shell 测试 | `Card`、`FluentProgressBar` 等 | panels、dialogs | qfluentwidgets、`BaseStyles` | `card.py`、`progress.py`、`combo_box.py`、`nav.py` 等 | `test_fluent_components.py`、`test_navbar.py` |
 | 屏幕适配 | `gui/screen_adapter.py` | `ScreenAdapter` 协议 + `QtScreenAdapter`：屏幕/可用几何/DPI 与变更订阅 | `QtScreenAdapter` | MainFrame、二级窗口生命周期 | QScreen、QGuiApplication | `screen_adapter.py` | `test_main_window_layout.py`、`test_ui_geometry_helpers.py`、`test_ui_dpi_matrix.py` |
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合、批次所有权/generation 边界 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、InstallBatchUseCase/OperationManager | `_base.py` 与 6 个 mixin | `test_model_*.py` |
 | vNext Operation | `adblab/application/` | 业务 operation 状态、fan-out、取消意图与兼容 metadata envelope；安装批次用例 | `OperationManager`、`InstallBatchUseCase` | 迁移中的 Controller/use case | 纯 Python 锁与值对象 | `operations.py`、`cancellation.py`、`envelope.py`、`install_batch.py` | `test_phase1_operations.py`、`test_phase2_install_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
@@ -44,7 +45,8 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### GUI 壳与面板
 
-- **职责/接口**：`MainFrame` 构建工具栏、左右分栏、Device/Apps/System/Remote 页签和对话框；
+- **职责/接口**：`MainFrame` 构建工具栏、qfluentwidgets `NavigationInterface` 左侧导航
+  （devices/tasks/logs/settings，展开 120px、窗口宽 <720px 折叠）、左右分栏、Device/Apps/System/Remote 页签和对话框；
   `FramelessResizeController` 通过四边四角共八个透明热区调用原生缩放；
   `window_layout_snapshot/restore_default_window_size/reset_panel_split` 是 Settings 使用的公开布局接口；
   `_ScanThread` 周期执行设备发现（扫描超时 15 秒以兼容端点防护拖慢的 adb 启动），失败仅更新

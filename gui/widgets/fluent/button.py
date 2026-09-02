@@ -1,50 +1,43 @@
-"""主题化按钮组件：FluentButton 与 IconButton。"""
+"""主题化按钮组件：FluentButton、IconButton 与 DangerPushButton。"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QPushButton, QSizePolicy, QWidget
+from PySide6.QtWidgets import QSizePolicy, QWidget
+from qfluentwidgets import PrimaryPushButton, PushButton, qconfig
 
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.fluent._base import (
-    apply_button_variant,
     apply_font_role_to,
     repolish,
     set_function_tooltip,
 )
 
-__all__ = ["FluentButton", "IconButton"]
+__all__ = ["DangerPushButton", "FluentButton", "IconButton"]
 
 
-class FluentButton(QPushButton):
-    """主题化文本按钮，支持 normal / accent / danger / ghost 变体。
+class FluentButton(PushButton):
+    """主题化文本按钮，外观由 PushButton 的 FluentStyleSheet 提供。
 
     契约：
     * 构造必须提供非空 ``tooltip``，空提示抛 ``ValueError``（与
       ``BasePanel._set_button_help`` 一致）；
-    * ``buttonVariant`` 决定 QSS 路由：``accent``/``danger`` 命中
-      ``BaseStyles.BUTTON_QSS()`` 的 ``#accent``/``#danger`` 选择器，
-      ``ghost`` 使用独立透明样式，normal 使用基础 ``QPushButton`` 样式；
-    * ``_sync_theme_state()`` 读取当前主题重建样式与图标。
+    * ``_sync_theme_state()`` 读取当前主题重建图标；按钮配色随 qfluentwidgets
+      主题自动切换。
     """
-
-    VARIANTS: tuple[str, ...] = ("", "accent", "danger", "ghost")
 
     def __init__(
         self,
         text: str = "",
         *,
-        variant: str = "",
         tooltip: str | None = None,
         icon: str | None = None,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(text, parent)
-        if variant not in self.VARIANTS:
-            raise ValueError(f"variant 必须是 {self.VARIANTS} 之一，收到 {variant!r}")
+        super().__init__(parent)
+        self.setText(text)
         set_function_tooltip(self, tooltip)
-        self._variant = ""
         self._icon_name: str | None = None
         self._font_role = FontRole.UI
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
@@ -55,26 +48,6 @@ class FluentButton(QPushButton):
         self.setMinimumHeight(28)
         if icon:
             self.set_icon(icon)
-        if variant:
-            self.set_variant(variant)
-        else:
-            self.setStyleSheet(BaseStyles.BUTTON_QSS())
-            repolish(self)
-
-    # ── 变体 ────────────────────────────────────────────────────────────
-
-    def variant(self) -> str:
-        """返回当前变体名；normal 返回空字符串。"""
-
-        return self._variant
-
-    def set_variant(self, variant: str) -> None:
-        """切换按钮变体并重新应用样式。"""
-
-        if variant not in self.VARIANTS:
-            raise ValueError(f"variant 必须是 {self.VARIANTS} 之一，收到 {variant!r}")
-        self._variant = variant
-        apply_button_variant(self, variant)
 
     # ── 内容 ────────────────────────────────────────────────────────────
 
@@ -107,15 +80,10 @@ class FluentButton(QPushButton):
         self._font_role = apply_font_role_to(self, role)
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建图标与样式表。"""
+        """按当前主题重建图标；按钮配色随 qfluentwidgets 主题自动切换。"""
 
         if self._icon_name:
             self.setIcon(get_themed_icon(self._icon_name))
-        if self._variant:
-            apply_button_variant(self, self._variant)
-        else:
-            self.setStyleSheet(BaseStyles.BUTTON_QSS())
-            repolish(self)
 
 
 class IconButton(FluentButton):
@@ -126,10 +94,70 @@ class IconButton(FluentButton):
         icon: str,
         tooltip: str,
         *,
-        variant: str = "",
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__("", tooltip=tooltip, variant=variant, icon=icon, parent=parent)
+        super().__init__("", tooltip=tooltip, icon=icon, parent=parent)
         self.setAccessibleName(str(tooltip).strip())
         self.setIconSize(QSize(BaseStyles.ICON_SIZE, BaseStyles.ICON_SIZE))
         self.setMinimumWidth(BaseStyles.ICON_SIZE + 12)
+
+
+class DangerPushButton(PrimaryPushButton):
+    """危险操作主按钮：主题化红色，替代 ``DANGER_BUTTON_STYLE`` 旧 QSS。
+
+    契约：
+    * 外观与 ``PrimaryPushButton`` 一致（Fluent 圆角/内边距），仅把强调色替换为
+      主题 token 的 ``BUTTON_DANGER`` 系列，白色前景保持不变；
+    * 主题切换时通过 ``qconfig.themeChangedFinished`` 重建红色样式（该信号在
+      FluentStyleSheet 重应用之后触发，确保自定义红色不被覆盖）。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        if text:
+            self.setText(text)
+        self.setProperty("buttonVariant", "danger")
+        self._apply_danger_style()
+        qconfig.themeChangedFinished.connect(self._apply_danger_style)
+        self.destroyed.connect(self._disconnect_theme)
+
+    def _disconnect_theme(self) -> None:
+        """销毁时断开主题信号；解释器收尾阶段 qconfig 可能已删除，容错处理。"""
+
+        try:
+            qconfig.themeChangedFinished.disconnect(self._apply_danger_style)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _apply_danger_style(self) -> None:
+        """按当前主题 token 重建危险红色样式。"""
+
+        bs = BaseStyles
+        radius = BaseStyles.RADIUS_MD
+        self.setStyleSheet(
+            f"""
+            PrimaryPushButton {{
+                color: #ffffff;
+                background-color: {bs.color('BUTTON_DANGER')};
+                border: 1px solid {bs.color('BUTTON_DANGER')};
+                border-radius: {radius}px;
+                padding: 5px 12px 6px 12px;
+            }}
+            PrimaryPushButton:hover {{
+                background-color: {bs.color('BUTTON_DANGER_HOVER')};
+            }}
+            PrimaryPushButton:pressed {{
+                color: rgba(255, 255, 255, 0.63);
+                background-color: {bs.color('BUTTON_DANGER')};
+            }}
+            PrimaryPushButton:focus {{
+                border: 2px solid {bs.color('TEXT_PRIMARY')};
+            }}
+            PrimaryPushButton:disabled {{
+                color: rgba(255, 255, 255, 0.9);
+                background-color: {bs.color('INPUT_BG')};
+                border: 1px solid {bs.color('BORDER_COLOR')};
+            }}
+            """
+        )
+        repolish(self)

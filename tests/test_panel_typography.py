@@ -109,12 +109,6 @@ def test_detached_devices_theme_and_font_bursts_each_settle_once(
         ),
     )
     try:
-        marker = "QListWidget#deviceList { background: rgb(1, 2, 3); }"
-        monkeypatch.setattr(
-            BaseStyles,
-            "DEVICE_LIST_STYLE",
-            classmethod(lambda _cls: marker),
-        )
         before = panel._responsive_coordinator.diagnostics.generation
         theme_settled = QSignalSpy(panel.responsive_layout_settled)
         for _ in range(3):
@@ -128,7 +122,8 @@ def test_detached_devices_theme_and_font_bursts_each_settle_once(
                 and panel._last_settled_generation > before
             ),
         )
-        assert marker in panel._devices_tab.listbox_devices.styleSheet()
+        # 设备列表样式由 ScalableListWidget 自维护，构造时即应用容器样式。
+        assert "QListWidget#deviceList" in panel._devices_tab.listbox_devices.styleSheet()
         # 响应式布局有意为动作区引入 _ShrinkableActionScroll（QScrollArea 子类），
         # 用于承接横向溢出的滚动；主题/字体 burst 不应产生其他滚动容器。
         # 因此这里只断言不存在除该预期动作滚动容器之外的 QScrollArea。
@@ -256,14 +251,19 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
             assert groups
             measured_titles = set()
             for group in groups:
-                gap, first_content_top = _group_title_gap(group)
+                gap, _first_content_top = _group_title_gap(group)
                 assert gap >= 4, f"{group.title()} 标题与首行内容仅保留 {gap}px"
                 title = group.title()
                 measured_titles.add("Devices" if title.startswith("Devices · ") else title)
-                if group.title() == "Text & Screen Capture":
-                    first_offsets[font_size] = first_content_top
 
-            assert {"Devices", "Text & Screen Capture"} <= measured_titles
+            assert "Devices" in measured_titles
+            # "Text & Screen Capture" 已收敛为 Card，改为验证其标题标签高度随字号缩放。
+            ts_card = next(
+                card
+                for card in panel._apps_tab._apps_section_groups
+                if getattr(card, "title", lambda: "")() == "Text & Screen Capture"
+            )
+            first_offsets[font_size] = ts_card.title_label().height()
             device_control_heights[font_size] = panel._devices_tab.btn_refresh.minimumHeight()
 
         assert first_offsets[22] > first_offsets[12]

@@ -5,30 +5,39 @@ from typing import cast
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFontMetrics, QStandardItemModel
 from PySide6.QtWidgets import (
-    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLayout,
-    QLineEdit,
     QListWidget,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
-    QStatusBar,
-    QTextEdit,
     QTreeView,
     QVBoxLayout,
     QWidget,
+)
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    InfoBadge,
+    InfoLevel,
+    LineEdit,
+    PushButton,
+    SmoothScrollDelegate,
+    TextEdit,
+    TreeView,
 )
 
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.label import FluentLabel
+from gui.widgets.fluent.menu import FluentMenu
+from gui.widgets.fluent.status_bar import FluentStatusBar
 from gui.widgets.responsive_layout import reflow_widgets
 
 
@@ -40,7 +49,16 @@ def _apply_adaptive_text_heights(widget: QWidget) -> None:
             continue
         button.setMinimumHeight(int(baseline))
         metrics_height = QFontMetrics(button.font()).height() + 10
-        button.setMinimumHeight(max(int(baseline), button.sizeHint().height(), metrics_height))
+        # qfluentwidgets PushButton 的最小行高由 minimumSizeHint 按点字号给出，
+        # 像素字体的 sizeHint 比它低 2px；以 minimumSizeHint 为下限避免按钮被裁切。
+        button.setMinimumHeight(
+            max(
+                int(baseline),
+                button.sizeHint().height(),
+                button.minimumSizeHint().height(),
+                metrics_height,
+            )
+        )
 
 
 class AppManagerForm:
@@ -58,32 +76,35 @@ class AppManagerForm:
         layout.setContentsMargins(8, 8, 8, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头（圆角由
+        # CardWidget 自绘制并随主题切换，不再依赖 QFrame 页头 QSS）。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级；
         # 不用 UI_SMALL，遵守对话框字体爆发测试不存在小型字角色控件的不变式。
-        header_card = QFrame()
+        header_card = CardWidget()
         header_card.setObjectName("dialogHeaderCard")
+        header_card.setBorderRadius(BaseStyles.RADIUS_LG)
         hl = QVBoxLayout(header_card)
         hl.setContentsMargins(12, 8, 12, 8)
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = QLabel("App Manager")
+        self._frame.dialog_title = FluentLabel(
+            "App Manager", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
-        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self._frame.status_badge = QLabel("No device")
-        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge = InfoBadge.info("No device", header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.status_badge.setToolTip("Device availability for app actions")
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = QLabel("Install, inspect and control device packages")
+        self._frame.dialog_subtitle = FluentLabel(
+            "Install, inspect and control device packages",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
-        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.dialog_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self._frame.dialog_subtitle)
@@ -93,27 +114,28 @@ class AppManagerForm:
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
         self._frame._search_label = QLabel("Search:")
-        self._frame.search_input = QLineEdit()
+        self._frame.search_input = LineEdit()
         self._frame.search_input.setPlaceholderText("Filter...")
         self._frame._search_label.setBuddy(self._frame.search_input)
         self._frame.search_input.setAccessibleName("Application search")
         self._frame.search_input.textChanged.connect(self._frame._filter)
         self._frame._type_label = QLabel("Type:")
-        self._frame.type_filter = QComboBox()
+        self._frame.type_filter = ComboBox()
         self._frame.type_filter.addItems(["All", "User Apps", "System Apps"])
         self._frame._type_label.setBuddy(self._frame.type_filter)
         self._frame.type_filter.setAccessibleName("Application type")
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
         self._frame.selection_label = QLabel("Selected: 0")
         self._frame.selection_label.setMinimumWidth(82)
-        self._frame.view_toggle = QPushButton()
+        self._frame.view_toggle = PushButton()
         self._frame.view_toggle.setFixedSize(28, 28)
         self._frame.view_toggle.setToolTip("Toggle Icon / List view")
         self._frame.view_toggle.setAccessibleName("Toggle Icon / List view")
         self._frame.view_toggle.clicked.connect(self._frame._toggle_view)
         self._frame.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
         self._frame.view_toggle.setIconSize(QSize(16, 16))
-        self._frame.refresh_btn = QPushButton("Refresh")
+        self._frame.refresh_btn = PushButton()
+        self._frame.refresh_btn.setText("Refresh")
         self._frame.refresh_btn.setToolTip("Reload the installed application list")
         self._frame.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.refresh_btn.setIconSize(QSize(14, 14))
@@ -142,7 +164,8 @@ class AppManagerForm:
         self._frame.proxy.setSourceModel(self._frame.model)
         self._frame.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._frame.proxy.setFilterKeyColumn(-1)
-        self._frame.tree = QTreeView()
+        self._frame.tree = TreeView()
+        self._frame.tree.setFrameShape(QFrame.Shape.NoFrame)
         self._frame.tree.setModel(self._frame.proxy)
         self._frame.tree.setSortingEnabled(True)
         self._frame.tree.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
@@ -174,6 +197,9 @@ class AppManagerForm:
         self._frame.icon_list.setGridSize(QSize(110, 80))
         self._frame.icon_list.setWordWrap(True)
         self._frame.icon_list.setMovement(QListWidget.Movement.Static)
+        # IconMode 下 qfluentwidgets ListWidget 的固定行高会破坏图标网格，故保留原生
+        # QListWidget，仅用 SmoothScrollDelegate 承接滚动条为 Fluent 平滑滚动条。
+        SmoothScrollDelegate(self._frame.icon_list)
         self._frame.icon_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._frame.icon_list.customContextMenuRequested.connect(self._frame._icon_context_menu)
         self._frame.icon_list.itemDoubleClicked.connect(self._frame._icon_double_click)
@@ -213,7 +239,8 @@ class AppManagerForm:
             ("Deselect All", None, "square.svg", "Clear the application selection"),
         ]
         for t, a, icon, tooltip in labels_actions:
-            b = QPushButton(t)
+            b = PushButton()
+            b.setText(t)
             b.setIcon(get_themed_icon(icon))
             b.setIconSize(QSize(14, 14))
             b.setProperty("adaptiveBaseHeight", btn_h)
@@ -263,7 +290,8 @@ class AppManagerForm:
                 "Show details for the selected application",
             ),
         ]:
-            b = QPushButton(t)
+            b = PushButton()
+            b.setText(t)
             b.setIcon(get_themed_icon(icon))
             b.setIconSize(QSize(14, 14))
             b.setProperty("adaptiveBaseHeight", btn_h)
@@ -277,13 +305,13 @@ class AppManagerForm:
             self._frame._preset_action_buttons.append(b)
         layout.addLayout(self._frame._preset_action_layout)
 
-        self._frame.log_output = QTextEdit()
+        self._frame.log_output = TextEdit()
         self._frame.log_output.setReadOnly(True)
         self._frame.log_output.setMaximumHeight(100)
         self._frame.log_output.setPlaceholderText("Operation log...")
         layout.addWidget(self._frame.log_output, 1)
 
-        self._frame.status_bar = QStatusBar()
+        self._frame.status_bar = FluentStatusBar()
         self._frame.status_bar.showMessage("Ready")
         layout.addWidget(self._frame.status_bar)
         self._frame._update_selection_ui()
@@ -294,29 +322,14 @@ class AppManagerForm:
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         log_font = bs.font_for_role(FontRole.LOG)
-        self._frame.setStyleSheet(bs.PANEL_BASE_STYLE())
         self._frame.setFont(ui_font)
         bg = bs.color("INPUT_BG")
         fg = bs.color("TEXT_PRIMARY")
         border = bs.color("BORDER_COLOR")
-        self._frame.log_output.setStyleSheet(
-            f"background-color:{bs.color('LOG_BACKGROUND')}; "
-            f"color:{bs.color('LOG_TEXT_COLOR')}; border:1px solid {border}; "
-            f"border-radius:{bs.RADIUS_MD}px;"
-        )
+        # 日志输出框样式由 qfluentwidgets TextEdit 自维护，这里仅同步等宽字体。
         self._frame.log_output.setFont(log_font)
         self._frame.log_output.document().setDefaultFont(log_font)
-        self._frame.tree.setStyleSheet(
-            "QTreeView { background-color:"
-            f"{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; "
-            "alternate-background-color:"
-            f"{bs.color('INPUT_BG_HOVER')}; "
-            "} QTreeView::item:selected { background-color:"
-            f"{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; "
-            "} QHeaderView::section { background-color:"
-            f"{bs.color('BUTTON_BG')}; color:{fg}; padding:4px; border:1px solid {border}"
-            "; }"
-        )
+        # 应用树样式由 qfluentwidgets TreeView 自维护（随主题切换）。
         self._frame.icon_list.setStyleSheet(
             "QListWidget { background-color:"
             f"{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; "
@@ -324,7 +337,7 @@ class AppManagerForm:
             f"{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px"
             "; }"
         )
-        self._frame.status_bar.setStyleSheet(bs.STATUS_BAR_STYLE())
+        # 状态栏样式由 FluentStatusBar 自维护（随主题重建）。
         for control in self._frame._top_controls:
             control.setFont(ui_font)
             control.updateGeometry()
@@ -343,34 +356,21 @@ class AppManagerForm:
     # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
 
     def _apply_header_style(self) -> None:
-        """视觉重设计：按当前主题重建页头卡片样式，并刷新各标签字体。"""
+        """视觉重设计：按字体变更刷新页头标签与徽标（颜色由 FluentLabel/InfoBadge 自随主题）。"""
 
         bs = BaseStyles
-        self._frame.header_card.setStyleSheet(
-            f"QFrame#dialogHeaderCard {{ background-color: {bs.color('PANEL_BG')};"
-            f" border: 1px solid {bs.color('BORDER_COLOR')};"
-            f" border-radius: {bs.RADIUS_LG}px; }}"
-        )
         self._frame.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
-        self._frame.dialog_title.setStyleSheet(f"color: {bs.color('TITLE_COLOR')};")
         self._frame.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
-        self._frame.dialog_subtitle.setStyleSheet(f"color: {bs.color('TEXT_SECONDARY')};")
         self._frame.status_badge.setFont(bs.font_for_role(FontRole.UI))
         self._refresh_status_badge()
 
     def _refresh_status_badge(self) -> None:
-        """视觉重设计：按设备连接状态刷新徽标；绿=已连接设备，灰=未选择设备。"""
+        """按设备连接状态刷新徽标；绿=已连接设备，蓝=未选择设备。"""
 
-        bs = BaseStyles
         has_device = bool(self._frame.device_ip)
         self._frame.status_badge.setText("Ready" if has_device else "No device")
-        background = (
-            bs.color("LOG_SUCCESS") if has_device else bs.color("TEXT_SECONDARY")
-        )
-        self._frame.status_badge.setStyleSheet(
-            f"QLabel#dialogStatusBadge {{ background-color: {background};"
-            f" color: {bs.color('PANEL_BG')};"
-            f" border-radius: 7px; padding: 1px 8px; }}"
+        self._frame.status_badge.setLevel(
+            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
         )
 
     def _action_layout_available_width(self) -> int:
@@ -496,9 +496,7 @@ class AppManagerForm:
         self._frame._top_layout.addWidget(self._frame.refresh_btn, 2, 2)
         self._frame._top_layout.setColumnStretch(2, 1)
 
-    def _create_context_menu(self) -> QMenu:
-        """创建使用共享深浅主题样式的上下文菜单。"""
+    def _create_context_menu(self) -> FluentMenu:
+        """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        menu = QMenu(self._frame)
-        menu.setStyleSheet(BaseStyles.MENU_STYLE())
-        return menu
+        return FluentMenu(parent=self._frame)

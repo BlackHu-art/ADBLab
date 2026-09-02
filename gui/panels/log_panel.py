@@ -8,12 +8,12 @@
   度量，字号变化自动适配），`text-indent` 负等值——自动折行与显式换行都对齐到
   消息列起点，级别与消息间只保留一个空格；
 - ERROR/CRITICAL 加粗；条目内容 HTML 按 (级别, 消息) 缓存，主题切换时重建；
-- 正文外包卡片视觉容器（``logViewCard``，QFrame 圆角+边框）：纯外围包壳，
+- 正文外包卡片视觉容器（``logViewCard``，Fluent CardWidget 圆角卡片）：纯外围包壳，
   ``text_output`` 的属性与渲染契约保持不变，主题切换经 ``_apply_style``
   重建卡片样式；
 - ``logViewCard`` 上方为卡片化工具条（``logToolbarCard``）：级别过滤下拉
-  （``logLevelFilter``）、当前过滤级别彩色徽标（``logLevelBadge``，复用
-  LOG_* 级别色）与清空图标按钮（``logClearButton``）。objectName 为公开
+  （``logLevelFilter``）、当前过滤级别徽标（``logLevelBadge``，InfoBadge 按
+  语义级别着色）与清空图标按钮（``logClearButton``）。objectName 为公开
   契约，供测试与 QSS 稳定引用；
 - 级别过滤只作用于新到达的批次（默认 ``All Levels`` 与历史行为完全一致），
   已渲染的历史行不回溯隐藏——正文渲染、裁剪、防抖与背压管线保持一字不动。
@@ -25,19 +25,30 @@ from html import escape
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import (
-    QFrame,
     QHBoxLayout,
-    QLabel,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import CardWidget, ComboBox, InfoBadge, InfoLevel, TextEdit
 
 from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent import FluentComboBox, IconButton
+from gui.widgets.fluent import IconButton
 
 _HTML_CACHE_LIMIT = 2048
+
+# 过滤级别徽标按语义映射 InfoLevel；qfluentwidgets InfoBadge 只有五个级别色，
+# 因此按严重程度对应（DEBUG/INFO→INFOAMTION、SUCCESS→SUCCESS、WARNING→WARNING、
+# ERROR/CRITICAL→ERROR），接受与旧 LOG_* 色值的细微色差（向 qfluentwidgets 靠拢）。
+_LOG_LEVEL_INFO_LEVEL = {
+    "": InfoLevel.INFOAMTION,
+    "DEBUG": InfoLevel.INFOAMTION,
+    "INFO": InfoLevel.INFOAMTION,
+    "SUCCESS": InfoLevel.SUCCESS,
+    "WARNING": InfoLevel.WARNING,
+    "ERROR": InfoLevel.ERROR,
+    "CRITICAL": InfoLevel.ERROR,
+}
 
 
 class LogPanel(QWidget):
@@ -93,33 +104,10 @@ class LogPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_style(self):
-        c = BaseStyles.color
-        self.text_output.setStyleSheet(f"""
-            QTextEdit {{
-                background-color: {c("LOG_BACKGROUND")};
-                color: {c("LOG_TEXT_COLOR")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {BaseStyles.RADIUS_LG}px;
-                padding: 4px;
-            }}
-            {BaseStyles.SCROLLBAR_STYLE()}
-        """)
-        # 卡片容器包壳：圆角边框 + 面板底色，与 Fluent Card 视觉一致。
-        self.logViewCard.setStyleSheet(
-            f"QFrame#logViewCard {{"
-            f" background-color: {c('PANEL_BG')};"
-            f" border: 1px solid {c('BORDER_COLOR')};"
-            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
-        )
-        # 卡片化工具条：与卡片容器一致的圆角边框，内嵌级别徽标/过滤/清空。
-        self.logToolbarCard.setStyleSheet(
-            f"QFrame#logToolbarCard {{"
-            f" background-color: {c('PANEL_BG')};"
-            f" border: 1px solid {c('BORDER_COLOR')};"
-            f" border-radius: {BaseStyles.RADIUS_LG}px; }}"
-        )
+        # 正文已收敛为 qfluentwidgets TextEdit，背景/边框/滚动条自维护（随主题切换），
+        # 无需在此套 QSS。
+        # 卡片容器与工具条包壳已由 CardWidget 自绘制并随主题切换，无需再套 QSS。
         self._refresh_level_badge()
-        self.logLevelFilter._sync_theme_state()
         self.logClearButton._sync_theme_state()
 
     def _on_theme_changed(self, _name: str):
@@ -147,7 +135,7 @@ class LogPanel(QWidget):
             widget.setFont(ui_font)
 
     def _init_ui(self):
-        self.text_output = QTextEdit(self)
+        self.text_output = TextEdit(self)
         self.text_output.setReadOnly(True)
         self.text_output.setAccessibleName("Operation log")
         self.text_output.setPlaceholderText("Operation logs will appear here.")
@@ -158,8 +146,9 @@ class LogPanel(QWidget):
         self._build_toolbar()
 
         # 正文外包卡片视觉容器：只换肤，正文属性与渲染契约不变。
-        self.logViewCard = QFrame(self)
+        self.logViewCard = CardWidget(self)
         self.logViewCard.setObjectName("logViewCard")
+        self.logViewCard.setBorderRadius(BaseStyles.RADIUS_LG)
         card_layout = QVBoxLayout(self.logViewCard)
         card_layout.setContentsMargins(8, 8, 8, 8)
         card_layout.addWidget(self.text_output)
@@ -180,22 +169,21 @@ class LogPanel(QWidget):
     def _build_toolbar(self):
         """构建卡片化工具条：级别徽标、过滤下拉与清空图标按钮。"""
 
-        self.logToolbarCard = QFrame(self)
+        self.logToolbarCard = CardWidget(self)
         self.logToolbarCard.setObjectName("logToolbarCard")
+        self.logToolbarCard.setBorderRadius(BaseStyles.RADIUS_LG)
 
-        self.logLevelBadge = QLabel("ALL", self.logToolbarCard)
+        self.logLevelBadge = InfoBadge("ALL", self.logToolbarCard)
         self.logLevelBadge.setObjectName("logLevelBadge")
         self.logLevelBadge.setProperty("fontRole", FontRole.UI.value)
         self.logLevelBadge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self.logLevelBadge.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.logLevelFilter = FluentComboBox(parent=self.logToolbarCard)
+        self.logLevelFilter = ComboBox(parent=self.logToolbarCard)
         self.logLevelFilter.setObjectName("logLevelFilter")
         self.logLevelFilter.setAccessibleName("Log level filter")
-        self.logLevelFilter.set_items(
-            [label for label, _data in self._LEVEL_FILTER_OPTIONS],
-            data=[data for _label, data in self._LEVEL_FILTER_OPTIONS],
-        )
+        for label, data in self._LEVEL_FILTER_OPTIONS:
+            self.logLevelFilter.addItem(label, userData=data)
         self.logLevelFilter.setMinimumWidth(110)
         # 先填项再连接：避免 set_items 清空动作触发未初始化的槽。
         self.logLevelFilter.currentIndexChanged.connect(self._on_level_filter_changed)
@@ -228,20 +216,11 @@ class LogPanel(QWidget):
         self._refresh_level_badge()
 
     def _refresh_level_badge(self):
-        """按当前过滤级别重绘彩色徽标（复用 LOG_* 级别色，文本用面板底色对比）。"""
+        """按当前过滤级别刷新徽标（InfoBadge 按语义级别着色）。"""
 
         level = self._current_filter_level()
-        background = (
-            BaseStyles.color(f"LOG_{level}") if level else BaseStyles.color("TEXT_SECONDARY")
-        )
         self.logLevelBadge.setText(level or "ALL")
-        self.logLevelBadge.setStyleSheet(
-            f"QLabel#logLevelBadge {{"
-            f" background-color: {background};"
-            f" color: {BaseStyles.color('PANEL_BG')};"
-            f" border-radius: {BaseStyles.RADIUS_MD + 3}px;"
-            f" padding: 2px 10px; }}"
-        )
+        self.logLevelBadge.setLevel(_LOG_LEVEL_INFO_LEVEL.get(level, InfoLevel.INFOAMTION))
 
     # ------------------------------------------------------------------
     # 缓冲与防抖

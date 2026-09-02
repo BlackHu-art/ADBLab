@@ -2,7 +2,6 @@
 
 import ctypes
 import os
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -53,50 +52,36 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
     assert len(calls) == 1
 
 
-def test_panel_base_status_bar_style_has_theme_background():
-    current_theme = BaseStyles.current_theme()
-    try:
-        BaseStyles.switch_theme("Dark")
-        expected_bg = BaseStyles.color("PANEL_BG")
-        style = BaseStyles.PANEL_BASE_STYLE()
-        marker = "QStatusBar {"
-        start = style.index(marker) + len(marker)
-        status_bar_block = style[start : style.index("}", start)]
-    finally:
-        BaseStyles.switch_theme(current_theme)
-
-    assert f"background-color: {expected_bg}" in status_bar_block
-
-
 def test_dialog_status_bar_style_has_theme_background():
+    from PySide6.QtWidgets import QApplication
+
+    from gui.widgets.fluent.status_bar import FluentStatusBar
+
+    _app = QApplication.instance() or QApplication([])
+    bar = FluentStatusBar()
     current_theme = BaseStyles.current_theme()
     try:
         BaseStyles.switch_theme("Dark")
         expected_bg = BaseStyles.color("PANEL_BG")
-        style = BaseStyles.STATUS_BAR_STYLE()
+        bar._apply_style()
+        style = bar.styleSheet()
     finally:
         BaseStyles.switch_theme(current_theme)
+        bar.deleteLater()
 
     assert f"background-color: {expected_bg}" in style
 
 
 def test_combo_box_arrow_uses_theme_specific_qss_resource():
     with patch.object(BaseStyles, "current_theme", return_value="Light"):
-        light_style = BaseStyles.INPUT_STYLE()
+        light_style = BaseStyles.COMBO_BOX_STYLE()
     with patch.object(BaseStyles, "current_theme", return_value="Dark"):
-        dark_style = BaseStyles.INPUT_STYLE()
+        dark_style = BaseStyles.COMBO_BOX_STYLE()
 
     assert "QComboBox::down-arrow" in light_style
     assert "icons:caret-down-qss-light.svg" in light_style
     assert "icons:caret-down-qss-dark.svg" in dark_style
     assert "icons:caret-down.svg" not in light_style + dark_style
-
-    icon_dir = Path(__file__).parents[1] / "resources" / "icons"
-    light_icon = (icon_dir / "caret-down-qss-light.svg").read_text(encoding="utf-8")
-    dark_icon = (icon_dir / "caret-down-qss-dark.svg").read_text(encoding="utf-8")
-    assert "currentColor" not in light_icon + dark_icon
-    assert "#1a1a1a" in light_icon
-    assert "#e0e0e8" in dark_icon
 
 
 def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons():

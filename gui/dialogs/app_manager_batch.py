@@ -8,11 +8,10 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
-    QTextEdit,
     QVBoxLayout,
 )
+from qfluentwidgets import LineEdit, TextEdit
 
 from core.settings_manager import AppSettings
 from gui.dialogs.app_manager_details import AppDetailsDialog
@@ -45,18 +44,18 @@ class AppManagerBatch:
         pkg = pkg_item.text()
         atype = atype_item.text()
         menu = self._frame._create_context_menu()
-        menu.addAction("App Details", lambda: self._frame._show_details_for(pkg))
+        menu.add_action("App Details", callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
-        menu.addAction("Launch App", lambda: self._frame._launch(pkg))
-        menu.addAction("Force Stop", lambda: self._frame._modify_one("force_stop", pkg))
-        menu.addAction("Clear Data", lambda: self._frame._modify_one("clear", pkg))
+        menu.add_action("Launch App", callback=lambda: self._frame._launch(pkg))
+        menu.add_action("Force Stop", callback=lambda: self._frame._modify_one("force_stop", pkg))
+        menu.add_action("Clear Data", callback=lambda: self._frame._modify_one("clear", pkg))
         menu.addSeparator()
-        menu.addAction("Uninstall", lambda: self._frame._modify_one("uninstall", pkg))
+        menu.add_action("Uninstall", callback=lambda: self._frame._modify_one("uninstall", pkg))
         if atype in ("System", "Vendor"):
-            menu.addAction("Disable", lambda: self._frame._modify_one("disable", pkg))
-            menu.addAction("Enable", lambda: self._frame._modify_one("enable", pkg))
+            menu.add_action("Disable", callback=lambda: self._frame._modify_one("disable", pkg))
+            menu.add_action("Enable", callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
-        menu.addAction("Backup", lambda: self._frame._backup_one(pkg))
+        menu.add_action("Backup", callback=lambda: self._frame._backup_one(pkg))
         if self._frame._batch_workers:
             for action in menu.actions():
                 if not action.isSeparator():
@@ -343,13 +342,13 @@ class AppManagerBatch:
         dlg.setFont(BaseStyles.font_for_role(FontRole.UI))
         lo = QVBoxLayout(dlg)
         lo.addWidget(QLabel("Preset Name:"))
-        ni = QLineEdit()
+        ni = LineEdit()
         lo.addWidget(ni)
         lo.addWidget(QLabel("Author (optional):"))
-        ai = QLineEdit()
+        ai = LineEdit()
         lo.addWidget(ai)
         lo.addWidget(QLabel("Description (optional):"))
-        di = QTextEdit()
+        di = TextEdit()
         di.setMaximumHeight(60)
         lo.addWidget(di)
         btns = QDialogButtonBox(

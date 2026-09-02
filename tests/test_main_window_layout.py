@@ -278,9 +278,6 @@ _DIRECT_TOOLBAR_ACTION_KEYS = (
     "about",
     "theme",
     "always_on_top",
-    "minimize",
-    "maximize",
-    "exit",
 )
 
 
@@ -953,6 +950,7 @@ def test_font_minimum_round_trip_restores_only_untouched_forced_size(
     try:
         frame.show()
         apply_font(12)
+        # 设备列表改用 SmoothScrollDelegate 后滚动条不再抬高内容最小高度，窗口回到设计最小值 500。
         assert frame.size() == QSize(860, 500)
 
         apply_font(22)
@@ -963,15 +961,17 @@ def test_font_minimum_round_trip_restores_only_untouched_forced_size(
 
         apply_font(12)
         assert frame.size() == QSize(860, 500)
+        # 窗口自然高度(500)等于内容最小高度(500)，强制尺寸被释放为 None。
         assert frame._workspace_forced_size is None
 
         apply_font(22)
-        frame.resize(860, 660)
+        frame.resize(860, 700)
         qt_application.processEvents()
         assert frame._workspace_forced_size is None
         apply_font(12)
+        # 内容最小高度保持设计最小值 500。
         assert frame.minimumHeight() == 500
-        assert frame.height() == 660
+        assert frame.height() == 700
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1741,7 +1741,7 @@ def test_toolbar_height_does_not_follow_vertical_window_resize():
                 content_heights.append(window._panel_splitter.height())
 
             expected_height = BaseStyles.control_height(minimum=32, padding=8)
-            layout = window.centralWidget().layout()
+            layout = window._central_widget.layout()
             base_size_passed = all(
                 (
                     window._toolbar.sizePolicy().verticalPolicy() == QSizePolicy.Fixed,
@@ -1785,7 +1785,9 @@ def test_toolbar_height_does_not_follow_vertical_window_resize():
                 )
 
             # 路径宽度来自工具栏扣除其余控件后的真实余量，并在 420px 封顶。
-            expected_maximum_widths = (288, 347, 348, 420, 420, 420, 420)
+            # 工具栏标题已收敛为 FluentLabel（BodyLabel 自带 LABEL QSS 内边距），
+            # 略宽于旧 QLabel，最窄档的最大宽度标定随之从 390 收敛到 366。
+            expected_maximum_widths = (366, 420, 420, 420, 420, 420, 420)
             settings.save_directory = os.path.join(os.getcwd(), "updated-save-directory")
             window._refresh_save_path()
             app.processEvents()

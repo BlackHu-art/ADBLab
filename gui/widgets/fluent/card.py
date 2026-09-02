@@ -1,22 +1,28 @@
-"""卡片容器组件。"""
+"""卡片容器组件（迁移到 qfluentwidgets ``CardWidget``）。"""
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QVBoxLayout, QWidget
+from qfluentwidgets import CardWidget
 
-from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent._base import apply_font_role_to, repolish
+from gui.styles import FontRole
+from gui.widgets.fluent._base import apply_font_role_to
+from gui.widgets.fluent.label import FluentLabel
 
 __all__ = ["Card"]
 
 
-class Card(QFrame):
+class Card(CardWidget):
     """带标题、可选副标题与内容区的主题化卡片容器。
 
-    契约：
+    契约（沿用自研 Card，调用方无需改动）：
     * ``body_layout()`` 返回内容区布局，供调用方追加控件；
     * 标题使用 ``FontRole.TITLE``、副标题使用 ``FontRole.UI_SMALL``；
-    * ``_sync_theme_state()`` 读取当前主题重建卡片与标题颜色。
+    * ``_sync_theme_state()`` 读取当前主题重建标题/副标题颜色。
+
+    卡片圆角背景与 hover 动画由 ``CardWidget`` 自行绘制并跟随 qfluentwidgets 主题，
+    不再依赖自研 ``_card_style()`` QSS。
     """
 
     def __init__(
@@ -29,14 +35,14 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName("fluentCard")
 
-        self._title = QLabel(title)
-        self._title.setProperty("fontRole", FontRole.TITLE.value)
-        self._title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+        self._title = FluentLabel(title, role=FontRole.TITLE, color_key="TITLE_COLOR")
         self._title.setVisible(bool(title))
 
-        self._subtitle = QLabel(subtitle)
-        self._subtitle.setProperty("fontRole", FontRole.UI_SMALL.value)
-        self._subtitle.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        self._subtitle = FluentLabel(
+            subtitle,
+            role=FontRole.UI_SMALL if subtitle else None,
+            color_key="TEXT_SECONDARY",
+        )
         self._subtitle.setVisible(bool(subtitle))
         self._subtitle.setWordWrap(True)
 
@@ -67,9 +73,25 @@ class Card(QFrame):
 
         self._subtitle.setText(text)
         self._subtitle.setVisible(bool(text))
+        # 空副标题不挂 UI_SMALL 角色：面板字体爆发测试要求面板内无 UI_SMALL 控件。
+        self._subtitle.set_role(FontRole.UI_SMALL if text else None)
 
     def title(self) -> str:
         return self._title.text()
+
+    def title_label(self) -> FluentLabel:
+        """返回标题标签，供测试与外部接入测量标题几何。"""
+
+        return self._title
+
+    def minimumSizeHint(self) -> QSize:
+        """把完整标题宽度计入最小宽度，避免长标题在窄容器中被裁剪。"""
+
+        base = super().minimumSizeHint()
+        if self._title.isVisible() and self._title.text():
+            title_width = self._title.fontMetrics().horizontalAdvance(self._title.text())
+            base.setWidth(max(base.width(), title_width + 24))
+        return base
 
     def subtitle(self) -> str:
         return self._subtitle.text()
@@ -92,18 +114,7 @@ class Card(QFrame):
         apply_font_role_to(self._title, role)
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建卡片与标题样式。"""
+        """标题/副标题颜色已由 FluentLabel 随 qfluentwidgets 主题自动切换。
 
-        self._title.setStyleSheet(f"color: {BaseStyles.color('TITLE_COLOR')};")
-        self._subtitle.setStyleSheet(f"color: {BaseStyles.color('TEXT_SECONDARY')};")
-        self.setStyleSheet(self._card_style())
-        repolish(self)
-
-    def _card_style(self) -> str:
-        radius = BaseStyles.RADIUS_LG
-        return (
-            f"QFrame#fluentCard {{"
-            f" background-color: {BaseStyles.color('PANEL_BG')};"
-            f" border: 1px solid {BaseStyles.color('BORDER_COLOR')};"
-            f" border-radius: {radius}px; }}"
-        )
+        保留该方法以兼容主题广播（``findChildren`` 按 ``_sync_theme_state`` 遍历刷新）。
+        """

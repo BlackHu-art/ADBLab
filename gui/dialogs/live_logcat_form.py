@@ -2,16 +2,21 @@
 
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
-    QComboBox,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
-    QPlainTextEdit,
-    QPushButton,
-    QStatusBar,
     QVBoxLayout,
+)
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    InfoBadge,
+    InfoLevel,
+    LineEdit,
+    PlainTextEdit,
+    PrimaryPushButton,
+    PushButton,
+    TogglePushButton,
 )
 
 from gui.dialogs.live_logcat_highlighter import LogcatHighlighter
@@ -20,6 +25,9 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.button import DangerPushButton
+from gui.widgets.fluent.label import FluentLabel
+from gui.widgets.fluent.status_bar import FluentStatusBar
 
 
 class LiveLogcatForm:
@@ -34,31 +42,33 @@ class LiveLogcatForm:
         layout.setContentsMargins(6, 6, 6, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为卡片页头（面板底色+细边框+大圆角）。
+        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
-        self._frame.header_card = QFrame()
+        self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
+        self._frame.header_card.setBorderRadius(BaseStyles.RADIUS_LG)
         hl = QVBoxLayout(self._frame.header_card)
         hl.setContentsMargins(12, 8, 12, 8)
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = QLabel("Live Logcat")
+        self._frame.dialog_title = FluentLabel(
+            "Live Logcat", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.dialog_title.setProperty("fontRole", FontRole.TITLE.value)
-        self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
-        self._frame.status_badge = QLabel("No device")
-        self._frame.status_badge.setObjectName("dialogStatusBadge")
+        self._frame.status_badge = InfoBadge.info("No device", self._frame.header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.status_badge.setToolTip("Device availability for log streaming")
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = QLabel("Stream and filter device log messages")
+        self._frame.dialog_subtitle = FluentLabel(
+            "Stream and filter device log messages",
+            role=FontRole.UI,
+            color_key="TEXT_SECONDARY",
+        )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
-        self._frame.dialog_subtitle.setProperty("fontRole", FontRole.UI.value)
-        self._frame.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.dialog_subtitle.setWordWrap(True)
         hl.addLayout(title_row)
         hl.addWidget(self._frame.dialog_subtitle)
@@ -69,7 +79,7 @@ class LiveLogcatForm:
         filters.setVerticalSpacing(4)
         self._frame._filters_layout = filters
         self._frame._level_label = QLabel("Level:")
-        self._frame.level_combo = QComboBox()
+        self._frame.level_combo = ComboBox()
         self._frame.level_combo.addItem("All", None)
         for code in ("V", "D", "I", "W", "E", "F"):
             self._frame.level_combo.addItem(LEVEL_LABELS[code], code)
@@ -78,13 +88,14 @@ class LiveLogcatForm:
         self._frame._level_label.setBuddy(self._frame.level_combo)
         self._frame.level_combo.setAccessibleName("Log level")
         self._frame._package_label = QLabel("Package:")
-        self._frame.pkg_input = QLineEdit()
+        self._frame.pkg_input = LineEdit()
         self._frame.pkg_input.setPlaceholderText("com.example.app")
         self._frame._package_label.setBuddy(self._frame.pkg_input)
         self._frame.pkg_input.setAccessibleName("Package filter")
         self._frame.pkg_input.setToolTip("Enter a package name, then press Enter to apply")
         self._frame.pkg_input.returnPressed.connect(self._frame._submit_package_filter)
-        self._frame.btn_get_pkg = QPushButton("Current Package")
+        self._frame.btn_get_pkg = PushButton()
+        self._frame.btn_get_pkg.setText("Current Package")
         self._frame.btn_get_pkg.setIcon(get_themed_icon("target.svg"))
         self._frame.btn_get_pkg.setProperty("iconName", "target.svg")
         self._frame.btn_get_pkg.setIconSize(QSize(14, 14))
@@ -103,27 +114,31 @@ class LiveLogcatForm:
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(6)
-        self._frame.start_btn = QPushButton("Start")
+        self._frame.start_btn = PrimaryPushButton()
+        self._frame.start_btn.setText("Start")
         self._frame.start_btn.setToolTip("Start streaming device log messages")
         self._frame.start_btn.setIcon(get_themed_icon("play.svg"))
         self._frame.start_btn.setProperty("iconName", "play.svg")
         self._frame.start_btn.setIconSize(QSize(14, 14))
-        self._frame.stop_btn = QPushButton("Stop")
+        self._frame.stop_btn = DangerPushButton("Stop")
         self._frame.stop_btn.setToolTip("Stop the active log stream")
         self._frame.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self._frame.stop_btn.setProperty("iconName", "stop-circle.svg")
         self._frame.stop_btn.setIconSize(QSize(14, 14))
-        self._frame.clear_btn = QPushButton("Clear")
+        self._frame.clear_btn = PushButton()
+        self._frame.clear_btn.setText("Clear")
         self._frame.clear_btn.setToolTip("Remove all displayed log messages")
         self._frame.clear_btn.setIcon(get_themed_icon("broom.svg"))
         self._frame.clear_btn.setProperty("iconName", "broom.svg")
         self._frame.clear_btn.setIconSize(QSize(14, 14))
-        self._frame.export_btn = QPushButton("Export")
+        self._frame.export_btn = PushButton()
+        self._frame.export_btn.setText("Export")
         self._frame.export_btn.setToolTip("Save the displayed log messages to a file")
         self._frame.export_btn.setIcon(get_themed_icon("file-arrow-down.svg"))
         self._frame.export_btn.setProperty("iconName", "file-arrow-down.svg")
         self._frame.export_btn.setIconSize(QSize(14, 14))
-        self._frame.wrap_btn = QPushButton("Wrap")
+        self._frame.wrap_btn = TogglePushButton()
+        self._frame.wrap_btn.setText("Wrap")
         self._frame.wrap_btn.setIcon(get_themed_icon("arrows-left-right.svg"))
         self._frame.wrap_btn.setProperty("iconName", "arrows-left-right.svg")
         self._frame.wrap_btn.setIconSize(QSize(14, 14))
@@ -150,15 +165,15 @@ class LiveLogcatForm:
         for button in action_buttons:
             btn_row.addWidget(button)
 
-        self._frame.status_bar = QStatusBar()
+        self._frame.status_bar = FluentStatusBar()
         self._frame.status_bar.setSizeGripEnabled(False)
         self._frame.status_bar.showMessage("Ready")
         btn_row.addWidget(self._frame.status_bar, 1)
         layout.addLayout(btn_row)
 
-        self._frame.output = QPlainTextEdit()
+        self._frame.output = PlainTextEdit()
         self._frame.output.setReadOnly(True)
-        self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self._frame.output.setLineWrapMode(PlainTextEdit.LineWrapMode.WidgetWidth)
         self._frame.output.setUndoRedoEnabled(False)
         self._frame.output.document().setMaximumBlockCount(self._frame.MAX_BUFFER)
         layout.addWidget(self._frame.output, 1)
@@ -215,29 +230,15 @@ class LiveLogcatForm:
         apply_dark_title_bar(self._frame)
         BS = BaseStyles
         self._frame.setWindowIcon(get_themed_icon(self._frame._window_icon_name))
-        # 视觉重设计：页头卡片样式随主题重建，徽标按 device_ip 刷新。
+        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
         if hasattr(self._frame, "header_card"):
-            self._frame.header_card.setStyleSheet(
-                f"QFrame#dialogHeaderCard {{ background-color: {BS.color('PANEL_BG')};"
-                f" border: 1px solid {BS.color('BORDER_COLOR')};"
-                f" border-radius: {BS.RADIUS_LG}px; }}"
-            )
             self._frame.dialog_title.setFont(BS.font_for_role(FontRole.TITLE))
-            self._frame.dialog_title.setStyleSheet(f"color: {BS.color('TITLE_COLOR')};")
             self._frame.dialog_subtitle.setFont(BS.font_for_role(FontRole.UI))
-            self._frame.dialog_subtitle.setStyleSheet(
-                f"color: {BS.color('TEXT_SECONDARY')};"
-            )
             self._frame.status_badge.setFont(BS.font_for_role(FontRole.UI))
             has_device = bool(self._frame.device_ip)
             self._frame.status_badge.setText("Ready" if has_device else "No device")
-            background = (
-                BS.color("LOG_SUCCESS") if has_device else BS.color("TEXT_SECONDARY")
-            )
-            self._frame.status_badge.setStyleSheet(
-                f"QLabel#dialogStatusBadge {{ background-color: {background};"
-                f" color: {BS.color('PANEL_BG')};"
-                f" border-radius: 7px; padding: 1px 8px; }}"
+            self._frame.status_badge.setLevel(
+                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
             )
         for button in (
             self._frame.btn_get_pkg,
@@ -253,19 +254,14 @@ class LiveLogcatForm:
         ui_font = BS.font_for_role(FontRole.UI)
         mono_font = BS.font_for_role(FontRole.MONO)
         log_font = BS.font_for_role(FontRole.LOG)
-        self._frame.setStyleSheet(BS.PANEL_BASE_STYLE())
         self._frame.setFont(ui_font)
+        # qfluentwidgets ComboBox/LineEdit 默认像素字号，这里显式覆盖为点位角色字体。
+        self._frame.level_combo.setFont(ui_font)
         self._frame.pkg_input.setFont(mono_font)
-        fg = BS.color("TEXT_PRIMARY")
-        border = BS.color("BORDER_COLOR")
-        self._frame.output.setStyleSheet(
-            f"background-color: {BS.color('LOG_BACKGROUND')}; "
-            f"color: {BS.color('LOG_TEXT_COLOR')}; "
-            f"border: 1px solid {border}; border-radius: {BS.RADIUS_MD}px;"
-        )
+        # 输出框样式由 qfluentwidgets PlainTextEdit 自维护（随主题切换），仅同步等宽字体。
         self._frame.output.setFont(log_font)
         self._frame.output.document().setDefaultFont(log_font)
-        self._frame.status_bar.setStyleSheet(BS.STATUS_BAR_STYLE())
+        # 状态栏样式由 FluentStatusBar 自维护（随主题重建）。
         self._apply_action_button_styles()
         self._frame.level_combo.setMinimumWidth(120)
         self._frame.level_combo.setMinimumWidth(
@@ -286,36 +282,12 @@ class LiveLogcatForm:
             "E": BS.color("LOG_ERROR"),
             "F": BS.color("LOG_CRITICAL"),
             "S": BS.color("TEXT_SECONDARY"),
-            "U": fg,
+            "U": BS.color("TEXT_PRIMARY"),
         }
         self._frame.highlighter.set_theme(hl_colors)
 
     def _apply_action_button_styles(self) -> None:
-        """按当前主题刷新启动和停止按钮的语义色。"""
-
-        bs = BaseStyles
-        self._frame.start_btn.setStyleSheet(f"""
-            QPushButton {{
-                {bs.BUTTON_BASE()}
-                background-color: {bs.color("LOG_SUCCESS")}; color: #ffffff;
-                border: 1px solid {bs.color("LOG_SUCCESS")};
-            }}
-            QPushButton:hover {{ border-color: {bs.color("TEXT_PRIMARY")}; }}
-            QPushButton:pressed {{ border-color: {bs.color("BORDER_FOCUS")}; }}
-            QPushButton:focus {{ border: 2px solid {bs.color("TEXT_PRIMARY")}; }}
-            QPushButton:disabled {{
-                background-color: {bs.color("INPUT_BG")};
-                color: {bs.color("TEXT_DISABLED")};
-                border-color: {bs.color("BORDER_COLOR")};
-            }}
-            """)
-        self._frame.stop_btn.setObjectName("danger")
-        self._frame.stop_btn.setProperty("buttonVariant", "danger")
-        self._frame.stop_btn.setStyleSheet(bs.BUTTON_QSS())
-        for button in (self._frame.start_btn, self._frame.stop_btn):
-            button.style().unpolish(button)
-            button.style().polish(button)
-            button.update()
+        """停止按钮已改用 DangerPushButton，其危险红样式与禁用态由自身 QSS 维护。"""
 
     def resizeEvent(self, event):
         self._reflow_filters()

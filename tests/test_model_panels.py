@@ -11,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem, QPushButton, QWidget
+from qfluentwidgets import ComboBox, PrimaryPushButton
 
 from controllers._system import ADBSystemControllerMixin
 from gui.panels.app_panel import AppPanel
@@ -19,7 +20,7 @@ from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from gui.panels.side_panel_signals import SidePanelSignals
-from gui.styles import BaseStyles
+from gui.widgets.fluent.button import DangerPushButton
 from utils.adb_targets import normalize_adb_connect_target
 
 
@@ -349,87 +350,28 @@ def test_remote_start_stop_buttons_follow_running_state():
     _app = QApplication.instance() or QApplication([])
     owner = QWidget()
     remote = SimpleNamespace(
-        btn_start=QPushButton(owner),
-        btn_stop=QPushButton(owner),
+        btn_start=PrimaryPushButton(owner),
+        btn_stop=DangerPushButton(parent=owner),
     )
     remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(remote, button)
     remote._set_button_enabled = lambda button, enabled: BasePanel._set_button_enabled(
         remote, button, enabled
     )
     try:
-        BasePanel._apply_button_variant(remote, remote.btn_start, "accent")
-        BasePanel._apply_button_variant(remote, remote.btn_stop, "danger")
         RemotePanel._set_running(remote, False)
 
-        assert remote.btn_start.objectName() == "accent"
-        assert remote.btn_start.property("buttonVariant") == "accent"
-        assert remote.btn_stop.objectName() == "danger"
-        assert remote.btn_stop.property("buttonVariant") == "danger"
-        assert (
-            remote.btn_start.palette().button().color().name()
-            == BaseStyles.color("BUTTON_ACCENT").lower()
-        )
+        assert remote.btn_start.isEnabled() is True
+        assert remote.btn_stop.isEnabled() is False
 
         RemotePanel._set_running(remote, True)
 
         assert remote.btn_start.isEnabled() is False
         assert remote.btn_stop.isEnabled() is True
-        assert (
-            remote.btn_start.palette().button().color().name()
-            == BaseStyles.color("INPUT_BG").lower()
-        )
-        assert (
-            remote.btn_stop.palette().button().color().name()
-            == BaseStyles.color("BUTTON_DANGER").lower()
-        )
 
         RemotePanel._set_running(remote, False)
 
         assert remote.btn_start.isEnabled() is True
         assert remote.btn_stop.isEnabled() is False
-        assert (
-            remote.btn_start.palette().button().color().name()
-            == BaseStyles.color("BUTTON_ACCENT").lower()
-        )
-        assert (
-            remote.btn_stop.palette().button().color().name()
-            == BaseStyles.color("INPUT_BG").lower()
-        )
-    finally:
-        owner.close()
-
-
-def test_side_panel_theme_refresh_preserves_remote_button_variants():
-    _app = QApplication.instance() or QApplication([])
-    owner = QWidget()
-    start_button = QPushButton(owner)
-    stop_button = QPushButton(owner)
-    panel = SimpleNamespace(
-        _font_tab=QFont(),
-        _font_base=QFont(),
-        _font_sm=QFont(),
-        tabs=Mock(),
-        _apps_tab=None,
-    )
-    panel._create_fonts = Mock()
-    panel.setStyleSheet = Mock()
-    panel._apply_tab_style = Mock()
-    panel.findChildren = Mock(return_value=[start_button, stop_button])
-    panel.apply_device_theme = Mock()
-    panel._refresh_button_style = lambda button: BasePanel._refresh_button_style(panel, button)
-    BasePanel._apply_button_variant(panel, start_button, "accent")
-    BasePanel._apply_button_variant(panel, stop_button, "danger")
-    try:
-        SidePanel._on_theme_changed(panel, BaseStyles.current_theme())
-
-        assert start_button.objectName() == "accent"
-        assert start_button.property("buttonVariant") == "accent"
-        assert (
-            start_button.palette().button().color().name()
-            == BaseStyles.color("BUTTON_ACCENT").lower()
-        )
-        assert stop_button.objectName() == "danger"
-        assert stop_button.property("buttonVariant") == "danger"
     finally:
         owner.close()
 
@@ -688,7 +630,10 @@ def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
         panel._ensure_tab_loaded(1)
         panel._ensure_tab_loaded(2)
 
-        buttons = panel.findChildren(QPushButton)
+        buttons = [
+            b for b in panel.findChildren(QPushButton)
+            if not isinstance(b, ComboBox)
+        ]
 
         assert buttons
         assert [button.text() for button in buttons if not button.toolTip().strip()] == []

@@ -5,8 +5,6 @@ import weakref
 from PySide6.QtCore import QEvent, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QResizeEvent
 from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
     QFileDialog,
     QGridLayout,
@@ -16,10 +14,17 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
+)
+from qfluentwidgets import (
+    CheckBox,
+    ComboBox,
+    PrimaryPushButton,
+    PushButton,
+    SmoothScrollArea,
+    SmoothScrollDelegate,
 )
 
 from core.settings_manager import AppSettings
@@ -27,6 +32,8 @@ from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.group_box import ScalableGroupBox
+from gui.widgets.fluent.label import FluentLabel
 from gui.window_layout import DEFAULT_PANEL_RATIO, ratio_from_sizes
 
 
@@ -78,6 +85,9 @@ class SettingsDialog(QDialog):
         self._settings_nav.setObjectName("settingsNav")
         self._settings_nav.setFixedWidth(180)
         self._settings_nav.setProperty("fontRole", FontRole.UI.value)
+        # 导航列表仅作锚点跳转，保留原生 QListWidget（qfluentwidgets ListWidget 固定
+        # 行高不兼容），用 SmoothScrollDelegate 承接滚动条。
+        SmoothScrollDelegate(self._settings_nav)
         nav_order = (
             ("Appearance", 0),
             ("Window & Layout", 1),
@@ -108,7 +118,7 @@ class SettingsDialog(QDialog):
             if isinstance(widget, QGroupBox):
                 self._nav_targets[index] = widget
 
-        self._settings_scroll = QScrollArea()
+        self._settings_scroll = SmoothScrollArea()
         self._settings_scroll.setObjectName("settingsScroll")
         self._settings_scroll.setWidgetResizable(True)
         self._settings_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -149,7 +159,6 @@ class SettingsDialog(QDialog):
             selected_family,
             maximum_width=260,
         )
-        self._font_combo.setMinimumContentsLength(13)
         self._font_combo.currentTextChanged.connect(self._on_font_family_changed)
         self._combo_font = self._combo(
             ["8", "9", "10", "11", "12", "13", "14", "15", "16", "18", "20", "22"],
@@ -223,8 +232,12 @@ class SettingsDialog(QDialog):
         )
         gg.addWidget(self._log_font_preview, 2, 3)
 
-        self._font_apply_hint = QLabel("Changes apply immediately.")
+        self._font_apply_hint = FluentLabel(
+            "Changes apply immediately.", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._font_apply_hint.setObjectName("hintLabel")
+        # 原 QSS `padding: 1px 2px` 用内容边距等价表达。
+        self._font_apply_hint.setContentsMargins(2, 1, 2, 1)
         self._font_apply_hint.setWordWrap(True)
         self._font_apply_hint.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
@@ -238,10 +251,12 @@ class SettingsDialog(QDialog):
 
     def _build_window(self, body):
         g = self._section("Window & Layout")
-        self._window_size_value = QLabel()
+        self._window_size_value = FluentLabel(role=FontRole.UI, color_key="TEXT_PRIMARY")
         self._window_size_value.setObjectName("settingsValue")
-        self._panel_split_value = QLabel()
+        self._window_size_value.setContentsMargins(2, 1, 2, 1)
+        self._panel_split_value = FluentLabel(role=FontRole.UI, color_key="TEXT_PRIMARY")
         self._panel_split_value.setObjectName("settingsValue")
+        self._panel_split_value.setContentsMargins(2, 1, 2, 1)
 
         self._btn_reset_window_size = self._icon_button(
             "arrow-u-up-left.svg",
@@ -328,8 +343,13 @@ class SettingsDialog(QDialog):
         gg.setVerticalSpacing(8)
 
         save_dir = self.s.get("save_directory", "")
-        self._lbl_save = QLabel(save_dir if save_dir else "~/ADBLab (default)")
+        self._lbl_save = FluentLabel(
+            save_dir if save_dir else "~/ADBLab (default)",
+            role=FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
+        )
         self._lbl_save.setObjectName("hintLabel")
+        self._lbl_save.setContentsMargins(2, 1, 2, 1)
         self._lbl_save.setWordWrap(True)
         self._lbl_save.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self._lbl_save.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -370,7 +390,8 @@ class SettingsDialog(QDialog):
         row = QHBoxLayout()
         row.setSpacing(8)
         row.setContentsMargins(10, 8, 10, 10)
-        self._btn_restore_defaults = QPushButton("Restore Defaults")
+        self._btn_restore_defaults = PushButton()
+        self._btn_restore_defaults.setText("Restore Defaults")
         self._btn_restore_defaults.setToolTip("Reset all preferences to their defaults")
         self._btn_restore_defaults.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         self._btn_restore_defaults.setIconSize(QSize(14, 14))
@@ -379,12 +400,12 @@ class SettingsDialog(QDialog):
         self._btn_restore_defaults.clicked.connect(self._reset_all)
         row.addWidget(self._btn_restore_defaults)
         row.addStretch()
-        self._btn_close = QPushButton("Close")
+        self._btn_close = PrimaryPushButton()
+        self._btn_close.setText("Close")
         self._btn_close.setToolTip("Save changes and close settings")
         self._btn_close.setIcon(get_themed_icon("x.svg"))
         self._btn_close.setIconSize(QSize(14, 14))
         self._btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_close.setObjectName("accent")
         self._btn_close.setDefault(True)
         self._btn_close.clicked.connect(self.accept)
         row.addWidget(self._btn_close)
@@ -392,33 +413,32 @@ class SettingsDialog(QDialog):
 
     # ── 控件辅助方法 ────────────────────────────────────────────────────
 
-    def _section(self, title: str) -> QGroupBox:
-        g = QGroupBox(title)
+    def _section(self, title: str) -> ScalableGroupBox:
+        g = ScalableGroupBox(title)
         g.setObjectName("settingsSection")
         g.setProperty("fontRole", FontRole.UI.value)
         return g
 
-    def _label(self, text: str) -> QLabel:
-        lbl = QLabel(text)
+    def _label(self, text: str) -> FluentLabel:
+        lbl = FluentLabel(text, role=FontRole.UI, color_key="TEXT_PRIMARY")
         lbl.setObjectName("settingsLabel")
-        lbl.setProperty("fontRole", FontRole.UI.value)
+        lbl.setMinimumWidth(72)
         return lbl
 
-    def _combo(self, items: list, current: str, *, maximum_width: int) -> QComboBox:
-        c = QComboBox()
+    def _combo(self, items: list, current: str, *, maximum_width: int) -> ComboBox:
+        c = ComboBox()
         c.addItems(items)
         c.setCurrentText(current)
-        c.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        c.setMinimumContentsLength(8)
         c.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         c.setMinimumWidth(0)
         c.setMaximumWidth(maximum_width)
         return c
 
-    def _description(self, text: str) -> QLabel:
-        label = QLabel(text)
+    def _description(self, text: str) -> FluentLabel:
+        label = FluentLabel(text, role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
         label.setObjectName("settingsDescription")
-        label.setProperty("fontRole", FontRole.UI_SMALL.value)
+        # 原 QSS `padding: 0 0 4px 26px` 用内容边距等价表达。
+        label.setContentsMargins(26, 0, 0, 4)
         label.setWordWrap(True)
         label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         label.setMinimumWidth(0)
@@ -435,17 +455,19 @@ class SettingsDialog(QDialog):
             families.insert(0, configured_family)
         return [cls._SYSTEM_DEFAULT_FONT, *families]
 
-    def _checkbox(self, text: str) -> QCheckBox:
-        cb = QCheckBox(text)
-        cb.setObjectName("settingsCheck")
+    def _checkbox(self, text: str) -> CheckBox:
+        cb = CheckBox()
+        cb.setText(text)
         cb.setProperty("fontRole", FontRole.UI.value)
         cb.setToolTip(text)
         cb.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         cb.setMinimumWidth(0)
         return cb
 
-    def _icon_button(self, icon: str, text: str = "", tooltip: str = "") -> QPushButton:
-        btn = QPushButton(text)
+    def _icon_button(self, icon: str, text: str = "", tooltip: str = "") -> PushButton:
+        btn = PushButton()
+        if text:
+            btn.setText(text)
         if icon:
             btn.setIcon(get_themed_icon(icon))
             btn.setIconSize(QSize(14, 14))
@@ -853,24 +875,15 @@ class SettingsDialog(QDialog):
             value.setFont(ui_font)
 
         control_height = BaseStyles.control_height(minimum=28, padding=8)
-        for control_type in (QComboBox, QPushButton):
-            for control in self.findChildren(control_type):
-                control.setMinimumHeight(control_height)
+        # ComboBox/PushButton 均为 QPushButton 子类，统一按 QPushButton 收集即可。
+        for control in self.findChildren(QPushButton):
+            control.setMinimumHeight(control_height)
         self.setStyleSheet(
-            BaseStyles.INPUT_STYLE()
-            + BaseStyles.BUTTON_QSS()
-            + BaseStyles.SCROLLBAR_STYLE()
-            + BaseStyles.GROUP_BOX_STYLE()
-            + f"""
+            f"""
             QDialog {{
                 background-color: {c("WINDOW_BG")};
                 color: {c("TEXT_PRIMARY")};
             }}
-            QDialog QLabel,
-            QDialog QComboBox,
-            QDialog QComboBox QAbstractItemView,
-            QDialog QCheckBox,
-            QDialog QPushButton {{ color: {c("TEXT_PRIMARY")}; }}
             QScrollArea#settingsScroll {{
                 border: none;
                 background-color: transparent;
@@ -893,31 +906,6 @@ class SettingsDialog(QDialog):
             QListWidget#settingsNav::item:selected {{
                 background-color: {c("BUTTON_ACCENT")};
                 color: #ffffff;
-            }}
-            QLabel#settingsLabel {{
-                color: {c("TEXT_PRIMARY")};
-                min-width: 72px;
-            }}
-            QLabel#hintLabel {{
-                color: {c("TEXT_SECONDARY")};
-                padding: 1px 2px;
-            }}
-            QLabel#settingsValue {{
-                color: {c("TEXT_PRIMARY")};
-                padding: 1px 2px;
-            }}
-            QLabel#settingsDescription {{
-                color: {c("TEXT_SECONDARY")};
-                padding: 0 0 4px 26px;
-            }}
-            QCheckBox#settingsCheck {{
-                color: {c("TEXT_PRIMARY")};
-                spacing: 8px;
-                padding: 2px 0;
-            }}
-            QCheckBox#settingsCheck:focus {{
-                border: 1px solid {c("BORDER_FOCUS")};
-                border-radius: 4px;
             }}
         """
         )

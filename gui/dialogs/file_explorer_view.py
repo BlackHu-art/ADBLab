@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
     QPlainTextEdit,
-    QPushButton,
     QVBoxLayout,
 )
+from qfluentwidgets import PlainTextEdit, PushButton
 
 from gui.dialogs.file_explorer_image import _ImageViewerDialog
 from gui.dialogs.lifecycle import (
@@ -74,10 +74,10 @@ class FileExplorerView:
 
     def _view_or_pull(self, name: str):
         menu = self._frame._create_context_menu()
-        pull = menu.addAction("Pull File")
+        pull = menu.add_action("Pull File")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self._frame.TEXT_EXTS or ext in self._frame.IMAGE_EXTS
-        view = menu.addAction("View") if viewable else None
+        view = menu.add_action("View") if viewable else None
         act = menu.exec(
             self._frame.table.mapToGlobal(
                 self._frame.table.visualItemRect(
@@ -203,7 +203,7 @@ class FileExplorerView:
         dlg.setMinimumSize(750, 550)
         dlg.setModal(True)
         lo = QVBoxLayout(dlg)
-        editor = QPlainTextEdit()
+        editor = PlainTextEdit()
         _set_plain_text_chunked(editor, content)
         if truncated:
             editor.appendPlainText(
@@ -211,19 +211,22 @@ class FileExplorerView:
             )
         lo.addWidget(editor)
         btns = QHBoxLayout()
-        save_as = QPushButton("Save As...")
+        save_as = PushButton()
+        save_as.setText("Save As...")
         save_as.setToolTip("Save the edited text to the computer")
         save_as.setIcon(get_themed_icon("floppy-disk.svg"))
         save_as.setIconSize(QSize(14, 14))
         save_as.clicked.connect(lambda: self._frame._save_as(name, editor.toPlainText()))
-        save_dev = QPushButton("Save to Device")
+        save_dev = PushButton()
+        save_dev.setText("Save to Device")
         save_dev.setToolTip("Write the edited text back to the device")
         save_dev.setIcon(get_themed_icon("device-mobile.svg"))
         save_dev.setIconSize(QSize(14, 14))
         save_dev.clicked.connect(
             lambda: self._frame._save_to_device(name, editor.toPlainText(), full_path)
         )
-        close = QPushButton("Close")
+        close = PushButton()
+        close.setText("Close")
         close.setToolTip("Close the text viewer")
         close.setIcon(get_themed_icon("x.svg"))
         close.setIconSize(QSize(14, 14))

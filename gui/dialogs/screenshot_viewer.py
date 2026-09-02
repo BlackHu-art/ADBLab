@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
     QFrame,
     QGraphicsPixmapItem,
     QListWidgetItem,
-    QPushButton,
 )
+from qfluentwidgets import TransparentToolButton
 
 from core.exec import ProcessRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
@@ -43,7 +43,7 @@ class ScreenshotViewer(QDialog):
         self._original_pixmap: QPixmap | None = None
         self._pixmap_item: QGraphicsPixmapItem | None = None
         self._window_icon_name = "camera.svg"
-        self._icon_buttons: list[QPushButton] = []
+        self._icon_buttons: list[TransparentToolButton] = []
         self._reflowing_bottom_bar = False
         self._bottom_bar_plan_fingerprint: tuple[object, ...] | None = None
 
@@ -127,7 +127,7 @@ class ScreenshotViewer(QDialog):
             getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
         )._schedule_bottom_bar_reflow()
 
-    def _tool_button(self, icon_name: str, tooltip: str) -> QPushButton:
+    def _tool_button(self, icon_name: str, tooltip: str) -> TransparentToolButton:
         return (
             getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
         )._tool_button(icon_name, tooltip)

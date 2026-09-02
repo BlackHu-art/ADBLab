@@ -5,7 +5,6 @@ from typing import cast
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
-    QGroupBox,
     QHBoxLayout,
     QPushButton,
     QScrollArea,
@@ -14,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import SmoothScrollArea
 
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
@@ -22,6 +22,7 @@ from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
+from gui.widgets.fluent.group_box import ScalableGroupBox
 from gui.widgets.responsive_controller import ReflowReason, ResponsiveCoordinator
 from gui.widgets.responsive_layout import prepare_responsive_content
 
@@ -54,7 +55,6 @@ class SidePanel(QWidget):
         self._responsive_settle_timer.timeout.connect(self._poll_responsive_settled)
 
         self.setMinimumWidth(300)
-        self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         BaseStyles.theme_changed.connect(self._on_theme_changed)
         BaseStyles.fonts_changed.connect(self._on_fonts_changed)
 
@@ -135,7 +135,7 @@ class SidePanel(QWidget):
         lo.addWidget(self.tabs, stretch=1)
 
     def _create_tab_scroll_area(self) -> QScrollArea:
-        scroll = QScrollArea()
+        scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         # 响应式重排优先；极窄宽度或超大字体下保留可访问的横向兜底。
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -143,10 +143,9 @@ class SidePanel(QWidget):
         # 滚动条若在 settle 后弹出会吃掉 viewport 宽度，破坏"一次 settle 即最终几何"
         # 契约；预留空间后滚动条出现与否都不改变内容宽度（P1 页面栈迁移）。
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        scroll.setStyleSheet(
-            "QScrollArea { border: none; background: transparent; }\n"
-            f"{BaseStyles.SCROLLBAR_STYLE()}"
-        )
+        # SmoothScrollArea 用自定义 SmoothScrollBar 承接滚动，滚动条样式由其
+        # FluentStyleSheet 提供，这里只保留透明容器边框。
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         return scroll
 
     def _ensure_tab_loaded(self, index: int):
@@ -417,38 +416,31 @@ class SidePanel(QWidget):
         )
 
     def _on_theme_changed(self, _):
-        self.setStyleSheet(BaseStyles.PANEL_BASE_STYLE())
         self._apply_tab_style()
-        scrollbar_qss = BaseStyles.SCROLLBAR_STYLE()
-        group_qss = BaseStyles.GROUP_BOX_STYLE()
         roots = [self]
         device_widget = getattr(self, "_device_widget", None)
         if device_widget is not None and not self.isAncestorOf(device_widget):
             roots.append(device_widget)
         visited = set()
         # Devices 视觉根由 MainFrame 托管，主题刷新必须显式覆盖两个控件树。
+        # 分组框样式由 ScalableGroupBox 自维护，这里仅对测试直接调用处理器时兜底刷新。
         for root in roots:
             for child in (root, *root.findChildren(QWidget)):
                 child_id = id(child)
                 if child_id in visited:
                     continue
                 visited.add(child_id)
-                if isinstance(child, QGroupBox):
-                    child.setStyleSheet(group_qss)
+                if isinstance(child, ScalableGroupBox):
+                    child._apply_style()
                 elif isinstance(child, QPushButton):
-                    variant = child.property("buttonVariant")
-                    if variant:
-                        child.setObjectName(str(variant))
-                        child.setStyleSheet(BaseStyles.BUTTON_QSS())
-                        child.style().unpolish(child)
-                        child.style().polish(child)
+                    # 危险按钮已由 DangerPushButton 自维护红色样式，无需在此重建；
+                    # 仅按主题重设图标。
                     icon_name = child.property("iconName")
                     if icon_name:
                         child.setIcon(get_themed_icon(icon_name))
                 elif isinstance(child, QScrollArea):
-                    child.setStyleSheet(
-                        f"QScrollArea {{ border: none; background: transparent; }}\n{scrollbar_qss}"
-                    )
+                    # SmoothScrollArea 用自定义 SmoothScrollBar，无需原生滚动条 QSS。
+                    child.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.apply_device_theme()
         if self._apps_tab is not None:
             if hasattr(self._apps_tab, "completer"):
@@ -465,11 +457,12 @@ class SidePanel(QWidget):
         self._create_fonts()
         self.setFont(self._font_base)
         self.tabs.setFont(self._font_tab)
-        group_qss = BaseStyles.GROUP_BOX_STYLE()
         roots = [self]
         device_widget = getattr(self, "_device_widget", None)
         if device_widget is not None and not self.isAncestorOf(device_widget):
             roots.append(device_widget)
+        # 分组标题净空依赖当前字体度量，由 ScalableGroupBox 随 fonts_changed 自刷新；
+        # 这里对测试直接调用处理器时兜底刷新。
         for root in roots:
             root.setFont(self._font_base)
             for child in root.findChildren(QWidget):
@@ -479,9 +472,8 @@ class SidePanel(QWidget):
                         child.setFont(BaseStyles.font_for_role(role))
                     except ValueError:
                         child.setFont(self._font_base)
-                if isinstance(child, QGroupBox):
-                    # 分组标题净空依赖当前字体度量，字号变化后必须同步刷新 QSS。
-                    child.setStyleSheet(group_qss)
+                if isinstance(child, ScalableGroupBox):
+                    child._apply_style()
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)

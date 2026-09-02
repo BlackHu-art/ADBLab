@@ -62,6 +62,7 @@ flowchart TD
 | PyYAML | 6.0.2 固定 | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | 7.2.2 固定 | `core/process_utils.py`：TCP 端口占用查找与进程树终止（ADR-0003 Phase 1 起） | `requirements.txt`、`core/process_utils.py` |
+| PySide6-Fluent-Widgets (qfluentwidgets) | 1.11.3 固定 | Fluent 风格 UI 组件（`NavigationInterface`/`CardWidget`/`ProgressBar`）与主题/强调色 | `requirements.txt`、`gui/main_frame.py`、`gui/widgets/fluent/`；GPLv3 双许可，仅内部使用、不对外分发（见 RISKS_AND_DEBT） |
 | XlsxWriter 移植副本 | 仓库内 vendored | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出现在 `requirements.txt`；

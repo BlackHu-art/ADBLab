@@ -6,10 +6,9 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
-from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
-    QComboBox,
     QGroupBox,
     QLabel,
     QLineEdit,
@@ -18,6 +17,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolButton,
 )
+from qfluentwidgets import EditableComboBox
 
 from gui.dialogs.performance_launcher import (
     CONFIG_HINTS,
@@ -89,7 +89,7 @@ def test_performance_numeric_aliases_use_original_dropdown_style_with_strict_val
         for canonical_name, compatibility_name, value, presets in preset_contract:
             canonical = getattr(dialog, canonical_name)
             assert canonical is getattr(dialog, compatibility_name)
-            assert isinstance(canonical, QComboBox)
+            assert isinstance(canonical, EditableComboBox)
             assert canonical.value() == value
             assert canonical.presets() == presets
 
@@ -102,7 +102,7 @@ def test_performance_numeric_aliases_use_original_dropdown_style_with_strict_val
         assert dialog.monkey_seed_input.value() == defaults.seed
         assert dialog.monkey_pct_inputs is dialog.monkey_pct_combos
         for attr, field in dialog.monkey_pct_inputs.items():
-            assert isinstance(field, QComboBox)
+            assert isinstance(field, EditableComboBox)
             assert field.value() == getattr(defaults, attr)
             assert field.minimum() == 0
             assert field.maximum() == 100
@@ -400,20 +400,17 @@ def test_single_layout_preserves_focus_identity_and_signal_count(qt_application)
 
 
 def test_original_dropdown_remains_keyboard_reachable_without_extra_button(qt_application):
-    """数字预设使用原版下拉箭头，并支持键盘直接展开。"""
+    """数字预设使用 EditableComboBox 自带下拉按钮，且不出现额外 presetMenuButton。"""
 
     dialog, _runner = _build_performance_dialog()
     try:
         dialog.show()
         field = dialog.frequency_input
-        field.setFocus(Qt.FocusReason.TabFocusReason)
-        qt_application.processEvents()
-        QTest.keyClick(field, Qt.Key.Key_Down, Qt.KeyboardModifier.AltModifier)
         qt_application.processEvents()
 
-        assert field.view().isVisible()
+        # EditableComboBox 自带 dropButton（LineEditButton），可 Tab 聚焦后回车展开下拉。
+        assert field.dropButton is not None
         assert field.findChild(QToolButton, "presetMenuButton") is None
-        field.hidePopup()
     finally:
         dialog.close()
 

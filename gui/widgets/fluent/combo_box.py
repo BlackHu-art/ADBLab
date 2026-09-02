@@ -1,10 +1,18 @@
-"""主题化下拉框组件。"""
+"""主题化下拉框组件。
+
+迁移说明：本组件保持自研实现，不迁移到 qfluentwidgets。原因：qfluentwidgets 把下拉框
+拆分为只读的 ``ComboBox``（QPushButton + 弹窗列表）与 ``EditableComboBox``（可编辑）两个
+不同类，二者不能在同一实例上切换；而自研契约要求 ``set_editable(True/False)`` 在同实例
+切换只读/可编辑（IP 地址输入等场景依赖该能力）。原生 ``QComboBox`` + 主题 QSS 已满足契约，
+迁移反而引入回归。
+"""
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
 from PySide6.QtWidgets import QComboBox, QLineEdit, QSizePolicy, QWidget
+from qfluentwidgets import qconfig
 
 from gui.styles import BaseStyles, FontRole
 from gui.widgets.fluent._base import apply_font_role_to, repolish
@@ -31,6 +39,16 @@ class FluentComboBox(QComboBox):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.set_editable(editable)
         self._sync_theme_state()
+        qconfig.themeChangedFinished.connect(self._sync_theme_state)
+        self.destroyed.connect(self._disconnect_theme)
+
+    def _disconnect_theme(self) -> None:
+        """销毁时断开主题信号；解释器收尾阶段 qconfig 可能已删除，容错处理。"""
+
+        try:
+            qconfig.themeChangedFinished.disconnect(self._sync_theme_state)
+        except (RuntimeError, TypeError):
+            pass
 
     # ── editable 变体 ───────────────────────────────────────────────────
 
@@ -100,6 +118,6 @@ class FluentComboBox(QComboBox):
     def _sync_theme_state(self) -> None:
         """按当前主题重建输入控件样式。"""
 
-        self.setStyleSheet(BaseStyles.INPUT_STYLE())
+        self.setStyleSheet(BaseStyles.COMBO_BOX_STYLE())
         self._sync_editor_font()
         repolish(self)

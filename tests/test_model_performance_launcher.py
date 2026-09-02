@@ -337,8 +337,9 @@ def test_performance_launcher_monkey_parameter_text_follows_dark_theme_colors():
         dialog.monkey_check.setChecked(True)
         style = dialog.styleSheet()
 
-        assert "QLabel#inlineLabel" in style
-        assert "QLineEdit, QComboBox, QSpinBox" in style
+        # 内联标签已收敛为 FluentLabel（颜色走 setTextColor，不再出现在 QSS）；
+        # QLineEdit 已收敛为 qfluentwidgets LineEdit，QComboBox 由 FluentComboBox
+        # 自维护 COMBO_BOX_STYLE；原生 QSpinBox/预设按钮已收敛为 qfluentwidgets SpinBox/ToolButton。
         assert BaseStyles.color("TEXT_PRIMARY") in style
         assert BaseStyles.color("INPUT_BG") in style
         assert "color: #000" not in style

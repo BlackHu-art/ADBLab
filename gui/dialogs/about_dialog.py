@@ -6,17 +6,17 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QLabel,
-    QPushButton,
-    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
+from qfluentwidgets import CardWidget, InfoBadge, PrimaryPushButton, SmoothScrollArea
 
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
+from gui.widgets.fluent.label import FluentLabel
 from utils.app_metadata import APP_VERSION
 from utils.resource_path import resource_path
 
@@ -43,7 +43,7 @@ class AboutDialog(QDialog):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        self._scroll_area = QScrollArea()
+        self._scroll_area = SmoothScrollArea()
         self._scroll_area.setObjectName("aboutScrollArea")
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -59,13 +59,18 @@ class AboutDialog(QDialog):
         self._content_layout.setSpacing(0)
         self._scroll_area.setWidget(self._content_host)
 
-        self._header = QFrame()
+        self._header = CardWidget()
         self._header.setObjectName("aboutHeader")
+        self._header.setBorderRadius(BaseStyles.RADIUS_LG)
         header_layout = QVBoxLayout(self._header)
         header_layout.setContentsMargins(8, 8, 8, 8)
         header_layout.setSpacing(4)
 
-        self._title = QLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>')
+        self._title = FluentLabel(
+            '<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>',
+            role=FontRole.TITLE,
+            color_key="TITLE_COLOR",
+        )
         self._title.setObjectName("aboutTitle")
         self._title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._title.setWordWrap(True)
@@ -78,17 +83,17 @@ class AboutDialog(QDialog):
         self._title.setAccessibleName("Open the ADBLab project page")
         header_layout.addWidget(self._title)
 
-        self._version = QLabel(f"Version {APP_VERSION}")
+        self._version = FluentLabel(
+            f"Version {APP_VERSION}", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._version.setObjectName("aboutVer")
         self._version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._version.setWordWrap(True)
         header_layout.addWidget(self._version)
 
         # ── 页头统一：状态徽标（开源许可）────────────────────────────────
-        # 视觉重设计：与其他对话框页头卡片（dialogHeaderCard/dialogStatusBadge）
-        # 视觉一致；aboutHeader 升级为卡片底色+细边框+圆角，标题/版本语义不变。
-        self._status_badge = QLabel("Open Source")
-        self._status_badge.setObjectName("dialogStatusBadge")
+        # 视觉重设计：改用 qfluentwidgets InfoBadge，跟随 Fluent 主题自动配色。
+        self._status_badge = InfoBadge.success("Open Source", self)
         self._status_badge.setProperty("fontRole", FontRole.UI.value)
         self._status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._status_badge.setToolTip("Licensed for open source use")
@@ -111,7 +116,9 @@ class AboutDialog(QDialog):
             self._qr.setPixmap(pix)
         body.addWidget(self._qr, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        self._hint = QLabel("Scan to support the author")
+        self._hint = FluentLabel(
+            "Scan to support the author", role=FontRole.UI, color_key="BUTTON_ACCENT"
+        )
         self._hint.setObjectName("aboutHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._hint.setWordWrap(True)
@@ -123,13 +130,16 @@ class AboutDialog(QDialog):
         footer_layout.setSpacing(2)
         footer_layout.setContentsMargins(0, 0, 0, 12)
 
-        self._footer = QLabel("Copyright © 2026 Frankie Hu")
+        self._footer = FluentLabel(
+            "Copyright © 2026 Frankie Hu", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self._footer.setObjectName("aboutFooter")
         self._footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._footer.setWordWrap(True)
         footer_layout.addWidget(self._footer)
 
-        self._close_btn = QPushButton("Close")
+        self._close_btn = PrimaryPushButton()
+        self._close_btn.setText("Close")
         self._close_btn.setToolTip("Close the application information window")
         self._close_btn.setIcon(get_themed_icon("x.svg"))
         self._close_btn.setIconSize(QSize(14, 14))
@@ -241,58 +251,16 @@ class AboutDialog(QDialog):
         def c(key):
             return BaseStyles.color(key)
 
-        accent = c("BUTTON_ACCENT")
         radius = BaseStyles.RADIUS_MD
-        if hasattr(self, "_status_badge"):
-            self._status_badge.setStyleSheet(
-                f"QLabel#dialogStatusBadge {{ background-color: {c('LOG_SUCCESS')};"
-                f" color: {c('PANEL_BG')}; border-radius: 7px; padding: 1px 8px; }}"
-            )
 
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: {c("PANEL_BG")};
             }}
-            QFrame#aboutHeader {{
-                background-color: {c("PANEL_BG")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {BaseStyles.RADIUS_LG}px;
-            }}
-            QLabel#aboutTitle {{
-                color: {c("TITLE_COLOR")};
-                background: transparent;
-            }}
-            QLabel#aboutVer {{
-                color: {c("TEXT_SECONDARY")};
-                background: transparent;
-            }}
             QLabel#aboutQR {{
                 border: 1px solid {c("BORDER_COLOR")};
                 border-radius: {radius}px;
                 background-color: #ffffff;
-            }}
-            QLabel#aboutHint {{
-                color: {c("BUTTON_ACCENT")};
-                background: transparent;
-            }}
-            QLabel#aboutFooter {{
-                color: {c("TEXT_SECONDARY")};
-                background: transparent;
-            }}
-            QPushButton#aboutCloseBtn {{
-                background-color: {accent};
-                color: #ffffff;
-                border: none;
-                border-radius: {radius}px;
-            }}
-            QPushButton#aboutCloseBtn:hover {{
-                background-color: {c("BUTTON_ACCENT_HOVER")};
-            }}
-            QPushButton#aboutCloseBtn:pressed {{
-                background-color: {c("BUTTON_ACCENT_PRESSED")};
-            }}
-            QPushButton#aboutCloseBtn:focus {{
-                border: 2px solid {c("BORDER_FOCUS")};
             }}
         """)
         self._close_btn.setMinimumHeight(30)
