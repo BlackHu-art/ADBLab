@@ -7,14 +7,13 @@ from unittest.mock import Mock, call, patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QWidget
+from qfluentwidgets import SmoothScrollArea
 
 from core.exec import CREATE_NEW_CONSOLE
 from gui.dialogs.app_manager import AppManagerDialog
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.main_frame import MainFrame, _ScanThread
-from gui.widgets.responsive_controller import ReflowReason
 
 
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():
@@ -41,11 +40,12 @@ def test_main_frame_open_cmd_launches_terminal_via_process_runner():
 
 
 class _FakeScanProc:
-    def __init__(self, output: str):
+    def __init__(self, output: str, return_code: int = 0):
         self._output = output
+        self._return_code = return_code
 
     def poll(self):
-        return 0
+        return self._return_code
 
     def communicate(self):
         return self._output, ""
@@ -59,7 +59,11 @@ class _FakeScanRunner:
 
     def start(self, key, cmd, **kwargs):
         self.started.append(cmd)
-        return _FakeScanProc(self._outputs.pop(0) if self._outputs else "")
+        result = self._outputs.pop(0) if self._outputs else ""
+        if isinstance(result, tuple):
+            output, return_code = result
+            return _FakeScanProc(output, return_code)
+        return _FakeScanProc(result)
 
     def stop(self, key, timeout=5.0):
         self.stopped.append(key)
@@ -150,6 +154,79 @@ def test_scan_thread_emits_when_device_set_changes_with_same_count():
         thread.run()
 
     assert emitted == [["device-a"], ["device-b"]]
+
+
+def test_scan_thread_republishes_same_snapshot_after_unavailable():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+    emitted_devices = []
+    emitted_states = []
+    sleeps = {"count": 0}
+    thread.devices_changed.connect(emitted_devices.append)
+    thread.discovery_state_changed.connect(emitted_states.append)
+    runner = _FakeScanRunner(
+        [
+            "List of devices attached\ndevice-a\tdevice\n",
+            ("adb failed", 1),
+            "List of devices attached\ndevice-a\tdevice\n",
+        ]
+    )
+
+    def stop_after_three_polls(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] >= 90:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
+        patch.object(_ScanThread, "msleep", side_effect=stop_after_three_polls),
+    ):
+        thread.run()
+
+    # 成功状态由对应设备快照在主线程发布，避免状态先于列表更新；
+    # 从 unavailable 恢复时即使集合未变，也必须重发快照恢复界面。
+    assert emitted_devices == [["device-a"], ["device-a"]]
+    assert emitted_states == ["unavailable"]
+
+
+def test_scan_thread_republishes_same_snapshot_after_external_invalidation():
+    _app = QApplication.instance() or QApplication([])
+    thread = _ScanThread(interval_ms=3000)
+    emitted_devices = []
+    sleeps = {"count": 0}
+    thread.devices_changed.connect(emitted_devices.append)
+    runner = _FakeScanRunner(
+        [
+            "List of devices attached\ndevice-a\tdevice\n",
+            "List of devices attached\ndevice-a\tdevice\n",
+        ]
+    )
+
+    def invalidate_before_second_poll(_ms):
+        sleeps["count"] += 1
+        if sleeps["count"] == 1:
+            thread.invalidate_snapshot()
+        if sleeps["count"] >= 60:
+            thread._stop_flag = True
+
+    with (
+        patch("gui.main_frame.CommandRunner.active_count", return_value=0),
+        patch("gui.main_frame.ProcessRunner", return_value=runner),
+        patch.object(_ScanThread, "msleep", side_effect=invalidate_before_second_poll),
+    ):
+        thread.run()
+
+    assert emitted_devices == [["device-a"], ["device-a"]]
+
+
+def test_scan_thread_treats_nonzero_adb_exit_as_unavailable():
+    thread = _ScanThread()
+    runner = _FakeScanRunner([("List of devices attached\n", 1)])
+
+    output = thread._run_devices_scan(runner)
+
+    assert output is None
 
 
 def test_scan_thread_stop_terminates_inflight_scan():
@@ -265,6 +342,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.device_widget = QWidget()
     fake_side_panel.signals = Mock()
     fake_side_panel.selected_devices_changed = Mock()
+    fake_side_panel.device_discovery_state_changed = Mock()
     fake_side_panel.apply_device_theme = Mock()
     fake_side_panel.update_device_list = Mock()
     fake_side_panel.refresh_device_choices = Mock()
@@ -277,6 +355,15 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
+    fake_side_panel._tab_scroll_areas = {}
+
+    def ensure_feature_page(index):
+        scroll = SmoothScrollArea()
+        scroll.setWidget(QWidget())
+        fake_side_panel._tab_scroll_areas[index] = scroll
+        return Mock()
+
+    fake_side_panel._ensure_tab_loaded = ensure_feature_page
 
     with (
         patch("gui.main_frame.LogService"),
@@ -315,6 +402,7 @@ def test_main_frame_start_device_discovery_respects_scan_setting():
     frame._start_scan_thread.assert_called_once()
     frame._initial_refresh_timer.start.assert_not_called()
     frame.adb_controller.refresh_devices.assert_not_called()
+    assert frame._continuous_scan_enabled is True
 
 
 def test_main_frame_start_device_discovery_uses_cancelable_initial_refresh_timer():
@@ -330,6 +418,7 @@ def test_main_frame_start_device_discovery_uses_cancelable_initial_refresh_timer
 
     frame._start_scan_thread.assert_not_called()
     frame._initial_refresh_timer.start.assert_called_once_with(0)
+    assert frame._continuous_scan_enabled is False
 
 
 def test_main_frame_start_device_discovery_skips_after_close():
@@ -383,18 +472,52 @@ def test_main_frame_stop_scan_thread_uses_blocking_wait_on_close():
     assert frame._scan_thread is None
 
 
-def test_main_frame_refresh_toolbar_icons_updates_registered_buttons():
-    _app = QApplication.instance() or QApplication([])
-    frame = SimpleNamespace()
-    button = QPushButton()
-    button.setProperty("iconName", "circle-half-tilt.svg")
-    frame.findChildren = Mock(return_value=[button])
-    frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
+def test_main_frame_disabling_continuous_scan_releases_scanning_state():
+    panel = SimpleNamespace(
+        _device_discovery_state="scanning",
+        _connected_device_cache=["device-1"],
+        set_device_discovery_state=Mock(),
+    )
+    frame = SimpleNamespace(
+        left_panel=panel,
+        _start_scan_thread=Mock(),
+        _stop_scan_thread=Mock(),
+    )
 
-    with patch("gui.main_frame_toolbar.get_themed_icon", return_value=QIcon()) as themed_icon:
-        MainFrame._refresh_toolbar_icons(frame)
+    MainFrame.set_continuous_scan(frame, False)
 
-    themed_icon.assert_called_once_with("circle-half-tilt.svg")
+    assert frame._continuous_scan_enabled is False
+    frame._stop_scan_thread.assert_called_once_with()
+    panel.set_device_discovery_state.assert_called_once_with("ready")
+
+
+def test_scan_thread_finish_restarts_after_fast_disable_enable_toggle():
+    scan_thread = Mock()
+    frame = SimpleNamespace(
+        _scan_thread=scan_thread,
+        _continuous_scan_enabled=True,
+        _closing=False,
+        _start_scan_thread=Mock(),
+    )
+
+    MainFrame._on_scan_thread_finished(frame, scan_thread)
+
+    assert frame._scan_thread is None
+    frame._start_scan_thread.assert_called_once_with()
+
+
+def test_main_frame_device_selection_updates_home_action_cards():
+    cards = {key: Mock() for key in ("app_mgr", "file_explorer", "logcat", "performance")}
+    frame = SimpleNamespace(
+        left_panel=SimpleNamespace(selected_devices=["device-1"]),
+        _home_page=SimpleNamespace(tool_cards=cards),
+        _sync_device_context=Mock(),
+    )
+
+    MainFrame._update_device_actions(frame)
+
+    assert all(cards[key].setEnabled.call_args.args == (True,) for key in cards)
+    frame._sync_device_context.assert_called_once_with()
 
 
 def test_main_frame_does_not_import_performance_monitor_at_module_load():
@@ -470,9 +593,9 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     frame._apply_window_flags = Mock()
     frame.setWindowFlags = Mock()
     frame.show = Mock()
-    button = QPushButton()
-    button.setCheckable(True)
-    frame.tb_always_on_top = button
+    pin_card = Mock()
+    pin_card.isChecked.return_value = False
+    frame._settings_page = SimpleNamespace(pin_card=pin_card)
     frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
@@ -485,9 +608,7 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     frame.setWindowFlags.assert_not_called()
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
-    assert button.toolTip() == "Allow other windows above the main window"
-    assert button.isChecked() is True
-    assert button.property("iconName") == "push-pin-slash.svg"
+    pin_card.setChecked.assert_called_once_with(True)
 
 
 def test_main_frame_always_on_top_native_path_does_not_recreate_window():
@@ -497,9 +618,9 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     frame._set_always_on_top_native = Mock(return_value=True)
     frame._apply_window_flags = Mock()
     frame.show = Mock()
-    button = QPushButton()
-    button.setCheckable(True)
-    frame.tb_always_on_top = button
+    pin_card = Mock()
+    pin_card.isChecked.return_value = False
+    frame._settings_page = SimpleNamespace(pin_card=pin_card)
     frame._refresh_always_on_top_button = lambda: MainFrame._refresh_always_on_top_button(frame)
 
     with patch("core.settings_manager.AppSettings") as settings_cls:
@@ -510,7 +631,7 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     frame._apply_window_flags.assert_not_called()
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
-    assert button.property("iconName") == "push-pin-slash.svg"
+    pin_card.setChecked.assert_called_once_with(True)
 
 
 def test_main_frame_device_dialogs_reuses_existing_per_device_window():
@@ -656,30 +777,25 @@ def test_main_frame_scan_refresh_debounce_collapses_bursts():
     frame.adb_controller._process_device_list.assert_not_called()
 
 
-def test_main_frame_splitter_size_save_is_debounced():
-    frame = SimpleNamespace()
-    frame._panel_splitter = Mock()
-    frame._panel_splitter.sizes.side_effect = [[300, 700], [320, 680], [320, 680]]
-    frame._pending_panel_sizes = None
-    frame._panel_size_save_timer = Mock()
-    frame.left_panel = SimpleNamespace(request_responsive_reflow=Mock())
-    frame.SPLITTER_SAVE_DEBOUNCE_MS = 20
+def test_manual_refresh_failure_invalidates_continuous_scan_snapshot():
+    frame = SimpleNamespace(
+        left_panel=Mock(),
+        _task_history=None,
+        _task_page=None,
+        _scan_thread=Mock(),
+    )
 
-    with patch("core.settings_manager.AppSettings") as settings_cls:
-        settings = Mock()
-        settings_cls.instance.return_value = settings
+    with patch("gui.main_frame.QTimer.singleShot") as single_shot:
+        MainFrame._on_operation_completed(frame, "refresh", False, "adb unavailable")
 
-        MainFrame._on_splitter_moved(frame, 0, 0)
-        MainFrame._on_splitter_moved(frame, 0, 0)
-        MainFrame._save_pending_panel_sizes(frame)
+    frame._scan_thread.invalidate_snapshot.assert_called_once_with()
+    single_shot.assert_called_once()
 
-    assert frame._panel_size_save_timer.start.call_args_list == [call(20), call(20)]
-    assert frame.left_panel.request_responsive_reflow.call_args_list == [
-        call(ReflowReason.SPLITTER),
-        call(ReflowReason.SPLITTER),
-    ]
-    assert settings.set.call_args_list == [
-        call("left_panel_width", 320),
-        call("right_panel_width", 680),
-        call("panel_split_ratio", 0.32),
-    ]
+
+def test_main_frame_device_refresh_uses_side_panel_state_owner():
+    frame = SimpleNamespace(left_panel=Mock())
+
+    MainFrame._request_device_refresh(frame)
+
+    frame.left_panel.request_device_refresh.assert_called_once_with()
+    frame.left_panel.signals.refresh_devices_requested.emit.assert_not_called()

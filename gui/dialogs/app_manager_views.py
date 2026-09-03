@@ -13,6 +13,7 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
 )
 from gui.styles import BaseStyles
+from gui.styles.fluent import add_menu_action
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 
@@ -136,7 +137,7 @@ class AppManagerViews:
         self._frame._syncing_selection = False
         self._frame._sync_selection_views()
         self._frame._filter()
-        self._frame.status_bar.showMessage(f"Loaded {len(apps)} apps — loading details...")
+        self._frame.status_bar.setText(f"Loaded {len(apps)} apps — loading details...")
         self._frame._schedule_visible_detail_load()
 
     def _on_detail(self, pkg, label, version, itime):
@@ -177,7 +178,7 @@ class AppManagerViews:
         if self._frame._has_unloaded_details():
             self._frame._schedule_visible_detail_load(delay_ms=80)
             return
-        self._frame.status_bar.showMessage(f"Loaded {len(self._frame._apps_data)} apps")
+        self._frame.status_bar.setText(f"Loaded {len(self._frame._apps_data)} apps")
 
     def _schedule_visible_detail_load(self, delay_ms: int = 120):
         if self._frame._closing or not is_qobject_alive(self._frame._detail_timer):
@@ -261,7 +262,7 @@ class AppManagerViews:
             return
         self._frame._pending_detail_packages.update(packages)
         self._frame._detail_worker_running = True
-        self._frame.status_bar.showMessage(
+        self._frame.status_bar.setText(
             f"Loading details {len(self._frame._detail_cache)}/{len(self._frame._apps_data)}"
         )
         w = _app_manager.AppManagerWorker(
@@ -310,17 +311,21 @@ class AppManagerViews:
             return
         self._frame._icon_selected_pkg = pkg
         menu = self._frame._create_context_menu()
-        menu.add_action("App Details", callback=lambda: self._frame._show_details_for(pkg))
+        add_menu_action(menu, "App Details", callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
-        menu.add_action("Launch App", callback=lambda: self._frame._launch(pkg))
-        menu.add_action("Force Stop", callback=lambda: self._frame._modify_one("force_stop", pkg))
-        menu.add_action("Clear Data", callback=lambda: self._frame._modify_one("clear", pkg))
+        add_menu_action(menu, "Launch App", callback=lambda: self._frame._launch(pkg))
+        add_menu_action(
+            menu, "Force Stop", callback=lambda: self._frame._modify_one("force_stop", pkg)
+        )
+        add_menu_action(menu, "Clear Data", callback=lambda: self._frame._modify_one("clear", pkg))
         menu.addSeparator()
-        menu.add_action("Uninstall", callback=lambda: self._frame._modify_one("uninstall", pkg))
-        menu.add_action("Disable", callback=lambda: self._frame._modify_one("disable", pkg))
-        menu.add_action("Enable", callback=lambda: self._frame._modify_one("enable", pkg))
+        add_menu_action(
+            menu, "Uninstall", callback=lambda: self._frame._modify_one("uninstall", pkg)
+        )
+        add_menu_action(menu, "Disable", callback=lambda: self._frame._modify_one("disable", pkg))
+        add_menu_action(menu, "Enable", callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
-        menu.add_action("Backup", callback=lambda: self._frame._backup_one(pkg))
+        add_menu_action(menu, "Backup", callback=lambda: self._frame._backup_one(pkg))
         if self._frame._batch_workers:
             for action in menu.actions():
                 if not action.isSeparator():

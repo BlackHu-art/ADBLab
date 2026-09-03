@@ -5,15 +5,10 @@ from typing import cast
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QPushButton,
-    QScrollArea,
-    QStackedWidget,
-    QToolButton,
-    QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import SmoothScrollArea
+from qfluentwidgets import HeaderCardWidget, SmoothScrollArea
 
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
@@ -22,8 +17,11 @@ from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import get_themed_icon
-from gui.widgets.fluent.group_box import ScalableGroupBox
-from gui.widgets.responsive_controller import ReflowReason, ResponsiveCoordinator
+from gui.widgets.responsive_controller import (
+    _EVENT_REASONS,
+    ReflowReason,
+    ResponsiveCoordinator,
+)
 from gui.widgets.responsive_layout import prepare_responsive_content
 
 
@@ -31,7 +29,9 @@ class SidePanel(QWidget):
     """创建并管理功能标签页，同时保持 MainFrame 使用的兼容接口。"""
 
     PANEL_WIDTH = 600
+    _DISCOVERY_STATES = frozenset({"scanning", "empty", "unavailable", "ready"})
     selected_devices_changed = Signal(list)
+    device_discovery_state_changed = Signal(str)
     responsive_layout_settled = Signal(int)
 
     def __init__(self, parent=None):
@@ -40,6 +40,7 @@ class SidePanel(QWidget):
         self.signals = SidePanelSignals()
         self._package_history = []
         self._connected_device_cache = []
+        self._device_discovery_state = "scanning"
         self._user_selected_ip = False
         self._current_ip = ""
         self._tabs_connected = False
@@ -75,23 +76,10 @@ class SidePanel(QWidget):
     # ── 界面构建 ─────────────────────────────────────────────────────────
 
     def _create_ui(self):
-        lo = QVBoxLayout(self)
-        lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(0)
-
-        # 设备面板由 MainFrame 放入左栏；这里提前构建，确保初始化时可以连接信号。
+        # SidePanel 只保留跨页面状态与信号协调职责，不再创建可见页签/页面栈。
+        # 设备面板与三个功能页由 MainFrame 直接注册为 FluentWindow 子页面。
         self._devices_tab = DeviceManager(self)
         self._device_widget = self._devices_tab.build_ui()
-
-        self.tabs = QStackedWidget()
-        self.tabs.setFont(self._font_tab)
-        # P1 页面栈迁移：QTabWidget → QStackedWidget + 自绘页签头（QToolButton 组）；
-        # 保持 currentChanged/count/setCurrentIndex/widget/font 等价契约与懒加载语义。
-        self._tab_header = QWidget()
-        self._tab_header_layout = QHBoxLayout(self._tab_header)
-        self._tab_header_layout.setContentsMargins(0, 0, 0, 0)
-        self._tab_header_layout.setSpacing(1)
-        self._tab_buttons: dict[int, QToolButton] = {}
 
         self._apps_tab = None
         self._advanced_tab = None
@@ -108,33 +96,9 @@ class SidePanel(QWidget):
             self._tab_scroll_areas[index] = scroll
             self._responsive_viewports[scroll.viewport()] = index
             scroll.viewport().installEventFilter(self)
-            self.tabs.addWidget(scroll)
-            button = QToolButton(self._tab_header)
-            button.setText(name)
-            button.setObjectName(f"tabHeader_{name}")
-            button.setCheckable(True)
-            button.setAutoExclusive(True)
-            button.setProperty("tabHeader", index)
-            button.setProperty("fontRole", FontRole.UI.value)
-            button.setFont(self._font_tab)
-            # 功能提示契约：英文短描述避免归一化后与标签重复（tooltip 契约测试）。
-            button.setToolTip(f"Switch to the {name} tab")
-            button.setProperty("functionalToolTip", f"Switch to the {name} tab")
-            button.clicked.connect(
-                lambda _checked=False, i=index: self.tabs.setCurrentIndex(i)
-            )
-            self._tab_header_layout.addWidget(button)
-            self._tab_buttons[index] = button
-        self.tabs.currentChanged.connect(self._ensure_tab_loaded)
-        self.tabs.currentChanged.connect(self._sync_tab_buttons)
-        self._tab_buttons[0].setChecked(True)
         self._ensure_tab_loaded(0)
-        self._apply_tab_style()
 
-        lo.addWidget(self._tab_header, stretch=0)
-        lo.addWidget(self.tabs, stretch=1)
-
-    def _create_tab_scroll_area(self) -> QScrollArea:
+    def _create_tab_scroll_area(self) -> SmoothScrollArea:
         scroll = SmoothScrollArea()
         scroll.setWidgetResizable(True)
         # 响应式重排优先；极窄宽度或超大字体下保留可访问的横向兜底。
@@ -171,6 +135,9 @@ class SidePanel(QWidget):
         return tab
 
     def eventFilter(self, watched, event):
+        if watched is getattr(self, "_responsive_top_level", None):
+            if event.type() in _EVENT_REASONS and not self._responsive_settle_timer.isActive():
+                self._responsive_settle_timer.start()
         index = self._responsive_viewports.get(watched)
         if index is not None and event.type() == QEvent.Type.Resize:
             attr, _cls, _name = self._lazy_tab_specs[index]
@@ -233,9 +200,28 @@ class SidePanel(QWidget):
 
     def update_device_list(self, devices: list[str] | None = None):
         self._devices_tab.update_device_list(devices)
+        self.set_device_discovery_state("ready" if devices else "empty")
 
     def set_device_discovery_state(self, state: str) -> None:
-        self._devices_tab.set_discovery_state(state)
+        """提交并渲染唯一的设备发现状态。"""
+
+        normalized = str(state or "empty").lower()
+        if normalized not in self._DISCOVERY_STATES:
+            normalized = "empty"
+        previous = self._device_discovery_state
+        self._device_discovery_state = normalized
+        self._devices_tab.set_discovery_state(normalized)
+        if normalized != previous:
+            self.device_discovery_state_changed.emit(normalized)
+
+    def request_device_refresh(self) -> bool:
+        """进入扫描态并只发送一次刷新请求；扫描结束前拒绝重复请求。"""
+
+        if self._device_discovery_state == "scanning":
+            return False
+        self.set_device_discovery_state("scanning")
+        self.signals.refresh_devices_requested.emit()
+        return True
 
     def set_restricted_width_mode(self, restricted: bool) -> None:
         """受限工作区允许右侧页签缩小，并由滚动条保证内容可达。"""
@@ -263,6 +249,11 @@ class SidePanel(QWidget):
         这些区域不会重排；挂到顶层后协调器通过事件过滤器统一感知尺寸变化。
         """
 
+        previous = getattr(self, "_responsive_top_level", None)
+        if previous is not None and previous is not widget:
+            previous.removeEventFilter(self)
+        self._responsive_top_level = widget
+        widget.installEventFilter(self)
         self._responsive_coordinator.attach_top_level(widget)
 
     def _poll_responsive_settled(self) -> None:
@@ -281,20 +272,6 @@ class SidePanel(QWidget):
 
     def apply_device_theme(self):
         self._devices_tab._apply_device_list_style()
-        if hasattr(self._devices_tab, "ip_entry"):
-            self._apply_completer_style(self._devices_tab.ip_entry.completer())
-
-    def apply_responsive_widths(
-        self,
-        left_width: int,
-        _right_width: int,
-        *,
-        reason: ReflowReason = ReflowReason.RESIZE,
-    ) -> None:
-        """刷新分栏布局；功能页始终以各自 viewport 实际宽度为准。"""
-
-        del left_width
-        self.request_responsive_reflow(reason)
 
     def current_package_text(self) -> str:
         apps_tab = self._apps_tab
@@ -341,6 +318,14 @@ class SidePanel(QWidget):
 
     def shutdown(self):
         """依次关闭已加载标签页拥有的后台资源。"""
+        top_level = getattr(self, "_responsive_top_level", None)
+        if top_level is not None:
+            top_level.removeEventFilter(self)
+            self._responsive_coordinator.detach_top_level(top_level)
+            self._responsive_top_level = None
+        settle_timer = getattr(self, "_responsive_settle_timer", None)
+        if settle_timer is not None:
+            settle_timer.stop()
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)
@@ -364,87 +349,38 @@ class SidePanel(QWidget):
 
     # ── 主题 ─────────────────────────────────────────────────────────────
 
-    def _apply_tab_style(self):
-        bs = BaseStyles
-        self.tabs.setStyleSheet(
-            "QStackedWidget{border:1px solid "
-            f"{bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_MD}px;"
-            f"background:{bs.color('WINDOW_BG')}"
-            ";}"
-        )
-        for index, button in self._tab_buttons.items():
-            _ = index
-            button.setStyleSheet(
-                "QToolButton{background:"
-                f"{bs.color('BUTTON_BG')};color:{bs.color('TEXT_PRIMARY')};"
-                "border:1px solid "
-                f"{bs.color('BORDER_COLOR')};border-bottom:none;padding:3px 12px;"
-                f"border-radius:{bs.RADIUS_SM}px {bs.RADIUS_SM}px 0 0;margin-right:1px"
-                ";}QToolButton:checked{background:"
-                f"{bs.color('WINDOW_BG')};border-bottom:2px solid {bs.color('BUTTON_ACCENT')}"
-                ";}QToolButton:hover{background:"
-                f"{bs.color('BUTTON_HOVER')}"
-                ";}"
-            )
+    def _visual_roots(self) -> list[QWidget]:
+        """返回被 FluentWindow 页面托管的全部已创建视觉根。"""
 
-    def _sync_tab_buttons(self, index: int) -> None:
-        """程序化 setCurrentIndex 后同步页签头按钮选中态。"""
-
-        for button_index, button in self._tab_buttons.items():
-            button.setChecked(button_index == index)
-
-    def _apply_completer_style(self, c):
-        """为 Devices/Apps 标签页的 QCompleter 弹窗应用样式。"""
-        if c is None:
-            return
-        p = c.popup()
-        if p is None:
-            return
-        p.setFont(self._font_mono)
-        bs = BaseStyles
-        p.setStyleSheet(
-            "QListView{background-color:"
-            f"{bs.color('INPUT_BG')};color:{bs.color('TEXT_PRIMARY')};"
-            "border:1px solid "
-            f"{bs.color('BORDER_COLOR')};border-radius:{bs.RADIUS_SM}px;padding:2px;outline:none"
-            ";}QListView::item{padding:4px 8px;}"
-            "QListView::item:selected{background-color:"
-            f"{bs.color('SELECTION_BG')};color:{bs.color('SELECTION_TEXT')}"
-            ";}QListView::item:hover{background-color:"
-            f"{bs.color('BUTTON_HOVER')}"
-            ";}"
-        )
-
-    def _on_theme_changed(self, _):
-        self._apply_tab_style()
-        roots = [self]
+        roots: list[QWidget] = [self]
         device_widget = getattr(self, "_device_widget", None)
         if device_widget is not None and not self.isAncestorOf(device_widget):
             roots.append(device_widget)
+        for index in sorted(self._loaded_lazy_tabs):
+            scroll = self._tab_scroll_areas.get(index)
+            widget = scroll.widget() if scroll is not None else None
+            if widget is not None and widget not in roots:
+                roots.append(widget)
+        return roots
+
+    def _on_theme_changed(self, _):
         visited = set()
-        # Devices 视觉根由 MainFrame 托管，主题刷新必须显式覆盖两个控件树。
-        # 分组框样式由 ScalableGroupBox 自维护，这里仅对测试直接调用处理器时兜底刷新。
-        for root in roots:
+        # 视觉根已由 FluentWindow 各页面托管，主题刷新必须显式覆盖全部控件树。
+        for root in self._visual_roots():
             for child in (root, *root.findChildren(QWidget)):
                 child_id = id(child)
                 if child_id in visited:
                     continue
                 visited.add(child_id)
-                if isinstance(child, ScalableGroupBox):
-                    child._apply_style()
+                if isinstance(child, HeaderCardWidget):
+                    child.update()
                 elif isinstance(child, QPushButton):
-                    # 危险按钮已由 DangerPushButton 自维护红色样式，无需在此重建；
-                    # 仅按主题重设图标。
+                    # qfluentwidgets 按钮自维护主题，这里只按主题重设项目 SVG 图标。
                     icon_name = child.property("iconName")
                     if icon_name:
                         child.setIcon(get_themed_icon(icon_name))
-                elif isinstance(child, QScrollArea):
-                    # SmoothScrollArea 用自定义 SmoothScrollBar，无需原生滚动条 QSS。
-                    child.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self.apply_device_theme()
         if self._apps_tab is not None:
-            if hasattr(self._apps_tab, "completer"):
-                self._apply_completer_style(self._apps_tab.completer)
             self._apps_tab._update_pct_total()
         self._responsive_style_generation = getattr(self, "_responsive_style_generation", 0) + 1
         request_reflow = getattr(self, "request_responsive_reflow", None)
@@ -456,14 +392,7 @@ class SidePanel(QWidget):
 
         self._create_fonts()
         self.setFont(self._font_base)
-        self.tabs.setFont(self._font_tab)
-        roots = [self]
-        device_widget = getattr(self, "_device_widget", None)
-        if device_widget is not None and not self.isAncestorOf(device_widget):
-            roots.append(device_widget)
-        # 分组标题净空依赖当前字体度量，由 ScalableGroupBox 随 fonts_changed 自刷新；
-        # 这里对测试直接调用处理器时兜底刷新。
-        for root in roots:
+        for root in self._visual_roots():
             root.setFont(self._font_base)
             for child in root.findChildren(QWidget):
                 role = child.property("fontRole")
@@ -472,8 +401,8 @@ class SidePanel(QWidget):
                         child.setFont(BaseStyles.font_for_role(role))
                     except ValueError:
                         child.setFont(self._font_base)
-                if isinstance(child, ScalableGroupBox):
-                    child._apply_style()
+                if isinstance(child, HeaderCardWidget):
+                    child.headerLabel.setFont(BaseStyles.font_for_role(FontRole.TITLE))
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)
@@ -481,9 +410,6 @@ class SidePanel(QWidget):
             if callable(refresh_metrics):
                 refresh_metrics()
         self._devices_tab.apply_fonts()
-        self._apply_completer_style(
-            self._apps_tab.completer if self._apps_tab is not None else None
-        )
         self._responsive_style_generation = getattr(self, "_responsive_style_generation", 0) + 1
         request_reflow = getattr(self, "request_responsive_reflow", None)
         if callable(request_reflow):

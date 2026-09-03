@@ -5,13 +5,12 @@ import json
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
-    QLabel,
+    QHBoxLayout,
     QMessageBox,
     QVBoxLayout,
 )
-from qfluentwidgets import LineEdit, TextEdit
+from qfluentwidgets import BodyLabel, LineEdit, PrimaryPushButton, PushButton, TextEdit
 
 from core.settings_manager import AppSettings
 from gui.dialogs.app_manager_details import AppDetailsDialog
@@ -22,6 +21,7 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
 )
 from gui.styles import BaseStyles
+from gui.styles.fluent import add_menu_action, apply_label_role, configure_button
 from gui.styles.typography import FontRole
 
 
@@ -44,18 +44,24 @@ class AppManagerBatch:
         pkg = pkg_item.text()
         atype = atype_item.text()
         menu = self._frame._create_context_menu()
-        menu.add_action("App Details", callback=lambda: self._frame._show_details_for(pkg))
+        add_menu_action(menu, "App Details", callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
-        menu.add_action("Launch App", callback=lambda: self._frame._launch(pkg))
-        menu.add_action("Force Stop", callback=lambda: self._frame._modify_one("force_stop", pkg))
-        menu.add_action("Clear Data", callback=lambda: self._frame._modify_one("clear", pkg))
+        add_menu_action(menu, "Launch App", callback=lambda: self._frame._launch(pkg))
+        add_menu_action(
+            menu, "Force Stop", callback=lambda: self._frame._modify_one("force_stop", pkg)
+        )
+        add_menu_action(menu, "Clear Data", callback=lambda: self._frame._modify_one("clear", pkg))
         menu.addSeparator()
-        menu.add_action("Uninstall", callback=lambda: self._frame._modify_one("uninstall", pkg))
+        add_menu_action(
+            menu, "Uninstall", callback=lambda: self._frame._modify_one("uninstall", pkg)
+        )
         if atype in ("System", "Vendor"):
-            menu.add_action("Disable", callback=lambda: self._frame._modify_one("disable", pkg))
-            menu.add_action("Enable", callback=lambda: self._frame._modify_one("enable", pkg))
+            add_menu_action(
+                menu, "Disable", callback=lambda: self._frame._modify_one("disable", pkg)
+            )
+            add_menu_action(menu, "Enable", callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
-        menu.add_action("Backup", callback=lambda: self._frame._backup_one(pkg))
+        add_menu_action(menu, "Backup", callback=lambda: self._frame._backup_one(pkg))
         if self._frame._batch_workers:
             for action in menu.actions():
                 if not action.isSeparator():
@@ -87,9 +93,7 @@ class AppManagerBatch:
     def _batch_action_blocked(self) -> bool:
         if not self._frame._batch_workers:
             return False
-        self._frame.status_bar.showMessage(
-            "A batch operation is in progress; wait for it to finish."
-        )
+        self._frame.status_bar.setText("A batch operation is in progress; wait for it to finish.")
         return True
 
     def _launch(self, pkg):
@@ -214,9 +218,7 @@ class AppManagerBatch:
         self._frame._batch_workers.update(workers)
         self._frame._batch_total = len(workers)
         self._frame._batch_action = action
-        self._frame.status_bar.showMessage(
-            f"{action.title()}: 0/{self._frame._batch_total} completed"
-        )
+        self._frame.status_bar.setText(f"{action.title()}: 0/{self._frame._batch_total} completed")
         self._frame._update_selection_ui()
         for w in workers:
             w.start()
@@ -232,7 +234,7 @@ class AppManagerBatch:
         remaining = len(self._frame._batch_workers)
         completed = self._frame._batch_total - remaining
         if remaining:
-            self._frame.status_bar.showMessage(
+            self._frame.status_bar.setText(
                 f"{self._frame._batch_action.title()}: "
                 f"{completed}/{self._frame._batch_total} completed"
             )
@@ -243,7 +245,7 @@ class AppManagerBatch:
         total = self._frame._batch_total
         self._frame._batch_action = ""
         self._frame._batch_total = 0
-        self._frame.status_bar.showMessage(
+        self._frame.status_bar.setText(
             f"{action.title()} completed for {total} apps; refreshing..."
         )
         self._frame._update_selection_ui()
@@ -341,26 +343,36 @@ class AppManagerBatch:
         dlg.resize(380, 280)
         dlg.setFont(BaseStyles.font_for_role(FontRole.UI))
         lo = QVBoxLayout(dlg)
-        lo.addWidget(QLabel("Preset Name:"))
+        lo.addWidget(apply_label_role(BodyLabel("Preset Name:"), FontRole.UI))
         ni = LineEdit()
         lo.addWidget(ni)
-        lo.addWidget(QLabel("Author (optional):"))
+        lo.addWidget(apply_label_role(BodyLabel("Author (optional):"), FontRole.UI))
         ai = LineEdit()
         lo.addWidget(ai)
-        lo.addWidget(QLabel("Description (optional):"))
+        lo.addWidget(apply_label_role(BodyLabel("Description (optional):"), FontRole.UI))
         di = TextEdit()
         di.setMaximumHeight(60)
         lo.addWidget(di)
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        cancel_button = PushButton()
+        configure_button(
+            cancel_button,
+            text="Cancel",
+            tooltip="Close without creating a preset",
         )
-        btns.button(QDialogButtonBox.StandardButton.Ok).setToolTip("Create this application preset")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setToolTip(
-            "Close without creating a preset"
+        create_button = PrimaryPushButton()
+        configure_button(
+            create_button,
+            text="Create",
+            tooltip="Create this application preset",
         )
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        lo.addWidget(btns)
+        create_button.setDefault(True)
+        cancel_button.clicked.connect(dlg.reject)
+        create_button.clicked.connect(dlg.accept)
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(create_button)
+        lo.addLayout(button_row)
         fit_secondary_window_to_owner_screen(
             dlg,
             self._frame,
@@ -439,7 +451,7 @@ class AppManagerBatch:
             QMessageBox.StandardButton.Ok,
             QMessageBox.StandardButton.NoButton,
         )
-        self._frame.status_bar.showMessage(message)
+        self._frame.status_bar.setText(message)
         self._frame.log(message)
 
     def _track_worker(self, w):

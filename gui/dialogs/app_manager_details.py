@@ -6,13 +6,12 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
-    QLabel,
     QListWidgetItem,
     QMessageBox,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import ListWidget, PushButton, TabWidget, TextEdit
+from qfluentwidgets import BodyLabel, ListWidget, PushButton, TabWidget, TextEdit
 
 from gui.dialogs.app_manager_form import _apply_adaptive_text_heights
 from gui.dialogs.lifecycle import (
@@ -21,6 +20,7 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
 )
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
@@ -98,7 +98,7 @@ class AppDetailsDialog(QDialog):
 
     def _ps(self, parent, title, *, checkable=True):
         hl = QHBoxLayout()
-        hl.addWidget(QLabel(title))
+        hl.addWidget(apply_label_role(BodyLabel(title), FontRole.UI))
         if checkable:
             sb = PushButton()
             sb.setText("Select All/None")

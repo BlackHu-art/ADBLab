@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-23
+last_verified: 2026-09-03
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -10,13 +10,13 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 
 | 数据对象 | 来源 | 转换/处理 | 存储/去向 | 生命周期 |
 | --- | --- | --- | --- | --- |
-| 设备标识与状态 | `adb devices`、用户输入的 IP:port | `utils.adb_targets` 校验；`ADBDevice` 解析 | DeviceStore、DeviceManager、Qt signals | 扫描周期内刷新；设备元数据跨会话保存 |
+| 设备标识与状态 | `adb devices`、用户输入的 IP:port | `utils.adb_targets` 校验；`ADBDevice` 解析；SidePanel 统一提交 scanning/ready/empty/unavailable | DeviceStore、DeviceManager、首页/工作台设备上下文、Qt signals | 成功扫描才替换列表；失败保留旧快照；设备元数据跨会话保存 |
 | `CommandResult` | subprocess 返回码/stdout/stderr/timeout | CommandRunner 规范化；model 转 dict；Controller handler 分派 | 日志、UI、批次状态 | 单次命令 |
 | AppSettings | 默认值、旧 resources JSON、用户设置及运行时 UI 更新 | RLock 内白名单加载/字段校验/单项或批量更新；500ms 防抖；写锁串行保存并在锁后取最新快照；原子替换 | 用户配置 `app_settings.json` | 跨会话；批量更新只调度一次保存 |
 | FontConfig | AppSettings 的 `font_family/ui_font_size/log_font_size`、Qt 系统字体数据库 | 字体族可用性解析、字号限制、角色映射 | TypographyManager、QApplication、字体变更信号 | 进程内不可变快照；设置变化时整体替换 |
-| 主窗口布局状态 | AppSettings、屏幕可用范围、窗口/分隔条事件 | 尺寸限制、左右宽度与比例换算、350/300ms 防抖 | MainFrame、Settings 摘要、响应式 Panels、AppSettings | 普通窗口会话内实时变化；尺寸与比例跨会话 |
+| 主窗口布局状态 | AppSettings、屏幕可用范围、窗口事件 | 尺寸限制、350ms 防抖 | MainFrame、SettingsPage、响应式 Panels、AppSettings | 普通窗口会话内实时变化；尺寸跨会话 |
 | DeviceStore 字典 | 旧 resources YAML、ADB 属性 | 锁内 upsert/快照、临时文件原子替换 | 用户配置 `connected_devices.yaml` | 跨会话 |
-| GUI 操作状态 | 表单、选中设备、当前页签 | Controller/Dialog 编排 | 内存、Qt widgets/signals | 窗口/操作生命周期 |
+| GUI 操作状态 | 表单、选中设备、当前导航页 | Controller/Dialog 编排 | 内存、Qt widgets/signals | 窗口/操作生命周期 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
 | 截图/录屏 | 设备 screencap/screenrecord | pull、PNG 校验、文件命名 | 用户保存目录、ScreenshotViewer | 文件持续存在直到用户删除 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
@@ -59,13 +59,24 @@ sequenceDiagram
     CR->>ADB: 子进程参数数组
     ADB-->>CR: 设备列表文本
     CR-->>Scan: CommandResult
-    Scan-->>C: 设备集合变化/刷新
+    Scan-->>C: 成功设备快照/刷新
+    Note over Scan,UI: 查询失败只发布 unavailable，保留最后成功列表
     C->>ADB: 批量 getprop 与探测命令
     ADB-->>C: 型号、版本、分辨率等
     C->>DS: upsert_devices()
     DS-->>DS: 写用户 YAML
     C-->>UI: devices_updated/basic_info_updated
+    Note over C,UI: 拓扑 generation 丢弃旧元数据回调
 ```
+
+持续扫描和手动/同步刷新共享同一列表语义：失败只发出 refresh 失败及 unavailable，不调用
+`_process_device_list()`，也不发送空的 `devices_updated`，因此 UI 保留最后一次成功列表。MainFrame
+同时调用 `_ScanThread.invalidate_snapshot()`；下一次成功轮询即使设备集合与故障前相同也会重发，
+由同一成功快照恢复 ready/empty，避免状态永久停在 unavailable。
+
+Controller 对去重后的设备 tuple 维护 `_device_topology_generation`。只有拓扑实际变化才递增代次；
+后台 `get_devices_basic_info()` 可能耗时数秒，任务在写入 DeviceStore 前和二次发送
+`devices_updated` 前都校验 generation 与拓扑，已离线设备的慢结果不能污染新快照。
 
 设备标识可能是 USB serial 或网络地址，属于潜在敏感设备信息；知识库和日志审计不应复制实际值。
 
@@ -101,7 +112,7 @@ flowchart TD
     LegacySettings["resources/app_settings.json"] -->|"首次迁移"| UserSettings["用户目录 app_settings.json"]
     Defaults["core.settings_manager.DEFAULTS"] --> Merge["白名单合并"]
     UserSettings --> Merge
-    UISettings["SettingsDialog / MainFrame / RemotePanel"] --> Batch["set / update / set_many"]
+    UISettings["SettingsPage / MainFrame / RemotePanel"] --> Batch["set / update / set_many"]
     Batch --> Memory["RLock 保护的 AppSettings._data"]
     Merge --> Memory
     Memory -->|"串行写锁后取最新快照"| Snapshot["独立临时文件"]
@@ -192,13 +203,13 @@ erDiagram
 
 | 分类 | 配置键 | 使用位置 |
 | --- | --- | --- |
-| 外观 | `theme`、`font_family`、`ui_font_size`、`log_font_size` | TypographyManager、BaseStyles、SettingsDialog、日志/对话框；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
-| 窗口 | `window_width`、`window_height`、`panel_split_ratio`、兼容字段 `left_panel_width`/`right_panel_width`、`always_on_top` | MainFrame、SettingsDialog；默认 1250×700、最小 860×500，左栏比例限制 0.20–0.70 |
-| 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsDialog |
+| 外观 | `theme`、`accent_color`、`mica_enabled`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、qfluentwidgets、MainFrame、SettingsPage、日志/对话框；主题为 System/Light/Dark，强调色规范化为 `#RRGGBB`，Mica 为布尔值；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
+| 窗口 | `window_width`、`window_height`、`always_on_top`；旧分栏键兼容读取 | MainFrame、SettingsPage；默认 1250×700、最小 860×500 |
+| 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsPage |
 | 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | Log UI、`core.perf_trace` helpers/Controller |
 | 文件 | `save_directory` | 截图、日志、备份、MobilePerf、文件浏览器 |
 | Monkey | `monkey_params` | AppPanel/Controller |
-| 分栏 | `device_log_split_ratio` | MainFrame 日志区/设备区分栏比例 |
+| 旧分栏兼容 | `panel_split_ratio`、`left_panel_width`、`right_panel_width`、`device_log_split_ratio` | 仅为旧配置 schema 兼容保留；新 FluentWindow 运行时不创建 splitter，也不再写入这些键 |
 | Remote | `scrcpy_preset`、`scrcpy_maxsize`、`scrcpy_fps`、`scrcpy_codec`、`scrcpy_buffer`、`scrcpy_bitrate`、`scrcpy_orientation` | RemotePanel；这些键由 `SCRCPY_SETTING_DEFAULTS` 白名单纳入 `DEFAULTS`，运行时可写且重启可载入 |
 
 Remote 行来自代码交叉检查：`core/settings_manager.py` 的 `SCRCPY_SETTING_DEFAULTS` 把 Remote 的
@@ -208,10 +219,14 @@ Remote 行来自代码交叉检查：`core/settings_manager.py` 的 `SCRCPY_SETT
 
 写入粒度补充：
 
-- Settings 修改字体族与 UI 字号时通过一次 `update()` 更新两个键，日志字号单独更新；随后
+- SettingsPage 修改字体族、UI 字号和日志字号时通过一次 `set_many()` 更新；随后
   `BaseStyles.reload_from_settings()` 读取同一份已校验快照并发送字体信号。
-- MainFrame 拖动分隔条时一次批量写入左右像素兼容字段和 `panel_split_ratio`；比例是后续恢复的
-  主值，旧像素字段仅用于旧配置迁移回退。
+- SettingsPage 的主题、强调色和 Mica 分别即时写入设置；主题切换同步 qfluentwidgets、应用
+  QPalette、FluentWindow 标题栏/导航壳层和已经创建但暂时隐藏的工作台表面，避免 Mica 透明层或
+  首次进入分区时露出旧主题背景。窗口首次显示后会在 qfluentwidgets 重设 Mica 的下一事件循环
+  再同步一次壳层主题；强调色变化会重建项目补充的焦点环和危险按钮样式。选择“跟随系统”后还
+  监听 Qt 系统配色变化并即时重新解析主题。
+- 旧分栏键只参与旧配置加载与 schema 兼容；当前 MainFrame 不读取或写入运行时分栏状态。
 - `AppSettings.reset()` 使用 `deepcopy(DEFAULTS)` 恢复嵌套默认值，取消等待中的防抖计时器并立即
   原子保存；不会与默认 `monkey_params` 共享嵌套可变对象。
 
@@ -244,10 +259,7 @@ flowchart TD
     StoredSize["启动设置/重置尺寸"] --> SizeGuard["normalize_window_size"]
     SizeGuard --> WindowEvent["普通窗口 resizeEvent"]
     WindowEvent -->|"350ms 防抖"| WindowKeys["window_width / window_height"]
-    SplitterEvent["splitterMoved"] --> Ratio["ratio_from_sizes"]
-    Ratio -->|"300ms 防抖"| SplitKeys["left/right width + panel_split_ratio"]
-    SplitterEvent --> WidthForward["SidePanel.apply_responsive_widths"]
-    ViewportEvent["页签视口 Resize"] --> WidthForward
+    ViewportEvent["首页/工作台分区视口 Resize"] --> WidthForward["SidePanel / Panel reflow"]
     WidthForward --> Reflow["移动既有控件的响应式重排"]
 ```
 
@@ -256,13 +268,9 @@ flowchart TD
   `ui_font_changed`，只有日志/等宽配置变化发送 `log_font_changed`，任一变化再发送 `fonts_changed`；
   主题变化走独立 `theme_changed`。
 - MainFrame 启动时将持久化尺寸限制到最小 860×500；屏幕可用范围不小于该最小值时再裁剪到
-  可用范围内，最小尺寸优先。左栏比例限制到 0.20–0.70；若没有 `panel_split_ratio`，
-  AppSettings 使用旧左右像素宽度推导并立即保存迁移结果。最大化、最小化和全屏尺寸不进入
-  普通尺寸保存路径。
-- Settings 通过 `window_layout_snapshot()` 读取当前普通尺寸和比例，通过
-  `restore_default_window_size()`、`reset_panel_split()` 恢复默认值；Settings 不直接读写
-  MainFrame 的 QSplitter。主面板响应式重排和 Settings 自身的字号感知单双列表单只改变布局位置，
-  不复制控件、业务状态或信号连接。
+  可用范围内，最小尺寸优先。最大化、最小化和全屏尺寸不进入普通尺寸保存路径。
+- SettingsPage 的恢复动作通过 `restore_default_window_size()` 恢复普通窗口尺寸，并同步所有
+  SettingCard。首页和工作台分区的响应式重排只改变布局位置，不复制控件、业务状态或信号连接。
 
 ## MobilePerf 数据生命周期
 

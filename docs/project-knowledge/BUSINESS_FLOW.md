@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-25
+last_verified: 2026-09-03
 related: [MODULE_MAP.md, DATA_FLOW.md]
 ---
 
@@ -12,10 +12,10 @@ related: [MODULE_MAP.md, DATA_FLOW.md]
 | --- | --- |
 | 触发条件 | 用户运行 `main.py`/ADBLab 可执行文件且未指定 worker/self-check 子命令 |
 | 前置条件 | Python 依赖可导入；资源可定位；ADB 可从内置目录或 PATH 解析 |
-| 主流程 | 创建 QApplication → 批量读取并校验字体设置 → 设置应用级 UI 字体 → 加载主题 → 创建 MainFrame/Controller/Models → 校验并恢复普通窗口尺寸和分栏比例 → 构建界面、原生缩放热区和信号 → 延后首次刷新 → 可选启动持续扫描 |
-| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号、窗口尺寸或分栏比例回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；连续六次自动扫描失败且没有受管后台任务时，尝试恢复项目解析到的 ADB Server；协议已卡死时只终止可执行路径与项目 ADB 完全一致的 5037 监听进程，外部监听进程不自动终止；恢复失败写日志并按冷却时间重试；关闭时取消尚未触发的刷新和扫描 |
+| 主流程 | 创建 QApplication → 批量读取并校验字体设置 → 设置应用级 UI 字体 → 加载主题 → 创建 MainFrame/Controller/Models → 校验并恢复普通窗口尺寸 → 构建 FluentWindow 五个顶层入口、Workspace 四个分区、原生缩放热区和信号 → ADB 预热后执行首次发现 → 可选持续扫描 |
+| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号或窗口尺寸回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；`adb devices` 超时、非零退出或结果异常时把发现状态标记为 unavailable，并保留最后一次成功设备快照，不自动重启 ADB Server；手动刷新失败会使持续扫描快照失效，下一次成功时即使设备集合未变也重新提交快照；慢速元数据补全若跨越设备拓扑 generation 会被丢弃；关闭时取消尚未触发的刷新和扫描 |
 | 涉及模块 | `main.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/styles/typography.py`、`core/settings_manager.py`、`controllers/`、`models/adb_device.py` |
-| 涉及数据 | AppSettings、FontConfig、设备列表、窗口尺寸/分栏比例、日志 |
+| 涉及数据 | AppSettings、FontConfig、设备列表、发现状态、设备拓扑 generation、窗口尺寸、日志 |
 | 代码位置 | `main.py::_run_gui`、`MainFrame.__init__/_start_device_discovery/closeEvent`、`_ScanThread.run` |
 
 ```mermaid
@@ -24,33 +24,33 @@ flowchart TD
     CLI -->|"worker"| MP["MobilePerf worker"]
     CLI -->|"self-check"| Check["打包资源自检"]
     CLI -->|"否"| Qt["QApplication + 应用字体 + 主题"]
-    Qt --> Layout["校验窗口尺寸与分栏比例"]
-    Layout --> Frame["构建 MainFrame / Controller / Panels / 缩放热区"]
-    Frame --> Initial["定时器触发首次设备刷新"]
+    Qt --> Layout["校验窗口尺寸"]
+    Layout --> Frame["构建五入口 / Workspace 全部分区 / 缩放热区"]
+    Frame --> Initial["ADB 预热后开始设备发现"]
     Frame --> Scan{"continuous_device_scan"}
     Scan -->|"开启"| Poll["周期 adb devices"]
     Poll --> Healthy{"ADB 查询成功"}
-    Healthy -->|"连续失败"| Recover{"无受管后台任务且冷却结束"}
-    Recover -->|"是"| Restart["受限恢复项目 ADB Server"]
-    Restart --> Poll
-    Recover -->|"否"| Poll
-    Healthy -->|"成功"| Changed{"设备集合变化"}
-    Changed -->|"是"| Refresh["刷新设备信息与 UI"]
-    Changed -->|"否"| Poll
+    Healthy -->|"失败"| Unavailable["标记 unavailable；保留旧列表"]
+    Unavailable --> Poll
+    Healthy -->|"成功"| Publish{"集合变化 / 从失败恢复 / 快照失效"}
+    Publish -->|"是"| Refresh["发布同一快照与 ready/empty"]
+    Refresh --> Generation["拓扑变化递增 generation"]
+    Generation --> Metadata["后台补全元数据；提交前复核代次"]
+    Publish -->|"否"| Poll
 ```
 
 ### 1.1 字体、窗口缩放与响应式布局
 
 | 项目 | 内容 |
 | --- | --- |
-| 触发条件 | 用户在 Settings 修改字体/字号或点击布局重置；用户拖动主窗口边角、工具栏或透明分隔热区；主分栏或页签滚动视口宽度变化 |
-| 前置条件 | QApplication 已创建；MainFrame 已完成窗口和面板初始化；Settings 以 MainFrame 为 parent 时才启用两个布局重置按钮 |
+| 触发条件 | 用户在 Settings 修改字体/字号或点击恢复默认；用户拖动主窗口边角；FluentWindow 页面滚动视口宽度变化 |
+| 前置条件 | QApplication 已创建；MainFrame 已完成 FluentWindow 页面和面板初始化 |
 | 字体主流程 | Settings 将字体族和字号通过 `AppSettings.update()` 批量更新 → `BaseStyles.reload_from_settings()` 生成并应用不可变 FontConfig → QApplication 接收 UI 字体 → 按实际变化发送 `ui_font_changed`、`log_font_changed` 和总括 `fonts_changed` → 主窗口、日志面板、面板/对话框分别刷新自己订阅的字体角色、安全最小高度和分组标题净空；普通操作文案统一使用 UI，提示/元数据使用 UI_SMALL，技术数据和日志分别使用 MONO/LOG |
-| 窗口主流程 | 四边或四角透明热区按压 → `QWindow.startSystemResize()` → 普通窗口尺寸变化 → 350 毫秒防抖批量保存宽高；工具栏空白区按压优先调用 `startSystemMove()`，双击在最大化与普通状态间切换 |
-| 分栏与响应式主流程 | 用户拖动 8 像素透明 QSplitter 热区 → 300 毫秒防抖批量保存左右像素宽度和左栏比例 → 左栏实际宽度驱动 Device，各功能页只以自身滚动视口实际宽度为准 → Device 按控件最小宽度动态切换列表/网格布局，Apps/System/Remote 按 420/560 默认断点重排既有控件；设备区允许纵向收缩且日志区保留字体感知的软下限；每个懒加载页签位于横向滚动按需的可纵向滚动区域；顶部全局保存路径从 860 像素最小窗口宽度起显示末级目录，并按工具栏剩余宽度动态省略完整路径 |
-| Settings 布局流程 | Settings 调用 `window_layout_snapshot()` 展示当前普通窗口尺寸与左右比例；“Reset Size”调用 `restore_default_window_size()`，“Reset Split”调用 `reset_panel_split()`；Appearance、Window、Storage & Logs 依据滚动视口宽度及 UI 字号在双列/纵向布局间切换，保存目录按钮始终入布局，内容超高时只使用纵向滚动区，固定页脚保持可操作 |
-| 异常/回退 | 原生移动或缩放未被窗口系统接受时，工具栏移动保留手动拖动回退，缩放热区不自行模拟尺寸；最大化/全屏时缩放热区隐藏且不保存该状态尺寸；无 MainFrame parent 的独立 Settings 只展示设置回退值并禁用布局重置；重排不销毁控件、不重复连接信号 |
-| 涉及模块 | `gui/styles/typography.py`、`gui/styles/fonts.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py`、`gui/widgets/responsive_layout.py`、`gui/dialogs/settings_dialog.py`、`gui/panels/`、`core/settings_manager.py` |
+| 窗口主流程 | 四边或四角透明热区按压 → `QWindow.startSystemResize()` → 普通窗口尺寸变化 → 350 毫秒防抖批量保存宽高；标题栏移动和最大化行为由 qfluentwidgets `FluentWindow` 提供 |
+| 页面与响应式主流程 | `FluentWindow.addSubInterface()` 在 Home/Workspace/Tasks/Logs/Settings 五个顶层入口间切换 → Workspace 通过 `SegmentedWidget` 在 Devices/Apps/System/Remote 四个分区间切换 → 首页和工作台常驻设备上下文 → 当前分区按滚动视口宽度驱动既有控件重排；Gallery `FlowLayout` 负责首页快捷卡片换行，Logs 不再常驻挤压业务页；MainFrame 启动时已实例化全部顶层页和工作台分区，切换不是懒加载 |
+| Settings 布局流程 | Settings 使用参考项目 `SettingCardGroup`、`PushSettingCard`、`SwitchSettingCard`、ComboBox SettingCard 和颜色选择卡；主题支持跟随系统/浅色/深色，强调色和 Mica 单独持久化；恢复默认会同步卡片值，再应用外观、字体、窗口尺寸、日志上限和扫描状态 |
+| 异常/回退 | 原生缩放未被窗口系统接受时不自行模拟尺寸；最大化/全屏时缩放热区隐藏且不保存该状态尺寸；页面重排不销毁控件、不重复连接信号 |
+| 涉及模块 | `gui/styles/typography.py`、`gui/styles/fonts.py`、`gui/main_frame.py`、`gui/pages/fluent_pages.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py`、`gui/widgets/responsive_layout.py`、`gui/panels/`、`core/settings_manager.py` |
 
 ```mermaid
 flowchart LR
@@ -60,8 +60,8 @@ flowchart LR
     Typography --> UISignal["ui_font_changed"]
     Typography --> LogSignal["log_font_changed"]
     Typography --> AllSignal["fonts_changed"]
-    Resize["窗口或分栏宽度变化"] --> Main["MainFrame 防抖与宽度转发"]
-    Main --> Store["尺寸与 panel_split_ratio"]
+    Resize["窗口或工作台视口宽度变化"] --> Main["MainFrame 防抖与宽度转发"]
+    Main --> Store["普通窗口尺寸"]
     Main --> Panels["SidePanel / Panels 响应式重排"]
 ```
 
@@ -215,9 +215,9 @@ sequenceDiagram
 | 项目 | 内容 |
 | --- | --- |
 | 触发条件 | 用户在 Remote 页选择设备和 scrcpy 参数并启动 |
-| 前置条件 | scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
+| 前置条件 | 必须恰好选择一台设备；scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
 | 主流程 | RemotePanel 将启动选择绑定为 `_active_device` → 创建 launch worker → ScrcpyService 检查版本/设备/编码器并生成 LaunchPlan → ProcessRunner 启动 scrcpy → stderr/FPS reader 和 watchdog 更新状态 → 输入只向活动会话设备发送 |
-| 异常流程 | 未运行活动会话时拒绝输入；多选启动只绑定首个选择并警告；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭页签先关闭输入准入，再在后台等待 executor 和全部 warmup producer，最后关闭 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
+| 异常流程 | 未选或多选都会拒绝启动和输入，不会静默取第一个设备；未运行活动会话时拒绝输入；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭 Remote 分区先关闭输入准入，再在后台等待 executor 和全部 warmup producer，最后关闭 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
 | 涉及模块 | `gui/panels/remote_panel.py`、`services/remote/*`、`core/adb_bridge.py` |
 | 涉及数据 | `ScrcpyConfig`、`PreflightResult`、`ScrcpyLaunchPlan`、设备尺寸缓存、FPS 文本 |
 | 代码位置 | `ScrcpyService.build_launch_plan/start/stop`、`RemoteControlService.perform_action`、`RemotePanel.shutdown` |
@@ -276,11 +276,11 @@ sequenceDiagram
 MainFrame 打开的设备对话框、Performance Launcher 以及 Controller 打开的 ScreenshotViewer
 都作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，并由 MainFrame/Controller
 持有强引用、安装事件过滤器和执行显式关闭清理，因此可以与主界面自由切换。About 继续使用模态交互，
-Settings 作为非模态独立窗口打开。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
+Settings 是 FluentWindow 的常驻导航页，不属于二级窗口。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
 应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
 DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
 
-MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸和分栏状态，再停止扫描、关闭对话框、shutdown 已加载面板；Controller 收口时先永久关闭四个 model 的异步命令准入，再停止 testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。已排队但尚未开始的方法体返回取消结果；录屏与 Monkey/logcat 的长进程启动和 stop-all 使用各自同一生命周期锁排序，避免清理快照之后再启动新进程。
+MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸，再停止扫描、关闭对话框、shutdown 全部业务面板；Controller 收口时先永久关闭四个 model 的异步命令准入，再停止 testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。旧 splitter 键只留在 AppSettings schema 中，不参与关闭保存。已排队但尚未开始的方法体返回取消结果；录屏与 Monkey/logcat 的长进程启动和 stop-all 使用各自同一生命周期锁排序，避免清理快照之后再启动新进程。
 LiveLogcat 对话框已将 worker/process 注册到 MainFrame 注入的 TaskSupervisor：Stop 只广播
 后台清理；运行中关闭窗口时先隐藏并断开数据界面信号，保留 `finished` 槽作为线程屏障。
 `owner_stopped` 仅表示停止流程已返回，对话框还会复核工作对象与 owner residual；只有两者

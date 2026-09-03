@@ -84,7 +84,7 @@ def test_app_manager_populate_schedules_visible_details_only():
     dialog._detail_timer.start.assert_called()
     assert dialog._detail_row_by_pkg == {"com.example.demo": 0}
     assert "com.example.demo" in dialog._detail_icon_by_pkg
-    dialog.status_bar.showMessage.assert_called()
+    dialog.status_bar.setText.assert_called()
 
 
 def test_app_manager_detail_update_uses_cached_indexes():
@@ -172,7 +172,7 @@ def test_app_manager_detail_worker_continues_after_first_visible_page():
     AppManagerDialog._on_detail_worker_finished(dialog, ["com.example.two"])
 
     dialog._detail_timer.start.assert_called()
-    dialog.status_bar.showMessage.assert_not_called()
+    dialog.status_bar.setText.assert_not_called()
 
 
 def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():

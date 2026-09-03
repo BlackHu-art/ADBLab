@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-27
+last_verified: 2026-09-03
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -27,14 +27,14 @@ flowchart TD
     Dialogs --> AppWorker["models/app_manager_worker.py"]
     Dialogs --> FileWorker["models/file_explorer_worker.py"]
     Dialogs --> MobileAdapter["services/mobileperf_runner.py"]
-    ADBModels --> Base["models/base"]
-    Remote --> Base
-    FileWorker --> Base
+    ADBModels --> Exec["core/exec.py"]
+    Remote --> Exec
+    FileWorker --> Exec
     ADBModels --> Bridge["core/adb_bridge.py"]
     GUI --> Infra["core/settings_manager.py<br/>core/log_service.py"]
     Controllers --> Infra
     MobileAdapter --> MobileCore["mobileperf/android"]
-    Base --> Utils["utils/adb_resolver.py<br/>utils/runtime_tools.py"]
+    Exec --> Utils["utils/adb_resolver.py<br/>utils/runtime_tools.py"]
     MobileCore --> MobileADB["mobileperf/android/tools/androiddevice.py"]
     MobileADB --> Utils
 ```
@@ -46,7 +46,7 @@ flowchart TD
 | `main.py` | `gui.main_frame`、`core.settings_manager` | GUI 组合根 | 启动层依赖应用层 |
 | `gui/main_frame.py` | `controllers`、`gui/panels`、`gui/dialogs` | UI 接线和生命周期 | MainFrame 是最高耦合热点 |
 | `controllers/_base.py` | 四个 ADB model、DeviceStore、`adblab.application`（OperationManager/InstallBatchUseCase） | 命令分派和结果聚合 | Controller 不应反向被 model 导入 |
-| `models/adb_*.py` | `models/base`、`core.adb_bridge` | 执行 ADB 与长进程 | 常规短命令应走 CommandRunner |
+| `models/adb_*.py` | `core.exec`、`core.adb_bridge` | 执行 ADB 与长进程 | 常规短命令走 CommandRunner，受控长进程走 ProcessRunner |
 | `gui/dialogs/app_manager.py` | `models/app_manager_worker.py` | 对话框专用异步任务 | 跳过统一 Controller |
 | `gui/dialogs/file_explorer.py` | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
 | `gui/panels/remote_panel.py` | `services.remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
@@ -62,12 +62,12 @@ flowchart TD
 | PyYAML | 6.0.2 固定 | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | 7.2.2 固定 | `core/process_utils.py`：TCP 端口占用查找与进程树终止（ADR-0003 Phase 1 起） | `requirements.txt`、`core/process_utils.py` |
-| PySide6-Fluent-Widgets (qfluentwidgets) | 1.11.3 固定 | Fluent 风格 UI 组件（`NavigationInterface`/`CardWidget`/`ProgressBar`）与主题/强调色 | `requirements.txt`、`gui/main_frame.py`、`gui/widgets/fluent/`；GPLv3 双许可，仅内部使用、不对外分发（见 RISKS_AND_DEBT） |
+| PySide6-Fluent-Widgets (qfluentwidgets) | 1.11.3 固定 | 全部通用可见 UI 控件（导航、卡片、按钮、输入、列表/表格、菜单、进度、滚动容器）与主题/强调色；项目不再维护中间控件封装层 | `requirements.txt`、`gui/main_frame.py`、`gui/panels/`、`gui/dialogs/`、`gui/styles/fluent.py`；GPLv3 双许可，仅内部使用、不对外分发（见 RISKS_AND_DEBT） |
 | XlsxWriter 移植副本 | 仓库内 vendored | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出现在 `requirements.txt`；
-主应用一方源码也不再导入它们。`mobileperf/setup.py` 仍列出 `requests` 和 `urllib3`，属于随项目
-携带的 MobilePerf 移植工程自身的遗留 setup 描述，主应用运行不依赖它们，是否清理待确认。
+主应用一方源码也不再导入它们。`mobileperf/setup.py` 当前只提供包元数据，没有
+`install_requires`，不会额外声明 `requests` 或 `urllib3`。
 
 依赖文件按用途逐层包含：`requirements.txt` 是运行时集合；`requirements-build.txt` 增加
 PyInstaller；`requirements-dev.txt` 再增加 pytest 9.1.1、Ruff 0.16.3、覆盖率、并行测试、
@@ -173,8 +173,7 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 ## 依赖治理建议
 
 1. 运行、构建、开发依赖已分层并固定版本；一方源码无 Pillow/PIL 引用，已从运行依赖移除；
-   `shiboken6` 因一方源码直接导入而显式固定。继续评估是否清理 `mobileperf/setup.py` 的
-   遗留 `requests`/`urllib3` 描述。
+   `shiboken6` 因一方源码直接导入而显式固定。`mobileperf/setup.py` 不声明额外安装依赖。
 2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入 Ruff 门禁；
    Ruff 重复配置已消除（仅 `ruff.toml` 生效）；可进一步在 CI 加入 format check 并清理死配置 `[tool.black]`。
 3. Auto-Clean 已为只读 `gh` CLI 审计（无第三方 action）；如后续引入 action，再固定到不可变 commit SHA 并把权限缩小到实际需要。

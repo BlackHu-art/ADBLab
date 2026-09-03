@@ -21,6 +21,7 @@ from gui.dialogs.lifecycle import (
     safe_disconnect,
 )
 from gui.styles import BaseStyles
+from gui.styles.fluent import add_menu_action
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 from services import file_explorer as explorer_service
@@ -74,16 +75,14 @@ class FileExplorerView:
 
     def _view_or_pull(self, name: str):
         menu = self._frame._create_context_menu()
-        pull = menu.add_action("Pull File")
+        pull = add_menu_action(menu, "Pull File")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self._frame.TEXT_EXTS or ext in self._frame.IMAGE_EXTS
-        view = menu.add_action("View") if viewable else None
+        view = add_menu_action(menu, "View") if viewable else None
         act = menu.exec(
             self._frame.table.mapToGlobal(
                 self._frame.table.visualItemRect(
-                    self._frame.table.item(
-                        self._frame.table.currentRow(), self._frame.NAME_COL
-                    )
+                    self._frame.table.item(self._frame.table.currentRow(), self._frame.NAME_COL)
                 ).center()
             )
         )
@@ -99,9 +98,7 @@ class FileExplorerView:
         if is_image:
             self._view_image(name, full)
         else:
-            shell = self._frame._root(
-                explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1)
-            )
+            shell = self._frame._root(explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1))
             w = self._frame._run_adb("shell", shell)
             self._frame._connect_worker_ui(
                 w,
@@ -134,9 +131,7 @@ class FileExplorerView:
             dev_tmp = f"/data/local/tmp/{name}"
             w1 = self._frame._run_adb(
                 "shell",
-                self._frame._root(
-                    explorer_service.copy_for_root_pull_command(full_path, dev_tmp)
-                ),
+                self._frame._root(explorer_service.copy_for_root_pull_command(full_path, dev_tmp)),
                 timeout=120,
             )
 

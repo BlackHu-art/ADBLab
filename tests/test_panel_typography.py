@@ -2,10 +2,10 @@
 
 from unittest.mock import Mock
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QGroupBox, QScrollArea, QStyle, QStyleOptionGroupBox, QWidget
+from PySide6.QtWidgets import QScrollArea, QWidget
+from qfluentwidgets import HeaderCardWidget, ListWidget
 
 from gui.panels.device_manager import DeviceManager
 from gui.panels.log_panel import LogPanel
@@ -17,25 +17,6 @@ from tests.ui_geometry_helpers import wait_until
 
 def _effective_size(font: QFont) -> int:
     return font.pointSize() if font.pointSize() > 0 else font.pixelSize()
-
-
-def _group_title_gap(group: QGroupBox) -> tuple[int, int]:
-    option = QStyleOptionGroupBox()
-    group.initStyleOption(option)
-    title_rect = group.style().subControlRect(
-        QStyle.ComplexControl.CC_GroupBox,
-        option,
-        QStyle.SubControl.SC_GroupBoxLabel,
-        group,
-    )
-    direct_children = [
-        child
-        for child in group.findChildren(QWidget, options=Qt.FindDirectChildrenOnly)
-        if not child.isHidden()
-    ]
-    assert direct_children
-    first_content_top = min(child.geometry().top() for child in direct_children)
-    return first_content_top - title_rect.bottom() - 1, first_content_top
 
 
 def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt_application):
@@ -58,7 +39,6 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
     try:
         panel._on_fonts_changed(None)
 
-        assert _effective_size(panel.tabs.font()) == 18
         assert _effective_size(panel._font_sm) == 18
         assert _effective_size(panel._apps_tab.btn_screenshot.font()) == 18
         assert _effective_size(panel._apps_tab.email_text_sender.font()) == 18
@@ -68,12 +48,12 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
         assert _effective_size(remote_panel.btn_start.font()) == 18
         assert _effective_size(panel._devices_tab.btn_refresh.font()) == 18
         assert _effective_size(panel._devices_tab.ip_entry.font()) == 14
-        assert _effective_size(panel._devices_tab.ip_entry.lineEdit().font()) == 14
         assert _effective_size(panel._devices_tab.listbox_devices.font()) == 14
-        assert _effective_size(panel._devices_tab.ip_entry.view().font()) == 14
-        assert _effective_size(panel._devices_tab.ip_entry.view().horizontalHeader().font()) == 14
 
-        roots = (panel, panel._device_widget)
+        roots = (
+            panel._device_widget,
+            *(panel._tab_scroll_areas[index].widget() for index in range(3)),
+        )
         ui_widgets = []
         small_widgets = []
         for root in roots:
@@ -122,8 +102,7 @@ def test_detached_devices_theme_and_font_bursts_each_settle_once(
                 and panel._last_settled_generation > before
             ),
         )
-        # 设备列表样式由 ScalableListWidget 自维护，构造时即应用容器样式。
-        assert "QListWidget#deviceList" in panel._devices_tab.listbox_devices.styleSheet()
+        assert isinstance(panel._devices_tab.listbox_devices, ListWidget)
         # 响应式布局有意为动作区引入 _ShrinkableActionScroll（QScrollArea 子类），
         # 用于承接横向溢出的滚动；主题/字体 burst 不应产生其他滚动容器。
         # 因此这里只断言不存在除该预期动作滚动容器之外的 QScrollArea。
@@ -163,28 +142,20 @@ def test_detached_devices_theme_and_font_bursts_each_settle_once(
         panel.close()
 
 
-def test_device_manager_font_refreshes_current_completer(monkeypatch):
+def test_device_manager_font_refreshes_direct_reference_controls(monkeypatch):
     mono_font = QFont("Consolas", 13)
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
         classmethod(lambda _cls, _role: mono_font),
     )
-    header = Mock()
-    view = Mock()
-    view.horizontalHeader.return_value = header
-    completer = object()
     manager = Mock()
     manager.listbox_devices.count.return_value = 0
-    manager.ip_entry.view.return_value = view
-    manager.ip_entry.completer.return_value = completer
 
     DeviceManager.apply_fonts(manager)
 
     manager.listbox_devices.setFont.assert_called_once_with(mono_font)
-    view.setFont.assert_called_once_with(mono_font)
-    header.setFont.assert_called_once_with(mono_font)
-    manager.panel._apply_completer_style.assert_called_once_with(completer)
+    manager.ip_entry.setFont.assert_called_once_with(mono_font)
 
 
 def test_log_panel_font_change_rerenders_for_hanging_indent(
@@ -241,29 +212,26 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
             panel._on_fonts_changed(None)
             qt_application.processEvents()
 
-            groups = list(device_widget.findChildren(QGroupBox))
-            for index in range(panel.tabs.count()):
-                panel.tabs.setCurrentIndex(index)
-                qt_application.processEvents()
+            groups = list(device_widget.findChildren(HeaderCardWidget))
+            for index in range(3):
                 tab_widget = panel._tab_scroll_areas[index].widget()
-                groups.extend(tab_widget.findChildren(QGroupBox))
+                groups.extend(tab_widget.findChildren(HeaderCardWidget))
 
             assert groups
             measured_titles = set()
             for group in groups:
-                gap, _first_content_top = _group_title_gap(group)
-                assert gap >= 4, f"{group.title()} 标题与首行内容仅保留 {gap}px"
-                title = group.title()
-                measured_titles.add("Devices" if title.startswith("Devices · ") else title)
+                assert group.viewLayout.contentsMargins().top() >= 4
+                assert group.headerLabel.height() >= group.headerLabel.fontMetrics().height()
+                measured_titles.add(group.title)
 
-            assert "Devices" in measured_titles
-            # "Text & Screen Capture" 已收敛为 Card，改为验证其标题标签高度随字号缩放。
+            assert "设备与连接" in measured_titles
+            # “文本与屏幕”已收敛为 Card，改为验证其标题标签高度随字号缩放。
             ts_card = next(
                 card
                 for card in panel._apps_tab._apps_section_groups
-                if getattr(card, "title", lambda: "")() == "Text & Screen Capture"
+                if card.title == "文本与屏幕"
             )
-            first_offsets[font_size] = ts_card.title_label().height()
+            first_offsets[font_size] = _effective_size(ts_card.headerLabel.font())
             device_control_heights[font_size] = panel._devices_tab.btn_refresh.minimumHeight()
 
         assert first_offsets[22] > first_offsets[12]

@@ -14,6 +14,7 @@ from PySide6.QtCore import QEvent
 
 from core.exec import ProcessRunner
 from gui.main_frame import MainFrame
+from gui.main_frame_actions import MainFrameActions
 from gui.panels.remote_panel import RemotePanel
 from mobileperf.common import log as mobileperf_log
 from mobileperf.common.utils import FileUtils
@@ -62,31 +63,32 @@ def test_main_frame_local_status_messages_use_log_service():
 
     frame.log_panel.clear.assert_called_once_with()
     assert [call.args for call in frame.log_service.log.call_args_list] == [
-        ("DEBUG", "ui.toolbar action=clear_log phase=requested"),
+        ("DEBUG", "ui.action action=clear_log phase=requested"),
         ("INFO", "Log cleared"),
     ]
     frame.log_panel._append_log.assert_not_called()
 
 
-def test_main_frame_toolbar_window_controls_emit_structured_debug():
+def test_main_frame_actions_emit_structured_debug():
     frame = SimpleNamespace(
         log_service=Mock(),
         close=Mock(),
     )
 
     with (
-        patch("gui.main_frame.BaseStyles.current_theme", return_value="Light"),
-        patch("gui.main_frame.BaseStyles.toggle_theme") as toggle_theme,
+        patch("gui.main_frame_actions.BaseStyles.current_theme", return_value="Light"),
+        patch("gui.main_frame_actions.BaseStyles.toggle_theme") as toggle_theme,
     ):
-        MainFrame._toggle_theme(frame)
-    MainFrame._request_application_close(frame)
+        actions = MainFrameActions(frame)
+        actions.toggle_theme()
+    actions.request_application_close()
 
     assert [call.args for call in frame.log_service.log.call_args_list] == [
         (
             "DEBUG",
-            "ui.toolbar action=theme current_theme=Light phase=requested",
+            "ui.theme action=toggle current_theme=Light phase=requested",
         ),
-        ("DEBUG", "ui.toolbar action=exit phase=requested"),
+        ("DEBUG", "ui.window action=close phase=requested"),
     ]
     toggle_theme.assert_called_once_with()
     frame.close.assert_called_once_with()

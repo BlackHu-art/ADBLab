@@ -1,147 +1,63 @@
-"""验证 NavBar 的折叠切换、导航信号与宽度预算契约（P1-A）。"""
+"""验证主界面直接使用 qfluentwidgets 导航与卡片组件。"""
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from qfluentwidgets import HeaderCardWidget, NavigationInterface
 
-from gui.main_frame_shell import MainFrameShell
-from gui.widgets.fluent.nav import NavBar
-
-# ── NavBar：条目 / 导航信号 ─────────────────────────────────────────────
+from gui.panels.base_panel import BasePanel
+from gui.styles import FontRole
+from gui.styles.icon_loader import get_themed_icon
 
 
-def test_navbar_default_entries_are_wide_without_tooltip(qt_application):
-    """默认四条稳定键，宽态为图标 + 文字且不携带 tooltip。"""
+def _navigation() -> tuple[NavigationInterface, list[str]]:
+    requested: list[str] = []
+    nav = NavigationInterface()
+    for key, icon, label in (
+        ("devices", "devices.svg", "Devices"),
+        ("tasks", "list-checks.svg", "Tasks"),
+        ("logs", "log.svg", "Logs"),
+        ("settings", "gear.svg", "Settings"),
+    ):
+        nav.addItem(
+            key,
+            get_themed_icon(icon),
+            label,
+            onClick=lambda _checked=False, k=key: requested.append(k),
+        )
+    nav.setCurrentItem("devices")
+    return nav, requested
 
-    nav = NavBar()
-    assert nav.keys() == ("devices", "tasks", "logs", "settings")
-    assert [button.text() for button in nav.buttons()] == [
-        "Devices",
-        "Tasks",
-        "Logs",
-        "Settings",
-    ]
-    assert nav.is_collapsed() is False
-    for button in nav.buttons():
-        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        assert button.toolTip() == ""
+
+def test_navigation_interface_exposes_stable_routes(qt_application):
+    nav, _requested = _navigation()
+
+    assert all(nav.widget(key) is not None for key in ("devices", "tasks", "logs", "settings"))
+    assert nav.widget("devices").isSelected
 
 
-def test_navbar_click_emits_navigate_requested_with_key(qt_application):
-    """点击条目只发出一次 navigate_requested，参数为对应业务键。"""
+def test_navigation_click_routes_once(qt_application):
+    nav, requested = _navigation()
 
-    nav = NavBar()
-    requested = []
-    nav.navigate_requested.connect(requested.append)
-    nav.buttons()[1].click()
+    nav.widget("tasks").click()
 
     assert requested == ["tasks"]
-    assert nav.current_key() == "tasks"
+    assert nav.widget("tasks").isSelected
 
 
-def test_navbar_set_current_key_does_not_emit_navigate(qt_application):
-    """程序化选中只更新高亮，不发出导航信号；set_page 为兼容别名。"""
+def test_navigation_width_configuration_uses_reference_api(qt_application):
+    nav, _requested = _navigation()
+    nav.setExpandWidth(160)
+    nav.setMinimumExpandWidth(720)
 
-    nav = NavBar()
-    requested = []
-    nav.navigate_requested.connect(requested.append)
-
-    nav.set_current_key("logs")
-    assert nav.current_key() == "logs"
-    assert nav.buttons()[2].isChecked()
-
-    nav.set_page("settings")
-    assert nav.current_key() == "settings"
-    assert nav.buttons()[3].isChecked()
-
-    assert requested == []
+    assert nav.panel.expandWidth == 160
+    assert nav.panel.minimumExpandWidth == 720
 
 
-# ── NavBar：折叠切换 / 宽度预算 ─────────────────────────────────────────
-
-
-def test_navbar_collapsed_changed_emits_once_per_transition(qt_application):
-    """折叠状态每变化一次发出一次 collapsed_changed，重复设置不重复发出。"""
-
-    nav = NavBar()
-    states = []
-    nav.collapsed_changed.connect(states.append)
-
-    nav.set_collapsed(True)
-    assert states == [True]
-    assert nav.is_collapsed() is True
-
-    nav.set_collapsed(True)
-    assert states == [True]
-
-    nav.set_collapsed(False)
-    assert states == [True, False]
-    assert nav.is_collapsed() is False
-
-
-def test_navbar_collapsed_uses_icon_only_with_tooltip(qt_application):
-    """折叠态为纯图标 + tooltip；展开态恢复图标 + 文字且清空 tooltip。"""
-
-    nav = NavBar()
-    nav.set_collapsed(True)
-    for button in nav.buttons():
-        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonIconOnly
-        assert button.toolTip() != ""
-
-    nav.set_collapsed(False)
-    for button in nav.buttons():
-        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-        assert button.toolTip() == ""
-
-
-def test_navbar_width_budget_collapses_below_threshold(qt_application):
-    """宽度预算在阈值两侧切换折叠态；apply_width_budget 为兼容别名。"""
-
-    nav = NavBar()
-    nav.set_width_budget(NavBar.COLLAPSE_WIDTH_BUDGET - 1)
-    assert nav.is_collapsed() is True
-
-    nav.set_width_budget(NavBar.COLLAPSE_WIDTH_BUDGET)
-    assert nav.is_collapsed() is False
-
-    nav.apply_width_budget(NavBar.COLLAPSE_WIDTH_BUDGET - 1)
-    assert nav.is_collapsed() is True
-
-
-# ── MainFrameShell：页面路由 / 导航回调 ─────────────────────────────────
-
-
-def test_shell_routes_pages_and_settings_callback(qt_application):
-    """set_page 切换页面栈，settings 走导航回调且不改变当前页面。"""
-
-    shell = MainFrameShell()
-    page_a = QLabel("A")
-    page_b = QLabel("B")
-    shell.register_page("devices", page_a)
-    shell.register_page("tasks", page_b)
-
-    shell.set_page("tasks")
-    assert shell.current_page == "tasks"
-
-    opened = []
-    shell.register_nav_callback("settings", lambda: opened.append(True))
-    shell.set_page("settings")
-    assert opened == [True]
-    assert shell.current_page == "tasks"
-
-
-def test_base_panel_card_factory_contract():
-    """P2 组件接入：BasePanel._card 产出 Fluent Card 并带契约属性。"""
-
-    from gui.panels.base_panel import BasePanel
-    from gui.widgets.fluent.card import Card
-
+def test_base_panel_card_factory_contract(qt_application):
     panel = BasePanel.__new__(BasePanel)
     card = panel._card("测试卡片")
-    assert isinstance(card, Card)
+
+    assert type(card) is HeaderCardWidget
     assert card.accessibleName() == "测试卡片"
     assert card.toolTip() == "测试卡片"
-    from gui.styles import FontRole
-
     assert card.property("fontRole") == FontRole.UI.value

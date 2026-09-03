@@ -5,11 +5,11 @@ from typing import Any, cast
 from PySide6.QtCore import QRegularExpression, Qt
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
-from qfluentwidgets import InfoBadge, InfoLevel
+from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent.label import FluentLabel
+from gui.styles.fluent import apply_label_role
 from gui.widgets.responsive_layout import WidthPolicy
 
 
@@ -21,15 +21,15 @@ class SystemPanel(BasePanel):
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
-        self._system_section_groups: list[QWidget] = []
+        self._system_section_groups: list[HeaderCardWidget] = []
         self._build_system_header(lo)
 
-        g1 = self._card_group("Shell Command")
-        gl1 = g1.body_layout()
+        g1 = self._card_group("Shell 命令")
+        gl1 = g1.viewLayout
         gl1.setSpacing(2)
-        self.shell_cmd_input = self._in("adb shell <command> ...")
+        self.shell_cmd_input = self._in("输入 adb shell 命令…")
         self.btn_shell_run = self._b(
-            "Run", "terminal-window.svg", tooltip="Run the entered shell command"
+            "执行", "terminal-window.svg", tooltip="执行输入的 Shell 命令"
         )
         self.shell_action_binding = self._add_responsive_row(
             gl1,
@@ -41,17 +41,17 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g1)
 
-        g_rb = self._card_group("Reboot & Modes")
-        gl_rb = g_rb.body_layout()
+        g_rb = self._card_group("重启与模式")
+        gl_rb = g_rb.viewLayout
         gl_rb.setSpacing(2)
         self.reboot_mode_combo = self._combo(["System", "Bootloader", "Recovery", "Fastboot"])
         self.btn_reboot_mode = self._b(
-            "Reboot", "power.svg", tooltip="Restart devices into the selected mode"
+            "重启", "power.svg", tooltip="将所选设备重启到指定模式"
         )
         self.tcpip_port_input = self._in_int("5555", 1, 65535, 72)
         self.tcpip_port_input.setText("5555")
         self.btn_tcpip_mode = self._b(
-            "TCP/IP", "wifi-high.svg", tooltip="Enable wireless ADB on the selected port"
+            "启用 TCP/IP", "wifi-high.svg", tooltip="在指定端口启用无线 ADB"
         )
         self._add_responsive_row(
             gl_rb,
@@ -65,12 +65,12 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g_rb)
 
-        gb = self._card_group("Broadcast & Intents")
-        glb = gb.body_layout()
+        gb = self._card_group("广播与 Intent")
+        glb = gb.viewLayout
         glb.setSpacing(2)
-        self.broadcast_action = self._in("Broadcast action")
+        self.broadcast_action = self._in("输入广播 Action")
         self.btn_broadcast = self._b(
-            "Send Broadcast", "broadcast.svg", tooltip="Send the entered Android broadcast"
+            "发送广播", "broadcast.svg", tooltip="发送输入的 Android 广播"
         )
         self._add_responsive_row(
             glb,
@@ -80,9 +80,9 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        self.activity_spec = self._in("Component (pkg/.Activity) or action")
+        self.activity_spec = self._in("组件（包名/.Activity）或 Action")
         self.btn_start_activity = self._b(
-            "Start Activity", "play.svg", tooltip="Launch the entered activity or intent"
+            "启动 Activity", "play.svg", tooltip="启动输入的 Activity 或 Intent"
         )
         self._add_responsive_row(
             glb,
@@ -92,12 +92,12 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        self.deep_link_uri = self._in("Deep link URL")
+        self.deep_link_uri = self._in("输入深层链接 URL")
         self.deep_link_uri.setValidator(
             QRegularExpressionValidator(QRegularExpression(r"https?://\S+"), self.deep_link_uri)
         )
         self.btn_deep_link = self._b(
-            "Open Link", "link.svg", tooltip="Open the entered URL on selected devices"
+            "打开链接", "link.svg", tooltip="在所选设备上打开输入的 URL"
         )
         self._add_responsive_row(
             glb,
@@ -109,16 +109,16 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(gb)
 
-        g3 = self._card_group("Port Forwarding")
-        gl3 = g3.body_layout()
+        g3 = self._card_group("端口转发")
+        gl3 = g3.viewLayout
         gl3.setSpacing(2)
-        self.fwd_local = self._in_int("Local port", 1, 65535, 96)
-        self.fwd_remote = self._in_int("Remote port", 1, 65535, 96)
+        self.fwd_local = self._in_int("本机端口", 1, 65535, 96)
+        self.fwd_remote = self._in_int("设备端口", 1, 65535, 96)
         self.btn_forward = self._b(
-            "Forward", "arrow-square-out.svg", tooltip="Forward a local port to the device"
+            "正向转发", "arrow-square-out.svg", tooltip="将本机端口转发到设备"
         )
         self.btn_reverse = self._b(
-            "Reverse", "arrow-square-in.svg", tooltip="Forward a device port to the computer"
+            "反向转发", "arrow-square-in.svg", tooltip="将设备端口转发到电脑"
         )
         self._add_responsive_row(
             gl3,
@@ -131,16 +131,16 @@ class SystemPanel(BasePanel):
             wide_columns=4,
         )
         self.btn_list_fwd = self._b(
-            "List", "list-bullets.svg", tooltip="Show active forward port rules"
+            "正向规则", "list-bullets.svg", tooltip="显示当前正向端口转发规则"
         )
         self.btn_remove_fwd = self._b(
-            "Remove", "x-circle.svg", tooltip="Remove the entered forward port rule"
+            "移除正向", "x-circle.svg", tooltip="移除输入的正向端口转发规则"
         )
         self.btn_list_rev = self._b(
-            "List Rev", "list-bullets.svg", tooltip="Show active reverse port rules"
+            "反向规则", "list-bullets.svg", tooltip="显示当前反向端口转发规则"
         )
         self.btn_remove_rev = self._b(
-            "Remove Rev", "x-circle.svg", tooltip="Remove the entered reverse port rule"
+            "移除反向", "x-circle.svg", tooltip="移除输入的反向端口转发规则"
         )
         self._add_responsive_row(
             gl3,
@@ -154,8 +154,8 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g3)
 
-        gs = self._card_group("Service Toggles (svc)")
-        gsl = gs.body_layout()
+        gs = self._card_group("系统服务开关 (svc)")
+        gsl = gs.viewLayout
         gsl.setSpacing(2)
         _toggle_icons = {
             "WiFi": "wifi-high.svg",
@@ -165,24 +165,29 @@ class SystemPanel(BasePanel):
         }
         for row_cmds in [
             [
-                ("WiFi ON", "svc wifi enable"),
-                ("WiFi OFF", "svc wifi disable"),
-                ("Data ON", "svc data enable"),
-                ("Data OFF", "svc data disable"),
+                ("启用 WiFi", "svc wifi enable"),
+                ("关闭 WiFi", "svc wifi disable"),
+                ("启用数据", "svc data enable"),
+                ("关闭数据", "svc data disable"),
             ],
             [
-                ("BT ON", "svc bluetooth enable"),
-                ("BT OFF", "svc bluetooth disable"),
-                ("NFC ON", "svc nfc enable"),
-                ("NFC OFF", "svc nfc disable"),
+                ("启用蓝牙", "svc bluetooth enable"),
+                ("关闭蓝牙", "svc bluetooth disable"),
+                ("启用 NFC", "svc nfc enable"),
+                ("关闭 NFC", "svc nfc disable"),
             ],
         ]:
             row_buttons = []
             for n, cmd in row_cmds:
-                icon = _toggle_icons.get(n.split()[0], "info.svg")
-                service, state = n.split()
-                verb = "Enable" if state == "ON" else "Disable"
-                b = self._b(n, icon, tooltip=f"{verb} the {service} service")
+                service = cmd.split()[1]
+                icon_key = {
+                    "wifi": "WiFi",
+                    "data": "Data",
+                    "bluetooth": "BT",
+                    "nfc": "NFC",
+                }[service]
+                icon = _toggle_icons.get(icon_key, "info.svg")
+                b = self._b(n, icon, tooltip=f"{n} 服务")
                 b.clicked.connect(lambda _, c=cmd: self._sh(c))
                 row_buttons.append((b, 1))
             self._add_responsive_row(
@@ -194,12 +199,12 @@ class SystemPanel(BasePanel):
             )
         lo.addWidget(gs)
 
-        g4 = self._card_group("Android Settings")
-        gl4 = g4.body_layout()
+        g4 = self._card_group("Android 设置")
+        gl4 = g4.viewLayout
         gl4.setSpacing(2)
         self.settings_ns = self._combo(["system", "global", "secure"])
-        self.settings_key = self._in("Key", 70)
-        self.settings_val = self._in("Value", 70)
+        self.settings_key = self._in("设置键", 70)
+        self.settings_val = self._in("设置值", 70)
         self._add_responsive_row(
             gl4,
             (self.settings_ns, 1),
@@ -210,13 +215,13 @@ class SystemPanel(BasePanel):
             wide_columns=3,
         )
         self.btn_settings_list = self._b(
-            "List All", "list.svg", tooltip="Show settings in the selected namespace"
+            "列出全部", "list.svg", tooltip="显示所选命名空间中的设置"
         )
         self.btn_settings_get = self._b(
-            "Get Value", "magnifying-glass.svg", tooltip="Read the selected Android setting"
+            "读取值", "magnifying-glass.svg", tooltip="读取指定 Android 设置"
         )
         self.btn_settings_put = self._b(
-            "Set Value", "pencil-simple.svg", tooltip="Write the selected Android setting"
+            "写入值", "pencil-simple.svg", tooltip="写入指定 Android 设置"
         )
         self._add_responsive_row(
             gl4,
@@ -229,12 +234,12 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g4)
 
-        g5 = self._card_group("System Tools")
-        gl5 = g5.body_layout()
+        g5 = self._card_group("系统工具")
+        gl5 = g5.viewLayout
         gl5.setSpacing(2)
-        self.content_uri = self._in("Content URI")
+        self.content_uri = self._in("输入 Content URI")
         self.btn_content_query = self._b(
-            "Query", "database.svg", tooltip="Query the entered content provider URI"
+            "查询", "database.svg", tooltip="查询输入的 Content Provider URI"
         )
         self._add_responsive_row(
             gl5,
@@ -245,14 +250,14 @@ class SystemPanel(BasePanel):
             wide_columns=2,
         )
         self.btn_ps_list = self._b(
-            "Process List", "tree-structure.svg", tooltip="Show running device processes"
+            "进程列表", "tree-structure.svg", tooltip="显示设备上正在运行的进程"
         )
         self.kill_pid_input = self._in_int("PID", 1, 2_147_483_647, 88)
         self.btn_kill_pid = self._b(
-            "Kill PID", "skull.svg", tooltip="Terminate the entered process ID"
+            "结束 PID", "skull.svg", tooltip="结束输入的进程 ID"
         )
         self.btn_pm_features = self._b(
-            "Features", "star.svg", tooltip="Show supported device features"
+            "设备特性", "star.svg", tooltip="显示设备支持的系统特性"
         )
         self._add_responsive_row(
             gl5,
@@ -286,11 +291,11 @@ class SystemPanel(BasePanel):
             ]
         )
         self.btn_dumpsys = self._b(
-            "Dumpsys", "clipboard-text.svg", tooltip="Run dumpsys for the selected service"
+            "运行 Dumpsys", "clipboard-text.svg", tooltip="对所选服务运行 dumpsys"
         )
-        self.btn_kernel = self._b("Kernel", "cpu.svg", tooltip="Show the device kernel version")
+        self.btn_kernel = self._b("内核版本", "cpu.svg", tooltip="显示设备内核版本")
         self.btn_cpuinfo_dev = self._b(
-            "CPU Info", "cpu.svg", tooltip="Show device processor details"
+            "CPU 信息", "cpu.svg", tooltip="显示设备处理器详情"
         )
         self._add_responsive_row(
             gl5,
@@ -304,18 +309,18 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g5)
 
-        g6 = self._card_group("Battery & Quick Settings")
-        gl6 = g6.body_layout()
+        g6 = self._card_group("电池与快捷设置")
+        gl6 = g6.viewLayout
         gl6.setSpacing(2)
         self.battery_param = self._combo(["level", "status"])
-        self.battery_val = self._in_int("Value", 0, 100, 88)
+        self.battery_val = self._in_int("数值", 0, 100, 88)
         self.btn_battery_set = self._b(
-            "Set", "pencil-simple.svg", tooltip="Apply the simulated battery value"
+            "应用", "pencil-simple.svg", tooltip="应用模拟电池数值"
         )
         self.btn_battery_reset = self._b(
-            "Reset", "arrow-u-up-left.svg", tooltip="Clear simulated battery values"
+            "重置", "arrow-u-up-left.svg", tooltip="清除模拟电池数值"
         )
-        self.battery_label = self._label("Battery")
+        self.battery_label = self._label("电池")
         self._battery_value_pair = self._atomic_form_pair(
             self.battery_label,
             self.battery_val,
@@ -337,11 +342,11 @@ class SystemPanel(BasePanel):
             wide_columns=4,
         )
         self.quick_setting_combo = self._combo()
-        self.quick_setting_combo.addItem("Disable Animations", "anim_off")
-        self.quick_setting_combo.addItem("Enable Animations", "anim_on")
-        self.quick_setting_combo.addItem("Stay Awake", "stay_awake")
+        self.quick_setting_combo.addItem("关闭动画", "anim_off")
+        self.quick_setting_combo.addItem("启用动画", "anim_on")
+        self.quick_setting_combo.addItem("保持唤醒", "stay_awake")
         self.btn_quick_setting = self._b(
-            "Apply", "check-circle.svg", tooltip="Apply the selected quick setting"
+            "应用设置", "check-circle.svg", tooltip="应用所选快捷设置"
         )
         self._add_responsive_row(
             gl6,
@@ -353,15 +358,15 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(g6)
 
-        g7 = self._card_group("IME & Emulator Control")
-        gl7 = g7.body_layout()
+        g7 = self._card_group("输入法与模拟器控制")
+        gl7 = g7.viewLayout
         gl7.setSpacing(2)
         self.btn_ime_list = self._b(
-            "List IME", "keyboard.svg", tooltip="Show installed input methods"
+            "输入法列表", "keyboard.svg", tooltip="显示已安装的输入法"
         )
-        self.ime_id_input = self._in("IME ID")
+        self.ime_id_input = self._in("输入法 ID")
         self.btn_ime_set = self._b(
-            "Set IME", "pencil-simple.svg", tooltip="Activate the entered input method"
+            "切换输入法", "pencil-simple.svg", tooltip="启用输入的输入法 ID"
         )
         self._add_responsive_row(
             gl7,
@@ -372,12 +377,12 @@ class SystemPanel(BasePanel):
             medium_columns=3,
             wide_columns=3,
         )
-        self.emu_sms_sender = self._in("Sender", 65)
-        self.emu_sms_text = self._in("SMS text", 70)
+        self.emu_sms_sender = self._in("发件人", 65)
+        self.emu_sms_text = self._in("短信内容", 70)
         self.btn_emu_sms = self._b(
-            "Send SMS", "chat-text.svg", tooltip="Simulate an incoming emulator message"
+            "模拟短信", "chat-text.svg", tooltip="模拟一条收到的短信"
         )
-        self.emu_label = self._label("Emu")
+        self.emu_label = self._label("模拟器")
         self._emu_sender_pair = self._atomic_form_pair(self.emu_label, self.emu_sms_sender)
         self.emu_sms_binding = self._add_responsive_row(
             gl7,
@@ -394,14 +399,14 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=3,
         )
-        self.emu_call_num = self._in("Phone number")
+        self.emu_call_num = self._in("电话号码")
         self.btn_emu_call = self._b(
-            "Call", "phone-call.svg", tooltip="Simulate an incoming emulator call"
+            "模拟来电", "phone-call.svg", tooltip="模拟模拟器收到来电"
         )
-        self.emu_geo_lon = self._in_float("Longitude", -180.0, 180.0, width=96)
-        self.emu_geo_lat = self._in_float("Latitude", -90.0, 90.0, width=96)
+        self.emu_geo_lon = self._in_float("经度", -180.0, 180.0, width=96)
+        self.emu_geo_lat = self._in_float("纬度", -90.0, 90.0, width=96)
         self.btn_emu_geo = self._b(
-            "GPS", "map-pin.svg", tooltip="Set the emulator location coordinates"
+            "设置 GPS", "map-pin.svg", tooltip="设置模拟器位置坐标"
         )
         self._add_responsive_row(
             gl7,
@@ -445,7 +450,7 @@ class SystemPanel(BasePanel):
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
-    def _card_group(self, t: str) -> QWidget:
+    def _card_group(self, t: str) -> HeaderCardWidget:
         """创建 qfluentwidgets Card 分区；标题与内容区由 Card 提供。"""
 
         card = self._card(t)
@@ -462,8 +467,10 @@ class SystemPanel(BasePanel):
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self.system_title = FluentLabel("System", role=FontRole.TITLE, color_key="TITLE_COLOR")
-        self.system_status_badge = InfoBadge("No device", self)
+        self.system_title = apply_label_role(
+            BodyLabel("系统与诊断"), FontRole.TITLE, color_key="TITLE_COLOR"
+        )
+        self.system_status_badge = InfoBadge("未选择", self)
         self.system_status_badge.setObjectName("systemStatusBadge")
         self.system_status_badge.setProperty("fontRole", FontRole.UI.value)
         self.system_status_badge.setFont(self._font_sm)
@@ -471,13 +478,13 @@ class SystemPanel(BasePanel):
         self.system_status_badge.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
         )
-        self.system_status_badge.setToolTip("Device availability for system actions")
+        self.system_status_badge.setToolTip("系统操作的设备选择状态")
         title_row.addWidget(self.system_title)
         title_row.addStretch(1)
         title_row.addWidget(self.system_status_badge)
-        self.system_subtitle = FluentLabel(
-            "Shell, settings, forwarding and emulator tools",
-            role=FontRole.UI,
+        self.system_subtitle = apply_label_role(
+            BodyLabel("Shell、系统设置、端口转发和模拟器工具"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
@@ -489,7 +496,7 @@ class SystemPanel(BasePanel):
         self._apply_system_header_style()
 
     def _apply_system_header_style(self) -> None:
-        """按当前主题刷新页头徽标颜色（标题/副标题已由 FluentLabel 自随主题）。"""
+        """按当前主题刷新页头徽标颜色。"""
 
         if not hasattr(self, "system_title"):
             return
@@ -501,10 +508,8 @@ class SystemPanel(BasePanel):
         if not hasattr(self, "system_status_badge"):
             return
         has_device = bool(self.selected_devices)
-        self.system_status_badge.setText("Ready" if has_device else "No device")
-        self.system_status_badge.setLevel(
-            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-        )
+        self.system_status_badge.setText("可操作" if has_device else "未选择")
+        self.system_status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
 
     def _on_theme_changed_system(self, _name: str) -> None:
         """主题切换时重建页头样式（分区 Card 自动跟随主题）。"""

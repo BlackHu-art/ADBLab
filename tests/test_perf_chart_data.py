@@ -81,6 +81,17 @@ def test_fps_legacy_two_column_format(tmp_path):
     fps = parse_fps_series(str(tmp_path))
     assert fps["fps"].values == [(0.0, 60.0), (1.0, 59.0)]
     assert fps["jank"].is_empty()
+    assert fps["jank"].error == "column 'jank' not found"
+
+
+def test_missing_jank_column_never_treats_numeric_timestamps_as_jank(tmp_path):
+    _write(tmp_path / "fps.csv", "datetime,fps\n1000,60\n1001,59\n")
+
+    fps = parse_fps_series(str(tmp_path))
+
+    assert fps["fps"].values == [(0.0, 60.0), (1.0, 59.0)]
+    assert fps["jank"].values == []
+    assert fps["jank"].error == "column 'jank' not found"
 
 
 def test_missing_file_reports_error(tmp_path):

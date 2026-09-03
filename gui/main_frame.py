@@ -6,22 +6,32 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from typing import cast
 
-from PySide6.QtCore import QEvent, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QMouseEvent, QResizeEvent
+from PySide6.QtCore import (
+    QAbstractAnimation,
+    QEvent,
+    QSignalBlocker,
+    QSize,
+    Qt,
+    QThread,
+    QTimer,
+    Signal,
+)
+from PySide6.QtGui import QColor, QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
-    QSizePolicy,
-    QSplitter,
-    QStackedWidget,
-    QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import NavigationInterface, NavigationItemPosition, SmoothScrollArea
-from qfluentwidgets.window.fluent_window import FluentWindowBase
+from qfluentwidgets import (
+    CardWidget,
+    FluentIcon,
+    FluentWindow,
+    NavigationDisplayMode,
+    NavigationItemPosition,
+    NavigationPanel,
+    SmoothScrollArea,
+)
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -30,30 +40,33 @@ from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
-from gui.main_frame_toolbar import ToolbarController
+from gui.main_frame_actions import MainFrameActions
+from gui.pages.fluent_pages import (
+    GalleryPage,
+    HomePage,
+    SettingsPage,
+    WorkspacePage,
+    WorkspaceSectionPage,
+)
 from gui.pages.tasks_page import TaskCenterPage
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.secondary_windows import SecondaryWindowHost
-from gui.styles.icon_loader import get_themed_icon
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
-    DEFAULT_DEVICE_LOG_RATIO,
-    DEFAULT_PANEL_RATIO,
     DEFAULT_WINDOW_SIZE,
     MINIMUM_WINDOW_SIZE,
     compute_workspace_constraints,
-    normalize_panel_ratio,
     normalize_window_size,
-    ratio_from_sizes,
-    split_sizes_for_constraints,
 )
-from services.task_history import TaskHistoryEntry, TaskHistoryStore
+from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
 from .styles import BaseStyles, FontRole
+from .styles.fluent import refresh_fluent_widget_style
+from .styles.theme import apply_dark_title_bar
 
 
 def _debug_log(owner, event: str, **fields) -> None:
@@ -83,15 +96,22 @@ class _ScanThread(QThread):
         super().__init__(parent)
         self._stop_flag = False
         self._interval_ms = max(3000, int(interval_ms))
+        self._snapshot_invalidated = threading.Event()
 
     def stop(self):
         self._stop_flag = True
+
+    def invalidate_snapshot(self) -> None:
+        """让下一次成功轮询重发快照，用于恢复外部刷新失败状态。"""
+
+        self._snapshot_invalidated.set()
 
     def run(self):
         from models.adb_device import parse_connected_devices
 
         runner: ProcessRunner | None = None
         last_devices = None  # 首次轮询必须发布设备列表。
+        last_state = "scanning"
         while not self._stop_flag:
             if CommandRunner.active_count() != 0:
                 # 有受管命令在执行时跳过本轮，等待完整间隔后再试。
@@ -105,17 +125,27 @@ class _ScanThread(QThread):
                 if self._stop_flag:
                     return
                 if output is None:
-                    self.discovery_state_changed.emit("unavailable")
+                    if last_state != "unavailable":
+                        self.discovery_state_changed.emit("unavailable")
+                    last_state = "unavailable"
                 else:
                     devices = parse_connected_devices(output)
                     device_set = tuple(sorted(devices))
-                    if device_set != last_devices:
+                    # 成功状态由同一设备快照在主线程提交，避免 ready/empty
+                    # 先于 300ms 防抖列表到达。故障恢复时即使集合相同也重发。
+                    if (
+                        device_set != last_devices
+                        or last_state == "unavailable"
+                        or self._snapshot_invalidated.is_set()
+                    ):
+                        self._snapshot_invalidated.clear()
                         last_devices = device_set
                         self.devices_changed.emit(devices)
-                    self.discovery_state_changed.emit("ready" if devices else "empty")
+                    last_state = "ready" if devices else "empty"
             except Exception:
-                if not self._stop_flag:
+                if not self._stop_flag and last_state != "unavailable":
                     self.discovery_state_changed.emit("unavailable")
+                last_state = "unavailable"
             if self._sleep_interruptibly(self._interval_ms):
                 return
 
@@ -139,12 +169,14 @@ class _ScanThread(QThread):
             return None
         deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
         try:
+            return_code = None
             while True:
                 if self._stop_flag:
                     runner.stop("device_scan", timeout=2.0)
                     return None
                 try:
-                    if proc.poll() is not None:
+                    return_code = proc.poll()
+                    if return_code is not None:
                         break
                 except OSError:
                     return None
@@ -153,7 +185,7 @@ class _ScanThread(QThread):
                     return None
                 self.msleep(100)
             stdout, _stderr = proc.communicate()
-            return stdout
+            return stdout if return_code == 0 else None
         except Exception:
             return None
 
@@ -170,11 +202,10 @@ class _ScanThread(QThread):
         return bool(self._stop_flag)
 
 
-class MainFrame(FluentWindowBase):
+class MainFrame(FluentWindow):
     SHUTDOWN_DEADLINE_SECONDS = 6.0
     SHUTDOWN_FINALIZER_RESERVE_SECONDS = 1.0
     DEVICE_SCAN_DEBOUNCE_MS = 300
-    SPLITTER_SAVE_DEBOUNCE_MS = 300
     WINDOW_SIZE_SAVE_DEBOUNCE_MS = 350
     WINDOW_SIZE_SAVE_POLL_MS = 50
     _adb_bootstrap_finished = Signal()
@@ -199,10 +230,8 @@ class MainFrame(FluentWindowBase):
         self._applying_workspace_constraints = False
         self._user_resize_transaction_active = False
         self._restricted_workspace = None
-        self._device_layout_ready_for_constraints = False
         self._workspace_forced_size = None
         self._last_workspace_minimum_size = QSize(MINIMUM_WINDOW_SIZE)
-        self._initial_device_width_fit_complete = False
         self._workspace_constraint_refresh_timer = QTimer(self)
         self._workspace_constraint_refresh_timer.setSingleShot(True)
         self._workspace_constraint_refresh_timer.timeout.connect(
@@ -217,7 +246,7 @@ class MainFrame(FluentWindowBase):
         self.task_supervisor = QtTaskSupervisor()
         self.task_supervisor.application_stopped.connect(self._on_application_stopped)
         self.task_supervisor.application_finalized.connect(self._on_application_finalized)
-        self._toolbar_controller = ToolbarController(self)
+        self._actions = MainFrameActions(self)
         self._secondary_window_host = SecondaryWindowHost(self)
         self._close_controller = CloseController(self)
         self._shutdown_owner_id = f"application-{id(self)}"
@@ -234,6 +263,7 @@ class MainFrame(FluentWindowBase):
         self._normal_window_size = QSize(DEFAULT_WINDOW_SIZE)
         self._active_dialogs = []
         self._scan_thread = None
+        self._continuous_scan_enabled = False
         self._closing = False
         self._scan_refresh_timer = QTimer(self)
         self._scan_refresh_timer.setSingleShot(True)
@@ -242,14 +272,6 @@ class MainFrame(FluentWindowBase):
         self._initial_refresh_timer = QTimer(self)
         self._initial_refresh_timer.setSingleShot(True)
         self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
-        self._pending_panel_sizes = None
-        self._panel_size_save_timer = QTimer(self)
-        self._panel_size_save_timer.setSingleShot(True)
-        self._panel_size_save_timer.timeout.connect(self._save_pending_panel_sizes)
-        self._pending_device_log_sizes = None
-        self._device_log_size_save_timer = QTimer(self)
-        self._device_log_size_save_timer.setSingleShot(True)
-        self._device_log_size_save_timer.timeout.connect(self._save_pending_device_log_sizes)
         self._pending_window_size = None
         self._window_size_save_timer = QTimer(self)
         self._window_size_save_timer.setSingleShot(True)
@@ -262,13 +284,15 @@ class MainFrame(FluentWindowBase):
         self._init_panels()
         self._sync_workspace_restriction(force=True)
         self._setup_shortcuts()
+        # FluentWindow 提供窗口外观与导航；该控制器只负责把原生缩放手势映射到
+        # ADBLab 的窗口尺寸持久化事务，不参与页面视觉实现。
         self._resize_controller = FramelessResizeController(
             self,
             on_user_resize_started=self._begin_user_resize_transaction,
             on_user_resize_cancelled=self._cancel_user_resize_transaction,
         )
         self._layout_ready = True
-        self._update_toolbar_path_display()
+        self._refresh_save_path()
         attach_top_level = getattr(self.left_panel, "attach_responsive_top_level", None)
         if callable(attach_top_level):
             attach_top_level(self)
@@ -308,7 +332,9 @@ class MainFrame(FluentWindowBase):
             return
         from core.settings_manager import AppSettings
 
-        if AppSettings.instance().get("continuous_device_scan", True):
+        enabled = bool(AppSettings.instance().get("continuous_device_scan", True))
+        self._continuous_scan_enabled = enabled
+        if enabled:
             self._start_scan_thread()
         else:
             self._initial_refresh_timer.start(0)
@@ -324,15 +350,28 @@ class MainFrame(FluentWindowBase):
         if callable(set_discovery_state):
             set_discovery_state("scanning")
         self._scan_thread = _ScanThread(interval_ms=interval_ms)
-        self._scan_thread.devices_changed.connect(self._schedule_scan_refresh)
+        scan_thread = self._scan_thread
+        scan_thread.devices_changed.connect(self._schedule_scan_refresh)
         discovery_state_changed = getattr(
-            self._scan_thread,
+            scan_thread,
             "discovery_state_changed",
             None,
         )
         if discovery_state_changed is not None and callable(set_discovery_state):
             discovery_state_changed.connect(set_discovery_state)
-        self._scan_thread.start()
+        finished = getattr(scan_thread, "finished", None)
+        if finished is not None:
+            finished.connect(lambda: self._on_scan_thread_finished(scan_thread))
+        scan_thread.start()
+
+    def _on_scan_thread_finished(self, scan_thread: _ScanThread) -> None:
+        """收口旧扫描线程，并兑现快速关闭后重新开启的用户意图。"""
+
+        if self._scan_thread is not scan_thread:
+            return
+        self._scan_thread = None
+        if self._continuous_scan_enabled and not self._closing:
+            self._start_scan_thread()
 
     def _stop_scan_thread(self, *, blocking: bool = False):
         initial_timer = getattr(self, "_initial_refresh_timer", None)
@@ -365,10 +404,18 @@ class MainFrame(FluentWindowBase):
         self.adb_controller.publish_detected_devices(list(self._pending_scanned_devices))
 
     def set_continuous_scan(self, enabled: bool):
-        if enabled:
+        self._continuous_scan_enabled = bool(enabled)
+        if self._continuous_scan_enabled:
             self._start_scan_thread()
         else:
             self._stop_scan_thread()
+            panel = getattr(self, "left_panel", None)
+            if (
+                panel is not None
+                and getattr(panel, "_device_discovery_state", None) == "scanning"
+            ):
+                connected = list(getattr(panel, "_connected_device_cache", []))
+                panel.set_device_discovery_state("ready" if connected else "empty")
 
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
@@ -376,6 +423,11 @@ class MainFrame(FluentWindowBase):
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
+        BaseStyles.set_accent_color(str(s.get("accent_color", "#0F6CBD")))
+        self.setCustomBackgroundColor(QColor("#F3F3F3"), QColor("#202020"))
+        self.setMicaEffectEnabled(bool(s.get("mica_enabled", True)))
+        self.navigationInterface.setExpandWidth(220)
+        self.navigationInterface.setMinimumExpandWidth(1000)
         self._always_on_top = bool(s.get("always_on_top", False))
         if self._always_on_top:
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
@@ -571,9 +623,6 @@ class MainFrame(FluentWindowBase):
         )
         previous_restricted = self._restricted_workspace
         self._restricted_workspace = constraints.restricted
-        # P1 修复：进入受限模式时不再重置初始 fit 标志——fit 是一次性初始调整，
-        # 重置会在后续 settle 后再次搬动分栏，破坏"一次 settle 即最终几何"契约
-        # （页签→页面栈迁移后 860px 缩窗路径触发了该回归）。
         device_scroll = getattr(self, "_device_scroll_area", None)
         device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
         if device_scroll is not None and device_panel is not None:
@@ -628,81 +677,16 @@ class MainFrame(FluentWindowBase):
             self._request_side_panel_reflow(self, reason)
         return constraints
 
-    @staticmethod
-    def _log_soft_minimum_height(log_panel) -> int:
-        """返回可显示一行日志的字体感知软下限。"""
-
-        if log_panel is None:
-            return 32
-        output = getattr(log_panel, "text_output", None)
-        if output is None:
-            minimum_height = getattr(log_panel, "minimumHeight", None)
-            return max(32, int(cast(int, minimum_height()))) if callable(minimum_height) else 32
-        return max(
-            32,
-            int(output.fontMetrics().height()) + 2 * max(0, int(output.frameWidth())),
-        )
-
-    def _apply_log_soft_minimum(self) -> int:
-        """应用 Log 的非折叠软下限，并允许 splitter 在极限位置折叠它。"""
-
-        log_panel = getattr(self, "log_panel", None)
-        soft_minimum = MainFrame._log_soft_minimum_height(log_panel)
-        if log_panel is None:
-            return soft_minimum
-        policy = log_panel.sizePolicy()
-        if policy.verticalPolicy() != QSizePolicy.Policy.Ignored:
-            policy.setVerticalPolicy(QSizePolicy.Policy.Ignored)
-            log_panel.setSizePolicy(policy)
-        if log_panel.minimumHeight() != soft_minimum:
-            log_panel.setMinimumHeight(soft_minimum)
-        return soft_minimum
-
-    def _workspace_vertical_chrome_height(self) -> int:
-        """返回 splitter 之外由标题栏、toolbar 与布局 margins 占用的真实高度。"""
-
-        splitter = getattr(self, "_device_log_splitter", None)
-        if self.isVisible() and splitter is not None and splitter.height() > 0:
-            return max(0, self.height() - splitter.height())
-        title_bar = getattr(self, "titleBar", None)
-        title_bar_height = title_bar.height() if title_bar is not None else 0
-        toolbar = getattr(self, "_toolbar", None)
-        toolbar_height = 0
-        if toolbar is not None:
-            toolbar_height = max(toolbar.minimumHeight(), toolbar.minimumSizeHint().height())
-        panel_layout = getattr(self, "_panel_row_layout", None)
-        panel_margins = panel_layout.contentsMargins() if panel_layout is not None else None
-        return title_bar_height + toolbar_height + (
-            panel_margins.top() + panel_margins.bottom() if panel_margins is not None else 0
-        )
-
     def _workspace_design_minimum(self) -> QSize:
-        """以完整 Devices、splitter handle 和一行 Log 推导主窗口最小高度。"""
+        """返回 FluentWindow 页面体系的设计下限。"""
 
-        minimum = QSize(MINIMUM_WINDOW_SIZE)
-        if not getattr(self, "_device_layout_ready_for_constraints", False):
-            return minimum
-        splitter = getattr(self, "_device_log_splitter", None)
-        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
-        if splitter is None or device_panel is None:
-            return minimum
-        device_minimum = MainFrame._minimum_splitter_height(device_panel)
-        log_minimum = self._apply_log_soft_minimum()
-        required_height = (
-            self._workspace_vertical_chrome_height()
-            + device_minimum
-            + max(0, splitter.handleWidth())
-            + log_minimum
-        )
-        minimum.setHeight(max(minimum.height(), required_height))
-        return minimum
+        return QSize(MINIMUM_WINDOW_SIZE)
 
     def _on_side_panel_responsive_layout_settled(self, _generation: int) -> None:
         """在 Devices 计划稳定后更新字体感知窗口边界。"""
 
         if getattr(self, "_closing", False):
             return
-        self._device_layout_ready_for_constraints = True
         self._workspace_constraint_refresh_timer.start(0)
 
     def _refresh_workspace_after_responsive_layout(self) -> None:
@@ -717,7 +701,6 @@ class MainFrame(FluentWindowBase):
             request_reflow=False,
             restore_preferred_size=False,
         )
-        self._fit_initial_device_width()
 
     def _sync_device_scroll_content_minimum(self) -> int:
         """同步 Devices 当前计划的完整高度，让短屏由局部滚动承接。"""
@@ -736,33 +719,6 @@ class MainFrame(FluentWindowBase):
             scroll.updateGeometry()
         return content_height
 
-    def _fit_initial_device_width(self) -> None:
-        """常规工作区首次显示时微调左栏，避免只差数像素便出现滚动条。
-
-        仅在首个非受限 settle 后执行一次；受限工作区跳过时同样标记完成，
-        避免后续 settle 后再次搬动分栏破坏"一次 settle 即最终几何"契约
-        （P1 页面栈迁移后该路径被 860px 缩窗触发）。
-        """
-
-        if self._restricted_workspace:
-            self._initial_device_width_fit_complete = True
-            return
-        if self._initial_device_width_fit_complete:
-            return
-        splitter = getattr(self, "_panel_splitter", None)
-        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
-        if splitter is None or device_panel is None:
-            return
-        sizes = splitter.sizes()
-        if len(sizes) != 2 or sum(sizes) <= 0:
-            return
-        total = int(sizes[0]) + int(sizes[1])
-        content_width = max(0, device_panel.minimumSizeHint().width())
-        right_minimum = max(0, self.left_panel.minimumWidth())
-        if sizes[0] < content_width <= total - right_minimum:
-            splitter.setSizes([content_width, total - content_width])
-        self._initial_device_width_fit_complete = True
-
     def _sync_workspace_restriction(self, *, force: bool = False) -> None:
         del force
         restricted = bool(self._restricted_workspace)
@@ -777,333 +733,409 @@ class MainFrame(FluentWindowBase):
             setter(restricted)
 
     def _init_panels(self):
-        """构建工具栏和左右功能面板。"""
-        central_widget = QWidget()
-        central_widget.setObjectName("centralWidget")
-        self._central_widget = central_widget
+        """构建设备上下文常驻的一体化 Fluent 工作台。"""
 
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        self._central_widget = self.stackedWidget
+        self._workspace_page = WorkspacePage(self, self)
 
-        # 工具栏只占用字体所需高度，窗口新增的纵向空间全部交给主内容区。
-        main_layout.addWidget(self._create_toolbar(), stretch=0)
-
-        left_col = QVBoxLayout()
-        left_col.setContentsMargins(0, 0, 0, 0)
-        left_col.setSpacing(1)
-        dw = self.left_panel.device_widget
-        dw.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        # Devices 的安全下限由当前字体下的一行列表和全部动作行动态度量。
-        dw.setMinimumHeight(0)
-        self._apply_log_soft_minimum()
-
-        device_scroll = SmoothScrollArea()
-        device_scroll.setObjectName("deviceScrollArea")
-        device_scroll.setAccessibleName("Devices")
-        device_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        device_scroll = SmoothScrollArea(self)
         device_scroll.setWidgetResizable(True)
-        device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        device_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         device_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        device_scroll.setProperty(
-            "preserveDeviceContentHeight",
-            not bool(self._restricted_workspace),
-        )
-        device_scroll.setMinimumSize(0, 0)
-        device_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
-        device_scroll.setWidget(dw)
+        device_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._device_scroll_area = device_scroll
-        self._sync_device_scroll_content_minimum()
 
-        left_wrapper = QWidget()
-        left_wrapper.setObjectName("leftPanelWrapper")
-        left_wrapper.setLayout(left_col)
-        left_wrapper.setMinimumWidth(120 if self._restricted_workspace else 280)
-        self._left_panel_wrapper = left_wrapper
-
-        panel_row = QHBoxLayout()
-        panel_row.setContentsMargins(3, 3, 3, 3)
-        panel_row.setSpacing(1)
-        self._panel_row_layout = panel_row
-
-        from core.settings_manager import AppSettings
-
-        s2 = AppSettings.instance()
-        stored_device_log_ratio = s2.get("device_log_split_ratio", None)
-        self._device_log_ratio = normalize_panel_ratio(
-            stored_device_log_ratio,
-            fallback=DEFAULT_DEVICE_LOG_RATIO,
+        self._devices_page = WorkspaceSectionPage(
+            "devicesPage",
+            self.left_panel.device_widget,
+            scroll_area=device_scroll,
+            parent=self,
         )
-        self._device_log_splitter = QSplitter(Qt.Orientation.Vertical)
-        self._device_log_splitter.setObjectName("deviceLogSplitter")
-        self._device_log_splitter.setAccessibleName("Devices and operation log splitter")
-        self._device_log_splitter.setHandleWidth(8)
-        self._device_log_splitter.addWidget(device_scroll)
-        self._device_log_splitter.addWidget(self.log_panel)
-        device_height, log_height = split_sizes_for_constraints(
-            1000,
-            self._device_log_ratio,
-            left_minimum=MainFrame._minimum_splitter_height(device_scroll),
-            right_minimum=MainFrame._minimum_splitter_height(self.log_panel),
-        )
-        self._device_log_splitter.setSizes([device_height, log_height])
-        # 两侧使用相同伸缩因子，窗口缩放时保持用户保存的实际比例。
-        self._device_log_splitter.setStretchFactor(0, 1)
-        self._device_log_splitter.setStretchFactor(1, 1)
-        self._device_log_splitter.setChildrenCollapsible(True)
-        self._device_log_splitter.setCollapsible(0, False)
-        self._device_log_splitter.setCollapsible(1, True)
-        self._device_log_splitter.splitterMoved.connect(self._on_device_log_splitter_moved)
-        left_col.addWidget(self._device_log_splitter)
 
-        lw = s2.get("left_panel_width", 400)
-        rw = s2.get("right_panel_width", 600)
-        stored_ratio = s2.get("panel_split_ratio", None)
-        self._panel_ratio = (
-            normalize_panel_ratio(stored_ratio)
-            if stored_ratio is not None
-            else ratio_from_sizes(lw, rw)
-        )
-        self._panel_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._panel_splitter.setHandleWidth(8)
-        self._apply_splitter_style()
-        self._panel_splitter.addWidget(left_wrapper)
-        self._panel_splitter.addWidget(self.left_panel)
-        left_size, right_size = split_sizes_for_constraints(
-            1000,
-            self._panel_ratio,
-            left_minimum=left_wrapper.minimumWidth(),
-            right_minimum=self.left_panel.minimumWidth(),
-        )
-        self._panel_splitter.setSizes([left_size, right_size])
-        self._panel_splitter.setStretchFactor(0, 1)
-        self._panel_splitter.setStretchFactor(1, 1)
-        self._panel_splitter.setChildrenCollapsible(False)
-        self._panel_splitter.splitterMoved.connect(self._on_splitter_moved)
-        # P1 信息架构：NavBar 导航栏 + 主内容栈（首页=设备/功能分栏，任务页=任务中心）。
-        self._nav_host = self._build_nav_host()
-        panel_row.addWidget(self._nav_host)
-        main_layout.addLayout(panel_row, stretch=1)
+        def build_feature_section(
+            index: int,
+            route: str,
+        ) -> WorkspaceSectionPage:
+            self.left_panel._ensure_tab_loaded(index)
+            scroll = self.left_panel._tab_scroll_areas[index]
+            content = scroll.takeWidget()
+            if content is None:
+                content = QWidget()
+            return WorkspaceSectionPage(
+                route,
+                content,
+                scroll_area=scroll,
+                parent=self,
+            )
 
-        # FluentWindowBase 的标题栏为覆盖层，内容区需预留顶部净空避免重叠。
-        self.hBoxLayout.setContentsMargins(0, self.titleBar.height(), 0, 0)
-        self.hBoxLayout.addWidget(central_widget, 1)
+        self._apps_page = build_feature_section(0, "appsPage")
+        self._system_page = build_feature_section(1, "systemPage")
+        self._remote_page = build_feature_section(2, "remotePage")
+        for key, label, icon, page in (
+            ("devices", "设备与连接", FluentIcon.PHONE, self._devices_page),
+            ("apps", "应用与自动化", FluentIcon.APPLICATION, self._apps_page),
+            ("system", "系统与诊断", FluentIcon.DEVELOPER_TOOLS, self._system_page),
+            ("remote", "远程控制", FluentIcon.PROJECTOR, self._remote_page),
+        ):
+            self._workspace_page.add_section(key, label, icon, page)
 
-        self._connect_all_signals()
-        self.left_panel.responsive_layout_settled.connect(
-            self._on_side_panel_responsive_layout_settled
-        )
-        BaseStyles.theme_changed.connect(self._on_theme_changed)
-        BaseStyles.ui_font_changed.connect(self._on_ui_font_changed)
-
-    # ── 顶部工具栏 ──────────────────────────────────────────────────────
-
-    def _build_nav_host(self) -> QWidget:
-        """构建左侧导航栏与主内容栈（首页=设备/功能分栏，任务页=任务中心）。"""
-
-        host = QWidget()
-        layout = QHBoxLayout(host)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self._nav_bar = NavigationInterface(host)
-        # 与旧自研 NavBar 保持一致的展开宽度（120px）与折叠阈值（720px 窗口宽）。
-        self._nav_bar.setExpandWidth(120)
-        self._nav_bar.setMinimumExpandWidth(720)
-        self._nav_stack = QStackedWidget(host)
-        self._nav_stack.addWidget(self._panel_splitter)
         self._task_history = TaskHistoryStore()
         self._task_page = TaskCenterPage(
             self.adb_controller.operation_manager,
             history_store=self._task_history,
+            stop_hook=self._stop_operation_from_task_center,
         )
-        self._nav_stack.addWidget(self._task_page)
-        for key, icon_name, label in (
-            ("devices", "devices.svg", "Devices"),
-            ("tasks", "list-checks.svg", "Tasks"),
-            ("logs", "log.svg", "Logs"),
-            ("settings", "gear.svg", "Settings"),
+        self._tasks_page = GalleryPage(
+            "tasksPage",
+            "任务中心",
+            "查看正在运行和最近完成的设备任务",
+            self._task_page,
+            scroll=False,
+            parent=self,
+        )
+        self._logs_page = GalleryPage(
+            "logsPage",
+            "操作日志",
+            "查看 ADBLab 操作记录与诊断信息",
+            self.log_panel,
+            scroll=False,
+            parent=self,
+        )
+        self._settings_page = SettingsPage(self, self)
+        self._home_page = HomePage(self, self)
+
+        self.navigationInterface.setAcrylicEnabled(True)
+        self.addSubInterface(self._home_page, FluentIcon.HOME, "首页")
+        self.addSubInterface(self._workspace_page, FluentIcon.PHONE, "设备工作台")
+        self.navigationInterface.addSeparator()
+        for page, icon, label in (
+            (self._tasks_page, FluentIcon.HISTORY, "任务中心"),
+            (self._logs_page, FluentIcon.SCROLL, "操作日志"),
         ):
-            self._nav_bar.addItem(
-                key,
-                get_themed_icon(icon_name),
-                label,
-                onClick=lambda _checked=False, k=key: self._on_nav_requested(k),
-                selectable=True,
-                position=NavigationItemPosition.TOP,
-            )
-        self._nav_bar.setCurrentItem("devices")
-        layout.addWidget(self._nav_bar)
-        layout.addWidget(self._nav_stack, stretch=1)
-        return host
+            self.addSubInterface(page, icon, label, NavigationItemPosition.SCROLL)
+        self.addSubInterface(
+            self._settings_page,
+            FluentIcon.SETTING,
+            "设置",
+            NavigationItemPosition.BOTTOM,
+        )
+        self._navigation_labels = {
+            self._home_page.objectName(): "首页",
+            self._workspace_page.objectName(): "设备工作台",
+            self._tasks_page.objectName(): "任务中心",
+            self._logs_page.objectName(): "操作日志",
+            self._settings_page.objectName(): "设置",
+        }
+        self.navigationInterface.displayModeChanged.connect(
+            self._sync_navigation_accessibility
+        )
+        self._sync_navigation_accessibility()
+
+        for page in (
+            self._workspace_page,
+            self._tasks_page,
+            self._logs_page,
+        ):
+            page.header.theme_button.clicked.connect(self._toggle_theme)
+
+        self._connect_all_signals()
+        self._workspace_page.sectionChanged.connect(self._on_workspace_section_changed)
+        self.left_panel.device_discovery_state_changed.connect(self._sync_device_context)
+        self.left_panel.responsive_layout_settled.connect(
+            self._on_side_panel_responsive_layout_settled
+        )
+        BaseStyles.theme_changed.connect(self._on_theme_changed)
+        BaseStyles.accent_color_changed.connect(self._on_accent_color_changed)
+        BaseStyles.ui_font_changed.connect(self._on_ui_font_changed)
+        self._bind_system_theme_changes()
+        self._sync_plain_container_palettes()
+        self._sync_device_context()
+
+    def _stop_operation_from_task_center(self, operation_id: str) -> None:
+        """把任务中心取消动作路由到拥有实际资源的控制器用例。"""
+
+        snapshot = self.adb_controller.operation_manager.get(operation_id)
+        if snapshot is None:
+            return
+        if "install" in snapshot.kind:
+            self.adb_controller.cancel_install_batch(operation_id)
+        elif snapshot.kind == "screenshot":
+            self.adb_controller.cancel_screenshot(operation_id)
+
+    def switchTo(self, interface) -> None:
+        """切换顶层导航并立即同步选中反馈，设备功能页进入工作台分区。"""
+
+        workspace = getattr(self, "_workspace_page", None)
+        if workspace is not None:
+            section_key = workspace.key_for_widget(interface)
+            if section_key is not None:
+                super().switchTo(workspace)
+                self.navigationInterface.setCurrentItem(workspace.objectName())
+                workspace.set_section(section_key)
+                self._collapse_navigation_menu_after_switch()
+                return
+        super().switchTo(interface)
+        route_key = getattr(interface, "objectName", lambda: "")()
+        if route_key:
+            # FluentWindow 默认等页面过渡结束才更新 NavigationPanel。业务页面已经
+            # 切换时选中态若仍停在旧项，会让快速连续点击看起来没有响应。
+            self.navigationInterface.setCurrentItem(route_key)
+        self._collapse_navigation_menu_after_switch()
+
+    def _collapse_navigation_menu_after_switch(self) -> None:
+        """切页后收起窄窗覆盖菜单，包括尚在执行的展开动画。"""
+
+        panel = self.navigationInterface.panel
+        if panel.displayMode != NavigationDisplayMode.MENU:
+            return
+        animation = panel.expandAni
+        if animation.state() == QAbstractAnimation.State.Running:
+            # NavigationPanel.collapse() 会忽略运行中的动画；若当前已在收起，
+            # 保留原动画，否则先停止展开再从当前宽度开始收起。
+            if not bool(animation.property("expand")):
+                return
+            animation.stop()
+        panel.collapse()
+
+    def _sync_navigation_accessibility(self, *_args) -> None:
+        """统一导航项、折叠按钮的中文提示和可访问名称。"""
+
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is None:
+            return
+        navigation.setAccessibleName("主导航")
+        panel = navigation.panel
+        panel.menuButton.setAccessibleName("展开或收起主导航")
+        panel.menuButton.setToolTip("展开或收起主导航")
+        panel.returnButton.setAccessibleName("返回上一页")
+        panel.returnButton.setToolTip("返回上一页")
+        for route_key, label in getattr(self, "_navigation_labels", {}).items():
+            item = navigation.widget(route_key)
+            item.setAccessibleName(label)
+            item.setToolTip(label)
+
+    def _on_workspace_section_changed(self, _key: str) -> None:
+        self._request_side_panel_reflow(self, ReflowReason.EXPLICIT)
+
+    def _sync_device_context(self, *_args) -> None:
+        panel = getattr(self, "left_panel", None)
+        if panel is None:
+            return
+        selected = list(panel.selected_devices)
+        connected = list(getattr(panel, "_connected_device_cache", []))
+        state = str(getattr(panel, "_device_discovery_state", "empty"))
+        for page_name in ("_workspace_page", "_home_page"):
+            page = getattr(self, page_name, None)
+            setter = getattr(page, "set_device_context", None)
+            if callable(setter):
+                setter(selected, connected, state)
 
     def _on_nav_requested(self, key: str) -> None:
-        """导航分发：devices/logs 回首页，tasks 切任务页，settings 打开设置。"""
+        """兼容旧调用方，把业务键映射到 FluentWindow 或工作台分区。"""
 
+        pages = {
+            "home": getattr(self, "_home_page", None),
+            "devices": getattr(self, "_devices_page", None),
+            "apps": getattr(self, "_apps_page", None),
+            "system": getattr(self, "_system_page", None),
+            "remote": getattr(self, "_remote_page", None),
+            "tasks": getattr(self, "_tasks_page", None),
+            "logs": getattr(self, "_logs_page", None),
+            "settings": getattr(self, "_settings_page", None),
+        }
+        page = pages.get(key)
+        if page is None:
+            return
+        self.switchTo(page)
         if key == "tasks":
-            self._nav_stack.setCurrentWidget(self._task_page)
             self._task_page.refresh()
-            self._nav_bar.setCurrentItem("tasks")
-        elif key == "settings":
-            self._show_settings()
-            self._nav_bar.setCurrentItem("devices")
-        else:
-            self._nav_stack.setCurrentWidget(self._panel_splitter)
-            self._nav_bar.setCurrentItem(key)
-
-    def _create_toolbar(self) -> QFrame:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._create_toolbar()
-
-    def _create_toolbar_action(
-        self,
-        key: str,
-        label: str,
-        icon_name: str,
-        callback: Callable,
-        *,
-        tooltip: str,
-        checkable: bool = False,
-        checked: bool = False,
-    ):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._create_toolbar_action(
-            key,
-            label,
-            icon_name,
-            callback,
-            tooltip=tooltip,
-            checkable=checkable,
-            checked=checked,
-        )
-
-    def _create_toolbar_action_button(
-        self,
-        key: str,
-        *,
-        icon_size: QSize = QSize(14, 14),
-    ):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._create_toolbar_action_button(key, icon_size=icon_size)
-
-    def _create_toolbar_btn(
-        self,
-        tooltip: str,
-        icon_path: str,
-        *,
-        action=None,
-    ):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._create_toolbar_btn(tooltip, icon_path, action=action)
-
-    def _sync_toolbar_action_button(self, key: str) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._sync_toolbar_action_button(key)
-
-    def _set_toolbar_action_state(
-        self,
-        key: str,
-        button_name: str,
-        *,
-        enabled: bool | None = None,
-        checked: bool | None = None,
-        tooltip: str | None = None,
-        accessible_name: str | None = None,
-        icon_name: str | None = None,
-    ) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._set_toolbar_action_state(
-            key,
-            button_name,
-            enabled=enabled,
-            checked=checked,
-            tooltip=tooltip,
-            accessible_name=accessible_name,
-            icon_name=icon_name,
-        )
+        elif key == "logs":
+            self.log_panel.text_output.setFocus(Qt.FocusReason.ShortcutFocusReason)
+            self.log_panel.text_output.ensureCursorVisible()
 
     def _setup_shortcuts(self) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._setup_shortcuts()
+        self._actions.setup_shortcuts()
 
     def _request_device_refresh(self) -> None:
-        """先公开扫描状态，再通过既有信号请求刷新。"""
+        """让 SidePanel 统一提交扫描状态并抑制重复刷新。"""
 
-        self.left_panel.set_device_discovery_state("scanning")
-        self.left_panel.signals.refresh_devices_requested.emit()
-
-    def _refresh_toolbar_metrics(self) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._refresh_toolbar_metrics()
+        self.left_panel.request_device_refresh()
 
     def _on_theme_changed(self, _name: str):
-        """主题变化后刷新窗口样式和图标，并持久化主题选择。"""
-        _debug_log(self, "ui.toolbar", action="theme", phase="applied", theme=_name)
+        """主题变化后刷新窗口与页面状态，并持久化主题选择。"""
+        _debug_log(self, "ui.theme", action="apply", phase="applied", theme=_name)
         from core.settings_manager import AppSettings
 
         AppSettings.instance().set("theme", _name)
 
-        # 工具栏已收敛为 CardWidget，背景/圆角自绘制并随 qfluentwidgets 主题切换，
-        # 无需在此重建 TOOLBAR_STYLE。
-        self._refresh_toolbar_icons()
+        settings_page = getattr(self, "_settings_page", None)
+        if settings_page is not None:
+            label = settings_page.THEME_LABELS.get(_name, "跟随系统")
+            blocker = QSignalBlocker(settings_page.theme_card.combo_box)
+            settings_page.theme_card.combo_box.setCurrentText(label)
+            del blocker
+
         self._refresh_save_path()
-        self._apply_splitter_style()
-        # 左侧容器不属于 SidePanel 控件树，需要在此单独刷新分组框和设备列表。
-        lw = cast(QWidget | None, self.findChild(QWidget, "leftPanelWrapper"))
-        if lw:
-            # 分组框样式由 ScalableGroupBox 自维护（随主题/字体重建）。
-            self.left_panel.apply_device_theme()
+        self._refresh_window_chrome_theme()
+        self._sync_page_header_theme_actions()
+        self.left_panel.apply_device_theme()
         self._refresh_active_dialog_themes()
-        # NavigationInterface 为 qfluentwidgets 组件，主题自动跟随，无需手动重建。
         task_page = getattr(self, "_task_page", None)
         if task_page is not None:
             task_page._sync_theme_state()
 
+    def _on_accent_color_changed(self, _color: str) -> None:
+        """强调色变化后刷新项目自绘表面、图标和已打开二级窗口。"""
+
+        self._sync_plain_container_palettes()
+        for widget in (self, *self.findChildren(QWidget)):
+            refresh_fluent_widget_style(widget)
+        self.left_panel._on_theme_changed(BaseStyles.current_theme())
+        for name in (
+            "_home_page",
+            "_workspace_page",
+            "_tasks_page",
+            "_logs_page",
+            "_settings_page",
+        ):
+            page = getattr(self, name, None)
+            if page is None:
+                continue
+            page.update()
+            for child in page.findChildren(QWidget):
+                child.update()
+        self._refresh_active_dialog_themes()
+
+    def _sync_page_header_theme_actions(self) -> None:
+        """让每个 Gallery 页的主题动作显示下一步操作，而不是固定图标。"""
+
+        for name in ("_workspace_page", "_tasks_page", "_logs_page"):
+            page = getattr(self, name, None)
+            header = getattr(page, "header", None)
+            sync = getattr(header, "sync_theme_action", None)
+            if callable(sync):
+                sync()
+
+    def _refresh_window_chrome_theme(self) -> None:
+        """在 Mica/DWM 更新之后重新同步 FluentWindow 壳层的实际明暗外观。"""
+
+        self._sync_plain_container_palettes()
+        apply_dark_title_bar(self)
+
+    def _bind_system_theme_changes(self) -> None:
+        """跟随 Qt 的系统配色信号，在应用运行中重新解析 System 主题。"""
+
+        style_hints = QApplication.styleHints()
+        signal = getattr(style_hints, "colorSchemeChanged", None)
+        if signal is not None:
+            signal.connect(self._on_system_color_scheme_changed)
+
+    def _on_system_color_scheme_changed(self, *_args) -> None:
+        if BaseStyles.current_theme() == "System":
+            BaseStyles.switch_theme("System")
+
+    def _sync_plain_container_palettes(self) -> None:
+        """让移植页面及隐藏卡片立即承接当前应用主题。"""
+
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        palette = app.palette()
+        candidates = []
+        shell_roots = tuple(
+            filter(
+                None,
+                (
+                    getattr(self, "navigationInterface", None),
+                    getattr(self, "titleBar", None),
+                ),
+            )
+        )
+        candidates.extend(shell_roots)
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is not None:
+            candidates.extend(navigation.findChildren(NavigationPanel))
+        workspace = getattr(self, "_workspace_page", None)
+        if workspace is not None:
+            candidates.extend((workspace, workspace.stack))
+        for name in (
+            "_home_page",
+            "_devices_page",
+            "_apps_page",
+            "_system_page",
+            "_remote_page",
+            "_tasks_page",
+            "_logs_page",
+            "_settings_page",
+        ):
+            page = getattr(self, name, None)
+            if page is None:
+                continue
+            candidates.append(page)
+            viewport = getattr(page, "viewport", None)
+            if callable(viewport):
+                candidates.append(viewport())
+            widget = getattr(page, "widget", None)
+            if callable(widget):
+                candidates.append(widget())
+            body = getattr(page, "body", None)
+            if body is not None:
+                body_viewport = getattr(body, "viewport", None)
+                if callable(body_viewport):
+                    candidates.append(body_viewport())
+                body_widget = getattr(body, "widget", None)
+                if callable(body_widget):
+                    candidates.append(body_widget())
+        roots = []
+        seen: set[int] = set()
+        for widget in filter(None, candidates):
+            identity = id(widget)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            roots.append(widget)
+            widget.setPalette(palette)
+            # FluentWindow 的内部堆栈使用自己的浅色 QSS；页面若保持透明，
+            # 深色模式会露出这层底色。移植页作为完整表面应主动绘制应用底色。
+            widget.setAutoFillBackground(True)
+            widget.update()
+
+        # Mica 下 FluentWindow 壳层默认透明。Windows 原生主题切换后若不更新
+        # 壳层子控件调色板，浅色页面会继续透出深色 DWM 背景。
+        for root in shell_roots:
+            for child in root.findChildren(QWidget):
+                child.setPalette(palette)
+                child.update()
+
+        # qfluentwidgets 用 120 ms 动画更新 CardWidget 背景。隐藏工作台分区的
+        # 动画不会推进，稍后打开时会保留切换前的浅色卡片，因此在主题切换边界
+        # 直接同步静止态背景；悬停/按压后仍由组件自己的动画接管。
+        for root in roots:
+            for container in root.findChildren(QWidget):
+                if container.autoFillBackground():
+                    container.setPalette(palette)
+                    container.update()
+            if isinstance(root, CardWidget):
+                root.backgroundColorAni.stop()
+                root.setBackgroundColor(root._normalBackgroundColor())
+                root.update()
+            for card in root.findChildren(CardWidget):
+                card.backgroundColorAni.stop()
+                card.setBackgroundColor(card._normalBackgroundColor())
+                card.update()
+
     def _on_ui_font_changed(self, _config) -> None:
-        """应用新的界面字体并重新计算工具栏文字相关尺寸。"""
+        """应用新的界面字体。"""
 
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self._refresh_toolbar_metrics()
-        self._refresh_save_path()
-
-    def _apply_splitter_style(self):
-        """隐藏常驻分隔线，同时保留足够宽的透明拖动热区。"""
-
-        for splitter in (
-            getattr(self, "_panel_splitter", None),
-            getattr(self, "_device_log_splitter", None),
-        ):
-            if splitter is not None:
-                splitter.setStyleSheet(
-                    "QSplitter::handle { background: transparent; border: none; }"
-                )
 
     def _toggle_theme(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._toggle_theme()
-
-    def _request_application_close(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._request_application_close()
+        return self._actions.toggle_theme()
 
     def _refresh_active_dialog_themes(self):
         return (
             getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
         )._refresh_active_dialog_themes()
-
-    def _refresh_toolbar_icons(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._refresh_toolbar_icons()
 
     def _connect_all_signals(self):
         """将左侧面板信号连接到 ADB Controller，并包装危险操作校验。"""
@@ -1120,8 +1152,8 @@ class MainFrame(FluentWindowBase):
         )
         for signal_, handler in signal_map:
             signal_.connect(handler)
-        self.left_panel.selected_devices_changed.connect(self._update_device_toolbar_actions)
-        self._update_device_toolbar_actions()
+        self.left_panel.selected_devices_changed.connect(self._update_device_actions)
+        self._update_device_actions()
 
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)
@@ -1148,19 +1180,15 @@ class MainFrame(FluentWindowBase):
         self.left_panel.on_operation_completed(operation, success, message)
         task_history = getattr(self, "_task_history", None)
         if task_history is not None:
-            task_history.record(
-                TaskHistoryEntry(
-                    task_id=operation,
-                    kind="legacy",
-                    label=operation,
-                    success=success,
-                    detail=message,
-                )
-            )
+            task_history.record_completed(operation, success, message)
         task_page = getattr(self, "_task_page", None)
         if task_page is not None and task_page.isVisible():
             task_page.refresh()
         if operation == "refresh" and not success:
+            scan_thread = getattr(self, "_scan_thread", None)
+            invalidate_snapshot = getattr(scan_thread, "invalidate_snapshot", None)
+            if callable(invalidate_snapshot):
+                invalidate_snapshot()
             QTimer.singleShot(
                 0,
                 self,
@@ -1259,60 +1287,33 @@ class MainFrame(FluentWindowBase):
         """仅在设备列表变化后刷新设备界面。"""
         self.left_panel.update_device_list(devices)
         self.left_panel.refresh_device_choices()
-        self._update_device_toolbar_actions()
+        self._update_device_actions()
 
-    def _update_device_toolbar_actions(self, _devices=None) -> None:
-        """让所有顶部设备入口跟随当前复选设备集合。"""
+    def _update_device_actions(self, _devices=None) -> None:
+        """让首页设备工具卡片跟随当前复选设备集合。"""
 
         selected_count = len(self.left_panel.selected_devices)
         has_selection = selected_count > 0
-        for key, button_name, label, description in (
-            (
-                "app_mgr",
-                "tb_app_mgr",
-                "App Manager",
-                "Manage apps on the selected device",
-            ),
-            (
-                "file_explorer",
-                "tb_file_explorer",
-                "File Explorer",
-                "Browse files on the selected device",
-            ),
-            (
-                "logcat",
-                "tb_logcat",
-                "Live Logcat",
-                "View live logs from the selected device",
-            ),
-        ):
-            MainFrame._set_toolbar_action_state(
-                self,
-                key,
-                button_name,
-                enabled=has_selection,
-                tooltip=description if has_selection else "Select a device first",
-                accessible_name=label,
-            )
-
-        if selected_count == 1:
-            performance_tooltip = "Configure and start performance monitoring"
-        elif selected_count > 1:
-            performance_tooltip = "Performance requires exactly one selected device"
-        else:
-            performance_tooltip = "Select a device first"
-        MainFrame._set_toolbar_action_state(
-            self,
-            "performance",
-            "tb_performance",
-            enabled=selected_count == 1,
-            tooltip=performance_tooltip,
-            accessible_name="Performance",
-        )
+        cards = getattr(getattr(self, "_home_page", None), "tool_cards", {})
+        for key in ("app_mgr", "file_explorer", "logcat"):
+            card = cards.get(key)
+            if card is not None:
+                card.setEnabled(has_selection)
+                card.setToolTip("" if has_selection else "请先在设备工作台选择操作设备")
+        performance = cards.get("performance")
+        if performance is not None:
+            performance.setEnabled(selected_count == 1)
+            if selected_count > 1:
+                performance.setToolTip("性能监控仅支持单个设备")
+            elif selected_count == 0:
+                performance.setToolTip("请先在设备工作台选择操作设备")
+            else:
+                performance.setToolTip("")
+        self._sync_device_context()
 
     def clear_log(self):
         """清空用户日志面板并记录操作结果。"""
-        _debug_log(self, "ui.toolbar", action="clear_log", phase="requested")
+        _debug_log(self, "ui.action", action="clear_log", phase="requested")
         self.log_panel.clear()
         self.log_service.log("INFO", "Log cleared")
 
@@ -1372,14 +1373,6 @@ class MainFrame(FluentWindowBase):
         )._on_dialog_destroyed(dialog, dialog_name)
 
     def eventFilter(self, watched, event):
-        if watched is getattr(self, "_toolbar", None) and event.type() in (
-            QEvent.Type.Resize,
-            QEvent.Type.Show,
-        ):
-            timer = getattr(self, "_toolbar_path_layout_timer", None)
-            if timer is not None:
-                # 子工具栏通常晚于主窗口完成几何更新，下一轮再按最终宽度省略路径。
-                timer.start(0)
         host = getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
         handled = host.eventFilter(watched, event)
         if handled is not None:
@@ -1387,9 +1380,10 @@ class MainFrame(FluentWindowBase):
         return super().eventFilter(watched, event)
 
     def _show_settings(self):
-        return (
-            getattr(self, "_secondary_window_host", None) or SecondaryWindowHost(self)
-        )._show_settings()
+        page = getattr(self, "_settings_page", None)
+        if page is not None:
+            self.switchTo(page)
+        return None
 
     def _refresh_live_settings(self) -> None:
         return (
@@ -1400,23 +1394,23 @@ class MainFrame(FluentWindowBase):
         """在项目根目录打开系统终端。"""
         import platform
 
-        _debug_log(self, "ui.toolbar", action="cmd", phase="requested")
+        _debug_log(self, "ui.action", action="cmd", phase="requested")
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         system = platform.system()
         runner = ProcessRunner()
         if system == "Windows":
             runner.spawn(["cmd.exe", "/K", f'cd /d "{root}"'], creationflags=CREATE_NEW_CONSOLE)
-            _debug_log(self, "ui.toolbar", action="cmd", backend="windows", phase="launched")
+            _debug_log(self, "ui.action", action="cmd", backend="windows", phase="launched")
         elif system == "Darwin":
             runner.spawn(["open", "-a", "Terminal", root])
-            _debug_log(self, "ui.toolbar", action="cmd", backend="macos", phase="launched")
+            _debug_log(self, "ui.action", action="cmd", backend="macos", phase="launched")
         else:
             for term in ["x-terminal-emulator", "gnome-terminal", "konsole", "xfce4-terminal"]:
                 if shutil.which(term):
                     runner.spawn([term], cwd=root)
                     _debug_log(
                         self,
-                        "ui.toolbar",
+                        "ui.action",
                         action="cmd",
                         backend="linux",
                         phase="launched",
@@ -1424,7 +1418,7 @@ class MainFrame(FluentWindowBase):
                     return
             _debug_log(
                 self,
-                "ui.toolbar",
+                "ui.action",
                 action="cmd",
                 phase="blocked",
                 reason="terminal_unavailable",
@@ -1440,41 +1434,12 @@ class MainFrame(FluentWindowBase):
         self._apply_workspace_constraints(self._bound_screen, request_reflow=True)
         self._persist_window_size(preferred)
 
-    def window_layout_snapshot(self) -> dict[str, object]:
-        """返回设置页可展示的当前窗口和分栏状态。"""
-
-        size = (
-            self._pending_user_window_size
-            or self._preferred_window_size
-            or self._normal_window_size
-        )
-        return {
-            "width": int(size.width()),
-            "height": int(size.height()),
-            "panel_ratio": self.panel_split_ratio(),
-            "device_log_ratio": self.device_log_split_ratio(),
-        }
-
     def restore_default_window_size(self):
         """立即恢复并持久化默认窗口尺寸。"""
 
         if self.isMaximized() or self.isMinimized() or self.isFullScreen():
             self.showNormal()
         self.apply_window_size(DEFAULT_WINDOW_SIZE.width(), DEFAULT_WINDOW_SIZE.height())
-
-    def reset_panel_split(self):
-        """立即恢复水平分栏和设备/日志纵向分栏的默认比例。"""
-
-        for timer in (
-            getattr(self, "_panel_size_save_timer", None),
-            getattr(self, "_device_log_size_save_timer", None),
-        ):
-            if timer is not None and timer.isActive():
-                timer.stop()
-        self.apply_panel_ratio(DEFAULT_PANEL_RATIO)
-        self.apply_device_log_ratio(DEFAULT_DEVICE_LOG_RATIO)
-        self._save_pending_panel_sizes()
-        self._save_pending_device_log_sizes()
 
     def _apply_window_flags(self):
         flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
@@ -1527,7 +1492,7 @@ class MainFrame(FluentWindowBase):
         native_applied = self._set_always_on_top_native(self._always_on_top)
         _debug_log(
             self,
-            "ui.toolbar",
+            "ui.window",
             action="always_on_top",
             enabled=self._always_on_top,
             native_applied=native_applied,
@@ -1539,117 +1504,9 @@ class MainFrame(FluentWindowBase):
         AppSettings.instance().set("always_on_top", self._always_on_top)
 
     def _refresh_always_on_top_button(self):
-        action = getattr(self, "_toolbar_actions", {}).get("always_on_top")
-        button = getattr(self, "tb_always_on_top", None)
-        if action is None and button is None:
-            return
-        icon_name = "push-pin-slash.svg" if self._always_on_top else "push-pin.svg"
-        label = "Unpin from top" if self._always_on_top else "Pin on top"
-        tooltip = (
-            "Allow other windows above the main window"
-            if self._always_on_top
-            else "Keep the main window above other windows"
-        )
-        MainFrame._set_toolbar_action_state(
-            self,
-            "always_on_top",
-            "tb_always_on_top",
-            checked=self._always_on_top,
-            tooltip=tooltip,
-            accessible_name=label,
-            icon_name=icon_name,
-        )
-
-    def panel_sizes(self) -> list[int]:
-        return self._panel_splitter.sizes() if self._panel_splitter else [400, 600]
-
-    def device_log_split_ratio(self) -> float:
-        """返回左侧设备区域在设备/日志纵向分栏中的实际比例。"""
-
-        splitter = getattr(self, "_device_log_splitter", None)
-        sizes = splitter.sizes() if splitter is not None else []
-        if len(sizes) != 2 or sum(sizes) <= 0:
-            return DEFAULT_DEVICE_LOG_RATIO
-        return normalize_panel_ratio(
-            sizes[0] / sum(sizes),
-            fallback=DEFAULT_DEVICE_LOG_RATIO,
-        )
-
-    def panel_split_ratio(self) -> float:
-        sizes = self.panel_sizes()
-        if len(sizes) != 2:
-            return DEFAULT_PANEL_RATIO
-        return ratio_from_sizes(sizes[0], sizes[1])
-
-    def apply_panel_sizes(self, left_w: int, right_w: int):
-        if self._panel_splitter:
-            self._panel_splitter.setSizes([left_w, right_w])
-
-    def apply_panel_ratio(self, ratio: float):
-        if not self._panel_splitter:
-            return
-        ratio = normalize_panel_ratio(ratio)
-        total = max(1, sum(self._panel_splitter.sizes()))
-        left_panel = self._panel_splitter.widget(0)
-        right_panel = self._panel_splitter.widget(1)
-        left_width, right_width = split_sizes_for_constraints(
-            total,
-            ratio,
-            left_minimum=left_panel.minimumWidth() if left_panel is not None else 0,
-            right_minimum=right_panel.minimumWidth() if right_panel is not None else 0,
-        )
-        self._panel_splitter.setSizes([left_width, right_width])
-        actual_sizes = self._panel_splitter.sizes()
-        if len(actual_sizes) == 2 and sum(actual_sizes) > 0:
-            left_width, right_width = map(int, actual_sizes)
-        self._panel_ratio = ratio_from_sizes(left_width, right_width)
-        self._pending_panel_sizes = (left_width, right_width)
-        MainFrame._request_side_panel_reflow(self, ReflowReason.SPLITTER)
-
-    def apply_device_log_ratio(self, ratio: float) -> None:
-        """按约束应用设备/日志纵向比例，并准备统一持久化。"""
-
-        splitter = getattr(self, "_device_log_splitter", None)
-        if splitter is None:
-            return
-        ratio = normalize_panel_ratio(ratio, fallback=DEFAULT_DEVICE_LOG_RATIO)
-        total = max(1, sum(splitter.sizes()))
-        device_panel = splitter.widget(0)
-        log_panel = splitter.widget(1)
-        device_height, log_height = MainFrame._device_log_split_sizes(
-            total,
-            ratio,
-            device_minimum=MainFrame._minimum_splitter_height(device_panel),
-            log_minimum=MainFrame._log_soft_minimum_height(log_panel),
-        )
-        splitter.setSizes([device_height, log_height])
-        actual_sizes = splitter.sizes()
-        if len(actual_sizes) == 2 and sum(actual_sizes) > 0:
-            device_height, log_height = map(int, actual_sizes)
-        self._device_log_ratio = normalize_panel_ratio(
-            device_height / max(1, device_height + log_height),
-            fallback=DEFAULT_DEVICE_LOG_RATIO,
-        )
-        self._pending_device_log_sizes = (device_height, log_height)
-        MainFrame._request_side_panel_reflow(self, ReflowReason.SPLITTER)
-
-    def _on_splitter_moved(self, _pos, _index):
-        sizes = self._panel_splitter.sizes()
-        if len(sizes) == 2:
-            total = max(0, int(sizes[0]) + int(sizes[1]))
-            left_panel = self._panel_splitter.widget(0)
-            right_panel = self._panel_splitter.widget(1)
-            corrected_sizes = split_sizes_for_constraints(
-                total,
-                sizes[0] / total if total else DEFAULT_PANEL_RATIO,
-                left_minimum=left_panel.minimumWidth() if left_panel is not None else 0,
-                right_minimum=right_panel.minimumWidth() if right_panel is not None else 0,
-            )
-            if tuple(map(int, sizes)) != corrected_sizes:
-                self._panel_splitter.setSizes(list(corrected_sizes))
-            self._pending_panel_sizes = corrected_sizes
-            self._panel_size_save_timer.start(self.SPLITTER_SAVE_DEBOUNCE_MS)
-            MainFrame._request_side_panel_reflow(self, ReflowReason.SPLITTER)
+        card = getattr(getattr(self, "_settings_page", None), "pin_card", None)
+        if card is not None and card.isChecked() != self._always_on_top:
+            card.setChecked(self._always_on_top)
 
     @staticmethod
     def _request_side_panel_reflow(owner, reason: ReflowReason) -> None:
@@ -1659,120 +1516,6 @@ class MainFrame(FluentWindowBase):
         callback = getattr(panel, "request_responsive_reflow", None)
         if callable(callback):
             callback(reason)
-
-    def _save_pending_panel_sizes(self):
-        if not self._pending_panel_sizes:
-            return
-        left_w, right_w = self._pending_panel_sizes
-        splitter = getattr(self, "_panel_splitter", None)
-        actual_sizes = splitter.sizes() if splitter is not None else []
-        if len(actual_sizes) == 2 and sum(actual_sizes) > 0:
-            left_w, right_w = map(int, actual_sizes)
-        self._pending_panel_sizes = None
-        from core.settings_manager import AppSettings
-
-        s = AppSettings.instance()
-        ratio = ratio_from_sizes(left_w, right_w)
-        self._panel_ratio = ratio
-        MainFrame._update_settings(
-            s,
-            {
-                "left_panel_width": int(left_w),
-                "right_panel_width": int(right_w),
-                "panel_split_ratio": ratio,
-            },
-        )
-
-    def _on_device_log_splitter_moved(self, _pos, _index) -> None:
-        """限制设备/日志区域最小高度，并防抖保存最终比例。"""
-
-        splitter = self._device_log_splitter
-        sizes = splitter.sizes()
-        if len(sizes) != 2:
-            return
-        total = max(0, int(sizes[0]) + int(sizes[1]))
-        if total <= 0:
-            return
-        device_panel = splitter.widget(0)
-        log_panel = splitter.widget(1)
-        corrected_sizes = MainFrame._device_log_split_sizes(
-            total,
-            sizes[0] / total,
-            device_minimum=MainFrame._minimum_splitter_height(device_panel),
-            log_minimum=MainFrame._log_soft_minimum_height(log_panel),
-            log_collapsed=int(sizes[1]) <= 0,
-        )
-        if tuple(map(int, sizes)) != corrected_sizes:
-            splitter.setSizes(list(corrected_sizes))
-        self._pending_device_log_sizes = corrected_sizes
-        self._device_log_ratio = normalize_panel_ratio(
-            corrected_sizes[0] / max(1, sum(corrected_sizes)),
-            fallback=DEFAULT_DEVICE_LOG_RATIO,
-        )
-        self._device_log_size_save_timer.start(self.SPLITTER_SAVE_DEBOUNCE_MS)
-        MainFrame._request_side_panel_reflow(self, ReflowReason.SPLITTER)
-
-    @staticmethod
-    def _minimum_splitter_height(widget) -> int:
-        """返回可避免内容相交的纵向分栏最小高度。"""
-
-        if widget is None:
-            return 0
-        minimum = max(0, int(widget.minimumHeight()))
-        size_hint = getattr(widget, "minimumSizeHint", None)
-        if not callable(size_hint):
-            return minimum
-        try:
-            return max(minimum, int(cast(QSize, size_hint()).height()))
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            return minimum
-
-    @staticmethod
-    def _device_log_split_sizes(
-        total: int,
-        ratio: float,
-        *,
-        device_minimum: int,
-        log_minimum: int,
-        log_collapsed: bool = False,
-    ) -> tuple[int, int]:
-        """优先满足 Devices；空间不足或用户越过软下限时折叠 Log。"""
-
-        total = max(0, int(total))
-        device_minimum = max(0, int(device_minimum))
-        log_minimum = max(0, int(log_minimum))
-        if total <= 0:
-            return 0, 0
-        if log_collapsed or total < device_minimum + log_minimum:
-            return total, 0
-        return split_sizes_for_constraints(
-            total,
-            ratio,
-            left_minimum=device_minimum,
-            right_minimum=log_minimum,
-        )
-
-    def _save_pending_device_log_sizes(self) -> None:
-        """持久化 Qt 实际采用的设备/日志高度比例。"""
-
-        if not self._pending_device_log_sizes:
-            return
-        device_height, log_height = self._pending_device_log_sizes
-        splitter = getattr(self, "_device_log_splitter", None)
-        actual_sizes = splitter.sizes() if splitter is not None else []
-        if len(actual_sizes) == 2 and sum(actual_sizes) > 0:
-            device_height, log_height = map(int, actual_sizes)
-        self._pending_device_log_sizes = None
-        total = max(1, device_height + log_height)
-        ratio = normalize_panel_ratio(
-            device_height / total,
-            fallback=DEFAULT_DEVICE_LOG_RATIO,
-        )
-        self._device_log_ratio = ratio
-        MainFrame._update_settings(
-            AppSettings.instance(),
-            {"device_log_split_ratio": ratio},
-        )
 
     @staticmethod
     def _update_settings(settings, values: dict[str, object]) -> None:
@@ -1858,17 +1601,10 @@ class MainFrame(FluentWindowBase):
         self._pending_window_size = None
 
     def _flush_pending_layout_state(self) -> None:
-        for timer, callback in (
-            (getattr(self, "_window_size_save_timer", None), MainFrame._save_pending_window_size),
-            (getattr(self, "_panel_size_save_timer", None), MainFrame._save_pending_panel_sizes),
-            (
-                getattr(self, "_device_log_size_save_timer", None),
-                MainFrame._save_pending_device_log_sizes,
-            ),
-        ):
-            if timer is not None and timer.isActive():
-                timer.stop()
-                callback(self)
+        timer = getattr(self, "_window_size_save_timer", None)
+        if timer is not None and timer.isActive():
+            timer.stop()
+            MainFrame._save_pending_window_size(self)
 
         # 原生无边框缩放在部分窗口系统上可能只产生 resizeEvent，而没有回到热区的
         # 事务完成回调。关闭前以最终可见状态兜底，确保尺寸和主题不会跨会话丢失。
@@ -1894,64 +1630,16 @@ class MainFrame(FluentWindowBase):
 
     # ── 全局保存路径 ────────────────────────────────────────────────────
 
-    def _sync_save_path_action(self, path: str) -> None:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._sync_save_path_action(path)
-
     def _refresh_save_path(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._refresh_save_path()
-
-    def _update_toolbar_path_display(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._update_toolbar_path_display()
-
-    def _update_toolbar_overflow(self) -> tuple[str, ...]:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._update_toolbar_overflow()
+        settings = AppSettings.instance()
+        path = str(settings.save_directory or "")
+        card = getattr(getattr(self, "_settings_page", None), "save_card", None)
+        if card is not None:
+            card.setContent(path or "系统默认目录")
+        return path
 
     def _on_save_path_clicked(self):
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._on_save_path_clicked()
-
-    # ── 拖动工具栏移动窗口 ──────────────────────────────────────────────
-
-    def _is_toolbar_drag_target(self, position) -> bool:
-        return (
-            getattr(self, "_toolbar_controller", None) or ToolbarController(self)
-        )._is_toolbar_drag_target(position)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton and self._is_toolbar_drag_target(
-            event.position().toPoint()
-        ):
-            handle = self.windowHandle()
-            if handle is not None and handle.startSystemMove():
-                event.accept()
-                return
-            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-            return
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        if event.buttons() & Qt.MouseButton.LeftButton and self._drag_pos:
-            self.move(event.globalPosition().toPoint() - self._drag_pos)
-            event.accept()
-            return
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        self._drag_pos = None
-        super().mouseReleaseEvent(event)
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        super().mouseDoubleClickEvent(event)
+        return self._actions.choose_save_directory()
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
@@ -1965,13 +1653,15 @@ class MainFrame(FluentWindowBase):
         controller = getattr(self, "_resize_controller", None)
         if controller is not None:
             controller.update_geometry()
-        # NavigationInterface 依据窗口宽度自动折叠/展开，无需外部预算驱动。
-        self._update_toolbar_path_display()
         self._schedule_window_size_save(event.size())
 
     def showEvent(self, event):
         super().showEvent(event)
         self._bind_window_screen()
+        # FluentWidget.showEvent 会在 Win11 再次应用 Mica；必须在它之后覆盖
+        # 标题栏和导航壳层，否则“浅色 + 系统深色”首次启动会出现黑色侧栏。
+        self._refresh_window_chrome_theme()
+        QTimer.singleShot(0, self._refresh_window_chrome_theme)
 
     def changeEvent(self, event):
         super().changeEvent(event)

@@ -63,7 +63,7 @@ def test_performance_launcher_build_config_uses_title_device_and_device_save_dir
     assert Path(cfg.save_path).name == "127.0.0.1_5555"
     assert dialog.serialnum_label.text() == "127.0.0.1:5555"
     assert dialog.serialnum_label.objectName() == "onlineDeviceLabel"
-    assert BaseStyles.color("LOG_SUCCESS") in dialog.styleSheet()
+    assert dialog.serialnum_label.lightColor.name() == BaseStyles.color("LOG_SUCCESS").lower()
     dialog.close()
 
 
@@ -337,17 +337,15 @@ def test_performance_launcher_monkey_parameter_text_follows_dark_theme_colors():
         dialog.monkey_check.setChecked(True)
         style = dialog.styleSheet()
 
-        # 内联标签已收敛为 FluentLabel（颜色走 setTextColor，不再出现在 QSS）；
-        # QLineEdit 已收敛为 qfluentwidgets LineEdit，QComboBox 由 FluentComboBox
-        # 自维护 COMBO_BOX_STYLE；原生 QSpinBox/预设按钮已收敛为 qfluentwidgets SpinBox/ToolButton。
+        # 可见输入和选择控件直接使用 qfluentwidgets，各自维护主题样式。
         assert BaseStyles.color("TEXT_PRIMARY") in style
-        assert BaseStyles.color("INPUT_BG") in style
         assert "color: #000" not in style
         assert "color: black" not in style.lower()
         assert "monkeyOptionCheck" not in style
         assert "monkeyOption" not in style
         assert "QCheckBox::indicator" not in style
         assert dialog.monkey_check.property("monkeyOption") is None
+        assert type(dialog.package_edit).__module__.startswith("qfluentwidgets")
         for checkbox in (
             dialog.monkey_ignore_crashes,
             dialog.monkey_ignore_timeouts,

@@ -1,7 +1,8 @@
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
+import threading
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
@@ -150,6 +151,11 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
     controller.executor = ImmediateExecutor()
     controller.signals = Mock()
+    controller.log_service = Mock()
+    controller._shutting_down = False
+    controller._device_topology_lock = threading.Lock()
+    controller._device_topology_generation = 1
+    controller._device_topology = ("device-1", "device-2")
 
     with (
         patch("controllers._device.ADBDevice.get_devices_basic_info") as get_info,
@@ -160,12 +166,52 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
             {"Brand": "Redmi", "Model": "22127", "Aversion": "9"},
         ]
 
-        ADBDeviceMixin._async_update_devices(controller, ["device-1", "device-2"])
+        ADBDeviceMixin._async_update_devices(
+            controller,
+            ["device-1", "device-2"],
+            generation=1,
+        )
 
     upsert.assert_called_once()
     records = upsert.call_args.args[0]
     assert [record["ip"] for record in records] == ["device-1", "device-2"]
     controller.signals.devices_updated.emit.assert_called_once_with(["device-1", "device-2"])
+
+
+def test_stale_device_metadata_update_does_not_restore_removed_device():
+    class DeferredExecutor:
+        def __init__(self):
+            self.jobs = []
+
+        def submit(self, func):
+            self.jobs.append(func)
+
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.executor = DeferredExecutor()
+    controller.signals = Mock()
+    controller.log_service = Mock()
+    controller._emit_operation = Mock()
+    controller._shutting_down = False
+    controller._device_topology_lock = threading.Lock()
+    controller._device_topology_generation = 0
+    controller._device_topology = ()
+
+    with (
+        patch(
+            "controllers._device.ADBDevice.get_devices_basic_info",
+            return_value={"Brand": "Google", "Model": "Pixel", "Aversion": "15"},
+        ),
+        patch("controllers._device.DeviceStore.upsert_devices") as upsert,
+    ):
+        ADBDeviceMixin._process_device_list(controller, ["device-1"])
+        ADBDeviceMixin._process_device_list(controller, [])
+        controller.executor.jobs[0]()
+
+    upsert.assert_not_called()
+    assert controller.signals.devices_updated.emit.call_args_list == [
+        call(["device-1"]),
+        call([]),
+    ]
 
 
 def test_controller_shutdown_stops_model_processes_and_executor():
@@ -295,7 +341,7 @@ def test_connected_devices_success_routes_to_process_device_list():
     controller.signals.devices_updated.emit.assert_not_called()
 
 
-def test_connected_devices_failure_emits_error_and_clears_list():
+def test_connected_devices_failure_reports_refresh_without_clearing_list():
     controller = _connected_devices_controller()
 
     _ADBControllerBase._handle_async_response(
@@ -306,9 +352,9 @@ def test_connected_devices_failure_emits_error_and_clears_list():
 
     controller._process_device_list.assert_not_called()
     controller._emit_operation.assert_called_once_with(
-        "get_connected_devices", False, "adb unavailable"
+        "refresh", False, "adb unavailable"
     )
-    controller.signals.devices_updated.emit.assert_called_once_with([])
+    controller.signals.devices_updated.emit.assert_not_called()
 
 
 def test_connected_devices_non_dict_result_reports_invalid_format():
@@ -322,7 +368,25 @@ def test_connected_devices_non_dict_result_reports_invalid_format():
 
     controller._process_device_list.assert_not_called()
     controller._emit_operation.assert_called_once_with(
-        "get_connected_devices", False, "Invalid device list format"
+        "refresh", False, "Invalid device list format"
+    )
+    controller.signals.devices_updated.emit.assert_not_called()
+
+
+def test_refresh_devices_sync_failure_reports_error_without_clearing_list():
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller._shutting_down = False
+    controller.device_model = Mock()
+    controller.device_model.get_connected_devices_async.side_effect = RuntimeError(
+        "submission failed"
+    )
+    controller._emit_operation = Mock()
+    controller.signals = Mock()
+
+    ADBDeviceMixin.refresh_devices(controller)
+
+    controller._emit_operation.assert_called_once_with(
+        "refresh", False, "Failed to refresh devices: submission failed"
     )
     controller.signals.devices_updated.emit.assert_not_called()
 

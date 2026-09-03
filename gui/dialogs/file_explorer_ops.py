@@ -10,13 +10,14 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QInputDialog,
-    QLabel,
     QMessageBox,
     QVBoxLayout,
 )
-from qfluentwidgets import CheckBox, PushButton
+from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen
+from gui.styles import FontRole
+from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from services import file_explorer as explorer_service
 
@@ -64,7 +65,7 @@ class FileExplorerOps:
                 QMessageBox.StandardButton.NoButton,
             )
         else:
-            self._frame.status_bar.showMessage(f"Saved {name}")
+            self._frame.status_bar.setText(f"Saved {name}")
             self._frame._refresh()
 
     # ── 拉取与推送 ──────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ class FileExplorerOps:
         )
         if not save_path:
             return
-        self._frame.status_bar.showMessage(f"Pulling {name}...")
+        self._frame.status_bar.setText(f"Pulling {name}...")
         if self._frame.root_cb.isChecked():
             dt = f"/data/local/tmp/{name}"
             w = self._frame._run_adb(
@@ -95,7 +96,7 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
-                lambda msg: self._frame.status_bar.showMessage(msg),
+                lambda msg: self._frame.status_bar.setText(msg),
             )
             self._frame._connect_worker_ui(
                 w,
@@ -113,13 +114,13 @@ class FileExplorerOps:
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
-            self._frame.status_bar.showMessage(f"Failed: {o}")
+            self._frame.status_bar.setText(f"Failed: {o}")
             return
         w = self._frame._run_transfer("pull", dev_tmp, save_path)
         self._frame._connect_worker_ui(
             w,
             w.progress,
-            lambda msg: self._frame.status_bar.showMessage(msg),
+            lambda msg: self._frame.status_bar.setText(msg),
         )
         self._frame._connect_worker_ui(
             w,
@@ -137,9 +138,7 @@ class FileExplorerOps:
         rows = set(i.row() for i in self._frame.table.selectedIndexes())
         if not rows:
             return
-        dest = QFileDialog.getExistingDirectory(
-            self._frame, "Destination", self._global_save_dir()
-        )
+        dest = QFileDialog.getExistingDirectory(self._frame, "Destination", self._global_save_dir())
         if not dest:
             return
         for row in rows:
@@ -152,7 +151,7 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
-                lambda msg: self._frame.status_bar.showMessage(msg),
+                lambda msg: self._frame.status_bar.setText(msg),
             )
             self._frame._connect_worker_ui(
                 w,
@@ -171,7 +170,7 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
-                lambda msg: self._frame.status_bar.showMessage(msg),
+                lambda msg: self._frame.status_bar.setText(msg),
             )
             bn = os.path.basename(fp)
             self._frame._connect_worker_ui(
@@ -190,9 +189,9 @@ class FileExplorerOps:
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
-            self._frame.status_bar.showMessage(f"Failed: {o}")
+            self._frame.status_bar.setText(f"Failed: {o}")
             return
-        self._frame.status_bar.showMessage(msg)
+        self._frame.status_bar.setText(msg)
         self._frame._refresh()
 
     def _on_file_op_done(self, output: str, error: bool, success_msg: str):
@@ -204,9 +203,9 @@ class FileExplorerOps:
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
-            self._frame.status_bar.showMessage(f"Failed: {output}")
+            self._frame.status_bar.setText(f"Failed: {output}")
             return
-        self._frame.status_bar.showMessage(success_msg)
+        self._frame.status_bar.setText(success_msg)
         self._frame._refresh()
 
     # ── 文件操作 ────────────────────────────────────────────────────────
@@ -284,7 +283,7 @@ class FileExplorerOps:
 
     def _delete_item(self, name: str):
         full = self._frame._dpath(self._frame.current_path, name)
-        self._frame.status_bar.showMessage(f"Deleting {name}...")
+        self._frame.status_bar.setText(f"Deleting {name}...")
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.delete_command(full)))
         self._frame._connect_worker_ui(
             w,
@@ -320,7 +319,7 @@ class FileExplorerOps:
             if self._frame._file_name_at(r) != ".."
         ]
         self._frame.copy_mode = copy_mode
-        self._frame.status_bar.showMessage(
+        self._frame.status_bar.setText(
             f"{'Copied' if copy_mode else 'Cut'} {len(self._frame.clipboard)} item(s)"
         )
 
@@ -357,7 +356,7 @@ class FileExplorerOps:
                     lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Moved {n}"),
                 )
                 w.start()
-        self._frame.status_bar.showMessage(f"Paste submitted: {len(self._frame.clipboard)} item(s)")
+        self._frame.status_bar.setText(f"Paste submitted: {len(self._frame.clipboard)} item(s)")
         self._frame.clipboard = []
 
     # ── 文件权限（chmod）────────────────────────────────────────────────
@@ -371,19 +370,24 @@ class FileExplorerOps:
         lo = QVBoxLayout(dlg)
 
         grid = QGridLayout()
-        grid.addWidget(QLabel(""), 0, 0)
+        grid.addWidget(apply_label_role(BodyLabel(""), FontRole.UI), 0, 0)
         for c, col in enumerate(["Owner", "Group", "Other"], 1):
-            grid.addWidget(QLabel(col), 0, c, alignment=Qt.AlignmentFlag.AlignCenter)
+            grid.addWidget(
+                apply_label_role(BodyLabel(col), FontRole.UI, bold=True),
+                0,
+                c,
+                alignment=Qt.AlignmentFlag.AlignCenter,
+            )
         cbs = {}
         for r, (label, key) in enumerate([("Read", "r"), ("Write", "w"), ("Execute", "x")], 1):
-            grid.addWidget(QLabel(label), r, 0)
+            grid.addWidget(apply_label_role(BodyLabel(label), FontRole.UI), r, 0)
             for c, col in enumerate(["owner", "group", "other"], 1):
                 cb = CheckBox()
                 grid.addWidget(cb, r, c, alignment=Qt.AlignmentFlag.AlignCenter)
                 cbs[(col, key)] = cb
         lo.addLayout(grid)
 
-        preview = QLabel("chmod: ")
+        preview = apply_label_role(BodyLabel("chmod: "), FontRole.MONO, color_key="TEXT_SECONDARY")
         lo.addWidget(preview)
         btn_row = QHBoxLayout()
         apply_btn = PushButton()
@@ -487,7 +491,7 @@ class FileExplorerOps:
                         QMessageBox.StandardButton.NoButton,
                     )
                     return
-                self._frame.status_bar.showMessage(f"Permissions updated for {name}")
+                self._frame.status_bar.setText(f"Permissions updated for {name}")
                 self._frame._refresh()
                 dlg.accept()
 

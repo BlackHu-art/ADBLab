@@ -5,8 +5,10 @@ import sys
 
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QMessageBox
+from qfluentwidgets import RoundMenu
 
-from gui.widgets.fluent.menu import FluentMenu
+from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import add_menu_action
 
 
 class ScreenshotViewerActions:
@@ -68,35 +70,34 @@ class ScreenshotViewerActions:
             self._frame.close()
             return
         self._frame._rebuild_thumbnails()
-        self._frame._current_idx = min(
-            self._frame._current_idx, len(self._frame._image_paths) - 1
-        )
+        self._frame._current_idx = min(self._frame._current_idx, len(self._frame._image_paths) - 1)
         self._frame._navigate_to(self._frame._current_idx)
 
     def _on_context_menu(self, pos):
         path = self._frame._current_path()
         has_file = bool(path and os.path.exists(path))
-        menu = FluentMenu(parent=self._frame)
+        menu = RoundMenu(parent=self._frame)
+        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
 
-        copy_action = menu.add_action("Copy Image\tCtrl+C")
+        copy_action = add_menu_action(menu, "Copy Image\tCtrl+C")
         copy_action.triggered.connect(self._frame.copy_to_clipboard)
         copy_action.setEnabled(has_file)
 
         menu.addSeparator()
 
-        folder_action = menu.add_action("Open File Location")
+        folder_action = add_menu_action(menu, "Open File Location")
         folder_action.triggered.connect(self._frame._open_file_location)
         folder_action.setEnabled(has_file)
 
-        delete_action = menu.add_action("Delete Screenshot")
+        delete_action = add_menu_action(menu, "Delete Screenshot")
         delete_action.triggered.connect(self._frame._delete_file)
         delete_action.setEnabled(has_file)
 
         menu.addSeparator()
 
-        menu.add_action("Zoom In\tCtrl+=").triggered.connect(self._frame.zoom_in)
-        menu.add_action("Zoom Out\tCtrl+-").triggered.connect(self._frame.zoom_out)
-        menu.add_action("Fit to Window\tCtrl+0").triggered.connect(self._frame._reset_zoom)
-        menu.add_action("Actual Size\tCtrl+1").triggered.connect(self._frame._actual_size)
+        add_menu_action(menu, "Zoom In\tCtrl+=").triggered.connect(self._frame.zoom_in)
+        add_menu_action(menu, "Zoom Out\tCtrl+-").triggered.connect(self._frame.zoom_out)
+        add_menu_action(menu, "Fit to Window\tCtrl+0").triggered.connect(self._frame._reset_zoom)
+        add_menu_action(menu, "Actual Size\tCtrl+1").triggered.connect(self._frame._actual_size)
 
         menu.exec(self._frame._view.mapToGlobal(pos))

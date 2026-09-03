@@ -69,9 +69,16 @@ class ADBDeviceMixin(_ADBControllerBase):
         self._emit_operation("connect", True, message)
 
     def _process_device_list(self, devices: list):
+        devices = list(dict.fromkeys(devices or []))
+        topology = tuple(devices)
+        with self._device_topology_lock:
+            if topology != self._device_topology:
+                self._device_topology_generation += 1
+                self._device_topology = topology
+            generation = self._device_topology_generation
         self._emit_operation("refresh", True, f"Found {len(devices)} connected devices")
         self.signals.devices_updated.emit(devices)
-        self._async_update_devices(devices)
+        self._async_update_devices(devices, generation=generation)
 
     def publish_detected_devices(self, devices: list[str]):
         self._process_device_list(list(devices or []))
@@ -83,11 +90,21 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.device_model.get_connected_devices_async()
         except Exception as e:
             self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
-            self.signals.devices_updated.emit([])
 
-    def _async_update_devices(self, devices: list):
+    def _async_update_devices(self, devices: list, *, generation: int):
         if not devices:
             return
+
+        topology = tuple(devices)
+
+        def _is_current_topology() -> bool:
+            if getattr(self, "_shutting_down", False):
+                return False
+            with self._device_topology_lock:
+                return (
+                    generation == self._device_topology_generation
+                    and topology == self._device_topology
+                )
 
         def _update():
             if getattr(self, "_shutting_down", False):
@@ -108,13 +125,18 @@ class ADBDeviceMixin(_ADBControllerBase):
                 except Exception:
                     pass
             if records:
+                # 设备属性查询可能持续数秒；拓扑已变化时旧结果不得再写盘或刷新 UI，
+                # 否则已离线设备会被晚到的补全任务重新显示。
+                if not _is_current_topology():
+                    return
                 try:
                     DeviceStore.upsert_devices(records)
                 except Exception as e:
                     self.log_service.log("ERROR", f"DeviceStore write failed: {str(e)}")
                     return
                 # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
-                self.signals.devices_updated.emit(devices)
+                if _is_current_topology():
+                    self.signals.devices_updated.emit(devices)
 
         self.executor.submit(_update)
 

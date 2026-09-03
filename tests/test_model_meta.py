@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication
 
 from gui.dialogs import live_logcat_form
 from gui.dialogs.live_logcat import CurrentPackageWorker, LiveLogcatDialog
-from gui.styles import BaseStyles, theme
+from gui.styles import BaseStyles, FontRole, theme
+from gui.styles.fluent import apply_label_role
 from main import windows_app_user_model_id
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 
@@ -52,36 +53,14 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
     assert len(calls) == 1
 
 
-def test_dialog_status_bar_style_has_theme_background():
-    from PySide6.QtWidgets import QApplication
+def test_dialog_status_uses_direct_reference_label(qt_application):
+    from qfluentwidgets import CaptionLabel
 
-    from gui.widgets.fluent.status_bar import FluentStatusBar
+    bar = apply_label_role(CaptionLabel("Ready"), FontRole.UI_SMALL)
 
-    _app = QApplication.instance() or QApplication([])
-    bar = FluentStatusBar()
-    current_theme = BaseStyles.current_theme()
-    try:
-        BaseStyles.switch_theme("Dark")
-        expected_bg = BaseStyles.color("PANEL_BG")
-        bar._apply_style()
-        style = bar.styleSheet()
-    finally:
-        BaseStyles.switch_theme(current_theme)
-        bar.deleteLater()
-
-    assert f"background-color: {expected_bg}" in style
-
-
-def test_combo_box_arrow_uses_theme_specific_qss_resource():
-    with patch.object(BaseStyles, "current_theme", return_value="Light"):
-        light_style = BaseStyles.COMBO_BOX_STYLE()
-    with patch.object(BaseStyles, "current_theme", return_value="Dark"):
-        dark_style = BaseStyles.COMBO_BOX_STYLE()
-
-    assert "QComboBox::down-arrow" in light_style
-    assert "icons:caret-down-qss-light.svg" in light_style
-    assert "icons:caret-down-qss-dark.svg" in dark_style
-    assert "icons:caret-down.svg" not in light_style + dark_style
+    assert type(bar) is CaptionLabel
+    assert bar.text() == "Ready"
+    assert bar.property("fontRole") == FontRole.UI_SMALL.value
 
 
 def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons():
@@ -132,7 +111,7 @@ def test_live_logcat_ignores_queued_status_after_close():
     try:
         dialog._on_status("Logcat stopped")
 
-        dialog.status_bar.showMessage.assert_not_called()
+        dialog.status_bar.setText.assert_not_called()
     finally:
         dialog.close()
 
@@ -166,9 +145,7 @@ def test_live_logcat_batches_visible_line_appends():
         dialog.output.appendPlainText.assert_not_called()
         dialog._flush_pending_lines()
 
-        assert appended == [
-            "05-27 12:00:00.000 1 1 I Tag: one\n" "05-27 12:00:00.000 1 1 I Tag: two"
-        ]
+        assert appended == ["05-27 12:00:00.000 1 1 I Tag: one\n05-27 12:00:00.000 1 1 I Tag: two"]
         assert len(dialog.entries) == 2
     finally:
         dialog.close()
@@ -208,9 +185,7 @@ def test_live_logcat_manual_package_filter_only_applies_after_enter():
         worker.update_package.assert_called_once_with("com.example.manual")
         assert not dialog._pending_visible_lines
         assert not dialog._line_flush_timer.isActive()
-        assert dialog.status_bar.currentMessage() == (
-            "Switching package filter: com.example.manual"
-        )
+        assert dialog.status_bar.text() == ("Switching package filter: com.example.manual")
     finally:
         dialog.worker = None
         dialog.close()
@@ -243,10 +218,11 @@ def test_live_logcat_enter_applies_manual_package_filter_clear():
             package_worker.assert_not_called()
 
         worker.update_package.assert_called_once_with("")
-        assert dialog.status_bar.currentMessage() == "Showing all device logs"
+        assert dialog.status_bar.text() == "Showing all device logs"
     finally:
         dialog.worker = None
         dialog.close()
+
 
 def test_live_logcat_enter_rejects_invalid_manual_package_without_changing_worker():
     """非法包名在 Enter 提交边界被拒绝，不改变正在运行的过滤条件。"""
@@ -262,7 +238,7 @@ def test_live_logcat_enter_rejects_invalid_manual_package_without_changing_worke
         QTest.keyClick(dialog.pkg_input, Qt.Key.Key_Return)
 
         worker.update_package.assert_not_called()
-        assert dialog.status_bar.currentMessage() == "Invalid package name for logcat filter"
+        assert dialog.status_bar.text() == "Invalid package name for logcat filter"
     finally:
         dialog.worker = None
         dialog.close()
@@ -283,9 +259,7 @@ def test_live_logcat_manual_enter_supersedes_running_current_package_probe():
 
         package_worker.requestInterruption.assert_called_once_with()
         package_worker.package_ready.disconnect.assert_called_once_with(dialog._on_current_pkg)
-        assert dialog.status_bar.currentMessage() == (
-            "Package filter ready: com.example.manual"
-        )
+        assert dialog.status_bar.text() == ("Package filter ready: com.example.manual")
     finally:
         dialog._pkg_worker = None
         dialog.close()
@@ -351,9 +325,7 @@ def test_live_logcat_stopping_rejects_new_or_late_package_switches():
         dialog.pkg_input.setText("")
         QTest.keyClick(dialog.pkg_input, Qt.Key.Key_Return)
         worker.update_package.assert_not_called()
-        assert dialog.status_bar.currentMessage() == (
-            "All device logs will be shown on next start"
-        )
+        assert dialog.status_bar.text() == ("All device logs will be shown on next start")
     finally:
         dialog.worker = None
         dialog.close()

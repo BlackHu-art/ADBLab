@@ -62,7 +62,6 @@
 - [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
 - [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
 - [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。
-- [agent_contract](architecture/agent_contract.md)：统一技能调用契约（已由 `utils/agent_skill_gateway.py` 实现）。
 
 ### 操作指南（guides/）
 
@@ -73,7 +72,10 @@
 
 修改以下区域前，优先按"入口 → 调用链 → 失败路径 → 清理路径 → 测试"的顺序追踪：
 
-- `gui/main_frame.py`：主窗口（约 1,700 行）、设备扫描、工具栏溢出、面板懒加载、信号接线和关闭清理。
+- `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`：FluentWindow 五入口
+  导航壳、Gallery 首页、Workspace 四分区、常驻 SettingCard 设置页、设备扫描、动作与关闭接线。
+- `gui/panels/side_panel.py`：业务面板所有权、共享设备状态和信号兼容门面；它不再是可见左侧导航，
+  MainFrame 启动时会创建 Devices/Apps/System/Remote 全部分区，不能按视图懒加载理解。
 - `adblab/application/`：`operations.py`（OperationManager 单元接口）与 `install_batch.py`（安装批次 Gate C 用例）。
 - `controllers/`：批次状态与所有权/generation 边界、异步结果分派、截图/录屏共享状态和危险操作入口。
 - `core/exec.py`、`core/adb_bridge.py`、`models/file_explorer_worker.py`：短命令、长进程、传输进程和持久 shell 边界。

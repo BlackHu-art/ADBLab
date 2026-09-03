@@ -11,7 +11,6 @@ from gui.dialogs.lifecycle import (
     fit_secondary_window_to_owner_screen,
 )
 from gui.dialogs.live_logcat import LiveLogcatDialog
-from gui.dialogs.settings_dialog import SettingsDialog
 
 from .styles import BaseStyles
 
@@ -31,7 +30,7 @@ class SecondaryWindowHost:
 
     def _show_about_dialog(self):
         """显示关于对话框。"""
-        _debug_log(self._frame, "ui.toolbar", action="about", phase="requested")
+        _debug_log(self._frame, "ui.action", action="about", phase="requested")
         dialog = AboutDialog(self._frame)
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.installEventFilter(self._frame)
@@ -47,17 +46,17 @@ class SecondaryWindowHost:
 
     def _show_app_manager(self):
         """为每个已选设备打开应用管理窗口。"""
-        _debug_log(self._frame, "ui.toolbar", action="app_manager", phase="requested")
+        _debug_log(self._frame, "ui.action", action="app_manager", phase="requested")
         self._frame._show_device_dialogs(AppManagerDialog)
 
     def _show_file_explorer(self):
         """为每个已选设备打开文件浏览窗口。"""
-        _debug_log(self._frame, "ui.toolbar", action="file_explorer", phase="requested")
+        _debug_log(self._frame, "ui.action", action="file_explorer", phase="requested")
         self._frame._show_device_dialogs(FileExplorerDialog)
 
     def _show_logcat(self):
         """为每个已选设备打开实时 Logcat 窗口。"""
-        _debug_log(self._frame, "ui.toolbar", action="live_logcat", phase="requested")
+        _debug_log(self._frame, "ui.action", action="live_logcat", phase="requested")
         self._frame._show_device_dialogs(
             LiveLogcatDialog,
             task_supervisor=self._frame.task_supervisor,
@@ -68,7 +67,7 @@ class SecondaryWindowHost:
         """打开原生性能采集启动对话框。"""
         from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 
-        _debug_log(self._frame, "ui.toolbar", action="performance", phase="requested")
+        _debug_log(self._frame, "ui.action", action="performance", phase="requested")
         devices = self._frame.left_panel.selected_devices
         if not devices:
             _debug_log(
@@ -238,21 +237,6 @@ class SecondaryWindowHost:
             )
             return False
         return None
-
-    def _show_settings(self):
-        """显示或激活非模态的单实例设置窗口。"""
-        _debug_log(self._frame, "ui.toolbar", action="settings", phase="requested")
-        dialog = self._frame._find_active_dialog(SettingsDialog, "global")
-        if dialog:
-            self._show_fitted_dialog(dialog)
-            return
-        dialog = self._frame._register_dialog(SettingsDialog(self._frame), SettingsDialog, "global")
-        dialog.continuous_scan_toggled.connect(self._frame.set_continuous_scan)
-        dialog.log_max_lines_changed.connect(self._frame.log_panel.set_max_lines)
-        dialog.save_directory_changed.connect(lambda _path: self._frame._refresh_save_path())
-        dialog.settings_applied.connect(self._frame._refresh_live_settings)
-        _debug_log(self._frame, "ui.secondary_window", dialog="SettingsDialog", phase="opened")
-        dialog.show()
 
     def _refresh_active_dialog_themes(self):
         survivors = []

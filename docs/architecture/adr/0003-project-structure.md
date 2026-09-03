@@ -22,6 +22,11 @@ Phase 4 已落地：`services/` 顶层包移动（ADR-0004，提交 `cf19d26`）
 `c235e89`）。全量 952 项通过。后续（2026-08-19）：`_pending_ops` 死账本已整体删除
 （写入者无消费者），Controller 业务状态清零；main.py 在设置读取前注入日志接收器。
 
+后续 UI 重写（2026-09-02）改变了 Phase 2 的具体落点：可见工具栏被参考项目的
+`FluentWindow` 导航、Gallery 首页和 SettingCard 设置页取代，`main_frame_toolbar.py` 删除；
+非视觉快捷键/主题/保存目录动作迁入 `main_frame_actions.py`，页面结构迁入
+`gui/pages/fluent_pages.py`。本段记录后续事实，不改写本 ADR 当时的拆分决策。
+
 ## 背景
 
 知识库重组（2026-08-19）完成后，对代码仓库结构做了一次实测体检：

@@ -21,15 +21,15 @@ class LiveLogcatLifecycle:
         ):
             return
         if result.disposition is StopDisposition.GRACEFUL:
-            self._frame.status_bar.showMessage("Logcat stopped")
+            self._frame.status_bar.setText("Logcat stopped")
         elif result.disposition is StopDisposition.FORCED:
-            self._frame.status_bar.showMessage("Logcat force-stopped")
+            self._frame.status_bar.setText("Logcat force-stopped")
         elif result.disposition is StopDisposition.TIMED_OUT:
-            self._frame.status_bar.showMessage("Logcat cleanup timed out; task remains supervised")
+            self._frame.status_bar.setText("Logcat cleanup timed out; task remains supervised")
         elif result.disposition is StopDisposition.ALREADY_STOPPED:
-            self._frame.status_bar.showMessage("Logcat already stopped")
+            self._frame.status_bar.setText("Logcat already stopped")
         else:
-            self._frame.status_bar.showMessage("Logcat cleanup failed")
+            self._frame.status_bar.setText("Logcat cleanup failed")
         worker = self._frame.worker
         if worker is None:
             self._frame._set_running_actions(False)

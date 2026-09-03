@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWi
     QPushButton,
     QWidget,
 )
-from qfluentwidgets import InfoBadge, InfoLevel
+from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
@@ -23,7 +23,6 @@ from gui.panels.base_panel import BasePanel
 from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
-from gui.widgets.fluent.label import FluentLabel
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
 
 
@@ -193,8 +192,8 @@ class RemotePanel(BasePanel):
     _SESSION_STOPPING = "stopping"
     # 页头控件由 RemotePanelForm 通过 _frame 注入；此处声明类型供 pyright 与
     # 状态刷新方法稳定引用（视觉重设计新增，不影响任何既有契约）。
-    remote_title: FluentLabel
-    remote_subtitle: FluentLabel
+    remote_title: BodyLabel
+    remote_subtitle: BodyLabel
     remote_status_badge: InfoBadge
     _remote_section_groups: list[QWidget]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
@@ -338,22 +337,31 @@ class RemotePanel(BasePanel):
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
     def _apply_remote_header_style(self) -> None:
-        """按当前主题刷新页头徽标颜色（标题/副标题已由 FluentLabel 自随主题）。"""
+        """按当前主题刷新页头徽标颜色。"""
 
         if not hasattr(self, "remote_title"):
             return
         self._refresh_remote_status_badge()
 
     def _refresh_remote_status_badge(self) -> None:
-        """按设备选中状态刷新徽标；绿=可用，灰=未选择设备。"""
+        """按设备选中数量刷新徽标；Remote 只接受恰好一个设备。"""
 
         if not hasattr(self, "remote_status_badge"):
             return
-        has_device = bool(self.selected_devices)
-        self.remote_status_badge.setText("Ready" if has_device else "No device")
-        self.remote_status_badge.setLevel(
-            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-        )
+        count = len(self.selected_devices)
+        if count == 1:
+            text, level = "可启动", InfoLevel.SUCCESS
+            description = "已选择一台设备，可以启动远程控制"
+        elif count > 1:
+            text, level = "请选择一台", InfoLevel.WARNING
+            description = "远程控制只能操作一台已选择设备"
+        else:
+            text, level = "未选择", InfoLevel.INFOAMTION
+            description = "请先选择一台设备再使用远程控制"
+        self.remote_status_badge.setText(text)
+        self.remote_status_badge.setLevel(level)
+        self.remote_status_badge.setToolTip(description)
+        self.remote_status_badge.setAccessibleDescription(description)
 
     def _on_theme_changed_remote(self, _name: str) -> None:
         """主题切换时重建页头样式（分区 Card 自动跟随主题）。"""
@@ -370,10 +378,20 @@ class RemotePanel(BasePanel):
 
     def _update_status(self, text: str, color: str | None):
         self._status_label.setStyleSheet("font-weight: bold;")
-        status = f"Status: {text}"
+        del color
+        localized = {
+            "Checking...": "正在检查…",
+            "Error": "错误",
+            "Running": "运行中",
+            "Idle": "空闲",
+            "Disconnected": "已断开",
+            "Stopping...": "正在停止…",
+            "Stop Failed": "停止失败",
+        }.get(text, text)
+        status = f"状态：{localized}"
         self._status_label.setText(status)
         device_info = str(getattr(self, "_status_device_info", "") or "").strip()
-        details = f"{status}\nDevice: {device_info}" if device_info else status
+        details = f"{status}\n设备：{device_info}" if device_info else status
         self._status_label.setToolTip(details)
         self._status_label.setAccessibleDescription(details)
 
@@ -469,6 +487,7 @@ class RemotePanel(BasePanel):
         if worker is None and not input_shutdown.has_resources and not process_running():
             return False
         self._shutdown_task_registered = True
+
         def completion_error_type() -> str:
             return input_shutdown.error_type()
 
@@ -810,14 +829,12 @@ class RemotePanel(BasePanel):
         return (getattr(self, "_form_controller", None) or RemotePanelForm(self)).build_ui()
 
     def _build_mirroring(self):
-        return (
-            getattr(self, "_form_controller", None) or RemotePanelForm(self)
-        )._build_mirroring()
+        return (getattr(self, "_form_controller", None) or RemotePanelForm(self))._build_mirroring()
 
     def _create_checkbox(self, text: str):
-        return (
-            getattr(self, "_form_controller", None) or RemotePanelForm(self)
-        )._create_checkbox(text)
+        return (getattr(self, "_form_controller", None) or RemotePanelForm(self))._create_checkbox(
+            text
+        )
 
     def _build_control(self):
         return (getattr(self, "_form_controller", None) or RemotePanelForm(self))._build_control()
@@ -900,9 +917,7 @@ class RemotePanel(BasePanel):
         )._poll_process()
 
     def _stop_scrcpy(self):
-        return (
-            getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
-        )._stop_scrcpy()
+        return (getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self))._stop_scrcpy()
 
     def _on_stop_completed(self, stopped: bool):
         return (
@@ -989,9 +1004,9 @@ class RemotePanel(BasePanel):
         )._update_remote_queue_status(submitted, completed, result)
 
     def _send_keyevent(self, key_name: str):
-        return (
-            getattr(self, "_input_controller", None) or RemotePanelInput(self)
-        )._send_keyevent(key_name)
+        return (getattr(self, "_input_controller", None) or RemotePanelInput(self))._send_keyevent(
+            key_name
+        )
 
     def _send_remote_action(self, action: str):
         return (

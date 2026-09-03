@@ -4,17 +4,12 @@ import uuid
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import (
-    QCompleter,
-    QHBoxLayout,
-    QVBoxLayout,
-    QWidget,
-)
-from qfluentwidgets import InfoBadge, InfoLevel
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent.label import FluentLabel
+from gui.styles.fluent import apply_label_role
 from gui.widgets.responsive_layout import (
     RESPONSIVE_MINIMUM_TEXT_PROPERTY,
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
@@ -34,15 +29,15 @@ class AppPanel(BasePanel):
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
-        self._apps_section_groups: list[QWidget] = []
+        self._apps_section_groups: list[HeaderCardWidget] = []
         self._build_apps_header(lo)
 
-        g_ts = self._card_group("Text & Screen Capture")
-        gts_l = g_ts.body_layout()
+        g_ts = self._card_group("文本与屏幕")
+        gts_l = g_ts.viewLayout
         gts_l.setSpacing(2)
-        self.email_text_sender = self._in("Email, verification code, or text...")
+        self.email_text_sender = self._in("输入邮箱、验证码或其他文本…")
         self.btn_send_text = self._b(
-            "Send", "text-aa.svg", tooltip="Type the entered text on selected devices"
+            "发送文本", "text-aa.svg", tooltip="在所选设备上输入这段文本"
         )
         self._screenshot_running = False
         self._add_responsive_row(
@@ -54,15 +49,15 @@ class AppPanel(BasePanel):
             wide_columns=2,
         )
         self.btn_screenshot = self._b(
-            "Screenshot", "camera.svg", tooltip="Capture selected device screens"
+            "截图", "camera.svg", tooltip="截取所选设备屏幕"
         )
         self.record_duration = self._combo(["10s", "20s", "30s", "60s", "120s", "180s", "300s"])
         self.record_duration.setCurrentText("30s")
         self.btn_screen_record = self._b(
-            "Record", "video-camera.svg", tooltip="Start screen recording on selected devices"
+            "开始录屏", "video-camera.svg", tooltip="开始录制所选设备屏幕"
         )
         self.btn_stop_record = self._b(
-            "Stop Rec", "stop-circle.svg", tooltip="Stop the active screen recordings"
+            "停止录屏", "stop-circle.svg", tooltip="停止正在进行的屏幕录制"
         )
         self.btn_stop_record.setEnabled(False)
         self._add_responsive_row(
@@ -77,25 +72,19 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_ts)
 
-        g_pm = self._card_group("Package Manager")
-        gl_pm = g_pm.body_layout()
+        g_pm = self._card_group("应用包管理")
+        gl_pm = g_pm.viewLayout
         gl_pm.setSpacing(2)
         self.program_edit = self._combo_editable(font_role=FontRole.MONO)
-        self.program_edit.setAccessibleName("Package name")
+        self.program_edit.setAccessibleName("应用包名")
         self.program_edit.setMinimumHeight(28)
-        line_edit = self.program_edit.lineEdit()
-        assert line_edit is not None  # stub Optional 收窄
-        line_edit.setFont(self._font_mono)
-        line_edit.setProperty("fontRole", FontRole.MONO.value)
-        line_edit.setAccessibleName("Package name")
-        line_edit.setPlaceholderText("Package name")
+        self.program_edit.setFont(self._font_mono)
+        self.program_edit.setProperty("fontRole", FontRole.MONO.value)
+        self.program_edit.setPlaceholderText("输入或选择应用包名")
+        self.program_edit.addItems(self.panel._package_history)
         self.program_edit.currentTextChanged.connect(lambda _text: self._update_action_states())
-        self.completer = QCompleter(self.panel._package_history)
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.panel._apply_completer_style(self.completer)
-        self.program_edit.setCompleter(self.completer)
         self.btn_get_program = self._b(
-            "Get Current Package", "target.svg", tooltip="Read the foreground app package"
+            "获取当前应用", "target.svg", tooltip="读取前台应用包名"
         )
         self._add_responsive_row(
             gl_pm,
@@ -106,13 +95,13 @@ class AppPanel(BasePanel):
             wide_columns=2,
         )
         self.uninstall_btn = self._b(
-            "Uninstall App", "trash.svg", tooltip="Remove the selected package"
+            "卸载应用", "trash.svg", tooltip="卸载选中的应用包"
         )
         self.clear_app_data_btn = self._b(
-            "Clear Data", "eraser.svg", tooltip="Erase data for the selected package"
+            "清除数据", "eraser.svg", tooltip="清除选中应用包的数据"
         )
         self.restart_app_btn = self._b(
-            "Restart App", "repeat.svg", tooltip="Force stop and relaunch the selected package"
+            "重启应用", "repeat.svg", tooltip="强制停止并重新启动选中的应用包"
         )
         package_modes = (
             span_tail_mode("three", 3, 0, column_stretches=(1, 1, 1)),
@@ -128,13 +117,13 @@ class AppPanel(BasePanel):
             span_tail=True,
         )
         self.print_activity_btn = self._b(
-            "Activity Info", "scroll.svg", tooltip="Show activity details for the selected package"
+            "Activity 信息", "scroll.svg", tooltip="显示选中应用包的 Activity 详情"
         )
         self.parse_apk_info_btn = self._b(
-            "Parse APK", "magnifying-glass.svg", tooltip="Inspect metadata from a local APK"
+            "解析 APK", "magnifying-glass.svg", tooltip="查看本地 APK 元数据"
         )
         self.btn_force_stop = self._b(
-            "Force Stop App", "stop-circle.svg", tooltip="Force stop the selected package"
+            "强制停止", "stop-circle.svg", tooltip="强制停止选中的应用包"
         )
         second_package_binding = self._add_responsive_row(
             gl_pm,
@@ -145,15 +134,15 @@ class AppPanel(BasePanel):
             span_tail=True,
         )
         self.btn_disable_app = self._b(
-            "Disable App", "prohibit.svg", tooltip="Disable the selected package"
+            "停用应用", "prohibit.svg", tooltip="停用选中的应用包"
         )
         self.btn_enable_app = self._b(
-            "Enable App", "check-circle.svg", tooltip="Enable the selected package"
+            "启用应用", "check-circle.svg", tooltip="启用选中的应用包"
         )
         self.btn_disable_user = self._b(
-            "Disable for User",
+            "对当前用户停用",
             "user-switch.svg",
-            tooltip="Disable the package for the current user",
+            tooltip="仅对当前用户停用该应用包",
         )
         third_package_binding = self._add_responsive_row(
             gl_pm,
@@ -172,7 +161,7 @@ class AppPanel(BasePanel):
         lo.addWidget(g_pm)
 
         g_m = self._card_group("Monkey")
-        gm_l = g_m.body_layout()
+        gm_l = g_m.viewLayout
         gm_l.setSpacing(3)
 
         EVENTS_OPTS = ["100", "500", "1000", "5000", "10000", "50000", "100000", "500000"]
@@ -190,14 +179,14 @@ class AppPanel(BasePanel):
         def _mk_combo(items):
             return self._combo_editable(items)
 
-        self.monkey_events_label = self._label("Events:")
+        self.monkey_events_label = self._label("事件数：")
         self.monkey_events = _mk_combo(EVENTS_OPTS)
         self._set_combo_int_validator(self.monkey_events, 1, 1_000_000)
-        self.monkey_throttle_label = self._label("Throttle:")
+        self.monkey_throttle_label = self._label("间隔：")
         self.monkey_throttle = _mk_combo(THROTTLE_OPTS)
         self._set_combo_int_validator(self.monkey_throttle, 0, 60_000, suffix="ms")
-        self._pct_total_lbl = self._status_text("Total: --")
-        # 使用原生 ComboBox 文本区精确覆盖合法上限；固定 em 会把下拉按钮
+        self._pct_total_lbl = self._status_text("合计：--")
+        # 使用 EditableComboBox 文本区精确覆盖合法上限；固定 em 会把下拉按钮
         # 留白重复计入，导致 Monkey 在仍有空间时过早从三组降成两组或一组。
         for field, maximum_text in (
             (self.monkey_events, "1000000"),
@@ -208,15 +197,15 @@ class AppPanel(BasePanel):
             self._refresh_responsive_widget_minimum(field)
 
         pct_configs = [
-            ("Touch", "touch"),
-            ("Motion", "motion"),
-            ("Trackball", "trackball"),
-            ("Nav", "nav"),
-            ("MjNav", "majornav"),
-            ("Syskey", "syskeys"),
-            ("AppSw", "appswitch"),
-            ("Any", "anyevent"),
-            ("Pinch", "pinch"),
+            ("触摸", "touch"),
+            ("移动", "motion"),
+            ("轨迹球", "trackball"),
+            ("导航", "nav"),
+            ("主导航", "majornav"),
+            ("系统键", "syskeys"),
+            ("应用切换", "appswitch"),
+            ("其他", "anyevent"),
+            ("缩放", "pinch"),
         ]
         self._monkey_pct_combos = {}
         self._monkey_pct_labels = {}
@@ -236,9 +225,9 @@ class AppPanel(BasePanel):
             pct_widgets.extend((lbl, c))
         # 参数行和百分比行共享标签轨道；Throttle 的单位已进入下拉值，
         # 不再占用第三组的标签列。
-        label_width = QFontMetrics(BaseStyles.font_for_role(FontRole.UI)).horizontalAdvance(
-            "Trackball:"
-        ) + 4
+        label_width = (
+            QFontMetrics(BaseStyles.font_for_role(FontRole.UI)).horizontalAdvance("应用切换：") + 4
+        )
         for _lbl in (self.monkey_events_label, self.monkey_throttle_label):
             _lbl.setMinimumWidth(label_width)
         for _lbl in self._monkey_pct_labels.values():
@@ -346,9 +335,9 @@ class AppPanel(BasePanel):
         )
         self._monkey_config_layout = self.monkey_percentage_binding
 
-        self.monkey_chk_crashes = self._checkbox("Ignore crashes")
-        self.monkey_chk_timeouts = self._checkbox("Ignore timeouts")
-        self.monkey_chk_security = self._checkbox("Ignore security")
+        self.monkey_chk_crashes = self._checkbox("忽略崩溃")
+        self.monkey_chk_timeouts = self._checkbox("忽略超时")
+        self.monkey_chk_security = self._checkbox("忽略安全异常")
         self._add_responsive_row(
             gm_l,
             self.monkey_chk_crashes,
@@ -361,9 +350,11 @@ class AppPanel(BasePanel):
         )
 
         self.start_monkey_btn = self._b(
-            "Start", "robot.svg", tooltip="Start the configured Monkey test"
+            "开始测试", "robot.svg", tooltip="按当前配置启动 Monkey 测试"
         )
-        self.kill_monkey_btn = self._b("Stop", "skull.svg", tooltip="Stop the active Monkey test")
+        self.kill_monkey_btn = self._b(
+            "停止测试", "skull.svg", tooltip="停止正在运行的 Monkey 测试"
+        )
         self._set_monkey_running(False)
         self._add_responsive_row(
             gm_l,
@@ -375,22 +366,22 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_m)
 
-        g_r = self._card_group("Reports")
-        gr_l = g_r.body_layout()
+        g_r = self._card_group("报告与日志")
+        gr_l = g_r.viewLayout
         gr_l.setSpacing(2)
         self.get_bugreport_btn = self._b(
-            "Bugreport", "bug.svg", tooltip="Collect an Android bug report"
+            "生成 Bugreport", "bug.svg", tooltip="收集 Android bugreport"
         )
         self.get_anr_file_btn = self._b(
-            "ANR Files", "warning.svg", tooltip="Retrieve application-not-responding reports"
+            "提取 ANR", "warning.svg", tooltip="提取应用无响应报告"
         )
         self.btn_retrieve_devices_logs = self._b(
-            "Retrieve Logs",
+            "提取日志",
             "file-arrow-down.svg",
-            tooltip="Copy diagnostic logs from selected devices",
+            tooltip="从所选设备复制诊断日志",
         )
         self.btn_cleanup_logs = self._b(
-            "Cleanup Logs", "broom.svg", tooltip="Remove collected logs from selected devices"
+            "清理日志", "broom.svg", tooltip="删除所选设备上的已收集日志"
         )
         self._add_responsive_row(
             gr_l,
@@ -404,20 +395,20 @@ class AppPanel(BasePanel):
         )
         lo.addWidget(g_r)
 
-        g_perf = self._card_group("Performance Diagnostics")
-        gl_perf = g_perf.body_layout()
+        g_perf = self._card_group("性能诊断")
+        gl_perf = g_perf.viewLayout
         gl_perf.setSpacing(2)
 
         self.btn_meminfo = self._b(
-            "Memory", "memory.svg", tooltip="Show memory usage for the selected package"
+            "内存", "memory.svg", tooltip="显示选中应用包的内存用量"
         )
         self.btn_cpuinfo = self._b(
-            "CPU Load", "cpu.svg", tooltip="Show CPU usage for the selected package"
+            "CPU 负载", "cpu.svg", tooltip="显示选中应用包的 CPU 用量"
         )
         self.btn_battery_info = self._b(
-            "Battery", "battery-full.svg", tooltip="Show battery diagnostics"
+            "电池", "battery-full.svg", tooltip="显示电池诊断信息"
         )
-        self.btn_uptime = self._b("Uptime", "clock.svg", tooltip="Show device and process uptime")
+        self.btn_uptime = self._b("运行时长", "clock.svg", tooltip="显示设备与进程运行时长")
         self._add_responsive_row(
             gl_perf,
             (self.btn_meminfo, 1),
@@ -430,12 +421,12 @@ class AppPanel(BasePanel):
         )
 
         self.btn_top = self._b(
-            "Top Snapshot", "chart-bar.svg", tooltip="Capture a process usage snapshot"
+            "进程快照", "chart-bar.svg", tooltip="采集进程资源占用快照"
         )
-        self.btn_gfx = self._b("GFX Info", "image.svg", tooltip="Show frame rendering statistics")
-        self.btn_wakelock = self._b("Wakelocks", "lock.svg", tooltip="Show active power wake locks")
+        self.btn_gfx = self._b("GFX 信息", "image.svg", tooltip="显示帧渲染统计信息")
+        self.btn_wakelock = self._b("唤醒锁", "lock.svg", tooltip="显示活动的电源唤醒锁")
         self.btn_netstats = self._b(
-            "Net Stats", "chart-line.svg", tooltip="Show network usage statistics"
+            "网络统计", "chart-line.svg", tooltip="显示网络用量统计"
         )
         self._add_responsive_row(
             gl_perf,
@@ -470,7 +461,7 @@ class AppPanel(BasePanel):
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
-    def _card_group(self, t: str) -> QWidget:
+    def _card_group(self, t: str) -> HeaderCardWidget:
         """创建 qfluentwidgets Card 分区；标题与内容区由 Card 提供。"""
 
         card = self._card(t)
@@ -487,22 +478,22 @@ class AppPanel(BasePanel):
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self.apps_title = FluentLabel(
-            "Applications", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self.apps_title = apply_label_role(
+            BodyLabel("应用与自动化"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
-        self.apps_status_badge = InfoBadge("No device", self)
+        self.apps_status_badge = InfoBadge("未选择", self)
         self.apps_status_badge.setObjectName("appsStatusBadge")
         self.apps_status_badge.setProperty("fontRole", FontRole.UI.value)
         self.apps_status_badge.setFont(self._font_sm)
         # InfoBadge 默认对鼠标透明，会吞掉 tooltip 的悬停事件，这里恢复接收。
         self.apps_status_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-        self.apps_status_badge.setToolTip("Device availability for app actions")
+        self.apps_status_badge.setToolTip("应用操作的设备选择状态")
         title_row.addWidget(self.apps_title)
         title_row.addStretch(1)
         title_row.addWidget(self.apps_status_badge)
-        self.apps_subtitle = FluentLabel(
-            "Package, Monkey and diagnostics tools",
-            role=FontRole.UI,
+        self.apps_subtitle = apply_label_role(
+            BodyLabel("应用包、Monkey、屏幕采集与诊断工具"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
@@ -514,7 +505,7 @@ class AppPanel(BasePanel):
         self._apply_apps_header_style()
 
     def _apply_apps_header_style(self) -> None:
-        """按当前主题刷新页头徽标颜色（标题/副标题已由 FluentLabel 自随主题）。"""
+        """按当前主题刷新页头徽标颜色。"""
 
         if not hasattr(self, "apps_title"):
             return
@@ -526,10 +517,8 @@ class AppPanel(BasePanel):
         if not hasattr(self, "apps_status_badge"):
             return
         has_device = bool(self.selected_devices)
-        self.apps_status_badge.setText("Ready" if has_device else "No device")
-        self.apps_status_badge.setLevel(
-            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-        )
+        self.apps_status_badge.setText("可操作" if has_device else "未选择")
+        self.apps_status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
 
     def _on_theme_changed_apps(self, _name: str) -> None:
         """主题切换时重建页头样式（分区 Card 自动跟随主题）。"""
@@ -559,12 +548,12 @@ class AppPanel(BasePanel):
         p = AppSettings.instance().get("monkey_params", {})
 
         _events = int(p.get("events", 10000))
-        self.monkey_events.setCurrentText(str(_events))
+        self.monkey_events.setText(str(_events))
         try:
             throttle_text = self._format_monkey_throttle(p.get("throttle", 300))
         except (TypeError, ValueError):
             throttle_text = "300 ms"
-        self.monkey_throttle.setCurrentText(throttle_text)
+        self.monkey_throttle.setText(throttle_text)
         # 针对各事件类型的默认值优化，从源头减少跳出
         _pct_defaults = {
             "touch": 40,
@@ -578,7 +567,7 @@ class AppPanel(BasePanel):
             "pinch": 5,
         }
         for key, c in self._monkey_pct_combos.items():
-            c.setCurrentText(str(p.get(key, _pct_defaults.get(key, 20))))
+            c.setText(str(p.get(key, _pct_defaults.get(key, 20))))
         self.monkey_chk_crashes.setChecked(p.get("ignore_crashes", True))
         self.monkey_chk_timeouts.setChecked(p.get("ignore_timeouts", True))
         self.monkey_chk_security.setChecked(p.get("ignore_security", True))
@@ -613,16 +602,16 @@ class AppPanel(BasePanel):
                 total += int(c.currentText() or "0")
             except ValueError:
                 pass
-        self._pct_total_lbl.setText(f"Total: {total}%")
+        self._pct_total_lbl.setText(f"合计：{total}%")
         if total == 100:
             color = BaseStyles.color("LOG_SUCCESS")
-            self._pct_total_lbl.setToolTip("Event percentages total 100%")
-            self._pct_total_lbl.setAccessibleDescription("Event percentages total 100 percent")
+            self._pct_total_lbl.setToolTip("事件比例合计为 100%")
+            self._pct_total_lbl.setAccessibleDescription("事件比例合计为百分之一百")
         else:
             color = BaseStyles.color("LOG_ERROR")
-            self._pct_total_lbl.setToolTip("Event percentages must total 100%")
+            self._pct_total_lbl.setToolTip("建议将事件比例调整为合计 100%")
             self._pct_total_lbl.setAccessibleDescription(
-                f"Event percentages total {total} percent; 100 percent is recommended"
+                f"当前事件比例合计为百分之 {total}，建议调整为百分之一百"
             )
         self._pct_total_lbl.setStyleSheet(
             f"color: {color}; font-weight: 600;"
@@ -723,10 +712,10 @@ class AppPanel(BasePanel):
 
             QMessageBox.warning(
                 self,
-                "Event Mix Invalid",
-                f"Event percentages sum to {total}%, not 100%.\n"
-                "Monkey will still run but event distribution may be unexpected.\n\n"
-                "Adjust values to sum to 100% for predictable results.",
+                "事件比例未达到 100%",
+                f"当前事件比例合计为 {total}%，不是 100%。\n"
+                "Monkey 仍会运行，但事件分布可能不符合预期。\n\n"
+                "建议调整各项比例，使合计达到 100%。",
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
@@ -826,20 +815,20 @@ class AppPanel(BasePanel):
             "btn_gfx",
         )
         for name in device_only_names:
-            self._set_action_enabled(name, has_device, "Select a device first")
+            self._set_action_enabled(name, has_device, "请先选择设备")
         for name in package_names:
-            reason = "Select a device first" if not has_device else "Enter a package name first"
+            reason = "请先选择设备" if not has_device else "请先输入应用包名"
             self._set_action_enabled(name, has_device and has_package, reason)
 
         self._set_action_enabled(
             "btn_screenshot",
             has_device and not self._screenshot_running,
-            "Select a device first" if not has_device else "Screenshot is in progress",
+            "请先选择设备" if not has_device else "正在截图，请稍候",
         )
         self._set_action_enabled(
             "btn_screen_record",
             has_device and not bool(getattr(self, "_recording_running", False)),
-            "Select a device first" if not has_device else "Recording is already running",
+            "请先选择设备" if not has_device else "屏幕录制已在运行",
         )
         self._set_action_enabled(
             "btn_stop_record",
@@ -847,16 +836,16 @@ class AppPanel(BasePanel):
             and bool(getattr(self, "_recording_running", False))
             and not bool(getattr(self, "_recording_stopping", False)),
             (
-                "Stopping recording"
+                "正在停止录屏"
                 if getattr(self, "_recording_stopping", False)
-                else "No recording is running"
+                else "当前没有正在运行的录屏"
             ),
         )
         monkey_running = bool(getattr(self, "_monkey_running", False))
         self._set_action_enabled(
             "start_monkey_btn",
             has_device and has_package and not monkey_running,
-            "Select a device and enter a package name first",
+            "请先选择设备并输入应用包名",
         )
         self._set_action_enabled(
             "kill_monkey_btn",
@@ -864,9 +853,9 @@ class AppPanel(BasePanel):
             and bool(getattr(self, "_monkey_active_devices", ()))
             and not bool(getattr(self, "_monkey_stopping", False)),
             (
-                "Stopping Monkey"
+                "正在停止 Monkey"
                 if getattr(self, "_monkey_stopping", False)
-                else "Monkey is not running"
+                else "Monkey 当前未运行"
             ),
         )
 
@@ -886,7 +875,7 @@ class AppPanel(BasePanel):
     def add_package_to_history(self, pkg: str):
         if self.program_edit.findText(pkg) < 0:
             self.program_edit.addItem(pkg)
-        self.program_edit.setCurrentText(pkg)
+        self.program_edit.setText(pkg)
 
     def connect_signals(self):
         """将本页控件连接到统一的 SidePanelSignals。"""

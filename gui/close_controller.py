@@ -209,10 +209,6 @@ class CloseController:
                 ),
                 flush_immediately=True,
             )
-        if self._frame._panel_size_save_timer.isActive():
-            self._frame._panel_size_save_timer.stop()
-            self._frame._save_pending_panel_sizes()
-
         # 最终用户日志必须在 GUI 线程刷新并冻结；后台 finalizer 只负责配置落盘。
         self._frame.log_service.shutdown()
         finalizer = ThreadedShutdownTask(

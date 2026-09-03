@@ -41,6 +41,9 @@ class _ADBControllerBase:
         self.testing_model = ADBTesting()
         self.advanced_model = ADBAdvanced()
         self._pending_lock = threading.Lock()
+        self._device_topology_lock = threading.Lock()
+        self._device_topology_generation = 0
+        self._device_topology: tuple[str, ...] = ()
         self.operation_manager = OperationManager()
         self.install_batch_use_case = InstallBatchUseCase(
             self.operation_manager,
@@ -180,11 +183,12 @@ class _ADBControllerBase:
                         getattr(self, "_process_device_list")(result["devices"])
                     else:
                         self._emit_operation(
-                            op_type, False, result.get("error", "Failed to list devices")
+                            "refresh",
+                            False,
+                            result.get("error", "Failed to list devices"),
                         )
-                        self.signals.devices_updated.emit([])
                 else:
-                    self._emit_operation(op_type, False, "Invalid device list format")
+                    self._emit_operation("refresh", False, "Invalid device list format")
                 return
 
             handler = self._handler_map.get(op_type)

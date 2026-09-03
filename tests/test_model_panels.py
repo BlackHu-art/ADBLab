@@ -10,8 +10,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication, QListWidget, QListWidgetItem, QPushButton, QWidget
-from qfluentwidgets import ComboBox, PrimaryPushButton
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import (
+    QApplication,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QStyle,
+    QStyleOptionViewItem,
+    QWidget,
+)
+from qfluentwidgets import ComboBox, EditableComboBox, PrimaryPushButton
 
 from controllers._system import ADBSystemControllerMixin
 from gui.panels.app_panel import AppPanel
@@ -20,7 +29,6 @@ from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from gui.panels.side_panel_signals import SidePanelSignals
-from gui.widgets.fluent.button import DangerPushButton
 from utils.adb_targets import normalize_adb_connect_target
 
 
@@ -40,7 +48,7 @@ def test_device_manager_shows_placeholder_for_new_unstored_device():
     item = manager.listbox_devices.item(0)
     assert "Detecting" in item.text()
     assert item.data(Qt.UserRole)["ip"] == "emulator-5554"
-    manager.set_discovery_state.assert_called_once_with("ready")
+    manager.set_discovery_state.assert_not_called()
 
 
 def test_device_manager_updates_device_list_incrementally():
@@ -75,7 +83,7 @@ def test_device_manager_updates_device_list_incrementally():
     assert first_item.checkState() == Qt.Checked
     assert manager.listbox_devices.item(1).data(Qt.UserRole)["ip"] == "device-3"
     assert "Detecting" in manager.listbox_devices.item(1).text()
-    assert manager.set_discovery_state.call_args_list == [call("ready"), call("ready")]
+    manager.set_discovery_state.assert_not_called()
 
 
 def test_device_manager_none_device_list_clears_without_model_lookup():
@@ -97,7 +105,7 @@ def test_device_manager_none_device_list_clears_without_model_lookup():
     get_devices.assert_not_called()
     assert manager.listbox_devices.count() == 0
     assert panel._connected_device_cache == []
-    manager.set_discovery_state.assert_called_once_with("empty")
+    manager.set_discovery_state.assert_not_called()
 
 
 def _build_connect_device_manager():
@@ -108,7 +116,6 @@ def _build_connect_device_manager():
     panel._font_base = QFont()
     panel._user_selected_ip = False
     panel._current_ip = ""
-    panel._apply_completer_style = Mock()
     panel.selected_devices = []
     manager = DeviceManager(panel)
     with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
@@ -135,8 +142,8 @@ def test_device_manager_return_pressed_requests_connect_with_normalized_target()
     panel.signals.connect_requested.connect(emitted.append)
 
     try:
-        manager.ip_entry.setCurrentText(" 10.0.0.195 : 5555 ")
-        manager.ip_entry.lineEdit().returnPressed.emit()
+        manager.ip_entry.setText(" 10.0.0.195 : 5555 ")
+        manager.ip_entry.returnPressed.emit()
     finally:
         widget.close()
         manager.close()
@@ -153,7 +160,7 @@ def test_device_manager_rejects_incomplete_connect_target_before_signal_emit():
     panel.signals.log_message.connect(lambda level, message: logs.append((level, message)))
 
     try:
-        manager.ip_entry.setCurrentText("10.0.0.195")
+        manager.ip_entry.setText("10.0.0.195")
         manager.btn_connect_devices.click()
     finally:
         widget.close()
@@ -184,7 +191,7 @@ def test_base_panel_button_factory_rejects_missing_functional_help():
     panel._font_sm = QFont()
     base = BasePanel(panel)
 
-    with pytest.raises(ValueError, match="Buttons must provide a functional tooltip"):
+    with pytest.raises(ValueError, match="must provide a functional tooltip"):
         base._b("Refresh", "arrows-clockwise.svg")
 
 
@@ -199,9 +206,9 @@ def test_base_panel_text_factories_apply_panel_fonts():
     status = base._status_text("Total")
     checkbox = base._checkbox("Ignore crashes")
 
-    assert label.font().pointSize() == 15
+    assert label.property("fontRole") == "ui"
     assert status.objectName() == "statusLabel"
-    assert checkbox.font().pointSize() == 15
+    assert checkbox.property("fontRole") == "ui"
 
 
 def test_base_panel_row_helper_adds_weighted_widgets():
@@ -225,23 +232,125 @@ def test_device_manager_skips_unchanged_device_combo_refresh():
     panel = Mock()
     manager = SimpleNamespace()
     manager.panel = panel
-    manager._device_model = Mock()
-    manager.ip_entry = Mock()
-    manager._sync_address_popup_width = Mock()
+    manager.ip_entry = EditableComboBox()
 
-    with (
-        patch(
-            "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
-            return_value=[("Google", "Pixel", "device-1")],
-        ),
-        patch("gui.panels.device_manager.QCompleter", return_value=Mock()) as completer_cls,
+    with patch(
+        "gui.panels.device_manager_view.DeviceStore.get_basic_devices_info",
+        return_value=[("Google", "Pixel", "device-1")],
     ):
         DeviceManager._refresh_device_combobox(manager)
+        first_item = manager.ip_entry.items[0]
         DeviceManager._refresh_device_combobox(manager)
 
-    manager._device_model.removeRows.assert_called_once()
-    manager._sync_address_popup_width.assert_called_once_with()
-    completer_cls.assert_called_once()
+    assert manager.ip_entry.count() == 1
+    assert manager.ip_entry.itemData(0) == "device-1"
+    assert manager.ip_entry.items[0] is first_item
+
+
+def test_device_history_refresh_preserves_current_input_and_cursor():
+    _app = QApplication.instance() or QApplication([])
+    manager = SimpleNamespace(panel=Mock(), ip_entry=EditableComboBox())
+    manager.ip_entry.setText("192.0.2.20:5555")
+    manager.ip_entry.setCursorPosition(8)
+
+    with patch(
+        "gui.panels.device_manager_view.DeviceStore.get_basic_devices_info",
+        return_value=[("Google", "Pixel", "device-1")],
+    ):
+        DeviceManager._refresh_device_combobox(manager)
+
+    assert manager.ip_entry.currentText() == "192.0.2.20:5555"
+    assert manager.ip_entry.cursorPosition() == 8
+    assert manager.ip_entry.itemData(0) == "device-1"
+
+
+def test_side_panel_refresh_owns_scanning_state_and_rejects_duplicates():
+    _app = QApplication.instance() or QApplication([])
+    with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
+        panel = SidePanel()
+    requested = []
+    states = []
+    panel.signals.refresh_devices_requested.connect(lambda: requested.append(True))
+    panel.device_discovery_state_changed.connect(states.append)
+
+    try:
+        panel.set_device_discovery_state("ready")
+        states.clear()
+
+        panel._devices_tab.btn_refresh.click()
+        panel._devices_tab._request_refresh()
+
+        assert requested == [True]
+        assert states == ["scanning"]
+        assert panel._device_discovery_state == "scanning"
+        assert not panel._devices_tab.btn_refresh.isEnabled()
+        assert "正在扫描" in panel._devices_tab.btn_refresh.toolTip()
+
+        panel.set_device_discovery_state("empty")
+        assert panel._devices_tab.btn_refresh.isEnabled()
+        assert panel._devices_tab.btn_refresh.toolTip() == "扫描已连接设备"
+    finally:
+        panel.close()
+
+
+def test_device_card_keeps_native_check_indicator_visible_and_clickable(qt_application):
+    device = "device-1"
+    info = {
+        "Brand": "Google",
+        "Model": "Pixel",
+        "Aversion": "15",
+        "ip": device,
+    }
+    with (
+        patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]),
+        patch(
+            "gui.panels.device_manager_view.DeviceStore.get_full_devices_info",
+            return_value=[info],
+        ),
+    ):
+        panel = SidePanel()
+        panel.update_device_list([device])
+    manager = panel._devices_tab
+    widget = panel.device_widget
+
+    try:
+        widget.resize(700, 450)
+        widget.show()
+        manager.listbox_devices.doItemsLayout()
+        qt_application.processEvents()
+
+        item = manager.listbox_devices.item(0)
+        card = manager.listbox_devices.itemWidget(item)
+        option = QStyleOptionViewItem()
+        manager.listbox_devices.initViewItemOption(option)
+        option.rect = manager.listbox_devices.visualItemRect(item)
+        option.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        option.checkState = item.checkState()
+        check_rect = manager.listbox_devices.style().subElementRect(
+            QStyle.SubElement.SE_ItemViewItemCheckIndicator,
+            option,
+            manager.listbox_devices,
+        )
+        check_center_in_card = card.mapFrom(
+            manager.listbox_devices.viewport(),
+            check_rect.center(),
+        )
+
+        assert card.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        assert not card._content.geometry().contains(check_center_in_card)
+        assert item.checkState() == Qt.CheckState.Unchecked
+
+        QTest.mouseClick(
+            manager.listbox_devices.viewport(),
+            Qt.MouseButton.LeftButton,
+            pos=check_rect.center(),
+        )
+        qt_application.processEvents()
+        assert item.checkState() == Qt.CheckState.Checked
+        assert panel.selected_devices == [device]
+    finally:
+        widget.close()
+        panel.close()
 
 
 def test_side_panel_theme_refresh_updates_button_icons():
@@ -252,18 +361,14 @@ def test_side_panel_theme_refresh_updates_button_icons():
     panel._font_mono = QFont()
     panel._font_tab = QFont()
     panel._create_fonts = Mock()
-    panel.tabs = Mock()
-    panel._apply_tab_style = Mock()
     panel._devices_tab = Mock()
     panel._devices_tab._apply_device_list_style = Mock()
-    panel._devices_tab.ip_entry.completer.return_value = None
     panel._apps_tab = Mock()
-    panel._apps_tab.completer = None
     button = QPushButton("Refresh")
     button.setProperty("iconName", "arrows-clockwise.svg")
     panel.findChildren = Mock(return_value=[button])
+    panel._visual_roots = lambda: [panel]
     panel.setStyleSheet = Mock()
-    panel._apply_completer_style = Mock()
     panel.apply_device_theme = Mock()
 
     with patch("gui.panels.side_panel.get_themed_icon", return_value=QIcon()) as themed_icon:
@@ -277,9 +382,7 @@ def test_side_panel_public_helpers_wrap_internal_tabs():
     panel = SimpleNamespace()
     panel._device_widget = device_widget
     panel._devices_tab = Mock()
-    panel._devices_tab.ip_entry.completer.return_value = None
     panel._apps_tab = Mock(package_text="com.example.app")
-    panel._apply_completer_style = Mock()
 
     assert SidePanel.device_widget.fget(panel) is device_widget
     assert SidePanel.current_package_text(panel) == "com.example.app"
@@ -351,7 +454,7 @@ def test_remote_start_stop_buttons_follow_running_state():
     owner = QWidget()
     remote = SimpleNamespace(
         btn_start=PrimaryPushButton(owner),
-        btn_stop=DangerPushButton(parent=owner),
+        btn_stop=PrimaryPushButton(owner),
     )
     remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(remote, button)
     remote._set_button_enabled = lambda button, enabled: BasePanel._set_button_enabled(
@@ -440,7 +543,7 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
         settings.get.return_value = {}
         widget = panel.build_ui()
         try:
-            panel.program_edit.setCurrentText("com.example.app")
+            panel.program_edit.setText("com.example.app")
 
             assert panel.start_monkey_btn.isEnabled() is True
             assert panel.kill_monkey_btn.isEnabled() is False
@@ -546,7 +649,7 @@ def test_app_panel_routes_disable_buttons_to_distinct_signals():
         widget = panel.build_ui()
         panel.connect_signals()
         try:
-            panel.program_edit.setCurrentText("com.example.app")
+            panel.program_edit.setText("com.example.app")
             panel.btn_disable_app.click()
             panel.btn_disable_user.click()
         finally:
@@ -630,9 +733,15 @@ def test_side_panel_loaded_buttons_have_tooltips_and_registered_icons():
         panel._ensure_tab_loaded(1)
         panel._ensure_tab_loaded(2)
 
+        roots = [
+            panel.device_widget,
+            *(panel._tab_scroll_areas[index].widget() for index in range(3)),
+        ]
         buttons = [
-            b for b in panel.findChildren(QPushButton)
-            if not isinstance(b, ComboBox)
+            button
+            for root in roots
+            for button in root.findChildren(QPushButton)
+            if not isinstance(button, ComboBox)
         ]
 
         assert buttons

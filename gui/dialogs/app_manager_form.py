@@ -9,9 +9,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QLayout,
-    QListWidget,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -20,24 +18,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
     CardWidget,
     ComboBox,
     InfoBadge,
     InfoLevel,
     LineEdit,
+    ListWidget,
     PushButton,
-    SmoothScrollDelegate,
+    RoundMenu,
     TextEdit,
     TreeView,
 )
 
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.label import FluentLabel
-from gui.widgets.fluent.menu import FluentMenu
-from gui.widgets.fluent.status_bar import FluentStatusBar
 from gui.widgets.responsive_layout import reflow_widgets
 
 
@@ -88,8 +87,8 @@ class AppManagerForm:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = FluentLabel(
-            "App Manager", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self._frame.dialog_title = apply_label_role(
+            BodyLabel("App Manager"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
         self._frame.status_badge = InfoBadge.info("No device", header_card)
@@ -99,9 +98,9 @@ class AppManagerForm:
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = FluentLabel(
-            "Install, inspect and control device packages",
-            role=FontRole.UI,
+        self._frame.dialog_subtitle = apply_label_role(
+            BodyLabel("Install, inspect and control device packages"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
@@ -113,19 +112,19 @@ class AppManagerForm:
 
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
-        self._frame._search_label = QLabel("Search:")
+        self._frame._search_label = apply_label_role(BodyLabel("Search:"), FontRole.UI)
         self._frame.search_input = LineEdit()
         self._frame.search_input.setPlaceholderText("Filter...")
         self._frame._search_label.setBuddy(self._frame.search_input)
         self._frame.search_input.setAccessibleName("Application search")
         self._frame.search_input.textChanged.connect(self._frame._filter)
-        self._frame._type_label = QLabel("Type:")
+        self._frame._type_label = apply_label_role(BodyLabel("Type:"), FontRole.UI)
         self._frame.type_filter = ComboBox()
         self._frame.type_filter.addItems(["All", "User Apps", "System Apps"])
         self._frame._type_label.setBuddy(self._frame.type_filter)
         self._frame.type_filter.setAccessibleName("Application type")
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
-        self._frame.selection_label = QLabel("Selected: 0")
+        self._frame.selection_label = apply_label_role(BodyLabel("Selected: 0"), FontRole.UI)
         self._frame.selection_label.setMinimumWidth(82)
         self._frame.view_toggle = PushButton()
         self._frame.view_toggle.setFixedSize(28, 28)
@@ -189,21 +188,18 @@ class AppManagerForm:
         )
         self._frame.stack.addWidget(self._frame.tree)
 
-        self._frame.icon_list = QListWidget()
-        self._frame.icon_list.setViewMode(QListWidget.ViewMode.IconMode)
-        self._frame.icon_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self._frame.icon_list = ListWidget()
+        self._frame.icon_list.setViewMode(ListWidget.ViewMode.IconMode)
+        self._frame.icon_list.setResizeMode(ListWidget.ResizeMode.Adjust)
         self._frame.icon_list.setIconSize(QSize(48, 48))
         self._frame.icon_list.setSpacing(4)
         self._frame.icon_list.setGridSize(QSize(110, 80))
         self._frame.icon_list.setWordWrap(True)
-        self._frame.icon_list.setMovement(QListWidget.Movement.Static)
-        # IconMode 下 qfluentwidgets ListWidget 的固定行高会破坏图标网格，故保留原生
-        # QListWidget，仅用 SmoothScrollDelegate 承接滚动条为 Fluent 平滑滚动条。
-        SmoothScrollDelegate(self._frame.icon_list)
+        self._frame.icon_list.setMovement(ListWidget.Movement.Static)
         self._frame.icon_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._frame.icon_list.customContextMenuRequested.connect(self._frame._icon_context_menu)
         self._frame.icon_list.itemDoubleClicked.connect(self._frame._icon_double_click)
-        self._frame.icon_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
+        self._frame.icon_list.setSelectionMode(ListWidget.SelectionMode.ExtendedSelection)
         self._frame.icon_list.itemSelectionChanged.connect(self._frame._on_icon_selection_changed)
         self._frame.icon_list.verticalScrollBar().valueChanged.connect(
             lambda _value: self._frame._schedule_visible_detail_load()
@@ -311,8 +307,10 @@ class AppManagerForm:
         self._frame.log_output.setPlaceholderText("Operation log...")
         layout.addWidget(self._frame.log_output, 1)
 
-        self._frame.status_bar = FluentStatusBar()
-        self._frame.status_bar.showMessage("Ready")
+        self._frame.status_bar = apply_label_role(
+            CaptionLabel("Ready"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self._frame.status_bar.setAccessibleName("Application manager status")
         layout.addWidget(self._frame.status_bar)
         self._frame._update_selection_ui()
         self._frame._reflow_action_buttons()
@@ -337,7 +335,7 @@ class AppManagerForm:
             f"{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px"
             "; }"
         )
-        # 状态栏样式由 FluentStatusBar 自维护（随主题重建）。
+        # 状态信息直接使用 qfluentwidgets CaptionLabel。
         for control in self._frame._top_controls:
             control.setFont(ui_font)
             control.updateGeometry()
@@ -356,7 +354,7 @@ class AppManagerForm:
     # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
 
     def _apply_header_style(self) -> None:
-        """视觉重设计：按字体变更刷新页头标签与徽标（颜色由 FluentLabel/InfoBadge 自随主题）。"""
+        """按字体变更刷新直接使用的参考标签与徽标。"""
 
         bs = BaseStyles
         self._frame.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
@@ -369,9 +367,7 @@ class AppManagerForm:
 
         has_device = bool(self._frame.device_ip)
         self._frame.status_badge.setText("Ready" if has_device else "No device")
-        self._frame.status_badge.setLevel(
-            InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-        )
+        self._frame.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
 
     def _action_layout_available_width(self) -> int:
         margins = self._frame.layout().contentsMargins()
@@ -496,7 +492,9 @@ class AppManagerForm:
         self._frame._top_layout.addWidget(self._frame.refresh_btn, 2, 2)
         self._frame._top_layout.setColumnStretch(2, 1)
 
-    def _create_context_menu(self) -> FluentMenu:
+    def _create_context_menu(self) -> RoundMenu:
         """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        return FluentMenu(parent=self._frame)
+        menu = RoundMenu(parent=self._frame)
+        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
+        return menu

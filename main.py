@@ -124,7 +124,8 @@ def _run_gui() -> int:
 
     # 字体管理器同时更新 QApplication 与各字体角色，保持单一应用入口。
     BaseStyles.reload_from_settings()
-    saved_theme = AppSettings.instance().get("theme", "Light")
+    BaseStyles.set_accent_color(AppSettings.instance().get("accent_color", "#0F6CBD"))
+    saved_theme = AppSettings.instance().get("theme", "System")
     BaseStyles.switch_theme(saved_theme)
 
     window = MainFrame()

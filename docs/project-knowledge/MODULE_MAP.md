@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-25
+last_verified: 2026-09-03
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -11,11 +11,11 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 | 模块 | 路径 | 职责 | 入口 | 上游 | 下游 | 核心文件 | 测试 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 启动与元数据 | `main.py`、`utils/app_metadata.py` | CLI 分派、GUI 启动、打包自检、版本 | `main.py` | 用户、PyInstaller | Qt、MainFrame、MobilePerf | `main.py` | `test_model_*.py` |
-| GUI 壳与接线 | `gui/main_frame.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 主窗口、qfluentwidgets NavigationInterface 左侧导航、原生无边框移动/缩放、尺寸与分栏恢复、设备扫描、信号接线、关闭清理 | `MainFrame` | 启动入口 | panels、dialogs、controller、AppSettings、qfluentwidgets | `main_frame.py`、`window_layout.py` | `test_model_*.py`、`test_main_window_layout.py` |
-| 面板 | `gui/panels/`、`gui/widgets/responsive_layout.py`、`gui/widgets/responsive_controller.py`（re-export，实体在 `responsive_primitives.py`/`responsive_coordinator.py`/`responsive_binding.py`） | 设备/应用/系统/Remote/日志交互、懒加载滚动容器与响应式重排（`ResponsiveCoordinator` 单一协调入口） | Qt 事件与 `SidePanelSignals` | 用户、MainFrame | controller、remote service | `side_panel.py`、`base_panel.py`、`app_panel.py`、`system_panel.py`、`remote_panel.py`、`device_manager.py`（+ `device_manager_layout.py`/`device_manager_view.py`/`device_manager_responsive.py`）、`responsive_controller.py` | `test_model_*.py`、`test_remote_services.py`、`test_responsive_panels.py`、`test_responsive_layout_controller.py` |
-| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图、设置 | MainFrame/面板按钮 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`（+ `app_manager_details/form/views/batch.py`）、`file_explorer.py`（+ `file_explorer_list/view/ops/image.py`）、`live_logcat.py`（+ `live_logcat_worker/highlighter/form/stream/lifecycle.py`）、`screenshot_viewer.py`（+ `screenshot_viewer_widgets/ui/nav/actions.py`）、`performance_launcher.py`、`settings_dialog.py`、`lifecycle.py` | `test_model_*.py`、`test_settings_typography.py`、`test_settings_window_layout.py`、`test_window_lifecycle.py`、`test_app_manager_selection.py` |
-| 样式与字体 | `gui/styles/` | 主题（桥接 qfluentwidgets setTheme/setThemeColor）、QSS、应用级字体配置、字体角色与细粒度变更信号 | `BaseStyles`、`TypographyManager` | 启动入口、SettingsDialog | QApplication、全局 GUI、qfluentwidgets | `typography.py`、`fonts.py`、`theme.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` |
-| Fluent 组件库 | `gui/widgets/fluent/` | 自研 Fluent 组件；Card/ProgressBar 已迁到 qfluentwidgets（CardWidget/ProgressBar），ComboBox/Button/Segmented/States 因契约不匹配保留自研，NavBar 保留供 shell 测试 | `Card`、`FluentProgressBar` 等 | panels、dialogs | qfluentwidgets、`BaseStyles` | `card.py`、`progress.py`、`combo_box.py`、`nav.py` 等 | `test_fluent_components.py`、`test_navbar.py` |
+| GUI 壳与接线 | `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py` | 直接使用 qfluentwidgets `FluentWindow.addSubInterface()` 的五入口主窗口；Gallery Banner/FlowLayout 首页、常驻设备上下文、SegmentedWidget 工作台、SettingCard 设置页、原生无边框缩放、设备扫描、信号接线和关闭清理 | `MainFrame` | 启动入口 | pages、panels、dialogs、controller、AppSettings、qfluentwidgets | `main_frame.py`、`main_frame_actions.py`、`fluent_pages.py` | `test_model_*.py`、`test_main_window_layout.py` |
+| 面板 | `gui/panels/`、`gui/widgets/responsive_layout.py`、`gui/widgets/responsive_controller.py`（re-export，实体在 `responsive_primitives.py`/`responsive_coordinator.py`/`responsive_binding.py`） | 设备/应用/系统/Remote/日志交互与响应式重排；`SidePanel` 是面板所有权、共享设备状态和业务信号兼容门面，不是可见左侧导航；全部工作台面板在 MainFrame 启动时实例化 | Qt 事件与 `SidePanelSignals` | 用户、MainFrame 页面 | controller、remote service | `side_panel.py`、`base_panel.py`、`app_panel.py`、`system_panel.py`、`remote_panel.py`、`device_manager.py`（+ `device_manager_layout.py`/`device_manager_view.py`/`device_manager_responsive.py`）、`responsive_controller.py` | `test_model_*.py`、`test_remote_services.py`、`test_responsive_panels.py`、`test_responsive_layout_controller.py` |
+| 对话框 | `gui/dialogs/` | 应用管理、文件、logcat、MobilePerf、截图等独立任务；Settings 不再使用对话框 | MainFrame/页面卡片 | 用户、MainFrame | workers、services、文件系统 | `app_manager.py`（+ `app_manager_details/form/views/batch.py`）、`file_explorer.py`（+ `file_explorer_list/view/ops/image.py`）、`live_logcat.py`（+ `live_logcat_worker/highlighter/form/stream/lifecycle.py`）、`screenshot_viewer.py`（+ `screenshot_viewer_widgets/ui/nav/actions.py`）、`performance_launcher.py`、`lifecycle.py` | `test_model_*.py`、`test_window_lifecycle.py`、`test_app_manager_selection.py` |
+| 样式与字体 | `gui/styles/` | 主题（桥接 qfluentwidgets `setTheme`/`setThemeColor`）、应用级字体配置、字体角色、细粒度变更信号及无继承的控件配置辅助；项目专用容器/图表/焦点样式按组件就地维护 | `BaseStyles`、`TypographyManager`、`configure_fluent_control` | 启动入口、SettingsPage、panels、dialogs | QApplication、全局 GUI、qfluentwidgets | `typography.py`、`fonts.py`、`theme.py`、`fluent.py` | `test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py`、`test_fluent_components.py` |
+| Fluent 直接集成 | `gui/styles/fluent.py`、`gui/widgets/preset_spin_box.py` | 可见通用控件直接实例化 qfluentwidgets；项目层只保留字体/提示/焦点配置函数和带严格数值业务契约的复合控件，旧 `gui/widgets/fluent/` 与全局 `gui/styles/qss.py` 已删除 | qfluentwidgets 公开组件、`StrictInt*` | panels、dialogs、MainFrame | qfluentwidgets、`BaseStyles` | `fluent.py`、`preset_spin_box.py` | `test_fluent_components.py`、`test_navbar.py`、`test_preset_spin_box.py` |
 | 屏幕适配 | `gui/screen_adapter.py` | `ScreenAdapter` 协议 + `QtScreenAdapter`：屏幕/可用几何/DPI 与变更订阅 | `QtScreenAdapter` | MainFrame、二级窗口生命周期 | QScreen、QGuiApplication | `screen_adapter.py` | `test_main_window_layout.py`、`test_ui_geometry_helpers.py`、`test_ui_dpi_matrix.py` |
 | Controller | `controllers/` | Qt 信号到 model 调用及结果聚合、批次所有权/generation 边界 | `ADBController` | MainFrame、panels | ADB models、DeviceStore、InstallBatchUseCase/OperationManager | `_base.py` 与 6 个 mixin | `test_model_*.py` |
 | vNext Operation | `adblab/application/` | 业务 operation 状态、fan-out、取消意图与兼容 metadata envelope；安装批次用例 | `OperationManager`、`InstallBatchUseCase` | 迁移中的 Controller/use case | 纯 Python 锁与值对象 | `operations.py`、`cancellation.py`、`envelope.py`、`install_batch.py` | `test_phase1_operations.py`、`test_phase2_install_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
@@ -45,56 +45,66 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 
 ### GUI 壳与面板
 
-- **职责/接口**：`MainFrame` 构建工具栏、qfluentwidgets `NavigationInterface` 左侧导航
-  （devices/tasks/logs/settings，展开 120px、窗口宽 <720px 折叠）、左右分栏、Device/Apps/System/Remote 页签和对话框；
+- **职责/接口**：`MainFrame` 直接继承 qfluentwidgets `FluentWindow`，通过
+  `addSubInterface()` 注册 Home/Workspace/Tasks/Logs/Settings 五个顶层入口；Workspace 再通过
+  `SegmentedWidget` 切换 Devices/Apps/System/Remote 四个任务分区，并与首页共享只读设备上下文；
+  导航选中态在页面过渡前同步，工作台标题、副标题和分区内容由同一分区激活路径原子更新；
+  `gui/pages/fluent_pages.py` 按参考 Gallery 代码组织 108px 标题区、32px 内容边距、Banner、
+  FlowLayout 快捷卡片、设备上下文卡和 SettingCardGroup；旧顶部工具栏、左右 splitter、日志常驻区和功能页签已移除；
+  通用可见控件直接使用 qfluentwidgets，Qt 本身仅继续承担参考项目同样依赖的布局、事件、信号、
+  窗口和线程生命周期；不再维护项目自研 Fluent 控件继承体系；
   `FramelessResizeController` 通过四边四角共八个透明热区调用原生缩放；
-  `window_layout_snapshot/restore_default_window_size/reset_panel_split` 是 Settings 使用的公开布局接口；
+  `restore_default_window_size` 是 SettingsPage 恢复窗口尺寸的接口；
   `_ScanThread` 周期执行设备发现（扫描超时 15 秒以兼容端点防护拖慢的 adb 启动），失败仅更新
-  发现状态为 unavailable，不再自动恢复 ADB Server；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口；
-  主窗口通过 `QtScreenAdapter` 获取所在屏幕、可用几何和逻辑 DPI，并据此约束工作区（窄宽工具栏
-  把放不下的共享 `QAction` 收入 More 菜单，Devices 以局部双向滚动承接短屏/窄栏，保存路径省略、
-  日志区软最小高度、二级窗口按 owner 屏幕适配）。
+  发现状态为 unavailable 并保留旧列表，不再自动恢复 ADB Server；手动刷新失败会使扫描快照失效，
+  下一次成功即使集合相同也重发；`SidePanelSignals`/`ADBControllerSignals` 是 UI 业务接口；
+  主窗口通过 `QtScreenAdapter` 获取所在屏幕、可用几何和逻辑 DPI，并据此约束工作区；各工作台
+  分区独立滚动，首页 FlowLayout 负责窄屏换行，二级窗口按 owner 屏幕适配。
+- **实例化边界**：MainFrame 构建 Workspace 时调用 `_ensure_tab_loaded(0..2)`，Apps/System/Remote
+  与 Devices 都在启动阶段创建。`SidePanel` 中的 lazy 命名仅为兼容实现细节，当前没有真正的
+  页面懒加载。
 - **输入/输出**：Qt 事件、选中设备和表单值；输出控制信号、日志、状态栏和对话框。
 - **上下游**：上游是 QApplication/用户；下游是 `ADBController`、各 panel/dialog、`CommandRunner`、`AppSettings`、`gui/screen_adapter.py`。
 - **配置/数据/外部服务**：`continuous_device_scan`、`device_scan_interval_ms`、窗口尺寸、
-  `panel_split_ratio`、主题、字体、保存目录；通过 ADB 扫描设备。常规屏幕保留不小于 860×500
-  的字体感知设计下限；屏幕可用范围更小时，有效窗口尺寸和最小尺寸裁到可用范围内，由 Devices
-  滚动区保持内容可达并为 Log 保留一行软下限；左栏比例限制为 0.20–0.70。
-- **测试/风险/待确认**：原生缩放热区、尺寸/比例校验、批量设置适配和响应式断点有单测；
+  系统/浅色/深色主题、强调色、Mica、字体、保存目录；通过 ADB 扫描设备。常规屏幕保留不小于 860×500 的设计下限；屏幕可用
+  范围更小时，有效窗口尺寸和最小尺寸裁到可用范围内，由各页面滚动区保持内容可达。
+- **测试/风险/待确认**：原生缩放热区、窗口尺寸校验、批量设置适配和响应式断点有单测；
   MainFrame 现在持有应用自有 `QtTaskSupervisor` 并注入 LiveLogcat，
   同时作为设备对话框、Performance Launcher 和 ScreenshotViewer 的统一生命周期 owner；
   这些非模态窗口不建立 Qt parent/transient owner，允许与主界面自由切换；
-  自动测试覆盖窄工具栏 More、Devices 双向滚动、12/22pt 短屏边界和字号往返恢复；原生缩放在
+  自动测试覆盖 Gallery FlowLayout、五入口导航、工作台分区/常驻设备上下文、SettingCard、
+  深色隐藏分区表面、Devices 滚动、12/22pt 短屏边界和字号往返；原生缩放在
   不同窗口管理器下的实际手感及真实跨屏高 DPI 视觉仍需人工验证；主窗口 close 已改为
   两阶段异步关闭（broadcast-first deadline，Gate B2 通过，契约测试见
   `test_phase2_mainframe_shutdown_gate.py`）；`main_frame.py` 已按 ADR-0003 Phase 2 拆出
-  `main_frame_toolbar.py`/`secondary_windows.py`/`close_controller.py` 三个组合模块
-  （MainFrame 约 1,700 行，保留同名委托 wrapper）。
+  `main_frame_actions.py`（非视觉动作）、`secondary_windows.py` 和 `close_controller.py`。旧 UI
+  删除清单为 `main_frame_shell.py`、`main_frame_toolbar.py`、`dialogs/settings_dialog.py`、
+  `pages/devices_page.py`、`pages/log_page.py`、`styles/qss.py`、`widgets/fluent/`、
+  `widgets/double_click_button.py`，以及旧 Settings 窗口专用的两个测试文件。
 
 ### 对话框
 
-- **职责/接口**：`AppManagerDialog`、`FileExplorerDialog`、`LiveLogcatDialog`、`PerformanceLauncherDialog`、`ScreenshotViewer`、`SettingsDialog` 分别处理复杂交互；LiveLogcat 使用
+- **职责/接口**：`AppManagerDialog`、`FileExplorerDialog`、`LiveLogcatDialog`、`PerformanceLauncherDialog`、`ScreenshotViewer` 分别处理复杂交互；LiveLogcat 使用
   `TaskSupervisor`/producer-side bounded batch，阻塞 stdout 由受控 reader 读取，Worker 按包名周期刷新
   全部 PID 并在本地严格过滤；运行中重新获取前台包会切换过滤 generation。其他对话框主要使用
   `gui/dialogs/lifecycle.py`。
 - **输入/输出**：设备标识、文件/包名、用户配置；输出 ADB 操作、结果文件、日志和设置。
 - **上下游**：上游为 MainFrame/用户；下游为专用 QThread、model service、ProcessRunner、文件系统。
-- **配置/数据/外部服务**：保存目录、日志上限、主题、字体、窗口布局、MobilePerf 参数；
-  SettingsDialog 通过 MainFrame 公开接口展示/恢复窗口尺寸和分栏，并用纵向滚动区及字号感知
-  断点重排外观、窗口、保存目录和日志设置；ScreenshotViewer 的元数据按宽度横/纵重排并为省略
+- **配置/数据/外部服务**：保存目录、日志上限、主题、字体、窗口布局、MobilePerf 参数由
+  FluentWindow 的 SettingsPage 管理；ScreenshotViewer 的元数据按宽度横/纵重排并为省略
   文件名保留完整辅助文本，文件预览信息允许换行；保存目录选择入口与页脚始终可见，其他对话框
   按字体角色刷新。调用 ADB、scrcpy、Perfetto URL。
 - **测试/风险/待确认**：Gate B1 覆盖 LiveLogcat heartbeat、停止语义、背压、稀疏尾批、动态包/PID
   过滤、超时保活和晚到信号；
   独立子进程还以真实 `WA_DeleteOnClose` 连续压力覆盖日志输出期间的窗口销毁、主窗口 Close
   事件及 `lastWindowClosed/aboutToQuit` 隔离；
-  二级窗口关闭隔离覆盖 About、Settings、App Manager、File Explorer、LiveLogcat、
+  二级窗口关闭隔离覆盖 About、App Manager、File Explorer、LiveLogcat、
   Performance Launcher 和 ScreenshotViewer；
   真实 ADB 阻塞 stdout/进程树与 MainFrame 集成关闭仍待确认。
 
 ### Controller
 
-- **职责/接口**：`controllers.__init__.ADBController` 用多重继承组合设备、应用、文件、输入、媒体和系统 mixin；`_ADBControllerBase` 创建 model、建立方法名 handler map、接收 `command_finished` 并发出 UI 反馈；安装批次通过 `InstallBatchUseCase` 完成提交预留、所有权（`_InstallOperationOwner`）与 generation 边界，Monkey/录屏批次使用独立 stop-request 映射并发出 `monkey_target_finished`/`record_target_finished` 终态信号。
+- **职责/接口**：`controllers.__init__.ADBController` 用多重继承组合设备、应用、文件、输入、媒体和系统 mixin；`_ADBControllerBase` 创建 model、建立方法名 handler map、接收 `command_finished` 并发出 UI 反馈；设备列表按拓扑维护 generation，慢速元数据补全只有在 generation 与拓扑仍匹配时才写入 DeviceStore 和二次发布；安装批次通过 `InstallBatchUseCase` 完成提交预留、所有权（`_InstallOperationOwner`）与 generation 边界，Monkey/录屏批次使用独立 stop-request 映射并发出 `monkey_target_finished`/`record_target_finished` 终态信号。
 - **输入/输出**：Qt signals 的设备/命令参数；输出日志、进度、设备列表、截图路径和操作完成信号。
 - **上下游**：上游 MainFrame/panels；下游四个 ADB model、DeviceStore、线程池、`InstallBatchUseCase`/`OperationManager`。
 - **配置/数据/外部服务**：性能日志阈值、保存目录和 Monkey 参数；卸载/清数据/重启/当前 Activity
@@ -137,7 +147,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
 - **输入/输出**：设置键值、日志消息、时间戳；输出用户配置文件、INFO 及以上 UI 日志和
   仅供开发环境查看的 DEBUG 诊断。
 - **上下游**：上游全应用；下游用户目录、Qt 定时器/信号。
-- **配置/数据/外部服务**：`DEFAULTS` 中的主题、字体、窗口尺寸、分栏比例、`device_log_split_ratio`、
+- **配置/数据/外部服务**：`DEFAULTS` 中的主题、强调色、Mica、字体、窗口尺寸、分栏兼容键、`device_log_split_ratio`、
   扫描、保存路径、日志、Monkey、`scrcpy_*` 白名单；无网络依赖。
 - **测试/风险/待确认**：迁移、日志线程、DEBUG 分流、root handler 保留、停止态和 flush
   有测试；AppSettings 使用 RLock 保护数据、计时器和快照，以独立写锁串行保存回调，批量更新、
@@ -158,12 +168,11 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md]
   40ms 防抖）；`StrictIntComboBox`（`gui/widgets/preset_spin_box.py`）提供严格整数预设输入。
 - **输入/输出**：输入 `font_family`、`ui_font_size`、`log_font_size` 和容器逻辑像素宽度；
   输出 QApplication 默认字体、角色 QFont、控件安全最小高度、响应式网格列数和三类字体信号。
-- **上下游**：上游为 `main.py`、SettingsDialog、MainFrame/SidePanel 的宽度事件；下游为
+- **上下游**：上游为 `main.py`、SettingsPage、MainFrame/SidePanel 的宽度事件；下游为
   QApplication、主窗口、面板和对话框。
 - **配置/数据/外部服务**：空字体族表示系统默认；不可用字体回退到 Qt 系统字体；UI 字号
   8–22、日志字号 7–16；通用面板断点为 420/560 逻辑像素，Device 按控件最小宽度动态切换列表/网格布局，
-  Settings 紧凑断点为 `640 + max(0, UI 字号 - 12) × 18`；工具栏保存路径按剩余宽度动态省略，
-  固定动作放不下时复用原 `QAction` 进入 More 菜单；可滚动面板的长分组标题进入稳定最小宽度，
+  SettingsPage 使用 SettingCard 的原生纵向布局；可滚动面板的长分组标题进入稳定最小宽度，
   Remote 状态允许换行并同步完整 tooltip/accessibility。无网络或设备依赖。
 - **测试/风险/待确认**：`ui_font_changed`、`log_font_changed`、`fonts_changed` 与
   `theme_changed` 相互独立；日志字号变化不会触发界面字体订阅者，主题变化不会伪装成字体变化。

@@ -11,24 +11,23 @@ from PySide6.QtWidgets import (
     QGraphicsScene,
     QGridLayout,
     QHBoxLayout,
-    QListView,
-    QListWidget,
     QSizePolicy,
     QVBoxLayout,
 )
 from qfluentwidgets import (
+    BodyLabel,
     CardWidget,
     InfoBadge,
     InfoLevel,
-    SmoothScrollDelegate,
+    ListWidget,
     TransparentToolButton,
 )
 
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotBottomBar, ScreenshotGraphicsView
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.label import FluentLabel
 
 
 class ScreenshotViewerUI:
@@ -76,12 +75,8 @@ class ScreenshotViewerUI:
             self._frame.dialog_subtitle.setFont(ui_font)
             self._frame.status_badge.setFont(ui_font)
             count = len(getattr(self._frame, "_image_paths", ()))
-            self._frame.status_badge.setText(
-                f"{count} images" if count else "Empty"
-            )
-            self._frame.status_badge.setLevel(
-                InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION
-            )
+            self._frame.status_badge.setText(f"{count} images" if count else "Empty")
+            self._frame.status_badge.setLevel(InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION)
 
         self._frame.setStyleSheet(
             f"""
@@ -188,8 +183,8 @@ class ScreenshotViewerUI:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = FluentLabel(
-            "Screenshot Viewer", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self._frame.dialog_title = apply_label_role(
+            BodyLabel("Screenshot Viewer"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
         self._frame.status_badge = InfoBadge.info("Empty", self._frame.header_card)
@@ -199,9 +194,9 @@ class ScreenshotViewerUI:
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = FluentLabel(
-            "Inspect captured device screenshots",
-            role=FontRole.UI,
+        self._frame.dialog_subtitle = apply_label_role(
+            BodyLabel("Inspect captured device screenshots"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
@@ -234,12 +229,12 @@ class ScreenshotViewerUI:
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
 
-        self._frame._thumb_list = QListWidget()
+        self._frame._thumb_list = ListWidget()
         self._frame._thumb_list.setObjectName("thumbnailStrip")
-        self._frame._thumb_list.setViewMode(QListView.ViewMode.IconMode)
-        self._frame._thumb_list.setFlow(QListView.Flow.LeftToRight)
-        self._frame._thumb_list.setMovement(QListView.Movement.Static)
-        self._frame._thumb_list.setResizeMode(QListView.ResizeMode.Adjust)
+        self._frame._thumb_list.setViewMode(ListWidget.ViewMode.IconMode)
+        self._frame._thumb_list.setFlow(ListWidget.Flow.LeftToRight)
+        self._frame._thumb_list.setMovement(ListWidget.Movement.Static)
+        self._frame._thumb_list.setResizeMode(ListWidget.ResizeMode.Adjust)
         self._frame._thumb_list.setWrapping(False)
         self._frame._thumb_list.setUniformItemSizes(True)
         self._frame._thumb_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -247,8 +242,10 @@ class ScreenshotViewerUI:
         self._frame._thumb_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._frame._thumb_list.setIconSize(QSize(86, 58))
         self._frame._thumb_list.setFixedHeight(92)
-        # 缩略图横向条保留原生 QListWidget（IconMode 网格），仅承接 Fluent 平滑滚动条。
-        SmoothScrollDelegate(self._frame._thumb_list)
+        apply_focus_indicator(
+            self._frame._thumb_list,
+            selector="QListWidget#thumbnailStrip",
+        )
         self._frame._thumb_list.itemClicked.connect(self._frame._on_thumbnail_clicked)
         layout.addWidget(self._frame._thumb_list)
 
@@ -263,8 +260,8 @@ class ScreenshotViewerUI:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
 
-        self._frame._path_label = FluentLabel(
-            "", role=FontRole.MONO, color_key="TEXT_SECONDARY"
+        self._frame._path_label = apply_label_role(
+            BodyLabel(""), FontRole.MONO, color_key="TEXT_SECONDARY"
         )
         self._frame._path_label.setObjectName("pathLabel")
         self._frame._path_label.setAlignment(
@@ -284,8 +281,8 @@ class ScreenshotViewerUI:
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
 
-        self._frame._info_label = FluentLabel(
-            "", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        self._frame._info_label = apply_label_role(
+            BodyLabel(""), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self._frame._info_label.setObjectName("metaLabel")
         self._frame._info_label.setAlignment(
@@ -302,8 +299,8 @@ class ScreenshotViewerUI:
         self._frame._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
         self._frame._prev_btn.clicked.connect(self._frame.navigate_prev)
 
-        self._frame._nav_label = FluentLabel(
-            "0 / 0", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        self._frame._nav_label = apply_label_role(
+            BodyLabel("0 / 0"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self._frame._nav_label.setObjectName("navLabel")
         self._frame._nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -318,8 +315,8 @@ class ScreenshotViewerUI:
         )
         self._frame._zoom_out_btn.clicked.connect(self._frame.zoom_out)
 
-        self._frame._zoom_label = FluentLabel(
-            "Fit", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        self._frame._zoom_label = apply_label_role(
+            BodyLabel("Fit"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self._frame._zoom_label.setObjectName("zoomLabel")
         self._frame._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)

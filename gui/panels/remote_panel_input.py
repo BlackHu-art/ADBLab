@@ -97,11 +97,11 @@ class RemotePanelInput:
             with self._lock:
                 sent = getattr(self._frame, "_remote_sent", 0)
                 failed = getattr(self._frame, "_remote_failed", 0)
-            text = f"Queue: {queued}"
+            text = f"队列：{queued}"
             if failed:
-                text += f" · Failed: {failed}"
+                text += f" · 失败：{failed}"
             label.setText(text)
-            details = f"Queued: {queued} · Sent: {sent} · Failed: {failed}"
+            details = f"排队：{queued} · 已发送：{sent} · 失败：{failed}"
             label.setToolTip(details)
             label.setAccessibleDescription(details)
 

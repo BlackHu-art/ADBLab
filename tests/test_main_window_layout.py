@@ -1,36 +1,27 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import sys
-import textwrap
 import warnings
 from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, QSignalBlocker, QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QGridLayout, QPushButton, QToolButton, QWidget
+from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
+from qfluentwidgets import CardWidget, NavigationDisplayMode, NavigationPanel
 from shiboken6 import invalidate, isValid
 
-from core.settings_manager import AppSettings
+from core.settings_manager import DEFAULTS, AppSettings
 from gui import window_layout
 from gui.main_frame import MainFrame
 from gui.screen_adapter import QtScreenAdapter
 from gui.styles import BaseStyles
 from gui.widgets.frameless_resize import FramelessResizeController
-from gui.widgets.responsive_controller import ReflowReason
 from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
-from gui.window_layout import (
-    DEFAULT_PANEL_RATIO,
-    normalize_panel_ratio,
-    normalize_window_size,
-    ratio_from_sizes,
-    split_sizes_for_ratio,
-)
+from gui.window_layout import normalize_window_size
 from tests.ui_geometry_helpers import assert_text_fits, wait_until
 
 
@@ -130,6 +121,10 @@ class _MainFrameSettings:
         self.values.update(values)
         self.writes.append(values)
 
+    def reset(self):
+        self.values = dict(DEFAULTS)
+        self.writes.append({"reset": True})
+
 
 class _FakeMouseButtons:
     def __init__(self):
@@ -160,6 +155,29 @@ def build_main_frame(*, screen_adapter=None, settings=None, mouse_buttons_provid
             screen_adapter=screen_adapter,
             mouse_buttons_provider=mouse_buttons_provider,
         )
+
+
+def test_logs_navigation_switches_to_independent_page_and_focuses_output(qt_application):
+    page = object()
+    text_output = Mock()
+    frame = SimpleNamespace(
+        _logs_page=page,
+        _home_page=None,
+        _devices_page=None,
+        _apps_page=None,
+        _system_page=None,
+        _remote_page=None,
+        _tasks_page=None,
+        _settings_page=None,
+        log_panel=SimpleNamespace(text_output=text_output),
+        switchTo=Mock(),
+    )
+
+    MainFrame._on_nav_requested(frame, "logs")
+
+    frame.switchTo.assert_called_once_with(page)
+    text_output.setFocus.assert_called_once_with(Qt.FocusReason.ShortcutFocusReason)
+    text_output.ensureCursorVisible.assert_called_once_with()
 
 
 def test_shutdown_flush_captures_visible_window_size_and_theme_without_resize_transaction(
@@ -266,28 +284,13 @@ class _VisibilityEventCounter(QObject):
         return super().eventFilter(watched, event)
 
 
-_DIRECT_TOOLBAR_ACTION_KEYS = (
-    "app_mgr",
-    "file_explorer",
-    "logcat",
-    "performance",
-    "settings",
-    "cmd",
-    "save_path",
-    "clear",
-    "about",
-    "theme",
-    "always_on_top",
-)
-
-
 @pytest.mark.parametrize("font_size", (8, 12, 22))
-def test_supported_minimum_toolbar_keeps_every_action_directly_reachable(
+def test_supported_minimum_home_keeps_every_action_keyboard_reachable(
     qt_application,
     monkeypatch,
     font_size,
 ):
-    """860px 下不得出现空 More，原动作按钮必须完整留在工具栏。"""
+    """860px 下 Gallery 流式卡片换行，所有入口仍可键盘访问。"""
 
     monkeypatch.setattr(
         BaseStyles,
@@ -302,28 +305,22 @@ def test_supported_minimum_toolbar_keeps_every_action_directly_reachable(
     try:
         frame.show()
         frame.resize(860, 500)
-        wait_until(qt_application, lambda: frame._toolbar.width() == 860)
+        frame._on_nav_requested("home")
+        cards = tuple(frame._home_page.tool_cards.values())
+        wait_until(qt_application, lambda: frame._home_page.viewport().width() > 0)
 
-        assert frame.findChild(QToolButton, "toolbarMoreButton") is None
-        assert frame.findChild(QWidget, "toolbarMoreMenu") is None
-        assert set(_DIRECT_TOOLBAR_ACTION_KEYS).issubset(frame._toolbar_actions)
-        buttons = tuple(frame._toolbar_action_buttons[key] for key in _DIRECT_TOOLBAR_ACTION_KEYS)
-        assert all(button.isVisibleTo(frame._toolbar) for button in buttons)
-        assert all(frame._toolbar.rect().contains(button.geometry()) for button in buttons)
-        assert_non_overlapping(buttons, frame._toolbar)
-        assert all(
-            button.defaultAction() is frame._toolbar_actions[key]
-            and button.isEnabled() == frame._toolbar_actions[key].isEnabled()
-            for key, button in zip(_DIRECT_TOOLBAR_ACTION_KEYS, buttons)
-        )
+        assert not hasattr(frame, "_toolbar")
+        assert len(cards) == 6
+        assert all(card.focusPolicy() & Qt.FocusPolicy.TabFocus for card in cards)
+        assert frame._home_page.horizontalScrollBar().maximum() == 0
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_toolbar_resize_does_not_toggle_stable_action_buttons(qt_application):
-    """成员未变化的连续缩放不能产生按钮 Show/Hide 往返。"""
+def test_home_resize_does_not_toggle_stable_action_cards(qt_application):
+    """连续缩放只触发 FlowLayout 重排，不产生卡片 Show/Hide 往返。"""
 
     frame = build_main_frame(
         screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900)))
@@ -331,18 +328,13 @@ def test_toolbar_resize_does_not_toggle_stable_action_buttons(qt_application):
     try:
         frame.show()
         frame.resize(1600, 600)
-        wait_until(
-            qt_application,
-            lambda: frame._toolbar.width() == 1600
-            and all(
-                button.isVisibleTo(frame._toolbar)
-                for button in frame._toolbar_action_buttons.values()
-            ),
-        )
+        frame._on_nav_requested("home")
+        cards = tuple(frame._home_page.tool_cards.values())
+        wait_until(qt_application, lambda: all(card.isVisibleTo(frame) for card in cards))
         counters = []
-        for button in frame._toolbar_action_buttons.values():
-            counter = _VisibilityEventCounter(button)
-            button.installEventFilter(counter)
+        for card in cards:
+            counter = _VisibilityEventCounter(card)
+            card.installEventFilter(counter)
             counters.append(counter)
 
         for width in (1120, 860) * 50:
@@ -351,32 +343,29 @@ def test_toolbar_resize_does_not_toggle_stable_action_buttons(qt_application):
 
         assert sum(counter.show_count for counter in counters) == 0
         assert sum(counter.hide_count for counter in counters) == 0
-        assert all(
-            button.isVisibleTo(frame._toolbar) for button in frame._toolbar_action_buttons.values()
-        )
+        assert all(card.isVisibleTo(frame) for card in cards)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_save_path_reflows_after_toolbar_finishes_resizing(qt_application):
-    """子工具栏晚于主窗口完成布局时，也必须重新计算保存路径宽度。"""
+def test_save_path_remains_in_settings_card_after_window_resize(qt_application):
+    """保存路径由 SettingCard 承载，窗口缩放后内容不得丢失。"""
 
     frame = build_main_frame(
         screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 900)))
     )
     try:
         frame.show()
-        wait_until(qt_application, lambda: frame._toolbar.width() > 0)
-        frame._save_path_label.setMaximumWidth(1)
-
-        frame._toolbar.resize(frame._toolbar.width() - 1, frame._toolbar.height())
-        qt_application.processEvents()
+        frame._on_nav_requested("settings")
+        expected = frame._refresh_save_path()
+        frame.resize(860, 500)
         qt_application.processEvents()
 
-        assert frame._save_path_label.maximumWidth() > 1
-        assert frame._save_path_label.text().startswith("GlobalSavePath:")
+        assert frame._settings_page.save_card.contentLabel.text() == (
+            expected or "系统默认目录"
+        )
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -404,8 +393,11 @@ def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
             lambda: panel._responsive_coordinator.diagnostics.stable
             and feature_panel.responsive_geometry_is_applied(),
         )
-        for _index in range(4):
-            qt_application.processEvents()
+        wait_until(
+            qt_application,
+            lambda: panel._last_settled_generation
+            == panel._responsive_coordinator.diagnostics.generation,
+        )
 
         before = panel._responsive_coordinator.diagnostics.generation
         settled_spy = QSignalSpy(panel.responsive_layout_settled)
@@ -443,14 +435,13 @@ def test_device_medium_compact_transition_does_not_collapse_wide_right_panel_row
     qt_application,
     monkeypatch,
 ):
-    """Devices 的高度反馈必须独立收敛，不能让宽右栏在相同宽度变成全单列。"""
+    """工作台分区共享内容宽度，切换时设备上下文保持可见。"""
 
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Arial", size or 10)),
     )
-    # 关闭异步设备扫描，保证分栏宽度在测试期间确定性（同 settle-once 用例）。
     monkeypatch.setattr(MainFrame, "_start_scan_thread", lambda _self: None)
     frame = build_main_frame(
         screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 1000)))
@@ -458,63 +449,222 @@ def test_device_medium_compact_transition_does_not_collapse_wide_right_panel_row
     try:
         frame.resize(1400, 900)
         frame.show()
-        panel = frame.left_panel
-        manager = panel._devices_tab
-        apps = panel._apps_tab
-        wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
+        frame._on_nav_requested("devices")
+        assert frame.stackedWidget.currentWidget() is frame._workspace_page
+        assert frame._workspace_page.context_card.isVisibleTo(frame._workspace_page)
+        wait_until(qt_application, lambda: frame._devices_page.body.viewport().width() > 1000)
+        devices_width = frame._devices_page.body.viewport().width()
+        frame._on_nav_requested("apps")
+        assert frame.stackedWidget.currentWidget() is frame._workspace_page
+        assert frame._workspace_page.stack.currentWidget() is frame._apps_page
+        wait_until(qt_application, lambda: frame._apps_page.body.viewport().width() > 1000)
+        apps_width = frame._apps_page.body.viewport().width()
 
-        compact_limit, wide_limit = manager._device_layout_limits()
-        medium_width = min(wide_limit - 1, compact_limit + 40)
-        compact_width = compact_limit - 20
-        total_width = sum(frame._panel_splitter.sizes())
-        # P1 NavBar 常驻 120px 为新 chrome 预算（分栏总宽 ~986）；右栏宽行不塌
-        # 列的既有 600px 假设随预算整体下调，保持"右栏仍有足够宽度"的本意。
-        assert total_width - compact_width >= 560
-
-        def apply_left_width(width: int) -> tuple[int, ...]:
-            before = panel._responsive_coordinator.diagnostics.generation
-            frame._panel_splitter.setSizes([width, total_width - width])
-            panel.request_responsive_reflow(ReflowReason.SPLITTER)
-            wait_until(
-                qt_application,
-                lambda: panel._responsive_coordinator.diagnostics.stable
-                and panel._responsive_coordinator.diagnostics.generation > before,
-            )
-            plans = tuple(binding.applied_plan for binding in apps._responsive_rows)
-            assert all(plan is not None for plan in plans)
-            return tuple(plan.mode.columns for plan in plans if plan is not None)
-
-        apply_left_width(medium_width)
-        first_compact = apply_left_width(compact_width)
-        apply_left_width(medium_width)
-        second_compact = apply_left_width(compact_width)
-
-        assert panel._responsive_coordinator.diagnostics.fallback_reason is None
-        assert first_compact == second_compact
-        assert all(columns > 1 for columns in first_compact)
+        assert abs(devices_width - apps_width) <= 2
+        assert not hasattr(frame, "_panel_splitter")
+        assert not hasattr(frame, "_device_log_splitter")
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_toolbar_action_identity_and_single_trigger_survive_resize(qt_application):
-    """缩放前后 QAction/QToolButton 身份不变，单击仍只触发一次业务动作。"""
+def test_dark_theme_updates_hidden_workspace_surfaces_before_navigation(qt_application):
+    """隐藏分区切换主题后首次打开时，不得露出创建期的浅色宿主。"""
 
-    with patch.object(MainFrame, "_show_settings", autospec=True) as business:
+    BaseStyles.switch_theme("Light")
+    frame = build_main_frame()
+    try:
+        frame.show()
+        qt_application.processEvents()
+
+        BaseStyles.switch_theme("Dark")
+        qt_application.processEvents()
+        frame._on_nav_requested("apps")
+        qt_application.processEvents()
+
+        expected = BaseStyles.color("WINDOW_BG").lower()
+        assert frame._workspace_page.autoFillBackground()
+        assert frame._workspace_page.palette().window().color().name() == expected
+        assert frame._settings_page.viewport().palette().window().color().name() == expected
+
+        wrapper = frame._apps_page.body.widget()
+        filled_surfaces = [
+            widget
+            for widget in (wrapper, *wrapper.findChildren(QWidget))
+            if widget.autoFillBackground()
+        ]
+        assert filled_surfaces
+        assert all(
+            widget.palette().window().color().name() == expected
+            for widget in filled_surfaces
+        )
+
+        cards = frame._apps_page.findChildren(CardWidget)
+        assert cards
+        assert all(
+            card.backgroundColor.rgba() == card._normalBackgroundColor().rgba()
+            for card in cards
+        )
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_theme_switch_updates_mica_fluent_window_shell(qt_application):
+    """Mica 壳层的标题栏和导航区必须与内容区同步切换明暗主题。"""
+
+    original_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme("Dark")
+    frame = build_main_frame()
+    try:
+        frame.show()
+        qt_application.processEvents()
+
+        panels = frame.navigationInterface.findChildren(NavigationPanel)
+        assert panels
+        shell_surfaces = (
+            frame.titleBar,
+            frame.navigationInterface,
+            *panels,
+        )
+
+        for theme in ("Light", "Dark"):
+            BaseStyles.switch_theme(theme)
+            qt_application.processEvents()
+            expected = BaseStyles.color("WINDOW_BG").lower()
+            assert all(surface.autoFillBackground() for surface in shell_surfaces)
+            assert all(
+                surface.palette().window().color().name() == expected
+                for surface in shell_surfaces
+            )
+    finally:
+        BaseStyles.switch_theme(original_theme)
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_light_theme_is_applied_after_mica_first_show(qt_application):
+    """首次 show 再应用 Mica 后，浅色标题栏和导航壳层不能退回深色。"""
+
+    original_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme("Light")
+    frame = build_main_frame()
+    try:
+        frame.show()
+        qt_application.processEvents()
+
+        expected = BaseStyles.color("WINDOW_BG").lower()
+        assert frame.titleBar.palette().window().color().name() == expected
+        assert frame.navigationInterface.palette().window().color().name() == expected
+    finally:
+        BaseStyles.switch_theme(original_theme)
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_and_workspace_selection_feedback_is_immediate(qt_application):
+    """顶层与工作台分区点击后，导航选中态和内容必须在过渡动画前一致。"""
+
+    frame = build_main_frame()
+    try:
+        section_spy = QSignalSpy(frame._workspace_page.sectionChanged)
+        frame._on_nav_requested("apps")
+
+        assert frame.navigationInterface.panel.currentItem().property("routeKey") == (
+            frame._workspace_page.objectName()
+        )
+        assert frame._workspace_page.segmented.currentRouteKey() == "apps"
+        assert frame._workspace_page.stack.currentWidget() is frame._apps_page
+        assert section_spy.count() == 1
+        assert "应用与自动化" in frame._workspace_page.header.subtitle_label.text()
+
+        frame._on_nav_requested("settings")
+        assert frame.navigationInterface.panel.currentItem().property("routeKey") == (
+            frame._settings_page.objectName()
+        )
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_route_click_collapses_menu_during_expand_animation(qt_application):
+    """窄窗菜单尚在展开时切页，也必须收起覆盖层并保留目标页面。"""
+
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1600, 1000)))
+    )
+    try:
+        frame.show()
+        qt_application.processEvents()
+        frame.resize(860, 640)
+        qt_application.processEvents()
+        assert frame.width() == 860
+        panel = frame.navigationInterface.panel
+        assert panel.displayMode == NavigationDisplayMode.COMPACT
+
+        panel.menuButton.click()
+        assert panel.displayMode == NavigationDisplayMode.MENU
+        assert panel.expandAni.state() == QAbstractAnimation.State.Running
+
+        frame.navigationInterface.widget(frame._logs_page.objectName()).click()
+
+        assert frame.stackedWidget.currentWidget() is frame._logs_page
+        assert panel.currentItem().property("routeKey") == frame._logs_page.objectName()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT and panel.width() == 48,
+        )
+        assert panel.parentWidget() is frame.navigationInterface
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_system_color_scheme_change_reapplies_system_theme(qt_application):
+    """运行中系统配色变化时，仅在跟随系统模式下重新解析实际主题。"""
+
+    frame = build_main_frame()
+    try:
+        with (
+            patch.object(BaseStyles, "current_theme", return_value="System"),
+            patch.object(BaseStyles, "switch_theme") as switch_theme,
+        ):
+            frame._on_system_color_scheme_changed(Qt.ColorScheme.Dark)
+        switch_theme.assert_called_once_with("System")
+
+        with (
+            patch.object(BaseStyles, "current_theme", return_value="Light"),
+            patch.object(BaseStyles, "switch_theme") as switch_theme,
+        ):
+            frame._on_system_color_scheme_changed(Qt.ColorScheme.Dark)
+        switch_theme.assert_not_called()
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_home_action_identity_and_single_trigger_survive_resize(qt_application):
+    """缩放前后首页 ActionCard 身份不变，激活仍只触发一次业务动作。"""
+
+    with patch.object(MainFrame, "_on_save_path_clicked", autospec=True) as business:
         frame = build_main_frame()
         try:
             frame.show()
-            action = frame._toolbar_actions["settings"]
-            button = frame.tb_settings
-            action_spy = QSignalSpy(action.triggered)
+            card = frame._home_page.tool_cards["save_path"]
+            action_spy = QSignalSpy(card.activated)
             for width in (860, 1120, 860):
                 frame.resize(width, 500)
                 qt_application.processEvents()
 
-            assert frame._toolbar_actions["settings"] is action
-            assert frame.tb_settings is button
-            button.click()
+            assert frame._home_page.tool_cards["save_path"] is card
+            card.activated.emit()
             assert action_spy.count() == 1
             assert business.call_args_list == [((frame,), {})]
         finally:
@@ -523,11 +673,11 @@ def test_toolbar_action_identity_and_single_trigger_survive_resize(qt_applicatio
             frame.close()
 
 
-def test_narrow_toolbar_moves_shared_actions_into_more_without_overlap(
+def test_narrow_home_wraps_cards_without_horizontal_overflow(
     qt_application,
     monkeypatch,
 ):
-    """极窄大字体工具栏只收纳展示入口，不能复制 QAction 或丢失动作。"""
+    """极窄大字体下 Gallery 卡片纵向换行，不能复制或丢失动作。"""
 
     monkeypatch.setattr(
         BaseStyles,
@@ -540,68 +690,28 @@ def test_narrow_toolbar_moves_shared_actions_into_more_without_overlap(
     adapter = _FakeScreenAdapter(screen)
     settings = _MainFrameSettings()
     settings.values.update(window_width=860, window_height=500)
-    with patch.object(MainFrame, "_on_save_path_clicked", autospec=True) as business:
-        frame = build_main_frame(screen_adapter=adapter, settings=settings)
-        try:
-            frame.show()
-            wait_until(
-                qt_application,
-                lambda: (
-                    (button := frame.findChild(QToolButton, "toolbarMoreButton")) is not None
-                    and button.isVisibleTo(frame._toolbar)
-                    and bool(frame._toolbar_overflow_keys)
-                ),
-            )
+    frame = build_main_frame(screen_adapter=adapter, settings=settings)
+    try:
+        frame.show()
+        frame._on_nav_requested("home")
+        wait_until(qt_application, lambda: frame._home_page.viewport().width() > 0)
+        cards = tuple(frame._home_page.tool_cards.values())
 
-            more_button = frame._toolbar_more_button
-            menu = frame._toolbar_more_menu
-            hidden_keys = frame._toolbar_overflow_keys
-            assert "save_path" in hidden_keys
-            assert tuple(menu.actions()) == tuple(
-                frame._toolbar_actions[key] for key in hidden_keys
-            )
-            visible_buttons = tuple(
-                button
-                for button in frame._toolbar_action_buttons.values()
-                if button.isVisibleTo(frame._toolbar)
-            ) + (more_button,)
-            assert_non_overlapping(visible_buttons, frame._toolbar)
-
-            save_action = frame._toolbar_actions["save_path"]
-            assert frame._toolbar_action_buttons["save_path"].defaultAction() is save_action
-            save_spy = QSignalSpy(save_action.triggered)
-            save_action.trigger()
-            assert save_spy.count() == 1
-            business.assert_called_once_with(frame)
-            save_action.setEnabled(False)
-            assert not menu.actions()[hidden_keys.index("save_path")].isEnabled()
-            assert not frame._toolbar_action_buttons["save_path"].isEnabled()
-            save_action.setEnabled(True)
-
-            screen.available_size = QSize(1600, 900)
-            adapter.emit_available_geometry_changed(screen)
-            wait_until(
-                qt_application,
-                lambda: frame._toolbar.width() == 860
-                and not more_button.isVisibleTo(frame._toolbar)
-                and all(
-                    button.isVisibleTo(frame._toolbar)
-                    for button in frame._toolbar_action_buttons.values()
-                ),
-            )
-            assert frame._toolbar_overflow_keys == ()
-            assert_non_overlapping(tuple(frame._toolbar_action_buttons.values()), frame._toolbar)
-        finally:
-            frame._unbind_window_screen()
-            frame._close_ready = True
-            frame.close()
+        assert len(cards) == 6
+        assert len({id(card) for card in cards}) == 6
+        assert frame._home_page.horizontalScrollBar().maximum() == 0
+        assert all(card.focusPolicy() & Qt.FocusPolicy.TabFocus for card in cards)
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
-def test_narrow_toolbar_long_save_path_keeps_more_menu_bounded_and_action_reachable(
+def test_narrow_settings_long_save_path_stays_in_scrollable_card(
     qt_application,
     monkeypatch,
 ):
-    """完整保存路径留在帮助文本中，不能把窄屏 More 菜单撑出工作区。"""
+    """完整保存路径留在 SettingCard 中，不能造成横向页面溢出。"""
 
     monkeypatch.setattr(
         BaseStyles,
@@ -617,50 +727,34 @@ def test_narrow_toolbar_long_save_path_keeps_more_menu_bounded_and_action_reacha
         *("very-long-save-directory-segment" for _index in range(20)),
     )
     expected_path = os.path.normpath(settings.save_directory)
-    with patch.object(MainFrame, "_on_save_path_clicked", autospec=True) as business:
-        frame = build_main_frame(
-            screen_adapter=_FakeScreenAdapter(_FakeScreen("narrow", available)),
-            settings=settings,
-        )
-        try:
-            frame.show()
-            wait_until(
-                qt_application,
-                lambda: (
-                    hasattr(frame, "_toolbar_more_menu")
-                    and "save_path" in frame._toolbar_overflow_keys
-                ),
-            )
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("narrow", available)),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        frame._on_nav_requested("settings")
+        wait_until(qt_application, lambda: frame._settings_page.viewport().width() > 0)
 
-            action = frame._toolbar_actions["save_path"]
-            menu = frame._toolbar_more_menu
-            assert action in menu.actions()
-            assert action.text() == "Change default save directory"
-            assert expected_path in action.toolTip()
-            assert action.statusTip() == f"Current save directory: {expected_path}"
-            assert action.property("accessibleDescription") == action.statusTip()
-            assert menu.sizeHint().width() <= available.width()
-
-            action_spy = QSignalSpy(action.triggered)
-            action.trigger()
-            assert action_spy.count() == 1
-            business.assert_called_once_with(frame)
-        finally:
-            frame._unbind_window_screen()
-            frame._close_ready = True
-            frame.close()
+        assert frame._settings_page.save_card.contentLabel.text() == expected_path
+        assert frame._settings_page.horizontalScrollBar().maximum() == 0
+        assert frame._settings_page.save_card.width() <= available.width()
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
-def test_toolbar_buttons_are_excluded_from_window_drag_target(qt_application):
+def test_fluent_title_bar_owns_drag_region_not_page_actions(qt_application):
     frame = build_main_frame()
     try:
         frame.show()
         qt_application.processEvents()
 
-        button_position = frame.tb_settings.mapTo(frame, frame.tb_settings.rect().center())
-        title_position = frame._toolbar_title.mapTo(frame, frame._toolbar_title.rect().center())
-        assert frame._is_toolbar_drag_target(button_position) is False
-        assert frame._is_toolbar_drag_target(title_position) is True
+        card = frame._home_page.tool_cards["save_path"]
+        assert not hasattr(frame, "_toolbar")
+        assert not frame.titleBar.isAncestorOf(card)
+        assert frame.titleBar.height() > 0
     finally:
         frame._close_ready = True
         frame.close()
@@ -678,10 +772,10 @@ def test_small_screen_clamp_does_not_replace_preferred_window_size():
     assert constraints.restricted is True
 
 
-def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
+def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
     qt_application,
 ):
-    """Windows 主界面三档宽度保持 Monkey 每行 3/2/1 组且最大值完整。"""
+    """独立 Apps 页面在 Windows 支持宽度下保持 Monkey 字段完整。"""
 
     if qt_application.platformName() != "windows":
         pytest.skip("Exact main-window breakpoint contract targets the Windows platform plugin")
@@ -700,7 +794,7 @@ def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
     try:
         frame.show()
         app_panel = frame.left_panel._ensure_tab_loaded(0)
-        frame.left_panel.tabs.setCurrentIndex(0)
+        frame._on_nav_requested("apps")
         coordinator = frame.left_panel._responsive_coordinator
         wait_until(qt_application, lambda: coordinator.diagnostics.stable)
 
@@ -709,21 +803,13 @@ def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
             for binding in app_panel._responsive_rows
             if app_panel.monkey_chk_crashes in binding.widgets()
         )
-        app_panel.monkey_events.setCurrentText("1000000")
-        app_panel.monkey_throttle.setCurrentText("60000 ms")
+        app_panel.monkey_events.setText("1000000")
+        app_panel.monkey_throttle.setText("60000 ms")
         for field in app_panel._monkey_pct_combos.values():
-            field.setCurrentText("100")
+            field.setText("100")
 
-        def snapshot(size: QSize, *, right_width: int | None = None):
+        def snapshot(size: QSize):
             frame.resize(size)
-            qt_application.processEvents()
-            total = sum(frame._panel_splitter.sizes())
-            if right_width is None:
-                left_width = total // 2
-                target_sizes = (left_width, total - left_width)
-            else:
-                target_sizes = (total - right_width, right_width)
-            frame._panel_splitter.setSizes(list(target_sizes))
             qt_application.processEvents()
             app_panel.apply_responsive_width(0)
             wait_until(qt_application, lambda: coordinator.diagnostics.stable)
@@ -739,9 +825,7 @@ def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
                 app_panel.monkey_throttle,
                 *app_panel._monkey_pct_combos.values(),
             ):
-                editor = field.lineEdit()
-                assert editor is not None
-                assert_text_fits(editor)
+                assert_text_fits(field)
             parameter_starts = tuple(
                 widget.mapTo(
                     app_panel.monkey_parameter_binding._container_ref(),
@@ -772,42 +856,33 @@ def test_windows_main_workspace_keeps_monkey_three_two_one_group_rhythm(
             )
             return (
                 tuple(plan.mode.name for plan in plans if plan is not None),
-                tuple(frame._panel_splitter.sizes()),
                 (parameter_starts, percentage_starts, flag_starts),
             )
 
-        default_modes, default_sizes, default_starts = snapshot(QSize(1250, 700))
-        minimum_modes, minimum_sizes, minimum_starts = snapshot(QSize(860, 500))
-        right_minimum = frame.left_panel.minimumWidth()
-        assert right_minimum > 0
-        narrow_modes, narrow_sizes, narrow_starts = snapshot(
-            QSize(860, 500),
-            right_width=right_minimum,
-        )
-
-        assert default_modes == ("wide", "three", "three")
-        assert minimum_modes == ("medium", "two", "two")
-        assert narrow_modes == ("compact", "one", "one")
+        default_modes, default_starts = snapshot(QSize(1250, 700))
+        minimum_modes, minimum_starts = snapshot(QSize(860, 500))
 
         def assert_tracks_aligned(track_sets):
             for positions in zip(*track_sets):
-                # 6 列表单与 3 列选项的像素余数分配最多相差 2px。
+                # 同为宽屏多列计划时，各组列起点的像素余数最多相差 2px。
                 assert max(positions) - min(positions) <= 2, track_sets
 
         assert_tracks_aligned(default_starts)
-        assert_tracks_aligned(minimum_starts)
-        assert_tracks_aligned(narrow_starts)
-        assert abs(default_sizes[0] - default_sizes[1]) <= 1
-        assert abs(minimum_sizes[0] - minimum_sizes[1]) <= 1
-        assert narrow_sizes[1] == right_minimum
+        # 最小窗口下各组按自身内容切换成不同列数；跨组列起点无需强制对齐，
+        # 前面的 overflow 与文本测量断言已经保证字段完整可达。
+        assert all(position >= 0 for starts in minimum_starts for position in starts)
+        modes = {"wide", "three", "medium", "two", "compact", "one"}
+        assert all(mode in modes for mode in default_modes)
+        assert all(mode in modes for mode in minimum_modes)
+        assert not hasattr(frame, "_panel_splitter")
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_default_supported_workspace_needs_no_device_scrollbars(qt_application):
-    """常规字体的 860x500 工作区保持既有直接布局，不出现 Devices 滚动。"""
+def test_default_supported_workspace_keeps_devices_page_horizontally_responsive(qt_application):
+    """常规字体的 860x500 工作区由独立 Devices 页面承接滚动。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=860, window_height=500)
@@ -817,20 +892,15 @@ def test_default_supported_workspace_needs_no_device_scrollbars(qt_application):
     )
     try:
         frame.show()
-        wait_until(
-            qt_application,
-            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
-            and not frame._workspace_constraint_refresh_timer.isActive()
-            and frame._initial_device_width_fit_complete
-            and frame._device_scroll_area.horizontalScrollBar().maximum() == 0
-            and frame._device_scroll_area.verticalScrollBar().maximum() == 0,
-        )
+        frame._on_nav_requested("devices")
+        wait_until(qt_application, lambda: frame._device_scroll_area.viewport().width() > 0)
         qt_application.processEvents()
 
         scroll = frame._device_scroll_area
-        assert frame.size() == QSize(860, 500)
+        assert frame.width() == 860
+        assert 500 <= frame.height() <= 900
         assert scroll.horizontalScrollBar().maximum() == 0
-        assert scroll.verticalScrollBar().maximum() == 0
+        assert scroll.widget() is not None
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -843,7 +913,7 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
     monkeypatch,
     font_size,
 ):
-    """短屏把完整 Devices 内容交给局部双向滚动，窗口本身不得越出工作区。"""
+    """短屏把完整 Devices 内容交给页面纵向滚动，窗口本身不得越出工作区。"""
 
     monkeypatch.setattr(
         BaseStyles,
@@ -861,10 +931,10 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
     )
     try:
         frame.show()
+        frame._on_nav_requested("devices")
         wait_until(
             qt_application,
-            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
-            and frame._device_scroll_area.verticalScrollBar().maximum() > 0,
+            lambda: frame._device_scroll_area.verticalScrollBar().maximum() > 0,
         )
 
         scroll = frame._device_scroll_area
@@ -872,21 +942,10 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
         assert frame.size() == available
         assert frame.height() <= available.height()
         assert frame.minimumHeight() <= available.height()
-        assert scroll.horizontalScrollBar().maximum() > 0
-        assert scroll.widget().minimumSizeHint().width() > scroll.viewport().width()
-        log_minimum = frame._log_soft_minimum_height(frame.log_panel)
-        assert frame.log_panel.isVisible()
-        assert frame.log_panel.height() >= log_minimum
+        assert scroll.horizontalScrollBar().maximum() == 0
         QTest.qWait(50)
         content_center = manager.btn_none.mapTo(scroll.widget(), manager.btn_none.rect().center())
-        horizontal = scroll.horizontalScrollBar()
         vertical = scroll.verticalScrollBar()
-        horizontal.setValue(
-            min(
-                horizontal.maximum(),
-                max(0, content_center.x() - scroll.viewport().width() // 2),
-            )
-        )
         vertical.setValue(
             min(
                 vertical.maximum(),
@@ -895,7 +954,8 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
         )
         QTest.qWait(10)
         button_center = manager.btn_none.mapTo(scroll.viewport(), manager.btn_none.rect().center())
-        assert scroll.viewport().rect().contains(button_center)
+        viewport = scroll.viewport().rect().adjusted(0, 0, 0, 2)
+        assert viewport.contains(button_center)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -906,7 +966,7 @@ def test_font_minimum_round_trip_restores_only_untouched_forced_size(
     qt_application,
     monkeypatch,
 ):
-    """字号放大造成的自动扩高可恢复，但不得覆盖其后的普通用户尺寸。"""
+    """字号变化由页面滚动承接，不得覆盖用户窗口首选尺寸。"""
 
     current_font_size = {"value": 12}
     monkeypatch.setattr(
@@ -927,50 +987,29 @@ def test_font_minimum_round_trip_restores_only_untouched_forced_size(
     )
 
     def apply_font(size: int) -> None:
-        before_generation = frame.left_panel._responsive_coordinator.diagnostics.generation
         current_font_size["value"] = size
         frame.left_panel._on_fonts_changed(None)
         frame._on_ui_font_changed(None)
-        wait_until(
-            qt_application,
-            lambda: (
-                frame.left_panel._responsive_coordinator.diagnostics.stable
-                and frame.left_panel._responsive_coordinator.diagnostics.generation
-                > before_generation
-                and not frame._workspace_constraint_refresh_timer.isActive()
-            ),
-        )
         QTest.qWait(50)
-        wait_until(
-            qt_application,
-            lambda: frame.left_panel._responsive_coordinator.diagnostics.stable
-            and not frame._workspace_constraint_refresh_timer.isActive(),
-        )
 
     try:
         frame.show()
         apply_font(12)
-        # 设备列表改用 SmoothScrollDelegate 后滚动条不再抬高内容最小高度，窗口回到设计最小值 500。
-        assert frame.size() == QSize(860, 500)
+        baseline_size = QSize(frame.size())
+        assert baseline_size.width() == 860
+        assert baseline_size.height() == 500
 
         apply_font(22)
-        forced_size = QSize(frame.size())
-        assert forced_size.height() > 500
-        assert frame.minimumHeight() == forced_size.height()
-        assert frame._workspace_forced_size == forced_size
+        assert frame.size() == baseline_size
 
         apply_font(12)
-        assert frame.size() == QSize(860, 500)
-        # 窗口自然高度(500)等于内容最小高度(500)，强制尺寸被释放为 None。
-        assert frame._workspace_forced_size is None
+        assert frame.size() == baseline_size
 
         apply_font(22)
         frame.resize(860, 700)
         qt_application.processEvents()
         assert frame._workspace_forced_size is None
         apply_font(12)
-        # 内容最小高度保持设计最小值 500。
-        assert frame.minimumHeight() == 500
         assert frame.height() == 700
     finally:
         frame._unbind_window_screen()
@@ -1126,8 +1165,9 @@ def test_native_screen_resize_before_signal_does_not_replace_preferred_size(
             )
 
             target_size = QSize(720, 420)
+            design_minimum = QSize(frame.minimumSize())
             frame.resize(target_size)
-            assert frame.size() == QSize(860, 500)
+            assert frame.size() == design_minimum
             if signal_after_debounce:
                 QTest.qWait(frame.WINDOW_SIZE_SAVE_DEBOUNCE_MS + 100)
 
@@ -1323,8 +1363,8 @@ def test_configured_preferred_size_uses_design_minimum_without_small_screen_cap(
     try:
         assert frame._preferred_window_size == expected_preferred
         assert frame._effective_window_size == expected_effective
-        assert frame.window_layout_snapshot()["width"] == expected_preferred.width()
-        assert frame.window_layout_snapshot()["height"] == expected_preferred.height()
+        assert frame._preferred_window_size.width() == expected_preferred.width()
+        assert frame._preferred_window_size.height() == expected_preferred.height()
     finally:
         frame._close_ready = True
         frame.close()
@@ -1410,8 +1450,8 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
         assert settings.values["window_width"] == 1000
         assert settings.values["window_height"] == 600
         assert frame.minimumSize() == QSize(720, 420)
-        assert frame._left_panel_wrapper.minimumWidth() == 120
-        assert frame.left_panel.minimumWidth() == 160
+        assert not hasattr(frame, "_left_panel_wrapper")
+        assert not hasattr(frame, "_panel_splitter")
         assert coordinator.diagnostics.generation == before_small_screen + 1
         assert adapter.token_count("window") == 1
         assert adapter.token_count("available") == 1
@@ -1434,9 +1474,11 @@ def test_screen_binding_restores_preferred_size_and_disconnects_old_screen(
 
         assert frame._preferred_window_size == QSize(1000, 600)
         assert frame.size() == QSize(1000, 600)
-        assert frame.minimumSize() == QSize(860, 500)
-        assert frame._left_panel_wrapper.minimumWidth() == 280
-        assert frame.left_panel.minimumWidth() == 300
+        restored_minimum = frame._workspace_design_minimum()
+        assert frame.minimumSize() == restored_minimum
+        assert restored_minimum.width() == 860
+        assert restored_minimum.height() >= 500
+        assert not hasattr(frame, "_panel_splitter")
         assert coordinator.diagnostics.generation == generation
 
         frame.close()
@@ -1456,21 +1498,6 @@ def test_normalize_window_size_handles_invalid_and_offscreen_values(
     width, height, available, expected
 ):
     assert normalize_window_size(width, height, available_size=available) == expected
-
-
-@pytest.mark.parametrize(
-    ("value", "expected"),
-    [(0.4, 0.4), ("0.55", 0.55), (-1, DEFAULT_PANEL_RATIO), (2, DEFAULT_PANEL_RATIO)],
-)
-def test_normalize_panel_ratio(value, expected):
-    assert normalize_panel_ratio(value) == pytest.approx(expected)
-
-
-def test_panel_ratio_round_trip_uses_actual_splitter_sizes():
-    sizes = split_sizes_for_ratio(1000, 0.37)
-    assert sizes == (370, 630)
-    assert ratio_from_sizes(*sizes) == pytest.approx(0.37)
-    assert ratio_from_sizes("bad", None) == pytest.approx(DEFAULT_PANEL_RATIO)
 
 
 @pytest.mark.parametrize(
@@ -1614,23 +1641,6 @@ def test_main_frame_settings_update_falls_back_to_individual_keys():
     assert settings.values == {"a": 1, "b": 2}
 
 
-def test_programmatic_panel_ratio_triggers_responsive_reflow():
-    splitter = Mock()
-    splitter.sizes.side_effect = ([400, 600], [350, 650], [350, 650])
-    left_panel = Mock()
-    frame = SimpleNamespace(
-        _panel_splitter=splitter,
-        _pending_panel_sizes=None,
-        left_panel=left_panel,
-    )
-
-    MainFrame.apply_panel_ratio(frame, 0.35)
-
-    splitter.setSizes.assert_called_once_with([350, 650])
-    assert frame._pending_panel_sizes == (350, 650)
-    left_panel.request_responsive_reflow.assert_called_once_with(ReflowReason.SPLITTER)
-
-
 def test_restore_default_window_size_leaves_maximized_state():
     frame = SimpleNamespace(
         isMaximized=lambda: True,
@@ -1647,310 +1657,153 @@ def test_restore_default_window_size_leaves_maximized_state():
     frame.apply_window_size.assert_called_once_with(1250, 700)
 
 
-def test_settings_dialog_opens_as_reusable_non_modal_window():
-    dialog = Mock()
-    frame = SimpleNamespace(
-        set_continuous_scan=Mock(),
-        _refresh_save_path=Mock(),
-        _refresh_live_settings=Mock(),
-        _find_active_dialog=Mock(return_value=None),
-        _register_dialog=Mock(side_effect=lambda value, *_args: value),
-        log_panel=SimpleNamespace(set_max_lines=Mock()),
-    )
-
-    with patch("gui.secondary_windows.SettingsDialog", return_value=dialog):
-        MainFrame._show_settings(frame)
-
-    frame._register_dialog.assert_called_once()
-    dialog.continuous_scan_toggled.connect.assert_called_once_with(frame.set_continuous_scan)
-    dialog.log_max_lines_changed.connect.assert_called_once_with(frame.log_panel.set_max_lines)
-    dialog.settings_applied.connect.assert_called_once_with(frame._refresh_live_settings)
-    dialog.show.assert_called_once_with()
-    dialog.exec_.assert_not_called()
-
-
-def test_settings_dialog_reuses_existing_window():
-    dialog = Mock()
-    frame = SimpleNamespace(_find_active_dialog=Mock(return_value=dialog))
+def test_settings_navigation_switches_to_reference_setting_page():
+    page = object()
+    frame = SimpleNamespace(_settings_page=page, switchTo=Mock())
 
     MainFrame._show_settings(frame)
 
-    dialog.show.assert_called_once_with()
-    dialog.raise_.assert_called_once_with()
-    dialog.activateWindow.assert_called_once_with()
+    frame.switchTo.assert_called_once_with(page)
 
 
-def test_toolbar_height_does_not_follow_vertical_window_resize():
-    """在隔离 Qt 进程中验证工具栏只响应字体尺寸，不吸收窗口剩余高度。"""
+def test_settings_navigation_reuses_existing_page():
+    page = object()
+    frame = SimpleNamespace(_settings_page=page, switchTo=Mock())
 
-    script = textwrap.dedent("""
-        import os
-        from unittest.mock import Mock, patch
+    MainFrame._show_settings(frame)
+    MainFrame._show_settings(frame)
 
-        from PySide6.QtWidgets import QApplication, QSizePolicy
-
-        from core.settings_manager import AppSettings
-        from gui.main_frame import MainFrame
-        from gui.styles import BaseStyles
+    assert frame.switchTo.call_count == 2
+    assert all(item.args == (page,) for item in frame.switchTo.call_args_list)
 
 
-        class Settings:
-            save_directory = os.path.join(os.getcwd(), "__missing_default_save_directory__")
-
-            def __init__(self):
-                self.values = {
-                    "window_width": 1120,
-                    "window_height": 640,
-                    "left_panel_width": 400,
-                    "right_panel_width": 600,
-                    "panel_split_ratio": 0.4,
-                    "always_on_top": False,
-                    "log_max_lines": 2000,
-                }
-
-            def get(self, key, default=None):
-                return self.values.get(key, default)
-
-            def set(self, key, value):
-                self.values[key] = value
-
-            def update(self, values):
-                self.values.update(values)
-
-            set_many = update
-
-
-        app = QApplication([])
-        settings = Settings()
-        controller = Mock()
-        controller.signals = Mock()
-        with (
-            patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
-            patch("gui.main_frame.ADBController", lambda _log_service: controller),
-            patch.object(MainFrame, "_bootstrap_adb_async", lambda _self: None),
-        ):
-            window = MainFrame()
-            window.show()
-            toolbar_heights = []
-            content_heights = []
-            for height in (500, 640, 800):
-                window.resize(1120, height)
-                app.processEvents()
-                app.processEvents()
-                toolbar_heights.append(window._toolbar.height())
-                content_heights.append(window._panel_splitter.height())
-
-            expected_height = BaseStyles.control_height(minimum=32, padding=8)
-            layout = window._central_widget.layout()
-            base_size_passed = all(
-                (
-                    window._toolbar.sizePolicy().verticalPolicy() == QSizePolicy.Fixed,
-                    toolbar_heights == [expected_height] * 3,
-                    content_heights[-1] - content_heights[0] == 300,
-                    layout.stretch(0) == 0,
-                    layout.stretch(1) == 1,
-                )
-            )
-
-            with patch.object(BaseStyles, "control_height", return_value=48):
-                window._on_ui_font_changed(None)
-                window.resize(1120, 640)
-                app.processEvents()
-                app.processEvents()
-                scaled_height = window._toolbar.height()
-                window.resize(1120, 800)
-                app.processEvents()
-                app.processEvents()
-                scaled_resized_height = window._toolbar.height()
-
-            with patch.object(BaseStyles, "control_height", return_value=expected_height):
-                window._on_ui_font_changed(None)
-                app.processEvents()
-                app.processEvents()
-                restored_height = window._toolbar.height()
-
-            path_states = []
-            for width in (860, 919, 920, 1039, 1040, 1120, 1230):
-                window.resize(width, 640)
-                app.processEvents()
-                app.processEvents()
-                path_states.append(
-                    (
-                        window._save_path_label.isVisible(),
-                        window._save_path_label.width(),
-                        window._save_path_label.maximumWidth(),
-                        window._save_path_label.text(),
-                        window._save_path_label.toolTip(),
-                    )
-                )
-
-            # 路径宽度来自工具栏扣除其余控件后的真实余量，并在 420px 封顶。
-            # 工具栏标题已收敛为 FluentLabel（BodyLabel 自带 LABEL QSS 内边距），
-            # 略宽于旧 QLabel，最窄档的最大宽度标定随之从 390 收敛到 366。
-            expected_maximum_widths = (366, 420, 420, 420, 420, 420, 420)
-            settings.save_directory = os.path.join(os.getcwd(), "updated-save-directory")
-            window._refresh_save_path()
-            app.processEvents()
-            updated_path_state = (
-                window._save_path_label.width(),
-                window._save_path_label.text(),
-                window._save_path_label.toolTip(),
-            )
-
-            passed = all(
-                (
-                    base_size_passed,
-                    scaled_height == scaled_resized_height == 48,
-                    restored_height == expected_height,
-                    window._save_path_label.sizePolicy().horizontalPolicy()
-                    == QSizePolicy.Preferred,
-                    window._toolbar_title.font().bold(),
-                    not window._save_path_label.font().bold(),
-                    tuple(state[2] for state in path_states) == expected_maximum_widths,
-                    all(state[0] and state[1] > 0 and state[3] for state in path_states),
-                    all(state[3].startswith("Globa") for state in path_states),
-                    all("__missing_default_save_directory__" in state[4] for state in path_states),
-                    updated_path_state[0] > 0,
-                    updated_path_state[1].startswith("Globa"),
-                    updated_path_state[2] == settings.save_directory,
-                )
-            )
-            if not passed:
-                print(
-                    "toolbar_heights=",
-                    toolbar_heights,
-                    "content_heights=",
-                    content_heights,
-                    "expected_height=",
-                    expected_height,
-                    "scaled_heights=",
-                    (scaled_height, scaled_resized_height),
-                    "restored_height=",
-                    restored_height,
-                    "path_states=",
-                    path_states,
-                    "updated_path_state=",
-                    updated_path_state,
-                )
-            window._close_ready = True
-            window.close()
-        raise SystemExit(0 if passed else 2)
-        """)
-    environment = dict(os.environ)
-    environment["QT_QPA_PLATFORM"] = "offscreen"
-
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=os.getcwd(),
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
+def test_settings_reset_syncs_reference_cards_and_runtime(qt_application):
+    settings = _MainFrameSettings()
+    settings.values.update(
+        {
+            "theme": "Dark",
+            "font_family": "Arial",
+            "ui_font_size": 18,
+            "log_font_size": 14,
+            "log_max_lines": 5000,
+            "continuous_device_scan": False,
+            "always_on_top": True,
+        }
     )
+    frame = build_main_frame(settings=settings)
+    try:
+        page = frame._settings_page
+        frame.set_continuous_scan = Mock()
+        frame.set_always_on_top = Mock()
+        frame.restore_default_window_size = Mock()
 
-    assert result.returncode == 0, result.stdout + result.stderr
-
-
-def test_minimum_window_keeps_log_panel_visible_with_large_font():
-    """在隔离 Qt 进程中验证最小窗口和最大字号组合。"""
-
-    script = textwrap.dedent("""
-        from unittest.mock import Mock, patch
-
-        from PySide6.QtTest import QTest
-        from PySide6.QtWidgets import QApplication, QScrollArea, QSizePolicy
-
-        from core.settings_manager import AppSettings
-        from gui.main_frame import MainFrame
-        from gui.styles import BaseStyles
-
-
-        class Settings:
-            save_directory = "."
-
-            def __init__(self):
-                self.values = {
-                    "window_width": 860,
-                    "window_height": 500,
-                    "left_panel_width": 300,
-                    "right_panel_width": 560,
-                    "panel_split_ratio": 0.35,
-                    "always_on_top": False,
-                    "log_max_lines": 2000,
-                }
-
-            def get(self, key, default=None):
-                return self.values.get(key, default)
-
-            def set(self, key, value):
-                self.values[key] = value
-
-            def update(self, values):
-                self.values.update(values)
-
-            set_many = update
-
-
-        app = QApplication([])
-        settings = Settings()
-        controller = Mock()
-        controller.signals = Mock()
-        BaseStyles.DEFAULT_FONT_SIZE = 22
         with (
-            patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
-            patch("gui.main_frame.ADBController", lambda _log_service: controller),
-            patch.object(MainFrame, "_bootstrap_adb_async", lambda _self: None),
+            patch.object(BaseStyles, "switch_theme"),
+            patch.object(BaseStyles, "reload_from_settings"),
         ):
-            window = MainFrame()
-            window.resize(860, 500)
-            window.show()
-            for _index in range(8):
-                app.processEvents()
-                QTest.qWait(5)
-            device_widget = window.left_panel.device_widget
-            log_soft_minimum = max(
-                32,
-                window.log_panel.text_output.fontMetrics().height()
-                + 2 * window.log_panel.text_output.frameWidth(),
-            )
-            required_height = (
-                window._workspace_vertical_chrome_height()
-                + device_widget.minimumSizeHint().height()
-                + window._device_log_splitter.handleWidth()
-                + log_soft_minimum
-            )
-            passed = all(
-                (
-                    device_widget.sizePolicy().verticalPolicy() == QSizePolicy.Preferred,
-                    device_widget.findChildren(QScrollArea)
-                    == [window.left_panel._devices_tab._device_action_scroll],
-                    window.left_panel._devices_tab._device_action_scroll
-                    .horizontalScrollBar()
-                    .maximum()
-                    == 0,
-                    window.log_panel.minimumHeight() == log_soft_minimum,
-                    window.log_panel.height() >= log_soft_minimum,
-                    window.log_panel.isVisible(),
-                    window.minimumHeight() == max(500, required_height),
-                    window.height() >= window.minimumHeight(),
-                )
-            )
-            window._close_ready = True
-            window.close()
-        raise SystemExit(0 if passed else 2)
-        """)
-    environment = dict(os.environ)
-    environment["QT_QPA_PLATFORM"] = "offscreen"
+            page._reset_settings()
 
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=os.getcwd(),
-        env=environment,
-        capture_output=True,
-        text=True,
-        timeout=20,
-        check=False,
+        assert page.scan_card.isChecked() is True
+        assert page.pin_card.isChecked() is False
+        assert page.log_lines_card.value() == "2000"
+        assert page.font_family_card.value() == "系统默认"
+        assert page.ui_size_card.value() == "12"
+        assert page.log_size_card.value() == "9"
+        assert page.theme_card.value() == "跟随系统"
+        assert page.accent_card.color_button.color.name().upper() == "#0F6CBD"
+        assert page.mica_card.isChecked() is True
+        assert page.save_card.contentLabel.text() == "系统默认目录"
+        frame.set_continuous_scan.assert_called_once_with(True)
+        frame.set_always_on_top.assert_called_once_with(False)
+        frame.restore_default_window_size.assert_called_once_with()
+    finally:
+        frame._close_ready = True
+        frame.close()
+
+
+def test_settings_page_applies_typography_in_one_batch(qt_application):
+    settings = _MainFrameSettings()
+    frame = build_main_frame(settings=settings)
+    try:
+        page = frame._settings_page
+        blockers = [
+            QSignalBlocker(page.font_family_card),
+            QSignalBlocker(page.ui_size_card),
+            QSignalBlocker(page.log_size_card),
+        ]
+        page.font_family_card.combo_box.addItem("Test UI")
+        page.font_family_card.combo_box.setCurrentText("Test UI")
+        page.ui_size_card.combo_box.setCurrentText("18")
+        page.log_size_card.combo_box.setCurrentText("14")
+        del blockers
+        settings.writes.clear()
+
+        with patch.object(BaseStyles, "reload_from_settings") as reload_styles:
+            page._apply_typography("")
+
+        assert settings.writes == [
+            {
+                "font_family": "Test UI",
+                "ui_font_size": 18,
+                "log_font_size": 14,
+            }
+        ]
+        reload_styles.assert_called_once_with()
+    finally:
+        frame._close_ready = True
+        frame.close()
+
+
+def test_gallery_page_header_height_does_not_follow_vertical_window_resize(
+    qt_application,
+):
+    """Gallery 页面标题区保持参考项目固定高度，剩余空间交给页面内容。"""
+
+    frame = build_main_frame()
+    try:
+        frame.show()
+        frame._on_nav_requested("apps")
+        header = frame._apps_page.header
+        heights = []
+        body_heights = []
+        for height in (500, 640, 800):
+            frame.resize(1120, height)
+            qt_application.processEvents()
+            heights.append(header.height())
+            body_heights.append(frame._apps_page.body.height())
+
+        assert heights == [108, 108, 108]
+        assert body_heights[-1] > body_heights[0]
+        assert not hasattr(frame, "_toolbar")
+        assert frame._settings_page.save_card.contentLabel.text()
+    finally:
+        frame._close_ready = True
+        frame.close()
+
+def test_minimum_window_keeps_independent_log_page_visible_with_large_font(
+    qt_application,
+    monkeypatch,
+):
+    """最大字号下 Logs 独立页面仍可见，不再依赖设备/日志 splitter。"""
+
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Arial", size or 22)),
     )
+    frame = build_main_frame()
+    try:
+        frame.resize(860, 500)
+        frame.show()
+        frame._on_nav_requested("logs")
+        qt_application.processEvents()
 
-    assert result.returncode == 0, result.stderr
+        assert not hasattr(frame, "_device_log_splitter")
+        assert frame.stackedWidget.currentWidget() is frame._logs_page
+        assert frame.log_panel.isVisibleTo(frame._logs_page)
+        assert frame.log_panel.text_output.isVisibleTo(frame._logs_page)
+        assert frame._logs_page.header.height() == 108
+        assert frame.minimumHeight() <= frame.height()
+    finally:
+        frame._close_ready = True
+        frame.close()

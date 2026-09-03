@@ -69,6 +69,7 @@ class DeviceManagerLayout:
         root_layout_margins = self._frame.device_widget.layout().contentsMargins()
         group_contents_margins = self._frame._device_group.contentsMargins()
         group_layout_margins = self._frame._device_group.layout().contentsMargins()
+        group_view_margins = self._frame._device_group.viewLayout.contentsMargins()
         body_layout_margins = self._frame._device_body_layout.contentsMargins()
         return sum(
             (
@@ -78,6 +79,8 @@ class DeviceManagerLayout:
                 group_contents_margins.right(),
                 group_layout_margins.left(),
                 group_layout_margins.right(),
+                group_view_margins.left(),
+                group_view_margins.right(),
                 body_layout_margins.left(),
                 body_layout_margins.right(),
             )
@@ -195,12 +198,7 @@ class DeviceManagerLayout:
             connect_layout.setColumnStretch(1, 1)
         else:
             connect_layout.addWidget(self._frame.ip_entry, 0, 0)
-            connect_layout.addWidget(
-                self._frame.btn_connect_devices,
-                0,
-                1,
-                alignment=Qt.AlignmentFlag.AlignRight,
-            )
+            connect_layout.addWidget(self._frame.btn_connect_devices, 0, 1)
             connect_layout.setColumnStretch(0, 3)
             # 连接区与主体共享 3:1 列语义，避免两个网格分别计算导致列宽漂移。
             connect_layout.setColumnStretch(1, 1)
@@ -249,24 +247,26 @@ class DeviceManagerLayout:
         for row in range(max(self._frame._device_actions_layout.rowCount(), action_row_count + 1)):
             self._frame._device_actions_layout.setRowStretch(row, 0)
         self._frame._device_actions_layout.setRowStretch(action_row_count, 1)
-        if plan.mode in {"wide", "medium"}:
-            self._frame.btn_connect_devices.setMinimumWidth(plan.connect_width)
-            self._frame.btn_connect_devices.setMaximumWidth(plan.connect_width)
-
         spacing = plan.action_plan.spacing
         for layout in (self._frame._connect_layout, self._frame._device_body_layout):
             if layout.horizontalSpacing() != spacing:
                 layout.setHorizontalSpacing(spacing)
             if layout.verticalSpacing() != spacing:
                 layout.setVerticalSpacing(spacing)
-
         self._frame._sync_device_control_heights()
         self._frame._update_device_minimum_heights(plan.body_minimum_height)
         self._frame._sync_address_popup_width()
         # 连接卡片样式随模式切换；相同模式内由视图控制器去重，不重复抛光。
         apply_card_style = getattr(self._frame, "_apply_connect_card_style", None)
         if callable(apply_card_style):
+            self._frame._connect_card.setMinimumHeight(0)
             apply_card_style(plan.mode)
+            self._frame._connect_card.setMinimumHeight(
+                max(
+                    self._frame._connect_layout.minimumSize().height(),
+                    self._frame._connect_card.minimumSizeHint().height(),
+                )
+            )
 
     def device_list_minimum_height(self) -> int:
         """返回当前内容下可完整显示一行设备所需的列表高度。"""
@@ -453,6 +453,8 @@ class DeviceManagerLayout:
         group_contents = self._frame._device_group.contentsMargins()
         group_layout = self._frame._device_group.layout()
         group_margins = group_layout.contentsMargins()
+        group_view_layout = self._frame._device_group.viewLayout
+        group_view_margins = group_view_layout.contentsMargins()
         connect_margins = self._frame._connect_layout.contentsMargins()
         body_margins = self._frame._device_body_layout.contentsMargins()
         connect_rows = 1 if mode == "wide" else 2
@@ -475,8 +477,10 @@ class DeviceManagerLayout:
                 group_contents.bottom(),
                 group_margins.top(),
                 group_margins.bottom(),
+                group_view_margins.top(),
+                group_view_margins.bottom(),
                 connect_height,
-                max(0, group_layout.spacing()),
+                max(0, group_view_layout.spacing()),
                 body_margins.top(),
                 body_margins.bottom(),
                 self._frame.device_list_minimum_height(),
@@ -497,6 +501,10 @@ class DeviceManagerLayout:
         if base_minimums is None:
             base_minimums = tuple(control.minimumHeight() for control in controls)
             self._frame._device_control_base_minimums = base_minimums
+            self._frame._device_control_base_maximums = tuple(
+                control.maximumHeight() for control in controls
+            )
+        base_maximums = self._frame._device_control_base_maximums
         target_height = max(
             max(
                 control.sizeHint().height(),
@@ -505,7 +513,12 @@ class DeviceManagerLayout:
             )
             for control, base_minimum in zip(controls, base_minimums)
         )
-        for control in controls:
+        for control, base_maximum in zip(controls, base_maximums):
+            # EditableComboBox 默认把高度上限固定为 28px。字号放大后若只提高
+            # minimumHeight，Qt 会面对互相冲突的约束并让相邻网格行重叠。
+            # 仅在真实内容高度超过参考组件默认上限时同步放宽，缩回字号时恢复。
+            if base_maximum < 16_777_215:
+                control.setMaximumHeight(max(base_maximum, target_height))
             control.setMinimumHeight(target_height)
 
     def _device_layout_limits(self) -> tuple[int, int]:
@@ -534,16 +547,4 @@ class DeviceManagerLayout:
         return compact_limit, wide_limit
 
     def _sync_address_popup_width(self) -> None:
-        """让设备地址下拉表格和补全弹窗保持与输入框相同的当前宽度。"""
-
-        width = max(1, self._frame.ip_entry.width())
-        completer = self._frame.ip_entry.completer()
-        for popup in (
-            self._frame.ip_entry.view(),
-            completer.popup() if completer is not None else None,
-        ):
-            if popup is None:
-                continue
-            popup.setMinimumWidth(width)
-            popup.setMaximumWidth(width)
-            popup.resize(width, popup.height())
+        """qfluentwidgets 自主管理弹出菜单宽度，此处保留响应式调用边界。"""

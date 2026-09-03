@@ -2,11 +2,11 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QLocale, QRect, QSize, Qt, QTimer
+from PySide6.QtCore import QLocale, QSize, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
-    QComboBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -14,14 +14,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QStyle,
-    QStyleOptionComboBox,
     QWidget,
 )
 from qfluentwidgets import (
     BodyLabel,
     CheckBox,
     ComboBox,
+    EditableComboBox,
+    HeaderCardWidget,
     LineEdit,
     PrimaryPushButton,
     PushButton,
@@ -29,11 +29,13 @@ from qfluentwidgets import (
 )
 
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import (
+    apply_focus_indicator,
+    apply_label_role,
+    configure_button,
+    configure_fluent_control,
+)
 from gui.styles.icon_loader import get_themed_icon
-from gui.widgets.double_click_button import DoubleClickButton
-from gui.widgets.fluent.button import DangerPushButton
-from gui.widgets.fluent.combo_box import FluentComboBox
-from gui.widgets.fluent.group_box import ScalableGroupBox
 from gui.widgets.responsive_controller import (
     ReflowReason,
     ResponsiveCoordinator,
@@ -58,9 +60,7 @@ class _SuffixedIntValidator(QIntValidator):
         super().__init__(minimum, maximum, parent)
         self._suffix = str(suffix).strip()
         locale = self.locale()
-        locale.setNumberOptions(
-            locale.numberOptions() | QLocale.NumberOption.RejectGroupSeparator
-        )
+        locale.setNumberOptions(locale.numberOptions() | QLocale.NumberOption.RejectGroupSeparator)
         self.setLocale(locale)
 
     def validate(self, input_text: str, position: int):
@@ -69,47 +69,6 @@ class _SuffixedIntValidator(QIntValidator):
             numeric_text = numeric_text[: -len(self._suffix)].rstrip()
         state = cast(Any, super().validate(numeric_text, position))[0]
         return state, input_text, position
-
-
-class _ResponsiveGroupBox(ScalableGroupBox):
-    """只让真实溢出行或可滚动标题撑宽分组，忽略普通子控件尺寸提示。"""
-
-    _HORIZONTAL_CONTENT_MARGIN = 32
-
-    def _title_minimum_width(self) -> int:
-        """返回滚动容器中完整绘制标题所需的稳定分组宽度。"""
-
-        ancestor = self.parentWidget()
-        while ancestor is not None and not isinstance(ancestor, QScrollArea):
-            ancestor = ancestor.parentWidget()
-        if not self.title() or ancestor is None:
-            return 0
-        # sub-control 的位置和宽度会随控件当前几何变化，不能进入最小宽度；
-        # 固定边距覆盖项目 QSS 的 10px 偏移、左右 8px padding、边框及留白。
-        return max(
-            0,
-            self.fontMetrics().horizontalAdvance(self.title())
-            + self._HORIZONTAL_CONTENT_MARGIN,
-        )
-
-    def minimumSizeHint(self) -> QSize:
-        hint = super().minimumSizeHint()
-        overflow_width = max(
-            (
-                int(child.property("responsiveOverflowWidth") or 0)
-                for child in self.findChildren(
-                    QWidget,
-                    options=Qt.FindChildOption.FindDirectChildrenOnly,
-                )
-            ),
-            default=0,
-        )
-        minimum_width = max(
-            self.minimumWidth(),
-            overflow_width + self._HORIZONTAL_CONTENT_MARGIN if overflow_width else 0,
-            self._title_minimum_width(),
-        )
-        return QSize(max(0, minimum_width), max(0, hint.height()))
 
 
 class BasePanel(QWidget):
@@ -169,32 +128,30 @@ class BasePanel(QWidget):
 
     # ── 界面控件工厂 ────────────────────────────────────────────────────
 
-    def _card(self, title: str, *, parent=None):
-        """创建 Fluent Card 容器（P2 组件体系接入：新工厂，不改既有方法契约）。"""
+    def _card(self, title: str, *, parent=None) -> HeaderCardWidget:
+        """按参考项目直接创建 HeaderCardWidget 分区。"""
 
-        from gui.widgets.fluent.card import Card
-
-        card = Card(title=title, parent=parent)
+        card = HeaderCardWidget(title, parent)
+        card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
+        card.viewLayout.setContentsMargins(16, 12, 16, 14)
+        card.viewLayout.setSpacing(8)
+        apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
         card.setProperty("fontRole", FontRole.UI.value)
         card.setToolTip(title)
         card.setAccessibleName(title)
         return card
 
-    def _g(self, t):
-        """创建统一样式的分组框（样式由 ScalableGroupBox 自维护）。"""
-        g = _ResponsiveGroupBox(t)
-        g.setFont(self._font_base)
-        g.setProperty("fontRole", FontRole.UI.value)
+    def _g(self, t: str) -> HeaderCardWidget:
+        """创建 qfluentwidgets 标题卡片，不再使用 QGroupBox。"""
+
+        g = self._card(t)
         g.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        g.setToolTip(t)
-        g.setAccessibleName(t)
         return g
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
         role = FontRole.UI_SMALL if small else FontRole.UI
         label = BodyLabel(text, self)
-        label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL) if small else self._font_base)
-        label.setProperty("fontRole", role.value)
+        apply_label_role(label, role)
         label.setWordWrap(True)
         if align is not None:
             label.setAlignment(align)
@@ -209,82 +166,32 @@ class BasePanel(QWidget):
         cb = CheckBox()
         cb.setText(text)
         cb.setAccessibleName(text)
-        cb.setFont(self._font_base)
-        cb.setProperty("fontRole", FontRole.UI.value)
+        configure_fluent_control(cb)
         if tooltip:
             cb.setToolTip(tooltip)
         return cb
 
-    @staticmethod
-    def _set_button_help(button: QPushButton, tooltip: str | None) -> None:
-        description = str(tooltip or "").strip()
-        if not description:
-            raise ValueError("Buttons must provide a functional tooltip")
-        button.setToolTip(description)
-        button.setAccessibleDescription(description)
-        button.setProperty("functionalToolTip", description)
-
     def _b(self, t, i, variant="", tooltip=None):
-        """创建图标按钮；accent/ghost 用 qfluentwidgets 按钮，其余用 QSS 变体。"""
+        """直接创建 qfluentwidgets 图标按钮并配置项目语义。"""
         if variant == "accent":
             b = PrimaryPushButton()
-            b.setText(t)
         elif variant == "ghost":
             b = TransparentPushButton()
-            b.setText(t)
         elif variant == "danger":
-            b = DangerPushButton()
-            b.setText(t)
-        else:
-            b = PushButton()
-            b.setText(t)
-        b.setFont(self._font_sm)
-        b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        b.setMinimumHeight(28)
-        b.setIcon(get_themed_icon(i))
-        b.setIconSize(QSize(14, 14))
-        b.setAccessibleName(t)
-        self._set_button_help(b, tooltip)
-        b.setProperty("iconName", i)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        return b
-
-    def _db(self, t, i, tooltip=None):
-        """创建只在双击时触发的图标按钮。"""
-        b = DoubleClickButton(t)
-        b.setFont(self._font_sm)
-        b.setProperty("fontRole", FontRole.UI.value)
-        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        b.setMinimumHeight(28)
-        b.setIcon(get_themed_icon(i))
-        b.setIconSize(QSize(14, 14))
-        b.setAccessibleName(t)
-        self._set_button_help(b, tooltip)
-        b.setProperty("iconName", i)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        return b
-
-    def _qb(self, t, variant="", tooltip=None):
-        """创建纯文本按钮；accent/ghost 用 qfluentwidgets 按钮，其余用 QSS 变体。"""
-        if variant == "accent":
             b = PrimaryPushButton()
-            b.setText(t)
-        elif variant == "ghost":
-            b = TransparentPushButton()
-            b.setText(t)
-        elif variant == "danger":
-            b = DangerPushButton()
-            b.setText(t)
         else:
             b = PushButton()
-            b.setText(t)
-        b.setFont(self._font_sm)
-        b.setProperty("fontRole", FontRole.UI.value)
+        configure_button(
+            b,
+            text=t,
+            tooltip=tooltip,
+            danger=variant == "danger",
+        )
         b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        b.setMinimumHeight(28)
+        b.setIcon(get_themed_icon(i))
+        b.setIconSize(QSize(16, 16))
         b.setAccessibleName(t)
-        self._set_button_help(b, tooltip)
+        b.setProperty("iconName", i)
         b.setCursor(Qt.CursorShape.PointingHandCursor)
         return b
 
@@ -312,12 +219,6 @@ class BasePanel(QWidget):
             else:
                 widget, stretch = item, 0
             row.addWidget(widget, stretch)
-        return row
-
-    def _add_row(self, layout, *items, spacing=4):
-        """创建水平控件行并追加到已有的垂直或分组布局。"""
-        row = self._row(*items, spacing=spacing)
-        layout.addLayout(row)
         return row
 
     def _add_responsive_row(
@@ -406,43 +307,14 @@ class BasePanel(QWidget):
         """按控件当前字体刷新由响应布局托管的稳定最小宽度。"""
 
         if bool(widget.property(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY)):
-            # 以当前字体和原生样式的 sizeHint 为起点，比固定 em
-            # 更适合作为可读下限；ComboBox 再按真实文本区补足净宽。
+            # 以当前字体和 qfluentwidgets 的 sizeHint 为起点，并按真实文本补足净宽。
             minimum_width = max(1, widget.sizeHint().width())
-            if isinstance(widget, QComboBox):
+            if isinstance(widget, (ComboBox, EditableComboBox)):
                 texts = [widget.itemText(index) for index in range(widget.count())]
                 minimum_text = widget.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY)
                 if minimum_text not in (None, ""):
                     # 业务合法上限未必属于预设项；显式文本只参与稳定下限，
                     # 不把用户当前输入带入响应式断点。
-                    texts.append(str(minimum_text))
-                elif widget.currentText():
-                    texts.append(widget.currentText())
-                required_text_width = max(
-                    (widget.fontMetrics().horizontalAdvance(text) for text in texts),
-                    default=0,
-                )
-                # PySide6 类型桩未暴露继承自 QStyleOption 的 rect，运行时接口存在。
-                option = cast(Any, QStyleOptionComboBox())
-                widget.initStyleOption(option)
-                option.rect = QRect(
-                    0,
-                    0,
-                    minimum_width,
-                    max(1, widget.sizeHint().height()),
-                )
-                edit_rect = widget.style().subControlRect(
-                    QStyle.ComplexControl.CC_ComboBox,
-                    option,
-                    QStyle.SubControl.SC_ComboBoxEditField,
-                    widget,
-                )
-                minimum_width += max(0, required_text_width - edit_rect.width())
-            elif isinstance(widget, ComboBox):
-                # qfluentwidgets ComboBox：最小宽度容纳最长项，避免闭合态文本裁剪。
-                texts = [widget.itemText(index) for index in range(widget.count())]
-                minimum_text = widget.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY)
-                if minimum_text not in (None, ""):
                     texts.append(str(minimum_text))
                 elif widget.currentText():
                     texts.append(widget.currentText())
@@ -502,10 +374,7 @@ class BasePanel(QWidget):
             if len(planned_context) == 5 and len(current_context) == 5:
                 planned_context = (planned_context[0], *planned_context[2:])
                 current_context = (current_context[0], *current_context[2:])
-            if (
-                plan.available_width != context.width
-                or planned_context != current_context
-            ):
+            if plan.available_width != context.width or planned_context != current_context:
                 return False
         return True
 
@@ -558,7 +427,7 @@ class BasePanel(QWidget):
     def _responsive_policy(widget: QWidget) -> WidthPolicy:
         """按控件语义选择稳定宽度来源，不读取用户当前输入文本。"""
 
-        if isinstance(widget, (QLineEdit, QComboBox)):
+        if isinstance(widget, QLineEdit):
             return WidthPolicy.SHRINKABLE
         if isinstance(widget, QLabel) and widget.wordWrap():
             return WidthPolicy.WRAPPING
@@ -700,8 +569,7 @@ class BasePanel(QWidget):
     def _in(self, p, w=0):
         """创建 qfluentwidgets 输入框。"""
         i = LineEdit()
-        i.setFont(self._font_sm)
-        i.setProperty("fontRole", FontRole.UI.value)
+        configure_fluent_control(i)
         i.setPlaceholderText(p)
         i.setAccessibleName(p)
         i.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -734,10 +602,6 @@ class BasePanel(QWidget):
 
     @staticmethod
     def _input_widget(widget):
-        if isinstance(widget, QComboBox) and widget.isEditable():
-            editor = widget.lineEdit()
-            assert editor is not None  # 可编辑下拉框必有内置 QLineEdit
-            return editor
         return widget
 
     def _link_form_labels(self, widgets) -> None:
@@ -748,7 +612,7 @@ class BasePanel(QWidget):
                 continue
             for candidate in widgets[index + 1 :]:
                 target = self._input_widget(candidate)
-                if not isinstance(target, (QLineEdit, QComboBox, QCheckBox)):
+                if not isinstance(target, (QLineEdit, QCheckBox, QPushButton)):
                     continue
                 label.setBuddy(target)
                 name = label.text().strip().rstrip(":")
@@ -774,7 +638,7 @@ class BasePanel(QWidget):
 
     def _set_combo_int_validator(
         self,
-        combo: QComboBox,
+        combo: EditableComboBox,
         minimum: int,
         maximum: int,
         *,
@@ -782,22 +646,20 @@ class BasePanel(QWidget):
     ) -> None:
         """为可编辑整数下拉框安装范围 validator，可接受固定单位后缀。"""
 
-        editor = combo.lineEdit()
-        if editor is not None:
-            validator = (
-                _SuffixedIntValidator(minimum, maximum, suffix, editor)
-                if suffix
-                else QIntValidator(minimum, maximum, editor)
-            )
-            editor.setValidator(validator)
+        validator = (
+            _SuffixedIntValidator(minimum, maximum, suffix, combo)
+            if suffix
+            else QIntValidator(minimum, maximum, combo)
+        )
+        combo.setValidator(validator)
 
     def _combo(self, items=None, font=None, *, font_role=FontRole.UI):
         """创建 qfluentwidgets 只读下拉框。"""
         role = FontRole(font_role)
-        role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
         c = ComboBox()
-        c.setFont(font or role_font)
-        c.setProperty("fontRole", role.value)
+        configure_fluent_control(c, role)
+        if font is not None:
+            c.setFont(font)
         c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if items:
             c.addItems(items)
@@ -807,13 +669,15 @@ class BasePanel(QWidget):
         return c
 
     def _combo_editable(self, items=None, font=None, *, font_role=FontRole.UI):
-        """创建样式一致的可编辑下拉框（FluentComboBox，自维护 COMBO_BOX_STYLE 主题）。"""
+        """创建 qfluentwidgets 原生 EditableComboBox。"""
         role = FontRole(font_role)
         role_font = self._font_sm if role is FontRole.UI else BaseStyles.font_for_role(role)
         resolved_font = font or role_font
-        c = FluentComboBox(editable=True)
+        c = EditableComboBox()
+        configure_fluent_control(c, role)
         c.setFont(resolved_font)
-        c.apply_font_role(role)
+        c.dropButton.setAccessibleName("展开选项")
+        apply_focus_indicator(c.dropButton)
         if items:
             c.addItems(items)
         return c

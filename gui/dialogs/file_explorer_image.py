@@ -2,14 +2,11 @@
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (
-    QDialog,
-    QLabel,
-    QSizePolicy,
-    QVBoxLayout,
-)
-from qfluentwidgets import PushButton, SmoothScrollArea
+from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout
+from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
 
+from gui.styles import FontRole
+from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 
 
@@ -28,12 +25,14 @@ class _ImageViewerDialog(QDialog):
         self.image_viewport = SmoothScrollArea()
         self.image_viewport.setWidgetResizable(False)
         self.image_viewport.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_label = QLabel()
+        self.image_label = ImageLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_viewport.setWidget(self.image_label)
         layout.addWidget(self.image_viewport, 1)
 
-        self.image_info = QLabel()
+        self.image_info = apply_label_role(
+            BodyLabel(), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
         self.image_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_info.setWordWrap(True)
         self.image_info.setMinimumWidth(0)

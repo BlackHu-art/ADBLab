@@ -125,8 +125,6 @@ _UI_TEST_FILES = frozenset(
         "test_preset_spin_box.py",
         "test_responsive_layout_controller.py",
         "test_responsive_panels.py",
-        "test_settings_typography.py",
-        "test_settings_window_layout.py",
         "test_typography_core.py",
         "test_ui_geometry_helpers.py",
         "test_window_lifecycle.py",

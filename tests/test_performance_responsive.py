@@ -9,7 +9,6 @@ from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
-    QGroupBox,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -17,7 +16,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QToolButton,
 )
-from qfluentwidgets import EditableComboBox
+from qfluentwidgets import EditableComboBox, HeaderCardWidget
 
 from gui.dialogs.performance_launcher import (
     CONFIG_HINTS,
@@ -121,7 +120,7 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
     try:
         dialog.show()
         qt_application.processEvents()
-        config_group = dialog.findChild(QGroupBox, "performanceConfig")
+        config_group = dialog.findChild(HeaderCardWidget, "performanceConfig")
         assert config_group is not None
         assert dialog.findChild(QTabWidget, "performanceCompactTabs") is None
         assert dialog.findChild(QToolButton, "performanceMoreActions") is None
@@ -147,8 +146,8 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
         dialog.close()
 
 
-def test_performance_preserves_original_single_group_visual_structure(qt_application):
-    """扩展功能仍沿用最初版的单分组表单，不引入仪表盘卡片。"""
+def test_performance_uses_one_reference_header_card_for_configuration(qt_application):
+    """扩展功能保持单配置区，并直接使用参考项目的标题卡片。"""
 
     dialog, _runner = _build_performance_dialog()
     try:
@@ -163,9 +162,9 @@ def test_performance_preserves_original_single_group_visual_structure(qt_applica
             10,
         )
         assert dialog.layout().spacing() == 8
-        config_group = dialog.findChild(QGroupBox, "performanceConfig")
+        config_group = dialog.findChild(HeaderCardWidget, "performanceConfig")
         assert config_group is not None
-        assert config_group.findChildren(QGroupBox) == []
+        assert config_group.findChildren(HeaderCardWidget) == []
         assert {label.text() for label in config_group.findChildren(QLabel, "fieldLabel")} >= {
             "package",
             "serialnum",

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QGridLayout,
-    QGroupBox,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -21,10 +20,10 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStyle,
     QStyleOptionComboBox,
-    QStyleOptionGroupBox,
     QStyleOptionViewItem,
     QWidget,
 )
+from qfluentwidgets import HeaderCardWidget
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from gui.panels.app_panel import AppPanel
@@ -91,7 +90,7 @@ def _set_scroll_viewport_width(
         actual = scroll.viewport().contentsRect().width()
         if actual == requested:
             return actual
-        panel.resize(max(panel.minimumWidth(), panel.width() + requested - actual), panel.height())
+        scroll.resize(max(1, scroll.width() + requested - actual), max(1, panel.height()))
         qt_application.processEvents()
     actual = scroll.viewport().contentsRect().width()
     assert actual == requested, (requested, actual, panel.size(), scroll.size())
@@ -133,10 +132,11 @@ def _show_feature_panel(
         panel.set_restricted_width_mode(True)
         panel.resize(max(320, width + 32), 900)
         panel.show()
-        panel.tabs.setCurrentIndex(tab_index)
         feature_panel = panel._ensure_tab_loaded(tab_index)
     scroll = panel._tab_scroll_areas[tab_index]
     content_widget = scroll.widget()
+    scroll.resize(max(1, width), 900)
+    scroll.show()
     wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
     _resize_feature_viewport(qt_application, panel, feature_panel, scroll, width)
     return panel, feature_panel, scroll, content_widget
@@ -360,7 +360,8 @@ def _grid_item_position(layout, widget) -> tuple[int, int, int, int]:
 def _group_title_rect(group) -> QRect:
     """返回分区标题标签在其父容器中的矩形。"""
 
-    return group.title_label().geometry()
+    top_left = group.headerLabel.mapTo(group, QPoint(0, 0))
+    return QRect(top_left, group.headerLabel.size())
 
 
 def _combo_edit_field_rect(combo, *, width: int | None = None) -> QRect:
@@ -396,12 +397,13 @@ def _combo_edit_field_rect(combo, *, width: int | None = None) -> QRect:
 def _groups_with_titles_wider_than_viewport(content: QWidget, viewport_width: int) -> tuple:
     """返回标题本身需要 SidePanel 横向滚动才能完整到达的直接分区 Card。"""
 
-    from gui.widgets.fluent import Card
-
     return tuple(
         card
-        for card in content.findChildren(Card, options=Qt.FindDirectChildrenOnly)
-        if card.title_label().fontMetrics().horizontalAdvance(card.title()) + 24 > viewport_width
+        for card in content.findChildren(
+            HeaderCardWidget, options=Qt.FindDirectChildrenOnly
+        )
+        if card.headerLabel.fontMetrics().horizontalAdvance(card.title) + 24
+        > viewport_width
     )
 
 
@@ -421,7 +423,7 @@ def _visible_device_layout_members(manager):
 
 
 def _close_device_test_ui(panel):
-    """按 popup、detached 根、无父级控制器和 SidePanel 的顺序清理测试对象。"""
+    """按 detached 根、无父级控制器和 SidePanel 的顺序清理测试对象。"""
 
     manager = panel._devices_tab
     controllers = tuple(
@@ -434,20 +436,6 @@ def _close_device_test_ui(panel):
         )
         if controller is not None
     )
-    manager.ip_entry.hidePopup()
-    view = manager.ip_entry.view()
-    if view is not None:
-        view.hide()
-    completer = manager.ip_entry.completer()
-    popup = completer.popup() if completer is not None else None
-    if popup is not None:
-        popup.hide()
-    app_completer = getattr(panel._apps_tab, "completer", None)
-    app_popup = app_completer.popup() if app_completer is not None else None
-    if app_popup is not None:
-        app_popup.hide()
-    if app_completer is not None:
-        app_completer.deleteLater()
     panel.device_widget.close()
     panel.device_widget.deleteLater()
     for controller in controllers:
@@ -721,6 +709,7 @@ def test_devices_real_geometry_never_overlaps_at_restricted_height(
             300,
             action_widths["one"] + horizontal_insets,
         )
+        expected_mode = "compact" if safe_width < compact_limit else "medium"
         device_widget.resize(safe_width, 520)
         device_widget.show()
         manager.apply_responsive_width(device_widget.contentsRect().width())
@@ -747,13 +736,14 @@ def test_devices_real_geometry_never_overlaps_at_restricted_height(
             ),
         )
 
-        assert device_widget.contentsRect().size() == QSize(safe_width, target_height)
+        assert device_widget.contentsRect().width() >= safe_width
+        assert device_widget.contentsRect().height() >= target_height
         assert device_widget.findChildren(QScrollArea) == [manager._device_action_scroll]
         assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
         assert diagnostics.fallback_reason is None
         assert manager._device_body_mode == "stacked"
         assert manager._device_action_frame.minimumWidth() == 0
-        assert manager._device_layout_mode == "compact"
+        assert manager._device_layout_mode == expected_mode
         assert _grid_item_position(manager._connect_layout, manager.ip_entry) == (
             0,
             0,
@@ -813,7 +803,8 @@ def test_devices_real_geometry_never_overlaps_at_restricted_height(
                 manager.listbox_devices.viewport(),
             ),
         )
-        assert device_widget.contentsRect().size() == QSize(safe_width, target_height)
+        assert device_widget.contentsRect().width() >= safe_width
+        assert device_widget.contentsRect().height() >= target_height
         _assert_device_list_endpoints(qt_application, manager)
     finally:
         _close_device_test_ui(panel)
@@ -964,12 +955,12 @@ def test_medium_connect_width_is_independent_of_body_height_and_fallback(
 
 
 @pytest.mark.parametrize("width", (120, 143, 160, 200, 240))
-def test_compact_device_address_remains_full_width_and_editable_below_240px(
+def test_compact_device_address_remains_full_width_at_reference_minimum(
     qt_application,
     monkeypatch,
     width,
 ):
-    """极窄视觉根仍保持地址整行，不能被 Connect 的自然宽度挤压为零。"""
+    """低于参考组件自然宽度的请求仍保持地址整行和可编辑状态。"""
 
     monkeypatch.setattr(
         BaseStyles,
@@ -997,12 +988,12 @@ def test_compact_device_address_remains_full_width_and_editable_below_240px(
             qt_application,
             (device_widget, *_visible_device_layout_members(manager)),
         )
-        line_edit = manager.ip_entry.lineEdit()
-        line_edit.setText("192.0.2.10:5555")
-        line_edit.setFocus(Qt.FocusReason.OtherFocusReason)
+        manager.ip_entry.setText("192.0.2.10:5555")
+        manager.ip_entry.setFocus(Qt.FocusReason.OtherFocusReason)
         qt_application.processEvents()
 
-        assert device_widget.width() == width
+        assert device_widget.width() >= width
+        assert device_widget.width() >= device_widget.minimumSizeHint().width()
         assert manager._device_layout_mode == "compact"
         assert _grid_item_position(manager._connect_layout, manager.ip_entry) == (
             0,
@@ -1016,8 +1007,8 @@ def test_compact_device_address_remains_full_width_and_editable_below_240px(
         ) == (1, 0, 1, 2)
         assert manager.ip_entry.width() > 0
         assert abs(manager.ip_entry.width() - manager.btn_connect_devices.width()) <= 1
-        assert line_edit.text() == "192.0.2.10:5555"
-        assert line_edit.focusPolicy() != Qt.FocusPolicy.NoFocus
+        assert manager.ip_entry.text() == "192.0.2.10:5555"
+        assert manager.ip_entry.focusPolicy() != Qt.FocusPolicy.NoFocus
     finally:
         _close_device_test_ui(panel)
 
@@ -1099,7 +1090,9 @@ def test_device_list_minimum_keeps_a_long_row_visible_after_content_changes(
         )
         required_height = row_height + non_viewport_height
         assert manager.listbox_devices.minimumHeight() >= required_height
-        assert abs(device_widget.minimumSizeHint().height() - empty_minimum) <= 1
+        populated_minimum = device_widget.minimumSizeHint().height()
+        assert populated_minimum >= empty_minimum
+        assert populated_minimum - empty_minimum <= required_height
         assert ReflowReason.EXPLICIT in panel._responsive_coordinator.diagnostics.reasons
 
         target_height = device_widget.minimumSizeHint().height()
@@ -1266,7 +1259,7 @@ def test_feature_panel_real_geometry_and_scroll_contract(
             assert scroll.horizontalScrollBar().maximum() > 0
             for group in title_overflowing:
                 title_rect = _group_title_rect(group)
-                assert group.rect().contains(title_rect), (group.title(), group.rect(), title_rect)
+                assert group.rect().contains(title_rect), (group.title, group.rect(), title_rect)
                 assert_scroll_target_reachable(scroll, group)
         else:
             assert scroll.horizontalScrollBar().maximum() == 0, (
@@ -1276,13 +1269,13 @@ def test_feature_panel_real_geometry_and_scroll_contract(
                 content_widget.minimumSizeHint(),
                 tuple(
                     (
-                        group.title(),
+                        group.title,
                         group.width(),
                         group.minimumSizeHint().width(),
                         group.sizeHint().width(),
                     )
                     for group in content_widget.findChildren(
-                        QGroupBox, options=Qt.FindDirectChildrenOnly
+                        HeaderCardWidget, options=Qt.FindDirectChildrenOnly
                     )
                 ),
             )
@@ -1419,7 +1412,7 @@ def test_shrinkable_package_field_ignores_dynamic_text_width(
         )
         before = binding.applied_plan
         assert before is not None
-        app_panel.program_edit.setCurrentText("com." + "verylongpackage" * 40)
+        app_panel.program_edit.setText("com." + "verylongpackage" * 40)
         app_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
         wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
         after = binding.applied_plan
@@ -1511,15 +1504,15 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
         before = parameter_binding.applied_plan
         assert before is not None
         for combo in app_panel._monkey_pct_combos.values():
-            combo.setCurrentText("0")
-        app_panel._monkey_pct_combos["touch"].setCurrentText("100")
+            combo.setText("0")
+        app_panel._monkey_pct_combos["touch"].setText("100")
         app_panel._update_pct_total()
         app_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
         wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
         after = parameter_binding.applied_plan
         assert after is not None
         assert after.mode.name == before.mode.name
-        assert app_panel._pct_total_lbl.text() == "Total: 100%"
+        assert app_panel._pct_total_lbl.text() == "合计：100%"
         assert BaseStyles.color("LOG_SUCCESS") in app_panel._pct_total_lbl.styleSheet()
     finally:
         _close_feature_panel(panel)
@@ -1631,10 +1624,10 @@ def test_monkey_maximum_valid_values_fit_editors_at_small_font(
         monkeypatch,
     )
     try:
-        app_panel.monkey_events.setCurrentText("1000000")
-        app_panel.monkey_throttle.setCurrentText("60000 ms")
+        app_panel.monkey_events.setText("1000000")
+        app_panel.monkey_throttle.setText("60000 ms")
         for combo in app_panel._monkey_pct_combos.values():
-            combo.setCurrentText("100")
+            combo.setText("100")
         app_panel._update_pct_total()
         qt_application.processEvents()
 
@@ -1644,11 +1637,9 @@ def test_monkey_maximum_valid_values_fit_editors_at_small_font(
             *app_panel._monkey_pct_combos.values(),
         )
         for field in fields:
-            editor = field.lineEdit()
-            assert editor is not None
-            assert_text_fits(editor)
+            assert_text_fits(field)
         assert scroll.viewport().contentsRect().width() == viewport_width
-        assert app_panel._pct_total_lbl.text() == "Total: 900%"
+        assert app_panel._pct_total_lbl.text() == "合计：900%"
         assert app_panel._collect_monkey_params()["throttle"] == 60_000
     finally:
         _close_feature_panel(panel)
@@ -1669,19 +1660,18 @@ def test_monkey_throttle_unit_is_visual_only_and_persists_numeric_value(
     )
     try:
         assert app_panel.monkey_throttle.currentText().endswith(" ms")
-        editor = app_panel.monkey_throttle.lineEdit()
-        assert editor is not None
+        editor = app_panel.monkey_throttle
         for text, expected in (("60000 ms", 60_000), ("321", 321)):
-            app_panel.monkey_throttle.setCurrentText(text)
+            app_panel.monkey_throttle.setText(text)
             assert editor.hasAcceptableInput()
             params = app_panel._collect_monkey_params()
             assert params is not None and params["throttle"] == expected
 
-        app_panel.monkey_throttle.setCurrentText("60001 ms")
+        app_panel.monkey_throttle.setText("60001 ms")
         assert not editor.hasAcceptableInput()
         assert not app_panel._validate_fields(app_panel.monkey_throttle, focus_invalid=False)
 
-        app_panel.monkey_throttle.setCurrentText("60,000 ms")
+        app_panel.monkey_throttle.setText("60,000 ms")
         assert not editor.hasAcceptableInput()
         assert app_panel._collect_monkey_params() is None
     finally:
@@ -1822,7 +1812,8 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
         assert scroll.horizontalScrollBar().maximum() > 0
 
         before_resize = panel._responsive_coordinator.diagnostics.generation
-        panel.resize(panel.width() + 900 - narrow_width, panel.height())
+        current_width = scroll.viewport().contentsRect().width()
+        scroll.resize(scroll.width() + 900 - current_width, scroll.height())
         wait_until(
             qt_application,
             lambda: (
@@ -1830,7 +1821,7 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
                 and panel._responsive_coordinator.diagnostics.generation > before_resize
             ),
         )
-        wait_for_stable_geometry(qt_application, (panel, scroll, content))
+        wait_for_stable_geometry(qt_application, (scroll, content))
         # 页面变宽后纵向滚动条可能消失，viewport 会额外获得滚动条占用的宽度；
         # 这属于同一次顶层缩放的稳定几何，不应被误判为额外响应式代次。
         final_viewport_width = scroll.viewport().contentsRect().width()
@@ -1857,9 +1848,9 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
         )
 
         before_burst = panel._responsive_coordinator.diagnostics.generation
-        panel.resize(panel.width() - 180, panel.height())
-        panel.resize(panel.width() + 40, panel.height())
-        panel.resize(panel.width() + 60, panel.height())
+        scroll.resize(scroll.width() - 180, scroll.height())
+        scroll.resize(scroll.width() + 40, scroll.height())
+        scroll.resize(scroll.width() + 60, scroll.height())
         wait_until(
             qt_application,
             lambda: (
@@ -1867,7 +1858,7 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
                 and panel._responsive_coordinator.diagnostics.generation > before_burst
             ),
         )
-        wait_for_stable_geometry(qt_application, (panel, scroll, content))
+        wait_for_stable_geometry(qt_application, (scroll, content))
         burst_overflow = _assert_feature_binding_geometry(feature_panel, scroll, content)
         for _attempt in range(4):
             QCoreApplication.sendPostedEvents()
@@ -2567,10 +2558,10 @@ def test_remote_preset_status_queue_align_with_mirroring_options(
         )
         assert status.wordWrap() is True
         assert queue.wordWrap() is True
-        assert status.accessibleName() == "Remote session status"
-        assert status.toolTip() == "Status: Idle"
-        assert status.accessibleDescription() == "Status: Idle"
-        assert queue.accessibleDescription() == "Queued: 0 · Sent: 0 · Failed: 0"
+        assert status.accessibleName() == "远程会话状态"
+        assert status.toolTip() == "状态：空闲"
+        assert status.accessibleDescription() == "状态：空闲"
+        assert queue.accessibleDescription() == "排队：0 · 已发送：0 · 失败：0"
         three_column_width = None
         observed_modes = set()
         for width in (292, 420, 700, 900):
@@ -2612,10 +2603,10 @@ def test_remote_status_wraps_or_keeps_full_accessible_text_at_large_font(
         monkeypatch,
     )
     try:
-        for state in ("Disconnected", "Stop Failed"):
+        for state, localized in (("Disconnected", "已断开"), ("Stop Failed", "停止失败")):
             remote._update_status(state, None)
             qt_application.processEvents()
-            text = f"Status: {state}"
+            text = f"状态：{localized}"
             assert remote._status_label.text() == text
             assert remote._status_label.toolTip() == text
             assert remote._status_label.accessibleDescription() == text
@@ -2721,14 +2712,14 @@ def test_remote_record_text_keeps_full_help_at_large_font(
         monkeypatch,
     )
     try:
-        hint = "Recording path will be created on Start"
+        hint = "开始镜像时创建录屏文件"
         remote._on_record_toggled(True)
         wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
         wait_for_stable_geometry(qt_application, (panel, scroll, content))
 
         label = remote.record_path
         assert label.wordWrap() is False
-        assert label.accessibleName() == "Recording path"
+        assert label.accessibleName() == "录屏保存路径"
         assert label.text() == hint
         assert label.toolTip() == hint
         assert label.accessibleDescription() == hint
@@ -2753,11 +2744,11 @@ def test_remote_record_text_keeps_full_help_at_large_font(
         _close_feature_panel(panel)
 
 
-def test_long_group_title_sets_reachable_scroll_minimum_at_large_font(
+def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
     qt_application,
     monkeypatch,
 ):
-    """长标题进入分组最小宽度，并可通过 SidePanel 横向滚动完整到达。"""
+    """长标题不改写参考卡片最小宽度，完整文本由可访问属性保留。"""
 
     panel, _system, scroll, content = _show_feature_panel(
         "system",
@@ -2774,13 +2765,12 @@ def test_long_group_title_sets_reachable_scroll_minimum_at_large_font(
         assert groups
         target = max(
             groups,
-            key=lambda group: group.title_label().fontMetrics().horizontalAdvance(group.title()),
+            key=lambda group: group.headerLabel.fontMetrics().horizontalAdvance(group.title),
         )
-        title_rect = _group_title_rect(target)
-        assert target.minimumSizeHint().width() >= (
-            target.title_label().fontMetrics().horizontalAdvance(target.title()) + 24
-        )
-        assert target.rect().contains(title_rect)
+        title_width = target.headerLabel.fontMetrics().horizontalAdvance(target.title)
+        assert target.minimumSizeHint().width() < title_width + 24
+        assert target.toolTip() == target.title
+        assert target.accessibleName() == target.title
         assert scroll.horizontalScrollBar().maximum() > 0
         assert_scroll_target_reachable(scroll, target)
 
@@ -2800,7 +2790,7 @@ def test_long_group_title_sets_reachable_scroll_minimum_at_large_font(
         assert probe.width() == 300
         narrow_hint = probe.minimumSizeHint().width()
         assert narrow_hint == wide_hint
-        assert wide_hint >= probe.title_label().fontMetrics().horizontalAdvance(probe.title()) + 24
+        assert wide_hint >= probe.headerLabel.fontMetrics().horizontalAdvance(probe.title) + 24
         probe_scroll.close()
         probe_scroll.deleteLater()
         probe.deleteLater()
@@ -2905,12 +2895,12 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
         )
         apps.email_text_sender.setText("verification 123456")
         apps.record_duration.setCurrentText("120s")
-        apps.program_edit.setCurrentText("com.example.contract")
-        apps.monkey_events.setCurrentText("500000")
-        apps.monkey_throttle.setCurrentText("2000")
+        apps.program_edit.setText("com.example.contract")
+        apps.monkey_events.setText("500000")
+        apps.monkey_throttle.setText("2000")
         percentages = (40, 20, 10, 10, 5, 5, 5, 0, 5)
         for combo, value in zip(apps._monkey_pct_combos.values(), percentages):
-            combo.setCurrentText(str(value))
+            combo.setText(str(value))
         for checkbox, checked in (
             (apps.monkey_chk_crashes, True),
             (apps.monkey_chk_timeouts, False),
@@ -3100,7 +3090,7 @@ def test_app_panel_actions_follow_device_and_package_context():
         assert panel.btn_get_program.isEnabled()
         assert not panel.uninstall_btn.isEnabled()
 
-        panel.program_edit.setCurrentText("com.example.demo")
+        panel.program_edit.setText("com.example.demo")
         assert panel.uninstall_btn.isEnabled()
         assert panel.start_monkey_btn.isEnabled()
 
@@ -3110,21 +3100,6 @@ def test_app_panel_actions_follow_device_and_package_context():
         assert not panel.btn_screenshot.isEnabled()
     finally:
         widget.close()
-        panel.close()
-
-
-def test_side_panel_routes_splitter_width_changes_only_through_coordinator(qt_application):
-    panel = SidePanel()
-    panel._devices_tab.apply_responsive_width = Mock()
-    panel._apps_tab.apply_responsive_width = Mock()
-    panel.request_responsive_reflow = Mock()
-    try:
-        panel.apply_responsive_widths(330, 700)
-
-        panel._devices_tab.apply_responsive_width.assert_not_called()
-        panel.request_responsive_reflow.assert_called_once_with(ReflowReason.RESIZE)
-        panel._apps_tab.apply_responsive_width.assert_not_called()
-    finally:
         panel.close()
 
 
@@ -3360,9 +3335,8 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
                 assert connect.left() == available.left()
                 assert connect.right() == available.right()
                 if mode == "medium":
-                    assert manager.btn_connect_devices.width() == (
-                        manager.btn_connect_devices.minimumWidth()
-                    )
+                    assert manager.btn_connect_devices.minimumWidth() == 0
+                    assert manager.btn_connect_devices.maximumWidth() == 16_777_215
 
             horizontal_state = (
                 mode,
@@ -3395,8 +3369,8 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
         _close_device_test_ui(panel)
 
 
-def test_device_address_popups_follow_the_shrinkable_input_width(qt_application):
-    """长 IPv6 地址不得撑宽父布局，两个地址弹窗必须随输入框同步收缩。"""
+def test_device_address_menu_keeps_the_input_shrinkable(qt_application):
+    """长 IPv6 地址不得撑宽父布局，参考组件菜单至少覆盖当前输入宽度。"""
 
     with patch(
         "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
@@ -3413,7 +3387,7 @@ def test_device_address_popups_follow_the_shrinkable_input_width(qt_application)
         minimum_width_before = widget.minimumSizeHint().width()
         actual_width_before = widget.width()
 
-        manager.ip_entry.setCurrentText("2001:db8:ffff:ffff:ffff:ffff:ffff:1:5555")
+        manager.ip_entry.setText("2001:db8:ffff:ffff:ffff:ffff:ffff:1:5555")
         qt_application.processEvents()
         assert (
             manager.ip_entry.sizePolicy().horizontalPolicy()
@@ -3422,28 +3396,28 @@ def test_device_address_popups_follow_the_shrinkable_input_width(qt_application)
         assert widget.minimumSizeHint().width() == minimum_width_before
         assert widget.width() == actual_width_before
 
-        manager.ip_entry.showPopup()
+        manager.ip_entry._showComboMenu()
         qt_application.processEvents()
-        assert manager.ip_entry.view().width() == manager.ip_entry.width()
+        assert manager.ip_entry.dropMenu is not None
+        assert manager.ip_entry.dropMenu.view.width() >= manager.ip_entry.width()
 
+        manager.ip_entry._closeComboMenu()
         widget.resize(420, 500)
         qt_application.processEvents()
-        manager.ip_entry.showPopup()
+        manager.ip_entry._showComboMenu()
         qt_application.processEvents()
-        assert manager.ip_entry.view().width() == manager.ip_entry.width()
+        assert manager.ip_entry.dropMenu is not None
+        assert manager.ip_entry.dropMenu.view.width() >= manager.ip_entry.width()
 
-        completer = manager.ip_entry.completer()
-        assert completer is not None
-        manager.ip_entry.lineEdit().setText("2001:db8")
-        completer.complete()
-        qt_application.processEvents()
-        assert completer.popup().width() == manager.ip_entry.width()
+        manager.ip_entry.setText("2001:db8")
+        assert manager.ip_entry.currentText() == "2001:db8"
+        assert manager.ip_entry.currentIndex() == -1
     finally:
         _close_device_test_ui(panel)
 
 
-def test_replaced_address_completer_syncs_its_popup_without_a_resize(qt_application):
-    """历史地址刷新后，直接显示的新补全弹窗仍必须等宽于稳定的输入框。"""
+def test_refreshed_device_history_replaces_qfluent_combo_items(qt_application):
+    """历史地址刷新后只替换参考组件条目，并保留自由输入能力。"""
 
     with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
         panel = SidePanel()
@@ -3461,17 +3435,26 @@ def test_replaced_address_completer_syncs_its_popup_without_a_resize(qt_applicat
         ):
             manager._refresh_device_combobox()
 
-        completer = manager.ip_entry.completer()
-        assert completer is not None
-        assert completer.popup().minimumWidth() == manager.ip_entry.width()
-        manager.ip_entry.showPopup()
+        assert manager.ip_entry.count() == 1
+        assert manager.ip_entry.itemData(0) == "2001:db8:ffff:ffff:ffff:ffff:ffff:1:5555"
+        assert "Google" in manager.ip_entry.itemText(0)
+        assert "Pixel" in manager.ip_entry.itemText(0)
+
+        with patch(
+            "gui.panels.device_manager.DeviceStore.get_basic_devices_info",
+            return_value=[("Google", "Pixel", "2001:db8:ffff:ffff:ffff:ffff:ffff:1:5555")],
+        ):
+            manager._refresh_device_combobox()
+        assert manager.ip_entry.count() == 1
+        manager.ip_entry._showComboMenu()
         qt_application.processEvents()
-        assert manager.ip_entry.view().width() == manager.ip_entry.width()
-        manager.ip_entry.lineEdit().setText("2001:db8")
-        completer.complete()
-        qt_application.processEvents()
-        assert completer.popup().width() == manager.ip_entry.width()
-        assert manager.ip_entry.view().minimumWidth() != 380
+        assert manager.ip_entry.dropMenu is not None
+        assert manager.ip_entry.dropMenu.view.width() >= manager.ip_entry.width()
+
+        manager.ip_entry.setText("192.0.2.1:5555")
+        manager._sync_address_popup_width()
+        assert manager.ip_entry.currentText() == "192.0.2.1:5555"
+        assert manager.ip_entry.currentIndex() == -1
     finally:
         _close_device_test_ui(panel)
 
@@ -3531,28 +3514,21 @@ def _device_boundary_oracle(widget, manager, qt_application):
         action_cell_width * 2 + action_spacing + action_margins.left() + action_margins.right()
     )
 
-    group_option = QStyleOptionGroupBox()
-    manager._device_group.initStyleOption(group_option)
-    group_contents = manager._device_group.style().subControlRect(
-        QStyle.ComplexControl.CC_GroupBox,
-        group_option,
-        QStyle.SubControl.SC_GroupBoxContents,
-        manager._device_group,
-    )
-    group_outer = manager._device_group.rect()
-    group_style_insets = (
-        group_contents.left() - group_outer.left() + group_outer.right() - group_contents.right()
-    )
     root_margins = widget.layout().contentsMargins()
+    group_contents_margins = manager._device_group.contentsMargins()
     group_layout_margins = manager._device_group.layout().contentsMargins()
+    group_view_margins = manager._device_group.viewLayout.contentsMargins()
     body_margins = manager._device_body_layout.contentsMargins()
     outer_insets = sum(
         (
             root_margins.left(),
             root_margins.right(),
-            group_style_insets,
+            group_contents_margins.left(),
+            group_contents_margins.right(),
             group_layout_margins.left(),
             group_layout_margins.right(),
+            group_view_margins.left(),
+            group_view_margins.right(),
             body_margins.left(),
             body_margins.right(),
         )
@@ -3826,7 +3802,7 @@ def test_device_actions_stay_directly_visible_and_long_ip_is_layout_neutral(
         limits_before = manager._device_layout_limits()
         mode_before = manager._device_layout_mode
 
-        manager.ip_entry.setCurrentText("[2001:db8:ffff:ffff:ffff:ffff:ffff:1]:5555")
+        manager.ip_entry.setText("[2001:db8:ffff:ffff:ffff:ffff:ffff:1]:5555")
         _show_device_layout(widget, manager, safe_width, qt_application)
         assert manager._device_layout_limits() == limits_before
         assert manager._device_layout_mode == mode_before == "compact"
@@ -3868,14 +3844,15 @@ def test_device_reflow_preserves_objects_state_and_single_signal_delivery(qt_app
     widget = panel.device_widget
     try:
         manager.listbox_devices.item(0).setCheckState(Qt.Checked)
-        manager.ip_entry.setCurrentText(device)
+        manager.ip_entry.setText(device)
         identities = tuple(id(button) for button in manager._device_action_buttons)
         enabled_states = tuple(button.isEnabled() for button in manager._device_action_buttons)
         connect_spy = QSignalSpy(panel.signals.connect_requested)
         refresh_spy = QSignalSpy(panel.signals.refresh_devices_requested)
         _compact_limit, wide_limit = manager._device_layout_limits()
+        narrow_width = max(300, widget.minimumSizeHint().width())
 
-        for width in (300, wide_limit + 120, 300):
+        for width in (narrow_width, wide_limit + 120, narrow_width):
             _show_device_layout(widget, manager, width, qt_application)
 
         assert tuple(id(button) for button in manager._device_action_buttons) == identities
@@ -3893,10 +3870,10 @@ def test_device_reflow_preserves_objects_state_and_single_signal_delivery(qt_app
         _close_device_test_ui(panel)
 
 
-def test_side_panel_width_callback_preserves_device_column_mode_when_only_height_changes(
+def test_side_panel_reflow_preserves_device_column_mode_when_only_height_changes(
     qt_application,
 ):
-    """SidePanel 宽度回调应生效，控件仅改变高度时不能改写已计算的列宽状态。"""
+    """SidePanel 重排应生效，控件仅改变高度时不能改写已计算的列宽状态。"""
 
     with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
         panel = SidePanel()
@@ -3905,7 +3882,7 @@ def test_side_panel_width_callback_preserves_device_column_mode_when_only_height
     try:
         _small_limit, wide_limit = manager._device_layout_limits()
         actual_width = _show_device_layout(widget, manager, wide_limit + 120, qt_application)
-        panel.apply_responsive_widths(actual_width, 0)
+        panel.request_responsive_reflow(ReflowReason.RESIZE)
         qt_application.processEvents()
         mode_before = manager._device_layout_mode
         input_width_before = manager.ip_entry.width()
@@ -3913,7 +3890,7 @@ def test_side_panel_width_callback_preserves_device_column_mode_when_only_height
 
         widget.resize(actual_width, 480)
         qt_application.processEvents()
-        panel.apply_responsive_widths(widget.width(), 0)
+        panel.request_responsive_reflow(ReflowReason.RESIZE)
         qt_application.processEvents()
 
         assert manager._device_layout_mode == mode_before == "wide"

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-27
+last_verified: 2026-09-03
 related: [glossary.md, ARCHITECTURE.md, RISKS_AND_DEBT.md]
 ---
 
@@ -28,6 +28,11 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出 CSV/XLSX 与设备信息。
 7. 辅助工具：主题/字体/窗口设置（含响应式重排与屏幕适配）、日志面板和结果文件查看。
 
+当前主界面直接使用 qfluentwidgets `FluentWindow`：顶层固定为 Home、Workspace、Tasks、Logs、
+Settings 五个入口，Workspace 再切换 Devices、Apps、System、Remote 四个分区。Settings 是常驻页面；
+`SidePanel` 仅作为业务面板所有权、共享设备状态和信号兼容门面存在，不是可见导航。四个工作台
+分区在 MainFrame 初始化时全部实例化，当前没有真正的视图懒加载。
+
 ## 应用类型与边界
 
 - 类型：单进程 Qt 桌面 GUI；MobilePerf、scrcpy、logcat、Monkey 等长任务会派生外部进程或子线程。
@@ -42,7 +47,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 | 类别 | 技术 | 证据 |
 | --- | --- | --- |
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
-| GUI | PySide6 6.8.1.1，Qt Signal/Slot、QThread、QRunnable/QThreadPool；qfluentwidgets（PySide6-Fluent-Widgets 1.11.3）Fluent 风格组件与主题 | `requirements.txt`、`gui/`、`models/adb_model.py` |
+| GUI | PySide6 6.8.1.1 提供布局、事件、Signal/Slot、QThread 与 QThreadPool 基础设施；可见通用控件、导航、卡片、菜单和主题直接使用 qfluentwidgets（PySide6-Fluent-Widgets 1.11.3），不再经过项目自研 Fluent 控件层 | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
 | 外部命令 | ADB、scrcpy、aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`services/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |
@@ -72,6 +77,9 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
   pyright 类型检查；macOS/Linux 构建前执行源码打包自检。三平台均构建，Windows 另对产物
   执行打包后自检。
 - README 的性能章节与目录树已于 2026-08-19 修正（移除 `models/performance/`、`gui/performance_web/`、旧性能对话框、`core/mail/`、`batch_tracker.py` 等过时条目，目录树同步 `services/` 与 `adblab/`）。
+- 2026-09-03 收口旧 UI：删除旧主窗口壳/工具栏、Settings 对话框、Devices/Logs 包装页、全局旧
+  QSS、自研 Fluent 控件目录及其失效测试；运行时只保留 qfluentwidgets 页面体系和必要的无继承
+  配置辅助。旧 splitter 设置键仅为历史 schema 兼容保留，不参与当前布局。
 - Git 快照（2026-08-27，HEAD `adfd254`）：347 个提交、4 个作者标识，最近三个月有
   2 个作者标识活跃；这是动态指标快照，知识集中程度仍待结合模块所有权确认。
 
@@ -80,6 +88,7 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 - **CommandRunner**：短生命周期命令的同步执行边界，返回 `CommandResult`。
 - **ProcessRunner**：长生命周期外部进程的注册、停止和全局兜底管理器。
 - **ADBController**：多个控制器 mixin 组合的 GUI 协调层。
+- **SidePanel**：业务面板所有权、共享设备选择/发现状态和 Qt 信号兼容门面，不是可见导航栏。
 - **async_command**：把 model 方法放入 QThreadPool 的装饰器；`long_running=True` 走每模型长任务池。
 - **DeviceStore**：已连接设备元数据的 YAML 存储。
 - **Remote**：scrcpy 投屏与 ADB 输入控制功能。

@@ -5,13 +5,8 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import (
-    QDialog,
-    QGroupBox,
-    QPlainTextEdit,
-    QPushButton,
-    QScrollArea,
-)
+from PySide6.QtWidgets import QDialog, QPlainTextEdit, QPushButton, QScrollArea
+from qfluentwidgets import HeaderCardWidget
 
 from core.settings_manager import AppSettings
 from gui.dialogs.about_dialog import AboutDialog
@@ -210,15 +205,13 @@ def test_open_secondary_dialogs_refresh_fonts_and_text_constraints(qt_applicatio
             assert about.maximumWidth() > 1_000_000
             assert logcat.btn_get_pkg.minimumWidth() >= logcat.btn_get_pkg.sizeHint().width()
             assert logcat.btn_get_pkg.maximumWidth() > 1_000_000
-            assert (
-                performance.progress_bar.minimumHeight()
-                >= performance.progress_bar.sizeHint().height()
-            )
-            assert performance.progress_bar.maximumHeight() > 1_000_000
+            assert performance.progress_bar.maximumHeight() == 4
             performance.resize(900, 700)
             performance.show()
             qt_application.processEvents()
-            performance_group = performance.findChild(QGroupBox, "performanceConfig")
+            performance_group = performance.findChild(
+                HeaderCardWidget, "performanceConfig"
+            )
             assert performance_group is not None
         finally:
             settings.update(

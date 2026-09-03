@@ -1214,7 +1214,7 @@ def test_dialog_reports_graceful_forced_and_orphan_cleanup_distinctly():
     dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
     dialog._supervisor_task_id = "task"
     messages = []
-    dialog.status_bar.showMessage = messages.append
+    dialog.status_bar.setText = messages.append
 
     try:
         for disposition in (

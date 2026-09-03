@@ -201,9 +201,7 @@ def test_log_panel_applies_new_line_limit_immediately(
     create_log_service()
     panel = LogPanel()
     try:
-        panel._entries = [
-            ("12:00:00", LogLevel.INFO, f"line-{index}") for index in range(105)
-        ]
+        panel._entries = [("12:00:00", LogLevel.INFO, f"line-{index}") for index in range(105)]
         panel._rerender_all()
 
         panel.set_max_lines(100)
@@ -225,7 +223,7 @@ def test_log_panel_text_output_is_wrapped_in_card_container(
     try:
         assert panel.logViewCard.objectName() == "logViewCard"
         assert panel.text_output.parent() is panel.logViewCard
-        assert panel.text_output.accessibleName() == "Operation log"
+        assert panel.text_output.accessibleName() == "操作日志"
         # 主题钩子：卡片容器已收敛为 CardWidget（自绘制圆角背景，随 qfluentwidgets 主题切换）。
         assert isinstance(panel.logViewCard, CardWidget)
         assert panel.logViewCard.borderRadius == BaseStyles.RADIUS_LG
@@ -252,7 +250,7 @@ def test_log_panel_toolbar_clear_button_wipes_entries(
         assert panel.logToolbarCard.objectName() == "logToolbarCard"
         assert panel.logClearButton.objectName() == "logClearButton"
         assert panel.logClearButton.property("iconName") == "broom.svg"
-        assert panel.logClearButton.toolTip() == "Clear Log"
+        assert panel.logClearButton.toolTip() == "清空操作日志"
 
         panel.logClearButton.click()
 
@@ -262,10 +260,10 @@ def test_log_panel_toolbar_clear_button_wipes_entries(
         panel.close()
 
 
-def test_log_panel_level_filter_badge_tracks_selection_and_filters_intake(
+def test_log_panel_level_filter_badge_tracks_selection_and_filters_view(
     create_log_service: Callable[[], LogService],
 ) -> None:
-    """彩色徽标映射 LOG_* 级别色；级别过滤只作用于新到达批次，历史行保留。"""
+    """彩色徽标映射语义级别；过滤器只改变视图，不丢弃底层记录。"""
 
     create_log_service()
     panel = LogPanel()
@@ -274,14 +272,14 @@ def test_log_panel_level_filter_badge_tracks_selection_and_filters_intake(
         panel._flush_pending_rows()
 
         assert panel.logLevelBadge.objectName() == "logLevelBadge"
-        assert panel.logLevelBadge.text() == "ALL"
+        assert panel.logLevelBadge.text() == "全部"
 
         # 选中 ERROR 项（All/DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL 的第 5 项）。
         panel.logLevelFilter.setCurrentIndex(5)
 
         assert panel.logLevelBadge.text() == "ERROR"
         assert panel.logLevelBadge.property("level") == InfoLevel.ERROR.value
-        assert "过滤前历史行" in panel.text_output.toPlainText()  # 历史行不回溯隐藏
+        assert "过滤前历史行" not in panel.text_output.toPlainText()
 
         panel._append_logs(
             [
@@ -293,6 +291,11 @@ def test_log_panel_level_filter_badge_tracks_selection_and_filters_intake(
 
         assert "保留错误" in panel.text_output.toPlainText()
         assert "被级别过滤拦截" not in panel.text_output.toPlainText()
+
+        panel.logLevelFilter.setCurrentIndex(0)
+        rendered = panel.text_output.toPlainText()
+        assert "过滤前历史行" in rendered
+        assert "被级别过滤拦截" in rendered
     finally:
         panel.close()
 

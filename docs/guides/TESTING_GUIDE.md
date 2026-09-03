@@ -29,7 +29,7 @@
 | `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
 | `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
 | `tests/test_logging_contract.py` | DEBUG 源码 stderr 分流、界面/文件隔离、root handler、停止态；面板渲染三元组批次、源时间戳、按块增量裁剪 | 日志基础契约 |
-| `tests/test_logging_routing_mobileperf.py` | MainFrame 工具栏/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
+| `tests/test_logging_routing_mobileperf.py` | MainFrame 动作/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
 | `tests/test_mobileperf_runner_concurrency.py` | 双管道压力、回调异常排空和连续运行代次隔离 | 进程/线程并发契约 |
 | `tests/test_mobileperf_androiddevice_log_safety.py` | MobilePerf 遗留 ADB 层日志/脱敏安全 | 安全契约 |
 | `tests/test_mobileperf_port_cleanup.py` | 5037 端口冲突清理（`core/process_utils` 契约，Phase 1） | 单元契约 |
@@ -55,13 +55,12 @@
 | `tests/test_preset_spin_box.py` | 严格整数预设输入（`StrictIntComboBox`）与合法性边界 | 组件单元 |
 | `tests/test_ui_geometry_helpers.py`、`tests/ui_geometry_helpers.py` | 真实 Qt 几何断言工具与状态隔离探针 | 测试工具 |
 | `tests/test_ui_dpi_matrix.py`、`tests/ui_dpi_probe.py` | 隔离子进程中的 Qt 缩放/DPI 探针契约 | 探针 |
-| `tests/test_main_window_layout.py` | 主窗口布局、尺寸/分栏校验、工具栏溢出、屏幕适配 | 轻量 UI |
+| `tests/test_main_window_layout.py` | FluentWindow 五入口、Workspace 分区、窗口尺寸、原生缩放和屏幕适配 | 轻量 UI |
 | `tests/test_settings_persistence.py` | 正式设置键（含 `scrcpy_*`）在应用重建后的持久化与旧 JSON 兼容 | 持久化契约 |
-| `tests/test_settings_typography.py`、`test_settings_window_layout.py`、`test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` | 设置、字体角色、字体信号与窗口布局契约 | UI/字体契约 |
+| `tests/test_main_window_layout.py`、`test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` | Fluent SettingsPage、字体角色、字体信号与窗口布局契约 | UI/字体契约 |
 | `tests/test_accessibility_contract.py` | 图标按钮 accessibleName/提示、可访问性契约 | UI 契约 |
 | `tests/test_app_manager_selection.py` | App Manager 选择、过滤、可见详情批次 | UI 契约 |
 | `tests/test_button_tooltips.py` | 按钮文本与 tooltip 一致性 | UI 契约 |
-| `tests/test_agent_skill_gateway.py` | 内置 agent 技能网关 PoC | 工具契约 |
 
 旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
 

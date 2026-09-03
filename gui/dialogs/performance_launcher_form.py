@@ -5,35 +5,35 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
-    QLabel,
     QLayout,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
+    BodyLabel,
     CardWidget,
     CheckBox,
+    HeaderCardWidget,
     InfoBadge,
     LineEdit,
     PlainTextEdit,
     PrimaryPushButton,
+    ProgressBar,
     PushButton,
+    SegmentedWidget,
 )
 
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.button import DangerPushButton
-from gui.widgets.fluent.label import FluentLabel
-from gui.widgets.fluent.segmented_control import SegmentedControl
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 
@@ -99,8 +99,8 @@ class PerformanceLauncherForm:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = FluentLabel(
-            "Performance Launcher", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self._frame.dialog_title = apply_label_role(
+            BodyLabel("Performance Launcher"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
         self._frame.status_badge = InfoBadge.info("No device", self._frame.header_card)
@@ -110,9 +110,9 @@ class PerformanceLauncherForm:
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = FluentLabel(
-            "Configure and launch device performance capture",
-            role=FontRole.UI,
+        self._frame.dialog_subtitle = apply_label_role(
+            BodyLabel("Configure and launch device performance capture"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
@@ -134,12 +134,15 @@ class PerformanceLauncherForm:
         self._frame._action_row = self._build_actions()
         root.addWidget(self._frame._action_row)
 
-    def _build_config_section(self, package_name: str) -> QGroupBox:
+    def _build_config_section(self, package_name: str) -> HeaderCardWidget:
         """按分页前版本的九项纵向表单构建配置区。"""
 
-        group = QGroupBox("MobilePerf Config")
+        group = HeaderCardWidget("MobilePerf Config")
+        group.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
+        apply_label_role(group.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
         group.setObjectName("performanceConfig")
-        grid = QGridLayout(group)
+        grid = QGridLayout()
+        group.viewLayout.addLayout(grid)
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
         grid.setColumnStretch(1, 1)
@@ -207,8 +210,11 @@ class PerformanceLauncherForm:
         self._frame.pick_save_btn.clicked.connect(self._frame._pick_save_path)
         save_row = self._row_widget(self._frame.save_path_edit, self._frame.pick_save_btn)
 
-        self._frame.serialnum_label = FluentLabel(
-            self._frame.device_ip or "-", role=FontRole.MONO, color_key="LOG_SUCCESS", bold=True
+        self._frame.serialnum_label = apply_label_role(
+            BodyLabel(self._frame.device_ip or "-"),
+            FontRole.MONO,
+            color_key="LOG_SUCCESS",
+            bold=True,
         )
         self._frame.serialnum_label.setObjectName("onlineDeviceLabel")
         self._frame.serialnum_label.setToolTip(
@@ -333,7 +339,9 @@ class PerformanceLauncherForm:
         layout.addWidget(self._inline_label("Seed", seed_hint), 0, 3)
         layout.addWidget(self._frame.monkey_seed_input, 0, 4)
 
-        self._frame.monkey_total_label = QLabel("Total: 100%")
+        self._frame.monkey_total_label = apply_label_role(
+            BodyLabel("Total: 100%"), FontRole.UI, color_key="LOG_SUCCESS", bold=True
+        )
         self._frame.monkey_total_label.setObjectName("monkeyTotalLabel")
         self._frame.monkey_total_label.setMinimumWidth(92)
         self._frame.monkey_total_label.setToolTip("Total: 100%")
@@ -405,8 +413,8 @@ class PerformanceLauncherForm:
         self._frame._apply_monkey_control_widths()
         return container
 
-    def _inline_label(self, text: str, tooltip: str = "") -> FluentLabel:
-        label = FluentLabel(text, role=FontRole.UI, color_key="TEXT_PRIMARY")
+    def _inline_label(self, text: str, tooltip: str = "") -> BodyLabel:
+        label = apply_label_role(BodyLabel(text), FontRole.UI)
         label.setObjectName("inlineLabel")
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         label.setMinimumWidth(136)
@@ -416,10 +424,10 @@ class PerformanceLauncherForm:
         return label
 
     @staticmethod
-    def _unit_label(text: str, semantic_name: str | None = None) -> QLabel:
+    def _unit_label(text: str, semantic_name: str | None = None) -> BodyLabel:
         """创建不会参与严格数字解析的可见单位标签。"""
 
-        label = QLabel(text)
+        label = apply_label_role(BodyLabel(text), FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
         label.setObjectName("unitLabel")
         label.setAccessibleName(f"Unit: {semantic_name or text}")
         return label
@@ -472,10 +480,10 @@ class PerformanceLauncherForm:
                 label.setToolTip("Total: Invalid")
                 label.setAccessibleName("Total: Invalid")
                 label.setAccessibleDescription("Monkey event percentage total is invalid")
-                label.setStyleSheet(f"color: {BaseStyles.color('LOG_ERROR')}; font-weight: bold;")
+                apply_label_role(label, FontRole.UI, color_key="LOG_ERROR", bold=True)
             return
         total = sum(field.value() for field in self._frame.monkey_pct_combos.values())
-        color = BaseStyles.color("LOG_SUCCESS" if total == 100 else "LOG_ERROR")
+        color_key = "LOG_SUCCESS" if total == 100 else "LOG_ERROR"
         for label in getattr(
             self._frame, "_monkey_total_labels", (self._frame.monkey_total_label,)
         ):
@@ -484,7 +492,7 @@ class PerformanceLauncherForm:
             label.setToolTip(full_text)
             label.setAccessibleName(full_text)
             label.setAccessibleDescription(f"Monkey event percentage total: {total}%")
-            label.setStyleSheet(f"color: {color}; font-weight: bold;")
+            apply_label_role(label, FontRole.UI, color_key=color_key, bold=True)
 
     def _collect_monkey_config(self) -> MobilePerfMonkeyConfig:
         values = {attr: field.value() for attr, field in self._frame.monkey_pct_combos.items()}
@@ -506,7 +514,7 @@ class PerformanceLauncherForm:
         field: QWidget,
         hint: str,
     ) -> int:
-        label = FluentLabel(key, role=FontRole.UI, color_key="TEXT_PRIMARY", bold=True)
+        label = apply_label_role(BodyLabel(key), FontRole.UI, bold=True)
         label.setObjectName("fieldLabel")
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         buddy = field
@@ -531,7 +539,7 @@ class PerformanceLauncherForm:
                     self._apply_hint(child, hint)
         grid.addWidget(label, row, 0)
         grid.addWidget(field, row, 1)
-        hint_label = FluentLabel(hint, role=FontRole.UI, color_key="TEXT_SECONDARY")
+        hint_label = apply_label_role(BodyLabel(hint), FontRole.UI, color_key="TEXT_SECONDARY")
         hint_label.setObjectName("configHint")
         hint_label.setWordWrap(True)
         hint_label.setAccessibleName(f"{key} help")
@@ -570,21 +578,19 @@ class PerformanceLauncherForm:
     def _build_chart_toggle(self) -> tuple[QWidget, QStackedWidget]:
         """构建日志/图表切换条与承载栈（P3）：图表视图由对话框注入到栈内。"""
 
-        toggle = QWidget()
-        toggle_layout = QHBoxLayout(toggle)
-        toggle_layout.setContentsMargins(0, 0, 0, 0)
-        segmented = SegmentedControl(parent=toggle)
-        segmented.set_items(["日志", "图表"], data=["log", "chart"])
+        segmented = SegmentedWidget()
+        segmented.addItem("log", "日志")
+        segmented.addItem("chart", "图表")
+        segmented.setCurrentItem("log")
         # 功能提示契约：分段按钮提供英文短描述（tooltip 契约测试）。
-        for button, tip in zip(segmented.buttons(), ("Show run logs", "Show result charts")):
+        for button, tip in zip(segmented.items.values(), ("Show run logs", "Show result charts")):
             button.setToolTip(tip)
             button.setProperty("functionalToolTip", tip)
-        toggle_layout.addWidget(segmented)
         stack = QStackedWidget()
-        segmented.currentChanged.connect(
-            lambda value: stack.setCurrentIndex(1 if value == "chart" else 0)
+        segmented.currentItemChanged.connect(
+            lambda route_key: stack.setCurrentIndex(1 if route_key == "chart" else 0)
         )
-        return toggle, stack
+        return segmented, stack
 
     def _build_actions(self) -> QWidget:
         container = QWidget()
@@ -594,19 +600,20 @@ class PerformanceLauncherForm:
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        self._frame.status_label = FluentLabel("Idle", role=FontRole.UI, color_key="TEXT_SECONDARY")
+        self._frame.status_label = apply_label_role(
+            BodyLabel("Idle"), FontRole.UI, color_key="TEXT_SECONDARY"
+        )
         self._frame.status_label.setObjectName("statusLabel")
         self._frame.status_label.setMinimumWidth(92)
         row.addWidget(self._frame.status_label, 0)
 
-        self._frame.progress_bar = QProgressBar()
+        self._frame.progress_bar = ProgressBar()
         self._frame.progress_bar.setObjectName("performanceProgress")
         self._frame.progress_bar.setRange(0, 100)
         self._frame.progress_bar.setValue(0)
         self._frame.progress_bar.setFormat("0%")
         self._frame.progress_bar.setTextVisible(True)
         self._frame.progress_bar.setMinimumWidth(160)
-        self._frame.progress_bar.setProperty("adaptiveBaseHeight", 22)
         row.addWidget(self._frame.progress_bar, 1)
 
         self._frame.perfetto_action = QAction(
@@ -645,8 +652,13 @@ class PerformanceLauncherForm:
         self._frame.result_action.changed.connect(self._frame._sync_result_button)
         row.addWidget(self._frame.result_btn)
 
-        self._frame.stop_btn = DangerPushButton("Stop")
-        self._frame.stop_btn.setToolTip("Stop the active performance collection")
+        self._frame.stop_btn = PrimaryPushButton()
+        configure_button(
+            self._frame.stop_btn,
+            text="Stop",
+            tooltip="Stop the active performance collection",
+            danger=True,
+        )
         self._frame.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self._frame.stop_btn.setIconSize(QSize(14, 14))
         self._frame.stop_btn.setProperty("iconName", "stop-circle.svg")

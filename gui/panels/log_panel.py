@@ -15,25 +15,33 @@
   （``logLevelFilter``）、当前过滤级别徽标（``logLevelBadge``，InfoBadge 按
   语义级别着色）与清空图标按钮（``logClearButton``）。objectName 为公开
   契约，供测试与 QSS 稳定引用；
-- 级别过滤只作用于新到达的批次（默认 ``All Levels`` 与历史行为完全一致），
-  已渲染的历史行不回溯隐藏——正文渲染、裁剪、防抖与背压管线保持一字不动。
+- 级别过滤是视图条件；完整的有界日志记录仍保存在 ``_entries``，切换过滤器会
+  立即重绘已有记录，未来不匹配条目也不会从数据层丢失。
 """
 
 from collections import OrderedDict
 from html import escape
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QTextBlockFormat, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import CardWidget, ComboBox, InfoBadge, InfoLevel, TextEdit
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    InfoBadge,
+    InfoLevel,
+    TextEdit,
+    TransparentToolButton,
+)
 
 from core.log_service import LogService
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent import IconButton
+from gui.styles.fluent import configure_button
+from gui.styles.icon_loader import get_themed_icon
 
 _HTML_CACHE_LIMIT = 2048
 
@@ -60,17 +68,16 @@ class LogPanel(QWidget):
       供测试与 QSS 引用）；
     - 工具条控件 objectName 稳定：``logToolbarCard`` / ``logLevelFilter`` /
       ``logLevelBadge`` / ``logClearButton``；
-    - 级别过滤默认 ``All Levels``（空 UserRole 数据），只过滤新到达批次，
-      已渲染历史行不回溯隐藏。
+    - 级别过滤默认“全部级别”（空 UserRole 数据），切换时重绘完整有界历史。
     """
 
     RENDER_DEBOUNCE_MS = 16
     FRAME_BATCH_SIZE = 100
     IMMEDIATE_BATCH_SIZE = FRAME_BATCH_SIZE
 
-    # 级别过滤下拉项：(显示文本, UserRole 数据)；空数据代表 All Levels。
+    # 级别过滤下拉项：(显示文本, UserRole 数据)；空数据代表全部级别。
     _LEVEL_FILTER_OPTIONS: tuple[tuple[str, str], ...] = (
-        ("All Levels", ""),
+        ("全部级别", ""),
         ("DEBUG", "DEBUG"),
         ("INFO", "INFO"),
         ("SUCCESS", "SUCCESS"),
@@ -108,7 +115,7 @@ class LogPanel(QWidget):
         # 无需在此套 QSS。
         # 卡片容器与工具条包壳已由 CardWidget 自绘制并随主题切换，无需再套 QSS。
         self._refresh_level_badge()
-        self.logClearButton._sync_theme_state()
+        self.logClearButton.setIcon(get_themed_icon("broom.svg"))
 
     def _on_theme_changed(self, _name: str):
         from core.settings_manager import AppSettings
@@ -137,8 +144,8 @@ class LogPanel(QWidget):
     def _init_ui(self):
         self.text_output = TextEdit(self)
         self.text_output.setReadOnly(True)
-        self.text_output.setAccessibleName("Operation log")
-        self.text_output.setPlaceholderText("Operation logs will appear here.")
+        self.text_output.setAccessibleName("操作日志")
+        self.text_output.setPlaceholderText("操作日志将在这里显示。")
         self.text_output.setUndoRedoEnabled(False)
 
         self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
@@ -173,7 +180,7 @@ class LogPanel(QWidget):
         self.logToolbarCard.setObjectName("logToolbarCard")
         self.logToolbarCard.setBorderRadius(BaseStyles.RADIUS_LG)
 
-        self.logLevelBadge = InfoBadge("ALL", self.logToolbarCard)
+        self.logLevelBadge = InfoBadge("全部", self.logToolbarCard)
         self.logLevelBadge.setObjectName("logLevelBadge")
         self.logLevelBadge.setProperty("fontRole", FontRole.UI.value)
         self.logLevelBadge.setFont(BaseStyles.font_for_role(FontRole.UI))
@@ -181,14 +188,22 @@ class LogPanel(QWidget):
 
         self.logLevelFilter = ComboBox(parent=self.logToolbarCard)
         self.logLevelFilter.setObjectName("logLevelFilter")
-        self.logLevelFilter.setAccessibleName("Log level filter")
+        self.logLevelFilter.setAccessibleName("日志级别筛选")
         for label, data in self._LEVEL_FILTER_OPTIONS:
             self.logLevelFilter.addItem(label, userData=data)
         self.logLevelFilter.setMinimumWidth(110)
         # 先填项再连接：避免 set_items 清空动作触发未初始化的槽。
         self.logLevelFilter.currentIndexChanged.connect(self._on_level_filter_changed)
 
-        self.logClearButton = IconButton("broom.svg", "Clear Log", parent=self.logToolbarCard)
+        self.logClearButton = TransparentToolButton(self.logToolbarCard)
+        configure_button(
+            self.logClearButton,
+            text="",
+            tooltip="清空操作日志",
+        )
+        self.logClearButton.setIcon(get_themed_icon("broom.svg"))
+        self.logClearButton.setIconSize(QSize(16, 16))
+        self.logClearButton.setProperty("iconName", "broom.svg")
         self.logClearButton.setObjectName("logClearButton")
         self.logClearButton.clicked.connect(self.clear)
 
@@ -201,7 +216,7 @@ class LogPanel(QWidget):
         row.addWidget(self.logClearButton)
 
     def _current_filter_level(self) -> str:
-        """返回当前过滤级别；``All Levels`` 返回空字符串（不过滤）。"""
+        """返回当前过滤级别；“全部级别”返回空字符串（不过滤）。"""
 
         data = self.logLevelFilter.currentData()
         return str(data or "").upper()
@@ -211,15 +226,17 @@ class LogPanel(QWidget):
         return not wanted or level == wanted
 
     def _on_level_filter_changed(self, _index: int):
-        """级别过滤变化时刷新徽标；历史已渲染行不回溯隐藏。"""
+        """级别过滤变化时刷新徽标并重绘完整有界历史。"""
 
         self._refresh_level_badge()
+        self._consume_pending_without_render()
+        self._rerender_all()
 
     def _refresh_level_badge(self):
         """按当前过滤级别刷新徽标（InfoBadge 按语义级别着色）。"""
 
         level = self._current_filter_level()
-        self.logLevelBadge.setText(level or "ALL")
+        self.logLevelBadge.setText(level or "全部")
         self.logLevelBadge.setLevel(_LOG_LEVEL_INFO_LEVEL.get(level, InfoLevel.INFOAMTION))
 
     # ------------------------------------------------------------------
@@ -232,15 +249,13 @@ class LogPanel(QWidget):
     def _append_logs(self, records: list[tuple[str, str, str]]):
         """接收三元组批次；DEBUG 已由 LogService 在源头过滤，此处不再重复。
 
-        级别过滤（工具条）只作用于新到达批次：默认 All Levels 时与历史行为
-        完全一致；已渲染的历史行不回溯隐藏，正文渲染管线保持不变。
+        所有记录先进入有界数据层；当前过滤器只决定哪些记录进入正文视图。
         """
 
         rows = [
             (str(timestamp), str(level).upper(), str(message))
             for timestamp, level, message in records
         ]
-        rows = [row for row in rows if self._passes_filter(row[1])]
         if not rows:
             return
         sb = self.text_output.verticalScrollBar()
@@ -280,7 +295,7 @@ class LogPanel(QWidget):
         scroll_bar = self.text_output.verticalScrollBar()
         scroll_value = scroll_bar.value()
         self._entries.extend(rows)
-        self._render_entries(rows)
+        self._render_entries([row for row in rows if self._passes_filter(row[1])])
         if at_bottom:
             scroll_bar.setValue(scroll_bar.maximum())
         else:
@@ -324,7 +339,11 @@ class LogPanel(QWidget):
         if scroll_value is None:
             scroll_value = sb.value()
         self.text_output.setHtml(
-            "".join(self._row_html(ts, level, msg) for ts, level, msg in self._entries)
+            "".join(
+                self._row_html(ts, level, msg)
+                for ts, level, msg in self._entries
+                if self._passes_filter(level)
+            )
         )
         if scroll_to_bottom:
             sb.setValue(sb.maximum())
@@ -339,9 +358,7 @@ class LogPanel(QWidget):
         body = self._message_body_html(level, message)
         # margin 上下必须显式归零：Qt 富文本对 <p> 有默认 12px 上下外边距，
         # 否则每条日志之间以及首条日志上方会出现空白行。
-        return (
-            f'<p style="margin:0 0 0 {indent}px; text-indent:-{indent}px;">{body}</p>'
-        )
+        return f'<p style="margin:0 0 0 {indent}px; text-indent:-{indent}px;">{body}</p>'
 
     def _message_body_html(self, level: str, message: str) -> str:
         """返回级别标签与消息正文的 HTML；命中缓存时跳过转义与拼接。"""
@@ -362,7 +379,7 @@ class LogPanel(QWidget):
         msg = escape(str(message).strip("\r\n")).replace("\n", "<br>")
         body = (
             f'{bold_open}<span style="color:{c(lv_key)}">[{escape(str(level))}]</span>'
-            f'{bold_close} '
+            f"{bold_close} "
             f'<span style="color:{c("LOG_TEXT_COLOR")}">{msg}</span>'
         )
         if len(self._html_cache) >= _HTML_CACHE_LIMIT:
@@ -380,8 +397,13 @@ class LogPanel(QWidget):
         if len(self._entries) <= self._max_lines:
             return
         excess = len(self._entries) - self._max_lines
+        removed_visible = sum(
+            1
+            for _timestamp, level, _message in self._entries[:excess]
+            if self._passes_filter(level)
+        )
         self._entries = self._entries[excess:]
-        self._remove_head_blocks(excess)
+        self._remove_head_blocks(removed_visible)
 
     def _remove_head_blocks(self, count: int):
         document = self.text_output.document()

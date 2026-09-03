@@ -44,9 +44,7 @@ class LiveLogcatStream:
         self._frame._line_flush_timer.stop()
         self._frame._pending_visible_lines.clear()
         self._frame.output.clear()
-        visible = [
-            text for text, level, _pid in self._frame.entries if self._passes(level)
-        ]
+        visible = [text for text, level, _pid in self._frame.entries if self._passes(level)]
         if visible:
             self._frame.output.setPlainText("\n".join(visible) + "\n")
         self._update_content_actions(bool(visible))
@@ -80,7 +78,7 @@ class LiveLogcatStream:
             try:
                 requested = normalize_android_package(requested)
             except ValueError:
-                self._frame.status_bar.showMessage("Invalid package name for logcat filter")
+                self._frame.status_bar.setText("Invalid package name for logcat filter")
                 return
         if self._frame._logcat_stopping:
             message = (
@@ -88,7 +86,7 @@ class LiveLogcatStream:
                 if requested
                 else "All device logs will be shown on next start"
             )
-            self._frame.status_bar.showMessage(message)
+            self._frame.status_bar.setText(message)
             return
         worker = self._frame.worker
         if worker is not None and worker.is_active():
@@ -101,14 +99,12 @@ class LiveLogcatStream:
                     if requested
                     else "Showing all device logs"
                 )
-                self._frame.status_bar.showMessage(message)
+                self._frame.status_bar.setText(message)
             return
         message = (
-            f"Package filter ready: {requested}"
-            if requested
-            else "All device logs will be shown"
+            f"Package filter ready: {requested}" if requested else "All device logs will be shown"
         )
-        self._frame.status_bar.showMessage(message)
+        self._frame.status_bar.setText(message)
 
     # ── 操作 ────────────────────────────────────────────────────────────
 
@@ -117,7 +113,7 @@ class LiveLogcatStream:
             return
         if self._frame._pkg_worker and self._frame._pkg_worker.isRunning():
             return
-        self._frame.status_bar.showMessage("Fetching current package...")
+        self._frame.status_bar.setText("Fetching current package...")
         self._frame.btn_get_pkg.setEnabled(False)
         worker = CurrentPackageWorker(self._frame.device_ip)
         worker._package_filter_revision = self._frame._package_filter_revision
@@ -141,7 +137,7 @@ class LiveLogcatStream:
             self._frame._disconnect_pkg_worker(worker)
             worker.deleteLater()
             self._frame.btn_get_pkg.setEnabled(True)
-            self._frame.status_bar.showMessage("Unable to supervise package lookup")
+            self._frame.status_bar.setText("Unable to supervise package lookup")
             return
         self._frame._pkg_worker = worker
         worker.start()
@@ -188,7 +184,7 @@ class LiveLogcatStream:
                 force_stop=worker.force_stop,
             )
         except Exception:
-            self._frame.status_bar.showMessage("Unable to supervise logcat task")
+            self._frame.status_bar.setText("Unable to supervise logcat task")
             worker.deleteLater()
             return
         self._frame.worker = worker
@@ -198,7 +194,7 @@ class LiveLogcatStream:
 
     def _stop(self):
         if self._frame.worker and self._frame._supervisor_task_id:
-            self._frame.status_bar.showMessage("Stopping...")
+            self._frame.status_bar.setText("Stopping...")
             self._frame._set_running_actions(True, stopping=True)
             self._frame._task_supervisor.stop_async(self._frame._supervisor_task_id)
 
@@ -207,7 +203,7 @@ class LiveLogcatStream:
         self._frame._pending_visible_lines.clear()
         self._frame._line_flush_timer.stop()
         self._frame.output.clear()
-        self._frame.status_bar.showMessage("Cleared")
+        self._frame.status_bar.setText("Cleared")
         self._update_content_actions(False)
 
     def _toggle_wrap(self):
@@ -215,12 +211,12 @@ class LiveLogcatStream:
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._frame.wrap_btn.setText("Wrap")
-            self._frame.status_bar.showMessage("Line wrap: ON")
+            self._frame.status_bar.setText("Line wrap: ON")
         else:
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
             self._frame.wrap_btn.setText("No Wrap")
-            self._frame.status_bar.showMessage("Line wrap: OFF - horizontal scroll enabled")
+            self._frame.status_bar.setText("Line wrap: OFF - horizontal scroll enabled")
 
     def _export(self):
         from core.settings_manager import AppSettings
@@ -249,7 +245,7 @@ class LiveLogcatStream:
                     except OSError:
                         pass
                     raise
-                self._frame.status_bar.showMessage(f"Exported to {fp}")
+                self._frame.status_bar.setText(f"Exported to {fp}")
             except OSError as e:
                 QMessageBox.critical(
                     self._frame,
@@ -315,7 +311,7 @@ class LiveLogcatStream:
             if batch.generation != worker.filter_generation:
                 return
             if batch.dropped_before:
-                self._frame.status_bar.showMessage(
+                self._frame.status_bar.setText(
                     f"Logcat running; {batch.dropped_before} lines dropped under load"
                 )
             for text, level, pid in batch.lines:
@@ -325,7 +321,7 @@ class LiveLogcatStream:
 
     def _on_dropped(self, worker: LogcatWorker, count: int):
         if not self._frame._closing and self._frame.worker is worker:
-            self._frame.status_bar.showMessage(f"Logcat running; {count} lines dropped under load")
+            self._frame.status_bar.setText(f"Logcat running; {count} lines dropped under load")
 
     def _schedule_line_flush(self):
         if not self._frame._line_flush_timer.isActive():
@@ -349,7 +345,7 @@ class LiveLogcatStream:
     def _on_status(self, msg: str):
         if self._frame._closing:
             return
-        self._frame.status_bar.showMessage(msg)
+        self._frame.status_bar.setText(msg)
 
     def _on_worker_status(self, worker: LogcatWorker, msg: str):
         if self._frame.worker is worker:
@@ -359,8 +355,8 @@ class LiveLogcatStream:
         if self._frame._closing or self._frame.worker is not worker:
             return
         if result.kind is LogcatTerminationKind.CANCELLED:
-            self._frame.status_bar.showMessage("Logcat stop requested")
+            self._frame.status_bar.setText("Logcat stop requested")
         elif result.kind is LogcatTerminationKind.START_FAILED:
-            self._frame.status_bar.showMessage("Logcat failed to start")
+            self._frame.status_bar.setText("Logcat failed to start")
         else:
-            self._frame.status_bar.showMessage("Logcat ended unexpectedly")
+            self._frame.status_bar.setText("Logcat ended unexpectedly")

@@ -6,11 +6,11 @@ from datetime import datetime
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import InfoBadge
+from qfluentwidgets import BodyLabel, InfoBadge
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent.label import FluentLabel
+from gui.styles.fluent import apply_label_role
 from gui.widgets.responsive_layout import (
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
@@ -56,10 +56,10 @@ class RemotePanelForm:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.remote_title = FluentLabel(
-            "Remote Control", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self._frame.remote_title = apply_label_role(
+            BodyLabel("远程控制"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
-        self._frame.remote_status_badge = InfoBadge("No device", self._frame)
+        self._frame.remote_status_badge = InfoBadge("未选择", self._frame)
         self._frame.remote_status_badge.setObjectName("remoteStatusBadge")
         self._frame.remote_status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.remote_status_badge.setFont(self._frame._font_sm)
@@ -67,13 +67,13 @@ class RemotePanelForm:
         self._frame.remote_status_badge.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
         )
-        self._frame.remote_status_badge.setToolTip("Device availability for remote actions")
+        self._frame.remote_status_badge.setToolTip("远程控制的设备选择状态")
         title_row.addWidget(self._frame.remote_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.remote_status_badge)
-        self._frame.remote_subtitle = FluentLabel(
-            "Screen mirroring and input control",
-            role=FontRole.UI,
+        self._frame.remote_subtitle = apply_label_role(
+            BodyLabel("屏幕镜像、设备按键与手势控制"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         # 页签字体爆发测试断言面板内不存在 UI_SMALL 角色控件（历史不变式），
@@ -90,11 +90,11 @@ class RemotePanelForm:
         self._frame._on_theme_changed_remote(_name)
 
     def _build_mirroring(self) -> QWidget:
-        g = self._frame._card("Screen Mirroring")
-        gl = g.body_layout()
+        g = self._frame._card("屏幕镜像")
+        gl = g.viewLayout
         gl.setSpacing(4)
 
-        preset_label = self._frame._label("Preset:")
+        preset_label = self._frame._label("预设：")
         preset_label.setMinimumWidth(56)
         preset_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         preset_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -107,14 +107,14 @@ class RemotePanelForm:
         self._frame.preset.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
         self._frame._refresh_responsive_widget_minimum(self._frame.preset)
 
-        self._frame._status_label = self._frame._status_text("Status: Idle")
-        self._frame._remote_queue_label = self._frame._status_text("Queue: 0")
-        self._frame._status_label.setAccessibleName("Remote session status")
-        initial_status = "Status: Idle"
+        self._frame._status_label = self._frame._status_text("状态：空闲")
+        self._frame._remote_queue_label = self._frame._status_text("队列：0")
+        self._frame._status_label.setAccessibleName("远程会话状态")
+        initial_status = "状态：空闲"
         self._frame._status_label.setToolTip(initial_status)
         self._frame._status_label.setAccessibleDescription(initial_status)
-        self._frame._remote_queue_label.setAccessibleName("Remote input queue status")
-        queue_details = "Queued: 0 · Sent: 0 · Failed: 0"
+        self._frame._remote_queue_label.setAccessibleName("远程输入队列状态")
+        queue_details = "排队：0 · 已发送：0 · 失败：0"
         self._frame._remote_queue_label.setToolTip(queue_details)
         self._frame._remote_queue_label.setAccessibleDescription(queue_details)
         for label in (self._frame._status_label, self._frame._remote_queue_label):
@@ -123,12 +123,12 @@ class RemotePanelForm:
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         settings = [
-            ("Size:", "maxsize", self._frame._SIZES),
+            ("尺寸：", "maxsize", self._frame._SIZES),
             ("FPS:", "fps", self._frame._FPS),
-            ("Codec:", "codec", self._frame._CODECS),
-            ("Buffer:", "buffer", self._frame._BUFFERS),
-            ("Bitrate:", "bitrate", self._frame._BITRATES),
-            ("Orient:", "orientation", self._frame._ORIENTATIONS),
+            ("编码：", "codec", self._frame._CODECS),
+            ("缓冲：", "buffer", self._frame._BUFFERS),
+            ("码率：", "bitrate", self._frame._BITRATES),
+            ("方向：", "orientation", self._frame._ORIENTATIONS),
         ]
         setting_widgets = []
         self._frame._parameter_labels = []
@@ -144,7 +144,7 @@ class RemotePanelForm:
             setattr(self._frame, attr, combo)
             self._frame._parameter_labels.append(label)
             setting_widgets.extend((label, combo))
-        self._frame.orientation.setToolTip("Lock orientation (0=auto)")
+        self._frame.orientation.setToolTip("锁定屏幕方向（0 为自动）")
 
         # Preset、Status、Queue 与六个参数必须共享同一个响应式网格。
         # 分属两个 binding 时，上下两行会各自计算列宽和断点（尤其 medium
@@ -157,15 +157,15 @@ class RemotePanelForm:
             self._frame._remote_queue_label,
         )
         mirroring_policies = (
-            WidthPolicy.NATURAL,      # Preset 标签
-            WidthPolicy.SHRINKABLE,   # Preset 下拉
+            WidthPolicy.NATURAL,  # Preset 标签
+            WidthPolicy.SHRINKABLE,  # Preset 下拉
             *tuple(
                 policy
                 for _setting in settings
                 for policy in (WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE)
             ),
-            WidthPolicy.WRAPPING,     # Status
-            WidthPolicy.WRAPPING,     # Queue
+            WidthPolicy.WRAPPING,  # Status
+            WidthPolicy.WRAPPING,  # Queue
         )
         # 顺序：0 Preset 标签、1 Preset 下拉、2..13 六组参数、14 Status、15 Queue。
         # 状态标签放在最后可避免 _link_form_labels 把它们误绑到参数下拉框。
@@ -254,11 +254,11 @@ class RemotePanelForm:
         self._frame.status_binding = self._frame.mirroring_binding
         self._frame.parameter_binding = self._frame.mirroring_binding
         self._frame.preset_binding = self._frame.mirroring_binding
-        self._frame.chk_record = self._frame._create_checkbox("Record")
-        self._frame.chk_record.setToolTip("Record mirroring to file")
+        self._frame.chk_record = self._frame._create_checkbox("保存录屏")
+        self._frame.chk_record.setToolTip("将镜像画面录制到文件")
         self._frame.chk_record.toggled.connect(self._frame._on_record_toggled)
         self._frame.record_path = self._frame._status_text("")
-        self._frame.record_path.setAccessibleName("Recording path")
+        self._frame.record_path.setAccessibleName("录屏保存路径")
         # 录制路径保持单行，避免长文件名无限拉高启动选项；
         # 完整内容由 tooltip 与辅助描述提供。
         self._frame.record_path.setWordWrap(False)
@@ -276,14 +276,14 @@ class RemotePanelForm:
             wide_columns=2,
         )
 
-        self._frame.chk_fullscreen = self._frame._create_checkbox("Fullscreen")
-        self._frame.chk_fullscreen.setToolTip("Launch in fullscreen mode")
-        self._frame.chk_aot = self._frame._create_checkbox("Pin Top")
-        self._frame.chk_aot.setToolTip("Keep window above all others")
-        self._frame.chk_showtouches = self._frame._create_checkbox("Touches")
-        self._frame.chk_showtouches.setToolTip("Visualize touch points on screen")
-        self._frame.chk_stayawake = self._frame._create_checkbox("Awake")
-        self._frame.chk_stayawake.setToolTip("Keep device screen on while mirroring")
+        self._frame.chk_fullscreen = self._frame._create_checkbox("全屏")
+        self._frame.chk_fullscreen.setToolTip("以全屏模式启动")
+        self._frame.chk_aot = self._frame._create_checkbox("窗口置顶")
+        self._frame.chk_aot.setToolTip("让镜像窗口保持在其他窗口上方")
+        self._frame.chk_showtouches = self._frame._create_checkbox("显示触点")
+        self._frame.chk_showtouches.setToolTip("在屏幕上显示触摸位置")
+        self._frame.chk_stayawake = self._frame._create_checkbox("保持唤醒")
+        self._frame.chk_stayawake.setToolTip("镜像期间保持设备屏幕唤醒")
         self._frame._add_responsive_row(
             gl,
             self._frame.chk_fullscreen,
@@ -296,15 +296,15 @@ class RemotePanelForm:
             wide_columns=4,
         )
 
-        self._frame.chk_turnscreenoff = self._frame._create_checkbox("Screen Off")
-        self._frame.chk_turnscreenoff.setToolTip("Turn off device screen on connect")
-        self._frame.chk_hw_encoder = self._frame._create_checkbox("HW Enc")
-        self._frame.chk_hw_encoder.setToolTip("Force hardware encoder (may cause stutter)")
-        self._frame.chk_noplayback = self._frame._create_checkbox("No Window")
-        self._frame.chk_noplayback.setToolTip("Record only, no display window")
-        self._frame.chk_noaudio = self._frame._create_checkbox("No Audio")
+        self._frame.chk_turnscreenoff = self._frame._create_checkbox("关闭设备屏幕")
+        self._frame.chk_turnscreenoff.setToolTip("连接后关闭设备屏幕")
+        self._frame.chk_hw_encoder = self._frame._create_checkbox("硬件编码")
+        self._frame.chk_hw_encoder.setToolTip("强制使用硬件编码器（可能造成卡顿）")
+        self._frame.chk_noplayback = self._frame._create_checkbox("仅录制")
+        self._frame.chk_noplayback.setToolTip("只录制文件，不显示镜像窗口")
+        self._frame.chk_noaudio = self._frame._create_checkbox("禁用音频")
         self._frame.chk_noaudio.setChecked(True)
-        self._frame.chk_noaudio.setToolTip("Disable audio forwarding")
+        self._frame.chk_noaudio.setToolTip("不转发设备音频")
         self._frame._add_responsive_row(
             gl,
             self._frame.chk_turnscreenoff,
@@ -318,15 +318,15 @@ class RemotePanelForm:
         )
 
         self._frame.btn_start = self._frame._b(
-            "Start", "monitor-play.svg", "accent", tooltip="Start mirroring (Ctrl+Enter)"
+            "开始镜像", "monitor-play.svg", "accent", tooltip="开始屏幕镜像（Ctrl+Enter）"
         )
         self._frame.btn_start.setMinimumHeight(32)
         self._frame.btn_start.setIconSize(QSize(16, 16))
         self._frame.btn_stop = self._frame._b(
-            "Stop",
+            "停止镜像",
             "stop-circle.svg",
             "danger",
-            tooltip="Stop mirroring (Ctrl+Shift+Return)",
+            tooltip="停止屏幕镜像（Ctrl+Shift+Return）",
         )
         self._frame.btn_stop.setMinimumHeight(32)
         self._frame.btn_stop.setIconSize(QSize(16, 16))
@@ -347,8 +347,8 @@ class RemotePanelForm:
         return self._frame._checkbox(text)
 
     def _build_control(self) -> QWidget:
-        g = self._frame._card("Remote Control")
-        outer = g.body_layout()
+        g = self._frame._card("远程按键与手势")
+        outer = g.viewLayout
         outer.setSpacing(6)
         self._frame._remote_control_buttons = []
         self._frame._remote_key_buttons = []
@@ -356,19 +356,19 @@ class RemotePanelForm:
 
         # RECENTS 已覆盖 APP_SWITCH；通知栏操作由下方手势处理。
         key_specs = [
-            ("HOME", "HOME"),
-            ("BACK", "BACK"),
-            ("RECENT", "RECENTS"),
-            ("MENU", "MENU"),
-            ("PWR", "POWER"),
-            ("SET", "SETTINGS"),
-            ("CAM", "CAMERA"),
-            ("SRCH", "SEARCH"),
-            ("ENTER", "ENTER"),
-            ("DEL", "DEL"),
+            ("主页", "HOME"),
+            ("返回", "BACK"),
+            ("最近", "RECENTS"),
+            ("菜单", "MENU"),
+            ("电源", "POWER"),
+            ("设置", "SETTINGS"),
+            ("相机", "CAMERA"),
+            ("搜索", "SEARCH"),
+            ("确认", "ENTER"),
+            ("删除", "DEL"),
         ]
         for label, code in key_specs:
-            self._frame._remote_key_button(label, code, f"Send keyevent {code}")
+            self._frame._remote_key_button(label, code, f"发送按键事件 {code}")
         self._frame._remote_primary_key_buttons = tuple(self._frame._remote_key_buttons)
         control_modes = (
             span_tail_mode("four", 4, 0, column_stretches=(1, 1, 1, 1)),
@@ -385,12 +385,12 @@ class RemotePanelForm:
         media_specs = [
             ("VOL-", "VOL_DOWN"),
             ("VOL+", "VOL_UP"),
-            ("PLAY", "MEDIA_PLAY"),
-            ("PREV", "MEDIA_PREV"),
-            ("NEXT", "MEDIA_NEXT"),
+            ("播放", "MEDIA_PLAY"),
+            ("上一个", "MEDIA_PREV"),
+            ("下一个", "MEDIA_NEXT"),
         ]
         for label, code in media_specs:
-            self._frame._remote_key_button(label, code, f"Send keyevent {code}")
+            self._frame._remote_key_button(label, code, f"发送按键事件 {code}")
         self._frame._remote_media_buttons = tuple(
             self._frame._remote_key_buttons[len(self._frame._remote_primary_key_buttons) :]
         )
@@ -403,14 +403,14 @@ class RemotePanelForm:
         )
 
         action_specs = [
-            ("Swipe Up", "swipe_up", "Send an upward swipe gesture"),
-            ("Swipe Down", "swipe_down", "Send a downward swipe gesture"),
-            ("Swipe Left", "swipe_left", "Send a leftward swipe gesture"),
-            ("Swipe Right", "swipe_right", "Send a rightward swipe gesture"),
-            ("Notif+", "notif_expand", "Expand notifications"),
-            ("Notif-", "notif_collapse", "Collapse notifications"),
-            ("Portrait", "rotate_portrait", "Rotate portrait"),
-            ("Land", "rotate_landscape", "Rotate landscape"),
+            ("上滑", "swipe_up", "发送向上滑动手势"),
+            ("下滑", "swipe_down", "发送向下滑动手势"),
+            ("左滑", "swipe_left", "发送向左滑动手势"),
+            ("右滑", "swipe_right", "发送向右滑动手势"),
+            ("展开通知", "notif_expand", "展开通知栏"),
+            ("收起通知", "notif_collapse", "收起通知栏"),
+            ("竖屏", "rotate_portrait", "切换到竖屏方向"),
+            ("横屏", "rotate_landscape", "切换到横屏方向"),
         ]
         for label, action, tooltip in action_specs:
             self._frame._remote_action_button(label, action, tooltip)
@@ -534,7 +534,7 @@ class RemotePanelForm:
             self._frame.record_path.setToolTip("")
             self._frame.record_path.setAccessibleDescription("")
             return
-        details = "Recording path will be created on Start"
+        details = "开始镜像时创建录屏文件"
         self._frame.record_path.setText(details)
         self._frame.record_path.setToolTip(details)
         self._frame.record_path.setAccessibleDescription(details)

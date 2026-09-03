@@ -7,10 +7,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QEvent, QModelIndex, QSize, Qt
-from PySide6.QtWidgets import QScrollArea, QStyle, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QWidget
+from qfluentwidgets import ListWidget, SmoothScrollArea
 
-from gui.widgets.fluent._base import repolish
-from gui.widgets.fluent.list_widget import ScalableListWidget
 from gui.widgets.responsive_controller import ResponsiveGridBinding
 from gui.widgets.responsive_layout import (
     GridPlan,
@@ -117,7 +116,7 @@ class _DeviceResponsiveBinding(ResponsiveGridBinding):
         ResponsiveGridBinding.synchronize_responsive_plan(self, plan.action_plan)
 
 
-class _ShrinkableDeviceList(ScalableListWidget):
+class _ShrinkableDeviceList(ListWidget):
     """只向布局声明一行的安全高度；行卡片透传鼠标，勾选/悬停由列表原生驱动。"""
 
     def __init__(self, parent=None):
@@ -137,11 +136,7 @@ class _ShrinkableDeviceList(ScalableListWidget):
             QEvent.Type.HoverMove,
             QEvent.Type.HoverLeave,
         ):
-            position = (
-                event.position().toPoint()
-                if event.type() == QEvent.Type.HoverMove
-                else None
-            )
+            position = event.position().toPoint() if event.type() == QEvent.Type.HoverMove else None
             self._sync_card_hover(position)
         return super().eventFilter(watched, event)
 
@@ -161,7 +156,9 @@ class _ShrinkableDeviceList(ScalableListWidget):
             value = "true" if row == hovered_row else "false"
             if widget.property("cardHovered") != value:
                 widget.setProperty("cardHovered", value)
-                repolish(widget)
+                widget.style().unpolish(widget)
+                widget.style().polish(widget)
+                widget.update()
 
     def mouseReleaseEvent(self, event) -> None:
         """itemWidget 行不再经过 QStyledItemDelegate 点击处理，这里按相同坐标
@@ -199,7 +196,7 @@ class _ShrinkableDeviceBody(QWidget):
         return QSize(0, max(0, self.minimumHeight()))
 
 
-class _ShrinkableActionScroll(QScrollArea):
+class _ShrinkableActionScroll(SmoothScrollArea):
     """只传播动作区安全高度，横向不足由自身滚动条承接。"""
 
     def sizeHint(self) -> QSize:

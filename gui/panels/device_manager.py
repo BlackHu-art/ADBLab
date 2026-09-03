@@ -5,11 +5,9 @@ from __future__ import annotations
 import weakref
 from typing import cast
 
-from PySide6.QtCore import QEvent, QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt, QTimer
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
-    QCompleter,  # noqa: F401  供测试通过本模块命名空间补丁 QCompleter。
     QFrame,
     QGridLayout,
     QSizePolicy,
@@ -60,22 +58,22 @@ class DeviceManager(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
 
-        g_dev = self._g("Devices")
+        g_dev = self._g("设备与连接")
         self._device_group = g_dev
         g_dev.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        g_dev.setAccessibleName("Devices")
-        g_dev.installEventFilter(self)
-        # 发现状态徽标：浮层 InfoBadge 对齐分组标题净空带右上角，不进入任何布局。
-        # 仅补充标题区视觉；状态字符串与标题文本仍由 set_discovery_state 维护。
-        self._discovery_badge = InfoBadge(w)
+        g_dev.setAccessibleName("设备与连接")
+        # HeaderCardWidget 公开 headerLayout，状态徽标直接进入参考组件标题区。
+        self._discovery_badge = InfoBadge(g_dev.headerView)
         self._discovery_badge.setProperty("fontRole", FontRole.UI.value)
         self._discovery_badge_kind = "empty"
-        gd_l = QVBoxLayout(g_dev)
+        g_dev.headerLayout.addStretch(1)
+        g_dev.headerLayout.addWidget(self._discovery_badge)
+        gd_l = g_dev.viewLayout
         # 与分组标题保留固定净空；连接区形态保持固定，极限尺寸由局部滚动承接。
-        gd_l.setContentsMargins(4, 9, 4, 4)
+        gd_l.setContentsMargins(12, 12, 12, 14)
         # 连接区和设备主体是两个视觉分区；宽布局下 Connect 正好位于 Refresh
         # 上方，保留明确净空以免两个按钮边框黏连。
-        gd_l.setSpacing(6)
+        gd_l.setSpacing(10)
 
         rc = QGridLayout()
         rc.setHorizontalSpacing(2)
@@ -83,17 +81,18 @@ class DeviceManager(BasePanel):
         rc.setContentsMargins(0, 0, 0, 0)
         self._connect_layout = rc
         self.ip_entry = self._combo_editable(font_role=FontRole.MONO)
-        self.ip_entry.setAccessibleName("Device address")
-        self.ip_entry.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.ip_entry.setAccessibleName("设备地址")
         self.ip_entry.setMinimumWidth(0)
         self.ip_entry.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-        self.ip_entry.installEventFilter(self)
         self._build_combo_view()
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
-        self.ip_entry.editTextChanged.connect(self._on_ip_edited)
+        self.ip_entry.textChanged.connect(self._on_ip_edited)
         self.btn_connect_devices = self._b(
-            "Connect", "plug.svg", tooltip="Connect to the entered device addresses"
+            "连接",
+            "plug.svg",
+            variant="accent",
+            tooltip="连接输入的设备地址",
         )
         rc.addWidget(self.ip_entry, 0, 0)
         rc.addWidget(self.btn_connect_devices, 0, 1)
@@ -109,8 +108,6 @@ class DeviceManager(BasePanel):
         gd_l.addWidget(connect_card)
         self._connect_card = connect_card
 
-        self.set_discovery_state("scanning")
-
         body_host = _ShrinkableDeviceBody()
         body_host.setObjectName("deviceBody")
         body_host.setMinimumWidth(0)
@@ -124,9 +121,9 @@ class DeviceManager(BasePanel):
 
         self.listbox_devices = _ShrinkableDeviceList()
         self.listbox_devices.setObjectName("deviceList")
-        self.listbox_devices.setAccessibleName("Connected devices")
+        self.listbox_devices.setAccessibleName("已连接设备")
         self.listbox_devices.setAccessibleDescription(
-            "Use the checkboxes to select one or more devices for an operation"
+            "使用复选框选择一台或多台设备执行操作"
         )
         self.listbox_devices.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.listbox_devices.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -146,35 +143,35 @@ class DeviceManager(BasePanel):
         sl.setContentsMargins(0, 0, 0, 0)
         self._device_actions_layout = sl
         self.btn_refresh = self._b(
-            "Refresh", "arrows-clockwise.svg", tooltip="Scan for connected devices"
+            "刷新", "arrows-clockwise.svg", tooltip="扫描已连接设备"
         )
         self.btn_info = self._b(
-            "Device Info",
+            "设备信息",
             "info.svg",
-            tooltip="Show selected device details in the operation log",
+            tooltip="在操作日志中显示所选设备详情",
         )
         self.btn_disconnect = self._b(
-            "Disconnect",
+            "断开连接",
             "link-break.svg",
             variant="danger",
-            tooltip="Disconnect the selected devices",
+            tooltip="断开所选设备",
         )
         self.btn_restart_dev = self._b(
-            "Restart", "arrow-counter-clockwise.svg", tooltip="Restart the selected devices"
+            "重启设备", "arrow-counter-clockwise.svg", tooltip="重启所选设备"
         )
         self.btn_restart_adb = self._b(
-            "ADB Server", "arrow-u-up-left.svg", tooltip="Restart the local ADB server"
+            "重启 ADB", "arrow-u-up-left.svg", tooltip="重启本机 ADB 服务"
         )
         self.btn_restart_adb.setAccessibleDescription(
-            "Restarts the local ADB server after confirmation"
+            "确认后重启本机 ADB 服务"
         )
         self.btn_batch = self._b(
-            "Batch Install", "stack-plus.svg", tooltip="Install APK files on selected devices"
+            "批量安装", "stack-plus.svg", tooltip="向所选设备安装 APK 文件"
         )
         self.btn_all = self._b(
-            "Select All", "check-square.svg", tooltip="Select every listed device"
+            "全选", "check-square.svg", tooltip="选择列表中的全部设备"
         )
-        self.btn_none = self._b("Deselect All", "square.svg", tooltip="Clear the device selection")
+        self.btn_none = self._b("取消全选", "square.svg", tooltip="清除设备选择")
         self._device_action_buttons = (
             self.btn_refresh,
             self.btn_info,
@@ -196,7 +193,7 @@ class DeviceManager(BasePanel):
 
         action_scroll = _ShrinkableActionScroll()
         action_scroll.setObjectName("deviceActionScroll")
-        action_scroll.setAccessibleName("Device actions")
+        action_scroll.setAccessibleName("设备操作")
         action_scroll.setFrameShape(QFrame.Shape.NoFrame)
         action_scroll.setWidgetResizable(True)
         action_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -215,6 +212,12 @@ class DeviceManager(BasePanel):
         self.action_binding = self._device_responsive_binding
         self._sync_device_control_heights()
         self._update_device_minimum_heights()
+        initial_state = str(
+            getattr(self.panel, "_device_discovery_state", "scanning") or "scanning"
+        ).lower()
+        if initial_state not in {"scanning", "empty", "unavailable", "ready"}:
+            initial_state = "scanning"
+        self.set_discovery_state(initial_state)
         self._update_action_states()
         self._apply_device_card_styles()
         gd_l.addWidget(body_host)
@@ -312,9 +315,7 @@ class DeviceManager(BasePanel):
     # ── 视图控制器委托 wrapper ─────────────────────────────────────────
 
     def apply_fonts(self):
-        return _resolve_device_controller(
-            self, "_view_controller", DeviceManagerView
-        ).apply_fonts()
+        return _resolve_device_controller(self, "_view_controller", DeviceManagerView).apply_fonts()
 
     def _apply_device_list_style(self):
         return _resolve_device_controller(
@@ -381,15 +382,6 @@ class DeviceManager(BasePanel):
             self, "_view_controller", DeviceManagerView
         )._on_device_double_click(item)
 
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.Type.Resize:
-            if watched is getattr(self, "ip_entry", None):
-                self._sync_address_popup_width()
-            if watched is getattr(self, "_device_group", None):
-                # 分组宽度变化时让浮层发现徽标跟随标题区右上角。
-                self._sync_discovery_badge_geometry()
-        return super().eventFilter(watched, event)
-
     # ── 选择状态 ────────────────────────────────────────────────────────
 
     @property
@@ -439,23 +431,26 @@ class DeviceManager(BasePanel):
         target, error = normalize_adb_connect_target(self.ip_address)
         if error:
             self.signals.log_message.emit("WARNING", error)
-            line_edit = self.ip_entry.lineEdit()
-            if line_edit:
-                line_edit.setFocus()
-                line_edit.selectAll()
+            self.ip_entry.setFocus()
+            self.ip_entry.selectAll()
             return
         self.signals.connect_requested.emit(target)
 
     def _request_refresh(self):
+        request_refresh = getattr(self.panel, "request_device_refresh", None)
+        if callable(request_refresh):
+            request_refresh()
+            return
+        # 仅供最小测试替身兼容；生产路径始终由 SidePanel 提交共享状态。
+        if not self.btn_refresh.isEnabled():
+            return
         self.set_discovery_state("scanning")
         self.signals.refresh_devices_requested.emit()
 
     def connect_signals(self):
         LP = self.signals
         self.btn_connect_devices.clicked.connect(self._request_connect)
-        line_edit = self.ip_entry.lineEdit()
-        if line_edit:
-            line_edit.returnPressed.connect(self._request_connect)
+        self.ip_entry.returnPressed.connect(self._request_connect)
         self.btn_refresh.clicked.connect(self._request_refresh)
         self.btn_info.clicked.connect(lambda: LP.device_info_requested.emit(self.selected_devices))
         self.btn_disconnect.clicked.connect(

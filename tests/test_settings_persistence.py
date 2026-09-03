@@ -86,6 +86,44 @@ def test_existing_json_scrcpy_keys_load_without_migration(isolated_settings):
     assert settings.get("retired_remote_setting") is None
 
 
+def test_appearance_settings_are_normalized_when_loaded(isolated_settings):
+    existing_values = {
+        "theme": "auto",
+        "accent_color": "#1a2b3c",
+        "mica_enabled": False,
+    }
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(
+        json.dumps(existing_values, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == "System"
+    assert settings.get("accent_color") == "#1A2B3C"
+    assert settings.get("mica_enabled") is False
+
+
+def test_invalid_appearance_settings_fall_back_to_fluent_defaults(isolated_settings):
+    existing_values = {
+        "theme": "neon",
+        "accent_color": "blue",
+        "mica_enabled": "yes",
+    }
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(
+        json.dumps(existing_values, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("theme") == settings_manager.DEFAULTS["theme"]
+    assert settings.get("accent_color") == settings_manager.DEFAULTS["accent_color"]
+    assert settings.get("mica_enabled") is settings_manager.DEFAULTS["mica_enabled"]
+
+
 def test_saved_file_stamps_current_schema_version(isolated_settings):
     settings = settings_manager.AppSettings.instance()
     settings.update({"theme": "Dark"})

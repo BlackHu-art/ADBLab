@@ -10,12 +10,12 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QMessageBox,
-    QTableWidget,
     QVBoxLayout,
 )
 from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
     CardWidget,
     CheckBox,
     InfoBadge,
@@ -23,6 +23,7 @@ from qfluentwidgets import (
     LineEdit,
     PlainTextEdit,
     PushButton,
+    RoundMenu,
     TableWidget,
 )
 
@@ -38,12 +39,10 @@ from gui.dialogs.lifecycle import (
     safe_disconnect,
 )
 from gui.styles import BaseStyles
+from gui.styles.fluent import add_menu_action, apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.label import FluentLabel
-from gui.widgets.fluent.menu import FluentMenu
-from gui.widgets.fluent.status_bar import FluentStatusBar
 from gui.widgets.responsive_layout import reflow_widgets
 from models.file_explorer_worker import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
@@ -136,8 +135,8 @@ class FileExplorerDialog(QDialog):
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self.dialog_title = FluentLabel(
-            "File Explorer", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self.dialog_title = apply_label_role(
+            BodyLabel("File Explorer"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self.dialog_title.setObjectName("dialogTitle")
         self.status_badge = InfoBadge.info("No device", self.header_card)
@@ -147,9 +146,9 @@ class FileExplorerDialog(QDialog):
         title_row.addWidget(self.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self.status_badge)
-        self.dialog_subtitle = FluentLabel(
-            "Browse and manage device files",
-            role=FontRole.UI,
+        self.dialog_subtitle = apply_label_role(
+            BodyLabel("Browse and manage device files"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         self.dialog_subtitle.setObjectName("dialogSubtitle")
@@ -161,7 +160,7 @@ class FileExplorerDialog(QDialog):
         self._path_layout = QGridLayout()
         self.path_layout = self._path_layout
         self._path_layout.setSpacing(4)
-        self._path_label = QLabel("Path:")
+        self._path_label = apply_label_role(BodyLabel("Path:"), FontRole.UI)
         self.path_field = LineEdit()
         self.path_field.setText(self.current_path)
         self._path_label.setBuddy(self.path_field)
@@ -263,8 +262,8 @@ class FileExplorerDialog(QDialog):
             self.table.horizontalHeader().setSectionResizeMode(
                 i, QHeaderView.ResizeMode.Interactive
             )
-        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(TableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(TableWidget.SelectionBehavior.SelectRows)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.cellDoubleClicked.connect(self._on_double_click)
@@ -274,8 +273,10 @@ class FileExplorerDialog(QDialog):
         self.table.setColumnWidth(self.MODIFIED_COL, 140)
         layout.addWidget(self.table, 1)
 
-        self.status_bar = FluentStatusBar()
-        self.status_bar.showMessage("Ready")
+        self.status_bar = apply_label_role(
+            CaptionLabel("Ready"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self.status_bar.setAccessibleName("File explorer status")
         layout.addWidget(self.status_bar)
 
     def _reflow_top_controls(self) -> None:
@@ -313,10 +314,12 @@ class FileExplorerDialog(QDialog):
         super().resizeEvent(event)
         self._reflow_top_controls()
 
-    def _create_context_menu(self) -> FluentMenu:
+    def _create_context_menu(self) -> RoundMenu:
         """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        return FluentMenu(parent=self)
+        menu = RoundMenu(parent=self)
+        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
+        return menu
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
@@ -325,9 +328,7 @@ class FileExplorerDialog(QDialog):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         mono_font = bs.font_for_role(FontRole.MONO)
-        self.setStyleSheet(
-            f"QTableView:focus {{ border: 2px solid {bs.color('BORDER_FOCUS')}; }}"
-        )
+        self.setStyleSheet(f"QTableView:focus {{ border: 2px solid {bs.color('BORDER_FOCUS')}; }}")
         self.setFont(ui_font)
         # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
         if hasattr(self, "header_card"):
@@ -336,11 +337,9 @@ class FileExplorerDialog(QDialog):
             self.status_badge.setFont(bs.font_for_role(FontRole.UI))
             has_device = bool(self.device_ip)
             self.status_badge.setText("Ready" if has_device else "No device")
-            self.status_badge.setLevel(
-                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-            )
+            self.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
         # 表格样式由 qfluentwidgets TableWidget 自维护（随主题切换），无需在此重建。
-        # 状态栏样式由 FluentStatusBar 自维护（随主题重建），无需在此重复应用。
+        # 状态信息直接使用 qfluentwidgets CaptionLabel，无需额外 QSS。
         # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
         self.path_field.setFont(mono_font)
         self.search_field.setFont(ui_font)
@@ -630,29 +629,29 @@ class FileExplorerDialog(QDialog):
         is_dir = self._file_type_at(row) == "Folder"
         menu = self._create_context_menu()
         if is_dir:
-            menu.add_action("Open", callback=lambda: self._on_double_click(row, 0))
+            add_menu_action(menu, "Open", callback=lambda: self._on_double_click(row, 0))
         else:
             is_image = self._ext(name).lower() in self.IMAGE_EXTS
-            menu.add_action("View", callback=lambda: self._view_file(name, is_image))
+            add_menu_action(menu, "View", callback=lambda: self._view_file(name, is_image))
         menu.addSeparator()
-        menu.add_action("Pull", callback=lambda: self._pull_file(name))
+        add_menu_action(menu, "Pull", callback=lambda: self._pull_file(name))
         if not is_dir:
-            menu.add_action("Push Here", callback=self._push_file)
+            add_menu_action(menu, "Push Here", callback=self._push_file)
         if not is_dir and name.endswith(".apk"):
-            menu.add_action("Install APK", callback=lambda: self._install_apk(name))
+            add_menu_action(menu, "Install APK", callback=lambda: self._install_apk(name))
         if not is_dir and name.endswith(".sh"):
-            menu.add_action("Execute Script", callback=lambda: self._exec_script(name))
-        menu.add_action("Permissions", callback=lambda: self._show_chmod(name, is_dir))
+            add_menu_action(menu, "Execute Script", callback=lambda: self._exec_script(name))
+        add_menu_action(menu, "Permissions", callback=lambda: self._show_chmod(name, is_dir))
         menu.addSeparator()
-        menu.add_action("Rename", callback=lambda: self._rename_item(name))
-        menu.add_action("Delete", callback=lambda: self._request_delete(name))
+        add_menu_action(menu, "Rename", callback=lambda: self._rename_item(name))
+        add_menu_action(menu, "Delete", callback=lambda: self._request_delete(name))
         menu.addSeparator()
-        menu.add_action("Copy", callback=lambda: self._copy_items(True))
-        menu.add_action("Cut", callback=lambda: self._copy_items(False))
+        add_menu_action(menu, "Copy", callback=lambda: self._copy_items(True))
+        add_menu_action(menu, "Cut", callback=lambda: self._copy_items(False))
         if self.clipboard:
-            menu.add_action("Paste", callback=self._paste_items)
+            add_menu_action(menu, "Paste", callback=self._paste_items)
         menu.addSeparator()
-        menu.add_action("Properties", callback=lambda: self._show_props(name, is_dir))
+        add_menu_action(menu, "Properties", callback=lambda: self._show_props(name, is_dir))
         menu.exec(self.table.mapToGlobal(pos))
 
     def _install_apk(self, name: str):
@@ -662,7 +661,7 @@ class FileExplorerDialog(QDialog):
         self._connect_worker_ui(
             w,
             w.result_ready,
-            lambda o, e: self.status_bar.showMessage(
+            lambda o, e: self.status_bar.setText(
                 f"APK {name} installed" if not e else f"APK install failed: {o}"
             ),
         )
@@ -738,7 +737,7 @@ class FileExplorerDialog(QDialog):
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
-            self.status_bar.showMessage(f"Failed to read properties for {name}")
+            self.status_bar.setText(f"Failed to read properties for {name}")
             return
         entry = self._parse_ls(output.splitlines()[0] if output.strip() else "")
         if entry:
@@ -762,7 +761,7 @@ class FileExplorerDialog(QDialog):
                 QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.NoButton,
             )
-            self.status_bar.showMessage(f"Failed to read properties for {name}")
+            self.status_bar.setText(f"Failed to read properties for {name}")
             return
         info = f"Name: {name}\nType: {ftype}\nSize: {size}\nPath: {full}"
         QMessageBox.information(self, f"Properties: {name}", info)

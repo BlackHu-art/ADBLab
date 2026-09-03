@@ -15,13 +15,12 @@ from gui.dialogs.file_explorer import FileExplorerDialog, _ImageViewerDialog
 from gui.dialogs.live_logcat import LiveLogcatDialog
 from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.dialogs.screenshot_viewer import ScreenshotViewer
-from gui.dialogs.settings_dialog import SettingsDialog
 from gui.panels.side_panel import SidePanel
 from tests.test_main_window_layout import build_main_frame
 
 
 def _normalized(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.casefold()).strip()
+    return re.sub(r"[^\w]+", " ", text.casefold(), flags=re.UNICODE).strip()
 
 
 def _button_label(button: QPushButton | QToolButton) -> str:
@@ -63,16 +62,25 @@ def test_all_main_panel_buttons_use_short_function_descriptions(qt_application):
     try:
         for index in range(3):
             panel._ensure_tab_loaded(index)
-        _assert_buttons_use_function_descriptions(panel)
+        roots = [
+            panel.device_widget,
+            *(panel._tab_scroll_areas[index].widget() for index in range(3)),
+        ]
+        for root in roots:
+            _assert_buttons_use_function_descriptions(root)
     finally:
         panel.shutdown()
         panel.close()
 
 
-def test_toolbar_buttons_use_function_descriptions(qt_application):
+def test_home_action_cards_expose_function_descriptions(qt_application):
     frame = build_main_frame()
     try:
-        _assert_buttons_use_function_descriptions(frame._toolbar)
+        assert not hasattr(frame, "_toolbar")
+        cards = frame._home_page.tool_cards.values()
+        assert cards
+        assert all(card.accessibleName().strip() for card in cards)
+        assert all(card.accessibleDescription().strip() for card in cards)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -83,11 +91,6 @@ def test_primary_dialog_buttons_use_function_descriptions(monkeypatch, qt_applic
     monkeypatch.setattr(AppManagerDialog, "_load_apps", lambda _self: None)
     monkeypatch.setattr(AppDetailsDialog, "_load_data", lambda _self: None)
     monkeypatch.setattr(FileExplorerDialog, "_refresh", lambda _self: None)
-    monkeypatch.setattr(
-        SettingsDialog,
-        "_available_ui_font_families",
-        classmethod(lambda _cls, _configured="": ["System Default"]),
-    )
     dialogs = (
         AboutDialog(),
         AppDetailsDialog(None, device_ip="", package_name="com.example.app"),
@@ -97,7 +100,6 @@ def test_primary_dialog_buttons_use_function_descriptions(monkeypatch, qt_applic
         LiveLogcatDialog(device_ip=""),
         PerformanceLauncherDialog(device_ip=""),
         ScreenshotViewer([]),
-        SettingsDialog(),
     )
     try:
         for dialog in dialogs:

@@ -10,13 +10,14 @@ from PySide6.QtGui import QFocusEvent, QKeyEvent, QValidator
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
-    QStyle,
     QToolButton,
     QWidget,
 )
-from qfluentwidgets import EditableComboBox, LineEdit, SpinBox, TransparentToolButton
+from qfluentwidgets import EditableComboBox, LineEdit, RoundMenu, SpinBox, TransparentToolButton
 
-from gui.widgets.fluent.menu import FluentMenu
+from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import add_menu_action
+from gui.styles.icon_loader import get_themed_icon
 
 
 class StrictIntComboBox(EditableComboBox):
@@ -430,12 +431,13 @@ class PresetSpinBox(QWidget):
         button.setToolTip("Select a preset value")
         button.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        button.setIcon(self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowDown))
+        button.setIcon(get_themed_icon("caret-down.svg"))
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        menu = FluentMenu(parent=button)
+        menu = RoundMenu(parent=button)
+        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
         for preset in self._presets:
-            action = menu.add_action(str(preset), data=preset)
+            action = add_menu_action(menu, str(preset), data=preset)
             action.triggered.connect(
                 lambda _checked=False, selected=preset: self.setValue(selected)
             )

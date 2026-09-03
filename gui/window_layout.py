@@ -1,4 +1,4 @@
-"""集中处理主窗口尺寸和左右分栏比例的校验与换算。"""
+"""集中处理主窗口尺寸与当前屏幕工作区约束。"""
 
 from __future__ import annotations
 
@@ -8,10 +8,6 @@ from PySide6.QtCore import QSize
 
 DEFAULT_WINDOW_SIZE = QSize(1250, 700)
 MINIMUM_WINDOW_SIZE = QSize(860, 500)
-DEFAULT_PANEL_RATIO = 0.50
-DEFAULT_DEVICE_LOG_RATIO = 0.60
-MINIMUM_PANEL_RATIO = 0.20
-MAXIMUM_PANEL_RATIO = 0.70
 
 
 @dataclass(frozen=True)
@@ -134,61 +130,3 @@ def compute_workspace_constraints(
             )
         ),
     )
-
-
-def normalize_panel_ratio(value, *, fallback: float = DEFAULT_PANEL_RATIO) -> float:
-    """返回安全的左栏比例，异常值回退到默认比例。"""
-
-    try:
-        ratio = float(value)
-    except (TypeError, ValueError, OverflowError):
-        ratio = float(fallback)
-    if ratio <= 0 or ratio >= 1:
-        ratio = float(fallback)
-    return min(MAXIMUM_PANEL_RATIO, max(MINIMUM_PANEL_RATIO, ratio))
-
-
-def ratio_from_sizes(left_width: int, right_width: int) -> float:
-    """根据分栏实际宽度计算并校验左栏比例。"""
-
-    left_width = max(0, _coerce_int(left_width, 0))
-    right_width = max(0, _coerce_int(right_width, 0))
-    total = left_width + right_width
-    if total <= 0:
-        return DEFAULT_PANEL_RATIO
-    return normalize_panel_ratio(left_width / total)
-
-
-def split_sizes_for_ratio(total_width: int, ratio: float) -> tuple[int, int]:
-    """按比例拆分可用宽度并保证两个结果均为非负整数。"""
-
-    total_width = max(0, int(total_width))
-    ratio = normalize_panel_ratio(ratio)
-    left_width = int(round(total_width * ratio))
-    return left_width, max(0, total_width - left_width)
-
-
-def split_sizes_for_constraints(
-    total_width: int,
-    ratio: float,
-    *,
-    left_minimum: int,
-    right_minimum: int,
-) -> tuple[int, int]:
-    """按比例拆分宽度，并以当前两个面板的真实最小宽度为边界。"""
-
-    total_width = max(0, _coerce_int(total_width, 0))
-    left_minimum = max(0, _coerce_int(left_minimum, 0))
-    right_minimum = max(0, _coerce_int(right_minimum, 0))
-    minimum_total = left_minimum + right_minimum
-    if total_width <= 0:
-        return 0, 0
-    if minimum_total > total_width:
-        if minimum_total <= 0:
-            return split_sizes_for_ratio(total_width, ratio)
-        left_width = int(round(total_width * left_minimum / minimum_total))
-        return left_width, total_width - left_width
-
-    requested_left, _requested_right = split_sizes_for_ratio(total_width, ratio)
-    left_width = min(total_width - right_minimum, max(left_minimum, requested_left))
-    return left_width, total_width - left_width

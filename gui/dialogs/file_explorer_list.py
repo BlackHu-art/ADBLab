@@ -55,7 +55,7 @@ class FileExplorerList:
         self._navigate(self._frame.forward_stack.pop(), push=False)
 
     def _go_parent(self):
-        self._frame.status_bar.showMessage("Opening parent folder...")
+        self._frame.status_bar.setText("Opening parent folder...")
         self._navigate(os.path.dirname(self._frame.current_path))
 
     # ── 目录列表 ────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ class FileExplorerList:
         requested_path = self._frame.current_path
         self._frame._active_refresh = (request_id, requested_path)
         self._frame.search_field.clear()
-        self._frame.status_bar.showMessage("Loading...")
+        self._frame.status_bar.setText("Loading...")
         self._frame.table.setRowCount(0)
         self._frame.symlink_targets.clear()
 
@@ -107,7 +107,7 @@ class FileExplorerList:
         if error and not output.strip():
             if request_id is not None:
                 self._frame._active_refresh = None
-            self._frame.status_bar.showMessage("Error loading directory")
+            self._frame.status_bar.setText("Error loading directory")
             return
         self._frame.table.setUpdatesEnabled(False)
         self._frame.table.setSortingEnabled(False)
@@ -132,9 +132,7 @@ class FileExplorerList:
         files = len(rows) - folders
         if request_id is not None:
             self._frame._active_refresh = None
-        self._frame.status_bar.showMessage(
-            f"{requested_path}  |  {folders} folders, {files} files"
-        )
+        self._frame.status_bar.setText(f"{requested_path}  |  {folders} folders, {files} files")
 
     def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
         type_item = QTableWidgetItem(file_type)

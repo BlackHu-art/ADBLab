@@ -648,14 +648,14 @@ def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_applicatio
         first, second = _FakeFileExplorerADBWorker.instances
         second.complete("-rw-r--r-- 1 shell shell 20 May 30 current.txt")
         qt_application.processEvents()
-        current_status = dialog.status_bar.currentMessage()
+        current_status = dialog.status_bar.text()
 
         first.complete("-rw-r--r-- 1 shell shell 10 May 30 stale.txt")
         qt_application.processEvents()
 
         assert dialog.current_path == "/sdcard/second"
         assert dialog._file_name_at(1) == "current.txt"
-        assert dialog.status_bar.currentMessage() == current_status
+        assert dialog.status_bar.text() == current_status
         assert current_status == "/sdcard/second  |  0 folders, 1 files"
         assert first not in dialog._workers
         assert second not in dialog._workers
@@ -674,11 +674,11 @@ def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_ap
 
     with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
         worker = dialog._run_adb("shell", "ls /sdcard")
-    dialog.status_bar.showMessage = Mock()
+    dialog.status_bar.setText = Mock()
     queued_ui_callback = dialog._connect_worker_ui(
         worker,
         worker.result_ready,
-        lambda output, error: dialog.status_bar.showMessage(output),
+        lambda output, error: dialog.status_bar.setText(output),
     )
     worker.start()
 
@@ -694,7 +694,7 @@ def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_ap
     assert dialog._worker_ui_bindings == {}
     assert dialog._worker_lifecycle_handlers == {}
     assert worker.abort_calls == 1
-    dialog.status_bar.showMessage.assert_not_called()
+    dialog.status_bar.setText.assert_not_called()
     retain.assert_called_once()
     assert retain.call_args.args[0] == [worker]
     dialog.deleteLater()
@@ -710,7 +710,7 @@ def test_file_explorer_transfer_failure_does_not_refresh():
         FileExplorerDialog._on_transfer_done(dialog, "failed to copy", True, "Pulled demo.txt")
 
     critical.assert_called_once()
-    dialog.status_bar.showMessage.assert_called_once_with("Failed: failed to copy")
+    dialog.status_bar.setText.assert_called_once_with("Failed: failed to copy")
     dialog._refresh.assert_not_called()
 
 
@@ -723,7 +723,7 @@ def test_file_explorer_file_operation_failure_does_not_show_success():
         FileExplorerDialog._on_file_op_done(dialog, "Permission denied", True, "Deleted demo.txt")
 
     critical.assert_called_once()
-    dialog.status_bar.showMessage.assert_called_once_with("Failed: Permission denied")
+    dialog.status_bar.setText.assert_called_once_with("Failed: Permission denied")
     dialog._refresh.assert_not_called()
 
 
@@ -831,7 +831,7 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     ]
     assert first_row_calls[0].args[2].text() == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
-    dialog.status_bar.showMessage.assert_called_once_with("/sdcard  |  1 folders, 1 files")
+    dialog.status_bar.setText.assert_called_once_with("/sdcard  |  1 folders, 1 files")
 
 
 def test_file_explorer_table_moves_type_first_and_hides_row_numbers():

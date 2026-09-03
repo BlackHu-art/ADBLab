@@ -5,18 +5,24 @@ from PySide6.QtGui import QFont, QFontMetrics, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
-    QLabel,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import CardWidget, InfoBadge, PrimaryPushButton, SmoothScrollArea
+from qfluentwidgets import (
+    BodyLabel,
+    CardWidget,
+    ImageLabel,
+    InfoBadge,
+    PrimaryPushButton,
+    SmoothScrollArea,
+)
 
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.label import FluentLabel
 from utils.app_metadata import APP_VERSION
 from utils.resource_path import resource_path
 
@@ -66,9 +72,9 @@ class AboutDialog(QDialog):
         header_layout.setContentsMargins(8, 8, 8, 8)
         header_layout.setSpacing(4)
 
-        self._title = FluentLabel(
-            '<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>',
-            role=FontRole.TITLE,
+        self._title = apply_label_role(
+            BodyLabel('<a href="https://github.com/BlackHu-art/ADBLab">ADBLab</a>'),
+            FontRole.TITLE,
             color_key="TITLE_COLOR",
         )
         self._title.setObjectName("aboutTitle")
@@ -83,8 +89,10 @@ class AboutDialog(QDialog):
         self._title.setAccessibleName("Open the ADBLab project page")
         header_layout.addWidget(self._title)
 
-        self._version = FluentLabel(
-            f"Version {APP_VERSION}", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        self._version = apply_label_role(
+            BodyLabel(f"Version {APP_VERSION}"),
+            FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
         )
         self._version.setObjectName("aboutVer")
         self._version.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -104,7 +112,7 @@ class AboutDialog(QDialog):
         body = QVBoxLayout()
         body.setSpacing(6)
 
-        self._qr = QLabel()
+        self._qr = ImageLabel()
         self._qr.setObjectName("aboutQR")
         self._qr.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._qr.setFixedSize(220, 220)
@@ -116,8 +124,10 @@ class AboutDialog(QDialog):
             self._qr.setPixmap(pix)
         body.addWidget(self._qr, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        self._hint = FluentLabel(
-            "Scan to support the author", role=FontRole.UI, color_key="BUTTON_ACCENT"
+        self._hint = apply_label_role(
+            BodyLabel("Scan to support the author"),
+            FontRole.UI,
+            color_key="BUTTON_ACCENT",
         )
         self._hint.setObjectName("aboutHint")
         self._hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -130,8 +140,10 @@ class AboutDialog(QDialog):
         footer_layout.setSpacing(2)
         footer_layout.setContentsMargins(0, 0, 0, 12)
 
-        self._footer = FluentLabel(
-            "Copyright © 2026 Frankie Hu", role=FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        self._footer = apply_label_role(
+            BodyLabel("Copyright © 2026 Frankie Hu"),
+            FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
         )
         self._footer.setObjectName("aboutFooter")
         self._footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -139,8 +151,11 @@ class AboutDialog(QDialog):
         footer_layout.addWidget(self._footer)
 
         self._close_btn = PrimaryPushButton()
-        self._close_btn.setText("Close")
-        self._close_btn.setToolTip("Close the application information window")
+        configure_button(
+            self._close_btn,
+            text="Close",
+            tooltip="Close the application information window",
+        )
         self._close_btn.setIcon(get_themed_icon("x.svg"))
         self._close_btn.setIconSize(QSize(14, 14))
         self._close_btn.setObjectName("aboutCloseBtn")

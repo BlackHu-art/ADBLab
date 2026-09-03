@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-08-27
+last_verified: 2026-09-03
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
@@ -46,21 +46,26 @@ flowchart LR
 ### 2. 视图与交互层
 
 - `MainFrame` 是组合根：创建 `LogService`、`SidePanel`、`ADBController` 和应用自有
-  `QtTaskSupervisor`，连接全部 GUI 信号并管理对话框。
+  `QtTaskSupervisor`，连接全部 GUI 信号并管理对话框。`SidePanel` 不进入可见导航树，只作为
+  Devices/Apps/System/Remote 面板所有权、共享设备选择/发现状态和旧信号接口的兼容门面。
 - `MainFrame` 是所有二级窗口的生命周期根：设备类对话框、Performance Launcher 和
   ScreenshotViewer 作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，由
   MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 保持有意的模态交互，
-  Settings 作为非模态独立窗口打开。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
+  Settings 已改为 `FluentWindow` 的常驻导航页。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
 - `MainFrame` 保持无边框外观，但通过 `FramelessResizeController` 在四边和四角建立八个透明
-  热区，并将按压交给 `QWindow.startSystemResize()`；工具栏拖动优先使用
-  `QWindow.startSystemMove()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
-- 主窗口尺寸和左右分栏比例由 `gui/window_layout.py` 统一校验。普通窗口缩放与分隔条拖动
-  分别防抖写入设置；分隔条常驻线条不可见，但保留 8 像素透明拖动热区。设置页只通过
-  `window_layout_snapshot()`、`restore_default_window_size()` 和 `reset_panel_split()` 公开接口
-  展示或恢复布局，不直接访问 MainFrame 私有控件。顶部全局保存路径从最小窗口宽度起保持可见，
-  窄窗口显示末级目录，宽窗口按字体度量从中间省略（按工具栏剩余宽度动态计算），避免与工具栏按钮重叠。
-- `SidePanel` 首次只创建默认页签，Apps/System/Remote 在选择后懒加载；每个功能页放入 `QScrollArea`（横向滚动按需，极窄宽度下保留可访问的横向兜底）。左栏分割宽度和各功能页滚动视口宽度变化会触发响应式重排，Device、Apps、
-  System、Remote 只移动既有控件，不重建控件或重新连接信号。
+  热区，并将按压交给 `QWindow.startSystemResize()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
+- 主窗口尺寸由 `gui/window_layout.py` 统一校验，普通窗口缩放防抖写入设置；不再存在主内容
+  splitter、常驻日志区或旧工具栏。Settings 的“恢复默认设置”直接恢复系统主题、强调色、Mica、
+  字体、窗口尺寸、日志和扫描选项，并同步全部 SettingCard。
+- `FluentWindow` 顶层只保留 Home、Workspace、Tasks、Logs、Settings 五个入口。Workspace 使用
+  参考项目的 `SegmentedWidget` 在同一设备上下文下切换 Devices、Apps、System、Remote 四个分区；
+  首页和工作台都常驻展示当前已连接/已选设备与扫描状态，业务操作无需回到单独设备页确认目标。
+  每个分区有独立滚动视口，`SidePanel` 只协调共享选择状态和业务信号；响应式布局只移动既有控件，
+  不重建控件或重新连接信号。顶层导航和工作台分区在过渡动画开始前先提交选中态，分区切换只
+  发送一次 `sectionChanged`，避免视觉选中、标题说明与实际内容短暂不同步。
+- MainFrame 构建 Workspace 时依次调用 `SidePanel._ensure_tab_loaded(0..2)` 并把 Apps、System、
+  Remote 的现有控件移入各分区；Devices 也在此前创建。因此五个顶层页面和四个工作台分区均在
+  启动阶段实例化，当前只有兼容命名中的“lazy tab”，没有真正的视图懒加载。
 - `gui/panels/` 负责普通操作表单；`gui/dialogs/` 负责需要独立生命周期的复杂任务。
 - 视图通常不直接阻塞执行命令，但 App Manager、File Explorer、Live Logcat、Performance Launcher 各自持有 QThread/worker 或 runner。
 
@@ -114,9 +119,9 @@ flowchart LR
   通过字体度量计算；通用分组框也按当前标题字体高度计算顶部净空，并在字号变化后刷新样式，
   避免放大字号后文字被固定高度裁切或被首行按钮覆盖。
 - `gui/widgets/responsive_layout.py` 以 420/560 逻辑像素为默认断点返回紧凑、中等和宽布局列数，
-  `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用可纵向滚动的内容区，
-  以滚动视口实际宽度及当前 UI 字号调整 Appearance、Window、Storage 与操作按钮的排列；
-  主面板在实际分栏或滚动视口宽度变化时重排。
+  `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用参考项目的纵向
+  `SettingCardGroup`；首页 `FlowLayout`、工作台分区滚动视口和面板实际可用宽度共同驱动重排。
+  设备上下文卡在窄屏隐藏次要刷新/计数信息，但保留当前目标语义与主操作。
 - `gui/widgets/responsive_coordinator.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
   用一次度量生成布局计划（内部为 `ReflowTarget`/`_plan_history`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
   的收敛循环（`MAX_APPLY_ROUNDS = 3`），窗口尺寸变化经 40 毫秒防抖（`RESIZE_DEBOUNCE_MS = 40`）
@@ -124,8 +129,8 @@ flowchart LR
   保证 Monkey 事件数、throttle 等业务值始终是合法整数。
 - `gui/screen_adapter.py` 定义 `ScreenAdapter` 协议和 `QtScreenAdapter` 实现（从 `main_frame.py`
   抽出）：统一封装窗口所在屏幕、可用几何、逻辑 DPI 与屏幕/DPI 变更订阅，供主窗口尺寸约束、
-  二级窗口适配（`gui/dialogs/lifecycle.py::fit_secondary_window_to_owner_screen`）和工具栏保存路径
-  显示宽度计算复用；GUI 依赖协议而不是直接调用 QScreen，便于测试注入与几何探针。
+  二级窗口适配（`gui/dialogs/lifecycle.py::fit_secondary_window_to_owner_screen`）复用；GUI 依赖
+  协议而不是直接调用 QScreen，便于测试注入与几何探针。
 
 ### 日志通道
 
@@ -137,8 +142,9 @@ flowchart LR
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
   不进入 Qt 信号、界面缓存。windowed 环境没有 `stderr` 时静默丢弃。
-- 顶部工具栏和二级窗口生命周期使用 `ui.toolbar`、`ui.secondary_window` 结构化 DEBUG
-  事件，字段只包含动作、阶段、窗口类型、布尔状态和数量，不记录设备标识、包名或真实路径。
+- 主窗口动作和二级窗口生命周期使用 `ui.theme`/`ui.window`/`ui.save_directory`、
+  `ui.secondary_window` 结构化 DEBUG 事件，字段只包含动作、阶段、窗口类型、布尔状态和数量，
+  不记录设备标识、包名或真实路径。
 - MobilePerf 子进程使用 stdout 传递 INFO 和功能 RAW 数据，源码 DEBUG 单独写 stderr；
   父进程按运行代次固化回调和脱敏值，分别排空两个流并在双管道收口后通知完成，DEBUG
   不进入性能窗口。动态设备、包、邮箱和本地路径在输出前脱敏。
@@ -167,19 +173,28 @@ sequenceDiagram
         Main->>Qt: 创建 QApplication / 应用字体 / 加载主题
         Main->>MF: MainFrame()
         MF->>C: 创建 Controller 与 Models
-        MF->>MF: 恢复尺寸和分栏 / 构建窗口、面板、信号映射
-        MF->>ADB: 延后首次 refresh_devices
+        MF->>MF: 恢复尺寸 / 构建五个导航入口、工作台分区和信号映射
+        MF->>ADB: ADB 预热后开始持续扫描或延后一次 refresh_devices
         opt 持续扫描开启
             MF->>Scan: start()
             loop 每个扫描周期且无活跃短命令
                 Scan->>ADB: adb devices
-                ADB-->>Scan: 设备集合
-                Scan-->>MF: 集合变化信号
+                alt 扫描成功
+                    ADB-->>Scan: 设备集合
+                    Scan-->>MF: 集合快照
+                    MF->>C: publish_detected_devices()
+                    Note over MF,C: 同一快照提交列表与 ready/empty 状态
+                    C->>C: 按拓扑变化递增 generation
+                    C->>ADB: 后台补全设备元数据
+                    Note over C,ADB: 写盘和二次发布前校验 generation/拓扑
+                else 超时、非零退出或结果异常
+                    Scan-->>MF: unavailable
+                    Note over MF,C: 保留最后一次成功设备列表
+                end
             end
-            opt 连续失败且没有受管后台进程
-                Scan->>ADB: kill-server / start-server
-                Note over Scan,ADB: 卡死时只终止路径与项目 ADB 一致的 5037 监听进程
-                Scan->>ADB: 立即重试 adb devices
+            opt 手动刷新失败
+                MF->>Scan: invalidate_snapshot()
+                Note over MF,Scan: 下一次成功即使集合相同也重发，恢复 ready/empty
             end
         end
         Main->>Qt: app.exec()
@@ -189,7 +204,7 @@ sequenceDiagram
     MF->>C: shutdown()
     C->>C: 关闭四个 model 准入栅栏
     C->>C: 停止测试/录屏/输入/进程/Executor
-    MF->>MF: 停止已加载面板与对话框 worker
+    MF->>MF: 停止全部业务面板与对话框 worker
     MF->>MF: 保存设置
 ```
 
@@ -219,14 +234,17 @@ sequenceDiagram
    运行时工具缓存由 `utils/runtime_tools.py` 写入 Windows LocalAppData 或非 Windows 的 XDG/用户
    cache 目录，均避免写入只读安装目录。
 6. **Windows onedir 优先**：内置 adb/scrcpy 是长生命周期进程，CI 和 spec 的 Windows 产物采用 onedir，避免 onefile 临时目录锁定。
-7. **视图懒加载和批量日志**：减少启动开销及高频 logcat/MobilePerf 对 UI 事件循环的压力。
+7. **常驻导航页和批量日志**：Home/Workspace/Tasks/Logs/Settings 及 Workspace 四分区在启动时
+   完成实例化，切换只改变可见内容；高频 logcat/MobilePerf 在 producer 侧批量化，降低 UI
+   事件循环压力。当前不宣称视图懒加载。
 8. **vNext 采用增量迁移**：保留 `ADBController` 与现有 Qt signals 作为兼容门面，先增加
    OperationManager/TaskSupervisor 能力，再按 Screenshot、LiveLogcat、Install batch 三个门逐项迁移；
    不先移动目录，也不引入 asyncio/qasync 或全局重型 EventBus。决策和阶段定义见
    `docs/architecture/adr/0001-incremental-vnext.md` 与
    `docs/archive/plans/IMPLEMENTATION_PLAN.md`。
-9. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸与分栏比例
-   使用纯函数校验和公开恢复接口；面板通过断点重排既有控件，避免为缩放复制业务控件和信号接线。
+9. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸使用纯函数
+   校验和公开恢复接口；面板通过断点重排既有控件，避免为缩放复制业务控件和信号接线。旧
+   splitter 配置键只为 schema 兼容保留，运行时不读取或写入分栏状态。
 
 ## vNext 目标边界
 
@@ -288,11 +306,18 @@ sequenceDiagram
   仅 ruff/pyright 静态检查，macOS/Linux 仅源码打包自检）。
 - 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与顶层
   requests/ruamel 依赖均已删除，主应用运行时不再发起外部 HTTP 调用）；`mobileperf/setup.py`
-  仍保留 `requests`/`urllib3` 的遗留工程声明，但不属于顶层运行依赖。仓库历史中曾跟踪的邮件配置仍需
+  也没有 `install_requires`，不会额外声明 requests/urllib3。仓库历史中曾跟踪的邮件配置仍需
   所有者轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
-- `gui/main_frame.py` 已按 ADR-0003 Phase 2 拆出 `gui/main_frame_toolbar.py`、
-  `gui/secondary_windows.py`、`gui/close_controller.py` 三个组合控制器（MainFrame 保留同名
-  委托 wrapper，约 1,700 行）；`controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
+- `gui/main_frame.py` 当前使用 `gui/main_frame_actions.py`（无 UI 动作）、
+  `gui/pages/fluent_pages.py`（参考 Gallery 的 Fluent 页面）、`gui/secondary_windows.py` 和
+  `gui/close_controller.py`；原 Phase 2 的 `gui/main_frame_toolbar.py` 已随旧工具栏删除；
+  `controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
   两个 mixin；`tests/test_model_execution.py` 拆为 10 个 `tests/test_model_*.py` 主题文件。
+- 旧 UI 删除范围已收口为：`gui/main_frame_shell.py`、`gui/main_frame_toolbar.py`、
+  `gui/dialogs/settings_dialog.py`、`gui/pages/devices_page.py`、`gui/pages/log_page.py`、
+  `gui/styles/qss.py`、整个 `gui/widgets/fluent/`、`gui/widgets/double_click_button.py`，以及只覆盖
+  旧 Settings 窗口的 `tests/test_settings_typography.py`、`tests/test_settings_window_layout.py`。
+  当前 UI 事实来源是 `gui/main_frame.py`、`gui/main_frame_actions.py`、
+  `gui/pages/fluent_pages.py`、`gui/styles/fluent.py` 和 qfluentwidgets。
 - 2026-08-21 全量 pytest 为 961 项、耗时 350.61 秒，响应式几何扫描测试是主要耗时来源之一
   （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。

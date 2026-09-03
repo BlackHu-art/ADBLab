@@ -89,7 +89,9 @@ DEFAULTS = {
         "ignore_timeouts": True,
         "ignore_security": True,
     },
-    "theme": "Light",
+    "theme": "System",
+    "accent_color": "#0F6CBD",
+    "mica_enabled": True,
     "window_width": 1250,
     "window_height": 700,
     "left_panel_width": 400,
@@ -113,6 +115,29 @@ def _normalise_setting(key: str, value: Any) -> Any:
             return SCRCPY_SETTING_DEFAULTS[key]
         text = str(value).strip()
         return text[:128] if text else SCRCPY_SETTING_DEFAULTS[key]
+
+    if key == "theme":
+        aliases = {
+            "auto": "System",
+            "system": "System",
+            "light": "Light",
+            "dark": "Dark",
+        }
+        return aliases.get(str(value).strip().casefold(), DEFAULTS[key])
+
+    if key == "accent_color":
+        text = str(value).strip().upper()
+        if len(text) == 7 and text.startswith("#"):
+            try:
+                int(text[1:], 16)
+            except ValueError:
+                pass
+            else:
+                return text
+        return DEFAULTS[key]
+
+    if key == "mica_enabled":
+        return value if isinstance(value, bool) else DEFAULTS[key]
 
     if key == "font_family":
         if not isinstance(value, str):

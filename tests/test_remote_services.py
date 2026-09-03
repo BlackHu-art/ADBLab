@@ -7,6 +7,7 @@ import pytest
 from PySide6.QtCore import SIGNAL, Qt, QThread
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QListWidgetItem
+from qfluentwidgets import InfoLevel
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from core.adb_bridge import ADBBridge, ADBInputSession
@@ -36,6 +37,27 @@ class _TestSignal:
     def emit(self):
         for callback in tuple(self.callbacks):
             callback()
+
+
+@pytest.mark.parametrize(
+    ("devices", "text", "level"),
+    (
+        ([], "未选择", InfoLevel.INFOAMTION),
+        (["device-1"], "可启动", InfoLevel.SUCCESS),
+        (["device-1", "device-2"], "请选择一台", InfoLevel.WARNING),
+    ),
+)
+def test_remote_status_badge_matches_single_device_requirement(devices, text, level):
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=devices)
+    panel.remote_status_badge = Mock()
+
+    RemotePanel._refresh_remote_status_badge(panel)
+
+    panel.remote_status_badge.setText.assert_called_once_with(text)
+    panel.remote_status_badge.setLevel.assert_called_once_with(level)
+    panel.remote_status_badge.setToolTip.assert_called_once()
+    panel.remote_status_badge.setAccessibleDescription.assert_called_once()
 
 
 class _FaultInjectingLaunchWorker:
@@ -518,12 +540,12 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     with patch("gui.panels.remote_panel.threading.Thread") as thread_cls:
         RemotePanel._on_launch_ready(panel, ["scrcpy.exe", "-s", "device-1"], "1080x2400")
 
-    panel._status_label.setText.assert_called_once_with("Status: Running")
+    panel._status_label.setText.assert_called_once_with("状态：运行中")
     panel._status_label.setToolTip.assert_called_once_with(
-        "Status: Running\nDevice: 1080x2400"
+        "状态：运行中\n设备：1080x2400"
     )
     panel._status_label.setAccessibleDescription.assert_called_once_with(
-        "Status: Running\nDevice: 1080x2400"
+        "状态：运行中\n设备：1080x2400"
     )
     assert panel._status_device_info == "1080x2400"
     panel._remote_control.remember_dimensions.assert_called_once_with("device-1", ["1080", "2400"])
@@ -540,10 +562,10 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._status_label.reset_mock()
     RemotePanel._update_status(panel, "60 fps", None)
     panel._status_label.setToolTip.assert_called_once_with(
-        "Status: 60 fps\nDevice: 1080x2400"
+        "状态：60 fps\n设备：1080x2400"
     )
     panel._status_label.setAccessibleDescription.assert_called_once_with(
-        "Status: 60 fps\nDevice: 1080x2400"
+        "状态：60 fps\n设备：1080x2400"
     )
 
 
@@ -2071,24 +2093,24 @@ def test_remote_panel_queue_status_keeps_primary_text_compact_and_details_in_too
 
     RemotePanel._update_remote_queue_status(panel, 8, 7, "queued")
 
-    panel._remote_queue_label.setText.assert_called_once_with("Queue: 1")
+    panel._remote_queue_label.setText.assert_called_once_with("队列：1")
     panel._remote_queue_label.setToolTip.assert_called_once_with(
-        "Queued: 1 · Sent: 7 · Failed: 0"
+        "排队：1 · 已发送：7 · 失败：0"
     )
     panel._remote_queue_label.setAccessibleDescription.assert_called_once_with(
-        "Queued: 1 · Sent: 7 · Failed: 0"
+        "排队：1 · 已发送：7 · 失败：0"
     )
 
     panel._remote_queue_label.reset_mock()
     panel._remote_failed = 2
     RemotePanel._update_remote_queue_status(panel, 9, 9, "failed")
 
-    panel._remote_queue_label.setText.assert_called_once_with("Queue: 0 · Failed: 2")
+    panel._remote_queue_label.setText.assert_called_once_with("队列：0 · 失败：2")
     panel._remote_queue_label.setToolTip.assert_called_once_with(
-        "Queued: 0 · Sent: 7 · Failed: 2"
+        "排队：0 · 已发送：7 · 失败：2"
     )
     panel._remote_queue_label.setAccessibleDescription.assert_called_once_with(
-        "Queued: 0 · Sent: 7 · Failed: 2"
+        "排队：0 · 已发送：7 · 失败：2"
     )
 
 

@@ -46,12 +46,6 @@ def _parse_float(text: str) -> float | None:
         return None
 
 
-def _seconds_from_index(index: int, samples: list) -> float:
-    """用采样序号构造单调相对时间轴，不依赖时间戳格式差异。"""
-
-    return float(index)
-
-
 def _load_series(
     path: str,
     column: str,
@@ -77,10 +71,10 @@ def _load_series(
         series.error = "empty file"
         return series
     header = [cell.strip() for cell in rows[0]]
-    if column not in header and not has_header:
-        series.error = f"column {column!r} not found"
-        return series
     if column not in header:
+        if has_header:
+            series.error = f"column {column!r} not found"
+            return series
         # 无表头兼容：直接按整列解析（仅支持首列为数值的退化场景）。
         for row in rows:
             value = _parse_float(row[0]) if row else None

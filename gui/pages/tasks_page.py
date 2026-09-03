@@ -18,12 +18,20 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLayout, QVBoxLayout, QWidget
-from qfluentwidgets import InfoBadge, InfoLevel
+from PySide6.QtWidgets import QBoxLayout, QHBoxLayout, QLayout, QVBoxLayout, QWidget
+from qfluentwidgets import (
+    BodyLabel,
+    HeaderCardWidget,
+    InfoBadge,
+    InfoLevel,
+    PrimaryPushButton,
+    ProgressBar,
+    SmoothScrollArea,
+)
 
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.styles import BaseStyles, FontRole
-from gui.widgets.fluent import Card, DangerPushButton, EmptyState, FluentProgressBar
+from gui.styles.fluent import apply_label_role, configure_button
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 
 # 在途视图轮询间隔（毫秒）。
@@ -129,9 +137,7 @@ class TaskCenterPage(QWidget):
         # panel 预留为 SidePanel 兼容接口（P1-A 契约）；本阶段未使用统一信号层。
         self._panel = panel
         self._operation_manager = operation_manager
-        self._history_store = (
-            history_store if history_store is not None else TaskHistoryStore()
-        )
+        self._history_store = history_store if history_store is not None else TaskHistoryStore()
         self._stop_hook = stop_hook
         self._history_limit = history_limit
 
@@ -139,14 +145,23 @@ class TaskCenterPage(QWidget):
         self._active_cache: tuple[OperationSnapshot, ...] | None = None
         self._history_cache: tuple[TaskHistoryEntry, ...] | None = None
 
-        self._active_card = Card(title="在途任务")
-        self._history_card = Card(title="历史记录")
+        self._active_card = self._make_card("在途任务")
+        self._history_card = self._make_card("历史记录")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
-        layout.addWidget(self._active_card)
-        layout.addWidget(self._history_card, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self._scroll = SmoothScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setSpacing(8)
+        content_layout.addWidget(self._active_card)
+        content_layout.addWidget(self._history_card)
+        content_layout.addStretch(1)
+        self._scroll.setWidget(content)
+        layout.addWidget(self._scroll)
 
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(max(0, int(poll_interval_ms)))
@@ -160,9 +175,7 @@ class TaskCenterPage(QWidget):
         """重读在途快照与历史，并按 diff 决定是否重建控件。"""
 
         active = (
-            self._operation_manager.active_snapshot()
-            if self._operation_manager is not None
-            else ()
+            self._operation_manager.active_snapshot() if self._operation_manager is not None else ()
         )
         self._apply_active(active)
         history = self._history_store.recent(self._history_limit)
@@ -183,19 +196,17 @@ class TaskCenterPage(QWidget):
     # ── 在途视图 ────────────────────────────────────────────────────────
 
     def _render_active_rows(self, active: tuple[OperationSnapshot, ...]) -> None:
-        self._clear_layout(self._active_card.body_layout())
+        self._clear_layout(self._active_card.viewLayout)
         if not active:
-            self._active_card.body_layout().addWidget(
-                EmptyState(
-                    title="暂无在途任务",
-                    description="安装批次、录屏、Monkey 与 MobilePerf 任务会显示在这里。",
-                    parent=self,
+            self._active_card.viewLayout.addWidget(
+                self._empty_state(
+                    "暂无在途任务",
+                    "安装批次、录屏、Monkey 与 MobilePerf 任务会显示在这里。",
                 )
             )
             return
         for snapshot in active:
-            self._active_card.body_layout().addWidget(self._make_active_row(snapshot))
-        self._active_card.body_layout().addStretch(1)
+            self._active_card.viewLayout.addWidget(self._make_active_row(snapshot))
 
     def _make_active_row(self, snapshot: OperationSnapshot) -> QWidget:
         row = QWidget()
@@ -203,9 +214,10 @@ class TaskCenterPage(QWidget):
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
-        summary = QLabel(f"{snapshot.kind} · {self._short_id(snapshot.operation_id)}")
-        summary.setProperty("fontRole", FontRole.UI.value)
-        summary.setFont(BaseStyles.font_for_role(FontRole.UI))
+        summary = apply_label_role(
+            BodyLabel(f"{snapshot.kind} · {self._short_id(snapshot.operation_id)}"),
+            FontRole.UI,
+        )
         summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         summary.setToolTip(snapshot.operation_id)
         layout.addWidget(summary, 1)
@@ -216,37 +228,34 @@ class TaskCenterPage(QWidget):
         )
         layout.addWidget(badge)
 
-        progress = FluentProgressBar(maximum=100, value=int(snapshot.progress))
+        progress = ProgressBar()
+        progress.setRange(0, 100)
+        progress.setValue(int(snapshot.progress))
         progress.setFixedWidth(120)
         layout.addWidget(progress)
 
-        cancel = DangerPushButton("取消")
-        cancel.setToolTip(f"取消任务 {snapshot.operation_id}")
-        cancel.setAccessibleName("取消")
-        cancel.setAccessibleDescription(f"取消任务 {snapshot.operation_id}")
-        cancel.setProperty("functionalToolTip", f"取消任务 {snapshot.operation_id}")
-        cancel.clicked.connect(
-            lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid)
+        cancel = PrimaryPushButton()
+        configure_button(
+            cancel,
+            text="取消",
+            tooltip=f"取消任务 {snapshot.operation_id}",
+            danger=True,
         )
+        cancel.clicked.connect(lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid))
         layout.addWidget(cancel)
         return row
 
     # ── 历史视图 ────────────────────────────────────────────────────────
 
     def _render_history_rows(self, history: tuple[TaskHistoryEntry, ...]) -> None:
-        self._clear_layout(self._history_card.body_layout())
+        self._clear_layout(self._history_card.viewLayout)
         if not history:
-            self._history_card.body_layout().addWidget(
-                EmptyState(
-                    title="暂无历史记录",
-                    description="已完成的任务会显示在这里。",
-                    parent=self,
-                )
+            self._history_card.viewLayout.addWidget(
+                self._empty_state("暂无历史记录", "已完成的任务会显示在这里。")
             )
             return
         for entry in history:
-            self._history_card.body_layout().addWidget(self._make_history_row(entry))
-        self._history_card.body_layout().addStretch(1)
+            self._history_card.viewLayout.addWidget(self._make_history_row(entry))
 
     def _make_history_row(self, entry: TaskHistoryEntry) -> QWidget:
         row = QWidget()
@@ -254,14 +263,16 @@ class TaskCenterPage(QWidget):
         layout.setContentsMargins(0, 2, 0, 2)
         layout.setSpacing(8)
 
-        time_label = QLabel(self._format_time(entry.finished_at))
-        time_label.setProperty("fontRole", FontRole.UI_SMALL.value)
-        time_label.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        time_label = apply_label_role(
+            BodyLabel(self._format_time(entry.finished_at)),
+            FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY",
+        )
         layout.addWidget(time_label)
 
-        summary = QLabel(f"{entry.kind} · {self._short_id(entry.task_id)}")
-        summary.setProperty("fontRole", FontRole.UI.value)
-        summary.setFont(BaseStyles.font_for_role(FontRole.UI))
+        summary = apply_label_role(
+            BodyLabel(f"{entry.kind} · {self._short_id(entry.task_id)}"), FontRole.UI
+        )
         summary.setToolTip(entry.detail or entry.task_id)
         layout.addWidget(summary, 1)
 
@@ -314,6 +325,36 @@ class TaskCenterPage(QWidget):
             sync = getattr(widget, "_sync_theme_state", None)
             if callable(sync):
                 sync()
+
+    @staticmethod
+    def _make_card(title: str) -> HeaderCardWidget:
+        """创建直接使用的 qfluentwidgets 标题卡片。"""
+
+        card = HeaderCardWidget(title)
+        card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
+        card.viewLayout.setContentsMargins(12, 8, 12, 8)
+        card.viewLayout.setSpacing(6)
+        apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
+        return card
+
+    @staticmethod
+    def _empty_state(title: str, description: str) -> QWidget:
+        """用 qfluentwidgets 标签组合轻量空状态。"""
+
+        host = QWidget()
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(6)
+        title_label = apply_label_role(BodyLabel(title), FontRole.TITLE, color_key="TITLE_COLOR")
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label = apply_label_role(
+            BodyLabel(description), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        description_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        description_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        layout.addWidget(description_label)
+        return host
 
     @staticmethod
     def _short_id(task_id: str) -> str:

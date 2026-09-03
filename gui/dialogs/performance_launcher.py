@@ -12,16 +12,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QFrame,
-    QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
-    QProgressBar,
     QPushButton,
     QWidget,
 )
-from qfluentwidgets import InfoLevel
+from qfluentwidgets import BodyLabel, CardWidget, InfoBadge, InfoLevel, ProgressBar
 
 from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
@@ -96,18 +93,18 @@ class PerformanceLauncherDialog(QDialog):
     exception_edit: QLineEdit
     phone_log_edit: QLineEdit
     result_action: QAction
-    progress_bar: QProgressBar
+    progress_bar: ProgressBar
     monkey_throttle_combo: StrictIntComboBox
     monkey_seed_edit: StrictIntLineEdit
     monkey_pct_combos: dict[str, StrictIntComboBox]
     perfetto_action: QAction
-    serialnum_label: QLabel
+    serialnum_label: BodyLabel
     # 页头控件由 PerformanceLauncherForm 注入；此处声明类型供 pyright 与
     # 主题刷新方法稳定引用（视觉重设计新增，不影响任何既有契约）。
-    header_card: QFrame
-    dialog_title: QLabel
-    dialog_subtitle: QLabel
-    status_badge: QLabel
+    header_card: CardWidget
+    dialog_title: BodyLabel
+    dialog_subtitle: BodyLabel
+    status_badge: InfoBadge
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
         super().__init__(parent)
@@ -175,9 +172,7 @@ class PerformanceLauncherDialog(QDialog):
             self.chart_view.clear()
             return
         metrics = load_result_metrics(result_dir)
-        self.chart_view.set_series(
-            {name: series.values for name, series in metrics.items()}
-        )
+        self.chart_view.set_series({name: series.values for name, series in metrics.items()})
 
     def _build_config_section(self, package_name):
         return self._form_controller._build_config_section(package_name)
@@ -427,8 +422,6 @@ class PerformanceLauncherDialog(QDialog):
     def _apply_theme(self, _value=None):
         apply_dark_title_bar(self)
         c = BaseStyles.color
-        r = BaseStyles.RADIUS_MD
-        group_title_margin = BaseStyles.group_box_title_margin()
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
@@ -439,47 +432,13 @@ class PerformanceLauncherDialog(QDialog):
             self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
             has_device = bool(self.device_ip)
             self.status_badge.setText("Ready" if has_device else "No device")
-            self.status_badge.setLevel(
-                InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
-            )
+            self.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self.setStyleSheet(
             f"""
             QDialog {{
                 background-color: {c("PANEL_BG")};
                 color: {c("TEXT_PRIMARY")};
-            }}
-            QGroupBox#performanceConfig {{
-                background-color: {c("INPUT_BG")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {r}px;
-                margin-top: {group_title_margin}px;
-                padding: 10px 10px 8px 10px;
-                color: {c("TEXT_PRIMARY")};
-                font-weight: bold;
-            }}
-            QGroupBox#performanceConfig::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                padding: 0 8px;
-                left: 10px;
-                color: {c("GROUP_TITLE_COLOR")};
-            }}
-            QProgressBar#performanceProgress {{
-                background-color: {c("INPUT_BG")};
-                color: {c("TEXT_PRIMARY")};
-                border: 1px solid {c("BORDER_COLOR")};
-                border-radius: {BaseStyles.RADIUS_MD}px;
-                text-align: center;
-            }}
-            QProgressBar#performanceProgress::chunk {{
-                background-color: {c("LOG_SUCCESS")};
-                border-radius: {BaseStyles.RADIUS_MD - 1}px;
-            }}
-            QWidget#inlineRow,
-            QWidget#inlineRow QLabel {{
-                color: {c("TEXT_PRIMARY")};
-                background-color: transparent;
             }}
             """
         )
@@ -522,11 +481,6 @@ class PerformanceLauncherDialog(QDialog):
         self.log_view.document().setDefaultFont(log_font)
         log_height = max(72, min(110, QFontMetrics(log_font).height() * 4 + 12))
         self.log_view.setFixedHeight(log_height)
-        progress_height = QFontMetrics(ui_font).height() + 10
-        self.progress_bar.setMinimumHeight(22)
-        self.progress_bar.setMinimumHeight(
-            max(22, self.progress_bar.sizeHint().height(), progress_height)
-        )
 
     @staticmethod
     def _theme_signature() -> tuple[str, str, int, int]:

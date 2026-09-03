@@ -4,10 +4,11 @@ from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
-    QLabel,
     QVBoxLayout,
 )
 from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
     CardWidget,
     ComboBox,
     InfoBadge,
@@ -22,12 +23,10 @@ from qfluentwidgets import (
 from gui.dialogs.live_logcat_highlighter import LogcatHighlighter
 from gui.dialogs.live_logcat_worker import LEVEL_LABELS
 from gui.styles import BaseStyles
+from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
-from gui.widgets.fluent.button import DangerPushButton
-from gui.widgets.fluent.label import FluentLabel
-from gui.widgets.fluent.status_bar import FluentStatusBar
 
 
 class LiveLogcatForm:
@@ -52,8 +51,8 @@ class LiveLogcatForm:
         hl.setSpacing(2)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
-        self._frame.dialog_title = FluentLabel(
-            "Live Logcat", role=FontRole.TITLE, color_key="TITLE_COLOR"
+        self._frame.dialog_title = apply_label_role(
+            BodyLabel("Live Logcat"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
         self._frame.status_badge = InfoBadge.info("No device", self._frame.header_card)
@@ -63,9 +62,9 @@ class LiveLogcatForm:
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
-        self._frame.dialog_subtitle = FluentLabel(
-            "Stream and filter device log messages",
-            role=FontRole.UI,
+        self._frame.dialog_subtitle = apply_label_role(
+            BodyLabel("Stream and filter device log messages"),
+            FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
         self._frame.dialog_subtitle.setObjectName("dialogSubtitle")
@@ -78,16 +77,16 @@ class LiveLogcatForm:
         filters.setHorizontalSpacing(6)
         filters.setVerticalSpacing(4)
         self._frame._filters_layout = filters
-        self._frame._level_label = QLabel("Level:")
+        self._frame._level_label = apply_label_role(BodyLabel("Level:"), FontRole.UI)
         self._frame.level_combo = ComboBox()
-        self._frame.level_combo.addItem("All", None)
+        self._frame.level_combo.addItem("All", userData=None)
         for code in ("V", "D", "I", "W", "E", "F"):
             self._frame.level_combo.addItem(LEVEL_LABELS[code], code)
         self._frame.level_combo.currentIndexChanged.connect(self._frame._rebuild)
         self._frame.level_combo.setMinimumWidth(120)
         self._frame._level_label.setBuddy(self._frame.level_combo)
         self._frame.level_combo.setAccessibleName("Log level")
-        self._frame._package_label = QLabel("Package:")
+        self._frame._package_label = apply_label_role(BodyLabel("Package:"), FontRole.UI)
         self._frame.pkg_input = LineEdit()
         self._frame.pkg_input.setPlaceholderText("com.example.app")
         self._frame._package_label.setBuddy(self._frame.pkg_input)
@@ -120,8 +119,13 @@ class LiveLogcatForm:
         self._frame.start_btn.setIcon(get_themed_icon("play.svg"))
         self._frame.start_btn.setProperty("iconName", "play.svg")
         self._frame.start_btn.setIconSize(QSize(14, 14))
-        self._frame.stop_btn = DangerPushButton("Stop")
-        self._frame.stop_btn.setToolTip("Stop the active log stream")
+        self._frame.stop_btn = PrimaryPushButton()
+        configure_button(
+            self._frame.stop_btn,
+            text="Stop",
+            tooltip="Stop the active log stream",
+            danger=True,
+        )
         self._frame.stop_btn.setIcon(get_themed_icon("stop-circle.svg"))
         self._frame.stop_btn.setProperty("iconName", "stop-circle.svg")
         self._frame.stop_btn.setIconSize(QSize(14, 14))
@@ -165,9 +169,10 @@ class LiveLogcatForm:
         for button in action_buttons:
             btn_row.addWidget(button)
 
-        self._frame.status_bar = FluentStatusBar()
-        self._frame.status_bar.setSizeGripEnabled(False)
-        self._frame.status_bar.showMessage("Ready")
+        self._frame.status_bar = apply_label_role(
+            CaptionLabel("Ready"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self._frame.status_bar.setAccessibleName("Logcat status")
         btn_row.addWidget(self._frame.status_bar, 1)
         layout.addLayout(btn_row)
 
@@ -261,7 +266,7 @@ class LiveLogcatForm:
         # 输出框样式由 qfluentwidgets PlainTextEdit 自维护（随主题切换），仅同步等宽字体。
         self._frame.output.setFont(log_font)
         self._frame.output.document().setDefaultFont(log_font)
-        # 状态栏样式由 FluentStatusBar 自维护（随主题重建）。
+        # 状态信息直接使用 qfluentwidgets CaptionLabel，并同步语义字体。
         self._apply_action_button_styles()
         self._frame.level_combo.setMinimumWidth(120)
         self._frame.level_combo.setMinimumWidth(
@@ -287,7 +292,7 @@ class LiveLogcatForm:
         self._frame.highlighter.set_theme(hl_colors)
 
     def _apply_action_button_styles(self) -> None:
-        """停止按钮已改用 DangerPushButton，其危险红样式与禁用态由自身 QSS 维护。"""
+        """动作按钮直接使用 qfluentwidgets，危险色由项目配置函数补充。"""
 
     def resizeEvent(self, event):
         self._reflow_filters()

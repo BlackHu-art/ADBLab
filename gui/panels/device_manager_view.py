@@ -2,23 +2,21 @@
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
-from PySide6.QtCore import QSignalBlocker, Qt
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtCore import QSignalBlocker, QSize, Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QListWidgetItem,
-    QTableView,
+    QStyle,
+    QStyleOptionViewItem,
     QWidget,
 )
-from qfluentwidgets import InfoBadge, InfoLevel
+from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
 
 from gui.panels.side_panel_signals import BlockSignals
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import apply_label_role
 from gui.widgets.responsive_controller import ReflowReason
 from models.device_store import DeviceStore
 
@@ -55,21 +53,38 @@ class _DeviceCardRow(QWidget):
         # 行卡片对鼠标透明：勾选、双击、悬停全部由 QListWidget 原生路径处理。
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self._info_label = QLabel(text, self)
+        self._content = QWidget(self)
+        self._content.setObjectName("deviceCardContent")
+        self._content.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._info_label = apply_label_role(BodyLabel(text, self._content), FontRole.MONO)
         self._info_label.setObjectName("deviceCardText")
-        self._badge = InfoBadge(self)
+        self._info_label.setToolTip(text)
+        self._info_label.setAccessibleDescription(text)
+        self._badge = InfoBadge(self._content)
         self._badge.setText(badge_text)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(4, 0, 4, 0)
-        layout.setSpacing(6)
-        layout.addWidget(self._info_label, 1)
-        layout.addWidget(self._badge, 0)
+        content_layout = QHBoxLayout(self._content)
+        content_layout.setContentsMargins(4, 0, 4, 0)
+        content_layout.setSpacing(6)
+        content_layout.addWidget(self._info_label, 1)
+        content_layout.addWidget(self._badge, 0)
+        self._layout = QHBoxLayout(self)
+        self._layout.setContentsMargins(32, 0, 0, 0)
+        self._layout.setSpacing(0)
+        self._layout.addWidget(self._content)
         self._sync_card_style()
+
+    def set_check_indicator_gutter(self, width: int) -> None:
+        """为列表原生勾选指示器保留透明且可点击的区域。"""
+
+        margins = self._layout.contentsMargins()
+        self._layout.setContentsMargins(max(0, int(width)), margins.top(), 0, margins.bottom())
 
     def set_device_text(self, text: str) -> None:
         """更新卡片信息文本（与条目文本保持同源）。"""
 
         self._info_label.setText(text)
+        self._info_label.setToolTip(text)
+        self._info_label.setAccessibleDescription(text)
 
     def set_badge(self, text: str, kind: str) -> None:
         """更新状态徽标文本与配色。"""
@@ -83,14 +98,25 @@ class _DeviceCardRow(QWidget):
 
         bs = BaseStyles
         self.setStyleSheet(
-            f"QWidget#deviceCard {{ background-color: {bs.color('PANEL_BG')};"
+            "QWidget#deviceCard { background: transparent; }"
+            f"QWidget#deviceCardContent {{ background-color: {bs.color('PANEL_BG')};"
             f" border-radius: {bs.RADIUS_SM}px; }}"
-            f"QWidget#deviceCard[cardHovered=\"true\"] {{"
+            f'QWidget#deviceCard[cardHovered="true"] QWidget#deviceCardContent {{'
             f" background-color: {bs.color('BUTTON_HOVER')}; }}"
         )
         self._badge.setLevel(
             InfoLevel.SUCCESS if self._badge_kind == "ready" else InfoLevel.WARNING
         )
+
+    def sizeHint(self) -> QSize:
+        """设备长文本不反向撑宽列表，仅保留当前行高。"""
+
+        return QSize(0, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        """设备行允许水平收缩，完整信息由条目数据与提示保留。"""
+
+        return QSize(0, super().minimumSizeHint().height())
 
 
 class DeviceManagerView:
@@ -113,13 +139,7 @@ class DeviceManagerView:
                 if card is not None:
                     # 行卡片跟随列表等宽字体；字号变化后徽标几何同步重算。
                     card.setFont(font)
-        view = self._frame.ip_entry.view()
-        if view is not None:
-            view.setFont(font)
-            horizontal_header = getattr(view, "horizontalHeader", None)
-            if callable(horizontal_header):
-                cast(QHeaderView, horizontal_header()).setFont(font)
-        self._frame.panel._apply_completer_style(self._frame.ip_entry.completer())
+        self._frame.ip_entry.setFont(font)
         sync_heights = getattr(self._frame, "_sync_device_control_heights", None)
         update_minimums = getattr(self._frame, "_update_device_minimum_heights", None)
         if callable(sync_heights) and hasattr(self._frame, "_device_action_buttons"):
@@ -129,7 +149,7 @@ class DeviceManagerView:
         self._sync_discovery_badge_geometry()
 
     def _apply_device_list_style(self):
-        # 列表样式由 ScalableListWidget 自维护（随主题重建），这里只刷新字体与卡片。
+        # 列表样式由 qfluentwidgets ListWidget 自维护，这里只刷新字体与设备卡片。
         self._frame.apply_fonts()
         self._apply_device_card_styles()
 
@@ -142,8 +162,9 @@ class DeviceManagerView:
             for row in range(listbox.count()):
                 item = listbox.item(row)
                 card = listbox.itemWidget(item) if item is not None else None
-                if card is not None and hasattr(card, "_sync_card_style"):
+                if item is not None and card is not None and hasattr(card, "_sync_card_style"):
                     card._sync_card_style()
+                    self._sync_device_card_indicator_gutter(item, card)
         connect_card = getattr(frame, "_connect_card", None)
         if connect_card is not None:
             connect_card.setStyleSheet(
@@ -197,35 +218,21 @@ class DeviceManagerView:
         )
 
     def _sync_discovery_badge_geometry(self) -> None:
-        """把发现状态徽标对齐到分组标题净空带右上角（浮层，不参与布局）。"""
+        """状态徽标由 HeaderCardWidget.headerLayout 自动管理。"""
 
-        frame = self._frame
-        badge = getattr(frame, "_discovery_badge", None)
-        group = getattr(frame, "_device_group", None)
-        # 仅对真实 QLabel 徽标做几何对齐：测试用 Mock 桩不应进入尺寸数学。
-        if not isinstance(badge, QLabel) or group is None or not badge.text():
-            return
-        hint = badge.sizeHint()
-        title_margin = BaseStyles.group_box_title_margin()
-        badge_height = max(6, min(max(1, hint.height()), max(6, title_margin - 2)))
-        badge_width = max(1, hint.width())
-        badge.setGeometry(
-            max(0, group.width() - badge_width - 12),
-            max(1, (title_margin - badge_height) // 2),
-            badge_width,
-            badge_height,
-        )
-        badge.raise_()
+        badge = getattr(self._frame, "_discovery_badge", None)
+        if badge is not None:
+            badge.updateGeometry()
 
     def _sync_device_card(self, item: QListWidgetItem, txt: str, info: dict) -> None:
         """创建或更新行卡片；条目文本仍是数据、提示与滚动契约的单一真源。"""
 
         listbox = self._frame.listbox_devices
-        placeholder = str(info.get("Brand", "")) == "ADB" and str(
-            info.get("Model", "")
-        ) == "Detecting"
+        placeholder = (
+            str(info.get("Brand", "")) == "ADB" and str(info.get("Model", "")) == "Detecting"
+        )
         badge_kind = "detecting" if placeholder else "ready"
-        badge_text = "Detecting" if placeholder else "Ready"
+        badge_text = "检测中" if placeholder else "就绪"
         card = listbox.itemWidget(item)
         if card is None:
             card = _DeviceCardRow(txt, badge_text, badge_kind)
@@ -235,7 +242,32 @@ class DeviceManagerView:
         else:
             card.set_device_text(txt)
             card.set_badge(badge_text, badge_kind)
+        self._sync_device_card_indicator_gutter(item, card)
         self._apply_device_card_styles()
+
+    def _sync_device_card_indicator_gutter(
+        self,
+        item: QListWidgetItem,
+        card: _DeviceCardRow,
+    ) -> None:
+        """让不透明卡片内容从原生勾选框右侧开始绘制。"""
+
+        listbox = self._frame.listbox_devices
+        option = QStyleOptionViewItem()
+        listbox.initViewItemOption(option)
+        # PySide6 类型桩未公开这些 ViewItem 字段，运行时由 Qt 提供。
+        runtime_option = cast(Any, option)
+        runtime_option.rect = listbox.visualItemRect(item)
+        runtime_option.features |= QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator
+        runtime_option.checkState = item.checkState()
+        check_rect = listbox.style().subElementRect(
+            QStyle.SubElement.SE_ItemViewItemCheckIndicator,
+            option,
+            listbox,
+        )
+        card_left = card.geometry().left()
+        gutter = max(32, check_rect.right() - card_left + 4)
+        card.set_check_indicator_gutter(gutter)
 
     def set_discovery_state(self, state: str) -> None:
         """在设备分组标题中紧凑显示发现状态。"""
@@ -244,32 +276,31 @@ class DeviceManagerView:
         device_list = getattr(self._frame, "listbox_devices", None)
         device_count = device_list.count() if device_list is not None else 0
         descriptions = {
-            "scanning": ("Scanning…", "ADB device discovery is in progress"),
-            "empty": ("No devices", "No Android devices are currently connected"),
+            "scanning": ("扫描中…", "正在扫描 Android 设备"),
+            "empty": ("无设备", "当前没有已连接的 Android 设备"),
             "unavailable": (
-                "ADB unavailable",
-                "ADB is unavailable; check the executable and server, then refresh",
+                "ADB 不可用",
+                "ADB 当前不可用，请检查程序和服务后刷新",
             ),
             "ready": (
-                f"{device_count} connected",
-                f"{device_count} connected Android device(s) are available",
+                f"已连接 {device_count} 台",
+                f"当前有 {device_count} 台 Android 设备可用",
             ),
         }
         if state not in descriptions:
             state = "empty"
         text, description = descriptions[state]
-        self._frame._discovery_state = state
-        title = f"Devices · {text}"
+        title = "设备与连接"
         self._frame._device_group.setTitle(title)
-        self._frame._device_group.setAccessibleName(title)
+        self._frame._device_group.setAccessibleName(f"{title}: {text}")
         self._frame._device_group.setAccessibleDescription(description)
         self._frame._device_group.setToolTip(description)
         # 徽标只补充标题区视觉；状态字符串、标题与可访问文本契约均保持不变。
         badge_labels = {
-            "scanning": ("Scanning", "scanning"),
-            "empty": ("Empty", "empty"),
-            "unavailable": ("Unavailable", "unavailable"),
-            "ready": ("Connected", "ready"),
+            "scanning": ("扫描中", "scanning"),
+            "empty": ("无设备", "empty"),
+            "unavailable": ("不可用", "unavailable"),
+            "ready": ("已连接", "ready"),
         }
         badge_text, badge_kind = badge_labels[state]
         badge = getattr(self._frame, "_discovery_badge", None)
@@ -278,6 +309,17 @@ class DeviceManagerView:
             self._frame._discovery_badge_kind = badge_kind
             badge.setLevel(_DISCOVERY_BADGE_LEVELS.get(badge_kind, InfoLevel.INFOAMTION))
             self._sync_discovery_badge_geometry()
+        refresh_button = getattr(self._frame, "btn_refresh", None)
+        if refresh_button is not None:
+            scanning = state == "scanning"
+            refresh_button.setEnabled(not scanning)
+            tooltip = (
+                "正在扫描已连接的 Android 设备"
+                if scanning
+                else str(refresh_button.property("functionalToolTip") or "扫描已连接设备")
+            )
+            refresh_button.setToolTip(tooltip)
+            refresh_button.setAccessibleDescription(tooltip)
 
     def update_device_list(self, devices: list[str] | None = None):
         if devices is None:
@@ -326,7 +368,6 @@ class DeviceManagerView:
         finally:
             del blocker
         self._frame.panel._connected_device_cache = devices
-        self._frame.set_discovery_state("ready" if devices else "empty")
         self._update_action_states()
         # 项目增删会改变真实行高及横向滚动条占位，必须立即刷新 splitter 安全下限。
         self._frame.listbox_devices.doItemsLayout()
@@ -360,11 +401,9 @@ class DeviceManagerView:
             if has_selection:
                 button.setToolTip(str(button.property("functionalToolTip") or ""))
             elif button is getattr(self._frame, "btn_info", None):
-                button.setToolTip(
-                    "Select a device first; device information is shown in the operation log"
-                )
+                button.setToolTip("请先选择设备；设备信息会显示在操作日志中")
             else:
-                button.setToolTip("Select a device first")
+                button.setToolTip("请先选择设备")
         select_all = getattr(self._frame, "btn_all", None)
         deselect_all = getattr(self._frame, "btn_none", None)
         if select_all is not None:
@@ -386,44 +425,12 @@ class DeviceManagerView:
         return items
 
     def _build_combo_view(self):
-        model = QStandardItemModel(0, 3)
-        model.setHorizontalHeaderLabels(["Brand", "Model", "IP"])
-        self._frame._device_model = model
-        tv = QTableView()
-        tv.setModel(model)
-        tv.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )  # 品牌列占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )  # 型号列占剩余空间
-        tv.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.ResizeToContents
-        )  # IP 列适应内容
-        tv.verticalHeader().setVisible(False)
-        tv.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        tv.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        tv.setShowGrid(False)
-        tv.horizontalHeader().setHighlightSections(False)
-        tv.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        tv.setFont(self._frame._font_mono)
-        tv.horizontalHeader().setFont(self._frame._font_mono)
-        tv.horizontalHeader().setDefaultAlignment(
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        )
-        tv.verticalHeader().setDefaultSectionSize(20)
-        tv.setMaximumHeight(240)
-        tv.setStyleSheet(
-            "QTableView { border: none; }"
-            "QHeaderView::section { padding: 2px 6px; font-weight: bold; }"
-        )
-        self._frame.ip_entry.setModel(model)
-        self._frame.ip_entry.setModelColumn(2)
-        self._frame.ip_entry.setView(tv)
+        """配置参考组件自己的弹出菜单，不再注入原生表格模型。"""
+
+        self._frame.ip_entry.setMaxVisibleItems(8)
+        self._frame.ip_entry.setPlaceholderText("选择或输入 IP:端口")
 
     def _refresh_device_combobox(self):
-        from gui.panels import device_manager as _device_manager_module
-
         if not hasattr(self._frame, "ip_entry"):
             return
         devs = DeviceStore.get_basic_devices_info()
@@ -431,38 +438,30 @@ class DeviceManagerView:
         if cache_key == getattr(self._frame, "_device_combo_cache", None):
             return
         self._frame._device_combo_cache = cache_key
-        self._frame._device_model.removeRows(0, self._frame._device_model.rowCount())
-        ip_list = []
-        for brand, model, ip in devs:
-            ip_list.append(ip)
-            self._frame._device_model.appendRow(
-                [
-                    QStandardItem(str(brand)),
-                    QStandardItem(str(model)),
-                    QStandardItem(str(ip)),
-                ]
-            )
-        if ip_list:
-            comp = _device_manager_module.QCompleter(ip_list, self._frame)
-            comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-            comp.setFilterMode(Qt.MatchFlag.MatchContains)
-            self._frame.panel._apply_completer_style(comp)
-            self._frame.ip_entry.setCompleter(comp)
-            self._frame._sync_address_popup_width()
-        self._frame.ip_entry.setCurrentIndex(-1)
-        line_edit = self._frame.ip_entry.lineEdit()
-        assert line_edit is not None  # stub Optional 收窄
-        line_edit.clear()
-        line_edit.setPlaceholderText("Select or type IP : Port")
-        line_edit.setAccessibleName("Device address")
+        combo = self._frame.ip_entry
+        current_text = combo.currentText()
+        cursor_position = combo.cursorPosition()
+        with BlockSignals(combo):
+            while combo.count():
+                combo.removeItem(combo.count() - 1)
+            for brand, model, ip in devs:
+                label = " · ".join(part for part in (str(brand), str(model), str(ip)) if part)
+                combo.addItem(label, userData=str(ip))
+            combo.setCurrentIndex(-1)
+            combo.setText(current_text)
+            combo.setCursorPosition(min(cursor_position, len(current_text)))
+        combo.setPlaceholderText("选择或输入 IP:端口")
+        combo.setAccessibleName("设备地址")
 
     def _on_ip_selected(self, i):
-        if 0 <= i < self._frame._device_model.rowCount():
-            ip_item = self._frame._device_model.item(i, 2)
-            if ip_item:
-                with BlockSignals(self._frame.ip_entry):
-                    self._frame.ip_entry.setCurrentIndex(-1)
-                    self._frame.ip_entry.setCurrentText(ip_item.text())
+        combo = self._frame.ip_entry
+        if 0 <= i < combo.count():
+            ip = str(combo.itemData(i) or "").strip()
+            if ip:
+                with BlockSignals(combo):
+                    combo.setCurrentIndex(-1)
+                    combo.setText(ip)
+                self._frame.panel._current_ip = ip
                 self._frame.panel._user_selected_ip = True
 
     def _on_ip_edited(self, t):
