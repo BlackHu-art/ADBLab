@@ -370,21 +370,6 @@ class ScreenshotViewerUI:
             self._frame._navigation_group,
             self._frame._actions_group,
         )
-        self._frame._bottom_bar_controls = (
-            self._frame._path_label,
-            self._frame._info_label,
-            self._frame._prev_btn,
-            self._frame._nav_label,
-            self._frame._next_btn,
-            self._frame._zoom_out_btn,
-            self._frame._zoom_label,
-            self._frame._zoom_in_btn,
-            self._frame._fit_btn,
-            self._frame._actual_btn,
-            self._frame._copy_btn,
-            self._frame._folder_btn,
-            self._frame._delete_btn,
-        )
         self._reflow_bottom_bar()
         return bar
 

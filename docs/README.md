@@ -11,7 +11,7 @@
 | 现状事实 | `docs/project-knowledge/` | 当前实现的架构、模块、流程、数据、依赖、术语和风险账本 | 代码/配置变化时同步更新 |
 | 决策 | `docs/architecture/` | ADR 决策留痕 | 新增决策时追加，不回改历史 ADR |
 | 操作指南 | `docs/guides/` | 已验证的构建、运行、测试命令与注释风格规范 | 命令/门禁变化时同步更新 |
-| 过程归档 | `docs/archive/` | 阶段账本、评审、历史卫生检查 | 只归档不更新 |
+| 过程归档 | `docs/archive/` | 阶段账本和历史卫生检查 | 只归档不更新 |
 
 单源规则：每个事实只在一篇文档展开，其余文档用链接指回，不复述；风险条目只进
 [project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。完整约定见
@@ -36,7 +36,7 @@
 
 - [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)：项目目标、用户、能力、技术栈、运行环境和当前实现边界。
 - [glossary](project-knowledge/glossary.md)：项目专有名词及对应代码概念。
-- [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)：总体分层、运行时组件、初始化/关闭、线程/进程模型和架构限制。
+- [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)：总体分层、运行时组件、初始化/关闭、线程/进程模型和架构边界。
 - [MODULE_MAP](project-knowledge/MODULE_MAP.md)：模块位置、职责边界、主要入口和代表性测试。
 - [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)：启动、设备、应用、安装批次、Monkey、诊断、文件、Remote、MobilePerf 和关闭链路。
 - [DATA_FLOW](project-knowledge/DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期、状态变化，以及文件型存储、设置字段与无数据库结论。
@@ -47,7 +47,7 @@
 
 - [0001-incremental-vnext](architecture/adr/0001-incremental-vnext.md)：vNext 增量迁移决策。
 - [0002-operation-contract](architecture/adr/0002-operation-contract.md)：OperationManager 契约决策。
-- [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化四阶段计划（3.2.1 基线）。
+- [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化的分阶段决策。
 - [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
 - [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
 - [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。
@@ -55,7 +55,7 @@
 ### 操作指南（guides/）
 
 - [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
-- [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口、提交前门禁，以及中文注释与文档风格规范。
+- [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、验证命令、风险账本入口、提交前门禁，以及中文注释与文档风格规范。
 
 ## 维护与归档
 

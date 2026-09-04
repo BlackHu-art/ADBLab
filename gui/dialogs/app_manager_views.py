@@ -351,7 +351,6 @@ class AppManagerViews:
         pkg = item.data(Qt.ItemDataRole.UserRole)
         if not pkg:
             return
-        self._frame._icon_selected_pkg = pkg
         menu = self._frame._create_context_menu()
         add_menu_action(menu, "App Details", callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()

@@ -27,6 +27,7 @@ from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     FluentWindow,
+    Flyout,
     InfoBar,
     InfoBarPosition,
     NavigationDisplayMode,
@@ -239,7 +240,6 @@ class MainFrame(FluentWindow):
         self._screen_metric_tokens = []
         self._bound_window_handle = None
         self._bound_screen = None
-        self._logical_dpi = 96.0
         self._preferred_window_size = QSize(DEFAULT_WINDOW_SIZE)
         self._effective_window_size = QSize(DEFAULT_WINDOW_SIZE)
         self._pending_user_window_size = None
@@ -254,6 +254,13 @@ class MainFrame(FluentWindow):
             self._refresh_workspace_after_responsive_layout
         )
         self._navigation_wide_state: bool | None = None
+        self._navigation_history: list[str | WorkspaceRoute] = []
+        self._current_navigation_location: str | WorkspaceRoute | None = None
+        self._transient_navigation_origin: str | WorkspaceRoute | None = None
+        self._workspace_navigation_in_progress = False
+        self._navigation_reopen_after_collapse = False
+        self._navigation_reopen_requires_wide = False
+        self._navigation_flyout_window: QWidget | None = None
         self._pending_navigation_scroll_key = ""
         self._navigation_layout_timer = QTimer(self)
         self._navigation_layout_timer.setSingleShot(True)
@@ -293,10 +300,8 @@ class MainFrame(FluentWindow):
         self._shutdown_finalizer_started = False
         self._close_started = False
         self._close_ready = False
-        self._drag_pos = None
         self._layout_ready = False
         self._resize_controller = None
-        self._normal_window_size = QSize(DEFAULT_WINDOW_SIZE)
         self._scan_thread = None
         self._continuous_scan_enabled = False
         self._closing = False
@@ -473,7 +478,6 @@ class MainFrame(FluentWindow):
         configured_height = s.get("window_height", DEFAULT_WINDOW_SIZE.height())
         configured_size = normalize_window_size(configured_width, configured_height)
         self._preferred_window_size = QSize(configured_size)
-        self._normal_window_size = QSize(configured_size)
         self._apply_workspace_constraints(
             self._screen_adapter.window_screen(self),
             request_reflow=False,
@@ -673,7 +677,6 @@ class MainFrame(FluentWindow):
             self._effective_window_size = QSize(constraints.effective_window_size)
         elif minimum_forced_size != size_before_constraints:
             self._effective_window_size = QSize(minimum_forced_size)
-        self._logical_dpi = self._screen_adapter.logical_dpi(screen)
         self._applying_workspace_constraints = True
         try:
             if self.minimumSize() != constraints.minimum_window_size:
@@ -1145,6 +1148,15 @@ class MainFrame(FluentWindow):
         except (RuntimeError, TypeError):
             pass
         panel.menuButton.clicked.connect(self._toggle_navigation_panel)
+        try:
+            panel.returnButton.clicked.disconnect(panel.history.pop)
+        except (RuntimeError, TypeError):
+            pass
+        try:
+            panel.history.emptyChanged.disconnect(panel.returnButton.setDisabled)
+        except (RuntimeError, TypeError):
+            pass
+        panel.returnButton.clicked.connect(self._navigate_back)
         panel.expandAni.finished.connect(self._on_navigation_animation_finished)
         self.navigationInterface.displayModeChanged.connect(
             self._on_navigation_display_mode_changed
@@ -1163,6 +1175,12 @@ class MainFrame(FluentWindow):
             page.routeChanged.connect(self._on_workspace_route_changed)
         self._visible_workspace_section: str | None = None
         self.stackedWidget.currentChanged.connect(self._on_stacked_page_changed)
+        current = self.stackedWidget.currentWidget()
+        if current is not None:
+            self._current_navigation_location = self._navigation_location_for_page(
+                current
+            )
+        self._update_navigation_back_button()
         self.left_panel.device_discovery_state_changed.connect(self._sync_device_context)
         self.left_panel.responsive_layout_settled.connect(
             self._on_side_panel_responsive_layout_settled
@@ -1214,7 +1232,129 @@ class MainFrame(FluentWindow):
         elif snapshot.kind == "screenshot":
             self.adb_controller.cancel_screenshot(operation_id)
 
-    def switchTo(self, interface) -> None:
+    def _onCurrentInterfaceChanged(self, index: int) -> None:
+        """同步物理页面，但把返回历史统一交给应用级逻辑路由。"""
+
+        widget = self.stackedWidget.widget(index)
+        if widget is None:
+            return
+        location = self._navigation_location_for_page(widget)
+        if isinstance(location, WorkspaceRoute):
+            self._sync_workspace_navigation_selection(location)
+        elif location:
+            self.navigationInterface.setCurrentItem(location)
+        self._updateStackedBackground()
+
+    @staticmethod
+    def _stable_workspace_route(route: WorkspaceRoute) -> WorkspaceRoute:
+        """返回可进入历史的稳定位置，排除一次性激活参数。"""
+
+        return WorkspaceRoute(route.section, route.feature, route.device_id)
+
+    def _navigation_location_for_page(
+        self,
+        page: QWidget | None,
+    ) -> str | WorkspaceRoute | None:
+        workspace_pages = getattr(self, "_workspace_pages", {})
+        for workspace_page in workspace_pages.values():
+            if workspace_page is page:
+                return self._stable_workspace_route(workspace_page.current_route)
+        route_key = getattr(page, "objectName", lambda: "")()
+        return str(route_key) or None
+
+    def _commit_navigation_location(
+        self,
+        location: str | WorkspaceRoute | None,
+        *,
+        record_history: bool,
+    ) -> None:
+        """原子提交当前语义位置，并维护去重的应用级返回栈。"""
+
+        if isinstance(location, WorkspaceRoute):
+            location = MainFrame._stable_workspace_route(location)
+        current = getattr(self, "_current_navigation_location", None)
+        if location is None or location == current:
+            MainFrame._update_navigation_back_button(self)
+            return
+        history = getattr(self, "_navigation_history", None)
+        if history is None:
+            history = []
+            self._navigation_history = history
+        if record_history and current is not None:
+            if not history or history[-1] != current:
+                history.append(current)
+                del history[:-100]
+        self._current_navigation_location = location
+        MainFrame._update_navigation_back_button(self)
+
+    def _update_navigation_back_button(self) -> None:
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is None:
+            return
+        can_go_back = bool(getattr(self, "_navigation_history", ())) or (
+            getattr(self, "_transient_navigation_origin", None) is not None
+        )
+        navigation.panel.returnButton.setEnabled(can_go_back)
+
+    def _cancel_pending_workspace_navigation(self) -> None:
+        """取消临时设备选择，并从历史语义中移除该中转页。"""
+
+        if getattr(self, "_pending_workspace_route", None) is None:
+            return
+        self._pending_workspace_route = None
+        origin = getattr(self, "_transient_navigation_origin", None)
+        self._transient_navigation_origin = None
+        if origin is not None:
+            self._current_navigation_location = origin
+        MainFrame._update_navigation_back_button(self)
+
+    def _navigate_to_location(self, location: str | WorkspaceRoute) -> bool:
+        """在不产生新历史项的前提下恢复一个语义位置。"""
+
+        if isinstance(location, WorkspaceRoute):
+            return self._open_workspace_feature(
+                location.section,
+                location.feature,
+                device_id=location.device_id,
+                _record_history=False,
+            )
+        for index in range(self.stackedWidget.count()):
+            page = self.stackedWidget.widget(index)
+            if page is not None and page.objectName() == location:
+                self.switchTo(page, _record_history=False, _target_location=location)
+                return True
+        return False
+
+    def _navigate_back(self, *_args) -> None:
+        """返回上一个功能叶节点，并跳过临时设备选择中转页。"""
+
+        self._close_navigation_flyouts()
+        self._navigation_reopen_after_collapse = False
+        self._navigation_reopen_requires_wide = False
+        self._collapse_navigation_menu_after_switch()
+        origin = getattr(self, "_transient_navigation_origin", None)
+        if origin is not None:
+            self._pending_workspace_route = None
+            self._transient_navigation_origin = None
+            self._navigate_to_location(origin)
+            self._update_navigation_back_button()
+            return
+        history = getattr(self, "_navigation_history", [])
+        if not history:
+            self._update_navigation_back_button()
+            return
+        target = history.pop()
+        if not self._navigate_to_location(target):
+            history.append(target)
+        self._update_navigation_back_button()
+
+    def switchTo(
+        self,
+        interface,
+        *,
+        _record_history: bool = True,
+        _target_location: str | WorkspaceRoute | None = None,
+    ) -> None:
         """切换独立主页面，并同步功能会话的前后台生命周期。"""
 
         workspace_pages = getattr(self, "_workspace_pages", {})
@@ -1223,7 +1363,12 @@ class MainFrame(FluentWindow):
             None,
         )
         if self._pending_workspace_route is not None and next_section != "devices":
-            self._pending_workspace_route = None
+            self._cancel_pending_workspace_navigation()
+        target_location = _target_location or self._navigation_location_for_page(interface)
+        self._commit_navigation_location(
+            target_location,
+            record_history=_record_history,
+        )
         super().switchTo(interface)
         route_key = getattr(interface, "objectName", lambda: "")()
         if next_section is not None:
@@ -1235,6 +1380,9 @@ class MainFrame(FluentWindow):
             # 切换时选中态若仍停在旧项，会让快速连续点击看起来没有响应。
             self.navigationInterface.setCurrentItem(route_key)
             self._set_workspace_navigation_group_expanded(None)
+        self._close_navigation_flyouts()
+        self._navigation_reopen_after_collapse = False
+        self._navigation_reopen_requires_wide = False
         self._collapse_navigation_menu_after_switch()
 
     def _on_stacked_page_changed(self, index: int) -> None:
@@ -1242,6 +1390,11 @@ class MainFrame(FluentWindow):
 
         workspace_pages = getattr(self, "_workspace_pages", {})
         current = self.stackedWidget.widget(index)
+        if getattr(self, "_transient_navigation_origin", None) is None:
+            self._commit_navigation_location(
+                self._navigation_location_for_page(current),
+                record_history=True,
+            )
         next_section = next(
             (key for key, page in workspace_pages.items() if page is current),
             None,
@@ -1252,8 +1405,6 @@ class MainFrame(FluentWindow):
         if previous_section is not None:
             workspace_pages[previous_section].deactivate("top_level_navigation")
         self._visible_workspace_section = next_section
-        if self._pending_workspace_route is not None and next_section != "devices":
-            self._pending_workspace_route = None
         if next_section is None:
             return
         page = workspace_pages[next_section]
@@ -1266,6 +1417,7 @@ class MainFrame(FluentWindow):
         panel = self.navigationInterface.panel
         if panel.displayMode != NavigationDisplayMode.MENU:
             return
+        self._stabilize_workspace_navigation_roots(None)
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             # NavigationPanel.collapse() 会忽略运行中的动画；若当前已在收起，
@@ -1278,7 +1430,20 @@ class MainFrame(FluentWindow):
     def _toggle_navigation_panel(self, *_args) -> None:
         """按内容可用宽度切换常驻左栏或覆盖菜单。"""
 
+        self._close_navigation_flyouts()
         panel = self.navigationInterface.panel
+        animation = panel.expandAni
+        if animation.state() == QAbstractAnimation.State.Running:
+            if bool(animation.property("expand")):
+                animation.stop()
+                self._stabilize_workspace_navigation_roots(None)
+                panel.collapse()
+            else:
+                # NavigationPanel 会忽略动画期间的 collapse/expand。记住第二次
+                # 点击，在收起尾沿重新展开，确保快速双击不会丢失用户意图。
+                self._navigation_reopen_after_collapse = True
+                self._navigation_reopen_requires_wide = False
+            return
         if panel.displayMode in {
             NavigationDisplayMode.COMPACT,
             NavigationDisplayMode.MINIMAL,
@@ -1314,24 +1479,34 @@ class MainFrame(FluentWindow):
             return
         panel = self.navigationInterface.panel
         wide = self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
-        previous = self._navigation_wide_state
         if not wide:
             self._navigation_wide_state = False
             return
-        if previous is True:
+        if (
+            self._navigation_wide_state is True
+            and panel.displayMode == NavigationDisplayMode.EXPAND
+            and panel.expandAni.state() != QAbstractAnimation.State.Running
+        ):
+            return
+        self._navigation_wide_state = False
+        if panel.displayMode == NavigationDisplayMode.MENU:
+            self._navigation_reopen_after_collapse = True
+            self._navigation_reopen_requires_wide = True
+            self._collapse_navigation_menu_after_switch()
             return
         if panel.expandAni.state() == QAbstractAnimation.State.Running:
-            self._navigation_wide_state = False
             self._navigation_layout_timer.start(
                 panel.expandAni.duration() + 20
             )
             return
-        self._navigation_wide_state = True
         if panel.displayMode in {
             NavigationDisplayMode.COMPACT,
             NavigationDisplayMode.MINIMAL,
         }:
             self._expand_navigation_panel(use_animation=False)
+        self._navigation_wide_state = (
+            panel.displayMode == NavigationDisplayMode.EXPAND
+        )
 
     def _on_navigation_display_mode_changed(
         self,
@@ -1340,6 +1515,10 @@ class MainFrame(FluentWindow):
         """导航形态稳定前先恢复当前分组，再在动画尾沿重排内容。"""
 
         self._sync_navigation_accessibility()
+        self._navigation_wide_state = (
+            mode == NavigationDisplayMode.EXPAND
+            and self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
+        )
         if mode in {
             NavigationDisplayMode.EXPAND,
             NavigationDisplayMode.MENU,
@@ -1372,10 +1551,51 @@ class MainFrame(FluentWindow):
             else 0
         )
         self._navigation_reflow_timer.start(delay)
+        if mode in {
+            NavigationDisplayMode.COMPACT,
+            NavigationDisplayMode.MINIMAL,
+        }:
+            self._navigation_layout_timer.start(0)
 
     def _on_navigation_animation_finished(self) -> None:
         """在导航最终宽度提交后刷新当前项位置和响应式布局。"""
 
+        panel = self.navigationInterface.panel
+        if panel.displayMode in {
+            NavigationDisplayMode.COMPACT,
+            NavigationDisplayMode.MINIMAL,
+        }:
+            self._stabilize_workspace_navigation_roots(None)
+        else:
+            current = self.stackedWidget.currentWidget()
+            active_section = next(
+                (
+                    section
+                    for section, page in getattr(
+                        self,
+                        "_workspace_pages",
+                        {},
+                    ).items()
+                    if page is current
+                ),
+                None,
+            )
+            self._stabilize_workspace_navigation_roots(active_section)
+        if self._navigation_reopen_after_collapse and panel.displayMode in {
+            NavigationDisplayMode.COMPACT,
+            NavigationDisplayMode.MINIMAL,
+        }:
+            should_reopen = (
+                not self._navigation_reopen_requires_wide
+                or self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
+            )
+            self._navigation_reopen_after_collapse = False
+            self._navigation_reopen_requires_wide = False
+            if should_reopen:
+                self._expand_navigation_panel(
+                    use_animation=self.width() < self.NAVIGATION_EXPAND_BREAKPOINT
+                )
+                return
         current = self.navigationInterface.panel.currentItem()
         if current is not None and current.property("parentRouteKey"):
             self._pending_navigation_scroll_key = str(
@@ -1394,14 +1614,82 @@ class MainFrame(FluentWindow):
     def _on_workspace_navigation_group_clicked(self, section: str) -> None:
         """手动展开父组时折叠兄弟组，控制短窗口中的列表长度。"""
 
+        if self.navigationInterface.panel.displayMode == NavigationDisplayMode.COMPACT:
+            QTimer.singleShot(0, self._retain_latest_navigation_flyout)
         roots = getattr(self, "_workspace_navigation_roots", {})
         current = roots.get(section)
         if current is None or not current.isExpanded:
             return
         for other_section, item in roots.items():
             if other_section != section:
-                item.setExpanded(False)
+                self._stabilize_workspace_navigation_root(item, False)
         self._navigation_reflow_timer.start(0)
+
+    def _navigation_flyouts(self) -> list[Flyout]:
+        """返回当前窗口创建的原生导航 Flyout，不影响其他提示浮层。"""
+
+        return [
+            flyout
+            for flyout in self.findChildren(Flyout)
+            if any(
+                type(child).__name__ == "NavigationFlyoutMenu"
+                for child in flyout.findChildren(QWidget)
+            )
+        ]
+
+    def _close_navigation_flyouts(self) -> None:
+        """关闭已打开的导航 Flyout，避免切页后残留在新内容上方。"""
+
+        for flyout in self._navigation_flyouts():
+            flyout.close()
+        self._navigation_flyout_window = None
+
+    def _retain_latest_navigation_flyout(self) -> None:
+        """窄栏父组只保留本次点击创建的一个 Flyout。"""
+
+        flyouts = [flyout for flyout in self._navigation_flyouts() if flyout.isVisible()]
+        if not flyouts:
+            self._navigation_flyout_window = None
+            return
+        previous = self._navigation_flyout_window
+        fresh = [flyout for flyout in flyouts if flyout is not previous]
+        latest = fresh[-1] if fresh else flyouts[-1]
+        for flyout in flyouts:
+            if flyout is not latest:
+                flyout.close()
+        self._navigation_flyout_window = latest
+
+    @staticmethod
+    def _stabilize_workspace_navigation_root(item, expanded: bool) -> None:
+        """终止树动画并提交与逻辑展开态一致的最终几何。"""
+
+        item.expandAni.stop()
+        if item.isExpanded != expanded:
+            item.setExpanded(expanded, ani=False)
+        item.setFixedSize(item.sizeHint())
+
+    def _stabilize_workspace_navigation_roots(
+        self,
+        active_section: str | None,
+    ) -> None:
+        for section, item in getattr(
+            self,
+            "_workspace_navigation_roots",
+            {},
+        ).items():
+            self._stabilize_workspace_navigation_root(
+                item,
+                section == active_section,
+            )
+
+    def _navigation_widget(self, route_key: str):
+        """按键读取导航控件；缺失键返回 None，不依赖异常控制流。"""
+
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is None:
+            return None
+        entry = navigation.panel.items.get(route_key)
+        return entry.widget if entry is not None else None
 
     def _sync_navigation_accessibility(self, *_args) -> None:
         """统一导航项、折叠按钮的中文提示和可访问名称。"""
@@ -1416,7 +1704,7 @@ class MainFrame(FluentWindow):
         panel.returnButton.setAccessibleName("返回上一页")
         panel.returnButton.setToolTip("返回上一页")
         for route_key, label in getattr(self, "_navigation_labels", {}).items():
-            item = navigation.widget(route_key)
+            item = self._navigation_widget(route_key)
             if item is None:
                 continue
             item.setAccessibleName(label)
@@ -1472,7 +1760,7 @@ class MainFrame(FluentWindow):
         navigation = getattr(self, "navigationInterface", None)
         if navigation is None:
             return
-        item = navigation.widget(route_key)
+        item = self._navigation_widget(route_key)
         if item is None or item.isHidden():
             return
         navigation.panel.scrollArea.ensureWidgetVisible(item, 0, 12)
@@ -1492,18 +1780,33 @@ class MainFrame(FluentWindow):
             NavigationDisplayMode.MENU,
         }:
             return
+        animation = panel.expandAni
+        if (
+            animation.state() == QAbstractAnimation.State.Running
+            and not bool(animation.property("expand"))
+        ):
+            return
         for section, item in getattr(
             self,
             "_workspace_navigation_roots",
             {},
         ).items():
-            item.setExpanded(section == active_section)
+            self._stabilize_workspace_navigation_root(
+                item,
+                section == active_section,
+            )
 
     def _on_workspace_route_changed(self, route: WorkspaceRoute) -> None:
-        if route.section != "devices" or route.feature != "overview":
-            self._pending_workspace_route = None
         page = getattr(self, "_workspace_pages", {}).get(route.section)
         if page is self.stackedWidget.currentWidget():
+            if (
+                not getattr(self, "_workspace_navigation_in_progress", False)
+                and getattr(self, "_transient_navigation_origin", None) is None
+            ):
+                self._commit_navigation_location(
+                    route,
+                    record_history=False,
+                )
             self._sync_workspace_navigation_selection(route)
         self._request_side_panel_reflow(self, ReflowReason.EXPLICIT)
 
@@ -1524,7 +1827,7 @@ class MainFrame(FluentWindow):
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
         """把业务键映射到对应的 FluentWindow 主页面。"""
 
-        self._pending_workspace_route = None
+        MainFrame._cancel_pending_workspace_navigation(self)
         if isinstance(key, WorkspaceRoute):
             self._open_workspace_feature(
                 key.section,
@@ -1567,11 +1870,13 @@ class MainFrame(FluentWindow):
         device_id: str = "",
         payload=None,
         _preserve_pending: bool = False,
+        _record_history: bool = True,
+        _update_location: bool = True,
     ) -> bool:
         """在所属主页面打开内嵌功能，不创建独立业务窗口。"""
 
         if not _preserve_pending:
-            self._pending_workspace_route = None
+            MainFrame._cancel_pending_workspace_navigation(self)
         if section == "remote":
             section = "devices"
             feature = "remote" if feature == "overview" else feature
@@ -1585,42 +1890,88 @@ class MainFrame(FluentWindow):
                 f"Unknown workspace route: {section}/{feature}",
             )
             return False
-        opened = page.open_route(route)
+        previous_transition = getattr(
+            self,
+            "_workspace_navigation_in_progress",
+            False,
+        )
+        self._workspace_navigation_in_progress = True
+        try:
+            opened = page.open_route(route)
+        finally:
+            self._workspace_navigation_in_progress = previous_transition
         if not opened:
             self.log_service.log(
                 "WARNING",
                 f"Unknown workspace route: {section}/{feature}",
             )
             return False
-        self.switchTo(page)
-        MainFrame._sync_workspace_navigation_selection(self, page.current_route)
+        stable_route = MainFrame._stable_workspace_route(page.current_route)
+        if _update_location:
+            MainFrame._commit_navigation_location(
+                self,
+                stable_route,
+                record_history=_record_history,
+            )
+        target_location = (
+            stable_route
+            if _update_location
+            else getattr(self, "_current_navigation_location", None)
+        )
+        self.switchTo(
+            page,
+            _record_history=False,
+            _target_location=target_location,
+        )
         return opened
 
     def _show_device_selection(self, route: WorkspaceRoute | None = None) -> None:
         """从空态进入设备概览，并记住选择完成后要恢复的功能。"""
 
+        if route is None:
+            self._open_workspace_feature("devices", "overview")
+            return
+        if self._transient_navigation_origin is None:
+            self._transient_navigation_origin = self._current_navigation_location
         self._pending_workspace_route = route
         self._open_workspace_feature(
             "devices",
             "overview",
             _preserve_pending=True,
+            _record_history=False,
+            _update_location=False,
         )
+        self._update_navigation_back_button()
 
     def _resume_pending_workspace_route(self, devices: list[str]) -> None:
         """用户完成设备选择后仅恢复一次此前请求的功能路由。"""
 
-        if getattr(self, "_closing", False) or not devices:
+        if getattr(self, "_closing", False):
+            return
+        normalized = tuple(
+            dict.fromkeys(
+                str(device).strip() for device in devices if str(device).strip()
+            )
+        )
+        if len(normalized) != 1:
             return
         route = self._pending_workspace_route
         if route is None:
             return
+        origin = self._transient_navigation_origin
         self._pending_workspace_route = None
-        self._open_workspace_feature(
+        self._transient_navigation_origin = None
+        opened = self._open_workspace_feature(
             route.section,
             route.feature,
-            device_id=str(devices[0]),
+            device_id=normalized[0],
             payload=route.payload,
+            _record_history=False,
         )
+        if not opened:
+            self._pending_workspace_route = route
+            self._transient_navigation_origin = origin
+        self._update_navigation_back_button()
 
     def _setup_shortcuts(self) -> None:
         self._actions.setup_shortcuts()
@@ -2023,21 +2374,6 @@ class MainFrame(FluentWindow):
             self.switchTo(page)
         return None
 
-    def _refresh_live_settings(self) -> None:
-        """让主窗口和已加载页签重新读取可即时生效的设置。"""
-
-        settings = AppSettings.instance()
-        always_on_top = bool(settings.get("always_on_top", False))
-        if always_on_top != self._always_on_top:
-            self.set_always_on_top(always_on_top)
-        else:
-            self._refresh_always_on_top_button()
-        self.log_panel.set_max_lines(settings.get("log_max_lines", 2000))
-        refresh_panels = getattr(self.left_panel, "refresh_from_settings", None)
-        if callable(refresh_panels):
-            refresh_panels()
-        self._refresh_save_path()
-
     def _open_cmd(self):
         """在项目根目录打开系统终端。"""
         import platform
@@ -2078,7 +2414,6 @@ class MainFrame(FluentWindow):
         self._cancel_user_resize_transaction()
         preferred = normalize_window_size(w, h)
         self._preferred_window_size = QSize(preferred)
-        self._normal_window_size = QSize(preferred)
         self._apply_workspace_constraints(self._bound_screen, request_reflow=True)
         self._persist_window_size(preferred)
 
@@ -2088,12 +2423,6 @@ class MainFrame(FluentWindow):
         if self.isMaximized() or self.isMinimized() or self.isFullScreen():
             self.showNormal()
         self.apply_window_size(DEFAULT_WINDOW_SIZE.width(), DEFAULT_WINDOW_SIZE.height())
-
-    def _apply_window_flags(self):
-        flags = Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window
-        if self._always_on_top:
-            flags |= Qt.WindowType.WindowStaysOnTopHint
-        self.setWindowFlags(flags)
 
     def _set_always_on_top_native(self, enabled: bool) -> bool:
         if os.name != "nt" or not self.isVisible():
@@ -2187,7 +2516,6 @@ class MainFrame(FluentWindow):
             or self.isFullScreen()
         ):
             return
-        self._normal_window_size = QSize(size)
         self._effective_window_size = QSize(size)
         self._pending_user_window_size = QSize(size)
         self._window_size_save_timer.start(self.WINDOW_SIZE_SAVE_DEBOUNCE_MS)
@@ -2201,7 +2529,6 @@ class MainFrame(FluentWindow):
             return
         self._pending_user_window_size = None
         self._pending_window_size = None
-        self._normal_window_size = QSize(size)
         self._preferred_window_size = QSize(size)
         self._user_resize_transaction_active = False
         self._persist_window_size(size)
@@ -2266,7 +2593,6 @@ class MainFrame(FluentWindow):
         else:
             preferred_size = QSize(self._preferred_window_size)
         self._preferred_window_size = QSize(preferred_size)
-        self._normal_window_size = QSize(preferred_size)
         MainFrame._update_settings(
             AppSettings.instance(),
             {
@@ -2291,6 +2617,8 @@ class MainFrame(FluentWindow):
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
+        if getattr(self, "_layout_ready", False):
+            self._close_navigation_flyouts()
         forced_size = getattr(self, "_workspace_forced_size", None)
         if (
             not getattr(self, "_applying_workspace_constraints", False)

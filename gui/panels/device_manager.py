@@ -88,7 +88,6 @@ class DeviceManager(BasePanel):
         self._build_combo_view()
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
-        self.ip_entry.textChanged.connect(self._on_ip_edited)
         self.btn_connect_devices = self._b(
             "连接",
             "plug.svg",
@@ -372,11 +371,6 @@ class DeviceManager(BasePanel):
         return _resolve_device_controller(
             self, "_view_controller", DeviceManagerView
         )._on_ip_selected(i)
-
-    def _on_ip_edited(self, t):
-        return _resolve_device_controller(
-            self, "_view_controller", DeviceManagerView
-        )._on_ip_edited(t)
 
     def _on_device_double_click(self, item):
         return _resolve_device_controller(

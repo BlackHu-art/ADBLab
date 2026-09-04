@@ -16,8 +16,6 @@ __pycache__/
 /pyright_output.json
 .coverage
 htmlcov/
-docs/.obsidian/
-
 logs/
 resources/app.log
 Excalidraw/

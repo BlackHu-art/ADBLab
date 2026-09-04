@@ -2,20 +2,16 @@
 
 from __future__ import annotations
 
-import threading
 import time
 import warnings
 import weakref
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QPoint, QRect, QSize, QThread
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
-_retained_qthreads: set[QThread] = set()
-_retained_qthreads_lock = threading.Lock()
 _FIT_ORIGINAL_MINIMUM_PROPERTY = "_adblab_fit_original_minimum"
 _FIT_ORIGINAL_SIZE_PROPERTY = "_adblab_fit_original_size"
 _FIT_WAS_CLAMPED_PROPERTY = "_adblab_fit_was_clamped"
@@ -141,87 +137,6 @@ def alive_signal_emitter(obj: Any, signal_name: str, *prefix_args: Any) -> Calla
         getattr(target, signal_name).emit(*prefix_args, *signal_args)
 
     return _callback
-
-
-@dataclass
-class WorkerSignalBinding:
-    worker: Any
-    handlers: tuple[tuple[Any, Callable], ...]
-    finished_handler: Callable | None = None
-    _connected: bool = field(default=False, init=False)
-
-    def connect(self) -> None:
-        if self._connected:
-            return
-        for signal_, handler in self.handlers:
-            signal_.connect(handler)
-        if self.finished_handler is not None:
-            self.worker.finished.connect(self.finished_handler)
-        self._connected = True
-
-    def disconnect(self) -> None:
-        if not self._connected:
-            return
-        for signal_, handler in self.handlers:
-            safe_disconnect(signal_, handler)
-        if self.finished_handler is not None and is_qobject_alive(self.worker):
-            safe_disconnect(self.worker.finished, self.finished_handler)
-        self._connected = False
-
-
-def wait_for_thread_later(thread: QThread, timeout_ms: int) -> None:
-    """后台等待线程结束，并在真正结束前持续保留 Qt 包装对象。"""
-
-    wait_for_threads_later([thread], timeout_ms)
-
-
-def wait_for_threads_later(threads: list[QThread], timeout_ms: int) -> None:
-    """异步等待一组 QThread；单次超时不会释放仍在运行的对象。"""
-
-    retained = []
-    for thread in dict.fromkeys(threads):
-        if not is_qobject_alive(thread):
-            continue
-        try:
-            thread.setParent(None)
-        except RuntimeError:
-            continue
-        retained.append(thread)
-    if not retained:
-        return
-
-    with _retained_qthreads_lock:
-        _retained_qthreads.update(retained)
-
-    deadline = None
-    if timeout_ms:
-        deadline = time.monotonic() + max(0, int(timeout_ms)) / 1000.0
-
-    def wait_until_stopped() -> None:
-        for thread in retained:
-            try:
-                while thread.isRunning():
-                    if deadline is not None and time.monotonic() >= deadline:
-                        break
-                    thread.wait(50)
-                running = thread.isRunning()
-            except RuntimeError:
-                running = False
-            if running:
-                # 超时仍未停止：保留对象，避免对运行中的 QThread 调 deleteLater 触发崩溃。
-                continue
-            with _retained_qthreads_lock:
-                _retained_qthreads.discard(thread)
-            try:
-                thread.deleteLater()
-            except RuntimeError:
-                pass
-
-    threading.Thread(
-        target=wait_until_stopped,
-        name="adblab-qthread-retention-wait",
-        daemon=True,
-    ).start()
 
 
 class QThreadGroupShutdownTask:

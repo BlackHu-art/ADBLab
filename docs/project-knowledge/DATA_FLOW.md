@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -16,6 +16,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | FontConfig | AppSettings 的 `font_family/ui_font_size/log_font_size`、Qt 系统字体数据库 | 字体族可用性解析、字号限制、角色映射 | TypographyManager、QApplication、字体变更信号 | 进程内不可变快照；设置变化时整体替换 |
 | 主窗口布局状态 | AppSettings、屏幕可用范围、窗口事件 | 尺寸限制、350ms 防抖 | MainFrame、SettingsPage、响应式 Panels、AppSettings | 普通窗口会话内实时变化；尺寸跨会话 |
 | DeviceStore 字典 | 旧 resources YAML、ADB 属性 | 锁内 upsert/快照、临时文件原子替换 | 用户配置 `connected_devices.yaml` | 跨会话 |
+| `WorkspaceRoute` | 首页快捷入口、主左栏叶节点、功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | GUI 操作状态 | 表单、选中设备、当前导航页 | Controller/Workspace 功能页编排 | 内存、Qt widgets/signals | 页面会话/操作生命周期 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
@@ -27,7 +28,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
 | 任务历史 | MainFrame 当前接收的兼容 `operation_completed` 信号 | `TaskHistoryStore.record_completed` 转换消息并按容量保留最新项；store 也提供终态快照写入接口，但 MainFrame 尚未订阅该来源 | Tasks 页面内存列表 | 仅进程内有界保留；应用重启后清空 |
 | 安装批次状态 | Apps 面板批量安装请求 | `InstallBatchUseCase` 的 start/complete/fail/cancel/retry 状态机按 operation/unit 收口 | 内存 registry（`OperationManager`）、Qt signals、日志 | 批次生命周期；终态原子移除 |
-| 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时做版本化存在性检查/覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
+| 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时按版本检查第一层条目类型和文件大小，失配时覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
 
 ## 总体数据流
 
@@ -75,11 +76,17 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-    Route["WorkspaceRoute"] --> Host["WorkspaceFeatureHost"]
+    Route["WorkspaceRoute"] --> Stable["稳定位置<br/>section + feature + device"]
+    Route --> Payload["一次性 payload"]
+    Stable --> History["MainFrame 语义历史 / current_route"]
+    Stable --> Host["WorkspaceFeatureHost"]
+    Payload --> Host
     Host --> NeedDevice{"功能是否需要设备"}
-    NeedDevice -->|"需要但未选择"| Empty["无设备空态并保存 pending route"]
+    NeedDevice -->|"需要但无唯一候选"| Empty["无设备空态并保存完整 pending route"]
     Empty --> Select["进入 Devices 选择设备"]
-    Select --> Route
+    Select -->|"明确选择或候选变为唯一"| Host
+    Empty -->|"宿主在后台"| Wait["只刷新候选；不消费 pending"]
+    Wait -->|"首次前台激活"| Host
     NeedDevice -->|"无需或已有设备"| Key["FeatureSessionKey<br/>feature + device + generation"]
     Key --> Registry["FeatureSessionRegistry get_or_create"]
     Registry --> Active["activate；显示同一会话"]
@@ -95,6 +102,10 @@ flowchart TD
     Dispose -->|"已归零"| Remove["移除页面并递增 generation"]
     Barrier --> Remove
 ```
+
+`WorkspaceRoute.payload` 不属于当前页位置，也不写入 MainFrame 返回历史。它只随待激活路由进入
+`WorkspaceFeatureHost`：无需设备时在首次会话激活中消费；需要设备但尚无唯一候选时随
+`pending_route` 保留。设备上下文在宿主后台变化只更新等待态，不能提前消费 payload 或创建目标页。
 
 截图是特殊的无设备功能会话：批次完成信号先通过 `WorkspaceFeatureHost.update_feature()` 后台追加
 到 ScreenshotPage；如果用户当前不在截图页，MainFrame 只显示带“查看结果”动作的 InfoBar，不
@@ -174,7 +185,7 @@ JSON、YAML 和普通文件持久化，下表是等价的存储地图。
 | MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
-| 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层文件存在性检查/覆盖复制，不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
+| 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层条目类型/文件大小校验，失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
 
 ### 设置字段
 

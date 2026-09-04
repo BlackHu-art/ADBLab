@@ -191,7 +191,6 @@ class PerformanceLauncherForm:
         grid.setHorizontalSpacing(8)
         grid.setVerticalSpacing(4)
         grid.setColumnStretch(1, 1)
-        self._frame._config_group_layout = grid
 
         self._frame.package_edit = LineEdit()
         self._frame.package_edit.setText(package_name)
@@ -336,7 +335,6 @@ class PerformanceLauncherForm:
             CONFIG_HINTS["phone_log_path"],
         )
 
-        self._frame._config_canvas = group
         self._frame._configuration_sections = (group,)
         self._on_monkey_enabled_changed(self._frame.monkey_check.isChecked())
         self._frame._apply_monkey_control_widths()
@@ -444,7 +442,6 @@ class PerformanceLauncherForm:
             "Ignore security exceptions",
             "Kill Monkey after error",
         )
-        self._frame._monkey_flag_labels = []
         for checkbox, hint, accessible_name in zip(monkey_flags, flag_hints, flag_names):
             checkbox.setChecked(True)
             self._apply_hint(checkbox, hint)
@@ -452,8 +449,6 @@ class PerformanceLauncherForm:
         flags_row = self._row_widget(*monkey_flags)
         layout.addWidget(flags_row, 6, 0, 1, 6)
         layout.setColumnStretch(5, 1)
-        self._frame._event_panel = container
-        self._frame._event_sections = (container,)
         self._update_monkey_total()
         self._frame._apply_monkey_control_widths()
         return container

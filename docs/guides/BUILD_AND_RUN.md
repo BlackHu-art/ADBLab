@@ -68,29 +68,15 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
 ## 测试与检查
 
-以下是发布验收或人工质量验收使用的完整门禁命令，不是每次本地代码修改后的默认动作；dev 推送 main
-本身不触发本地全量测试。
-日常修复应先按 [TESTING_GUIDE](TESTING_GUIDE.md#增量验证策略) 选择直接和受影响模块测试：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe main.py --self-check packaging
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pyright
-git diff --check
-```
-
-`pytest --collect-only` 只用于发现和选择测试，不属于完整门禁：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest --collect-only -q
-```
+日常修复按 [TESTING_GUIDE 的增量验证策略](TESTING_GUIDE.md#增量验证策略) 选择直接和受影响模块
+测试；发布验收或人工质量验收使用的唯一完整命令清单见
+[完整门禁命令](TESTING_GUIDE.md#完整门禁命令)。dev 推送 main 本身不触发本地全量测试，
+`pytest --collect-only` 只用于发现和选择测试。
 
 `compileall` 与 Ruff、测试导入和 Pyright 的职责重复，还会生成 `__pycache__`，不属于默认门禁；
 只有排查明确的解释器编译问题时才对具体目标临时运行。`git diff --check` 应在本次修改全部完成后执行。
 
-Ruff 的规则、排除项和逐文件例外只以 `ruff.toml` 为准；门禁命令为
-`.\.venv\Scripts\python.exe -m ruff check .`。
+Ruff 的规则、排除项和逐文件例外只以 `ruff.toml` 为准。
 
 ## 本地 PyInstaller 构建
 
@@ -104,8 +90,10 @@ README 提供的 Windows spec 构建命令：
 `ADBLab.spec`：
 
 - 入口为 `main.py`。
-- 收集 `resources/`、`icon.ico`、`scrcpy-win64/`、`mobileperf/`。
-- 收集全部 `mobileperf` 子模块。
+- 通过白名单收集图标、迁移种子、Bugreport JAR、二维码、第三方许可、`icon.ico` 和
+  `scrcpy-win64/`，不把旧演示图或无关文档带入产物。
+- 通过 hidden imports 收集全部 `mobileperf` 子模块，不再把 `mobileperf/` 源码目录作为 data
+  重复打包；运行配置由 `MobilePerfRunner` 临时生成。
 - 生成 windowed、onedir 的 `ADBLab`。
 
 完整 PyInstaller 构建会创建 `build/` 和 `dist/`；仅修改源码或文档时可先运行 packaging

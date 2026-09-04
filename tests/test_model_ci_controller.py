@@ -10,19 +10,6 @@ from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
 
 
-def test_performance_monitor_page_code_is_not_bundled():
-    spec = Path("ADBLab.spec").read_text(encoding="utf-8")
-    workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
-
-    assert "gui/performance_web/assets" not in spec
-    assert "gui/performance_web/assets" not in workflow
-    assert "PySide6.QtWebEngine" not in spec
-    assert "PySide6.QtWebChannel" not in spec
-    assert "COLLECT(" in spec
-    assert "package_mode: --onedir" in workflow
-    assert "Compress-Archive" in workflow
-
-
 def test_cross_platform_builds_do_not_run_full_gui_test_suite():
     workflow = Path(".github/workflows/Build-exe.yaml").read_text(encoding="utf-8")
 

@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-09-04
-related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
+related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
 # 术语表
@@ -16,13 +16,13 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md]
 | ADB | Android Debug Bridge，主设备命令边界 | `utils/adb_resolver.py`、`models/adb_*.py` |
 | device id / serial | ADB 设备选择标识，可能是 USB serial 或网络地址 | model/controller 的 `device_ip`/`device_id` 参数 |
 | MainFrame | 主窗口和 GUI 组合根 | `gui/main_frame.py::MainFrame` |
-| SidePanel | Device/Apps/System/Remote 概览面板的所有权与共享设备状态兼容门面，不是可见导航 | `gui/panels/side_panel.py::SidePanel` |
-| WorkspaceRoute | 定位设备任务主页面、内嵌功能、稳定设备会话及可选载荷的值对象 | `gui/pages/workspace_features.py::WorkspaceRoute` |
-| WorkspaceFeatureHost | 在一个业务宿主页内承载路由目录、独立会话设备、内容栈、空态和关闭屏障的宿主 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
-| 主左栏功能树 | FluentWindow 中唯一可见的模块导航；设备、应用、系统是不可选分组，WorkspaceRoute 对应可选叶节点，窄窗由原生 Flyout 展示 | `gui/main_frame.py::MainFrame` |
-| AdaptiveCategoryStack | Apps、System、Remote 面板内部一次显示一个分类的内容栈；组装时隐藏其 Pivot/ComboBox，由主左栏功能叶节点驱动 | `gui/widgets/category_stack.py::AdaptiveCategoryStack` |
-| 批量操作目标 | 设备页复选形成的零台或多台设备集合，供应用、系统等批量动作使用，不等同于单设备会话 | `gui/panels/device_manager.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
-| 会话设备 | 单设备深层功能与 Remote 独立绑定的设备；列出全部在线设备并保留离线已有会话，多个批量目标或无批量目标且多台在线时需显式选择 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
+| SidePanel | 持有业务概览面板和共享设备状态的兼容门面 | `gui/panels/side_panel.py::SidePanel` |
+| WorkspaceRoute | 定位业务宿主、功能、可选设备和载荷的路由值对象 | `gui/pages/workspace_features.py::WorkspaceRoute` |
+| WorkspaceFeatureHost | 承载 Workspace 路由、设备上下文、内容栈和关闭屏障的宿主 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
+| 主左栏功能树 | MainFrame 中可见功能导航与 WorkspaceRoute 的映射入口 | `gui/main_frame.py::MainFrame` |
+| AdaptiveCategoryStack | 业务面板内部一次显示一个分类的内容栈 | `gui/widgets/category_stack.py::AdaptiveCategoryStack` |
+| 批量操作目标 | 设备页复选形成的零台或多台设备集合 | `gui/panels/device_manager.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
+| 会话设备 | 单设备功能或 Remote 独立绑定的设备，不等同于批量操作目标 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
 | FeatureSessionKey | 由 feature、device_id、generation 组成的不可变页面会话标识 | `gui/features/base.py::FeatureSessionKey` |
 | FeatureSessionRegistry | 懒创建并复用内嵌功能页，转发 activate/deactivate/request_dispose 和关闭任务登记 | `gui/features/base.py::FeatureSessionRegistry` |
 | ADBController | 把 Qt signals 协调到 ADB models 的多 mixin Controller | `controllers/__init__.py::ADBController` |

@@ -67,10 +67,58 @@ def _self_check_packaging() -> int:
             check(f"import:{module_name}", False, str(exc))
 
     importable("PySide6")
+    importable("qfluentwidgets")
     importable("mobileperf.android.startup")
 
     check("resource:icon.ico", Path(resource_path("icon.ico")).is_file())
     check("resource:resources", Path(resource_path("resources")).is_dir())
+    for relative_path in (
+        "resources/icons",
+        "resources/icons/LICENSE.txt",
+        "resources/app_settings.json",
+        "resources/connected_devices.yaml",
+        "resources/chkbugreport-0.5-215.jar",
+        "resources/ZFB.jpg",
+    ):
+        resolved = Path(resource_path(relative_path))
+        check(
+            f"resource:{relative_path}",
+            (
+                resolved.is_dir()
+                if relative_path == "resources/icons"
+                else resolved.is_file()
+            ),
+        )
+    check(
+        "resource:third-party-notices",
+        any(
+            Path(resource_path(relative_path)).is_file()
+            for relative_path in (
+                "licenses/THIRD_PARTY_NOTICES.md",
+                "THIRD_PARTY_NOTICES.md",
+            )
+        ),
+    )
+    check(
+        "resource:mobileperf-license",
+        any(
+            Path(resource_path(relative_path)).is_file()
+            for relative_path in (
+                "licenses/mobileperf/LICENSE",
+                "mobileperf/LICENSE",
+            )
+        ),
+    )
+    check(
+        "resource:xlsxwriter-license",
+        any(
+            Path(resource_path(relative_path)).is_file()
+            for relative_path in (
+                "licenses/xlsxwriter/LICENSE.txt",
+                "mobileperf/extlib/xlsxwriter/LICENSE.txt",
+            )
+        ),
+    )
     if sys.platform == "win32":
         check(
             "resource:scrcpy.exe",

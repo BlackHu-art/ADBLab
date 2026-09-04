@@ -1,3 +1,4 @@
+import ast
 import re
 from pathlib import Path
 
@@ -5,6 +6,26 @@ WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
 RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
 PYINSTALLER_SPEC = Path("ADBLab.spec")
+ICON_DIR = Path("resources/icons")
+FIRST_PARTY_PYTHON_PATHS = (
+    Path("adblab"),
+    Path("controllers"),
+    Path("core"),
+    Path("gui"),
+    Path("models"),
+    Path("services"),
+    Path("utils"),
+)
+RUNTIME_RESOURCE_DATA = (
+    ("resources/icons", "resources/icons"),
+    ("resources/app_settings.json", "resources"),
+    ("resources/connected_devices.yaml", "resources"),
+    ("resources/chkbugreport-0.5-215.jar", "resources"),
+    ("resources/ZFB.jpg", "resources"),
+    ("THIRD_PARTY_NOTICES.md", "licenses"),
+    ("mobileperf/LICENSE", "licenses/mobileperf"),
+    ("mobileperf/extlib/xlsxwriter/LICENSE.txt", "licenses/xlsxwriter"),
+)
 
 PINNED_ACTIONS = {
     "actions/checkout": ("fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "v5"),
@@ -22,6 +43,26 @@ USES_PATTERN = re.compile(
 
 def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _declared_svg_names() -> set[str]:
+    """提取一方生产源码声明的 SVG 文件名，不依赖宿主文件系统的大小写规则。"""
+
+    paths = [Path("main.py")]
+    for root in FIRST_PARTY_PYTHON_PATHS:
+        paths.extend(root.rglob("*.py"))
+
+    names: set[str] = set()
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and node.value.endswith(".svg")
+            ):
+                names.add(Path(node.value).name)
+    return names
 
 
 def test_all_actions_are_pinned_to_verified_commit_shas():
@@ -66,6 +107,42 @@ def test_windows_build_collects_current_scrcpy_bundle():
     for config in packaging_configs:
         assert "scrcpy-win64-v3.3.1" not in config
         assert "scrcpy-win64" in config
+
+
+def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses():
+    """本地 spec 与 CI 不得重新整目录打包文档、截图或 MobilePerf 源码。"""
+
+    spec = _read(PYINSTALLER_SPEC)
+    workflow = _read(BUILD_WORKFLOW)
+    compact_spec = re.sub(r"\s+", "", spec)
+
+    assert "('resources','resources')" not in compact_spec
+    assert "('mobileperf','mobileperf')" not in compact_spec
+    assert '--add-data "resources;resources"' not in workflow
+    assert '--add-data "resources:resources"' not in workflow
+    assert '--add-data "mobileperf;mobileperf"' not in workflow
+    assert '--add-data "mobileperf:mobileperf"' not in workflow
+    assert "demo.gif" not in spec
+    assert "demo.gif" not in workflow
+
+    for source, destination in RUNTIME_RESOURCE_DATA:
+        assert Path(source).exists(), f"Missing packaging source: {source}"
+        assert f"('{source}','{destination}')" in compact_spec
+        assert f'--add-data "{source};{destination}"' in workflow
+        assert f'--add-data "{source}:{destination}"' in workflow
+
+    assert "collect_submodules('mobileperf')" in spec
+    assert "--collect-submodules mobileperf" in workflow
+
+
+def test_declared_svg_icons_exist_with_exact_case():
+    """即使在 Windows 上，也按目录记录的精确大小写校验所有图标声明。"""
+
+    available = {path.name for path in ICON_DIR.iterdir() if path.is_file()}
+    declared = _declared_svg_names()
+
+    assert declared
+    assert sorted(declared - available) == []
 
 
 def test_same_version_remains_immutable_and_old_tags_are_pruned_to_five():

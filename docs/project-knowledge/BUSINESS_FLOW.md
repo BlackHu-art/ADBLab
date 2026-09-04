@@ -17,10 +17,39 @@ related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
   Settings 七个物理页面，Remote 归入设备与控制。主左栏以设备、应用、系统三个折叠分组组织功能
   叶节点；宽屏直接展开树，窄屏使用 qfluentwidgets 原生 Flyout，内容区不显示模块下拉框。面板内部
   AdaptiveCategoryStack 的 Pivot/ComboBox 保持隐藏。复杂功能按路由、
-  设备和代次懒创建；ADB 在后台预热并按设置执行设备发现。
+  设备和代次懒创建；ADB 在后台预热并按设置执行设备发现。返回按钮使用 MainFrame 的语义历史，
+  因而同一物理宿主页内的功能叶节点也逐级返回；为单设备功能临时打开的 Devices 选择页不进入历史。
 - **失败与恢复**：字体、字号和窗口尺寸在边界外时回退到安全值；扫描失败只标记 unavailable，
   保留最后成功设备列表，不自动重启 ADB Server。慢速元数据回调只有在设备拓扑 generation 仍匹配
-  时才写入和发布。
+  时才写入和发布。窄栏分组 Flyout 同时只保留一个，并在切页、打开覆盖菜单、缩放或返回时关闭；
+  MENU 状态跨入 1120 像素宽屏断点时会归位为常驻左栏，树动画结束后同步最终展开几何。
+
+### Workspace 路由目录
+
+下表是 Workspace 完整路由的单一事实来源。概览分类复用 Devices 页的批量目标，不显示独立会话
+设备选择器；固定设备功能使用宿主会话设备，并按设备懒创建页面。
+
+| 路由 | 主内容 | 设备上下文 | 生命周期 |
+| --- | --- | --- | --- |
+| `devices/overview` | 连接与选择 | 批量目标来源 | 随主窗口创建 |
+| `devices/files` | 文件管理 | 固定一台设备 | 按设备懒创建；显式关闭后释放 |
+| `devices/remote` | 屏幕镜像 | 固定一台设备 | 复用 RemotePanel，不进入 FeatureSessionRegistry |
+| `devices/remote-control` | 按键与手势 | 固定一台设备 | 与屏幕镜像共用 RemotePanel 和会话设备 |
+| `apps/overview` | 日常操作 | 批量目标 | 复用 AppPanel 概览 |
+| `apps/packages` | 应用包 | 批量目标 | 复用 AppPanel 概览 |
+| `apps/manager` | 应用管理 | 固定一台设备 | 按设备懒创建；显式关闭后释放 |
+| `apps/monkey` | Monkey 测试 | 批量目标 | 复用 AppPanel 概览 |
+| `apps/diagnostics` | 诊断工具 | 批量目标 | 复用 AppPanel 概览 |
+| `apps/media` | 截图结果 | 不需要设备 | 使用空设备键懒创建；可在后台追加结果 |
+| `system/overview` | 命令与启动 | 批量目标 | 复用 SystemPanel 概览 |
+| `system/connectivity` | 连接与服务 | 批量目标 | 复用 SystemPanel 概览 |
+| `system/settings` | 设置与工具 | 批量目标 | 复用 SystemPanel 概览 |
+| `system/device` | 设备与模拟器 | 批量目标 | 复用 SystemPanel 概览 |
+| `system/logcat` | 实时 Logcat | 固定一台设备 | 按设备懒创建；关闭会话才停止资源 |
+| `system/performance` | 性能采集 | 固定一台设备 | 按设备懒创建；关闭进入异步停止屏障 |
+
+Settings 中的 About 随 SettingsPage 创建，不属于 Workspace 路由。未知 section/feature 会在主页面
+切换前被拒绝。
 
 ## 2. 连接设备与读取信息
 
@@ -29,7 +58,8 @@ related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
   汇总属性并写入 DeviceStore，随后更新首页和三个业务主页面的设备上下文。设备页复选项组成
   多设备批量操作目标；单设备深层功能和 Remote 使用独立的会话设备。会话候选列出全部在线设备
   并保留已有离线会话；恰好一个批量目标或仅一台在线设备时可自动选定，多个批量目标或无批量
-  目标且多台在线时要求显式选择。
+  目标且多台在线时要求显式选择。没有可自动选定的设备时先保留原功能路由并进入临时选择页；
+  后台宿主只刷新候选和等待提示，不提前创建或激活目标页，首次进入前台或用户明确选定后再恢复。
 - **失败与恢复**：不完整目标在执行前拒绝；超时和非零退出形成失败结果；offline/unauthorized
   设备只展示可确认信息，不用空结果覆盖最近成功快照。
 

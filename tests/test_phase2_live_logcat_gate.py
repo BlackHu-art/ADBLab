@@ -362,6 +362,43 @@ def test_live_logcat_stop_and_close_only_schedule_background_cleanup():
     adapter.owner_stopped.emit(dialog._supervisor_owner_id, ())
 
 
+def test_logcat_worker_release_waits_for_native_thread_join():
+    _app = QApplication.instance() or QApplication([])
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
+    worker = FakePageWorker()
+    worker._active = False
+    worker.wait = Mock(return_value=False)
+    worker.deleteLater = Mock()
+    dialog.worker = worker
+
+    assert dialog._release_logcat_worker(worker) is False
+    worker.wait.assert_called_once_with(0)
+    assert dialog.worker is worker
+    worker.deleteLater.assert_not_called()
+
+    dialog.worker = None
+    dialog.close()
+
+
+def test_package_worker_release_waits_for_native_thread_join():
+    _app = QApplication.instance() or QApplication([])
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
+    worker = Mock()
+    worker.isRunning.return_value = False
+    worker.wait.return_value = False
+    dialog._pkg_worker = worker
+
+    assert dialog._release_pkg_worker(worker) is False
+    worker.wait.assert_called_once_with(0)
+    assert dialog._pkg_worker is worker
+    worker.deleteLater.assert_not_called()
+
+    dialog._pkg_worker = None
+    dialog.close()
+
+
 def test_active_embedded_logcat_close_keeps_main_window_open_until_cleanup_finishes():
     _app = QApplication.instance() or QApplication([])
     main_window = QMainWindow()

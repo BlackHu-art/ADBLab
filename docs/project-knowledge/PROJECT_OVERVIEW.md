@@ -1,7 +1,7 @@
 ---
 status: current
 last_verified: 2026-09-04
-related: [glossary.md, ARCHITECTURE.md, RISKS_AND_DEBT.md]
+related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
 # 项目概览
@@ -30,16 +30,9 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出 CSV/XLSX 与设备信息。
 7. 辅助工具：主题/字体/窗口设置（含响应式重排与屏幕适配）、日志面板和结果文件查看。
 
-当前主界面直接使用 qfluentwidgets `FluentWindow`：Home、三个业务宿主页、Tasks、Logs、Settings
-组成七个物理页面，Remote 已归入设备与控制。唯一的主左栏以设备、应用、系统三个折叠树分组
-承载具体功能叶节点；窄窗由 qfluentwidgets 原生 Flyout 展示同一导航树，内容区不再出现模块 Tab
-或“当前功能”下拉。`WorkspaceFeatureHost` 只负责路由、内容栈和会话；面板内部
-`AdaptiveCategoryStack` 只保留内容栈职责，其 Pivot/ComboBox 不再显示。设备页复选用于多设备批量
-目标；单设备深层功能和 Remote 使用独立会话设备，多个批量目标或无批量目标且多台在线时要求
-显式选择，不静默取第一台。Devices
-内嵌文件管理及 Remote，Apps 内嵌应用管理和截图结果，System 内嵌实时 Logcat 和性能采集；深层
-功能按功能、设备和代次懒创建并复用，短屏上由宿主滚动保证底部动作可达。About 直接位于
-Settings，`SidePanel` 只保留面板所有权、共享设备状态和信号兼容职责，不是可见导航。
+当前主界面是一个 qfluentwidgets `FluentWindow` 工作台，长期功能在主窗口内运行，消息、输入和系统
+文件选择等短生命周期交互仍使用瞬态窗口。完整页面路由与设备选择规则见
+[BUSINESS_FLOW](BUSINESS_FLOW.md#workspace-路由目录)，组件与会话边界见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 ## 应用类型与边界
 
@@ -55,7 +48,7 @@ Settings，`SidePanel` 只保留面板所有权、共享设备状态和信号兼
 | 类别 | 技术 | 证据 |
 | --- | --- | --- |
 | 语言 | Python；少量 YAML/JSON/TOML/PowerShell/Bash | `*.py`、工作流与配置文件 |
-| GUI | PySide6 提供布局、事件、Signal/Slot、QWidget/QDialog/QFileDialog、QThread 与 QThreadPool；通用控件、导航和主题使用 PySide6-Fluent-Widgets；长期任务使用主页面内嵌 QWidget，瞬态消息/输入经过 `gui/dialogs/fluent_dialog.py` | `requirements.txt`、`gui/`、`models/adb_model.py` |
+| GUI | PySide6 提供 Qt 组件与线程模型；通用控件、导航和主题使用 PySide6-Fluent-Widgets | `requirements.txt`、`gui/`、`models/adb_model.py` |
 | 配置 | JSON、PyYAML | `core/settings_manager.py`、`models/device_store.py` |
 | 外部命令 | ADB、scrcpy、aapt、Java | `core/exec.py`、`core/adb_bridge.py`、`services/remote/`、`models/adb_testing.py` |
 | 性能采集 | 移植版 MobilePerf、CSV、XLSXWriter | `services/mobileperf_runner.py`、`mobileperf/android/` |
@@ -72,12 +65,10 @@ Settings，`SidePanel` 只保留面板所有权、共享设备状态和信号兼
 
 ## 当前实现边界
 
-- 主窗口固定为 Home、设备与控制、应用与自动化、系统与诊断、Tasks、Logs、Settings 七个页面；
-  Remote 位于设备与控制。长期功能会话由 `WorkspaceFeatureHost` 按功能、设备和代次管理；所有在线
-  设备均可作为会话候选，已有离线会话继续保留并标记。About 位于 Settings；消息、文本输入、
-  短操作表单和系统文件选择器仍为瞬态窗口。
-- 打包 CI 当前不运行 pytest；验证策略与覆盖缺口见
-  [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。
+- 这是本地桌面应用，不提供 Web/RPC 服务；长期功能会话属于主窗口，瞬态交互不承担后台任务。
+  具体导航、设备上下文和会话生命周期由 [BUSINESS_FLOW](BUSINESS_FLOW.md) 与
+  [ARCHITECTURE](ARCHITECTURE.md) 单源维护。
+- 打包 CI 当前不运行 pytest；验证策略见 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。
 - 当前未解决的安全、并发、平台和发布问题只在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md) 维护。
 
 项目术语统一见 [glossary.md](glossary.md)。

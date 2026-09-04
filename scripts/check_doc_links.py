@@ -1,10 +1,10 @@
-"""校验 docs/ 下 Markdown 文档的相对链接与 frontmatter 必填字段。
+"""校验项目知识文档的相对链接与 frontmatter 必填字段。
 
 用法：
     py -3.11 scripts/check_doc_links.py
 
 规则：
-- 扫描 docs/**/*.md；
+- 扫描 docs/**/*.md、根 README、第三方说明和 MobilePerf 移植说明；
 - project-knowledge/ 下的文档必须有 frontmatter，且包含 status 与 last_verified 字段；
 - 正文中的相对 Markdown 链接（不含 http/https/mailto 与纯锚点）必须能解析到已存在文件；
 - frontmatter 中 related 列出的路径按同一规则解析（支持流式与块式 YAML 列表）。
@@ -20,6 +20,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+PROJECT_MARKDOWN = (
+    ROOT / "README.md",
+    ROOT / "THIRD_PARTY_NOTICES.md",
+    ROOT / "mobileperf" / "readme.md",
+)
 
 LINK_RE = re.compile(r"\]\(([^()]+)\)")
 FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
@@ -102,13 +107,24 @@ def check_file(path: Path) -> list[str]:
     return errors
 
 
+def markdown_files() -> list[Path]:
+    """返回需要持续校验的项目知识文档。"""
+
+    return sorted({*DOCS.rglob("*.md"), *PROJECT_MARKDOWN})
+
+
 def main() -> int:
     if not DOCS.exists():
         print(f"docs 目录不存在: {DOCS}", file=sys.stderr)
         return 1
-    files = sorted(DOCS.rglob("*.md"))
+    files = markdown_files()
+    missing = [path for path in PROJECT_MARKDOWN if not path.is_file()]
+    if missing:
+        for path in missing:
+            print(f"项目知识入口不存在: {path.relative_to(ROOT)}", file=sys.stderr)
+        return 1
     if not files:
-        print("docs 下没有 Markdown 文件", file=sys.stderr)
+        print("项目中没有可校验的 Markdown 文件", file=sys.stderr)
         return 1
     all_errors: list[str] = []
     for path in files:
@@ -118,7 +134,7 @@ def main() -> int:
         for error in all_errors:
             print(f"  - {error}")
         return 1
-    print(f"OK: {len(files)} 个 Markdown 文档的链接与 frontmatter 全部通过")
+    print(f"OK: {len(files)} 个项目知识文档的链接与 frontmatter 全部通过")
     return 0
 
 

@@ -1,5 +1,7 @@
 """提供 Logcat 功能页的表单构建、主题应用与响应式重排。"""
 
+import weakref
+
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
     QGridLayout,
@@ -32,7 +34,15 @@ class LiveLogcatForm:
     """组合进 LiveLogcatPage 的表单控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
-        self._frame = frame
+        # 控制器由页面持有，反向使用弱引用，避免 Qt 包装对象进入 Python 引用环。
+        self._frame_ref = weakref.ref(frame)
+
+    @property
+    def _frame(self):
+        frame = self._frame_ref()
+        if frame is None:
+            raise RuntimeError("LiveLogcatPage has been released")
+        return frame
 
     def _init_ui(self):
         layout = QVBoxLayout(self._frame)

@@ -1,5 +1,7 @@
 """提供 Logcat 功能页关闭与 worker 生命周期管理。"""
 
+import weakref
+
 from PySide6.QtCore import QTimer
 
 from adblab.application.supervision import StopDisposition, TaskStopResult
@@ -11,7 +13,15 @@ class LiveLogcatLifecycle:
     """组合进 LiveLogcatPage 的生命周期控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
-        self._frame = frame
+        # 控制器由页面持有，反向使用弱引用，避免 Qt 包装对象进入 Python 引用环。
+        self._frame_ref = weakref.ref(frame)
+
+    @property
+    def _frame(self):
+        frame = self._frame_ref()
+        if frame is None:
+            raise RuntimeError("LiveLogcatPage has been released")
+        return frame
 
     def _on_task_stopped(self, result: TaskStopResult):
         if (
@@ -52,8 +62,28 @@ class LiveLogcatLifecycle:
         self._frame.pkg_input.setText(package)
         self._frame._apply_package_filter(package)
 
+    @staticmethod
+    def _thread_is_joined(worker) -> bool:
+        """非阻塞确认 QThread 的原生收尾已经完成。"""
+
+        wait = getattr(worker, "wait", None)
+        if not callable(wait):
+            return True
+        try:
+            return bool(wait(0))
+        except RuntimeError:
+            # C++ 对象已经释放时，不再存在需要等待的原生线程。
+            return True
+
     def _release_pkg_worker(self, worker: CurrentPackageWorker) -> bool:
         """释放已经停止的包名查询线程，并返回它是否仍是当前线程。"""
+        try:
+            if worker.isRunning():
+                return False
+        except RuntimeError:
+            pass
+        if not self._thread_is_joined(worker):
+            return False
         self._disconnect_pkg_worker(worker)
         task_id = getattr(worker, "_supervisor_task_id", None)
         if task_id:
@@ -74,6 +104,12 @@ class LiveLogcatLifecycle:
             self._frame._debug_lifecycle("worker_finished_waiting", worker_kind="package_probe")
             return
         was_current = self._release_pkg_worker(worker)
+        if self._frame._pkg_worker is worker:
+            if not self._frame._closing and not self._frame._worker_release_timer.isActive():
+                self._frame._worker_release_timer.start(self._frame.CLEANUP_RECHECK_MS)
+            if self._frame._closing:
+                self._try_finalize_close("package_worker_join_pending")
+            return
         if self._frame._closing:
             self._try_finalize_close("package_worker_finished")
         elif was_current:
@@ -82,6 +118,8 @@ class LiveLogcatLifecycle:
     def _release_logcat_worker(self, worker: LogcatWorker) -> bool:
         """仅在线程和受跟踪进程都停止后释放 Logcat 工作对象。"""
         if worker.is_active():
+            return False
+        if not self._thread_is_joined(worker):
             return False
         self._disconnect_worker(worker)
         task_id = getattr(worker, "_supervisor_task_id", None)
@@ -122,18 +160,26 @@ class LiveLogcatLifecycle:
             self._frame._set_running_actions(False)
 
     def _poll_worker_release(self) -> None:
-        """在窗口保持打开时释放线程先结束、进程稍后退出的日志任务。"""
+        """在窗口保持打开时等待工作线程完成原生收尾并释放对象。"""
 
         if self._frame._closing:
             return
+        release_pending = False
+        package_worker = self._frame._pkg_worker
+        if package_worker is not None:
+            if self._release_pkg_worker(package_worker):
+                self._frame.btn_get_pkg.setEnabled(not self._frame._logcat_stopping)
+            else:
+                release_pending = True
         worker = self._frame.worker
         if worker is None:
             self._frame._set_running_actions(False)
-            return
-        if self._release_logcat_worker(worker):
+        elif self._release_logcat_worker(worker):
             self._frame._set_running_actions(False)
-            return
-        self._frame._worker_release_timer.start(self._frame.CLEANUP_RECHECK_MS)
+        else:
+            release_pending = True
+        if release_pending:
+            self._frame._worker_release_timer.start(self._frame.CLEANUP_RECHECK_MS)
 
     def _owner_residual_tasks(self):
         """返回仍由当前日志窗口负责的受监督资源。"""

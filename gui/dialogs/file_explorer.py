@@ -175,7 +175,6 @@ class FileExplorerPage(QWidget):
         layout.addWidget(self.header_card)
 
         self._path_layout = QGridLayout()
-        self.path_layout = self._path_layout
         self._path_layout.setSpacing(4)
         self._path_label = apply_label_role(BodyLabel("Path:"), FontRole.UI)
         self.path_field = LineEdit()

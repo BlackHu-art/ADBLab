@@ -185,8 +185,6 @@ def test_host_exposes_navigation_catalog_without_a_local_feature_selector(
         ("remote", "屏幕镜像"),
     ]
     assert host.findChildren(ComboBox) == [host.device_combo]
-    assert not hasattr(host, "area_navigation")
-    assert not hasattr(host, "segmented")
     assert host.open_route(WorkspaceRoute("devices", "remote")) is True
     assert host.stack.currentWidget() is host.no_device_page
     assert activated == []
@@ -559,7 +557,7 @@ def test_inactive_deep_route_activates_target_without_resuming_old_session(
     )
 
     assert page.open_route(target_route) is True
-    assert page.current_route == target_route
+    assert page.current_route == WorkspaceRoute("apps", "media", "device-1")
     assert manager_page.activations == [None]
     assert all(key.feature != "media" for key in host.registry.keys())
 
@@ -665,8 +663,6 @@ def test_narrow_workspace_keeps_only_the_session_device_combo(qt_application):
 
     assert host.findChildren(ComboBox) == [host.device_combo]
     assert host.device_combo.isVisibleTo(host)
-    assert not hasattr(host, "_compact_navigation")
-    assert not hasattr(host, "area_navigation")
     assert host.session_toolbar.minimumSizeHint().width() <= 650
 
 

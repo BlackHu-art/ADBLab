@@ -41,12 +41,6 @@ class MainFrameActions:
         )
         return BaseStyles.toggle_theme()
 
-    def request_application_close(self) -> None:
-        from gui.main_frame import _debug_log
-
-        _debug_log(self._frame, "ui.window", action="close", phase="requested")
-        self._frame.close()
-
     def choose_save_directory(self) -> None:
         from gui.main_frame import _debug_log
 

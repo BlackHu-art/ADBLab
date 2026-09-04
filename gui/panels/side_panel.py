@@ -28,7 +28,6 @@ from gui.widgets.responsive_layout import prepare_responsive_content
 class SidePanel(QWidget):
     """创建并管理功能标签页，同时保持 MainFrame 使用的兼容接口。"""
 
-    PANEL_WIDTH = 600
     _DISCOVERY_STATES = frozenset({"scanning", "empty", "unavailable", "ready"})
     selected_devices_changed = Signal(list)
     device_discovery_state_changed = Signal(str)
@@ -42,7 +41,6 @@ class SidePanel(QWidget):
         self._connected_device_cache = []
         self._device_discovery_state = "scanning"
         self._user_selected_ip = False
-        self._current_ip = ""
         self._tabs_connected = False
         self._connected_lazy_tabs = set()
         self._loaded_lazy_tabs = set()

@@ -2,7 +2,7 @@ PySide6==6.8.1.1
 PySide6_Addons==6.8.1.1
 PySide6_Essentials==6.8.1.1
 shiboken6==6.8.1.1
-# GPLv3 双许可（非商用 GPLv3，商用需付费）；仅内部使用，禁止对外分发
+# GPL-3.0 或商业许可；分发前按 THIRD_PARTY_NOTICES.md 核验许可义务
 PySide6-Fluent-Widgets==1.11.3
 PyYAML==6.0.2
 psutil==7.2.2

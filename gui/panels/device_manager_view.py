@@ -461,11 +461,7 @@ class DeviceManagerView:
                 with BlockSignals(combo):
                     combo.setCurrentIndex(-1)
                     combo.setText(ip)
-                self._frame.panel._current_ip = ip
                 self._frame.panel._user_selected_ip = True
-
-    def _on_ip_edited(self, t):
-        self._frame.panel._current_ip = t.strip()
 
     def _on_device_double_click(self, item):
         if not (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):

@@ -6,8 +6,8 @@ import warnings
 from unittest.mock import Mock, patch
 
 from core.exec import ProcessRunner
-from gui.dialogs.lifecycle import WorkerSignalBinding, safe_disconnect
-from gui.panels.remote_panel import ScrcpyLaunchWorker
+from gui.dialogs.lifecycle import safe_disconnect
+from services.remote import ScrcpyConfig, build_scrcpy_args
 
 
 def test_scrcpy_launch_args_include_selected_ui_options():
@@ -30,7 +30,7 @@ def test_scrcpy_launch_args_include_selected_ui_options():
         "no_window": True,
     }
 
-    args = ScrcpyLaunchWorker._build_args(cfg, "OMX.test.encoder")
+    args = build_scrcpy_args(ScrcpyConfig.from_mapping(cfg), "OMX.test.encoder")
 
     assert args[:3] == ["scrcpy.exe", "-s", "device-1"]
     assert ["-m", "1080"] == args[3:5]
@@ -66,7 +66,7 @@ def test_scrcpy_launch_args_omit_defaults():
         "no_window": False,
     }
 
-    args = ScrcpyLaunchWorker._build_args(cfg, None)
+    args = build_scrcpy_args(ScrcpyConfig.from_mapping(cfg), None)
 
     assert "-m" not in args
     assert "--video-codec" not in args
@@ -104,42 +104,6 @@ def test_safe_disconnect_suppresses_pyside_disconnect_warnings():
         safe_disconnect(WarningSignal(), Mock())
 
     assert caught == []
-
-
-def test_worker_signal_binding_connects_and_disconnects_handlers():
-    class FakeSignal:
-        def __init__(self):
-            self.connected = []
-            self.disconnected = []
-
-        def connect(self, handler):
-            self.connected.append(handler)
-
-        def disconnect(self, handler=None):
-            self.disconnected.append(handler)
-
-    class FakeWorker:
-        def __init__(self):
-            self.finished = FakeSignal()
-
-    worker = FakeWorker()
-    result_signal = FakeSignal()
-    result_handler = Mock()
-    finished_handler = Mock()
-    binding = WorkerSignalBinding(
-        worker=worker,
-        handlers=((result_signal, result_handler),),
-        finished_handler=finished_handler,
-    )
-
-    binding.connect()
-    binding.disconnect()
-    binding.disconnect()
-
-    assert result_signal.connected == [result_handler]
-    assert worker.finished.connected == [finished_handler]
-    assert result_signal.disconnected == [result_handler]
-    assert worker.finished.disconnected == [finished_handler]
 
 
 def test_process_runner_start_replaces_existing_process_without_deadlock():

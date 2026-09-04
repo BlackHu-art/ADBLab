@@ -55,13 +55,20 @@
 
 ### 完整门禁命令
 
-实际验证过（Python 3.11）：
+完整门禁只在增量策略列出的触发条件成立时执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest --collect-only -q
 .\.venv\Scripts\python.exe -m pytest -q
 .\.venv\Scripts\python.exe main.py --self-check packaging
 .\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pyright
+git diff --check
+```
+
+`pytest --collect-only` 只用于发现和选择测试，不属于完整门禁：
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest --collect-only -q
 ```
 
 测试数量、耗时和通过结果只属于执行当时的工作树，写入任务/发布记录，不作为长期指南内容。
@@ -84,14 +91,8 @@
 
 ## 当前覆盖缺口
 
-1. AppSettings 跨进程并发写入没有文件锁或对应测试。
-2. 多类型长任务并发、应用关闭和 helper 进程树缺少真实设备压力验证。
-3. Android 厂商/版本的 dumpsys、top、SurfaceFlinger、bugreport 输出缺少实机矩阵。
-4. MobilePerf 长跑、断线、报告完整性和录屏清理缺少授权硬件集成测试。
-5. macOS/Linux 产物只有构建/自检，没有 ADB、scrcpy 降级和 GUI 功能验证。
-6. 已运行 QRunnable/Executor 的协作取消和有界等待缺少完整生命周期测试。
-7. 设备日志和诊断/媒体结果的脱敏、保留期与清理策略缺少安全测试。
-8. 全量套件仍偏慢，且 `unit` marker 尚未系统分配。
+活动测试缺口统一维护在 [RISKS_AND_DEBT](../project-knowledge/RISKS_AND_DEBT.md)，本指南不重复
+风险清单。新增缺口在风险账本登记后，再在本页补充对应测试域、选择方式或门禁命令。
 
 ## 注释与文档风格
 
@@ -149,16 +150,9 @@
 版本与发布规则只在 [BUILD_AND_RUN](BUILD_AND_RUN.md) 维护。
 
 普通本地修改的最低门禁是关联测试、修改文件的 Ruff/适用静态检查以及 `git diff --check`。
-纯文档修改按增量策略只运行文档检查。以下完整门禁仅用于发布验收、用户明确要求或无法可靠
-界定影响范围的共享核心改动；Build 工作流不执行 pytest，dev 推送 main 本身不触发本地全量测试：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe main.py --self-check packaging
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pyright
-git diff --check
-```
+纯文档修改按增量策略只运行文档检查。发布验收、用户明确要求或无法可靠界定影响范围的共享
+核心改动按 [完整门禁命令](#完整门禁命令) 执行；Build 工作流不执行 pytest，dev 推送 main 本身
+不触发本地全量测试。
 
 若修改 PyInstaller/资源/入口，再执行 spec 构建和打包后 self-check。若修改 ADB 命令、Remote 或 MobilePerf，除单测外应在授权测试设备上执行最小实机验证，并确保日志不含真实敏感值。
 

@@ -168,13 +168,6 @@ class ScrcpyLaunchWorker(QThread):
             return
         self.launch_ready.emit(plan.args, plan.device_info)
 
-    @staticmethod
-    def _build_args(cfg: dict, encoder: str | None) -> list[str]:
-        from services.remote import build_scrcpy_args
-
-        return build_scrcpy_args(ScrcpyConfig.from_mapping(cfg), encoder)
-
-
 class RemotePanel(BasePanel):
     """管理 scrcpy 会话、串行 Remote 输入队列和相关界面状态。"""
 

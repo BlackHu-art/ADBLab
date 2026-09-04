@@ -332,8 +332,6 @@ class AppPanel(BasePanel):
                 ),
             ),
         )
-        self._monkey_config_layout = self.monkey_percentage_binding
-
         self.monkey_chk_crashes = self._checkbox("忽略崩溃")
         self.monkey_chk_timeouts = self._checkbox("忽略超时")
         self.monkey_chk_security = self._checkbox("忽略安全异常")

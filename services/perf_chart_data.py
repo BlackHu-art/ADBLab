@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # 各指标的标准列名（存在即解析，缺失跳过）。
-_DEVICE_CPU_KEYS = ("device_cpu_rate%", "user%", "system%", "idle%")
 _MEM_TOTAL_KEY = "total_ram(MB)"
 _MEM_FREE_KEY = "free_ram(MB)"
 _FPS_KEY = "fps"

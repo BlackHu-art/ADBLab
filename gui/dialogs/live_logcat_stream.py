@@ -3,6 +3,7 @@
 import os
 import tempfile
 import uuid
+import weakref
 from collections import deque
 from datetime import datetime
 from math import ceil
@@ -27,7 +28,15 @@ class LiveLogcatStream:
     """组合进 LiveLogcatPage 的流式控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
-        self._frame = frame
+        # 控制器由页面持有，反向使用弱引用，避免 Qt 包装对象进入 Python 引用环。
+        self._frame_ref = weakref.ref(frame)
+
+    @property
+    def _frame(self):
+        frame = self._frame_ref()
+        if frame is None:
+            raise RuntimeError("LiveLogcatPage has been released")
+        return frame
 
     # ── 筛选 ────────────────────────────────────────────────────────────
 

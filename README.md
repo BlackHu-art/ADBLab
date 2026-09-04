@@ -1,21 +1,33 @@
 # ADBLab
 
-## 项目概览
+ADBLab 是一款基于 Python 3.11、PySide6 和 PySide6-Fluent-Widgets 的 Android
+设备管理、自动化测试与性能诊断桌面应用，主要面向 Windows。项目将 ADB、scrcpy、
+logcat、dumpsys、Monkey、文件管理和性能采集能力整合到统一界面，并对长任务、外部进程、
+配置写入和窗口关闭进行集中管理。
 
-**ADBLab** 是一款基于 PySide6 的 Android 设备管理、自动化测试与性能诊断桌面工具。项目把常用 ADB、scrcpy、logcat、dumpsys、gfxinfo、meminfo 等能力封装为图形界面，适合日常设备调试、应用管理、投屏控制、Monkey 压测、文件操作和性能巡检。
+应用版本以 [`utils/app_metadata.py`](utils/app_metadata.py) 为唯一来源。
 
-![ADBLab UI 预览](resources/demo.gif)
+## 界面与功能
 
-| 项目 | 当前状态 |
-|------|----------|
-| 应用版本 | 以 `utils/app_metadata.py` 中的 `APP_VERSION` 为准 |
-| 开发语言 | Python，建议使用 Python 3.11 |
-| GUI 框架 | PySide6 / Qt 6 |
-| 主要平台 | Windows（精确版本兼容矩阵待确认） |
-| 内置工具 | `scrcpy-win64/`，包含 `adb.exe` 与 `scrcpy.exe` |
-| 作者 | Frankie Hu (Copyright (c) 2026) |
+主窗口使用左侧分组导航，不再为主要工具创建独立顶层窗口：
 
----
+- **设备与控制**：设备连接与选择、文件管理、屏幕镜像、按键与手势控制。
+- **应用与自动化**：日常应用操作、应用包管理、Monkey 测试、诊断工具和截图结果。
+- **系统与诊断**：系统命令、连接与服务、设备设置、实时 Logcat 和性能采集。
+- **任务中心 / 操作日志**：查看运行中及最近完成的任务和诊断记录。
+- **设置**：主题、字体、窗口、路径、日志及设备扫描配置；About 信息也位于设置页。
+
+文件管理、应用管理、实时 Logcat 和性能采集按单设备上下文在工作区内创建、复用和关闭；
+截图结果使用独立的无设备会话。需要确认、短文本输入或系统文件选择时才使用临时窗口。
+
+主要能力包括：
+
+- USB/IP 设备发现、连接、断开、重启和设备信息读取。
+- 应用安装、卸载、启停、清理、备份恢复、权限与包信息管理。
+- Monkey、Bugreport、ANR、meminfo、gfxinfo、wakelock、netstats 等测试与诊断。
+- 设备文件浏览、搜索、推送、拉取、重命名、删除、预览和脚本执行。
+- 基于 scrcpy 的投屏、录制、编码参数和 ADB 按键/手势控制。
+- 隔离子进程运行的 MobilePerf 采集与报告生成。
 
 ## 快速启动
 
@@ -26,328 +38,69 @@ py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-`requirements.txt` 只包含运行依赖；`requirements-build.txt` 在其上增加 PyInstaller；
-`requirements-dev.txt` 再增加测试、lint、类型检查和 pre-commit 工具。开发环境统一使用根目录
-`.venv`，不要直接向系统 Python 安装项目依赖。
+依赖按用途分层：
 
-日常修复按 [增量验证策略](docs/guides/TESTING_GUIDE.md#增量验证策略) 运行直接和受影响模块测试。
-以下完整门禁仅用于发布验收、用户明确要求或影响范围无法可靠界定的改动：
+- `requirements.txt`：运行依赖。
+- `requirements-build.txt`：运行依赖和 PyInstaller。
+- `requirements-dev.txt`：构建、测试、Lint、类型检查和 pre-commit 工具。
+
+开发时直接调用 `.venv\Scripts\python.exe`，避免把依赖安装到系统 Python。
+
+## 项目结构
+
+| 路径 | 职责 |
+| --- | --- |
+| `main.py` | GUI、打包自检和 MobilePerf worker 入口 |
+| `gui/` | 页面、工作区宿主、主题和 Qt 控件 |
+| `controllers/` | 信号路由与用例协调 |
+| `models/` | ADB 模型、设备存储及专用 worker |
+| `services/` | 文件、Remote、MobilePerf 等服务边界 |
+| `core/` | 命令、进程、设置和日志基础设施 |
+| `adblab/` | 应用用例、任务状态及 Qt 适配 |
+| `mobileperf/` | 随项目移植的 MobilePerf 内核 |
+| `resources/` | 运行所需配置、图标及辅助工具 |
+| `tests/` | 单元、UI、集成及生命周期回归测试 |
+| `docs/` | 当前知识、架构决策、指南与历史归档 |
+
+模块职责、完整业务路由和依赖方向不在本页重复维护，请从
+[`docs/README.md`](docs/README.md) 进入项目知识库。
+
+## 开发约束
+
+- Qt 控件只在 GUI 主线程操作；耗时 ADB、I/O 和进程等待通过现有 worker 或任务设施执行。
+- 短命令使用 `core.exec.CommandRunner`；受控长进程使用 `ProcessRunner`。
+- 动态设备值必须经过现有校验和 quoting 边界，不在 UI 中拼接复杂 shell 命令。
+- 配置和设备元数据写入 `utils/user_data.py` 提供的用户目录；日志主要保存在内存，截图、报告等
+  结果写入用户选择的目录。
+- 资源通过项目资源解析接口访问，同时兼容源码和 PyInstaller 环境。
+- 外部 ZIP 使用 `utils.archive.safe_extract_zip()` 解压。
+- 当前 UI 栈是 PySide6；查询 qfluentwidgets 行为时以活动环境中的 PySide6 包为准。
+
+更完整的实现契约见
+[`ARCHITECTURE.md`](docs/project-knowledge/ARCHITECTURE.md) 和
+[`DEPENDENCY_MAP.md`](docs/project-knowledge/DEPENDENCY_MAP.md)。
+
+## 测试与打包
+
+先运行直接相关测试，再按调用链扩大范围。测试分层、完整门禁和 Qt 平台设置统一维护在
+[`TESTING_GUIDE.md`](docs/guides/TESTING_GUIDE.md)。构建和 PyInstaller 流程见
+[`BUILD_AND_RUN.md`](docs/guides/BUILD_AND_RUN.md)。
+
+常用检查示例：
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m pyright
+.\.venv\Scripts\python.exe -m pytest -q <test-file-or-node>
+.\.venv\Scripts\python.exe -m ruff check <changed-python-files>
+.\.venv\Scripts\python.exe -m pyright <affected-production-paths>
+.\.venv\Scripts\python.exe scripts/check_doc_links.py
 .\.venv\Scripts\python.exe main.py --self-check packaging
 git diff --check
 ```
 
----
+## 第三方代码与许可
 
-## 当前功能
+项目运行时依赖 PySide6-Fluent-Widgets，并包含经适配的 MobilePerf、XlsxWriter 及平台工具。
+来源、修改边界和许可要求见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 及各组件随附的
+许可文件。对外分发前必须完成相应许可核验。
 
-### 设备与基础操作
-
-- IP/USB 设备连接、断开、刷新、重启和多选批量操作。
-- IP 连接输入框支持 Enter 触发连接，并在执行前校验 `ip:port` 完整性。
-- 设备信息读取：品牌、型号、Android 版本、SDK、CPU、分辨率、内存、存储、网络信息等。
-- ADB Server 重启、TCP/IP 模式、端口 forward/reverse、系统 reboot 模式切换。
-- 左侧设备列表支持持续扫描 USB 设备；扫描会避让正在执行的 ADB 命令，并在退出时做阻塞清理，降低 exe 关闭时的线程残留风险。
-
-### 应用管理与测试
-
-- 获取当前前台包名，支持 focus 优先检测和 activity/window 回退。
-- 安装、卸载、清数据、强停、重启、禁用、启用、disable-user。
-- 本地 APK 解析，读取包名、版本、权限、架构等信息；会校验 APK 路径和 `aapt` 可用性。
-- Monkey 压力测试：事件占比、事件数、throttle、flags、随机种子、按设备中止；非 0 退出、设备连续超时和恢复失败会返回失败状态。
-- Bugreport、ANR 拉取、logcat 导出/清理、meminfo、cpuinfo、gfxinfo、top、wakelock、netstats 等诊断入口；Bugreport ZIP 使用安全解压并通过 `resource_path()` 定位转换器。
-
-### Remote 投屏控制
-
-- 内置 scrcpy v4.1，支持流畅/均衡/画质/低延迟预设。
-- 自定义分辨率、FPS、码率、codec、buffer、方向锁定、录制文件。
-- 支持全屏、置顶、显示触摸、保持唤醒、关闭设备屏幕、无窗口、无音频。
-- `services/remote/` 提供原生无界面服务层：
-  - `ScrcpyService`：scrcpy 路径解析、版本检测、预检、编码器检测、启动/停止、FPS 解析。
-  - `RemoteControlService`：按键、D-Pad、滑动、通知栏、旋转等 ADB 控制。
-  - `control_mapping.py`：keycode 和手势坐标计算。
-  - `scrcpy_args.py`：集中构建 scrcpy 参数。
-- Remote 保留 ADBLab 自有 PySide6 UI，不嵌入 guiscrcpy 的 Qt UI/launcher 栈。
-
-### 文件浏览器
-
-- 浏览设备文件系统，支持路径栏、后退/前进/上级导航、搜索过滤。
-- 拉取、推送、删除、重命名、新建文件/文件夹、复制/剪切/粘贴。
-- 文件操作失败时不会再显示成功文案或无条件刷新；粘贴按每个任务的实际结果反馈。
-- 文本和图片查看，脚本执行，APK 直接安装，文件属性查看。
-- chmod 权限弹窗与 root 模式。
-- `services/file_explorer.py` 是无 Qt 依赖的纯逻辑层，负责路径处理、shell quoting、`ls -la` 解析、权限模式和文件名安全校验。
-
-### 性能监控
-
-- 工具栏提供 `Performance` 入口，必须先选中设备；弹窗标题会带上当前设备名称。
-- `gui/dialogs/performance_launcher.py` 提供 MobilePerf 启动弹窗，支持获取当前前台包名、配置采样频率/时长/Monkey/dumpheap/异常关键字、启动/停止采集、打开结果目录和跳转 Perfetto。
-- MobilePerf 结果目录会追加设备名称，方便区分多设备保存文件。
-- MobilePerf 日志使用纯文本批量追加，保留工具原始输出，不再额外叠加 ADBLab 时间和等级前缀，避免长时间运行导致主界面卡顿。
-- `mobileperf/` 保持独立移植目录；ADBLab 通过 `services/mobileperf_runner.py` 生成临时配置并启动子进程，不直接修改 `mobileperf/config.conf`。
-- 打包后 MobilePerf 通过 `ADBLab.exe --mobileperf-worker` 进入采集子进程，不再依赖 `python -m mobileperf.android.startup`。
-- MobilePerf 子进程通过 `ADB_PATH` 使用 ADBLab 解析出的内置 ADB，并把日志写入用户可写目录，避免安装目录或 PyInstaller 临时目录写入失败。
-- 原 Perfetto 跳转已移动到 Performance 弹窗内的 `Open Perfetto` 按钮。
-
-### 弹窗与工具
-
-- 主窗口工具栏提供置顶按钮，状态保存到 `AppSettings["always_on_top"]`；Windows 运行时切换使用原生窗口置顶，不重建主界面。
-- 应用管理器：表格/网格视图、搜索过滤、批量操作、备份/恢复、权限管理、JSON 预设。
-- 实时 Logcat：等级和包名过滤、当前前台包获取、语法高亮及文本导出；输入包名后按 Enter 只显示该包日志，清空后按 Enter 恢复全部设备日志。
-- 截图查看器：多图导航、缩放、复制、另存为、打开目录、删除。
-- Monkey、Remote、MobilePerf 弹窗和面板响应全局主题、字体、图标刷新和深浅色切换。
-- 设置弹窗：主题、字体、窗口尺寸、面板宽度、保存目录、日志行数、持续扫描，以及兼容保留但
-  当前不驱动确认弹窗的危险操作开关。
-
----
-
-## 项目结构
-
-```text
-ADBLab/
-├── main.py                         # 程序入口，支持 GUI、--self-check、--mobileperf-worker
-├── requirements.txt                # 应用运行依赖
-├── requirements-build.txt          # 运行依赖 + PyInstaller
-├── requirements-dev.txt            # 构建依赖 + 测试、lint、类型检查工具
-├── pyproject.toml                  # black / pytest / coverage 配置，目标语法 py310
-├── ADBLab.spec                     # PyInstaller 打包配置
-├── README.md
-├── icon.ico
-├── mobileperf/                     # MobilePerf 移植内核，保持独立目录
-├── .github/workflows/
-│   ├── Build-exe.yaml              # 构建 exe 并发布 GitHub Release（发布后保留最新 5 个版本）
-│   └── Auto-Clean.yaml             # 手动只读 Retention Audit（不自动删除）
-│
-├── core/                           # 核心基础设施
-│   ├── exec.py                     # CommandRunner/ProcessRunner/ExecHandle 统一执行契约（ADR-0005）
-│   ├── adb_bridge.py               # 轻量 ADB 桥接与持久输入会话
-│   ├── log_service.py              # 线程安全日志服务，跨线程 flush 回到 owner thread
-│   ├── settings_manager.py         # 应用设置单例，JSON 原子写入（schema 版本化，ADR-0006）
-│   └── process_utils.py            # psutil 端口查找与进程树终止
-│
-├── controllers/                    # Controller 层，多个 mixin 组合成 ADBController
-│   ├── __init__.py
-│   ├── _base.py                    # model、signals、handler_map 分发
-│   ├── _device.py                  # 设备连接与设备信息
-│   ├── _app.py                     # 应用管理、Monkey、日志、Bugreport
-│   ├── _system.py                  # 系统命令、广播、Activity、输入法、模拟器
-│   ├── _media.py                   # 截图、录屏、性能基础项、电池
-│   ├── _input.py                   # 文本输入、点击、滑动、keyevent、settings
-│   └── _file.py                    # 文件、端口、content query
-│
-├── models/                         # Model 与 Worker 层
-│   ├── adb_model.py                # @async_command 与 ADBModelCore
-│   ├── adb_device.py               # 设备操作
-│   ├── adb_app.py                  # 应用操作
-│   ├── adb_testing.py              # Monkey、Bugreport、ANR、日志
-│   ├── adb_advanced.py             # 录屏、输入、性能基础项、logcat
-│   ├── adb_network.py              # 网络 ADB mixin
-│   ├── adb_system.py               # 系统 ADB mixin
-│   ├── app_manager_worker.py       # 应用管理器 worker
-│   ├── file_explorer_worker.py     # 文件浏览器 QThread worker
-│   ├── device_store.py             # YAML 设备信息持久化
-│   └── base/
-│       └── focus_detector.py       # 前台包名检测（CommandRunner/ProcessRunner 已迁 core/exec.py）
-│
-├── services/                       # 纯服务层（低 Qt 耦合，ADR-0004）
-│   ├── file_explorer.py            # 文件浏览器纯逻辑服务
-│   ├── mobileperf_runner.py        # MobilePerf 子进程适配层
-│   └── remote/                     # Remote / scrcpy 无界面服务层
-│
-├── adblab/                         # vNext 应用内核（新代码落位，ADR-0001/0003）
-│   ├── application/                # OperationManager、InstallBatch/DeviceBatch/ScreenRecord 用例
-│   └── presentation/               # QtTaskSupervisor 等 Qt 适配
-│
-├── gui/                            # PySide6 视图层
-│   ├── main_frame.py               # 主窗口组合根（工具栏/二级窗口/关闭控制器已拆出）
-│   ├── panels/                     # 右侧 Apps/System/Remote 面板与左侧设备/日志面板
-│   ├── dialogs/                    # About、App Manager、File Explorer、Logcat、Performance、Screenshot、Settings
-│   ├── styles/                     # 主题、QSS、字体、图标加载
-│   └── widgets/                    # 自定义控件
-│
-├── utils/
-│   ├── app_metadata.py             # 应用版本单一事实来源
-│   ├── resource_path.py            # 开发/打包资源路径解析
-│   ├── adb_resolver.py             # 内置 ADB 路径解析
-│   ├── adb_targets.py              # ADB 连接目标 ip:port 规范化与校验
-│   ├── archive.py                  # ZIP 安全解压工具
-│   ├── runtime_tools.py            # 打包后外部工具路径与运行时缓存
-│   └── user_data.py                # 用户可写配置/运行时目录
-│
-├── tests/
-│   ├── test_model_*.py              # 由 test_model_execution.py 拆出的主题回归（10 个文件）
-│   ├── test_remote_services.py
-│   └── test_file_explorer_service.py
-│
-├── resources/                      # 设置、历史、预览图、二维码、图标、Bugreport 转换器
-└── scrcpy-win64/                   # Windows 版 adb/scrcpy 运行时
-```
-
----
-
-## 架构说明
-
-### MVC + 信号/槽
-
-```text
-用户操作 Panel/Dialog
-  → 发出 Qt signal
-  → ADBController 或弹窗本地 worker 接收
-  → Model / Service 通过 CommandRunner 或 ProcessRunner 执行
-  → Worker / Model 发回结果
-  → Controller / Dialog 更新日志、状态和界面
-```
-
-核心原则：
-
-- UI 只负责交互、状态展示和信号连接。
-- 短命令统一走 `CommandRunner.run()`。
-- 主应用可控的长生命周期任务优先走 `ProcessRunner.start()` / `ProcessRunner.spawn()`；
-  MobilePerf 等独立执行边界见后文。
-- UI 层不能直接调用 `subprocess.run()`、`subprocess.Popen()` 或 `os.startfile()`。
-- Remote、File Explorer、Performance 的复杂逻辑都放入无 Qt 或低 Qt 耦合的服务层，便于单测和复用。
-
-### 线程模型
-
-- 主线程：Qt 事件循环和 UI 渲染。
-- 普通异步 ADB 命令：`@async_command` 包装成 QRunnable，交给 `QThreadPool`。
-- 弹窗级任务：App Manager、File Explorer、Performance 使用专用 QThread/worker。
-- 主应用可控长进程：Logcat、scrcpy 和 MobilePerf worker 等优先由 `ProcessRunner`
-  管理；MobilePerf 内核仍是独立 Popen/ADB 边界。
-- 主窗口关闭时会请求停止扫描、Remote tab 和 controller model，取消 Controller executor
-  中尚未运行的任务，并停止被追踪的长进程；全局 `QThreadPool` 中已运行 QRunnable
-  的统一等待/取消仍是已知边界缺口。
-- 日志：`LogService` 批量缓冲刷新，并通过 Qt 信号把跨线程 flush 调回 owner thread。
-
-### 当前服务拆分
-
-| 服务层 | 文件 | 说明 |
-|--------|------|------|
-| 命令执行 | `core/exec.py` | ADB 与短命令统一执行入口（CommandRunner/CommandResult），规范输出与 timeout |
-| 进程执行 | `core/exec.py` | 长生命周期进程统一管理（ProcessRunner，支持 stop、spawn、stop_all）与 ExecHandle 协议（ADR-0005） |
-| Remote | `services/remote/` | scrcpy 参数、预检、启动、FPS、按键与手势控制 |
-| File Explorer | `services/file_explorer.py` | shell quoting、路径、权限、文件列表解析 |
-| MobilePerf | `services/mobileperf_runner.py` + `mobileperf/` | 临时 config、子进程启动/停止、日志批量回传、结果目录定位 |
-| 设置 | `core/settings_manager.py` | 应用配置 JSON 原子写入和自动保存 |
-| 日志 | `core/log_service.py` | 线程安全日志缓冲与 UI 刷新 |
-| 运行时工具 | `utils/runtime_tools.py` / `utils/user_data.py` | 打包后工具路径、用户可写目录和运行时缓存 |
-| 安全解压 | `utils/archive.py` | 防止 ZIP 条目写出目标目录 |
-
----
-
-## 依赖
-
-依赖按运行、构建和开发三层维护：
-
-| 包 | 版本 | 所在文件 | 用途 |
-|----|------|----------|------|
-| PySide6 / Addons / Essentials / shiboken6 | 6.8.1.1 | `requirements.txt` | Qt 6 GUI 与 Qt 对象有效性检查 |
-| PyYAML | 6.0.2 | `requirements.txt` | YAML 解析 |
-| psutil | 7.2.2 | `requirements.txt` | 端口占用查询与进程树清理 |
-| PyInstaller | 6.22.2 | `requirements-build.txt` | 三平台制品构建 |
-| pytest / Ruff 等 | 见文件 | `requirements-dev.txt` | 测试、lint、覆盖率、类型检查与本地钩子 |
-
-系统侧依赖：
-
-- Windows 是主要支持目标；Windows 10/11 的精确兼容范围尚无仓库内验证矩阵。
-- ADB：已内置在 `scrcpy-win64/`。
-- scrcpy：已内置 Windows 版 `scrcpy.exe`。
-- aapt：用于本地 APK 解析，需要外部提供。
-- Java JRE：用于运行 `resources/chkbugreport-0.5-215.jar`。
-
----
-
-## 测试与验证
-
-当前测试目录覆盖：
-
-- `tests/test_model_*.py`（10 个主题文件，原 `test_model_execution.py` 拆分）：命令/进程执行层、ADB model、GUI 生命周期、MobilePerf 等行为。
-- `tests/test_remote_services.py`：Remote scrcpy 参数、预检、按键/手势映射。
-- `tests/test_file_explorer_service.py`：文件浏览器路径、quoting、`ls` 解析、权限模式。
-- MobilePerf/Performance 入口、置顶切换、Monkey/Remote 字体主题刷新等 UI 行为集中在 `tests/test_model_*.py` 中做轻量回归。
-
-日常改动先选择直接测试和受影响模块测试，再检查修改文件；不要默认运行 `compileall`、全量
-pytest 或 packaging self-check。例如：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q tests/test_affected_module.py -k "affected_behavior"
-.\.venv\Scripts\python.exe -m ruff check path/to/changed_file.py tests/test_affected_module.py
-git diff --check
-```
-
-完整测试、Pyright、packaging self-check 和 PyInstaller 的触发条件见
-[TESTING_GUIDE](docs/guides/TESTING_GUIDE.md#增量验证策略) 与
-[BUILD_AND_RUN](docs/guides/BUILD_AND_RUN.md#测试与检查)。
-
-打包验证：
-
-```powershell
-.\.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noconfirm --clean
-.\dist\ADBLab\ADBLab.exe --self-check packaging
-```
-
-`--self-check packaging` 会检查 PySide6、MobilePerf 子入口、图标/resources、Windows 内置
-adb/scrcpy 和用户可写目录。该命令不会启动主界面。
-
-文档或中文内容改动后，建议使用 UTF-8 读回确认，避免 Windows 终端编码显示误判：
-
-```bash
-python -c "from pathlib import Path; print(Path('README.md').read_text(encoding='utf-8')[:120])"
-```
-
----
-
-## CI/CD 与版本
-
-`utils/app_metadata.py` 是应用版本单一事实来源：
-
-```python
-APP_NAME = "ADBLab"
-APP_VERSION = "<major.minor.patch>"
-APP_RELEASE_TAG = f"v{APP_VERSION}"
-```
-
-该版本号用于：
-
-- About 弹窗版本显示。
-- Windows `AppUserModelID`。
-- GitHub Actions 构建产物名称。
-- GitHub Release tag 和 release title。
-
-`APP_VERSION` 仅在准备把 dev 代码推送到 main 时递增一次，并且不得复用历史版本；本地提交和
-dev 分支提交都不修改版本号。默认只递增补丁版本；主版本或次版本由明确的发布计划决定。
-发布时再从 `main` 构建或手动运行 `Build-exe.yaml`。
-
-GitHub Actions 构建流程：
-
-- Windows 安装开发工具后运行 Ruff、Pyright；pytest 不在编译发布工作流中执行。
-  macOS/Linux 运行源码模式 packaging self-check。
-- Windows 使用 onedir 产物并打包成 zip，避免 onefile 临时目录被 adb/scrcpy 长进程锁住。
-- PyInstaller 显式收集 `mobileperf` 子模块和资源。
-- Windows 产物上传前执行 `--self-check packaging`。
-- Release 只在 build job 成功后创建；现存同版本禁止覆盖，发布后自动保留最新 5 个版本，
-  删除更旧的 tag 及对应 Release。
-
----
-
-## 代码约定
-
-- 保持 PySide6 作为唯一应用 UI 栈，不把 PyQt5/PySide2 UI 代码引入主应用路径。
-- 主应用 ADB 短命令走 `CommandRunner.run()`，可控长进程优先走 `ProcessRunner`；MobilePerf 内核
-  仍保留独立 Popen/ADB 执行边界。
-- UI 文件不要拼接复杂 shell 命令；优先放到 service 层集中处理和单测。
-- 涉及中文 Windows 的 subprocess 文本输出时，使用 `encoding="utf-8", errors="ignore"`。
-- 弹窗生命周期要显式停止后台 worker 或长进程。
-- 打包后不能假设当前目录可写；配置和日志写入 `utils/user_data.py` 提供的用户目录，运行时工具
-  缓存由 `utils/runtime_tools.py` 写入平台缓存目录。
-- 解压外部 ZIP 必须使用 `utils/archive.py::safe_extract_zip()`，不要直接调用 `ZipFile.extractall()`。
-- Windows exe 内的长生命周期外部工具优先使用 onedir 资源路径；onefile 场景需先复制到稳定运行时缓存。
-- 所有弹窗应响应 `BaseStyles.theme_changed`。
-- 图标使用 `get_themed_icon("name.svg")`，不要直接使用原始 `QIcon`。
-- 应用版本只改 `utils/app_metadata.py`。
-- 仅在 dev 代码推送到 main 时递增一次 `APP_VERSION`（默认补丁版本）；本地与 dev 提交不修改版本号。
-- 新增功能优先补充对应服务层测试，而不是只测 UI。
+Copyright (c) 2026 Frankie Hu

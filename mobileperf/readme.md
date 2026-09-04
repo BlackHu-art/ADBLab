@@ -1,19 +1,18 @@
-# mobileperf
+# ADBLab MobilePerf 移植说明
 
-mobileperf is python PC 工具，可以收集Android性能数据: cpu 内存 流畅度fps logcat日志 流量 进程线程数 进程启动日志，mobileperf也支持原生monkey test
+本目录包含 Alibaba [mobileperf](https://github.com/alibaba/mobileperf) 的项目内移植版本，
+用于 Android CPU、内存、FPS、日志、流量、进程和 Monkey 等性能采集。许可文本见
+[`LICENSE`](LICENSE)。
 
-## 特性
+## 当前运行边界
 
-- 支持Android6.0-16，兼容性好
-- 无需root设备，无需集成SDK，非侵入式，使用成本低
-- 支持mac linux windows
-- 稳定性好，能连续运行72小时以上
-- 少量占用PC资源，消耗PC内存约12M左右
+- GUI 通过 `services/mobileperf_runner.py` 生成每次运行独立的临时配置并启动受控子进程。
+- 打包后，worker 复用主可执行文件的 `--mobileperf-worker --config <path>` 入口；源码运行时，
+  runner 使用当前 Python 解释器调用 `mobileperf.android.startup --config <path>`。
+- ADB 路径、结果目录、日志批量回传、停止和清理均由 ADBLab 适配层管理。
+- `config.conf` 只保留为内核默认配置样例；正常 GUI 流程不会原地修改它。
 
-## 使用方法
-
-- 安装python3.7 [python下载链接](https://www.python.org/downloads/)，加入到环境变量中，执行python --version，确保是python3
-- 安装adb，确保adb devices能找到设备
-- 修改配置文件，示例参考根目录下config.conf
-
-- 运行，mac、linux 在mobileperf工具根目录下执行sh run.sh，windows 双击run.bat，结束测试，等待设置测试时长到或按Ctrl+C
+本目录不再提供上游旧版 `run.bat`、`run.sh` 或 `setup.py` 入口。这些脚本绕过 ADBLab 的
+进程、配置和用户数据边界，不能用于验证当前应用行为。构建、运行和测试命令统一见
+[`docs/guides/BUILD_AND_RUN.md`](../docs/guides/BUILD_AND_RUN.md) 与
+[`docs/guides/TESTING_GUIDE.md`](../docs/guides/TESTING_GUIDE.md)。

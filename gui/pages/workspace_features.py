@@ -455,16 +455,27 @@ class WorkspaceFeatureHost(QWidget):
     ) -> None:
         self._selected_devices = self._normalized_devices(selected_devices)
         self._connected_devices = self._normalized_devices(connected_devices)
-        self._sync_device_combo()
         for key in self.registry.keys():
             page = self.registry.get(key)
             callback = getattr(page, "set_device_connected", None)
             if callable(callback):
                 callback(key.device_id in self._connected_devices)
+
+        resumed_pending = False
+        if self._pending_route is not None:
+            # 隐藏分区必须保留一次性 payload，交给首次前台激活或主窗口
+            # 的待恢复路由消费，避免设备快照更新在后台提前创建页面。
+            if self._active:
+                resumed_pending = self._resume_pending_route_if_possible()
+            if self._pending_route is not None:
+                self._refresh_pending_route_state()
+                return
+
         current_definition = self._definitions.get(self._current_feature)
         current_overview = self._overview_definitions.get(self._current_feature)
         if (
-            current_overview is not None
+            not resumed_pending
+            and current_overview is not None
             and current_overview.requires_device
             and current_overview.activate is not None
             and self._active_device_id
@@ -561,16 +572,7 @@ class WorkspaceFeatureHost(QWidget):
                     feature,
                     payload=payload,
                 )
-                self.no_device_page.set_feature_label(definition.label)
-                self.no_device_page.set_candidates_available(bool(candidates))
-                self.stack.setCurrentWidget(self.no_device_page)
-                self._sync_device_combo()
-                self.close_session_button.setVisible(False)
-                self.close_session_button.setEnabled(False)
-                self._sync_session_toolbar_visibility()
-                self.session_badge.setText("等待选择设备")
-                self.session_badge.setLevel(InfoLevel.INFOAMTION)
-                self.session_badge.setToolTip("请在会话设备列表中明确选择一台设备")
+                self._refresh_pending_route_state()
                 self.route_changed.emit(WorkspaceRoute(self.section_key, feature))
                 return True
             self._last_device_by_feature[feature] = device_id
@@ -699,14 +701,7 @@ class WorkspaceFeatureHost(QWidget):
                         self._active_device_explicit = False
             if not device_id:
                 self._pending_route = WorkspaceRoute(self.section_key, category)
-                self.no_device_page.set_feature_label(definition.label)
-                self.no_device_page.set_candidates_available(bool(candidates))
-                self.stack.setCurrentWidget(self.no_device_page)
-                self._sync_feature_controls(definition)
-                self._sync_device_combo()
-                self.session_badge.setText("等待选择设备")
-                self.session_badge.setLevel(InfoLevel.INFOAMTION)
-                self.session_badge.setToolTip("请在会话设备列表中明确选择一台设备")
+                self._refresh_pending_route_state()
                 self.route_changed.emit(WorkspaceRoute(self.section_key, category))
                 return True
             self._active_device_id = device_id
@@ -770,6 +765,10 @@ class WorkspaceFeatureHost(QWidget):
         if self._active:
             return
         self._active = True
+        if self._pending_route is not None:
+            if not self._resume_pending_route_if_possible():
+                self._refresh_pending_route_state()
+            return
         key = self.registry.current_key
         if key is None or self._current_feature == "overview":
             return
@@ -796,6 +795,7 @@ class WorkspaceFeatureHost(QWidget):
         device_id = str(self.device_combo.currentData() or "")
         if not device_id or device_id == self._active_device_id:
             return
+        pending = self._pending_route
         self._active_device_id = device_id
         self._active_device_explicit = True
         if self._current_feature in self._overview_definitions:
@@ -804,7 +804,16 @@ class WorkspaceFeatureHost(QWidget):
                 preferred_device=device_id,
             )
             return
-        self.open_feature(self._current_feature, preferred_device=device_id)
+        payload = (
+            pending.payload
+            if pending is not None and pending.feature == self._current_feature
+            else None
+        )
+        self.open_feature(
+            self._current_feature,
+            preferred_device=device_id,
+            payload=payload,
+        )
 
     def _sync_device_combo(self) -> None:
         definition = self._definitions.get(self._current_feature)
@@ -828,7 +837,7 @@ class WorkspaceFeatureHost(QWidget):
         self._synchronizing_controls = True
         blocker = QSignalBlocker(self.device_combo)
         self.device_combo.clear()
-        if not current and len(candidates) > 1:
+        if not current and candidates:
             self.device_combo.addItem("请选择一台设备", userData="")
         for device_id in candidates:
             label = device_id
@@ -846,9 +855,12 @@ class WorkspaceFeatureHost(QWidget):
         lock_reason = self._device_selection_locks.get(self._current_feature, "")
         self.device_label.setVisible(has_candidates)
         self.device_combo.setVisible(has_candidates)
-        self.device_combo.setEnabled(len(candidates) > 1 and not lock_reason)
+        can_choose = bool(candidates) and (not current or len(candidates) > 1)
+        self.device_combo.setEnabled(can_choose and not lock_reason)
         if lock_reason:
             tooltip = lock_reason
+        elif not current and candidates:
+            tooltip = "请选择当前功能使用的一台设备"
         elif len(candidates) <= 1:
             tooltip = "当前只有这一台会话设备"
         else:
@@ -994,6 +1006,52 @@ class WorkspaceFeatureHost(QWidget):
         if not self._selected_devices and len(self._connected_devices) == 1:
             return self._connected_devices[0]
         return ""
+
+    def _resume_pending_route_if_possible(self) -> bool:
+        """只在前台且存在唯一自动候选时恢复待打开路由。"""
+
+        route = self._pending_route
+        if route is None or not self._active:
+            return False
+        device_id = self._automatic_device_candidate()
+        if not device_id:
+            return False
+        return self.open_route(
+            WorkspaceRoute(
+                route.section,
+                route.feature,
+                device_id,
+                route.payload,
+            )
+        )
+
+    def _refresh_pending_route_state(self) -> None:
+        """按最新候选刷新等待页，不消费路由携带的一次性 payload。"""
+
+        route = self._pending_route
+        if route is None:
+            return
+        definition = self._definitions.get(route.feature)
+        overview = self._overview_definitions.get(route.feature)
+        current_definition = definition or overview
+        if current_definition is None:
+            return
+        self._current_feature = route.feature
+        candidates = self._device_candidates(route.feature)
+        self.no_device_page.set_feature_label(current_definition.label)
+        self.no_device_page.set_candidates_available(bool(candidates))
+        self.stack.setCurrentWidget(self.no_device_page)
+        self._sync_feature_controls(current_definition)
+        self._sync_device_combo()
+        self.close_session_button.setVisible(False)
+        self.close_session_button.setEnabled(False)
+        self.session_badge.setText("等待选择设备")
+        self.session_badge.setLevel(InfoLevel.INFOAMTION)
+        self.session_badge.setToolTip("请在会话设备列表中明确选择一台设备")
+        self.session_badge.setAccessibleDescription(
+            "请在会话设备列表中明确选择一台设备"
+        )
+        self._sync_session_toolbar_visibility()
 
     @staticmethod
     def _normalized_devices(devices: Iterable[str]) -> tuple[str, ...]:

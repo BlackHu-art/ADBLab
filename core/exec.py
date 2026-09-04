@@ -1,10 +1,8 @@
 """core 层统一执行契约与短命令执行入口（ADR-0005）。
 
 短命令走 :class:`CommandRunner`（同步 subprocess.run → :class:`CommandResult`），
-长进程走 :class:`~core.exec.ProcessRunner`（ADR-0005 Step B 迁入，在此之前由
-``models/base/process_runner.py`` 的兼容垫片转出）。ADB 可执行路径解析、Windows
-创建标志与 :class:`ExecHandle` 进程句柄协议均在此单一维护，core 不再反向依赖
-``models``。
+长进程走 :class:`~core.exec.ProcessRunner`。ADB 可执行路径解析、Windows 创建标志与
+:class:`ExecHandle` 进程句柄协议均在此单一维护，core 不反向依赖 ``models``。
 """
 
 from __future__ import annotations

@@ -85,7 +85,6 @@ class BasePanel(QWidget):
         coordinator = getattr(panel, "_responsive_coordinator", None)
         if coordinator is None:
             coordinator = ResponsiveCoordinator()
-            self._local_responsive_coordinator = coordinator
         self._responsive_coordinator = coordinator
         self._responsive_bindings_activated = False
 
@@ -98,13 +97,6 @@ class BasePanel(QWidget):
     @property
     def selected_devices(self):
         return self.panel.selected_devices
-
-    @property
-    def current_package(self):
-        """当前选中的包名（来自 AppPanel 的 program_edit）。"""
-        if hasattr(self.panel, "_apps_tab") and self.panel._apps_tab:
-            return self.panel._apps_tab.package_text
-        return ""
 
     @property
     def _font_sm(self):
@@ -201,21 +193,6 @@ class BasePanel(QWidget):
             return
         button.setEnabled(enabled)
         self._refresh_button_style(button)
-
-    def _row(self, *items, spacing=4):
-        """创建紧凑的水平控件行。
-
-        每个参数可以是控件或 ``(widget, stretch)``，用于统一重复面板行的布局规则。
-        """
-        row = QHBoxLayout()
-        row.setSpacing(spacing)
-        for item in items:
-            if isinstance(item, tuple):
-                widget, stretch = item
-            else:
-                widget, stretch = item, 0
-            row.addWidget(widget, stretch)
-        return row
 
     def _add_responsive_row(
         self,

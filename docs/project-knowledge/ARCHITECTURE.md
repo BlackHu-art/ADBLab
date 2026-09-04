@@ -4,7 +4,6 @@ last_verified: 2026-09-04
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
-  - ../archive/plans/IMPLEMENTATION_PLAN.md
   - ../architecture/adr/0001-incremental-vnext.md
 ---
 
@@ -42,7 +41,8 @@ flowchart LR
 - `_run_gui()` 设置 Windows AppUserModelID、创建 QApplication、初始化资源路径，并在任何设置
   读取之前创建 LogService 并调用 `set_error_sink` 注入设置层错误接收器，随后加载主题并显示
   `gui.main_frame.MainFrame`。
-- MobilePerf worker 复用同一可执行入口，但不创建 GUI。
+- MobilePerf worker 不创建 GUI：打包后复用主可执行文件的 worker 入口，源码运行时由 runner 使用
+  当前 Python 解释器调用 `mobileperf.android.startup` 模块。
 
 ### 2. 视图与交互层
 
@@ -54,15 +54,20 @@ flowchart LR
   `WorkspaceRoute` 一一对应；内容区不再显示模块 Tab 或模块下拉框。`WorkspaceAreaPage` 为三个
   业务宿主页提供紧凑页头和功能宿主，页头右侧统一承载会话状态与主题动作；Remote 不再占用
   顶层入口，屏幕镜像和按键与手势均归入设备组。
-- `gui/pages/workspace_features.py::WorkspaceFeatureHost` 在业务宿主页内承载路由目录、按需显示的
+- `MainFrame` 自有的语义导航历史同时记录独立物理页面和 Workspace 功能叶节点，不依赖物理
+  `QStackedWidget` 页面历史推断功能切换。缺少设备时显示的 Devices 选择页只是中转状态，不进入
+  返回栈；返回会恢复发起请求前的位置，完成选择则进入原目标路由。具体用户流程见
+  [BUSINESS_FLOW](BUSINESS_FLOW.md#1-启动导航与设备发现)。
+- `gui/pages/workspace_features.py::WorkspaceFeatureHost` 在业务宿主页内承载路由、按需显示的
   会话设备/关闭工具栏、无设备空态和异步关闭屏障；`WorkspaceRoute` 是首页快捷入口和主左栏功能叶节点
-  共用的深层路由。设备与控制注册文件管理及 Remote，应用与自动化注册应用管理和无需设备的截图
-  结果，系统与诊断注册实时 Logcat 和性能采集。深层功能页共用宿主滚动容器，当内容超出短屏时
+  共用的深层路由。完整路由目录与设备上下文规则见 [BUSINESS_FLOW](BUSINESS_FLOW.md#workspace-路由目录)。
+  深层功能页共用宿主滚动容器，当内容超出短屏时
   保留页面的完整布局并提供双向滚动；Performance 嵌入工作区后移除配置区内部滚动，避免出现
   两层可见滚动条。返回概览或空态后不保留隐藏页面的滚动范围。
 - 设备页复选项组成多设备批量操作目标；需要一台设备的深层功能和 Remote 使用宿主中独立的
   会话设备。候选列表包含全部在线设备并保留已有的离线会话；恰好一个批量目标或仅一台在线
   设备时可自动选定，多个批量目标或无批量目标且多台在线时必须显式选择，不能静默取第一台。
+  后台宿主只更新候选和等待态，不提前消费待打开路由；首次进入前台后才恢复唯一候选对应的会话。
 - `gui/features/base.py::FeatureSessionRegistry` 以 `(feature, device_id, generation)` 为稳定键懒
   创建页面。切换独立主页面只调用 `deactivate()` 暂停瞬态绘制，不销毁页面或中止仍需继续的
   后台任务；再次进入调用 `activate()` 恢复。后台页收到深层路由时先暂存目标，进入前台后通过
@@ -76,21 +81,8 @@ flowchart LR
   表单，并保留 QDialog 的 `exec/accept/reject/modal` 契约。`QFileDialog` 仍作为绑定当前页面 owner
   的系统原生文件/目录选择器；两者均不承担长期任务会话，不属于旧功能窗口回退。
 
-| 内嵌功能路由 | 所属主页面 | 设备要求 | 会话行为 |
-| --- | --- | --- | --- |
-| `devices/overview` | DeviceManager 概览 | 共享选择上下文 | 启动时创建 |
-| `devices/files` | `FileExplorerPage` | 固定一台设备 | 按设备懒创建；保留路径/预览，离线禁用新操作 |
-| `devices/remote` | RemotePanel 屏幕镜像 | 固定一台设备 | 使用独立 Remote 会话设备；保留既有面板生命周期，不经 FeatureSessionRegistry |
-| `devices/remote-control` | RemotePanel 按键与手势 | 固定一台设备 | 与屏幕镜像共用 RemotePanel 和会话设备，不经 FeatureSessionRegistry |
-| `apps/overview` | AppPanel 快捷操作 | 共享选择上下文 | 启动时创建 |
-| `apps/manager` | `AppManagerPage`（内含 `AppDetailsPage`） | 固定一台设备 | 按设备懒创建；列表、筛选和详情留在同一页面 |
-| `apps/media` | `ScreenshotPage` | 不需要设备 | 使用空设备键；截图批次可在后台追加，不抢当前导航 |
-| `system/overview` | SystemPanel 工具 | 共享选择上下文 | 启动时创建 |
-| `system/logcat` | `LiveLogcatPage` | 固定一台设备 | 切页继续消费流；关闭会话才停止资源 |
-| `system/performance` | `PerformancePage` | 固定一台设备 | 切页允许采集继续；关闭会话进入异步停止屏障 |
-
-Settings 中的 `AboutPanel` 不属于内嵌功能路由；它随 SettingsPage 创建并销毁。未知 section/feature
-会在切换主页面前被拒绝，不能意外改变当前页面。
+Settings 中的 `AboutPanel` 不属于 Workspace 路由；它随 SettingsPage 创建并销毁。未知
+section/feature 会在切换主页面前被拒绝，不能意外改变当前页面。
 
 - `MainFrame` 保持无边框外观，但通过 `FramelessResizeController` 在四边和四角建立八个透明
   热区，并将按压交给 `QWindow.startSystemResize()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
@@ -115,7 +107,7 @@ Settings 中的 `AboutPanel` 不属于内嵌功能路由；它随 SettingsPage �
 
 ### 4. Model 与 Service 层
 
-- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/push/backup 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。Controller 关闭时先永久关闭四个 model 的新任务准入；已经排队但尚未执行的方法体会返回取消结果，并保留原有 metadata/perf 信封。
+- `models/adb_model.py::async_command` 把方法放入 QThreadPool——普通命令走全局池，`@async_command(long_running=True)`（install/bugreport/pull/push 等长任务）走每模型的 `long_pool`，避免长任务占满全局池；结果通过 `command_finished(method, result)` 回到 Controller。Controller 关闭时先永久关闭四个 model 的新任务准入；已经排队但尚未执行的方法体会返回取消结果，并保留原有 metadata/perf 信封。
   operation 相关的 `_operation_id/_operation_owner_token/_operation_generation_token` 等关键字参数
   只用于构造 `OperationMetadata` 信封（`adblab/application/envelope.py`），不会转发给底层 model 方法。
 - `models/adb_device.py`、`adb_app.py`、`adb_advanced.py`、`adb_testing.py` 提供主要 ADB 能力；`adb_network.py` 和 `adb_system.py` 作为 mixin 复用。
@@ -160,7 +152,10 @@ Settings 中的 `AboutPanel` 不属于内嵌功能路由；它随 SettingsPage �
   Apps、System、Remote 原有的 `AdaptiveCategoryStack` 仅作为面板内部内容栈，其 `Pivot`/`ComboBox`
   在主页面组装时隐藏，并由主左栏的 `WorkspaceRoute` 驱动。主窗口宽度达到 1120 逻辑像素时常驻
   220 像素左栏，低于该阈值时使用不挤压内容的覆盖菜单；任一时刻只展开当前分组，短窗口会把当前
-  叶节点滚入视口。导航宽度动画结束后再触发一次响应式重排，避免内容按动画中间宽度停在单列回退。
+  叶节点滚入视口。窄栏分组 Flyout 互斥；切页、打开覆盖菜单、窗口缩放和返回前都会关闭残留 Flyout。
+  已打开的 MENU 跨过 1120 断点时先归位到折叠态，再进入无动画的常驻 EXPAND，避免覆盖层父级或
+  模式状态滞留。导航宽度和树节点展开动画在尾沿提交最终状态：停止未完成的树动画，以节点
+  `sizeHint()` 固化逻辑展开态对应的几何，再触发响应式重排，避免空白间隙、裁切或重叠。
 - `gui/widgets/responsive_coordinator.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
   用一次度量生成布局计划（内部为 `ReflowTarget`/`_plan_history`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
   的收敛循环（`MAX_APPLY_ROUNDS = 3`），窗口尺寸变化经 40 毫秒防抖（`RESIZE_DEBOUNCE_MS = 40`）
@@ -215,7 +210,7 @@ flowchart TD
 | --- | --- | --- |
 | Qt 主线程 | UI、信号槽、定时器、日志呈现 | QApplication 事件循环 |
 | 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | Controller 先关闭 model 终态栅栏；未开始的 QRunnable 在执行入口取消，已运行任务仍不统一等待 |
-| 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/backup）| 与全局池隔离并受同一 model 终态栅栏约束；已运行任务仍按各命令超时收口 |
+| 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/push）| 与全局池隔离并受同一 model 终态栅栏约束；已运行任务仍按各命令超时收口 |
 | `_ScanThread` | 设备列表轮询 | MainFrame 显式停止/等待 |
 | 功能页 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | 会话关闭前向 TaskSupervisor 登记；页面 `request_dispose()` 发出停止请求，资源归零后才能从 registry 移除 |
 | 应用自有 cleanup QThreadPool | Live Logcat 等资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor 并注入页面；不使用 global pool |
@@ -262,14 +257,6 @@ flowchart TD
 - GUI 只消费 Controller/服务端口和 Qt signals，不从后台线程直接更新控件。历史迁移阶段和 Gate
   结论只在 ADR 与 [archive](../archive/README.md) 中追溯。
 
-## 已知架构限制
+## 活动风险
 
-- Controller 仍保留 `_batch_starts`、安装 owner/generation 和 Monkey 停止映射等编排状态；不能
-  假设所有任务都已成为无共享状态的 Operation。
-- MobilePerf 内核仍使用独立 Popen/ADB 边界；已运行的 QRunnable/Executor 长命令也未统一支持
-  协作取消和有限等待。
-- 应用关闭会并发广播 Remote 与 Controller；底层持久输入 Shell 与全局进程兜底的真实设备顺序
-  仍需验证。
-- 应用没有鉴权或权限分层。高影响操作依赖目标校验、失败传播和日志，而不是二次确认。
-- 非 Windows 构建、Android 厂商/版本矩阵和真实设备长任务缺少自动化功能验证；打包 CI 当前不
-  运行 pytest。完整活动风险见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。
+未闭环的架构限制和验证缺口统一维护在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)，本页不重复风险清单。

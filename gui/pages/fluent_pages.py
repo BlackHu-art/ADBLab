@@ -550,14 +550,25 @@ class WorkspaceAreaPage(QWidget):
             return False
         if self._feature_host is not None:
             if not self._active:
-                self._queued_route = route
+                queued_route = route
+                pending_route = self._feature_host.pending_route
+                if (
+                    route.payload is None
+                    and pending_route is not None
+                    and self._stable_route(pending_route) == self._stable_route(route)
+                ):
+                    # 历史返回只携带稳定位置；同一路由仍在等待设备时，不能用
+                    # 这个无 payload 的恢复请求覆盖尚未实际消费的一次性参数。
+                    queued_route = pending_route
+                self._queued_route = queued_route
                 self._set_route_presentation(route)
                 return True
             self._queued_route = None
             return self._feature_host.open_route(route)
-        self._current_route = route
+        stable_route = self._stable_route(route)
+        self._current_route = stable_route
         self.header.set_subtitle(self._base_subtitle)
-        self.routeChanged.emit(route)
+        self.routeChanged.emit(stable_route)
         return True
 
     def activate(self) -> None:
@@ -593,13 +604,14 @@ class WorkspaceAreaPage(QWidget):
             self._feature_host.set_device_context(selected_devices, connected_devices)
 
     def _on_feature_route_changed(self, route: WorkspaceRoute) -> None:
-        self._set_route_presentation(route)
-        self.routeChanged.emit(route)
+        stable_route = self._stable_route(route)
+        self._set_route_presentation(stable_route)
+        self.routeChanged.emit(stable_route)
 
     def _set_route_presentation(self, route: WorkspaceRoute) -> None:
         """同步已选路由及页头，不触发功能会话生命周期。"""
 
-        self._current_route = route
+        self._current_route = self._stable_route(route)
         host = self._feature_host
         if route.feature == "overview":
             title = self._base_title
@@ -624,6 +636,12 @@ class WorkspaceAreaPage(QWidget):
                 subtitle = self._base_title
         self.header.set_title(title)
         self.header.set_subtitle(subtitle)
+
+    @staticmethod
+    def _stable_route(route: WorkspaceRoute) -> WorkspaceRoute:
+        """移除一次性激活参数，只保留可恢复的工作区位置。"""
+
+        return WorkspaceRoute(route.section, route.feature, route.device_id)
 
 class HomePage(ScrollArea):
     """按参考 Gallery 首页组织的 ADBLab 入口页。"""

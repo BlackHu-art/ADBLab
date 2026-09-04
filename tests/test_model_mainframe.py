@@ -555,8 +555,16 @@ def test_main_frame_workspace_route_is_forwarded_without_top_level_window():
     page = Mock()
     page.supports_route.return_value = True
     events = []
-    page.open_route.side_effect = lambda route: events.append(("open", route)) or True
-    switch_to = Mock(side_effect=lambda target: events.append(("switch", target)))
+
+    def open_route(route):
+        page.current_route = route
+        events.append(("open", route))
+        return True
+
+    page.open_route.side_effect = open_route
+    switch_to = Mock(
+        side_effect=lambda target, **_kwargs: events.append(("switch", target))
+    )
     frame = SimpleNamespace(
         _pending_workspace_route=WorkspaceRoute("devices", "files"),
         _workspace_pages={"system": page},
@@ -578,7 +586,11 @@ def test_main_frame_workspace_route_is_forwarded_without_top_level_window():
         "device-1",
         {"package_name": "com.example.app"},
     )
-    switch_to.assert_called_once_with(page)
+    switch_to.assert_called_once_with(
+        page,
+        _record_history=False,
+        _target_location=WorkspaceRoute("system", "performance", "device-1"),
+    )
     page.open_route.assert_called_once_with(route)
     assert events == [("open", route), ("switch", page)]
     assert frame._pending_workspace_route is None
@@ -629,7 +641,6 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
     frame = SimpleNamespace()
     frame._always_on_top = False
     frame._set_always_on_top_native = Mock(return_value=False)
-    frame._apply_window_flags = Mock()
     frame.setWindowFlags = Mock()
     frame.show = Mock()
     pin_card = Mock()
@@ -643,7 +654,6 @@ def test_main_frame_always_on_top_updates_state_without_recreating_window_when_n
 
     assert frame._always_on_top is True
     frame._set_always_on_top_native.assert_called_once_with(True)
-    frame._apply_window_flags.assert_not_called()
     frame.setWindowFlags.assert_not_called()
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
@@ -655,7 +665,6 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     frame = SimpleNamespace()
     frame._always_on_top = False
     frame._set_always_on_top_native = Mock(return_value=True)
-    frame._apply_window_flags = Mock()
     frame.show = Mock()
     pin_card = Mock()
     pin_card.isChecked.return_value = False
@@ -667,7 +676,6 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
         MainFrame.set_always_on_top(frame, True)
 
     frame._set_always_on_top_native.assert_called_once_with(True)
-    frame._apply_window_flags.assert_not_called()
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
     pin_card.setChecked.assert_called_once_with(True)

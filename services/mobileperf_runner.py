@@ -223,15 +223,10 @@ class MobilePerfRunner:
         self._config_dir: tempfile.TemporaryDirectory[str] | None = None
         self._config_path: str = ""
         self._stop_path: str = ""
-        self._log_thread: threading.Thread | None = None
-        self._diagnostic_thread: threading.Thread | None = None
         self._diagnostic_lock = threading.Lock()
         self._state_lock = threading.RLock()
         self._generation = 0
         self._active_context: _MobilePerfRunContext | None = None
-        self._on_log: Callable[[str], None] | None = None
-        self._on_finished: Callable[[], None] | None = None
-        self._finished_notified = False
         self._last_config: MobilePerfRunConfig | None = None
         self._last_exit_code: int | None = None
         self._baseline_package_root = ""
@@ -275,9 +270,6 @@ class MobilePerfRunner:
             self._last_config = config
             self._last_exit_code = None
             self._capture_result_baseline(config)
-            self._on_log = on_log
-            self._on_finished = on_finished
-            self._finished_notified = False
             config_dir = tempfile.TemporaryDirectory(prefix="adblab_mobileperf_")
             self._config_dir = config_dir
             try:
@@ -354,8 +346,6 @@ class MobilePerfRunner:
                     name=f"adblab-mobileperf-diagnostic-{generation}",
                     daemon=True,
                 )
-            self._log_thread = context.log_thread
-            self._diagnostic_thread = context.diagnostic_thread
             context.log_thread.start()
             if context.diagnostic_thread is not None:
                 context.diagnostic_thread.start()
@@ -394,13 +384,6 @@ class MobilePerfRunner:
         self._join_context_readers(context, timeout=1.0)
         if context is not None:
             self._maybe_notify_finished(context)
-        with self._state_lock:
-            if context is None or self._active_context is context:
-                self._log_thread = None
-                self._diagnostic_thread = None
-                self._on_log = None
-                self._on_finished = None
-                self._finished_notified = bool(context is not None and context.finished_notified)
         if context is None:
             self._cleanup_config_dir()
         self._safe_write_diagnostic(
@@ -668,11 +651,6 @@ class MobilePerfRunner:
                 self._last_exit_code = exit_code
                 self._proc = None
                 self._active_context = None
-                self._log_thread = None
-                self._diagnostic_thread = None
-                self._on_log = None
-                self._on_finished = None
-                self._finished_notified = True
         if notify and context.on_finished:
             try:
                 context.on_finished()

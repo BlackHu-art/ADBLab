@@ -14,7 +14,7 @@ from unittest.mock import patch
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -92,6 +92,7 @@ def run_probe() -> int:
     stack = QStackedWidget(frame)
     frame.setCentralWidget(stack)
     registry = FeatureSessionRegistry(frame)
+    registry.session_removed.connect(lambda _key, page: stack.removeWidget(page))
     task_supervisor = QtTaskSupervisor()
     frame.show()
 
@@ -100,6 +101,7 @@ def run_probe() -> int:
             return
         state["error"] = message
         state["phase"] = "failed"
+        watchdog.stop()
         frame._close_ready = True
         frame.close()
         QTimer.singleShot(0, app.quit)
@@ -185,6 +187,7 @@ def run_probe() -> int:
                 fail("application exit path occurred before deliberate close")
                 return
             state["phase"] = "deliberate"
+            watchdog.stop()
             frame._close_ready = True
             frame.close()
             return
@@ -216,16 +219,27 @@ def run_probe() -> int:
             page._start()
         QTimer.singleShot(1, wait_for_traffic)
 
-    QTimer.singleShot(0, start_cycle)
-    QTimer.singleShot(
-        8000,
+    watchdog = QTimer(frame)
+    watchdog.setSingleShot(True)
+    watchdog.timeout.connect(
         lambda: (
             fail("global lifecycle timeout")
             if state["phase"] not in {"deliberate", "failed"}
             else None
-        ),
+        )
     )
+    QTimer.singleShot(0, start_cycle)
+    watchdog.start(8000)
     app.exec()
+    if not task_supervisor._pool.waitForDone(1000):
+        state["error"] = state["error"] or "supervisor thread pool did not stop"
+    current.clear()
+    frame.deleteLater()
+    task_supervisor._pool.deleteLater()
+    task_supervisor.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     print(json.dumps(state, sort_keys=True))
     passed = (
         state["error"] is None

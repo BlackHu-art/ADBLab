@@ -115,7 +115,6 @@ def _build_connect_device_manager():
     panel._font_mono = QFont()
     panel._font_base = QFont()
     panel._user_selected_ip = False
-    panel._current_ip = ""
     panel.selected_devices = []
     manager = DeviceManager(panel)
     with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):
@@ -209,22 +208,6 @@ def test_base_panel_text_factories_apply_panel_fonts():
     assert label.property("fontRole") == "ui"
     assert status.objectName() == "statusLabel"
     assert checkbox.property("fontRole") == "ui"
-
-
-def test_base_panel_row_helper_adds_weighted_widgets():
-    _app = QApplication.instance() or QApplication([])
-    panel = Mock()
-    panel._font_sm = QFont()
-    base = BasePanel(panel)
-    left = QPushButton("Left")
-    right = QPushButton("Right")
-
-    row = base._row((left, 2), right, spacing=7)
-
-    assert row.spacing() == 7
-    assert row.count() == 2
-    assert row.stretch(0) == 2
-    assert row.stretch(1) == 0
 
 
 def test_device_manager_skips_unchanged_device_combo_refresh():
@@ -454,6 +437,8 @@ def test_remote_start_stop_buttons_follow_running_state():
     remote = SimpleNamespace(
         btn_start=PrimaryPushButton(owner),
         btn_stop=PrimaryPushButton(owner),
+        _SESSION_IDLE=RemotePanel._SESSION_IDLE,
+        workspace_target_lock_changed=Mock(),
     )
     remote._refresh_button_style = lambda button: BasePanel._refresh_button_style(remote, button)
     remote._set_button_enabled = lambda button, enabled: BasePanel._set_button_enabled(
@@ -474,6 +459,11 @@ def test_remote_start_stop_buttons_follow_running_state():
 
         assert remote.btn_start.isEnabled() is True
         assert remote.btn_stop.isEnabled() is False
+        assert remote.workspace_target_lock_changed.emit.call_args_list == [
+            call(False),
+            call(True),
+            call(False),
+        ]
     finally:
         owner.close()
 

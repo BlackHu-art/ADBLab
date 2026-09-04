@@ -557,33 +557,6 @@ def prepare_responsive_content(root: QWidget) -> None:
         label.setWordWrap(True)
 
 
-def responsive_column_count(
-    width: int,
-    *,
-    compact_width: int = 420,
-    wide_width: int = 560,
-    compact_columns: int = 1,
-    medium_columns: int = 2,
-    wide_columns: int = 4,
-    font_point_size: float | None = None,
-) -> int:
-    """根据逻辑像素宽度和界面字号返回当前布局列数。"""
-
-    width = max(0, int(width))
-    if font_point_size is not None:
-        try:
-            extra_width = max(0.0, float(font_point_size) - 12.0) * 10.0
-        except (TypeError, ValueError, OverflowError):
-            extra_width = 0.0
-        compact_width += round(extra_width)
-        wide_width += round(extra_width)
-    if width < compact_width:
-        return max(1, int(compact_columns))
-    if width < wide_width:
-        return max(1, int(medium_columns))
-    return max(1, int(wide_columns))
-
-
 def reflow_widgets(
     layout: QGridLayout,
     widgets: Iterable[QWidget],

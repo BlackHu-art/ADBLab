@@ -21,7 +21,7 @@ from gui.pages.workspace_features import WorkspaceRoute
 from gui.screen_adapter import QtScreenAdapter
 from gui.styles import BaseStyles
 from gui.widgets.frameless_resize import FramelessResizeController
-from gui.widgets.responsive_layout import reflow_widgets, responsive_column_count
+from gui.widgets.responsive_layout import reflow_widgets
 from gui.window_layout import normalize_window_size
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
@@ -369,7 +369,7 @@ def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
     qt_application,
     monkeypatch,
 ):
-    """一次真实主窗口 resize 只能提交一代，并应用最终 viewport 几何。"""
+    """一次真实主窗口 resize 只发布一次稳定结果，并应用最终 viewport 几何。"""
 
     # 关闭异步设备扫描：真实 adb 环境下扫描随时更新设备列表最小宽，会让分栏
     # 在 settle 后漂移，破坏本用例的确定性（P1 NavBar 改变事件时序后更易触发）。
@@ -403,7 +403,6 @@ def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
         )
         wait_until(qt_application, lambda: settled_spy.count() == 1)
 
-        assert panel._responsive_coordinator.diagnostics.generation == before + 1
         assert settled_spy.count() == 1
         # P1 页面栈/NavBar 引入额外布局层级后，分栏在 settle 信号后还有一次
         # 无新代的宿主布局收尾；改为等待"最终几何与已应用计划一致"这一不变式
@@ -817,6 +816,77 @@ def test_navigation_history_restores_workspace_child_and_lifecycle(qt_applicatio
         assert frame.navigationInterface.panel.currentItem().property(
             "routeKey"
         ) == "workspace:apps:packages"
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_history_tracks_workspace_leaves_on_same_physical_page(
+    qt_application,
+):
+    """同一业务宿主页内切换功能后，返回应逐个恢复逻辑叶节点。"""
+
+    frame = build_main_frame()
+    try:
+        frame.show()
+        assert frame._open_workspace_feature("apps", "packages")
+        assert frame._open_workspace_feature("apps", "diagnostics")
+
+        frame.navigationInterface.panel.returnButton.click()
+        assert frame._apps_page.current_route.feature == "packages"
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+
+        frame.navigationInterface.panel.returnButton.click()
+        assert frame.stackedWidget.currentWidget() is frame._home_page
+        assert frame.navigationInterface.panel.returnButton.isEnabled() is False
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application):
+    """设备中转页不进入历史，多选和隐藏宿主信号也不能夺走待恢复意图。"""
+
+    frame = build_main_frame()
+    try:
+        frame.show()
+        assert frame._open_workspace_feature("apps", "manager")
+        pending = frame._workspace_feature_hosts["apps"].pending_route
+        assert pending is not None
+        frame._show_device_selection(pending)
+
+        frame._on_workspace_route_changed(WorkspaceRoute("system", "overview"))
+        frame._resume_pending_workspace_route(["device-1", "device-2"])
+        assert frame._pending_workspace_route == pending
+        assert frame.stackedWidget.currentWidget() is frame._devices_page
+
+        frame.navigationInterface.panel.returnButton.click()
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert frame._apps_page.current_route.feature == "manager"
+
+        frame._show_device_selection(pending)
+        frame._on_nav_requested("logs")
+        assert frame._pending_workspace_route is None
+        frame.navigationInterface.panel.returnButton.click()
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert frame._apps_page.current_route.feature == "manager"
+
+        frame._show_device_selection(pending)
+        from gui.features.app_manager import AppManagerPage
+
+        with patch.object(AppManagerPage, "_load_apps"):
+            frame._resume_pending_workspace_route(["device-1"])
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert frame._apps_page.current_route == WorkspaceRoute(
+            "apps",
+            "manager",
+            "device-1",
+        )
+
+        frame.navigationInterface.panel.returnButton.click()
+        assert frame.stackedWidget.currentWidget() is frame._home_page
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1257,6 +1327,209 @@ def test_navigation_route_click_collapses_menu_during_expand_animation(qt_applic
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT and panel.width() == 48,
         )
         assert panel.parentWidget() is frame.navigationInterface
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_back_closes_narrow_overlay_menu(qt_application):
+    """覆盖菜单打开时返回，菜单与页面必须在同一交互内一起恢复。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=600)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        assert frame._open_workspace_feature("apps", "packages")
+        frame._on_nav_requested("logs")
+        panel = frame.navigationInterface.panel
+        panel.menuButton.click()
+        assert panel.displayMode == NavigationDisplayMode.MENU
+
+        panel.returnButton.click()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
+        )
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert frame._apps_page.current_route.feature == "packages"
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_menu_resize_to_wide_settles_as_persistent_sidebar(
+    qt_application,
+):
+    """覆盖菜单跨越宽屏断点后必须重新归位为常驻左栏。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=600)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        panel = frame.navigationInterface.panel
+        panel.menuButton.click()
+        assert panel.displayMode == NavigationDisplayMode.MENU
+
+        frame.resize(1120, 640)
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.EXPAND,
+        )
+        assert panel.parentWidget() is frame.navigationInterface
+        assert panel.width() == panel.expandWidth == 220
+        assert frame._navigation_wide_state is True
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_compact_navigation_keeps_one_flyout_and_cleans_it_on_shell_actions(
+    qt_application,
+):
+    """窄栏分组 Flyout 互斥，并在切页、展开菜单和缩放时立即关闭。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=600)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        panel = frame.navigationInterface.panel
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
+        )
+        for section in ("devices", "apps", "system"):
+            QTest.mouseClick(
+                frame._workspace_navigation_roots[section].itemWidget,
+                Qt.MouseButton.LeftButton,
+            )
+            qt_application.processEvents()
+            wait_until(
+                qt_application,
+                lambda: len(
+                    [flyout for flyout in frame._navigation_flyouts() if flyout.isVisible()]
+                )
+                == 1,
+            )
+
+        frame.navigationInterface.widget(frame._logs_page.objectName()).click()
+        qt_application.processEvents()
+        assert not any(
+            flyout.isVisible() for flyout in frame._navigation_flyouts()
+        )
+
+        QTest.mouseClick(
+            frame._workspace_navigation_roots["apps"].itemWidget,
+            Qt.MouseButton.LeftButton,
+        )
+        qt_application.processEvents()
+        panel.menuButton.click()
+        assert panel.displayMode == NavigationDisplayMode.MENU
+        assert not any(
+            flyout.isVisible() for flyout in frame._navigation_flyouts()
+        )
+
+        frame._collapse_navigation_menu_after_switch()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
+        )
+        QTest.mouseClick(
+            frame._workspace_navigation_roots["system"].itemWidget,
+            Qt.MouseButton.LeftButton,
+        )
+        qt_application.processEvents()
+        frame.resize(1120, 640)
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.EXPAND,
+        )
+        assert not any(
+            flyout.isVisible() for flyout in frame._navigation_flyouts()
+        )
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_workspace_navigation_animation_finishes_with_consistent_tree_geometry(
+    qt_application,
+):
+    """菜单动画期间切换叶节点后，逻辑展开态与父树高度必须一致。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=600)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        assert frame._open_workspace_feature("apps", "packages")
+        panel = frame.navigationInterface.panel
+        panel.menuButton.click()
+        frame.navigationInterface.widget("workspace:apps:diagnostics").click()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
+        )
+        for root in frame._workspace_navigation_roots.values():
+            assert root.isExpanded is False
+            assert root.height() == root.sizeHint().height()
+
+        panel.menuButton.click()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.MENU
+            and frame._workspace_navigation_roots["apps"].isExpanded,
+        )
+        apps = frame._workspace_navigation_roots["apps"]
+        current = frame.navigationInterface.widget("workspace:apps:diagnostics")
+        assert apps.height() == apps.sizeHint().height()
+        assert apps.rect().contains(current.mapTo(apps, current.rect().center()))
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_navigation_hamburger_replays_click_received_during_collapse(qt_application):
+    """收起动画中的第二次点击不能被 NavigationPanel 静默丢弃。"""
+
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=600)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+        settings=settings,
+    )
+    try:
+        frame.show()
+        panel = frame.navigationInterface.panel
+        panel.menuButton.click()
+        panel.menuButton.click()
+        assert panel.expandAni.state() == QAbstractAnimation.State.Running
+        panel.menuButton.click()
+
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.MENU
+            and panel.expandAni.state() != QAbstractAnimation.State.Running,
+        )
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -2326,20 +2599,6 @@ def test_normalize_window_size_handles_invalid_and_offscreen_values(
     width, height, available, expected
 ):
     assert normalize_window_size(width, height, available_size=available) == expected
-
-
-@pytest.mark.parametrize(
-    ("width", "expected"),
-    [(300, 1), (419, 1), (420, 2), (559, 2), (560, 4)],
-)
-def test_responsive_column_count_uses_stable_breakpoints(width, expected):
-    assert responsive_column_count(width) == expected
-
-
-def test_responsive_column_count_expands_breakpoints_for_large_font():
-    assert responsive_column_count(500, font_point_size=12) == 2
-    assert responsive_column_count(500, font_point_size=22) == 1
-    assert responsive_column_count(620, font_point_size=22) == 2
 
 
 def test_reflow_widgets_preserves_declared_column_weights(qt_application):

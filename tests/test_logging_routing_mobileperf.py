@@ -69,11 +69,8 @@ def test_main_frame_local_status_messages_use_log_service():
     frame.log_panel._append_log.assert_not_called()
 
 
-def test_main_frame_actions_emit_structured_debug():
-    frame = SimpleNamespace(
-        log_service=Mock(),
-        close=Mock(),
-    )
+def test_main_frame_theme_action_emits_structured_debug():
+    frame = SimpleNamespace(log_service=Mock())
 
     with (
         patch("gui.main_frame_actions.BaseStyles.current_theme", return_value="Light"),
@@ -81,17 +78,14 @@ def test_main_frame_actions_emit_structured_debug():
     ):
         actions = MainFrameActions(frame)
         actions.toggle_theme()
-    actions.request_application_close()
 
     assert [call.args for call in frame.log_service.log.call_args_list] == [
         (
             "DEBUG",
             "ui.theme action=toggle current_theme=Light phase=requested",
         ),
-        ("DEBUG", "ui.window action=close phase=requested"),
     ]
     toggle_theme.assert_called_once_with()
-    frame.close.assert_called_once_with()
 
 
 def test_remote_diagnostic_redacts_active_device_and_limits_length():

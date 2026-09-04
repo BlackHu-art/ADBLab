@@ -15,6 +15,4 @@
 | --- | --- | --- |
 | 实施账本 | [Phase 0](ledgers/PHASE0_LEDGER.md)、[Phase 1](ledgers/PHASE1_LEDGER.md) | 早期安全与 Operation 契约实施记录 |
 | 实施账本 | [Screenshot Gate](ledgers/PHASE2_GATE_A_LEDGER.md)、[LiveLogcat Gate](ledgers/PHASE2_GATE_B_LEDGER.md) | 当时的组件与生命周期验证；页面形态后来已变化 |
-| 历史计划 | [vNext IMPLEMENTATION_PLAN](plans/IMPLEMENTATION_PLAN.md) | 部分实施后被后续 ADR 和当前架构取代，不表示所有原计划均已完成 |
-| 评审 | [Agent Skills Review](reviews/AGENT_SKILLS_REVIEW_Q1_2026-07-25.md) | 未落地的阶段性调研，仅供追溯，不是当前方案 |
 | 卫生检查 | [2026-08-18](hygiene/2026-08-18.md) | 当时的文档结构快照 |
