@@ -1,4 +1,4 @@
-"""提供截图查看器对话框的导航、缩放与信息显示控制器。"""
+"""提供截图页面的导航、缩放与信息显示控制器。"""
 
 import os
 from datetime import datetime
@@ -53,7 +53,7 @@ def _load_pixmap(path: str, *, kind: str, max_size: QSize | None = None) -> QPix
 
 
 class ScreenshotViewerNav:
-    """组合进 ScreenshotViewer 的导航/缩放控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 ScreenshotPage 的导航与缩放控制器。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -64,6 +64,7 @@ class ScreenshotViewerNav:
         return ""
 
     def _navigate_to(self, index: int):
+        self._frame._reset_delete_confirmation()
         if not self._frame._image_paths:
             self._show_placeholder("No screenshot available")
             return

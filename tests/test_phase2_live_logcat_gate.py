@@ -24,12 +24,11 @@ from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from core.exec import CommandResult, ProcessRunner
 from gui.dialogs.live_logcat import (
     CurrentPackageWorker,
-    LiveLogcatDialog,
     LogcatBatch,
-    LogcatTerminationKind,
     LogcatWorker,
 )
-from gui.main_frame import MainFrame
+from gui.dialogs.live_logcat_worker import LogcatTerminationKind
+from gui.features.logcat import LiveLogcatPage
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -45,6 +44,7 @@ def drain_live_logcat_deferred_deletes(qt_application):
 class FakeQtTaskSupervisor(QObject):
     task_stopped = Signal(object)
     owner_stopped = Signal(str, object)
+    application_stopped = Signal(object, object)
 
     def __init__(self):
         super().__init__()
@@ -59,7 +59,7 @@ class FakeQtTaskSupervisor(QObject):
         self.owner_stop_requests.append(owner_id)
 
 
-class FakeDialogWorker(QObject):
+class FakePageWorker(QObject):
     lines_ready = Signal(object)
     dropped_ready = Signal(int)
     status_changed = Signal(str)
@@ -340,8 +340,8 @@ def test_process_runner_does_not_untrack_a_process_that_survives_stop():
 def test_live_logcat_stop_and_close_only_schedule_background_cleanup():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
-    worker = FakeDialogWorker()
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
+    worker = FakePageWorker()
     dialog.worker = worker
     dialog._supervisor_task_id = "task"
     dialog.setAttribute(Qt.WA_DeleteOnClose, False)
@@ -362,25 +362,26 @@ def test_live_logcat_stop_and_close_only_schedule_background_cleanup():
     adapter.owner_stopped.emit(dialog._supervisor_owner_id, ())
 
 
-def test_active_logcat_close_keeps_main_window_open_until_cleanup_finishes():
+def test_active_embedded_logcat_close_keeps_main_window_open_until_cleanup_finishes():
     _app = QApplication.instance() or QApplication([])
     main_window = QMainWindow()
     main_window.show()
     adapter = FakeQtTaskSupervisor()
     log_service = Mock()
-    dialog = LiveLogcatDialog(
+    dialog = LiveLogcatPage(
         parent=main_window,
         device_ip="target",
         task_supervisor=adapter,
         log_service=log_service,
     )
-    worker = FakeDialogWorker()
+    worker = FakePageWorker()
     dialog.worker = worker
     dialog._supervisor_task_id = "task"
     dialog.setAttribute(Qt.WA_DeleteOnClose, False)
     dialog.show()
 
-    assert not dialog.testAttribute(Qt.WA_QuitOnClose)
+    assert not dialog.isWindow()
+    assert dialog.window() is main_window
     dialog.close()
 
     assert main_window.isVisible()
@@ -408,17 +409,17 @@ def test_active_logcat_close_keeps_main_window_open_until_cleanup_finishes():
     main_window.close()
 
 
-def test_owner_timeout_keeps_logcat_dialog_alive_until_worker_really_finishes():
+def test_owner_timeout_keeps_logcat_page_alive_until_worker_really_finishes():
     _app = QApplication.instance() or QApplication([])
     main_window = QMainWindow()
     main_window.show()
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(
+    dialog = LiveLogcatPage(
         parent=main_window,
         device_ip="target",
         task_supervisor=adapter,
     )
-    worker = FakeDialogWorker()
+    worker = FakePageWorker()
     task_id = "stubborn-logcat"
     worker._supervisor_task_id = task_id
     dialog.worker = worker
@@ -465,12 +466,12 @@ def test_finished_before_timeout_rechecks_process_that_exits_later():
     main_window = QMainWindow()
     main_window.show()
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(
+    dialog = LiveLogcatPage(
         parent=main_window,
         device_ip="target",
         task_supervisor=adapter,
     )
-    worker = FakeDialogWorker()
+    worker = FakePageWorker()
     task_id = "late-process-exit"
     worker._supervisor_task_id = task_id
     dialog.worker = worker
@@ -579,10 +580,10 @@ def test_qt_supervisor_keeps_event_loop_responsive_during_stubborn_cleanup():
     assert adapter.supervisor.active_count == 1
 
 
-def test_real_qthread_dialog_close_reaps_blocking_process_off_gui_thread():
+def test_real_qthread_page_disposal_reaps_blocking_process_off_gui_thread():
     _app = QApplication.instance() or QApplication([])
     adapter = QtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target")
     worker.deleteLater = Mock()
     process = BlockingProcess()
@@ -951,10 +952,10 @@ def test_logcat_package_switch_drops_unattributed_lines_and_stale_batches():
     assert emitted == []
 
 
-def test_live_logcat_dialog_acknowledges_but_ignores_stale_filter_batch():
+def test_live_logcat_page_acknowledges_but_ignores_stale_filter_batch():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target", package="com.example.alpha")
     stale_generation = worker.filter_generation
     assert worker.update_package("com.example.beta") is True
@@ -981,9 +982,10 @@ def test_live_logcat_dialog_acknowledges_but_ignores_stale_filter_batch():
 def test_live_logcat_package_switch_discards_old_generation_pending_ui_lines():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target", package="com.example.alpha")
     dialog.worker = worker
+    dialog.activate()
 
     try:
         dialog._on_lines(
@@ -1092,7 +1094,7 @@ def test_logcat_transport_resumes_and_reports_drops_after_ack():
 def test_late_old_worker_finished_cannot_clear_new_worker():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     old_worker = LogcatWorker("target")
     new_worker = LogcatWorker("target")
     new_worker._finished_event.set()
@@ -1109,7 +1111,7 @@ def test_late_old_worker_finished_cannot_clear_new_worker():
 def test_worker_finished_does_not_unregister_a_surviving_process():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target")
     task_id = "surviving-process"
     worker._supervisor_task_id = task_id
@@ -1154,7 +1156,7 @@ def test_worker_finished_does_not_unregister_a_surviving_process():
 def test_task_stop_callback_releases_worker_after_process_exits_late():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target")
     task_id = "late-process-exit"
     worker._supervisor_task_id = task_id
@@ -1186,10 +1188,10 @@ def test_task_stop_callback_releases_worker_after_process_exits_late():
     dialog.close()
 
 
-def test_disconnect_clears_dialog_capturing_handlers_from_orphan_worker():
+def test_disconnect_clears_page_capturing_handlers_from_orphan_worker():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target")
     worker._dialog_lines_handler = lambda _batch: dialog.objectName()
     worker._dialog_dropped_handler = lambda _count: dialog.objectName()
@@ -1208,10 +1210,10 @@ def test_disconnect_clears_dialog_capturing_handlers_from_orphan_worker():
     dialog.close()
 
 
-def test_dialog_reports_graceful_forced_and_orphan_cleanup_distinctly():
+def test_page_reports_graceful_forced_and_orphan_cleanup_distinctly():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     dialog._supervisor_task_id = "task"
     messages = []
     dialog.status_bar.setText = messages.append
@@ -1240,10 +1242,10 @@ def test_dialog_reports_graceful_forced_and_orphan_cleanup_distinctly():
     ]
 
 
-def test_dialog_acknowledges_late_batch_without_touching_closed_ui():
+def test_page_acknowledges_late_batch_without_touching_closed_ui():
     _app = QApplication.instance() or QApplication([])
     adapter = FakeQtTaskSupervisor()
-    dialog = LiveLogcatDialog(device_ip="target", task_supervisor=adapter)
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     worker = LogcatWorker("target")
     worker._inflight_batches = 1
     dialog.worker = worker
@@ -1255,35 +1257,3 @@ def test_dialog_acknowledges_late_batch_without_touching_closed_ui():
     assert not dialog.entries
     worker._finished_event.set()
     dialog.close()
-
-
-def test_mainframe_composition_root_injects_owned_supervisor_into_logcat_dialogs():
-    frame = MainFrame.__new__(MainFrame)
-    frame.task_supervisor = object()
-    frame._show_device_dialogs = Mock()
-
-    MainFrame._show_logcat(frame)
-
-    frame._show_device_dialogs.assert_called_once_with(
-        LiveLogcatDialog,
-        task_supervisor=frame.task_supervisor,
-        log_service=None,
-    )
-
-
-def test_mainframe_does_not_reopen_a_logcat_dialog_that_is_closing():
-    frame = MainFrame.__new__(MainFrame)
-    frame._active_dialogs = []
-    dialog = Mock()
-    dialog._closing = True
-    dialog.property.side_effect = lambda name: {
-        "dialog_class": LiveLogcatDialog.__name__,
-        "device_ip": "target",
-    }[name]
-    frame._active_dialogs.append(dialog)
-
-    match = MainFrame._find_active_dialog(frame, LiveLogcatDialog, "target")
-
-    assert match is None
-    assert frame._active_dialogs == [dialog]
-    dialog.show.assert_not_called()

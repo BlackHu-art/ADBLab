@@ -19,7 +19,6 @@ from qfluentwidgets import InfoBadge
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager_layout import DeviceManagerLayout
 from gui.panels.device_manager_responsive import (
-    _DeviceCompositePlan,  # noqa: F401  兼容测试按名导入。
     _DeviceResponsiveBinding,
     _ShrinkableActionScroll,
     _ShrinkableDeviceBody,
@@ -56,7 +55,9 @@ class DeviceManager(BasePanel):
         w.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         lo = QVBoxLayout(w)
         lo.setSpacing(1)
-        lo.setContentsMargins(0, 0, 0, 0)
+        # 给短屏滚动到底后的最后一行动作保留稳定净空，避免 Qt 在
+        # 响应式高度收敛期间因像素取整把按钮边缘留在 viewport 外。
+        lo.setContentsMargins(0, 0, 0, 8)
 
         g_dev = self._g("设备与连接")
         self._device_group = g_dev

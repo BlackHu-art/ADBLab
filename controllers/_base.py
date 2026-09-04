@@ -65,7 +65,6 @@ class _ADBControllerBase:
         # 由界面组装根注入，只负责生命周期托管，不建立 Qt 原生父子关系。
         self.window_owner = None
         self.last_save_dir = None
-        self._active_viewers = []
         self._monkey_running = set()
         self._monkey_lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=4)

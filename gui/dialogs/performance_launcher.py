@@ -10,10 +10,8 @@ from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QFileDialog,
     QLineEdit,
-    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QWidget,
@@ -22,11 +20,11 @@ from qfluentwidgets import BodyLabel, CardWidget, InfoBadge, InfoLevel, Progress
 
 from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
     alive_callback,
     safe_disconnect,
-    wait_for_thread_later,
 )
 from gui.dialogs.performance_launcher_form import (
     CONFIG_HINTS,
@@ -37,13 +35,12 @@ from gui.dialogs.performance_launcher_log import PerformanceLauncherLog
 from gui.dialogs.performance_launcher_run import PerformanceLauncherRun
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
-from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from models.base.focus_detector import detect_current_package
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
-__all__ = ["CONFIG_HINTS", "MONKEY_PERCENT_FIELDS", "PerformanceLauncherDialog"]
+__all__ = ["CONFIG_HINTS", "MONKEY_PERCENT_FIELDS", "PerformancePage"]
 
 
 class CurrentPackageWorker(QThread):
@@ -72,14 +69,15 @@ class CurrentPackageWorker(QThread):
             )
 
 
-class PerformanceLauncherDialog(QDialog):
-    """针对一个已选设备启动和管理 MobilePerf 采集。"""
+class PerformancePage(QWidget):
+    """嵌入 System 分区，针对一个稳定设备会话管理 MobilePerf 采集。"""
 
     LOG_RENDER_DEBOUNCE_MS = 50
     IMMEDIATE_LOG_BATCH_SIZE = 100
     MAX_PENDING_LOG_ROWS = 2000
     log_received = Signal(str, str)
     runner_finished = Signal()
+    dispose_ready = Signal(object)
 
     # 表单与动作区控件在控制器中创建，此处提供类级类型声明供跨控制器解析。
     log_view: QPlainTextEdit
@@ -94,6 +92,8 @@ class PerformanceLauncherDialog(QDialog):
     phone_log_edit: QLineEdit
     result_action: QAction
     progress_bar: ProgressBar
+    start_btn: QPushButton
+    stop_btn: QPushButton
     monkey_throttle_combo: StrictIntComboBox
     monkey_seed_edit: StrictIntLineEdit
     monkey_pct_combos: dict[str, StrictIntComboBox]
@@ -112,6 +112,7 @@ class PerformanceLauncherDialog(QDialog):
         self._run_controller = PerformanceLauncherRun(self)
         self._log_controller = PerformanceLauncherLog(self)
         self.device_ip = device_ip
+        self._device_connected = bool(device_ip)
         self._runner = MobilePerfRunner()
         self._package_worker: CurrentPackageWorker | None = None
         self._stop_thread: threading.Thread | None = None
@@ -128,6 +129,10 @@ class PerformanceLauncherDialog(QDialog):
         self._pending_log_scroll_to_bottom = False
         self._applied_theme_signature: tuple[str, str, int, int] | None = None
         self._configuration_locked = False
+        self._view_active = False
+        self._dispose_ready_state = False
+        self._dispose_emitted = False
+        self._disposing_package_workers: list[CurrentPackageWorker] = []
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.setSingleShot(True)
         self._log_flush_timer.timeout.connect(self._flush_pending_logs)
@@ -137,11 +142,12 @@ class PerformanceLauncherDialog(QDialog):
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(1000)
         self._poll_timer.timeout.connect(self._poll_runner)
+        self._dispose_poll_timer = QTimer(self)
+        self._dispose_poll_timer.setSingleShot(True)
+        self._dispose_poll_timer.timeout.connect(self._poll_dispose_ready)
         self.setWindowTitle(f"Performance - {device_ip}" if device_ip else "Performance")
         self.setWindowIcon(get_themed_icon("speedometer.svg"))
-        self.setMinimumSize(880, 660)
-        self.resize(1200, 900)
-        self.setModal(False)
+        self.setMinimumSize(0, 0)
         self.log_received.connect(self._append_log)
         self.runner_finished.connect(self._on_runner_finished)
 
@@ -156,7 +162,60 @@ class PerformanceLauncherDialog(QDialog):
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
+
+    def prepare_for_workspace(self) -> None:
+        """让主工作区成为唯一纵向滚动所有者。"""
+
+        self._form_controller.use_workspace_scroll_container()
+
+    def activate(self, payload=None) -> None:
+        """恢复页面外观刷新；已运行采集不会因返回页面而重启。"""
+
+        if self._closing:
+            return
+        self._view_active = True
+        if isinstance(payload, dict):
+            package = str(payload.get("package_name", "") or "").strip()
+            if package and not self._configuration_locked:
+                self.package_edit.setText(package)
+        self._sync_theme_state(force=True)
         self._theme_sync_timer.start()
+        self.show()
+
+    def deactivate(self, _reason: str = "navigation") -> None:
+        """停止隐藏页的主题轮询，但允许采集和进度轮询继续。"""
+
+        self._view_active = False
+        self._theme_sync_timer.stop()
+
+    def set_device_connected(self, connected: bool) -> None:
+        """显示固定设备会话的在线状态，并阻止新的离线采集请求。"""
+
+        self._device_connected = bool(connected and self.device_ip)
+        running = self._runner.is_running()
+        self.start_btn.setEnabled(self._device_connected and not running and not self._closing)
+        self.get_package_btn.setEnabled(
+            self._device_connected
+            and not running
+            and self._package_worker is None
+            and not self._closing
+        )
+        self.status_badge.setText("Ready" if self._device_connected else "Device offline")
+        self.status_badge.setLevel(
+            InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
+        )
+        if not self._device_connected and not running:
+            self._set_status("Device offline", "failed")
+
+    def request_dispose(self, _reason: str = "user") -> bool:
+        """请求异步停止页面资源，并在真实资源归零后通知宿主。"""
+
+        if self._dispose_ready_state:
+            return True
+        if not self._closing:
+            self._begin_dispose()
+        self._poll_dispose_ready()
+        return self._dispose_ready_state
 
     # ── 表单控制器委托 wrapper ──────────────────────────────────────────
 
@@ -333,7 +392,7 @@ class PerformanceLauncherDialog(QDialog):
     def fetch_current_package(self):
         if self._package_worker and self._package_worker.isRunning():
             return
-        if not self.device_ip:
+        if not self.device_ip or not self._device_connected:
             self.log_received.emit("WARNING", "No device selected")
             return
         self.get_package_btn.setEnabled(False)
@@ -379,7 +438,7 @@ class PerformanceLauncherDialog(QDialog):
     def open_result(self):
         path = self._last_result_root
         if not path or not os.path.isdir(path):
-            QMessageBox.information(
+            FluentMessageBox.information(
                 self,
                 "Result Not Available",
                 "No MobilePerf result is available yet.",
@@ -420,8 +479,6 @@ class PerformanceLauncherDialog(QDialog):
             combo.setMinimumWidth(max(72, percent_width))
 
     def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self)
-        c = BaseStyles.color
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
@@ -430,18 +487,10 @@ class PerformanceLauncherDialog(QDialog):
             self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
             self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
             self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
-            has_device = bool(self.device_ip)
+            has_device = bool(self.device_ip and self._device_connected)
             self.status_badge.setText("Ready" if has_device else "No device")
             self.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
-        self.setStyleSheet(
-            f"""
-            QDialog {{
-                background-color: {c("PANEL_BG")};
-                color: {c("TEXT_PRIMARY")};
-            }}
-            """
-        )
         self._apply_widget_fonts()
         self._apply_status_style()
         if hasattr(self, "monkey_total_label"):
@@ -485,7 +534,7 @@ class PerformanceLauncherDialog(QDialog):
     @staticmethod
     def _theme_signature() -> tuple[str, str, int, int]:
         return (
-            BaseStyles.current_theme(),
+            BaseStyles.resolved_theme(),
             BaseStyles.DEFAULT_FONT_FAMILY,
             int(BaseStyles.DEFAULT_FONT_SIZE),
             int(BaseStyles.LOG_FONT_SIZE_VAR),
@@ -496,6 +545,7 @@ class PerformanceLauncherDialog(QDialog):
             return
         current_signature = self._theme_signature()
         if force or current_signature != self._applied_theme_signature:
+            # 定时兜底可补齐一次漏发的主题信号；页面壳层由工作区统一刷新。
             self._apply_theme(BaseStyles.current_theme())
 
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
@@ -560,28 +610,68 @@ class PerformanceLauncherDialog(QDialog):
         self._shutdown_registered = bool(task_ids)
         return tuple(task_ids)
 
-    def closeEvent(self, event):
-        """停止界面定时器并断开信号，资源等待由已注册的关闭任务接管。"""
+    def _begin_dispose(self) -> None:
+        """隔离界面回调并发起停止，页面对象保留到所有资源退出。"""
+
         self._closing = True
-        if self._log_flush_timer.isActive():
-            self._log_flush_timer.stop()
-        if self._theme_sync_timer.isActive():
-            self._theme_sync_timer.stop()
+        self._view_active = False
+        self._log_flush_timer.stop()
+        self._theme_sync_timer.stop()
         self._pending_log_rows = []
-        self._poll_timer.stop()
-        if self._runner.is_running() is True and not self._shutdown_registered:
-            self.stop_mobileperf()
-        if self._package_worker and self._package_worker.isRunning():
-            worker = self._package_worker
+        if self._runner.is_running() and not self._stopping:
+            if self._shutdown_registered:
+                # 应用关闭时 runner 已交给全局监督器；这里只发出轻量停止意图，
+                # 避免再创建一个线程并发调用同一个 MobilePerfRunner.stop()。
+                self._runner.request_stop()
+            else:
+                self.stop_mobileperf()
+        package_worker = self._package_worker
+        if package_worker is not None:
             self._package_worker = None
-            worker.requestInterruption()
-            safe_disconnect(worker.package_ready, self._on_current_package)
-            safe_disconnect(worker.log_ready, self.log_received.emit)
-            worker.setParent(None)
-            if not self._shutdown_registered:
-                wait_for_thread_later(worker, 2000)
-        safe_disconnect(self.log_received, self._append_log)
-        safe_disconnect(self.runner_finished, self._on_runner_finished)
+            if package_worker.isRunning():
+                package_worker.requestInterruption()
+                safe_disconnect(package_worker.package_ready, self._on_current_package)
+                safe_disconnect(package_worker.log_ready, self.log_received.emit)
+                package_worker.setParent(None)
+                self._disposing_package_workers.append(package_worker)
+            else:
+                package_worker.deleteLater()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
-        super().closeEvent(event)
+
+    def _poll_dispose_ready(self) -> None:
+        """等待 runner、停止线程和包名查询线程全部真实退出。"""
+
+        retained: list[CurrentPackageWorker] = []
+        for worker in self._disposing_package_workers:
+            if worker.isRunning():
+                retained.append(worker)
+            else:
+                worker.deleteLater()
+        self._disposing_package_workers = retained
+        stop_thread = self._stop_thread
+        resources_running = bool(
+            retained
+            or self._runner.is_running()
+            or (stop_thread is not None and stop_thread.is_alive())
+        )
+        if resources_running:
+            self._dispose_poll_timer.start(50)
+            return
+        self._poll_timer.stop()
+        safe_disconnect(self.log_received, self._append_log)
+        safe_disconnect(self.runner_finished, self._on_runner_finished)
+        self._dispose_ready_state = True
+        if not self._dispose_emitted:
+            self._dispose_emitted = True
+            self.dispose_ready.emit(self.property("session_generation"))
+
+    def closeEvent(self, event):
+        """顶层兼容关闭也走非阻塞页面销毁协议。"""
+
+        if self.request_dispose("widget_close"):
+            event.accept()
+            super().closeEvent(event)
+            return
+        event.ignore()
+        self.hide()

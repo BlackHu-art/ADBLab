@@ -110,6 +110,8 @@ def test_base_panel_card_factory_returns_reference_component(qt_application):
     assert type(card) is HeaderCardWidget
     assert card.title == "测试卡片"
     assert card.accessibleName() == "测试卡片"
+    assert card.toolTip() == "测试卡片"
+    assert card.property("fontRole") == FontRole.UI.value
     assert card.viewLayout.direction() == QBoxLayout.Direction.TopToBottom
 
 

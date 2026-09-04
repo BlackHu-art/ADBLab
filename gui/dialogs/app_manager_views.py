@@ -48,7 +48,7 @@ def _painted_icon(name: str, atype: str, size: int) -> QIcon:
 
 
 class AppManagerViews:
-    """组合进 AppManagerDialog 的视图控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 AppManagerPage 的视图控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -57,26 +57,31 @@ class AppManagerViews:
         from gui.dialogs import app_manager as _app_manager
 
         if self._frame._closing:
-            return
+            return False
+        if getattr(self._frame, "_load_in_progress", False):
+            self._frame._load_refresh_pending = True
+            self._frame.status_bar.setText("Refresh queued until the current load finishes.")
+            return False
+        if not self._frame.device_ip or not getattr(self._frame, "_device_connected", True):
+            set_state = getattr(self._frame, "_set_load_state", None)
+            if callable(set_state):
+                set_state("error", "The device is offline; reconnect it before refreshing.")
+            return False
         self._frame._load_request_id += 1
         request_id = self._frame._load_request_id
         self._frame._active_load_request = request_id
-        self._frame._syncing_selection = True
-        self._frame.model.removeRows(0, self._frame.model.rowCount())
-        self._frame.icon_list.clear()
-        self._frame._syncing_selection = False
-        self._frame.selected_packages.clear()
-        self._frame._update_selection_ui()
-        self._frame._detail_cache.clear()
-        self._frame._pending_detail_packages.clear()
-        self._frame._detail_worker_running = False
-        self._frame._detail_row_by_pkg = {}
-        self._frame._detail_icon_by_pkg = {}
+        self._frame._load_in_progress = True
+        self._frame._load_result_received = False
+        self._frame._last_load_error = ""
         if is_qobject_alive(self._frame._detail_timer):
             self._frame._detail_timer.stop()
+        set_state = getattr(self._frame, "_set_load_state", None)
+        if callable(set_state):
+            set_state("loading", "Loading installed applications...")
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "load_apps")
         w.log_message.connect(
-            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            lambda message: self._frame._on_load_log(request_id, message),
+            Qt.ConnectionType.QueuedConnection,
         )
         dialog_ref = weakref.ref(self._frame)
 
@@ -86,17 +91,26 @@ class AppManagerViews:
                 dialog._populate(apps, request_id=request_id)
 
         w.apps_loaded.connect(populate_current, Qt.ConnectionType.QueuedConnection)
+        w.finished.connect(
+            alive_callback(self._frame, "_on_load_worker_finished", request_id),
+            Qt.ConnectionType.QueuedConnection,
+        )
         self._frame._track_worker(w)
         w.start()
+        return True
 
     def _populate(self, apps, *, request_id=None):
         if self._frame._closing or (
             request_id is not None and request_id != self._frame._active_load_request
         ):
             return
+        previous_selection = set(getattr(self._frame, "selected_packages", set()))
         self._frame._apps_data = apps
         self._frame._app_labels = {}
         self._frame._app_versions = {}
+        self._frame._detail_cache.clear()
+        self._frame._pending_detail_packages.clear()
+        self._frame._detail_worker_running = False
         self._frame._detail_row_by_pkg = {}
         self._frame._detail_icon_by_pkg = {}
         self._frame._syncing_selection = True
@@ -134,10 +148,26 @@ class AppManagerViews:
                 self._frame._detail_icon_by_pkg[pkg] = item
         finally:
             self._frame.icon_list.setUpdatesEnabled(True)
+        available_packages = {pkg for _name, pkg, _status, _app_type in apps}
+        if not hasattr(self._frame, "selected_packages"):
+            self._frame.selected_packages = set()
+        self._frame.selected_packages.clear()
+        self._frame.selected_packages.update(previous_selection & available_packages)
         self._frame._syncing_selection = False
         self._frame._sync_selection_views()
         self._frame._filter()
-        self._frame.status_bar.setText(f"Loaded {len(apps)} apps — loading details...")
+        record_success = getattr(self._frame, "_record_load_success", None)
+        if callable(record_success) and request_id is not None:
+            record_success(request_id, len(apps))
+        else:
+            self._frame.status_bar.setText(f"Loaded {len(apps)} apps — loading details...")
+        details_page = getattr(self._frame, "details_page", None)
+        if (
+            getattr(self._frame, "_details_open", False)
+            and details_page is not None
+            and details_page.package_name not in available_packages
+        ):
+            self._frame.close_details()
         self._frame._schedule_visible_detail_load()
 
     def _on_detail(self, pkg, label, version, itime):
@@ -173,6 +203,8 @@ class AppManagerViews:
         self._frame._detail_worker_running = False
         if self._frame._closing or not is_qobject_alive(self._frame._detail_timer):
             return
+        if not getattr(self._frame, "_device_connected", True):
+            return
         if self._frame._detail_timer.isActive():
             return
         if self._frame._has_unloaded_details():
@@ -181,7 +213,12 @@ class AppManagerViews:
         self._frame.status_bar.setText(f"Loaded {len(self._frame._apps_data)} apps")
 
     def _schedule_visible_detail_load(self, delay_ms: int = 120):
-        if self._frame._closing or not is_qobject_alive(self._frame._detail_timer):
+        if (
+            self._frame._closing
+            or not getattr(self._frame, "_active", True)
+            or not getattr(self._frame, "_device_connected", True)
+            or not is_qobject_alive(self._frame._detail_timer)
+        ):
             return
         if self._frame._detail_timer.isActive():
             self._frame._detail_timer.stop()
@@ -249,7 +286,12 @@ class AppManagerViews:
     def _load_visible_details(self):
         from gui.dialogs import app_manager as _app_manager
 
-        if self._frame._closing or self._frame._detail_worker_running:
+        if (
+            self._frame._closing
+            or not getattr(self._frame, "_active", True)
+            or not getattr(self._frame, "_device_connected", True)
+            or self._frame._detail_worker_running
+        ):
             return
         packages = [
             pkg
@@ -326,7 +368,9 @@ class AppManagerViews:
         add_menu_action(menu, "Enable", callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
         add_menu_action(menu, "Backup", callback=lambda: self._frame._backup_one(pkg))
-        if self._frame._batch_workers:
+        if self._frame._batch_workers or not getattr(
+            self._frame, "_device_connected", True
+        ):
             for action in menu.actions():
                 if not action.isSeparator():
                     action.setEnabled(False)
@@ -436,10 +480,30 @@ class AppManagerViews:
 
         count = len(self._frame.selected_packages)
         batch_running = bool(self._frame._batch_workers)
+        load_running = bool(getattr(self._frame, "_load_in_progress", False))
+        device_connected = bool(getattr(self._frame, "_device_connected", True))
         self._frame.selection_label.setText(f"Selected: {count}")
         for button in self._frame._selection_action_buttons:
-            button.setEnabled(count > 0 and not batch_running)
-        self._frame.refresh_btn.setEnabled(not batch_running)
+            requires_device = bool(button.property("requiresDevice"))
+            button.setEnabled(
+                count > 0
+                and not batch_running
+                and (device_connected or not requires_device)
+            )
+        for button in self._frame._preset_action_buttons:
+            requires_device = bool(button.property("requiresDevice"))
+            requires_selection = bool(button.property("requiresSelection"))
+            button.setEnabled(
+                not batch_running
+                and (device_connected or not requires_device)
+                and (count > 0 or not requires_selection)
+            )
+        self._frame.refresh_btn.setEnabled(
+            device_connected and not batch_running and not load_running
+        )
+        retry_btn = getattr(self._frame, "retry_btn", None)
+        if retry_btn is not None:
+            retry_btn.setEnabled(device_connected and not batch_running and not load_running)
 
     def _on_row_clicked(self, index):
         src = self._frame.proxy.mapToSource(index)

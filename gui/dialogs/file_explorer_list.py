@@ -1,16 +1,17 @@
-"""提供文件浏览器对话框的导航、列表解析与渲染控制器。"""
+"""提供文件浏览器页的导航、列表解析与渲染控制器。"""
 
 import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidgetItem
 
+from gui.dialogs.lifecycle import QThreadGroupShutdownTask
 from gui.styles.icon_loader import get_themed_icon
 from services import file_explorer as explorer_service
 
 
 class FileExplorerList:
-    """组合进 FileExplorerDialog 的列表控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 FileExplorerPage 的列表控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -26,33 +27,39 @@ class FileExplorerList:
     def _dpath(self, *parts) -> str:
         return explorer_service.device_path(*parts)
 
+    def _set_loading(self, loading: bool) -> None:
+        callback = getattr(self._frame, "_set_directory_loading", None)
+        if callable(callback):
+            callback(loading)
+        else:
+            self._frame.table.setEnabled(not loading)
+
     # ── 路径导航 ────────────────────────────────────────────────────────
 
     def _navigate(self, path: str, push: bool = True):
-        if not path or path == self._frame.current_path:
+        path = str(path or "").strip()
+        if not path or (path == self._frame.current_path and self._frame._active_refresh is None):
             return
-        if push:
-            self._frame.history.append(self._frame.current_path)
-            self._frame.forward_stack.clear()
-            self._frame.fwd_btn.setEnabled(False)
-        self._frame.current_path = path
-        self._frame.path_field.setText(path)
-        self._frame.back_btn.setEnabled(bool(self._frame.history))
-        self._refresh()
+        self._refresh(
+            requested_path=path,
+            navigation_action="push" if push else "replace",
+        )
 
     def _go_back(self):
         if not self._frame.history:
             return
-        self._frame.forward_stack.append(self._frame.current_path)
-        self._frame.fwd_btn.setEnabled(True)
-        self._navigate(self._frame.history.pop(), push=False)
+        self._refresh(
+            requested_path=self._frame.history[-1],
+            navigation_action="back",
+        )
 
     def _go_forward(self):
         if not self._frame.forward_stack:
             return
-        self._frame.history.append(self._frame.current_path)
-        self._frame.back_btn.setEnabled(True)
-        self._navigate(self._frame.forward_stack.pop(), push=False)
+        self._refresh(
+            requested_path=self._frame.forward_stack[-1],
+            navigation_action="forward",
+        )
 
     def _go_parent(self):
         self._frame.status_bar.setText("Opening parent folder...")
@@ -60,21 +67,47 @@ class FileExplorerList:
 
     # ── 目录列表 ────────────────────────────────────────────────────────
 
-    def _refresh(self):
+    def _refresh(
+        self,
+        *,
+        requested_path: str | None = None,
+        navigation_action: str = "refresh",
+    ):
         if self._frame._closing:
+            return
+        if not getattr(self._frame, "_device_connected", True):
+            self._frame.status_bar.setText("Device offline; reconnect or choose another device")
+            return
+        requested_path = str(requested_path or self._frame.current_path).strip()
+        if not requested_path:
             return
         self._frame._refresh_request_id += 1
         request_id = self._frame._refresh_request_id
-        requested_path = self._frame.current_path
         self._frame._active_refresh = (request_id, requested_path)
+        if navigation_action != "refresh":
+            close_preview = getattr(self._frame, "_close_preview", None)
+            if callable(close_preview):
+                close_preview()
+        self._frame._pending_navigation = (
+            (request_id, navigation_action, requested_path)
+            if navigation_action != "refresh"
+            else None
+        )
+        previous_worker = getattr(self._frame, "_active_refresh_worker", None)
+        if previous_worker is not None and QThreadGroupShutdownTask._running(previous_worker):
+            try:
+                previous_worker.abort()
+            except RuntimeError:
+                pass
         self._frame.search_field.clear()
-        self._frame.status_bar.setText("Loading...")
-        self._frame.table.setRowCount(0)
-        self._frame.symlink_targets.clear()
+        self._frame.status_bar.setText(f"Opening {requested_path}…")
+        self._frame.status_bar.setToolTip("")
+        self._set_loading(True)
 
         cmd = explorer_service.ls_command(requested_path)
         shell_cmd = self._root(cmd)
         worker = self._frame._run_adb("shell", shell_cmd)
+        self._frame._active_refresh_worker = worker
         worker.setProperty("refreshRequestId", request_id)
         worker.setProperty("requestedPath", requested_path)
         self._frame._connect_worker_ui(
@@ -101,14 +134,22 @@ class FileExplorerList:
         if request_id is not None and (
             getattr(self._frame, "_closing", False)
             or getattr(self._frame, "_active_refresh", None) != (request_id, requested_path)
-            or self._frame.current_path != requested_path
         ):
             return
-        if error and not output.strip():
+        if error:
             if request_id is not None:
                 self._frame._active_refresh = None
-            self._frame.status_bar.setText("Error loading directory")
+                self._frame._pending_navigation = None
+            self._set_loading(False)
+            self._frame.path_field.setText(self._frame.current_path)
+            self._frame.status_bar.setText(f"Unable to open {requested_path}")
+            self._frame.status_bar.setToolTip(str(output or "Directory loading failed"))
             return
+        if request_id is not None:
+            pending = getattr(self._frame, "_pending_navigation", None)
+            if pending is not None and pending[0] == request_id:
+                self._commit_navigation(pending[1], requested_path)
+                self._frame._pending_navigation = None
         self._frame.table.setUpdatesEnabled(False)
         self._frame.table.setSortingEnabled(False)
         try:
@@ -127,12 +168,37 @@ class FileExplorerList:
         finally:
             self._frame.table.setSortingEnabled(True)
             self._frame.table.setUpdatesEnabled(True)
+            self._set_loading(False)
 
         folders = sum(1 for entry in rows if entry.is_dir)
         files = len(rows) - folders
         if request_id is not None:
             self._frame._active_refresh = None
+        self._frame.status_bar.setToolTip("")
         self._frame.status_bar.setText(f"{requested_path}  |  {folders} folders, {files} files")
+
+    def _commit_navigation(self, action: str, target: str) -> None:
+        """仅在目录读取成功后原子提交路径和前进/后退历史。"""
+
+        current = self._frame.current_path
+        if action == "push" and target != current:
+            self._frame.history.append(current)
+            self._frame.forward_stack.clear()
+        elif action == "back" and self._frame.history and self._frame.history[-1] == target:
+            self._frame.history.pop()
+            self._frame.forward_stack.append(current)
+        elif (
+            action == "forward"
+            and self._frame.forward_stack
+            and self._frame.forward_stack[-1] == target
+        ):
+            self._frame.forward_stack.pop()
+            self._frame.history.append(current)
+        self._frame.current_path = target
+        self._frame.path_field.setText(target)
+        sync_controls = getattr(self._frame, "_sync_directory_controls", None)
+        if callable(sync_controls):
+            sync_controls()
 
     def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
         type_item = QTableWidgetItem(file_type)

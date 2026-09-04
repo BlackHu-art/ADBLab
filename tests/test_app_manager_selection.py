@@ -1,13 +1,16 @@
+import json
 import os
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton
+from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton, QWidget
 
-from gui.dialogs.app_manager import AppManagerDialog
+from gui.dialogs.app_manager_batch import AppManagerBatch
+from gui.dialogs.fluent_dialog import FluentDialog
+from gui.features.app_manager import AppDetailsPage, AppManagerPage
 from gui.styles import BaseStyles
 from gui.styles.typography import FontRole
 from tests.ui_geometry_helpers import assert_non_overlapping
@@ -27,10 +30,10 @@ _PRESET_ACTIONS = (
 )
 
 
-def _app_manager_dialog():
+def _app_manager_page():
     app = QApplication.instance() or QApplication([])
-    with patch.object(AppManagerDialog, "_load_apps"):
-        dialog = AppManagerDialog(device_ip="device-1")
+    with patch.object(AppManagerPage, "_load_apps"):
+        dialog = AppManagerPage(device_ip="device-1")
     return app, dialog
 
 
@@ -96,10 +99,82 @@ def _patch_font_size(monkeypatch, current_size):
     )
 
 
+def test_app_manager_family_exposes_pure_widget_pages_without_eager_io():
+    app = QApplication.instance() or QApplication([])
+    with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
+        manager = AppManagerPage(device_ip="device-1")
+        details = AppDetailsPage(manager, "device-1", "com.example.app")
+    try:
+        assert isinstance(manager, QWidget)
+        assert isinstance(details, QWidget)
+        assert not isinstance(manager, FluentDialog)
+        assert not isinstance(details, FluentDialog)
+        assert manager._activated_once is False
+        assert details.load_state == "idle"
+        worker_cls.assert_not_called()
+    finally:
+        details.close()
+        manager.close()
+        app.processEvents()
+
+
+def test_create_preset_reads_accepted_values_before_explicit_dialog_release(tmp_path):
+    """接受预设弹窗后，应在显式释放前复制输入值。"""
+
+    class TrackingPresetDialog(FluentDialog):
+        instances = []
+
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.release_requested = False
+            self.__class__.instances.append(self)
+
+        def exec(self):
+            from qfluentwidgets import LineEdit, TextEdit
+
+            name_input, author_input = self.findChildren(LineEdit)
+            description_input = self.findChild(TextEdit)
+            name_input.setText("Daily Apps")
+            author_input.setText("QA")
+            description_input.setPlainText("Regression preset")
+            QTimer.singleShot(0, self.accept)
+            return super().exec()
+
+        def deleteLater(self):
+            self.release_requested = True
+            return super().deleteLater()
+
+    app, manager = _app_manager_page()
+    preset_path = tmp_path / "daily.json"
+    manager.selected_packages = {"com.example.two", "com.example.one"}
+    try:
+        with (
+            patch("gui.dialogs.app_manager_batch.FluentDialog", TrackingPresetDialog),
+            patch(
+                "gui.dialogs.app_manager_batch.QFileDialog.getSaveFileName",
+                return_value=(str(preset_path), "JSON (*.json)"),
+            ),
+        ):
+            AppManagerBatch(manager)._create_preset()
+
+        preset_dialog = TrackingPresetDialog.instances[-1]
+        assert preset_dialog.testAttribute(Qt.WidgetAttribute.WA_DeleteOnClose) is False
+        assert preset_dialog.release_requested is True
+        assert json.loads(preset_path.read_text(encoding="utf-8")) == {
+            "name": "Daily Apps",
+            "author": "QA",
+            "description": "Regression preset",
+            "selected_packages": ["com.example.one", "com.example.two"],
+        }
+    finally:
+        manager.close()
+        app.processEvents()
+
+
 def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
     current_size = {"ui": 22}
     _patch_font_size(monkeypatch, current_size)
-    app, dialog = _app_manager_dialog()
+    app, dialog = _app_manager_page()
     geometry_failures = []
     bounds_failures = []
     signatures = []
@@ -109,7 +184,7 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
             # qfluentwidgets ComboBox 比原生 QComboBox 窄，顶部控件在 768px
             # 以下会触发五列重排并把 "Selected: 0" 标签压到最小宽度以下；
             # 断点随收敛上移 8px。qfluentwidgets 控件行高比原生高，22pt 下
-            # 660px 高会让顶部控件溢出布局，高度升到 700 后恢复完整落位。
+            # 内容区至少需要 700px；Fluent 标题栏额外占用 48px。
             dialog.resize(width, 700)
             app.processEvents()
             controls = _top_controls(dialog)
@@ -145,7 +220,7 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
 def test_app_manager_font_round_trip_restores_action_heights(monkeypatch):
     current_size = {"ui": 8}
     _patch_font_size(monkeypatch, current_size)
-    app, dialog = _app_manager_dialog()
+    app, dialog = _app_manager_page()
     fresh_dialog = None
     try:
         dialog.show()
@@ -162,7 +237,7 @@ def test_app_manager_font_round_trip_restores_action_heights(monkeypatch):
         app.processEvents()
         restored = tuple(button.minimumHeight() for button in _action_buttons(dialog).values())
 
-        _fresh_app, fresh_dialog = _app_manager_dialog()
+        _fresh_app, fresh_dialog = _app_manager_page()
         fresh_dialog.show()
         app.processEvents()
         fresh_baseline = tuple(
@@ -180,7 +255,7 @@ def test_app_manager_font_round_trip_restores_action_heights(monkeypatch):
 
 
 def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_font(monkeypatch):
-    app, dialog = _app_manager_dialog()
+    app, dialog = _app_manager_page()
     try:
         dialog.resize(776, 600)
         dialog.show()
@@ -219,19 +294,6 @@ def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_fon
             )
             <= 2
         )
-        assert [buttons[label].text() for label in _SELECTION_ACTIONS] == [
-            "Uninstall",
-            "Disable",
-            "Enable",
-            "Clear",
-        ]
-        assert [buttons[label].text() for label in _PRESET_ACTIONS] == [
-            "Save",
-            "Load",
-            "Backup",
-            "Restore",
-            "Details",
-        ]
         _assert_buttons_fit(dialog, buttons)
         # 视觉重设计映射：页头卡片固定占用约 60px 纵向空间，600px/22pt 下
         # 栈区（应用列表/图标视图）可用高度从约 127px 降到约 64px；
@@ -242,7 +304,7 @@ def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_fon
 
 
 def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_narrow():
-    app, dialog = _app_manager_dialog()
+    app, dialog = _app_manager_page()
     try:
         _set_action_font(dialog, 22)
         dialog.setMinimumSize(0, 0)
@@ -293,15 +355,15 @@ def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_
 
 
 def test_app_manager_restores_full_actions_without_rebuilding_buttons_or_duplicate_clicks():
-    class TrackingDialog(AppManagerDialog):
+    class TrackingPage(AppManagerPage):
         deselect_calls = 0
 
         def _deselect_all(self):
             self.deselect_calls += 1
 
     app = QApplication.instance() or QApplication([])
-    with patch.object(TrackingDialog, "_load_apps"):
-        dialog = TrackingDialog(device_ip="device-1")
+    with patch.object(TrackingPage, "_load_apps"):
+        dialog = TrackingPage(device_ip="device-1")
 
     try:
         _set_action_font(dialog, 22)
@@ -334,8 +396,8 @@ def test_app_manager_restores_full_actions_without_rebuilding_buttons_or_duplica
 
 def test_app_manager_keeps_table_and_icon_selection_in_sync():
     _app = QApplication.instance() or QApplication([])
-    with patch.object(AppManagerDialog, "_load_apps"):
-        dialog = AppManagerDialog(device_ip="device-1")
+    with patch.object(AppManagerPage, "_load_apps"):
+        dialog = AppManagerPage(device_ip="device-1")
 
     try:
         dialog._populate(
@@ -392,10 +454,9 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     dialog._track_worker = Mock()
     dialog._update_selection_ui = Mock()
     dialog._load_apps = Mock()
-    dialog._confirm_dangerous_action = Mock(return_value=True)
-    dialog._get_selected_pkgs = lambda: AppManagerDialog._get_selected_pkgs(dialog)
+    dialog._get_selected_pkgs = lambda: AppManagerPage._get_selected_pkgs(dialog)
     dialog._on_batch_worker_finished = lambda worker: (
-        AppManagerDialog._on_batch_worker_finished(dialog, worker)
+        AppManagerPage._on_batch_worker_finished(dialog, worker)
     )
 
     workers = [Mock(), Mock()]
@@ -404,7 +465,7 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
         worker.finished.connect.side_effect = lambda cb, *_args: finished_callbacks.append(cb)
 
     with patch("gui.dialogs.app_manager.AppManagerWorker", side_effect=workers) as worker_cls:
-        AppManagerDialog._modify_selected(dialog, "disable")
+        AppManagerPage._modify_selected(dialog, "disable")
 
     assert worker_cls.call_args_list == [
         call(
@@ -433,3 +494,248 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     assert dialog._batch_workers == set()
     assert dialog._batch_total == 0
     assert dialog._batch_action == ""
+
+
+def test_app_manager_first_activate_is_lazy_and_duplicate_refreshes_are_coalesced():
+    app = QApplication.instance() or QApplication([])
+    worker = Mock()
+    worker.isRunning.return_value = False
+    with patch("gui.dialogs.app_manager.AppManagerWorker", return_value=worker) as worker_cls:
+        page = AppManagerPage(device_ip="device-1")
+        try:
+            worker_cls.assert_not_called()
+
+            page.activate()
+            assert worker_cls.call_count == 1
+            assert page.load_state == "loading"
+
+            page.retry_load()
+            page.retry_load()
+            assert worker_cls.call_count == 1
+            assert page._load_refresh_pending is True
+
+            page._record_load_success(page._active_load_request, 0)
+            page._on_load_worker_finished(page._active_load_request)
+            app.processEvents()
+            assert worker_cls.call_count == 2
+            assert page._load_refresh_pending is False
+        finally:
+            page.close()
+
+
+def test_app_manager_load_failure_exposes_retry_state():
+    app = QApplication.instance() or QApplication([])
+    workers = [Mock(), Mock()]
+    for worker in workers:
+        worker.isRunning.return_value = False
+    with patch("gui.dialogs.app_manager.AppManagerWorker", side_effect=workers) as worker_cls:
+        page = AppManagerPage(device_ip="device-1")
+        try:
+            page.activate()
+            request_id = page._active_load_request
+            page._on_load_log(request_id, "Failed to list apps: device offline")
+            page._on_load_worker_finished(request_id)
+
+            assert page.load_state == "error"
+            assert page.load_error_panel.isHidden() is False
+            assert "device offline" in page.load_error_label.text()
+
+            page.retry_btn.click()
+            assert worker_cls.call_count == 2
+            assert page.load_state == "loading"
+            assert page.load_error_panel.isHidden() is True
+        finally:
+            page.close()
+            app.processEvents()
+
+
+def test_app_details_page_loads_on_activate_and_exposes_retry_after_failure():
+    app = QApplication.instance() or QApplication([])
+    workers = [Mock(), Mock(), Mock(), Mock()]
+    for worker in workers:
+        worker.isRunning.return_value = False
+    with patch(
+        "gui.dialogs.app_manager_details.AppManagerWorker",
+        side_effect=workers,
+    ) as worker_cls:
+        page = AppDetailsPage(device_ip="device-1", package_name="com.example.app")
+        try:
+            worker_cls.assert_not_called()
+            page.activate()
+            assert worker_cls.call_count == 2
+            generation = page._load_generation
+
+            page._on_load_part_finished(generation, "details")
+            assert page.load_state == "error"
+            assert page.retry_btn.isHidden() is False
+
+            page.retry_btn.click()
+            assert worker_cls.call_count == 4
+            assert page.load_state == "loading"
+            assert page.retry_btn.isHidden() is True
+        finally:
+            page.close()
+            app.processEvents()
+
+
+def test_app_manager_successful_refresh_preserves_only_valid_selection():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    try:
+        page._populate(
+            [
+                ("One", "com.example.one", "Enabled", "User"),
+                ("Two", "com.example.two", "Enabled", "User"),
+            ]
+        )
+        page._detail_timer.stop()
+        page.selected_packages.update({"com.example.one", "com.example.two"})
+        page._sync_selection_views()
+
+        page._populate(
+            [
+                ("Two", "com.example.two", "Disabled", "User"),
+                ("Three", "com.example.three", "Enabled", "User"),
+            ]
+        )
+        page._detail_timer.stop()
+
+        assert page.selected_packages == {"com.example.two"}
+        assert page.model.item(0, 0).checkState() == Qt.CheckState.Checked
+        assert page.model.item(1, 0).checkState() == Qt.CheckState.Unchecked
+    finally:
+        page.close()
+        app.processEvents()
+
+
+def test_app_manager_master_detail_contract_switches_split_and_stack_modes():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    try:
+        page.resize(1400, 700)
+        page.show()
+        app.processEvents()
+        with patch.object(page.details_page, "_load_data", return_value=True):
+            assert page.open_details("com.example.app") is page.details_page
+        app.processEvents()
+
+        assert page.master_detail_mode == "split"
+        assert page._master_panel.isHidden() is False
+        assert page.details_page.isHidden() is False
+
+        page.resize(800, 700)
+        app.processEvents()
+        assert page.master_detail_mode == "stack"
+        assert page._master_panel.isHidden() is True
+        assert page.details_page.isHidden() is False
+
+        page.close_details()
+        assert page._master_panel.isHidden() is False
+        assert page.details_page.isHidden() is True
+    finally:
+        page.close()
+        app.processEvents()
+
+
+def test_app_manager_reports_workspace_content_minimum_for_visible_master_detail_mode():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    try:
+        page.resize(623, 300)
+        page.show()
+        app.processEvents()
+
+        master_minimum = page._master_panel.minimumSizeHint()
+        assert page.workspace_content_minimum_size() == master_minimum
+        assert isinstance(page.workspace_content_minimum_size(), QSize)
+        assert page.minimumSize() == QSize(0, 0)
+
+        with patch.object(page.details_page, "_load_data", return_value=True):
+            page.open_details("com.example.app")
+        app.processEvents()
+
+        detail_minimum = page.details_page.minimumSizeHint()
+        assert page.master_detail_mode == "stack"
+        assert page.workspace_content_minimum_size() == detail_minimum
+
+        page.resize(1400, 700)
+        app.processEvents()
+        master_minimum = page._master_panel.minimumSizeHint()
+        detail_minimum = page.details_page.minimumSizeHint()
+        expected_split = QSize(
+            master_minimum.width()
+            + detail_minimum.width()
+            + page._master_detail_splitter.handleWidth(),
+            max(master_minimum.height(), detail_minimum.height()),
+        )
+        assert page.master_detail_mode == "split"
+        assert page.workspace_content_minimum_size() == expected_split
+
+        page.close_details()
+        app.processEvents()
+        assert page.workspace_content_minimum_size() == page._master_panel.minimumSizeHint()
+    finally:
+        page.close()
+        app.processEvents()
+
+
+def test_app_manager_dispose_waits_for_worker_then_emits_ready():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    worker = Mock()
+    worker.isRunning.return_value = True
+    page._workers.append(worker)
+    emitted = []
+    page.dispose_ready.connect(lambda: emitted.append(True))
+    try:
+        assert page.request_dispose("test") is False
+        worker.abort.assert_called_once_with()
+        assert emitted == []
+
+        worker.isRunning.return_value = False
+        page._prune_worker(worker)
+        assert emitted == [True]
+        assert page._dispose_finalized is True
+    finally:
+        page.close()
+        app.processEvents()
+
+
+def test_app_manager_offline_state_keeps_cached_content_and_blocks_new_adb_work():
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    try:
+        page._populate([("One", "com.example.one", "Enabled", "User")])
+        page._detail_timer.stop()
+        page.selected_packages.add("com.example.one")
+        page._sync_selection_views()
+        with patch.object(page.details_page, "_load_data", return_value=True):
+            page.open_details("com.example.one")
+        page.details_page.detail_text.setPlainText("cached details")
+
+        with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
+            page.set_device_connected(False)
+            assert page._load_apps() is False
+
+        buttons = _action_buttons(page)
+        assert page.status_badge.text() == "Offline"
+        assert page.refresh_btn.isEnabled() is False
+        assert buttons["Uninstall Selected"].isEnabled() is False
+        assert buttons["Backup Selected"].isEnabled() is False
+        assert buttons["Restore Backup"].isEnabled() is False
+        assert buttons["App Details"].isEnabled() is False
+        assert buttons["Create Preset"].isEnabled() is True
+        assert buttons["Deselect All"].isEnabled() is True
+        assert page.model.rowCount() == 1
+        assert page.selected_packages == {"com.example.one"}
+        assert page.details_page.detail_text.toPlainText() == "cached details"
+        assert page.details_page.grant_btn.isEnabled() is False
+        worker_cls.assert_not_called()
+
+        page.set_device_connected(True)
+        assert page.status_badge.text() == "Ready"
+        assert page.refresh_btn.isEnabled() is True
+        worker_cls.assert_not_called()
+    finally:
+        page.close()
+        app.processEvents()

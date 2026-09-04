@@ -11,7 +11,7 @@ from collections.abc import Callable
 
 from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor, QFontDatabase, QLinearGradient, QPainter, QPainterPath
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -28,7 +28,6 @@ from qfluentwidgets import (
     PushButton,
     PushSettingCard,
     ScrollArea,
-    SegmentedWidget,
     SettingCard,
     SettingCardGroup,
     SmoothScrollArea,
@@ -40,6 +39,8 @@ from qfluentwidgets import (
 )
 
 from core.settings_manager import AppSettings
+from gui.features import AboutPanel
+from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles
 
 
@@ -48,31 +49,54 @@ class PageHeader(QWidget):
 
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(108)
+        self.setFixedHeight(88)
         self.title_label = TitleLabel(title, self)
         self.subtitle_label = CaptionLabel(subtitle, self)
         self.theme_button = ToolButton(FluentIcon.CONSTRACT, self)
         self.sync_theme_action()
+        for label in (self.title_label, self.subtitle_label):
+            label.setMinimumWidth(0)
+            label.setSizePolicy(
+                QSizePolicy.Policy.Ignored,
+                QSizePolicy.Policy.Preferred,
+            )
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(0)
-        layout.setContentsMargins(32, 18, 32, 10)
-        layout.addWidget(self.title_label)
-        layout.addSpacing(4)
-        layout.addWidget(self.subtitle_label)
-        layout.addSpacing(8)
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(4)
+        text_layout.addWidget(self.title_label)
+        text_layout.addWidget(self.subtitle_label)
 
         actions = QHBoxLayout()
         actions.setContentsMargins(0, 0, 0, 0)
-        actions.addStretch(1)
+        actions.setSpacing(8)
         actions.addWidget(self.theme_button)
-        layout.addLayout(actions, 1)
+        self.actions_layout = actions
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(32, 14, 32, 12)
+        layout.setSpacing(16)
+        layout.addLayout(text_layout, 1)
+        layout.addLayout(actions)
 
     def set_subtitle(self, text: str) -> None:
-        """更新页面位置说明，供工作台分区切换提供即时反馈。"""
+        """更新页面位置说明，为内嵌功能切换提供即时反馈。"""
 
         self.subtitle_label.setText(text)
         self.subtitle_label.setToolTip(text)
+
+    def set_title(self, text: str) -> None:
+        """更新当前功能标题，使左侧叶节点与内容标题保持一致。"""
+
+        self.title_label.setText(text)
+        self.title_label.setToolTip(text)
+
+    def add_action_widget(self, widget: QWidget) -> None:
+        """把页面状态或动作放到主题按钮之前，避免重复构建业务页头。"""
+
+        widget.setParent(self)
+        self.actions_layout.insertWidget(self.actions_layout.count() - 1, widget)
+        widget.show()
 
     def sync_theme_action(self) -> None:
         """按已解析主题显示切换目标，避免固定图标造成动作语义含糊。"""
@@ -232,7 +256,7 @@ class BannerWidget(QWidget):
         title.setStyleSheet("font-size: 42px; font-weight: 600; background: transparent;")
         subtitle = BodyLabel("Android 设备实验室", self)
         description = CaptionLabel(
-            "选择设备后，在一个工作台完成应用、系统、远程控制和诊断任务。", self
+            "选择设备后，在三个任务领域完成设备控制、应用自动化和系统诊断。", self
         )
 
         layout = QVBoxLayout(self)
@@ -405,11 +429,19 @@ class WorkspaceSectionPage(QWidget):
         content: QWidget,
         *,
         scroll_area: SmoothScrollArea | None = None,
+        scroll: bool = True,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName(route_key)
-        self.header: PageHeader | None = None
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        if not scroll:
+            content.setParent(self)
+            layout.addWidget(content)
+            content.show()
+            self.body = content
+            return
         body = scroll_area or SmoothScrollArea(self)
         body.setWidgetResizable(True)
         body.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -420,7 +452,9 @@ class WorkspaceSectionPage(QWidget):
         wrapper = QWidget(body)
         wrapper.setObjectName(f"{route_key}View")
         wrapper_layout = QVBoxLayout(wrapper)
-        wrapper_layout.setContentsMargins(32, 14, 32, 28)
+        # WorkspaceFeatureHost 已提供 24px 外边距；这里补足到与 32px
+        # 页头基线一致，避免嵌套滚动页再次叠加一整层 32px 留白。
+        wrapper_layout.setContentsMargins(8, 8, 8, 20)
         wrapper_layout.setSpacing(18)
         wrapper_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         content.setParent(wrapper)
@@ -428,103 +462,168 @@ class WorkspaceSectionPage(QWidget):
         content.show()
         body.setWidget(wrapper)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(body)
         self.body = body
 
+    def reset_scroll_position(self) -> None:
+        """分类路由变化后从内容起点展示，避免继承上一分类的中段位置。"""
 
-class WorkspacePage(QWidget):
-    """参考 SegmentedWidget 示例移植的一体化设备工作台。"""
+        horizontal = getattr(self.body, "horizontalScrollBar", None)
+        vertical = getattr(self.body, "verticalScrollBar", None)
+        if callable(horizontal):
+            set_horizontal = getattr(horizontal(), "setValue", None)
+            if callable(set_horizontal):
+                set_horizontal(0)
+        if callable(vertical):
+            set_vertical = getattr(vertical(), "setValue", None)
+            if callable(set_vertical):
+                set_vertical(0)
 
-    sectionChanged = Signal(str)
 
-    def __init__(self, frame, parent: QWidget | None = None) -> None:
+class WorkspaceAreaPage(QWidget):
+    """主导航中的独立设备任务页，并承载该领域的设备功能会话。"""
+
+    routeChanged = Signal(object)
+
+    def __init__(
+        self,
+        route_key: str,
+        section_key: str,
+        title: str,
+        subtitle: str,
+        content: QWidget,
+        *,
+        feature_host: WorkspaceFeatureHost | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
-        self._frame = frame
-        self._sections: dict[str, WorkspaceSectionPage] = {}
-        self._section_labels: dict[str, str] = {}
-        self.setObjectName("workspacePage")
-        self.header = PageHeader(
-            "设备工作台",
-            "设备上下文始终可见；在下方切换应用、系统和远程任务",
-            self,
-        )
-        self.context_card = DeviceContextCard(self)
-        self.segmented = SegmentedWidget(self)
-        self.segmented.setObjectName("workspaceSegmentedNavigation")
-        self.stack = QStackedWidget(self)
-        self.stack.setObjectName("workspaceStack")
+        self.setObjectName(route_key)
+        self.section_key = section_key.strip()
+        if not self.section_key:
+            raise ValueError("section_key must not be empty")
+        self._base_title = title
+        self._base_subtitle = subtitle
+        self._feature_host = feature_host
+        self._current_route = WorkspaceRoute(self.section_key)
+        self._queued_route: WorkspaceRoute | None = None
+        self._active = False
+        self.header = PageHeader(title, subtitle, self)
 
-        context_layout = QVBoxLayout()
-        context_layout.setContentsMargins(32, 6, 32, 8)
-        context_layout.setSpacing(10)
-        context_layout.addWidget(self.context_card)
-        context_layout.addWidget(self.segmented)
-
+        content.setParent(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.header)
-        layout.addLayout(context_layout)
-        layout.addWidget(self.stack, 1)
+        layout.addWidget(content, 1)
+        content.show()
+        self.body = content
 
-        self.segmented.currentItemChanged.connect(self._activate_section)
-        self.context_card.manageRequested.connect(lambda: self.set_section("devices"))
-        self.context_card.refreshRequested.connect(frame._request_device_refresh)
+        if feature_host is not None:
+            if feature_host.section_key != self.section_key:
+                raise ValueError("feature_host section does not match page section")
+            self._current_route = WorkspaceRoute(
+                self.section_key,
+                feature_host.current_feature,
+                feature_host.current_device_id,
+            )
+            self.header.add_action_widget(feature_host.take_session_badge())
+            feature_host.route_changed.connect(self._on_feature_route_changed)
+            feature_host.deactivate("page_hidden")
 
-    def add_section(
-        self,
-        key: str,
-        label: str,
-        icon,
-        page: WorkspaceSectionPage,
-    ) -> None:
-        page.header = self.header
-        self._sections[key] = page
-        self._section_labels[key] = label
-        self.stack.addWidget(page)
-        self.segmented.addItem(routeKey=key, text=label, icon=icon)
-        if len(self._sections) == 1:
-            self.set_section(key)
+    @property
+    def current_route(self) -> WorkspaceRoute:
+        return self._current_route
 
-    def set_section(self, key: str) -> None:
-        key = str(key)
-        if key not in self._sections:
+    def supports_route(self, route: WorkspaceRoute) -> bool:
+        """只读判断路由是否属于当前领域及其已登记功能。"""
+
+        if route.section != self.section_key:
+            return False
+        if self._feature_host is None:
+            return route.feature == "overview"
+        return self._feature_host.has_feature(route.feature)
+
+    def open_route(self, route: WorkspaceRoute) -> bool:
+        """选择目标路由；页面在后台时延迟到进入前台后再激活会话。"""
+
+        if not self.supports_route(route):
+            return False
+        if self._feature_host is not None:
+            if not self._active:
+                self._queued_route = route
+                self._set_route_presentation(route)
+                return True
+            self._queued_route = None
+            return self._feature_host.open_route(route)
+        self._current_route = route
+        self.header.set_subtitle(self._base_subtitle)
+        self.routeChanged.emit(route)
+        return True
+
+    def activate(self) -> None:
+        """页面进入前台时恢复当前功能的前台生命周期。"""
+
+        if self._active:
             return
-        if self.segmented.currentRouteKey() != key:
-            # setCurrentItem 会同步发出 currentItemChanged，统一由 _activate_section
-            # 完成页面切换，避免同一次点击重复发射 sectionChanged。
-            self.segmented.setCurrentItem(key)
+        self._active = True
+        host = self._feature_host
+        if host is None:
             return
-        self._activate_section(key)
 
-    def _activate_section(self, key: str) -> None:
-        """原子更新分区内容、位置说明和业务通知。"""
+        route = self._queued_route or host.pending_route or self._current_route
+        self._queued_route = None
+        host.activate_route(route)
 
-        key = str(key)
-        page = self._sections.get(key)
-        if page is None:
+    def deactivate(self, reason: str = "top_level_navigation") -> None:
+        """页面离开前台时暂停瞬态工作，但保留设备会话。"""
+
+        if not self._active:
             return
-        self.stack.setCurrentWidget(page)
-        label = self._section_labels.get(key, "设备任务")
-        self.header.set_subtitle(f"当前分区：{label} · 操作设备上下文保持不变")
-        self.sectionChanged.emit(key)
-
-    def key_for_widget(self, widget: QWidget) -> str | None:
-        for key, page in self._sections.items():
-            if page is widget:
-                return key
-        return None
+        self._active = False
+        if self._feature_host is not None:
+            self._feature_host.deactivate(reason)
 
     def set_device_context(
         self,
         selected_devices: list[str],
         connected_devices: list[str],
-        discovery_state: str,
+        _discovery_state: str,
     ) -> None:
-        self.context_card.set_context(selected_devices, connected_devices, discovery_state)
+        if self._feature_host is not None:
+            self._feature_host.set_device_context(selected_devices, connected_devices)
 
+    def _on_feature_route_changed(self, route: WorkspaceRoute) -> None:
+        self._set_route_presentation(route)
+        self.routeChanged.emit(route)
+
+    def _set_route_presentation(self, route: WorkspaceRoute) -> None:
+        """同步已选路由及页头，不触发功能会话生命周期。"""
+
+        self._current_route = route
+        host = self._feature_host
+        if route.feature == "overview":
+            title = self._base_title
+            subtitle = self._base_subtitle
+        elif host is not None and host.is_overview_feature(route.feature):
+            label = host.feature_label(route.feature) or route.feature
+            title = label
+            if host.feature_requires_device(route.feature):
+                context = "会话设备已选择" if route.device_id else "请选择会话设备"
+            else:
+                context = "使用设备页中勾选的批量操作目标"
+            subtitle = f"{self._base_title} · {context}"
+        else:
+            label = (
+                host.feature_label(route.feature) if host is not None else ""
+            ) or route.feature
+            title = label
+            if host is not None and host.feature_requires_device(route.feature):
+                context = "会话设备已选择" if route.device_id else "请选择会话设备"
+                subtitle = f"{self._base_title} · {context}"
+            else:
+                subtitle = self._base_title
+        self.header.set_title(title)
+        self.header.set_subtitle(subtitle)
 
 class HomePage(ScrollArea):
     """按参考 Gallery 首页组织的 ADBLab 入口页。"""
@@ -562,28 +661,28 @@ class HomePage(ScrollArea):
                 FluentIcon.APPLICATION,
                 "应用管理",
                 "查看、安装和卸载设备应用",
-                frame._show_app_manager,
+                lambda: frame._open_workspace_feature("apps", "manager"),
             ),
             (
                 "file_explorer",
                 FluentIcon.FOLDER,
                 "文件浏览器",
                 "浏览设备文件并传输内容",
-                frame._show_file_explorer,
+                lambda: frame._open_workspace_feature("devices", "files"),
             ),
             (
                 "logcat",
                 FluentIcon.SCROLL,
                 "实时 Logcat",
                 "按设备查看实时 Android 日志",
-                frame._show_logcat,
+                lambda: frame._open_workspace_feature("system", "logcat"),
             ),
             (
                 "performance",
                 FluentIcon.SPEED_HIGH,
                 "性能监控",
                 "启动性能采样与图表分析",
-                frame._show_performance_monitor,
+                lambda: frame._open_workspace_feature("system", "performance"),
             ),
             (
                 "cmd",
@@ -605,10 +704,14 @@ class HomePage(ScrollArea):
 
         workspace = ActionCardView("设备工作流", view)
         for key, icon, title, content in (
-            ("devices", FluentIcon.PHONE, "设备与连接", "连接设备并选择本次操作目标"),
+            (
+                "devices",
+                FluentIcon.PHONE,
+                "设备与控制",
+                "连接设备、管理文件并使用远程控制",
+            ),
             ("apps", FluentIcon.APPLICATION, "应用与自动化", "应用、录屏、Monkey 与包操作"),
             ("system", FluentIcon.DEVELOPER_TOOLS, "系统与诊断", "系统信息、设置和调试工具"),
-            ("remote", FluentIcon.PROJECTOR, "远程控制", "scrcpy 镜像、输入与显示参数"),
         ):
             workspace.add_card(
                 icon,
@@ -769,20 +872,15 @@ class SettingsPage(ScrollArea):
             "恢复窗口、主题、字体和常规选项",
             application,
         )
-        self.about_card = PushSettingCard(
-            "查看",
-            FluentIcon.INFO,
-            "关于 ADBLab",
-            "版本、许可证与项目说明",
-            application,
-        )
         application.addSettingCard(self.reset_card)
-        application.addSettingCard(self.about_card)
+
+        self.about_panel = AboutPanel(view)
 
         self.expand_layout.addWidget(general)
         self.expand_layout.addWidget(appearance)
         self.expand_layout.addWidget(typography)
         self.expand_layout.addWidget(application)
+        self.expand_layout.addWidget(self.about_panel)
         self.setWidget(view)
 
         self.save_card.clicked.connect(self._pick_save_directory)
@@ -796,7 +894,6 @@ class SettingsPage(ScrollArea):
         self.ui_size_card.valueChanged.connect(self._apply_typography)
         self.log_size_card.valueChanged.connect(self._apply_typography)
         self.reset_card.clicked.connect(self._reset_settings)
-        self.about_card.clicked.connect(frame._show_about_dialog)
 
     def _pick_save_directory(self) -> None:
         self._frame._on_save_path_clicked()
@@ -966,6 +1063,6 @@ __all__ = [
     "HomePage",
     "PageHeader",
     "SettingsPage",
-    "WorkspacePage",
+    "WorkspaceAreaPage",
     "WorkspaceSectionPage",
 ]

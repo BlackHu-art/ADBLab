@@ -8,8 +8,9 @@ from datetime import datetime
 from math import ceil
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFileDialog, QMessageBox, QPlainTextEdit
+from PySide6.QtWidgets import QFileDialog, QPlainTextEdit
 
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import safe_disconnect
 from gui.dialogs.live_logcat_worker import (
     LEVEL_ORDER,
@@ -23,7 +24,7 @@ from utils.adb_values import normalize_android_package
 
 
 class LiveLogcatStream:
-    """组合进 LiveLogcatDialog 的流式控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 LiveLogcatPage 的流式控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -111,6 +112,12 @@ class LiveLogcatStream:
     def _fetch_current_pkg(self):
         if self._frame._closing or self._frame._logcat_stopping:
             return
+        if not self._frame.device_ip or not getattr(
+            self._frame, "_device_connected", True
+        ):
+            self._frame.status_bar.setText("Select a device before querying its package")
+            self._frame._set_running_actions(False)
+            return
         if self._frame._pkg_worker and self._frame._pkg_worker.isRunning():
             return
         self._frame.status_bar.setText("Fetching current package...")
@@ -146,6 +153,12 @@ class LiveLogcatStream:
         from gui.dialogs import live_logcat as _live_logcat
 
         if self._frame.worker and self._frame.worker.is_active():
+            return
+        if not self._frame.device_ip or not getattr(
+            self._frame, "_device_connected", True
+        ):
+            self._frame.status_bar.setText("Select a device before starting Logcat")
+            self._frame._set_running_actions(False)
             return
         self._frame._worker_release_timer.stop()
         self._frame.entries.clear()
@@ -247,18 +260,16 @@ class LiveLogcatStream:
                     raise
                 self._frame.status_bar.setText(f"Exported to {fp}")
             except OSError as e:
-                QMessageBox.critical(
+                FluentMessageBox.critical(
                     self._frame,
                     "Error",
                     str(e),
-                    QMessageBox.StandardButton.Ok,
-                    QMessageBox.StandardButton.NoButton,
                 )
 
     # ── 信号槽 ──────────────────────────────────────────────────────────
 
     def _on_lines_signal(self, batch: LogcatBatch):
-        """通过对话框 QObject 槽接收批次，避免匿名回调越过窗口生命周期。"""
+        """通过页面 QObject 槽接收批次，避免匿名回调越过页面生命周期。"""
         worker = self._frame.sender()
         if worker is not None:
             self._on_lines(worker, batch)
@@ -301,7 +312,8 @@ class LiveLogcatStream:
         self._frame.entries.append((text, level, pid))
         if self._passes(level):
             self._frame._pending_visible_lines.append(text)
-            self._schedule_line_flush()
+            if getattr(self._frame, "_view_active", True):
+                self._schedule_line_flush()
         self._frame.clear_btn.setEnabled(True)
 
     def _on_lines(self, worker: LogcatWorker, batch: LogcatBatch):

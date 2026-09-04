@@ -8,7 +8,7 @@
 | 分区 | 目录 | 主要写入者 | 更新规则 |
 | --- | --- | --- | --- |
 | 现状事实 | `project-knowledge/` | 修改代码/配置的人 | 与代码同步更新；必须带 frontmatter |
-| 决策 | `architecture/` | 架构决策者 | 追加 ADR，不回改历史决策 |
+| 决策 | `architecture/` | 架构决策者 | 只追加 ADR，不在 ADR 中维护实施进度 |
 | 操作指南 | `guides/` | 修改命令/门禁的人 | 只记录已验证命令；未验证标"待确认" |
 | 过程归档 | `archive/` | 阶段收口时 | 只搬移不更新；入口见 [archive/README.md](archive/README.md) |
 
@@ -26,7 +26,7 @@
 ```yaml
 ---
 status: current
-last_verified: 2026-08-19
+last_verified: YYYY-MM-DD
 related: [glossary.md, ARCHITECTURE.md]
 ---
 ```
@@ -36,7 +36,8 @@ related: [glossary.md, ARCHITECTURE.md]
 - `related`：同分区或跨分区的相关文档相对路径列表，支持流式 `[a, b]` 或块式 `- a` 写法。
 - `RISKS_AND_DEBT.md` 额外要求 `owner` 字段；未指定具名维护人时填"待确认"。
 
-`guides/`、`architecture/`、`archive/` 的文档不强制 frontmatter，但推荐至少标注 `last_verified`。
+`guides/` 不强制 frontmatter；ADR 和 `archive/` 是不可回写的历史记录，不维护滚动
+`last_verified`。
 
 ## 链接规范
 
@@ -51,8 +52,8 @@ related: [glossary.md, ARCHITECTURE.md]
 
 ## 归档条件
 
-满足以下任一条件的文档移入 `archive/` 对应子目录，且不再修改正文：
+只有具备审计价值的完成材料才移入 `archive/`，且不再修改正文：
 
 - 阶段实施账本在阶段收口、结论已并入当前知识文档后；
-- 阶段性评审/调研报告失去指导意义后；
+- 阶段性评审/调研产生了实际决策或能解释历史实现时；
 - 历史卫生检查报告。

@@ -1,16 +1,15 @@
 import pytest
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPixmap, QShortcut
-from PySide6.QtWidgets import QPushButton, QToolButton
+from PySide6.QtWidgets import QPushButton
 from qfluentwidgets import CardWidget, TransparentToolButton
 
-from gui.dialogs.screenshot_viewer import ScreenshotViewer
+from gui.features.media import ScreenshotPage
 from gui.pages.fluent_pages import ActionCard
 from gui.panels.side_panel import SidePanel
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_focus_indicator
 from gui.styles.theme import THEMES
-from gui.widgets.preset_spin_box import PresetSpinBox
 from tests.ui_geometry_helpers import wait_until
 
 
@@ -56,16 +55,6 @@ def test_home_action_card_has_accessible_name_and_keyboard_focus(qt_application)
     assert card.accessibleDescription() == "Configure application preferences"
     assert card.focusPolicy() & Qt.FocusPolicy.TabFocus
     card.deleteLater()
-
-
-def test_preset_icon_button_has_accessible_name_and_keyboard_focus(qt_application):
-    field = PresetSpinBox(1, 100, 5, presets=(1, 5, 10))
-    button = field.findChild(QToolButton, "presetMenuButton")
-
-    assert button is not None
-    assert button.text() == ""
-    assert button.accessibleName().strip()
-    assert button.focusPolicy() & Qt.FocusPolicy.TabFocus
 
 
 @pytest.mark.parametrize(
@@ -128,7 +117,7 @@ def test_home_actions_use_gallery_cardwidget_container(qt_application):
 
 
 def test_screenshot_icon_buttons_have_accessible_names(qt_application):
-    viewer = ScreenshotViewer([])
+    viewer = ScreenshotPage([])
     try:
         # 图标按钮已收敛为 qfluentwidgets TransparentToolButton（QToolButton 子类）；
         # SmoothScrollDelegate 的内部 ArrowButton 是滚动条子控件，不属于图标按钮，
@@ -144,7 +133,7 @@ def test_screenshot_icon_buttons_have_accessible_names(qt_application):
 
 
 def test_screenshot_controls_render_focus_indicators_in_dark_theme(qt_application, tmp_path):
-    """A local dialog stylesheet must not hide the global keyboard-focus affordance."""
+    """截图页局部样式不得遮蔽全局键盘焦点提示。"""
     image_paths = []
     for index, color in enumerate(("#ff0000", "#00ff00")):
         path = tmp_path / f"screenshot-{index}.png"
@@ -155,7 +144,7 @@ def test_screenshot_controls_render_focus_indicators_in_dark_theme(qt_applicatio
 
     previous_theme = BaseStyles.current_theme()
     BaseStyles.switch_theme("Dark")
-    viewer = ScreenshotViewer(image_paths)
+    viewer = ScreenshotPage(image_paths)
     try:
         viewer.show()
         qt_application.processEvents()

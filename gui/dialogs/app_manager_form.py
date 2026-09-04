@@ -35,7 +35,6 @@ from qfluentwidgets import (
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
-from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 from gui.widgets.responsive_layout import reflow_widgets
 
@@ -61,7 +60,7 @@ def _apply_adaptive_text_heights(widget: QWidget) -> None:
 
 
 class AppManagerForm:
-    """组合进 AppManagerDialog 的表单控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 AppManagerPage 的表单控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -69,16 +68,21 @@ class AppManagerForm:
     def _init_ui(self):
         from gui.dialogs import app_manager as _app_manager
 
-        layout = QVBoxLayout(self._frame)
+        self._frame._page_layout = QVBoxLayout(self._frame)
+        self._frame._page_layout.setContentsMargins(0, 0, 0, 0)
+        self._frame._page_layout.setSpacing(0)
+        self._frame._master_panel = QWidget(self._frame)
+        self._frame._master_panel.setObjectName("appManagerMasterPanel")
+        layout = QVBoxLayout(self._frame._master_panel)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         layout.setSpacing(4)
         layout.setContentsMargins(8, 8, 8, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头（圆角由
+        # 视觉重设计：页面内容顶部统一为 Fluent CardWidget 卡片页头（圆角由
         # CardWidget 自绘制并随主题切换，不再依赖 QFrame 页头 QSS）。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级；
-        # 不用 UI_SMALL，遵守对话框字体爆发测试不存在小型字角色控件的不变式。
+        # 不用 UI_SMALL，遵守功能页字体测试不存在小型字角色控件的不变式。
         header_card = CardWidget()
         header_card.setObjectName("dialogHeaderCard")
         header_card.setBorderRadius(BaseStyles.RADIUS_LG)
@@ -151,6 +155,30 @@ class AppManagerForm:
         )
         layout.addLayout(self._frame._top_layout)
         self._frame._reflow_top_controls()
+
+        self._frame.load_error_panel = QFrame()
+        self._frame.load_error_panel.setObjectName("appManagerLoadError")
+        error_layout = QHBoxLayout(self._frame.load_error_panel)
+        error_layout.setContentsMargins(8, 4, 8, 4)
+        error_layout.setSpacing(8)
+        self._frame.load_error_label = apply_label_role(
+            CaptionLabel("Unable to load applications."),
+            FontRole.UI_SMALL,
+            color_key="ERROR_COLOR",
+        )
+        self._frame.load_error_label.setWordWrap(True)
+        self._frame.load_error_label.setAccessibleName("Application load error")
+        self._frame.retry_btn = PushButton("Retry")
+        self._frame.retry_btn.setToolTip("Retry loading the installed application list")
+        self._frame.retry_btn.setAccessibleName("Retry application loading")
+        self._frame.retry_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self._frame.retry_btn.setIconSize(QSize(14, 14))
+        self._frame.retry_btn.setProperty("adaptiveBaseHeight", 28)
+        self._frame.retry_btn.clicked.connect(self._frame.retry_load)
+        error_layout.addWidget(self._frame.load_error_label, 1)
+        error_layout.addWidget(self._frame.retry_btn)
+        self._frame.load_error_panel.hide()
+        layout.addWidget(self._frame.load_error_panel)
 
         self._frame.stack = QStackedWidget()
 
@@ -243,6 +271,8 @@ class AppManagerForm:
             b.setToolTip(tooltip)
             b.setAccessibleName(t)
             b.setAccessibleDescription(tooltip)
+            b.setProperty("requiresDevice", a is not None)
+            b.setProperty("requiresSelection", True)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             if a:
                 b.clicked.connect(lambda _, act=a: self._frame._modify_selected(act))
@@ -294,6 +324,14 @@ class AppManagerForm:
             b.setToolTip(tooltip)
             b.setAccessibleName(t)
             b.setAccessibleDescription(tooltip)
+            b.setProperty(
+                "requiresDevice",
+                t in {"Backup Selected", "Restore Backup", "App Details"},
+            )
+            b.setProperty(
+                "requiresSelection",
+                t in {"Create Preset", "Backup Selected", "App Details"},
+            )
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             b.clicked.connect(fn)
             if t in {"Create Preset", "Backup Selected", "App Details"}:
@@ -316,7 +354,6 @@ class AppManagerForm:
         self._frame._reflow_action_buttons()
 
     def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self._frame)
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         log_font = bs.font_for_role(FontRole.LOG)
@@ -327,6 +364,8 @@ class AppManagerForm:
         # 日志输出框样式由 qfluentwidgets TextEdit 自维护，这里仅同步等宽字体。
         self._frame.log_output.setFont(log_font)
         self._frame.log_output.document().setDefaultFont(log_font)
+        self._frame.load_error_label.setFont(bs.font_for_role(FontRole.UI_SMALL))
+        self._frame.retry_btn.setFont(ui_font)
         # 应用树样式由 qfluentwidgets TreeView 自维护（随主题切换）。
         self._frame.icon_list.setStyleSheet(
             "QListWidget { background-color:"
@@ -366,12 +405,29 @@ class AppManagerForm:
         """按设备连接状态刷新徽标；绿=已连接设备，蓝=未选择设备。"""
 
         has_device = bool(self._frame.device_ip)
-        self._frame.status_badge.setText("Ready" if has_device else "No device")
-        self._frame.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
+        connected = bool(getattr(self._frame, "_device_connected", has_device))
+        if not has_device:
+            text, level = "No device", InfoLevel.INFOAMTION
+        elif connected:
+            text, level = "Ready", InfoLevel.SUCCESS
+        else:
+            text, level = "Offline", InfoLevel.WARNING
+        self._frame.status_badge.setText(text)
+        self._frame.status_badge.setLevel(level)
 
     def _action_layout_available_width(self) -> int:
-        margins = self._frame.layout().contentsMargins()
-        return max(1, self._frame.contentsRect().width() - margins.left() - margins.right())
+        surface = getattr(self._frame, "_master_panel", None)
+        if not isinstance(surface, QWidget):
+            surface = self._frame
+        layout = surface.layout()
+        if layout is None:
+            return max(1, surface.contentsRect().width())
+        margins = layout.contentsMargins()
+        if not getattr(self._frame, "_details_open", False):
+            surface_width = self._frame.contentsRect().width()
+        else:
+            surface_width = surface.contentsRect().width()
+        return max(1, surface_width - margins.left() - margins.right())
 
     @staticmethod
     def _buttons_fit_columns(buttons, columns: int, available_width: int, spacing: int) -> bool:

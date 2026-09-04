@@ -54,7 +54,7 @@ class CloseController:
         self._frame.task_supervisor.stop_all_async(deadline=max(0.0, remaining - reserve))
 
     def _register_application_shutdown_tasks(self):
-        """按扫描、面板、对话框和 Controller 顺序注册应用级关闭资源。"""
+        """按扫描、面板、内嵌会话和 Controller 顺序注册关闭资源。"""
         supervisor = self._frame.task_supervisor.supervisor
         thread = self._frame._scan_thread
         if thread is not None:
@@ -82,20 +82,21 @@ class CloseController:
                 owner_id=self._frame._shutdown_owner_id,
             )
 
-        for index, dialog in enumerate(list(self._frame._active_dialogs)):
-            register_dialog_tasks = getattr(dialog, "register_shutdown_tasks", None)
-            if not callable(register_dialog_tasks):
+        feature_hosts = getattr(self._frame, "_workspace_feature_hosts", {})
+        for index, host in enumerate(feature_hosts.values()):
+            register_feature_tasks = getattr(host, "register_shutdown_tasks", None)
+            if not callable(register_feature_tasks):
                 continue
             try:
-                register_dialog_tasks(
+                register_feature_tasks(
                     supervisor,
                     owner_id=self._frame._shutdown_owner_id,
-                    task_prefix=f"{self._frame._shutdown_owner_id}-dialog-{index}",
+                    task_prefix=f"{self._frame._shutdown_owner_id}-feature-{index}",
                 )
             except Exception as exc:
                 self._frame.log_service.log(
                     "ERROR",
-                    f"Shutdown task registration failed: {type(exc).__name__}",
+                    f"Feature shutdown task registration failed: {type(exc).__name__}",
                     flush_immediately=True,
                 )
 
@@ -150,15 +151,9 @@ class CloseController:
                     )
             except (TypeError, RuntimeError, AttributeError):
                 pass
-        for dlg in list(self._frame._active_dialogs):
+        for host in getattr(self._frame, "_workspace_feature_hosts", {}).values():
             try:
-                dlg.close()
-            except Exception:
-                pass
-        # 独立窗口可能在后台资源停止前忽略关闭事件；保留强引用直到 destroyed 回调移除。
-        for viewer in list(getattr(self._frame.adb_controller, "_active_viewers", [])):
-            try:
-                viewer.close()
+                host.shutdown()
             except Exception:
                 pass
         shutdown_left_panel = getattr(self._frame.left_panel, "shutdown", None)

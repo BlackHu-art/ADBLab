@@ -10,8 +10,6 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from PySide6.QtCore import QEvent
-
 from core.exec import ProcessRunner
 from gui.main_frame import MainFrame
 from gui.main_frame_actions import MainFrameActions
@@ -30,6 +28,7 @@ def _feedback_controller() -> SimpleNamespace:
         operation_completed=Mock(),
         current_package_received=Mock(),
         device_info_updated=Mock(),
+        screenshot_batch_ready=Mock(),
     )
 
 
@@ -40,6 +39,7 @@ def test_main_frame_routes_business_log_signal_to_log_service():
         log_panel=Mock(),
         left_panel=Mock(),
         _on_devices_updated=Mock(),
+        _on_screenshot_batch_ready=Mock(),
     )
     left_panel = SimpleNamespace(log_message=Mock())
     controller = _feedback_controller()
@@ -92,39 +92,6 @@ def test_main_frame_actions_emit_structured_debug():
     ]
     toggle_theme.assert_called_once_with()
     frame.close.assert_called_once_with()
-
-
-def test_secondary_window_destroyed_debug_excludes_target_identity():
-    dialog = object()
-    frame = SimpleNamespace(
-        log_service=Mock(),
-        _active_dialogs=[dialog],
-    )
-    frame._forget_dialog = lambda target: MainFrame._forget_dialog(frame, target)
-
-    MainFrame._on_dialog_destroyed(frame, dialog, "LiveLogcatDialog")
-
-    frame.log_service.log.assert_called_once_with(
-        "DEBUG",
-        "ui.secondary_window active_count=0 dialog=LiveLogcatDialog phase=closed",
-    )
-    assert frame._active_dialogs == []
-
-
-def test_secondary_window_close_request_is_captured_by_main_event_filter():
-    frame = SimpleNamespace(log_service=Mock())
-    watched = Mock()
-    watched.property.return_value = "FileExplorerDialog"
-    event = Mock()
-    event.type.return_value = QEvent.Type.Close
-
-    handled = MainFrame.eventFilter(frame, watched, event)
-
-    assert handled is False
-    frame.log_service.log.assert_called_once_with(
-        "DEBUG",
-        "ui.secondary_window dialog=FileExplorerDialog phase=close_requested",
-    )
 
 
 def test_remote_diagnostic_redacts_active_device_and_limits_length():

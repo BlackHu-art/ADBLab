@@ -1112,9 +1112,10 @@ def test_single_apk_entry_uses_same_operation_identity_for_every_device():
     with patch(
         "controllers._app.QFileDialog.getOpenFileName",
         return_value=("a.apk", ""),
-    ):
+    ) as select_apk:
         operation_id = controller.install_apk(["device-a", "device-b"])
 
+    assert select_apk.call_args.args[0] is None
     tasks = _submitted(controller, operation_id)
     assert len(tasks) == 2
     assert {call.args[4] for call in tasks} == {"install"}
@@ -1126,8 +1127,12 @@ def test_single_apk_entry_uses_same_operation_identity_for_every_device():
 
 def test_install_batch_partial_maps_to_compat_failure_and_reports_counts():
     controller = _controller()
-    with patch("controllers._app.QFileDialog.getOpenFileNames", return_value=(["a.apk"], "")):
+    with patch(
+        "controllers._app.QFileDialog.getOpenFileNames",
+        return_value=(["a.apk"], ""),
+    ) as select_apks:
         operation_id = controller.batch_install_apk(["device-a", "device-b"])
+    assert select_apks.call_args.args[0] is None
     first, second = _submitted(controller, operation_id)
 
     assert _finish(controller, first) is None

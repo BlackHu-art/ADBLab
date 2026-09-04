@@ -1,8 +1,8 @@
-"""提供文件浏览器复用的图片预览子对话框。"""
+"""提供文件浏览器页内复用的图片预览控件。"""
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QDialog, QSizePolicy, QVBoxLayout
+from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
 
 from gui.styles import FontRole
@@ -10,8 +10,10 @@ from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 
 
-class _ImageViewerDialog(QDialog):
-    """保持图片预览控件稳定，并让源图片适配可视区域。"""
+class FileExplorerImagePreview(QWidget):
+    """保持页内图片预览稳定，并让源图片适配可视区域。"""
+
+    closeRequested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,7 +48,7 @@ class _ImageViewerDialog(QDialog):
         self.image_close.setToolTip("Close the image preview")
         self.image_close.setIcon(get_themed_icon("x.svg"))
         self.image_close.setIconSize(QSize(14, 14))
-        self.image_close.clicked.connect(self.accept)
+        self.image_close.clicked.connect(self.closeRequested.emit)
         layout.addWidget(self.image_close, alignment=Qt.AlignmentFlag.AlignCenter)
 
     def set_image_source(self, source: QPixmap, name: str) -> None:
@@ -80,7 +82,7 @@ class _ImageViewerDialog(QDialog):
         self.image_label.setFixedSize(pixmap.size())
 
     def release_image_source(self) -> None:
-        """延迟删除对话框前取消待处理适配并释放图片。"""
+        """释放预览前取消待处理适配并清空图片。"""
 
         self._fit_timer.stop()
         self._fit_pending = False
@@ -101,3 +103,5 @@ class _ImageViewerDialog(QDialog):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._schedule_fit()
+
+__all__ = ["FileExplorerImagePreview"]

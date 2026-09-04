@@ -1,4 +1,4 @@
-"""提供 Logcat 对话框的表单构建、主题应用与响应式重排。"""
+"""提供 Logcat 功能页的表单构建、主题应用与响应式重排。"""
 
 from PySide6.QtCore import QSize
 from PySide6.QtWidgets import (
@@ -25,12 +25,11 @@ from gui.dialogs.live_logcat_worker import LEVEL_LABELS
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_themed_icon
-from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 
 
 class LiveLogcatForm:
-    """组合进 LiveLogcatDialog 的表单控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 LiveLogcatPage 的表单控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -41,7 +40,7 @@ class LiveLogcatForm:
         layout.setContentsMargins(6, 6, 6, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
+        # 视觉重设计：页面内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
         self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
@@ -161,7 +160,7 @@ class LiveLogcatForm:
             self._frame.export_btn,
             self._frame.wrap_btn,
         )
-        # QDialog 默认会让 QPushButton 响应 Enter；包名输入框已独占 Enter 提交，
+        # 顶层窗口默认会让动作按钮响应 Enter；包名输入框已独占 Enter 提交，
         # 所有动作按钮必须关闭默认按钮语义，避免随后再次触发 Current Package 等操作。
         for button in (self._frame.btn_get_pkg, *action_buttons):
             button.setAutoDefault(False)
@@ -232,7 +231,6 @@ class LiveLogcatForm:
         self._frame._reflowing_filters = False
 
     def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self._frame)
         BS = BaseStyles
         self._frame.setWindowIcon(get_themed_icon(self._frame._window_icon_name))
         # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
@@ -240,7 +238,10 @@ class LiveLogcatForm:
             self._frame.dialog_title.setFont(BS.font_for_role(FontRole.TITLE))
             self._frame.dialog_subtitle.setFont(BS.font_for_role(FontRole.UI))
             self._frame.status_badge.setFont(BS.font_for_role(FontRole.UI))
-            has_device = bool(self._frame.device_ip)
+            has_device = bool(
+                self._frame.device_ip
+                and getattr(self._frame, "_device_connected", True)
+            )
             self._frame.status_badge.setText("Ready" if has_device else "No device")
             self._frame.status_badge.setLevel(
                 InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION
@@ -302,10 +303,16 @@ class LiveLogcatForm:
         """统一维护日志采集按钮状态，避免异步路径出现状态分叉。"""
 
         self._frame._logcat_stopping = stopping
-        self._frame.start_btn.setEnabled(not running)
+        has_device = bool(
+            self._frame.device_ip
+            and getattr(self._frame, "_device_connected", True)
+        )
+        self._frame.start_btn.setEnabled(has_device and not running)
         self._frame.stop_btn.setEnabled(running and not stopping)
         package_lookup_active = bool(
             self._frame._pkg_worker is not None and self._frame._pkg_worker.isRunning()
         )
-        self._frame.btn_get_pkg.setEnabled(not stopping and not package_lookup_active)
+        self._frame.btn_get_pkg.setEnabled(
+            has_device and not stopping and not package_lookup_active
+        )
         self._apply_action_button_styles()

@@ -7,9 +7,11 @@ from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
+from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.responsive_layout import (
     RESPONSIVE_MINIMUM_TEXT_PROPERTY,
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
@@ -31,6 +33,7 @@ class AppPanel(BasePanel):
         lo.setContentsMargins(0, 0, 0, 0)
         self._apps_section_groups: list[HeaderCardWidget] = []
         self._build_apps_header(lo)
+        self.category_stack = AdaptiveCategoryStack("apps", w)
 
         g_ts = self._card_group("文本与屏幕")
         gts_l = g_ts.viewLayout
@@ -70,8 +73,6 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g_ts)
-
         g_pm = self._card_group("应用包管理")
         gl_pm = g_pm.viewLayout
         gl_pm.setSpacing(2)
@@ -158,8 +159,6 @@ class AppPanel(BasePanel):
             third_package_binding,
         )
         self.package_action_binding = first_package_binding
-        lo.addWidget(g_pm)
-
         g_m = self._card_group("Monkey")
         gm_l = g_m.viewLayout
         gm_l.setSpacing(3)
@@ -364,8 +363,6 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        lo.addWidget(g_m)
-
         g_r = self._card_group("报告与日志")
         gr_l = g_r.viewLayout
         gr_l.setSpacing(2)
@@ -393,8 +390,6 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g_r)
-
         g_perf = self._card_group("性能诊断")
         gl_perf = g_perf.viewLayout
         gl_perf.setSpacing(2)
@@ -438,8 +433,18 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g_perf)
-
+        self.category_stack.add_category("daily", "日常操作", (g_ts,))
+        self.category_stack.add_category("packages", "应用包", (g_pm,))
+        self.category_stack.add_category("monkey", "Monkey 测试", (g_m,))
+        self.category_stack.add_category(
+            "diagnostics",
+            "诊断工具",
+            (g_r, g_perf),
+        )
+        self.category_stack.current_changed.connect(
+            lambda _key: self.apply_responsive_width(0)
+        )
+        lo.addWidget(self.category_stack)
         lo.addStretch()
 
         # 恢复上次使用的 Monkey 参数，避免切换页签后丢失测试配置。
@@ -473,6 +478,7 @@ class AppPanel(BasePanel):
 
         header = QWidget()
         header.setObjectName("appsHeader")
+        self.panel_header = header
         hl = QVBoxLayout(header)
         hl.setContentsMargins(0, 0, 0, 4)
         hl.setSpacing(2)
@@ -708,16 +714,12 @@ class AppPanel(BasePanel):
         # Monkey 允许非 100% 的事件比例，但必须提示分布不可预测。
         total = sum(int(c.currentText() or "0") for c in self._monkey_pct_combos.values())
         if total != 100:
-            from PySide6.QtWidgets import QMessageBox
-
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self,
                 "事件比例未达到 100%",
                 f"当前事件比例合计为 {total}%，不是 100%。\n"
                 "Monkey 仍会运行，但事件分布可能不符合预期。\n\n"
                 "建议调整各项比例，使合计达到 100%。",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
         params["package_name"] = self.package_text
         from core.settings_manager import AppSettings

@@ -2,8 +2,6 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import Mock, patch
 
-from PySide6.QtCore import Qt
-
 from adblab.application.envelope import OperationMetadata
 from adblab.application.operations import OperationManager, OperationState
 from controllers._media import ADBMediaMixin
@@ -17,9 +15,7 @@ def _controller(tmp_path):
     controller.testing_model = Mock()
     controller.signals = Mock()
     controller.log_service = Mock()
-    controller._active_viewers = []
     controller._get_screenshot_dir = Mock(return_value=str(tmp_path))
-    controller._show_screenshot_viewer = Mock()
     return controller
 
 
@@ -106,11 +102,12 @@ def test_two_overlapping_screenshot_batches_are_isolated_when_callbacks_interlea
     assert {terminal.operation_id for terminal in terminals} == {operation_a, operation_b}
     assert all(terminal.state is OperationState.SUCCEEDED for terminal in terminals)
     assert controller.operation_manager.active_count == 0
-    assert controller._show_screenshot_viewer.call_count == 2
-    viewer_sets = {
-        frozenset(call.args[0]) for call in controller._show_screenshot_viewer.call_args_list
+    assert controller.signals.screenshot_batch_ready.emit.call_count == 2
+    batch_sets = {
+        frozenset(call.args[0])
+        for call in controller.signals.screenshot_batch_ready.emit.call_args_list
     }
-    assert viewer_sets == {
+    assert batch_sets == {
         frozenset(call.args[1] for call in tasks_a),
         frozenset(call.args[1] for call in tasks_b),
     }
@@ -155,11 +152,13 @@ def test_screenshot_partial_failure_is_not_reported_as_success(tmp_path):
     assert completed[0] == "screenshot"
     assert completed[1] is False
     assert "1/3 succeeded" in completed[2]
-    controller._show_screenshot_viewer.assert_called_once_with([success_task.args[1]])
+    controller.signals.screenshot_batch_ready.emit.assert_called_once_with(
+        [success_task.args[1]]
+    )
     assert controller.operation_manager.active_count == 0
 
 
-def test_screenshot_all_failure_creates_no_artifact_signal_or_viewer(tmp_path):
+def test_screenshot_all_failure_creates_no_artifact_or_batch_signal(tmp_path):
     controller = _controller(tmp_path)
     operation_id = controller.take_screenshot(["target-a", "target-b"])
     first, second = _tasks(controller, operation_id)
@@ -176,7 +175,7 @@ def test_screenshot_all_failure_creates_no_artifact_signal_or_viewer(tmp_path):
     assert terminal.state is OperationState.FAILED
     assert terminal.artifacts == ()
     controller.signals.screenshot_captured.emit.assert_not_called()
-    controller._show_screenshot_viewer.assert_not_called()
+    controller.signals.screenshot_batch_ready.emit.assert_not_called()
     controller.signals.operation_completed.emit.assert_called_once()
     assert controller.signals.operation_completed.emit.call_args.args[1] is False
     assert controller.operation_manager.active_count == 0
@@ -204,7 +203,7 @@ def test_screenshot_duplicate_and_late_callbacks_have_no_duplicate_side_effects(
         counts = (
             controller.signals.screenshot_captured.emit.call_count,
             controller.signals.operation_completed.emit.call_count,
-            controller._show_screenshot_viewer.call_count,
+            controller.signals.screenshot_batch_ready.emit.call_count,
         )
 
         assert controller._process_screenshot_operation_result(first_result, first_meta) is None
@@ -214,7 +213,7 @@ def test_screenshot_duplicate_and_late_callbacks_have_no_duplicate_side_effects(
     assert (
         controller.signals.screenshot_captured.emit.call_count,
         controller.signals.operation_completed.emit.call_count,
-        controller._show_screenshot_viewer.call_count,
+        controller.signals.screenshot_batch_ready.emit.call_count,
     ) == counts
 
 
@@ -256,7 +255,7 @@ def test_screenshot_submission_failures_are_terminal_without_waiting_for_callbac
     controller.signals.operation_completed.emit.assert_called_once()
     assert controller.signals.operation_completed.emit.call_args.args[1] is False
     controller.signals.screenshot_captured.emit.assert_not_called()
-    controller._show_screenshot_viewer.assert_not_called()
+    controller.signals.screenshot_batch_ready.emit.assert_not_called()
 
 
 def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp_path):
@@ -278,7 +277,7 @@ def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp
         counts = (
             controller.signals.screenshot_captured.emit.call_count,
             controller.signals.operation_completed.emit.call_count,
-            controller._show_screenshot_viewer.call_count,
+            controller.signals.screenshot_batch_ready.emit.call_count,
         )
         assert controller.cancel_screenshot(operation_id) is False
         assert (
@@ -295,7 +294,7 @@ def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp
     assert (
         controller.signals.screenshot_captured.emit.call_count,
         controller.signals.operation_completed.emit.call_count,
-        controller._show_screenshot_viewer.call_count,
+        controller.signals.screenshot_batch_ready.emit.call_count,
     ) == counts
     assert controller.operation_manager.active_count == 0
 
@@ -395,22 +394,18 @@ def test_cancel_between_artifact_and_result_does_not_publish_cancelled_artifact(
     assert callback_errors == []
     assert controller.operation_manager.active_count == 0
     controller.signals.screenshot_captured.emit.assert_not_called()
-    controller._show_screenshot_viewer.assert_not_called()
+    controller.signals.screenshot_batch_ready.emit.assert_not_called()
     controller.signals.operation_completed.emit.assert_called_once()
     assert "0/1 succeeded" in controller.signals.operation_completed.emit.call_args.args[2]
     assert "1 cancelled" in controller.signals.operation_completed.emit.call_args.args[2]
 
 
-def test_screenshot_filters_empty_and_duplicate_targets_and_uses_no_legacy_shared_state(tmp_path):
+def test_screenshot_filters_empty_and_duplicate_targets(tmp_path):
     controller = _controller(tmp_path)
 
     operation_id = controller.take_screenshot(["", "target-a", "target-a", None])
 
     assert len(_tasks(controller, operation_id)) == 1
-    assert not hasattr(controller, "_screenshot_paths")
-    assert not hasattr(controller, "_screenshot_remaining")
-    assert not hasattr(controller, "_screenshot_devices")
-    assert not hasattr(controller, "_pending_ops")
 
 
 def test_screenshot_metadata_mismatch_fails_closed_and_emits_compat_terminal(tmp_path):
@@ -539,49 +534,25 @@ def test_screenshot_cas_loss_before_artifact_record_emits_no_success(tmp_path):
     controller.signals.operation_completed.emit.assert_not_called()
 
 
-def test_screenshot_viewer_is_independent_but_managed_by_injected_window_owner():
+def test_screenshot_batch_is_published_without_creating_or_owning_gui():
     controller = ADBMediaMixin.__new__(ADBMediaMixin)
-    controller.window_owner = Mock()
-    controller.log_service = Mock()
-    controller._active_viewers = []
-    viewer = Mock()
+    controller.signals = Mock()
 
-    with (
-        patch("controllers._media.ScreenshotViewer", return_value=viewer) as viewer_cls,
-        patch("controllers._media.configure_independent_secondary_window") as configure_window,
-        patch("controllers._media.fit_secondary_window_to_owner_screen") as fit_window,
-    ):
-        controller._show_screenshot_viewer(["shot.png"])
+    controller._emit_screenshot_batch(["shot.png", "", "second.png"])
 
-    viewer_cls.assert_called_once_with(["shot.png"])
-    configure_window.assert_called_once_with(viewer)
-    fit_window.assert_called_once_with(viewer, controller.window_owner)
-    viewer.setAttribute.assert_called_once_with(Qt.WA_DeleteOnClose)
-    viewer.installEventFilter.assert_called_once_with(controller.window_owner)
-    viewer.show.assert_called_once_with()
-    created_message = controller.log_service.log.call_args.args[1]
-    assert "dialog=ScreenshotViewer" in created_message
-    assert "phase=created" in created_message
-    assert "shot.png" not in created_message
-
-    destroyed_handler = viewer.destroyed.connect.call_args.args[0]
-    destroyed_handler()
-
-    assert controller._active_viewers == []
-    closed_message = controller.log_service.log.call_args.args[1]
-    assert "phase=closed" in closed_message
+    controller.signals.screenshot_batch_ready.emit.assert_called_once_with(
+        ["shot.png", "second.png"]
+    )
 
 
-def test_screenshot_viewer_is_skipped_while_shutting_down():
+def test_screenshot_batch_is_skipped_while_shutting_down():
     controller = ADBMediaMixin.__new__(ADBMediaMixin)
     controller._shutting_down = True
-    controller._active_viewers = []
+    controller.signals = Mock()
 
-    with patch("controllers._media.ScreenshotViewer") as viewer_cls:
-        controller._show_screenshot_viewer(["shot.png"])
+    controller._emit_screenshot_batch(["shot.png"])
 
-    viewer_cls.assert_not_called()
-    assert controller._active_viewers == []
+    controller.signals.screenshot_batch_ready.emit.assert_not_called()
 
 
 def test_auto_pull_is_skipped_while_shutting_down():

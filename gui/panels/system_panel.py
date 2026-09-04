@@ -10,6 +10,7 @@ from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
+from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.responsive_layout import WidthPolicy
 
 
@@ -23,6 +24,7 @@ class SystemPanel(BasePanel):
         lo.setContentsMargins(0, 0, 0, 0)
         self._system_section_groups: list[HeaderCardWidget] = []
         self._build_system_header(lo)
+        self.category_stack = AdaptiveCategoryStack("system", w)
 
         g1 = self._card_group("Shell 命令")
         gl1 = g1.viewLayout
@@ -39,8 +41,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        lo.addWidget(g1)
-
         g_rb = self._card_group("重启与模式")
         gl_rb = g_rb.viewLayout
         gl_rb.setSpacing(2)
@@ -63,8 +63,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g_rb)
-
         gb = self._card_group("广播与 Intent")
         glb = gb.viewLayout
         glb.setSpacing(2)
@@ -107,8 +105,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        lo.addWidget(gb)
-
         g3 = self._card_group("端口转发")
         gl3 = g3.viewLayout
         gl3.setSpacing(2)
@@ -152,8 +148,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g3)
-
         gs = self._card_group("系统服务开关 (svc)")
         gsl = gs.viewLayout
         gsl.setSpacing(2)
@@ -197,8 +191,6 @@ class SystemPanel(BasePanel):
                 medium_columns=2,
                 wide_columns=4,
             )
-        lo.addWidget(gs)
-
         g4 = self._card_group("Android 设置")
         gl4 = g4.viewLayout
         gl4.setSpacing(2)
@@ -232,8 +224,6 @@ class SystemPanel(BasePanel):
             medium_columns=3,
             wide_columns=3,
         )
-        lo.addWidget(g4)
-
         g5 = self._card_group("系统工具")
         gl5 = g5.viewLayout
         gl5.setSpacing(2)
@@ -307,8 +297,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        lo.addWidget(g5)
-
         g6 = self._card_group("电池与快捷设置")
         gl6 = g6.viewLayout
         gl6.setSpacing(2)
@@ -356,8 +344,6 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        lo.addWidget(g6)
-
         g7 = self._card_group("输入法与模拟器控制")
         gl7 = g7.viewLayout
         gl7.setSpacing(2)
@@ -420,7 +406,30 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=5,
         )
-        lo.addWidget(g7)
+        self.category_stack.add_category(
+            "commands",
+            "命令与启动",
+            (g1, g_rb, gb),
+        )
+        self.category_stack.add_category(
+            "connectivity",
+            "连接与服务",
+            (g3, gs),
+        )
+        self.category_stack.add_category(
+            "settings",
+            "设置与工具",
+            (g4, g5),
+        )
+        self.category_stack.add_category(
+            "device",
+            "设备与模拟器",
+            (g6, g7),
+        )
+        self.category_stack.current_changed.connect(
+            lambda _key: self.apply_responsive_width(0)
+        )
+        lo.addWidget(self.category_stack)
         lo.addStretch()
         self.battery_param.currentTextChanged.connect(self._on_battery_param_changed)
         for field in (
@@ -462,6 +471,7 @@ class SystemPanel(BasePanel):
 
         header = QWidget()
         header.setObjectName("systemHeader")
+        self.panel_header = header
         hl = QVBoxLayout(header)
         hl.setContentsMargins(0, 0, 0, 4)
         hl.setSpacing(2)

@@ -1,68 +1,25 @@
 # 测试指南
 
-## 测试框架与现状
+## 基础约定
 
-- 框架：pytest；`pyproject.toml` 把项目根加入 `pythonpath`。
-- 测试目录：`tests/`；`conftest.py` 提供 session 级 `qt_application` 引用保持、autouse
-  `isolated_ui_state`（每个用例结束后恢复主题/字体、清理新建顶层窗口的定时器并调用 shutdown）
-  与 `isolated_ui_state_probe` 断言入口，隔离跨测试的 Qt 延迟销毁状态。
-- 2026-08-18 使用 Python 3.11 的全量回归为 **930 项通过**，套件约 11 分钟；2026-08-19 增补
-  P0/P1 测试后为 **940 项通过**，本机约 5 分钟（此前 11 分钟含机器负载差异）。响应式几何扫描
-  测试通过 autouse 把 `ResponsiveCoordinator.RESIZE_DEBOUNCE_MS` 降到 1ms，单文件从约 6 分钟
-  降到约 1.5 分钟。
-- 历史执行记录：2026-08-21 使用 Python 3.11.9、pytest 9.1.1 和当时的 dev 依赖验证
-  **961 项通过**，耗时 350.61 秒；同一环境已卸载 Pillow，测试收集、全量回归和 packaging
-  self-check 均通过。该记录不替代后续工作树的重新验证。
-- 2026-08-25 当前修复工作树离屏全量复跑为 **1107 项通过**，耗时 331.12 秒；本轮
-  LiveLogcat 相关扩展集 94 项通过，9 项关键并发/过滤用例连续重复 5 轮均通过。
-- 测试主要使用 monkeypatch、临时目录、轻量 fake/stub 和通过 `__new__` 构造的最小 Qt 对象；不要求真实 Android 设备。
-- `pyproject.toml` 已配置 coverage 范围，2026-08-19 快速子集记录了 adblab + services 88%
-  语句覆盖率；全量用例数量仍不能直接推导语句或分支覆盖率。
+- 使用 pytest；`pyproject.toml` 把项目根加入 `pythonpath`。
+- `tests/conftest.py` 保持 session 级 QApplication，并在每个用例后恢复主题、字体和顶层窗口状态。
+- 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
+- `ui` 与 `integration` marker 由 `tests/conftest.py` 集中附加；新增 Qt 测试文件时同步登记。
+  `unit` marker 已注册但尚未系统分配，不能把 `not ui` 等同为显式 unit 集。
 
-## 测试目录
+## 测试域
 
-| 文件 | 规模/职责 | 主要类型 |
+| 测试域 | 代表性入口 | 主要覆盖 |
 | --- | --- | --- |
-| `tests/conftest.py` | session 级 QApplication 引用保持；autouse UI 状态隔离/探针 | 共享夹具 |
-| `tests/test_model_*.py` | 由原 `test_model_execution.py` 按 ADR-0003 Phase 2 拆出的 10 个主题文件（meta/processes/mainframe/performance_launcher/mobileperf/ci_controller/device/panels/apps/media_adb）；2026-08-21 collect-only 快照为 241 项；启动、GUI 生命周期、命令/进程、Controller、ADB model、MobilePerf、App/File/Log 等综合回归 | 单元 + 轻量组件/契约测试 |
-| `tests/test_remote_services.py` | Remote launch plan、scrcpy 参数/版本/预检、输入映射、面板启动停止和关闭、TaskSupervisor completion_error | service 单元 + 轻量 UI |
-| `tests/test_file_explorer_service.py` | `ls` 解析、安全文件名、权限模式、命令构建 | 纯单元测试 |
-| `tests/test_runtime_tools.py` | frozen/开发/onedir 工具路径、ADB 解析优先级 | 纯单元测试 |
-| `tests/test_logging_contract.py` | DEBUG 源码 stderr 分流、界面/文件隔离、root handler、停止态；面板渲染三元组批次、源时间戳、按块增量裁剪 | 日志基础契约 |
-| `tests/test_logging_routing_mobileperf.py` | MainFrame 动作/窗口生命周期、Remote 路由、MobilePerf stdout/stderr、脱敏和 windowed 标准流 | 日志集成契约 |
-| `tests/test_mobileperf_runner_concurrency.py` | 双管道压力、回调异常排空和连续运行代次隔离 | 进程/线程并发契约 |
-| `tests/test_mobileperf_androiddevice_log_safety.py` | MobilePerf 遗留 ADB 层日志/脱敏安全 | 安全契约 |
-| `tests/test_mobileperf_port_cleanup.py` | 5037 端口冲突清理（`core/process_utils` 契约，Phase 1） | 单元契约 |
-| `tests/test_process_utils.py` | 端口监听查找与进程树终止的 psutil 行为 | 纯单元测试 |
-| `tests/test_comment_language.py` | 中文注释识别、豁免规则、模块说明和渐进受控范围 | 静态规范门禁 |
-| `tests/test_device_store_concurrency.py` | 并发 upsert、原子替换故障、损坏备份恢复 | 并发/故障注入 |
-| `tests/test_phase0_failure_semantics.py` | Monkey fail-closed、AppManager 错误传播 | 失败语义 |
-| `tests/test_device_batch_use_case.py` | `DeviceBatchUseCase` 汇总/部分失败/晚到结果/并发（ADR-0003 Phase 3） | 纯单元测试 |
-| `tests/test_screen_record_use_case.py` | `ScreenRecordUseCase` 登记/幂等标记/批次校验/终态移除（ADR-0003 Phase 3） | 纯单元测试 |
-| `tests/test_phase0_remote_mobileperf.py` | Remote 活动会话绑定、当前报告和退出状态 | 运行边界 |
-| `tests/test_ci_contracts.py` | 最小权限、固定 SHA、同版本不可变、保留最新 5 个版本 tag、只读保留审计、CI lint 步骤 | CI 安全契约 |
-| `tests/test_phase1_operations.py` | Operation 状态/fan-out/并发、取消、metadata/perf envelope、单元接口（`cancel_pending_units` 等）与 Controller 路由 | 架构契约 |
-| `tests/test_model_shutdown_admission.py` | model 终态准入、Controller 栅栏顺序、录屏与 Monkey/logcat 进程启停的确定性竞态 | 生命周期并发契约 |
-| `tests/test_phase2_screenshot_gate.py` | 重叠截图、乱序/部分失败、artifact、提交异常、取消（generation 原子化）、重复/晚到和兼容 signal | 架构 Gate A |
-| `tests/test_phase2_live_logcat_gate.py` | supervisor deadline/停止语义、GUI heartbeat、进程 tracking、日志背压、稀疏尾批、动态包/PID 过滤、超时保活和独立进程关闭压力 | 架构 Gate B1 |
-| `tests/test_phase2_install_batch_use_case.py` | `InstallBatchUseCase` 状态机：start/complete/fail/cancel/retry、部分失败、owner/generation 边界 | 架构 Gate C 用例 |
-| `tests/test_phase2_install_batch_gate.py` | 安装批次 Controller 集成：提交预留、所有权、协作取消、失败项 retry、晚到结果 | 架构 Gate C 门禁 |
-| `tests/test_phase2_mainframe_shutdown_gate.py` | 主窗口两阶段异步关闭：广播-first deadline、非阻塞/幂等、资源归零与 residual snapshot | 架构 Gate B2 契约 |
-| `tests/live_logcat_close_probe.py` | 真实延迟删除下连续关闭输出中的 LiveLogcat，并区分主窗口 Close、Qt 正常退出和原生崩溃 | Gate B1 子进程探针 |
-| `tests/test_window_lifecycle.py` | 二级窗口的 parent 约束、关闭隔离和 owner 屏幕适配 | 轻量 UI 生命周期契约 |
-| `tests/test_responsive_panels.py` | 响应式面板几何扫描（autouse 降防抖到 1ms）、控件身份保持、溢出收敛 | 轻量 UI 契约 |
-| `tests/test_responsive_layout_controller.py` | `ResponsiveCoordinator` 度量/重排/收敛轮次与防抖 | 组件契约 |
-| `tests/test_preset_spin_box.py` | 严格整数预设输入（`StrictIntComboBox`）与合法性边界 | 组件单元 |
-| `tests/test_ui_geometry_helpers.py`、`tests/ui_geometry_helpers.py` | 真实 Qt 几何断言工具与状态隔离探针 | 测试工具 |
-| `tests/test_ui_dpi_matrix.py`、`tests/ui_dpi_probe.py` | 隔离子进程中的 Qt 缩放/DPI 探针契约 | 探针 |
-| `tests/test_main_window_layout.py` | FluentWindow 五入口、Workspace 分区、窗口尺寸、原生缩放和屏幕适配 | 轻量 UI |
-| `tests/test_settings_persistence.py` | 正式设置键（含 `scrcpy_*`）在应用重建后的持久化与旧 JSON 兼容 | 持久化契约 |
-| `tests/test_main_window_layout.py`、`test_typography_core.py`、`test_panel_typography.py`、`test_dialog_typography.py` | Fluent SettingsPage、字体角色、字体信号与窗口布局契约 | UI/字体契约 |
-| `tests/test_accessibility_contract.py` | 图标按钮 accessibleName/提示、可访问性契约 | UI 契约 |
-| `tests/test_app_manager_selection.py` | App Manager 选择、过滤、可见详情批次 | UI 契约 |
-| `tests/test_button_tooltips.py` | 按钮文本与 tooltip 一致性 | UI 契约 |
-
-旧性能测试已删除或合并，当前 MobilePerf 相关测试集中在 `tests/test_model_mobileperf.py`。邮件服务已移除，`tests/test_email_service.py` 已随 `core/mail/` 一并删除。
+| 执行、配置与存储 | `test_model_*.py`、`test_settings_persistence.py`、`test_device_store_concurrency.py` | CommandRunner/ProcessRunner、ADB model、设置迁移、原子写与故障恢复 |
+| Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
+| Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
+| UI、主题与响应式 | `test_main_window_layout.py`、`test_responsive_*.py`、`test_*typography.py` | 导航、主题、字体、DPI、断点重排、无障碍与瞬态交互 |
+| App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py` | 应用管理、路径/传输、截图批次和页面交互 |
+| Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空 |
+| 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`live_logcat_close_probe.py` | 关闭准入、QObject 晚到回调、线程/进程释放 |
+| 静态与构建契约 | `test_ci_contracts.py`、`test_comment_language.py`、`test_runtime_tools.py` | workflow 权限、注释规则、资源和打包路径 |
 
 ## 执行命令
 
@@ -107,96 +64,34 @@
 .\.venv\Scripts\python.exe -m ruff check .
 ```
 
-最近一次历史全量记录为 2026-08-21 的 961 项通过、350.61 秒，Ruff 0 错误；本次知识校准
-只执行 collect-only，得到总计 961、`not ui` 478、UI 483、integration 8、unit 0，不代表全量
-测试已重新通过。`tests/ui_geometry_helpers.py::wait_until` 的默认 deadline 为 6000ms：全量套件末尾
-Qt 延迟删除事件累积会拖慢单次 `processEvents`，1500ms 曾在顺序相关场景下确定性超时（单独跑
-该文件不复现），放宽后顺序无关且历史全量记录稳定。测试分层 marker 由
-ADR-0003 Phase 0 注册了 `unit`（纯逻辑）、`ui`（Qt 几何/字体/窗口）、`integration`（子进程/探针）
-三个 marker；当前 `tests/conftest.py::pytest_collection_modifyitems` 只按文件附加 `ui` 和
-`integration`，尚未给测试附加 `unit`。`not ui` 快速子集会选择所有未标记为 UI 的项目
-（包含 integration 和未标 marker 的项目），不能把它等同为显式的“unit + integration”：
+测试数量、耗时和通过结果只属于执行当时的工作树，写入任务/发布记录，不作为长期指南内容。
+`not ui` 会选择 integration 和其他未标为 UI 的项目，不能把它等同为显式 unit 集：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q -m "not ui"
 ```
 
 新增 UI 类测试文件时同步登记 conftest 映射。Build 工作流不执行 pytest；开发和发布验收仅在
-上述全量触发条件成立时执行完整命令。
+全量触发条件成立时执行完整命令。
 
-## 覆盖分层
-
-### 单元测试
-
-- File Explorer：路径、quote、`ls -l` 变体、symlink、chmod 和命令契约。
-- Remote：参数构建、FPS 解析、尺寸缓存、按键/滑动/旋转映射、窗口聚焦。
-- 工具：ADB target、资源/运行时路径、ZIP 安全解压。
-- parsers：设备列表、getprop、labeled sections、前台包名、APK 信息、包列表。
-- MobilePerf：配置生成、事件比例/事件数、报告 sheet 名、停止文件、结果定位。
-
-### 组件与接口测试
-
-- `CommandRunner`/`ProcessRunner` 的返回、替换、停止、流参数和全局清理。
-- Controller signal map、handler、批次更新、shutdown 和异步分派。
-- DeviceStore/AppSettings 旧文件迁移。
-- ScrcpyService 与 RemotePanel 的 service 边界。
-- MainFrame 的延后启动、扫描 debounce、对话框复用、parent 注入和关闭路径。
-
-### UI 测试
-
-当前是轻量 Qt 行为测试，不是端到端自动化：主题切换、字体/图标、按钮状态、对话框
-close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批次、Performance Launcher
-表单/日志/状态、Settings 宽窄布局和保存目录入口、8–22pt 分组标题净空等。
-
-没有 Playwright/Selenium/Appium/QtBot 的完整用户路径测试，也没有截图对比。
-
-### 集成测试
-
-- 当前没有连接真实 ADB server/device 的自动化集成测试。
-- 没有真实 scrcpy、aapt、Java 或 PyInstaller 三平台运行集成测试（邮件服务已移除，不再有外部 HTTP 集成面）。
-- CI 的 Windows packaged self-check 是打包冒烟测试，但不启动 GUI、不连接设备。
-
-### 性能测试
-
-项目本身采集设备性能，但没有对 ADBLab UI/worker 的基准、负载、内存泄漏或长时间稳定性自动测试。响应式几何扫描测试是全量套件的主要耗时来源（单文件约 1.5 分钟）。
-
-## Mock 机制
+## 隔离与替身
 
 - pytest `monkeypatch` 替换 subprocess、路径解析、设置和 platform/frozen 状态。
 - fake process 实现 `poll/terminate/kill/wait/stdout` 等协议，验证 ProcessRunner 和 MobilePerfRunner。
 - `tmp_path` 隔离 JSON/YAML/截图/报告/临时配置。
-- Qt 测试尽量直接调用方法并替换 widget/service，避免启动真实外部进程；`ResponsiveCoordinator.RESIZE_DEBOUNCE_MS` 通过 autouse monkeypatch 降到 1ms。
+- Qt 测试直接验证可观察行为，并替换外部 service；不依赖无业务意义的私有字段不存在断言。
 - 测试工作流 YAML 的关键文本/结构，防止打包模式和发布资产回归。
 
 ## 当前覆盖缺口
 
-1. `test_settings_persistence.py` 已覆盖 `scrcpy_*` 持久化、schema 写入、v1 迁移、未知键清理和
-   未来版本的已知值/版本号；`_future_extra` 会在后续保存时合并回未来未知字段（有回归断言
-   `future_key` 在 update/save 后仍存在）；跨进程并发写入仍无文件锁/测试。
-2. Controller 的通用 `_pending_ops` 已删除；Screenshot Gate A、Install batch Gate C、
-   DeviceBatch/ScreenRecord 用例已覆盖各自的重叠/晚到结果，但多类型任务同时运行的
-   真实设备长时压力与关闭回收仍无集成验证。
-3. Android 多版本/厂商 ROM 的 dumpsys、top、SurfaceFlinger、bugreport 输出变体无实机矩阵。
-4. MobilePerf 多线程停止、报告完整性、长时间运行、断线重连无集成测试（`os._exit`/`os.chdir`
-   已按 ADR-0004 移除，停止路径结构化收口，长跑验证仍待实机）。
-5. 非 Windows scrcpy/ADB 和 macOS/Linux PyInstaller 产物只有构建/自检，没有真实功能验证。
-6. 全局 QRunnable 未统一注册/等待的关机边界无长任务测试。
-7. 设备日志、bugreport、heapdump、截图等结果的敏感信息处理和保留期无安全测试。
-8. 最近一次全量记录约 6 分钟，响应式几何扫描占比较高；`not ui` 快速子集的
-   2026-08-21 collect-only 快照为 478/961 项。当前只自动附加 ui/integration marker，unit marker
-   尚未实际分配；`test_model_execution.py` 已按 Phase 2 拆为 10 个主题文件。
-
-## 推荐新增测试
-
-按优先级：
-
-1. MainFrame 异步关闭（Gate B2）契约已落地：`test_phase2_mainframe_shutdown_gate.py` 11 项测试
-   覆盖首次关闭不阻塞事件循环、所有 owner 广播停止、资源归零或保留 residual snapshot；剩余
-   为真实设备 helper 进程树集成验证。
-2. 录屏 model 与 Controller 的基础关闭竞态已覆盖；仍需补充 `ScreenRecordUseCase` 的跨批次取消、结果回传和真实进程树集成契约。
-3. 可选硬件集成 job：至少一台测试设备，覆盖连接、包列表、截图、logcat、Remote 预检、5 分钟 MobilePerf。
-4. PyInstaller Windows 打包能力检查；macOS/Linux 加 scrcpy 缺失的明确降级测试。
-5. 持续维护按层/按模块的 fast 子集与耗时预算，控制当前约 6 分钟的全量门禁。
+1. AppSettings 跨进程并发写入没有文件锁或对应测试。
+2. 多类型长任务并发、应用关闭和 helper 进程树缺少真实设备压力验证。
+3. Android 厂商/版本的 dumpsys、top、SurfaceFlinger、bugreport 输出缺少实机矩阵。
+4. MobilePerf 长跑、断线、报告完整性和录屏清理缺少授权硬件集成测试。
+5. macOS/Linux 产物只有构建/自检，没有 ADB、scrcpy 降级和 GUI 功能验证。
+6. 已运行 QRunnable/Executor 的协作取消和有界等待缺少完整生命周期测试。
+7. 设备日志和诊断/媒体结果的脱敏、保留期与清理策略缺少安全测试。
+8. 全量套件仍偏慢，且 `unit` marker 尚未系统分配。
 
 ## 注释与文档风格
 
@@ -251,8 +146,7 @@ close cleanup/主窗口关闭隔离、截图导航、App Manager 可见详情批
 
 ## 提交与发布门禁
 
-dev 推送到 main 前，先确认 `utils/app_metadata.py` 中的 `APP_VERSION` 相对上次发布已递增（默认补丁 +1），
-并确保没有复用历史版本；本地与 dev 提交不修改版本号。
+版本与发布规则只在 [BUILD_AND_RUN](BUILD_AND_RUN.md) 维护。
 
 普通本地修改的最低门禁是关联测试、修改文件的 Ruff/适用静态检查以及 `git diff --check`。
 纯文档修改按增量策略只运行文档检查。以下完整门禁仅用于发布验收、用户明确要求或无法可靠
@@ -272,12 +166,9 @@ git diff --check
 
 除 pytest/ruff 外，`requirements-dev.txt` 提供以下工具（配置随仓库）：
 
-- **pyright**（类型检查，基线范围 `adblab/` + `services/` + `core/` + `controllers/` +
-  `models/` + `utils/` + `gui/`，配置见 `pyrightconfig.json`；2026-08-21 起 `gui/`
-  随 PySide6 6.8 作用域枚举现代化完成后纳入，全仓 0 错误）：`.\.venv\Scripts\python.exe -m pyright`
-  （venv 内 `pyright` 可执行文件亦可直接运行）。
+- **pyright**（类型检查）：范围和排除项见 `pyrightconfig.json`；运行
+  `.\.venv\Scripts\python.exe -m pyright`。
 - **pytest-cov**（覆盖率）：`.\.venv\Scripts\python.exe -m pytest -q -m "not ui" --cov=adblab --cov=services --cov-report=term-missing`。
-  基线（2026-08-19，快速子集）：adblab + services 合计 88%（2301 语句，279 未覆盖）。
 - **pytest-xdist**（并行）：`.\.venv\Scripts\python.exe -m pytest -q -n auto`。注意：含子进程探针的
   `test_phase2_live_logcat_gate.py` 在并行 worker 下不稳定，并行运行请限定纯逻辑子集
   （如 `-n 4 -m "not ui" --ignore=tests/test_phase2_live_logcat_gate.py`）；人工全量验证仍建议串行执行。

@@ -11,6 +11,7 @@ from qfluentwidgets import BodyLabel, InfoBadge
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
+from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.responsive_layout import (
     RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY,
     GridMode,
@@ -29,19 +30,24 @@ class RemotePanelForm:
     def build_ui(self) -> QWidget:
         w = QWidget()
         lo = QVBoxLayout(w)
-        lo.setSpacing(1)
+        lo.setSpacing(10)
         lo.setContentsMargins(0, 0, 0, 0)
         self._frame._remote_section_groups = []
         self._build_header(lo)
         mirroring = self._frame._build_mirroring()
         control = self._frame._build_control()
         self._frame._remote_section_groups.extend((mirroring, control))
+        self._frame.category_stack = AdaptiveCategoryStack("remote", w)
+        self._frame.category_stack.setObjectName("remoteCategoryStack")
+        self._frame.category_stack.add_category("mirroring", "镜像配置", (mirroring,))
+        self._frame.category_stack.add_category("control", "按键与手势", (control,))
+        self._frame.category_stack.current_changed.connect(
+            lambda _key: self._frame.apply_responsive_width(0)
+        )
         self._frame._on_theme_changed_remote("")
         self._frame._set_session_state(self._frame._SESSION_IDLE)
         BaseStyles.theme_changed.connect(self._on_theme_changed_remote)
-        lo.addWidget(mirroring)
-        lo.addWidget(control)
-        lo.addStretch()
+        lo.addWidget(self._frame.category_stack, 1)
         return w
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
@@ -51,6 +57,7 @@ class RemotePanelForm:
 
         header = QWidget()
         header.setObjectName("remoteHeader")
+        self._frame.panel_header = header
         hl = QVBoxLayout(header)
         hl.setContentsMargins(0, 0, 0, 4)
         hl.setSpacing(2)
@@ -95,6 +102,7 @@ class RemotePanelForm:
         gl.setSpacing(4)
 
         preset_label = self._frame._label("预设：")
+        preset_label.setWordWrap(False)
         preset_label.setMinimumWidth(56)
         preset_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         preset_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
@@ -134,6 +142,7 @@ class RemotePanelForm:
         self._frame._parameter_labels = []
         for lbl, attr, items in settings:
             label = self._frame._label(lbl)
+            label.setWordWrap(False)
             label.setMinimumWidth(56)
             label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

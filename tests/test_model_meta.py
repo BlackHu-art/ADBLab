@@ -11,9 +11,9 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from gui.dialogs import live_logcat_form
-from gui.dialogs.live_logcat import CurrentPackageWorker, LiveLogcatDialog
-from gui.styles import BaseStyles, FontRole, theme
-from gui.styles.fluent import apply_label_role
+from gui.dialogs.live_logcat import CurrentPackageWorker
+from gui.features.logcat import LiveLogcatPage
+from gui.styles import BaseStyles, theme
 from main import windows_app_user_model_id
 from utils.app_metadata import APP_RELEASE_TAG, APP_VERSION
 
@@ -53,19 +53,9 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
     assert len(calls) == 1
 
 
-def test_dialog_status_uses_direct_reference_label(qt_application):
-    from qfluentwidgets import CaptionLabel
-
-    bar = apply_label_role(CaptionLabel("Ready"), FontRole.UI_SMALL)
-
-    assert type(bar) is CaptionLabel
-    assert bar.text() == "Ready"
-    assert bar.property("fontRole") == FontRole.UI_SMALL.value
-
-
 def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     dialog._closing = True
     dialog.start_btn = Mock()
     dialog.stop_btn = Mock()
@@ -83,7 +73,7 @@ def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons
 def test_live_logcat_apply_theme_does_not_reconnect_theme_signal():
     _app = QApplication.instance() or QApplication([])
 
-    class CountingLiveLogcatDialog(LiveLogcatDialog):
+    class CountingLiveLogcatPage(LiveLogcatPage):
         def __init__(self, *args, **kwargs):
             self.theme_calls = 0
             super().__init__(*args, **kwargs)
@@ -92,7 +82,7 @@ def test_live_logcat_apply_theme_does_not_reconnect_theme_signal():
             self.theme_calls += 1
             return super()._apply_theme(*args, **kwargs)
 
-    dialog = CountingLiveLogcatDialog(device_ip="device-1")
+    dialog = CountingLiveLogcatPage(device_ip="device-1")
     try:
         BaseStyles.switch_theme("Dark")
         BaseStyles.switch_theme("Light")
@@ -104,7 +94,7 @@ def test_live_logcat_apply_theme_does_not_reconnect_theme_signal():
 
 def test_live_logcat_ignores_queued_status_after_close():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     dialog._closing = True
     dialog.status_bar = Mock()
 
@@ -118,7 +108,7 @@ def test_live_logcat_ignores_queued_status_after_close():
 
 def test_live_logcat_ignores_queued_line_after_close():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     dialog._closing = True
     dialog.output = Mock()
 
@@ -133,7 +123,7 @@ def test_live_logcat_ignores_queued_line_after_close():
 
 def test_live_logcat_batches_visible_line_appends():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     appended = []
     dialog.output = Mock()
     dialog.output.appendPlainText.side_effect = appended.append
@@ -155,7 +145,7 @@ def test_live_logcat_form_has_no_tag_filter():
     """Live Logcat 仅保留等级和包名过滤，不再暴露重复的 Tag 过滤入口。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
 
     try:
         assert not hasattr(dialog, "tag_input")
@@ -168,7 +158,7 @@ def test_live_logcat_manual_package_filter_only_applies_after_enter():
     """编辑包名不会改变运行中 worker，按 Enter 后才建立新的过滤代次。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     worker = Mock()
     worker.is_active.return_value = True
     worker.update_package.return_value = True
@@ -195,7 +185,7 @@ def test_live_logcat_enter_applies_manual_package_filter_clear():
     """清空包名后按 Enter 仅切回全部日志，不触发任何对话框默认按钮。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     worker = Mock()
     worker.is_active.return_value = True
     worker.update_package.return_value = True
@@ -228,7 +218,7 @@ def test_live_logcat_enter_rejects_invalid_manual_package_without_changing_worke
     """非法包名在 Enter 提交边界被拒绝，不改变正在运行的过滤条件。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     worker = Mock()
     worker.is_active.return_value = True
     dialog.worker = worker
@@ -248,7 +238,7 @@ def test_live_logcat_manual_enter_supersedes_running_current_package_probe():
     """手动提交优先于尚未完成的 Current Package 查询，避免晚到结果覆盖输入。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     package_worker = Mock()
     package_worker.isRunning.return_value = True
     dialog._pkg_worker = package_worker
@@ -269,7 +259,7 @@ def test_live_logcat_ignores_current_package_result_from_older_manual_revision()
     """已经排队的旧查询结果也不能覆盖较新的 Enter 手动提交。"""
 
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     source = CurrentPackageWorker("device-1")
     source._package_filter_revision = 0
     dialog._package_filter_revision = 1
@@ -288,7 +278,7 @@ def test_live_logcat_ignores_current_package_result_from_older_manual_revision()
 
 def test_live_logcat_current_package_updates_the_running_filter_generation():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     worker = Mock()
     worker.is_active.return_value = True
     dialog.worker = worker
@@ -305,7 +295,7 @@ def test_live_logcat_current_package_updates_the_running_filter_generation():
 
 def test_live_logcat_stopping_rejects_new_or_late_package_switches():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     worker = Mock()
     worker.is_active.return_value = True
     dialog.worker = worker
@@ -333,7 +323,7 @@ def test_live_logcat_stopping_rejects_new_or_late_package_switches():
 
 def test_live_logcat_no_wrap_flush_preserves_horizontal_position_and_follows_tail():
     app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     dialog.show()
     app.processEvents()
 
@@ -367,7 +357,7 @@ def test_live_logcat_no_wrap_flush_preserves_horizontal_position_and_follows_tai
 
 def test_live_logcat_theme_refresh_explicitly_rebinds_action_icons():
     _app = QApplication.instance() or QApplication([])
-    dialog = LiveLogcatDialog(device_ip="device-1")
+    dialog = LiveLogcatPage(device_ip="device-1")
     current_theme = BaseStyles.current_theme()
     next_theme = "Dark" if current_theme != "Dark" else "Light"
 

@@ -10,7 +10,7 @@ from core.settings_manager import AppSettings
 
 
 class PerformanceLauncherLog:
-    """组合进 PerformanceLauncherDialog 的日志控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 PerformancePage 的日志控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame

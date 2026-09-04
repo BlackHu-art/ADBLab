@@ -71,7 +71,6 @@ class SidePanel(QWidget):
         self._font_sm = BaseStyles.font_for_role(FontRole.UI)
         self._font_mono = BaseStyles.font_for_role(FontRole.MONO)
         self._font_base = BaseStyles.font_for_role(FontRole.UI)
-        self._font_tab = BaseStyles.font_for_role(FontRole.UI)
 
     # ── 界面构建 ─────────────────────────────────────────────────────────
 
@@ -402,7 +401,14 @@ class SidePanel(QWidget):
                     except ValueError:
                         child.setFont(self._font_base)
                 if isinstance(child, HeaderCardWidget):
-                    child.headerLabel.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+                    title_label = child.headerLabel
+                    title_label.setFont(BaseStyles.font_for_role(FontRole.TITLE))
+                    # 隐藏页不会立即收到布局事件；主动激活标题区，避免首次
+                    # 切入页面时仍沿用旧字号高度而裁掉字形底部。
+                    title_label.updateGeometry()
+                    child.headerLayout.invalidate()
+                    child.headerLayout.activate()
+                    child.updateGeometry()
         for index in sorted(self._loaded_lazy_tabs):
             attr, _cls, _name = self._lazy_tab_specs[index]
             tab = getattr(self, attr, None)

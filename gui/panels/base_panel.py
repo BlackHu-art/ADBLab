@@ -118,10 +118,6 @@ class BasePanel(QWidget):
     def _font_base(self):
         return self.panel._font_base
 
-    @property
-    def _font_tab(self):
-        return self.panel._font_tab
-
     def _sh(self, cmd: str):
         """为当前选中设备发出 Shell 命令请求。"""
         self.signals.shell_command_requested.emit(self.selected_devices, cmd)

@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, cast
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 
 from adblab.application.envelope import OperationMetadata
 from adblab.application.operations import (
@@ -23,11 +23,6 @@ from adblab.application.operations import (
 from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
-from gui.dialogs.lifecycle import (
-    configure_independent_secondary_window,
-    fit_secondary_window_to_owner_screen,
-)
-from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from models.adb_advanced import ADBAdvanced
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package, truncate_diagnostic_output
@@ -83,7 +78,6 @@ class ADBMediaMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     log_service: LogService
     executor: ThreadPoolExecutor
-    _active_viewers: list
     last_save_dir: str | None
 
     _handlers = {
@@ -432,48 +426,17 @@ class ADBMediaMixin(_ADBControllerBase):
             QTimer.singleShot(
                 0,
                 self.signals,
-                lambda captured=tuple(paths): self._show_screenshot_viewer(list(captured)),
+                lambda captured=tuple(paths): self._emit_screenshot_batch(list(captured)),
             )
 
-    def _show_screenshot_viewer(self, image_paths: list):
+    def _emit_screenshot_batch(self, image_paths: list[str]) -> None:
+        """在 GUI 线程发布完整截图批次，不创建或持有具体页面。"""
+
         if getattr(self, "_shutting_down", False):
             return
-        viewer = ScreenshotViewer(image_paths)
-        configure_independent_secondary_window(viewer)
-        viewer.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        if self.window_owner is not None:
-            fit_secondary_window_to_owner_screen(viewer, self.window_owner)
-            viewer.installEventFilter(self.window_owner)
-        self._active_viewers.append(viewer)
-        log_service = getattr(self, "log_service", None)
-        if log_service is not None:
-            log_service.log(
-                "DEBUG",
-                (
-                    "ui.secondary_window "
-                    f"active_count={len(self._active_viewers)} "
-                    "dialog=ScreenshotViewer phase=created"
-                ),
-            )
-        viewer.destroyed.connect(
-            lambda _obj=None, v=viewer: self._on_screenshot_viewer_destroyed(v)
-        )
-        viewer.show()
-
-    def _on_screenshot_viewer_destroyed(self, viewer):
-        """移除已销毁截图窗口并记录关闭完成。"""
-        if viewer in self._active_viewers:
-            self._active_viewers.remove(viewer)
-        log_service = getattr(self, "log_service", None)
-        if log_service is not None:
-            log_service.log(
-                "DEBUG",
-                (
-                    "ui.secondary_window "
-                    f"active_count={len(self._active_viewers)} "
-                    "dialog=ScreenshotViewer phase=closed"
-                ),
-            )
+        paths = [str(path) for path in image_paths if path]
+        if paths:
+            self.signals.screenshot_batch_ready.emit(paths)
 
     # 屏幕录制
 

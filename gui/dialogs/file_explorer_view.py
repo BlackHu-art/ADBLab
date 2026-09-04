@@ -1,45 +1,16 @@
-"""提供文件浏览器对话框的文件预览与查看控制器。"""
+"""提供文件浏览器页内预览与查看控制器。"""
 
 import os
 import tempfile
 
 from PySide6.QtCore import QSize
-from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache, QTextCursor
-from PySide6.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QMessageBox,
-    QPlainTextEdit,
-    QVBoxLayout,
-)
-from qfluentwidgets import PlainTextEdit, PushButton
+from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache
 
-from gui.dialogs.file_explorer_image import _ImageViewerDialog
-from gui.dialogs.lifecycle import (
-    fit_secondary_window_to_owner_screen,
-    is_qobject_alive,
-    safe_disconnect,
-)
-from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action
-from gui.styles.icon_loader import get_themed_icon
-from gui.styles.typography import FontRole
 from services import file_explorer as explorer_service
 
 MAX_TEXT_VIEW_BYTES = 2 * 1024 * 1024
-TEXT_RENDER_CHUNK = 64 * 1024
 MAX_IMAGE_PREVIEW_DIMENSION = 2048
-
-
-def _set_plain_text_chunked(editor: QPlainTextEdit, content: str) -> None:
-    editor.setUpdatesEnabled(False)
-    try:
-        cursor = editor.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        for start in range(0, len(content), TEXT_RENDER_CHUNK):
-            cursor.insertText(content[start : start + TEXT_RENDER_CHUNK])
-    finally:
-        editor.setUpdatesEnabled(True)
 
 
 def _load_image_preview(path: str) -> QPixmap:
@@ -66,10 +37,11 @@ def _load_image_preview(path: str) -> QPixmap:
 
 
 class FileExplorerView:
-    """组合进 FileExplorerDialog 的预览查看控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 FileExplorerPage 的预览控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
+        self._temporary_files: set[str] = set()
 
     # ── 双击操作 ────────────────────────────────────────────────────────
 
@@ -98,34 +70,34 @@ class FileExplorerView:
         if is_image:
             self._view_image(name, full)
         else:
+            request_id = self._frame._begin_preview_request(name)
             shell = self._frame._root(explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1))
             w = self._frame._run_adb("shell", shell)
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
-                lambda o, e: self._show_text_viewer(name, o, e, full),
+                lambda o, e: self._show_text_viewer(
+                    name,
+                    o,
+                    e,
+                    full,
+                    request_id=request_id,
+                ),
             )
             w.start()
 
     def _view_image(self, name: str, full_path: str):
         if not explorer_service.safe_name(name):
-            QMessageBox.critical(
-                self._frame,
+            self._frame._show_preview_error(
                 "Invalid file name",
                 f"Refusing to open image with unsafe name: {name}",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
-        dlg = _ImageViewerDialog(self._frame)
-        dlg.setWindowTitle(name)
-        dlg.setMinimumSize(750, 550)
-        dlg.setModal(True)
-        fit_secondary_window_to_owner_screen(dlg, self._frame)
-
-        tmp_dir = os.path.join(tempfile.gettempdir(), "adblab_explorer")
-        os.makedirs(tmp_dir, exist_ok=True)
-        tmp_path = os.path.join(tmp_dir, name)
+        request_id = self._frame._begin_preview_request(name)
+        suffix = os.path.splitext(name)[1]
+        file_descriptor, tmp_path = tempfile.mkstemp(prefix="adblab-preview-", suffix=suffix)
+        os.close(file_descriptor)
+        self._temporary_files.add(tmp_path)
 
         if self._frame.root_cb.isChecked():
             dev_tmp = f"/data/local/tmp/{name}"
@@ -135,133 +107,111 @@ class FileExplorerView:
                 timeout=120,
             )
 
-            def _on_copy(o, e):
-                if e:
-                    QMessageBox.critical(
-                        dlg,
-                        "Error",
-                        o,
-                        QMessageBox.StandardButton.Ok,
-                        QMessageBox.StandardButton.NoButton,
+            def _on_copy(output, error):
+                if not self._frame._preview_request_is_current(request_id):
+                    self._frame._run_adb(
+                        "shell",
+                        explorer_service.delete_command(dev_tmp),
+                    ).start()
+                    self._remove_temporary_file(tmp_path)
+                    return
+                if error:
+                    self._frame._show_preview_error(
+                        name,
+                        output or "Unable to prepare image preview",
                     )
+                    self._remove_temporary_file(tmp_path)
                     return
                 w2 = self._frame._run_transfer("pull", dev_tmp, tmp_path)
                 self._frame._connect_worker_ui(
                     w2,
                     w2.result_ready,
-                    lambda o2, e2, d: self._show_image(dlg, name, tmp_path, dev_tmp),
-                    guard_objects=(dlg,),
+                    lambda o2, e2, _destination: self._show_image(
+                        request_id,
+                        name,
+                        tmp_path,
+                        dev_tmp,
+                        output=o2,
+                        error=e2,
+                    ),
                 )
                 w2.start()
 
-            self._frame._connect_worker_ui(w1, w1.result_ready, _on_copy, guard_objects=(dlg,))
+            self._frame._connect_worker_ui(w1, w1.result_ready, _on_copy)
             w1.start()
         else:
             w = self._frame._run_transfer("pull", full_path, tmp_path)
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
-                lambda o2, e2, d: self._show_image(dlg, name, tmp_path, ""),
-                guard_objects=(dlg,),
+                lambda o2, e2, _destination: self._show_image(
+                    request_id,
+                    name,
+                    tmp_path,
+                    "",
+                    output=o2,
+                    error=e2,
+                ),
             )
             w.start()
 
-        try:
-            dlg.exec()
-        finally:
-            if is_qobject_alive(dlg):
-                dlg.release_image_source()
-                dlg.deleteLater()
-            try:
-                os.remove(tmp_path)
-            except OSError:
-                pass
-
-    def _show_image(self, dlg, name, tmp_path, dev_tmp):
+    def _show_image(
+        self,
+        request_id: int,
+        name: str,
+        tmp_path: str,
+        dev_tmp: str,
+        *,
+        output: str = "",
+        error: bool = False,
+    ):
         if dev_tmp:
             self._frame._run_adb("shell", explorer_service.delete_command(dev_tmp)).start()
-        dlg.set_image_source(_load_image_preview(tmp_path), name)
+        try:
+            if not self._frame._preview_request_is_current(request_id):
+                return
+            if error:
+                self._frame._show_preview_error(name, output or "Unable to pull image")
+                return
+            pixmap = _load_image_preview(tmp_path)
+            if pixmap.isNull():
+                self._frame._show_preview_error(name, "The downloaded image could not be decoded")
+                return
+            self._frame._show_image_preview(name, pixmap)
+        finally:
+            self._remove_temporary_file(tmp_path)
 
-    def _show_text_viewer(self, name: str, content: str, error: bool, full_path: str):
+    def _show_text_viewer(
+        self,
+        name: str,
+        content: str,
+        error: bool,
+        full_path: str,
+        *,
+        request_id: int | None = None,
+    ):
+        if request_id is not None and not self._frame._preview_request_is_current(request_id):
+            return
         if error:
-            QMessageBox.critical(
-                self._frame,
-                "Error",
-                content,
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
-            )
+            self._frame._show_preview_error(name, content)
             return
         truncated = len(content.encode("utf-8", errors="ignore")) > MAX_TEXT_VIEW_BYTES
-        dlg = QDialog(self._frame)
-        dlg.setWindowTitle(name)
-        dlg.setMinimumSize(750, 550)
-        dlg.setModal(True)
-        lo = QVBoxLayout(dlg)
-        editor = PlainTextEdit()
-        _set_plain_text_chunked(editor, content)
-        if truncated:
-            editor.appendPlainText(
-                f"\n… (preview truncated; file exceeds {MAX_TEXT_VIEW_BYTES // (1024 * 1024)} MB)"
-            )
-        lo.addWidget(editor)
-        btns = QHBoxLayout()
-        save_as = PushButton()
-        save_as.setText("Save As...")
-        save_as.setToolTip("Save the edited text to the computer")
-        save_as.setIcon(get_themed_icon("floppy-disk.svg"))
-        save_as.setIconSize(QSize(14, 14))
-        save_as.clicked.connect(lambda: self._frame._save_as(name, editor.toPlainText()))
-        save_dev = PushButton()
-        save_dev.setText("Save to Device")
-        save_dev.setToolTip("Write the edited text back to the device")
-        save_dev.setIcon(get_themed_icon("device-mobile.svg"))
-        save_dev.setIconSize(QSize(14, 14))
-        save_dev.clicked.connect(
-            lambda: self._frame._save_to_device(name, editor.toPlainText(), full_path)
+        self._frame._show_text_preview(
+            name,
+            content,
+            full_path,
+            editable=not truncated,
         )
-        close = PushButton()
-        close.setText("Close")
-        close.setToolTip("Close the text viewer")
-        close.setIcon(get_themed_icon("x.svg"))
-        close.setIconSize(QSize(14, 14))
-        close.clicked.connect(dlg.accept)
-        for b in (save_as, save_dev, close):
-            btns.addWidget(b)
-        lo.addLayout(btns)
-        self._bind_dialog_font_refresh(
-            dlg,
-            lambda: self._apply_text_dialog_fonts(dlg, editor, FontRole.MONO),
-        )
-        fit_secondary_window_to_owner_screen(dlg, self._frame)
-        dlg.exec()
-        dlg.deleteLater()
 
-    @staticmethod
-    def _apply_text_dialog_fonts(dialog, editor, role: FontRole) -> None:
-        """刷新临时文本窗口及其显式文本字体。"""
+    def _remove_temporary_file(self, path: str) -> None:
+        self._temporary_files.discard(path)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
-        dialog.setFont(BaseStyles.font_for_role(FontRole.UI))
-        text_font = BaseStyles.font_for_role(role)
-        editor.setFont(text_font)
-        editor.document().setDefaultFont(text_font)
+    def dispose(self) -> None:
+        """在页面 worker 停止后删除尚未进入完成回调的本地预览文件。"""
 
-    @staticmethod
-    def _bind_dialog_font_refresh(dialog, refresh) -> None:
-        """让临时对话框在存活期间响应全局字体变化。"""
-
-        font_signal = BaseStyles.fonts_changed
-
-        def apply_font(_config=None):
-            try:
-                refresh()
-            except RuntimeError:
-                return
-
-        def disconnect_font(_result=None):
-            safe_disconnect(font_signal, apply_font)
-
-        font_signal.connect(apply_font)
-        dialog.finished.connect(disconnect_font)
-        dialog.destroyed.connect(disconnect_font)
-        apply_font()
+        for path in tuple(self._temporary_files):
+            self._remove_temporary_file(path)

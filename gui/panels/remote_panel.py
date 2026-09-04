@@ -186,6 +186,7 @@ class RemotePanel(BasePanel):
     _status_update_requested = Signal(str, object)
     _remote_queue_status_requested = Signal(int, int, str)
     _stop_completed_requested = Signal(bool)
+    workspace_target_lock_changed = Signal(bool)
     _SESSION_IDLE = "idle"
     _SESSION_STARTING = "starting"
     _SESSION_RUNNING = "running"
@@ -258,6 +259,8 @@ class RemotePanel(BasePanel):
 
     def __init__(self, panel, parent=None):
         super().__init__(panel, parent)
+        self._workspace_device_id = ""
+        self._workspace_device_connected: bool | None = None
         self._form_controller = RemotePanelForm(self)
         self._scrcpy_controller = RemotePanelScrcpy(self)
         self._input_controller = RemotePanelInput(self)
@@ -334,6 +337,36 @@ class RemotePanel(BasePanel):
 
         self._update_action_states()
 
+    @property
+    def selected_devices(self) -> list[str]:
+        """Remote 使用独立会话设备；未嵌入工作区时兼容原批量选择。"""
+
+        workspace_device = str(getattr(self, "_workspace_device_id", "") or "")
+        if workspace_device:
+            connected = getattr(self, "_workspace_device_connected", None)
+            if connected is False:
+                return []
+            return [workspace_device]
+        return list(super().selected_devices)
+
+    def set_workspace_device(
+        self,
+        device_id: str,
+        *,
+        connected: bool | None = None,
+    ) -> str:
+        """设置 Remote 会话目标；运行期间保持启动时设备，避免中途改向。"""
+
+        requested = str(device_id).strip()
+        active_device = str(getattr(self, "_active_device", "") or "")
+        if active_device and requested != active_device:
+            self._workspace_device_id = active_device
+        else:
+            self._workspace_device_id = active_device or requested
+            self._workspace_device_connected = connected
+        self._update_action_states()
+        return self._workspace_device_id
+
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
     def _apply_remote_header_style(self) -> None:
@@ -347,6 +380,16 @@ class RemotePanel(BasePanel):
         """按设备选中数量刷新徽标；Remote 只接受恰好一个设备。"""
 
         if not hasattr(self, "remote_status_badge"):
+            return
+        if (
+            getattr(self, "_workspace_device_id", "")
+            and getattr(self, "_workspace_device_connected", None) is False
+        ):
+            self.remote_status_badge.setText("设备离线")
+            self.remote_status_badge.setLevel(InfoLevel.WARNING)
+            description = "当前远程会话设备已离线，停止会话后可重新选择"
+            self.remote_status_badge.setToolTip(description)
+            self.remote_status_badge.setAccessibleDescription(description)
             return
         count = len(self.selected_devices)
         if count == 1:
@@ -925,9 +968,11 @@ class RemotePanel(BasePanel):
         )._on_stop_completed(stopped)
 
     def _set_session_state(self, state: str):
-        return (
+        result = (
             getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
         )._set_session_state(state)
+        self.workspace_target_lock_changed.emit(state != self._SESSION_IDLE)
+        return result
 
     def _scrcpy_config(self, exe: str, device: str) -> ScrcpyConfig:
         return (

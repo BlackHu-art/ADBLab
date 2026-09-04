@@ -5,12 +5,13 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QBoxLayout,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QLayout,
     QLineEdit,
-    QMessageBox,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -28,8 +29,10 @@ from qfluentwidgets import (
     ProgressBar,
     PushButton,
     SegmentedWidget,
+    SmoothScrollArea,
 )
 
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_themed_icon
@@ -76,10 +79,28 @@ MONKEY_PERCENT_FIELDS = [
 
 
 class PerformanceLauncherForm:
-    """组合进 PerformanceLauncherDialog 的表单控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 PerformancePage 的表单控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
+
+    def use_workspace_scroll_container(self) -> None:
+        """嵌入主工作区时移除配置区的纵向滚动嵌套。"""
+
+        if bool(getattr(self._frame, "_workspace_scroll_prepared", False)):
+            return
+        scroll = self._frame._config_scroll
+        content = scroll.takeWidget()
+        if content is None:
+            return
+        root = self._frame._root_layout
+        index = root.indexOf(scroll)
+        root.removeWidget(scroll)
+        scroll.hide()
+        content.setParent(self._frame)
+        root.insertWidget(max(0, index), content)
+        content.show()
+        self._frame._workspace_scroll_prepared = True
 
     def _build_ui(self, package_name: str):
         root = QVBoxLayout(self._frame)
@@ -89,7 +110,7 @@ class PerformanceLauncherForm:
         self._frame._root_layout = root
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
+        # 视觉重设计：页面内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
         self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
@@ -122,11 +143,35 @@ class PerformanceLauncherForm:
         root.addWidget(self._frame.header_card)
 
         self._frame._config_group = self._build_config_section(package_name)
-        root.addWidget(self._frame._config_group, 1)
+        # 长提示和 Monkey 选项的自然尺寸不得反向顶高原生窗口；滚动视口隔离
+        # 配置卡的 sizeHint，并在二级窗口被小屏适配器压窄时保留横纵到达路径。
+        self._frame._config_scroll = SmoothScrollArea()
+        self._frame._config_scroll.setObjectName("performanceConfigScroll")
+        self._frame._config_scroll.setWidgetResizable(True)
+        self._frame._config_scroll.setSizeAdjustPolicy(
+            QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored
+        )
+        self._frame._config_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self._frame._config_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._frame._config_scroll.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self._frame._config_scroll.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self._frame._config_scroll.setMinimumSize(QSize())
+        self._frame._config_scroll.setStyleSheet(
+            "QScrollArea { border: none; background: transparent; }"
+        )
+        self._frame._config_scroll.setWidget(self._frame._config_group)
+        root.addWidget(self._frame._config_scroll, 1)
         self._frame.log_view = self._build_log_view()
         self._frame.log_view.setFixedHeight(96)
         # P3 图表双视图：日志/图表用可折叠容器承载，SegmentedControl 切换（集成契约：
-        # _build_chart_toggle 由对话框注入切换回调，默认隐藏图表视图）。
+        # _build_chart_toggle 由页面注入切换回调，默认隐藏图表视图）。
         self._frame._chart_toggle, self._frame._chart_stack = self._build_chart_toggle()
         self._frame._chart_stack.addWidget(self._frame.log_view)
         root.addWidget(self._frame._chart_toggle)
@@ -576,7 +621,7 @@ class PerformanceLauncherForm:
         return log_view
 
     def _build_chart_toggle(self) -> tuple[QWidget, QStackedWidget]:
-        """构建日志/图表切换条与承载栈（P3）：图表视图由对话框注入到栈内。"""
+        """构建日志/图表切换条与承载栈（P3）：图表视图由页面注入到栈内。"""
 
         segmented = SegmentedWidget()
         segmented.addItem("log", "日志")
@@ -725,12 +770,10 @@ class PerformanceLauncherForm:
         for label, field in fields:
             if field.input_is_acceptable():
                 continue
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Invalid Number",
                 f"Please enter a valid {label} value within the allowed range.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             field.focus_editor()
             self._update_monkey_total()

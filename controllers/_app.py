@@ -62,7 +62,10 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
 
     def parse_apk_info(self):
         apk_path, _ = QFileDialog.getOpenFileName(
-            None, "Select APK File", "", "APK Files (*.apk);;All Files (*)"
+            getattr(self, "window_owner", None),
+            "Select APK File",
+            "",
+            "APK Files (*.apk);;All Files (*)",
         )
         if not apk_path:
             self._emit_operation("apk_info", False, "⚠️ APK file selection cancelled")

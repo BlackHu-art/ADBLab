@@ -1,23 +1,20 @@
 # 归档区
 
-本目录存放 ADBLab 知识库的**过程记录**：实施账本、阶段性评审、已收口的实施计划和历史
-卫生检查。归档文档是当时决策与验证的留痕，**不再更新**，也不作为当前实现的事实来源。
+本目录只保存历史过程和当时的验证结论，不作为当前实现依据。发生冲突时，以当前代码、测试和
+[project-knowledge](../project-knowledge/PROJECT_OVERVIEW.md) 为准；ADR 只解释决策缘由。
 
-## 归档政策
+## 规则
 
-1. 现状事实、当前架构与业务流程一律以 [../README.md](../README.md)（MOC 入口）和
-   [../architecture/](../architecture/)（ADR、实施计划）为准；冲突时以当前代码和测试为准。
-2. 归档只搬移文件、不修改正文；需要纠正的历史陈述以新文档或当前知识文档为准，不回改归档内容。
-3. 新的过程记录（如未来 Phase 账本）先放在 `docs/architecture/`，待阶段结束或结论并入
-   当前知识文档后，再移入本目录对应子目录。
-4. 卫生检查报告按日期放入 `hygiene/`，仅用于追溯当时的检查结论；当前维护状态见
-   `docs/README.md`（MOC 入口）与各知识文档的 frontmatter。
+1. 归档正文不回改；必要的纠正在当前知识文档中说明。
+2. 临时任务计划不进入现状文档。完成后只有具备审计价值的材料才归档。
+3. 阶段编号、测试数量、路径和结论都只代表记录当时，不能直接套用到当前工作树。
 
-## 子目录
+## 索引
 
-- `ledgers/`：Phase 0/1、Phase 2 Gate A/B 实施账本（含 Go/No-Go 结论）。
-- `reviews/`：阶段性评审报告（如 Agent 技能评审）。
-- `hygiene/`：历史知识库卫生检查报告。
-- `plans/`：已收口、结论已并入当前知识文档的实施计划（如 vNext IMPLEMENTATION_PLAN，
-  Gate A/B/C 与 Phase 0–4 均已落地，对应结论见 `../architecture/adr/` 与
-  `../project-knowledge/ARCHITECTURE.md`）。
+| 类型 | 文档 | 说明 |
+| --- | --- | --- |
+| 实施账本 | [Phase 0](ledgers/PHASE0_LEDGER.md)、[Phase 1](ledgers/PHASE1_LEDGER.md) | 早期安全与 Operation 契约实施记录 |
+| 实施账本 | [Screenshot Gate](ledgers/PHASE2_GATE_A_LEDGER.md)、[LiveLogcat Gate](ledgers/PHASE2_GATE_B_LEDGER.md) | 当时的组件与生命周期验证；页面形态后来已变化 |
+| 历史计划 | [vNext IMPLEMENTATION_PLAN](plans/IMPLEMENTATION_PLAN.md) | 部分实施后被后续 ADR 和当前架构取代，不表示所有原计划均已完成 |
+| 评审 | [Agent Skills Review](reviews/AGENT_SKILLS_REVIEW_Q1_2026-07-25.md) | 未落地的阶段性调研，仅供追溯，不是当前方案 |
+| 卫生检查 | [2026-08-18](hygiene/2026-08-18.md) | 当时的文档结构快照 |

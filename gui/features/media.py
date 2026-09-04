@@ -1,40 +1,53 @@
-"""提供截图浏览、缩放、复制和文件管理对话框。"""
+"""提供可嵌入主窗口的截图浏览页面。"""
 
 from __future__ import annotations
 
-import os  # noqa: F401  供测试通过本模块命名空间补丁。
+import os
+from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
-    QDialog,
     QFrame,
     QGraphicsPixmapItem,
+    QGraphicsScene,
     QListWidgetItem,
+    QWidget,
 )
 from qfluentwidgets import TransparentToolButton
 
-from core.exec import ProcessRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
 from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
 from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
-from gui.dialogs.screenshot_viewer_widgets import (  # noqa: F401  供按名导入。
-    ScreenshotBottomBar,
-    ScreenshotGraphicsView,
-)
 from gui.styles import BaseStyles
-from gui.styles.icon_loader import get_themed_icon  # noqa: F401  供测试通过本模块命名空间补丁。
 
 
-class ScreenshotViewer(QDialog):
-    """浏览截图批次，并管理当前图片的显示和文件操作。"""
+class ScreenshotPage(QWidget):
+    """浏览截图批次，并遵循 Workspace 功能页的同步生命周期契约。
 
-    def __init__(self, image_paths: list, current_index: int = 0, parent=None):
+    页面不拥有线程或外部进程；``request_dispose`` 因此可同步完成。
+    ``activate`` 只增量追加新批次且默认聚焦首张新增截图，导航离开不会
+    丢弃已加载结果。
+    """
+
+    dispose_ready = Signal(object)
+    back_requested = Signal()
+    image_count_changed = Signal(int)
+
+    DELETE_CONFIRM_TIMEOUT_MS = 4000
+    _scene: QGraphicsScene
+
+    def __init__(
+        self,
+        image_paths: Iterable[str | os.PathLike[str]] | None = None,
+        current_index: int = 0,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._ui_controller = ScreenshotViewerUI(self)
         self._nav_controller = ScreenshotViewerNav(self)
         self._actions_controller = ScreenshotViewerActions(self)
-        self._image_paths = list(image_paths) if image_paths else []
+        self._image_paths = self._normalize_paths(image_paths)
         self._current_idx = (
             max(0, min(current_index, len(self._image_paths) - 1)) if self._image_paths else 0
         )
@@ -42,12 +55,15 @@ class ScreenshotViewer(QDialog):
         self._fit_to_window = True
         self._original_pixmap: QPixmap | None = None
         self._pixmap_item: QGraphicsPixmapItem | None = None
-        self._window_icon_name = "camera.svg"
         self._icon_buttons: list[TransparentToolButton] = []
         self._reflowing_bottom_bar = False
         self._bottom_bar_plan_fingerprint: tuple[object, ...] | None = None
+        self._active = False
+        self._disposed = False
+        self._style_signals_connected = False
+        self._pending_delete_path = ""
 
-        self._init_window()
+        self._init_page()
         self._init_shortcuts()
         self._init_ui()
         self._status_restore_text = ""
@@ -60,6 +76,9 @@ class ScreenshotViewer(QDialog):
         self._bottom_bar_reflow_timer = QTimer(self)
         self._bottom_bar_reflow_timer.setSingleShot(True)
         self._bottom_bar_reflow_timer.timeout.connect(self._reflow_bottom_bar)
+        self._delete_confirm_timer = QTimer(self)
+        self._delete_confirm_timer.setSingleShot(True)
+        self._delete_confirm_timer.timeout.connect(self._reset_delete_confirmation)
         self._apply_theme()
         self._rebuild_thumbnails()
 
@@ -68,14 +87,169 @@ class ScreenshotViewer(QDialog):
         else:
             self._show_placeholder("No screenshot available")
         self._update_nav_visibility()
+        self._apply_theme()
+        self._connect_style_signals()
 
+    @staticmethod
+    def _normalize_paths(
+        values: Iterable[str | os.PathLike[str]] | None,
+    ) -> list[str]:
+        """规范化路径并按绝对路径去重，同时保留输入顺序。"""
+
+        if values is None:
+            return []
+        if isinstance(values, (str, os.PathLike)):
+            values = (values,)
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            try:
+                path = os.fspath(value).strip()
+            except (TypeError, AttributeError):
+                continue
+            if not path:
+                continue
+            identity = os.path.normcase(os.path.abspath(path))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            normalized.append(path)
+        return normalized
+
+    @classmethod
+    def _paths_from_payload(cls, payload) -> tuple[list[str], int | None, bool]:
+        """接受路径列表或路由字典，并返回路径、显式索引和聚焦策略。"""
+
+        current_index: int | None = None
+        focus_new = True
+        values = payload
+        if isinstance(payload, Mapping):
+            values = payload.get("image_paths", payload.get("paths", payload.get("path")))
+            raw_index = payload.get("current_index")
+            if isinstance(raw_index, int) and not isinstance(raw_index, bool):
+                current_index = raw_index
+            focus_new = bool(payload.get("focus_new", True))
+        if values is None:
+            return [], current_index, focus_new
+        if isinstance(values, (str, os.PathLike)):
+            values = (values,)
+        try:
+            paths = cls._normalize_paths(values)
+        except TypeError:
+            paths = []
+        return paths, current_index, focus_new
+
+    def activate(self, payload=None) -> None:
+        """激活页面并把一次新截图批次追加到现有会话。"""
+
+        if self._disposed:
+            return
+        self._active = True
+        self.receive_payload(payload)
+
+    def receive_payload(self, payload=None) -> None:
+        """接收后台完成的截图批次，不要求页面当前位于前台。"""
+
+        if self._disposed:
+            return
+        previous_count = len(self._image_paths)
+        incoming, explicit_index, focus_new = self._paths_from_payload(payload)
+        existing = {
+            os.path.normcase(os.path.abspath(path)) for path in self._image_paths
+        }
+        first_added_index: int | None = None
+        for path in incoming:
+            identity = os.path.normcase(os.path.abspath(path))
+            if identity in existing:
+                continue
+            if first_added_index is None:
+                first_added_index = len(self._image_paths)
+            self._image_paths.append(path)
+            existing.add(identity)
+
+        if first_added_index is not None:
+            self._rebuild_thumbnails()
+            target_index = first_added_index if focus_new else self._current_idx
+            if explicit_index is not None:
+                target_index = max(0, min(explicit_index, len(self._image_paths) - 1))
+            self._navigate_to(target_index)
+        elif self._image_paths:
+            self._navigate_to(self._current_idx)
+        else:
+            self._show_placeholder("No screenshot available")
+        if len(self._image_paths) != previous_count:
+            self.image_count_changed.emit(len(self._image_paths))
+        self._apply_theme()
+        self._schedule_bottom_bar_reflow()
+
+    def deactivate(self, reason: str = "navigation") -> None:
+        """暂停瞬态 UI 工作；截图列表保留供同一会话再次激活。"""
+
+        self._active = False
+        self.setProperty("deactivation_reason", reason)
+        self._status_restore_timer.stop()
+        self._fit_resize_timer.stop()
+        self._bottom_bar_reflow_timer.stop()
+        self._reset_delete_confirmation()
+
+    def request_dispose(self, reason: str = "user") -> bool:
+        """同步释放页面资源；返回 ``True`` 表示宿主可立即移除页面。"""
+
+        if self._disposed:
+            return True
+        self.deactivate(reason)
+        self._disposed = True
+        self._disconnect_style_signals()
+        self._scene.clear()
+        self._placeholder_text = None
+        self._original_pixmap = None
+        self._pixmap_item = None
+        self._image_paths.clear()
+        self.image_count_changed.emit(0)
+        return True
+
+    def register_shutdown_tasks(
+        self,
+        supervisor,
+        *,
+        owner_id: str,
+        task_prefix: str,
+    ) -> tuple[str, ...]:
+        """截图页没有后台资源，因此无需向关闭协调器注册任务。"""
+
+        return ()
+
+    @property
+    def is_disposed(self) -> bool:
+        return self._disposed
+
+    @property
+    def image_paths(self) -> tuple[str, ...]:
+        """返回当前批次快照，避免调用方依赖页面内部可变列表。"""
+
+        return tuple(self._image_paths)
+
+    def _connect_style_signals(self) -> None:
+        if self._style_signals_connected:
+            return
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
+        self._style_signals_connected = True
+
+    def _disconnect_style_signals(self) -> None:
+        if not self._style_signals_connected:
+            return
+        for signal in (BaseStyles.theme_changed, BaseStyles.fonts_changed):
+            try:
+                signal.disconnect(self._apply_theme)
+            except (TypeError, RuntimeError):
+                pass
+        self._style_signals_connected = False
 
     # ── 主题与界面控制器委托 wrapper ──────────────────────────────────────
 
-    def _init_window(self):
-        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_window()
+    def _init_page(self):
+        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_page()
 
     def _init_shortcuts(self):
         return (
@@ -262,10 +436,10 @@ class ScreenshotViewer(QDialog):
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
         ).copy_to_clipboard()
 
-    def _flash_status(self, text: str):
+    def _flash_status(self, text: str, timeout_ms: int = 1800):
         return (
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._flash_status(text)
+        )._flash_status(text, timeout_ms)
 
     def _restore_info_status(self) -> None:
         return (
@@ -282,6 +456,11 @@ class ScreenshotViewer(QDialog):
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
         )._delete_file()
 
+    def _reset_delete_confirmation(self) -> None:
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._reset_delete_confirmation()
+
     def _on_context_menu(self, pos):
         return (
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
@@ -290,17 +469,7 @@ class ScreenshotViewer(QDialog):
     # ── 生命周期与事件 ─────────────────────────────────────────────────────
 
     def closeEvent(self, event):
-        self._status_restore_timer.stop()
-        self._fit_resize_timer.stop()
-        self._bottom_bar_reflow_timer.stop()
-        try:
-            BaseStyles.theme_changed.disconnect(self._apply_theme)
-        except (TypeError, RuntimeError):
-            pass
-        try:
-            BaseStyles.fonts_changed.disconnect(self._apply_theme)
-        except (TypeError, RuntimeError):
-            pass
+        self.request_dispose("widget_close")
         super().closeEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -316,3 +485,5 @@ class ScreenshotViewer(QDialog):
             self._schedule_bottom_bar_reflow()
         if getattr(self, "_fit_to_window", False):
             self._fit_resize_timer.start(0)
+
+__all__ = ["ScreenshotPage"]

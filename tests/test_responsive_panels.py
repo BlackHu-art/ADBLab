@@ -69,7 +69,6 @@ def _side_panel() -> SimpleNamespace:
         _font_sm=QFont("Arial", 10),
         _font_base=QFont("Arial", 10),
         _font_mono=QFont("Courier New", 10),
-        _font_tab=QFont("Arial", 10),
         _package_history=[],
         _apply_completer_style=lambda _completer: None,
         selected_devices=[],
@@ -268,10 +267,17 @@ def _binding_widget_state(feature_panel) -> tuple:
     return tuple(state)
 
 
-def _assert_feature_binding_geometry(feature_panel, scroll, content) -> tuple:
-    """核对当前 viewport 下所有响应行的几何，并返回真实溢出 binding。"""
+def _assert_feature_binding_geometry(
+    feature_panel,
+    scroll,
+    content,
+    bindings=None,
+) -> tuple:
+    """核对当前分类的响应行几何，并返回真实溢出 binding。"""
 
-    bindings = tuple(feature_panel._responsive_rows)
+    bindings = (
+        tuple(feature_panel._responsive_rows) if bindings is None else tuple(bindings)
+    )
     overflowing = tuple(
         binding
         for binding in bindings
@@ -330,6 +336,9 @@ def _resize_binding_until_mode(
 ) -> int:
     """测试侧逐像素扫描真实 viewport，不调用生产布局决策 helper。"""
 
+    widgets = binding.widgets()
+    assert widgets
+    _show_widget_category(qt_application, feature_panel, widgets[0])
     for width in range(180, 901):
         _set_scroll_viewport_width(qt_application, panel, scroll, width)
         feature_panel.apply_responsive_width(scroll.viewport().contentsRect().width())
@@ -338,15 +347,6 @@ def _resize_binding_until_mode(
         if plan is not None and plan.mode.name == mode_name:
             return width
     raise AssertionError(f"responsive mode was not reachable: {mode_name}")
-
-
-def _grid_position(layout, widget) -> tuple[int, int]:
-    """读取控件在网格中的行列位置。"""
-
-    index = layout.indexOf(widget)
-    assert index >= 0
-    row, column, _row_span, _column_span = layout.getItemPosition(index)
-    return row, column
 
 
 def _grid_item_position(layout, widget) -> tuple[int, int, int, int]:
@@ -405,6 +405,88 @@ def _groups_with_titles_wider_than_viewport(content: QWidget, viewport_width: in
         if card.headerLabel.fontMetrics().horizontalAdvance(card.title) + 24
         > viewport_width
     )
+
+
+def _feature_category_slices(feature_panel, content: QWidget) -> tuple:
+    """按当前分类页拆分 binding，避免把隐藏页几何当成同时可见。"""
+
+    bindings = tuple(feature_panel._responsive_rows)
+    category_stack = getattr(feature_panel, "category_stack", None)
+    if category_stack is None:
+        return ((None, content, bindings),)
+
+    slices = []
+    assigned = []
+    for category_key in category_stack.category_keys:
+        category_page = category_stack.page(category_key)
+        assert category_page is not None
+        category_bindings = []
+        for binding in bindings:
+            widgets = binding.widgets()
+            assert widgets
+            membership = tuple(
+                widget is category_page or category_page.isAncestorOf(widget)
+                for widget in widgets
+            )
+            if any(membership):
+                assert all(membership), (category_key, widgets)
+                category_bindings.append(binding)
+                assigned.append(binding)
+        slices.append((category_key, category_page, tuple(category_bindings)))
+
+    assert len(assigned) == len(bindings)
+    assert {id(binding) for binding in assigned} == {id(binding) for binding in bindings}
+    return tuple(slices)
+
+
+def _activate_feature_category(
+    qt_application,
+    panel: SidePanel,
+    feature_panel,
+    scroll: QScrollArea,
+    category_key: str | None,
+    viewport_width: int,
+) -> None:
+    """显示 binding 所属分类，并让响应式计划收敛到目标 viewport。"""
+
+    category_stack = getattr(feature_panel, "category_stack", None)
+    if category_key is not None:
+        assert category_stack is not None
+        assert category_stack.set_current(category_key) is True
+    _resize_feature_viewport(
+        qt_application,
+        panel,
+        feature_panel,
+        scroll,
+        viewport_width,
+    )
+    if category_key is not None:
+        assert category_stack.current_key == category_key
+
+
+def _feature_category_key(feature_panel, widget: QWidget) -> str | None:
+    """返回控件所属分类；未使用分类栈的旧面板返回 ``None``。"""
+
+    category_stack = getattr(feature_panel, "category_stack", None)
+    if category_stack is None:
+        return None
+    for category_key in category_stack.category_keys:
+        category_page = category_stack.page(category_key)
+        assert category_page is not None
+        if widget is category_page or category_page.isAncestorOf(widget):
+            return category_key
+    raise AssertionError(f"widget is outside category stack: {widget!r}")
+
+
+def _show_widget_category(qt_application, feature_panel, widget: QWidget) -> str | None:
+    """显示控件所属分类，并等待 QStackedWidget 完成可见性切换。"""
+
+    category_key = _feature_category_key(feature_panel, widget)
+    if category_key is not None:
+        assert feature_panel.category_stack.set_current(category_key) is True
+        qt_application.processEvents()
+        assert widget.isVisibleTo(feature_panel)
+    return category_key
 
 
 def _visible_device_layout_members(manager):
@@ -827,14 +909,8 @@ def test_device_body_height_boundary_switches_both_directions_without_fallback(
     manager = panel._devices_tab
     device_widget = panel.device_widget
     try:
-        device_widget.resize(300, 700)
-        device_widget.show()
-        manager.apply_responsive_width(300)
-        wait_until(qt_application, lambda: panel._responsive_coordinator.diagnostics.stable)
-        wait_for_stable_geometry(
-            qt_application,
-            (device_widget, manager.listbox_devices, manager._device_action_frame),
-        )
+        compact_width = max(1, device_widget.minimumSizeHint().width())
+        _show_device_layout(device_widget, manager, compact_width, qt_application)
         assert manager._device_layout_mode == "compact"
         assert manager._device_body_mode == "stacked"
         minimum = device_widget.minimumSizeHint().height()
@@ -1135,150 +1211,166 @@ def test_feature_panel_real_geometry_and_scroll_contract(
         bindings = tuple(feature_panel._responsive_rows)
         assert bindings
         assert all(isinstance(binding, ResponsiveGridBinding) for binding in bindings)
-        wait_for_stable_geometry(
-            qt_application,
-            tuple(widget for binding in bindings for widget in binding.widgets()),
-        )
-        for binding_index, binding in enumerate(bindings):
-            plan = binding.applied_plan
-            assert plan is not None, (
-                panel_name,
-                font_size,
-                binding_index,
-                tuple(widget.objectName() for widget in binding.widgets()),
-                panel._responsive_coordinator.diagnostics,
-            )
-            widgets = binding.widgets()
-            assert widgets
-            for widget in widgets:
-                try:
-                    assert_positive_geometry(widget, content_widget)
-                except AssertionError as error:
-                    raise AssertionError(
-                        (
-                            panel_name,
-                            font_size,
-                            binding_index,
-                            plan.mode.name,
-                            plan.required_width,
-                            plan.available_width,
-                            tuple(item.geometry().getRect() for item in widgets),
-                            tuple(
-                                (metric.minimum_width, metric.preferred_width)
-                                for metric in plan.metrics
-                            ),
-                        )
-                    ) from error
-            try:
-                assert_non_overlapping(widgets, content_widget)
-            except AssertionError as error:
-                raise AssertionError(
-                    (
-                        panel_name,
-                        font_size,
-                        binding_index,
-                        plan.mode.name,
-                        plan.required_width,
-                        plan.available_width,
-                        widgets[0].parentWidget().contentsRect().width(),
-                        content_widget.width(),
-                        scroll.horizontalScrollBar().maximum(),
-                        plan.column_widths,
-                        tuple(
-                            widgets[0].parentWidget().layout().columnMinimumWidth(column)
-                            for column in range(plan.mode.columns)
-                        ),
-                        tuple(widget.geometry().getRect() for widget in widgets),
-                    )
-                ) from error
-
-        overflowing = [
-            (binding_index, binding)
-            for binding_index, binding in enumerate(bindings)
-            if binding.applied_plan is not None and binding.applied_plan.overflow_required
-        ]
-        title_overflowing = _groups_with_titles_wider_than_viewport(
+        tested_bindings = set()
+        for category_key, category_content, category_bindings in _feature_category_slices(
+            feature_panel,
             content_widget,
-            scroll.viewport().contentsRect().width(),
-        )
-        scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().minimum())
-        qt_application.processEvents()
-        viewport_rect = scroll.viewport().rect()
-        for binding_index, binding in enumerate(bindings):
-            plan = binding.applied_plan
-            if plan is None or plan.overflow_required:
-                continue
-            for widget in binding.widgets():
-                rect = QRect(widget.mapTo(scroll.viewport(), QPoint(0, 0)), widget.size())
-                assert (
-                    viewport_rect.left() <= rect.left() and rect.right() <= viewport_rect.right()
-                ), (
+        ):
+            _activate_feature_category(
+                qt_application,
+                panel,
+                feature_panel,
+                scroll,
+                category_key,
+                292,
+            )
+            wait_for_stable_geometry(
+                qt_application,
+                tuple(widget for binding in category_bindings for widget in binding.widgets()),
+            )
+            for binding in category_bindings:
+                binding_index = bindings.index(binding)
+                tested_bindings.add(id(binding))
+                plan = binding.applied_plan
+                assert plan is not None, (
                     panel_name,
+                    category_key,
                     font_size,
                     binding_index,
-                    plan.mode.name,
-                    plan.required_width,
-                    plan.available_width,
-                    rect,
-                    viewport_rect,
-                    content_widget.size(),
+                    tuple(widget.objectName() for widget in binding.widgets()),
+                    panel._responsive_coordinator.diagnostics,
                 )
-        if overflowing:
-            for binding_index, binding in overflowing:
                 widgets = binding.widgets()
                 try:
-                    assert_scroll_target_reachable(scroll, widgets[0])
-                    assert_scroll_target_reachable(scroll, widgets[-1])
+                    for widget in widgets:
+                        assert widget.isVisibleTo(content_widget)
+                        assert_positive_geometry(widget, content_widget)
+                    assert_non_overlapping(widgets, content_widget)
                 except AssertionError as error:
-                    plan = binding.applied_plan
                     raise AssertionError(
                         (
                             panel_name,
+                            category_key,
                             font_size,
                             binding_index,
                             plan.mode.name,
                             plan.required_width,
                             plan.available_width,
                             widgets[0].parentWidget().contentsRect().width(),
-                            content_widget.size(),
-                            scroll.viewport().size(),
+                            content_widget.width(),
                             scroll.horizontalScrollBar().maximum(),
-                            scroll.verticalScrollBar().maximum(),
+                            plan.column_widths,
                             tuple(
-                                (
-                                    getattr(widget, "text", lambda: "")(),
-                                    metric.minimum_width,
-                                    metric.preferred_width,
-                                    widget.minimumSizeHint().width(),
-                                )
-                                for widget, metric in zip(widgets, plan.metrics)
+                                widgets[0].parentWidget().layout().columnMinimumWidth(column)
+                                for column in range(plan.mode.columns)
+                            ),
+                            tuple(widget.geometry().getRect() for widget in widgets),
+                            tuple(
+                                (metric.minimum_width, metric.preferred_width)
+                                for metric in plan.metrics
                             ),
                         )
                     ) from error
-        elif title_overflowing:
-            assert scroll.horizontalScrollBar().maximum() > 0
-            for group in title_overflowing:
-                title_rect = _group_title_rect(group)
-                assert group.rect().contains(title_rect), (group.title, group.rect(), title_rect)
-                assert_scroll_target_reachable(scroll, group)
-        else:
-            assert scroll.horizontalScrollBar().maximum() == 0, (
-                panel_name,
-                font_size,
-                content_widget.size(),
-                content_widget.minimumSizeHint(),
-                tuple(
-                    (
-                        group.title,
-                        group.width(),
-                        group.minimumSizeHint().width(),
-                        group.sizeHint().width(),
-                    )
-                    for group in content_widget.findChildren(
-                        HeaderCardWidget, options=Qt.FindDirectChildrenOnly
-                    )
-                ),
+
+            overflowing = [
+                (bindings.index(binding), binding)
+                for binding in category_bindings
+                if binding.applied_plan is not None and binding.applied_plan.overflow_required
+            ]
+            title_overflowing = _groups_with_titles_wider_than_viewport(
+                category_content,
+                scroll.viewport().contentsRect().width(),
             )
+            scroll.horizontalScrollBar().setValue(scroll.horizontalScrollBar().minimum())
+            qt_application.processEvents()
+            viewport_rect = scroll.viewport().rect()
+            for binding in category_bindings:
+                binding_index = bindings.index(binding)
+                plan = binding.applied_plan
+                if plan is None or plan.overflow_required:
+                    continue
+                for widget in binding.widgets():
+                    rect = QRect(widget.mapTo(scroll.viewport(), QPoint(0, 0)), widget.size())
+                    assert (
+                        viewport_rect.left() <= rect.left()
+                        and rect.right() <= viewport_rect.right()
+                    ), (
+                        panel_name,
+                        category_key,
+                        font_size,
+                        binding_index,
+                        plan.mode.name,
+                        plan.required_width,
+                        plan.available_width,
+                        rect,
+                        viewport_rect,
+                        content_widget.size(),
+                    )
+            if overflowing:
+                for binding_index, binding in overflowing:
+                    widgets = binding.widgets()
+                    try:
+                        assert_scroll_target_reachable(scroll, widgets[0])
+                        assert_scroll_target_reachable(scroll, widgets[-1])
+                    except AssertionError as error:
+                        plan = binding.applied_plan
+                        raise AssertionError(
+                            (
+                                panel_name,
+                                category_key,
+                                font_size,
+                                binding_index,
+                                plan.mode.name,
+                                plan.required_width,
+                                plan.available_width,
+                                widgets[0].parentWidget().contentsRect().width(),
+                                content_widget.size(),
+                                scroll.viewport().size(),
+                                scroll.horizontalScrollBar().maximum(),
+                                scroll.verticalScrollBar().maximum(),
+                                tuple(
+                                    (
+                                        getattr(widget, "text", lambda: "")(),
+                                        metric.minimum_width,
+                                        metric.preferred_width,
+                                        widget.minimumSizeHint().width(),
+                                    )
+                                    for widget, metric in zip(widgets, plan.metrics)
+                                ),
+                            )
+                        ) from error
+            elif title_overflowing:
+                assert scroll.horizontalScrollBar().maximum() > 0
+                for group in title_overflowing:
+                    title_rect = _group_title_rect(group)
+                    assert group.rect().contains(title_rect), (
+                        group.title,
+                        group.rect(),
+                        title_rect,
+                    )
+                    assert_scroll_target_reachable(scroll, group)
+            else:
+                assert scroll.horizontalScrollBar().maximum() == 0, (
+                    panel_name,
+                    category_key,
+                    font_size,
+                    category_content.size(),
+                    category_content.minimumSizeHint(),
+                    tuple(
+                        (
+                            group.title,
+                            group.width(),
+                            group.minimumSizeHint().width(),
+                            group.sizeHint().width(),
+                        )
+                        for group in category_content.findChildren(
+                            HeaderCardWidget,
+                            options=Qt.FindDirectChildrenOnly,
+                        )
+                    ),
+                )
+
+        assert tested_bindings == {id(binding) for binding in bindings}
     finally:
         _close_feature_panel(panel)
 
@@ -1305,23 +1397,41 @@ def test_feature_panel_geometry_is_stable_in_light_and_dark_themes(
     )
     try:
         bindings = tuple(feature_panel._responsive_rows)
-        wait_for_stable_geometry(
-            qt_application,
-            tuple(widget for binding in bindings for widget in binding.widgets()),
-        )
-        for binding in bindings:
-            assert binding.applied_plan is not None
-            widgets = binding.widgets()
-            for widget in widgets:
-                assert_positive_geometry(widget, content_widget)
-            assert_non_overlapping(widgets, content_widget)
-        has_overflow = any(binding.applied_plan.overflow_required for binding in bindings) or bool(
-            _groups_with_titles_wider_than_viewport(
-                content_widget,
-                scroll.viewport().contentsRect().width(),
+        tested_bindings = set()
+        for category_key, category_content, category_bindings in _feature_category_slices(
+            feature_panel,
+            content_widget,
+        ):
+            _activate_feature_category(
+                qt_application,
+                panel,
+                feature_panel,
+                scroll,
+                category_key,
+                292,
             )
-        )
-        assert (scroll.horizontalScrollBar().maximum() > 0) is has_overflow
+            wait_for_stable_geometry(
+                qt_application,
+                tuple(widget for binding in category_bindings for widget in binding.widgets()),
+            )
+            for binding in category_bindings:
+                tested_bindings.add(id(binding))
+                assert binding.applied_plan is not None
+                widgets = binding.widgets()
+                for widget in widgets:
+                    assert widget.isVisibleTo(content_widget)
+                    assert_positive_geometry(widget, content_widget)
+                assert_non_overlapping(widgets, content_widget)
+            has_overflow = any(
+                binding.applied_plan.overflow_required for binding in category_bindings
+            ) or bool(
+                _groups_with_titles_wider_than_viewport(
+                    category_content,
+                    scroll.viewport().contentsRect().width(),
+                )
+            )
+            assert (scroll.horizontalScrollBar().maximum() > 0) is has_overflow
+        assert tested_bindings == {id(binding) for binding in bindings}
     finally:
         _close_feature_panel(panel)
 
@@ -1439,6 +1549,18 @@ def test_system_label_field_pair_never_splits_in_narrow_mode(
     )
     try:
         binding = system_panel.battery_parameter_binding
+        _show_widget_category(
+            qt_application,
+            system_panel,
+            system_panel._battery_value_pair,
+        )
+        _resize_feature_viewport(
+            qt_application,
+            panel,
+            system_panel,
+            scroll,
+            292,
+        )
         plan = binding.applied_plan
         assert plan is not None
         widgets = binding.widgets()
@@ -1783,20 +1905,54 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
         monkeypatch,
     )
     try:
+        category_stack = feature_panel.category_stack
+        category_key = ""
+        category_bindings = ()
         samples = []
         narrow_width = None
-        for width in range(180, 901, 24):
-            _resize_feature_viewport(qt_application, panel, feature_panel, scroll, width)
-            overflow_count = sum(
-                1
-                for binding in feature_panel._responsive_rows
-                if binding.applied_plan is not None and binding.applied_plan.overflow_required
+        category_attempts = {}
+        for candidate_key, _category_content, candidate_bindings in (
+            _feature_category_slices(feature_panel, content)
+        ):
+            assert candidate_key is not None
+            if not candidate_bindings:
+                continue
+            _activate_feature_category(
+                qt_application,
+                panel,
+                feature_panel,
+                scroll,
+                candidate_key,
+                180,
             )
-            horizontal_maximum = scroll.horizontalScrollBar().maximum()
-            samples.append((width, overflow_count, horizontal_maximum))
-            if narrow_width is None and overflow_count > 0 and horizontal_maximum > 0:
-                narrow_width = width
-        assert narrow_width is not None, samples
+            candidate_samples = []
+            candidate_narrow_width = None
+            for width in range(180, 901, 24):
+                _resize_feature_viewport(qt_application, panel, feature_panel, scroll, width)
+                overflow_count = sum(
+                    1
+                    for binding in candidate_bindings
+                    if binding.applied_plan is not None
+                    and binding.applied_plan.overflow_required
+                )
+                horizontal_maximum = scroll.horizontalScrollBar().maximum()
+                candidate_samples.append((width, overflow_count, horizontal_maximum))
+                if (
+                    candidate_narrow_width is None
+                    and overflow_count > 0
+                    and horizontal_maximum > 0
+                ):
+                    candidate_narrow_width = width
+            category_attempts[candidate_key] = candidate_samples
+            if candidate_narrow_width is not None:
+                category_key = candidate_key
+                category_bindings = candidate_bindings
+                samples = candidate_samples
+                narrow_width = candidate_narrow_width
+                break
+        assert category_key == category_stack.current_key
+        assert category_bindings
+        assert narrow_width is not None, category_attempts
         assert samples[-1][0] == 900
         assert samples[-1][1:] == (0, 0), samples
 
@@ -1807,7 +1963,12 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
             scroll,
             narrow_width,
         )
-        narrow_overflow = _assert_feature_binding_geometry(feature_panel, scroll, content)
+        narrow_overflow = _assert_feature_binding_geometry(
+            feature_panel,
+            scroll,
+            content,
+            category_bindings,
+        )
         assert narrow_overflow
         assert scroll.horizontalScrollBar().maximum() > 0
 
@@ -1827,7 +1988,12 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
         final_viewport_width = scroll.viewport().contentsRect().width()
         scrollbar_width = scroll.verticalScrollBar().sizeHint().width()
         assert 900 <= final_viewport_width <= 900 + scrollbar_width
-        wide_overflow = _assert_feature_binding_geometry(feature_panel, scroll, content)
+        wide_overflow = _assert_feature_binding_geometry(
+            feature_panel,
+            scroll,
+            content,
+            category_bindings,
+        )
         assert panel._responsive_coordinator.diagnostics.generation == before_resize + 1
         assert panel._responsive_coordinator.diagnostics.fallback_reason is None
         assert wide_overflow == ()
@@ -1859,7 +2025,12 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
             ),
         )
         wait_for_stable_geometry(qt_application, (scroll, content))
-        burst_overflow = _assert_feature_binding_geometry(feature_panel, scroll, content)
+        burst_overflow = _assert_feature_binding_geometry(
+            feature_panel,
+            scroll,
+            content,
+            category_bindings,
+        )
         for _attempt in range(4):
             QCoreApplication.sendPostedEvents()
             qt_application.processEvents()
@@ -2025,7 +2196,20 @@ def test_large_font_static_semantic_labels_are_not_clipped_after_runtime_change(
             )
         else:
             labels = tuple(feature_panel._parameter_labels)
+        assert labels
+        _show_widget_category(qt_application, feature_panel, labels[0])
+        _resize_feature_viewport(
+            qt_application,
+            panel,
+            feature_panel,
+            scroll,
+            292,
+        )
         for label in labels:
+            assert _feature_category_key(feature_panel, label) == _feature_category_key(
+                feature_panel,
+                labels[0],
+            )
             text = label.text()
             if label.wordWrap() and " " in text:
                 # 含空格的标签允许按词折行（wordWrap 设计行为）；契约是
@@ -2336,8 +2520,17 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
     )
     observed = {id(binding): set() for binding in remote.remote_control_bindings}
     try:
+        _activate_feature_category(
+            qt_application,
+            panel,
+            remote,
+            scroll,
+            "control",
+            292,
+        )
         for width in range(180, 901, 8):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+            assert remote.category_stack.current_key == "control"
             for binding in remote.remote_control_bindings:
                 plan = binding.applied_plan
                 assert plan is not None
@@ -2750,7 +2943,7 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
 ):
     """长标题不改写参考卡片最小宽度，完整文本由可访问属性保留。"""
 
-    panel, _system, scroll, content = _show_feature_panel(
+    panel, system, scroll, _content = _show_feature_panel(
         "system",
         292,
         22,
@@ -2758,17 +2951,41 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
         monkeypatch,
     )
     try:
+        category_pages = tuple(
+            system.category_stack.page(key) for key in system.category_stack.category_keys
+        )
+        assert all(page is not None for page in category_pages)
+        cards = tuple(
+            card
+            for page in category_pages
+            for card in page.findChildren(
+                HeaderCardWidget,
+                options=Qt.FindDirectChildrenOnly,
+            )
+        )
+        assert cards
+        target = max(
+            cards,
+            key=lambda card: card.headerLabel.fontMetrics().horizontalAdvance(card.title),
+        )
+        category_key = _show_widget_category(qt_application, system, target)
+        assert category_key is not None
+        category_page = system.category_stack.page(category_key)
+        assert category_page is not None
+        title_width = target.headerLabel.fontMetrics().horizontalAdvance(target.title)
+        _resize_feature_viewport(
+            qt_application,
+            panel,
+            system,
+            scroll,
+            title_width + 23,
+        )
         groups = _groups_with_titles_wider_than_viewport(
-            content,
+            category_page,
             scroll.viewport().contentsRect().width(),
         )
-        assert groups
-        target = max(
-            groups,
-            key=lambda group: group.headerLabel.fontMetrics().horizontalAdvance(group.title),
-        )
-        title_width = target.headerLabel.fontMetrics().horizontalAdvance(target.title)
-        assert target.minimumSizeHint().width() < title_width + 24
+        assert target in groups
+        assert target.minimumSizeHint().width() >= title_width + 24
         assert target.toolTip() == target.title
         assert target.accessibleName() == target.title
         assert scroll.horizontalScrollBar().maximum() > 0
@@ -2887,6 +3104,18 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
         monkeypatch,
     )
     try:
+        for category_key in apps.category_stack.category_keys:
+            _activate_feature_category(
+                qt_application,
+                panel,
+                apps,
+                scroll,
+                category_key,
+                292,
+            )
+        assert apps.category_stack.set_current("daily") is True
+        qt_application.processEvents()
+
         devices = ["device-a", "device-b"]
         monkeypatch.setattr(
             type(panel._devices_tab),
@@ -2929,6 +3158,10 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
             _validator_signature(combo)[2:] == (0, 100)
             for combo in apps._monkey_pct_combos.values()
         )
+        # 分类导航会在 620px 处由 ComboBox 切换为 Pivot；把焦点留在持续可见的
+        # 滚动宿主，避免 Qt 因隐藏当前焦点控件而主动聚焦并全选首个输入框。
+        scroll.setFocus(Qt.FocusReason.OtherFocusReason)
+        qt_application.processEvents()
 
         def batch_state():
             return (
@@ -2955,6 +3188,7 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
         assert batch_state() == before_batches
 
         uninstall_spy = QSignalSpy(panel.signals.uninstall_app_requested)
+        _show_widget_category(qt_application, apps, apps.uninstall_btn)
         apps.uninstall_btn.click()
         assert uninstall_spy.count() == 1
         assert list(uninstall_spy.at(0)) == [devices, "com.example.contract"]
@@ -3304,8 +3538,9 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
         widget.resize(640, 500)
         widget.show()
         qt_application.processEvents()
+        scan_widths = range(max(1, widget.minimumSizeHint().width()), 1001, 20)
         observed_modes = set()
-        for width in range(320, 1001, 20):
+        for width in scan_widths:
             actual_width = _show_device_layout(widget, manager, width, qt_application)
             if manager._device_body_mode != "stacked":
                 continue
@@ -3584,7 +3819,7 @@ def _show_device_height(widget, manager, requested_height: int, qt_application):
     return _show_device_geometry(
         widget,
         manager,
-        300,
+        widget.contentsRect().width(),
         requested_height,
         qt_application,
     )

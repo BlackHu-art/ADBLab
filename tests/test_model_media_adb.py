@@ -12,17 +12,17 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QFont, QIcon, QPixmap, QPixmapCache
-from PySide6.QtWidgets import QApplication
+from PySide6.QtGui import QFont, QIcon, QPixmap, QPixmapCache
+from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QWidget
 
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult
 from core.log_service import LogService
-from gui.dialogs.file_explorer import FileExplorerDialog
-from gui.dialogs.file_explorer_image import _ImageViewerDialog
+from gui.dialogs.file_explorer_image import FileExplorerImagePreview
 from gui.dialogs.file_explorer_view import _load_image_preview
-from gui.dialogs.screenshot_viewer import ScreenshotViewer
 from gui.dialogs.screenshot_viewer_nav import _load_pixmap
+from gui.features.file_explorer import FileExplorerPage
+from gui.features.media import ScreenshotPage
 from gui.panels.log_panel import LogPanel
 from gui.styles import BaseStyles
 from models.adb_advanced import ADBAdvanced
@@ -32,18 +32,18 @@ from models.adb_testing import ADBTesting
 from models.file_explorer_worker import ADBWorker, TransferWorker
 
 
-def test_screenshot_viewer_opens_folder_via_process_runner():
+def test_screenshot_page_opens_folder_via_process_runner():
     path = os.path.abspath(__file__)
     viewer = SimpleNamespace()
     viewer._current_path = lambda: path
     runner = Mock()
 
     with (
-        patch("gui.dialogs.screenshot_viewer.ProcessRunner", return_value=runner),
-        patch("gui.dialogs.screenshot_viewer.os.path.exists", return_value=True),
-        patch("gui.dialogs.screenshot_viewer.os.name", "nt"),
+        patch("gui.dialogs.screenshot_viewer_actions.ProcessRunner", return_value=runner),
+        patch("gui.dialogs.screenshot_viewer_actions.os.path.exists", return_value=True),
+        patch("gui.dialogs.screenshot_viewer_actions.os.name", "nt"),
     ):
-        ScreenshotViewer._open_file_location(viewer)
+        ScreenshotPage._open_file_location(viewer)
 
     runner.spawn.assert_called_once()
     assert runner.spawn.call_args.args[0][0] == "explorer"
@@ -103,14 +103,14 @@ def test_screenshot_thumbnail_reuses_qpixmap_cache(tmp_path):
         QPixmapCache.clear()
 
 
-def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
+def test_screenshot_page_uses_bottom_toolbar_with_tooltips(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
     pixmap.fill(Qt.GlobalColor.red)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotViewer([str(image_path)])
+    viewer = ScreenshotPage([str(image_path)])
     try:
         assert "120 x 80" in viewer._info_label.text()
         assert "shot.png" not in viewer._info_label.text()
@@ -120,11 +120,6 @@ def test_screenshot_viewer_uses_bottom_toolbar_with_tooltips(tmp_path):
         assert viewer._bottom_bar.objectName() == "bottomBar"
         assert viewer._bottom_dock.objectName() == "bottomDock"
         assert viewer._thumb_list.isHidden()
-        assert not hasattr(viewer, "_close_btn")
-        assert not hasattr(viewer, "_copy_path_btn")
-        assert not hasattr(viewer, "_save_btn")
-        assert not hasattr(viewer, "copy_path_to_clipboard")
-        assert not hasattr(viewer, "save_as")
         expected_tips = {
             viewer._prev_btn: "Previous screenshot (Left)",
             viewer._next_btn: "Next screenshot (Right)",
@@ -157,37 +152,42 @@ def test_screenshot_metadata_reflows_and_long_name_stays_accessible(
     pixmap.fill(Qt.GlobalColor.red)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotViewer([str(image_path)])
+    host = QWidget()
+    host.setFixedSize(760, 520)
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(0, 0, 0, 0)
+    page = ScreenshotPage([str(image_path)], parent=host)
+    layout.addWidget(page)
     try:
-        viewer.resize(760, 520)
-        viewer.show()
+        host.show()
         for _attempt in range(4):
             _app.processEvents()
-        viewer._reflow_bottom_bar()
+        page._reflow_bottom_bar()
         _app.processEvents()
 
-        assert viewer.size() == QSize(760, 520)
-        assert viewer._metadata_layout_mode == "stacked"
-        assert viewer._info_label.wordWrap() is True
-        assert viewer._path_label.text() != file_name
-        assert "…" in viewer._path_label.text()
-        assert viewer._path_label.toolTip() == os.path.abspath(image_path)
-        assert viewer._path_label.accessibleDescription() == os.path.abspath(image_path)
-        assert viewer._info_label.toolTip() == viewer._info_label.text()
-        assert viewer._info_label.accessibleDescription() == viewer._info_label.text()
-        wrapped = viewer._info_label.fontMetrics().boundingRect(
-            viewer._info_label.contentsRect(),
+        assert host.size() == QSize(760, 520)
+        assert page.size() == host.contentsRect().size()
+        assert page._metadata_layout_mode == "stacked"
+        assert page._info_label.wordWrap() is True
+        assert page._path_label.text() != file_name
+        assert "…" in page._path_label.text()
+        assert page._path_label.toolTip() == os.path.abspath(image_path)
+        assert page._path_label.accessibleDescription() == os.path.abspath(image_path)
+        assert page._info_label.toolTip() == page._info_label.text()
+        assert page._info_label.accessibleDescription() == page._info_label.text()
+        wrapped = page._info_label.fontMetrics().boundingRect(
+            page._info_label.contentsRect(),
             Qt.TextFlag.TextWordWrap,
-            viewer._info_label.text(),
+            page._info_label.text(),
         )
-        assert viewer._info_label.contentsRect().height() >= wrapped.height()
+        assert page._info_label.contentsRect().height() >= wrapped.height()
     finally:
-        viewer.close()
+        host.close()
 
 
 def test_file_explorer_image_name_wraps_and_keeps_full_help_text():
     _app = QApplication.instance() or QApplication([])
-    dialog = _ImageViewerDialog()
+    dialog = FileExplorerImagePreview()
     pixmap = QPixmap(120, 80)
     pixmap.fill(Qt.GlobalColor.blue)
     name = f"{'very-long-image-name-' * 8}preview.png"
@@ -207,7 +207,84 @@ def test_file_explorer_image_name_wraps_and_keeps_full_help_text():
         dialog.close()
 
 
-def test_screenshot_viewer_thumbnail_and_navigation_update_current_image(tmp_path):
+def test_file_explorer_is_lazy_widget_with_inline_preview(qt_application):
+    refresh = Mock()
+    with patch.object(FileExplorerPage, "_refresh", refresh):
+        page = FileExplorerPage(device_ip="device-1")
+        assert isinstance(page, QWidget)
+        assert not isinstance(page, QDialog)
+        refresh.assert_not_called()
+
+        page.activate()
+        refresh.assert_called_once_with()
+        page.deactivate("navigation")
+        page.activate()
+        refresh.assert_called_once_with()
+    try:
+        page.resize(700, 520)
+        page.show()
+        qt_application.processEvents()
+        page._show_text_viewer("notes.txt", "hello", False, "/sdcard/notes.txt")
+        qt_application.processEvents()
+        assert page.preview_stack.currentWidget() is page.preview_text_page
+        assert page.preview_text_edit.toPlainText() == "hello"
+        assert page.preview_panel.isVisible()
+        assert not page.browser_panel.isVisible()
+        assert page.preview_back_btn.isVisible()
+
+        page._show_text_preview(
+            "large.txt",
+            "partial content",
+            "/sdcard/large.txt",
+            editable=False,
+        )
+        assert page.preview_text_edit.isReadOnly()
+        assert not page.preview_save_as_btn.isEnabled()
+        assert not page.preview_save_device_btn.isEnabled()
+
+        page._close_preview()
+        qt_application.processEvents()
+        assert page.browser_panel.isVisible()
+        assert not page.preview_panel.isVisible()
+
+        image = QPixmap(80, 60)
+        image.fill(Qt.GlobalColor.blue)
+        page._show_image_preview("preview.png", image)
+        qt_application.processEvents()
+        assert page.preview_stack.currentWidget() is page.preview_image
+        assert not page.preview_image._source_pixmap.isNull()
+
+        page._show_script_output("demo.sh", "done", False)
+        page.resize(1000, 620)
+        qt_application.processEvents()
+        assert page.preview_stack.currentWidget() is page.preview_output
+        assert page.preview_output.toPlainText() == "done"
+        assert page.browser_panel.isVisible()
+        assert page.preview_panel.isVisible()
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
+def test_file_explorer_offline_first_activation_defers_load_until_reconnect(qt_application):
+    page = FileExplorerPage(device_ip="device-1")
+    page._refresh = Mock()
+    try:
+        page.set_device_connected(False)
+        page.activate()
+
+        page._refresh.assert_not_called()
+        assert page.status_badge.text() == "Device offline"
+
+        page.set_device_connected(True)
+        page._refresh.assert_called_once_with()
+        assert page.status_badge.text() == "Ready"
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
+def test_screenshot_page_thumbnail_and_navigation_update_current_image(tmp_path):
     _app = QApplication.instance() or QApplication([])
     paths = []
     for name, color in (
@@ -221,7 +298,7 @@ def test_screenshot_viewer_thumbnail_and_navigation_update_current_image(tmp_pat
         assert pixmap.save(str(path))
         paths.append(str(path))
 
-    viewer = ScreenshotViewer(paths)
+    viewer = ScreenshotPage(paths)
     try:
         assert not viewer._thumb_list.isHidden()
         assert viewer._thumb_list.count() == 3
@@ -245,35 +322,35 @@ def test_screenshot_viewer_thumbnail_and_navigation_update_current_image(tmp_pat
         viewer.close()
 
 
-def test_screenshot_viewer_refreshes_themed_icons(tmp_path):
+def test_screenshot_page_refreshes_themed_icons(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
     pixmap.fill(Qt.GlobalColor.green)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotViewer([str(image_path)])
+    viewer = ScreenshotPage([str(image_path)])
     try:
         with patch(
-            "gui.dialogs.screenshot_viewer.get_themed_icon", return_value=QIcon()
+            "gui.dialogs.screenshot_viewer_ui.get_themed_icon", return_value=QIcon()
         ) as themed_icon:
             viewer._refresh_button_icons()
 
         icon_names = [call.args[0] for call in themed_icon.call_args_list]
-        assert "camera.svg" in icon_names
+        assert "camera.svg" not in icon_names
         assert {button.property("iconName") for button in viewer._icon_buttons}.issubset(icon_names)
     finally:
         viewer.close()
 
 
-def test_screenshot_viewer_actual_size_updates_zoom_label(tmp_path):
+def test_screenshot_page_actual_size_updates_zoom_label(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
     pixmap.fill(Qt.GlobalColor.blue)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotViewer([str(image_path)])
+    viewer = ScreenshotPage([str(image_path)])
     try:
         viewer._actual_size()
 
@@ -281,27 +358,6 @@ def test_screenshot_viewer_actual_size_updates_zoom_label(tmp_path):
         assert viewer._zoom_label.text() == "100%"
     finally:
         viewer.close()
-
-
-def test_screenshot_viewer_delete_without_confirmation_auto_closes_when_last_image_removed(
-    tmp_path,
-):
-    _app = QApplication.instance() or QApplication([])
-    image_path = tmp_path / "shot.png"
-    pixmap = QPixmap(120, 80)
-    pixmap.fill(Qt.GlobalColor.magenta)
-    assert pixmap.save(str(image_path))
-
-    viewer = ScreenshotViewer([str(image_path)])
-    try:
-        viewer._delete_file()
-
-        assert not image_path.exists()
-        assert viewer._image_paths == []
-        assert not viewer.isVisible()
-    finally:
-        if viewer.isVisible():
-            viewer.close()
 
 
 def test_pull_recorded_video_reports_pull_failure():
@@ -610,16 +666,16 @@ class _FakeFileExplorerADBWorker(QObject):
 def test_file_explorer_refresh_carries_monotonic_request_identity(qt_application):
     _FakeFileExplorerADBWorker.instances = []
     with (
-        patch.object(FileExplorerDialog, "_refresh"),
+        patch.object(FileExplorerPage, "_refresh"),
         patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
     ):
-        dialog = FileExplorerDialog(device_ip="device-1")
+        dialog = FileExplorerPage(device_ip="device-1")
 
     try:
         with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
-            FileExplorerDialog._refresh(dialog)
+            FileExplorerPage._refresh(dialog)
             dialog.current_path = "/sdcard/next"
-            FileExplorerDialog._refresh(dialog)
+            FileExplorerPage._refresh(dialog)
 
         first, second = _FakeFileExplorerADBWorker.instances
         assert first.property("refreshRequestId") == 1
@@ -627,6 +683,7 @@ def test_file_explorer_refresh_carries_monotonic_request_identity(qt_application
         assert second.property("refreshRequestId") == 2
         assert second.property("requestedPath") == "/sdcard/next"
         assert dialog._active_refresh == (2, "/sdcard/next")
+        assert first.abort_calls == 1
     finally:
         dialog.close()
         qt_application.processEvents()
@@ -635,10 +692,10 @@ def test_file_explorer_refresh_carries_monotonic_request_identity(qt_application
 def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_application):
     _FakeFileExplorerADBWorker.instances = []
     with (
-        patch.object(FileExplorerDialog, "_refresh"),
+        patch.object(FileExplorerPage, "_refresh"),
         patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
     ):
-        dialog = FileExplorerDialog(device_ip="device-1")
+        dialog = FileExplorerPage(device_ip="device-1")
 
     try:
         with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
@@ -654,6 +711,8 @@ def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_applicatio
         qt_application.processEvents()
 
         assert dialog.current_path == "/sdcard/second"
+        assert dialog.history == ["/storage/emulated/0"]
+        assert dialog.forward_stack == []
         assert dialog._file_name_at(1) == "current.txt"
         assert dialog.status_bar.text() == current_status
         assert current_status == "/sdcard/second  |  0 folders, 1 files"
@@ -664,13 +723,64 @@ def test_file_explorer_ignores_stale_result_after_quick_navigation(qt_applicatio
         qt_application.processEvents()
 
 
-def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_application):
+def test_file_explorer_failed_navigation_keeps_committed_path_and_history(qt_application):
+    _FakeFileExplorerADBWorker.instances = []
+    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        page = FileExplorerPage(device_ip="device-1")
+        page._navigate("/data/denied")
+
+    try:
+        worker = _FakeFileExplorerADBWorker.instances[-1]
+        assert page.current_path == "/storage/emulated/0"
+        assert page.history == []
+
+        worker.complete("Permission denied", True)
+        qt_application.processEvents()
+
+        assert page.current_path == "/storage/emulated/0"
+        assert page.path_field.text() == "/storage/emulated/0"
+        assert page.history == []
+        assert page.forward_stack == []
+        assert page.status_bar.text() == "Unable to open /data/denied"
+        assert page.status_bar.toolTip() == "Permission denied"
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
+def test_file_explorer_back_history_commits_only_after_success(qt_application):
+    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        page = FileExplorerPage(device_ip="device-1")
+        page.current_path = "/sdcard/Documents"
+        page.path_field.setText(page.current_path)
+        page.history[:] = ["/storage/emulated/0"]
+        page._sync_directory_controls()
+        page._go_back()
+
+    try:
+        worker = _FakeFileExplorerADBWorker.instances[-1]
+        assert page.current_path == "/sdcard/Documents"
+        assert page.history == ["/storage/emulated/0"]
+        assert page.forward_stack == []
+
+        worker.complete("", False)
+        qt_application.processEvents()
+
+        assert page.current_path == "/storage/emulated/0"
+        assert page.history == []
+        assert page.forward_stack == ["/sdcard/Documents"]
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
+def test_file_explorer_dispose_disconnects_late_worker_ui(qt_application):
     _FakeFileExplorerADBWorker.instances = []
     with (
-        patch.object(FileExplorerDialog, "_refresh"),
+        patch.object(FileExplorerPage, "_refresh"),
         patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker),
     ):
-        dialog = FileExplorerDialog(device_ip="device-1")
+        dialog = FileExplorerPage(device_ip="device-1")
 
     with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
         worker = dialog._run_adb("shell", "ls /sdcard")
@@ -682,8 +792,7 @@ def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_ap
     )
     worker.start()
 
-    with patch.object(FileExplorerDialog, "_retain_workers_until_stopped") as retain:
-        dialog.closeEvent(QCloseEvent())
+    assert dialog.request_dispose("test") is True
 
     # 模拟关闭事件发生前已排队、关闭后才被事件循环投递的界面回调。
     queued_ui_callback("queued result", False)
@@ -691,13 +800,69 @@ def test_file_explorer_close_disconnects_late_worker_ui_and_retains_worker(qt_ap
     qt_application.processEvents()
 
     assert dialog._closing is True
+    assert dialog._disposed is True
     assert dialog._worker_ui_bindings == {}
     assert dialog._worker_lifecycle_handlers == {}
     assert worker.abort_calls == 1
     dialog.status_bar.setText.assert_not_called()
-    retain.assert_called_once()
-    assert retain.call_args.args[0] == [worker]
     dialog.deleteLater()
+    qt_application.processEvents()
+
+
+def test_file_explorer_async_dispose_emits_ready_after_worker_stops(qt_application):
+    class SlowAbortWorker(_FakeFileExplorerADBWorker):
+        def abort(self):
+            self.abort_calls += 1
+
+    with patch("gui.dialogs.file_explorer.ADBWorker", SlowAbortWorker):
+        page = FileExplorerPage(device_ip="device-1")
+        worker = page._run_adb("shell", "ls /sdcard")
+    worker.start()
+    emitted = []
+    page.dispose_ready.connect(lambda: emitted.append(True))
+
+    assert page.request_dispose("test") is False
+    assert worker.abort_calls == 1
+    assert emitted == []
+
+    worker.running = False
+    worker.finished.emit()
+    qt_application.processEvents()
+    qt_application.processEvents()
+
+    assert page._disposed is True
+    assert emitted == [True]
+    page.deleteLater()
+    qt_application.processEvents()
+
+
+def test_file_explorer_deactivate_preserves_state_and_registers_shutdown_task(qt_application):
+    with patch("gui.dialogs.file_explorer.ADBWorker", _FakeFileExplorerADBWorker):
+        page = FileExplorerPage(device_ip="device-1")
+        worker = page._run_adb("shell", "ls /sdcard")
+    worker.start()
+    page.current_path = "/sdcard/Documents"
+    page.history[:] = ["/storage/emulated/0"]
+    page._active = True
+
+    page.deactivate("navigation")
+    supervisor = Mock()
+    task_ids = page.register_shutdown_tasks(
+        supervisor,
+        owner_id="workspace",
+        task_prefix="file-session",
+    )
+
+    assert page._active is False
+    assert page.current_path == "/sdcard/Documents"
+    assert page.history == ["/storage/emulated/0"]
+    assert task_ids == ("file-session-workers",)
+    supervisor.register.assert_called_once()
+    assert supervisor.register.call_args.kwargs["owner_id"] == "workspace"
+    assert supervisor.register.call_args.kwargs["kind"] == "file_explorer_workers"
+
+    assert page.request_dispose("test") is True
+    page.deleteLater()
     qt_application.processEvents()
 
 
@@ -706,8 +871,8 @@ def test_file_explorer_transfer_failure_does_not_refresh():
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
-    with patch("gui.dialogs.file_explorer.QMessageBox.critical") as critical:
-        FileExplorerDialog._on_transfer_done(dialog, "failed to copy", True, "Pulled demo.txt")
+    with patch("gui.dialogs.file_explorer_ops.FluentMessageBox.critical") as critical:
+        FileExplorerPage._on_transfer_done(dialog, "failed to copy", True, "Pulled demo.txt")
 
     critical.assert_called_once()
     dialog.status_bar.setText.assert_called_once_with("Failed: failed to copy")
@@ -719,8 +884,8 @@ def test_file_explorer_file_operation_failure_does_not_show_success():
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
-    with patch("gui.dialogs.file_explorer.QMessageBox.critical") as critical:
-        FileExplorerDialog._on_file_op_done(dialog, "Permission denied", True, "Deleted demo.txt")
+    with patch("gui.dialogs.file_explorer_ops.FluentMessageBox.critical") as critical:
+        FileExplorerPage._on_file_op_done(dialog, "Permission denied", True, "Deleted demo.txt")
 
     critical.assert_called_once()
     dialog.status_bar.setText.assert_called_once_with("Failed: Permission denied")
@@ -796,16 +961,16 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     _app = QApplication.instance() or QApplication([])
     dialog = SimpleNamespace()
     dialog.current_path = "/sdcard"
-    dialog.TYPE_COL = FileExplorerDialog.TYPE_COL
-    dialog.NAME_COL = FileExplorerDialog.NAME_COL
-    dialog.SIZE_COL = FileExplorerDialog.SIZE_COL
-    dialog.MODIFIED_COL = FileExplorerDialog.MODIFIED_COL
+    dialog.TYPE_COL = FileExplorerPage.TYPE_COL
+    dialog.NAME_COL = FileExplorerPage.NAME_COL
+    dialog.SIZE_COL = FileExplorerPage.SIZE_COL
+    dialog.MODIFIED_COL = FileExplorerPage.MODIFIED_COL
     dialog.table = Mock()
     dialog.status_bar = Mock()
     dialog.symlink_targets = {}
     dialog._file_type_icon = Mock(return_value=QIcon())
     dialog._set_file_row = lambda row, name, file_type, size, modified: (
-        FileExplorerDialog._set_file_row(dialog, row, name, file_type, size, modified)
+        FileExplorerPage._set_file_row(dialog, row, name, file_type, size, modified)
     )
     output = """
 total 8
@@ -813,7 +978,7 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
 -rw-r--r-- 1 shell shell 1024 May 30 readme.txt
 """
 
-    FileExplorerDialog._on_ls_result(dialog, output, "")
+    FileExplorerPage._on_ls_result(dialog, output, "")
 
     dialog.table.setUpdatesEnabled.assert_any_call(False)
     dialog.table.setUpdatesEnabled.assert_any_call(True)
@@ -824,10 +989,10 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     assert dialog.table.setItem.call_count == 12
     first_row_calls = dialog.table.setItem.call_args_list[:4]
     assert [call_.args[1] for call_ in first_row_calls] == [
-        FileExplorerDialog.TYPE_COL,
-        FileExplorerDialog.NAME_COL,
-        FileExplorerDialog.SIZE_COL,
-        FileExplorerDialog.MODIFIED_COL,
+        FileExplorerPage.TYPE_COL,
+        FileExplorerPage.NAME_COL,
+        FileExplorerPage.SIZE_COL,
+        FileExplorerPage.MODIFIED_COL,
     ]
     assert first_row_calls[0].args[2].text() == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
@@ -836,8 +1001,8 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
 
 def test_file_explorer_table_moves_type_first_and_hides_row_numbers():
     _app = QApplication.instance() or QApplication([])
-    with patch.object(FileExplorerDialog, "_refresh"):
-        dialog = FileExplorerDialog(device_ip="device-1")
+    with patch.object(FileExplorerPage, "_refresh"):
+        dialog = FileExplorerPage(device_ip="device-1")
 
     try:
         assert dialog.table.horizontalHeaderItem(0).text() == "Type"

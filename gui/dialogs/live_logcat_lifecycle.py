@@ -1,4 +1,4 @@
-"""提供 Logcat 对话框关闭与 worker 生命周期管理。"""
+"""提供 Logcat 功能页关闭与 worker 生命周期管理。"""
 
 from PySide6.QtCore import QTimer
 
@@ -8,7 +8,7 @@ from gui.dialogs.live_logcat_worker import CurrentPackageWorker, LogcatWorker
 
 
 class LiveLogcatLifecycle:
-    """组合进 LiveLogcatDialog 的生命周期控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 LiveLogcatPage 的生命周期控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -202,6 +202,10 @@ class LiveLogcatLifecycle:
             self._frame._cleanup_recheck_timer.stop()
         self._frame._close_ready = True
         safe_disconnect(self._frame._task_supervisor.owner_stopped, self._frame._on_owner_stopped)
+        safe_disconnect(
+            self._frame._task_supervisor.application_stopped,
+            self._frame._on_application_stopped,
+        )
         self._frame._debug_lifecycle("resources_stopped", trigger=trigger)
         QTimer.singleShot(0, self._frame.close)
         return True
@@ -225,6 +229,33 @@ class LiveLogcatLifecycle:
             unresolved_count=len(unresolved),
         )
         self._try_finalize_close("owner_stop_completed")
+
+    def _on_application_stopped(self, results, residual) -> None:
+        """应用级停止接管 owner 清理时，恢复页面释放状态机。"""
+
+        if (
+            not self._frame._application_cleanup_fallback
+            or not self._frame._close_pending
+            or self._frame._close_ready
+        ):
+            return
+        own_results = tuple(
+            result
+            for result in tuple(results or ())
+            if result.owner_id == self._frame._supervisor_owner_id
+        )
+        own_residual = tuple(
+            item
+            for item in tuple(residual or ())
+            if item.owner_id == self._frame._supervisor_owner_id
+        )
+        self._frame._owner_cleanup_completed = True
+        self._frame._debug_lifecycle(
+            "application_stop_completed",
+            residual_count=len(own_residual),
+            result_count=len(own_results),
+        )
+        self._try_finalize_close("application_stop_completed")
 
     # ── 资源清理 ────────────────────────────────────────────────────────
 

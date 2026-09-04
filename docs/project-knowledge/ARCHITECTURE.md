@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-03
+last_verified: 2026-09-04
 related:
   - MODULE_MAP.md
   - BUSINESS_FLOW.md
@@ -12,19 +12,20 @@ related:
 
 ## 总体架构
 
-ADBLab 是以 Qt Signal/Slot 为连接机制的桌面分层应用。主路径近似 MVC，但对话框中的复杂功能也会直接使用 service/worker，因此不是严格的单一 Controller 架构。
+ADBLab 是以 Qt Signal/Slot 为连接机制的桌面分层应用。主路径近似 MVC，但独立主页面中的复杂
+功能页也会直接使用 service/worker，因此不是严格的单一 Controller 架构。
 
 ```mermaid
 flowchart LR
-    User["用户"] --> GUI["PySide6 GUI<br/>MainFrame / Panel / Dialog"]
+    User["用户"] --> GUI["PySide6 GUI<br/>MainFrame / Panel / Feature Page"]
     GUI -->|"Qt signals"| Controller["ADBController<br/>设备/应用/文件/输入/媒体/系统 mixin"]
     Controller --> Models["ADB Models<br/>异步命令与结果归一化"]
-    GUI --> DialogServices["对话框专用 Service / Worker<br/>Remote / File Explorer / App Manager / MobilePerf"]
+    GUI --> FeatureServices["功能页专用 Service / Worker<br/>File Explorer / App Manager / Logcat / MobilePerf"]
     Models --> Exec["CommandRunner / ProcessRunner / ADBBridge"]
-    DialogServices --> Exec
+    FeatureServices --> Exec
     Exec --> ADB["ADB server 与 Android 设备"]
-    DialogServices --> Scrcpy["scrcpy 外部进程"]
-    DialogServices --> MP["MobilePerf 隔离子进程"]
+    GUI --> Scrcpy["scrcpy 外部进程"]
+    FeatureServices --> MP["MobilePerf 隔离子进程"]
     Controller --> Core["Settings / DeviceStore / LogService / perf_trace helpers"]
     Controller --> UseCases["adblab/application<br/>OperationManager / InstallBatchUseCase"]
     GUI --> Core
@@ -46,36 +47,68 @@ flowchart LR
 ### 2. 视图与交互层
 
 - `MainFrame` 是组合根：创建 `LogService`、`SidePanel`、`ADBController` 和应用自有
-  `QtTaskSupervisor`，连接全部 GUI 信号并管理对话框。`SidePanel` 不进入可见导航树，只作为
+  `QtTaskSupervisor`，连接全部 GUI 信号并管理内嵌功能会话。`SidePanel` 不进入可见导航树，只作为
   Devices/Apps/System/Remote 面板所有权、共享设备选择/发现状态和旧信号接口的兼容门面。
-- `MainFrame` 是所有二级窗口的生命周期根：设备类对话框、Performance Launcher 和
-  ScreenshotViewer 作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，由
-  MainFrame/Controller 的强引用、事件过滤器和显式关闭流程托管。About 保持有意的模态交互，
-  Settings 已改为 `FluentWindow` 的常驻导航页。关闭任一非模态二级窗口不得触发 MainFrame 的关闭状态机。
+- `MainFrame` 构建 Home、设备与控制、应用与自动化、系统与诊断、Tasks、Logs、Settings 七个物理
+  页面。主左栏使用 qfluentwidgets 原生树：设备、应用、系统是不可选的折叠分组，组内叶节点与
+  `WorkspaceRoute` 一一对应；内容区不再显示模块 Tab 或模块下拉框。`WorkspaceAreaPage` 为三个
+  业务宿主页提供紧凑页头和功能宿主，页头右侧统一承载会话状态与主题动作；Remote 不再占用
+  顶层入口，屏幕镜像和按键与手势均归入设备组。
+- `gui/pages/workspace_features.py::WorkspaceFeatureHost` 在业务宿主页内承载路由目录、按需显示的
+  会话设备/关闭工具栏、无设备空态和异步关闭屏障；`WorkspaceRoute` 是首页快捷入口和主左栏功能叶节点
+  共用的深层路由。设备与控制注册文件管理及 Remote，应用与自动化注册应用管理和无需设备的截图
+  结果，系统与诊断注册实时 Logcat 和性能采集。深层功能页共用宿主滚动容器，当内容超出短屏时
+  保留页面的完整布局并提供双向滚动；Performance 嵌入工作区后移除配置区内部滚动，避免出现
+  两层可见滚动条。返回概览或空态后不保留隐藏页面的滚动范围。
+- 设备页复选项组成多设备批量操作目标；需要一台设备的深层功能和 Remote 使用宿主中独立的
+  会话设备。候选列表包含全部在线设备并保留已有的离线会话；恰好一个批量目标或仅一台在线
+  设备时可自动选定，多个批量目标或无批量目标且多台在线时必须显式选择，不能静默取第一台。
+- `gui/features/base.py::FeatureSessionRegistry` 以 `(feature, device_id, generation)` 为稳定键懒
+  创建页面。切换独立主页面只调用 `deactivate()` 暂停瞬态绘制，不销毁页面或中止仍需继续的
+  后台任务；再次进入调用 `activate()` 恢复。后台页收到深层路由时先暂存目标，进入前台后通过
+  `activate_route()` 原子提交，不会先恢复上一个会话。设备离线时保留对应缓存会话并禁止新的设备操作，
+  用户显式关闭会话才调用 `request_dispose()`；异步资源归零前显示关闭屏障，旧代次不可重激活。
+- App Manager、File Explorer、Live Logcat、Performance 和 Screenshot 均为 MainFrame 子树中的
+  `QWidget` 功能页，不再创建独立顶层业务窗口。About 由 `AboutPanel` 直接嵌入 Settings。功能页
+  的规范公开入口位于 `gui/features/`；部分组合控制器仍保留在 `gui/dialogs/` 文件名下，但其页面
+  类型不再提供 QDialog 语义。
+- `gui/dialogs/fluent_dialog.py` 只负责功能页内部的瞬态消息、单行文本输入和少量短生命周期操作
+  表单，并保留 QDialog 的 `exec/accept/reject/modal` 契约。`QFileDialog` 仍作为绑定当前页面 owner
+  的系统原生文件/目录选择器；两者均不承担长期任务会话，不属于旧功能窗口回退。
+
+| 内嵌功能路由 | 所属主页面 | 设备要求 | 会话行为 |
+| --- | --- | --- | --- |
+| `devices/overview` | DeviceManager 概览 | 共享选择上下文 | 启动时创建 |
+| `devices/files` | `FileExplorerPage` | 固定一台设备 | 按设备懒创建；保留路径/预览，离线禁用新操作 |
+| `devices/remote` | RemotePanel 屏幕镜像 | 固定一台设备 | 使用独立 Remote 会话设备；保留既有面板生命周期，不经 FeatureSessionRegistry |
+| `devices/remote-control` | RemotePanel 按键与手势 | 固定一台设备 | 与屏幕镜像共用 RemotePanel 和会话设备，不经 FeatureSessionRegistry |
+| `apps/overview` | AppPanel 快捷操作 | 共享选择上下文 | 启动时创建 |
+| `apps/manager` | `AppManagerPage`（内含 `AppDetailsPage`） | 固定一台设备 | 按设备懒创建；列表、筛选和详情留在同一页面 |
+| `apps/media` | `ScreenshotPage` | 不需要设备 | 使用空设备键；截图批次可在后台追加，不抢当前导航 |
+| `system/overview` | SystemPanel 工具 | 共享选择上下文 | 启动时创建 |
+| `system/logcat` | `LiveLogcatPage` | 固定一台设备 | 切页继续消费流；关闭会话才停止资源 |
+| `system/performance` | `PerformancePage` | 固定一台设备 | 切页允许采集继续；关闭会话进入异步停止屏障 |
+
+Settings 中的 `AboutPanel` 不属于内嵌功能路由；它随 SettingsPage 创建并销毁。未知 section/feature
+会在切换主页面前被拒绝，不能意外改变当前页面。
+
 - `MainFrame` 保持无边框外观，但通过 `FramelessResizeController` 在四边和四角建立八个透明
   热区，并将按压交给 `QWindow.startSystemResize()`。最大化或全屏时缩放热区隐藏，恢复普通状态后重新启用。
 - 主窗口尺寸由 `gui/window_layout.py` 统一校验，普通窗口缩放防抖写入设置；不再存在主内容
   splitter、常驻日志区或旧工具栏。Settings 的“恢复默认设置”直接恢复系统主题、强调色、Mica、
   字体、窗口尺寸、日志和扫描选项，并同步全部 SettingCard。
-- `FluentWindow` 顶层只保留 Home、Workspace、Tasks、Logs、Settings 五个入口。Workspace 使用
-  参考项目的 `SegmentedWidget` 在同一设备上下文下切换 Devices、Apps、System、Remote 四个分区；
-  首页和工作台都常驻展示当前已连接/已选设备与扫描状态，业务操作无需回到单独设备页确认目标。
-  每个分区有独立滚动视口，`SidePanel` 只协调共享选择状态和业务信号；响应式布局只移动既有控件，
-  不重建控件或重新连接信号。顶层导航和工作台分区在过渡动画开始前先提交选中态，分区切换只
-  发送一次 `sectionChanged`，避免视觉选中、标题说明与实际内容短暂不同步。
-- MainFrame 构建 Workspace 时依次调用 `SidePanel._ensure_tab_loaded(0..2)` 并把 Apps、System、
-  Remote 的现有控件移入各分区；Devices 也在此前创建。因此五个顶层页面和四个工作台分区均在
-  启动阶段实例化，当前只有兼容命名中的“lazy tab”，没有真正的视图懒加载。
-- `gui/panels/` 负责普通操作表单；`gui/dialogs/` 负责需要独立生命周期的复杂任务。
-- 视图通常不直接阻塞执行命令，但 App Manager、File Explorer、Live Logcat、Performance Launcher 各自持有 QThread/worker 或 runner。
+- Tasks 由 `TaskCenterPage` 展示 `OperationManager` 的活动快照和 `TaskHistoryStore` 的有界内存历史；
+  页面可见时轮询差异，隐藏时停止计时器。取消总是写入 Operation 取消意图；MainFrame 当前只为
+  安装批次和截图补充资源停止调用，不能把任务中心视为所有后台任务的统一停止器。
+- 视图通常不直接阻塞执行命令，但 AppManagerPage、FileExplorerPage、LiveLogcatPage 和
+  PerformancePage 各自持有 QThread/worker 或 runner，并通过会话生命周期和 TaskSupervisor 收口。
 
 ### 3. 协调层
 
 - `controllers.ADBController` 由 `ADBDeviceMixin`、`ADBInputMixin`、`ADBMediaMixin`、`ADBAppMixin`、`ADBFileMixin`、`ADBSystemControllerMixin` 和 `_ADBControllerBase` 组合。
 - `_ADBControllerBase` 根据 MRO 合并各 mixin 的 `_handlers` 注册表，按 model 返回的 method 名称分派到相应 `_process_*_result` 方法。
-- Controller 聚合多设备批次、录屏和保存路径，再将结果转换为 GUI 信号；Screenshot 已作为
-  vNext Gate A 迁入 OperationManager，不再使用 Controller 共享剩余计数/路径列表；安装批次已作为
-  Gate C 迁入 `InstallBatchUseCase`。`ADBControllerSignals` 新增
+- Controller 聚合多设备批次、录屏和保存路径，再将结果转换为 GUI 信号；截图批次由
+  OperationManager 跟踪，安装批次由 `InstallBatchUseCase` 编排。`ADBControllerSignals` 提供
   `record_target_finished(str, str)` 与 `monkey_target_finished(str, str)` 批次终态信号（参数为批次标识、设备），
   `SidePanelSignals` 提供 `screen_record_batch_requested`、`start_monkey_batch_requested`、
   `stop_screen_record_batch_requested`、`kill_monkey_batch_requested` 与 `batch_install_requested` 等批次入口。
@@ -115,22 +148,28 @@ flowchart LR
 - 普通标签、按钮、输入框、下拉框、复选框和页签统一使用 `UI`；`UI_SMALL` 只用于提示、元数据和
   次要状态，设备标识、包名、命令及路径使用同字号的 `MONO`，日志使用独立 `LOG`。日志面板只订阅
   `log_font_changed`，主窗口只订阅
-  `ui_font_changed`，需要同时刷新多种角色的面板和对话框订阅 `fonts_changed`。控件最小高度
+  `ui_font_changed`，需要同时刷新多种角色的面板、功能页和瞬态对话框订阅 `fonts_changed`。控件最小高度
   通过字体度量计算；通用分组框也按当前标题字体高度计算顶部净空，并在字号变化后刷新样式，
   避免放大字号后文字被固定高度裁切或被首行按钮覆盖。
 - `gui/widgets/responsive_layout.py` 以 420/560 逻辑像素为默认断点返回紧凑、中等和宽布局列数，
-  `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用参考项目的纵向
-  `SettingCardGroup`；首页 `FlowLayout`、工作台分区滚动视口和面板实际可用宽度共同驱动重排。
+  `reflow_widgets()` 仅从 QGridLayout 取出并重新放置现有控件。Settings 使用 qfluentwidgets 的纵向
+  `SettingCardGroup`；首页 `FlowLayout`、各业务主页面滚动视口和面板实际可用宽度共同驱动重排。
   设备上下文卡在窄屏隐藏次要刷新/计数信息，但保留当前目标语义与主操作。
+- 模块切换统一由 `FluentWindow.navigationInterface` 的树形叶节点承担。展开模式在主左栏显示分组与
+  子项；窄窗折叠模式使用 qfluentwidgets 原生侧边 Flyout 展示同一棵树，不在内容区降级成 ComboBox。
+  Apps、System、Remote 原有的 `AdaptiveCategoryStack` 仅作为面板内部内容栈，其 `Pivot`/`ComboBox`
+  在主页面组装时隐藏，并由主左栏的 `WorkspaceRoute` 驱动。主窗口宽度达到 1120 逻辑像素时常驻
+  220 像素左栏，低于该阈值时使用不挤压内容的覆盖菜单；任一时刻只展开当前分组，短窗口会把当前
+  叶节点滚入视口。导航宽度动画结束后再触发一次响应式重排，避免内容按动画中间宽度停在单列回退。
 - `gui/widgets/responsive_coordinator.py` 的 `ResponsiveCoordinator` 是响应式重排的单一协调入口：
   用一次度量生成布局计划（内部为 `ReflowTarget`/`_plan_history`），在实际尺寸不足以容纳内容时触发“溢出 → 收缩/换行 → 再度量”
   的收敛循环（`MAX_APPLY_ROUNDS = 3`），窗口尺寸变化经 40 毫秒防抖（`RESIZE_DEBOUNCE_MS = 40`）
   批量触发重排；`gui/widgets/preset_spin_box.py` 提供严格整数预设输入（`StrictIntComboBox`），
   保证 Monkey 事件数、throttle 等业务值始终是合法整数。
 - `gui/screen_adapter.py` 定义 `ScreenAdapter` 协议和 `QtScreenAdapter` 实现（从 `main_frame.py`
-  抽出）：统一封装窗口所在屏幕、可用几何、逻辑 DPI 与屏幕/DPI 变更订阅，供主窗口尺寸约束、
-  二级窗口适配（`gui/dialogs/lifecycle.py::fit_secondary_window_to_owner_screen`）复用；GUI 依赖
-  协议而不是直接调用 QScreen，便于测试注入与几何探针。
+  抽出）：统一封装窗口所在屏幕、可用几何、逻辑 DPI 与屏幕/DPI 变更订阅，供主窗口尺寸约束和
+  仍存在的瞬态操作表单屏幕适配复用；内嵌功能页直接受主窗口内容区约束，不再单独适配
+  顶层窗口。GUI 依赖协议而不是直接调用 QScreen，便于测试注入与几何探针。
 
 ### 日志通道
 
@@ -142,70 +181,32 @@ flowchart LR
   超限裁剪按块从文档头部删除（O(裁剪行)），避免持续日志流下每 50 行整份重绘。
 - DEBUG 只在源码、非 frozen 模式写入线程安全的 `stderr`，用于 IDE 或源码终端诊断；
   不进入 Qt 信号、界面缓存。windowed 环境没有 `stderr` 时静默丢弃。
-- 主窗口动作和二级窗口生命周期使用 `ui.theme`/`ui.window`/`ui.save_directory`、
-  `ui.secondary_window` 结构化 DEBUG 事件，字段只包含动作、阶段、窗口类型、布尔状态和数量，
-  不记录设备标识、包名或真实路径。
+- 主窗口动作、主题、保存目录和功能页资源生命周期只记录结构化 DEBUG 摘要；字段限于动作、阶段、
+  组件类型、布尔状态和数量，不记录设备标识、包名或真实路径。旧独立业务窗口的
+  创建/复用/事件过滤器日志不再属于当前运行路径。
 - MobilePerf 子进程使用 stdout 传递 INFO 和功能 RAW 数据，源码 DEBUG 单独写 stderr；
   父进程按运行代次固化回调和脱敏值，分别排空两个流并在双管道收口后通知完成，DEBUG
-  不进入性能窗口。动态设备、包、邮箱和本地路径在输出前脱敏。
+  不进入 PerformancePage。动态设备、包、邮箱和本地路径在输出前脱敏。
 - `LogService.shutdown()` 保持同一停止态单例并拒绝晚到日志，防止后台线程在错误的 Qt
   线程重新创建 QObject/QTimer。
 
 ## 初始化与关闭流程
 
 ```mermaid
-sequenceDiagram
-    participant OS as "操作系统/用户"
-    participant Main as "main.py"
-    participant Qt as "QApplication"
-    participant MF as "MainFrame"
-    participant C as "ADBController"
-    participant Scan as "_ScanThread"
-    participant ADB as "ADB"
-
-    OS->>Main: 启动 main.py 或 ADBLab.exe
-    Main->>Main: _dispatch_cli(argv)
-    alt MobilePerf worker
-        Main->>Main: _run_mobileperf_worker()
-    else 打包自检
-        Main->>Main: _self_check_packaging()
-    else GUI
-        Main->>Qt: 创建 QApplication / 应用字体 / 加载主题
-        Main->>MF: MainFrame()
-        MF->>C: 创建 Controller 与 Models
-        MF->>MF: 恢复尺寸 / 构建五个导航入口、工作台分区和信号映射
-        MF->>ADB: ADB 预热后开始持续扫描或延后一次 refresh_devices
-        opt 持续扫描开启
-            MF->>Scan: start()
-            loop 每个扫描周期且无活跃短命令
-                Scan->>ADB: adb devices
-                alt 扫描成功
-                    ADB-->>Scan: 设备集合
-                    Scan-->>MF: 集合快照
-                    MF->>C: publish_detected_devices()
-                    Note over MF,C: 同一快照提交列表与 ready/empty 状态
-                    C->>C: 按拓扑变化递增 generation
-                    C->>ADB: 后台补全设备元数据
-                    Note over C,ADB: 写盘和二次发布前校验 generation/拓扑
-                else 超时、非零退出或结果异常
-                    Scan-->>MF: unavailable
-                    Note over MF,C: 保留最后一次成功设备列表
-                end
-            end
-            opt 手动刷新失败
-                MF->>Scan: invalidate_snapshot()
-                Note over MF,Scan: 下一次成功即使集合相同也重发，恢复 ready/empty
-            end
-        end
-        Main->>Qt: app.exec()
-    end
-    OS->>MF: 关闭窗口
-    MF->>Scan: 停止并等待
-    MF->>C: shutdown()
-    C->>C: 关闭四个 model 准入栅栏
-    C->>C: 停止测试/录屏/输入/进程/Executor
-    MF->>MF: 停止全部业务面板与对话框 worker
-    MF->>MF: 保存设置
+flowchart TD
+    CLI["main.py / ADBLab.exe"] --> Dispatch{"CLI 模式"}
+    Dispatch --> Worker["MobilePerf worker"]
+    Dispatch --> Check["打包自检"]
+    Dispatch --> GUI["创建 QApplication、主题、MainFrame"]
+    GUI --> Shell["构建七个主页面、Controller 与 Supervisor"]
+    Shell --> Scan["后台 ADB 预热与设备扫描"]
+    Scan -->|"成功"| Publish["发布设备快照并按 generation 补元数据"]
+    Scan -->|"失败"| Unavailable["标记 unavailable，保留最后成功快照"]
+    Shell --> EventLoop["Qt 事件循环"]
+    EventLoop -->|"关闭请求"| Admission["关闭新任务准入"]
+    Admission --> Broadcast["并发广播扫描、页面、面板、Controller 停止"]
+    Broadcast --> Wait["后台等待共享 deadline"]
+    Wait --> Finalize["记录残留、保存配置、完成关闭"]
 ```
 
 ## 运行时并发模型
@@ -216,8 +217,8 @@ sequenceDiagram
 | 全局 QThreadPool/QRunnable | 普通 `*_async` ADB 命令 | Controller 先关闭 model 终态栅栏；未开始的 QRunnable 在执行入口取消，已运行任务仍不统一等待 |
 | 每模型 `long_pool`（QThreadPool） | 长任务 `*_async`（install/bugreport/pull/backup）| 与全局池隔离并受同一 model 终态栅栏约束；已运行任务仍按各命令超时收口 |
 | `_ScanThread` | 设备列表轮询 | MainFrame 显式停止/等待 |
-| 对话框 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | LiveLogcat 已由 TaskSupervisor 后台治理；其余仍由各 closeEvent abort/延后等待 |
-| 应用自有 cleanup QThreadPool | LiveLogcat 资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor，dialog 注入；不使用 global pool |
+| 功能页 QThread | App Manager、File Explorer、Live Logcat、当前包名查询 | 会话关闭前向 TaskSupervisor 登记；页面 `request_dispose()` 发出停止请求，资源归零后才能从 registry 移除 |
+| 应用自有 cleanup QThreadPool | Live Logcat 等资源停止、等待和强停 | MainFrame 创建 QtTaskSupervisor 并注入页面；不使用 global pool |
 | Controller ThreadPoolExecutor | 并行设备信息等 Python 任务 | `_ADBControllerBase.shutdown()` |
 | Remote ThreadPoolExecutor(1) | 串行发送 Remote 输入 | Remote 自有关闭路径先关闭输入准入，再在后台等待 executor 与全部 warmup，最后关闭持久输入会话；TaskSupervisor 观察完成/错误 |
 | 外部进程 | adb、scrcpy、logcat、Monkey、终端 | CommandRunner/ProcessRunner；部分例外见风险 |
@@ -234,90 +235,41 @@ sequenceDiagram
    运行时工具缓存由 `utils/runtime_tools.py` 写入 Windows LocalAppData 或非 Windows 的 XDG/用户
    cache 目录，均避免写入只读安装目录。
 6. **Windows onedir 优先**：内置 adb/scrcpy 是长生命周期进程，CI 和 spec 的 Windows 产物采用 onedir，避免 onefile 临时目录锁定。
-7. **常驻导航页和批量日志**：Home/Workspace/Tasks/Logs/Settings 及 Workspace 四分区在启动时
-   完成实例化，切换只改变可见内容；高频 logcat/MobilePerf 在 producer 侧批量化，降低 UI
-   事件循环压力。当前不宣称视图懒加载。
-8. **vNext 采用增量迁移**：保留 `ADBController` 与现有 Qt signals 作为兼容门面，先增加
-   OperationManager/TaskSupervisor 能力，再按 Screenshot、LiveLogcat、Install batch 三个门逐项迁移；
-   不先移动目录，也不引入 asyncio/qasync 或全局重型 EventBus。决策和阶段定义见
-   `docs/architecture/adr/0001-incremental-vnext.md` 与
-   `docs/archive/plans/IMPLEMENTATION_PLAN.md`。
-9. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸使用纯函数
+7. **七个物理页面、树形功能入口与懒创建会话**：Home、三个业务宿主页、Tasks、Logs、Settings
+   在启动时完成实例化；设备、应用、系统模块以主左栏树形叶节点切换，Remote 归入设备与控制。
+   复杂功能页按 `(feature, device_id, generation)` 首次访问时创建，
+   返回时复用同一会话。高频 logcat/MobilePerf 在 producer 侧批量化，降低 UI 事件循环压力。
+8. **长期任务内嵌、瞬态交互弹出**：App Manager、File Explorer、Live Logcat、Performance、
+    Screenshot 和 About 均属于主窗口页面树；仅消息、文本输入、短生命周期操作表单及系统文件
+    选择器使用模态/瞬态窗口。
+9. **Operation 与资源监督分离**：OperationManager 管业务身份、状态、结果和取消意图；
+   TaskSupervisor 管线程、执行器和外部进程的停止/等待。兼容 Qt signals 仍是 GUI 边界，决策缘由见
+   [ADR-0001](../architecture/adr/0001-incremental-vnext.md) 和
+   [ADR-0002](../architecture/adr/0002-operation-contract.md)。
+10. **字体角色和布局状态集中管理**：主题、UI 字体和日志字体使用独立信号；窗口尺寸使用纯函数
    校验和公开恢复接口；面板通过断点重排既有控件，避免为缩放复制业务控件和信号接线。旧
    splitter 配置键只为 schema 兼容保留，运行时不读取或写入分栏状态。
 
-## vNext 目标边界
+## Operation 与资源生命周期边界
 
-- **OperationManager** 管理业务操作身份、状态机、进度、取消意图和结果汇总，不拥有线程或进程。
-- Phase 1 实现位于 `adblab/application/`：active registry 在终态原子移除，fan-out 使用明确 unit
-  结果汇总，metadata envelope 保持 `Signal(str, object)` 兼容。`OperationMetadata` 增加
-  `owner_token`（结果响应所有权）与 `generation_token`（代次边界，用于丢弃晚到/错代结果）；
-  `OperationManager` 提供 `cancel_pending_units`、`record_unit_result`、`finish_from_unit_results`
-  等单元接口。详细决策见 `docs/architecture/adr/0002-operation-contract.md`。
-- **TaskSupervisor** 管理 QThread/QRunnable/Executor/外部进程的注册、停止和等待，不判断业务成功。
-  Remote/MobilePerf 重做后，超时或失败停止结果会携带 `completion_error`，避免把被强制停止的任务
-  误报为成功。
-- LiveLogcat Gate B1 已接入 TaskSupervisor：停止广播在 GUI 线程外执行，超时资源保留
-  residual snapshot，日志在 producer 侧做有界 batch，工作线程信号通过对话框 QObject 槽
-  校验发送者，避免匿名回调越过接收者生命周期。运行中关闭日志窗口时先隐藏并断开数据界面信号，
-  但保留 `finished` 屏障；`owner_stopped` 只表示停止流程返回，窗口还必须确认 worker 引用和
-  owner residual 均已清零后才允许销毁。超时或失败时隐藏窗口和 QObject 继续存活；
-  GUI 定时器继续复核线程先结束但外部进程晚退出的路径，避免丢失最后一次唤醒。
-  `WA_QuitOnClose` 明确关闭，二级日志窗口不参与应用级最后窗口退出判定。
-  Gate B2 的 MainFrame 两阶段异步关闭已实施：`closeEvent` 首次事件只进入 closing 状态并广播停止
-  （broadcast-first、共享 wall-clock deadline），所有资源归零或到达 deadline 后经后台 finalizer
-  落盘配置并重新触发 close 完成销毁；`tests/test_phase2_mainframe_shutdown_gate.py` 11 项契约测试
-  覆盖非阻塞、幂等、residual snapshot 与 finalizer 语义，Gate B 总体为 Go。
-- GUI 只消费兼容 facade 或新端口，不直接依赖具体 worker；旧信号在迁移期保持名称、参数和线程语义。
-- Phase 0 已先收紧安全与结果真实性：批次汇总线程安全、Monkey 前台探测
-  fail-closed、App Manager 失败传播、Remote 输入锁定活动会话、MobilePerf 仅接受本次运行产物、
-  DeviceStore 原子写。
-- 三个架构门的状态：Screenshot（Gate A）已完成 operation 隔离；Install batch（Gate C）已完成
-  批次部分失败语义（`adblab/application/install_batch.py::InstallBatchUseCase` 的
-  start/complete/fail/cancel/retry、operation/unit 身份、协作取消、Controller 侧提交预留/所有权/
-  generation 边界）；LiveLogcat（Gate B）B1（组件级资源托管）与 B2（MainFrame 两阶段异步关闭）
-  均已完成，Gate B 总体为 Go。任一门回滚时只回滚该门，不拆除兼容 facade。
+- **OperationManager** 管业务 operation 身份、终态、进度、结果汇总和取消意图，不拥有线程或进程。
+  metadata 的 owner/generation 用于拒绝晚到或错代结果。
+- **TaskSupervisor** 管 QThread、执行器和外部进程的登记、停止、等待与残留快照，不判断业务成功。
+- `WorkspaceFeatureHost` 功能会话在释放前先停用界面回调，再等待其 worker 与 supervisor owner 同时归零；
+  超时资源保留到后续复核，不因页面隐藏而伪装成已释放。
+- MainFrame 关闭采用两阶段流程：先并发广播停止，再在共享 deadline 内后台等待，最终保存配置并
+  重新触发关闭；GUI 线程不串行等待各资源。
+- GUI 只消费 Controller/服务端口和 Qt signals，不从后台线程直接更新控件。历史迁移阶段和 Gate
+  结论只在 ADR 与 [archive](../archive/README.md) 中追溯。
 
 ## 已知架构限制
 
-- Controller 已删除通用 `_pending_ops` 死账本，Screenshot 走 OperationManager，安装批次走
-  `InstallBatchUseCase`，卸载/清数据/重启/当前 Activity 走 `DeviceBatchUseCase`，录屏走
-  `ScreenRecordUseCase`。Controller 仍保留 `_batch_starts` 兼容索引、安装所有权/generation 映射和
-  Monkey 停止映射等编排状态，不能概括为“不再持有批次/单发共享状态”。
-- 命令执行边界没有完全统一：MobilePerf 内核仍保留独立 Popen 生命周期（参数数组）；调用层
-  已无 `shell=True`（API 参数 `shell` 默认 False 仍保留），`core/adb_bridge.py::ADBInputSession` 已纳入 ProcessRunner 跟踪。
-- 应用级关闭会并发广播 Remote 与 Controller 任务；Controller 的全局 tracked-process 兜底可能在
-  Remote producer 排空前终止底层输入 Shell。Remote 自有关闭仍会在 producer 结束后移除并关闭
-  逻辑 session，避免晚到 producer 重建的会话残留；真实设备上的跨任务终止顺序仍待验证。
-- 对话框与 Remote 面板均已接入 TaskSupervisor：App Manager、File Explorer、Performance Launcher
-  与 RemotePanel 都实现 `register_shutdown_task(s)`（MainFrame 关闭时按 owner 广播停止）；
-  LiveLogcat 直接连接 `task_supervisor.task_stopped/owner_stopped` 并调用 `stop_owner_async`。
-  它们都不再各自在 closeEvent 里同步等待 worker。
-- 本地配置已按 ADR-0006 引入由加载/保存流程托管的 `schema_version` 和 v1→v2→v3 迁移链：
-  无版本文件按 v1 迁移，受支持版本迁移后剔除未知键。高于当前版本的文件在加载时
-  只读取已知键且不立即改写；未知的未来字段经 `_future_extra` 缓存并在每次保存时
-  合并回文件，保留较高 `schema_version`，避免降级安装破坏新版本数据。
-  Remote 的 `scrcpy_*` 键通过 `SCRCPY_SETTING_DEFAULTS` 纳入 `DEFAULTS` 并可跨会话恢复；
-  DeviceStore 仍是无 schema/version 的 YAML 存储，但已改为锁内快照和原子替换。
-- 没有真正的鉴权/权限分层；危险入口不再弹窗确认（按产品决定全局移除，`confirm_dangerous_ops`
-  键和设置控件仅兼容保留，不驱动弹窗），误操作防护依赖目标校验、失败结果传播与审计日志。
-  本地用户通过目标校验后可直接执行 shell、文件删除、应用清除等高影响操作。
-- 非 Windows 构建和真实 Android 版本矩阵缺少功能测试；打包 CI 不运行 pytest（Windows
-  仅 ruff/pyright 静态检查，macOS/Linux 仅源码打包自检）。
-- 邮件服务已整体移除（`core/mail/` 源码、邮件获取入口、邮件/验证码信号与顶层
-  requests/ruamel 依赖均已删除，主应用运行时不再发起外部 HTTP 调用）；`mobileperf/setup.py`
-  也没有 `install_requires`，不会额外声明 requests/urllib3。仓库历史中曾跟踪的邮件配置仍需
-  所有者轮换并审查 Git 历史，属保留的历史提醒而非当前代码风险。
-- `gui/main_frame.py` 当前使用 `gui/main_frame_actions.py`（无 UI 动作）、
-  `gui/pages/fluent_pages.py`（参考 Gallery 的 Fluent 页面）、`gui/secondary_windows.py` 和
-  `gui/close_controller.py`；原 Phase 2 的 `gui/main_frame_toolbar.py` 已随旧工具栏删除；
-  `controllers/_app.py` 拆出 `_app_install.py`/`_app_monkey.py`
-  两个 mixin；`tests/test_model_execution.py` 拆为 10 个 `tests/test_model_*.py` 主题文件。
-- 旧 UI 删除范围已收口为：`gui/main_frame_shell.py`、`gui/main_frame_toolbar.py`、
-  `gui/dialogs/settings_dialog.py`、`gui/pages/devices_page.py`、`gui/pages/log_page.py`、
-  `gui/styles/qss.py`、整个 `gui/widgets/fluent/`、`gui/widgets/double_click_button.py`，以及只覆盖
-  旧 Settings 窗口的 `tests/test_settings_typography.py`、`tests/test_settings_window_layout.py`。
-  当前 UI 事实来源是 `gui/main_frame.py`、`gui/main_frame_actions.py`、
-  `gui/pages/fluent_pages.py`、`gui/styles/fluent.py` 和 qfluentwidgets。
-- 2026-08-21 全量 pytest 为 961 项、耗时 350.61 秒，响应式几何扫描测试是主要耗时来源之一
-  （已通过 autouse 降防抖从 40ms 到 1ms 把单文件扫描从约 6 分钟降到约 1.5 分钟）。
+- Controller 仍保留 `_batch_starts`、安装 owner/generation 和 Monkey 停止映射等编排状态；不能
+  假设所有任务都已成为无共享状态的 Operation。
+- MobilePerf 内核仍使用独立 Popen/ADB 边界；已运行的 QRunnable/Executor 长命令也未统一支持
+  协作取消和有限等待。
+- 应用关闭会并发广播 Remote 与 Controller；底层持久输入 Shell 与全局进程兜底的真实设备顺序
+  仍需验证。
+- 应用没有鉴权或权限分层。高影响操作依赖目标校验、失败传播和日志，而不是二次确认。
+- 非 Windows 构建、Android 厂商/版本矩阵和真实设备长任务缺少自动化功能验证；打包 CI 当前不
+  运行 pytest。完整活动风险见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

@@ -221,7 +221,12 @@ def test_all_main_panel_group_titles_keep_clearance_across_font_sizes(
             measured_titles = set()
             for group in groups:
                 assert group.viewLayout.contentsMargins().top() >= 4
-                assert group.headerLabel.height() >= group.headerLabel.fontMetrics().height()
+                assert group.headerLabel.height() >= group.headerLabel.fontMetrics().height(), (
+                    font_size,
+                    group.title,
+                    group.headerLabel.size(),
+                    group.headerLabel.minimumSizeHint(),
+                )
                 measured_titles.add(group.title)
 
             assert "设备与连接" in measured_titles

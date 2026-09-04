@@ -7,12 +7,14 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QRunnable, Qt, QThread
+from PySide6.QtCore import QRunnable, Qt, QThread, Signal
 from PySide6.QtWidgets import QApplication
 
 from adblab.application.supervision import StopDisposition, TaskSupervisor
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
-from gui.dialogs.performance_launcher import PerformanceLauncherDialog
+from gui.features import FeatureSessionKey, FeatureSessionRegistry
+from gui.features.logcat import LiveLogcatPage
+from gui.features.performance import PerformancePage
 from gui.main_frame import MainFrame
 
 
@@ -107,9 +109,8 @@ def _frame(controller_shutdown, *, scan_thread=None, deadline=0.5, left_panel=No
     frame.left_panel = left_panel or FakeLeftPanel()
     frame.adb_controller = Mock()
     frame.adb_controller.shutdown.side_effect = controller_shutdown
-    frame.adb_controller._active_viewers = []
     frame.log_service = Mock()
-    frame._active_dialogs = []
+    frame._workspace_feature_hosts = {}
     frame.setEnabled = Mock()
     frame.setWindowTitle = Mock()
     frame.close = Mock()
@@ -282,20 +283,110 @@ def test_application_shutdown_lane_is_not_starved_by_owner_cleanup_pool():
     assert emitted[0][1]
 
 
-def test_performance_dialog_close_delegates_running_stop_without_waiting():
+def test_application_shutdown_releases_live_logcat_feature_session():
+    """全局停止接管页面 owner 后仍须完成资源屏障并移除会话。"""
+
+    app = QApplication.instance() or QApplication([])
+    adapter = QtTaskSupervisor()
+    stop_requested = threading.Event()
+
+    class BlockingLogcatWorker(QThread):
+        lines_ready = Signal(object)
+        dropped_ready = Signal(int)
+        status_changed = Signal(str)
+        terminated = Signal(object)
+
+        def __init__(self, _device_ip: str, package: str = ""):
+            super().__init__()
+            self.package = package
+
+        def run(self):
+            stop_requested.wait(1.0)
+
+        def request_stop(self):
+            stop_requested.set()
+
+        def wait_for_stop(self, timeout: float) -> bool:
+            return self.wait(max(0, int(timeout * 1000))) and not self.isRunning()
+
+        def force_stop(self, _timeout: float) -> bool:
+            stop_requested.set()
+            return True
+
+        def is_active(self) -> bool:
+            return self.isRunning()
+
+    registry = FeatureSessionRegistry()
+    key = FeatureSessionKey("logcat", "device-1")
+    page, _ = registry.get_or_create(
+        key,
+        lambda _key: LiveLogcatPage(
+            device_ip="device-1",
+            task_supervisor=adapter,
+        ),
+    )
+    emitted = []
+    page.dispose_ready.connect(emitted.append)
+    with patch("gui.dialogs.live_logcat.LogcatWorker", BlockingLogcatWorker):
+        page._start()
+    worker = page.worker
+    assert worker is not None
+    start_deadline = time.perf_counter() + 1.0
+    while not worker.isRunning() and time.perf_counter() < start_deadline:
+        app.processEvents()
+        time.sleep(0.002)
+    assert worker.isRunning()
+
+    assert adapter.begin_application_shutdown() is True
+    assert registry.request_dispose(key, "application_shutdown") is False
+    assert page._application_cleanup_fallback is True
+    assert adapter.stop_all_async(deadline=1.0) is True
+
+    deadline = time.perf_counter() + 2.0
+    while registry.get(key) is not None and time.perf_counter() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
+    app.processEvents()
+
+    assert emitted
+    assert registry.get(key) is None
+    assert page.worker is None
+    assert adapter.supervisor.active_count == 0
+    adapter._pool.waitForDone(1000)
+
+
+def test_performance_page_dispose_delegates_running_stop_without_waiting():
     _app = QApplication.instance() or QApplication([])
-    dialog = PerformanceLauncherDialog(device_ip="target")
-    dialog._runner = Mock()
-    dialog._runner.is_running.return_value = True
-    dialog.stop_mobileperf = Mock()
+    page = PerformancePage(device_ip="target")
+    page._runner = Mock()
+    page._runner.is_running.return_value = True
+    page.stop_mobileperf = Mock()
 
     started = time.perf_counter()
-    dialog.close()
+    ready = page.request_dispose("test")
     elapsed = time.perf_counter() - started
 
+    assert ready is False
     assert elapsed < 0.1
-    dialog.stop_mobileperf.assert_called_once()
-    dialog._runner.stop.assert_not_called()
+    page.stop_mobileperf.assert_called_once()
+    page._runner.stop.assert_not_called()
+
+
+def test_performance_page_application_shutdown_does_not_start_second_stop_thread():
+    _app = QApplication.instance() or QApplication([])
+    page = PerformancePage(device_ip="target")
+    page._runner = Mock()
+    page._runner.is_running.return_value = True
+    page._shutdown_registered = True
+    page.stop_mobileperf = Mock()
+
+    page._begin_dispose()
+
+    page._runner.request_stop.assert_called_once_with()
+    page.stop_mobileperf.assert_not_called()
+    page._runner.is_running.return_value = False
+    page._poll_dispose_ready()
+    page.deleteLater()
 
 
 def test_mainframe_two_stage_close_is_nonblocking_broadcast_first_and_idempotent():
@@ -435,29 +526,29 @@ def test_late_scan_notifications_are_ignored_after_close_starts():
     frame.adb_controller.publish_detected_devices.assert_not_called()
 
 
-def test_active_dialog_tasks_are_registered_before_dialog_close():
+def test_feature_tasks_are_registered_before_host_shutdown():
     app = QApplication.instance() or QApplication([])
     events = []
     blocker = threading.Event()
 
-    class Dialog:
+    class FeatureHost:
         def register_shutdown_tasks(self, supervisor, *, owner_id, task_prefix):
             events.append("register")
             supervisor.register(
                 f"{task_prefix}-worker",
                 owner_id=owner_id,
-                kind="dialog_worker",
+                kind="feature_worker",
                 request_stop=lambda: events.append("request"),
                 wait=lambda timeout: blocker.wait(timeout),
                 is_running=lambda: not blocker.is_set(),
             )
 
-        def close(self):
-            events.append("close")
+        def shutdown(self):
+            events.append("shutdown")
 
     frame = _frame(lambda: None, deadline=0.06)
-    dialog = Dialog()
-    frame._active_dialogs = [dialog]
+    host = FeatureHost()
+    frame._workspace_feature_hosts = {"system": host}
     settings = Mock()
     settings._save_timer = None
     _bind_settings_finalizer(frame, settings)
@@ -465,10 +556,10 @@ def test_active_dialog_tasks_are_registered_before_dialog_close():
     frame.closeEvent(CloseEvent())
     _drive_until(app, lambda: frame._close_ready, frame=frame)
 
-    assert events.index("register") < events.index("close")
-    assert events.index("close") < events.index("request")
-    assert frame._active_dialogs == [dialog]
-    assert any(item.kind == "dialog_worker" for item in frame._shutdown_residual)
+    assert events.index("register") < events.index("shutdown")
+    assert events.index("shutdown") < events.index("request")
+    assert frame._workspace_feature_hosts == {"system": host}
+    assert any(item.kind == "feature_worker" for item in frame._shutdown_residual)
     blocker.set()
 
 

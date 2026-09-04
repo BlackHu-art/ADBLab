@@ -359,7 +359,6 @@ def test_side_panel_theme_refresh_updates_button_icons():
     panel._font_sm = QFont()
     panel._font_base = QFont()
     panel._font_mono = QFont()
-    panel._font_tab = QFont()
     panel._create_fonts = Mock()
     panel._devices_tab = Mock()
     panel._devices_tab._apply_device_list_style = Mock()
@@ -531,7 +530,6 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
     side_panel._font_sm = QFont("Arial", 12)
     side_panel._font_base = QFont("Arial", 12)
     side_panel._font_mono = QFont("Courier New", 10)
-    side_panel._font_tab = QFont("Arial", 12)
     side_panel._package_history = []
     side_panel._apply_completer_style = Mock()
     side_panel.selected_devices = ["device-1"]
@@ -587,7 +585,6 @@ def test_app_panel_screenshot_button_disables_during_operation_then_recovers():
     side_panel._font_sm = QFont("Arial", 12)
     side_panel._font_base = QFont("Arial", 12)
     side_panel._font_mono = QFont("Courier New", 10)
-    side_panel._font_tab = QFont("Arial", 12)
     side_panel._package_history = []
     side_panel._apply_completer_style = Mock()
     side_panel.selected_devices = ["device-1"]
@@ -629,7 +626,6 @@ def test_app_panel_routes_disable_buttons_to_distinct_signals():
     side_panel._font_sm = QFont("Arial", 12)
     side_panel._font_base = QFont("Arial", 12)
     side_panel._font_mono = QFont("Courier New", 10)
-    side_panel._font_tab = QFont("Arial", 12)
     side_panel._package_history = []
     side_panel._apply_completer_style = Mock()
     side_panel.selected_devices = ["device-1"]

@@ -1,295 +1,107 @@
 ---
 status: current
-last_verified: 2026-09-03
-related: [MODULE_MAP.md, DATA_FLOW.md]
+last_verified: 2026-09-04
+related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
 ---
 
 # 主要业务流程
 
-## 1. 应用启动与设备发现
+本页只保留用户触发、主流程、失败/取消和清理语义。模块位置见
+[MODULE_MAP](MODULE_MAP.md)，数据生命周期见 [DATA_FLOW](DATA_FLOW.md)，线程与应用关闭见
+[ARCHITECTURE](ARCHITECTURE.md)。
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户运行 `main.py`/ADBLab 可执行文件且未指定 worker/self-check 子命令 |
-| 前置条件 | Python 依赖可导入；资源可定位；ADB 可从内置目录或 PATH 解析 |
-| 主流程 | 创建 QApplication → 批量读取并校验字体设置 → 设置应用级 UI 字体 → 加载主题 → 创建 MainFrame/Controller/Models → 校验并恢复普通窗口尺寸 → 构建 FluentWindow 五个顶层入口、Workspace 四个分区、原生缩放热区和信号 → ADB 预热后执行首次发现 → 可选持续扫描 |
-| 异常流程 | 不可用字体回退到 Qt 系统字体；非法字号或窗口尺寸回退/限制到安全范围；资源或 Qt 导入失败会在启动阶段退出；`adb devices` 超时、非零退出或结果异常时把发现状态标记为 unavailable，并保留最后一次成功设备快照，不自动重启 ADB Server；手动刷新失败会使持续扫描快照失效，下一次成功时即使设备集合未变也重新提交快照；慢速元数据补全若跨越设备拓扑 generation 会被丢弃；关闭时取消尚未触发的刷新和扫描 |
-| 涉及模块 | `main.py`、`gui/main_frame.py`、`gui/window_layout.py`、`gui/styles/typography.py`、`core/settings_manager.py`、`controllers/`、`models/adb_device.py` |
-| 涉及数据 | AppSettings、FontConfig、设备列表、发现状态、设备拓扑 generation、窗口尺寸、日志 |
-| 代码位置 | `main.py::_run_gui`、`MainFrame.__init__/_start_device_discovery/closeEvent`、`_ScanThread.run` |
+## 1. 启动、导航与设备发现
 
-```mermaid
-flowchart TD
-    Start["启动"] --> CLI{"_dispatch_cli 是否命中子模式"}
-    CLI -->|"worker"| MP["MobilePerf worker"]
-    CLI -->|"self-check"| Check["打包资源自检"]
-    CLI -->|"否"| Qt["QApplication + 应用字体 + 主题"]
-    Qt --> Layout["校验窗口尺寸"]
-    Layout --> Frame["构建五入口 / Workspace 全部分区 / 缩放热区"]
-    Frame --> Initial["ADB 预热后开始设备发现"]
-    Frame --> Scan{"continuous_device_scan"}
-    Scan -->|"开启"| Poll["周期 adb devices"]
-    Poll --> Healthy{"ADB 查询成功"}
-    Healthy -->|"失败"| Unavailable["标记 unavailable；保留旧列表"]
-    Unavailable --> Poll
-    Healthy -->|"成功"| Publish{"集合变化 / 从失败恢复 / 快照失效"}
-    Publish -->|"是"| Refresh["发布同一快照与 ready/empty"]
-    Refresh --> Generation["拓扑变化递增 generation"]
-    Generation --> Metadata["后台补全元数据；提交前复核代次"]
-    Publish -->|"否"| Poll
-```
+- **触发**：运行 GUI 入口；worker 和打包自检子模式不会创建主窗口。
+- **主流程**：创建 QApplication、主题和 MainFrame；构建 Home、三个业务宿主页、Tasks、Logs、
+  Settings 七个物理页面，Remote 归入设备与控制。主左栏以设备、应用、系统三个折叠分组组织功能
+  叶节点；宽屏直接展开树，窄屏使用 qfluentwidgets 原生 Flyout，内容区不显示模块下拉框。面板内部
+  AdaptiveCategoryStack 的 Pivot/ComboBox 保持隐藏。复杂功能按路由、
+  设备和代次懒创建；ADB 在后台预热并按设置执行设备发现。
+- **失败与恢复**：字体、字号和窗口尺寸在边界外时回退到安全值；扫描失败只标记 unavailable，
+  保留最后成功设备列表，不自动重启 ADB Server。慢速元数据回调只有在设备拓扑 generation 仍匹配
+  时才写入和发布。
 
-### 1.1 字体、窗口缩放与响应式布局
+## 2. 连接设备与读取信息
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户在 Settings 修改字体/字号或点击恢复默认；用户拖动主窗口边角；FluentWindow 页面滚动视口宽度变化 |
-| 前置条件 | QApplication 已创建；MainFrame 已完成 FluentWindow 页面和面板初始化 |
-| 字体主流程 | Settings 将字体族和字号通过 `AppSettings.update()` 批量更新 → `BaseStyles.reload_from_settings()` 生成并应用不可变 FontConfig → QApplication 接收 UI 字体 → 按实际变化发送 `ui_font_changed`、`log_font_changed` 和总括 `fonts_changed` → 主窗口、日志面板、面板/对话框分别刷新自己订阅的字体角色、安全最小高度和分组标题净空；普通操作文案统一使用 UI，提示/元数据使用 UI_SMALL，技术数据和日志分别使用 MONO/LOG |
-| 窗口主流程 | 四边或四角透明热区按压 → `QWindow.startSystemResize()` → 普通窗口尺寸变化 → 350 毫秒防抖批量保存宽高；标题栏移动和最大化行为由 qfluentwidgets `FluentWindow` 提供 |
-| 页面与响应式主流程 | `FluentWindow.addSubInterface()` 在 Home/Workspace/Tasks/Logs/Settings 五个顶层入口间切换 → Workspace 通过 `SegmentedWidget` 在 Devices/Apps/System/Remote 四个分区间切换 → 首页和工作台常驻设备上下文 → 当前分区按滚动视口宽度驱动既有控件重排；Gallery `FlowLayout` 负责首页快捷卡片换行，Logs 不再常驻挤压业务页；MainFrame 启动时已实例化全部顶层页和工作台分区，切换不是懒加载 |
-| Settings 布局流程 | Settings 使用参考项目 `SettingCardGroup`、`PushSettingCard`、`SwitchSettingCard`、ComboBox SettingCard 和颜色选择卡；主题支持跟随系统/浅色/深色，强调色和 Mica 单独持久化；恢复默认会同步卡片值，再应用外观、字体、窗口尺寸、日志上限和扫描状态 |
-| 异常/回退 | 原生缩放未被窗口系统接受时不自行模拟尺寸；最大化/全屏时缩放热区隐藏且不保存该状态尺寸；页面重排不销毁控件、不重复连接信号 |
-| 涉及模块 | `gui/styles/typography.py`、`gui/styles/fonts.py`、`gui/main_frame.py`、`gui/pages/fluent_pages.py`、`gui/window_layout.py`、`gui/widgets/frameless_resize.py`、`gui/widgets/responsive_layout.py`、`gui/panels/`、`core/settings_manager.py` |
+- **触发**：用户输入 ip:port/[IPv6]:port 连接，或请求刷新设备。
+- **主流程**：UI 与 Controller 校验目标，ADB 执行 connect/devices/getprop 等命令，Controller
+  汇总属性并写入 DeviceStore，随后更新首页和三个业务主页面的设备上下文。设备页复选项组成
+  多设备批量操作目标；单设备深层功能和 Remote 使用独立的会话设备。会话候选列出全部在线设备
+  并保留已有离线会话；恰好一个批量目标或仅一台在线设备时可自动选定，多个批量目标或无批量
+  目标且多台在线时要求显式选择。
+- **失败与恢复**：不完整目标在执行前拒绝；超时和非零退出形成失败结果；offline/unauthorized
+  设备只展示可确认信息，不用空结果覆盖最近成功快照。
 
-```mermaid
-flowchart LR
-    Settings["Settings 字体控件"] -->|"一次批量更新"| AppSettings["AppSettings.update / set_many"]
-    AppSettings --> Typography["TypographyManager.apply"]
-    Typography --> AppFont["QApplication UI 字体"]
-    Typography --> UISignal["ui_font_changed"]
-    Typography --> LogSignal["log_font_changed"]
-    Typography --> AllSignal["fonts_changed"]
-    Resize["窗口或工作台视口宽度变化"] --> Main["MainFrame 防抖与宽度转发"]
-    Main --> Store["普通窗口尺寸"]
-    Main --> Panels["SidePanel / Panels 响应式重排"]
-```
+## 3. 应用管理与安装批次
 
-## 2. 连接设备并读取信息
+- **触发**：安装、卸载、启停、清数据、权限、备份/恢复、批量安装或打开 App Manager。
+- **主流程**：普通动作经 Controller/ADB model；App Manager 在固定设备的内嵌功能会话中用
+  worker 加载列表和详情。安装批次为每次请求创建 operation 和 unit 身份，按 owner/generation
+  接受结果，支持部分失败、取消和失败项重试。
+- **失败与清理**：输入或目标校验失败时不启动 worker；worker 在开始前收到中止请求就不执行设备
+  操作。备份先写 staging，恢复安装失败不会报告成功；晚到或错代批次结果直接丢弃。高影响动作
+  当前不二次确认，安全边界依赖目标校验和真实失败传播。
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户输入 `ip:port`/`[IPv6]:port` 并点击连接，或请求刷新 |
-| 前置条件 | 目标通过 `normalize_adb_connect_target()`；ADB server 可用；设备允许调试 |
-| 主流程 | UI 校验 → Controller 调用 `connect_device_async` → `adb connect` → 解析返回 → 刷新设备列表 → 并行/批量读取 getprop 和探测信息 → DeviceStore upsert → 更新 UI |
-| 异常流程 | 地址不完整在 UI/Controller 拒绝；ADB 超时/返回非零形成失败结果；已连接文本仍会触发刷新；离线/未授权设备信息不完整 |
-| 涉及模块 | `gui/panels/device_manager.py`、`controllers/_device.py`、`models/adb_device.py`、`models/device_store.py` |
-| 涉及数据 | 设备标识、型号、Android 版本、分辨率、电池/网络等展示信息 |
-| 代码位置 | `DeviceManager` 连接槽、`ADBDeviceMixin.connect_device/_process_connect_device_result/publish_detected_devices`、`ADBDevice` |
+## 4. Monkey、截图、录屏与诊断
 
-```mermaid
-sequenceDiagram
-    participant U as "用户"
-    participant DM as "DeviceManager"
-    participant C as "ADBDeviceMixin"
-    participant M as "ADBDevice"
-    participant A as "ADB"
-    participant S as "DeviceStore"
+- **Monkey**：校验参数后启动并跟踪进程，同时监测前台包。用户中止或连续探测失败会停止进程并
+  清理日志资源；未知前台状态不按成功处理。
+- **截图**：每批请求按 operation/task 隔离，校验目标、路径和 PNG artifact 后汇总。成功结果后台
+  追加到 ScreenshotPage；不在该页时只显示“查看结果”提示，不抢占导航。取消会原子标记未完成
+  unit，晚到回调被丢弃。
+- **录屏与诊断**：录屏按批次管理启动、停止和拉取；本地视频拉取成功但远端清理失败时保留文件并
+  单独报告清理错误。bugreport 解压使用安全 ZIP 边界。
 
-    U->>DM: 输入连接目标
-    DM->>DM: normalize_adb_connect_target
-    DM-->>C: connect_requested
-    C->>C: 再次校验/建立 pending trace
-    C->>M: connect_device_async
-    M->>A: adb connect target
-    A-->>M: stdout/stderr/returncode
-    M-->>C: command_finished
-    alt 成功或已连接
-        C->>M: get_devices/basic_info
-        M->>A: adb devices + getprop/probes
-        A-->>M: 设备属性
-        M-->>C: 设备数据
-        C->>S: upsert_devices
-        C-->>DM: devices_updated/basic_info_updated
-    else 失败
-        C-->>DM: operation_result + 日志
-    end
-```
+## 5. Live Logcat
 
-## 3. 应用管理与批量操作
+- **触发**：在 System 中为一台设备打开 LiveLogcatPage，可选择包过滤。
+- **主流程**：worker 消费单一 logcat 流并在 producer 侧批量；包过滤周期刷新全部 PID，只发布
+  当前 generation 的匹配行。切走页面暂停绘制但继续消费。
+- **失败与清理**：包未运行或 PID 查询失败时 fail-closed 并重试，不退化为其他应用日志。显式
+  关闭会话或应用关闭才停止进程、reader 和 PID 刷新线程；资源归零前页面保持释放屏障。
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户在 Apps 面板或 App Manager 选择安装、卸载、启停、清数据、权限、备份/恢复等操作 |
-| 前置条件 | 已选择设备；包名/APK/备份文件存在且相关系统工具可用 |
-| 主流程 | 危险动作不再弹窗确认（2026-08-19 全局移除），直接走 SidePanel signal → ADBController → ADBApp/Advanced/System model；复杂列表/详情/备份走 AppManagerWorker QThread → ADB → signal 更新对话框 |
-| 异常流程 | 目标或参数校验失败时不调用 Controller/worker；AppManagerWorker 在执行入口发现已 abort/interruption 时不再分派操作；Model 和 AppManagerWorker 都传播命令失败，备份使用 staging 后原子替换，恢复 install 失败不会报告成功；aapt 缺失导致 APK 解析失败 |
-| 涉及模块 | `gui/panels/app_panel.py`、`gui/dialogs/app_manager.py`、`controllers/_app.py`、`models/adb_app.py`、`models/app_manager_worker.py` |
-| 涉及数据 | 包名、APK 路径、权限、应用详情、预设 JSON、备份 ZIP |
-| 代码位置 | `ADBAppMixin`、`ADBApp`、`AppManagerWorker.run` 及 `_backup_app/_restore_apps/_modify_permission` 路径 |
+## 6. 文件浏览与传输
 
-卸载、清数据、重启和当前 Activity 批次使用 `DeviceBatchUseCase` 聚合完成数；Controller 通过
-`_batch_starts` 按操作名保留兼容结果路由。App Panel 的“Disable for User”按钮发出独立
-`disable_app_for_user_requested` 信号，最终由 `disable_package_user_async` 执行 `pm disable-user`。
+- **触发**：从 Devices 打开固定设备的 File Explorer，执行浏览、pull/push、编辑、复制、移动、
+  删除、chmod、APK 安装或脚本操作。
+- **主流程**：服务层校验名称和路径；短命令走 CommandRunner，传输走 ProcessRunner；成功后刷新
+  目录。切走页面保留路径、预览和仍需继续的任务。
+- **失败与清理**：未选设备显示空态，离线会话禁止新操作；非法名称、.. 和失败结果不会进入
+  成功刷新。显式关闭会话中止 worker，尚未进入执行体的任务不会启动。
 
-安装批次（Gate C）不再使用共享 tracker：`InstallBatchUseCase`（`adblab/application/install_batch.py`）
-为每次提交创建带 `operation_id`/unit 身份的批次，通过 `start/complete/fail/cancel/retry` 状态机
-管理整批与逐 unit 结果，支持部分失败（PARTIAL）与失败项重试；Controller 在提交前先
-`_reserve_install_start` 预留并绑定 `_InstallOperationOwner` 所有权，结果按 owner/generation
-token 校验归属与代次，晚到或错代结果直接丢弃；批次级协作取消把取消意图广播给仍待处理的
-pending units。
+## 7. Remote
 
-## 4. Monkey 稳定性测试
+- **触发**：在设备与控制中进入屏幕镜像或按键与手势，为 Remote 会话选定一台设备后启动 scrcpy。
+- **主流程**：Remote 使用独立于设备页批量复选的会话设备；多候选且无当前会话时先显式选择。
+  预检后生成 LaunchPlan，ProcessRunner 启动 scrcpy；stderr/FPS reader 和 watchdog 更新状态，输入只
+  发送给该会话设备的持久 ADB shell。已启动的 Remote 运行保持绑定原会话设备，不被后续候选刷新改向。
+- **失败与清理**：无会话设备、离线会话、预检或前置设置失败都拒绝后续动作。关闭时先停止输入
+  准入，再等待 executor 和 warmup producer，最后关闭持久输入会话；非 Windows 缺少 PATH scrcpy
+  时明确失败。
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户配置包名、事件比例、事件数/throttle/flags 后启动 Monkey（支持批次：`start_monkey_batch_requested`） |
-| 前置条件 | 设备在线、目标包已安装、事件参数可被 Android Monkey 接受 |
-| 主流程 | AppPanel → Controller → `ADBTesting.run_monkey_test_async` → 检测当前包 → 启动并跟踪 Monkey 进程 → 同步 logcat/恢复目标包 → 输出日志和结果；批次路径按 batch id 登记 stop 意图，每台设备完成/失败/取消后发 `monkey_target_finished(batch_id, device)` |
-| 异常流程 | 非零退出返回失败；用户中止会停止进程；前台探测超时、失败或空结果均按失败处理，连续 3 次失败后终止任务并进入清理，不再把未知状态当作前台正常；等待阶段通过 `_wait_for_monkey_abort` 短轮询探测中止请求，避免真实阻塞 |
-| 涉及模块 | `gui/panels/app_panel.py`、`controllers/_app.py`、`models/adb_testing.py`、`models/base/focus_detector.py` |
-| 涉及数据 | Monkey 参数、随机种子、当前包名、logcat 和执行日志 |
-| 代码位置 | `ADBTesting.run_monkey_test_async`、`_wait_for_monkey_abort`、`detect_current_package`、Controller Monkey handlers |
+## 8. MobilePerf
 
-```mermaid
-flowchart TD
-    Config["Monkey 参数"] --> Warn{"事件比例是否为 100%"}
-    Warn -->|"否"| Continue["警告后仍继续"]
-    Warn -->|"是"| Run["启动 Monkey"]
-    Continue --> Run
-    Run --> Monitor["读取输出并检测当前包"]
-    Monitor --> Stop{"完成/中止/失败"}
-    Stop -->|"正常完成"| Success["成功结果"]
-    Stop -->|"非零/明确失败"| Failure["失败结果"]
-    Stop -->|"连续 3 次前台探测失败"| ProbeFail["失败并清理 Monkey/logcat"]
-```
+- **触发**：在 System/Performance 选择设备和包，配置采样后启动。
+- **主流程**：页面生成运行配置，Runner 创建独立临时目录和子进程，双管道 reader 排空输出；
+  只有退出码成功且本次生成非空报告时才显示完成。切走页面不停止采集。
+- **失败与清理**：启动失败立即恢复 UI；停止先写 stop 标记并等待报告，超时后强制停止。旧报告、
+  空报告或非零退出不能伪装为成功。
 
-## 5. 截图、录屏与诊断
+## 9. 任务中心
 
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户选择一个或多个设备执行截图、录屏、bugreport、ANR、日志导出 |
-| 前置条件 | 设备在线；保存目录可写；录屏/bugreport 相关设备命令可用；可选 Java 已安装 |
-| 主流程 | Screenshot 为一次请求创建 parent operation 和每设备 task metadata → model 执行 exec-out/pull → Controller 校验目标、预期路径与 PNG artifact → fan-out 汇总 → 逐项发 `screenshot_captured` 且每批最多打开一次 viewer；录屏/诊断走 Controller/model 路径，批次录屏按 batch id 跟踪，每台设备停止/失败后发 `record_target_finished(batch_id, device)` |
-| 异常流程 | 截图 exec-out 非 PNG 时回退设备临时文件；缺失/无效/路径不符 artifact 视为失败；部分失败终态为 PARTIAL 且兼容 success=False；重复/晚到 callback 丢弃（截图取消经 `cancel_pending_units` 按 generation 原子化）；bugreport ZIP 路径逃逸被拒绝；录屏 pull 与远端清理分离报告，pull 成功但 cleanup 失败会整体报告失败 |
-| 涉及模块 | `controllers/_media.py`、`controllers/_app.py`、`models/adb_advanced.py`、`models/adb_testing.py`、`utils/archive.py`、`gui/dialogs/screenshot_viewer.py`、`gui/dialogs/lifecycle.py` |
-| 涉及数据 | PNG、MP4、ZIP、txt、ANR、bugreport 转换目录 |
-| 代码位置 | `take_screenshot_async`、`start/stop_screen_record_async`、`pull_recorded_video_async`、`capture_bugreport_async`、`safe_extract_zip` |
+- **活动项**：只来自 OperationManager 当前快照，不代表 Monkey、录屏、MobilePerf 等全部后台工作。
+- **历史项**：MainFrame 当前把兼容 operation_completed 信号写入进程内有界 TaskHistoryStore；
+  应用重启后清空。
+- **取消**：按钮总是调用 OperationManager.request_cancel()；MainFrame 当前只为安装批次和截图
+  追加资源停止路由，其他任务是否真正停止取决于其自身执行边界。
 
-Screenshot Gate A 已删除 Controller 共享路径/剩余计数，重叠批次按 operation/task id 隔离；
-录屏批次已接入 batch id 与 `record_target_finished` 终态信号，原 `_record_info`/
-`_record_stop_requests` 共享字典已收敛到线程安全的 `ScreenRecordUseCase`，未并入 OperationManager。
+## 10. 页面会话与应用关闭
 
-LiveLogcat 启动单一 `threadtime` 流；未指定包名时显示全设备日志，指定包名后 Worker 周期执行
-`pidof` 获取该包全部进程，并只把匹配 PID 的日志送入界面。包未运行或 PID 探测失败时保持
-fail-closed 并后台重试，不退化为展示其他应用日志；运行中再次获取前台包名会递增过滤 generation、
-清空旧 PID 并立即切换目标。阻塞 stdout 由 Worker 所属 reader 读取，协调循环通过超时队列发送
-稀疏尾批；停止时 Logcat 进程、reader 和 PID 刷新线程一并回收。
-
-## 6. 设备文件浏览与传输
-
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户打开 File Explorer，浏览目录或执行 pull/push/edit/copy/move/delete/chmod/install/execute |
-| 前置条件 | 已选择设备；路径和文件名可被服务层接受；本地目标目录可写 |
-| 主流程 | Dialog 构造规范化设备路径 → `services.file_explorer` 模块级纯函数安全引用/构造命令 → 短操作由 `ADBWorker`/CommandRunner 执行，传输由 `TransferWorker`/ProcessRunner 执行 → 成功后刷新列表 |
-| 异常流程 | 非法文件名拒绝；失败结果显示错误且不刷新；删除操作不再弹窗，但仍校验目标并排除 `..`；关闭对话框时中止 worker，尚未进入 `run()` 的短命令或传输不会再启动；root 包装或设备权限不足会失败 |
-| 涉及模块 | `gui/dialogs/file_explorer.py`、`services/file_explorer.py`、`models/file_explorer_worker.py` |
-| 涉及数据 | 目录项、文件内容、临时设备/本地文件、权限模式 |
-| 代码位置 | `services/file_explorer.py` 的 `safe_name/shell_quote/parse_ls_output/*_command`、`FileExplorerDialog._navigate/_pull_file/_delete_selected/_paste_items/closeEvent` |
-
-```mermaid
-sequenceDiagram
-    participant U as "用户"
-    participant D as "FileExplorerDialog"
-    participant S as "file_explorer 纯函数"
-    participant W as "Worker"
-    participant A as "ADB/设备文件系统"
-
-    U->>D: 选择文件操作
-    D->>S: 校验名称/路径并构造命令
-    S-->>D: 参数或引用后的 shell 命令
-    D->>W: 启动短命令或传输
-    W->>A: adb shell/pull/push
-    A-->>W: 输出与返回码
-    W-->>D: finished(output, error)
-    alt 成功
-        D->>D: 更新状态并刷新目录
-    else 失败
-        D->>D: 显示错误，不刷新成功状态
-    end
-```
-
-## 7. Remote 投屏与输入
-
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户在 Remote 页选择设备和 scrcpy 参数并启动 |
-| 前置条件 | 必须恰好选择一台设备；scrcpy 可解析；ADB 设备可达；预检可获得必要信息或允许带警告继续 |
-| 主流程 | RemotePanel 将启动选择绑定为 `_active_device` → 创建 launch worker → ScrcpyService 检查版本/设备/编码器并生成 LaunchPlan → ProcessRunner 启动 scrcpy → stderr/FPS reader 和 watchdog 更新状态 → 输入只向活动会话设备发送 |
-| 异常流程 | 未选或多选都会拒绝启动和输入，不会静默取第一个设备；未运行活动会话时拒绝输入；预检或启动失败恢复按钮状态并清空活动设备；旋转等前置设置失败会中止后续动作；强制停止仅在进程已解除 tracking 时确认成功；关闭 Remote 分区先关闭输入准入，再在后台等待 executor 和全部 warmup producer，最后关闭 input session；supervisor 超时结果携带 `completion_error`；非 Windows 找不到系统 scrcpy 则无法启动 |
-| 涉及模块 | `gui/panels/remote_panel.py`、`services/remote/*`、`core/adb_bridge.py` |
-| 涉及数据 | `ScrcpyConfig`、`PreflightResult`、`ScrcpyLaunchPlan`、设备尺寸缓存、FPS 文本 |
-| 代码位置 | `ScrcpyService.build_launch_plan/start/stop`、`RemoteControlService.perform_action`、`RemotePanel.shutdown` |
-
-```mermaid
-sequenceDiagram
-    participant UI as "RemotePanel"
-    participant S as "ScrcpyService"
-    participant P as "ProcessRunner"
-    participant X as "scrcpy"
-    participant R as "RemoteControlService"
-    participant B as "ADBBridge"
-
-    UI->>S: 解析可执行文件并构建 LaunchPlan
-    S->>S: version / adb preflight / encoder
-    S-->>UI: plan + warnings + dimensions
-    UI->>S: start(plan)
-    S->>P: 注册并启动进程
-    P->>X: scrcpy args
-    X-->>UI: stderr/FPS/退出状态
-    loop 用户按键或手势
-        UI->>R: perform_action / swipe
-        R->>B: shell_input
-        B-->>R: 写入持久 adb shell 是否成功
-    end
-    UI->>S: stop
-    S->>P: 终止进程树
-```
-
-## 8. MobilePerf 性能采集
-
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户选择设备/包名，配置采样与 Monkey 后在 Performance Launcher 启动 |
-| 前置条件 | 设备在线、目标包已安装、保存目录可写、MobilePerf 模块可导入 |
-| 主流程 | 表单生成 `MobilePerfRunConfig`（`__post_init__` 规范化分号字段）→ Runner 记录运行前结果/报告签名并创建运行代次上下文 → 写临时配置 → 根据开发/冻结状态启动 module 或 `--mobileperf-worker` → StartUp 逐层剥离配置 BOM 前缀后验证设备/包并采集 → stdout/stderr reader 分别排空且共同收口后通知完成 → GUI 只定位本次新建或变化的非空报告；退出码 0 且有当前报告才显示 Completed/100 |
-| 异常流程 | 启动异常立即恢复 UI；停止先写 stop 文件并等待报告，超时后强制终止；非零退出、缺少当前报告或只有旧报告均显示 Failed/Warning 且进度低于 100；内核已按 ADR-0004 移除 `os._exit`，stop 完成后结构化收口（采集线程 daemon） |
-| 涉及模块 | `gui/dialogs/performance_launcher.py`、`services/mobileperf_runner.py`、`mobileperf/android/startup.py` 与各 monitor |
-| 涉及数据 | 临时 config、指标 CSV、XLSX、设备信息、logcat、heapdump、外部设备日志 |
-| 代码位置 | `PerformanceLauncherDialog.start_mobileperf/stop_mobileperf`、`MobilePerfRunner.start/stop`、`StartUp.run/stop` |
-
-## 9. 安装批次（Gate C）
-
-| 项目 | 内容 |
-| --- | --- |
-| 触发条件 | 用户在 Apps 面板选择多设备/多 APK 安装或点击批量安装（`batch_install_requested`） |
-| 前置条件 | 已选择设备；APK 文件存在且可被 aapt/install 接受 |
-| 主流程 | Controller 校验请求并 `_reserve_install_start` 预留批次 → 创建 `InstallBatchUseCase` 批次（operation id + 每 unit 身份，绑定 `_InstallOperationOwner` 所有权与 generation）→ 逐 unit 经 `install_apk_async`（`async_command` 透传 owner/generation token 到 `OperationMetadata`）提交 → 每 unit 结果按 owner/generation 校验归属后记录 → 全部结束后按 unit 结果汇总终态（成功/部分失败/失败），失败项可整批重试（retry） |
-| 异常流程 | 选择取消/空请求直接失败；提交阶段异常丢弃预留；晚到或错代结果标记 stale 并丢弃；协作取消（cancel）把意图广播给未处理 units；部分 unit 失败不影响其他 unit 收口，终态为 PARTIAL 且兼容 success=False |
-| 涉及模块 | `gui/panels/app_panel.py`、`controllers/_app.py`、`adblab/application/install_batch.py`、`adblab/application/operations.py`、`models/adb_app.py` |
-| 涉及数据 | 安装请求列表、unit 结果、批次终态、owner/generation token |
-| 代码位置 | `InstallBatchUseCase.start/complete/fail/cancel/retry`、`_reserve_install_start/_submit_install_unit/_finish_install_start`、`OperationManager.cancel_pending_units/record_unit_result/finish_from_unit_results` |
-
-## 10. 应用关闭
-
-MainFrame 打开的设备对话框、Performance Launcher 以及 Controller 打开的 ScreenshotViewer
-都作为无 Qt parent/transient owner 的独立非模态顶层窗口运行，并由 MainFrame/Controller
-持有强引用、安装事件过滤器和执行显式关闭清理，因此可以与主界面自由切换。About 继续使用模态交互，
-Settings 是 FluentWindow 的常驻导航页，不属于二级窗口。用户关闭任一非模态二级窗口只清理该窗口资源，不进入 MainFrame
-应用级关闭状态机。源码运行时会向开发控制台输出窗口创建、复用、关闭请求和关闭完成等
-DEBUG 诊断；运行中 LiveLogcat 还会输出隐藏等待、资源停止和最终销毁阶段。
-
-MainFrame 关闭时先刷新尚未落盘的普通窗口尺寸，再停止扫描、关闭对话框、shutdown 全部业务面板；Controller 收口时先永久关闭四个 model 的异步命令准入，再停止 testing/advanced model、全局 tracked process 和 executor，并显式调用 `LogService.shutdown()`。旧 splitter 键只留在 AppSettings schema 中，不参与关闭保存。已排队但尚未开始的方法体返回取消结果；录屏与 Monkey/logcat 的长进程启动和 stop-all 使用各自同一生命周期锁排序，避免清理快照之后再启动新进程。
-LiveLogcat 对话框已将 worker/process 注册到 MainFrame 注入的 TaskSupervisor：Stop 只广播
-后台清理；运行中关闭窗口时先隐藏并断开数据界面信号，保留 `finished` 槽作为线程屏障。
-`owner_stopped` 仅表示停止流程已返回，对话框还会复核工作对象与 owner residual；只有两者
-全部清零才销毁窗口。graceful/forced/timeout 分离，超时资源继续保留 residual snapshot，
-隐藏窗口也继续持有 QObject，避免仍运行的 QThread 被提前析构；LiveLogcat 显式关闭
-`WA_QuitOnClose`，不会参与应用的最后窗口退出判定。若线程完成信号先于超时结果到达，
-关闭复核定时器会继续观察晚退出的受跟踪进程，并在实际清零后完成销毁。
-MainFrame 自身也已改为两阶段异步关闭（Gate B2）：首次 close 事件只进入 closing 状态、停止 UI
-定时器并断开生产者信号，随后按扫描、面板、对话框、Controller 顺序注册关闭任务，以
-broadcast-first + 共享 wall-clock deadline 广播停止；全部资源归零或到达 deadline 后，后台
-finalizer 原子落盘配置并重新触发 close 完成销毁，超时资源保留在 residual snapshot 中且不
-宣称资源归零。该链路由 `test_phase2_mainframe_shutdown_gate.py` 的 11 项契约测试覆盖。
+- 主左栏功能叶节点切换概览分类时复用同一面板内容；切换深层功能只调用功能页 deactivate()，
+  同一 feature/device/generation 返回时复用页面。用户
+  显式关闭才执行 request_dispose()；旧代次在 worker 或进程归零前不能重激活。
+- 应用关闭先封闭新任务准入，再并发广播扫描、各业务主页面、面板和 Controller 停止，并在共享
+  deadline 内后台等待。单个资源登记失败不会跳过其他资源。
+- finalizer 记录仍未退出的 residual、保存配置并完成窗口关闭；超时不被描述为资源已归零。
+  瞬态消息/输入/短表单只结束该次交互，不创建长期页面会话。

@@ -51,6 +51,9 @@
 
 ## PySide6 规则
 
+- 查询 qfluentwidgets 行为时，依次以当前代码/测试、活动项目解释器动态定位到的实际安装版本、
+  上游官方 `PySide6` 分支的单个相关文件为准；用 `importlib.util.find_spec()` 和 `rg` 定位后只读取
+  必要行，不克隆或扫描整个上游仓库，也不使用默认 PyQt5 分支判断本项目 API。
 - 只在 GUI 主线程操作控件；耗时 I/O、ADB 和进程等待不得阻塞 Qt 事件循环。后台任务通过信号槽
   返回数据、状态和错误，不从 `QThread`、`QRunnable` 或 Python 线程直接改 UI。
 - 沿用项目已有的 QThread/QThreadPool、worker、TaskSupervisor 和 ProcessRunner 生命周期模式。

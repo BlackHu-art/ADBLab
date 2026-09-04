@@ -9,24 +9,13 @@
 | 分区 | 目录 | 内容 | 更新规则 |
 | --- | --- | --- | --- |
 | 现状事实 | `docs/project-knowledge/` | 当前实现的架构、模块、流程、数据、依赖、术语和风险账本 | 代码/配置变化时同步更新 |
-| 决策 | `docs/architecture/` | ADR、实施计划等决策留痕 | 新增决策时追加，不回改历史 ADR |
+| 决策 | `docs/architecture/` | ADR 决策留痕 | 新增决策时追加，不回改历史 ADR |
 | 操作指南 | `docs/guides/` | 已验证的构建、运行、测试命令与注释风格规范 | 命令/门禁变化时同步更新 |
 | 过程归档 | `docs/archive/` | 阶段账本、评审、历史卫生检查 | 只归档不更新 |
 
 单源规则：每个事实只在一篇文档展开，其余文档用链接指回，不复述；风险条目只进
 [project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。完整约定见
 [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)。
-
-## 基线与状态
-
-| 项目 | 当前记录 |
-| --- | --- |
-| 事实基线 | `dev` 当前工作树，扫描日期 2026-08-27；Git HEAD 锚点 `adfd254` |
-| 本次整理 | 2026-08-27，以当前代码为基准重校基线：版本 3.2.10；同步打包 CI 移除 pytest 后的契约描述（PROJECT_OVERVIEW/ARCHITECTURE/RISKS_AND_DEBT/DEPENDENCY_MAP/BUILD_AND_RUN/README） |
-| 历史锚点 | main 基线 `8b84f8d`（3.1.14）；不再手工维护易漂移的提交清单，按需运行 `git log 8b84f8d..HEAD` 获取当前变更 |
-| 文档范围 | 根入口、`controllers/`、`core/`、`gui/`、`models/`、`utils/`、`adblab/`、`tests/`、`.github/workflows/`、`mobileperf/` 核心代码，以及资源和内置工具用途 |
-| 文档 owner | 待确认；未指定具名维护人前，不把这些文档视为正式受控 SOP |
-| 敏感信息规则 | 不记录密钥、Token、密码、私有证书、真实设备唯一标识、邮件正文或验证码 |
 
 ## 快速阅读路径
 
@@ -45,14 +34,14 @@
 
 ### 现状事实（project-knowledge/）
 
-- [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)：项目目标、用户、能力、技术栈、运行环境、当前状态与关键术语入口。
-- [glossary](project-knowledge/glossary.md)：项目专有名词、通用缩写和对应代码概念。
+- [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)：项目目标、用户、能力、技术栈、运行环境和当前实现边界。
+- [glossary](project-knowledge/glossary.md)：项目专有名词及对应代码概念。
 - [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)：总体分层、运行时组件、初始化/关闭、线程/进程模型和架构限制。
-- [MODULE_MAP](project-knowledge/MODULE_MAP.md)：模块职责、接口、上下游、配置、数据、测试与风险。
+- [MODULE_MAP](project-knowledge/MODULE_MAP.md)：模块位置、职责边界、主要入口和代表性测试。
 - [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)：启动、设备、应用、安装批次、Monkey、诊断、文件、Remote、MobilePerf 和关闭链路。
 - [DATA_FLOW](project-knowledge/DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期、状态变化，以及文件型存储、设置字段与无数据库结论。
 - [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md)：内部依赖方向、第三方依赖、外部系统、外部边界与 ADB 命令接口、依赖治理建议。
-- [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)：按严重程度排序的缺陷、安全风险、技术债、历史热点和修复优先级。
+- [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)：仅保留尚未闭环的缺陷、安全风险和技术债。
 
 ### 决策（architecture/）
 
@@ -68,48 +57,14 @@
 - [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
 - [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、已验证命令、覆盖缺口、提交前门禁，以及中文注释与文档风格规范。
 
-## 维护热点
+## 维护与归档
 
-修改以下区域前，优先按"入口 → 调用链 → 失败路径 → 清理路径 → 测试"的顺序追踪：
-
-- `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`：FluentWindow 五入口
-  导航壳、Gallery 首页、Workspace 四分区、常驻 SettingCard 设置页、设备扫描、动作与关闭接线。
-- `gui/panels/side_panel.py`：业务面板所有权、共享设备状态和信号兼容门面；它不再是可见左侧导航，
-  MainFrame 启动时会创建 Devices/Apps/System/Remote 全部分区，不能按视图懒加载理解。
-- `adblab/application/`：`operations.py`（OperationManager 单元接口）与 `install_batch.py`（安装批次 Gate C 用例）。
-- `controllers/`：批次状态与所有权/generation 边界、异步结果分派、截图/录屏共享状态和危险操作入口。
-- `core/exec.py`、`core/adb_bridge.py`、`models/file_explorer_worker.py`：短命令、长进程、传输进程和持久 shell 边界。
-- `gui/widgets/responsive_controller.py`、`gui/widgets/responsive_layout.py`、`gui/screen_adapter.py`：响应式重排协调器、语义布局和屏幕适配协议。
-- `gui/dialogs/app_manager.py`、`models/app_manager_worker.py`：批量应用操作、备份恢复和失败传播。
-- `gui/panels/remote_panel.py`、`services/remote/`：scrcpy 预检、输入映射、会话所有权/watchdog 和关闭清理。
-- `services/mobileperf_runner.py`、`mobileperf/android/`：隔离子进程、采样线程、报告落盘和遗留 ADB 实现（`shell=True` 已移除，独立 Popen 生命周期仍待统一）。
-
-## 知识库维护规则
-
-1. 修改架构、对外接口、配置键、数据结构、主要业务链路、构建或测试命令后，同步更新对应主题文档和本页导航。
-2. 代码与文档冲突时，以当前可执行代码和测试为准；修正文档，不把推测写成事实。
-3. 新增功能时至少更新 [MODULE_MAP](project-knowledge/MODULE_MAP.md) 和相关业务/数据/边界文档；新增风险时同步 [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)。
-4. 新增术语或缩写时同步 [glossary](project-knowledge/glossary.md)，避免同一词在不同文档中漂移。
-5. `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号且不得复用历史版本。
-6. 日常修复默认运行直接与受影响模块测试，不在每批修改后执行全量测试；只有用户明确要求、
-   发布验收、影响范围无法可靠界定或 CI 门禁时才运行全量 `pytest -q`。dev 推送 main 本身不
-   触发本地全量测试；测试选择、静态检查和打包自检的触发条件见
-   [TESTING_GUIDE](guides/TESTING_GUIDE.md)。
-7. 文档类提交前运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py`，确保链接与 frontmatter 通过。
-
-## 归档
-
-过程记录与历史检查已移入 [archive/](archive/README.md)：Phase 0/1/2 实施账本、Agent 技能评审、
-2026-08-18 知识库卫生检查和已收口的 vNext 实施计划（[IMPLEMENTATION_PLAN](archive/plans/IMPLEMENTATION_PLAN.md)，
-各阶段结论已并入 ARCHITECTURE 与 ADR-0001~0006）。归档文档不再更新，现状事实一律以
-`project-knowledge/` 与 [architecture/](architecture/) 的 ADR 为准。
-
-## 明确排除
-
-- `.git/`：版本数据库，不属于运行时代码。
-- `.idea/`、`.pytest_cache/`、`__pycache__/`、`logs/`：IDE、缓存或运行产物。
-- `resources/icons/`：大量图标资源，只验证加载机制与打包关系。
-- `scrcpy-win64/`：第三方可执行文件、DLL 和脚本，只验证调用与打包关系。
-- `mobileperf/extlib/xlsxwriter/`：随项目携带的第三方实现，只验证报告模块对它的依赖。
-- `mobileperf/android/tools/`：MobilePerf 的 ADB 封装（内置平台二进制已移除，回退统一走 `utils/adb_resolver`），以及仓库中的 JAR、图片、GIF、日志和其他媒体/生成文件：只验证调用位置与用途，不作为核心源码分析对象。
-- `pyright_output.json`：静态分析输出产物，不作为实现事实来源。
+- 修改代码时按“入口 → 调用链 → 失败/取消 → 清理 → 测试”追踪；模块入口见
+  [MODULE_MAP](project-knowledge/MODULE_MAP.md)，未解决事项只记录在
+  [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)。
+- 不在长期知识库保存分支、HEAD、提交数、测试数或临时工作树状态；版本以
+  `utils/app_metadata.py` 为准，验证结果写入对应任务或发布记录。
+- 写作、frontmatter、单源和陈旧检查规则见 [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)；文档修改后运行
+  `.\.venv\Scripts\python.exe scripts/check_doc_links.py`。
+- 阶段账本和历史检查见 [archive/](archive/README.md)。归档只用于追溯；当前事实以代码、测试和
+  `project-knowledge/` 为准，ADR 只解释决策缘由。

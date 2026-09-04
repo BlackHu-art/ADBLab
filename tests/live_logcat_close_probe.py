@@ -1,4 +1,4 @@
-"""在独立进程中压力验证实时日志窗口的关闭生命周期。"""
+"""在独立进程中压力验证内嵌实时日志页的关闭生命周期。"""
 
 from __future__ import annotations
 
@@ -15,11 +15,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
-from gui.dialogs.live_logcat import LiveLogcatDialog
+from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from gui.dialogs.live_logcat import LogcatWorker as RealLogcatWorker
-from gui.main_frame import MainFrame
+from gui.features.base import FeatureSessionKey, FeatureSessionRegistry
+from gui.features.logcat import LiveLogcatPage
 
 CYCLES = 10
 TRAFFIC_TIMEOUT_SECONDS = 2.0
@@ -36,8 +37,12 @@ class StreamingProcess:
         self._line = 0
 
     def readline(self):
-        if self._stopped.wait(0.0002):
+        if self._stopped.is_set():
             return ""
+        # Windows 的 Event.wait() 会把亚毫秒超时放大到系统时钟粒度；100 行
+        # 可能因此虚耗约 1.5 秒。这里仅让出线程时间片，保持持续流量而不注入
+        # 与被测生命周期无关的平台定时误差。
+        time.sleep(0)
         self._line += 1
         return f"07-25 12:00:00.000  1  1 I Tag: line-{self._line}\n"
 
@@ -62,11 +67,12 @@ class StreamingProcess:
 
 
 def run_probe() -> int:
-    """连续关闭正在输出的日志窗口，并分类记录主窗口和应用退出事件。"""
+    """连续销毁正在输出的内嵌日志会话，并记录应用退出事件。"""
     state = {
         "phase": "stress",
         "cycle": 0,
         "destroyed": 0,
+        "cycle_timings_ms": [],
         "main_close_phases": [],
         "last_window_closed_phases": [],
         "about_to_quit_phases": [],
@@ -74,7 +80,7 @@ def run_probe() -> int:
     }
     current = {}
 
-    class ProbeMain(MainFrame):
+    class ProbeMain(QMainWindow):
         def closeEvent(self, event):
             state["main_close_phases"].append(state["phase"])
             super().closeEvent(event)
@@ -82,11 +88,11 @@ def run_probe() -> int:
     app = QApplication([])
     app.lastWindowClosed.connect(lambda: state["last_window_closed_phases"].append(state["phase"]))
     app.aboutToQuit.connect(lambda: state["about_to_quit_phases"].append(state["phase"]))
-    with (
-        patch.object(MainFrame, "_bootstrap_adb_async", lambda self: None),
-        patch.object(MainFrame, "_start_device_discovery", lambda self: None),
-    ):
-        frame = ProbeMain()
+    frame = ProbeMain()
+    stack = QStackedWidget(frame)
+    frame.setCentralWidget(stack)
+    registry = FeatureSessionRegistry(frame)
+    task_supervisor = QtTaskSupervisor()
     frame.show()
 
     def fail(message: str):
@@ -113,6 +119,24 @@ def run_probe() -> int:
 
     def wait_for_destroy():
         if current.get("destroyed", False):
+            current["destroyed_at"] = time.monotonic()
+            state["cycle_timings_ms"].append(
+                {
+                    "construct": round(
+                        (current["created_at"] - current["started_at"]) * 1000,
+                        1,
+                    ),
+                    "show_and_traffic": round(
+                        (current["traffic_at"] - current["created_at"]) * 1000,
+                        1,
+                    ),
+                    "cleanup": round(
+                        (current["destroyed_at"] - current["traffic_at"]) * 1000,
+                        1,
+                    ),
+                    "entries_at_close": current["entries_at_close"],
+                }
+            )
             if not frame.isVisible():
                 fail("main window hidden while closing logcat")
                 return
@@ -123,22 +147,26 @@ def run_probe() -> int:
             ):
                 fail("application exit path observed during logcat close")
                 return
-            if frame._active_dialogs:
-                fail("destroyed logcat dialog is still retained")
+            if registry.get(current["key"]) is not None:
+                fail("destroyed logcat page is still retained")
                 return
             state["destroyed"] += 1
             state["cycle"] += 1
             QTimer.singleShot(0, start_cycle)
             return
         if time.monotonic() >= current["deadline"]:
-            fail("logcat dialog destruction timeout")
+            fail("logcat page disposal timeout")
             return
         QTimer.singleShot(1, wait_for_destroy)
 
     def wait_for_traffic():
-        dialog = current["dialog"]
-        if len(dialog.entries) >= 100:
-            dialog.close()
+        page = current["page"]
+        if len(page.entries) >= 100:
+            current["traffic_at"] = time.monotonic()
+            current["entries_at_close"] = len(page.entries)
+            if registry.request_dispose(current["key"], "probe_cycle"):
+                fail("active logcat page disposed before worker cleanup")
+                return
             current["deadline"] = time.monotonic() + DESTROY_TIMEOUT_SECONDS
             QTimer.singleShot(1, wait_for_destroy)
             return
@@ -162,22 +190,30 @@ def run_probe() -> int:
             return
 
         current.clear()
+        current["started_at"] = time.monotonic()
         current["deadline"] = time.monotonic() + TRAFFIC_TIMEOUT_SECONDS
-        dialog = frame._register_dialog(
-            LiveLogcatDialog(
+        key = FeatureSessionKey("logcat", "target", state["cycle"])
+        page, created = registry.get_or_create(
+            key,
+            lambda _key: LiveLogcatPage(
                 device_ip="target",
-                task_supervisor=frame.task_supervisor,
-                log_service=frame.log_service,
+                task_supervisor=task_supervisor,
             ),
-            LiveLogcatDialog,
-            "target",
         )
-        current["dialog"] = dialog
+        if not created:
+            fail("logcat page session was unexpectedly reused")
+            return
+        page.setParent(stack)
+        stack.addWidget(page)
+        registry.activate(key)
+        stack.setCurrentWidget(page)
+        current["created_at"] = time.monotonic()
+        current["key"] = key
+        current["page"] = page
         current["destroyed"] = False
-        dialog.destroyed.connect(lambda *_args: current.__setitem__("destroyed", True))
-        dialog.show()
+        page.destroyed.connect(lambda *_args: current.__setitem__("destroyed", True))
         with patch("gui.dialogs.live_logcat.LogcatWorker", side_effect=make_worker):
-            dialog._start()
+            page._start()
         QTimer.singleShot(1, wait_for_traffic)
 
     QTimer.singleShot(0, start_cycle)

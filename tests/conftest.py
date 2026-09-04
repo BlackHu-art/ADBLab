@@ -23,12 +23,6 @@ def qt_application():
     yield application
 
 
-@pytest.fixture(autouse=True)
-def drain_qt_deferred_deletes(qt_application):
-    """保留兼容夹具名称；窗口清理由 isolated_ui_state 按安全边界处理。"""
-    yield
-
-
 @pytest.fixture
 def isolated_ui_state_probe():
     """为隔离夹具提供可重复的 teardown 断言入口。"""
@@ -105,10 +99,13 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe):
 _UI_TEST_FILES = frozenset(
     {
         "test_accessibility_contract.py",
+        "test_adaptive_category_stack.py",
+        "test_app_panel_categories.py",
         "test_app_manager_selection.py",
         "test_button_tooltips.py",
-        "test_dialog_typography.py",
+        "test_feature_typography.py",
         "test_fluent_components.py",
+        "test_fluent_dialog_contract.py",
         "test_main_window_layout.py",
         # test_model_execution.py 已按主题拆分为以下文件（ADR-0003 Phase 2）。
         # 纯逻辑（runner/parser/配置类）文件不在此列，进入 CI 快速子集。
@@ -125,9 +122,13 @@ _UI_TEST_FILES = frozenset(
         "test_preset_spin_box.py",
         "test_responsive_layout_controller.py",
         "test_responsive_panels.py",
+        "test_screenshot_page.py",
+        "test_system_panel_categories.py",
+        "test_task_center.py",
         "test_typography_core.py",
         "test_ui_geometry_helpers.py",
         "test_window_lifecycle.py",
+        "test_workspace_feature_host.py",
         # 以下文件 import 并实例化 GUI（2026-08-28 基线核实补登，避免漏出 ui 子集）。
         "test_logging_contract.py",
         "test_logging_routing_mobileperf.py",

@@ -4,16 +4,14 @@ import json
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog,
     QFileDialog,
     QHBoxLayout,
-    QMessageBox,
     QVBoxLayout,
 )
 from qfluentwidgets import BodyLabel, LineEdit, PrimaryPushButton, PushButton, TextEdit
 
 from core.settings_manager import AppSettings
-from gui.dialogs.app_manager_details import AppDetailsDialog
+from gui.dialogs.fluent_dialog import FluentDialog, FluentMessageBox
 from gui.dialogs.lifecycle import (
     alive_callback,
     alive_forwarding_callback,
@@ -26,7 +24,7 @@ from gui.styles.typography import FontRole
 
 
 class AppManagerBatch:
-    """组合进 AppManagerDialog 的批量控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 AppManagerPage 的批量控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -62,35 +60,23 @@ class AppManagerBatch:
             add_menu_action(menu, "Enable", callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
         add_menu_action(menu, "Backup", callback=lambda: self._frame._backup_one(pkg))
-        if self._frame._batch_workers:
+        if self._frame._batch_workers or not getattr(
+            self._frame, "_device_connected", True
+        ):
             for action in menu.actions():
                 if not action.isSeparator():
                     action.setEnabled(False)
         menu.exec(self._frame.tree.mapToGlobal(pos))
 
     def _show_details_for(self, pkg):
-        if self._batch_action_blocked():
-            return None
-        existing = self._frame._detail_dialogs.get(pkg)
-        if is_qobject_alive(existing):
-            fit_secondary_window_to_owner_screen(existing, self._frame)
-            existing.show()
-            existing.raise_()
-            existing.activateWindow()
-            return existing
-        dlg = AppDetailsDialog(self._frame, self._frame.device_ip, pkg)
-        fit_secondary_window_to_owner_screen(dlg, self._frame)
-        self._frame._detail_dialogs[pkg] = dlg
-        dlg.finished.connect(alive_callback(self._frame, "_forget_detail_dialog", pkg, dlg))
-        dlg.destroyed.connect(alive_callback(self._frame, "_forget_detail_dialog", pkg, dlg))
-        dlg.show()
-        return dlg
-
-    def _forget_detail_dialog(self, pkg, dialog):
-        if self._frame._detail_dialogs.get(pkg) is dialog:
-            self._frame._detail_dialogs.pop(pkg, None)
+        return self._frame.open_details(pkg)
 
     def _batch_action_blocked(self) -> bool:
+        if not getattr(self._frame, "_device_connected", True):
+            self._frame.status_bar.setText(
+                "Device offline — reconnect it before starting an application action."
+            )
+            return True
         if not self._frame._batch_workers:
             return False
         self._frame.status_bar.setText("A batch operation is in progress; wait for it to finish.")
@@ -112,8 +98,6 @@ class AppManagerBatch:
         from gui.dialogs import app_manager as _app_manager
 
         if self._batch_action_blocked():
-            return
-        if not self._frame._confirm_dangerous_action(action, 1):
             return
         if action == "force_stop":
             w = _app_manager.AppManagerWorker(
@@ -190,15 +174,11 @@ class AppManagerBatch:
             return
         pkgs = self._frame._get_selected_pkgs()
         if not pkgs:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "No Selection",
                 "No apps selected.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
-            return
-        if not self._frame._confirm_dangerous_action(action, len(pkgs)):
             return
         workers = []
         for pkg in pkgs:
@@ -251,23 +231,17 @@ class AppManagerBatch:
         self._frame._update_selection_ui()
         self._frame._load_apps()
 
-    def _confirm_dangerous_action(self, action: str, target_count: int) -> bool:
-        """兼容占位：危险操作不再弹窗确认，直接放行。"""
-
-        del action, target_count
-        return True
-
     def _backup_selected(self):
         from gui.dialogs import app_manager as _app_manager
 
+        if self._batch_action_blocked():
+            return
         pkgs = self._frame._get_selected_pkgs()
         if not pkgs:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "No Selection",
                 "No apps selected.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         sd = QFileDialog.getExistingDirectory(
@@ -292,6 +266,8 @@ class AppManagerBatch:
     def _restore_apps(self):
         from gui.dialogs import app_manager as _app_manager
 
+        if self._batch_action_blocked():
+            return
         files, _ = QFileDialog.getOpenFileNames(
             self._frame, "Select Backup ZIP(s)", "", "ZIP Files (*.zip)"
         )
@@ -314,12 +290,10 @@ class AppManagerBatch:
     def _show_details(self):
         packages = self._frame._get_selected_pkgs()
         if not packages:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "No Selection",
                 "No app selected.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         pkg = packages[0]
@@ -328,19 +302,16 @@ class AppManagerBatch:
 
     def _create_preset(self):
         if not self._frame.selected_packages:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "No Selection",
                 "Select apps first.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
-        dlg = QDialog(self._frame)
-        dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dlg = FluentDialog(self._frame)
         dlg.setWindowTitle("Create Preset")
-        dlg.setMinimumSize(380, 280)
-        dlg.resize(380, 280)
+        dlg.setMinimumSize(380, 280 + dlg.TITLE_BAR_HEIGHT)
+        dlg.resize(380, 280 + dlg.TITLE_BAR_HEIGHT)
         dlg.setFont(BaseStyles.font_for_role(FontRole.UI))
         lo = QVBoxLayout(dlg)
         lo.addWidget(apply_label_role(BodyLabel("Preset Name:"), FontRole.UI))
@@ -373,18 +344,33 @@ class AppManagerBatch:
         button_row.addWidget(cancel_button)
         button_row.addWidget(create_button)
         lo.addLayout(button_row)
+        dlg.finalize_fluent_layout(lo)
         fit_secondary_window_to_owner_screen(
             dlg,
             self._frame,
             minimum_floor=dlg.minimumSize(),
         )
-        if not dlg.exec():
+        accepted = False
+        preset_fields: tuple[str, str, str] | None = None
+        try:
+            accepted = bool(dlg.exec())
+            if accepted:
+                preset_fields = (
+                    ni.text().strip(),
+                    ai.text().strip(),
+                    di.toPlainText().strip(),
+                )
+        finally:
+            # 模态 exec 返回后先复制控件值，再显式排队释放，避免关闭即销毁导致悬空访问。
+            dlg.deleteLater()
+        if not accepted or preset_fields is None:
             return
-        name = ni.text().strip() or "New Preset"
+        name, author, description = preset_fields
+        name = name or "New Preset"
         data = {
             "name": name,
-            "author": ai.text().strip(),
-            "description": di.toPlainText().strip(),
+            "author": author,
+            "description": description,
             "selected_packages": sorted(list(self._frame.selected_packages)),
         }
         fp, _ = QFileDialog.getSaveFileName(
@@ -444,12 +430,10 @@ class AppManagerBatch:
 
     def _report_preset_error(self, action: str, error: Exception) -> None:
         message = f"Unable to {action} preset: {error}"
-        QMessageBox.critical(
+        FluentMessageBox.critical(
             self._frame,
             "Preset Error",
             message,
-            QMessageBox.StandardButton.Ok,
-            QMessageBox.StandardButton.NoButton,
         )
         self._frame.status_bar.setText(message)
         self._frame.log(message)
@@ -462,9 +446,10 @@ class AppManagerBatch:
         self._frame._workers.append(w)
 
     def _prune_worker(self, w):
-        if self._frame._closing:
-            return
         if w in self._frame._workers:
             self._frame._workers.remove(w)
         if is_qobject_alive(w) and hasattr(w, "deleteLater"):
             w.deleteLater()
+        maybe_finish = getattr(self._frame, "_maybe_finish_dispose", None)
+        if callable(maybe_finish):
+            maybe_finish()

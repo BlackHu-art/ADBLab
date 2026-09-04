@@ -63,11 +63,16 @@ class QtTaskSupervisor(QObject):
 
         self._pool.start(StopTask())
 
-    def stop_owner_async(self, owner_id: str, *, deadline: float = 3.0) -> None:
-        """异步停止指定 owner 的资源；应用关闭开始后拒绝新请求。"""
+    def stop_owner_async(self, owner_id: str, *, deadline: float = 3.0) -> bool:
+        """异步停止指定 owner 的资源，并返回请求是否已提交。
+
+        应用级关闭开始后由 ``stop_all_async`` 接管全部资源；调用方可依据
+        ``False`` 改为等待 ``application_stopped``，避免永远等待不会发送的
+        ``owner_stopped`` 信号。
+        """
         with self._application_stop_lock:
             if self._application_stop_started:
-                return
+                return False
         adapter = self
 
         class StopOwnerTask(QRunnable):
@@ -79,6 +84,7 @@ class QtTaskSupervisor(QObject):
                     pass
 
         self._pool.start(StopOwnerTask())
+        return True
 
     def begin_application_shutdown(self) -> bool:
         """原子标记应用关闭开始，仅首次调用返回 True。"""

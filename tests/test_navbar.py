@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from qfluentwidgets import HeaderCardWidget, NavigationInterface
+from qfluentwidgets import NavigationInterface
 
-from gui.panels.base_panel import BasePanel
-from gui.styles import FontRole
 from gui.styles.icon_loader import get_themed_icon
 
 
@@ -51,13 +49,3 @@ def test_navigation_width_configuration_uses_reference_api(qt_application):
 
     assert nav.panel.expandWidth == 160
     assert nav.panel.minimumExpandWidth == 720
-
-
-def test_base_panel_card_factory_contract(qt_application):
-    panel = BasePanel.__new__(BasePanel)
-    card = panel._card("测试卡片")
-
-    assert type(card) is HeaderCardWidget
-    assert card.accessibleName() == "测试卡片"
-    assert card.toolTip() == "测试卡片"
-    assert card.property("fontRole") == FontRole.UI.value

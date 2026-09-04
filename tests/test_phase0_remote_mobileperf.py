@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 
 from core.exec import ProcessRunner
-from gui.dialogs.performance_launcher import PerformanceLauncherDialog
+from gui.features.performance import PerformancePage
 from gui.panels.remote_panel import RemotePanel
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
@@ -62,6 +62,7 @@ def test_remote_multi_device_start_requires_exactly_one_selection():
     panel._scrcpy_service = Mock()
     panel._scrcpy_service.resolve_executable.return_value = "C:/tools/scrcpy.exe"
     panel._set_running = Mock()
+    panel._update_action_states = Mock()
     panel._update_status = Mock()
     panel._scrcpy_config = Mock(return_value=Mock())
     panel._log = Mock()
@@ -83,6 +84,27 @@ def test_remote_multi_device_start_requires_exactly_one_selection():
         call.args[0] == "WARNING" and "exactly one" in call.args[1].lower()
         for call in panel._log.call_args_list
     )
+
+
+def test_remote_workspace_device_is_independent_from_batch_selection():
+    panel = _remote_panel(
+        active_device=None,
+        selected_devices=["batch-a", "batch-b"],
+        process_running=False,
+    )
+    panel._workspace_device_id = ""
+    panel._update_action_states = Mock()
+
+    assert RemotePanel.set_workspace_device(panel, "session-device") == (
+        "session-device"
+    )
+    assert panel.selected_devices == ["session-device"]
+
+    panel._active_device = "running-device"
+    assert RemotePanel.set_workspace_device(panel, "other-device") == (
+        "running-device"
+    )
+    assert panel.selected_devices == ["running-device"]
 
 
 def test_mobileperf_result_lookup_excludes_artifacts_that_predate_current_start(tmp_path):
@@ -136,14 +158,14 @@ def test_mobileperf_result_lookup_excludes_artifacts_that_predate_current_start(
         (None, "D:/results/current/summary.xlsx", "Warning", 99),
     ],
 )
-def test_performance_launcher_completion_state_requires_current_successful_report(
+def test_performance_page_completion_state_requires_current_successful_report(
     exit_code,
     report_path,
     expected_status,
     expected_progress,
 ):
     _app = QApplication.instance() or QApplication([])
-    dialog = PerformanceLauncherDialog(device_ip="device-1")
+    dialog = PerformancePage(device_ip="device-1")
     try:
         dialog._runner = Mock()
         dialog._runner.last_config = Mock()

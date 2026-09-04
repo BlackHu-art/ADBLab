@@ -1,14 +1,14 @@
-"""提供设备 Logcat 实时读取、筛选、高亮和导出对话框。"""
+"""提供设备 Logcat 实时读取、筛选、高亮和导出功能页。"""
 
 import uuid
 from collections import deque
 
-from PySide6.QtCore import Qt, QTimer, Slot
-from PySide6.QtWidgets import QDialog
+from PySide6.QtCore import QTimer, Signal, Slot
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
-from core.exec import CommandRunner  # noqa: F401  供测试通过本模块命名空间补丁。
 from gui.dialogs.lifecycle import safe_disconnect
 from gui.dialogs.live_logcat_form import LiveLogcatForm
 from gui.dialogs.live_logcat_lifecycle import LiveLogcatLifecycle
@@ -17,16 +17,20 @@ from gui.dialogs.live_logcat_worker import (
     CurrentPackageWorker,
     LogcatBatch,
     LogcatTermination,
-    LogcatTerminationKind,  # noqa: F401  供测试通过本模块命名空间导入。
     LogcatWorker,
 )
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 
 
-class LiveLogcatDialog(QDialog):
+class LiveLogcatPage(QWidget):
+    """嵌入 System 分区的实时日志页面，并持有一个稳定设备会话。"""
+
+    dispose_ready = Signal(object)
     MAX_BUFFER = 8000
     CLEANUP_RECHECK_MS = 100
+    status_badge: InfoBadge
+    status_bar: BodyLabel
 
     def __init__(
         self,
@@ -35,14 +39,15 @@ class LiveLogcatDialog(QDialog):
         task_supervisor: QtTaskSupervisor | None = None,
         log_service=None,
     ):
-        super().__init__(parent, Qt.WindowType.Window)
+        super().__init__(parent)
         self._form_controller = LiveLogcatForm(self)
         self._stream_controller = LiveLogcatStream(self)
         self._lifecycle_controller = LiveLogcatLifecycle(self)
         self.device_ip = device_ip
         self._task_supervisor = task_supervisor or QtTaskSupervisor.shared()
         self._log_service = log_service
-        self._supervisor_owner_id = f"live-logcat-dialog-{uuid.uuid4()}"
+        self._device_connected = bool(device_ip)
+        self._supervisor_owner_id = f"live-logcat-page-{uuid.uuid4()}"
         self._supervisor_task_id = None
         self.worker = None
         self._pkg_worker = None
@@ -53,7 +58,10 @@ class LiveLogcatDialog(QDialog):
         self._close_ready = False
         self._owner_cleanup_requested = False
         self._owner_cleanup_completed = False
+        self._application_cleanup_fallback = False
         self._logcat_stopping = False
+        self._view_active = False
+        self._dispose_emitted = False
         self._package_filter_revision = 0
         self._reflowing_filters = False
         self._line_flush_timer = QTimer(self)
@@ -72,30 +80,72 @@ class LiveLogcatDialog(QDialog):
         self.setWindowTitle(f"Live Logcat - {device_ip}")
         self._window_icon_name = "scroll.svg"
         self.setWindowIcon(get_themed_icon(self._window_icon_name))
-        self.setMinimumSize(640, 420)
-        self.resize(1000, 650)
-        self.setModal(False)
-        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        # 二级日志窗口不参与“最后窗口关闭即退出”的应用级判定。
-        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setMinimumSize(0, 0)
         self._init_ui()
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
         self._task_supervisor.task_stopped.connect(self._on_task_stopped)
         self._task_supervisor.owner_stopped.connect(self._on_owner_stopped)
+        self._task_supervisor.application_stopped.connect(
+            self._on_application_stopped
+        )
+
+    def activate(self, payload=None) -> None:
+        """恢复当前页面绘制；导航返回不会重复启动采集。"""
+
+        if self._closing:
+            return
+        self._view_active = True
+        if isinstance(payload, dict):
+            package = str(payload.get("package_name", "") or "").strip()
+            if package:
+                package_input = getattr(self, "pkg_input", None)
+                if package_input is not None:
+                    package_input.setText(package)
+                self._apply_package_filter(package)
+        if self._pending_visible_lines and not self._line_flush_timer.isActive():
+            self._line_flush_timer.start(0)
+        self.show()
+
+    def deactivate(self, _reason: str = "navigation") -> None:
+        """暂停批量绘制但继续消费日志，防止切页隐式停止设备进程。"""
+
+        self._view_active = False
+        self._line_flush_timer.stop()
+
+    def set_device_connected(self, connected: bool) -> None:
+        """反映固定会话设备的在线状态，不把页面静默切到其他设备。"""
+
+        self._device_connected = bool(connected and self.device_ip)
+        active = bool(self.worker is not None and self.worker.is_active())
+        self._set_running_actions(active, stopping=self._logcat_stopping)
+        self.status_badge.setText("Ready" if self._device_connected else "Device offline")
+        self.status_badge.setLevel(
+            InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
+        )
+        if not self._device_connected and not active:
+            self.status_bar.setText("Device offline; reconnect or choose another device")
+
+    def request_dispose(self, _reason: str = "user") -> bool:
+        """非阻塞停止日志会话；资源归零后由 ``dispose_ready`` 通知宿主。"""
+
+        if self._close_ready:
+            return True
+        self.close()
+        return self._close_ready
 
     def _debug_lifecycle(self, phase: str, **fields):
         """记录不包含设备标识和日志正文的窗口生命周期诊断。"""
         if self._log_service is None:
             return
         values = {
-            "dialog": type(self).__name__,
+            "page": type(self).__name__,
             "phase": phase,
             **fields,
         }
         details = " ".join(f"{name}={value}" for name, value in sorted(values.items()))
-        self._log_service.log("DEBUG", f"ui.secondary_window {details}")
+        self._log_service.log("DEBUG", f"ui.feature_session {details}")
 
     # ── 表单控制器委托 wrapper ─────────────────────────────────────────
 
@@ -321,6 +371,11 @@ class LiveLogcatDialog(QDialog):
             getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
         )._on_owner_stopped(owner_id, results)
 
+    def _on_application_stopped(self, results, residual):
+        return (
+            getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
+        )._on_application_stopped(results, residual)
+
     def _disconnect_worker(self, worker: LogcatWorker, *, keep_finished: bool = False):
         return (
             getattr(self, "_lifecycle_controller", None) or LiveLogcatLifecycle(self)
@@ -337,11 +392,12 @@ class LiveLogcatDialog(QDialog):
         )._disconnect_pkg_worker(worker, keep_finished=keep_finished)
 
     def closeEvent(self, event):
-        """先隐藏并清理后台资源，完成后再销毁日志窗口。"""
+        """先隐藏并清理后台资源，完成后再释放页面会话。"""
         if self._close_ready:
             self._debug_lifecycle("close_accepted")
             event.accept()
             super().closeEvent(event)
+            self._emit_dispose_ready()
             return
         if self._close_pending:
             self._debug_lifecycle("close_ignored", reason="cleanup_pending")
@@ -388,12 +444,26 @@ class LiveLogcatDialog(QDialog):
             )
             event.ignore()
             self.hide()
-            self._task_supervisor.stop_owner_async(
+            owner_stop_started = self._task_supervisor.stop_owner_async(
                 self._supervisor_owner_id,
                 deadline=6.0,
             )
+            if owner_stop_started is False:
+                self._application_cleanup_fallback = True
+                self._debug_lifecycle("waiting_for_application_stop")
             return
         self._close_ready = True
         self._debug_lifecycle("close_accepted", reason="no_active_resource")
         safe_disconnect(self._task_supervisor.owner_stopped, self._on_owner_stopped)
+        safe_disconnect(
+            self._task_supervisor.application_stopped,
+            self._on_application_stopped,
+        )
         super().closeEvent(event)
+        self._emit_dispose_ready()
+
+    def _emit_dispose_ready(self) -> None:
+        if self._dispose_emitted:
+            return
+        self._dispose_emitted = True
+        self.dispose_ready.emit(self.property("session_generation"))

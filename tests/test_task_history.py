@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
+from adblab.application.operations import OperationManager, OperationState
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 
 
@@ -68,7 +71,41 @@ def test_thread_safety_concurrent_records():
 
 
 def test_invalid_capacity_rejected():
-    import pytest
-
     with pytest.raises(ValueError):
         TaskHistoryStore(capacity=0)
+
+
+def test_terminal_snapshot_remains_readable_after_operation_deleted():
+    manager = OperationManager(id_factory=lambda: "op-1")
+    operation = manager.begin("install")
+    manager.mark_running(operation.operation_id)
+    terminal = manager.finish(operation.operation_id, OperationState.SUCCEEDED)
+    assert terminal is not None
+
+    assert manager.active_count == 0
+    store = TaskHistoryStore()
+    entry = store.record(terminal)
+
+    assert store.recent() == (entry,)
+    assert entry.task_id == operation.operation_id
+    assert entry.state == OperationState.SUCCEEDED.value
+    assert entry.success is True
+
+
+def test_record_completed_consumes_compatibility_signal():
+    store = TaskHistoryStore()
+
+    entry = store.record_completed("install", False, "boom")
+
+    assert entry.task_id == "install"
+    assert entry.state == OperationState.FAILED.value
+    assert entry.success is False
+
+
+def test_record_rejects_non_terminal_snapshot():
+    manager = OperationManager(id_factory=lambda: "op-1")
+    operation = manager.begin("install")
+
+    store = TaskHistoryStore()
+    with pytest.raises(ValueError):
+        store.record(operation)

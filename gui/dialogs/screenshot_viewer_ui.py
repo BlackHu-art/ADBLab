@@ -1,4 +1,4 @@
-"""提供截图查看器对话框的主题与界面构建控制器。"""
+"""提供截图页面的主题与界面构建控制器。"""
 
 from typing import cast
 
@@ -26,27 +26,24 @@ from qfluentwidgets import (
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotBottomBar, ScreenshotGraphicsView
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_focus_indicator, apply_label_role
-from gui.styles.theme import apply_dark_title_bar
+from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 
 
 class ScreenshotViewerUI:
-    """组合进 ScreenshotViewer 的主题与界面控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 ScreenshotPage 的主题与界面控制器。"""
 
     def __init__(self, frame):
         self._frame = frame
 
-    def _init_window(self):
-        from gui.dialogs import screenshot_viewer as _sv
-
-        self._frame.setWindowTitle("Screenshot Viewer")
-        self._frame.setWindowIcon(_sv.get_themed_icon(self._frame._window_icon_name))
+    def _init_page(self):
+        self._frame.setObjectName("screenshotPage")
         self._frame.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self._frame.setMinimumSize(760, 520)
-        self._frame.resize(1100, 760)
+        self._frame.setMinimumSize(0, 0)
+        self._frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def _init_shortcuts(self):
-        QShortcut(QKeySequence("Esc"), self._frame, self._frame.close)
+        QShortcut(QKeySequence("Esc"), self._frame, self._frame.back_requested.emit)
         QShortcut(QKeySequence("Ctrl+C"), self._frame, self._frame.copy_to_clipboard)
         QShortcut(QKeySequence("Ctrl+="), self._frame, self._frame.zoom_in)
         QShortcut(QKeySequence("Ctrl++"), self._frame, self._frame.zoom_in)
@@ -61,7 +58,6 @@ class ScreenshotViewerUI:
         return BaseStyles.color(key)
 
     def _apply_theme(self, _value=None):
-        apply_dark_title_bar(self._frame)
         ui_font = BaseStyles.font_for_role(FontRole.UI)
         small_font = BaseStyles.font_for_role(FontRole.UI_SMALL)
         mono_font = BaseStyles.font_for_role(FontRole.MONO)
@@ -69,7 +65,7 @@ class ScreenshotViewerUI:
         c = self._theme_color
         r = BaseStyles
 
-        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按已加载截图数量刷新。
+        # 页头卡片由 CardWidget 自绘制随主题切换，徽标按已加载截图数量刷新。
         if hasattr(self._frame, "header_card"):
             self._frame.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
             self._frame.dialog_subtitle.setFont(ui_font)
@@ -80,10 +76,6 @@ class ScreenshotViewerUI:
 
         self._frame.setStyleSheet(
             f"""
-            QDialog {{
-                background-color: {c("WINDOW_BG")};
-                color: {c("TEXT_PRIMARY")};
-            }}
             QFrame#canvasFrame {{
                 background-color: {c("INPUT_BG")};
                 border: 1px solid {c("BORDER_COLOR")};
@@ -173,7 +165,7 @@ class ScreenshotViewerUI:
         root.setSpacing(8)
 
         # ── 页头卡片：标题、副标题与截图数量状态徽标 ─────────────────────
-        # 视觉重设计：对话框内容顶部统一为 Fluent CardWidget 卡片页头。
+        # 页面内容顶部统一为 Fluent CardWidget 卡片页头。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
         self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
@@ -606,10 +598,8 @@ class ScreenshotViewerUI:
         self._frame._bottom_bar_reflow_timer.start(0)
 
     def _tool_button(self, icon_name: str, tooltip: str) -> TransparentToolButton:
-        from gui.dialogs import screenshot_viewer as _sv
-
         button = TransparentToolButton()
-        button.setIcon(_sv.get_themed_icon(icon_name))
+        button.setIcon(get_themed_icon(icon_name))
         button.setIconSize(QSize(14, 14))
         button.setFixedSize(28, 28)
         button.setToolTip(tooltip)
@@ -621,10 +611,7 @@ class ScreenshotViewerUI:
         return button
 
     def _refresh_button_icons(self):
-        from gui.dialogs import screenshot_viewer as _sv
-
-        self._frame.setWindowIcon(_sv.get_themed_icon(self._frame._window_icon_name))
         for button in getattr(self._frame, "_icon_buttons", []):
             icon_name = button.property("iconName")
             if icon_name:
-                button.setIcon(_sv.get_themed_icon(icon_name))
+                button.setIcon(get_themed_icon(icon_name))

@@ -1,4 +1,4 @@
-"""提供对话框信号断开、对象存活检查和 worker 清理辅助能力。"""
+"""提供 UI 信号断开、对象存活检查和 worker 清理辅助能力。"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QThread
+from PySide6.QtCore import QPoint, QRect, QSize, QThread
 from PySide6.QtWidgets import QWidget
 from shiboken6 import isValid
 
@@ -19,17 +19,6 @@ _retained_qthreads_lock = threading.Lock()
 _FIT_ORIGINAL_MINIMUM_PROPERTY = "_adblab_fit_original_minimum"
 _FIT_ORIGINAL_SIZE_PROPERTY = "_adblab_fit_original_size"
 _FIT_WAS_CLAMPED_PROPERTY = "_adblab_fit_was_clamped"
-
-
-def configure_independent_secondary_window(dialog: QWidget) -> None:
-    """将受代码托管的二级窗口配置为可独立切换的非模态顶层窗口。"""
-    if dialog.parentWidget() is not None:
-        # 保留窗口类型和装饰，只解除操作系统层面的 transient owner 关系。
-        dialog.setParent(None, dialog.windowFlags())
-    # 通过 Qt API 单独清除置顶位，避免枚举取反截断高位的关闭按钮标志。
-    dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, False)
-    dialog.setWindowModality(Qt.WindowModality.NonModal)
-    dialog.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
 
 
 def fit_secondary_window_to_owner_screen(

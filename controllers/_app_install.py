@@ -90,7 +90,10 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not self._require_devices(devices, "install"):
             return None
         apk_path, _ = QFileDialog.getOpenFileName(
-            None, "Select APK File", "", "APK Files (*.apk);;All Files (*)"
+            getattr(self, "window_owner", None),
+            "Select APK File",
+            "",
+            "APK Files (*.apk);;All Files (*)",
         )
         if not apk_path:
             self._emit_operation("install", False, "APK selection canceled")
@@ -105,7 +108,10 @@ class ADBAppInstallMixin(_ADBControllerBase):
         if not self._require_devices(devices, "batch_install"):
             return None
         apk_paths, _ = QFileDialog.getOpenFileNames(
-            None, "Select APK files to install", "", "APK Files (*.apk);;All Files (*)"
+            getattr(self, "window_owner", None),
+            "Select APK files to install",
+            "",
+            "APK Files (*.apk);;All Files (*)",
         )
         if not apk_paths:
             self._emit_operation("batch_install", False, "APK selection canceled")

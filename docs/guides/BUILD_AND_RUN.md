@@ -1,16 +1,15 @@
 # 构建与运行
 
-本页记录能从仓库配置验证的命令，以及带日期的历史执行记录；历史记录不替代后续工作树复验。
-所有命令默认在项目根目录执行。
+本页只记录当前可执行的安装、运行、检查和构建方式。所有命令默认在项目根目录执行。
 
 ## 环境要求
 
 | 项目 | 要求/状态 | 依据 |
 | --- | --- | --- |
 | Python | 3.11 为 README 与 CI 标准版本 | `README.md`、`Build-exe.yaml` |
-| 语法兼容目标 | Ruff/Black 配置为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
+| 语法兼容目标 | 静态检查与格式配置目标为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
-| GUI | PySide6 6.8.1.1 | `requirements.txt` |
+| GUI | PySide6；精确版本见依赖清单 | `requirements.txt` |
 | ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器已按平台门控（Windows 用内置 adb.exe、非 Windows 走 PATH） | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
@@ -37,7 +36,7 @@ Poetry、PDM 或 npm 构建入口。
 
 虚拟环境提示：若 venv 由 `uv venv`（未加 `--seed`）等工具创建，环境内可能没有 pip 模块，
 PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module named pip`。此时运行
-`.venv\Scripts\python.exe -m ensurepip --upgrade` 补种 pip 即可（已在 2026-08-19 实际执行验证）。
+`.venv\Scripts\python.exe -m ensurepip --upgrade` 补种 pip 即可。
 
 ## 配置
 
@@ -49,8 +48,6 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
-- 历史邮件服务（`core/mail/` 与 `mail.yaml`）已移除；Git 历史中曾跟踪的邮件配置仍需
-  仓库所有者轮换材料、停止跟踪并审查 Git 历史，不应复制或扩散其内容。
 
 ## 启动
 
@@ -67,7 +64,7 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 .\.venv\Scripts\python.exe main.py --mobileperf-worker --config <由 MobilePerfRunner 生成的配置路径>
 ```
 
-第二条是内部 worker 入口，正常用户应通过 Performance Launcher 启动，不应手写含真实设备/包信息的配置并提交到仓库。
+第二条是内部 worker 入口，正常用户应通过 Workspace 的 System/Performance 内嵌页启动，不应手写含真实设备/包信息的配置并提交到仓库。
 
 ## 测试与检查
 
@@ -83,11 +80,6 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 git diff --check
 ```
 
-2026-08-21 使用 Python 3.11.9 和 `requirements-dev.txt` 实际验证：961 tests collected；
-961 passed in 350.61s；packaging self-check 的 PySide6、MobilePerf、icon/resources、Windows
-内置 adb/scrcpy 和用户数据目录检查全部通过；Ruff 0 错误。验证环境已卸载 Pillow，证明当前
-源码、测试和 packaging self-check 不依赖它。
-
 `pytest --collect-only` 只用于发现和选择测试，不属于完整门禁：
 
 ```powershell
@@ -97,10 +89,7 @@ git diff --check
 `compileall` 与 Ruff、测试导入和 Pyright 的职责重复，还会生成 `__pycache__`，不属于默认门禁；
 只有排查明确的解释器编译问题时才对具体目标临时运行。`git diff --check` 应在本次修改全部完成后执行。
 
-Ruff 门禁配置位于 `ruff.toml`（行宽 100、py310 目标、E/F/W/UP/I 规则集）；
-`mobileperf/**` 的 E402/UP031 豁免已移除，当前仅保留 `tests/live_logcat_close_probe.py` 的 E402
-逐文件豁免，`mobileperf/extlib` 作为 vendored 源码整体排除。Ruff 配置已收敛到 `ruff.toml`，
-`pyproject.toml` 仅保留 `[tool.black]` 与 pytest/coverage 配置。门禁命令为
+Ruff 的规则、排除项和逐文件例外只以 `ruff.toml` 为准；门禁命令为
 `.\.venv\Scripts\python.exe -m ruff check .`。
 
 ## 本地 PyInstaller 构建
@@ -118,14 +107,9 @@ README 提供的 Windows spec 构建命令：
 - 收集 `resources/`、`icon.ico`、`scrcpy-win64/`、`mobileperf/`。
 - 收集全部 `mobileperf` 子模块。
 - 生成 windowed、onedir 的 `ADBLab`。
-- 邮件服务已移除，spec 不再涉及任何 `mail.yaml` 收集项。
 
 完整 PyInstaller 构建会创建 `build/` 和 `dist/`；仅修改源码或文档时可先运行 packaging
 self-check，修改 PyInstaller、资源收集或入口时必须额外验证完整产物。
-
-2026-08-21 依赖分层调整后，以 PyInstaller 6.22.2 完整执行 `ADBLab.spec` 构建并运行产物
-packaging self-check，均以退出码 0 完成；递归检查产物归档未发现 `PIL`/`Pillow` 条目。
-验证使用系统临时目录，完成后已清理，不在仓库保留 `build/` 或 `dist/`。
 
 ## CI/CD
 
@@ -151,7 +135,7 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 
 - `utils/app_metadata.py` 是版本号唯一事实来源。
 - `APP_VERSION` 仅在 dev 代码推送到 main 分支时递增一次（默认补丁 +1），本地与 dev 提交不修改版本号。
-- 主版本和次版本只按明确的发布计划调整；当前基线为 3.2.10。
+- 主版本和次版本只按明确的发布计划调整；当前值直接读取 `utils/app_metadata.py`。
 - 不允许把多次推送共用一个版本，也不允许只修改 README、工作流或发布标签中的派生版本。
 - 推送前应先比较上次推送时的版本，确认本次版本已递增；本地验证继续按增量策略选择，推送 main
   本身不触发本地全量测试。发布验收按完整门禁执行；CI Build 只执行静态检查、打包和产物自检。
@@ -167,8 +151,9 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 - 普通 ADB 失败：先运行 packaging self-check 确认 adb 路径，再观察主界面 LogPanel。
 - 设备扫描：检查 `continuous_device_scan` 和 `device_scan_interval_ms`；扫描会在有活跃 CommandRunner 命令时跳过一次轮询。
 - Remote：观察预检 warning、scrcpy stderr/FPS 状态；Windows 确认内置 scrcpy 完整，非 Windows 确认 PATH。
-- MobilePerf：使用 Performance Launcher 的日志与结果目录；停止会先生成 stop 文件并最多等待报告，再强制停止。
-- 高并发/关闭问题：重点检查对话框 `closeEvent`、`ProcessRunner` 全局进程表、QThread 是否仍运行。
+- MobilePerf：使用 System/Performance 内嵌页的日志与结果目录；停止会先生成 stop 文件并最多等待报告，再强制停止。
+- 高并发/关闭问题：重点检查功能页 `request_dispose()`、Workspace 会话 registry、TaskSupervisor、
+  `ProcessRunner` 全局进程表和 QThread 是否仍运行；瞬态表单再单独检查 `closeEvent`。
 
 ## 常见问题
 
@@ -178,5 +163,3 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 | APK 信息解析失败 | `aapt` 不在 PATH 或 APK 不存在 |
 | bugreport 转换失败 | Java 或 JAR 不可用；保留原始输出再排查 |
 | 非 Windows Remote 无法启动 | CI 产物不内置 scrcpy，需系统提供 |
-| Remote 设置重启后恢复默认 | 已通过 `SCRCPY_SETTING_DEFAULTS` 白名单修复；旧 JSON 中同名键无需迁移即可载入 |
-| 按旧文档找不到 Performance 目录 | 旧性能模块已删除，README 已校正；当前实现是 `performance_launcher.py` + `services/mobileperf_runner.py` + `mobileperf/` |

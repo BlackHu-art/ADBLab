@@ -1,20 +1,18 @@
-"""提供文件浏览器对话框的文件操作与传输控制器。"""
+"""提供文件浏览器页的文件操作与传输控制器。"""
 
 import base64
 import os
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
-    QDialog,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
-    QMessageBox,
     QVBoxLayout,
 )
 from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
+from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
@@ -23,7 +21,7 @@ from services import file_explorer as explorer_service
 
 
 class FileExplorerOps:
-    """组合进 FileExplorerDialog 的文件操作控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 FileExplorerPage 的文件操作控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -57,12 +55,10 @@ class FileExplorerOps:
 
     def _on_save_result(self, output, error, name):
         if error:
-            QMessageBox.critical(
+            FluentMessageBox.critical(
                 self._frame,
                 "Error",
                 f"Save failed: {output}",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
         else:
             self._frame.status_bar.setText(f"Saved {name}")
@@ -107,12 +103,10 @@ class FileExplorerOps:
 
     def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
         if e:
-            QMessageBox.critical(
+            FluentMessageBox.critical(
                 self._frame,
                 "Error",
                 o,
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             self._frame.status_bar.setText(f"Failed: {o}")
             return
@@ -182,12 +176,10 @@ class FileExplorerOps:
 
     def _on_transfer_done(self, o, e, msg):
         if e:
-            QMessageBox.critical(
+            FluentMessageBox.critical(
                 self._frame,
                 "Error",
                 o,
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             self._frame.status_bar.setText(f"Failed: {o}")
             return
@@ -196,12 +188,10 @@ class FileExplorerOps:
 
     def _on_file_op_done(self, output: str, error: bool, success_msg: str):
         if error:
-            QMessageBox.critical(
+            FluentMessageBox.critical(
                 self._frame,
                 "Error",
                 output,
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             self._frame.status_bar.setText(f"Failed: {output}")
             return
@@ -211,16 +201,14 @@ class FileExplorerOps:
     # ── 文件操作 ────────────────────────────────────────────────────────
 
     def _mkdir(self):
-        name, ok = QInputDialog.getText(self._frame, "New Folder", "Name:")
+        name, ok = FluentInputDialog.getText(self._frame, "New Folder", "Name:")
         if not ok or not name or "/" in name:
             return
         if not self._frame._safe_name(name):
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Invalid Name",
                 "Folder name contains invalid characters",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         full = self._frame._dpath(self._frame.current_path, name)
@@ -233,16 +221,14 @@ class FileExplorerOps:
         w.start()
 
     def _touch(self):
-        name, ok = QInputDialog.getText(self._frame, "New File", "Name:")
+        name, ok = FluentInputDialog.getText(self._frame, "New File", "Name:")
         if not ok or not name or "/" in name:
             return
         if not self._frame._safe_name(name):
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Invalid Name",
                 "Filename contains invalid characters",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         full = self._frame._dpath(self._frame.current_path, name)
@@ -255,16 +241,14 @@ class FileExplorerOps:
         w.start()
 
     def _rename_item(self, name: str):
-        new, ok = QInputDialog.getText(self._frame, "Rename", "New name:", text=name)
+        new, ok = FluentInputDialog.getText(self._frame, "Rename", "New name:", text=name)
         if not ok or not new or new == name:
             return
         if not self._frame._safe_name(new):
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Invalid Name",
                 "New name contains invalid characters",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         old = self._frame._dpath(self._frame.current_path, name)
@@ -363,7 +347,7 @@ class FileExplorerOps:
 
     def _show_chmod(self, name: str, is_dir: bool):
         full = self._frame._dpath(self._frame.current_path, name)
-        dlg = QDialog(self._frame)
+        dlg = FluentDialog(self._frame)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dlg.setWindowTitle(f"Permissions - {name}")
         dlg.setModal(True)
@@ -411,6 +395,7 @@ class FileExplorerOps:
         for b in (revert_btn, apply_btn, close_btn):
             btn_row.addWidget(b)
         lo.addLayout(btn_row)
+        dlg.finalize_fluent_layout()
         close_btn.clicked.connect(dlg.reject)
 
         def to_mode():
@@ -434,23 +419,19 @@ class FileExplorerOps:
         def _on_stat(o, e):
             if e:
                 preview.setText("Unable to read current permissions")
-                QMessageBox.critical(
+                FluentMessageBox.critical(
                     dlg,
                     "Permissions Error",
                     o or "Permission read failed",
-                    QMessageBox.StandardButton.Ok,
-                    QMessageBox.StandardButton.NoButton,
                 )
                 return
             mode = explorer_service.parse_mode(o)
             if mode is None:
                 preview.setText("Unable to read current permissions")
-                QMessageBox.critical(
+                FluentMessageBox.critical(
                     dlg,
                     "Permissions Error",
                     "The device returned an invalid permission mode.",
-                    QMessageBox.StandardButton.Ok,
-                    QMessageBox.StandardButton.NoButton,
                 )
                 return
             orig[0] = mode
@@ -483,12 +464,10 @@ class FileExplorerOps:
                     apply_btn.setEnabled(True)
                     revert_btn.setEnabled(True)
                     preview.setText(f"chmod failed for {full}")
-                    QMessageBox.critical(
+                    FluentMessageBox.critical(
                         dlg,
                         "Permissions Error",
                         output or "Permission update failed",
-                        QMessageBox.StandardButton.Ok,
-                        QMessageBox.StandardButton.NoButton,
                     )
                     return
                 self._frame.status_bar.setText(f"Permissions updated for {name}")
@@ -504,6 +483,10 @@ class FileExplorerOps:
             chmod_worker.start()
 
         apply_btn.clicked.connect(_apply_permissions)
-        dlg.resize(420, 240)
-        fit_secondary_window_to_owner_screen(dlg, self._frame)
+        dlg.resize(420, 240 + dlg.TITLE_BAR_HEIGHT)
+        fit_secondary_window_to_owner_screen(
+            dlg,
+            self._frame,
+            minimum_floor=QSize(420, 240 + dlg.TITLE_BAR_HEIGHT),
+        )
         dlg.exec()

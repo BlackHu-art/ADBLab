@@ -16,14 +16,16 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | FontConfig | AppSettings 的 `font_family/ui_font_size/log_font_size`、Qt 系统字体数据库 | 字体族可用性解析、字号限制、角色映射 | TypographyManager、QApplication、字体变更信号 | 进程内不可变快照；设置变化时整体替换 |
 | 主窗口布局状态 | AppSettings、屏幕可用范围、窗口事件 | 尺寸限制、350ms 防抖 | MainFrame、SettingsPage、响应式 Panels、AppSettings | 普通窗口会话内实时变化；尺寸跨会话 |
 | DeviceStore 字典 | 旧 resources YAML、ADB 属性 | 锁内 upsert/快照、临时文件原子替换 | 用户配置 `connected_devices.yaml` | 跨会话 |
-| GUI 操作状态 | 表单、选中设备、当前导航页 | Controller/Dialog 编排 | 内存、Qt widgets/signals | 窗口/操作生命周期 |
+| Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
+| GUI 操作状态 | 表单、选中设备、当前导航页 | Controller/Workspace 功能页编排 | 内存、Qt widgets/signals | 页面会话/操作生命周期 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
-| 截图/录屏 | 设备 screencap/screenrecord | pull、PNG 校验、文件命名 | 用户保存目录、ScreenshotViewer | 文件持续存在直到用户删除 |
+| 截图/录屏 | 设备 screencap/screenrecord | pull、PNG 校验、文件命名；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 文件持续存在直到用户删除；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
 | Remote 状态 | UI scrcpy 参数、预检、设备尺寸 | 生成 launch plan、FPS 解析、坐标映射 | scrcpy 进程、状态标签、尺寸 TTL 缓存 | Remote 会话 |
-| MobilePerf 配置 | Performance 对话框 | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
+| MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
+| 任务历史 | MainFrame 当前接收的兼容 `operation_completed` 信号 | `TaskHistoryStore.record_completed` 转换消息并按容量保留最新项；store 也提供终态快照写入接口，但 MainFrame 尚未订阅该来源 | Tasks 页面内存列表 | 仅进程内有界保留；应用重启后清空 |
 | 安装批次状态 | Apps 面板批量安装请求 | `InstallBatchUseCase` 的 start/complete/fail/cancel/retry 状态机按 operation/unit 收口 | 内存 registry（`OperationManager`）、Qt signals、日志 | 批次生命周期；终态原子移除 |
 | 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时做版本化存在性检查/覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
 
@@ -33,14 +35,14 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 flowchart LR
     Input["用户输入 / Qt 事件"] --> Validate["UI 或 utils 参数校验"]
     Validate --> Signal["Qt Signal"]
-    Signal --> Controller["Controller / Dialog 编排"]
-    Controller --> Model["Model / Service / Worker"]
+    Signal --> Orchestrator["Controller / Workspace 功能页编排"]
+    Orchestrator --> Model["Model / Service / Worker"]
     Model --> Exec["CommandRunner / ProcessRunner / ADBBridge"]
     Exec --> Device["Android 设备或外部工具"]
     Device --> Raw["stdout / stderr / 文件 / 进程状态"]
     Raw --> Parse["解析与 CommandResult 归一化"]
     Parse --> State["批次状态 / 内存缓存 / Qt signal"]
-    State --> UI["日志、状态、列表、对话框"]
+    State --> UI["日志、状态、列表、内嵌功能页"]
     Parse --> Files["JSON / YAML / 截图 / 视频 / 报告"]
 ```
 
@@ -69,14 +71,37 @@ sequenceDiagram
     Note over C,UI: 拓扑 generation 丢弃旧元数据回调
 ```
 
-持续扫描和手动/同步刷新共享同一列表语义：失败只发出 refresh 失败及 unavailable，不调用
-`_process_device_list()`，也不发送空的 `devices_updated`，因此 UI 保留最后一次成功列表。MainFrame
-同时调用 `_ScanThread.invalidate_snapshot()`；下一次成功轮询即使设备集合与故障前相同也会重发，
-由同一成功快照恢复 ready/empty，避免状态永久停在 unavailable。
+## Workspace 功能会话状态流
 
-Controller 对去重后的设备 tuple 维护 `_device_topology_generation`。只有拓扑实际变化才递增代次；
-后台 `get_devices_basic_info()` 可能耗时数秒，任务在写入 DeviceStore 前和二次发送
-`devices_updated` 前都校验 generation 与拓扑，已离线设备的慢结果不能污染新快照。
+```mermaid
+flowchart TD
+    Route["WorkspaceRoute"] --> Host["WorkspaceFeatureHost"]
+    Host --> NeedDevice{"功能是否需要设备"}
+    NeedDevice -->|"需要但未选择"| Empty["无设备空态并保存 pending route"]
+    Empty --> Select["进入 Devices 选择设备"]
+    Select --> Route
+    NeedDevice -->|"无需或已有设备"| Key["FeatureSessionKey<br/>feature + device + generation"]
+    Key --> Registry["FeatureSessionRegistry get_or_create"]
+    Registry --> Active["activate；显示同一会话"]
+    Active --> Navigate["离开分区/顶层导航"]
+    Navigate --> Inactive["deactivate；保留页面和后台任务"]
+    Inactive --> Queue["后台页暂存目标 route"]
+    Queue --> Atomic["activate_route 原子切换"]
+    Atomic --> Active
+    Active --> Offline["设备离线：保留缓存并禁用新设备操作"]
+    Active --> Close["用户关闭会话"]
+    Close --> Dispose["request_dispose"]
+    Dispose -->|"资源仍在退出"| Barrier["关闭屏障；禁止重激活旧代次"]
+    Dispose -->|"已归零"| Remove["移除页面并递增 generation"]
+    Barrier --> Remove
+```
+
+截图是特殊的无设备功能会话：批次完成信号先通过 `WorkspaceFeatureHost.update_feature()` 后台追加
+到 ScreenshotPage；如果用户当前不在截图页，MainFrame 只显示带“查看结果”动作的 InfoBar，不
+切换顶层导航、当前分区或尚待恢复的设备路由。
+
+深层功能页将当前内容的最小尺寸交给 `WorkspaceFeatureHost`；宿主在短屏上扩展当前页面并
+提供滚动，而不是压缩控件。隐藏会话不参与当前滚动尺寸计算。
 
 设备标识可能是 USB serial 或网络地址，属于潜在敏感设备信息；知识库和日志审计不应复制实际值。
 
@@ -142,60 +167,14 @@ JSON、YAML 和普通文件持久化，下表是等价的存储地图。
 | 存储 | 类型/位置 | 数据结构 | 主要读写入口 | 一致性机制 | 风险 |
 | --- | --- | --- | --- | --- | --- |
 | 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；受支持版本的未知键加载时剔除并记录 WARNING；未来版本在加载时不立即改写，未知字段经 `_future_extra` 在保存时合并回写 |
-| 旧应用设置 | `resources/app_settings.json` | 中性默认种子（`save_directory` 为空、无旧像素值、monkey 参数与代码默认一致） | AppSettings 首次迁移 | 只在用户文件不存在时迁移；迁移结果立即写入用户目录 | 种子已清理本机路径与过期值，可移植性无风险 |
+| 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；不含本机保存路径，但仍带字体、主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
 | 设备元数据 | YAML；用户配置目录 `connected_devices.yaml` | device id → 属性字典 | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 设备标识属敏感元数据；无 schema/version |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 已清空历史设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 历史真实设备标识已从仓库移除，合规风险解除 |
-| App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerDialog._create_preset/_load_preset` | 直接 open/json dump | 无 schema、编码未显式指定、异常处理不足 |
+| App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
 | MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
-| 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、Dialogs | 单文件/目录操作 | 无统一配额、保留或访问控制 |
+| 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
 | 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层文件存在性检查/覆盖复制，不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
-
-### 逻辑数据关系
-
-这不是数据库 ER 图，而是当前文件型数据的逻辑关系：
-
-```mermaid
-erDiagram
-    APP_SETTINGS ||--o{ UI_SESSION : "配置"
-    DEVICE_STORE ||--o{ DEVICE : "记录"
-    DEVICE ||--o{ APP_OPERATION : "执行"
-    DEVICE ||--o{ REMOTE_SESSION : "投屏"
-    DEVICE ||--o{ PERFORMANCE_RUN : "采集"
-    PERFORMANCE_RUN ||--o{ METRIC_FILE : "生成"
-    PERFORMANCE_RUN ||--o| REPORT_FILE : "汇总"
-    DEVICE ||--o{ MEDIA_FILE : "截图/录屏/诊断"
-    APP_PRESET }o--o{ APP_PACKAGE : "选择"
-
-    APP_SETTINGS {
-        string key
-        any value
-    }
-    DEVICE_STORE {
-        string device_id
-        object properties
-    }
-    DEVICE {
-        string serial_or_network_target
-        string state
-    }
-    PERFORMANCE_RUN {
-        string package
-        datetime start_time
-        string result_path
-    }
-    METRIC_FILE {
-        string metric_type
-        string csv_path
-    }
-    REPORT_FILE {
-        string xlsx_path
-    }
-    MEDIA_FILE {
-        string type
-        string local_path
-    }
-```
 
 ### 设置字段
 
@@ -203,7 +182,7 @@ erDiagram
 
 | 分类 | 配置键 | 使用位置 |
 | --- | --- | --- |
-| 外观 | `theme`、`accent_color`、`mica_enabled`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、qfluentwidgets、MainFrame、SettingsPage、日志/对话框；主题为 System/Light/Dark，强调色规范化为 `#RRGGBB`，Mica 为布尔值；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
+| 外观 | `theme`、`accent_color`、`mica_enabled`、`font_family`、`ui_font_size`、`log_font_size` | BaseStyles、qfluentwidgets、MainFrame、SettingsPage、日志/功能页/瞬态对话框；主题为 System/Light/Dark，强调色规范化为 `#RRGGBB`，Mica 为布尔值；空字体族表示系统默认，UI 字号限制 8–22，日志字号限制 7–16 |
 | 窗口 | `window_width`、`window_height`、`always_on_top`；旧分栏键兼容读取 | MainFrame、SettingsPage；默认 1250×700、最小 860×500 |
 | 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsPage |
 | 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | Log UI、`core.perf_trace` helpers/Controller |
@@ -222,7 +201,8 @@ Remote 行来自代码交叉检查：`core/settings_manager.py` 的 `SCRCPY_SETT
 - SettingsPage 修改字体族、UI 字号和日志字号时通过一次 `set_many()` 更新；随后
   `BaseStyles.reload_from_settings()` 读取同一份已校验快照并发送字体信号。
 - SettingsPage 的主题、强调色和 Mica 分别即时写入设置；主题切换同步 qfluentwidgets、应用
-  QPalette、FluentWindow 标题栏/导航壳层和已经创建但暂时隐藏的工作台表面，避免 Mica 透明层或
+  QPalette、FluentWindow 标题栏/导航壳层、已创建但暂时隐藏的 Workspace 功能页，以及瞬态
+  FluentDialog/消息提示，避免 Mica 透明层或
   首次进入分区时露出旧主题背景。窗口首次显示后会在 qfluentwidgets 重设 Mica 的下一事件循环
   再同步一次壳层主题；强调色变化会重建项目补充的焦点环和危险按钮样式。选择“跟随系统”后还
   监听 Qt 系统配色变化并即时重新解析主题。
@@ -242,41 +222,11 @@ Remote 行来自代码交叉检查：`core/settings_manager.py` 的 `SCRCPY_SETT
 存储相关的风险条目与治理建议集中在 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)（配置
 schema/version、动态设置键白名单、结果文件保留期与敏感数据等），本页不复制风险清单。
 
-## 字体与窗口布局状态流
-
-```mermaid
-flowchart TD
-    FontUI["Settings 字体族/UI 字号"] -->|"一次 update"| Settings["AppSettings"]
-    LogUI["Settings 日志字号"] -->|"update"| Settings
-    Settings --> Reload["BaseStyles.reload_from_settings"]
-    Reload --> Config["已校验的不可变 FontConfig"]
-    Config --> Typography["TypographyManager.apply"]
-    Typography --> AppFont["QApplication 默认 UI 字体"]
-    Typography --> UIChanged["ui_font_changed"]
-    Typography --> LogChanged["log_font_changed"]
-    Typography --> AllChanged["fonts_changed"]
-
-    StoredSize["启动设置/重置尺寸"] --> SizeGuard["normalize_window_size"]
-    SizeGuard --> WindowEvent["普通窗口 resizeEvent"]
-    WindowEvent -->|"350ms 防抖"| WindowKeys["window_width / window_height"]
-    ViewportEvent["首页/工作台分区视口 Resize"] --> WidthForward["SidePanel / Panel reflow"]
-    WidthForward --> Reflow["移动既有控件的响应式重排"]
-```
-
-- `font_family` 的空字符串表示跟随 Qt 系统界面字体；指定字体未安装时也回退到系统字体。
-  `FontConfig` 将 UI、UI_SMALL、MONO、LOG、TITLE 五类角色投影为 QFont。只有 UI 配置变化发送
-  `ui_font_changed`，只有日志/等宽配置变化发送 `log_font_changed`，任一变化再发送 `fonts_changed`；
-  主题变化走独立 `theme_changed`。
-- MainFrame 启动时将持久化尺寸限制到最小 860×500；屏幕可用范围不小于该最小值时再裁剪到
-  可用范围内，最小尺寸优先。最大化、最小化和全屏尺寸不进入普通尺寸保存路径。
-- SettingsPage 的恢复动作通过 `restore_default_window_size()` 恢复普通窗口尺寸，并同步所有
-  SettingCard。首页和工作台分区的响应式重排只改变布局位置，不复制控件、业务状态或信号连接。
-
 ## MobilePerf 数据生命周期
 
 ```mermaid
 flowchart TD
-    Form["PerformanceLauncherDialog 表单"] --> Config["MobilePerfRunConfig"]
+    Form["PerformancePage 表单"] --> Config["MobilePerfRunConfig"]
     Config --> Temp["临时 config.conf"]
     Temp --> Worker["独立 Python/ADBLab worker 进程"]
     Worker --> Monitors["CPU / Mem / Traffic / FPS / FD / Threads / Monkey / Logcat"]
@@ -294,7 +244,7 @@ flowchart TD
 
 ## 数据保留与删除
 
-- UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各对话框另有显示缓冲上限，缓冲溢出时
+- UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各功能页另有显示缓冲上限，缓冲溢出时
   会丢弃最旧行并累计丢弃计数（`LogService.dropped_count` / LogPanel `_pending_dropped_total`）。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。

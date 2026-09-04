@@ -14,7 +14,7 @@ from adblab.application.install_batch import InstallBatchUseCase, InstallRequest
 from adblab.application.operations import OperationManager
 from controllers._app import ADBAppMixin
 from core.exec import CommandResult
-from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
+from gui.features.app_manager import AppDetailsPage, AppManagerPage
 from gui.styles import BaseStyles
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
@@ -59,17 +59,17 @@ def _app_manager_for_unit_tests():
     dialog.icon_list.clear = Mock()
     dialog.icon_list.addItem = Mock()
     dialog._sync_selection_views = Mock()
-    dialog._gen_icon = AppManagerDialog._gen_icon
-    dialog._on_detail = lambda *args: AppManagerDialog._on_detail(dialog, *args)
+    dialog._gen_icon = AppManagerPage._gen_icon
+    dialog._on_detail = lambda *args: AppManagerPage._on_detail(dialog, *args)
     dialog._on_detail_worker_finished = lambda packages=None: (
-        AppManagerDialog._on_detail_worker_finished(dialog, packages)
+        AppManagerPage._on_detail_worker_finished(dialog, packages)
     )
-    dialog._has_unloaded_details = lambda: AppManagerDialog._has_unloaded_details(dialog)
+    dialog._has_unloaded_details = lambda: AppManagerPage._has_unloaded_details(dialog)
     dialog._next_unloaded_detail_packages = lambda limit=30: (
-        AppManagerDialog._next_unloaded_detail_packages(dialog, limit)
+        AppManagerPage._next_unloaded_detail_packages(dialog, limit)
     )
     dialog._schedule_visible_detail_load = lambda delay_ms=120: (
-        AppManagerDialog._schedule_visible_detail_load(dialog, delay_ms)
+        AppManagerPage._schedule_visible_detail_load(dialog, delay_ms)
     )
     return dialog
 
@@ -78,7 +78,7 @@ def test_app_manager_populate_schedules_visible_details_only():
     dialog = _app_manager_for_unit_tests()
 
     with patch("gui.dialogs.app_manager.AppManagerWorker") as worker:
-        AppManagerDialog._populate(dialog, [("Demo", "com.example.demo", "Enabled", "User")])
+        AppManagerPage._populate(dialog, [("Demo", "com.example.demo", "Enabled", "User")])
 
     worker.assert_not_called()
     dialog._detail_timer.start.assert_called()
@@ -99,7 +99,7 @@ def test_app_manager_detail_update_uses_cached_indexes():
         (2, 3): version_item,
     }.get((row, col))
 
-    AppManagerDialog._on_detail(dialog, "com.example.demo", "Demo", "1.0 (1)", "2026-05-31")
+    AppManagerPage._on_detail(dialog, "com.example.demo", "Demo", "1.0 (1)", "2026-05-31")
 
     assert dialog._detail_cache["com.example.demo"] == ("Demo", "1.0 (1)", "2026-05-31")
     icon_item.setToolTip.assert_called_once_with("Demo\ncom.example.demo\n1.0 (1)")
@@ -114,7 +114,7 @@ def test_app_manager_load_visible_details_starts_small_worker_batch():
 
     with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
         worker = worker_cls.return_value
-        AppManagerDialog._load_visible_details(dialog)
+        AppManagerPage._load_visible_details(dialog)
 
     worker_cls.assert_called_once_with(
         "device-1",
@@ -169,7 +169,7 @@ def test_app_manager_detail_worker_continues_after_first_visible_page():
     dialog._detail_cache = {"com.example.one": ("One", "1.0", "")}
     dialog._pending_detail_packages = {"com.example.two"}
 
-    AppManagerDialog._on_detail_worker_finished(dialog, ["com.example.two"])
+    AppManagerPage._on_detail_worker_finished(dialog, ["com.example.two"])
 
     dialog._detail_timer.start.assert_called()
     dialog.status_bar.setText.assert_not_called()
@@ -185,7 +185,7 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
     dialog._visible_detail_packages = Mock(return_value=[])
 
     with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
-        AppManagerDialog._load_visible_details(dialog)
+        AppManagerPage._load_visible_details(dialog)
 
     worker_cls.assert_called_once_with(
         "device-1",
@@ -195,24 +195,19 @@ def test_app_manager_load_visible_details_falls_back_to_next_unloaded_batch():
     assert dialog._pending_detail_packages == {"com.example.two"}
 
 
-def test_app_details_dialog_close_disconnects_theme_handler():
+def test_app_details_page_dispose_disconnects_theme_handler():
     _app = QApplication.instance() or QApplication([])
-    with patch.object(AppDetailsDialog, "_load_data"):
-        dialog = AppDetailsDialog(None, "device-1", "com.example.demo")
+    page = AppDetailsPage(None, "device-1", "com.example.demo")
 
-    with (
-        patch("gui.dialogs.app_manager.safe_disconnect") as disconnect,
-        patch("gui.dialogs.app_manager.wait_for_threads_later") as wait_threads,
-    ):
-        dialog.close()
+    with patch("gui.dialogs.app_manager_details.safe_disconnect") as disconnect:
+        assert page.request_dispose("test") is True
 
-    assert dialog._closing is True
+    assert page._closing is True
     assert disconnect.call_args_list == [
-        call(BaseStyles.theme_changed, dialog._apply_theme),
-        call(BaseStyles.fonts_changed, dialog._apply_theme),
+        call(BaseStyles.theme_changed, page._apply_theme),
+        call(BaseStyles.fonts_changed, page._apply_theme),
     ]
-    wait_threads.assert_called_once_with([], 5000)
-    dialog.deleteLater()
+    page.deleteLater()
 
 
 def test_extract_package_name_ignores_log_prefix_and_returns_real_package():
@@ -406,15 +401,21 @@ def test_install_apk_uses_run_helper_and_preserves_result_fields():
 
 
 def test_parse_apk_info_accepts_existing_apk_case_insensitively():
-    controller = Mock()
+    owner = object()
+    controller = Mock(spec=["app_model", "_emit_operation", "window_owner"])
     controller.app_model = Mock()
+    controller.window_owner = owner
 
     with (
-        patch("controllers._app.QFileDialog.getOpenFileName", return_value=("C:/tmp/DEMO.APK", "")),
+        patch(
+            "controllers._app.QFileDialog.getOpenFileName",
+            return_value=("C:/tmp/DEMO.APK", ""),
+        ) as select_apk,
         patch("controllers._app.os.path.isfile", return_value=True),
     ):
         ADBAppMixin.parse_apk_info(controller)
 
+    assert select_apk.call_args.args[0] is owner
     controller.app_model.parse_apk_info_async.assert_called_once_with("C:/tmp/DEMO.APK")
     assert controller._emit_operation.call_args.args[1] is True
 

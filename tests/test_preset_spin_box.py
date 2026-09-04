@@ -253,6 +253,7 @@ def test_preset_button_is_keyboard_reachable_and_action_commits_once(qt_applicat
 
     assert field.value() == 10
     assert value_spy.count() == 1
+    assert button.text() == ""
     assert button.focusPolicy() & Qt.FocusPolicy.TabFocus
     assert button.accessibleName().strip()
     assert not button.icon().isNull()

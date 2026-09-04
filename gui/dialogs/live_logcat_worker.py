@@ -69,7 +69,7 @@ class LogcatWorker(QThread):
     status_changed = Signal(str)
     terminated = Signal(object)
 
-    # 对话框连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
+    # 页面连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
     _dialog_lines_handler: Callable[..., Any] | None
     _dialog_dropped_handler: Callable[..., Any] | None
     _dialog_status_handler: Callable[..., Any] | None
@@ -538,7 +538,7 @@ class CurrentPackageWorker(QThread):
     package_ready = Signal(str)
     status_changed = Signal(str)
 
-    # 对话框连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
+    # 页面连接的回调句柄，由 LiveLogcatStream 写入，供断开时安全解绑。
     _dialog_finished_handler: Callable[..., Any] | None
     _supervisor_task_id: str | None
     _package_filter_revision: int

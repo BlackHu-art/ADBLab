@@ -12,81 +12,55 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 `main` → `gui` → `controllers` → `models` → `core/utils` → 操作系统与设备。
 
-复杂对话框是例外：`gui/dialogs` 和 `gui/panels/remote_panel.py` 会直接依赖 `models` service/worker。`core` 仅 `log_service.py` 依赖 Qt（设置层错误日志经 `set_error_sink` 注入，ADR-0003 Phase 3）；`CommandRunner`/`ProcessRunner` 执行边界已迁入 `core/exec.py`（ADR-0005），旧 `models/base/*runner*` 路径已删除，`core` 不再反向依赖 `models`。
-
-```mermaid
-flowchart TD
-    Main["main.py"] --> GUI["gui/main_frame.py"]
-    GUI --> Panels["gui/panels"]
-    GUI --> Dialogs["gui/dialogs"]
-    GUI --> Controllers["controllers"]
-    Controllers --> ADBModels["models/adb_*.py"]
-    Controllers --> Store["models/device_store.py"]
-    Controllers --> UseCases["adblab/application<br/>operations / install_batch"]
-    Panels --> Remote["services/remote"]
-    Dialogs --> AppWorker["models/app_manager_worker.py"]
-    Dialogs --> FileWorker["models/file_explorer_worker.py"]
-    Dialogs --> MobileAdapter["services/mobileperf_runner.py"]
-    ADBModels --> Exec["core/exec.py"]
-    Remote --> Exec
-    FileWorker --> Exec
-    ADBModels --> Bridge["core/adb_bridge.py"]
-    GUI --> Infra["core/settings_manager.py<br/>core/log_service.py"]
-    Controllers --> Infra
-    MobileAdapter --> MobileCore["mobileperf/android"]
-    Exec --> Utils["utils/adb_resolver.py<br/>utils/runtime_tools.py"]
-    MobileCore --> MobileADB["mobileperf/android/tools/androiddevice.py"]
-    MobileADB --> Utils
-```
+复杂功能页是例外：`gui/features` 的页面实现和 `gui/panels/remote_panel.py` 会直接依赖 `models`
+service/worker。部分页面组合控制器仍位于 `gui/dialogs/*.py`，但它们由 Workspace 作为 QWidget
+承载，不代表独立窗口边界。`core` 仅 `log_service.py` 依赖 Qt；设置层错误日志经
+`set_error_sink` 注入。`CommandRunner`/`ProcessRunner` 位于 `core/exec.py`，`core` 不反向依赖
+`models`。
 
 ## 主要内部模块依赖
 
 | 上游 | 下游 | 用途 | 方向约束/说明 |
 | --- | --- | --- | --- |
 | `main.py` | `gui.main_frame`、`core.settings_manager` | GUI 组合根 | 启动层依赖应用层 |
-| `gui/main_frame.py` | `controllers`、`gui/panels`、`gui/dialogs` | UI 接线和生命周期 | MainFrame 是最高耦合热点 |
+| `gui/main_frame.py` | `controllers`、`gui/panels`、`gui/pages`、`gui/features` | UI 接线、深层路由和会话生命周期 | MainFrame 是最高耦合热点 |
+| `gui/pages/workspace_features.py`、`gui/features/base.py` | `gui/features`、TaskSupervisor | 懒创建、复用、停用和释放按设备功能会话 | 页面不能绕过 registry 自行成为长期顶层窗口 |
 | `controllers/_base.py` | 四个 ADB model、DeviceStore、`adblab.application`（OperationManager/InstallBatchUseCase） | 命令分派和结果聚合 | Controller 不应反向被 model 导入 |
 | `models/adb_*.py` | `core.exec`、`core.adb_bridge` | 执行 ADB 与长进程 | 常规短命令走 CommandRunner，受控长进程走 ProcessRunner |
-| `gui/dialogs/app_manager.py` | `models/app_manager_worker.py` | 对话框专用异步任务 | 跳过统一 Controller |
-| `gui/dialogs/file_explorer.py` | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
+| `gui/features/app_manager.py`（实现拆在 `gui/dialogs/app_manager*.py`） | `models/app_manager_worker.py` | 内嵌页专用异步任务 | 跳过统一 Controller |
+| `gui/features/file_explorer.py`（实现拆在 `gui/dialogs/file_explorer*.py`） | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
 | `gui/panels/remote_panel.py` | `services.remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
-| `gui/dialogs/performance_launcher.py` | `services.mobileperf_runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
+| `gui/features/performance.py`（实现拆在 `gui/dialogs/performance_launcher*.py`） | `services.mobileperf_runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
 | `core.settings_manager` | `utils.user_data`、`utils.resource_path` | 用户配置路径与种子资源 | 错误日志经可注入 `set_error_sink` 输出，不直接依赖 log_service |
 | `mobileperf/android/*` | `mobileperf/android/tools/androiddevice.py` | 采集设备指标 | 与主应用执行层重复实现 |
 
 ## 第三方 Python 依赖
 
-| 依赖 | 版本状态 | 实际用途 | 证据/备注 |
-| --- | --- | --- | --- |
-| PySide6 / Addons / Essentials / shiboken6 | 6.8.1.1 固定 | GUI、线程、信号槽、Qt 对象有效性检查 | `requirements.txt`、`gui/`、`models/adb_model.py` |
-| PyYAML | 6.0.2 固定 | DeviceStore YAML | `models/device_store.py` |
-| PyInstaller | 6.22.2 固定 | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
-| psutil | 7.2.2 固定 | `core/process_utils.py`：TCP 端口占用查找与进程树终止（ADR-0003 Phase 1 起） | `requirements.txt`、`core/process_utils.py` |
-| PySide6-Fluent-Widgets (qfluentwidgets) | 1.11.3 固定 | 全部通用可见 UI 控件（导航、卡片、按钮、输入、列表/表格、菜单、进度、滚动容器）与主题/强调色；项目不再维护中间控件封装层 | `requirements.txt`、`gui/main_frame.py`、`gui/panels/`、`gui/dialogs/`、`gui/styles/fluent.py`；GPLv3 双许可，仅内部使用、不对外分发（见 RISKS_AND_DEBT） |
-| XlsxWriter 移植副本 | 仓库内 vendored | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
+精确版本以三个 requirements 文件为准，长期文档只记录用途和边界。
 
-Requests 与 ruamel.yaml 及其派生依赖已随邮件服务移除，不再出现在 `requirements.txt`；
-主应用一方源码也不再导入它们。`mobileperf/setup.py` 当前只提供包元数据，没有
-`install_requires`，不会额外声明 `requests` 或 `urllib3`。
+| 依赖 | 实际用途 | 证据/备注 |
+| --- | --- | --- |
+| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查 | `requirements.txt`、`gui/`、`models/adb_model.py` |
+| PyYAML | DeviceStore YAML | `models/device_store.py` |
+| PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
+| psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
+| PySide6-Fluent-Widgets (qfluentwidgets) | 主窗口、Workspace、内嵌功能页、控件、主题和瞬态消息 | `requirements.txt`、`gui/`；许可分发风险见 RISKS_AND_DEBT |
+| XlsxWriter 移植副本 | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
-依赖文件按用途逐层包含：`requirements.txt` 是运行时集合；`requirements-build.txt` 增加
-PyInstaller；`requirements-dev.txt` 再增加 pytest 9.1.1、Ruff 0.16.3、覆盖率、并行测试、
-pre-commit 和 pyright。CI 全平台安装 build 集合，Windows 再安装 dev 集合并运行 Ruff、pyright
-（不运行 pytest）；Ruff 门禁配置以
-`ruff.toml` 为准（Ruff 配置已收敛到 `ruff.toml`，`pyproject.toml` 仅保留 `[tool.black]` 与 pytest/coverage 配置）。
+### Fluent 运行时来源边界
+
+- 运行时以 `requirements.txt` 固定的 `PySide6-Fluent-Widgets` 为唯一组件来源，生产代码
+  直接 `import qfluentwidgets`；`ADBLab.spec` 也从已安装包收集其子模块。
+- 仓库不保存 `reference/` 上游副本；`.gitignore` 中的排除项用于防止误加入。查询实际 API 时，
+  先用项目解释器的 `importlib.util.find_spec()` 定位当前 `qfluentwidgets` 安装路径，再按需查看上游
+  [PySide6 分支](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6)的单个文件。
+- 上游仓库默认分支是 PyQt5 变体，不能作为本项目 API 依据。历史 Gallery 页面改写及许可归属记录
+  在根目录 `THIRD_PARTY_NOTICES.md`；该记录不构成运行时依赖。
+
+依赖按 `requirements.txt`（运行）、`requirements-build.txt`（构建）和
+`requirements-dev.txt`（开发/测试）逐层包含；精确版本只以这些文件为准。
 
 ## 外部系统与工具依赖
-
-```mermaid
-flowchart LR
-    App["ADBLab"] --> ADB["ADB server / Android device"]
-    App --> Scrcpy["scrcpy"]
-    App --> Aapt["aapt（可选）"]
-    App --> Java["Java + chkbugreport JAR（可选）"]
-    App --> Perfetto["ui.perfetto.dev（浏览器打开）"]
-    App --> FS["本地用户目录与结果目录"]
-    App --> GitHub["GitHub Actions / Releases（构建期）"]
-```
 
 | 外部依赖 | 用途 | 解析/调用位置 | 缺失行为 |
 | --- | --- | --- | --- |
@@ -95,31 +69,15 @@ flowchart LR
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
-| Perfetto 网站 | 手动打开性能分析页面 | `PerformanceLauncherDialog.open_perfetto()` | 只影响跳转，不影响采集 |
+| Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |
 | GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 只影响 CI/CD |
 
 ## 外部边界与命令接口
 
-### 入站 API 结论
+ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 只有桌面 GUI、
+`--mobileperf-worker --config <path>` 和 `--self-check packaging` 三种本地入口。
 
-当前项目不存在对外提供的 HTTP/REST/WebSocket/RPC API，也没有 Web server、路由表、端口监听器、
-消息消费者或鉴权中间件。应用入口只有桌面 GUI 和两个本地 CLI 子模式：
-
-| 类型 | 入口 | 参数 | 输出/作用 | 鉴权 | 测试 |
-| --- | --- | --- | --- | --- | --- |
-| GUI | `main.py` 无子命令 | Qt/用户输入 | 启动 MainFrame | 依赖本机用户和 ADB 授权 | `test_model_mainframe.py` 部分覆盖 |
-| MobilePerf worker | `main.py --mobileperf-worker --config <path>` | config 路径 | 运行采集子进程 | 无应用级鉴权 | runner/startup tests |
-| 打包自检 | `main.py --self-check packaging` | 固定 target | 检查导入、资源、工具和用户目录 | 无 | CI + 实际验证 |
-
-因此本节的接口表描述的是**应用调用的外部接口**，不是 ADBLab 对外提供的 API。
-
-### 外部 HTTP API 结论
-
-当前主应用代码中没有出站 HTTP 客户端（`requests`/`urllib` 等不再被任何一方源码导入），也没有
-外部 HTTP 服务调用。仅有的 URL 引用是 About 对话框的 GitHub 链接和
-`PerformanceLauncherDialog.open_perfetto()` 用 `QDesktopServices.openUrl` 打开
-`ui.perfetto.dev`，两者都只是交给系统浏览器打开，不构成 API 调用。历史邮件服务（临时邮箱
-HTTP API、`core/mail/`、requests/ruamel 依赖）已随 `70be33e` 移除。
+主应用也不调用外部 HTTP API。About 的 GitHub 链接和 Perfetto 链接仅交给系统浏览器打开。
 
 ### ADB 命令接口地图
 
@@ -158,25 +116,5 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
   最终回退走 `utils.adb_resolver`（内置平台二进制已移除），与主应用共用同一 ADB 事实来源。
   详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
 
-## 循环依赖与方向风险
-
-- 未发现明显的 Python import 闭环，但 `core` 中仅 `log_service.py` 依赖 Qt；`settings_manager` 的错误日志已改为可注入 sink（`set_error_sink`，MainFrame 组合根注入 LogService，ADR-0003 Phase 3），core 其余模块可在无 Qt 环境下导入与单测。
-- GUI 直接依赖 model worker/service 形成多条平行编排路径；新功能若同时在 Controller 和 Dialog 内实现，容易产生行为分叉。
-- MobilePerf 保留独立 ADB 执行层，没有复用 CommandRunner/ProcessRunner；ADB 可执行路径已
-  通过 `utils.adb_resolver` 与主应用统一（内置 1.0.39 二进制已移除），修复超时、编码、
-  日志脱敏时仍需同时维护两套实现。
-- 主应用长进程优先走 ProcessRunner；`ADBInputSession` 已通过实例 ProcessRunner 进入实例与全局跟踪，
-  MobilePerf 内核仍是独立执行边界。
-- ADR-0005 已把 `CommandRunner`/`ProcessRunner` 物理迁入 `core/exec.py`，旧
-  `models/base/*runner*` 路径已删除，`core` → `models` 的反向依赖解除。
-
-## 依赖治理建议
-
-1. 运行、构建、开发依赖已分层并固定版本；一方源码无 Pillow/PIL 引用，已从运行依赖移除；
-   `shiboken6` 因一方源码直接导入而显式固定。`mobileperf/setup.py` 不声明额外安装依赖。
-2. pytest、Ruff 已进入 `requirements-dev.txt`，CI 已加入 Ruff 门禁；
-   Ruff 重复配置已消除（仅 `ruff.toml` 生效）；可进一步在 CI 加入 format check 并清理死配置 `[tool.black]`。
-3. Auto-Clean 已为只读 `gh` CLI 审计（无第三方 action）；如后续引入 action，再固定到不可变 commit SHA 并把权限缩小到实际需要。
-4. 为 aapt、Java、非 Windows scrcpy 提供启动前能力检查与 UI 提示。
-5. 长期将 MobilePerf 的 ADB 执行接口适配到统一抽象，至少统一超时、编码、进程跟踪和日志脱敏
-   策略；`mobileperf/**` 的 E402/UP031 Ruff 豁免已移除，不再是该重构的前置条件。
+未闭环的依赖方向、平台能力检查和 MobilePerf 执行边界只在
+[RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) 维护。

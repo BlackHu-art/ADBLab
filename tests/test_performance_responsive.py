@@ -11,20 +11,21 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QScrollArea,
     QTabWidget,
     QToolButton,
 )
 from qfluentwidgets import EditableComboBox, HeaderCardWidget
 
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.performance_launcher import (
     CONFIG_HINTS,
     MONKEY_PERCENT_FIELDS,
-    PerformanceLauncherDialog,
 )
+from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles
 from services.mobileperf_runner import MobilePerfMonkeyConfig
+from tests.ui_geometry_helpers import assert_contained, assert_scroll_target_reachable
 
 
 @dataclass
@@ -51,8 +52,8 @@ class _RunnerProbe:
         return ""
 
 
-def _build_performance_dialog(*, package: str = "com.example"):
-    dialog = PerformanceLauncherDialog(device_ip="device-1", package_name=package)
+def _build_performance_page(*, package: str = "com.example"):
+    dialog = PerformancePage(device_ip="device-1", package_name=package)
     runner = _RunnerProbe()
     dialog._runner = runner
     return dialog, runner
@@ -71,7 +72,7 @@ def test_performance_numeric_aliases_use_original_dropdown_style_with_strict_val
 ):
     """分页前数字下拉框保留严格整数接口，且不出现上下微调按钮。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     defaults = MobilePerfMonkeyConfig()
     try:
         preset_contract = (
@@ -116,7 +117,7 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
 ):
     """窗口缩放不得再切换 compact/wide 宿主或生成无效下拉入口。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog.show()
         qt_application.processEvents()
@@ -127,7 +128,11 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
         assert dialog._configuration_sections == (config_group,)
 
         section_ids = tuple(map(id, dialog._configuration_sections))
-        for size in (QSize(940, 700), QSize(1500, 900), QSize(1100, 760)):
+        for size in (
+            QSize(940, 700),
+            QSize(1500, 900),
+            QSize(1100, 760),
+        ):
             dialog.resize(size)
             qt_application.processEvents()
             assert dialog.size() == size
@@ -141,7 +146,10 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
                     dialog.start_btn,
                 )
             )
-            assert dialog.findChildren(QScrollArea) == []
+            assert dialog.findChildren(QScrollArea) == [dialog._config_scroll]
+            assert dialog._config_scroll.widget() is config_group
+            assert dialog._config_scroll.verticalScrollBar().maximum() > 0
+            assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
     finally:
         dialog.close()
 
@@ -149,7 +157,7 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
 def test_performance_uses_one_reference_header_card_for_configuration(qt_application):
     """扩展功能保持单配置区，并直接使用参考项目的标题卡片。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog.show()
         qt_application.processEvents()
@@ -215,7 +223,7 @@ def test_performance_uses_one_reference_header_card_for_configuration(qt_applica
 def test_performance_restores_visible_previous_version_hints(qt_application):
     """旧版关键提示不能只藏在 tooltip 中，单界面必须直接展示。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         visible_hints = {
             label.text()
@@ -235,19 +243,20 @@ def test_performance_restores_visible_previous_version_hints(qt_application):
         dialog.close()
 
 
-def test_performance_displays_full_group_without_scroll_and_uses_short_log(
+def test_performance_bounds_configuration_in_scroll_and_uses_short_log(
     qt_application,
     monkeypatch,
 ):
-    """配置直接完整显示，日志保持较低高度且页面不产生滚动区域。"""
+    """配置卡不再顶高窗口，全部字段仍可滚动到达。"""
 
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Arial", size or 12)),
     )
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
+        dialog.resize(1200, 900)
         dialog.show()
         for _index in range(4):
             qt_application.processEvents()
@@ -255,11 +264,34 @@ def test_performance_displays_full_group_without_scroll_and_uses_short_log(
         assert dialog.width() <= 1200
         assert dialog.height() == 900
         config_group = dialog._config_group
-        assert dialog.findChildren(QScrollArea) == []
+        assert dialog.findChildren(QScrollArea) == [dialog._config_scroll]
+        assert dialog._config_scroll.widget() is config_group
         assert config_group.isVisibleTo(dialog)
-        assert dialog.rect().contains(config_group.geometry())
+        assert_contained(dialog._config_scroll, dialog)
+        assert dialog._config_scroll.verticalScrollBar().maximum() > 0
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
         assert dialog.log_view.height() <= 110
         assert dialog.log_view.height() < config_group.height()
+    finally:
+        dialog.close()
+
+
+def test_performance_small_window_keeps_configuration_fields_reachable(qt_application):
+    """小屏收缩后配置区同时提供纵向与横向到达路径。"""
+
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.setMinimumSize(640, 420)
+        dialog.resize(640, 420)
+        dialog.show()
+        qt_application.processEvents()
+
+        assert dialog.size() == QSize(640, 420)
+        assert dialog._config_scroll.verticalScrollBar().maximum() > 0
+        assert dialog._config_scroll.horizontalScrollBar().maximum() > 0
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
     finally:
         dialog.close()
 
@@ -270,8 +302,8 @@ def test_start_commits_focused_valid_number_before_building_config(
 ):
     """焦点字段的有效原文必须在 Start 边界统一提交。"""
 
-    dialog, runner = _build_performance_dialog()
-    monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
+    dialog, runner = _build_performance_page()
+    monkeypatch.setattr(FluentMessageBox, "warning", lambda *_args, **_kwargs: None)
     try:
         editor = _editor(dialog.frequency_input)
         editor.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -292,7 +324,7 @@ def test_start_commits_focused_valid_number_before_building_config(
 def test_monkey_total_ignores_disabled_invalid_then_restores_invalid_state(qt_application):
     """禁用 Monkey 只忽略非法值，重新启用后仍恢复原文和错误状态。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog.monkey_check.setChecked(True)
         field = dialog.monkey_pct_combos["pct_touch"]
@@ -316,8 +348,8 @@ def test_start_checks_all_enabled_fields_before_committing_any_value(
 ):
     """后续字段失败时不得留下前面字段的半提交配置。"""
 
-    dialog, runner = _build_performance_dialog()
-    monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
+    dialog, runner = _build_performance_page()
+    monkeypatch.setattr(FluentMessageBox, "warning", lambda *_args, **_kwargs: None)
     try:
         dialog.show()
         qt_application.processEvents()
@@ -344,13 +376,8 @@ def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
 ):
     """关闭 Monkey 后非法子项不阻止启动，也不清除用户原文。"""
 
-    dialog, runner = _build_performance_dialog()
-    monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        QMessageBox,
-        "question",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
-    )
+    dialog, runner = _build_performance_page()
+    monkeypatch.setattr(FluentMessageBox, "warning", lambda *_args, **_kwargs: None)
     try:
         dialog.monkey_check.setChecked(True)
         field = dialog.monkey_pct_combos["pct_touch"]
@@ -375,7 +402,7 @@ def test_disabled_invalid_monkey_value_does_not_block_and_survives_reenable(
 def test_single_layout_preserves_focus_identity_and_signal_count(qt_application):
     """尺寸往返不得重建输入控件、丢失原文或重复连接信号。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     field = dialog.frequency_input
     editor = _editor(field)
     committed = QSignalSpy(field.valueChanged)
@@ -401,7 +428,7 @@ def test_single_layout_preserves_focus_identity_and_signal_count(qt_application)
 def test_original_dropdown_remains_keyboard_reachable_without_extra_button(qt_application):
     """数字预设使用 EditableComboBox 自带下拉按钮，且不出现额外 presetMenuButton。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog.show()
         field = dialog.frequency_input
@@ -419,7 +446,7 @@ def test_running_locks_only_configuration_and_keeps_log_and_actions_available(
 ):
     """运行锁只覆盖配置叶区，日志、状态和停止入口保持可用。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog.show()
         dialog._set_running(True)
@@ -444,7 +471,7 @@ def test_late_package_callbacks_do_not_mutate_or_unlock_running_configuration(
 ):
     """启动后的晚到包名结果不得改写本次运行配置。"""
 
-    dialog, _runner = _build_performance_dialog(package="com.before")
+    dialog, _runner = _build_performance_page(package="com.before")
 
     class _FinishedWorker:
         def deleteLater(self):
@@ -467,7 +494,7 @@ def test_late_package_callbacks_do_not_mutate_or_unlock_running_configuration(
 def test_direct_action_buttons_share_canonical_actions(monkeypatch, qt_application):
     """直接按钮保留 QAction 状态同步，且每次点击只调用一次业务入口。"""
 
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     opened = {"perfetto": 0, "result": 0}
     monkeypatch.setattr(
         dialog,
@@ -496,7 +523,7 @@ def test_result_availability_updates_canonical_action(tmp_path, qt_application):
 
     result_root = tmp_path / "result"
     result_root.mkdir()
-    dialog, _runner = _build_performance_dialog()
+    dialog, _runner = _build_performance_page()
     try:
         dialog._last_result_root = str(result_root)
         dialog._update_result_action()

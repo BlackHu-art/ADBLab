@@ -5,29 +5,36 @@ from __future__ import annotations
 import threading
 import time
 
-from PySide6.QtWidgets import QMessageBox
-
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import alive_signal_emitter
 from gui.styles import BaseStyles
 
 
 class PerformanceLauncherRun:
-    """组合进 PerformanceLauncherDialog 的运行控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 PerformancePage 的运行控制器，通过 ``self._frame`` 访问页面。"""
 
     def __init__(self, frame):
         self._frame = frame
 
     def start_mobileperf(self):
+        if not self._frame.device_ip or not getattr(
+            self._frame, "_device_connected", True
+        ):
+            FluentMessageBox.warning(
+                self._frame,
+                "No Device",
+                "Select one device before starting performance collection.",
+            )
+            self._frame._set_status("No device selected", "failed")
+            return
         if not self._frame._commit_numeric_inputs():
             return
         config = self._frame.build_config()
         if not config.package:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Package Required",
                 "Please enter a package name.",
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         if config.monkey_enabled and config.monkey_config.total_percentage != 100:
@@ -180,7 +187,9 @@ class PerformanceLauncherRun:
             self._set_status("Warning", "warning")
 
     def _set_running(self, running: bool):
-        self._frame.start_btn.setEnabled(not running)
+        self._frame.start_btn.setEnabled(
+            not running and getattr(self._frame, "_device_connected", True)
+        )
         self._frame.stop_btn.setEnabled(running)
         self._frame._set_configuration_enabled(not running)
         self._set_status("Running" if running else "Idle", "running" if running else "idle")

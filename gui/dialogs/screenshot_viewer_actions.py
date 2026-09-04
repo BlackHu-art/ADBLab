@@ -1,18 +1,20 @@
-"""提供截图查看器对话框的剪贴板、文件与右键菜单操作控制器。"""
+"""提供截图页面的剪贴板、文件与右键菜单操作控制器。"""
 
 import os
 import sys
 
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 from qfluentwidgets import RoundMenu
 
+from core.exec import ProcessRunner
+from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import add_menu_action
 
 
 class ScreenshotViewerActions:
-    """组合进 ScreenshotViewer 的操作控制器，通过 ``self._frame`` 访问对话框。"""
+    """组合进 ScreenshotPage 的操作控制器。"""
 
     def __init__(self, frame):
         self._frame = frame
@@ -26,18 +28,16 @@ class ScreenshotViewerActions:
             QApplication.clipboard().setPixmap(pixmap)
             self._flash_status("Image copied")
 
-    def _flash_status(self, text: str):
+    def _flash_status(self, text: str, timeout_ms: int = 1800):
         if not self._frame._status_restore_timer.isActive():
             self._frame._status_restore_text = self._frame._info_label.text()
         self._frame._info_label.setText(text)
-        self._frame._status_restore_timer.start(1800)
+        self._frame._status_restore_timer.start(max(1, int(timeout_ms)))
 
     def _restore_info_status(self) -> None:
         self._frame._info_label.setText(self._frame._status_restore_text)
 
     def _open_file_location(self):
-        from gui.dialogs import screenshot_viewer as _sv
-
         path = self._frame._current_path()
         if not path or not os.path.exists(path):
             return
@@ -48,30 +48,59 @@ class ScreenshotViewerActions:
             command = ["open", folder]
         else:
             command = ["xdg-open", folder]
-        _sv.ProcessRunner().spawn(command)
+        ProcessRunner().spawn(command)
 
     def _delete_file(self):
         path = self._frame._current_path()
         if not path or not os.path.exists(path):
             return
+        if self._frame._pending_delete_path != path:
+            self._reset_delete_confirmation()
+            self._frame._pending_delete_path = path
+            self._frame._delete_btn.setToolTip("Click again to confirm deletion")
+            self._frame._delete_btn.setAccessibleName("Confirm screenshot deletion")
+            self._frame._delete_confirm_timer.start(self._frame.DELETE_CONFIRM_TIMEOUT_MS)
+            self._flash_status(
+                "Click Delete again to confirm",
+                self._frame.DELETE_CONFIRM_TIMEOUT_MS,
+            )
+            return
+
+        self._reset_delete_confirmation()
+        self._frame._status_restore_timer.stop()
         try:
             os.remove(path)
         except OSError as exc:
-            QMessageBox.warning(
+            FluentMessageBox.warning(
                 self._frame,
                 "Delete Failed",
                 str(exc),
-                QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.NoButton,
             )
             return
         del self._frame._image_paths[self._frame._current_idx]
+        self._frame.image_count_changed.emit(len(self._frame._image_paths))
         if not self._frame._image_paths:
-            self._frame.close()
+            self._frame._current_idx = 0
+            self._frame._rebuild_thumbnails()
+            self._frame._show_placeholder("No screenshot available")
+            self._frame._apply_theme()
             return
         self._frame._rebuild_thumbnails()
         self._frame._current_idx = min(self._frame._current_idx, len(self._frame._image_paths) - 1)
         self._frame._navigate_to(self._frame._current_idx)
+        self._frame._apply_theme()
+
+    def _reset_delete_confirmation(self) -> None:
+        """撤销尚未二次确认的删除意图，并恢复按钮语义。"""
+
+        self._frame._pending_delete_path = ""
+        timer = getattr(self._frame, "_delete_confirm_timer", None)
+        if timer is not None:
+            timer.stop()
+        button = getattr(self._frame, "_delete_btn", None)
+        if button is not None:
+            button.setToolTip("Delete screenshot")
+            button.setAccessibleName("Delete screenshot")
 
     def _on_context_menu(self, pos):
         path = self._frame._current_path()

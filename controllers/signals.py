@@ -11,7 +11,8 @@ class ADBControllerSignals(QObject):
 
     devices_updated = Signal(list)
     device_info_updated = Signal(str, dict)
-    screenshot_captured = Signal(str, str)
+    screenshot_captured = Signal(str, str)  # 兼容信号：设备、单张截图路径
+    screenshot_batch_ready = Signal(list)  # 一次操作终态中的有序成功路径
     logs_retrieved = Signal(str, str)
     operation_completed = Signal(str, bool, str)
     text_input = Signal(str, str)

@@ -9,13 +9,13 @@ from PySide6.QtGui import QPainter, QWheelEvent
 from PySide6.QtWidgets import QFrame, QGraphicsView
 
 if TYPE_CHECKING:
-    from gui.dialogs.screenshot_viewer import ScreenshotViewer
+    from gui.features.media import ScreenshotPage
 
 
 class ScreenshotGraphicsView(QGraphicsView):
     """把滚轮和双击缩放操作委托给所属截图查看器。"""
 
-    def __init__(self, owner: ScreenshotViewer):
+    def __init__(self, owner: ScreenshotPage):
         super().__init__()
         self._owner = owner
         self.setObjectName("imageView")
@@ -45,7 +45,7 @@ class ScreenshotGraphicsView(QGraphicsView):
 class ScreenshotBottomBar(QFrame):
     """在实际可用宽度变化后请求所属查看器重排既有工具控件。"""
 
-    def __init__(self, owner: ScreenshotViewer):
+    def __init__(self, owner: ScreenshotPage):
         super().__init__()
         self._owner = owner
 

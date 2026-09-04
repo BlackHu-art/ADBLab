@@ -1,4 +1,4 @@
-"""验证主要面板与二级对话框按钮的功能描述 tooltip 契约。"""
+"""验证主要面板、内嵌功能页与瞬态对话框按钮的 tooltip 契约。"""
 
 import re
 
@@ -9,12 +9,13 @@ from qfluentwidgets.components.widgets.line_edit import LineEditButton
 from qfluentwidgets.components.widgets.scroll_bar import ArrowButton
 from qfluentwidgets.components.widgets.tab_view import TabItem, TabToolButton
 
-from gui.dialogs.about_dialog import AboutDialog
-from gui.dialogs.app_manager import AppDetailsDialog, AppManagerDialog
-from gui.dialogs.file_explorer import FileExplorerDialog, _ImageViewerDialog
-from gui.dialogs.live_logcat import LiveLogcatDialog
-from gui.dialogs.performance_launcher import PerformanceLauncherDialog
-from gui.dialogs.screenshot_viewer import ScreenshotViewer
+from gui.dialogs.file_explorer_image import FileExplorerImagePreview
+from gui.features import AboutPanel
+from gui.features.app_manager import AppDetailsPage, AppManagerPage
+from gui.features.file_explorer import FileExplorerPage
+from gui.features.logcat import LiveLogcatPage
+from gui.features.media import ScreenshotPage
+from gui.features.performance import PerformancePage
 from gui.panels.side_panel import SidePanel
 from tests.test_main_window_layout import build_main_frame
 
@@ -87,26 +88,28 @@ def test_home_action_cards_expose_function_descriptions(qt_application):
         frame.close()
 
 
-def test_primary_dialog_buttons_use_function_descriptions(monkeypatch, qt_application):
-    monkeypatch.setattr(AppManagerDialog, "_load_apps", lambda _self: None)
-    monkeypatch.setattr(AppDetailsDialog, "_load_data", lambda _self: None)
-    monkeypatch.setattr(FileExplorerDialog, "_refresh", lambda _self: None)
-    dialogs = (
-        AboutDialog(),
-        AppDetailsDialog(None, device_ip="", package_name="com.example.app"),
-        AppManagerDialog(device_ip=""),
-        FileExplorerDialog(device_ip=""),
-        _ImageViewerDialog(),
-        LiveLogcatDialog(device_ip=""),
-        PerformanceLauncherDialog(device_ip=""),
-        ScreenshotViewer([]),
+def test_primary_feature_buttons_use_function_descriptions(monkeypatch, qt_application):
+    monkeypatch.setattr(AppManagerPage, "_load_apps", lambda _self: None)
+    monkeypatch.setattr(AppDetailsPage, "_load_data", lambda _self: None)
+    monkeypatch.setattr(FileExplorerPage, "_refresh", lambda _self: None)
+    widgets = (
+        AboutPanel(),
+        AppDetailsPage(None, device_ip="", package_name="com.example.app"),
+        AppManagerPage(device_ip=""),
+        FileExplorerPage(device_ip=""),
+        FileExplorerImagePreview(),
+        LiveLogcatPage(device_ip=""),
+        PerformancePage(device_ip=""),
+        ScreenshotPage([]),
     )
     try:
-        for dialog in dialogs:
-            _assert_buttons_use_function_descriptions(dialog)
+        for widget in widgets:
+            buttons = widget.findChildren(QPushButton)
+            if buttons:
+                _assert_buttons_use_function_descriptions(widget)
     finally:
-        for dialog in dialogs:
-            shutdown = getattr(dialog, "shutdown", None)
+        for widget in widgets:
+            shutdown = getattr(widget, "shutdown", None)
             if callable(shutdown):
                 shutdown()
-            dialog.close()
+            widget.close()

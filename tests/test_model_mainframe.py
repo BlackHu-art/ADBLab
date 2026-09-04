@@ -6,14 +6,12 @@ from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QWidget
+from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import SmoothScrollArea
 
 from core.exec import CREATE_NEW_CONSOLE
-from gui.dialogs.app_manager import AppManagerDialog
-from gui.dialogs.performance_launcher import PerformanceLauncherDialog
 from gui.main_frame import MainFrame, _ScanThread
+from gui.pages.workspace_features import WorkspaceRoute
 
 
 def test_main_frame_open_cmd_launches_terminal_via_process_runner():
@@ -356,6 +354,23 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
     fake_side_panel._tab_scroll_areas = {}
+    fake_side_panel._apps_tab = SimpleNamespace(
+        panel_header=QWidget(),
+        apps_status_badge=QWidget(),
+        category_stack=Mock(),
+    )
+    fake_side_panel._advanced_tab = SimpleNamespace(
+        panel_header=QWidget(),
+        system_status_badge=QWidget(),
+        category_stack=Mock(),
+    )
+    fake_side_panel._scrcpy_tab = SimpleNamespace(
+        panel_header=QWidget(),
+        remote_status_badge=QWidget(),
+        category_stack=Mock(),
+        set_workspace_device=Mock(side_effect=lambda device_id: device_id),
+        apply_responsive_width=Mock(),
+    )
 
     def ensure_feature_page(index):
         scroll = SmoothScrollArea()
@@ -520,69 +535,93 @@ def test_main_frame_device_selection_updates_home_action_cards():
     frame._sync_device_context.assert_called_once_with()
 
 
-def test_main_frame_does_not_import_performance_monitor_at_module_load():
-    import gui.main_frame as main_frame_module
-
-    assert not hasattr(main_frame_module, "PerformanceMonitorDialog")
-
-
-def test_main_frame_performance_button_opens_launcher_dialog():
-    _app = QApplication.instance() or QApplication([])
-    frame = SimpleNamespace()
-    frame.left_panel = Mock()
-    frame.left_panel.selected_devices = ["device-1"]
-    frame.left_panel.current_package_text.return_value = "com.example.app"
-    frame._find_active_dialog = Mock(return_value=None)
-    frame._register_dialog = Mock(side_effect=lambda dialog, *_args: dialog)
-
-    with patch("gui.dialogs.performance_launcher.PerformanceLauncherDialog.show") as show:
-        MainFrame._show_performance_monitor(frame)
-
-    frame._register_dialog.assert_called_once()
-    dialog = frame._register_dialog.call_args.args[0]
-    assert isinstance(dialog, PerformanceLauncherDialog)
-    assert dialog.windowTitle() == "Performance - device-1"
-    assert not hasattr(dialog, "device_edit")
-    assert dialog.package_edit.text() == "com.example.app"
-    assert dialog.save_path_edit.text().replace("\\", "/").endswith("/mobileperf/device-1")
-    show.assert_called_once()
-    dialog.close()
-
-
-def test_main_frame_performance_button_requires_selected_device():
-    frame = SimpleNamespace()
-    frame.left_panel = Mock()
-    frame.left_panel.selected_devices = []
-    frame.log_panel = Mock()
-    frame.log_service = Mock()
-    frame._find_active_dialog = Mock()
-    frame._register_dialog = Mock()
-
-    MainFrame._show_performance_monitor(frame)
-
-    assert frame.log_service.log.call_args_list[-1].args == (
-        "WARNING",
-        "No device selected",
+def test_main_frame_keeps_home_feature_cards_openable_without_device():
+    cards = {key: Mock() for key in ("app_mgr", "file_explorer", "logcat", "performance")}
+    frame = SimpleNamespace(
+        left_panel=SimpleNamespace(selected_devices=[]),
+        _home_page=SimpleNamespace(tool_cards=cards),
+        _sync_device_context=Mock(),
     )
-    assert [call.args[0] for call in frame.log_service.log.call_args_list[:-1]] == [
-        "DEBUG",
-        "DEBUG",
-    ]
-    frame.log_panel._append_log.assert_not_called()
-    frame._register_dialog.assert_not_called()
+
+    MainFrame._update_device_actions(frame)
+
+    for card in cards.values():
+        card.setEnabled.assert_called_once_with(True)
+        card.setToolTip.assert_called_once_with("打开后可前往设备页选择操作设备")
+    frame._sync_device_context.assert_called_once_with()
 
 
-def test_main_frame_theme_change_forces_running_performance_dialog_refresh():
-    frame = SimpleNamespace()
-    dialog = Mock()
-    stale_dialog = Mock()
-    stale_dialog._sync_theme_state.side_effect = RuntimeError("deleted")
-    frame._active_dialogs = [dialog, stale_dialog]
+def test_main_frame_workspace_route_is_forwarded_without_top_level_window():
+    page = Mock()
+    page.supports_route.return_value = True
+    events = []
+    page.open_route.side_effect = lambda route: events.append(("open", route)) or True
+    switch_to = Mock(side_effect=lambda target: events.append(("switch", target)))
+    frame = SimpleNamespace(
+        _pending_workspace_route=WorkspaceRoute("devices", "files"),
+        _workspace_pages={"system": page},
+        switchTo=switch_to,
+        log_service=Mock(),
+    )
 
-    MainFrame._refresh_active_dialog_themes(frame)
+    assert MainFrame._open_workspace_feature(
+        frame,
+        "system",
+        "performance",
+        device_id="device-1",
+        payload={"package_name": "com.example.app"},
+    )
 
-    dialog._sync_theme_state.assert_called_once_with(force=True)
-    assert frame._active_dialogs == [dialog]
+    route = WorkspaceRoute(
+        "system",
+        "performance",
+        "device-1",
+        {"package_name": "com.example.app"},
+    )
+    switch_to.assert_called_once_with(page)
+    page.open_route.assert_called_once_with(route)
+    assert events == [("open", route), ("switch", page)]
+    assert frame._pending_workspace_route is None
+
+
+def test_main_frame_unknown_workspace_route_does_not_switch_page():
+    page = Mock()
+    page.supports_route.return_value = False
+    frame = SimpleNamespace(
+        _pending_workspace_route=None,
+        _workspace_pages={"system": page},
+        switchTo=Mock(),
+        log_service=Mock(),
+    )
+
+    assert not MainFrame._open_workspace_feature(frame, "system", "missing")
+    frame.switchTo.assert_not_called()
+    page.open_route.assert_not_called()
+    frame.log_service.log.assert_called_once_with(
+        "WARNING",
+        "Unknown workspace route: system/missing",
+    )
+
+
+def test_main_frame_syncs_device_context_to_every_task_page():
+    home = Mock()
+    pages = {key: Mock() for key in ("devices", "apps", "system")}
+    frame = SimpleNamespace(
+        left_panel=SimpleNamespace(
+            selected_devices=["device-1"],
+            _connected_device_cache=["device-1", "device-2"],
+            _device_discovery_state="ready",
+        ),
+        _home_page=home,
+        _workspace_pages=pages,
+    )
+
+    MainFrame._sync_device_context(frame)
+
+    expected = (["device-1"], ["device-1", "device-2"], "ready")
+    home.set_device_context.assert_called_once_with(*expected)
+    for page in pages.values():
+        page.set_device_context.assert_called_once_with(*expected)
 
 
 def test_main_frame_always_on_top_updates_state_without_recreating_window_when_native_fails():
@@ -632,96 +671,6 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
     frame.show.assert_not_called()
     settings.set.assert_called_once_with("always_on_top", True)
     pin_card.setChecked.assert_called_once_with(True)
-
-
-def test_main_frame_device_dialogs_reuses_existing_per_device_window():
-    frame = SimpleNamespace()
-    frame.left_panel = Mock()
-    frame.left_panel.selected_devices = ["device-1"]
-    frame.log_panel = Mock()
-    existing = Mock()
-    frame._find_active_dialog = Mock(return_value=existing)
-    frame._register_dialog = Mock()
-
-    MainFrame._show_device_dialogs(frame, AppManagerDialog)
-
-    existing.show.assert_called_once()
-    existing.raise_.assert_called_once()
-    existing.activateWindow.assert_called_once()
-    frame._register_dialog.assert_not_called()
-
-
-def test_main_frame_device_dialogs_create_independent_window():
-    frame = SimpleNamespace()
-    frame.left_panel = Mock()
-    frame.left_panel.selected_devices = ["device-1"]
-    frame.log_service = Mock()
-    frame._find_active_dialog = Mock(return_value=None)
-    created = []
-
-    class DeviceDialog:
-        def __init__(self, parent=None, device_ip=""):
-            self.parent = parent
-            self.device_ip = device_ip
-
-        def show(self):
-            return None
-
-        def close(self):
-            return None
-
-    def register(dialog, *_args):
-        created.append(dialog)
-        return dialog
-
-    frame._register_dialog = register
-
-    MainFrame._show_device_dialogs(frame, DeviceDialog)
-
-    assert len(created) == 1
-    assert created[0].parent is None
-    assert created[0].device_ip == "device-1"
-    created[0].close()
-
-
-def test_performance_dialog_creation_uses_no_qt_parent():
-    frame = QMainWindow()
-    frame.left_panel = Mock()
-    frame.left_panel.selected_devices = ["device-1"]
-    frame.left_panel.current_package_text.return_value = "com.example"
-    frame.log_service = Mock()
-    frame._find_active_dialog = Mock(return_value=None)
-    created = Mock()
-    frame._register_dialog = Mock(return_value=created)
-
-    with patch("gui.dialogs.performance_launcher.PerformanceLauncherDialog") as dialog_cls:
-        MainFrame._show_performance_monitor(frame)
-
-    dialog_cls.assert_called_once_with(
-        device_ip="device-1",
-        package_name="com.example",
-    )
-    created.show.assert_called_once_with()
-
-
-def test_main_frame_registers_independent_non_modal_secondary_window():
-    frame = QMainWindow()
-    frame._active_dialogs = []
-    frame.log_service = Mock()
-    frame._on_dialog_destroyed = Mock()
-    dialog = QDialog(frame, Qt.Window | Qt.WindowStaysOnTopHint)
-
-    registered = MainFrame._register_dialog(frame, dialog, QDialog, "device-1")
-
-    assert registered is dialog
-    assert dialog.parentWidget() is None
-    assert dialog.windowModality() == Qt.NonModal
-    assert not dialog.windowFlags() & Qt.WindowStaysOnTopHint
-    assert dialog.windowFlags() & Qt.WindowCloseButtonHint
-    assert not dialog.testAttribute(Qt.WA_QuitOnClose)
-    dialog.setAttribute(Qt.WA_DeleteOnClose, False)
-    dialog.close()
-    frame.close()
 
 
 def test_main_frame_signal_maps_keep_expected_coverage():
