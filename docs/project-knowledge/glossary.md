@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-04
+last_verified: 2026-09-05
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -17,11 +17,16 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | device id / serial | ADB 设备选择标识，可能是 USB serial 或网络地址 | model/controller 的 `device_ip`/`device_id` 参数 |
 | MainFrame | 主窗口和 GUI 组合根 | `gui/main_frame.py::MainFrame` |
 | SidePanel | 持有业务概览面板和共享设备状态的兼容门面 | `gui/panels/side_panel.py::SidePanel` |
+| DeviceManager | 隐藏的原设备面板控制器；其列表复选状态仍是批量目标的兼容状态源，不是单设备会话 registry | `gui/panels/device_manager.py::DeviceManager` |
+| DeviceContextBar | 页面堆叠外的全局设备栏，提交批量选择/连接动作，并投影可见宿主的会话控件 | `gui/widgets/device_context_bar.py::DeviceContextBar` |
+| DeviceHubPage | 设备概览与工作流入口，只显示发现快照，不持有独立选择或设备命令 | `gui/pages/device_hub.py::DeviceHubPage` |
 | WorkspaceRoute | 定位业务宿主、功能、可选设备和载荷的路由值对象 | `gui/pages/workspace_features.py::WorkspaceRoute` |
 | WorkspaceFeatureHost | 承载 Workspace 路由、设备上下文、内容栈和关闭屏障的宿主 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
-| 主左栏功能树 | MainFrame 中可见功能导航与 WorkspaceRoute 的映射入口 | `gui/main_frame.py::MainFrame` |
+| 主左栏 | 九个业务功能与首页、任务、设置共十二个一级入口；直接提交语义路由 | `gui/main_frame.py::MainFrame` |
+| CollapsibleTools | 应用管理同页共享工具的展开/收起容器，只管显隐，不拥有业务会话 | `gui/widgets/collapsible_tools.py::CollapsibleTools` |
+| AdaptiveNavigation | 在页签与下拉框之间自适应切换的功能选择控件，不拥有业务页面与历史 | `gui/widgets/adaptive_navigation.py::AdaptiveNavigation` |
 | AdaptiveCategoryStack | 业务面板内部一次显示一个分类的内容栈 | `gui/widgets/category_stack.py::AdaptiveCategoryStack` |
-| 批量操作目标 | 设备页复选形成的零台或多台设备集合 | `gui/panels/device_manager.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
+| 批量操作目标 | 全局设备栏复选形成的零台或多台设备集合，提交到原设备状态源 | `gui/widgets/device_context_bar.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |
 | 会话设备 | 单设备功能或 Remote 独立绑定的设备，不等同于批量操作目标 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
 | FeatureSessionKey | 由 feature、device_id、generation 组成的不可变页面会话标识 | `gui/features/base.py::FeatureSessionKey` |
 | FeatureSessionRegistry | 懒创建并复用内嵌功能页，转发 activate/deactivate/request_dispose 和关闭任务登记 | `gui/features/base.py::FeatureSessionRegistry` |
@@ -36,7 +41,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | ProcessRunner | 长生命周期进程注册、停止和全局清理器 | `core/exec.py` |
 | ADBBridge | ADB shell 适配，支持持久输入 session | `core/adb_bridge.py` |
 | ADBInputSession | 每设备持久 `adb shell`，用于低延迟 input 命令 | `core/adb_bridge.py` |
-| DeviceStore | 连接设备元数据的 YAML 存储 | `models/device_store.py` |
+| DeviceStore | 按 alias 保存含 `ip` 标识和属性的 YAML 元数据存储；历史记录不代表当前在线设备或复选目标 | `models/device_store.py` |
 | AppSettings | 应用设置单例和 JSON 存储 | `core/settings_manager.py` |
 | LogService | 线程安全缓冲、批量向 Qt 发日志信号的服务 | `core/log_service.py` |
 | perf trace | 由 `build_async_perf/attach_perf/split_perf/summarize_perf` 等函数记录和汇总异步耗时 | `core/perf_trace.py` |
@@ -46,7 +51,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | InstallBatchUseCase | 安装批次 start/complete/fail/cancel/retry、部分失败与失败项重试状态机 | `adblab/application/install_batch.py` |
 | ResponsiveCoordinator | 响应式布局的度量、重排和溢出收敛入口 | `gui/widgets/responsive_coordinator.py` |
 | ScreenAdapter / QtScreenAdapter | 屏幕适配协议与 Qt 实现：所在屏幕、可用几何、逻辑 DPI 与变更订阅 | `gui/screen_adapter.py` |
-| Remote | 归入“设备与控制”的 scrcpy 投屏与 ADB 远程输入功能，使用独立会话设备 | `gui/panels/remote_panel.py`、`services/remote/` |
+| Remote | 左侧“远程控制”的 scrcpy 投屏与 ADB 远程输入功能，使用独立会话设备 | `gui/panels/remote_panel.py`、`services/remote/` |
 | scrcpy | Android 投屏/控制外部工具 | `scrcpy-win64/`、`ScrcpyService` |
 | ScrcpyConfig | scrcpy 用户配置数据类 | `services/remote/types.py` |
 | PreflightResult | scrcpy 启动前设备可达性和详情检查结果 | `services/remote/types.py` |

@@ -21,7 +21,7 @@ from utils.user_data import user_config_path
 SETTINGS_FILE = user_config_path("app_settings.json")
 LEGACY_SETTINGS_FILE = resource_path("resources/app_settings.json")
 
-# 设置层错误日志的注入点：组合根在创建 LogService 后调用 set_error_sink 注入实现，
+# 设置层错误日志的注入点：组合根先注入启动缓冲，再在 LogService 创建后注入正式实现，
 # 使 core 不依赖 Qt/LogService 即可单测；未注入时错误静默丢弃（ADR-0003 Phase 3）。
 _error_sink = None
 _error_sink_lock = threading.Lock()
@@ -60,10 +60,28 @@ SCRCPY_SETTING_DEFAULTS = {
 }
 
 
+# Auto 保留平台的 DPI 策略；手动比例只在下一次 GUI 启动前传给 Qt。
+UI_SCALE_OPTIONS = ("Auto", 1.0, 1.25, 1.5, 1.75, 2.0)
+
+
+def normalise_ui_scale(value: Any) -> str | float:
+    """只接受设置页提供的显示比例，非法值安全回退到跟随系统。"""
+    if isinstance(value, bool):
+        return "Auto"
+    if isinstance(value, str) and value.strip().casefold() == "auto":
+        return "Auto"
+    try:
+        factor = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return "Auto"
+    return factor if factor in UI_SCALE_OPTIONS[1:] else "Auto"
+
+
 DEFAULTS = {
     # 空字符串表示跟随 Qt 提供的系统默认界面字体。
     "font_family": "",
     "ui_font_size": 12,
+    "ui_scale": "Auto",
     "log_font_size": 9,
     "save_directory": "",
     "log_max_lines": 2000,
@@ -107,8 +125,47 @@ _FONT_SIZE_RULES = {
 }
 
 
+def _normalise_integer(value: Any, default: int) -> int:
+    """读取整型设置；布尔值、非整数和转换失败均回退到默认值。"""
+    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
 def _normalise_setting(key: str, value: Any) -> Any:
     """校验需要稳定边界的设置，其他设置保持原有类型与行为。"""
+
+    if key == "ui_scale":
+        return normalise_ui_scale(value)
+
+    if key == "save_directory":
+        # 路径中的首尾空白可能属于真实目录名，不能随类型校验一并裁剪。
+        return value if isinstance(value, str) else DEFAULTS[key]
+
+    if key == "log_max_lines":
+        count = _normalise_integer(value, DEFAULTS[key])
+        return count if count > 0 else DEFAULTS[key]
+
+    if key == "monkey_params":
+        defaults = DEFAULTS[key]
+        if not isinstance(value, dict):
+            return deepcopy(defaults)
+        # 只规范已知字段的类型；比例合计和执行范围仍由 Monkey 启动边界校验。
+        # 保留未来版本的未知字段，普通版本的字段清理由既有迁移流程负责。
+        normalised = deepcopy(value)
+        for field, default in defaults.items():
+            item = value.get(field, default)
+            if isinstance(default, bool):
+                normalised[field] = item if isinstance(item, bool) else default
+            else:
+                if field == "throttle" and isinstance(item, str):
+                    text = item.strip()
+                    item = text[:-2].rstrip() if text.casefold().endswith("ms") else text
+                normalised[field] = _normalise_integer(item, default)
+        return normalised
 
     if key in SCRCPY_SETTING_DEFAULTS:
         if value is None or isinstance(value, (bool, dict, list, tuple, set)):

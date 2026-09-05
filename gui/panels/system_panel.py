@@ -2,9 +2,17 @@
 
 from typing import Any, cast
 
-from PySide6.QtCore import QRegularExpression, Qt
+from PySide6.QtCore import QRegularExpression, QSize, Qt
 from PySide6.QtGui import QIntValidator, QRegularExpressionValidator
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLineEdit,
+    QPushButton,
+    QStyle,
+    QStyleOptionFrame,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
 from gui.panels.base_panel import BasePanel
@@ -23,6 +31,7 @@ class SystemPanel(BasePanel):
         lo.setSpacing(1)
         lo.setContentsMargins(0, 0, 0, 0)
         self._system_section_groups: list[HeaderCardWidget] = []
+        self._system_input_minimums: list[tuple[QLineEdit, tuple[str, ...]]] = []
         self._build_system_header(lo)
         self.category_stack = AdaptiveCategoryStack("system", w)
 
@@ -48,7 +57,8 @@ class SystemPanel(BasePanel):
         self.btn_reboot_mode = self._b(
             "重启", "power.svg", tooltip="将所选设备重启到指定模式"
         )
-        self.tcpip_port_input = self._in_int("5555", 1, 65535, 72)
+        self.tcpip_port_input = self._in_int("5555", 1, 65535)
+        self._register_input_minimum(self.tcpip_port_input, "65535")
         self.tcpip_port_input.setText("5555")
         self.btn_tcpip_mode = self._b(
             "启用 TCP/IP", "wifi-high.svg", tooltip="在指定端口启用无线 ADB"
@@ -108,8 +118,10 @@ class SystemPanel(BasePanel):
         g3 = self._card_group("端口转发")
         gl3 = g3.viewLayout
         gl3.setSpacing(2)
-        self.fwd_local = self._in_int("本机端口", 1, 65535, 96)
-        self.fwd_remote = self._in_int("设备端口", 1, 65535, 96)
+        self.fwd_local = self._in_int("本机端口", 1, 65535)
+        self.fwd_remote = self._in_int("设备端口", 1, 65535)
+        self._register_input_minimum(self.fwd_local, "65535")
+        self._register_input_minimum(self.fwd_remote, "65535")
         self.btn_forward = self._b(
             "正向转发", "arrow-square-out.svg", tooltip="将本机端口转发到设备"
         )
@@ -195,13 +207,15 @@ class SystemPanel(BasePanel):
         gl4 = g4.viewLayout
         gl4.setSpacing(2)
         self.settings_ns = self._combo(["system", "global", "secure"])
-        self.settings_key = self._in("设置键", 70)
-        self.settings_val = self._in("设置值", 70)
+        self.settings_key = self._in("设置键")
+        self.settings_val = self._in("设置值")
+        self._register_input_minimum(self.settings_key)
+        self._register_input_minimum(self.settings_val)
         self._add_responsive_row(
             gl4,
             (self.settings_ns, 1),
-            (self.settings_key, 1),
-            (self.settings_val, 1),
+            (self.settings_key, 2),
+            (self.settings_val, 2),
             compact_columns=1,
             medium_columns=3,
             wide_columns=3,
@@ -242,7 +256,8 @@ class SystemPanel(BasePanel):
         self.btn_ps_list = self._b(
             "进程列表", "tree-structure.svg", tooltip="显示设备上正在运行的进程"
         )
-        self.kill_pid_input = self._in_int("PID", 1, 2_147_483_647, 88)
+        self.kill_pid_input = self._in_int("PID", 1, 2_147_483_647)
+        self._register_input_minimum(self.kill_pid_input, "2147483647")
         self.btn_kill_pid = self._b(
             "结束 PID", "skull.svg", tooltip="结束输入的进程 ID"
         )
@@ -301,7 +316,8 @@ class SystemPanel(BasePanel):
         gl6 = g6.viewLayout
         gl6.setSpacing(2)
         self.battery_param = self._combo(["level", "status"])
-        self.battery_val = self._in_int("数值", 0, 100, 88)
+        self.battery_val = self._in_int("数值", 0, 100)
+        self._register_input_minimum(self.battery_val, "100")
         self.btn_battery_set = self._b(
             "应用", "pencil-simple.svg", tooltip="应用模拟电池数值"
         )
@@ -351,6 +367,7 @@ class SystemPanel(BasePanel):
             "输入法列表", "keyboard.svg", tooltip="显示已安装的输入法"
         )
         self.ime_id_input = self._in("输入法 ID")
+        self._register_input_minimum(self.ime_id_input)
         self.btn_ime_set = self._b(
             "切换输入法", "pencil-simple.svg", tooltip="启用输入的输入法 ID"
         )
@@ -363,8 +380,10 @@ class SystemPanel(BasePanel):
             medium_columns=3,
             wide_columns=3,
         )
-        self.emu_sms_sender = self._in("发件人", 65)
-        self.emu_sms_text = self._in("短信内容", 70)
+        self.emu_sms_sender = self._in("发件人")
+        self.emu_sms_text = self._in("短信内容")
+        self._register_input_minimum(self.emu_sms_sender)
+        self._register_input_minimum(self.emu_sms_text)
         self.btn_emu_sms = self._b(
             "模拟短信", "chat-text.svg", tooltip="模拟一条收到的短信"
         )
@@ -386,11 +405,14 @@ class SystemPanel(BasePanel):
             wide_columns=3,
         )
         self.emu_call_num = self._in("电话号码")
+        self._register_input_minimum(self.emu_call_num)
         self.btn_emu_call = self._b(
             "模拟来电", "phone-call.svg", tooltip="模拟模拟器收到来电"
         )
-        self.emu_geo_lon = self._in_float("经度", -180.0, 180.0, width=96)
-        self.emu_geo_lat = self._in_float("纬度", -90.0, 90.0, width=96)
+        self.emu_geo_lon = self._in_float("经度", -180.0, 180.0)
+        self.emu_geo_lat = self._in_float("纬度", -90.0, 90.0)
+        self._register_input_minimum(self.emu_geo_lon, "-180.000000")
+        self._register_input_minimum(self.emu_geo_lat, "-90.000000")
         self.btn_emu_geo = self._b(
             "设置 GPS", "map-pin.svg", tooltip="设置模拟器位置坐标"
         )
@@ -408,24 +430,12 @@ class SystemPanel(BasePanel):
         )
         self.category_stack.add_category(
             "commands",
-            "命令与启动",
-            (g1, g_rb, gb),
+            "系统工具",
+            (g1, gb, g4, g_rb, g3, gs, g6, g7, g5),
         )
-        self.category_stack.add_category(
-            "connectivity",
-            "连接与服务",
-            (g3, gs),
-        )
-        self.category_stack.add_category(
-            "settings",
-            "设置与工具",
-            (g4, g5),
-        )
-        self.category_stack.add_category(
-            "device",
-            "设备与模拟器",
-            (g6, g7),
-        )
+        self.category_stack.add_alias("connectivity", "commands")
+        self.category_stack.add_alias("settings", "commands")
+        self.category_stack.add_alias("device", "commands")
         self.category_stack.current_changed.connect(
             lambda _key: self.apply_responsive_width(0)
         )
@@ -453,9 +463,47 @@ class SystemPanel(BasePanel):
             self.emu_geo_lat,
         ):
             field.textChanged.connect(lambda _text: self._update_action_states())
-        self._action_buttons = tuple(w.findChildren(QPushButton))
+        self._action_buttons = tuple(
+            button for button in w.findChildren(QPushButton)
+            if button.property("functionalToolTip")
+        )
         BaseStyles.theme_changed.connect(self._on_theme_changed_system)
         return w
+
+    def _register_input_minimum(self, field: QLineEdit, *samples: str) -> None:
+        """按字段用途注册稳定下限，让响应式行换行而不是截断提示和合法数值。"""
+
+        texts = (field.placeholderText(), *samples)
+        self._system_input_minimums.append((field, texts))
+        self._refresh_input_minimum(field, texts)
+
+    @staticmethod
+    def _refresh_input_minimum(field: QLineEdit, texts: tuple[str, ...]) -> None:
+        """合并当前字体、原生边框与文字边距，不让用户输入推动布局断点。"""
+
+        field.ensurePolished()
+        option = QStyleOptionFrame()
+        field.initStyleOption(option)
+        metrics = field.fontMetrics()
+        margins = field.textMargins()
+        text_width = max((metrics.horizontalAdvance(text) for text in texts), default=0)
+        # QLineEdit 的文本绘制在样式内容区内再留左右各 2px；QSS 内边距
+        # 交给 CT_LineEdit 度量，避免字号或主题改变后沿用固定像素上限。
+        contents = QSize(text_width + margins.left() + margins.right() + 4, metrics.height())
+        required = field.style().sizeFromContents(
+            QStyle.ContentsType.CT_LineEdit, option, contents, field
+        )
+        field.setMinimumWidth(max(1, required.width()))
+
+    def refresh_responsive_metrics(self) -> bool:
+        """沿用面板的字体与主题刷新入口，同步用途相关的输入净宽。"""
+
+        changed = super().refresh_responsive_metrics()
+        for field, texts in self._system_input_minimums:
+            previous_width = field.minimumWidth()
+            self._refresh_input_minimum(field, texts)
+            changed = changed or previous_width != field.minimumWidth()
+        return changed
 
     # ── 卡片化页头与分区视觉 ─────────────────────────────────────────────
 
@@ -529,18 +577,20 @@ class SystemPanel(BasePanel):
     def connect_signals(self):
         LP = self.signals
         self.btn_shell_run.clicked.connect(
-            lambda: LP.shell_command_requested.emit(
-                self.selected_devices, self.shell_cmd_input.text()
+            lambda: self._emit_device_action(
+                LP.shell_command_requested, self.shell_cmd_input.text(),
+                fields=(self.shell_cmd_input,),
             )
         )
         self.shell_cmd_input.returnPressed.connect(
-            lambda: LP.shell_command_requested.emit(
-                self.selected_devices, self.shell_cmd_input.text()
+            lambda: self._emit_device_action(
+                LP.shell_command_requested, self.shell_cmd_input.text(),
+                fields=(self.shell_cmd_input,),
             )
         )
         self.btn_reboot_mode.clicked.connect(
-            lambda: LP.reboot_mode_requested.emit(
-                self.selected_devices, self.reboot_mode_combo.currentText().lower()
+            lambda: self._emit_device_action(
+                LP.reboot_mode_requested, self.reboot_mode_combo.currentText().lower()
             )
         )
         self.btn_tcpip_mode.clicked.connect(
@@ -552,13 +602,15 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_broadcast.clicked.connect(
-            lambda: LP.send_broadcast_requested.emit(
-                self.selected_devices, self.broadcast_action.text().strip()
+            lambda: self._emit_device_action(
+                LP.send_broadcast_requested, self.broadcast_action.text().strip(),
+                fields=(self.broadcast_action,),
             )
         )
         self.btn_start_activity.clicked.connect(
-            lambda: LP.start_activity_requested.emit(
-                self.selected_devices, self.activity_spec.text().strip()
+            lambda: self._emit_device_action(
+                LP.start_activity_requested, self.activity_spec.text().strip(),
+                fields=(self.activity_spec,),
             )
         )
         self.btn_deep_link.clicked.connect(
@@ -578,10 +630,10 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_list_fwd.clicked.connect(
-            lambda: LP.list_forwards_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.list_forwards_requested)
         )
         self.btn_remove_fwd.clicked.connect(
-            lambda: LP.remove_forwards_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.remove_forwards_requested)
         )
         self.btn_reverse.clicked.connect(
             lambda: self._submit_device_action(
@@ -592,38 +644,41 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_list_rev.clicked.connect(
-            lambda: LP.list_reverse_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.list_reverse_requested)
         )
         self.btn_remove_rev.clicked.connect(
-            lambda: LP.remove_reverse_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.remove_reverse_requested)
         )
         self.btn_settings_list.clicked.connect(
-            lambda: LP.settings_list_requested.emit(
-                self.selected_devices, self.settings_ns.currentText()
+            lambda: self._emit_device_action(
+                LP.settings_list_requested, self.settings_ns.currentText()
             )
         )
         self.btn_settings_get.clicked.connect(
-            lambda: LP.settings_get_requested.emit(
-                self.selected_devices,
+            lambda: self._emit_device_action(
+                LP.settings_get_requested,
                 self.settings_ns.currentText(),
                 self.settings_key.text().strip(),
+                fields=(self.settings_key,),
             )
         )
         self.btn_settings_put.clicked.connect(
-            lambda: LP.settings_put_requested.emit(
-                self.selected_devices,
+            lambda: self._emit_device_action(
+                LP.settings_put_requested,
                 self.settings_ns.currentText(),
                 self.settings_key.text().strip(),
                 self.settings_val.text().strip(),
+                fields=(self.settings_key, self.settings_val),
             )
         )
         self.btn_content_query.clicked.connect(
-            lambda: LP.content_query_requested.emit(
-                self.selected_devices, self.content_uri.text().strip()
+            lambda: self._emit_device_action(
+                LP.content_query_requested, self.content_uri.text().strip(),
+                fields=(self.content_uri,),
             )
         )
         self.btn_ps_list.clicked.connect(
-            lambda: LP.list_processes_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.list_processes_requested)
         )
         self.btn_kill_pid.clicked.connect(
             lambda: self._submit_device_action(
@@ -644,32 +699,33 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_battery_reset.clicked.connect(
-            lambda: LP.battery_reset_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.battery_reset_requested)
         )
         self.btn_quick_setting.clicked.connect(
-            lambda: LP.quick_setting_requested.emit(
-                self.selected_devices, self.quick_setting_combo.currentData()
+            lambda: self._emit_device_action(
+                LP.quick_setting_requested, self.quick_setting_combo.currentData()
             )
         )
-        self.btn_ime_list.clicked.connect(lambda: LP.ime_list_requested.emit(self.selected_devices))
+        self.btn_ime_list.clicked.connect(lambda: self._emit_device_action(LP.ime_list_requested))
         self.btn_ime_set.clicked.connect(
-            lambda: LP.ime_set_requested.emit(
-                self.selected_devices, self.ime_id_input.text().strip()
+            lambda: self._emit_device_action(
+                LP.ime_set_requested, self.ime_id_input.text().strip(), fields=(self.ime_id_input,)
             )
         )
         self.btn_pm_features.clicked.connect(
-            lambda: LP.pm_features_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.pm_features_requested)
         )
         self.btn_emu_sms.clicked.connect(
-            lambda: LP.emu_sms_requested.emit(
-                self.selected_devices,
+            lambda: self._emit_device_action(
+                LP.emu_sms_requested,
                 self.emu_sms_sender.text().strip(),
                 self.emu_sms_text.text().strip(),
+                fields=(self.emu_sms_sender, self.emu_sms_text),
             )
         )
         self.btn_emu_call.clicked.connect(
-            lambda: LP.emu_call_requested.emit(
-                self.selected_devices, self.emu_call_num.text().strip()
+            lambda: self._emit_device_action(
+                LP.emu_call_requested, self.emu_call_num.text().strip(), fields=(self.emu_call_num,)
             )
         )
         self.btn_emu_geo.clicked.connect(
@@ -683,16 +739,16 @@ class SystemPanel(BasePanel):
             )
         )
         self.btn_dumpsys.clicked.connect(
-            lambda: LP.dumpsys_service_requested.emit(
-                self.selected_devices,
+            lambda: self._emit_device_action(
+                LP.dumpsys_service_requested,
                 self.dumpsys_combo.currentText().strip(),
             )
         )
         self.btn_kernel.clicked.connect(
-            lambda: LP.kernel_version_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.kernel_version_requested)
         )
         self.btn_cpuinfo_dev.clicked.connect(
-            lambda: LP.cpu_info_requested.emit(self.selected_devices)
+            lambda: self._emit_device_action(LP.cpu_info_requested)
         )
         self._update_action_states()
 
@@ -701,14 +757,6 @@ class SystemPanel(BasePanel):
         minimum = 0 if param == "level" else 1
         self.battery_val.setValidator(QIntValidator(minimum, maximum, self.battery_val))
         self._update_action_states()
-
-    def _submit_device_action(self, fields, callback) -> bool:
-        devices = list(dict.fromkeys(device for device in self.selected_devices if device))
-        if not devices or (fields and not self._validate_fields(*fields)):
-            self._update_action_states()
-            return False
-        callback(devices)
-        return True
 
     def _update_action_states(self) -> None:
         """按设备和字段有效性更新 System 页动作状态。"""

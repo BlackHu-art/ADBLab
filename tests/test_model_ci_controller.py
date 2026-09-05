@@ -145,11 +145,11 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     controller._device_topology = ("device-1", "device-2")
 
     with (
-        patch("controllers._device.ADBDevice.get_devices_basic_info") as get_info,
+        patch("controllers._device.ADBDevice.get_device_overview_info") as get_info,
         patch("controllers._device.DeviceStore.upsert_devices") as upsert,
     ):
         get_info.side_effect = [
-            {"Brand": "Google", "Model": "Pixel", "Aversion": "15"},
+            {"Brand": "Google", "Model": "Pixel", "Aversion": "15", "SDK Version": "35"},
             {"Brand": "Redmi", "Model": "22127", "Aversion": "9"},
         ]
 
@@ -163,6 +163,21 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     records = upsert.call_args.args[0]
     assert [record["ip"] for record in records] == ["device-1", "device-2"]
     controller.signals.devices_updated.emit.assert_called_once_with(["device-1", "device-2"])
+    metadata_events = controller.signals.device_info_updated.emit.call_args_list
+    assert len(metadata_events) == 2
+    assert metadata_events[0].args[0] == "device-1"
+    assert metadata_events[0].args[1]["SDK Version"] == "35"
+
+
+def test_empty_current_package_result_releases_query_as_failure():
+    controller = ADBAppMixin.__new__(ADBAppMixin)
+    controller._emit_operation = Mock()
+    controller.signals = Mock()
+    controller._process_get_package_result({
+        "device_ip": "demo-a", "success": True, "package_name": "",
+    })
+    assert controller._emit_operation.call_args.args[:2] == ("get_package", False)
+    controller.signals.current_package_received.emit.assert_not_called()
 
 
 def test_stale_device_metadata_update_does_not_restore_removed_device():
@@ -185,7 +200,7 @@ def test_stale_device_metadata_update_does_not_restore_removed_device():
 
     with (
         patch(
-            "controllers._device.ADBDevice.get_devices_basic_info",
+            "controllers._device.ADBDevice.get_device_overview_info",
             return_value={"Brand": "Google", "Model": "Pixel", "Aversion": "15"},
         ),
         patch("controllers._device.DeviceStore.upsert_devices") as upsert,
@@ -195,6 +210,7 @@ def test_stale_device_metadata_update_does_not_restore_removed_device():
         controller.executor.jobs[0]()
 
     upsert.assert_not_called()
+    controller.signals.device_info_updated.emit.assert_not_called()
     assert controller.signals.devices_updated.emit.call_args_list == [
         call(["device-1"]),
         call([]),

@@ -111,22 +111,13 @@ class FontMixin:
     def get_default_font(cls, size: int | None = None) -> QFont:
         """创建界面字体；保留对旧版可写类属性的兼容。"""
 
-        font = QFont(
-            cls.DEFAULT_FONT_FAMILY,
-            cls.DEFAULT_FONT_SIZE if size is None else size,
-        )
-        font.setStyleHint(QFont.StyleHint.SansSerif)
-        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
-        return font
+        return cls.font_for_role(FontRole.UI, size=size)
 
     @classmethod
     def get_log_font(cls) -> QFont:
         """创建日志等宽字体；保留旧版方法名称。"""
 
-        font = QFont(cls.LOG_FONT, cls.LOG_FONT_SIZE_VAR)
-        font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
-        return font
+        return cls.font_for_role(FontRole.LOG)
 
 
 def get_default_font(size: int | None = None) -> QFont:

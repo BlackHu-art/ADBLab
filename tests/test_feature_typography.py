@@ -101,8 +101,9 @@ def test_feature_pages_use_semantic_font_roles(qt_application):
         _assert_role(screenshots._info_label, FontRole.UI_SMALL)
         _assert_role(
             about.title_label,
-            FontRole.TITLE,
+            FontRole.UI,
         )
+        _assert_role(about.titleLabel, FontRole.UI)
 
 
 @pytest.mark.parametrize(
@@ -215,10 +216,11 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             performance.resize(900, 700)
             performance.show()
             qt_application.processEvents()
-            performance_group = performance.findChild(
-                HeaderCardWidget, "performanceConfig"
-            )
-            assert performance_group is not None
+            assert len(performance._configuration_sections) == 4
+            for section in performance._configuration_sections:
+                assert isinstance(section, HeaderCardWidget)
+                _assert_role(section.headerLabel, FontRole.TITLE)
+            assert performance._results_group not in performance._configuration_sections
         finally:
             settings.update(
                 {
@@ -254,6 +256,7 @@ def test_performance_large_font_keeps_bounded_scrollable_content(
         BaseStyles.reload_from_settings()
         qt_application.processEvents()
         page = PerformancePage(device_ip="test-device")
+        page.resize(640, 720)
         page.show()
         qt_application.processEvents()
 
@@ -263,7 +266,9 @@ def test_performance_large_font_keeps_bounded_scrollable_content(
         assert page._config_scroll.verticalScrollBar().maximum() > 0
         assert_scroll_target_reachable(page._config_scroll, page.package_edit)
         assert_scroll_target_reachable(page._config_scroll, page.phone_log_edit)
-        assert page.log_view.height() <= 110
+        assert page._config_scroll.horizontalScrollBar().maximum() == 0
+        assert page.log_view.viewport().height() >= page.log_view.fontMetrics().height() * 8
+        assert_scroll_target_reachable(page._config_scroll, page.log_view)
     finally:
         if page is not None:
             page._theme_sync_timer.stop()

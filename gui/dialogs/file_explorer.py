@@ -29,7 +29,11 @@ from qfluentwidgets import (
 )
 
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
-from gui.dialogs.file_explorer_list import FileExplorerList
+from gui.dialogs.file_explorer_list import (
+    FileExplorerItemDelegate,
+    FileExplorerList,
+    file_explorer_icon,
+)
 from gui.dialogs.file_explorer_ops import FileExplorerOps
 from gui.dialogs.file_explorer_view import FileExplorerView
 from gui.dialogs.fluent_dialog import FluentMessageBox
@@ -41,7 +45,6 @@ from gui.dialogs.lifecycle import (
 )
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action, apply_label_role
-from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 from gui.widgets.responsive_layout import reflow_widgets
 from models.file_explorer_worker import ADBWorker, TransferWorker
@@ -54,6 +57,7 @@ class FileExplorerPage(QWidget):
     """按设备持有状态的页内文件浏览器会话。"""
 
     dispose_ready = Signal()
+    operation_availability_changed = Signal(bool)
 
     TYPE_COL = 0
     NAME_COL = 1
@@ -94,6 +98,7 @@ class FileExplorerPage(QWidget):
         self._ops_controller = FileExplorerOps(self)
         self.device_ip = device_ip
         self._device_connected = bool(device_ip)
+        self._device_selected = bool(device_ip)
         self.current_path = "/storage/emulated/0"
         self.history = []
         self.forward_stack = []
@@ -124,7 +129,7 @@ class FileExplorerPage(QWidget):
         self._sort_order = Qt.SortOrder.AscendingOrder
 
         self.setWindowTitle(f"File Explorer - {device_ip}")
-        self.setWindowIcon(get_themed_icon("folder-open.svg"))
+        self.setWindowIcon(file_explorer_icon("folder-open.svg"))
         self.setObjectName("fileExplorerPage")
         self.setProperty("feature", "file_explorer")
         self.setProperty("deviceConnected", self._device_connected)
@@ -135,6 +140,16 @@ class FileExplorerPage(QWidget):
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
+
+    def prepare_for_workspace(self) -> None:
+        """由工作区隐藏重复标题，保留宿主统一的设备会话信息。"""
+        self.set_device_selected(False)
+        self.set_workspace_embedded(True)
+
+    def set_workspace_embedded(self, embedded: bool) -> None:
+        """仅切换页头呈现，不改变目录、预览、worker 或关闭契约。"""
+        self.setProperty("workspace_embedded", bool(embedded))
+        self.header_card.setVisible(not embedded)
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -193,21 +208,21 @@ class FileExplorerPage(QWidget):
         self._toolbar_layout = QGridLayout()
         self._toolbar_layout.setSpacing(3)
         self.back_btn = PushButton()
-        self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
+        self.back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.setToolTip("Return to the previous folder")
         self.back_btn.setAccessibleName("Back")
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
         self.fwd_btn = PushButton()
-        self.fwd_btn.setIcon(get_themed_icon("arrow-right.svg"))
+        self.fwd_btn.setIcon(file_explorer_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
         self.fwd_btn.setToolTip("Return to the next folder")
         self.fwd_btn.setAccessibleName("Forward")
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
         self.up_btn = PushButton()
-        self.up_btn.setIcon(get_themed_icon("arrow-up.svg"))
+        self.up_btn.setIcon(file_explorer_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
         self.up_btn.setToolTip("Open the parent folder")
         self.up_btn.setAccessibleName("Parent folder")
@@ -215,37 +230,37 @@ class FileExplorerPage(QWidget):
         self.refresh_btn = PushButton()
         self.refresh_btn.setText("Refresh")
         self.refresh_btn.setToolTip("Reload the current device folder")
-        self.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
+        self.refresh_btn.setIcon(file_explorer_icon("arrows-clockwise.svg"))
         self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._refresh)
         self.mkdir_btn = PushButton()
         self.mkdir_btn.setText("New Folder")
         self.mkdir_btn.setToolTip("Create a folder in the current location")
-        self.mkdir_btn.setIcon(get_themed_icon("folder-plus.svg"))
+        self.mkdir_btn.setIcon(file_explorer_icon("folder-plus.svg"))
         self.mkdir_btn.setIconSize(QSize(14, 14))
         self.mkdir_btn.clicked.connect(self._mkdir)
         self.touch_btn = PushButton()
         self.touch_btn.setText("New File")
         self.touch_btn.setToolTip("Create an empty file in the current location")
-        self.touch_btn.setIcon(get_themed_icon("file-plus.svg"))
+        self.touch_btn.setIcon(file_explorer_icon("file-plus.svg"))
         self.touch_btn.setIconSize(QSize(14, 14))
         self.touch_btn.clicked.connect(self._touch)
         self.pull_btn = PushButton()
         self.pull_btn.setText("Pull")
         self.pull_btn.setToolTip("Copy selected items to the computer")
-        self.pull_btn.setIcon(get_themed_icon("download-simple.svg"))
+        self.pull_btn.setIcon(file_explorer_icon("download-simple.svg"))
         self.pull_btn.setIconSize(QSize(14, 14))
         self.pull_btn.clicked.connect(self._pull_selected)
         self.push_btn = PushButton()
         self.push_btn.setText("Push")
         self.push_btn.setToolTip("Copy a local file to the current device folder")
-        self.push_btn.setIcon(get_themed_icon("upload-simple.svg"))
+        self.push_btn.setIcon(file_explorer_icon("upload-simple.svg"))
         self.push_btn.setIconSize(QSize(14, 14))
         self.push_btn.clicked.connect(self._push_file)
         self.delete_btn = PushButton()
         self.delete_btn.setText("Delete")
         self.delete_btn.setToolTip("Remove the selected device items")
-        self.delete_btn.setIcon(get_themed_icon("trash.svg"))
+        self.delete_btn.setIcon(file_explorer_icon("trash.svg"))
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.clicked.connect(self._delete_selected)
         self._toolbar_buttons = (
@@ -273,7 +288,9 @@ class FileExplorerPage(QWidget):
         browser_layout.setSpacing(4)
 
         self.table = TableWidget(self.browser_panel)
+        self.table.setItemDelegate(FileExplorerItemDelegate(self.table))
         self.table.setFrameShape(QFrame.Shape.NoFrame)
+        self.table.setIconSize(QSize(16, 16))
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
         self.table.verticalHeader().setVisible(False)
@@ -290,7 +307,12 @@ class FileExplorerPage(QWidget):
         self.table.customContextMenuRequested.connect(self._context_menu)
         self.table.cellDoubleClicked.connect(self._on_double_click)
         self.table.horizontalHeader().sectionClicked.connect(self._header_clicked)
-        self.table.setColumnWidth(self.TYPE_COL, 92)
+        type_header = self.table.horizontalHeader()
+        type_width = max(
+            self.table.iconSize().width() + 24,
+            type_header.fontMetrics().horizontalAdvance("Type") + 24,
+        )
+        self.table.setColumnWidth(self.TYPE_COL, type_width)
         self.table.setColumnWidth(self.SIZE_COL, 92)
         self.table.setColumnWidth(self.MODIFIED_COL, 140)
         browser_layout.addWidget(self.table, 1)
@@ -328,7 +350,7 @@ class FileExplorerPage(QWidget):
         header = QHBoxLayout()
         header.setSpacing(6)
         self.preview_back_btn = PushButton(panel)
-        self.preview_back_btn.setIcon(get_themed_icon("arrow-left.svg"))
+        self.preview_back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
         self.preview_back_btn.setToolTip("Back to file list")
         self.preview_back_btn.setAccessibleName("Back to file list")
         self.preview_back_btn.clicked.connect(self._close_preview)
@@ -340,7 +362,7 @@ class FileExplorerPage(QWidget):
         self.preview_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header.addWidget(self.preview_title, 1)
         self.preview_close_btn = PushButton(panel)
-        self.preview_close_btn.setIcon(get_themed_icon("x.svg"))
+        self.preview_close_btn.setIcon(file_explorer_icon("x.svg"))
         self.preview_close_btn.setToolTip("Close preview")
         self.preview_close_btn.setAccessibleName("Close preview")
         self.preview_close_btn.clicked.connect(self._close_preview)
@@ -439,7 +461,7 @@ class FileExplorerPage(QWidget):
         self.preview_text_edit.setPlainText(content)
         self.preview_text_edit.setReadOnly(not editable)
         self.preview_save_as_btn.setEnabled(editable)
-        self.preview_save_device_btn.setEnabled(editable)
+        self.preview_save_device_btn.setEnabled(editable and self._can_operate())
         self.preview_stack.setCurrentWidget(self.preview_text_page)
         self._sync_preview_layout()
         if not editable:
@@ -532,7 +554,7 @@ class FileExplorerPage(QWidget):
 
         if not hasattr(self, "refresh_btn"):
             return
-        available = self._device_connected and not self._disposing
+        available = self._can_operate()
         interactive = available and not self._directory_loading
         self.path_field.setEnabled(interactive)
         self.root_cb.setEnabled(interactive)
@@ -546,6 +568,10 @@ class FileExplorerPage(QWidget):
         self.fwd_btn.setEnabled(interactive and bool(self.forward_stack))
         self.refresh_btn.setEnabled(available)
         self.table.setEnabled(interactive)
+        self.preview_save_device_btn.setEnabled(
+            available and bool(self._preview_full_path) and not self.preview_text_edit.isReadOnly()
+        )
+        self.operation_availability_changed.emit(available)
 
     def _reflow_top_controls(self) -> None:
         """在窄窗口中把路径、搜索和工具按钮重排到多行。"""
@@ -592,20 +618,41 @@ class FileExplorerPage(QWidget):
 
     # ── 主题 ────────────────────────────────────────────────────────────
 
+    def _refresh_icons(self) -> None:
+        """原生 SVG 图标绑定当前主题，更新图像但保留行、选择及目录状态。"""
+        self.setWindowIcon(file_explorer_icon("folder-open.svg"))
+        for button, name in (
+            (self.back_btn, "arrow-left.svg"),
+            (self.fwd_btn, "arrow-right.svg"),
+            (self.up_btn, "arrow-up.svg"),
+            (self.refresh_btn, "arrows-clockwise.svg"),
+            (self.mkdir_btn, "folder-plus.svg"),
+            (self.touch_btn, "file-plus.svg"),
+            (self.pull_btn, "download-simple.svg"),
+            (self.push_btn, "upload-simple.svg"),
+            (self.delete_btn, "trash.svg"),
+            (self.preview_back_btn, "arrow-left.svg"),
+            (self.preview_close_btn, "x.svg"),
+            (self.preview_image.image_close, "x.svg"),
+        ):
+            button.setIcon(file_explorer_icon(name))
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, self.TYPE_COL)
+            if item is not None:
+                item.setIcon(self._file_type_icon(self._file_name_at(row), item.text()))
+
     def _apply_theme(self, _value=None):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         mono_font = bs.font_for_role(FontRole.MONO)
         self.setStyleSheet(f"QTableView:focus {{ border: 2px solid {bs.color('BORDER_FOCUS')}; }}")
         self.setFont(ui_font)
-        # 视觉重设计：页头卡片由 CardWidget 自绘制随主题切换，徽标按 device_ip 刷新。
+        # 页头由 CardWidget 绘制，主题变化仍需保留设备连接与操作选择的区分。
         if hasattr(self, "header_card"):
             self.dialog_title.setFont(bs.font_for_role(FontRole.TITLE))
             self.dialog_subtitle.setFont(bs.font_for_role(FontRole.UI))
             self.status_badge.setFont(bs.font_for_role(FontRole.UI))
-            has_device = self._device_connected
-            self.status_badge.setText("Ready" if has_device else "No device")
-            self.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
+            self._refresh_status_badge()
         # 表格样式由 qfluentwidgets TableWidget 自维护（随主题切换），无需在此重建。
         # 状态信息直接使用 qfluentwidgets CaptionLabel，无需额外 QSS。
         # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
@@ -619,8 +666,7 @@ class FileExplorerPage(QWidget):
         self.preview_text_edit.document().setDefaultFont(mono_font)
         self.preview_output.setFont(bs.font_for_role(FontRole.LOG))
         self.preview_output.document().setDefaultFont(bs.font_for_role(FontRole.LOG))
-        self.preview_back_btn.setIcon(get_themed_icon("arrow-left.svg"))
-        self.preview_close_btn.setIcon(get_themed_icon("x.svg"))
+        self._refresh_icons()
 
     # ── ADB 辅助方法 ────────────────────────────────────────────────────
 
@@ -666,7 +712,10 @@ class FileExplorerPage(QWidget):
         ):
             QTimer.singleShot(0, self._finish_async_dispose)
 
-    def _run_adb(self, *args, timeout: int = 30):
+    def _run_adb(self, *args, timeout: int = 30, _cleanup: bool = False):
+        """新命令必须仍有操作资格；清理仅用于已启动传输留下的临时文件。"""
+        if not _cleanup and not self._can_operate():
+            return None
         worker = ADBWorker(self.device_ip, list(args), timeout=timeout)
         lifecycle_handler = alive_callback(self, "_prune_worker", worker)
         worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
@@ -676,6 +725,9 @@ class FileExplorerPage(QWidget):
         return worker
 
     def _run_transfer(self, *args):
+        """在实际创建传输前复核固定设备资格，防止弹窗和回调越过选择变化。"""
+        if not self._can_operate():
+            return None
         worker = TransferWorker(self.device_ip, list(args))
         lifecycle_handler = alive_callback(self, "_prune_worker", worker)
         worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
@@ -683,6 +735,13 @@ class FileExplorerPage(QWidget):
         self._workers.append(worker)
         worker.setParent(self)
         return worker
+
+    def _cleanup_remote_file(self, path: str, *, root: bool = False) -> None:
+        """原会话传输的临时文件必须在取消选择后继续清理，不能改向新设备。"""
+        command = explorer_service.delete_command(path)
+        worker = self._run_adb("shell", self._root(command) if root else command, _cleanup=True)
+        if worker is not None:
+            worker.start()
 
     # ── 列表控制器委托 wrapper ──────────────────────────────────────────
 
@@ -877,6 +936,8 @@ class FileExplorerPage(QWidget):
     # ── 右键菜单 ────────────────────────────────────────────────────────
 
     def _context_menu(self, pos):
+        if not self._can_operate():
+            return
         idx = self.table.indexAt(pos)
         if not idx.isValid():
             return
@@ -913,9 +974,13 @@ class FileExplorerPage(QWidget):
         menu.exec(self.table.mapToGlobal(pos))
 
     def _install_apk(self, name: str):
+        if not self._can_operate():
+            return
         full = self._dpath(self.current_path, name)
         cmd = self._root(explorer_service.install_apk_command(full))
         w = self._run_adb("shell", cmd)
+        if w is None:
+            return
         self._connect_worker_ui(
             w,
             w.result_ready,
@@ -926,10 +991,14 @@ class FileExplorerPage(QWidget):
         w.start()
 
     def _exec_script(self, name: str):
+        if not self._can_operate():
+            return
         full = self._dpath(self.current_path, name)
         cmd = explorer_service.script_command(full, self.root_cb.isChecked())
         request_id = self._begin_preview_request(f"Output: {name}")
         w = self._run_adb("shell", self._root(cmd) if self.root_cb.isChecked() else cmd)
+        if w is None:
+            return
         self._connect_worker_ui(
             w,
             w.result_ready,
@@ -943,9 +1012,13 @@ class FileExplorerPage(QWidget):
         self._show_output_preview(name, output, error=bool(error))
 
     def _show_props(self, name: str, is_dir: bool):
+        if not self._can_operate():
+            return
         full = self._dpath(self.current_path, name)
         if is_dir:
             w = self._run_adb("shell", explorer_service.folder_size_command(full))
+            if w is None:
+                return
             self._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -960,6 +1033,8 @@ class FileExplorerPage(QWidget):
             w.start()
         else:
             w = self._run_adb("shell", explorer_service.ls_command(full))
+            if w is None:
+                return
             self._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -1016,7 +1091,7 @@ class FileExplorerPage(QWidget):
             requested_path = payload.strip()
         self._activated_once = True
         if not self._loaded_once:
-            if not self._device_connected:
+            if not self._can_operate():
                 self.status_bar.setText("Select a device to browse files")
                 return
             self._loaded_once = True
@@ -1033,6 +1108,36 @@ class FileExplorerPage(QWidget):
 
         self._active = False
 
+    def _can_operate(self) -> bool:
+        """固定会话只允许对当前已选且在线的原设备发起新操作。"""
+        return bool(
+            self.device_ip and self._device_selected and self._device_connected
+            and not self._closing and not self._disposing
+        )
+
+    def _refresh_status_badge(self) -> None:
+        """连接、选择和主题更新共用同一状态展示，在线不等于已获操作资格。"""
+        if not self.device_ip:
+            text, level = "未选择设备", InfoLevel.INFOAMTION
+        elif not self._device_connected:
+            text, level = "离线", InfoLevel.ERROR
+        elif not self._device_selected:
+            text, level = "未选为操作目标", InfoLevel.INFOAMTION
+        else:
+            text, level = "就绪", InfoLevel.SUCCESS
+        self.status_badge.setText(text)
+        self.status_badge.setLevel(level)
+
+    def set_device_selected(self, selected: bool) -> None:
+        """同步操作资格，保留浏览缓存和原会话资源，不自动换设备。"""
+        self._device_selected = bool(selected and self.device_ip)
+        self._refresh_status_badge()
+        self._sync_directory_controls()
+        if not self._device_selected:
+            self.status_bar.setText(
+                "Select this device in the device bar to perform file operations"
+            )
+
     def set_device_connected(self, connected: bool) -> None:
         """同步稳定会话设备的在线状态，不静默切换到其他设备。"""
 
@@ -1040,8 +1145,7 @@ class FileExplorerPage(QWidget):
         became_available = connected and not self._device_connected
         self._device_connected = connected
         self.setProperty("deviceConnected", connected)
-        self.status_badge.setText("Ready" if connected else "Device offline")
-        self.status_badge.setLevel(InfoLevel.SUCCESS if connected else InfoLevel.ERROR)
+        self._refresh_status_badge()
         if not connected and self._active_refresh is not None:
             self._active_refresh = None
             self._pending_navigation = None
@@ -1055,7 +1159,8 @@ class FileExplorerPage(QWidget):
         self._sync_directory_controls()
         if not connected:
             self.status_bar.setText("Device offline; reconnect or choose another device")
-        elif became_available and self._active and self._activated_once and not self._loaded_once:
+        elif (became_available and self._can_operate() and self._active
+              and self._activated_once and not self._loaded_once):
             self._loaded_once = True
             self._refresh()
 

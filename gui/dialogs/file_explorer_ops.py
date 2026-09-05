@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
 from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
-from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen
+from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen, safe_disconnect
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -43,9 +43,13 @@ class FileExplorerOps:
                 f.write(content)
 
     def _save_to_device(self, name, content, full_path):
+        if not self._frame._can_operate():
+            return
         b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
         cmd = self._frame._root(explorer_service.save_text_command(b64, full_path))
         w = self._frame._run_adb("shell", cmd)
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
@@ -67,6 +71,8 @@ class FileExplorerOps:
     # ── 拉取与推送 ──────────────────────────────────────────────────────
 
     def _pull_file(self, name: str):
+        if not self._frame._can_operate():
+            return
         full = self._frame._dpath(self._frame.current_path, name)
         save_path, _ = QFileDialog.getSaveFileName(
             self._frame, "Save As", os.path.join(self._global_save_dir(), name)
@@ -81,6 +87,8 @@ class FileExplorerOps:
                 self._frame._root(explorer_service.copy_for_root_pull_command(full, dt)),
                 timeout=120,
             )
+            if w is None:
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -89,6 +97,8 @@ class FileExplorerOps:
             w.start()
         else:
             w = self._frame._run_transfer("pull", full, save_path)
+            if w is None:
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
@@ -110,7 +120,12 @@ class FileExplorerOps:
             )
             self._frame.status_bar.setText(f"Failed: {o}")
             return
+        if not self._frame._can_operate():
+            self._frame._cleanup_remote_file(dev_tmp, root=True)
+            return
         w = self._frame._run_transfer("pull", dev_tmp, save_path)
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.progress,
@@ -120,15 +135,15 @@ class FileExplorerOps:
             w,
             w.result_ready,
             lambda o2, e2, d: (
-                self._frame._run_adb(
-                    "shell", self._frame._root(explorer_service.delete_command(dev_tmp))
-                ).start(),
+                self._frame._cleanup_remote_file(dev_tmp, root=True),
                 self._on_transfer_done(o2, e2, f"Pulled {name}"),
             ),
         )
         w.start()
 
     def _pull_selected(self):
+        if not self._frame._can_operate():
+            return
         rows = set(i.row() for i in self._frame.table.selectedIndexes())
         if not rows:
             return
@@ -142,6 +157,8 @@ class FileExplorerOps:
             src = self._frame._dpath(self._frame.current_path, name)
             dst = os.path.join(dest, name)
             w = self._frame._run_transfer("pull", src, dst)
+            if w is None:
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
@@ -155,12 +172,16 @@ class FileExplorerOps:
             w.start()
 
     def _push_file(self):
+        if not self._frame._can_operate():
+            return
         files, _ = QFileDialog.getOpenFileNames(self._frame, "Select Files to Push")
         if not files:
             return
         for fp in files:
             dst = self._frame._dpath(self._frame.current_path, os.path.basename(fp))
             w = self._frame._run_transfer("push", fp, dst)
+            if w is None:
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.progress,
@@ -201,6 +222,8 @@ class FileExplorerOps:
     # ── 文件操作 ────────────────────────────────────────────────────────
 
     def _mkdir(self):
+        if not self._frame._can_operate():
+            return
         name, ok = FluentInputDialog.getText(self._frame, "New Folder", "Name:")
         if not ok or not name or "/" in name:
             return
@@ -213,6 +236,8 @@ class FileExplorerOps:
             return
         full = self._frame._dpath(self._frame.current_path, name)
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.mkdir_command(full)))
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
@@ -221,6 +246,8 @@ class FileExplorerOps:
         w.start()
 
     def _touch(self):
+        if not self._frame._can_operate():
+            return
         name, ok = FluentInputDialog.getText(self._frame, "New File", "Name:")
         if not ok or not name or "/" in name:
             return
@@ -233,6 +260,8 @@ class FileExplorerOps:
             return
         full = self._frame._dpath(self._frame.current_path, name)
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.touch_command(full)))
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
@@ -241,6 +270,8 @@ class FileExplorerOps:
         w.start()
 
     def _rename_item(self, name: str):
+        if not self._frame._can_operate():
+            return
         new, ok = FluentInputDialog.getText(self._frame, "Rename", "New name:", text=name)
         if not ok or not new or new == name:
             return
@@ -256,6 +287,8 @@ class FileExplorerOps:
         w = self._frame._run_adb(
             "shell", self._frame._root(explorer_service.move_command(old, new_p))
         )
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
@@ -266,9 +299,13 @@ class FileExplorerOps:
         w.start()
 
     def _delete_item(self, name: str):
+        if not self._frame._can_operate():
+            return
         full = self._frame._dpath(self._frame.current_path, name)
         self._frame.status_bar.setText(f"Deleting {name}...")
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.delete_command(full)))
+        if w is None:
+            return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
@@ -308,6 +345,8 @@ class FileExplorerOps:
         )
 
     def _paste_items(self):
+        if not self._frame._can_operate():
+            return
         if not self._frame.clipboard:
             return
         for src in self._frame.clipboard:
@@ -320,6 +359,8 @@ class FileExplorerOps:
                     self._frame._root(explorer_service.copy_command(src, dst)),
                     timeout=120,
                 )
+                if w is None:
+                    return
                 self._frame._connect_worker_ui(
                     w,
                     w.result_ready,
@@ -334,6 +375,8 @@ class FileExplorerOps:
                     self._frame._root(explorer_service.move_command(src, dst)),
                     timeout=120,
                 )
+                if w is None:
+                    return
                 self._frame._connect_worker_ui(
                     w,
                     w.result_ready,
@@ -346,6 +389,8 @@ class FileExplorerOps:
     # ── 文件权限（chmod）────────────────────────────────────────────────
 
     def _show_chmod(self, name: str, is_dir: bool):
+        if not self._frame._can_operate():
+            return
         full = self._frame._dpath(self._frame.current_path, name)
         dlg = FluentDialog(self._frame)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
@@ -414,7 +459,16 @@ class FileExplorerOps:
                 pass
 
         orig = [""]
+        applying = [False]
+
+        def _sync_apply_access(*_args):
+            apply_btn.setEnabled(
+                bool(orig[0]) and not applying[0] and self._frame._can_operate()
+            )
+
         w = self._frame._run_adb("shell", explorer_service.stat_mode_command(full))
+        if w is None:
+            return
 
         def _on_stat(o, e):
             if e:
@@ -437,7 +491,7 @@ class FileExplorerOps:
             orig[0] = mode
             set_from_mode(orig[0])
             preview.setText(f"chmod {to_mode()}  {full}")
-            apply_btn.setEnabled(True)
+            _sync_apply_access()
             revert_btn.setEnabled(True)
 
         self._frame._connect_worker_ui(w, w.result_ready, _on_stat, guard_objects=(dlg,))
@@ -450,6 +504,9 @@ class FileExplorerOps:
         )
 
         def _apply_permissions():
+            if not self._frame._can_operate() or not orig[0] or applying[0]:
+                return
+            applying[0] = True
             apply_btn.setEnabled(False)
             revert_btn.setEnabled(False)
             mode = to_mode()
@@ -458,10 +515,15 @@ class FileExplorerOps:
                 "shell",
                 self._frame._root(explorer_service.chmod_command(mode, full)),
             )
+            if chmod_worker is None:
+                applying[0] = False
+                _sync_apply_access()
+                return
 
             def _on_chmod(output, error):
                 if error:
-                    apply_btn.setEnabled(True)
+                    applying[0] = False
+                    _sync_apply_access()
                     revert_btn.setEnabled(True)
                     preview.setText(f"chmod failed for {full}")
                     FluentMessageBox.critical(
@@ -489,4 +551,8 @@ class FileExplorerOps:
             self._frame,
             minimum_floor=QSize(420, 240 + dlg.TITLE_BAR_HEIGHT),
         )
-        dlg.exec()
+        self._frame.operation_availability_changed.connect(_sync_apply_access)
+        try:
+            dlg.exec()
+        finally:
+            safe_disconnect(self._frame.operation_availability_changed, _sync_apply_access)

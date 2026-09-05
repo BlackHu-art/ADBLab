@@ -4,8 +4,16 @@ import uuid
 from collections import deque
 
 from PySide6.QtCore import QTimer, Signal, Slot
-from PySide6.QtWidgets import QWidget
-from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
+from PySide6.QtWidgets import QGridLayout, QWidget
+from qfluentwidgets import (
+    BodyLabel,
+    ComboBox,
+    FluentIcon,
+    InfoBadge,
+    InfoLevel,
+    LineEdit,
+    PushButton,
+)
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -20,7 +28,6 @@ from gui.dialogs.live_logcat_worker import (
     LogcatWorker,
 )
 from gui.styles import BaseStyles
-from gui.styles.icon_loader import get_themed_icon
 
 
 class LiveLogcatPage(QWidget):
@@ -31,6 +38,13 @@ class LiveLogcatPage(QWidget):
     CLEANUP_RECHECK_MS = 100
     status_badge: InfoBadge
     status_bar: BodyLabel
+    header_card: QWidget
+    _level_label: BodyLabel
+    _package_label: BodyLabel
+    level_combo: ComboBox
+    pkg_input: LineEdit
+    btn_get_pkg: PushButton
+    _filters_layout: QGridLayout
 
     def __init__(
         self,
@@ -47,6 +61,7 @@ class LiveLogcatPage(QWidget):
         self._task_supervisor = task_supervisor or QtTaskSupervisor.shared()
         self._log_service = log_service
         self._device_connected = bool(device_ip)
+        self._device_selected = True
         self._supervisor_owner_id = f"live-logcat-page-{uuid.uuid4()}"
         self._supervisor_task_id = None
         self.worker = None
@@ -77,9 +92,8 @@ class LiveLogcatPage(QWidget):
         self._worker_release_timer.setSingleShot(True)
         self._worker_release_timer.timeout.connect(self._poll_worker_release)
 
-        self.setWindowTitle(f"Live Logcat - {device_ip}")
-        self._window_icon_name = "scroll.svg"
-        self.setWindowIcon(get_themed_icon(self._window_icon_name))
+        self.setWindowTitle(f"实时 Logcat - {device_ip}")
+        self.setWindowIcon(FluentIcon.SCROLL.icon())
         self.setMinimumSize(0, 0)
         self._init_ui()
         self._apply_theme()
@@ -90,6 +104,34 @@ class LiveLogcatPage(QWidget):
         self._task_supervisor.application_stopped.connect(
             self._on_application_stopped
         )
+
+    def prepare_for_workspace(self) -> None:
+        """由宿主公开调用嵌入契约，设备与页面标题只在主窗口显示一次。"""
+        self.set_workspace_embedded(True)
+        self.set_device_selected(False)
+
+    def set_workspace_embedded(self, embedded: bool) -> None:
+        """切换标题呈现，不改变 worker、设备归属或关闭监督。"""
+        self.setProperty("workspace_embedded", bool(embedded))
+        self.header_card.setVisible(not embedded)
+        self._reflow_filters()
+
+    def minimumSizeHint(self):
+        """以过滤区可换行时的宽度为下限，避免宽行反向阻止窗口收窄。"""
+        size = super().minimumSizeHint()
+        layout = self.layout()
+        if not getattr(self, "_filter_controls", ()) or layout is None:
+            return size
+        labels = max(self._level_label.minimumSizeHint().width(),
+                     self._package_label.minimumSizeHint().width())
+        fields = max(self.level_combo.minimumWidth(), self.pkg_input.minimumSizeHint().width(),
+                     self.btn_get_pkg.minimumWidth())
+        width = labels + fields + self._filters_layout.horizontalSpacing()
+        if not self.header_card.isHidden():
+            width = max(width, self.header_card.minimumSizeHint().width())
+        margins = layout.contentsMargins()
+        size.setWidth(width + margins.left() + margins.right())
+        return size
 
     def activate(self, payload=None) -> None:
         """恢复当前页面绘制；导航返回不会重复启动采集。"""
@@ -117,15 +159,47 @@ class LiveLogcatPage(QWidget):
     def set_device_connected(self, connected: bool) -> None:
         """反映固定会话设备的在线状态，不把页面静默切到其他设备。"""
 
-        self._device_connected = bool(connected and self.device_ip)
+        connected = bool(connected and self.device_ip)
+        if not connected and self._device_connected:
+            self._invalidate_package_query()
+        self._device_connected = connected
+        self._sync_device_actions()
+
+    def _can_operate_device(self) -> bool:
+        """所有新设备请求共用准入，不限制已有采集的停止和本地日志查看。"""
+        return bool(
+            self.device_ip
+            and self._device_connected
+            and self._device_selected
+            and not self._closing
+        )
+
+    def _invalidate_package_query(self) -> None:
+        """撤销选择后旧查询不能通过晚到结果重设正在采集的包过滤。"""
+        self._package_filter_revision += 1
+        worker = self._pkg_worker
+        if worker is not None:
+            worker.requestInterruption()
+
+    def set_device_selected(self, selected: bool) -> None:
+        """接收固定设备的全局勾选状态，既有采集保持其原设备。"""
+        selected = bool(selected)
+        if not selected and self._device_selected:
+            self._invalidate_package_query()
+        self._device_selected = selected
+        self._sync_device_actions()
+
+    def _sync_device_actions(self) -> None:
         active = bool(self.worker is not None and self.worker.is_active())
         self._set_running_actions(active, stopping=self._logcat_stopping)
-        self.status_badge.setText("Ready" if self._device_connected else "Device offline")
+        self.status_badge.setText("设备已连接" if self._device_connected else "设备离线")
         self.status_badge.setLevel(
             InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
         )
         if not self._device_connected and not active:
-            self.status_bar.setText("Device offline; reconnect or choose another device")
+            self.status_bar.setText("设备已离线，请重新连接后开始采集")
+        elif not self._device_selected:
+            self.status_bar.setText("请在顶部勾选当前设备后操作；已有采集仍可停止")
 
     def request_dispose(self, _reason: str = "user") -> bool:
         """非阻塞停止日志会话；资源归零后由 ``dispose_ready`` 通知宿主。"""
@@ -176,6 +250,10 @@ class LiveLogcatPage(QWidget):
         return (
             getattr(self, "_form_controller", None) or LiveLogcatForm(self)
         ).resizeEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._filter_reflow_timer.start(0)
 
     def _set_running_actions(self, running: bool, *, stopping: bool = False) -> None:
         return (

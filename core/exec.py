@@ -285,12 +285,15 @@ class ProcessRunner:
         creationflags: int | None = None,
         env: dict[str, str] | None = None,
     ) -> subprocess.Popen:
-        """启动子进程，同名 key 会先停止旧进程。"""
+        """启动子进程；旧进程未退出或同 key 并发启动冲突时抛出 RuntimeError。
 
+        并发失败方只清理自身进程；未能退出的进程保留内部 key，供后续统一清理。
+        """
+
+        self.stop(key)
         with self._lock:
-            old_proc = self._procs.pop(key, None)
-        self._unregister_global(key, old_proc)
-        self._stop_proc(old_proc)
+            if key in self._procs:
+                raise RuntimeError("Cannot start process while previous process is still running")
 
         proc = self.spawn(
             cmd,
@@ -307,8 +310,8 @@ class ProcessRunner:
         )
 
         # spawn 在锁外进行，此处用一次原子 compare-and-swap 决定唯一获胜者：
-        # 只有 key 仍为空的一方完成注册并返回新进程；并发失败方停掉自己刚
-        # spawn 的进程并返回当前占用者，避免向调用方返回已被替换的句柄。
+        # 只有 key 仍为空的一方完成注册并返回新进程；失败方不能把另一调用
+        # 的进程句柄伪装成本次成功结果，也不能覆盖获胜者的跟踪记录。
         with self._lock:
             incumbent = self._procs.get(key)
             if incumbent is None:
@@ -319,9 +322,14 @@ class ProcessRunner:
         if winner:
             self._register_global(key, proc)
             return proc
-        self._stop_proc(proc)
         with self._lock:
-            return self._procs.get(key, proc)
+            residual_key = f"__process_runner_residual_{id(proc)}"
+            while residual_key in self._procs:
+                residual_key += "_"
+            self._procs[residual_key] = proc
+        self._register_global(residual_key, proc)
+        self.stop(residual_key)
+        raise RuntimeError("Process start rejected: a concurrent start already claimed this key")
 
     def spawn(
         self,
@@ -496,6 +504,8 @@ class ProcessRunner:
 
     @property
     def active_keys(self) -> list[str]:
+        """返回仍存活的跟踪 key，包含仅供清理使用的内部残留项。"""
+
         with self._lock:
             keys = []
             for k, p in self._procs.items():
@@ -591,10 +601,15 @@ class ProcessRunner:
         return attempted
 
     def _register_global(self, key: str, proc: subprocess.Popen | None):
+        """仅登记仍归本实例当前 key 所有的句柄，防止旧启动覆盖新一代跟踪。"""
+
         if proc is None:
             return
-        with self._global_lock:
-            self._global_procs[(self._instance_id, key)] = proc
+        with self._lock:
+            if self._procs.get(key) is not proc:
+                return
+            with self._global_lock:
+                self._global_procs[(self._instance_id, key)] = proc
 
     def _unregister_global(self, key: str, proc: subprocess.Popen | None):
         if proc is None:

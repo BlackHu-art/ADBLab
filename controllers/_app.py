@@ -54,6 +54,8 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
                     "get_package", True, f"Current package on {device_ip}: {package_name}"
                 )
                 self.signals.current_package_received.emit(device_ip, package_name)
+            else:
+                self._emit_operation("get_package", False, "未找到前台应用，请解锁设备后重试")
         else:
             error = result.get("error", "Unknown error")
             self._emit_operation(

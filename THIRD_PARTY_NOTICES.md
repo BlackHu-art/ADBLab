@@ -34,8 +34,8 @@ License；该版本许可文本见
 
 ## Phosphor Icons
 
-`resources/icons/` 包含 Phosphor Icons Regular SVG 图标集，并由 ADBLab 的主题图标加载器进行
-颜色替换。Phosphor Icons 采用 MIT License；来源和许可文本见
+`resources/icons/` 包含 Phosphor Icons Regular SVG 图标集；当前设备轮廓复用其中的
+`device-mobile.svg`，经 Fluent 扩展接口按主题着色。Phosphor Icons 采用 MIT License；来源和许可文本见
 [`resources/icons/LICENSE.txt`](resources/icons/LICENSE.txt)。仓库历史没有记录导入时的精确
 上游发布版本，因此不得在长期文档中推断具体版本号。
 

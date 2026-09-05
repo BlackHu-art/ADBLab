@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QBoxLayout
 from qfluentwidgets import (
@@ -30,6 +31,7 @@ from gui.styles.fluent import (
     configure_fluent_control,
     refresh_fluent_widget_style,
 )
+from gui.widgets.responsive_layout import RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY
 
 
 def _font_size(font) -> int:
@@ -107,12 +109,49 @@ def test_base_panel_card_factory_returns_reference_component(qt_application):
     panel = BasePanel.__new__(BasePanel)
     card = panel._card("测试卡片")
 
-    assert type(card) is HeaderCardWidget
+    assert isinstance(card, HeaderCardWidget)
     assert card.title == "测试卡片"
     assert card.accessibleName() == "测试卡片"
-    assert card.toolTip() == "测试卡片"
+    assert card.toolTip() == ""
     assert card.property("fontRole") == FontRole.UI.value
     assert card.viewLayout.direction() == QBoxLayout.Direction.TopToBottom
+
+
+@pytest.mark.parametrize("font_size", (8, 12, 18, 22))
+@pytest.mark.parametrize("custom_padding", (False, True))
+def test_combo_stable_minimum_measures_all_closed_values_without_selection_changes(
+    qt_application,
+    font_size,
+    custom_padding,
+):
+    """闭合态宽度使用真实字体和样式，并且测量不会触发业务选项信号。"""
+
+    panel = BasePanel.__new__(BasePanel)
+    combo = panel._combo(["1024", "1080p", "Default"], font=QFont("Microsoft YaHei", font_size))
+    combo.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+    combo.show()
+    qt_application.processEvents()
+    if custom_padding:
+        combo.setStyleSheet(
+            combo.styleSheet()
+            + "\nComboBox { padding-left: 17px; padding-right: 41px; border-width: 2px; }"
+        )
+    selection = (combo.currentIndex(), combo.currentText())
+    changed = QSignalSpy(combo.currentIndexChanged)
+    text_changed = QSignalSpy(combo.currentTextChanged)
+
+    panel._refresh_responsive_widget_minimum(combo)
+
+    assert (combo.currentIndex(), combo.currentText()) == selection
+    assert changed.count() == text_changed.count() == 0
+    stable_minimum = combo.minimumWidth()
+    actual_hints = []
+    for index in range(combo.count()):
+        combo.setCurrentIndex(index)
+        actual_hints.append(combo.sizeHint().width())
+        assert combo.minimumWidth() == stable_minimum
+        assert stable_minimum >= combo.sizeHint().width()
+    assert stable_minimum == max(actual_hints)
 
 
 def test_round_menu_uses_qaction_without_menu_wrapper(qt_application):

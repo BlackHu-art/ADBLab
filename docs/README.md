@@ -17,6 +17,18 @@
 [project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。完整约定见
 [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)。
 
+## 当前约束入口
+
+| 约束 | 唯一维护位置 |
+| --- | --- |
+| 协作、授权、修改与清理边界 | [AGENTS.md](../AGENTS.md) |
+| 测试范围、规范、隔离、注释 | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
+| 环境、构建、版本与发布 | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
+| 事实核实、链接、归档与清理 | [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md) |
+
+历史 ADR 中的“每步全量”及归档测试结果只适用于当时任务。当前验证按测试指南选择；打开历史
+文档、进行项目审计或结束长任务都不会自动触发全量测试。
+
 ## 快速阅读路径
 
 | 场景 | 先读 | 再读 |

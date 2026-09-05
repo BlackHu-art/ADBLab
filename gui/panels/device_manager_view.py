@@ -401,7 +401,7 @@ class DeviceManagerView:
             if has_selection:
                 button.setToolTip(str(button.property("functionalToolTip") or ""))
             elif button is getattr(self._frame, "btn_info", None):
-                button.setToolTip("请先选择设备；设备信息会显示在操作日志中")
+                button.setToolTip("请先选择设备；设备信息会显示在任务中心运行记录中")
             else:
                 button.setToolTip("请先选择设备")
         select_all = getattr(self._frame, "btn_all", None)

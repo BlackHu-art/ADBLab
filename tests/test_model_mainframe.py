@@ -353,11 +353,17 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
+    fake_side_panel._devices_tab = SimpleNamespace(set_selected_devices=Mock())
     fake_side_panel._tab_scroll_areas = {}
     fake_side_panel._apps_tab = SimpleNamespace(
         panel_header=QWidget(),
         apps_status_badge=QWidget(),
         category_stack=Mock(),
+        monkey_preparation_requested=Mock(),
+        on_monkey_preparation_finished=Mock(),
+        program_edit=SimpleNamespace(textChanged=Mock()),
+        set_package_query_pending=Mock(),
+        apply_responsive_width=Mock(),
     )
     fake_side_panel._advanced_tab = SimpleNamespace(
         panel_header=QWidget(),
@@ -369,6 +375,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         remote_status_badge=QWidget(),
         category_stack=Mock(),
         set_workspace_device=Mock(side_effect=lambda device_id: device_id),
+        set_device_selected=Mock(),
         apply_responsive_width=Mock(),
     )
 
@@ -396,6 +403,9 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     try:
         assert created == {"central_widget_ready": True, "scan_thread": None}
         resolve.assert_not_called()
+        fake_side_panel._apps_tab.program_edit.textChanged.connect.assert_called_once_with(
+            frame._invalidate_package_query
+        )
     finally:
         # 本用例只验证初始化顺序，避免在 teardown 启动异步应用级关机。
         frame._close_ready = True
@@ -566,7 +576,6 @@ def test_main_frame_workspace_route_is_forwarded_without_top_level_window():
         side_effect=lambda target, **_kwargs: events.append(("switch", target))
     )
     frame = SimpleNamespace(
-        _pending_workspace_route=WorkspaceRoute("devices", "files"),
         _workspace_pages={"system": page},
         switchTo=switch_to,
         log_service=Mock(),
@@ -593,14 +602,12 @@ def test_main_frame_workspace_route_is_forwarded_without_top_level_window():
     )
     page.open_route.assert_called_once_with(route)
     assert events == [("open", route), ("switch", page)]
-    assert frame._pending_workspace_route is None
 
 
 def test_main_frame_unknown_workspace_route_does_not_switch_page():
     page = Mock()
     page.supports_route.return_value = False
     frame = SimpleNamespace(
-        _pending_workspace_route=None,
         _workspace_pages={"system": page},
         switchTo=Mock(),
         log_service=Mock(),
@@ -625,13 +632,29 @@ def test_main_frame_syncs_device_context_to_every_task_page():
             _device_discovery_state="ready",
         ),
         _home_page=home,
+        _global_device_bar=Mock(),
+        _device_hub=Mock(),
+        _sync_global_session_controls=Mock(),
         _workspace_pages=pages,
+        _pending_package_device="",
+        _device_metadata={"device-1": {"Model": "Current model"}},
     )
 
-    MainFrame._sync_device_context(frame)
+    with patch(
+        "gui.main_frame.DeviceStore.get_full_devices_info",
+        return_value=[{"ip": "device-1", "Brand": "Demo", "Model": "Cached model"}],
+    ):
+        MainFrame._sync_device_context(frame)
 
     expected = (["device-1"], ["device-1", "device-2"], "ready")
     home.set_device_context.assert_called_once_with(*expected)
+    frame._global_device_bar.set_context.assert_called_once_with(*expected)
+    frame._device_hub.set_device_context.assert_called_once_with(*expected)
+    frame._device_hub.set_device_metadata.assert_called_once_with([
+        {"ip": "device-1", "Brand": "Demo", "Model": "Current model"},
+        {"ip": "device-2"},
+    ])
+    frame._sync_global_session_controls.assert_called_once_with()
     for page in pages.values():
         page.set_device_context.assert_called_once_with(*expected)
 
@@ -682,7 +705,7 @@ def test_main_frame_always_on_top_native_path_does_not_recreate_window():
 
 
 def test_main_frame_signal_maps_keep_expected_coverage():
-    frame = SimpleNamespace()
+    frame = SimpleNamespace(_request_current_package=Mock())
     lp = Mock()
     ac = Mock()
 
@@ -694,6 +717,14 @@ def test_main_frame_signal_maps_keep_expected_coverage():
     )
 
     assert len(signal_map) == 72
+    assert (lp.get_program_requested, frame._request_current_package) in signal_map
+    assert (lp.get_program_requested, ac.get_current_package) not in signal_map
+    package_handler = next(
+        handler for signal, handler in signal_map if signal is lp.get_program_requested
+    )
+    package_handler(["device-1"])
+    frame._request_current_package.assert_called_once_with(["device-1"])
+    ac.get_current_package.assert_not_called()
     assert (lp.connect_requested, ac.connect_device) in signal_map
     assert (lp.open_deep_link_requested, ac.open_deep_link) in signal_map
     assert (lp.disable_app_requested, ac.disable_app) in signal_map

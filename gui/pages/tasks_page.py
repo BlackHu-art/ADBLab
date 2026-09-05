@@ -18,9 +18,10 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
-from PySide6.QtWidgets import QBoxLayout, QHBoxLayout, QLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
+    FluentIcon,
     HeaderCardWidget,
     InfoBadge,
     InfoLevel,
@@ -32,6 +33,8 @@ from qfluentwidgets import (
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role, configure_button
+from gui.widgets.collapsible_tools import CollapsibleTools
+from gui.widgets.content_section import ContentSection
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 
 # 在途视图轮询间隔（毫秒）。
@@ -131,6 +134,7 @@ class TaskCenterPage(QWidget):
         parent: QWidget | None = None,
         poll_interval_ms: int = POLL_INTERVAL_MS,
         history_limit: int | None = DEFAULT_HISTORY_LIMIT,
+        runtime_log: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("taskCenterPage")
@@ -151,14 +155,25 @@ class TaskCenterPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._scroll = SmoothScrollArea()
+        self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(8, 8, 8, 8)
-        content_layout.setSpacing(8)
+        content_layout.setSpacing(20)
         content_layout.addWidget(self._active_card)
         content_layout.addWidget(self._history_card)
+        self.runtime_records: CollapsibleTools | None = None
+        if runtime_log is not None:
+            # 记录面板继续接收有界日志；折叠只影响显示，不丢失后台错误和操作结果。
+            runtime_log.setMinimumHeight(300)
+            self.runtime_records = CollapsibleTools(
+                "运行记录", runtime_log, content,
+                icon=FluentIcon.SCROLL,
+                tooltip="查看应用操作与异常记录，可按级别筛选或清空显示",
+            )
+            content_layout.addWidget(self.runtime_records)
         content_layout.addStretch(1)
         self._scroll.setWidget(content)
         layout.addWidget(self._scroll)
@@ -167,7 +182,48 @@ class TaskCenterPage(QWidget):
         self._poll_timer.setInterval(max(0, int(poll_interval_ms)))
         self._poll_timer.timeout.connect(self.refresh)
 
+        self._runtime_reveal_pending = False
+        self._runtime_reveal_timer = QTimer(self)
+        self._runtime_reveal_timer.setSingleShot(True)
+        self._runtime_reveal_timer.setInterval(20)
+        self._runtime_reveal_timer.timeout.connect(self._reveal_runtime_records)
+        self._scroll.verticalScrollBar().rangeChanged.connect(self._reschedule_runtime_reveal)
+        if self.runtime_records is not None:
+            self.runtime_records.expanded_changed.connect(self._on_runtime_records_expanded)
+
         self._sync_theme_state()
+
+    def show_runtime_records(self) -> None:
+        """展开同页记录并移到可读位置，原日志控件继续负责过滤和有界缓存。"""
+
+        if self.runtime_records is None:
+            return
+        self.runtime_records.toggle_button.setChecked(True)
+        self._on_runtime_records_expanded(True)
+
+    def _on_runtime_records_expanded(self, expanded: bool) -> None:
+        """展开和重新定位共享一次请求；折叠后不再响应已排队的滚动。"""
+        self._runtime_reveal_pending = expanded
+        if expanded:
+            self._reschedule_runtime_reveal()
+        else:
+            self._runtime_reveal_timer.stop()
+
+    def _reschedule_runtime_reveal(self, *_args) -> None:
+        # 卡片展开与主窗口高度修正可能分属不同事件循环；合并滚动范围更新，
+        # 等下一帧布局完成后定位，避免按折叠时仍为零的滚动范围丢掉本次请求。
+        if self._runtime_reveal_pending:
+            self._runtime_reveal_timer.start()
+
+    def _reveal_runtime_records(self) -> None:
+        if self.runtime_records is None or not self._runtime_reveal_pending:
+            return
+        self._runtime_reveal_pending = False
+        if not self.isVisible() or self.runtime_records.content.isHidden():
+            return
+        self._scroll.ensureWidgetVisible(self.runtime_records.content, 0, 8)
+        # 日志面板本身也是合法焦点代理，避免依赖它内部控件的名称。
+        self.runtime_records.content.setFocus(Qt.FocusReason.ShortcutFocusReason)
 
     # ── 数据刷新契约 ────────────────────────────────────────────────────
 
@@ -201,7 +257,7 @@ class TaskCenterPage(QWidget):
             self._active_card.viewLayout.addWidget(
                 self._empty_state(
                     "暂无在途任务",
-                    "安装批次、录屏、Monkey 与 MobilePerf 任务会显示在这里。",
+                    "操作结果与异常信息可在下方运行记录中查看。",
                 )
             )
             return
@@ -309,12 +365,16 @@ class TaskCenterPage(QWidget):
 
     def hideEvent(self, event: QHideEvent) -> None:
         self._poll_timer.stop()
+        self._runtime_reveal_pending = False
+        self._runtime_reveal_timer.stop()
         super().hideEvent(event)
 
     def shutdown(self) -> None:
         """停止轮询定时器，供窗口关闭清理调用。"""
 
         self._poll_timer.stop()
+        self._runtime_reveal_pending = False
+        self._runtime_reveal_timer.stop()
 
     # ── 主题与辅助 ──────────────────────────────────────────────────────
 
@@ -328,11 +388,11 @@ class TaskCenterPage(QWidget):
 
     @staticmethod
     def _make_card(title: str) -> HeaderCardWidget:
-        """创建直接使用的 qfluentwidgets 标题卡片。"""
+        """以标题和间距区分任务列表，复用原分区的布局与行生命周期。"""
 
-        card = HeaderCardWidget(title)
+        card = ContentSection(title)
         card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        card.viewLayout.setContentsMargins(12, 8, 12, 8)
+        card.viewLayout.setContentsMargins(0, 8, 0, 8)
         card.viewLayout.setSpacing(6)
         apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
         return card

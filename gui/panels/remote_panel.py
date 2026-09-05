@@ -155,6 +155,8 @@ class ScrcpyLaunchWorker(QThread):
 
     def run(self):
         # scrcpy 版本、设备预检和编码器探测都可能阻塞，放到 QThread 避免卡住 UI。
+        if self.isInterruptionRequested():
+            return
         try:
             plan = self.service.build_launch_plan(self.config)
         except Exception as exc:
@@ -254,6 +256,8 @@ class RemotePanel(BasePanel):
         super().__init__(panel, parent)
         self._workspace_device_id = ""
         self._workspace_device_connected: bool | None = None
+        self._device_selected = True
+        self._device_admission_revision = 0
         self._form_controller = RemotePanelForm(self)
         self._scrcpy_controller = RemotePanelScrcpy(self)
         self._input_controller = RemotePanelInput(self)
@@ -332,15 +336,34 @@ class RemotePanel(BasePanel):
 
     @property
     def selected_devices(self) -> list[str]:
-        """Remote 使用独立会话设备；未嵌入工作区时兼容原批量选择。"""
+        """会话固定操作设备；查看该设备不能替代全局明确选择。"""
 
         workspace_device = str(getattr(self, "_workspace_device_id", "") or "")
         if workspace_device:
             connected = getattr(self, "_workspace_device_connected", None)
-            if connected is False:
+            if connected is False or not getattr(self, "_device_selected", True):
                 return []
             return [workspace_device]
         return list(super().selected_devices)
+
+    def _can_operate_device(self) -> bool:
+        """新启动与遥控输入共用准入；停止既有资源不受当前选择限制。"""
+        return not getattr(self, "_closing", False) and len(self.selected_devices) == 1
+
+    def _invalidate_device_admission(self) -> None:
+        """撤销尚未执行的输入与预检，重新勾选也不恢复旧请求。"""
+        self._device_admission_revision = getattr(self, "_device_admission_revision", 0) + 1
+        worker = getattr(self, "_launch_worker", None)
+        if worker is not None:
+            self._request_launch_worker_interruption_once(worker)
+
+    def set_device_selected(self, selected: bool) -> None:
+        """由主窗口投影固定会话设备是否在当前全局操作目标中。"""
+        selected = bool(selected)
+        if not selected and getattr(self, "_device_selected", True):
+            self._invalidate_device_admission()
+        self._device_selected = selected
+        self._update_action_states()
 
     def set_workspace_device(
         self,
@@ -356,6 +379,11 @@ class RemotePanel(BasePanel):
             self._workspace_device_id = active_device
         else:
             self._workspace_device_id = active_device or requested
+            if (
+                connected is False
+                and getattr(self, "_workspace_device_connected", None) is not False
+            ):
+                self._invalidate_device_admission()
             self._workspace_device_connected = connected
         self._update_action_states()
         return self._workspace_device_id

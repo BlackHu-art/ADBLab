@@ -1,3 +1,5 @@
+import pytest
+
 from services import file_explorer as explorer_service
 
 
@@ -85,3 +87,29 @@ drwxrwx--x 3 media_rw media_rw 4096 2025-12-01 08:00 Pictures
     assert rows[2].size == 2048
     assert rows[2].size_text == "2.0 KB"
     assert rows[2].modified == "May 30 12:34"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["draft  final.txt", "tab\tname.txt", "trailing-space.txt ", "Permission denied notes.txt"],
+)
+@pytest.mark.parametrize("modified", ["May 30 12:34", "2026-06-02 15:30", "May 30"])
+def test_parse_ls_output_preserves_exact_filename_for_later_operations(name, modified):
+    output = f"-rw-r--r-- 1 shell shell 12 {modified} {name}\n"
+
+    rows, links = explorer_service.parse_ls_output(output)
+
+    assert len(rows) == 1
+    assert rows[0].name == name
+    assert rows[0].modified == modified
+    assert links == {}
+    assert explorer_service.device_path("/sdcard", rows[0].name) == f"/sdcard/{name}"
+
+
+def test_parse_ls_output_preserves_whitespace_inside_symlink_name_and_target():
+    output = "lrwxrwxrwx 1 shell shell 12 May 30 12:34 my  link -> /sdcard/my  folder\n"
+
+    rows, links = explorer_service.parse_ls_output(output)
+
+    assert rows[0].name == "my  link"
+    assert links == {"my  link": "/sdcard/my  folder"}

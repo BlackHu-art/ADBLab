@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QWidget,
 )
-from qfluentwidgets import HeaderCardWidget, SmoothScrollArea
+from qfluentwidgets import HeaderCardWidget, PushButton, SmoothScrollArea
 
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
@@ -16,7 +16,7 @@ from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
 from gui.styles import BaseStyles, FontRole
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
 from gui.widgets.responsive_controller import (
     _EVENT_REASONS,
     ReflowReason,
@@ -76,6 +76,8 @@ class SidePanel(QWidget):
         # SidePanel 只保留跨页面状态与信号协调职责，不再创建可见页签/页面栈。
         # 设备面板与三个功能页由 MainFrame 直接注册为 FluentWindow 子页面。
         self._devices_tab = DeviceManager(self)
+        self._devices_tab.setParent(self)
+        self._devices_tab.hide()
         self._device_widget = self._devices_tab.build_ui()
 
         self._apps_tab = None
@@ -117,6 +119,10 @@ class SidePanel(QWidget):
         if tab is not None:
             return tab
         tab = cls(self)
+        # 控制器属于共享状态协调器；可见根控件随后交给工作区宿主。
+        # 显式隐藏控制器，销毁协调器时 Qt 自动断开其全局样式连接。
+        tab.setParent(self)
+        tab.hide()
         tab_widget = tab.build_ui()
         prepare_responsive_content(tab_widget)
         tab_widget.setMinimumWidth(0)
@@ -183,7 +189,14 @@ class SidePanel(QWidget):
 
     @property
     def selected_devices(self) -> list[str]:
-        return self._devices_tab.selected_devices
+        """新操作只用已选在线设备；ADB 不可用时拒绝提交，扫描中保留最近快照。"""
+
+        if self._device_discovery_state == "unavailable":
+            return []
+        connected = set(self._connected_device_cache)
+        return list(dict.fromkeys(
+            device for device in self._devices_tab.selected_devices if device in connected
+        ))
 
     @property
     def ip_address(self) -> str:
@@ -209,6 +222,7 @@ class SidePanel(QWidget):
         self._device_discovery_state = normalized
         self._devices_tab.set_discovery_state(normalized)
         if normalized != previous:
+            self._refresh_loaded_action_states()
             self.device_discovery_state_changed.emit(normalized)
 
     def request_device_refresh(self) -> bool:
@@ -372,10 +386,14 @@ class SidePanel(QWidget):
                 if isinstance(child, HeaderCardWidget):
                     child.update()
                 elif isinstance(child, QPushButton):
-                    # qfluentwidgets 按钮自维护主题，这里只按主题重设项目 SVG 图标。
+                    # qfluentwidgets 按钮自维护主题，这里同步原生 Fluent 操作图标。
                     icon_name = child.property("iconName")
                     if icon_name:
-                        child.setIcon(get_themed_icon(icon_name))
+                        icon = get_fluent_icon(icon_name)
+                        if isinstance(child, PushButton):
+                            child.setIcon(icon)
+                        else:
+                            child.setIcon(icon.qicon())
         self.apply_device_theme()
         if self._apps_tab is not None:
             self._apps_tab._update_pct_total()
@@ -391,7 +409,7 @@ class SidePanel(QWidget):
         self.setFont(self._font_base)
         for root in self._visual_roots():
             root.setFont(self._font_base)
-            for child in root.findChildren(QWidget):
+            for child in (root, *root.findChildren(QWidget)):
                 role = child.property("fontRole")
                 if role:
                     try:

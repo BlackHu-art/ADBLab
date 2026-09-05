@@ -5,9 +5,9 @@ target-version = ["py310"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 markers = [
-    "unit: 无 Qt/进程依赖的纯逻辑测试（CI 快速子集）",
+    "unit: 无 Qt/进程依赖的纯逻辑测试（已注册，尚未系统分配）",
     "ui: 需要 QApplication、窗口几何或字体度量的轻量 Qt 测试",
-    "integration: 子进程、外部边界或探针类测试（CI 快速子集）",
+    "integration: 子进程、外部边界或探针类测试（不保证并行安全）",
 ]
 
 [tool.coverage.run]

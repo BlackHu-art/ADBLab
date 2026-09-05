@@ -1,6 +1,7 @@
 import threading
 from unittest.mock import patch
 
+import pytest
 import yaml
 
 from models.device_store import DeviceStore
@@ -88,6 +89,41 @@ def test_device_store_corrupt_yaml_is_backed_up_and_snapshot_kept(tmp_path):
         assert level == "WARNING"
         assert message.startswith("DeviceStore 加载失败：")
         log_service.write_developer_console.assert_called_once()
+
+
+@pytest.mark.parametrize("invalid_root", ["[]", "false", "0", "''", "[item]", "invalid"])
+def test_device_store_rejects_non_mapping_roots_and_keeps_snapshot(tmp_path, invalid_root):
+    with _DeviceStoreState(), patch("models.device_store.LogService") as log_service:
+        store_path = tmp_path / "connected_devices.yaml"
+        store_path.write_text(invalid_root, encoding="utf-8")
+        DeviceStore._file_path = str(store_path)
+        DeviceStore._legacy_file_path = str(tmp_path / "missing.yaml")
+        DeviceStore._devices = {"retained": {"ip": "device-1"}}
+
+        DeviceStore.load()
+
+        assert DeviceStore.get_all() == [("retained", {"ip": "device-1"})]
+        assert store_path.read_text("utf-8") == invalid_root
+        backups = list(tmp_path.glob("connected_devices.yaml.corrupt-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text("utf-8") == invalid_root
+        log_service.return_value.log.assert_called_once()
+
+
+@pytest.mark.parametrize("empty_content", ["", " \n", "{}"])
+def test_device_store_still_accepts_empty_files_and_empty_mappings(tmp_path, empty_content):
+    with _DeviceStoreState(), patch("models.device_store.LogService") as log_service:
+        store_path = tmp_path / "connected_devices.yaml"
+        store_path.write_text(empty_content, encoding="utf-8")
+        DeviceStore._file_path = str(store_path)
+        DeviceStore._legacy_file_path = str(tmp_path / "missing.yaml")
+        DeviceStore._devices = {"previous": {"ip": "device-1"}}
+
+        DeviceStore.load()
+
+        assert DeviceStore.get_all() == []
+        assert not list(tmp_path.glob("connected_devices.yaml.corrupt-*"))
+        log_service.return_value.log.assert_not_called()
 
 
 def test_device_store_load_tolerates_trailing_garbage_and_rewrites(tmp_path):

@@ -18,7 +18,7 @@ from utils.user_data import user_config_path
 class DeviceStore:
     """维护设备信息快照，并以原子替换方式写入用户配置目录。
 
-    加载失败时先尝试备份损坏的用户文件，再回退为空快照；写入失败会清理临时文件并
+    加载失败时尝试备份损坏的用户文件，并保留已有内存快照；写入失败会清理临时文件并
     将异常交给调用方处理。
     """
 
@@ -108,7 +108,10 @@ class DeviceStore:
     def _parse_snapshot(raw: str, *, strict: bool) -> dict:
         """解析设备快照；strict 失败时按非严格模式只取第一个合法文档。"""
         if strict:
-            content = yaml.safe_load(raw) or {}
+            content = yaml.safe_load(raw)
+            # 只有空文档代表空快照；列表、布尔值和零仍须经过映射类型校验。
+            if content is None:
+                content = {}
         else:
             # 端点防护附加的扫描块常以 NUL 字节开始；先截断再按多文档解析，
             # 只采用第一个映射文档，忽略其余内容。

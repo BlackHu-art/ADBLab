@@ -61,11 +61,12 @@ def kill_process_tree(
     """终止指定进程及其子进程（先子后父），返回 (是否已确认退出, 说明)。
 
     ``force=True`` 时先 terminate，超时再 kill；``force=False`` 只 terminate。
-    进程本就不存在视为已终止成功，返回 (True, "already-exited")。
+    进程本就不存在视为已终止成功，返回 (True, "already-exited")；
+    子进程无法枚举或未确认退出时，父进程即使退出也不能报告整棵树成功。
 
     ``timeout`` 为可选总时限（秒）：提供时所有 terminate/wait/kill 步骤共享该
     绝对截止时间，剩余时间不足即放弃并返回失败；``None`` 时使用各步骤的默认
-    等待（父进程 3s、子进程 1s、kill 后 2s）。
+    等待（每个进程正常退出等待 1s、kill 后 2s）。
     """
 
     try:
@@ -75,16 +76,12 @@ def kill_process_tree(
     except (psutil.AccessDenied, OSError) as error:
         return False, str(error)
     deadline = _deadline(timeout)
-    _kill_children(parent, force, deadline)
+    children_stopped = _kill_children(parent, force, deadline)
     if not _kill_one(parent, force, deadline):
         return False, f"parent-{pid}-kill-failed"
-    try:
-        parent.wait(timeout=_remaining_or(deadline, 3.0))
-        return True, "terminated"
-    except psutil.TimeoutExpired:
-        return False, f"parent-{pid}-still-alive"
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        return True, "terminated"
+    if not children_stopped:
+        return False, "children-not-confirmed-exited"
+    return True, "terminated"
 
 
 def _deadline(timeout: float | None) -> float | None:
@@ -107,24 +104,22 @@ def _expired(deadline: float | None) -> bool:
     return deadline is not None and time.monotonic() >= deadline
 
 
-def _kill_children(parent: psutil.Process, force: bool, deadline: float | None) -> None:
-    """递归终止子进程，先处理最深层后代。"""
+def _kill_children(parent: psutil.Process, force: bool, deadline: float | None) -> bool:
+    """终止全部已枚举的后代；任一成员无法确认退出时返回 False。"""
 
     if _expired(deadline):
-        return
+        return False
     try:
         children = parent.children(recursive=True)
-    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-        return
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        return False
+    stopped = True
     for child in children:
         if _expired(deadline):
-            return
-        _kill_one(child, force, deadline)
-    for child in children:
-        try:
-            child.wait(timeout=_remaining_or(deadline, 1.0))
-        except (psutil.TimeoutExpired, psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+            return False
+        # 即使已有后代失败也继续清理其余成员，避免短路留下可停止的进程。
+        stopped = _kill_one(child, force, deadline) and stopped
+    return stopped
 
 
 def _kill_one(proc: psutil.Process, force: bool, deadline: float | None) -> bool:
@@ -142,6 +137,10 @@ def _kill_one(proc: psutil.Process, force: bool, deadline: float | None) -> bool
     try:
         proc.wait(timeout=_remaining_or(deadline, 1.0))
         return True
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+        return True
+    except (psutil.AccessDenied, OSError):
+        return False
     except psutil.TimeoutExpired:
         if not force or _expired(deadline):
             return False

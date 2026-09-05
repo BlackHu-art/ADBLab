@@ -31,9 +31,6 @@ def test_system_categories_expose_stable_keys(qt_application):
 
     assert panel.category_stack.category_keys == (
         "commands",
-        "connectivity",
-        "settings",
-        "device",
     )
     assert panel.category_stack.current_key == "commands"
 
@@ -44,13 +41,13 @@ def test_system_cards_belong_to_expected_category_pages(qt_application):
     panel, widget = _build_system_panel()
     cards = _cards_by_title(panel)
     expected = {
-        "commands": ("Shell 命令", "重启与模式", "广播与 Intent"),
-        "connectivity": ("端口转发", "系统服务开关 (svc)"),
-        "settings": ("Android 设置", "系统工具"),
-        "device": ("电池与快捷设置", "输入法与模拟器控制"),
+        "commands": (
+            "Shell 命令", "广播与 Intent", "Android 设置", "重启与模式", "端口转发",
+            "系统服务开关 (svc)", "电池与快捷设置", "输入法与模拟器控制", "系统工具",
+        ),
     }
 
-    assert tuple(cards) == tuple(title for titles in expected.values() for title in titles)
+    assert set(cards) == {title for titles in expected.values() for title in titles}
     for key, titles in expected.items():
         page = panel.category_stack.page(key)
         assert page is not None
@@ -62,7 +59,7 @@ def test_system_cards_belong_to_expected_category_pages(qt_application):
     widget.deleteLater()
 
 
-def test_system_category_switch_shows_only_selected_page(qt_application):
+def test_legacy_system_categories_share_one_complete_page(qt_application):
     panel, widget = _build_system_panel()
     widget.resize(900, 700)
     widget.show()
@@ -75,8 +72,8 @@ def test_system_category_switch_shows_only_selected_page(qt_application):
     assert panel.category_stack.stack.currentWidget() is selected
     assert selected is not None and selected.isVisibleTo(widget)
     assert all(
-        panel.category_stack.page(key).isHidden()
-        for key in ("commands", "connectivity", "settings")
+        panel.category_stack.page(key) is selected
+        for key in ("commands", "settings")
     )
 
     widget.close()

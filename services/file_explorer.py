@@ -51,8 +51,9 @@ def shell_quote(value: str) -> str:
 
 def parse_ls_line(line: str) -> dict[str, str] | None:
     """解析 toybox、busybox 或 coreutils 产生的一行 ls -la 输出。"""
-    text = line.strip()
-    parts = text.split()
+    text = line.rstrip("\r\n")
+    tokens = list(re.finditer(r"\S+", text))
+    parts = [token.group() for token in tokens]
     if len(parts) < 6:
         return None
     perms = parts[0]
@@ -73,7 +74,8 @@ def parse_ls_line(line: str) -> dict[str, str] | None:
     if size_index is None or size_index + 1 >= len(parts):
         return None
 
-    modified, name = _split_modified_name(" ".join(parts[size_index + 1 :]))
+    # 元数据按字段解析，文件名仍取原始文本，防止连续空白被折叠后指向错误路径。
+    modified, name = _split_modified_name(text[tokens[size_index + 1].start() :])
     if not name:
         return None
     return {
@@ -168,7 +170,7 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
     for line in output.splitlines():
         if not line.strip() or line.startswith("total"):
             continue
-        if "Permission denied" in line or line.startswith("ls:"):
+        if line.lstrip().startswith(("Permission denied", "ls:")):
             continue
         entry = parse_ls_line(line)
         if not entry:
@@ -224,10 +226,6 @@ def mode_from_permissions(states: dict[tuple[str, str], bool]) -> str:
 
 def ls_command(path: str) -> str:
     return f"ls -la {shell_quote(path)} 2>&1"
-
-
-def cat_command(path: str) -> str:
-    return f"cat {shell_quote(path)}"
 
 
 def head_command(path: str, byte_limit: int) -> str:

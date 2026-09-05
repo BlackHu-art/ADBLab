@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 import uuid
 
+from adblab.application.cancellation import CancellationToken
 from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
+from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package
 
@@ -68,15 +70,42 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
 
     # 以下属性由 _ADBControllerBase 提供。
     testing_model: ADBTesting
+    app_model: ADBApp
     signals: ADBControllerSignals
     log_service: LogService
 
     _handlers = {
+        "prepare_monkey_targets": "_process_monkey_preparation_result",
         "run_monkey_test": "_process_run_monkey_test_result",
         "kill_monkey": "_process_kill_monkey_result",
     }
 
     # Monkey 测试
+
+    def prepare_monkey_targets(
+        self, devices: list[str], package_name: str, request_id: str,
+        cancellation: CancellationToken,
+    ) -> None:
+        """提交只读准备任务，沿用 model 线程池与关闭栅栏，不在回调中自动启动测试。"""
+        if getattr(self, "_shutting_down", False) or cancellation.is_cancelled:
+            return
+        try:
+            self.app_model.prepare_monkey_targets_async(
+                list(devices), package_name, request_id, cancellation
+            )
+        except Exception as exc:
+            self._process_monkey_preparation_result({
+                "request_id": request_id, "success": False,
+                "error": "无法提交测试包查询，请重试", "error_detail": str(exc),
+            })
+
+    def _process_monkey_preparation_result(self, result: dict) -> None:
+        """保留请求标识转发结果，由拥有目标快照的面板决定是否接受。"""
+        if getattr(self, "_shutting_down", False):
+            return
+        if result.get("error_detail"):
+            self.log_service.log("ERROR", f"Monkey preparation failed: {result['error_detail']}")
+        self.signals.monkey_preparation_finished.emit(str(result.get("request_id", "")), result)
 
     def kill_monkey(self, devices: list, batch_id: str = ""):
         devices = list(dict.fromkeys(device for device in devices if device))
@@ -237,7 +266,11 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         )
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
+            prepared = False
             try:
+                prepared = self.testing_model.prepare_monkey_batch(device_ip, batch_id)
+                if not prepared:
+                    raise RuntimeError("Monkey batch could not be registered")
                 self.testing_model.run_monkey_test_async(
                     device_ip,
                     package_name,
@@ -249,6 +282,8 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                     batch_id=batch_id,
                 )
             except Exception as exc:
+                if prepared:
+                    self.testing_model.discard_prepared_monkey_batch(device_ip, batch_id)
                 self._emit_operation(
                     "monkey",
                     False,

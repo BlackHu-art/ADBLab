@@ -714,7 +714,7 @@ def test_current_package_probe_bounds_every_compatibility_fallback():
 
     assert run_command.call_count == 3
     assert [call.kwargs["timeout"] for call in run_command.call_args_list] == [5] * 3
-    assert statuses == ["No foreground app found"]
+    assert statuses == ["未找到前台应用，请在设备上打开应用后重试"]
 
 
 def test_logcat_pid_probe_uses_device_tolerant_timeout():
@@ -1273,9 +1273,9 @@ def test_page_reports_graceful_forced_and_orphan_cleanup_distinctly():
         dialog.close()
 
     assert messages == [
-        "Logcat stopped",
-        "Logcat force-stopped",
-        "Logcat cleanup timed out; task remains supervised",
+        "采集已停止",
+        "已强制停止采集",
+        "停止采集超时；任务仍受监督，请等待清理完成",
     ]
 
 
@@ -1294,3 +1294,19 @@ def test_page_acknowledges_late_batch_without_touching_closed_ui():
     assert not dialog.entries
     worker._finished_event.set()
     dialog.close()
+
+
+def test_queued_logcat_close_is_cancelled_when_page_is_destroyed(qt_application):
+    """资源归零后的排队关闭不得晚于页面销毁再次调用旧窗口。"""
+    from shiboken6 import delete
+
+    adapter = FakeQtTaskSupervisor()
+    dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
+    dialog._close_pending = True
+    queued_close = Mock()
+    dialog.close = queued_close
+    assert dialog._try_finalize_close("test") is True
+
+    delete(dialog)
+    qt_application.processEvents()
+    queued_close.assert_not_called()

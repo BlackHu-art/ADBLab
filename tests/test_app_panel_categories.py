@@ -38,11 +38,9 @@ def test_app_panel_exposes_stable_category_keys(qt_application):
 
         assert apps.category_stack.category_keys == (
             "daily",
-            "packages",
-            "monkey",
-            "diagnostics",
         )
         assert apps.category_stack.current_key == "daily"
+        assert apps.category_stack.page("monkey") is apps.category_stack.page("daily")
     finally:
         panel.deleteLater()
         qt_application.processEvents()
@@ -52,10 +50,7 @@ def test_app_panel_cards_belong_to_expected_categories(qt_application):
     panel, apps, _root = _build_apps_panel()
     try:
         expected = {
-            "daily": ("文本与屏幕",),
-            "packages": ("应用包管理",),
-            "monkey": ("Monkey",),
-            "diagnostics": ("报告与日志", "性能诊断"),
+            "daily": ("应用包管理", "文本与屏幕", "Monkey", "报告与日志", "性能诊断"),
         }
 
         assert {
@@ -87,6 +82,39 @@ def test_app_panel_category_switch_shows_only_selected_page(qt_application):
                 page = apps.category_stack.page(key)
                 assert page is not None
                 assert page.isVisibleTo(apps.category_stack) is (key == selected_key)
+    finally:
+        panel.deleteLater()
+        qt_application.processEvents()
+
+
+def test_app_action_tips_preserve_function_when_selection_changes(qt_application):
+    """缺少设备或包名时仍说明按钮用途，恢复可用后清除过期阻塞原因。"""
+    panel, apps, _root = _build_apps_panel()
+    try:
+        panel._devices_tab.set_selected_devices([])
+        apps.program_edit.setText("")
+        apps._update_action_states()
+        actions = (apps.uninstall_btn, apps.clear_app_data_btn, apps.btn_screenshot)
+        for button in actions:
+            assert not button.isEnabled()
+            assert button.property("functionalToolTip") in button.toolTip()
+            assert "请先选择设备" in button.toolTip()
+            assert button.accessibleDescription() == button.toolTip()
+        assert len({button.toolTip() for button in actions}) == len(actions)
+
+        panel._devices_tab.update_device_list(["demo-device"])
+        panel._devices_tab.set_selected_devices(["demo-device"])
+        apps._update_action_states()
+        assert "请先输入应用包名" in apps.uninstall_btn.toolTip()
+        assert "请先选择设备" not in apps.uninstall_btn.toolTip()
+        assert apps.btn_screenshot.toolTip() == apps.btn_screenshot.property("functionalToolTip")
+
+        apps.program_edit.setText("com.example.demo")
+        apps._update_action_states()
+        for button in actions:
+            assert button.isEnabled()
+            assert button.toolTip() == button.property("functionalToolTip")
+            assert button.accessibleDescription() == button.toolTip()
     finally:
         panel.deleteLater()
         qt_application.processEvents()

@@ -48,7 +48,7 @@ jobs:
             package_mode: --onedir
             windowed: --windowed
             icon: --icon icon.ico
-            datas: --add-data "resources/icons;resources/icons" --add-data "resources/app_settings.json;resources" --add-data "resources/connected_devices.yaml;resources" --add-data "resources/chkbugreport-0.5-215.jar;resources" --add-data "resources/ZFB.jpg;resources" --add-data "THIRD_PARTY_NOTICES.md;licenses" --add-data "mobileperf/LICENSE;licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt;licenses/xlsxwriter" --add-data "icon.ico;." --add-data "scrcpy-win64;scrcpy-win64"
+            datas: --add-data "resources/icons;resources/icons" --add-data "resources/app_settings.json;resources" --add-data "resources/connected_devices.yaml;resources" --add-data "resources/chkbugreport-0.5-215.jar;resources" --add-data "resources/app-icon-helper.jar;resources" --add-data "resources/ZFB.jpg;resources" --add-data "THIRD_PARTY_NOTICES.md;licenses" --add-data "mobileperf/LICENSE;licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt;licenses/xlsxwriter" --add-data "icon.ico;." --add-data "scrcpy-win64;scrcpy-win64"
             pip_cache: ~\AppData\Local\pip\Cache
 
           - os: macos-latest
@@ -56,7 +56,7 @@ jobs:
             package_mode: --onefile
             windowed: --windowed
             icon: ""
-            datas: --add-data "resources/icons:resources/icons" --add-data "resources/app_settings.json:resources" --add-data "resources/connected_devices.yaml:resources" --add-data "resources/chkbugreport-0.5-215.jar:resources" --add-data "resources/ZFB.jpg:resources" --add-data "THIRD_PARTY_NOTICES.md:licenses" --add-data "mobileperf/LICENSE:licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt:licenses/xlsxwriter" --add-data "icon.ico:."
+            datas: --add-data "resources/icons:resources/icons" --add-data "resources/app_settings.json:resources" --add-data "resources/connected_devices.yaml:resources" --add-data "resources/chkbugreport-0.5-215.jar:resources" --add-data "resources/app-icon-helper.jar:resources" --add-data "resources/ZFB.jpg:resources" --add-data "THIRD_PARTY_NOTICES.md:licenses" --add-data "mobileperf/LICENSE:licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt:licenses/xlsxwriter" --add-data "icon.ico:."
             pip_cache: ~/Library/Caches/pip
 
           - os: ubuntu-latest
@@ -64,7 +64,7 @@ jobs:
             package_mode: --onefile
             windowed: ""
             icon: ""
-            datas: --add-data "resources/icons:resources/icons" --add-data "resources/app_settings.json:resources" --add-data "resources/connected_devices.yaml:resources" --add-data "resources/chkbugreport-0.5-215.jar:resources" --add-data "resources/ZFB.jpg:resources" --add-data "THIRD_PARTY_NOTICES.md:licenses" --add-data "mobileperf/LICENSE:licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt:licenses/xlsxwriter" --add-data "icon.ico:."
+            datas: --add-data "resources/icons:resources/icons" --add-data "resources/app_settings.json:resources" --add-data "resources/connected_devices.yaml:resources" --add-data "resources/chkbugreport-0.5-215.jar:resources" --add-data "resources/app-icon-helper.jar:resources" --add-data "resources/ZFB.jpg:resources" --add-data "THIRD_PARTY_NOTICES.md:licenses" --add-data "mobileperf/LICENSE:licenses/mobileperf" --add-data "mobileperf/extlib/xlsxwriter/LICENSE.txt:licenses/xlsxwriter" --add-data "icon.ico:."
             pip_cache: ~/.cache/pip
 
     runs-on: ${{ matrix.os }}

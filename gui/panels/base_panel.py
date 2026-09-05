@@ -5,7 +5,6 @@ from typing import Any, cast
 from PySide6.QtCore import QLocale, QSize, Qt, QTimer
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtWidgets import (
-    QBoxLayout,
     QCheckBox,
     QGridLayout,
     QHBoxLayout,
@@ -14,6 +13,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
     QWidget,
 )
 from qfluentwidgets import (
@@ -35,7 +36,8 @@ from gui.styles.fluent import (
     configure_button,
     configure_fluent_control,
 )
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
+from gui.widgets.content_section import ContentSection
 from gui.widgets.responsive_controller import (
     ReflowReason,
     ResponsiveCoordinator,
@@ -51,6 +53,21 @@ from gui.widgets.responsive_layout import (
     row_major_mode,
     span_tail_mode,
 )
+
+
+class _ResponsiveRowLayout(QGridLayout):
+    """按响应式计划允许的真实宽度向父布局报告换行高度。"""
+
+    def heightForWidth(self, width: int) -> int:
+        # QBoxLayout 可能用完整剩余宽度询问子行高度；行本身的限宽仍会
+        # 在实际分配几何时生效，测量也必须使用同一边界，避免换行后挤压邻行。
+        container = self.parentWidget()
+        effective_width = (
+            max(container.minimumWidth(), min(width, container.maximumWidth()))
+            if container is not None
+            else width
+        )
+        return super().heightForWidth(effective_width)
 
 
 class _SuffixedIntValidator(QIntValidator):
@@ -95,8 +112,10 @@ class BasePanel(QWidget):
         return self.panel.signals
 
     @property
-    def selected_devices(self):
-        return self.panel.selected_devices
+    def selected_devices(self) -> list[str]:
+        """复制本次批量目标，去除空项和重复项，不借用可变的外部选择集合。"""
+
+        return list(dict.fromkeys(device for device in self.panel.selected_devices if device))
 
     @property
     def _font_sm(self):
@@ -112,20 +131,39 @@ class BasePanel(QWidget):
 
     def _sh(self, cmd: str):
         """为当前选中设备发出 Shell 命令请求。"""
-        self.signals.shell_command_requested.emit(self.selected_devices, cmd)
+        self._emit_device_action(self.signals.shell_command_requested, cmd)
+
+    def _submit_device_action(self, fields, callback, *, single_device: bool = False) -> bool:
+        """新设备操作在提交时校验目标和字段，回调只接收本次不可重定向的快照。"""
+
+        devices = self.selected_devices
+        if (
+            not devices
+            or (single_device and len(devices) != 1)
+            or (fields and not self._validate_fields(*fields))
+        ):
+            refresh = getattr(self, "_update_action_states", None)
+            if callable(refresh):
+                refresh()
+            return False
+        callback(devices)
+        return True
+
+    def _emit_device_action(self, signal, *args, fields=(), single_device: bool = False) -> bool:
+        """为普通设备信号复用提交校验，停止既有任务仍使用任务自己的目标快照。"""
+
+        return self._submit_device_action(
+            fields, lambda devices: signal.emit(devices, *args), single_device=single_device
+        )
 
     # ── 界面控件工厂 ────────────────────────────────────────────────────
 
     def _card(self, title: str, *, parent=None) -> HeaderCardWidget:
-        """按参考项目直接创建 HeaderCardWidget 分区。"""
+        """用标题和留白组织分区，复用原生卡片布局与子控件交互。"""
 
-        card = HeaderCardWidget(title, parent)
-        card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        card.viewLayout.setContentsMargins(16, 12, 16, 14)
-        card.viewLayout.setSpacing(8)
+        card = ContentSection(title, parent)
         apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
         card.setProperty("fontRole", FontRole.UI.value)
-        card.setToolTip(title)
         card.setAccessibleName(title)
         return card
 
@@ -176,7 +214,7 @@ class BasePanel(QWidget):
             danger=variant == "danger",
         )
         b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        b.setIcon(get_themed_icon(i))
+        b.setIcon(get_fluent_icon(i))
         b.setIconSize(QSize(16, 16))
         b.setAccessibleName(t)
         b.setProperty("iconName", i)
@@ -216,7 +254,7 @@ class BasePanel(QWidget):
         row_policy.setHorizontalPolicy(QSizePolicy.Policy.Ignored)
         row_policy.setVerticalPolicy(QSizePolicy.Policy.Preferred)
         row_container.setSizePolicy(row_policy)
-        row = QGridLayout(row_container)
+        row = _ResponsiveRowLayout(row_container)
         row.setContentsMargins(0, 0, 0, 0)
         row.setHorizontalSpacing(spacing)
         row.setVerticalSpacing(spacing)
@@ -276,6 +314,28 @@ class BasePanel(QWidget):
         return binding
 
     @staticmethod
+    def _combo_closed_minimum_width(combo: ComboBox, texts: list[str]) -> int:
+        """测量所有闭合选项的原生样式宽度，保持当前选择和业务信号不变。"""
+
+        combo.ensurePolished()
+        option = QStyleOptionButton()
+        combo.initStyleOption(option)
+        minimum_width = max(1, combo.sizeHint().width())
+        for text in texts:
+            # Fluent 只读下拉框继承 QPushButton；使用按钮相同的文字边界及
+            # CT_PushButton 盒模型，让当前主题的边框、内边距参与尺寸计算。
+            setattr(option, "text", text)
+            text_size = combo.fontMetrics().size(Qt.TextFlag.TextShowMnemonic, text)
+            styled_size = combo.style().sizeFromContents(
+                QStyle.ContentsType.CT_PushButton,
+                option,
+                text_size,
+                combo,
+            )
+            minimum_width = max(minimum_width, styled_size.width())
+        return minimum_width
+
+    @staticmethod
     def _refresh_responsive_widget_minimum(widget: QWidget) -> None:
         """按控件当前字体刷新由响应布局托管的稳定最小宽度。"""
 
@@ -291,11 +351,14 @@ class BasePanel(QWidget):
                     texts.append(str(minimum_text))
                 elif widget.currentText():
                     texts.append(widget.currentText())
-                required_text_width = max(
-                    (widget.fontMetrics().horizontalAdvance(text) for text in texts),
-                    default=0,
-                )
-                minimum_width = max(minimum_width, required_text_width + 44)
+                if isinstance(widget, ComboBox):
+                    minimum_width = BasePanel._combo_closed_minimum_width(widget, texts)
+                else:
+                    required_text_width = max(
+                        (widget.fontMetrics().horizontalAdvance(text) for text in texts),
+                        default=0,
+                    )
+                    minimum_width = max(minimum_width, required_text_width + 44)
             widget.setMinimumWidth(minimum_width)
             return
         em_count = int(widget.property(RESPONSIVE_AUTO_MINIMUM_EM_PROPERTY) or 0)
@@ -637,8 +700,8 @@ class BasePanel(QWidget):
         if items:
             c.addItems(items)
             # 最小宽度容纳最长项，避免闭合态文本被响应式网格压窄裁剪。
-            max_text = max(c.fontMetrics().horizontalAdvance(str(item)) for item in items)
-            c.setMinimumWidth(max_text + 44)
+            texts = [c.itemText(index) for index in range(c.count())]
+            c.setMinimumWidth(self._combo_closed_minimum_width(c, texts))
         return c
 
     def _combo_editable(self, items=None, font=None, *, font_role=FontRole.UI):

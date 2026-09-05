@@ -20,6 +20,7 @@ MANAGED_PATHS = (
     Path("core"),
     Path("gui"),
     Path("models"),
+    Path("services"),
     Path("utils"),
     Path("main.py"),
     Path("mobileperf/common"),

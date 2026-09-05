@@ -11,6 +11,7 @@ import subprocess
 import threading
 import time
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime
 
 from core.exec import CommandRunner, ProcessRunner
@@ -23,6 +24,15 @@ from .adb_model import ADBModelCore, async_command
 from .base.focus_detector import detect_current_package
 
 
+@dataclass
+class _MonkeyBatchState:
+    """保存已提交批次的取消与执行状态，排队阶段也必须保留停止意图。"""
+
+    batch_id: str
+    running: bool = False
+    cancelled: bool = False
+
+
 class ADBTesting(ADBModelCore):
     """封装 Monkey、Bugreport、截图、日志获取和 ANR 拉取操作。"""
 
@@ -31,6 +41,7 @@ class ADBTesting(ADBModelCore):
         self._aborted_devices = set()
         self._abort_lock = threading.Lock()
         self._abort_condition = threading.Condition(self._abort_lock)
+        self._monkey_batches: dict[str, _MonkeyBatchState] = {}
         self._procs = ProcessRunner()
         self._process_lifecycle_lock = threading.Lock()
 
@@ -42,13 +53,43 @@ class ADBTesting(ADBModelCore):
             self._abort_condition.notify_all()
         with self._process_lifecycle_lock:
             self._procs.stop_all()
+            with self._abort_condition:
+                self._monkey_batches.clear()
 
-    def _start_testing_process(self, key: str, cmd: list[str], *, stdout=None):
+    def prepare_monkey_batch(self, device_ip: str, batch_id: str) -> bool:
+        """排队前登记设备批次；关闭或已有批次时拒绝，不等待外部进程。"""
+
+        with self._abort_condition:
+            if self.is_shutting_down() or device_ip in self._monkey_batches:
+                return False
+            self._monkey_batches[device_ip] = _MonkeyBatchState(batch_id)
+            self._aborted_devices.discard(device_ip)
+            return True
+
+    def discard_prepared_monkey_batch(self, device_ip: str, batch_id: str) -> None:
+        """提交失败时释放尚未执行的同批登记，不影响已运行或其他批次。"""
+
+        with self._abort_condition:
+            state = self._monkey_batches.get(device_ip)
+            if state is not None and state.batch_id == batch_id and not state.running:
+                self._monkey_batches.pop(device_ip)
+                self._aborted_devices.discard(device_ip)
+
+    def _start_testing_process(
+        self, key: str, cmd: list[str], *, stdout=None,
+        monkey_batch: tuple[str, str] | None = None,
+    ):
         """按 model 终态与 shutdown 原子排序启动测试长进程。"""
 
         with self._process_lifecycle_lock:
             if self.is_shutting_down():
                 raise RuntimeError("Model is shutting down")
+            if monkey_batch is not None:
+                device_ip, batch_id = monkey_batch
+                with self._abort_condition:
+                    state = self._monkey_batches.get(device_ip)
+                    if state is None or state.batch_id != batch_id or state.cancelled:
+                        raise RuntimeError("Aborted by user")
             return self._procs.start(key, cmd, stdout=stdout)
 
     def _wait_for_monkey_abort(self, device_ip: str, timeout: float) -> bool:
@@ -215,8 +256,22 @@ class ADBTesting(ADBModelCore):
         }
         monkey_fh = None
         logcat_fh = None
+        owned_state = None
 
         try:
+            with self._abort_condition:
+                state = self._monkey_batches.get(device_ip)
+                if state is None:
+                    # 独立同步调用保留旧接口；正常 Controller 已在排队前登记。
+                    state = _MonkeyBatchState(batch_id)
+                    self._monkey_batches[device_ip] = state
+                    self._aborted_devices.discard(device_ip)
+                if state.batch_id != batch_id or state.running:
+                    raise RuntimeError("Another Monkey batch is already active")
+                state.running = True
+                owned_state = state
+                if state.cancelled or "*" in self._aborted_devices:
+                    raise RuntimeError("Aborted by user")
             package_name = normalize_android_package(package_name)
             timestamp = datetime.now().strftime("%H%M%S")
             log_dir = os.path.join(save_dir, f"{sanitized_name}_monkey_{timestamp}")
@@ -227,9 +282,6 @@ class ADBTesting(ADBModelCore):
                 logcat_log=logcat_log_path,
             )
             os.makedirs(log_dir, exist_ok=True)
-            with self._abort_condition:
-                self._aborted_devices.discard(device_ip)
-
             log("Clearing previous device logs...")
             self._run(["adb", "-s", device_ip, "logcat", "-c"])
 
@@ -239,6 +291,7 @@ class ADBTesting(ADBModelCore):
                 f"{device_ip}_logcat",
                 ["adb", "-s", device_ip, "logcat", "-v", "time"],
                 stdout=logcat_fh,
+                monkey_batch=(device_ip, batch_id),
             )
 
             monkey_cmd = [
@@ -290,6 +343,7 @@ class ADBTesting(ADBModelCore):
                 f"{device_ip}_monkey",
                 monkey_cmd,
                 stdout=monkey_fh,
+                monkey_batch=(device_ip, batch_id),
             )
 
             log("Starting Monkey Test monitoring loop...")
@@ -416,6 +470,7 @@ class ADBTesting(ADBModelCore):
                                 f"{device_ip}_monkey",
                                 restart_cmd,
                                 stdout=monkey_fh,
+                                monkey_batch=(device_ip, batch_id),
                             )
                             log(f"New monkey started (pid={monkey_proc.pid})")
 
@@ -437,6 +492,8 @@ class ADBTesting(ADBModelCore):
                         result["error"] = "Aborted by user"
                         break
 
+            if self._wait_for_monkey_abort(device_ip, 0):
+                result["error"] = "Aborted by user"
             result["duration"] = str(datetime.now() - start_time)
             return_code = monkey_proc.poll()
             if result["error"]:
@@ -456,10 +513,17 @@ class ADBTesting(ADBModelCore):
             log(f"Monkey test failed: {e}")
 
         finally:
-            with self._abort_condition:
-                self._aborted_devices.discard(device_ip)
-            self._procs.stop(f"{device_ip}_logcat")
-            self._procs.stop(f"{device_ip}_monkey")
+            if owned_state is not None:
+                # 与停止命令原子排序；旧批次收尾完成之前不能登记新批次。
+                with self._process_lifecycle_lock:
+                    with self._abort_condition:
+                        owns_batch = self._monkey_batches.get(device_ip) is owned_state
+                    if owns_batch:
+                        self._procs.stop(f"{device_ip}_logcat")
+                        self._procs.stop(f"{device_ip}_monkey")
+                        with self._abort_condition:
+                            self._monkey_batches.pop(device_ip, None)
+                            self._aborted_devices.discard(device_ip)
             for fh in (monkey_fh, logcat_fh):
                 try:
                     if fh:
@@ -483,22 +547,35 @@ class ADBTesting(ADBModelCore):
 
     @async_command
     def kill_monkey_async(self, device_ip: str, index: int, batch_id: str = "") -> dict:
-        with self._abort_condition:
-            self._aborted_devices.add(device_ip)
-            self._abort_condition.notify_all()
         try:
-            local_code = self._procs.stop(f"{device_ip}_monkey")
-            r = self._run(
-                [
-                    "adb",
-                    "-s",
-                    device_ip,
-                    "shell",
-                    "pkill -f com.android.commands.monkey || true",
-                ],
-                timeout=10,
-                device_ip=device_ip,
-            )
+            with self._process_lifecycle_lock:
+                with self._abort_condition:
+                    state = self._monkey_batches.get(device_ip)
+                    if batch_id and (state is None or state.batch_id != batch_id):
+                        return {
+                            "device_ip": device_ip, "index": index, "batch_id": batch_id,
+                            "success": True, "message": "Monkey is not running",
+                            "already_stopped": True,
+                        }
+                    if state is not None:
+                        state.cancelled = True
+                    self._aborted_devices.add(device_ip)
+                    self._abort_condition.notify_all()
+                    pending = state is not None and not state.running
+                if pending:
+                    local_code = None
+                    r = {"success": True, "output": ""}
+                else:
+                    # 停止与下一批进程启动共用同一锁，晚到 pkill 不能落到新批次。
+                    local_code = self._procs.stop(f"{device_ip}_monkey")
+                    r = self._run(
+                        [
+                            "adb", "-s", device_ip, "shell",
+                            "pkill -f com.android.commands.monkey || true",
+                        ],
+                        timeout=10,
+                        device_ip=device_ip,
+                    )
             error = (r.get("error") or "").strip()
             already_stopped = local_code is None and not error
             success = r["success"] or already_stopped or (local_code is not None and not error)

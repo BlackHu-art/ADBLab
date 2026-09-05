@@ -1,11 +1,11 @@
 """校验项目知识文档的相对链接与 frontmatter 必填字段。
 
 用法：
-    py -3.11 scripts/check_doc_links.py
+    .venv/Scripts/python.exe scripts/check_doc_links.py
 
 规则：
-- 扫描 docs/**/*.md、根 README、第三方说明和 MobilePerf 移植说明；
-- project-knowledge/ 下的文档必须有 frontmatter，且包含 status 与 last_verified 字段；
+- 扫描 docs/**/*.md、根 README/AGENTS、第三方说明和 MobilePerf 移植说明；
+- 现状文档的 status、核实日期及风险账本 owner 必须符合知识库约定；
 - 正文中的相对 Markdown 链接（不含 http/https/mailto 与纯锚点）必须能解析到已存在文件；
 - frontmatter 中 related 列出的路径按同一规则解析（支持流式与块式 YAML 列表）。
 
@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 PROJECT_MARKDOWN = (
     ROOT / "README.md",
+    ROOT / "AGENTS.md",
     ROOT / "THIRD_PARTY_NOTICES.md",
     ROOT / "mobileperf" / "readme.md",
 )
@@ -31,7 +33,7 @@ FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 REQUIRED_KEYS = ("status", "last_verified")
 
 
-def parse_frontmatter(text: str) -> dict:
+def parse_frontmatter(text: str) -> dict | None:
     """解析 YAML frontmatter 为 {key: value|list}；无 frontmatter 返回 None。"""
     match = FRONTMATTER_RE.match(text)
     if not match:
@@ -89,6 +91,24 @@ def check_file(path: Path) -> list[str]:
             for key in REQUIRED_KEYS:
                 if key not in frontmatter:
                     errors.append(f"{rel_display}: frontmatter 缺少 {key}")
+            if "status" in frontmatter and frontmatter["status"] not in (
+                "current", "under-review"
+            ):
+                errors.append(f"{rel_display}: status 必须为 current 或 under-review")
+            if "last_verified" in frontmatter:
+                verified = frontmatter["last_verified"]
+                try:
+                    if not isinstance(verified, str) or not re.fullmatch(
+                        r"\d{4}-\d{2}-\d{2}", verified
+                    ):
+                        raise ValueError("核实日期格式无效")
+                    date.fromisoformat(verified)
+                except ValueError:
+                    errors.append(f"{rel_display}: last_verified 必须为有效的 YYYY-MM-DD 日期")
+            if path.name == "RISKS_AND_DEBT.md":
+                owner = frontmatter.get("owner")
+                if not isinstance(owner, str) or not owner.strip():
+                    errors.append(f"{rel_display}: 风险账本必须提供非空 owner，可填待确认")
 
     def resolve(target: str) -> Path:
         target_path = target.split("#", 1)[0]

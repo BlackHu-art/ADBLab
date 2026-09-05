@@ -88,31 +88,34 @@ class LiveLogcatStream:
             try:
                 requested = normalize_android_package(requested)
             except ValueError:
-                self._frame.status_bar.setText("Invalid package name for logcat filter")
+                self._frame.status_bar.setText("包名格式无效，请输入有效包名后按 Enter")
                 return
         if self._frame._logcat_stopping:
             message = (
-                f"Package: {requested} (applies on next start)"
+                f"应用过滤将在下次采集时生效：{requested}"
                 if requested
-                else "All device logs will be shown on next start"
+                else "下次采集将显示全部设备日志"
             )
             self._frame.status_bar.setText(message)
             return
         worker = self._frame.worker
         if worker is not None and worker.is_active():
+            if not self._frame._can_operate_device():
+                self._frame.status_bar.setText("请在顶部勾选并连接当前设备后切换应用过滤")
+                return
             if worker.update_package(requested):
                 # 旧代次尚未落屏的内容不能越过 Enter 提交形成的过滤边界。
                 self._frame._line_flush_timer.stop()
                 self._frame._pending_visible_lines.clear()
                 message = (
-                    f"Switching package filter: {requested}"
+                    f"正在切换应用过滤：{requested}"
                     if requested
-                    else "Showing all device logs"
+                    else "正在显示全部设备日志"
                 )
                 self._frame.status_bar.setText(message)
             return
         message = (
-            f"Package filter ready: {requested}" if requested else "All device logs will be shown"
+            f"应用过滤已就绪：{requested}" if requested else "将显示全部设备日志"
         )
         self._frame.status_bar.setText(message)
 
@@ -121,15 +124,13 @@ class LiveLogcatStream:
     def _fetch_current_pkg(self):
         if self._frame._closing or self._frame._logcat_stopping:
             return
-        if not self._frame.device_ip or not getattr(
-            self._frame, "_device_connected", True
-        ):
-            self._frame.status_bar.setText("Select a device before querying its package")
-            self._frame._set_running_actions(False)
+        if not self._frame._can_operate_device():
+            self._frame.status_bar.setText("请先勾选并连接当前设备，再获取当前应用")
+            self._frame._sync_device_actions()
             return
         if self._frame._pkg_worker and self._frame._pkg_worker.isRunning():
             return
-        self._frame.status_bar.setText("Fetching current package...")
+        self._frame.status_bar.setText("正在获取设备前台应用…")
         self._frame.btn_get_pkg.setEnabled(False)
         worker = CurrentPackageWorker(self._frame.device_ip)
         worker._package_filter_revision = self._frame._package_filter_revision
@@ -152,8 +153,8 @@ class LiveLogcatStream:
         except Exception:
             self._frame._disconnect_pkg_worker(worker)
             worker.deleteLater()
-            self._frame.btn_get_pkg.setEnabled(True)
-            self._frame.status_bar.setText("Unable to supervise package lookup")
+            self._frame._sync_device_actions()
+            self._frame.status_bar.setText("无法启动应用查询，请稍后重试")
             return
         self._frame._pkg_worker = worker
         worker.start()
@@ -163,10 +164,8 @@ class LiveLogcatStream:
 
         if self._frame.worker and self._frame.worker.is_active():
             return
-        if not self._frame.device_ip or not getattr(
-            self._frame, "_device_connected", True
-        ):
-            self._frame.status_bar.setText("Select a device before starting Logcat")
+        if not self._frame._can_operate_device():
+            self._frame.status_bar.setText("请先勾选并连接当前设备，再开始采集")
             self._frame._set_running_actions(False)
             return
         self._frame._worker_release_timer.stop()
@@ -206,7 +205,7 @@ class LiveLogcatStream:
                 force_stop=worker.force_stop,
             )
         except Exception:
-            self._frame.status_bar.setText("Unable to supervise logcat task")
+            self._frame.status_bar.setText("无法启动日志任务，请稍后重试")
             worker.deleteLater()
             return
         self._frame.worker = worker
@@ -216,7 +215,7 @@ class LiveLogcatStream:
 
     def _stop(self):
         if self._frame.worker and self._frame._supervisor_task_id:
-            self._frame.status_bar.setText("Stopping...")
+            self._frame.status_bar.setText("正在停止采集…")
             self._frame._set_running_actions(True, stopping=True)
             self._frame._task_supervisor.stop_async(self._frame._supervisor_task_id)
 
@@ -225,20 +224,20 @@ class LiveLogcatStream:
         self._frame._pending_visible_lines.clear()
         self._frame._line_flush_timer.stop()
         self._frame.output.clear()
-        self._frame.status_bar.setText("Cleared")
+        self._frame.status_bar.setText("已清空日志；运行中的采集会继续")
         self._update_content_actions(False)
 
     def _toggle_wrap(self):
         if self._frame.wrap_btn.isChecked():
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self._frame.wrap_btn.setText("Wrap")
-            self._frame.status_bar.setText("Line wrap: ON")
+            self._frame.wrap_btn.setText("自动换行")
+            self._frame.status_bar.setText("已开启自动换行")
         else:
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-            self._frame.wrap_btn.setText("No Wrap")
-            self._frame.status_bar.setText("Line wrap: OFF - horizontal scroll enabled")
+            self._frame.wrap_btn.setText("自动换行")
+            self._frame.status_bar.setText("已关闭自动换行，可横向滚动查看完整日志")
 
     def _export(self):
         from core.settings_manager import AppSettings
@@ -247,9 +246,9 @@ class LiveLogcatStream:
         name = f"logcat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
         fp, _ = QFileDialog.getSaveFileName(
             self._frame,
-            "Export",
+            "导出日志",
             os.path.join(save_dir, name),
-            "Text Files (*.txt);;All Files (*)",
+            "文本文件 (*.txt);;所有文件 (*)",
         )
         if fp:
             try:
@@ -267,11 +266,11 @@ class LiveLogcatStream:
                     except OSError:
                         pass
                     raise
-                self._frame.status_bar.setText(f"Exported to {fp}")
+                self._frame.status_bar.setText(f"日志已导出：{os.path.basename(fp)}")
             except OSError as e:
                 FluentMessageBox.critical(
                     self._frame,
-                    "Error",
+                    "日志导出失败",
                     str(e),
                 )
 
@@ -333,7 +332,7 @@ class LiveLogcatStream:
                 return
             if batch.dropped_before:
                 self._frame.status_bar.setText(
-                    f"Logcat running; {batch.dropped_before} lines dropped under load"
+                    f"正在采集；高负载下已丢弃 {batch.dropped_before} 行日志"
                 )
             for text, level, pid in batch.lines:
                 self._on_line(text, level, pid)
@@ -342,7 +341,7 @@ class LiveLogcatStream:
 
     def _on_dropped(self, worker: LogcatWorker, count: int):
         if not self._frame._closing and self._frame.worker is worker:
-            self._frame.status_bar.setText(f"Logcat running; {count} lines dropped under load")
+            self._frame.status_bar.setText(f"正在采集；高负载下已丢弃 {count} 行日志")
 
     def _schedule_line_flush(self):
         if not self._frame._line_flush_timer.isActive():
@@ -357,9 +356,12 @@ class LiveLogcatStream:
         output = self._frame.output
         horizontal_scroll = output.horizontalScrollBar()
         horizontal_position = horizontal_scroll.value()
-        output.appendPlainText("\n".join(lines))
         vertical_scroll = output.verticalScrollBar()
-        vertical_scroll.setValue(vertical_scroll.maximum())
+        vertical_position = vertical_scroll.value()
+        follow_tail = vertical_position == vertical_scroll.maximum()
+        output.appendPlainText("\n".join(lines))
+        # 用户向上查看历史时保持当前位置；回到底部后自动跟随新批次。
+        vertical_scroll.setValue(vertical_scroll.maximum() if follow_tail else vertical_position)
         horizontal_scroll.setValue(horizontal_position)
         self._update_content_actions(True)
 
@@ -376,8 +378,8 @@ class LiveLogcatStream:
         if self._frame._closing or self._frame.worker is not worker:
             return
         if result.kind is LogcatTerminationKind.CANCELLED:
-            self._frame.status_bar.setText("Logcat stop requested")
+            self._frame.status_bar.setText("已请求停止采集")
         elif result.kind is LogcatTerminationKind.START_FAILED:
-            self._frame.status_bar.setText("Logcat failed to start")
+            self._frame.status_bar.setText("日志采集启动失败，请检查设备连接后重试")
         else:
-            self._frame.status_bar.setText("Logcat ended unexpectedly")
+            self._frame.status_bar.setText("日志采集意外结束，请检查设备连接后重新开始")

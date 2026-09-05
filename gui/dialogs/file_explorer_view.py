@@ -46,6 +46,8 @@ class FileExplorerView:
     # ── 双击操作 ────────────────────────────────────────────────────────
 
     def _view_or_pull(self, name: str):
+        if not self._frame._can_operate():
+            return
         menu = self._frame._create_context_menu()
         pull = add_menu_action(menu, "Pull File")
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
@@ -66,6 +68,8 @@ class FileExplorerView:
     # ── 查看与编辑文件 ──────────────────────────────────────────────────
 
     def _view_file(self, name: str, is_image: bool = False):
+        if not self._frame._can_operate():
+            return
         full = self._frame._dpath(self._frame.current_path, name)
         if is_image:
             self._view_image(name, full)
@@ -73,6 +77,8 @@ class FileExplorerView:
             request_id = self._frame._begin_preview_request(name)
             shell = self._frame._root(explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1))
             w = self._frame._run_adb("shell", shell)
+            if w is None:
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -87,6 +93,8 @@ class FileExplorerView:
             w.start()
 
     def _view_image(self, name: str, full_path: str):
+        if not self._frame._can_operate():
+            return
         if not explorer_service.safe_name(name):
             self._frame._show_preview_error(
                 "Invalid file name",
@@ -106,13 +114,14 @@ class FileExplorerView:
                 self._frame._root(explorer_service.copy_for_root_pull_command(full_path, dev_tmp)),
                 timeout=120,
             )
+            if w1 is None:
+                self._remove_temporary_file(tmp_path)
+                return
 
             def _on_copy(output, error):
-                if not self._frame._preview_request_is_current(request_id):
-                    self._frame._run_adb(
-                        "shell",
-                        explorer_service.delete_command(dev_tmp),
-                    ).start()
+                if (not self._frame._preview_request_is_current(request_id)
+                        or not self._frame._can_operate()):
+                    self._frame._cleanup_remote_file(dev_tmp)
                     self._remove_temporary_file(tmp_path)
                     return
                 if error:
@@ -123,6 +132,10 @@ class FileExplorerView:
                     self._remove_temporary_file(tmp_path)
                     return
                 w2 = self._frame._run_transfer("pull", dev_tmp, tmp_path)
+                if w2 is None:
+                    self._frame._cleanup_remote_file(dev_tmp)
+                    self._remove_temporary_file(tmp_path)
+                    return
                 self._frame._connect_worker_ui(
                     w2,
                     w2.result_ready,
@@ -141,6 +154,9 @@ class FileExplorerView:
             w1.start()
         else:
             w = self._frame._run_transfer("pull", full_path, tmp_path)
+            if w is None:
+                self._remove_temporary_file(tmp_path)
+                return
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -166,7 +182,7 @@ class FileExplorerView:
         error: bool = False,
     ):
         if dev_tmp:
-            self._frame._run_adb("shell", explorer_service.delete_command(dev_tmp)).start()
+            self._frame._cleanup_remote_file(dev_tmp)
         try:
             if not self._frame._preview_request_is_current(request_id):
                 return

@@ -17,6 +17,8 @@ class RemotePanelScrcpy:
     def _start_scrcpy(self):
         from gui.panels.remote_panel import ScrcpyLaunchWorker
 
+        if getattr(self._frame, "_closing", False):
+            return
         if (
             getattr(self._frame, "_session_state", self._frame._SESSION_IDLE)
             != self._frame._SESSION_IDLE
@@ -53,6 +55,9 @@ class RemotePanelScrcpy:
 
         config = self._frame._scrcpy_config(exe, self._frame._active_device)
         self._frame._session_config = config
+        self._frame._launch_admission_revision = getattr(
+            self._frame, "_device_admission_revision", 0
+        )
 
         worker = ScrcpyLaunchWorker(config, service=self._frame._scrcpy_service)
         worker.log_message.connect(self._frame._log)
@@ -74,6 +79,13 @@ class RemotePanelScrcpy:
 
     def _on_launch_ready(self, args: list, device_info: str):
         if getattr(self._frame, "_closing", False):
+            return
+        if not self._frame._can_operate_device():
+            return
+        if getattr(self._frame, "_launch_admission_revision", 0) != getattr(
+            self._frame, "_device_admission_revision", 0
+        ):
+            # QThread 已退出时中断标志可能已清除，仍须拒绝排队中的旧启动结果。
             return
         if self._frame._launch_worker and self._frame._launch_worker.isInterruptionRequested():
             return
@@ -248,8 +260,10 @@ class RemotePanelScrcpy:
             selected_devices = self._frame.selected_devices
         except AttributeError:
             selected_devices = None
-        can_start = state == RemotePanel._SESSION_IDLE and (
-            selected_devices is None or len(selected_devices) == 1
+        can_start = (
+            not getattr(self._frame, "_closing", False)
+            and state == RemotePanel._SESSION_IDLE
+            and (selected_devices is None or len(selected_devices) == 1)
         )
         self._frame._set_button_enabled(btn_start, can_start)
         self._frame._set_button_enabled(
@@ -260,6 +274,7 @@ class RemotePanelScrcpy:
             can_control = running
         else:
             can_control = len(selected_devices) == 1
+        can_control = can_control and not getattr(self._frame, "_closing", False)
         for button in getattr(self._frame, "_remote_control_buttons", ()):
             self._frame._set_button_enabled(button, can_control)
         locked = state != RemotePanel._SESSION_IDLE

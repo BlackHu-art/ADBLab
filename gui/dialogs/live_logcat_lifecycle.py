@@ -31,15 +31,15 @@ class LiveLogcatLifecycle:
         ):
             return
         if result.disposition is StopDisposition.GRACEFUL:
-            self._frame.status_bar.setText("Logcat stopped")
+            self._frame.status_bar.setText("采集已停止")
         elif result.disposition is StopDisposition.FORCED:
-            self._frame.status_bar.setText("Logcat force-stopped")
+            self._frame.status_bar.setText("已强制停止采集")
         elif result.disposition is StopDisposition.TIMED_OUT:
-            self._frame.status_bar.setText("Logcat cleanup timed out; task remains supervised")
+            self._frame.status_bar.setText("停止采集超时；任务仍受监督，请等待清理完成")
         elif result.disposition is StopDisposition.ALREADY_STOPPED:
-            self._frame.status_bar.setText("Logcat already stopped")
+            self._frame.status_bar.setText("日志采集已停止")
         else:
-            self._frame.status_bar.setText("Logcat cleanup failed")
+            self._frame.status_bar.setText("日志任务清理失败，请重试停止操作")
         worker = self._frame.worker
         if worker is None:
             self._frame._set_running_actions(False)
@@ -50,7 +50,7 @@ class LiveLogcatLifecycle:
             self._frame._worker_release_timer.start(self._frame.CLEANUP_RECHECK_MS)
 
     def _on_current_pkg(self, package: str):
-        if self._frame._closing:
+        if not self._frame._can_operate_device():
             return
         source = self._frame.sender()
         if source is not None and (
@@ -113,7 +113,7 @@ class LiveLogcatLifecycle:
         if self._frame._closing:
             self._try_finalize_close("package_worker_finished")
         elif was_current:
-            self._frame.btn_get_pkg.setEnabled(not self._frame._logcat_stopping)
+            self._frame._sync_device_actions()
 
     def _release_logcat_worker(self, worker: LogcatWorker) -> bool:
         """仅在线程和受跟踪进程都停止后释放 Logcat 工作对象。"""
@@ -253,7 +253,8 @@ class LiveLogcatLifecycle:
             self._frame._on_application_stopped,
         )
         self._frame._debug_lifecycle("resources_stopped", trigger=trigger)
-        QTimer.singleShot(0, self._frame.close)
+        # 页面可能先被会话宿主销毁，关闭回调必须绑定 Qt 上下文以随之取消。
+        QTimer.singleShot(0, self._frame, self._frame.close)
         return True
 
     def _on_owner_stopped(self, owner_id: str, results):

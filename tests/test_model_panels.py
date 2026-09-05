@@ -9,8 +9,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QIcon
-from PySide6.QtTest import QTest
+from PySide6.QtGui import QFont
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QApplication,
     QListWidget,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QWidget,
 )
-from qfluentwidgets import ComboBox, EditableComboBox, PrimaryPushButton
+from qfluentwidgets import ComboBox, EditableComboBox, FluentIcon, PrimaryPushButton
 
 from controllers._system import ADBSystemControllerMixin
 from gui.panels.app_panel import AppPanel
@@ -30,6 +30,146 @@ from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel import SidePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from utils.adb_targets import normalize_adb_connect_target
+
+
+def test_system_device_actions_reject_empty_selection_and_keep_configuration_editable(
+    qt_application,
+):
+    owner = SidePanel()
+    system = owner._ensure_tab_loaded(1)
+    shell = QSignalSpy(owner.signals.shell_command_requested)
+    processes = QSignalSpy(owner.signals.list_processes_requested)
+    try:
+        system.shell_cmd_input.setText("id")
+        assert not system.btn_shell_run.isEnabled()
+        assert not system.btn_ps_list.isEnabled()
+        assert system.reboot_mode_combo.isEnabled()
+        assert system.settings_ns.isEnabled()
+        system.shell_cmd_input.returnPressed.emit()
+        system.btn_ps_list.clicked.emit()
+        system._sh("svc wifi enable")
+        assert shell.count() == 0
+        assert processes.count() == 0
+    finally:
+        owner.close()
+
+
+def test_app_direct_submission_rejects_missing_targets_without_starting_state(qt_application):
+    owner = SidePanel()
+    apps = owner._apps_tab
+    screenshots = QSignalSpy(owner.signals.screenshot_requested)
+    installs = QSignalSpy(owner.signals.batch_install_requested)
+    uninstalls = QSignalSpy(owner.signals.uninstall_app_requested)
+    local_apk = QSignalSpy(owner.signals.parse_apk_info_requested)
+    try:
+        apps.program_edit.setText("com.example.demo")
+        apps._on_screenshot()
+        apps.btn_batch_install.clicked.emit()
+        apps.uninstall_btn.clicked.emit()
+        assert screenshots.count() == installs.count() == uninstalls.count() == 0
+        assert not apps._screenshot_running
+        assert apps.parse_apk_info_btn.isEnabled()
+        apps.parse_apk_info_btn.click()
+        assert local_apk.count() == 1
+    finally:
+        owner.close()
+
+
+def test_side_panel_selection_is_a_unique_online_snapshot(qt_application):
+    owner = SidePanel()
+    try:
+        owner.update_device_list(["demo-a", "demo-b"])
+        owner._devices_tab.set_selected_devices(["demo-a", "demo-b"])
+        owner._connected_device_cache = ["demo-b", "demo-b"]
+        snapshot = owner.selected_devices
+        assert snapshot == ["demo-b"]
+        snapshot.clear()
+        assert owner.selected_devices == ["demo-b"]
+        owner._connected_device_cache = []
+        owner._refresh_loaded_action_states()
+        assert owner.selected_devices == []
+        assert not owner._apps_tab.btn_screenshot.isEnabled()
+    finally:
+        owner.close()
+
+
+def test_app_current_package_requires_one_target_and_batch_actions_keep_all_targets(qt_application):
+    owner = SidePanel()
+    apps = owner._apps_tab
+    packages = QSignalSpy(owner.signals.get_program_requested)
+    screenshots = QSignalSpy(owner.signals.screenshot_requested)
+    try:
+        owner.update_device_list(["demo-a", "demo-b"])
+        owner._devices_tab.set_selected_devices(["demo-a", "demo-b"])
+        assert not apps.btn_get_program.isEnabled()
+        apps.btn_get_program.clicked.emit()
+        assert packages.count() == 0
+        apps.btn_screenshot.click()
+        assert screenshots.count() == 1
+        assert screenshots.at(0)[0] == ["demo-a", "demo-b"]
+        owner._devices_tab.set_selected_devices(["demo-b"])
+        assert apps.btn_get_program.isEnabled()
+        apps.btn_get_program.click()
+        assert packages.count() == 1
+        assert packages.at(0)[0] == ["demo-b"]
+        apps.set_package_query_pending(True)
+        assert not apps.btn_get_program.isEnabled()
+        apps.btn_get_program.clicked.emit()
+        assert packages.count() == 1
+        apps.set_package_query_pending(False)
+        assert apps.btn_get_program.isEnabled()
+    finally:
+        owner.close()
+
+
+def test_base_device_submission_copies_and_deduplicates_target_snapshot(qt_application):
+    selected = ["demo-a", "demo-a", "", "demo-b"]
+    owner = SimpleNamespace(selected_devices=selected, signals=SidePanelSignals())
+    panel = BasePanel(owner)
+    emitted = []
+    owner.signals.shell_command_requested.connect(lambda targets, _command: emitted.append(targets))
+    try:
+        panel._sh("id")
+        selected[:] = ["demo-c"]
+        assert emitted == [["demo-a", "demo-b"]]
+        assert panel.selected_devices == ["demo-c"]
+    finally:
+        panel.close()
+
+
+def test_discovery_failure_blocks_new_actions_but_preserves_selection_and_recording_stop(
+    qt_application,
+):
+    owner = SidePanel()
+    system = owner._ensure_tab_loaded(1)
+    apps = owner._apps_tab
+    shell = QSignalSpy(owner.signals.shell_command_requested)
+    stops = QSignalSpy(owner.signals.stop_screen_record_batch_requested)
+    try:
+        owner.update_device_list(["demo-a"])
+        owner._devices_tab.set_selected_devices(["demo-a"])
+        apps._on_record_start()
+        batch = apps._recording_batch_id
+        owner.set_device_discovery_state("unavailable")
+        assert owner.selected_devices == []
+        assert owner._devices_tab.selected_devices == ["demo-a"]
+        assert not apps.btn_screenshot.isEnabled()
+        assert not system.btn_ps_list.isEnabled()
+        system._sh("id")
+        assert shell.count() == 0
+        assert apps.btn_stop_record.isEnabled()
+        apps.btn_stop_record.click()
+        assert stops.at(0) == [["demo-a"], batch]
+
+        for state in ("scanning", "ready"):
+            owner.set_device_discovery_state(state)
+            assert owner.selected_devices == ["demo-a"]
+            assert apps.btn_screenshot.isEnabled()
+            assert system.btn_ps_list.isEnabled()
+            system._sh("id")
+        assert shell.count() == 2
+    finally:
+        owner.close()
 
 
 def test_device_manager_shows_placeholder_for_new_unstored_device():
@@ -353,7 +493,9 @@ def test_side_panel_theme_refresh_updates_button_icons():
     panel.setStyleSheet = Mock()
     panel.apply_device_theme = Mock()
 
-    with patch("gui.panels.side_panel.get_themed_icon", return_value=QIcon()) as themed_icon:
+    with patch(
+        "gui.panels.side_panel.get_fluent_icon", return_value=FluentIcon.SYNC
+    ) as themed_icon:
         SidePanel._on_theme_changed(panel, "Dark")
 
     themed_icon.assert_called_once_with("arrows-clockwise.svg")
@@ -539,6 +681,14 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
             panel._on_start_monkey()
 
             assert panel.start_monkey_btn.isEnabled() is False
+            assert panel.kill_monkey_btn.isEnabled() is False
+            side_panel.signals.start_monkey_batch_requested.emit.assert_not_called()
+            preparation = panel._monkey_preparation
+            package_result = {
+                "success": True, "devices": ["device-1"], "package_name": "com.example.app",
+                "packages": [{"device_ip": "device-1", "package_name": "com.example.app"}],
+            }
+            panel.on_monkey_preparation_finished(preparation.request_id, package_result)
             assert panel.kill_monkey_btn.isEnabled() is True
             side_panel.signals.start_monkey_batch_requested.emit.assert_called_once()
             batch_id = side_panel.signals.start_monkey_batch_requested.emit.call_args.args[2]
@@ -549,6 +699,9 @@ def test_app_panel_monkey_buttons_follow_start_stop_state():
             assert panel.kill_monkey_btn.isEnabled() is False
 
             panel._on_start_monkey()
+            panel.on_monkey_preparation_finished(
+                panel._monkey_preparation.request_id, package_result
+            )
             second_batch_id = side_panel.signals.start_monkey_batch_requested.emit.call_args.args[2]
             panel.on_operation_completed("install", True, "done")
 

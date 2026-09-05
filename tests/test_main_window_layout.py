@@ -11,7 +11,12 @@ from PySide6.QtCore import QAbstractAnimation, QEvent, QObject, QPoint, QSignalB
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QGridLayout, QPushButton, QWidget
-from qfluentwidgets import CardWidget, ComboBox, NavigationDisplayMode, NavigationPanel
+from qfluentwidgets import (
+    CardWidget,
+    ComboBox,
+    NavigationDisplayMode,
+    NavigationPanel,
+)
 from shiboken6 import invalidate, isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -146,12 +151,16 @@ class _FakeMouseButtons:
         self._buttons = Qt.MouseButton.NoButton
 
 
-def build_main_frame(*, screen_adapter=None, settings=None, mouse_buttons_provider=None):
+def build_main_frame(
+    *, screen_adapter=None, settings=None, mouse_buttons_provider=None, controller=None
+):
     """用本地依赖替身构造 MainFrame，不访问 ADB 或外部 helper。"""
 
     settings = settings or _MainFrameSettings()
-    controller = Mock()
-    controller.signals = Mock()
+    if controller is None:
+        controller = Mock()
+        controller.signals = Mock()
+    controller.operation_manager.active_snapshot.return_value = ()
     with (
         patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
         patch("gui.main_frame.ADBController", lambda _log_service: controller),
@@ -163,26 +172,32 @@ def build_main_frame(*, screen_adapter=None, settings=None, mouse_buttons_provid
         )
 
 
-def test_logs_navigation_switches_to_independent_page_and_focuses_output(qt_application):
+def populate_device_workbench(frame, count=8):
+    """用合成设备形成真实可滚动内容，不依赖已移除的概览跳转卡。"""
+    devices = [f"demo-device-{index}" for index in range(count)]
+    frame._on_devices_updated(devices)
+    frame.left_panel._devices_tab.set_selected_devices(devices[:1])
+    return frame._device_hub.device_cards
+
+
+def test_tasks_navigation_refreshes_task_history(qt_application):
     page = object()
-    text_output = Mock()
+    task_page = SimpleNamespace(refresh=Mock())
     frame = SimpleNamespace(
-        _logs_page=page,
         _home_page=None,
         _devices_page=None,
         _apps_page=None,
         _system_page=None,
-        _tasks_page=None,
+        _tasks_page=page,
+        _task_page=task_page,
         _settings_page=None,
-        log_panel=SimpleNamespace(text_output=text_output),
         switchTo=Mock(),
     )
 
-    MainFrame._on_nav_requested(frame, "logs")
+    MainFrame._on_nav_requested(frame, "tasks")
 
     frame.switchTo.assert_called_once_with(page)
-    text_output.setFocus.assert_called_once_with(Qt.FocusReason.ShortcutFocusReason)
-    text_output.ensureCursorVisible.assert_called_once_with()
+    task_page.refresh.assert_called_once_with()
 
 
 def test_shutdown_flush_captures_visible_window_size_and_theme_without_resize_transaction(
@@ -379,6 +394,7 @@ def test_main_window_resize_batch_settles_side_panel_once_with_final_geometry(
     )
     try:
         frame.show()
+        frame._on_nav_requested("apps")
         panel = frame.left_panel
         feature_panel = panel._apps_tab
         wait_until(
@@ -544,45 +560,44 @@ def test_theme_switch_keeps_mica_content_stack_edges_borderless(qt_application):
         screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
         settings=settings,
     )
-    border_override = "StackedWidget { border: none; }"
-    native_windows = qt_application.platformName().lower() == "windows"
 
     def assert_edges_match_window_surface() -> None:
         image = frame.grab().toImage()
         origin = frame.stackedWidget.mapTo(frame, QPoint())
         left_y = origin.y() + frame.stackedWidget.height() // 2
         top_x = origin.x() + frame.stackedWidget.width() // 2
-        assert image.pixelColor(origin.x(), left_y) == image.pixelColor(
-            origin.x() - 1,
-            left_y,
-        )
-        assert image.pixelColor(top_x, origin.y()) == image.pixelColor(
-            top_x,
-            origin.y() - 1,
-        )
+        scale = image.devicePixelRatio()
+        for edge, adjacent in (
+            (QPoint(origin.x(), left_y), QPoint(origin.x() - 1, left_y)),
+            (QPoint(top_x, origin.y()), QPoint(top_x, origin.y() - 1)),
+        ):
+            color = image.pixelColor(round(edge.x() * scale), round(edge.y() * scale))
+            assert color.alpha() == 255
+            assert color.name() == BaseStyles.color("WINDOW_BG").lower()
+            assert color == image.pixelColor(
+                round(adjacent.x() * scale), round(adjacent.y() * scale)
+            )
 
     try:
         frame.show()
+        # 首页滚动区有独立原生边框；用无边框设置页隔离内容栈边缘的绘制。
+        frame._on_nav_requested("settings")
+        wait_until(
+            qt_application,
+            lambda: frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped,
+        )
         qt_application.processEvents()
-        assert frame.stackedWidget.property("lightCustomQss") == border_override
-        assert frame.stackedWidget.property("darkCustomQss") == border_override
-        if native_windows:
-            # offscreen 插件不经过 Windows Mica/DWM，不能代表原生边缘合成。
-            assert_edges_match_window_surface()
+        # 验证实际边缘像素；离屏覆盖 Qt 绘制，原生平台再覆盖 Mica/DWM 路径。
+        assert_edges_match_window_surface()
 
         for theme in ("Dark", "Light"):
             BaseStyles.switch_theme(theme)
             # 同步返回态覆盖“边框先切换、页面稍后切换”的瞬间。
-            if native_windows:
-                assert_edges_match_window_surface()
+            assert_edges_match_window_surface()
             QTest.qWait(250)
             qt_application.processEvents()
             # Mica/DWM 稳定后，样式管理器也不能恢复半透明边框。
-            if native_windows:
-                assert_edges_match_window_surface()
-            assert frame.stackedWidget.styleSheet().rstrip().endswith(
-                border_override
-            )
+            assert_edges_match_window_surface()
     finally:
         BaseStyles.switch_theme(original_theme)
         frame._unbind_window_screen()
@@ -645,7 +660,7 @@ def test_light_theme_is_applied_after_mica_first_show(qt_application):
 
 
 def test_navigation_and_workspace_selection_feedback_is_immediate(qt_application):
-    """不可选领域分组下的功能子项须同步物理页面与逻辑路由。"""
+    """一级功能入口同步内容与语义路由，物理宿主继续复用。"""
 
     frame = build_main_frame()
     try:
@@ -660,24 +675,26 @@ def test_navigation_and_workspace_selection_feedback_is_immediate(qt_application
             assert frame.stackedWidget.currentWidget() is page
             assert frame.navigationInterface.panel.currentItem().property(
                 "routeKey"
-            ) == f"workspace:{key}:overview"
+            ) == page.objectName()
 
         frame._on_nav_requested("remote")
         assert frame.stackedWidget.currentWidget() is frame._devices_page
         assert frame._devices_page.current_route.feature == "remote"
         assert frame.navigationInterface.panel.currentItem().property("routeKey") == (
-            "workspace:devices:remote"
+            frame._workspace_navigation_keys[("devices", "remote")]
         )
 
-        packages_key = "workspace:apps:packages"
+        packages_key = frame._workspace_navigation_keys[("apps", "manager")]
         frame.navigationInterface.widget(packages_key).click()
+        media_key = frame._workspace_navigation_keys[("apps", "media")]
+        frame.navigationInterface.widget(media_key).click()
         assert frame.stackedWidget.currentWidget() is frame._apps_page
-        assert frame._apps_page.current_route.feature == "packages"
+        assert frame._apps_page.current_route.feature == "media"
         assert frame.navigationInterface.panel.currentItem().property(
             "routeKey"
-        ) == packages_key
+        ) == media_key
 
-        overview_key = "workspace:apps:overview"
+        overview_key = frame._workspace_navigation_keys[("apps", "overview")]
         frame.navigationInterface.widget(overview_key).click()
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert frame._apps_page.current_route.feature == "overview"
@@ -696,17 +713,17 @@ def test_navigation_and_workspace_selection_feedback_is_immediate(qt_application
 
 
 def test_workspace_overviews_expose_task_categories(qt_application):
-    """领域只负责分组，概览和其他模块均为原生主导航树子项。"""
+    """九个业务入口唯一登记在左栏，三个宿主不再展示区内功能选择器。"""
 
     frame = build_main_frame()
     try:
         expected_panels = (
-            (frame.left_panel._apps_tab, ("daily", "packages", "monkey", "diagnostics")),
+            (frame.left_panel._apps_tab, ("daily",)),
             (
                 frame.left_panel._advanced_tab,
-                ("commands", "connectivity", "settings", "device"),
+                ("commands",),
             ),
-            (frame.left_panel._scrcpy_tab, ("mirroring", "control")),
+            (frame.left_panel._scrcpy_tab, ("mirroring",)),
         )
         for panel, keys in expected_panels:
             assert panel is not None
@@ -720,20 +737,14 @@ def test_workspace_overviews_expose_task_categories(qt_application):
             assert panel.category_stack.combo.isHidden()
 
         expected_navigation = {
-            "devices": ("overview", "files", "remote", "remote-control"),
+            "devices": ("overview", "files", "remote"),
             "apps": (
                 "overview",
-                "packages",
                 "manager",
-                "monkey",
-                "diagnostics",
                 "media",
             ),
             "system": (
                 "overview",
-                "connectivity",
-                "settings",
-                "device",
                 "logcat",
                 "performance",
             ),
@@ -741,42 +752,45 @@ def test_workspace_overviews_expose_task_categories(qt_application):
         route_keys = []
         for section, features in expected_navigation.items():
             host = frame._workspace_feature_hosts[section]
-            root = frame._workspace_navigation_roots[section]
-            group_key = f"workspace-group:{section}"
-            route_keys.append(group_key)
-            assert frame._workspace_navigation_group_keys[section] == group_key
-            assert root is frame.navigationInterface.widget(group_key)
-            assert root.isSelectable is False
             assert tuple(item.feature for item in host.navigation_items()) == features
-
-            children = root.childItems()
-            assert len(children) == len(features)
-            for feature, child in zip(features, children, strict=True):
-                route_key = f"workspace:{section}:{feature}"
+            assert host.feature_selector.isHidden()
+            assert host.feature_combo.isHidden()
+            assert host.feature_pivot.isHidden()
+            for feature in features:
+                route_key = frame._workspace_navigation_keys[(section, feature)]
                 route_keys.append(route_key)
-                assert frame._workspace_navigation_keys[(section, feature)] == route_key
-                assert frame.navigationInterface.widget(route_key) is child
-                assert child.treeParent is root
+                item = frame.navigationInterface.widget(route_key)
+                assert item is not None
+                assert item.isSelectable is True
+                assert item.treeParent is None
+                assert not item.property("parentRouteKey")
 
         assert len(route_keys) == len(set(route_keys))
         assert all(frame.navigationInterface.widget(key) is not None for key in route_keys)
+        assert all(
+            f"workspace-group:{section}" not in frame.navigationInterface.panel.items
+            for section in expected_navigation
+        )
+        assert len(route_keys) == 9
+        assert len(frame._workspace_pages) == 3
+        assert frame.stackedWidget.count() == 6
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_programmatic_workspace_route_selects_native_navigation_child(qt_application):
+def test_programmatic_workspace_route_selects_native_navigation_item(qt_application):
     frame = build_main_frame()
     try:
         frame.show()
         assert frame._open_workspace_feature("system", "connectivity") is True
 
-        route_key = "workspace:system:connectivity"
+        route_key = frame._system_page.objectName()
         assert frame.stackedWidget.currentWidget() is frame._system_page
         assert frame._system_page.current_route == WorkspaceRoute(
             "system",
-            "connectivity",
+            "overview",
         )
         assert frame.navigationInterface.panel.currentItem().property(
             "routeKey"
@@ -784,8 +798,9 @@ def test_programmatic_workspace_route_selects_native_navigation_child(qt_applica
         assert frame.navigationInterface.panel.currentItem() is (
             frame.navigationInterface.widget(route_key)
         )
-        assert frame._system_page.header.title_label.text() == "连接与服务"
-        assert "系统与诊断" in frame._system_page.header.subtitle_label.text()
+        assert frame._workspace_feature_hosts["system"].feature_selector.isHidden()
+        assert frame._system_page.header.title_label.text() == "系统工具"
+        assert "设备配置" in frame._system_page.header.subtitle_label.text()
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -793,7 +808,7 @@ def test_programmatic_workspace_route_selects_native_navigation_child(qt_applica
 
 
 def test_navigation_history_restores_workspace_child_and_lifecycle(qt_application):
-    """返回业务宿主页时须恢复叶节点选中态并重新激活当前会话。"""
+    """返回业务宿主页时须恢复功能入口选中态并重新激活当前会话。"""
 
     frame = build_main_frame()
     try:
@@ -801,7 +816,7 @@ def test_navigation_history_restores_workspace_child_and_lifecycle(qt_applicatio
         assert frame._open_workspace_feature("apps", "packages") is True
         assert frame._apps_page._active is True
 
-        frame._on_nav_requested("logs")
+        frame._on_nav_requested("tasks")
         assert frame._apps_page._active is False
 
         frame.navigationInterface.panel.returnButton.click()
@@ -812,10 +827,11 @@ def test_navigation_history_restores_workspace_child_and_lifecycle(qt_applicatio
 
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert frame._apps_page._active is True
-        assert frame._apps_page.current_route.feature == "packages"
+        assert frame._apps_page.current_route.feature == "manager"
         assert frame.navigationInterface.panel.currentItem().property(
             "routeKey"
-        ) == "workspace:apps:packages"
+        ) == frame._workspace_navigation_keys[("apps", "manager")]
+        assert frame._workspace_feature_hosts["apps"].feature_selector.isHidden()
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -825,16 +841,16 @@ def test_navigation_history_restores_workspace_child_and_lifecycle(qt_applicatio
 def test_navigation_history_tracks_workspace_leaves_on_same_physical_page(
     qt_application,
 ):
-    """同一业务宿主页内切换功能后，返回应逐个恢复逻辑叶节点。"""
+    """同一业务宿主页内切换功能后，返回应逐个恢复逻辑入口。"""
 
     frame = build_main_frame()
     try:
         frame.show()
         assert frame._open_workspace_feature("apps", "packages")
-        assert frame._open_workspace_feature("apps", "diagnostics")
+        assert frame._open_workspace_feature("apps", "monkey")
 
         frame.navigationInterface.panel.returnButton.click()
-        assert frame._apps_page.current_route.feature == "packages"
+        assert frame._apps_page.current_route.feature == "manager"
         assert frame.stackedWidget.currentWidget() is frame._apps_page
 
         frame.navigationInterface.panel.returnButton.click()
@@ -847,37 +863,41 @@ def test_navigation_history_tracks_workspace_leaves_on_same_physical_page(
 
 
 def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application):
-    """设备中转页不进入历史，多选和隐藏宿主信号也不能夺走待恢复意图。"""
+    """全局设备弹层不改变历史，多选和隐藏宿主信号不能夺走待打开意图。"""
 
     frame = build_main_frame()
     try:
         frame.show()
         assert frame._open_workspace_feature("apps", "manager")
-        pending = frame._workspace_feature_hosts["apps"].pending_route
+        host = frame._workspace_feature_hosts["apps"]
+        pending = host.pending_route
         assert pending is not None
-        frame._show_device_selection(pending)
+        history = tuple(frame._navigation_history)
+        host.no_device_page.choose_button.click()
+        assert frame._global_device_bar._picker is not None
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert tuple(frame._navigation_history) == history
 
+        frame._on_devices_updated(["device-1", "device-2"])
+        frame._global_device_bar.selection_requested.emit(["device-1", "device-2"])
         frame._on_workspace_route_changed(WorkspaceRoute("system", "overview"))
-        frame._resume_pending_workspace_route(["device-1", "device-2"])
-        assert frame._pending_workspace_route == pending
-        assert frame.stackedWidget.currentWidget() is frame._devices_page
+        assert host.pending_route == pending
+        assert host.stack.currentWidget() is host.no_device_page
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
+        assert tuple(frame._navigation_history) == history
 
+        frame._on_nav_requested("tasks")
+        assert host.pending_route == pending
         frame.navigationInterface.panel.returnButton.click()
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert frame._apps_page.current_route.feature == "manager"
+        assert host.pending_route == pending
 
-        frame._show_device_selection(pending)
-        frame._on_nav_requested("logs")
-        assert frame._pending_workspace_route is None
-        frame.navigationInterface.panel.returnButton.click()
-        assert frame.stackedWidget.currentWidget() is frame._apps_page
-        assert frame._apps_page.current_route.feature == "manager"
-
-        frame._show_device_selection(pending)
         from gui.features.app_manager import AppManagerPage
 
         with patch.object(AppManagerPage, "_load_apps"):
-            frame._resume_pending_workspace_route(["device-1"])
+            frame._global_device_bar.selection_requested.emit(["device-1"])
+        assert host.pending_route is None
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert frame._apps_page.current_route == WorkspaceRoute(
             "apps",
@@ -893,7 +913,7 @@ def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application)
         frame.close()
 
 
-def test_narrow_workspace_has_no_visible_feature_combo(qt_application):
+def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_application):
     adapter = _FakeScreenAdapter(_FakeScreen("narrow", QSize(720, 500)))
     frame = build_main_frame(screen_adapter=adapter)
     try:
@@ -912,8 +932,19 @@ def test_narrow_workspace_has_no_visible_feature_combo(qt_application):
             for combo in host.findChildren(ComboBox)
             if combo.isVisibleTo(host)
         ]
-        assert visible_combos == [host.device_combo]
-        assert host.device_combo.accessibleName() == "会话设备"
+        assert host.feature_combo not in visible_combos
+        assert host.feature_combo.isHidden()
+        assert host.feature_pivot.isHidden()
+        assert host.feature_selector.isHidden()
+        assert host.session_toolbar.isHidden()
+        assert frame.navigationInterface.panel.currentItem() is frame.navigationInterface.widget(
+            frame._workspace_navigation_keys[("system", "performance")]
+        )
+        bar = frame._global_device_bar
+        assert bar.targets_button.isVisible()
+        assert bar.session_combo.isVisible()
+        assert bar.session_combo.currentData() == "device-1"
+        assert bar.session_combo.accessibleName() == "当前查看的会话设备"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1044,14 +1075,14 @@ def test_no_device_feature_resumes_inline_after_device_selection(qt_application)
         pending = apps_host.pending_route
         assert pending is not None
 
-        frame._show_device_selection(pending)
-        assert frame._pending_workspace_route == pending
-        assert frame.stackedWidget.currentWidget() is frame._devices_page
-        assert frame._devices_page.current_route.section == "devices"
+        apps_host.no_device_page.choose_button.click()
+        assert frame._global_device_bar._picker is not None
+        assert apps_host.pending_route == pending
+        assert frame.stackedWidget.currentWidget() is frame._apps_page
 
-        apps_host.set_device_context(["device-1"], ["device-1"])
+        frame._on_devices_updated(["device-1", "device-2"])
         with patch.object(AppManagerPage, "_load_apps"):
-            frame._resume_pending_workspace_route(["device-1"])
+            frame._global_device_bar.selection_requested.emit(["device-1"])
 
         page = apps_host.stack.currentWidget()
         assert isinstance(page, AppManagerPage)
@@ -1062,7 +1093,7 @@ def test_no_device_feature_resumes_inline_after_device_selection(qt_application)
             "manager",
             "device-1",
         )
-        assert frame._pending_workspace_route is None
+        assert apps_host.pending_route is None
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1267,14 +1298,22 @@ def test_screenshot_batch_preserves_pending_device_route(qt_application, tmp_pat
     frame = build_main_frame()
     try:
         frame.show()
-        frame._show_device_selection(pending)
-        current_route = frame._devices_page.current_route
+        frame._on_nav_requested(pending)
+        host = frame._workspace_feature_hosts["system"]
+        host.no_device_page.choose_button.click()
+        assert frame._global_device_bar._picker is not None
+        current_route = frame._system_page.current_route
+        history = tuple(frame._navigation_history)
 
         frame._on_screenshot_batch_ready([str(image_path)])
 
-        assert frame._pending_workspace_route == pending
-        assert frame._devices_page.current_route == current_route
-        assert current_route == WorkspaceRoute("devices", "overview")
+        assert host.pending_route == pending
+        assert host.stack.currentWidget() is host.no_device_page
+        assert frame.stackedWidget.currentWidget() is frame._system_page
+        assert frame._system_page.current_route == current_route
+        assert tuple(frame._navigation_history) == history
+        assert current_route.section == "system"
+        assert current_route.feature == "logcat"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1318,10 +1357,10 @@ def test_navigation_route_click_collapses_menu_during_expand_animation(qt_applic
         assert panel.displayMode == NavigationDisplayMode.MENU
         assert panel.expandAni.state() == QAbstractAnimation.State.Running
 
-        frame.navigationInterface.widget(frame._logs_page.objectName()).click()
+        frame.navigationInterface.widget(frame._tasks_page.objectName()).click()
 
-        assert frame.stackedWidget.currentWidget() is frame._logs_page
-        assert panel.currentItem().property("routeKey") == frame._logs_page.objectName()
+        assert frame.stackedWidget.currentWidget() is frame._tasks_page
+        assert panel.currentItem().property("routeKey") == frame._tasks_page.objectName()
         wait_until(
             qt_application,
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT and panel.width() == 48,
@@ -1345,7 +1384,7 @@ def test_navigation_back_closes_narrow_overlay_menu(qt_application):
     try:
         frame.show()
         assert frame._open_workspace_feature("apps", "packages")
-        frame._on_nav_requested("logs")
+        frame._on_nav_requested("tasks")
         panel = frame.navigationInterface.panel
         panel.menuButton.click()
         assert panel.displayMode == NavigationDisplayMode.MENU
@@ -1356,7 +1395,7 @@ def test_navigation_back_closes_narrow_overlay_menu(qt_application):
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
         )
         assert frame.stackedWidget.currentWidget() is frame._apps_page
-        assert frame._apps_page.current_route.feature == "packages"
+        assert frame._apps_page.current_route.feature == "manager"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1394,10 +1433,10 @@ def test_navigation_menu_resize_to_wide_settles_as_persistent_sidebar(
         frame.close()
 
 
-def test_compact_navigation_keeps_one_flyout_and_cleans_it_on_shell_actions(
+def test_compact_navigation_exposes_flat_routes_without_tree_flyouts(
     qt_application,
 ):
-    """窄栏分组 Flyout 互斥，并在切页、展开菜单和缩放时立即关闭。"""
+    """窄栏只保留一级入口，点击功能时不再创建树形 Flyout。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=900, window_height=600)
@@ -1412,65 +1451,49 @@ def test_compact_navigation_keeps_one_flyout_and_cleans_it_on_shell_actions(
             qt_application,
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
         )
-        for section in ("devices", "apps", "system"):
-            QTest.mouseClick(
-                frame._workspace_navigation_roots[section].itemWidget,
-                Qt.MouseButton.LeftButton,
-            )
-            qt_application.processEvents()
-            wait_until(
-                qt_application,
-                lambda: len(
-                    [flyout for flyout in frame._navigation_flyouts() if flyout.isVisible()]
-                )
-                == 1,
-            )
+        assert panel.width() == 48
+        visible_items = 0
+        for route_key in frame._workspace_navigation_keys.values():
+            item = frame.navigationInterface.widget(route_key)
+            visible = item.visibleRegion().boundingRect()
+            if visible.isEmpty():
+                continue
+            visible_items += 1
+            left = item.mapTo(panel, visible.topLeft()).x()
+            right = item.mapTo(panel, visible.bottomRight()).x()
+            assert 0 <= left <= right < panel.width()
+        assert visible_items > 0
 
-        frame.navigationInterface.widget(frame._logs_page.objectName()).click()
-        qt_application.processEvents()
-        assert not any(
-            flyout.isVisible() for flyout in frame._navigation_flyouts()
-        )
+        route = frame.navigationInterface.widget(frame._apps_page.objectName())
+        assert route.treeParent is None
+        assert not route.property("parentRouteKey")
+        route.click()
+        frame.navigationInterface.widget(
+            frame._workspace_navigation_keys[("apps", "media")]
+        ).click()
+        assert frame._apps_page.current_route.feature == "media"
 
-        QTest.mouseClick(
-            frame._workspace_navigation_roots["apps"].itemWidget,
-            Qt.MouseButton.LeftButton,
-        )
-        qt_application.processEvents()
         panel.menuButton.click()
         assert panel.displayMode == NavigationDisplayMode.MENU
-        assert not any(
-            flyout.isVisible() for flyout in frame._navigation_flyouts()
-        )
-
-        frame._collapse_navigation_menu_after_switch()
+        frame.navigationInterface.widget(frame._system_page.objectName()).click()
         wait_until(
             qt_application,
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
         )
-        QTest.mouseClick(
-            frame._workspace_navigation_roots["system"].itemWidget,
-            Qt.MouseButton.LeftButton,
-        )
-        qt_application.processEvents()
-        frame.resize(1120, 640)
-        wait_until(
-            qt_application,
-            lambda: panel.displayMode == NavigationDisplayMode.EXPAND,
-        )
-        assert not any(
-            flyout.isVisible() for flyout in frame._navigation_flyouts()
-        )
+        frame.navigationInterface.widget(
+            frame._workspace_navigation_keys[("system", "performance")]
+        ).click()
+        assert frame._system_page.current_route.feature == "performance"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_workspace_navigation_animation_finishes_with_consistent_tree_geometry(
+def test_workspace_navigation_animation_keeps_flat_item_geometry_inside_panel(
     qt_application,
 ):
-    """菜单动画期间切换叶节点后，逻辑展开态与父树高度必须一致。"""
+    """菜单动画期间切换一级入口后，控件不得溢出导航面板。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=900, window_height=600)
@@ -1483,25 +1506,23 @@ def test_workspace_navigation_animation_finishes_with_consistent_tree_geometry(
         assert frame._open_workspace_feature("apps", "packages")
         panel = frame.navigationInterface.panel
         panel.menuButton.click()
-        frame.navigationInterface.widget("workspace:apps:diagnostics").click()
+        media_key = frame._workspace_navigation_keys[("apps", "media")]
+        frame.navigationInterface.widget(media_key).click()
         wait_until(
             qt_application,
             lambda: panel.displayMode == NavigationDisplayMode.COMPACT,
         )
-        for root in frame._workspace_navigation_roots.values():
-            assert root.isExpanded is False
-            assert root.height() == root.sizeHint().height()
-
+        current = frame.navigationInterface.widget(media_key)
+        assert panel.currentItem() is current
+        assert current.treeParent is None
+        assert current.width() <= panel.expandWidth
         panel.menuButton.click()
         wait_until(
             qt_application,
-            lambda: panel.displayMode == NavigationDisplayMode.MENU
-            and frame._workspace_navigation_roots["apps"].isExpanded,
+            lambda: panel.displayMode == NavigationDisplayMode.MENU,
         )
-        apps = frame._workspace_navigation_roots["apps"]
-        current = frame.navigationInterface.widget("workspace:apps:diagnostics")
-        assert apps.height() == apps.sizeHint().height()
-        assert apps.rect().contains(current.mapTo(apps, current.rect().center()))
+        assert current.isVisibleTo(panel)
+        assert current.rect().right() < panel.expandWidth
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1536,10 +1557,10 @@ def test_navigation_hamburger_replays_click_received_during_collapse(qt_applicat
         frame.close()
 
 
-def test_wide_workspace_opens_native_navigation_and_reveals_active_child(
+def test_wide_workspace_opens_native_navigation_and_reveals_active_route(
     qt_application,
 ):
-    """桌面宽度直接展示左栏；切入业务页后当前叶节点必须可见。"""
+    """桌面宽度直接展示左栏；切入业务页后当前入口必须可见。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=1120, window_height=640)
@@ -1556,24 +1577,20 @@ def test_wide_workspace_opens_native_navigation_and_reveals_active_child(
         )
 
         assert frame._open_workspace_feature("apps", "packages") is True
-        wait_until(
-            qt_application,
-            lambda: frame._workspace_navigation_roots["apps"].isExpanded,
+        current = frame.navigationInterface.widget(
+            frame._workspace_navigation_keys[("apps", "manager")]
         )
-
-        current = frame.navigationInterface.widget("workspace:apps:packages")
         assert current.isVisibleTo(panel.scrollArea.viewport())
-        assert frame._workspace_navigation_roots["apps"].isExpanded is True
-        assert frame._workspace_navigation_roots["devices"].isExpanded is False
-        assert frame._workspace_navigation_roots["system"].isExpanded is False
+        assert current.treeParent is None
+        assert panel.currentItem() is current
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_narrow_navigation_is_overlay_and_expands_the_active_group(qt_application):
-    """窄窗菜单不得挤压内容，打开后应直接露出当前功能所属分组。"""
+def test_narrow_navigation_overlay_reveals_the_active_flat_route(qt_application):
+    """窄窗菜单不得挤压内容，打开后应直接露出当前一级入口。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=900, window_height=600)
@@ -1590,9 +1607,8 @@ def test_narrow_navigation_is_overlay_and_expands_the_active_group(qt_applicatio
 
         panel.menuButton.click()
         assert panel.displayMode == NavigationDisplayMode.MENU
-        assert frame._workspace_navigation_roots["apps"].isExpanded is True
         assert frame.navigationInterface.widget(
-            "workspace:apps:packages"
+            frame._workspace_navigation_keys[("apps", "manager")]
         ).isVisibleTo(panel)
         assert frame._apps_page.width() == page_width
     finally:
@@ -1601,8 +1617,8 @@ def test_narrow_navigation_is_overlay_and_expands_the_active_group(qt_applicatio
         frame.close()
 
 
-def test_workspace_group_click_keeps_only_one_tree_branch_expanded(qt_application):
-    """手动浏览左栏分组时也只保留一个展开分支。"""
+def test_workspace_navigation_has_nine_flat_features_and_three_persistent_pages(qt_application):
+    """业务功能与三个常驻页均为一级入口，六个物理页面继续复用。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=1120, window_height=640)
@@ -1617,25 +1633,28 @@ def test_workspace_group_click_keeps_only_one_tree_branch_expanded(qt_applicatio
             qt_application,
             lambda: panel.displayMode == NavigationDisplayMode.EXPAND,
         )
-        devices = frame._workspace_navigation_roots["devices"]
-        apps = frame._workspace_navigation_roots["apps"]
-
-        QTest.mouseClick(devices.itemWidget, Qt.MouseButton.LeftButton)
-        wait_until(qt_application, lambda: devices.isExpanded)
-        QTest.mouseClick(apps.itemWidget, Qt.MouseButton.LeftButton)
-        wait_until(qt_application, lambda: apps.isExpanded)
-
-        assert apps.isExpanded is True
-        assert devices.isExpanded is False
-        assert frame._workspace_navigation_roots["system"].isExpanded is False
+        assert len(frame._workspace_navigation_page_keys) == 3
+        assert len(frame._workspace_navigation_keys) == 9
+        route_keys = tuple(frame._workspace_navigation_keys.values()) + tuple(
+            page.objectName() for page in (
+                frame._home_page, frame._tasks_page, frame._settings_page
+            )
+        )
+        assert len(set(route_keys)) == 12
+        assert frame.stackedWidget.count() == 6
+        for route_key in route_keys:
+            item = frame.navigationInterface.widget(route_key)
+            assert item is not None
+            assert item.isSelectable is True
+            assert item.treeParent is None
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
 
 
-def test_short_navigation_scrolls_current_workspace_leaf_into_view(qt_application):
-    """短窗口切换到分组末项时，选中叶节点不能留在左栏视口之外。"""
+def test_short_navigation_scrolls_current_workspace_item_into_view(qt_application):
+    """短窗口切换到领域末项时，选中入口不能留在左栏视口之外。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=1120, window_height=500)
@@ -1651,7 +1670,10 @@ def test_short_navigation_scrolls_current_workspace_leaf_into_view(qt_applicatio
             lambda: panel.displayMode == NavigationDisplayMode.EXPAND,
         )
         assert frame._open_workspace_feature("system", "performance") is True
-        item = frame.navigationInterface.widget("workspace:system:performance")
+        item = frame.navigationInterface.widget(
+            frame._workspace_navigation_keys[("system", "performance")]
+        )
+        assert panel.currentItem() is item
         wait_until(
             qt_application,
             lambda: panel.scrollArea.viewport().rect().contains(
@@ -1891,9 +1913,11 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
     try:
         frame.show()
         app_panel = frame.left_panel._ensure_tab_loaded(0)
-        frame._on_nav_requested("apps")
+        frame._on_nav_requested(WorkspaceRoute("apps", "monkey"))
         coordinator = frame.left_panel._responsive_coordinator
         wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+        assert app_panel.monkey_events.isVisibleTo(frame)
 
         flag_binding = next(
             binding
@@ -1910,6 +1934,8 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
             qt_application.processEvents()
             app_panel.apply_responsive_width(0)
             wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+
+            assert app_panel.monkey_events.isVisibleTo(frame)
 
             plans = (
                 app_panel.monkey_parameter_binding.applied_plan,
@@ -1971,7 +1997,6 @@ def test_windows_apps_page_responsive_groups_fit_at_supported_widths(
         modes = {"wide", "three", "medium", "two", "compact", "one"}
         assert all(mode in modes for mode in default_modes)
         assert all(mode in modes for mode in minimum_modes)
-        assert not hasattr(frame, "_panel_splitter")
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -2028,6 +2053,7 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
     )
     try:
         frame.show()
+        cards = populate_device_workbench(frame)
         frame._on_nav_requested("devices")
         wait_until(
             qt_application,
@@ -2035,13 +2061,13 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
         )
 
         scroll = frame._device_scroll_area
-        manager = frame.left_panel._devices_tab
+        last_action = cards[-1].apps_button
         assert frame.size() == available
         assert frame.height() <= available.height()
         assert frame.minimumHeight() <= available.height()
         assert scroll.horizontalScrollBar().maximum() == 0
         QTest.qWait(50)
-        content_center = manager.btn_none.mapTo(scroll.widget(), manager.btn_none.rect().center())
+        content_center = last_action.mapTo(scroll.widget(), last_action.rect().center())
         vertical = scroll.verticalScrollBar()
         vertical.setValue(
             min(
@@ -2050,7 +2076,7 @@ def test_short_workspace_scrolls_devices_without_exceeding_available_height(
             )
         )
         QTest.qWait(10)
-        button_center = manager.btn_none.mapTo(scroll.viewport(), manager.btn_none.rect().center())
+        button_center = last_action.mapTo(scroll.viewport(), last_action.rect().center())
         viewport = scroll.viewport().rect().adjusted(0, 0, 0, 2)
         assert viewport.contains(button_center), (
             f"button={button_center!r}, viewport={viewport!r}, "
@@ -2821,6 +2847,7 @@ def test_manually_shortened_devices_page_keeps_bottom_action_reachable(
     )
     try:
         frame.show()
+        cards = populate_device_workbench(frame)
         frame._on_nav_requested("devices")
         inner_scroll = frame._device_scroll_area
         outer_scroll = frame._workspace_feature_hosts["devices"].content_scroll
@@ -2834,7 +2861,7 @@ def test_manually_shortened_devices_page_keeps_bottom_action_reachable(
             inner_scroll.verticalScrollBar().maximum()
         )
         QTest.qWait(20)
-        button = frame.left_panel._devices_tab.btn_none
+        button = cards[-1].apps_button
         center = button.mapTo(outer_scroll.viewport(), button.rect().center())
         assert outer_scroll.viewport().rect().adjusted(0, 0, 0, 2).contains(center)
     finally:
@@ -2902,11 +2929,13 @@ def test_gallery_page_header_height_does_not_follow_vertical_window_resize(
         frame._close_ready = True
         frame.close()
 
-def test_minimum_window_keeps_independent_log_page_visible_with_large_font(
+def test_minimum_window_keeps_task_runtime_records_reachable_with_large_font(
     qt_application,
     monkeypatch,
 ):
-    """最大字号下 Logs 独立页面仍可见，不再依赖设备/日志 splitter。"""
+    """最大字号展开任务运行记录后自动定位，稳定视口内正文全部可达。"""
+
+    from tests.ui_geometry_helpers import wait_for_stable_geometry
 
     monkeypatch.setattr(
         BaseStyles,
@@ -2917,14 +2946,22 @@ def test_minimum_window_keeps_independent_log_page_visible_with_large_font(
     try:
         frame.resize(860, 500)
         frame.show()
-        frame._on_nav_requested("logs")
-        qt_application.processEvents()
+        frame._on_nav_requested("tasks")
+        frame._task_page.show_runtime_records()
+        scroll = frame._task_page._scroll
+        output = frame.log_panel.text_output
+        wait_until(
+            qt_application,
+            lambda: scroll.viewport().rect().contains(mapped_rect(output, scroll.viewport())),
+        )
+        wait_for_stable_geometry(qt_application, (scroll.viewport(), scroll.widget(), output))
 
         assert not hasattr(frame, "_device_log_splitter")
-        assert frame.stackedWidget.currentWidget() is frame._logs_page
-        assert frame.log_panel.isVisibleTo(frame._logs_page)
-        assert frame.log_panel.text_output.isVisibleTo(frame._logs_page)
-        assert frame._logs_page.header.height() == 88
+        assert frame.stackedWidget.currentWidget() is frame._tasks_page
+        assert frame.log_panel.isVisibleTo(frame._tasks_page)
+        assert frame.log_panel.text_output.isVisibleTo(frame._tasks_page)
+        assert scroll.viewport().rect().contains(mapped_rect(output, scroll.viewport()))
+        assert_scroll_target_reachable(scroll, output)
         assert frame.minimumHeight() <= frame.height()
     finally:
         frame._close_ready = True

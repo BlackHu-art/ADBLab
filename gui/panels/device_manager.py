@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import weakref
 from typing import cast
 
-from PySide6.QtCore import QSignalBlocker, Qt, QTimer
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -148,7 +147,7 @@ class DeviceManager(BasePanel):
         self.btn_info = self._b(
             "设备信息",
             "info.svg",
-            tooltip="在操作日志中显示所选设备详情",
+            tooltip="在任务中心运行记录中显示所选设备详情",
         )
         self.btn_disconnect = self._b(
             "断开连接",
@@ -397,28 +396,21 @@ class DeviceManager(BasePanel):
         return t if (self.panel._user_selected_ip or t) else ""
 
     def update_current_package(self, device_ip: str, package_name: str):
-        frame_ref = weakref.ref(self)
+        """由主窗在 GUI 线程校验回传归属后调用，行文本与输入在同一事件内更新。"""
 
-        def _up():
-            frame = frame_ref()
-            if frame is None:
-                return
-            for i in range(frame.listbox_devices.count()):
-                item = frame.listbox_devices.item(i)
-                info = item.data(Qt.ItemDataRole.UserRole)
-                if info and info.get("ip") == device_ip:
-                    text = f"{device_ip}  |  {package_name}"
-                    item.setText(text)
-                    card = frame.listbox_devices.itemWidget(item)
-                    if card is not None:
-                        # 行卡片文本与条目文本保持同源显示。
-                        cast(_DeviceCardRow, card).set_device_text(text)
-                    apps_tab = getattr(frame.panel, "_apps_tab", None)
-                    if apps_tab:
-                        apps_tab.add_package_to_history(package_name)
-                    break
-
-        QTimer.singleShot(0, _up)
+        for i in range(self.listbox_devices.count()):
+            item = self.listbox_devices.item(i)
+            info = item.data(Qt.ItemDataRole.UserRole)
+            if info and info.get("ip") == device_ip:
+                text = f"{device_ip}  |  {package_name}"
+                item.setText(text)
+                card = self.listbox_devices.itemWidget(item)
+                if card is not None:
+                    cast(_DeviceCardRow, card).set_device_text(text)
+                apps_tab = getattr(self.panel, "_apps_tab", None)
+                if apps_tab:
+                    apps_tab.add_package_to_history(package_name)
+                break
 
     # ── 信号连接 ────────────────────────────────────────────────────────
 
@@ -473,4 +465,22 @@ class DeviceManager(BasePanel):
                 item.setCheckState(state)
         finally:
             del blocker
+        self._update_action_states()
+
+    def set_selected_devices(self, devices: list[str]) -> None:
+        """全局多选栏提交目标集合，列表复选仍是兼容接口的唯一真源。"""
+
+        selected = set(devices)
+        blocker = QSignalBlocker(self.listbox_devices)
+        for row in range(self.listbox_devices.count()):
+            item = self.listbox_devices.item(row)
+            if item is None:
+                continue
+            info = item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(info, dict) and info.get("ip"):
+                item.setCheckState(
+                    Qt.CheckState.Checked
+                    if str(info["ip"]) in selected else Qt.CheckState.Unchecked
+                )
+        del blocker
         self._update_action_states()

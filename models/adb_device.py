@@ -14,6 +14,9 @@ BASIC_PROP_FIELDS = {
     "Model": "ro.product.model",
     "Brand": "ro.product.brand",
     "Aversion": "ro.build.version.release",
+    "SDK Version": "ro.build.version.sdk",
+    "CPU Architecture": "ro.product.cpu.abi",
+    "Hardware": "ro.hardware",
 }
 
 FULL_PROP_FIELDS = {
@@ -36,6 +39,47 @@ INFO_MARKERS = {
     "IP": "__ADBLAB_IP__",
 }
 
+OVERVIEW_MARKERS = {
+    key: f"__ADBLAB_OVERVIEW_{key}__" for key in ("BASIC", "MEMORY", "STORAGE", "SCREEN", "BATTERY")
+}
+
+
+def parse_device_overview(output: str) -> dict[str, str]:
+    """解析概览只读快照；仅接受有明确单位和有效范围的属性，不保存原始诊断输出。"""
+
+    sections = parse_labeled_sections(output, OVERVIEW_MARKERS, preserve_empty_lines=True)
+    values = sections["BASIC"].splitlines()
+    info = {
+        label: values[index].strip() if index < len(values) else ""
+        for index, label in enumerate(BASIC_PROP_FIELDS)
+    }
+    for source, target in (("MemTotal", "Total Memory"), ("MemAvailable", "Available Memory")):
+        match = re.search(rf"(?m)^{source}:\s*(\d+)\s+kB\s*$", sections["MEMORY"])
+        if match:
+            info[target] = f"{int(match[1]) / (1024 * 1024):.1f} GiB"
+    for line in sections["STORAGE"].splitlines():
+        match = re.match(r"^\S+\s+(\d+)\s+(\d+)\s+(\d+)\s+\d+%\s+\S+", line.strip())
+        if match:
+            total, used, available = map(int, match.groups())
+            if total > 0 and used <= total and available <= total:
+                info["Storage Total"] = f"{total / (1024 * 1024):.1f} GiB"
+                info["Storage Available"] = f"{available / (1024 * 1024):.1f} GiB"
+    dimensions = re.findall(r"(?:Physical|Override) size:\s*(\d+)x(\d+)", sections["SCREEN"])
+    if dimensions and all(int(value) > 0 for value in dimensions[-1]):
+        info["Resolution"] = " × ".join(dimensions[-1])
+    density = re.findall(r"(?:Physical|Override) density:\s*(\d+)", sections["SCREEN"])
+    if density and int(density[-1]) > 0:
+        info["Density"] = f"{density[-1]} dpi"
+    battery = dict(re.findall(r"(?m)^\s*(level|scale|status):\s*(\d+)\s*$", sections["BATTERY"]))
+    level, scale = int(battery.get("level", "-1")), int(battery.get("scale", "0"))
+    if scale > 0 and 0 <= level <= scale:
+        info["Battery Level"] = f"{round(level * 100 / scale)}%"
+    statuses = {"2": "充电中", "3": "使用电池", "4": "未充电", "5": "已充满"}
+    status = statuses.get(battery.get("status", ""))
+    if status:
+        info["Battery Status"] = status
+    return info
+
 
 def parse_connected_devices(output: str) -> list[str]:
     devices = []
@@ -56,7 +100,9 @@ def parse_getprop_output(output: str) -> dict[str, str]:
     return props
 
 
-def parse_labeled_sections(output: str, markers: dict[str, str]) -> dict[str, str]:
+def parse_labeled_sections(
+    output: str, markers: dict[str, str], *, preserve_empty_lines: bool = False,
+) -> dict[str, str]:
     """按显式分段标记拆分批量 Shell 输出。"""
     sections = {key: "" for key in markers}
     marker_to_key = {marker: key for key, marker in markers.items()}
@@ -70,7 +116,8 @@ def parse_labeled_sections(output: str, markers: dict[str, str]) -> dict[str, st
         if current_key:
             lines[current_key].append(raw_line)
     for key, section_lines in lines.items():
-        sections[key] = "\n".join(section_lines).strip()
+        text = "\n".join(section_lines)
+        sections[key] = text if preserve_empty_lines else text.strip()
     return sections
 
 
@@ -165,6 +212,25 @@ class ADBDevice(ADBModelCore):
     def get_devices_basic_info(device):
         """供 DeviceStore 快速查询使用的同步封装。"""
         return ADBDevice._fetch_properties(device, BASIC_PROP_FIELDS)
+
+    @staticmethod
+    def get_device_overview_info(device: str) -> dict[str, str]:
+        """在既有后台发现任务中一次读取概览属性；失败回退基础信息，不增加 GUI 查询。"""
+
+        commands = {
+            "BASIC": "; ".join(f"getprop {prop}" for prop in BASIC_PROP_FIELDS.values()),
+            "MEMORY": "cat /proc/meminfo",
+            "STORAGE": "df -k /data",
+            "SCREEN": "wm size; wm density",
+            "BATTERY": "dumpsys battery",
+        }
+        command = "; ".join(
+            f"echo {OVERVIEW_MARKERS[key]}; {probe}" for key, probe in commands.items()
+        )
+        result = CommandRunner.run(["adb", "-s", device, "shell", command], timeout=15)
+        if result.success and OVERVIEW_MARKERS["BASIC"] in result.output:
+            return parse_device_overview(result.output)
+        return ADBDevice.get_devices_basic_info(device)
 
     @staticmethod
     def _fetch_properties(device: str, field_map: dict[str, str]) -> dict[str, str]:

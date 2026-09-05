@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
 from gui.styles.tokens import RAW_PALETTE
 
 # 单序列点数上限：超出按步长抽稀，避免万点级曲线卡顿（评审要求 decimation）。
@@ -62,6 +62,7 @@ class PerfChartView(QWidget):
             self._series_names.append(name)
         if self._series_names:
             self._attach_axes()
+        self._sync_theme_state()
 
     def _attach_axes(self) -> None:
         axis_x = QValueAxis(self._chart)
@@ -83,13 +84,19 @@ class PerfChartView(QWidget):
         return bool(self._series_names)
 
     def _sync_theme_state(self) -> None:
-        """按当前主题刷新图表背景/标题/图例颜色。"""
+        """同步背景、图例与坐标轴，确保新建轴和深色主题使用相同文字语义。"""
 
         window = BaseStyles.color("WINDOW_BG")
         text = BaseStyles.color("TEXT_PRIMARY")
         self._chart.setBackgroundBrush(self._chart_view.palette().brush(self._chart_view.backgroundRole()))
         self._chart.setTitleBrush(Qt.GlobalColor.transparent)
         self._chart.legend().setLabelColor(text)
+        self._chart.legend().setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+        for axis in self._chart.axes():
+            axis.setLabelsColor(BaseStyles.color("TEXT_SECONDARY"))
+            axis.setLabelsFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
+            axis.setLinePenColor(BaseStyles.color("BORDER_COLOR"))
+            axis.setGridLineColor(BaseStyles.color("BORDER_COLOR"))
         self._chart.setBackgroundVisible(False)
         self._chart_view.setStyleSheet(
             f"QChartView {{ background: {window}; color: {text}; border: none; }}"

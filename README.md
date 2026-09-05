@@ -9,15 +9,18 @@ logcat、dumpsys、Monkey、文件管理和性能采集能力整合到统一界�
 
 ## 界面与功能
 
-主窗口使用左侧分组导航，不再为主要工具创建独立顶层窗口：
+主窗口左侧直接选择具体功能，页面内不再重复展示功能页签，主要工具在窗口内运行：
 
-- **设备与控制**：设备连接与选择、文件管理、屏幕镜像、按键与手势控制。
-- **应用与自动化**：日常应用操作、应用包管理、Monkey 测试、诊断工具和截图结果。
-- **系统与诊断**：系统命令、连接与服务、设备设置、实时 Logcat 和性能采集。
-- **任务中心 / 操作日志**：查看运行中及最近完成的任务和诊断记录。
-- **设置**：主题、字体、窗口、路径、日志及设备扫描配置；About 信息也位于设置页。
+- **设备概览 / 文件管理 / 远程控制**：设备卡支持多选和直接打开该设备的工具；屏幕镜像与按键手势合并。
+- **应用管理 / 截图与诊断 / 截图结果**：应用管理显示单设备应用列表；应用包管理和 APK 工具在截图与诊断页顶部常显，与 Monkey 共用包名输入。
+- **系统工具 / 实时 Logcat / 性能采集**：系统命令与设备配置在同一页面，其余工具独立直达。
+- **任务中心**：查看运行中及最近完成的任务；展开“运行记录”筛选应用操作结果与异常。
+- **设置**：主题、字体、显示缩放、窗口、路径、日志、设备扫描配置及 ADB 维护；About 信息也位于设置页。
 
-文件管理、应用管理、实时 Logcat 和性能采集按单设备上下文在工作区内创建、复用和关闭；
+除首页外，各页面顶部常驻设备栏，支持多选、连接和刷新；固定设备功能在同一区域选择“当前查看”的设备。
+信息和断开操作位于设备栏的“更多”菜单。Monkey 与截图录屏、应用诊断位于同一页，开始前先获取所有目标设备的测试包信息。设置中的显示缩放支持跟随系统及 100%～200%，重启后生效；
+字号使用 pt，既有字号保持不变，可选择 11 pt 获得更紧凑的界面。
+文件管理、已安装应用列表、实时 Logcat 和性能采集按单设备上下文在窗口内创建、复用和关闭；
 截图结果使用独立的无设备会话。需要确认、短文本输入或系统文件选择时才使用临时窗口。
 
 主要能力包括：
@@ -67,16 +70,8 @@ py -3.11 -m venv .venv
 
 ## 开发约束
 
-- Qt 控件只在 GUI 主线程操作；耗时 ADB、I/O 和进程等待通过现有 worker 或任务设施执行。
-- 短命令使用 `core.exec.CommandRunner`；受控长进程使用 `ProcessRunner`。
-- 动态设备值必须经过现有校验和 quoting 边界，不在 UI 中拼接复杂 shell 命令。
-- 配置和设备元数据写入 `utils/user_data.py` 提供的用户目录；日志主要保存在内存，截图、报告等
-  结果写入用户选择的目录。
-- 资源通过项目资源解析接口访问，同时兼容源码和 PyInstaller 环境。
-- 外部 ZIP 使用 `utils.archive.safe_extract_zip()` 解压。
-- 当前 UI 栈是 PySide6；查询 qfluentwidgets 行为时以活动环境中的 PySide6 包为准。
-
-更完整的实现契约见
+协作、修改、清理和授权边界统一维护在 [`AGENTS.md`](AGENTS.md)，
+各类约束的索引见 [`docs/README.md`](docs/README.md#当前约束入口)。实现契约见
 [`ARCHITECTURE.md`](docs/project-knowledge/ARCHITECTURE.md) 和
 [`DEPENDENCY_MAP.md`](docs/project-knowledge/DEPENDENCY_MAP.md)。
 
@@ -85,17 +80,6 @@ py -3.11 -m venv .venv
 先运行直接相关测试，再按调用链扩大范围。测试分层、完整门禁和 Qt 平台设置统一维护在
 [`TESTING_GUIDE.md`](docs/guides/TESTING_GUIDE.md)。构建和 PyInstaller 流程见
 [`BUILD_AND_RUN.md`](docs/guides/BUILD_AND_RUN.md)。
-
-常用检查示例：
-
-```powershell
-.\.venv\Scripts\python.exe -m pytest -q <test-file-or-node>
-.\.venv\Scripts\python.exe -m ruff check <changed-python-files>
-.\.venv\Scripts\python.exe -m pyright <affected-production-paths>
-.\.venv\Scripts\python.exe scripts/check_doc_links.py
-.\.venv\Scripts\python.exe main.py --self-check packaging
-git diff --check
-```
 
 ## 第三方代码与许可
 

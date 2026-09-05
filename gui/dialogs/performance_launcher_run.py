@@ -17,13 +17,13 @@ class PerformanceLauncherRun:
         self._frame = frame
 
     def start_mobileperf(self):
-        if not self._frame.device_ip or not getattr(
-            self._frame, "_device_connected", True
-        ):
+        if self._frame._closing or self._frame._configuration_locked:
+            return
+        if not self._frame._can_operate_device():
             FluentMessageBox.warning(
                 self._frame,
-                "No Device",
-                "Select one device before starting performance collection.",
+                "未选择当前设备",
+                "请在顶部勾选并连接当前设备，再开始性能采集。",
             )
             self._frame._set_status("No device selected", "failed")
             return
@@ -112,6 +112,18 @@ class PerformanceLauncherRun:
     def _mark_runner_finished(self):
         if self._frame._closing or self._frame._runner_finished_handled:
             return
+        if self._frame._runner.is_running():
+            # 停止线程结束不代表采集进程退出；保留原会话并恢复停止入口。
+            # 非停止流程的晚到完成信号不得改变当前运行的状态。
+            if self._frame._stopping:
+                self._frame._stopping = False
+                self._set_running(True)
+                self._set_status("Stop failed", "warning")
+                self._frame.log_received.emit(
+                    "ERROR", "MobilePerf is still running. Click Stop to retry."
+                )
+                self._frame._poll_timer.start()
+            return
         self._frame._runner_finished_handled = True
         self._frame._stopping = False
         self._frame._poll_timer.stop()
@@ -188,7 +200,7 @@ class PerformanceLauncherRun:
 
     def _set_running(self, running: bool):
         self._frame.start_btn.setEnabled(
-            not running and getattr(self._frame, "_device_connected", True)
+            not running and self._frame._can_operate_device()
         )
         self._frame.stop_btn.setEnabled(running)
         self._frame._set_configuration_enabled(not running)

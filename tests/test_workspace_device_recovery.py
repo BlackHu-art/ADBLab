@@ -44,7 +44,7 @@ def _combo_index(host: WorkspaceFeatureHost, device_id: str) -> int:
     )
 
 
-def test_pending_route_resumes_when_device_candidates_become_unique(qt_application):
+def test_pending_route_resumes_when_online_device_is_explicitly_selected(qt_application):
     host = _host()
     payload = {"package_name": "example.package"}
     host.set_device_context([], ["device-1", "device-2"])
@@ -52,7 +52,7 @@ def test_pending_route_resumes_when_device_candidates_become_unique(qt_applicati
     assert host.open_feature("logcat", payload=payload) is True
     assert host.stack.currentWidget() is host.no_device_page
 
-    host.set_device_context([], ["device-2"])
+    host.set_device_context(["device-2"], ["device-2"])
 
     page = host.stack.currentWidget()
     assert isinstance(page, _PayloadPage)
@@ -64,6 +64,18 @@ def test_pending_route_resumes_when_device_candidates_become_unique(qt_applicati
     assert host.device_combo.currentData() == "device-2"
     assert host.device_combo.isEnabled() is False
     assert host.session_badge.text() == "在线"
+
+
+def test_single_online_device_does_not_start_unselected_session(qt_application):
+    host = _host()
+    host.set_device_context([], ["device-1"])
+    host.open_feature("logcat")
+    assert host.stack.currentWidget() is host.no_device_page
+    assert host.current_device_id == ""
+    assert host.device_combo.isEnabled()
+    host.device_combo.setCurrentIndex(_combo_index(host, "device-1"))
+    assert isinstance(host.stack.currentWidget(), _PayloadPage)
+    assert host.current_device_id == "device-1"
 
 
 def test_pending_route_keeps_explicit_choice_and_empty_state_in_sync(qt_application):
@@ -79,7 +91,7 @@ def test_pending_route_keeps_explicit_choice_and_empty_state_in_sync(qt_applicat
     assert host.current_device_id == ""
     assert host.device_combo.currentData() == ""
     assert host.device_combo.isEnabled() is True
-    assert "多台可用设备" in host.no_device_page.message_label.text()
+    assert "选择当前查看的一台" in host.no_device_page.message_label.text()
     assert host.no_device_page.choose_button.isHidden() is True
 
     host.set_device_context([], [])
@@ -114,7 +126,7 @@ def test_hidden_pending_route_waits_for_activation_before_resume(qt_application)
     host.open_feature("logcat", payload=payload)
     host.deactivate()
 
-    host.set_device_context([], ["device-1"])
+    host.set_device_context(["device-1"], ["device-1"])
 
     assert host.stack.currentWidget() is host.no_device_page
     assert host.pending_route == WorkspaceRoute(

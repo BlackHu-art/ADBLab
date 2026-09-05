@@ -4,8 +4,13 @@
 """
 
 import os
+import re
 import shlex
 import shutil
+
+from adblab.application.cancellation import CancellationError, CancellationToken
+from core.exec import CommandRunner
+from utils.adb_values import normalize_android_package
 
 from .adb_model import ADBModelCore, async_command
 from .base.focus_detector import detect_current_package
@@ -20,6 +25,98 @@ class ADBApp(ADBModelCore):
     @async_command
     def get_current_package_async(self, device_ip: str) -> dict:
         return self.get_current_package(device_ip)
+
+    @async_command
+    def prepare_monkey_targets_async(
+        self, devices: list[str], package_name: str, request_id: str,
+        cancellation: CancellationToken,
+    ) -> dict:
+        """后台核对完整目标快照；准备阶段只查询，不启动应用或 Monkey。
+
+        每条查询有有限超时，取消和 model 关闭在命令前后检查；异常保留请求身份，
+        让界面总能结束对应准备态。不同设备可以安装同包的不同版本。
+        """
+        targets = list(dict.fromkeys(device for device in devices if device))
+        result = {
+            "request_id": request_id, "devices": targets, "package_name": package_name,
+            "success": False, "packages": [],
+        }
+
+        def check_cancelled() -> None:
+            cancellation.raise_if_cancelled()
+            if self.is_shutting_down():
+                raise CancellationError("Model is shutting down")
+
+        class FocusRunner:
+            def run(self, command: list[str], timeout: int = 5):
+                check_cancelled()
+                response = CommandRunner.run(command, timeout=timeout)
+                check_cancelled()
+                return response
+
+        try:
+            check_cancelled()
+            if not targets:
+                raise ValueError("请先选择测试设备")
+            try:
+                package = normalize_android_package(package_name) if package_name.strip() else ""
+            except ValueError as exc:
+                raise ValueError("应用包名格式无效，请输入完整包名后重试") from exc
+            if not package:
+                foreground = []
+                for index, device in enumerate(targets, 1):
+                    detected = detect_current_package(device, FocusRunner())
+                    if not detected.get("success"):
+                        raise ValueError(f"第 {index} 台设备无法获取前台应用，请输入测试包名后重试")
+                    foreground.append(normalize_android_package(detected.get("package_name", "")))
+                if len(set(foreground)) != 1:
+                    raise ValueError("所选设备的前台应用不一致，请输入要测试的包名")
+                package = foreground[0]
+            result["package_name"] = package
+            packages = []
+            for index, device in enumerate(targets, 1):
+                check_cancelled()
+                installed = self._run(
+                    ["adb", "-s", device, "shell", "pm", "path", shlex.quote(package)],
+                    timeout=5,
+                )
+                check_cancelled()
+                if not installed.get("success"):
+                    raise ValueError(f"第 {index} 台设备无法查询已安装应用，请检查连接与调试授权")
+                if not any(
+                    line.startswith("package:") and line.removeprefix("package:").strip()
+                    for line in installed["output"].splitlines()
+                ):
+                    raise ValueError(f"第 {index} 台设备未安装目标应用，请先安装后重试")
+                details = self._run(
+                    ["adb", "-s", device, "shell", "dumpsys", "package", shlex.quote(package)],
+                    timeout=5,
+                )
+                check_cancelled()
+                if not details.get("success"):
+                    raise ValueError(f"第 {index} 台设备无法获取测试包信息，请重试")
+                output = details.get("output", "")
+                if not re.search(r"Package\s+\[" + re.escape(package) + r"\]", output):
+                    raise ValueError(f"第 {index} 台设备返回的包信息不匹配，请重新获取")
+                info = {"device_ip": device, "package_name": package}
+                for key, pattern in (
+                    ("version_name", r"versionName=(\S+)"),
+                    ("version_code", r"versionCode=(\d+)"),
+                    ("target_sdk", r"targetSdk=(\d+)"),
+                ):
+                    match = re.search(pattern, output)
+                    info[key] = match.group(1) if match else ""
+                packages.append(info)
+            check_cancelled()
+            result.update(success=True, packages=packages)
+        except CancellationError:
+            result.update(cancelled=True, error="已取消获取测试包信息")
+        except ValueError as exc:
+            result["error"] = str(exc)
+        except Exception as exc:
+            # 异步边界必须保留 request_id；否则通用装饰器的错误字典无法解除本次准备态。
+            result.update(error="获取测试包信息失败，请检查连接后重试", error_detail=str(exc))
+        return result
 
     def install_apk(
         self,
@@ -75,10 +172,21 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def restart_app_async(self, device_ip: str, package_name: str, index: int) -> dict:
+        """先停止再启动应用；停止失败时保留错误并禁止后续启动。"""
         r1 = self._run(
             ["adb", "-s", device_ip, "shell", "am", "force-stop", shlex.quote(package_name)],
             device_ip=device_ip,
         )
+        if not r1["success"]:
+            error = r1.get("error") or "Failed to stop application"
+            return {
+                "success": False,
+                "device_ip": device_ip,
+                "package_name": package_name,
+                "index": index,
+                "output": error,
+                "error": error,
+            }
         r2 = self._run(
             [
                 "adb",
@@ -94,8 +202,8 @@ class ADBApp(ADBModelCore):
             ],
             device_ip=device_ip,
         )
-        return {
-            "success": r1["success"] and r2["success"],
+        result = {
+            "success": r2["success"],
             "device_ip": device_ip,
             "package_name": package_name,
             "index": index,
@@ -104,6 +212,9 @@ class ADBApp(ADBModelCore):
                 f"{r2.get('output', r2.get('error', ''))}"
             ),
         }
+        if not r2["success"]:
+            result["error"] = r2.get("error") or "Failed to launch application"
+        return result
 
     @async_command
     def get_current_activity_async(self, device_ip: str, index: int = 0) -> dict:

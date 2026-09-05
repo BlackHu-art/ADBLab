@@ -83,6 +83,39 @@ def test_kill_process_tree_access_denied_reports_failure():
     assert detail
 
 
+@pytest.mark.parametrize("failure", ["terminate", "wait", "enumerate"])
+def test_kill_process_tree_child_failure_is_not_hidden_by_parent_exit(failure):
+    """父进程退出不能掩盖子进程存活或无法确认子进程状态。"""
+    parent = MagicMock()
+    child = MagicMock()
+    parent.children.return_value = [child]
+    if failure == "terminate":
+        child.terminate.side_effect = psutil.AccessDenied(456)
+    elif failure == "wait":
+        child.wait.side_effect = psutil.TimeoutExpired(1)
+    else:
+        parent.children.side_effect = psutil.AccessDenied(123)
+
+    with patch("psutil.Process", return_value=parent):
+        ok, detail = kill_process_tree(123)
+
+    assert ok is False
+    assert detail == "children-not-confirmed-exited"
+    parent.terminate.assert_called_once_with()
+
+
+def test_kill_process_tree_unreadable_wait_is_a_reported_failure():
+    """等待权限不足时返回失败，不抛出异常或伪造退出成功。"""
+    parent = MagicMock()
+    parent.children.return_value = []
+    parent.wait.side_effect = psutil.AccessDenied(123)
+    with patch("psutil.Process", return_value=parent):
+        ok, detail = kill_process_tree(123)
+
+    assert ok is False
+    assert detail == "parent-123-kill-failed"
+
+
 def test_kill_process_tree_respects_shared_deadline():
     parent = MagicMock()
     child = MagicMock()

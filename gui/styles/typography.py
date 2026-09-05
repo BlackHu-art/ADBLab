@@ -174,10 +174,15 @@ def font_for_config(
         )
     )
     font = QFont(family, requested_size)
+    if role not in (FontRole.LOG, FontRole.MONO):
+        # 保留有效的用户字体为首选，再为缺失字形提供 Fluent 使用的中西文字体。
+        # points 仍是旧设置的单位，不把已保存的 12pt 误当成 Gallery 的 14px。
+        families = (family, "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC")
+        font.setFamilies(list(dict.fromkeys(families)))
     font.setStyleHint(style_hint)
-    font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+    font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
     if role is FontRole.TITLE:
-        font.setBold(True)
+        font.setWeight(QFont.Weight.DemiBold)
     return font
 
 

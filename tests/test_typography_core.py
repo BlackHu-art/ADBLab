@@ -17,8 +17,10 @@ from gui.styles.typography import (
     LOG_FONT_SIZE_MAX,
     UI_FONT_SIZE_MAX,
     FontConfig,
+    FontRole,
     TypographyManager,
     font_config_from_mapping,
+    font_for_config,
     system_ui_font_family,
     typography_manager,
 )
@@ -37,6 +39,33 @@ def test_font_config_validates_sizes_and_falls_back_to_system_family():
     assert config.ui_size == UI_FONT_SIZE_MAX
     assert config.log_size == 9
     assert config.mono_family
+
+
+def test_role_fonts_preserve_point_sizes_user_family_and_monospace_separation():
+    config = FontConfig("Microsoft YaHei", 12, 9, "Consolas")
+    body = font_for_config(config, FontRole.UI)
+    small = font_for_config(config, FontRole.UI_SMALL)
+    title = font_for_config(config, FontRole.TITLE)
+    log = font_for_config(config, FontRole.LOG)
+    mono = font_for_config(config, FontRole.MONO)
+
+    assert (body.pointSize(), small.pointSize(), title.pointSize()) == (12, 11, 16)
+    assert body.pixelSize() == -1
+    assert body.families()[0] == config.ui_family
+    assert "Segoe UI" in body.families()
+    assert "Microsoft YaHei UI" in body.families()
+    assert body.weight() == QFont.Weight.Normal
+    assert title.weight() == QFont.Weight.DemiBold
+    assert log.families() == mono.families() == ["Consolas"]
+    assert log.pointSize() == 9 and mono.pointSize() == 12
+    for font in (body, small, title, log, mono):
+        assert font.hintingPreference() == QFont.HintingPreference.PreferDefaultHinting
+
+
+def test_legacy_font_factories_share_current_role_rendering_and_custom_size():
+    assert BaseStyles.get_default_font() == BaseStyles.font_for_role(FontRole.UI)
+    assert BaseStyles.get_default_font(11) == BaseStyles.font_for_role(FontRole.UI, size=11)
+    assert BaseStyles.get_log_font() == BaseStyles.font_for_role(FontRole.LOG)
 
 
 def test_typography_manager_emits_only_changed_role_and_sets_application_font(

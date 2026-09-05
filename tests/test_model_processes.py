@@ -5,6 +5,8 @@ import threading
 import warnings
 from unittest.mock import Mock, patch
 
+import pytest
+
 from core.exec import ProcessRunner
 from gui.dialogs.lifecycle import safe_disconnect
 from services.remote import ScrcpyConfig, build_scrcpy_args
@@ -132,6 +134,81 @@ def test_process_runner_start_replaces_existing_process_without_deadlock():
     assert runner._procs["device_logcat"] is new_proc
 
 
+def test_process_runner_start_preserves_old_process_when_replacement_cannot_stop_it():
+    """旧进程未能退出时拒绝替换，保留本地和全局跟踪以便再次清理。"""
+    runner = ProcessRunner()
+    old_proc = Mock()
+    old_proc.poll.return_value = None
+    old_proc.returncode = None
+    old_proc.terminate.side_effect = PermissionError("test stop denied")
+    runner._procs["capture"] = old_proc
+    runner._register_global("capture", old_proc)
+
+    try:
+        with patch.object(runner, "spawn") as spawn:
+            with pytest.raises(RuntimeError, match="previous process"):
+                runner.start("capture", ["test-command"])
+        spawn.assert_not_called()
+        assert runner.active_keys == ["capture"]
+        assert runner._procs["capture"] is old_proc
+        assert ProcessRunner._global_procs[(runner._instance_id, "capture")] is old_proc
+    finally:
+        old_proc.poll.return_value = 0
+        old_proc.returncode = 0
+        runner.stop_all()
+        runner._unregister_global("capture", old_proc)
+
+
+def test_process_runner_late_global_registration_does_not_hide_replacement():
+    """旧启动延迟登记全局表时，应用退出仍须能够停止新一代进程。"""
+    runner = ProcessRunner()
+    old_proc = Mock(returncode=None)
+    new_proc = Mock(returncode=None)
+    for proc in (old_proc, new_proc):
+        proc.poll.side_effect = lambda proc=proc: proc.returncode
+        proc.terminate.side_effect = lambda proc=proc: setattr(proc, "returncode", 0)
+        proc.wait.return_value = 0
+    old_register_entered = threading.Event()
+    resume_old_register = threading.Event()
+    register_global = runner._register_global
+    errors = []
+
+    def delayed_registration(key, proc):
+        if proc is old_proc:
+            old_register_entered.set()
+            if not resume_old_register.wait(timeout=5):
+                raise TimeoutError("test registration was not released")
+        register_global(key, proc)
+
+    def start_old():
+        try:
+            runner.start("capture", ["test-command"])
+        except Exception as error:
+            errors.append(error)
+
+    starter = threading.Thread(target=start_old, daemon=True)
+    with (
+        patch.object(runner, "spawn", side_effect=[old_proc, new_proc]),
+        patch.object(runner, "_register_global", side_effect=delayed_registration),
+    ):
+        try:
+            starter.start()
+            assert old_register_entered.wait(timeout=5)
+            assert runner.start("capture", ["test-command"]) is new_proc
+            resume_old_register.set()
+            starter.join(timeout=5)
+            assert not starter.is_alive()
+            assert errors == []
+
+            ProcessRunner.stop_all_tracked()
+            new_proc.terminate.assert_called_once_with()
+            assert runner.active_keys == []
+        finally:
+            resume_old_register.set()
+            starter.join(timeout=5)
+            runner.stop_all()
+
+
 def test_process_runner_start_stops_own_proc_when_key_claimed_during_spawn():
     ProcessRunner._global_procs.clear()
     runner = ProcessRunner()
@@ -148,13 +225,86 @@ def test_process_runner_start_stops_own_proc_when_key_claimed_during_spawn():
         return new_proc
 
     with patch("core.exec.subprocess.Popen", side_effect=popen_side_effect):
-        started = runner.start("device_logcat", ["adb", "logcat"])
+        with pytest.raises(RuntimeError, match="concurrent start"):
+            runner.start("device_logcat", ["adb", "logcat"])
 
-    # 本次 start 成为失败方：停掉自己刚 spawn 的进程，返回并发获胜者。
-    assert started is displaced_proc
+    # 本次 start 失败并只停止自身进程，不能把另一调用的句柄伪装为成功结果。
     new_proc.terminate.assert_called_once()
     displaced_proc.terminate.assert_not_called()
     assert runner._procs["device_logcat"] is displaced_proc
+
+
+@pytest.mark.parametrize("cleanup_scope", ["instance", "global"])
+def test_process_runner_concurrent_loser_is_retained_when_cleanup_fails(cleanup_scope):
+    """并发失败方的进程无法停止时仍被跟踪，实例及全局清理均可重试。"""
+    runner = ProcessRunner()
+    winner = Mock(returncode=None)
+    loser = Mock(returncode=None)
+    deny_stop = True
+    winner.poll.side_effect = lambda: winner.returncode
+    winner.terminate.side_effect = lambda: setattr(winner, "returncode", 0)
+    winner.wait.return_value = 0
+    loser.poll.side_effect = lambda: loser.returncode
+    loser.wait.return_value = 0
+
+    def stop_loser():
+        if deny_stop:
+            raise PermissionError("test stop denied")
+        loser.returncode = 0
+
+    loser.terminate.side_effect = stop_loser
+    spawning_loser = threading.Event()
+    resume_loser = threading.Event()
+    errors = []
+
+    def spawn(_cmd, **_kwargs):
+        if threading.current_thread() is starter:
+            spawning_loser.set()
+            if not resume_loser.wait(timeout=5):
+                raise TimeoutError("test spawn was not released")
+            return loser
+        return winner
+
+    def start_loser():
+        try:
+            runner.start("capture", ["test-command"])
+        except Exception as error:
+            errors.append(error)
+
+    starter = threading.Thread(target=start_loser, daemon=True)
+    cleanup = runner.stop_all if cleanup_scope == "instance" else ProcessRunner.stop_all_tracked
+    with patch.object(runner, "spawn", side_effect=spawn):
+        try:
+            starter.start()
+            assert spawning_loser.wait(timeout=5)
+            assert runner.start("capture", ["test-command"]) is winner
+            resume_loser.set()
+            starter.join(timeout=5)
+            assert not starter.is_alive()
+            assert len(errors) == 1
+            assert isinstance(errors[0], RuntimeError)
+            assert "concurrent start" in str(errors[0])
+            winner.terminate.assert_not_called()
+            assert runner._procs["capture"] is winner
+            residual_keys = [key for key in runner.active_keys if key != "capture"]
+            assert len(residual_keys) == 1
+            assert runner._procs[residual_keys[0]] is loser
+            assert loser in ProcessRunner._global_procs.values()
+
+            cleanup()
+            assert runner.active_keys == residual_keys
+            assert loser in ProcessRunner._global_procs.values()
+
+            deny_stop = False
+            cleanup()
+            assert runner.active_keys == []
+            assert loser.returncode == 0
+            assert loser not in ProcessRunner._global_procs.values()
+        finally:
+            resume_loser.set()
+            starter.join(timeout=5)
+            deny_stop = False
+            runner.stop_all()
 
 
 def test_process_runner_active_keys_tolerates_poll_oserror():

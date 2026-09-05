@@ -10,7 +10,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
-from gui.dialogs import live_logcat_form
 from gui.dialogs.live_logcat import CurrentPackageWorker
 from gui.features.logcat import LiveLogcatPage
 from gui.styles import BaseStyles, theme
@@ -99,7 +98,7 @@ def test_live_logcat_ignores_queued_status_after_close():
     dialog.status_bar = Mock()
 
     try:
-        dialog._on_status("Logcat stopped")
+        dialog._on_status("采集已停止")
 
         dialog.status_bar.setText.assert_not_called()
     finally:
@@ -175,7 +174,7 @@ def test_live_logcat_manual_package_filter_only_applies_after_enter():
         worker.update_package.assert_called_once_with("com.example.manual")
         assert not dialog._pending_visible_lines
         assert not dialog._line_flush_timer.isActive()
-        assert dialog.status_bar.text() == ("Switching package filter: com.example.manual")
+        assert dialog.status_bar.text() == ("正在切换应用过滤：com.example.manual")
     finally:
         dialog.worker = None
         dialog.close()
@@ -208,7 +207,7 @@ def test_live_logcat_enter_applies_manual_package_filter_clear():
             package_worker.assert_not_called()
 
         worker.update_package.assert_called_once_with("")
-        assert dialog.status_bar.text() == "Showing all device logs"
+        assert dialog.status_bar.text() == "正在显示全部设备日志"
     finally:
         dialog.worker = None
         dialog.close()
@@ -228,7 +227,7 @@ def test_live_logcat_enter_rejects_invalid_manual_package_without_changing_worke
         QTest.keyClick(dialog.pkg_input, Qt.Key.Key_Return)
 
         worker.update_package.assert_not_called()
-        assert dialog.status_bar.text() == "Invalid package name for logcat filter"
+        assert dialog.status_bar.text() == "包名格式无效，请输入有效包名后按 Enter"
     finally:
         dialog.worker = None
         dialog.close()
@@ -249,7 +248,7 @@ def test_live_logcat_manual_enter_supersedes_running_current_package_probe():
 
         package_worker.requestInterruption.assert_called_once_with()
         package_worker.package_ready.disconnect.assert_called_once_with(dialog._on_current_pkg)
-        assert dialog.status_bar.text() == ("Package filter ready: com.example.manual")
+        assert dialog.status_bar.text() == ("应用过滤已就绪：com.example.manual")
     finally:
         dialog._pkg_worker = None
         dialog.close()
@@ -315,7 +314,7 @@ def test_live_logcat_stopping_rejects_new_or_late_package_switches():
         dialog.pkg_input.setText("")
         QTest.keyClick(dialog.pkg_input, Qt.Key.Key_Return)
         worker.update_package.assert_not_called()
-        assert dialog.status_bar.text() == ("All device logs will be shown on next start")
+        assert dialog.status_bar.text() == ("下次采集将显示全部设备日志")
     finally:
         dialog.worker = None
         dialog.close()
@@ -355,30 +354,17 @@ def test_live_logcat_no_wrap_flush_preserves_horizontal_position_and_follows_tai
         dialog.close()
 
 
-def test_live_logcat_theme_refresh_explicitly_rebinds_action_icons():
+def test_live_logcat_fluent_action_icons_follow_theme():
     _app = QApplication.instance() or QApplication([])
     dialog = LiveLogcatPage(device_ip="device-1")
-    current_theme = BaseStyles.current_theme()
-    next_theme = "Dark" if current_theme != "Dark" else "Light"
-
     try:
-        with patch.object(
-            live_logcat_form,
-            "get_themed_icon",
-            wraps=live_logcat_form.get_themed_icon,
-        ) as load_icon:
-            BaseStyles.switch_theme(next_theme)
-
-        rebound = {call.args[0] for call in load_icon.call_args_list}
-        assert {
-            "scroll.svg",
-            "target.svg",
-            "play.svg",
-            "stop-circle.svg",
-            "broom.svg",
-            "file-arrow-down.svg",
-            "arrows-left-right.svg",
-        } <= rebound
+        icons = []
+        for theme_name in ("Light", "Dark"):
+            BaseStyles.switch_theme(theme_name)
+            buttons = (dialog.btn_get_pkg, dialog.start_btn, dialog.stop_btn,
+                       dialog.clear_btn, dialog.export_btn, dialog.wrap_btn)
+            assert all(not button.icon().isNull() for button in buttons)
+            icons.append([button.icon().pixmap(24, 24).toImage() for button in buttons])
+        assert all(light != dark for light, dark in zip(*icons))
     finally:
-        BaseStyles.switch_theme(current_theme)
         dialog.close()

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
+import pytest
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QLabel,
@@ -14,9 +16,11 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QTabWidget,
     QToolButton,
+    QWidget,
 )
 from qfluentwidgets import EditableComboBox, HeaderCardWidget
 
+from core.settings_manager import DEFAULTS, AppSettings
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.performance_launcher import (
     CONFIG_HINTS,
@@ -25,7 +29,12 @@ from gui.dialogs.performance_launcher import (
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles
 from services.mobileperf_runner import MobilePerfMonkeyConfig
-from tests.ui_geometry_helpers import assert_contained, assert_scroll_target_reachable
+from tests.ui_geometry_helpers import (
+    assert_contained,
+    assert_scroll_target_reachable,
+    wait_for_stable_geometry,
+    wait_until,
+)
 
 
 @dataclass
@@ -50,6 +59,20 @@ class _RunnerProbe:
     @staticmethod
     def latest_report_file() -> str:
         return ""
+
+
+@pytest.fixture(autouse=True)
+def isolated_performance_settings(monkeypatch, tmp_path):
+    """页面构造只读取本用例设置，数值编辑不能写入开发者的真实配置。"""
+    values = dict(DEFAULTS)
+    values["save_directory"] = str(tmp_path)
+    settings = SimpleNamespace(
+        get=values.get,
+        set=lambda key, value: values.update({key: value}),
+        set_many=values.update,
+        save_directory=str(tmp_path),
+    )
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
 
 
 def _build_performance_page(*, package: str = "com.example"):
@@ -112,7 +135,7 @@ def test_performance_numeric_aliases_use_original_dropdown_style_with_strict_val
         dialog.close()
 
 
-def test_performance_uses_one_persistent_configuration_group_without_tabs_or_more(
+def test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner(
     qt_application,
 ):
     """窗口缩放不得再切换 compact/wide 宿主或生成无效下拉入口。"""
@@ -121,11 +144,14 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
     try:
         dialog.show()
         qt_application.processEvents()
-        config_group = dialog.findChild(HeaderCardWidget, "performanceConfig")
+        config_group = dialog.findChild(QWidget, "performanceConfig")
         assert config_group is not None
         assert dialog.findChild(QTabWidget, "performanceCompactTabs") is None
         assert dialog.findChild(QToolButton, "performanceMoreActions") is None
-        assert dialog._configuration_sections == (config_group,)
+        assert len(dialog._configuration_sections) == 4
+        assert all(
+            isinstance(section, HeaderCardWidget) for section in dialog._configuration_sections
+        )
 
         section_ids = tuple(map(id, dialog._configuration_sections))
         for size in (
@@ -154,8 +180,29 @@ def test_performance_uses_one_persistent_configuration_group_without_tabs_or_mor
         dialog.close()
 
 
-def test_performance_uses_one_reference_header_card_for_configuration(qt_application):
-    """扩展功能保持单配置区，并直接使用参考项目的标题卡片。"""
+def test_workspace_performance_uses_one_title_and_keeps_actions_visible(qt_application):
+    """嵌入时只收起重复页头，启动与停止按钮仍在同一功能页面内。"""
+
+    dialog, _runner = _build_performance_page()
+    try:
+        start, stop = dialog.start_btn, dialog.stop_btn
+        dialog.prepare_for_workspace()
+        dialog.prepare_for_workspace()
+        dialog.show()
+        qt_application.processEvents()
+        assert not dialog.dialog_title.isVisible()
+        assert not dialog.dialog_subtitle.isVisible()
+        assert dialog.start_btn is start and start.isVisible()
+        assert dialog.stop_btn is stop and stop.isVisible()
+        assert not start.geometry().intersects(stop.geometry())
+        assert dialog._config_scroll.isHidden()
+        assert all(section.separator.isHidden() for section in dialog._configuration_sections)
+    finally:
+        dialog.close()
+
+
+def test_performance_groups_fields_and_results_in_reference_header_cards(qt_application):
+    """配置语义与结果分别使用 Fluent 标题卡片，保留可见帮助及直接动作。"""
 
     dialog, _runner = _build_performance_page()
     try:
@@ -169,11 +216,20 @@ def test_performance_uses_one_reference_header_card_for_configuration(qt_applica
             10,
             10,
         )
-        assert dialog.layout().spacing() == 8
-        config_group = dialog.findChild(HeaderCardWidget, "performanceConfig")
+        assert dialog.layout().spacing() == 12
+        config_group = dialog.findChild(QWidget, "performanceConfig")
         assert config_group is not None
-        assert config_group.findChildren(HeaderCardWidget) == []
-        assert {label.text() for label in config_group.findChildren(QLabel, "fieldLabel")} >= {
+        assert tuple(section.objectName() for section in dialog._configuration_sections) == (
+            "performanceTarget",
+            "performanceSampling",
+            "performanceOutput",
+            "performanceMonkey",
+        )
+        assert len(config_group.findChildren(HeaderCardWidget)) == 5
+        assert {
+            label.property("configurationKey")
+            for label in config_group.findChildren(QLabel, "fieldLabel")
+        } >= {
             "package",
             "serialnum",
             "frequency",
@@ -187,10 +243,9 @@ def test_performance_uses_one_reference_header_card_for_configuration(qt_applica
         hints = config_group.findChildren(QLabel, "configHint")
         assert len(hints) == 9
         assert all(label.wordWrap() and label.text().strip() for label in hints)
-        visible_monkey_labels = {
-            label.text() for label in config_group.findChildren(QLabel, "inlineLabel")
-        }
-        assert {label for label, _attr, _option in MONKEY_PERCENT_FIELDS} <= visible_monkey_labels
+        assert {attr for _label, attr, _option in MONKEY_PERCENT_FIELDS} == set(
+            dialog.monkey_pct_inputs
+        )
         assert {
             dialog.monkey_check.text(),
             dialog.monkey_ignore_crashes.text(),
@@ -198,24 +253,17 @@ def test_performance_uses_one_reference_header_card_for_configuration(qt_applica
             dialog.monkey_ignore_security.text(),
             dialog.monkey_kill_after_error.text(),
         } == {
-            "Enable monkey",
-            "Ignore crashes",
-            "Ignore timeouts",
-            "Ignore security",
-            "Kill after error",
+            "同时运行 Monkey",
+            "忽略应用崩溃",
+            "忽略无响应",
+            "忽略安全异常",
+            "出错后结束 Monkey",
         }
-        action_widgets = (
-            dialog.status_label,
-            dialog.progress_bar,
-            dialog.perfetto_btn,
-            dialog.result_btn,
-            dialog.stop_btn,
-            dialog.start_btn,
-        )
-        assert all(widget.parentWidget() is dialog._action_row for widget in action_widgets)
-        assert [widget.x() for widget in action_widgets] == sorted(
-            widget.x() for widget in action_widgets
-        )
+        assert dialog.header_card.isAncestorOf(dialog.start_btn)
+        assert dialog.header_card.isAncestorOf(dialog.stop_btn)
+        assert dialog._results_group.isAncestorOf(dialog.perfetto_btn)
+        assert dialog._results_group.isAncestorOf(dialog.result_btn)
+        assert not dialog.start_btn.geometry().intersects(dialog.stop_btn.geometry())
     finally:
         dialog.close()
 
@@ -243,7 +291,7 @@ def test_performance_restores_visible_previous_version_hints(qt_application):
         dialog.close()
 
 
-def test_performance_bounds_configuration_in_scroll_and_uses_short_log(
+def test_performance_bounds_configuration_and_results_in_one_scroll(
     qt_application,
     monkeypatch,
 ):
@@ -271,14 +319,16 @@ def test_performance_bounds_configuration_in_scroll_and_uses_short_log(
         assert dialog._config_scroll.verticalScrollBar().maximum() > 0
         assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
         assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
-        assert dialog.log_view.height() <= 110
+        assert dialog.log_view.height() >= 180
+        assert dialog._results_group.isAncestorOf(dialog.log_view)
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.log_view)
         assert dialog.log_view.height() < config_group.height()
     finally:
         dialog.close()
 
 
 def test_performance_small_window_keeps_configuration_fields_reachable(qt_application):
-    """小屏收缩后配置区同时提供纵向与横向到达路径。"""
+    """小屏收缩后字段重排，仅通过纵向滚动即可到达。"""
 
     dialog, _runner = _build_performance_page()
     try:
@@ -289,7 +339,7 @@ def test_performance_small_window_keeps_configuration_fields_reachable(qt_applic
 
         assert dialog.size() == QSize(640, 420)
         assert dialog._config_scroll.verticalScrollBar().maximum() > 0
-        assert dialog._config_scroll.horizontalScrollBar().maximum() > 0
+        assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
         assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
         assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
     finally:
@@ -408,12 +458,14 @@ def test_single_layout_preserves_focus_identity_and_signal_count(qt_application)
     committed = QSignalSpy(field.valueChanged)
     try:
         dialog.show()
+        dialog.activateWindow()
         field.focus_editor()
         editor.selectAll()
         editor.setText("7")
         for size in (QSize(760, 520), QSize(1500, 850), QSize(1000, 620)):
             dialog.resize(size)
             qt_application.processEvents()
+            assert editor.hasFocus()
 
         assert dialog.frequency_input is field
         assert _editor(dialog.frequency_input) is editor
@@ -434,9 +486,21 @@ def test_original_dropdown_remains_keyboard_reachable_without_extra_button(qt_ap
         field = dialog.frequency_input
         qt_application.processEvents()
 
-        # EditableComboBox 自带 dropButton（LineEditButton），可 Tab 聚焦后回车展开下拉。
+        field.focus_editor()
+        QTest.keyClick(field, Qt.Key.Key_Tab)
+        assert field.dropButton.hasFocus()
+        activated = QSignalSpy(field.dropButton.clicked)
+        QTest.keyClick(field.dropButton, Qt.Key.Key_Space)
+        wait_until(
+            qt_application, lambda: field.dropMenu is not None and field.dropMenu.isVisible()
+        )
+        assert activated.count() == 1
+        assert [action.text() for action in field.dropMenu.actions()] == [
+            str(value) for value in field.presets()
+        ]
         assert field.dropButton is not None
         assert field.findChild(QToolButton, "presetMenuButton") is None
+        field.dropMenu.close()
     finally:
         dialog.close()
 
@@ -534,5 +598,109 @@ def test_result_availability_updates_canonical_action(tmp_path, qt_application):
         dialog._update_result_action()
         assert not dialog.result_action.isEnabled()
         assert not dialog.result_btn.isEnabled()
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+@pytest.mark.parametrize("font_size", (12, 22))
+@pytest.mark.parametrize("width", (420, 640))
+def test_performance_cards_reflow_without_horizontal_scroll_or_clipped_controls(
+    qt_application, monkeypatch, theme, font_size, width
+):
+    """窄窗和大字体只需纵向滚动，展开参数与顶部操作保持完整。"""
+
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    BaseStyles.switch_theme(theme)
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.resize(width, 720)
+        dialog.show()
+        dialog.monkey_check.setChecked(True)
+        wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
+        assert dialog.size() == QSize(width, 720)
+        assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
+        assert not dialog.start_btn.geometry().intersects(dialog.stop_btn.geometry())
+        assert_contained(dialog.start_btn, dialog.header_card)
+        assert_contained(dialog.stop_btn, dialog.header_card)
+        fields = (
+            dialog.package_edit,
+            dialog.frequency_input,
+            dialog.timeout_input,
+            dialog.dumpheap_input,
+            dialog.phone_log_edit,
+            dialog.monkey_seed_input,
+            *dialog.monkey_pct_inputs.values(),
+        )
+        for field in fields:
+            assert field.font().pointSize() == font_size
+            assert field.height() >= field.fontMetrics().height() + 10
+            assert_scroll_target_reachable(dialog._config_scroll, field)
+        assert dialog._results_group not in dialog._configuration_sections
+    finally:
+        dialog.close()
+
+
+def test_performance_monkey_expansion_keeps_invalid_input_and_shared_scroll_owner(
+    qt_application,
+):
+    """折叠可选配置保留原文，嵌入工作区不会保留第二层配置滚动视口。"""
+
+    dialog, _runner = _build_performance_page()
+    workspace = QScrollArea()
+    workspace.setWidgetResizable(True)
+    try:
+        dialog.prepare_for_workspace()
+        dialog.prepare_for_workspace()
+        workspace.setWidget(dialog)
+        workspace.resize(640, 720)
+        workspace.show()
+        dialog.monkey_check.setChecked(True)
+        field = dialog.monkey_pct_inputs["pct_touch"]
+        field.setText("101")
+        dialog.monkey_check.setChecked(False)
+        assert not dialog._monkey_details.isVisibleTo(dialog)
+        dialog.monkey_check.setChecked(True)
+        wait_for_stable_geometry(qt_application, (workspace, dialog, dialog._config_group))
+        assert dialog.monkey_pct_inputs["pct_touch"] is field
+        assert field.text() == "101"
+        assert not field.input_is_acceptable()
+        assert dialog._config_scroll.widget() is None
+        assert not dialog._config_scroll.isVisibleTo(dialog)
+        assert workspace.horizontalScrollBar().maximum() == 0
+        assert_scroll_target_reachable(workspace, dialog.phone_log_edit)
+        assert_scroll_target_reachable(workspace, dialog.log_view)
+    finally:
+        dialog.close()
+        workspace.close()
+
+
+def test_performance_result_view_switch_keeps_large_font_chart_plot_readable(
+    qt_application, monkeypatch
+):
+    """图表高度随界面字体扩展，切回日志恢复独立字号和视口高度。"""
+
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 22)
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.resize(900, 720)
+        dialog.show()
+        dialog.log_view.setPlainText("保留日志内容")
+        log_height = dialog._chart_stack.height()
+        dialog.chart_view.set_series({"CPU": [(0, 10), (1, 30), (2, 20)]})
+        dialog._chart_stack.setCurrentIndex(1)
+        wait_for_stable_geometry(qt_application, (dialog, dialog._chart_stack))
+        assert dialog._chart_stack.height() > log_height
+        assert dialog.chart_view._chart.plotArea().height() >= 100
+        assert_scroll_target_reachable(dialog._config_scroll, dialog.chart_view)
+        for theme in ("Dark", "Light"):
+            BaseStyles.switch_theme(theme)
+            assert all(
+                axis.labelsColor().name() == BaseStyles.color("TEXT_SECONDARY").lower()
+                for axis in dialog.chart_view._chart.axes()
+            )
+        dialog._chart_stack.setCurrentIndex(0)
+        assert dialog._chart_stack.height() == log_height
+        assert dialog.log_view.toPlainText() == "保留日志内容"
     finally:
         dialog.close()

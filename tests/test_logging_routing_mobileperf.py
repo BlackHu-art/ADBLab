@@ -25,6 +25,7 @@ def _feedback_controller() -> SimpleNamespace:
         record_finished=Mock(),
         record_target_finished=Mock(),
         monkey_target_finished=Mock(),
+        monkey_preparation_finished=Mock(),
         operation_completed=Mock(),
         current_package_received=Mock(),
         device_info_updated=Mock(),
@@ -34,12 +35,32 @@ def _feedback_controller() -> SimpleNamespace:
 
 def test_main_frame_routes_business_log_signal_to_log_service():
     log_service = Mock()
+    apps_panel = SimpleNamespace(
+        monkey_preparation_requested=Mock(),
+        on_monkey_preparation_finished=Mock(),
+        program_edit=SimpleNamespace(textChanged=Mock()),
+    )
     frame = SimpleNamespace(
         log_service=log_service,
         log_panel=Mock(),
-        left_panel=Mock(),
+        adb_controller=Mock(),
+        left_panel=SimpleNamespace(
+            _apps_tab=apps_panel,
+            _connected_device_cache=["device-secret"],
+            on_recording_target_finished=Mock(),
+            on_monkey_target_finished=Mock(),
+            on_operation_completed=Mock(),
+        ),
         _on_devices_updated=Mock(),
         _on_screenshot_batch_ready=Mock(),
+        _on_current_package_received=Mock(),
+        _invalidate_package_query=Mock(),
+        _closing=False,
+        _device_metadata={},
+        _sync_device_context=Mock(),
+    )
+    frame._on_device_info_updated = lambda device, info: MainFrame._on_device_info_updated(
+        frame, device, info
     )
     left_panel = SimpleNamespace(log_message=Mock())
     controller = _feedback_controller()
@@ -47,13 +68,29 @@ def test_main_frame_routes_business_log_signal_to_log_service():
     MainFrame._connect_controller_feedback(frame, left_panel, controller)
 
     left_panel.log_message.connect.assert_called_once_with(log_service.log)
+    business_log_handler = left_panel.log_message.connect.call_args.args[0]
+    business_log_handler("INFO", "Operation ready")
+    log_service.log.assert_called_once_with("INFO", "Operation ready")
     assert frame.log_panel._append_log.call_count == 0
+    apps_panel.monkey_preparation_requested.connect.assert_called_once_with(
+        frame.adb_controller.prepare_monkey_targets
+    )
+    controller.monkey_preparation_finished.connect.assert_called_once_with(
+        apps_panel.on_monkey_preparation_finished
+    )
+    controller.current_package_received.connect.assert_called_once_with(
+        frame._on_current_package_received
+    )
+    apps_panel.program_edit.textChanged.connect.assert_called_once_with(
+        frame._invalidate_package_query
+    )
+    controller.device_info_updated.connect.assert_called_once_with(frame._on_device_info_updated)
     device_info_handler = controller.device_info_updated.connect.call_args.args[0]
-    device_info_handler("device-secret", {"serial": "device-secret", "model": "secret"})
-    level, message = log_service.log.call_args.args
-    assert level == "INFO"
-    assert message == "Device information updated: field_count=2"
-    assert "device-secret" not in message
+    device_info_handler("device-secret", {"serial": "device-secret", "Model": "Demo model"})
+    assert frame._device_metadata == {"device-secret": {"Model": "Demo model"}}
+    frame._sync_device_context.assert_called_once_with()
+    log_service.log.assert_called_once_with("INFO", "Operation ready")
+    assert "device-secret" not in str(log_service.log.call_args_list)
 
 
 def test_main_frame_local_status_messages_use_log_service():
@@ -103,6 +140,7 @@ def test_remote_diagnostic_redacts_active_device_and_limits_length():
 
 def test_remote_launch_log_does_not_expose_command_arguments():
     panel = SimpleNamespace(
+        _can_operate_device=lambda: True,
         _closing=False,
         _launch_worker=None,
         _active_device="device-secret",

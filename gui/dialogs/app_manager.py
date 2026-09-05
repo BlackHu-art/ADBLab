@@ -7,6 +7,7 @@ from qfluentwidgets import CaptionLabel
 from gui.dialogs.app_manager_batch import AppManagerBatch
 from gui.dialogs.app_manager_details import AppDetailsPage
 from gui.dialogs.app_manager_form import AppManagerForm
+from gui.dialogs.app_manager_icons import AppManagerIcons
 from gui.dialogs.app_manager_views import AppManagerViews
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
@@ -32,6 +33,16 @@ class AppSortProxy(QSortFilterProxyModel):
         self._search_text = search_text.strip().lower()
         self._app_type = app_type
         self.invalidateFilter()
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        """展示中文状态；源模型继续保存 worker 返回的稳定业务值。"""
+        value = super().data(index, role)
+        if role == Qt.ItemDataRole.DisplayRole and index.column() in (4, 5):
+            return {
+                "Enabled": "已启用", "Disabled": "已停用", "User": "用户",
+                "System": "系统", "Vendor": "厂商", "Other": "其他",
+            }.get(value, value)
+        return value
 
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
@@ -87,6 +98,7 @@ class AppManagerPage(QWidget):
         super().__init__(parent)
         self.device_ip = device_ip
         self._device_connected = bool(device_ip)
+        self._device_selected = bool(device_ip)
         self.selected_packages = set()
         self._syncing_selection = False
         self._batch_workers = set()
@@ -129,6 +141,7 @@ class AppManagerPage(QWidget):
         self.setMinimumSize(0, 0)
         self._init_ui()
         self._init_master_detail()
+        self._icons_controller = AppManagerIcons(self)
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
@@ -187,11 +200,13 @@ class AppManagerPage(QWidget):
         package_name = self._package_from_payload(payload)
         if package_name:
             self.open_details(package_name)
+        self._icons_controller.schedule()
 
     def deactivate(self, reason: str = "navigation") -> None:
         """离开前台时暂停增量详情加载，但不终止业务 worker。"""
 
         self._active = False
+        self._icons_controller.pause()
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()
         self.details_page.deactivate(reason)
@@ -209,12 +224,39 @@ class AppManagerPage(QWidget):
             self._load_refresh_pending = False
             if is_qobject_alive(self._detail_timer):
                 self._detail_timer.stop()
-            self.status_bar.setText("Device offline — cached applications remain available.")
+            self.status_bar.setText("设备已离线，仍可查看缓存的应用列表。")
         elif changed:
-            self.status_bar.setText("Device reconnected. Refresh to update applications.")
+            self.status_bar.setText("设备已重新连接，刷新可更新应用列表。")
+        if self._can_operate():
+            self._icons_controller.schedule()
+        else:
+            self._icons_controller.pause()
         self._update_selection_ui()
         if changed:
             self.device_connected_changed.emit(connected)
+
+    def _can_operate(self) -> bool:
+        """已选、在线且未关闭的固定设备才可接受新的应用操作。"""
+        return bool(
+            self.device_ip and self._device_selected and self._device_connected
+            and not self._closing
+        )
+
+    def set_device_selected(self, selected: bool) -> None:
+        """更新会话操作资格；缓存可保留，已提交 worker 继续使用原设备。"""
+        self._device_selected = bool(selected and self.device_ip)
+        self.details_page.set_device_selected(self._device_selected)
+        self._form_controller._refresh_status_badge()
+        if not self._can_operate():
+            self._load_refresh_pending = False
+            self._detail_timer.stop()
+            self._icons_controller.pause()
+        else:
+            self._schedule_visible_detail_load()
+            self._icons_controller.schedule()
+        self._update_selection_ui()
+        if not self._device_selected:
+            self.status_bar.setText("请在顶部设备栏勾选当前设备后执行应用操作；已加载内容仍可查看。")
 
     def open_details(self, package_name: str):
         """在当前管理页内打开指定包详情，不创建顶层窗口。"""
@@ -246,6 +288,11 @@ class AppManagerPage(QWidget):
 
         hint = surface.minimumSizeHint().expandedTo(surface.minimumSize())
         return QSize(max(0, hint.width()), max(0, hint.height()))
+
+    def prepare_for_workspace(self) -> None:
+        """嵌入工作区时复用宿主页头，将设备状态保留在本页工具栏。"""
+        self.set_device_selected(False)
+        self._form_controller.prepare_for_workspace()
 
     def workspace_content_minimum_size(self) -> QSize:
         """返回当前主从视图供 Workspace 外层滚动使用的内容下限。
@@ -318,7 +365,7 @@ class AppManagerPage(QWidget):
         self.load_state = state
         self.setProperty("loadState", state)
         is_error = state == "error"
-        self.load_error_label.setText(message or "Unable to load applications.")
+        self.load_error_label.setText(message or "无法加载应用列表。")
         self.load_error_panel.setVisible(is_error)
         self.status_bar.setText(message)
         self._update_selection_ui()
@@ -337,9 +384,9 @@ class AppManagerPage(QWidget):
             return
         self._load_result_received = True
         if self._device_connected:
-            message = f"Loaded {count} apps — loading details..."
+            message = f"已加载 {count} 个应用，正在读取详情…"
         else:
-            message = f"Device offline — showing {count} cached applications."
+            message = f"设备已离线，显示 {count} 个缓存应用。"
         self._set_load_state("ready", message)
 
     def _on_load_worker_finished(self, request_id: int) -> None:
@@ -349,7 +396,7 @@ class AppManagerPage(QWidget):
         self._load_in_progress = False
         if not self._closing and not self._load_result_received:
             message = self._last_load_error or (
-                "Unable to load applications. Check the device and retry."
+                "无法加载应用，请检查设备后重试。"
             )
             self._set_load_state("error", message)
         if not self._closing and self._load_refresh_pending and self._active:
@@ -357,6 +404,7 @@ class AppManagerPage(QWidget):
             QTimer.singleShot(0, self._load_apps)
         else:
             self._update_selection_ui()
+            self._icons_controller.schedule()
         self._maybe_finish_dispose()
 
     # ── 表单控制器委托 wrapper ─────────────────────────────────────────
@@ -636,6 +684,7 @@ class AppManagerPage(QWidget):
             return True
         self._dispose_requested = True
         self._closing = True
+        self._icons_controller.reset()
         self._active = False
         if is_qobject_alive(self._detail_timer):
             self._detail_timer.stop()

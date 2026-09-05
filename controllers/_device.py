@@ -110,20 +110,28 @@ class ADBDeviceMixin(_ADBControllerBase):
             if getattr(self, "_shutting_down", False):
                 return
             records = []
+            failed_devices = []
             for ip in devices:
                 try:
-                    info = ADBDevice.get_devices_basic_info(ip)
+                    info = ADBDevice.get_device_overview_info(ip)
                     records.append(
                         {
+                            **info,
                             "alias": f"device_{ip}",
                             "ip": ip,
                             "Brand": info.get("Brand", "Unknown"),
                             "Model": info.get("Model", "Unknown"),
                             "Aversion": info.get("Aversion", "Unknown"),
+                            "SDK Version": info.get("SDK Version", ""),
+                            "CPU Architecture": info.get("CPU Architecture", ""),
+                            "Hardware": info.get("Hardware", ""),
                         }
                     )
                 except Exception:
-                    pass
+                    failed_devices.append(ip)
+                    self.log_service.log(
+                        "WARNING", "设备概览属性读取失败，将清除本轮缺失的动态指标",
+                    )
             if records:
                 # 设备属性查询可能持续数秒；拓扑已变化时旧结果不得再写盘或刷新 UI，
                 # 否则已离线设备会被晚到的补全任务重新显示。
@@ -137,6 +145,15 @@ class ADBDeviceMixin(_ADBControllerBase):
                 # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
                 if _is_current_topology():
                     self.signals.devices_updated.emit(devices)
+                    for record in records:
+                        if not _is_current_topology():
+                            return
+                        # 扩展字段仅供当前窗口展示，DeviceStore 仍按既有白名单落盘。
+                        self.signals.device_info_updated.emit(record["ip"], record)
+            for ip in failed_devices:
+                if not _is_current_topology():
+                    return
+                self.signals.device_info_updated.emit(ip, {})
 
         self.executor.submit(_update)
 

@@ -12,6 +12,7 @@ import zipfile
 from PySide6.QtCore import QThread, Signal
 
 from core.exec import CommandRunner
+from services.app_icons import load_app_icons
 from utils.archive import safe_extract_zip
 
 _PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9_.]+$")
@@ -55,6 +56,7 @@ class AppManagerWorker(QThread):
     apps_loaded = Signal(list)
     app_details_loaded = Signal(dict)
     app_detail_batch = Signal(str, str, str, str)
+    app_icon_loaded = Signal(str, bytes, str)
     permissions_loaded = Signal(list, list, list)
     backup_progress = Signal(str, str)
     operation_done = Signal(str)
@@ -78,6 +80,12 @@ class AppManagerWorker(QThread):
         ops = {
             "load_apps": self._load_apps,
             "load_detail_batch": lambda: self._load_detail_batch(self.kwargs.get("packages", [])),
+            "load_icon_batch": lambda: load_app_icons(
+                self.device_ip,
+                self.kwargs.get("packages", []),
+                lambda: self._aborted.is_set() or self.isInterruptionRequested(),
+                self.app_icon_loaded.emit,
+            ),
             "app_details": lambda: self._fetch_app_details(self.kwargs.get("package_name")),
             "permissions": lambda: self._fetch_permissions(self.kwargs.get("package_name")),
             "modify_app": lambda: self._modify_app(

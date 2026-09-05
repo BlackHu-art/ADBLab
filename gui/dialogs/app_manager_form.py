@@ -29,7 +29,9 @@ from qfluentwidgets import (
     PushButton,
     RoundMenu,
     TextEdit,
+    TreeItemDelegate,
     TreeView,
+    setCustomStyleSheet,
 )
 
 from gui.styles import BaseStyles
@@ -59,6 +61,15 @@ def _apply_adaptive_text_heights(widget: QWidget) -> None:
         )
 
 
+class AppManagerItemDelegate(TreeItemDelegate):
+    """保留 Fluent 复选绘制，并使用页面字号展示应用名与包名。"""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        option.font = cast(QWidget, self.parent()).font()
+        option.fontMetrics = QFontMetrics(option.font)
+
+
 class AppManagerForm:
     """组合进 AppManagerPage 的表单控制器，通过 ``self._frame`` 访问页面。"""
 
@@ -75,7 +86,7 @@ class AppManagerForm:
         self._frame._master_panel.setObjectName("appManagerMasterPanel")
         layout = QVBoxLayout(self._frame._master_panel)
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-        layout.setSpacing(4)
+        layout.setSpacing(8)
         layout.setContentsMargins(8, 8, 8, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
@@ -92,18 +103,18 @@ class AppManagerForm:
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self._frame.dialog_title = apply_label_role(
-            BodyLabel("App Manager"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel("应用管理"), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.status_badge = InfoBadge.info("No device", header_card)
+        self._frame.status_badge = InfoBadge.info("未选择设备", header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self._frame.status_badge.setToolTip("Device availability for app actions")
+        self._frame.status_badge.setToolTip("当前设备的连接状态与操作资格")
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
         self._frame.dialog_subtitle = apply_label_role(
-            BodyLabel("Install, inspect and control device packages"),
+            BodyLabel("查看应用信息、管理启用状态与备份"),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -116,34 +127,38 @@ class AppManagerForm:
 
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
-        self._frame._search_label = apply_label_role(BodyLabel("Search:"), FontRole.UI)
+        self._frame._search_label = apply_label_role(BodyLabel("搜索"), FontRole.UI)
         self._frame.search_input = LineEdit()
-        self._frame.search_input.setPlaceholderText("Filter...")
+        self._frame.search_input.setPlaceholderText("搜索应用名称或包名")
         self._frame._search_label.setBuddy(self._frame.search_input)
-        self._frame.search_input.setAccessibleName("Application search")
+        self._frame.search_input.setAccessibleName("搜索应用")
         self._frame.search_input.textChanged.connect(self._frame._filter)
-        self._frame._type_label = apply_label_role(BodyLabel("Type:"), FontRole.UI)
+        self._frame._type_label = apply_label_role(BodyLabel("类型"), FontRole.UI)
         self._frame.type_filter = ComboBox()
-        self._frame.type_filter.addItems(["All", "User Apps", "System Apps"])
+        for label, key in (
+            ("全部应用", "All"), ("用户应用", "User Apps"), ("系统应用", "System Apps")
+        ):
+            self._frame.type_filter.addItem(label, userData=key)
         self._frame._type_label.setBuddy(self._frame.type_filter)
-        self._frame.type_filter.setAccessibleName("Application type")
+        self._frame.type_filter.setAccessibleName("筛选应用类型")
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
-        self._frame.selection_label = apply_label_role(BodyLabel("Selected: 0"), FontRole.UI)
+        self._frame.selection_label = apply_label_role(BodyLabel("已选 0 项"), FontRole.UI)
         self._frame.selection_label.setMinimumWidth(82)
         self._frame.view_toggle = PushButton()
         self._frame.view_toggle.setFixedSize(28, 28)
-        self._frame.view_toggle.setToolTip("Toggle Icon / List view")
-        self._frame.view_toggle.setAccessibleName("Toggle Icon / List view")
+        self._frame.view_toggle.setToolTip("切换图标或列表视图")
+        self._frame.view_toggle.setAccessibleName("切换图标或列表视图")
         self._frame.view_toggle.clicked.connect(self._frame._toggle_view)
         self._frame.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
         self._frame.view_toggle.setIconSize(QSize(16, 16))
         self._frame.refresh_btn = PushButton()
-        self._frame.refresh_btn.setText("Refresh")
-        self._frame.refresh_btn.setToolTip("Reload the installed application list")
+        self._frame.refresh_btn.setText("刷新")
+        self._frame.refresh_btn.setToolTip("重新加载已安装应用")
         self._frame.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.refresh_btn.setIconSize(QSize(14, 14))
         self._frame.refresh_btn.clicked.connect(self._frame._load_apps)
         self._frame.refresh_btn.setProperty("adaptiveBaseHeight", 28)
+        self._frame._search_control = self._frame.search_input
         self._frame._top_controls = (
             self._frame._search_label,
             self._frame.search_input,
@@ -162,15 +177,15 @@ class AppManagerForm:
         error_layout.setContentsMargins(8, 4, 8, 4)
         error_layout.setSpacing(8)
         self._frame.load_error_label = apply_label_role(
-            CaptionLabel("Unable to load applications."),
+            CaptionLabel("无法加载应用列表。"),
             FontRole.UI_SMALL,
             color_key="ERROR_COLOR",
         )
         self._frame.load_error_label.setWordWrap(True)
-        self._frame.load_error_label.setAccessibleName("Application load error")
-        self._frame.retry_btn = PushButton("Retry")
-        self._frame.retry_btn.setToolTip("Retry loading the installed application list")
-        self._frame.retry_btn.setAccessibleName("Retry application loading")
+        self._frame.load_error_label.setAccessibleName("应用加载错误")
+        self._frame.retry_btn = PushButton("重试")
+        self._frame.retry_btn.setToolTip("重新尝试加载应用列表")
+        self._frame.retry_btn.setAccessibleName("重试加载应用")
         self._frame.retry_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.retry_btn.setIconSize(QSize(14, 14))
         self._frame.retry_btn.setProperty("adaptiveBaseHeight", 28)
@@ -184,7 +199,7 @@ class AppManagerForm:
 
         self._frame.model = QStandardItemModel(0, 6)
         self._frame.model.setHorizontalHeaderLabels(
-            ["", "App Name", "Package Name", "Version", "Status", "Type"]
+            ["", "应用名称", "包名", "版本", "状态", "类型"]
         )
         self._frame.model.itemChanged.connect(self._frame._on_table_item_changed)
         self._frame.proxy = _app_manager.AppSortProxy()
@@ -192,6 +207,9 @@ class AppManagerForm:
         self._frame.proxy.setFilterCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self._frame.proxy.setFilterKeyColumn(-1)
         self._frame.tree = TreeView()
+        self._frame.tree.setObjectName("appManagerTable")
+        self._frame.tree.setItemDelegate(AppManagerItemDelegate(self._frame.tree))
+        self._frame.tree.setBorderVisible(True)
         self._frame.tree.setFrameShape(QFrame.Shape.NoFrame)
         self._frame.tree.setModel(self._frame.proxy)
         self._frame.tree.setSortingEnabled(True)
@@ -205,7 +223,8 @@ class AppManagerForm:
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         for i in range(1, 6):
             h.setSectionResizeMode(i, QHeaderView.ResizeMode.Interactive)
-        self._frame.tree.setColumnWidth(0, 40)
+        # Fluent 复选框从列内 23px 绘制到 42px，需留出完整边框与右侧净空。
+        self._frame.tree.setColumnWidth(0, 48)
         self._frame.tree.setColumnWidth(1, 160)
         self._frame.tree.setColumnWidth(2, 320)
         self._frame.tree.setColumnWidth(3, 100)
@@ -243,24 +262,24 @@ class AppManagerForm:
         self._frame._selection_action_buttons = []
         labels_actions = [
             (
-                "Uninstall Selected",
+                "卸载所选",
                 "uninstall",
                 "trash.svg",
-                "Remove the selected applications",
+                "卸载已选择的应用",
             ),
             (
-                "Disable Selected",
+                "停用所选",
                 "disable",
                 "prohibit.svg",
-                "Disable the selected applications",
+                "停用已选择的应用",
             ),
             (
-                "Enable Selected",
+                "启用所选",
                 "enable",
                 "check-circle.svg",
-                "Enable the selected applications",
+                "启用已选择的应用",
             ),
-            ("Deselect All", None, "square.svg", "Clear the application selection"),
+            ("取消全选", None, "square.svg", "清除当前应用选择"),
         ]
         for t, a, icon, tooltip in labels_actions:
             b = PushButton()
@@ -286,34 +305,34 @@ class AppManagerForm:
         self._frame._preset_action_buttons = []
         for t, fn, icon, tooltip in [
             (
-                "Create Preset",
+                "创建预设",
                 self._frame._create_preset,
                 "floppy-disk.svg",
-                "Save the selected package list as a preset",
+                "将所选应用列表保存为预设",
             ),
             (
-                "Load Preset",
+                "加载预设",
                 self._frame._load_preset,
                 "folder-open.svg",
-                "Select applications from a saved preset",
+                "根据已保存的预设选择应用",
             ),
             (
-                "Backup Selected",
+                "备份所选",
                 self._frame._backup_selected,
                 "archive.svg",
-                "Back up the selected applications",
+                "备份已选择的应用",
             ),
             (
-                "Restore Backup",
+                "恢复备份",
                 self._frame._restore_apps,
                 "cloud-arrow-down.svg",
-                "Restore applications from a backup",
+                "从备份文件恢复应用",
             ),
             (
-                "App Details",
+                "应用详情",
                 self._frame._show_details,
                 "info.svg",
-                "Show details for the selected application",
+                "查看所选应用的详情",
             ),
         ]:
             b = PushButton()
@@ -326,38 +345,78 @@ class AppManagerForm:
             b.setAccessibleDescription(tooltip)
             b.setProperty(
                 "requiresDevice",
-                t in {"Backup Selected", "Restore Backup", "App Details"},
+                t in {"备份所选", "恢复备份", "应用详情"},
             )
             b.setProperty(
                 "requiresSelection",
-                t in {"Create Preset", "Backup Selected", "App Details"},
+                t in {"创建预设", "备份所选", "应用详情"},
             )
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             b.clicked.connect(fn)
-            if t in {"Create Preset", "Backup Selected", "App Details"}:
+            if t in {"创建预设", "备份所选", "应用详情"}:
                 self._frame._selection_action_buttons.append(b)
             self._frame._preset_action_buttons.append(b)
         layout.addLayout(self._frame._preset_action_layout)
 
         self._frame.log_output = TextEdit()
         self._frame.log_output.setReadOnly(True)
-        self._frame.log_output.setMaximumHeight(100)
-        self._frame.log_output.setPlaceholderText("Operation log...")
-        layout.addWidget(self._frame.log_output, 1)
+        self._frame.log_output.setMaximumHeight(96)
+        self._frame.log_output.setPlaceholderText("操作过程将在此显示")
+        log_header = QHBoxLayout()
+        log_header.addWidget(apply_label_role(BodyLabel("操作记录"), FontRole.UI))
+        log_header.addStretch(1)
+        self._frame.log_toggle = PushButton("展开记录")
+        self._frame.log_toggle.setCheckable(True)
+        self._frame.log_toggle.setChecked(False)
+        self._frame.log_toggle.setAccessibleName("显示或收起操作记录")
+        self._frame.log_toggle.setToolTip("查看或收起本页操作过程，收起后保留记录内容")
+        self._frame.log_toggle.setAccessibleDescription(self._frame.log_toggle.toolTip())
+        self._frame.log_toggle.toggled.connect(self._toggle_log)
+        log_header.addWidget(self._frame.log_toggle)
+        layout.addLayout(log_header)
+        layout.addWidget(self._frame.log_output)
+        self._frame.log_output.hide()
 
         self._frame.status_bar = apply_label_role(
-            CaptionLabel("Ready"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            CaptionLabel("就绪"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
-        self._frame.status_bar.setAccessibleName("Application manager status")
+        self._frame.status_bar.setAccessibleName("应用管理状态")
+        self._frame.status_bar.setWordWrap(True)
         layout.addWidget(self._frame.status_bar)
         self._frame._update_selection_ui()
         self._frame._reflow_action_buttons()
+
+    def prepare_for_workspace(self) -> None:
+        """工作区已有页头，保留同一状态控件并避免重复创建工具栏容器。"""
+        if getattr(self._frame, "_workspace_prepared", False):
+            return
+        self._frame._workspace_prepared = True
+        self._frame.header_card.hide()
+        search_control = QWidget(self._frame._master_panel)
+        search_layout = QHBoxLayout(search_control)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(8)
+        search_layout.addWidget(self._frame.search_input, 1)
+        search_layout.addWidget(self._frame.status_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._frame.status_badge.show()
+        self._frame._search_control = search_control
+        controls = self._frame._top_controls
+        self._frame._top_controls = (controls[0], search_control, *controls[2:])
+        self._frame._reflow_top_controls()
+        self._frame._master_panel.updateGeometry()
+        self._frame.updateGeometry()
 
     def _apply_theme(self, _value=None):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         log_font = bs.font_for_role(FontRole.LOG)
         self._frame.setFont(ui_font)
+        # 工作区滚动容器可能保留创建时的调色板，页面表面自行提交当前主题底色。
+        self._frame._master_panel.setStyleSheet(
+            "QWidget#appManagerMasterPanel {"
+            f"background-color: {bs.color('WINDOW_BG')};"
+            "}"
+        )
         bg = bs.color("INPUT_BG")
         fg = bs.color("TEXT_PRIMARY")
         border = bs.color("BORDER_COLOR")
@@ -366,7 +425,36 @@ class AppManagerForm:
         self._frame.log_output.document().setDefaultFont(log_font)
         self._frame.load_error_label.setFont(bs.font_for_role(FontRole.UI_SMALL))
         self._frame.retry_btn.setFont(ui_font)
-        # 应用树样式由 qfluentwidgets TreeView 自维护（随主题切换）。
+        # 上游树控件的透明普通行与 Qt AlternateBase 在切换主题后可能反色。
+        # 同时声明两套局部实色，并保留 Fluent 的表头、选中态和复选委托。
+        self._frame.tree.setFont(ui_font)
+        self._frame.tree.header().setFont(ui_font)
+        for column in range(self._frame.model.columnCount()):
+            self._frame.model.setHeaderData(
+                column, Qt.Orientation.Horizontal, ui_font, Qt.ItemDataRole.FontRole
+            )
+        metrics = QFontMetrics(ui_font)
+        self._frame.tree.setColumnWidth(4, max(96, metrics.horizontalAdvance("已停用") + 40))
+        self._frame.tree.setColumnWidth(5, max(80, metrics.horizontalAdvance("厂商") + 40))
+        row_height = max(36, QFontMetrics(ui_font).height() + 12)
+        header_font_size = (
+            f"{ui_font.pointSizeF()}pt" if ui_font.pointSizeF() > 0 else f"{ui_font.pixelSize()}px"
+        )
+        styles = []
+        for theme in ("Light", "Dark"):
+            styles.append(
+                "QTreeView#appManagerTable {"
+                f"background-color: {bs.color_for(theme, 'INPUT_BG')};"
+                f"alternate-background-color: {bs.color_for(theme, 'INPUT_BG_HOVER')};"
+                f"border: 1px solid {bs.color_for(theme, 'BORDER_COLOR')};"
+                f"border-radius: {bs.RADIUS_MD}px;"
+                "} QTreeView#appManagerTable::item {"
+                f"height: {row_height}px;"
+                "} QHeaderView, QHeaderView::section {"
+                f"font-size: {header_font_size};"
+                "}"
+            )
+        setCustomStyleSheet(self._frame.tree, styles[0], styles[1])
         self._frame.icon_list.setStyleSheet(
             "QListWidget { background-color:"
             f"{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; "
@@ -378,6 +466,12 @@ class AppManagerForm:
         for control in self._frame._top_controls:
             control.setFont(ui_font)
             control.updateGeometry()
+        # Fluent LineEdit 默认固定为 33px，大字体须重新按实际内容高度留白。
+        editor = self._frame.search_input
+        editor.setFont(ui_font)
+        editor.setMaximumHeight(16777215)
+        editor.setMinimumHeight(0)
+        editor.setMinimumHeight(max(33, editor.sizeHint().height(), metrics.height() + 12))
         for button in (*self._frame._selection_action_buttons, *self._frame._preset_action_buttons):
             button.setFont(ui_font)
             button.updateGeometry()
@@ -389,6 +483,51 @@ class AppManagerForm:
         self._frame._reflow_top_controls()
         self._frame._reflow_action_buttons()
         self._apply_header_style()
+        self._update_view_geometry()
+
+    def _update_view_geometry(self) -> None:
+        """保留可读的列表视口，超出小工作区的动作区域由宿主外层滚动承接。"""
+        tree = self._frame.tree
+        tree.ensurePolished()
+        tree.doItemsLayout()
+        row_heights = [
+            tree.sizeHintForRow(row) for row in range(min(3, self._frame.proxy.rowCount()))
+        ]
+        # 空列表也预留同等空间；加载后以包含 Fluent 内边距的真实行高替代估计。
+        fallback = max(36, QFontMetrics(tree.font()).height() + 12) + 12
+        row_height = max(row_heights, default=fallback)
+        tree.setMinimumHeight(
+            row_height * 3
+            + tree.header().sizeHint().height()
+            + 2 * tree.frameWidth()
+            + tree.horizontalScrollBar().sizeHint().height()
+        )
+
+        icons = self._frame.icon_list
+        font = BaseStyles.font_for_role(FontRole.UI)
+        icons.setFont(font)
+        metrics = QFontMetrics(font)
+        spacing = icons.spacing()
+        grid = QSize(
+            max(128, metrics.horizontalAdvance("应用名称") + 24),
+            icons.iconSize().height() + metrics.height() * 2 + 16,
+        )
+        icons.setGridSize(grid)
+        for index in range(icons.count()):
+            item = icons.item(index)
+            item.setFont(font)
+            item.setSizeHint(grid - QSize(spacing * 2, spacing * 2))
+        icons.setMinimumHeight(
+            grid.height() * 2 + spacing * 2 + 2 * icons.frameWidth()
+            + icons.horizontalScrollBar().sizeHint().height()
+        )
+        self._frame._master_panel.updateGeometry()
+        self._frame.updateGeometry()
+
+    def _toggle_log(self, expanded: bool) -> None:
+        """收起操作记录只释放布局空间，日志内容与后台写入保持不变。"""
+        self._frame.log_output.setVisible(expanded)
+        self._frame.log_toggle.setText("收起记录" if expanded else "展开记录")
 
     # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
 
@@ -402,16 +541,18 @@ class AppManagerForm:
         self._refresh_status_badge()
 
     def _refresh_status_badge(self) -> None:
-        """按设备连接状态刷新徽标；绿=已连接设备，蓝=未选择设备。"""
+        """在线和操作选择分别呈现，避免把仅连接的会话显示为可操作。"""
 
         has_device = bool(self._frame.device_ip)
         connected = bool(getattr(self._frame, "_device_connected", has_device))
         if not has_device:
-            text, level = "No device", InfoLevel.INFOAMTION
-        elif connected:
-            text, level = "Ready", InfoLevel.SUCCESS
+            text, level = "未选择设备", InfoLevel.INFOAMTION
+        elif not connected:
+            text, level = "离线", InfoLevel.WARNING
+        elif not self._frame._device_selected:
+            text, level = "未选为操作目标", InfoLevel.INFOAMTION
         else:
-            text, level = "Offline", InfoLevel.WARNING
+            text, level = "就绪", InfoLevel.SUCCESS
         self._frame.status_badge.setText(text)
         self._frame.status_badge.setLevel(level)
 
@@ -454,7 +595,17 @@ class AppManagerForm:
             if button.text() != label:
                 button.setText(label)
                 button.updateGeometry()
-        if self._frame._buttons_fit_columns(buttons, wide_columns, available_width, spacing):
+        # 中文短标签不能让窄窗意外挤回整行；保留批量动作两列与紧凑短动词层次。
+        if available_width < 560:
+            for button, label in zip(buttons, short_labels):
+                button.setText(label)
+                button.updateGeometry()
+            columns = (
+                2 if self._frame._buttons_fit_columns(buttons, 2, available_width, spacing) else 1
+            )
+        elif available_width >= 860 and self._frame._buttons_fit_columns(
+            buttons, wide_columns, available_width, spacing
+        ):
             columns = wide_columns
         elif self._frame._buttons_fit_columns(buttons, 2, available_width, spacing):
             columns = 2
@@ -483,13 +634,13 @@ class AppManagerForm:
         self._frame._reflow_action_group(
             self._frame._selection_action_layout,
             self._frame._selection_action_buttons[:4],
-            ("Uninstall", "Disable", "Enable", "Clear"),
+            ("卸载", "停用", "启用", "清除"),
             4,
         )
         self._frame._reflow_action_group(
             self._frame._preset_action_layout,
             self._frame._preset_action_buttons,
-            ("Save", "Load", "Backup", "Restore", "Details"),
+            ("保存", "加载", "备份", "恢复", "详情"),
             5,
             span_last_in_two_columns=True,
         )
@@ -522,7 +673,7 @@ class AppManagerForm:
         for column in range(max(7, self._frame._top_layout.columnCount())):
             self._frame._top_layout.setColumnStretch(column, 0)
 
-        if self._frame._top_controls_fit(7):
+        if self._frame._action_layout_available_width() >= 860 and self._frame._top_controls_fit(7):
             for column, widget in enumerate(self._frame._top_controls):
                 self._frame._top_layout.addWidget(widget, 0, column)
             self._frame._top_layout.setColumnStretch(1, 1)
@@ -530,7 +681,7 @@ class AppManagerForm:
 
         if self._frame._top_controls_fit(5):
             self._frame._top_layout.addWidget(self._frame._search_label, 0, 0)
-            self._frame._top_layout.addWidget(self._frame.search_input, 0, 1, 1, 4)
+            self._frame._top_layout.addWidget(self._frame._search_control, 0, 1, 1, 4)
             self._frame._top_layout.addWidget(self._frame._type_label, 1, 0)
             self._frame._top_layout.addWidget(self._frame.type_filter, 1, 1)
             self._frame._top_layout.addWidget(self._frame.selection_label, 1, 2)
@@ -540,7 +691,7 @@ class AppManagerForm:
             return
 
         self._frame._top_layout.addWidget(self._frame._search_label, 0, 0)
-        self._frame._top_layout.addWidget(self._frame.search_input, 0, 1, 1, 2)
+        self._frame._top_layout.addWidget(self._frame._search_control, 0, 1, 1, 2)
         self._frame._top_layout.addWidget(self._frame._type_label, 1, 0)
         self._frame._top_layout.addWidget(self._frame.type_filter, 1, 1, 1, 2)
         self._frame._top_layout.addWidget(self._frame.selection_label, 2, 0)

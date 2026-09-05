@@ -16,3 +16,5 @@
 | 实施账本 | [Phase 0](ledgers/PHASE0_LEDGER.md)、[Phase 1](ledgers/PHASE1_LEDGER.md) | 早期安全与 Operation 契约实施记录 |
 | 实施账本 | [Screenshot Gate](ledgers/PHASE2_GATE_A_LEDGER.md)、[LiveLogcat Gate](ledgers/PHASE2_GATE_B_LEDGER.md) | 当时的组件与生命周期验证；页面形态后来已变化 |
 | 卫生检查 | [2026-08-18](hygiene/2026-08-18.md) | 当时的文档结构快照 |
+| 实施验收 | [2026-09-05 质量与 UI 改进](ledgers/QUALITY_UI_2026_09_05.md) | 本地工作树的业务、生命周期、导航布局、完整测试与 Windows 打包验收 |
+| 实施验收 | [2026-09-05 第二轮界面整合](ledgers/QUALITY_UI_CONSOLIDATION_2026_09_05.md) | 全局多选设备栏、功能归并、列表与采集布局、QObject 归属及最终软件验收 |

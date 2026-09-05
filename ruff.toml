@@ -1,4 +1,4 @@
-# ADBLab lint 配置：行宽 100，语法目标 py310（与 README/CI 标准一致）。
+# ADBLab lint 配置：行宽 100，语法兼容目标 py310；运行与 CI 使用 Python 3.11。
 line-length = 100
 target-version = "py310"
 exclude = [

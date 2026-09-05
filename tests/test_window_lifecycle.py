@@ -1,11 +1,12 @@
 import os
+import sys
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QRect, QSize, Signal
 from PySide6.QtWidgets import QDialog
-from shiboken6 import delete
+from shiboken6 import delete, isValid
 
 from gui.dialogs.lifecycle import (
     alive_forwarding_callback,
@@ -98,3 +99,101 @@ def test_late_callbacks_ignore_deleted_qobject(qt_application):
     delete(probe)
     forward("late-direct")
     emit("late-signal")
+
+
+def test_remote_form_disconnects_global_style_signals_with_its_visual_root(
+    monkeypatch, qt_application,
+):
+    """保留 Python 控制器引用，销毁视图后仍不能收到跨窗口的主题与字体回调。"""
+
+    from core.settings_manager import DEFAULTS, AppSettings
+    from gui.panels.remote_panel import RemotePanel
+    from gui.panels.side_panel import SidePanel
+    from gui.styles import BaseStyles
+    from models.device_store import DeviceStore
+
+    values = dict(DEFAULTS)
+    settings = SimpleNamespace(get=values.get, set=lambda key, value: values.update({key: value}))
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    monkeypatch.setattr(DeviceStore, "_devices", {})
+    monkeypatch.setattr(DeviceStore, "load", classmethod(lambda cls: None))
+    theme_calls = []
+    callback_errors = []
+    original_theme_callback = RemotePanel._on_theme_changed_remote
+
+    def record_theme_callback(panel, name):
+        theme_calls.append(name)
+        original_theme_callback(panel, name)
+
+    monkeypatch.setattr(RemotePanel, "_on_theme_changed_remote", record_theme_callback)
+    monkeypatch.setattr(sys, "excepthook", lambda *error: callback_errors.append(error))
+    original_windows = set(qt_application.topLevelWidgets())
+    side_panel = SidePanel()
+    remote = side_panel._ensure_tab_loaded(2)
+    form = remote._form_controller
+    try:
+        theme_calls.clear()
+        BaseStyles.theme_changed.emit(BaseStyles.current_theme())
+        BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+        assert len(theme_calls) == 1
+        assert callback_errors == []
+
+        side_panel.shutdown()
+        assert remote._remote_input_shutdown.wait(1.0)
+        visual_roots = set(qt_application.topLevelWidgets()) - original_windows - {remote}
+        for widget in visual_roots:
+            if isValid(widget):
+                delete(widget)
+
+        # Python 强引用仍在，验证 Qt 连接归属，而不是依赖垃圾回收碰巧清掉回调。
+        assert remote._form_controller is form
+        theme_calls.clear()
+        BaseStyles.theme_changed.emit(BaseStyles.current_theme())
+        BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+        qt_application.processEvents()
+        assert theme_calls == []
+        assert callback_errors == []
+    finally:
+        if isValid(side_panel):
+            side_panel.shutdown()
+        for widget in set(qt_application.topLevelWidgets()) - original_windows:
+            if isValid(widget):
+                delete(widget)
+
+
+def test_side_panel_disposes_hidden_controllers_before_late_style_changes(
+    monkeypatch, qt_application,
+):
+    """协调器销毁后，强引用保留的控制器也不能继续读取已释放的设备视图。"""
+    from core.settings_manager import DEFAULTS, AppSettings
+    from gui.panels.side_panel import SidePanel
+    from gui.styles import BaseStyles
+    from models.device_store import DeviceStore
+
+    values = dict(DEFAULTS)
+    settings = SimpleNamespace(get=values.get, set=lambda key, value: values.update({key: value}))
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    monkeypatch.setattr(DeviceStore, "_devices", {})
+    monkeypatch.setattr(DeviceStore, "load", classmethod(lambda cls: None))
+    original_windows = set(qt_application.topLevelWidgets())
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda *error: errors.append(error))
+    panel = SidePanel()
+    apps = panel._ensure_tab_loaded(0)
+    system = panel._ensure_tab_loaded(1)
+    devices = panel._devices_tab
+    try:
+        BaseStyles.theme_changed.emit(BaseStyles.current_theme())
+        assert errors == []
+        panel.shutdown()
+        delete(panel.device_widget)
+        delete(panel)
+        BaseStyles.theme_changed.emit(BaseStyles.current_theme())
+        BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+        qt_application.processEvents()
+        assert errors == []
+        assert not any(isValid(controller) for controller in (apps, system, devices))
+    finally:
+        for widget in set(qt_application.topLevelWidgets()) - original_windows:
+            if isValid(widget):
+                delete(widget)

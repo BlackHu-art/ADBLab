@@ -16,17 +16,17 @@ from gui.styles.typography import FontRole
 from tests.ui_geometry_helpers import assert_non_overlapping
 
 _SELECTION_ACTIONS = (
-    "Uninstall Selected",
-    "Disable Selected",
-    "Enable Selected",
-    "Deselect All",
+    "卸载所选",
+    "停用所选",
+    "启用所选",
+    "取消全选",
 )
 _PRESET_ACTIONS = (
-    "Create Preset",
-    "Load Preset",
-    "Backup Selected",
-    "Restore Backup",
-    "App Details",
+    "创建预设",
+    "加载预设",
+    "备份所选",
+    "恢复备份",
+    "应用详情",
 )
 
 
@@ -182,7 +182,7 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
         dialog.show()
         for width in (776, 768):
             # qfluentwidgets ComboBox 比原生 QComboBox 窄，顶部控件在 768px
-            # 以下会触发五列重排并把 "Selected: 0" 标签压到最小宽度以下；
+            # 以下会触发五列重排并把 "已选 0 项" 标签压到最小宽度以下；
             # 断点随收敛上移 8px。qfluentwidgets 控件行高比原生高，22pt 下
             # 内容区至少需要 700px；Fluent 标题栏额外占用 48px。
             dialog.resize(width, 700)
@@ -282,14 +282,14 @@ def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_fon
         assert dialog._preset_action_layout.rowCount() == 3
         assert (
             abs(
-                buttons["Disable Selected"].geometry().right()
+                buttons["停用所选"].geometry().right()
                 - dialog._selection_action_layout.geometry().right()
             )
             <= 2
         )
         assert (
             abs(
-                buttons["App Details"].geometry().right()
+                buttons["应用详情"].geometry().right()
                 - dialog._preset_action_layout.geometry().right()
             )
             <= 2
@@ -317,33 +317,33 @@ def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_
 
         buttons = _action_buttons(dialog)
         assert [buttons[label].text() for label in _SELECTION_ACTIONS] == [
-            "Uninstall",
-            "Disable",
-            "Enable",
-            "Clear",
+            "卸载",
+            "停用",
+            "启用",
+            "清除",
         ]
         assert [buttons[label].text() for label in _PRESET_ACTIONS] == [
-            "Save",
-            "Load",
-            "Backup",
-            "Restore",
-            "Details",
+            "保存",
+            "加载",
+            "备份",
+            "恢复",
+            "详情",
         ]
         expected_help = {
-            "Uninstall Selected": "Remove the selected applications",
-            "Disable Selected": "Disable the selected applications",
-            "Enable Selected": "Enable the selected applications",
-            "Deselect All": "Clear the application selection",
-            "Create Preset": "Save the selected package list as a preset",
-            "Load Preset": "Select applications from a saved preset",
-            "Backup Selected": "Back up the selected applications",
-            "Restore Backup": "Restore applications from a backup",
-            "App Details": "Show details for the selected application",
+            "卸载所选": "卸载已选择的应用",
+            "停用所选": "停用已选择的应用",
+            "启用所选": "启用已选择的应用",
+            "取消全选": "清除当前应用选择",
+            "创建预设": "将所选应用列表保存为预设",
+            "加载预设": "根据已保存的预设选择应用",
+            "备份所选": "备份已选择的应用",
+            "恢复备份": "从备份文件恢复应用",
+            "应用详情": "查看所选应用的详情",
         }
         for accessible_name, button in buttons.items():
             assert button.toolTip() == expected_help[accessible_name]
             assert button.accessibleDescription() == expected_help[accessible_name]
-        details_index = dialog._preset_action_layout.indexOf(buttons["App Details"])
+        details_index = dialog._preset_action_layout.indexOf(buttons["应用详情"])
         _row, column, _row_span, column_span = dialog._preset_action_layout.getItemPosition(
             details_index
         )
@@ -387,8 +387,8 @@ def test_app_manager_restores_full_actions_without_rebuilding_buttons_or_duplica
 
         dialog.resize(400, 600)
         app.processEvents()
-        wide_buttons["Deselect All"].setEnabled(True)
-        wide_buttons["Deselect All"].click()
+        wide_buttons["取消全选"].setEnabled(True)
+        wide_buttons["取消全选"].click()
         assert dialog.deselect_calls == 1
     finally:
         dialog.close()
@@ -415,7 +415,7 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
 
         assert dialog.selected_packages == {"com.example.one"}
         assert first_icon.isSelected() is True
-        assert dialog.selection_label.text() == "Selected: 1"
+        assert dialog.selection_label.text() == "已选 1 项"
         assert all(button.isEnabled() for button in dialog._selection_action_buttons)
 
         dialog._toggle_view()
@@ -432,7 +432,7 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
 
         dialog._deselect_all()
         assert dialog.selected_packages == set()
-        assert dialog.selection_label.text() == "Selected: 0"
+        assert dialog.selection_label.text() == "已选 0 项"
         assert not any(button.isEnabled() for button in dialog._selection_action_buttons)
     finally:
         dialog.close()
@@ -449,6 +449,9 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     dialog._batch_total = 0
     dialog._batch_action = ""
     dialog._closing = False
+    dialog._device_selected = True
+    dialog._device_connected = True
+    dialog._can_operate = lambda: AppManagerPage._can_operate(dialog)
     dialog.log = Mock()
     dialog.status_bar = Mock()
     dialog._track_worker = Mock()
@@ -718,14 +721,14 @@ def test_app_manager_offline_state_keeps_cached_content_and_blocks_new_adb_work(
             assert page._load_apps() is False
 
         buttons = _action_buttons(page)
-        assert page.status_badge.text() == "Offline"
+        assert page.status_badge.text() == "离线"
         assert page.refresh_btn.isEnabled() is False
-        assert buttons["Uninstall Selected"].isEnabled() is False
-        assert buttons["Backup Selected"].isEnabled() is False
-        assert buttons["Restore Backup"].isEnabled() is False
-        assert buttons["App Details"].isEnabled() is False
-        assert buttons["Create Preset"].isEnabled() is True
-        assert buttons["Deselect All"].isEnabled() is True
+        assert buttons["卸载所选"].isEnabled() is False
+        assert buttons["备份所选"].isEnabled() is False
+        assert buttons["恢复备份"].isEnabled() is False
+        assert buttons["应用详情"].isEnabled() is False
+        assert buttons["创建预设"].isEnabled() is True
+        assert buttons["取消全选"].isEnabled() is True
         assert page.model.rowCount() == 1
         assert page.selected_packages == {"com.example.one"}
         assert page.details_page.detail_text.toPlainText() == "cached details"
@@ -733,7 +736,7 @@ def test_app_manager_offline_state_keeps_cached_content_and_blocks_new_adb_work(
         worker_cls.assert_not_called()
 
         page.set_device_connected(True)
-        assert page.status_badge.text() == "Ready"
+        assert page.status_badge.text() == "就绪"
         assert page.refresh_btn.isEnabled() is True
         worker_cls.assert_not_called()
     finally:

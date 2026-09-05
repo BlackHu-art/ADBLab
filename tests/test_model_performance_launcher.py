@@ -5,14 +5,35 @@ import time
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication, QLabel
 
+from adblab.application.supervision import StopDisposition, TaskSupervisor
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles, theme
 from gui.styles.typography import FontRole
+
+
+def test_performance_form_keeps_field_help_out_of_adjacent_action_tips(qt_application):
+    """表单输入规则不应附加到获取包名或目录选择动作上。"""
+    from gui.dialogs.performance_launcher import CONFIG_HINTS
+
+    dialog = PerformancePage(device_ip="demo-device")
+    try:
+        for field, action, key in (
+            (dialog.package_edit, dialog.get_package_btn, "package"),
+            (dialog.save_path_edit, dialog.pick_save_btn, "save_path"),
+        ):
+            assert CONFIG_HINTS[key] in field.toolTip()
+            assert action.toolTip() == action.property("functionalToolTip")
+            assert CONFIG_HINTS[key] not in action.toolTip()
+            assert action.accessibleDescription() == action.toolTip()
+    finally:
+        dialog.close()
 
 
 def test_performance_page_perfetto_button_opens_perfetto_home():
@@ -431,6 +452,101 @@ def test_performance_page_stopping_status_is_warning_color():
         assert dialog.status_label.text() == "Stopping"
         assert BaseStyles.color("LOG_WARNING") in dialog.status_label.styleSheet()
     finally:
+        dialog.close()
+
+
+def test_performance_page_failed_stop_keeps_controls_active_for_retry():
+    """停止线程返回后进程仍存活时，保留运行状态并允许再次停止。"""
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformancePage(device_ip="device-1")
+    runner = Mock()
+    runner.is_running.return_value = True
+    runner.latest_result_dir.return_value = ""
+    runner.latest_report_file.return_value = ""
+    runner.last_config = None
+    dialog._runner = runner
+    try:
+        dialog._runner_finished_handled = False
+        dialog._set_running(True)
+        dialog._stopping = True
+        dialog._run_started_at = time.monotonic()
+        dialog._set_progress(25)
+
+        dialog._on_runner_finished()
+
+        assert dialog._runner_finished_handled is False
+        assert dialog._stopping is False
+        assert dialog.start_btn.isEnabled() is False
+        assert dialog.stop_btn.isEnabled() is True
+        assert dialog._configuration_locked is True
+        assert dialog._poll_timer.isActive()
+        assert dialog._run_started_at is not None
+        assert dialog.progress_bar.value() == 25
+        assert dialog._status_state == "warning"
+        dialog._flush_pending_logs()
+        assert "retry" in dialog.log_view.toPlainText().lower()
+        runner.latest_report_file.assert_not_called()
+
+        runner.is_running.return_value = False
+        dialog._on_runner_finished()
+        assert dialog._runner_finished_handled is True
+        assert dialog.start_btn.isEnabled() is True
+        assert dialog.stop_btn.isEnabled() is False
+    finally:
+        runner.is_running.return_value = False
+        dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("stop_outcome", "expected_disposition"),
+    [
+        ("graceful", StopDisposition.GRACEFUL),
+        ("forced", StopDisposition.FORCED),
+        ("timeout", StopDisposition.TIMED_OUT),
+    ],
+)
+def test_performance_shutdown_tracks_process_after_stop_worker_returns(
+    stop_outcome, expected_disposition
+):
+    """关闭监督须同时观察停止线程和实际进程，并保留无法停止的资源。"""
+    _app = QApplication.instance() or QApplication([])
+    dialog = PerformancePage(device_ip="device-1")
+    runner = Mock()
+    runner.is_running.return_value = True
+
+    def stop():
+        if stop_outcome == "graceful":
+            runner.is_running.return_value = False
+            return 0
+        return None
+
+    def force_stop(_timeout):
+        if stop_outcome == "forced":
+            runner.is_running.return_value = False
+            return True
+        return False
+
+    runner.stop.side_effect = stop
+    runner.force_stop.side_effect = force_stop
+    dialog._runner = runner
+    supervisor = TaskSupervisor()
+    try:
+        dialog.register_shutdown_tasks(
+            supervisor, owner_id="test-performance", task_prefix="test-performance"
+        )
+        results = supervisor.stop_all(deadline=1)
+
+        assert len(results) == 1
+        assert results[0].disposition == expected_disposition
+        runner.stop.assert_called_once_with()
+        if stop_outcome == "graceful":
+            runner.force_stop.assert_not_called()
+        else:
+            runner.force_stop.assert_called_once()
+        assert supervisor.active_count == int(stop_outcome == "timeout")
+        assert dialog.request_dispose("test") is (stop_outcome != "timeout")
+    finally:
+        runner.is_running.return_value = False
         dialog.close()
 
 

@@ -167,7 +167,9 @@ def test_performance_page_completion_state_requires_current_successful_report(
     _app = QApplication.instance() or QApplication([])
     dialog = PerformancePage(device_ip="device-1")
     try:
-        dialog._runner = Mock()
+        dialog._runner = Mock(spec=MobilePerfRunner)
+        # 本组验证进程已经结束后的报告结果；活动进程应由完成回调保护拒绝。
+        dialog._runner.is_running.return_value = False
         dialog._runner.last_config = Mock()
         dialog._runner.last_exit_code = exit_code
         dialog._runner.latest_result_dir.return_value = "D:/results/current"

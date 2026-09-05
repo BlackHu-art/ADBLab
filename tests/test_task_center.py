@@ -4,11 +4,31 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pytest
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QPushButton
 
 from adblab.application.operations import OperationManager
 from gui.pages.tasks_page import TaskCenterPage
+from gui.styles import BaseStyles
 from services.task_history import TaskHistoryStore
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_task_lists_share_page_background_without_an_outer_frame(qt_application, theme):
+    BaseStyles.switch_theme(theme)
+    page = TaskCenterPage(operation_manager=OperationManager())
+    page.resize(680, 600)
+    page.show()
+    qt_application.processEvents()
+    rendered = page.grab().toImage()
+    edge = page._scroll.mapTo(page, QPoint(0, 80))
+    scale = rendered.devicePixelRatio()
+    assert rendered.pixelColor(round(edge.x() * scale), round(edge.y() * scale)) == QColor(
+        BaseStyles.color("WINDOW_BG")
+    )
+    page.shutdown()
 
 
 def test_poll_diff_skips_rebuild_when_snapshot_unchanged():

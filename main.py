@@ -78,6 +78,7 @@ def _self_check_packaging() -> int:
         "resources/app_settings.json",
         "resources/connected_devices.yaml",
         "resources/chkbugreport-0.5-215.jar",
+        "resources/app-icon-helper.jar",
         "resources/ZFB.jpg",
     ):
         resolved = Path(resource_path(relative_path))
@@ -148,16 +149,37 @@ def _self_check_packaging() -> int:
     return 1 if failed else 0
 
 
+def _configure_gui_scaling(value: object) -> str | float:
+    """在 QApplication 创建前设置本进程比例；Auto 保留系统及启动环境。"""
+    from core.settings_manager import normalise_ui_scale
+
+    factor = normalise_ui_scale(value)
+    if factor != "Auto":
+        # 与 Gallery 一致：手动比例替代自动 DPI 比例，避免两者相乘。
+        os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+        os.environ["QT_SCALE_FACTOR"] = str(factor)
+        os.environ["QT_SCALE_FACTOR_ROUNDING_POLICY"] = "PassThrough"
+    return factor
+
+
 def _run_gui() -> int:
     """创建 QApplication、加载主题并进入主界面事件循环。"""
     if sys.platform == "win32":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(windows_app_user_model_id())
 
+    from core.settings_manager import AppSettings, set_error_sink
+
+    # Qt 比例必须先于 QApplication 读取。此时日志服务尚未创建，先完整缓冲
+    # 设置加载诊断，再转交正式日志接收器，避免提前加载使迁移/读取失败静默。
+    startup_diagnostics: list[tuple[str, str]] = []
+    set_error_sink(lambda level, message: startup_diagnostics.append((level, message)))
+    settings = AppSettings.instance()
+    _configure_gui_scaling(settings.get("ui_scale", "Auto"))
+
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
     from core.log_service import LogService
-    from core.settings_manager import AppSettings, set_error_sink
     from gui.main_frame import MainFrame
     from gui.styles import BaseStyles
 
@@ -165,15 +187,16 @@ def _run_gui() -> int:
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
 
-    # 先于任何设置读取创建日志服务并注入设置层错误接收器，使启动期
-    # （MainFrame 创建之前）的设置加载/保存错误可见，而不是静默丢弃。
-    LogService()
-    set_error_sink(LogService().log)
+    log_service = LogService()
+    set_error_sink(log_service.log)
+    for level, message in startup_diagnostics:
+        log_service.log(level, message)
+    startup_diagnostics.clear()
 
     # 字体管理器同时更新 QApplication 与各字体角色，保持单一应用入口。
     BaseStyles.reload_from_settings()
-    BaseStyles.set_accent_color(AppSettings.instance().get("accent_color", "#0F6CBD"))
-    saved_theme = AppSettings.instance().get("theme", "System")
+    BaseStyles.set_accent_color(settings.get("accent_color", "#0F6CBD"))
+    saved_theme = settings.get("theme", "System")
     BaseStyles.switch_theme(saved_theme)
 
     window = MainFrame()

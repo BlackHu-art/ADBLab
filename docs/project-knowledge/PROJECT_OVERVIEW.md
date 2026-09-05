@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-04
+last_verified: 2026-09-05
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -22,7 +22,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 
 ## 主要业务能力
 
-1. 设备发现与连接：轮询 `adb devices`，连接/配对/断开 TCP 设备，读取设备属性并持久化设备列表。
+1. 设备发现与连接：轮询 `adb devices`，连接/断开 TCP 设备，读取并持久化设备元数据；全局设备栏
+   管理批量操作目标，单设备功能使用独立会话。无线配对已有 Controller/model 接口，当前没有可见配对表单。
 2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、批量安装、当前前台应用检测和 APK 信息解析。
 3. 测试与诊断：Monkey、截图、录屏、logcat、bugreport、ANR、进程/电池/系统信息。
 4. 文件操作：浏览设备文件、上传/下载、编辑、复制/移动/删除、权限修改、APK 安装和脚本执行。
@@ -58,7 +59,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 ## 运行环境
 
 - CI 和 README 的标准解释器为 Python 3.11；仓库内开发环境统一为 `.venv`，完整工具链由
-  `requirements-dev.txt` 安装；`pyproject.toml` 的格式/静态检查目标是 Python 3.10 语法兼容。
+  `requirements-dev.txt` 安装。Black/Ruff 配置目标为 Python 3.10 语法兼容，Pyright 的
+  `pyrightconfig.json` 使用 Python 3.11；这些目标不构成 Python 3.10 运行兼容性承诺。
 - Windows 开发运行优先使用仓库内 `scrcpy-win64/adb.exe` 和 `scrcpy.exe`；具体版本以工具本身为准。
 - 用户可写数据根目录由 `utils/user_data.py::user_data_root()` 决定：Windows 默认 `%LOCALAPPDATA%/ADBLab`；非 Windows 使用 XDG 配置目录或 `~/.config/ADBLab`。
 - 开发模式直接引用仓库资源；PyInstaller onefile 场景由 `utils/runtime_tools.py::bundled_tool_path()` 把长生命周期工具复制到稳定的用户运行时缓存。

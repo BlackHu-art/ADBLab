@@ -45,6 +45,7 @@ class AppDetailsPage(QWidget):
         super().__init__(parent)
         self.device_ip = device_ip
         self._device_connected = bool(device_ip)
+        self._device_selected = bool(device_ip)
         self.package_name = package_name
         self._workers = []
         self._closing = False
@@ -76,14 +77,14 @@ class AppDetailsPage(QWidget):
         layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         layout.setContentsMargins(8, 8, 8, 6)
         header = QHBoxLayout()
-        self.back_btn = PushButton("Back to apps")
-        self.back_btn.setToolTip("Return to the installed application list")
-        self.back_btn.setAccessibleName("Back to applications")
+        self.back_btn = PushButton("返回列表")
+        self.back_btn.setToolTip("返回已安装应用列表")
+        self.back_btn.setAccessibleName("返回应用列表")
         self.back_btn.setIcon(get_themed_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.clicked.connect(self.back_requested)
         self.package_label = apply_label_role(
-            BodyLabel(self.package_name or "Application details"),
+            BodyLabel(self.package_name or "应用详情"),
             FontRole.TITLE,
             color_key="TITLE_COLOR",
         )
@@ -94,14 +95,14 @@ class AppDetailsPage(QWidget):
 
         error_row = QHBoxLayout()
         self.load_error_label = apply_label_role(
-            CaptionLabel("Unable to load application details."),
+            CaptionLabel("无法加载应用详情。"),
             FontRole.UI_SMALL,
             color_key="ERROR_COLOR",
         )
         self.load_error_label.setWordWrap(True)
-        self.retry_btn = PushButton("Retry")
-        self.retry_btn.setToolTip("Retry loading application details")
-        self.retry_btn.setAccessibleName("Retry application details")
+        self.retry_btn = PushButton("重试")
+        self.retry_btn.setToolTip("重新尝试加载应用详情")
+        self.retry_btn.setAccessibleName("重试应用详情")
         self.retry_btn.clicked.connect(self.retry_load)
         error_row.addWidget(self.load_error_label, 1)
         error_row.addWidget(self.retry_btn)
@@ -115,22 +116,22 @@ class AppDetailsPage(QWidget):
         self.detail_text = TextEdit()
         self.detail_text.setReadOnly(True)
         dl.addWidget(self.detail_text)
-        self.tabs.addTab(dw, "App Details")
+        self.tabs.addTab(dw, "应用详情")
 
         pw = QWidget()
         pl = QVBoxLayout(pw)
-        self.declared_list = self._ps(pl, "Declared Permissions (Read-Only)", checkable=False)
-        self.requested_list = self._ps(pl, "Requested Permissions")
-        self.runtime_list = self._ps(pl, "Runtime Permissions (Grant/Revoke)")
+        self.declared_list = self._ps(pl, "声明权限（只读）", checkable=False)
+        self.requested_list = self._ps(pl, "请求权限")
+        self.runtime_list = self._ps(pl, "运行时权限（授权或撤销）")
         pb = QHBoxLayout()
         self.grant_btn = PushButton()
-        self.grant_btn.setText("Grant Selected")
-        self.grant_btn.setToolTip("Grant the selected runtime permissions")
+        self.grant_btn.setText("授权所选")
+        self.grant_btn.setToolTip("授予选中的运行时权限")
         self.grant_btn.setIcon(get_themed_icon("check-circle.svg"))
         self.grant_btn.setIconSize(QSize(14, 14))
         self.revoke_btn = PushButton()
-        self.revoke_btn.setText("Revoke Selected")
-        self.revoke_btn.setToolTip("Revoke the selected runtime permissions")
+        self.revoke_btn.setText("撤销所选")
+        self.revoke_btn.setToolTip("撤销选中的运行时权限")
         self.revoke_btn.setIcon(get_themed_icon("x-circle.svg"))
         self.revoke_btn.setIconSize(QSize(14, 14))
         self.grant_btn.clicked.connect(lambda: self._mp("grant"))
@@ -138,7 +139,7 @@ class AppDetailsPage(QWidget):
         pb.addWidget(self.grant_btn)
         pb.addWidget(self.revoke_btn)
         pl.addLayout(pb)
-        self.tabs.addTab(pw, "Permissions")
+        self.tabs.addTab(pw, "权限")
         layout.addWidget(self.tabs)
 
     def _apply_theme(self, _value=None):
@@ -155,8 +156,8 @@ class AppDetailsPage(QWidget):
         hl.addWidget(apply_label_role(BodyLabel(title), FontRole.UI))
         if checkable:
             sb = PushButton()
-            sb.setText("Select All/None")
-            sb.setToolTip("Toggle every permission in this list")
+            sb.setText("全选 / 全不选")
+            sb.setToolTip("切换此列表的全部权限选择")
             sb.setIcon(get_themed_icon("check-square.svg"))
             sb.setIconSize(QSize(14, 14))
             sb.setMinimumWidth(130)
@@ -206,7 +207,7 @@ class AppDetailsPage(QWidget):
         self._active = True
         package_name = self._package_from_payload(payload) or self.package_name
         if not package_name:
-            self._set_load_state("error", "No application package was selected.")
+            self._set_load_state("error", "请先选择一个应用。")
             return
         package_changed = package_name != self.package_name
         if package_changed:
@@ -236,11 +237,29 @@ class AppDetailsPage(QWidget):
         changed = connected != self._device_connected
         self._device_connected = connected
         self.setProperty("deviceConnected", connected)
-        self.grant_btn.setEnabled(connected)
-        self.revoke_btn.setEnabled(connected)
-        self.retry_btn.setEnabled(connected)
+        self._sync_operation_controls()
         if changed:
             self.device_connected_changed.emit(connected)
+
+    def _can_operate(self) -> bool:
+        """详情查询和权限修改复用所属固定设备的选择资格。"""
+        return bool(
+            self.device_ip and self._device_selected and self._device_connected
+            and not self._closing
+        )
+
+    def set_device_selected(self, selected: bool) -> None:
+        """取消选择只封闭新命令，保留已显示的详情和现有任务归属。"""
+        self._device_selected = bool(selected and self.device_ip)
+        if not self._device_selected:
+            self._pending_reload = False
+        self._sync_operation_controls()
+
+    def _sync_operation_controls(self) -> None:
+        allowed = self._can_operate()
+        self.grant_btn.setEnabled(allowed)
+        self.revoke_btn.setEnabled(allowed)
+        self.retry_btn.setEnabled(allowed)
 
     def retry_load(self) -> None:
         if self._dispose_requested or not self.package_name:
@@ -256,16 +275,16 @@ class AppDetailsPage(QWidget):
             self._closing
             or not self.package_name
             or not self.device_ip
-            or not self._device_connected
+            or not self._can_operate()
         ):
-            self._set_load_state("error", "Unable to load details without a device and package.")
+            self._set_load_state("error", "请连接设备并选择应用后重试。")
             return False
         self._pending_reload = False
         self._load_generation += 1
         generation = self._load_generation
         self._pending_load_parts = {"details", "permissions"}
         self._last_load_error = ""
-        self._set_load_state("loading", f"Loading {self.package_name}...")
+        self._set_load_state("loading", f"正在加载 {self.package_name}…")
         self._rw(
             "app_details",
             _generation=generation,
@@ -307,7 +326,7 @@ class AppDetailsPage(QWidget):
         callback(*args)
         if not self._pending_load_parts and self.load_state != "error":
             self._loaded_package = self.package_name
-            self._set_load_state("ready", f"Loaded {self.package_name}")
+            self._set_load_state("ready", f"已加载 {self.package_name}")
 
     def _on_load_part_finished(self, generation: int, part: str) -> None:
         if generation != self._load_generation or self._closing:
@@ -315,7 +334,8 @@ class AppDetailsPage(QWidget):
         if part not in self._pending_load_parts:
             return
         self._pending_load_parts.discard(part)
-        message = self._last_load_error or f"Unable to load {part} for {self.package_name}."
+        part_text = "权限" if part == "permissions" else "详情"
+        message = self._last_load_error or f"无法加载 {self.package_name} 的{part_text}。"
         self._set_load_state("error", message)
 
     def _on_worker_log(self, generation: int, message: str) -> None:
@@ -332,7 +352,7 @@ class AppDetailsPage(QWidget):
         self.load_state = state
         self.setProperty("loadState", state)
         is_error = state == "error"
-        self.load_error_label.setText(message or "Unable to load application details.")
+        self.load_error_label.setText(message or "无法加载应用详情。")
         self.load_error_label.setVisible(is_error)
         self.retry_btn.setVisible(is_error)
         self.load_state_changed.emit(state, message)
@@ -356,12 +376,12 @@ class AppDetailsPage(QWidget):
 
         fill(self.declared_list, declared, checkable=False)
         fill(self.requested_list, requested)
-        fill(self.runtime_list, runtime, lambda r: f"{r[0]} (Granted: {r[1]})")
+        fill(self.runtime_list, runtime, lambda r: f"{r[0]} (已授权：{'是' if r[1] else '否'})")
 
     def _mp(self, action):
-        if not self._device_connected:
+        if not self._can_operate():
             self.log_message.emit(
-                "Device offline — reconnect it before changing application permissions."
+                "请在顶部设备栏勾选当前在线设备后修改权限。"
             )
             return
         rc = []
@@ -380,8 +400,8 @@ class AppDetailsPage(QWidget):
         if not sel:
             FluentMessageBox.warning(
                 self,
-                "No Selection",
-                f"No permissions selected to {action}.",
+                "未选择权限",
+                "请先选择要授权或撤销的权限。",
             )
             return
         for perm in sel:
@@ -394,7 +414,7 @@ class AppDetailsPage(QWidget):
             )
 
     def _rw(self, op, *, _generation=None, _finished_part=None, **kw):
-        if self._closing or not self._device_connected:
+        if not self._can_operate():
             return None
         generation = self._load_generation if _generation is None else int(_generation)
         signal_handlers = {}

@@ -24,13 +24,13 @@ FALLBACK_RE = re.compile(r"\b([VDIWEAFS])/[^\s:]+")
 
 LEVEL_ORDER = {"V": 0, "D": 1, "I": 2, "W": 3, "E": 4, "F": 5, "S": 6}
 LEVEL_LABELS = {
-    "V": "Verbose+",
-    "D": "Debug+",
-    "I": "Info+",
-    "W": "Warning+",
-    "E": "Error+",
-    "F": "Fatal",
-    "S": "Silent",
+    "V": "详细及以上",
+    "D": "调试及以上",
+    "I": "信息及以上",
+    "W": "警告及以上",
+    "E": "错误及以上",
+    "F": "严重错误",
+    "S": "静默",
 }
 
 
@@ -107,7 +107,7 @@ class LogcatWorker(QThread):
             try:
                 requested = normalize_android_package(requested)
             except ValueError:
-                self.status_changed.emit("Invalid package name for logcat filter")
+                self.status_changed.emit("包名格式无效，请输入有效包名后按 Enter")
                 return False
         with self._package_lock:
             self.package = requested
@@ -211,7 +211,7 @@ class LogcatWorker(QThread):
                     package,
                     generation,
                     frozenset(),
-                    "Logcat running; showing all device logs",
+                    "正在采集，显示全部设备日志",
                 )
             return
         try:
@@ -240,7 +240,7 @@ class LogcatWorker(QThread):
                 package,
                 generation,
                 pids,
-                "Logcat running; package PID lookup failed, retrying",
+                "应用进程查询失败，正在重试；过滤期间不会显示其他应用日志",
             )
         elif pids:
             self._publish_filter_status(
@@ -248,7 +248,7 @@ class LogcatWorker(QThread):
                 package,
                 generation,
                 pids,
-                f"Logcat running; package filter active ({len(pids)} process(es))",
+                f"正在采集 · 应用过滤生效（{len(pids)} 个进程）",
             )
         else:
             self._publish_filter_status(
@@ -256,7 +256,7 @@ class LogcatWorker(QThread):
                 package,
                 generation,
                 pids,
-                "Logcat running; waiting for the selected app process",
+                "正在等待目标应用启动；过滤期间不会显示其他应用日志",
             )
 
     def _refresh_package_loop(self) -> None:
@@ -336,12 +336,12 @@ class LogcatWorker(QThread):
                         LogcatTerminationKind.START_FAILED,
                         error_type="InvalidPackage",
                     )
-                    self.status_changed.emit("Invalid package name for logcat filter")
+                    self.status_changed.emit("包名格式无效，请输入有效包名后按 Enter")
                     return
                 with self._package_lock:
                     if self.package == package:
                         self.package = normalized
-            self.status_changed.emit("Starting logcat...")
+            self.status_changed.emit("正在启动日志采集…")
             with self._launch_lock:
                 if self._stop_event.is_set():
                     termination = LogcatTermination(LogcatTerminationKind.CANCELLED)
@@ -366,7 +366,7 @@ class LogcatWorker(QThread):
                 # 在 reader 开始消费前先取得初始 PID，避免启动瞬间把目标日志当作未知进程丢弃。
                 self._refresh_filter_pids(package, generation)
             else:
-                self.status_changed.emit("Logcat running")
+                self.status_changed.emit("正在采集")
             self._reader_thread = threading.Thread(
                 target=self._read_stdout,
                 args=(stdout, raw_lines, reader_done),
@@ -442,7 +442,7 @@ class LogcatWorker(QThread):
                 ),
                 error_type=type(exc).__name__,
             )
-            self.status_changed.emit("Logcat could not continue")
+            self.status_changed.emit("日志采集无法继续，请检查设备连接后重试")
         finally:
             try:
                 if termination is None:
@@ -560,7 +560,7 @@ class CurrentPackageWorker(QThread):
             if result.get("success") and result.get("package_name"):
                 self.package_ready.emit(str(result["package_name"]))
             else:
-                self.status_changed.emit("No foreground app found")
+                self.status_changed.emit("未找到前台应用，请在设备上打开应用后重试")
         except Exception as e:
             if not self.isInterruptionRequested():
-                self.status_changed.emit(f"Error: {e}")
+                self.status_changed.emit(f"查询前台应用失败：{e}")

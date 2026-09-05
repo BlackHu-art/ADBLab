@@ -356,7 +356,7 @@ class MobilePerfRunner:
         return self.expected_result_root(config)
 
     def stop(self, timeout: float = REPORT_SHUTDOWN_TIMEOUT_SECONDS) -> int | None:
-        """请求生成报告并等待退出，超过报告时限后强制停止进程。"""
+        """请求生成报告并等待退出；未确认退出时保留运行状态，允许后续重试。"""
         with self._state_lock:
             context = self._active_context
             proc = context.proc if context is not None else self._proc
@@ -375,19 +375,19 @@ class MobilePerfRunner:
         else:
             code = proc.returncode
             self._release_process_tracking(context, process_key, timeout=0)
-        if context is not None:
+        if context is not None and code is not None:
             context.exit_code = code
         with self._state_lock:
-            if context is None or self._active_context is context:
+            if code is not None and (context is None or self._active_context is context):
                 self._last_exit_code = code
                 self._proc = None
         self._join_context_readers(context, timeout=1.0)
         if context is not None:
             self._maybe_notify_finished(context)
-        if context is None:
+        if context is None and code is not None:
             self._cleanup_config_dir()
         self._safe_write_diagnostic(
-            f"MobilePerf worker stopped: exit_code={code}",
+            f"MobilePerf stop finished: exit_code={code}",
             context,
         )
         return code
@@ -667,19 +667,19 @@ class MobilePerfRunner:
         *,
         timeout: float,
     ) -> int | None:
-        """按运行代次解除进程跟踪，避免旧停止流程命中新进程。"""
+        """按运行代次串行停止；只有确认退出后才标记跟踪已释放。"""
         if context is None:
             return self._process_runner.stop(process_key, timeout=timeout)
         with context.tracking_lock:
             if context.process_tracking_released:
                 return context.exit_code
-            context.process_tracking_released = True
-        try:
-            return self._process_runner.stop(process_key, timeout=timeout)
-        except Exception:
-            with context.tracking_lock:
-                context.process_tracking_released = False
-            raise
+            code = self._process_runner.stop(process_key, timeout=timeout)
+            if code is None:
+                code = context.proc.poll()
+            if code is not None:
+                context.exit_code = code
+                context.process_tracking_released = True
+            return code
 
     def _join_context_readers(
         self,

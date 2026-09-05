@@ -9,9 +9,25 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QRectF, QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QColor, QFontDatabase, QLinearGradient, QPainter, QPainterPath
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtCore import QRectF, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFontDatabase,
+    QLinearGradient,
+    QPainter,
+    QPainterPath,
+    QPalette,
+    QPen,
+)
+from PySide6.QtWidgets import (
+    QBoxLayout,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -36,12 +52,19 @@ from qfluentwidgets import (
     TitleLabel,
     ToolButton,
     isDarkTheme,
+    setCustomStyleSheet,
 )
 
-from core.settings_manager import AppSettings
+from core.settings_manager import AppSettings, normalise_ui_scale
 from gui.features import AboutPanel
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
-from gui.styles import BaseStyles
+from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import apply_font_role, apply_label_role
+from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.setting_card_layout import (
+    SettingsCardPresentation as _SettingsCardPresentation,
+)
+from gui.widgets.setting_card_layout import apply_setting_text_style
 
 
 class PageHeader(QWidget):
@@ -49,12 +72,14 @@ class PageHeader(QWidget):
 
     def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(88)
+        self.setMinimumHeight(88)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
         self.title_label = TitleLabel(title, self)
         self.subtitle_label = CaptionLabel(subtitle, self)
         self.theme_button = ToolButton(FluentIcon.CONSTRACT, self)
         self.sync_theme_action()
         for label in (self.title_label, self.subtitle_label):
+            label.setWordWrap(True)
             label.setMinimumWidth(0)
             label.setSizePolicy(
                 QSizePolicy.Policy.Ignored,
@@ -73,23 +98,54 @@ class PageHeader(QWidget):
         actions.addWidget(self.theme_button)
         self.actions_layout = actions
 
-        layout = QHBoxLayout(self)
+        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
         layout.setContentsMargins(32, 14, 32, 12)
         layout.setSpacing(16)
         layout.addLayout(text_layout, 1)
         layout.addLayout(actions)
+        self._header_layout = layout
+        BaseStyles.ui_font_changed.connect(self._sync_font)
+        self._sync_font()
+
+    def _sync_font(self, _config=None) -> None:
+        """页头参与全局字号设置，换行后的高度由布局而非固定像素决定。"""
+
+        apply_label_role(self.title_label, FontRole.TITLE)
+        apply_label_role(self.subtitle_label, FontRole.UI_SMALL)
+        self._sync_layout_direction()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_layout_direction()
+
+    def _sync_layout_direction(self) -> None:
+        """在标题与动作无法并排时把动作放在下一行，保留完整文字和焦点。"""
+
+        margins = self._header_layout.contentsMargins()
+        needed = (
+            self.title_label.fontMetrics().horizontalAdvance(self.title_label.text())
+            + self.actions_layout.sizeHint().width()
+            + margins.left() + margins.right() + self._header_layout.spacing()
+        )
+        direction = (
+            QBoxLayout.Direction.TopToBottom
+            if self.width() < needed
+            else QBoxLayout.Direction.LeftToRight
+        )
+        self._header_layout.setDirection(direction)
+        self.updateGeometry()
 
     def set_subtitle(self, text: str) -> None:
         """更新页面位置说明，为内嵌功能切换提供即时反馈。"""
 
         self.subtitle_label.setText(text)
-        self.subtitle_label.setToolTip(text)
+        self.updateGeometry()
 
     def set_title(self, text: str) -> None:
-        """更新当前功能标题，使左侧叶节点与内容标题保持一致。"""
+        """更新页面标题，使工作区导航与内容位置保持一致。"""
 
         self.title_label.setText(text)
-        self.title_label.setToolTip(text)
+        self._sync_layout_direction()
 
     def add_action_widget(self, widget: QWidget) -> None:
         """把页面状态或动作放到主题按钮之前，避免重复构建业务页头。"""
@@ -97,6 +153,7 @@ class PageHeader(QWidget):
         widget.setParent(self)
         self.actions_layout.insertWidget(self.actions_layout.count() - 1, widget)
         widget.show()
+        self._sync_layout_direction()
 
     def sync_theme_action(self) -> None:
         """按已解析主题显示切换目标，避免固定图标造成动作语义含糊。"""
@@ -181,7 +238,10 @@ class ActionCard(CardWidget):
     ) -> None:
         super().__init__(parent)
         self._callback = callback
-        self.setFixedSize(300, 92)
+        self._preferred_width = 300
+        self.setMinimumWidth(0)
+        self.setMinimumHeight(92)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAccessibleName(title)
@@ -191,7 +251,13 @@ class ActionCard(CardWidget):
         icon_widget.setFixedSize(36, 36)
         title_label = StrongBodyLabel(title, self)
         content_label = CaptionLabel(content, self)
+        self.title_label = title_label
+        self.content_label = content_label
+        title_label.setWordWrap(True)
         content_label.setWordWrap(True)
+        for label in (title_label, content_label):
+            label.setMinimumWidth(0)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         text_layout = QVBoxLayout()
         text_layout.setContentsMargins(0, 0, 12, 0)
@@ -205,6 +271,58 @@ class ActionCard(CardWidget):
         layout.addWidget(icon_widget)
         layout.addLayout(text_layout, 1)
         self.activated.connect(callback)
+        BaseStyles.ui_font_changed.connect(self._sync_font)
+        self._sync_font()
+
+    def _sync_font(self, _config=None) -> None:
+        """快捷卡片跟随界面字体，并重新测量标题与说明的换行高度。"""
+
+        apply_label_role(self.title_label, FontRole.UI, bold=True)
+        apply_label_role(self.content_label, FontRole.UI_SMALL)
+        self.updateGeometry()
+
+    def set_preferred_width(self, width: int) -> None:
+        """由分组统一分配行宽；不锁定最小宽度，允许极窄窗口继续收缩。"""
+
+        width = max(1, width)
+        if width != self._preferred_width:
+            self._preferred_width = width
+            self.updateGeometry()
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        text_width = max(1, width - 92)
+        text_height = sum(
+            max(label.fontMetrics().height(), label.heightForWidth(text_width))
+            for label in (self.title_label, self.content_label)
+        )
+        return max(92, text_height + 28)
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._preferred_width, self.heightForWidth(self._preferred_width))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 92)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if self.hasFocus():
+            # CardWidget 自行绘制边框，QSS 的 :focus 不会覆盖它；显式呈现键盘位置。
+            painter = QPainter(self)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(QPen(QColor(BaseStyles.color("BORDER_FOCUS")), 2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(self.rect().adjusted(3, 3, -3, -3), 4, 4)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.update()
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        self.update()
 
     def mouseReleaseEvent(self, event) -> None:
         super().mouseReleaseEvent(event)
@@ -225,6 +343,9 @@ class ActionCardView(QWidget):
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._cards: list[ActionCard] = []
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.title_label = StrongBodyLabel(title, self)
         self.flow_layout = FlowLayout()
         self.flow_layout.setContentsMargins(0, 0, 0, 0)
@@ -236,12 +357,49 @@ class ActionCardView(QWidget):
         layout.setSpacing(12)
         layout.addWidget(self.title_label)
         layout.addLayout(self.flow_layout)
+        BaseStyles.ui_font_changed.connect(self._sync_font)
+        self._sync_font()
+
+    def _sync_font(self, _config=None) -> None:
+        apply_label_role(self.title_label, FontRole.UI, bold=True)
+        self._sync_card_widths()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._sync_card_widths()
+
+    def sizeHint(self) -> QSize:
+        """按当前行宽报告高度，避免父滚动容器用单列估算锁住多余空白。"""
+
+        layout = self.layout()
+        if layout is None:
+            return super().sizeHint()
+        width = max(1, self.width())
+        return QSize(width, layout.heightForWidth(width))
+
+    def _sync_card_widths(self) -> None:
+        """让同一行均分可用宽度，保留卡片对象、业务回调和键盘顺序。"""
+
+        layout = self.layout()
+        if layout is None:
+            return
+        margins = layout.contentsMargins()
+        width = max(1, self.width() - margins.left() - margins.right() - 1)
+        spacing = self.flow_layout.horizontalSpacing()
+        columns = min(3, max(1, (width + spacing) // (300 + spacing)))
+        card_width = max(1, (width - (columns - 1) * spacing) // columns)
+        for card in self._cards:
+            card.set_preferred_width(card_width)
+        self.flow_layout.invalidate()
+        self.updateGeometry()
 
     def add_card(
         self, icon, title: str, content: str, callback: Callable[[], object]
     ) -> ActionCard:
         card = ActionCard(icon, title, content, callback, self)
+        self._cards.append(card)
         self.flow_layout.addWidget(card)
+        self._sync_card_widths()
         return card
 
 
@@ -250,22 +408,35 @@ class BannerWidget(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(204)
+        self.setMinimumHeight(168)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         title = TitleLabel("ADBLab", self)
         title.setStyleSheet("font-size: 42px; font-weight: 600; background: transparent;")
         subtitle = BodyLabel("Android 设备实验室", self)
         description = CaptionLabel(
-            "选择设备后，在三个任务领域完成设备控制、应用自动化和系统诊断。", self
+            "选择设备后，从左侧直接打开文件、远程控制、应用管理和诊断工具。", self
         )
+        self._subtitle_label = subtitle
+        self._description_label = description
+        description.setWordWrap(True)
+        description.setMinimumWidth(0)
+        description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 24)
+        layout.setContentsMargins(32, 20, 32, 20)
         layout.setSpacing(8)
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(description)
         layout.addStretch(1)
+        BaseStyles.ui_font_changed.connect(self._sync_font)
+        self._sync_font()
+
+    def _sync_font(self, _config=None) -> None:
+        apply_label_role(self._subtitle_label, FontRole.UI)
+        apply_label_role(self._description_label, FontRole.UI_SMALL)
+        self.updateGeometry()
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
@@ -285,8 +456,11 @@ class BannerWidget(QWidget):
         painter.fillPath(path, gradient)
         # 参考 Gallery 把横幅插画作为绘制层，不让它参与文字布局；窄屏隐藏，
         # 避免大字号把首页撑出水平滚动条。
-        if self.width() >= 600:
-            FluentIcon.PHONE.render(
+        description_width = self._description_label.fontMetrics().horizontalAdvance(
+            self._description_label.text()
+        )
+        if self.width() >= max(600, description_width + 228):
+            DEVICE_ICON.render(
                 painter,
                 QRectF(self.width() - 164, (self.height() - 112) / 2, 112, 112),
             )
@@ -305,11 +479,12 @@ class DeviceContextCard(CardWidget):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
-        icon = IconWidget(FluentIcon.PHONE, self)
+        icon = IconWidget(DEVICE_ICON, self)
         icon.setFixedSize(36, 36)
         self.title_label = StrongBodyLabel("操作设备", self)
         self.summary_label = BodyLabel("尚未选择设备", self)
         self.detail_label = CaptionLabel("先选择设备，再执行应用、系统或远程操作", self)
+        self.summary_label.setWordWrap(True)
         self.detail_label.setWordWrap(True)
         for label in (self.title_label, self.summary_label, self.detail_label):
             label.setMinimumWidth(0)
@@ -323,7 +498,7 @@ class DeviceContextCard(CardWidget):
         self.refresh_button.setToolTip("重新扫描已连接的 Android 设备")
         self.refresh_button.setAccessibleName("刷新设备")
         self.manage_button = PrimaryPushButton(self)
-        self.manage_button.setIcon(FluentIcon.PHONE)
+        self.manage_button.setIcon(DEVICE_ICON)
         self.manage_button.setText("选择设备")
         self.manage_button.setToolTip("打开设备页并选择本次操作目标")
         self.manage_button.setAccessibleName("选择设备")
@@ -347,6 +522,39 @@ class DeviceContextCard(CardWidget):
         self.manage_button.clicked.connect(self.manageRequested)
         self.refresh_button.clicked.connect(self.refreshRequested)
         self._manage_text = "选择设备"
+        BaseStyles.ui_font_changed.connect(self._sync_font)
+        self._sync_font()
+
+    def _sync_font(self, _config=None) -> None:
+        apply_label_role(self.title_label, FontRole.UI, bold=True)
+        apply_label_role(self.summary_label, FontRole.UI)
+        apply_label_role(self.detail_label, FontRole.UI_SMALL)
+        for button in (self.refresh_button, self.manage_button):
+            apply_font_role(button, FontRole.UI, ensure_height=True)
+        self._sync_responsive_state()
+        self.updateGeometry()
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        actions = (self.badge, self.refresh_button, self.manage_button)
+        action_width = sum(
+            action.sizeHint().width() + 14
+            for action in actions if not action.isHidden()
+        )
+        text_width = max(1, width - 84 - action_width)
+        text_height = sum(
+            max(label.fontMetrics().height(), label.heightForWidth(text_width))
+            for label in (self.title_label, self.summary_label, self.detail_label)
+        )
+        return max(96, text_height + 28)
+
+    def sizeHint(self) -> QSize:
+        return QSize(600, self.heightForWidth(max(1, self.width())))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, 96)
 
     def set_context(
         self,
@@ -404,17 +612,19 @@ class DeviceContextCard(CardWidget):
         self._sync_responsive_state()
 
     def _sync_responsive_state(self) -> None:
-        """窄屏保留设备语义与主动作，把次要控件收进图标表达。"""
+        """窄屏保留设备语义与短文本主动作，折叠次要状态。"""
 
         width = self.width()
         compact = width < 620
         self.refresh_button.setVisible(width >= 720)
         self.badge.setVisible(not compact)
-        self.manage_button.setText("" if compact else self._manage_text)
+        compact_text = "连接" if self._manage_text == "连接设备" else "选择"
+        self.manage_button.setText(compact_text if compact else self._manage_text)
         self.manage_button.setAccessibleName(self._manage_text)
         if compact:
-            height = max(36, self.manage_button.sizeHint().height())
-            self.manage_button.setFixedWidth(height)
+            # PushButton 的图标位置依赖样式最小宽度；压成正方形会把图标绘制到边界外。
+            # 保留短动词并尊重最小尺寸，使窄屏主动作仍能直接辨认。
+            self.manage_button.setFixedWidth(self.manage_button.minimumSizeHint().width())
         else:
             self.manage_button.setMinimumWidth(0)
             self.manage_button.setMaximumWidth(16777215)
@@ -503,6 +713,7 @@ class WorkspaceAreaPage(QWidget):
             raise ValueError("section_key must not be empty")
         self._base_title = title
         self._base_subtitle = subtitle
+        self._route_presentations: dict[str, tuple[str, str]] = {}
         self._feature_host = feature_host
         self._current_route = WorkspaceRoute(self.section_key)
         self._queued_route: WorkspaceRoute | None = None
@@ -534,6 +745,13 @@ class WorkspaceAreaPage(QWidget):
     def current_route(self) -> WorkspaceRoute:
         return self._current_route
 
+    def set_route_presentation(self, feature: str, title: str, subtitle: str) -> None:
+        """一级导航直接展示具体功能标题，物理宿主仅作为内部资源容器。"""
+
+        self._route_presentations[feature] = (title, subtitle)
+        if self._current_route.feature == feature:
+            self._set_route_presentation(self._current_route)
+
     def supports_route(self, route: WorkspaceRoute) -> bool:
         """只读判断路由是否属于当前领域及其已登记功能。"""
 
@@ -549,6 +767,10 @@ class WorkspaceAreaPage(QWidget):
         if not self.supports_route(route):
             return False
         if self._feature_host is not None:
+            route = WorkspaceRoute(
+                route.section, self._feature_host.canonical_feature(route.feature),
+                route.device_id, route.payload,
+            )
             if not self._active:
                 queued_route = route
                 pending_route = self._feature_host.pending_route
@@ -613,27 +835,30 @@ class WorkspaceAreaPage(QWidget):
 
         self._current_route = self._stable_route(route)
         host = self._feature_host
+        presentation = self._route_presentations.get(route.feature)
+        if presentation is not None:
+            self.header.set_title(presentation[0])
+            self.header.set_subtitle(presentation[1])
+            return
+        title = self._base_title
         if route.feature == "overview":
-            title = self._base_title
             subtitle = self._base_subtitle
         elif host is not None and host.is_overview_feature(route.feature):
             label = host.feature_label(route.feature) or route.feature
-            title = label
             if host.feature_requires_device(route.feature):
                 context = "会话设备已选择" if route.device_id else "请选择会话设备"
             else:
-                context = "使用设备页中勾选的批量操作目标"
-            subtitle = f"{self._base_title} · {context}"
+                context = "使用顶部设备栏中勾选的操作目标"
+            subtitle = f"{label} · {context}"
         else:
             label = (
                 host.feature_label(route.feature) if host is not None else ""
             ) or route.feature
-            title = label
             if host is not None and host.feature_requires_device(route.feature):
                 context = "会话设备已选择" if route.device_id else "请选择会话设备"
-                subtitle = f"{self._base_title} · {context}"
+                subtitle = f"{label} · {context}"
             else:
-                subtitle = self._base_title
+                subtitle = label
         self.header.set_title(title)
         self.header.set_subtitle(subtitle)
 
@@ -670,6 +895,7 @@ class HomePage(ScrollArea):
         context_layout.setContentsMargins(32, 0, 32, 0)
         context_layout.addWidget(self.device_context)
         layout.addWidget(context_host)
+        context_host.setVisible(not hasattr(frame, "_global_device_bar"))
 
         tools = ActionCardView("常用工具", view)
         self.tool_cards: dict[str, ActionCard] = {}
@@ -724,12 +950,12 @@ class HomePage(ScrollArea):
         for key, icon, title, content in (
             (
                 "devices",
-                FluentIcon.PHONE,
-                "设备与控制",
-                "连接设备、管理文件并使用远程控制",
+                DEVICE_ICON,
+                "设备概览",
+                "查看连接状态，选择设备并打开工具",
             ),
-            ("apps", FluentIcon.APPLICATION, "应用与自动化", "应用、录屏、Monkey 与包操作"),
-            ("system", FluentIcon.DEVELOPER_TOOLS, "系统与诊断", "系统信息、设置和调试工具"),
+            ("apps", FluentIcon.CAMERA, "截图与诊断", "截图录屏、应用诊断与报告收集"),
+            ("system", FluentIcon.DEVELOPER_TOOLS, "系统工具", "系统命令、设备配置与网络操作"),
         ):
             workspace.add_card(
                 icon,
@@ -754,6 +980,31 @@ class HomePage(ScrollArea):
         )
 
 
+class _SettingsPathLabel(QLabel):
+    """长路径中间省略，完整配置仍由文本、悬停提示和辅助技术读取。"""
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+
+    def heightForWidth(self, _width: int) -> int:
+        return self.fontMetrics().height()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.WindowText))
+        text = self.fontMetrics().elidedText(
+            self.text(), Qt.TextElideMode.ElideMiddle, self.contentsRect().width(),
+        )
+        painter.drawText(
+            self.contentsRect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            text,
+        )
+
+
+
+
 class SettingsPage(ScrollArea):
     """使用参考项目 SettingCardGroup 体系重写的设置页。"""
 
@@ -763,12 +1014,23 @@ class SettingsPage(ScrollArea):
         "Dark": "深色",
     }
     THEME_MODES = {label: mode for mode, label in THEME_LABELS.items()}
+    SCALE_LABELS = {
+        "Auto": "跟随系统", 1.0: "100%", 1.25: "125%", 1.5: "150%",
+        1.75: "175%", 2.0: "200%",
+    }
+    SCALE_VALUES = {label: value for value, label in SCALE_LABELS.items()}
 
     def __init__(self, frame, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._frame = frame
         self._settings = AppSettings.instance()
         self.setObjectName("settingsPage")
+        self.setFrameShape(ScrollArea.Shape.NoFrame)
+        # Gallery 的固定标题和底部留白与内容使用同一透明表面，避免 Qt 默认
+        # ScrollArea 底色把 viewportMargins 画成两条独立色带。
+        self.setStyleSheet(
+            "#settingsPage, #settingsView { background: transparent; border: none; }"
+        )
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidgetResizable(True)
         self.setViewportMargins(0, 80, 0, 20)
@@ -789,7 +1051,7 @@ class SettingsPage(ScrollArea):
             str(self._settings.get("save_directory", "") or "系统默认目录"),
             general,
         )
-        self.scan_card = SwitchSettingCard(
+        self.scan_card = _LocalizedSwitchSettingCard(
             FluentIcon.SYNC,
             "持续扫描设备",
             "后台定期刷新已连接的 Android 设备",
@@ -801,7 +1063,7 @@ class SettingsPage(ScrollArea):
         self.log_lines_card = ComboSettingCard(
             FluentIcon.SCROLL,
             "日志保留行数",
-            "限制主界面操作日志的最大行数",
+            "限制任务中心运行记录的最大行数",
             ["500", "1000", "2000", "5000", "10000"],
             str(self._settings.get("log_max_lines", 2000)),
             general,
@@ -818,6 +1080,14 @@ class SettingsPage(ScrollArea):
             self.THEME_LABELS.get(theme_mode, "跟随系统"),
             appearance,
         )
+        self.scale_card = ComboSettingCard(
+            FluentIcon.ZOOM,
+            "显示缩放",
+            "调整控件与文字的整体比例，重启应用后生效；窗口布局随宽度自动调整",
+            list(self.SCALE_VALUES),
+            self.SCALE_LABELS[normalise_ui_scale(self._settings.get("ui_scale", "Auto"))],
+            appearance,
+        )
         self.accent_card = AccentColorSettingCard(
             FluentIcon.PALETTE,
             "强调色",
@@ -825,14 +1095,14 @@ class SettingsPage(ScrollArea):
             str(self._settings.get("accent_color", "#0F6CBD")),
             appearance,
         )
-        self.mica_card = SwitchSettingCard(
+        self.mica_card = _LocalizedSwitchSettingCard(
             FluentIcon.TRANSPARENT,
             "Mica 窗口材质",
             "在支持的 Windows 版本上启用 FluentWindow 窗口材质",
             parent=appearance,
         )
         self.mica_card.setChecked(bool(self._settings.get("mica_enabled", True)))
-        self.pin_card = SwitchSettingCard(
+        self.pin_card = _LocalizedSwitchSettingCard(
             FluentIcon.PIN,
             "窗口置顶",
             "让 ADBLab 保持在其他窗口上方",
@@ -843,6 +1113,7 @@ class SettingsPage(ScrollArea):
             card.switchButton.setOnText("开")
             card.switchButton.setOffText("关")
         appearance.addSettingCard(self.theme_card)
+        appearance.addSettingCard(self.scale_card)
         appearance.addSettingCard(self.accent_card)
         appearance.addSettingCard(self.mica_card)
         appearance.addSettingCard(self.pin_card)
@@ -851,7 +1122,9 @@ class SettingsPage(ScrollArea):
         configured_family = str(self._settings.get("font_family", "") or "系统默认")
         installed = set(QFontDatabase.families())
         families = ["系统默认"]
-        for family in ("Segoe UI", "Microsoft YaHei UI", "Arial", configured_family):
+        for family in (
+            "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "Arial", configured_family,
+        ):
             if family != "系统默认" and family in installed and family not in families:
                 families.append(family)
         self.font_family_card = ComboSettingCard(
@@ -864,16 +1137,16 @@ class SettingsPage(ScrollArea):
         )
         self.ui_size_card = ComboSettingCard(
             FluentIcon.FONT_SIZE,
-            "界面字号",
-            "调整界面控件和正文的字号",
+            "界面字号（pt）",
+            "即时调整正文大小；推荐 11 pt，已有字号保持不变",
             [str(value) for value in range(8, 23)],
             str(self._settings.get("ui_font_size", 12)),
             typography,
         )
         self.log_size_card = ComboSettingCard(
             FluentIcon.CODE,
-            "日志字号",
-            "调整等宽日志文字大小",
+            "日志字号（pt）",
+            "即时调整等宽日志文字大小",
             [str(value) for value in range(7, 17)],
             str(self._settings.get("log_font_size", 9)),
             typography,
@@ -892,18 +1165,30 @@ class SettingsPage(ScrollArea):
         )
         application.addSettingCard(self.reset_card)
 
+        maintenance = SettingCardGroup("ADB 维护", view)
+        self.restart_adb_card = PushSettingCard(
+            "重启 ADB", FluentIcon.SYNC, "重启本机 ADB 服务",
+            "设备发现或连接异常时使用，将影响当前设备连接", maintenance,
+        )
+        maintenance.addSettingCard(self.restart_adb_card)
+        self.restart_adb_card.clicked.connect(
+            lambda: frame.left_panel.signals.restart_adb_requested.emit()
+        )
+
         self.about_panel = AboutPanel(view)
 
         self.expand_layout.addWidget(general)
         self.expand_layout.addWidget(appearance)
         self.expand_layout.addWidget(typography)
         self.expand_layout.addWidget(application)
+        self.expand_layout.addWidget(maintenance)
         self.expand_layout.addWidget(self.about_panel)
         self.setWidget(view)
 
         self.save_card.clicked.connect(self._pick_save_directory)
         self.scan_card.checkedChanged.connect(self._set_continuous_scan)
         self.theme_card.valueChanged.connect(self._set_theme)
+        self.scale_card.valueChanged.connect(self._set_ui_scale)
         self.accent_card.colorChanged.connect(self._set_accent_color)
         self.mica_card.checkedChanged.connect(self._set_mica_enabled)
         self.pin_card.checkedChanged.connect(frame.set_always_on_top)
@@ -912,11 +1197,104 @@ class SettingsPage(ScrollArea):
         self.ui_size_card.valueChanged.connect(self._apply_typography)
         self.log_size_card.valueChanged.connect(self._apply_typography)
         self.reset_card.clicked.connect(self._reset_settings)
+        self._setting_groups = (general, appearance, typography, application, maintenance)
+        original_path = self.save_card.contentLabel
+        self.save_card.vBoxLayout.removeWidget(original_path)
+        self.save_card.contentLabel = _SettingsPathLabel(self.save_card)
+        self.save_card.contentLabel.setObjectName("contentLabel")
+        self.save_card.contentLabel.setText(original_path.text())
+        original_path.hide()
+        original_path.deleteLater()
+        self._card_presentations = [
+            _SettingsCardPresentation(card, control)
+            for card, control in (
+                (self.save_card, self.save_card.button),
+                (self.scan_card, self.scan_card.switchButton),
+                (self.log_lines_card, self.log_lines_card.combo_box),
+                (self.theme_card, self.theme_card.combo_box),
+                (self.scale_card, self.scale_card.combo_box),
+                (self.accent_card, self.accent_card.color_button),
+                (self.mica_card, self.mica_card.switchButton),
+                (self.pin_card, self.pin_card.switchButton),
+                (self.font_family_card, self.font_family_card.combo_box),
+                (self.ui_size_card, self.ui_size_card.combo_box),
+                (self.log_size_card, self.log_size_card.combo_box),
+                (self.reset_card, self.reset_card.button),
+                (self.restart_adb_card, self.restart_adb_card.button),
+            )
+        ]
+        BaseStyles.ui_font_changed.connect(self._refresh_typography)
+        BaseStyles.theme_changed.connect(self._refresh_typography)
+        self._refresh_typography()
+
+    def _refresh_typography(self, _config=None) -> None:
+        """设置字号本身也可即时阅读；仅更新呈现，不触发任何配置写入。"""
+
+        apply_label_role(self.title_label, FontRole.TITLE)
+        self.title_label.adjustSize()
+        self.setViewportMargins(0, self.title_label.height() + 52, 0, 20)
+        for group in self._setting_groups:
+            apply_label_role(group.titleLabel, FontRole.UI, bold=True)
+            self._set_setting_font(group.titleLabel, FontRole.UI, bold=True)
+            group.titleLabel.adjustSize()
+        for presentation in self._card_presentations:
+            card, control = presentation.card, presentation.control
+            apply_label_role(card.titleLabel, FontRole.UI)
+            apply_label_role(card.contentLabel, FontRole.UI_SMALL)
+            self._set_setting_font(card.titleLabel, FontRole.UI)
+            self._set_setting_font(card.contentLabel, FontRole.UI_SMALL)
+            control.setMaximumHeight(16777215)
+            apply_font_role(control, FontRole.UI)
+            if type(control) is QPushButton:
+                self._set_setting_font(control, FontRole.UI)
+            elif isinstance(control, ComboBox):
+                font = BaseStyles.font_for_role(FontRole.UI)
+                family = font.family().replace("'", "\\'")
+                rule = f"ComboBox {{ font-family: '{family}'; font-size: {font.pointSizeF()}pt; }}"
+                setCustomStyleSheet(control, rule, rule)
+            for child in control.findChildren(QWidget):
+                child.setFont(control.font())
+                if isinstance(child, QLabel):
+                    self._set_setting_font(child, FontRole.UI)
+            control.ensurePolished()
+            control.setMinimumHeight(max(32, control.fontMetrics().height() + 14))
+        self._reflow_settings()
+
+    @staticmethod
+    def _set_setting_font(widget: QWidget, role: FontRole, *, bold: bool = False) -> None:
+        """局部覆盖 SettingCard 给普通 QLabel 固定的像素字号，保留其主题颜色。"""
+
+        apply_setting_text_style(widget, role, bold=bold)
+
+    def _reflow_settings(self) -> None:
+        """ExpandLayout 使用当前控件高度，先测量卡片再更新分组与页面总高。"""
+
+        if not hasattr(self, "_card_presentations"):
+            return
+        width = max(1, self.viewport().width() - 72)
+        for presentation in self._card_presentations:
+            presentation.reflow(width)
+        for group in self._setting_groups:
+            cards = [item.card for item in self._card_presentations if item.card.parent() is group]
+            height = sum(card.height() for card in cards) + max(0, len(cards) - 1) * 2
+            group.setFixedHeight(height + group.titleLabel.sizeHint().height() + 12)
+        self.about_panel.reflow(width)
+        view = self.widget()
+        if view is not None:
+            view.resize(
+                self.viewport().width(),
+                self.expand_layout.heightForWidth(self.viewport().width()) + 10,
+            )
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow_settings()
 
     def _pick_save_directory(self) -> None:
         self._frame._on_save_path_clicked()
         value = str(self._settings.get("save_directory", "") or "系统默认目录")
         self.save_card.setContent(value)
+        self._reflow_settings()
 
     def _set_continuous_scan(self, checked: bool) -> None:
         self._settings.set("continuous_device_scan", bool(checked))
@@ -925,6 +1303,11 @@ class SettingsPage(ScrollArea):
     def _set_theme(self, label: str) -> None:
         mode = self.THEME_MODES.get(label, "System")
         BaseStyles.switch_theme(mode)
+
+    def _set_ui_scale(self, label: str) -> None:
+        """只保存下次启动比例，当前窗口继续使用创建 QApplication 时的 DPI。"""
+
+        self._settings.set("ui_scale", self.SCALE_VALUES[label])
 
     def _set_accent_color(self, color: QColor) -> None:
         value = BaseStyles.set_accent_color(color.name())
@@ -960,6 +1343,7 @@ class SettingsPage(ScrollArea):
         blocked_cards = (
             self.scan_card,
             self.theme_card,
+            self.scale_card,
             self.accent_card,
             self.mica_card,
             self.pin_card,
@@ -973,6 +1357,9 @@ class SettingsPage(ScrollArea):
         theme = str(self._settings.get("theme", "System"))
         self.theme_card.combo_box.setCurrentText(
             self.THEME_LABELS.get(theme, "跟随系统")
+        )
+        self.scale_card.combo_box.setCurrentText(
+            self.SCALE_LABELS[normalise_ui_scale(self._settings.get("ui_scale", "Auto"))]
         )
         self.accent_card.set_color(
             str(self._settings.get("accent_color", "#0F6CBD"))
@@ -1010,6 +1397,16 @@ class SettingsPage(ScrollArea):
         )
         self._frame.set_always_on_top(bool(self._settings.get("always_on_top", False)))
         self._frame.restore_default_window_size()
+
+
+class _LocalizedSwitchSettingCard(SwitchSettingCard):
+    """保持原生设置开关的信号契约，更新状态后仍使用中文标签。"""
+
+    def setValue(self, isChecked: bool) -> None:
+        # 上游 setValue 会覆盖 SwitchButton.onText/offText；恢复默认和手动
+        # 切换都会经过此边界，因此在原生更新后统一还原中文并重新度量。
+        super().setValue(isChecked)
+        self.switchButton.setText("开" if isChecked else "关")
 
 
 class ComboSettingCard(SettingCard):

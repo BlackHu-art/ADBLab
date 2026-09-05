@@ -1,96 +1,145 @@
-"""提供跟随主题变化的 SVG 图标加载器。
+"""将操作语义映射到 Fluent 图标，补充组件库缺少的设备轮廓。
 
-每次绘制都会把当前主题色注入 SVG 的 currentColor。用法：
-    from gui.styles.icon_loader import get_themed_icon
-
-    btn.setIcon(get_themed_icon("gear.svg"))
-    dlg.setWindowIcon(get_themed_icon("gear.svg"))
-
-主题变化后图标颜色自动更新，不需要逐个刷新控件。
+Fluent 按钮直接使用 FluentIcon，保留强调、禁用和选中状态的原生绘制；
+Qt 窗口与菜单通过 qicon() 使用相同图标和主题。
 """
 
-from __future__ import annotations
+from pathlib import Path
 
-from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QIcon, QIconEngine, QPainter, QPixmap
-from PySide6.QtSvg import QSvgRenderer
+from PySide6.QtCore import QRectF
+from PySide6.QtGui import QColor, QIcon
+from qfluentwidgets import FluentIcon, FluentIconBase, Theme
+from qfluentwidgets.common.icon import SvgIconEngine, getIconColor
 
-from gui.styles.theme import _tc
 from utils.resource_path import resource_path
 
-# 原始 SVG 内容与主题无关，可跨主题复用缓存。
-_SVG: dict[str, str] = {}
+
+class DeviceIcon(FluentIconBase):
+    """通过 Fluent 扩展接口复用已授权的手机轮廓，避免用电话听筒表示设备。"""
+
+    def path(self, theme=Theme.AUTO) -> str:
+        """资源定位同时支持源码与打包后的解压目录。"""
+        return resource_path("resources/icons/device-mobile.svg")
+
+    def icon(self, theme=Theme.AUTO, color: QColor | str | None = None) -> QIcon:
+        """颜色由当前主题或调用方确定，禁用和选中状态仍由 Fluent 引擎处理。"""
+        svg = Path(self.path(theme)).read_text(encoding="utf-8")
+        tint = QColor(color if color is not None else getIconColor(theme)).name()
+        return QIcon(SvgIconEngine(svg.replace("currentColor", tint)))
+
+    def render(self, painter, rect, theme=Theme.AUTO, indexes=None, **attributes):
+        """导航与图标控件直接绘制时使用同一份主题着色。"""
+        color = attributes.get("fill") or attributes.get("stroke")
+        self.icon(theme, color).paint(painter, QRectF(rect).toRect())
 
 
-def _load_svg(name: str) -> str:
-    cached = _SVG.get(name)
-    if cached is not None:
-        return cached
-    path = resource_path(f"resources/icons/{name}")
-    try:
-        with open(path, encoding="utf-8") as fh:
-            _SVG[name] = fh.read()
-    except FileNotFoundError:
-        _SVG[name] = ""
-    return _SVG[name]
+DEVICE_ICON = DeviceIcon()
+
+# 旧文件名只作兼容键；多个文件类型可复用参考组件中的同一语义图标。
+_FLUENT_ICONS = {
+    name: icon
+    for icon, names in (
+        (FluentIcon.APPLICATION, ("android-logo.svg", "target.svg", "square.svg")),
+        (FluentIcon.ZIP_FOLDER, ("archive.svg", "file-archive.svg", "file-zip.svg")),
+        (FluentIcon.ROTATE, ("arrow-counter-clockwise.svg", "device-rotate.svg")),
+        (FluentIcon.DOWN, ("arrow-down.svg",)),
+        (FluentIcon.LEFT_ARROW, ("arrow-left.svg", "caret-left.svg")),
+        (FluentIcon.RIGHT_ARROW, ("arrow-right.svg", "caret-right.svg")),
+        (FluentIcon.EMBED, ("arrow-square-in.svg",)),
+        (FluentIcon.SHARE, ("arrow-square-out.svg", "upload-simple.svg", "tray-arrow-up.svg")),
+        (FluentIcon.RETURN, ("arrow-u-left-up.svg", "arrow-u-up-left.svg")),
+        (FluentIcon.UP, ("arrow-up.svg",)),
+        (FluentIcon.SYNC, ("arrows-clockwise.svg", "repeat.svg")),
+        (FluentIcon.ALIGNMENT, ("arrows-left-right.svg",)),
+        (FluentIcon.REMOVE, ("backspace.svg",)),
+        (FluentIcon.IOT, ("battery-full.svg",)),
+        (FluentIcon.BLUETOOTH, ("bluetooth.svg",)),
+        (FluentIcon.MEGAPHONE, ("broadcast.svg",)),
+        (FluentIcon.BROOM, ("broom.svg",)),
+        (FluentIcon.DEVELOPER_TOOLS, ("bug.svg", "cpu.svg")),
+        (FluentIcon.CAMERA, ("camera.svg",)),
+        (FluentIcon.PIE_SINGLE, ("chart-bar.svg",)),
+        (FluentIcon.SPEED_HIGH, ("chart-line.svg", "speedometer.svg")),
+        (FluentIcon.MESSAGE, ("chat-text.svg",)),
+        (FluentIcon.ACCEPT, ("check-circle.svg",)),
+        (FluentIcon.CHECKBOX, ("check-square.svg",)),
+        (FluentIcon.PASTE, ("clipboard-text.svg",)),
+        (FluentIcon.HISTORY, ("clock.svg",)),
+        (FluentIcon.CLOUD_DOWNLOAD, ("cloud-arrow-down.svg",)),
+        (FluentIcon.COPY, ("copy.svg",)),
+        (FluentIcon.LIBRARY, ("database.svg", "memory.svg")),
+        (DEVICE_ICON, ("device-mobile.svg",)),
+        (FluentIcon.PHONE, ("phone-call.svg",)),
+        (FluentIcon.DOWNLOAD, ("download-simple.svg", "tray-arrow-down.svg")),
+        (FluentIcon.ERASE_TOOL, ("eraser.svg",)),
+        (FluentIcon.SAVE_AS, ("file-arrow-down.svg",)),
+        (FluentIcon.MUSIC, ("file-audio.svg",)),
+        (FluentIcon.CODE, (
+            "file-code.svg", "file-css.svg", "file-html.svg", "file-js.svg", "file-py.svg",
+            "file-sql.svg",
+        )),
+        (FluentIcon.DOCUMENT, (
+            "file-csv.svg", "file-md.svg", "file-pdf.svg", "file-text.svg", "file-txt.svg",
+            "file-xls.svg", "file.svg",
+        )),
+        (FluentIcon.PHOTO, (
+            "file-image.svg", "file-jpg.svg", "file-png.svg", "file-svg.svg", "image.svg",
+            "image-broken.svg",
+        )),
+        (FluentIcon.SETTING, ("file-ini.svg", "gear.svg")),
+        (FluentIcon.ADD, ("file-plus.svg",)),
+        (FluentIcon.VIDEO, ("file-video.svg", "video-camera.svg")),
+        (FluentIcon.SAVE, ("floppy-disk.svg",)),
+        (FluentIcon.FOLDER, ("folder-open.svg", "folder.svg")),
+        (FluentIcon.FOLDER_ADD, ("folder-plus.svg",)),
+        (FluentIcon.FULL_SCREEN, ("frame-corners.svg",)),
+        (FluentIcon.HOME, ("house.svg",)),
+        (FluentIcon.INFO, ("info.svg", "warning.svg")),
+        (FluentIcon.COMMAND_PROMPT, ("keyboard.svg", "terminal-window.svg", "terminal.svg")),
+        (FluentIcon.CANCEL, (
+            "link-break.svg", "prohibit.svg", "skull.svg", "stop-circle.svg", "x-circle.svg",
+        )),
+        (FluentIcon.LINK, ("link.svg",)),
+        (FluentIcon.MENU, ("list-bullets.svg", "list.svg")),
+        (FluentIcon.FINGERPRINT, ("lock.svg",)),
+        (FluentIcon.ZOOM_OUT, ("magnifying-glass-minus.svg",)),
+        (FluentIcon.ZOOM_IN, ("magnifying-glass-plus.svg",)),
+        (FluentIcon.SEARCH, ("magnifying-glass.svg",)),
+        (FluentIcon.PIN, ("map-pin.svg",)),
+        (FluentIcon.PROJECTOR, ("monitor-play.svg",)),
+        (FluentIcon.UNIT, ("number-square-one.svg",)),
+        (FluentIcon.EDIT, ("pencil-simple.svg",)),
+        (FluentIcon.PLAY, ("play.svg",)),
+        (FluentIcon.CONNECT, ("plug.svg",)),
+        (FluentIcon.POWER_BUTTON, ("power.svg",)),
+        (FluentIcon.VIEW, ("radio-button.svg",)),
+        (FluentIcon.ROBOT, ("robot.svg",)),
+        (FluentIcon.SCROLL, ("scroll.svg",)),
+        (FluentIcon.SKIP_BACK, ("skip-back.svg",)),
+        (FluentIcon.SKIP_FORWARD, ("skip-forward.svg",)),
+        (FluentIcon.VOLUME, ("speaker-high.svg",)),
+        (FluentIcon.MUTE, ("speaker-low.svg",)),
+        (FluentIcon.TILES, ("squares-four.svg",)),
+        (FluentIcon.ADD_TO, ("stack-plus.svg",)),
+        (FluentIcon.HEART, ("star.svg",)),
+        (FluentIcon.FONT, ("text-aa.svg",)),
+        (FluentIcon.DELETE, ("trash.svg",)),
+        (FluentIcon.LAYOUT, ("tree-structure.svg",)),
+        (FluentIcon.PEOPLE, ("user-switch.svg",)),
+        (FluentIcon.WIFI, ("wifi-high.svg",)),
+        (FluentIcon.CLOSE, ("x.svg",)),
+    )
+    for name in names
+}
 
 
-# 已按 (图标名, 色键, 色值) 缓存的 QSvgRenderer，避免每次 paint 重新解析 SVG。
-# 色值随主题变化，因此主题切换后自然生成新缓存项，图标颜色自动更新。
-_RENDERERS: dict[tuple[str, str, str], QSvgRenderer] = {}
+def get_fluent_icon(name: str) -> FluentIconBase:
+    """解析操作语义；遗漏映射立即报错，避免界面悄然显示空图标。"""
 
-
-def _renderer_for(name: str, color_key: str) -> QSvgRenderer | None:
-    """返回注入指定主题色后的渲染器；SVG 缺失时返回 None。"""
-
-    color = _tc(color_key)
-    key = (name, color_key, color)
-    renderer = _RENDERERS.get(key)
-    if renderer is None:
-        svg = _load_svg(name)
-        if not svg:
-            return None
-        renderer = QSvgRenderer(svg.replace("currentColor", color).encode("utf-8"))
-        _RENDERERS[key] = renderer
-    return renderer
-
-
-class _ThemedIconEngine(QIconEngine):
-    """每次 paint() 时渲染 SVG，并注入当前主题颜色。"""
-
-    def __init__(self, name: str):
-        super().__init__()
-        self._name = name
-
-    def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State):
-        if mode == QIcon.Mode.Disabled:
-            color_key = "TEXT_DISABLED"
-        elif mode in (QIcon.Mode.Active, QIcon.Mode.Selected) or state == QIcon.State.On:
-            color_key = "BUTTON_ACCENT"
-        else:
-            color_key = "TEXT_PRIMARY"
-        renderer = _renderer_for(self._name, color_key)
-        if renderer is not None:
-            renderer.render(painter, rect)
-
-    def clone(self) -> _ThemedIconEngine:
-        return _ThemedIconEngine(self._name)
-
-    def key(self) -> str:
-        return f"themed:{self._name}:{_tc('TEXT_PRIMARY')}"
-
-    def actualSize(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QSize:
-        return size
-
-    def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
-        pix = QPixmap(size)
-        pix.fill(Qt.GlobalColor.transparent)
-        p = QPainter(pix)
-        self.paint(p, QRect(0, 0, size.width(), size.height()), mode, state)
-        p.end()
-        return pix
+    return _FLUENT_ICONS[name]
 
 
 def get_themed_icon(name: str) -> QIcon:
-    """返回始终使用当前主题颜色绘制的 QIcon。"""
-    return QIcon(_ThemedIconEngine(name))
+    """为 Qt 原生 API 提供随主题更新的 QIcon，绘制由 qfluentwidgets 负责。"""
+
+    return get_fluent_icon(name).qicon()

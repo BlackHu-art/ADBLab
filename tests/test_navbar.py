@@ -11,9 +11,8 @@ def _navigation() -> tuple[NavigationInterface, list[str]]:
     requested: list[str] = []
     nav = NavigationInterface()
     for key, icon, label in (
-        ("devices", "devices.svg", "Devices"),
-        ("tasks", "list-checks.svg", "Tasks"),
-        ("logs", "log.svg", "Logs"),
+        ("devices", "device-mobile.svg", "设备概览"),
+        ("tasks", "clock.svg", "任务中心"),
         ("settings", "gear.svg", "Settings"),
     ):
         nav.addItem(
@@ -29,7 +28,7 @@ def _navigation() -> tuple[NavigationInterface, list[str]]:
 def test_navigation_interface_exposes_stable_routes(qt_application):
     nav, _requested = _navigation()
 
-    assert all(nav.widget(key) is not None for key in ("devices", "tasks", "logs", "settings"))
+    assert all(nav.widget(key) is not None for key in ("devices", "tasks", "settings"))
     assert nav.widget("devices").isSelected
 
 

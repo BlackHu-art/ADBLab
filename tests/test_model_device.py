@@ -4,8 +4,10 @@ from unittest.mock import patch
 
 from core.exec import CommandResult
 from models.adb_device import (
+    OVERVIEW_MARKERS,
     ADBDevice,
     parse_connected_devices,
+    parse_device_overview,
     parse_getprop_output,
     parse_labeled_sections,
 )
@@ -123,12 +125,15 @@ def test_get_devices_basic_info_uses_single_getprop_call():
     with patch("models.adb_device.CommandRunner.run") as run:
         run.return_value = CommandResult(
             success=True,
-            output="22127RK46C\nRedmi\n9\n",
+            output="22127RK46C\nRedmi\n9\n28\narm64-v8a\nqcom\n",
         )
 
         info = ADBDevice.get_devices_basic_info("device-1")
 
-    assert info == {"Model": "22127RK46C", "Brand": "Redmi", "Aversion": "9"}
+    assert info == {
+        "Model": "22127RK46C", "Brand": "Redmi", "Aversion": "9",
+        "SDK Version": "28", "CPU Architecture": "arm64-v8a", "Hardware": "qcom",
+    }
     run.assert_called_once_with(
         [
             "adb",
@@ -136,10 +141,67 @@ def test_get_devices_basic_info_uses_single_getprop_call():
             "device-1",
             "shell",
             "getprop ro.product.model; getprop ro.product.brand; "
-            "getprop ro.build.version.release",
+            "getprop ro.build.version.release; getprop ro.build.version.sdk; "
+            "getprop ro.product.cpu.abi; getprop ro.hardware",
         ],
         timeout=15,
     )
+
+
+def test_overview_reads_screen_memory_storage_and_battery_in_one_command():
+    output = "\n".join([
+        OVERVIEW_MARKERS["BASIC"], "Example phone", "Example", "14", "34", "arm64-v8a", "qcom",
+        OVERVIEW_MARKERS["MEMORY"], "MemTotal: 8388608 kB", "MemAvailable: 3145728 kB",
+        OVERVIEW_MARKERS["STORAGE"], "Filesystem 1K-blocks Used Available Use% Mounted on",
+        "/dev/block/data 134217728 67108864 67108864 50% /data",
+        OVERVIEW_MARKERS["SCREEN"], "Physical size: 1080x2400", "Physical density: 420",
+        OVERVIEW_MARKERS["BATTERY"], "  level: 84", "  scale: 100", "  status: 2",
+    ])
+    with patch(
+        "models.adb_device.CommandRunner.run",
+        return_value=CommandResult(success=True, output=output),
+    ) as run:
+        info = ADBDevice.get_device_overview_info("demo-a")
+    assert info == {
+        "Model": "Example phone", "Brand": "Example", "Aversion": "14", "SDK Version": "34",
+        "CPU Architecture": "arm64-v8a", "Hardware": "qcom", "Total Memory": "8.0 GiB",
+        "Available Memory": "3.0 GiB", "Storage Total": "128.0 GiB",
+        "Storage Available": "64.0 GiB", "Resolution": "1080 × 2400", "Density": "420 dpi",
+        "Battery Level": "84%", "Battery Status": "充电中",
+    }
+    run.assert_called_once()
+    assert run.call_args.args[0][:4] == ["adb", "-s", "demo-a", "shell"]
+    assert "ro.serialno" not in run.call_args.args[0][-1]
+    assert "ip addr" not in run.call_args.args[0][-1]
+    assert run.call_args.kwargs["timeout"] == 15
+
+
+def test_overview_keeps_empty_basic_fields_and_ignores_invalid_metrics():
+    output = "\n".join([
+        OVERVIEW_MARKERS["BASIC"], "", "Example", "14", "34", "", "",
+        OVERVIEW_MARKERS["MEMORY"], "cat: permission denied",
+        OVERVIEW_MARKERS["STORAGE"], "/dev/data 100 50 900 50% /data",
+        OVERVIEW_MARKERS["SCREEN"], "Physical size: 0x0", "Physical density: 0",
+        OVERVIEW_MARKERS["BATTERY"], "level: 120", "scale: 100", "status: 99",
+    ])
+    assert parse_device_overview(output) == {
+        "Model": "", "Brand": "Example", "Aversion": "14", "SDK Version": "34",
+        "CPU Architecture": "", "Hardware": "",
+    }
+
+
+def test_failed_overview_read_falls_back_to_basic_information():
+    with (
+        patch(
+            "models.adb_device.CommandRunner.run",
+            return_value=CommandResult(success=False, error="timeout"),
+        ),
+        patch.object(
+            ADBDevice, "get_devices_basic_info", return_value={"Model": "Example"},
+        ) as basic,
+    ):
+        assert ADBDevice.get_device_overview_info("demo-a") == {"Model": "Example"}
+    basic.assert_called_once_with("demo-a")
 
 
 def test_get_devices_basic_info_falls_back_to_individual_props():
@@ -155,7 +217,9 @@ def test_get_devices_basic_info_falls_back_to_individual_props():
     assert info == {"Model": "N/A", "Brand": "N/A", "Aversion": "N/A"}
     fetch.assert_called_once()
     commands = fetch.call_args.args[0]
-    assert list(commands) == ["Model", "Brand", "Aversion"]
+    assert list(commands) == [
+        "Model", "Brand", "Aversion", "SDK Version", "CPU Architecture", "Hardware"
+    ]
     assert commands["Model"] == ["adb", "-s", "device-1", "shell", "getprop", "ro.product.model"]
 
 

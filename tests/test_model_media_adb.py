@@ -420,6 +420,59 @@ def test_start_screen_record_reports_immediate_exit():
     assert "exited immediately" in result["error"]
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"duration": "30;echo injected"},
+        {"duration": 0},
+        {"duration": 3601},
+        {"duration": 1.5},
+        {"bitrate": "8000000;echo injected"},
+        {"bitrate": "0"},
+        {"width": "1080;echo injected", "height": "1920"},
+        {"width": "1080", "height": "1920;echo injected"},
+        {"width": "0", "height": "1920"},
+        {"width": "1080"},
+        {"height": "1920"},
+    ],
+)
+def test_start_screen_record_rejects_invalid_parameters_before_process_start(options):
+    model = ADBAdvanced()
+    with (
+        patch.object(model, "_rec_procs") as procs,
+        patch("models.adb_advanced.time.sleep"),
+    ):
+        result = ADBAdvanced.start_screen_record_async.__wrapped__(
+            model, "device-1", "C:/tmp", batch_id="record-batch", **options
+        )
+
+    assert result["success"] is False
+    assert result["error"]
+    assert result["device_ip"] == "device-1"
+    assert result["batch_id"] == "record-batch"
+    procs.start.assert_not_called()
+
+
+def test_start_screen_record_normalizes_valid_numeric_parameters():
+    model = ADBAdvanced()
+    with (
+        patch.object(model, "_rec_procs") as procs,
+        patch("models.adb_advanced.time.sleep"),
+    ):
+        procs.start.return_value = SimpleNamespace(pid=123, poll=lambda: None)
+        result = ADBAdvanced.start_screen_record_async.__wrapped__(
+            model, "device-1", "C:/tmp", duration=" 0030 ",
+            bitrate=" 08000000 ", width="01080", height="01920"
+        )
+
+    assert result["success"] is True
+    cmd = procs.start.call_args.args[1]
+    assert cmd[cmd.index("--time-limit") + 1] == "30"
+    assert cmd[cmd.index("--bit-rate") + 1] == "8000000"
+    assert cmd[cmd.index("--size") + 1] == "1080x1920"
+    assert result["duration"] == 30
+
+
 def test_settings_get_async_returns_value_alias():
     model = ADBAdvanced()
 
@@ -994,7 +1047,9 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
         FileExplorerPage.SIZE_COL,
         FileExplorerPage.MODIFIED_COL,
     ]
-    assert first_row_calls[0].args[2].text() == "Folder"
+    type_item = first_row_calls[0].args[2]
+    assert type_item.text() == "Folder"
+    assert type_item.data(Qt.ItemDataRole.AccessibleTextRole) == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
     dialog.status_bar.setText.assert_called_once_with("/sdcard  |  1 folders, 1 files")
 

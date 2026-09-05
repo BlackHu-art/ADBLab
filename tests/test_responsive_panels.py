@@ -402,7 +402,9 @@ def _groups_with_titles_wider_than_viewport(content: QWidget, viewport_width: in
         for card in content.findChildren(
             HeaderCardWidget, options=Qt.FindDirectChildrenOnly
         )
-        if card.headerLabel.fontMetrics().horizontalAdvance(card.title) + 24
+        if card.headerLabel.fontMetrics().horizontalAdvance(card.title)
+        + card.headerLayout.contentsMargins().left()
+        + card.headerLayout.contentsMargins().right()
         > viewport_width
     )
 
@@ -2525,12 +2527,12 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
             panel,
             remote,
             scroll,
-            "control",
+            "mirroring",
             292,
         )
         for width in range(180, 901, 8):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
-            assert remote.category_stack.current_key == "control"
+            assert remote.category_stack.current_key == "mirroring"
             for binding in remote.remote_control_bindings:
                 plan = binding.applied_plan
                 assert plan is not None
@@ -2941,7 +2943,7 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
     qt_application,
     monkeypatch,
 ):
-    """长标题不改写参考卡片最小宽度，完整文本由可访问属性保留。"""
+    """长分区标题保持完整可达，宽度测量遵循当前布局边距。"""
 
     panel, system, scroll, _content = _show_feature_panel(
         "system",
@@ -2973,20 +2975,22 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
         category_page = system.category_stack.page(category_key)
         assert category_page is not None
         title_width = target.headerLabel.fontMetrics().horizontalAdvance(target.title)
+        margins = target.headerLayout.contentsMargins()
+        title_extent = title_width + margins.left() + margins.right()
         _resize_feature_viewport(
             qt_application,
             panel,
             system,
             scroll,
-            title_width + 23,
+            title_extent - 1,
         )
         groups = _groups_with_titles_wider_than_viewport(
             category_page,
             scroll.viewport().contentsRect().width(),
         )
         assert target in groups
-        assert target.minimumSizeHint().width() >= title_width + 24
-        assert target.toolTip() == target.title
+        assert target.minimumSizeHint().width() >= title_extent
+        assert target.toolTip() == ""
         assert target.accessibleName() == target.title
         assert scroll.horizontalScrollBar().maximum() > 0
         assert_scroll_target_reachable(scroll, target)
@@ -3007,7 +3011,11 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
         assert probe.width() == 300
         narrow_hint = probe.minimumSizeHint().width()
         assert narrow_hint == wide_hint
-        assert wide_hint >= probe.headerLabel.fontMetrics().horizontalAdvance(probe.title) + 24
+        margins = probe.headerLayout.contentsMargins()
+        assert wide_hint >= (
+            probe.headerLabel.fontMetrics().horizontalAdvance(probe.title)
+            + margins.left() + margins.right()
+        )
         probe_scroll.close()
         probe_scroll.deleteLater()
         probe.deleteLater()
@@ -3288,6 +3296,14 @@ def test_system_real_reflow_preserves_all_binding_state_validators_and_one_signa
                 )
                 for field in explicit_fields
             )
+
+        # 首次 Tab 焦点进入会让 QLineEdit 正常全选；先明确编辑焦点与部分选区，
+        # 再单独验证重排不会改变已有编辑状态，避免把窗口激活混入布局契约。
+        system.shell_cmd_input.window().activateWindow()
+        system.shell_cmd_input.setFocus(Qt.FocusReason.OtherFocusReason)
+        wait_until(qt_application, system.shell_cmd_input.hasFocus)
+        system.shell_cmd_input.setSelection(5, 10)
+        assert system.shell_cmd_input.selectedText() == "responsive"
 
         before_widgets = _binding_widget_state(system)
         before_fields = explicit_state()

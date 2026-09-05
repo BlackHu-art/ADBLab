@@ -21,13 +21,13 @@ from PySide6.QtGui import QColor, QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
     CardWidget,
     FluentIcon,
     FluentWindow,
-    Flyout,
     InfoBar,
     InfoBarPosition,
     NavigationDisplayMode,
@@ -46,6 +46,7 @@ from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
 from gui.main_frame_actions import MainFrameActions
+from gui.pages.device_hub import DeviceHubPage
 from gui.pages.fluent_pages import (
     GalleryPage,
     HomePage,
@@ -58,6 +59,8 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
+from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.device_context_bar import DeviceContextBar
 from gui.widgets.frameless_resize import FramelessResizeController
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
@@ -66,6 +69,7 @@ from gui.window_layout import (
     compute_workspace_constraints,
     normalize_window_size,
 )
+from models.device_store import DeviceStore
 from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
@@ -225,15 +229,22 @@ class MainFrame(FluentWindow):
         mouse_buttons_provider: Callable[[], Qt.MouseButton] | None = None,
     ):
         super().__init__()
-        # FluentWindow 默认给内容栈绘制半透明的上/左边框。Mica 会把该像素与
-        # DWM 背景再次合成，导致暗色主题稳定后反而出现亮线。通过 qfluentwidgets
-        # 的自定义样式层覆盖边框，确保主题重载时也不会恢复默认线条。
-        stacked_border_override = "StackedWidget { border: none; }"
-        setCustomStyleSheet(
-            self.stackedWidget,
-            stacked_border_override,
-            stacked_border_override,
-        )
+        # 切页动画会露出内容栈，导航收起又会重设 QStyle 后重新挂回父级。
+        # 这两层由主题 QSS 持续绘制实色，不能依赖页面遮挡或动画完成后补色；
+        # 同时去掉透明边框与圆角，避免 Mica 在边缘合成出亮线。
+        light_surface = BaseStyles.color_for("Light", "WINDOW_BG")
+        dark_surface = BaseStyles.color_for("Dark", "WINDOW_BG")
+        for surface, selector in (
+            (self.stackedWidget, "StackedWidget"),
+            (self.navigationInterface.panel, "NavigationPanel[menu=false]"),
+        ):
+            setCustomStyleSheet(
+                surface,
+                f"{selector} {{ background-color: {light_surface}; "
+                "border: none; border-radius: 0px; }",
+                f"{selector} {{ background-color: {dark_surface}; "
+                "border: none; border-radius: 0px; }",
+            )
         self._screen_adapter = screen_adapter or QtScreenAdapter()
         self._mouse_buttons_provider = mouse_buttons_provider or QApplication.mouseButtons
         self._window_screen_token = None
@@ -256,11 +267,9 @@ class MainFrame(FluentWindow):
         self._navigation_wide_state: bool | None = None
         self._navigation_history: list[str | WorkspaceRoute] = []
         self._current_navigation_location: str | WorkspaceRoute | None = None
-        self._transient_navigation_origin: str | WorkspaceRoute | None = None
         self._workspace_navigation_in_progress = False
         self._navigation_reopen_after_collapse = False
         self._navigation_reopen_requires_wide = False
-        self._navigation_flyout_window: QWidget | None = None
         self._pending_navigation_scroll_key = ""
         self._navigation_layout_timer = QTimer(self)
         self._navigation_layout_timer.setSingleShot(True)
@@ -282,9 +291,14 @@ class MainFrame(FluentWindow):
         )
         self._device_scroll_vertical_maximum = 0
         self.log_service = LogService()
+        self._device_metadata: dict[str, dict[str, str]] = {}
+        self._pending_package_device = ""
+        self._package_query_invalidated = False
         set_error_sink(self.log_service.log)
         self.log_panel = LogPanel()
-        self.left_panel = SidePanel()
+        # 隐藏协调器必须随主窗销毁，不能在工作区视图释放后继续接收全局样式信号。
+        self.left_panel = SidePanel(self)
+        self.left_panel.hide()
         self.adb_controller = ADBController(self.log_service)
         setattr(self.adb_controller, "window_owner", self)
         self.task_supervisor = QtTaskSupervisor()
@@ -313,7 +327,6 @@ class MainFrame(FluentWindow):
         self._initial_refresh_timer.setSingleShot(True)
         self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
         self._pending_window_size = None
-        self._pending_workspace_route: WorkspaceRoute | None = None
         self._window_size_save_timer = QTimer(self)
         self._window_size_save_timer.setSingleShot(True)
         self._window_size_save_timer.timeout.connect(self._poll_user_resize_transaction)
@@ -740,7 +753,9 @@ class MainFrame(FluentWindow):
     def _sync_device_scroll_content_minimum(self) -> int:
         """同步 Devices 当前计划的完整高度，让短屏由局部滚动承接。"""
 
-        device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
+        device_panel = getattr(self, "_device_hub", None)
+        if device_panel is None:
+            device_panel = getattr(getattr(self, "left_panel", None), "device_widget", None)
         if device_panel is None:
             return 0
         layout = device_panel.layout()
@@ -795,6 +810,19 @@ class MainFrame(FluentWindow):
 
         self._central_widget = self.stackedWidget
 
+        self._global_device_bar = DeviceContextBar(self)
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        self._content_layout = QVBoxLayout()
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(0)
+        self._content_layout.addWidget(self._global_device_bar)
+        self._content_layout.addWidget(self.stackedWidget, 1)
+        self.widgetLayout.addLayout(self._content_layout, 1)
+        self._device_hub = DeviceHubPage(self)
+        # 旧设备视图作为兼容状态源保留在协调器下；不拆走仍被响应式绑定引用的控件。
+        self.left_panel.device_widget.setParent(self.left_panel)
+        self.left_panel.device_widget.hide()
+
         device_scroll = SmoothScrollArea(self)
         device_scroll.setObjectName("deviceScrollArea")
         device_scroll.setWidgetResizable(True)
@@ -808,7 +836,7 @@ class MainFrame(FluentWindow):
 
         devices_overview = WorkspaceSectionPage(
             "devicesOverviewPage",
-            self.left_panel.device_widget,
+            self._device_hub,
             scroll_area=device_scroll,
             parent=self,
         )
@@ -844,9 +872,13 @@ class MainFrame(FluentWindow):
 
         devices_host = WorkspaceFeatureHost(
             "devices",
-            "连接与选择",
+            "设备概览",
             devices_overview,
             self,
+        )
+        devices_host.configure_overview_category(
+            "overview",
+            icon=DEVICE_ICON,
         )
         devices_host.register_feature(
             "files",
@@ -857,7 +889,7 @@ class MainFrame(FluentWindow):
         )
         devices_host.register_overview_category(
             "remote",
-            "屏幕镜像",
+            "远程控制",
             FluentIcon.PROJECTOR,
             page=remote_overview,
             requires_device=True,
@@ -866,35 +898,18 @@ class MainFrame(FluentWindow):
                 device_id,
             ),
         )
-        devices_host.register_overview_category(
-            "remote-control",
-            "按键与手势",
-            FluentIcon.PROJECTOR,
-            page=remote_overview,
-            requires_device=True,
-            activate=lambda device_id: self._activate_remote_workspace(
-                "control",
-                device_id,
-            ),
-        )
+        devices_host.register_alias("remote-control", "remote")
 
         apps_host = WorkspaceFeatureHost(
             "apps",
-            "日常操作",
+            "截图与诊断",
             apps_overview,
             self,
         )
         apps_host.configure_overview_category(
             "overview",
+            icon=FluentIcon.PLAY,
             activate=lambda _device_id: apps_panel.category_stack.set_current("daily"),
-        )
-        apps_host.register_overview_category(
-            "packages",
-            "应用包",
-            FluentIcon.APPLICATION,
-            activate=lambda _device_id: apps_panel.category_stack.set_current(
-                "packages"
-            ),
         )
         apps_host.register_feature(
             "manager",
@@ -903,20 +918,9 @@ class MainFrame(FluentWindow):
             lambda key: AppManagerPage(device_ip=key.device_id),
             close_label="关闭应用管理",
         )
-        apps_host.register_overview_category(
-            "monkey",
-            "Monkey 测试",
-            FluentIcon.APPLICATION,
-            activate=lambda _device_id: apps_panel.category_stack.set_current("monkey"),
-        )
-        apps_host.register_overview_category(
-            "diagnostics",
-            "诊断工具",
-            FluentIcon.DEVELOPER_TOOLS,
-            activate=lambda _device_id: apps_panel.category_stack.set_current(
-                "diagnostics"
-            ),
-        )
+        apps_host.register_alias("packages", "manager")
+        apps_host.register_alias("monkey", "overview")
+        apps_host.register_alias("diagnostics", "overview")
 
         def create_screenshot_page(_key):
             page = ScreenshotPage()
@@ -934,29 +938,20 @@ class MainFrame(FluentWindow):
 
         system_host = WorkspaceFeatureHost(
             "system",
-            "命令与启动",
+            "系统工具",
             system_overview,
             self,
         )
         system_host.configure_overview_category(
             "overview",
+            icon=FluentIcon.COMMAND_PROMPT,
             activate=lambda _device_id: system_panel.category_stack.set_current(
                 "commands"
             ),
         )
-        for key, label, icon in (
-            ("connectivity", "连接与服务", FluentIcon.DEVELOPER_TOOLS),
-            ("settings", "设置与工具", FluentIcon.SETTING),
-            ("device", "设备与模拟器", FluentIcon.PHONE),
-        ):
-            system_host.register_overview_category(
-                key,
-                label,
-                icon,
-                activate=lambda _device_id, category=key: (
-                    system_panel.category_stack.set_current(category)
-                ),
-            )
+        system_host.register_alias("connectivity", "overview")
+        system_host.register_alias("settings", "overview")
+        system_host.register_alias("device", "overview")
         system_host.register_feature(
             "logcat",
             "实时 Logcat",
@@ -966,7 +961,7 @@ class MainFrame(FluentWindow):
                 task_supervisor=self.task_supervisor,
                 log_service=self.log_service,
             ),
-            close_label="停止实时日志",
+            close_label="关闭日志会话",
         )
 
         def create_performance_page(key):
@@ -1000,15 +995,40 @@ class MainFrame(FluentWindow):
         if target_lock_signal is not None:
             target_lock_signal.connect(self._set_remote_target_locked)
         for host in self._workspace_feature_hosts.values():
+            host.feature_selector.set_navigation_visible(False)
+            host.set_external_device_controls(True)
+            host.controls_changed.connect(self._sync_global_session_controls)
+            host.route_requested.connect(self._on_nav_requested)
             host.choose_device_requested.connect(
-                lambda source=host: self._show_device_selection(source.pending_route)
+                self._global_device_bar.open_picker
             )
+
+        bar = self._global_device_bar
+        bar.selection_requested.connect(self.left_panel._devices_tab.set_selected_devices)
+        bar.refresh_requested.connect(self._request_device_refresh)
+        bar.connection_requested.connect(self._show_global_connection)
+        bar.connect_requested.connect(self.left_panel.signals.connect_requested)
+        bar.info_requested.connect(self._show_selected_device_info)
+        bar.disconnect_requested.connect(
+            lambda: self.left_panel.signals.disconnect_requested.emit(
+                self.left_panel.selected_devices
+            )
+        )
+        bar.session_requested.connect(self._choose_global_session)
+        bar.close_session_requested.connect(self._close_global_session)
+        self._device_hub.choose_requested.connect(bar.open_picker)
+        self._device_hub.connect_requested.connect(self._show_global_connection)
+        self._device_hub.refresh_requested.connect(self._request_device_refresh)
+        self._device_hub.selection_requested.connect(
+            self.left_panel._devices_tab.set_selected_devices
+        )
+        self._device_hub.device_action_requested.connect(self._open_device_tool)
 
         self._devices_page = WorkspaceAreaPage(
             "devicesPage",
             "devices",
-            "设备与控制",
-            "连接设备、管理文件并使用屏幕镜像与远程控制",
+            "设备概览",
+            "双击设备行选择或取消操作目标，右侧按钮打开该设备工具",
             devices_host,
             feature_host=devices_host,
             parent=self,
@@ -1016,8 +1036,8 @@ class MainFrame(FluentWindow):
         self._apps_page = WorkspaceAreaPage(
             "appsPage",
             "apps",
-            "应用与自动化",
-            "日常操作、应用包、Monkey 与结果诊断",
+            "截图与诊断",
+            "截图录屏、诊断应用并收集报告",
             apps_host,
             feature_host=apps_host,
             parent=self,
@@ -1025,8 +1045,8 @@ class MainFrame(FluentWindow):
         self._system_page = WorkspaceAreaPage(
             "systemPage",
             "system",
-            "系统与诊断",
-            "系统命令、设备设置、实时日志与性能采集",
+            "系统工具",
+            "系统命令、设备配置、网络与模拟器操作",
             system_host,
             feature_host=system_host,
             parent=self,
@@ -1042,20 +1062,13 @@ class MainFrame(FluentWindow):
             self.adb_controller.operation_manager,
             history_store=self._task_history,
             stop_hook=self._stop_operation_from_task_center,
+            runtime_log=self.log_panel,
         )
         self._tasks_page = GalleryPage(
             "tasksPage",
             "任务中心",
-            "查看正在运行和最近完成的设备任务",
+            "查看任务进度、历史结果与运行记录",
             self._task_page,
-            scroll=False,
-            parent=self,
-        )
-        self._logs_page = GalleryPage(
-            "logsPage",
-            "操作日志",
-            "查看 ADBLab 操作记录与诊断信息",
-            self.log_panel,
             scroll=False,
             parent=self,
         )
@@ -1065,59 +1078,46 @@ class MainFrame(FluentWindow):
         self.navigationInterface.setAcrylicEnabled(True)
         self.addSubInterface(self._home_page, FluentIcon.HOME, "首页")
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
+        self._workspace_navigation_page_keys: dict[str, str] = {}
         self._workspace_navigation_keys: dict[tuple[str, str], str] = {}
-        self._workspace_navigation_roots = {}
-        self._workspace_navigation_group_keys = {}
         workspace_navigation = (
-            ("devices", self._devices_page, FluentIcon.PHONE, "设备与控制"),
-            ("apps", self._apps_page, FluentIcon.APPLICATION, "应用与自动化"),
-            ("system", self._system_page, FluentIcon.DEVELOPER_TOOLS, "系统与诊断"),
+            ("devices", "overview", "devicesPage", DEVICE_ICON, "设备概览",
+             "双击设备行选择或取消操作目标，右侧按钮打开该设备工具"),
+            ("devices", "files", "filesPage", FluentIcon.FOLDER, "文件管理",
+             "浏览、传输和管理当前设备的文件"),
+            ("devices", "remote", "remotePage", FluentIcon.PROJECTOR, "远程控制",
+             "屏幕镜像、按键和手势在同一页面操作"),
+            ("apps", "manager", "appManagerPage", FluentIcon.APPLICATION, "应用管理",
+             "查看已安装应用，管理列表中的应用"),
+            ("apps", "overview", "appsPage", FluentIcon.CAMERA, "截图与诊断",
+             "应用包操作、截图录屏、Monkey 测试与诊断"),
+            ("apps", "media", "screenshotsPage", FluentIcon.PHOTO, "截图结果",
+             "查看并保存设备截图，切页后保留结果"),
+            ("system", "overview", "systemPage", FluentIcon.DEVELOPER_TOOLS, "系统工具",
+             "系统命令、设备配置、网络与模拟器操作"),
+            ("system", "logcat", "logcatPage", FluentIcon.SCROLL, "实时 Logcat",
+             "持续读取当前设备日志，支持应用过滤"),
+            ("system", "performance", "performancePage", FluentIcon.SPEED_HIGH, "性能采集",
+             "配置采样，查看运行状态与采集结果"),
         )
-        for section, page, icon, label in workspace_navigation:
-            # 三个 QWidget 仍是唯一的会话宿主，但不再冒充可选模块。
-            # 左侧父项只负责分组，真正可选的叶节点与 WorkspaceRoute 一一对应。
+        for section, page in self._workspace_pages.items():
+            # 物理宿主继续保有会话，左栏直接选择语义功能；不重复创建页面或业务资源。
             page.setProperty("isStackedTransparent", False)
             self.stackedWidget.addWidget(page)
-            group_key = f"workspace-group:{section}"
-            root_item = self.navigationInterface.addItem(
-                routeKey=group_key,
-                icon=icon,
-                text=label,
-                selectable=False,
-                position=NavigationItemPosition.SCROLL,
-                tooltip=label,
+            self._workspace_navigation_page_keys[section] = page.objectName()
+        for section, feature, route_key, icon, label, subtitle in workspace_navigation:
+            self.navigationInterface.addItem(
+                routeKey=route_key, icon=icon, text=label,
+                onClick=lambda _clicked=False, s=section, f=feature: (
+                    self._open_workspace_feature(s, f)
+                ),
+                position=NavigationItemPosition.SCROLL, tooltip=label,
             )
-            root_item.setRememberExpandState(True)
-            root_item.itemWidget.itemClicked.connect(
-                lambda _triggered=False, _arrow=False, current=section: (
-                    self._on_workspace_navigation_group_clicked(current)
-                )
-            )
-            self._workspace_navigation_roots[section] = root_item
-            self._workspace_navigation_group_keys[section] = group_key
-            host = self._workspace_feature_hosts[section]
-            for item in host.navigation_items():
-                route_key = self._workspace_navigation_route_key(
-                    section,
-                    item.feature,
-                )
-                self.navigationInterface.addItem(
-                    routeKey=route_key,
-                    icon=item.icon,
-                    text=item.label,
-                    onClick=self._workspace_navigation_handler(
-                        section,
-                        item.feature,
-                    ),
-                    position=NavigationItemPosition.SCROLL,
-                    tooltip=item.label,
-                    parentRouteKey=group_key,
-                )
-                self._workspace_navigation_keys[(section, item.feature)] = route_key
+            self._workspace_navigation_keys[(section, feature)] = route_key
+            self._workspace_pages[section].set_route_presentation(feature, label, subtitle)
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
         for page, icon, label in (
             (self._tasks_page, FluentIcon.HISTORY, "任务中心"),
-            (self._logs_page, FluentIcon.SCROLL, "操作日志"),
         ):
             self.addSubInterface(page, icon, label, NavigationItemPosition.SCROLL)
         self.addSubInterface(
@@ -1129,19 +1129,11 @@ class MainFrame(FluentWindow):
         self._navigation_labels = {
             self._home_page.objectName(): "首页",
             self._tasks_page.objectName(): "任务中心",
-            self._logs_page.objectName(): "操作日志",
             self._settings_page.objectName(): "设置",
         }
-        for section, route_key in self._workspace_navigation_group_keys.items():
-            self._navigation_labels[route_key] = dict(
-                devices="设备与控制",
-                apps="应用与自动化",
-                system="系统与诊断",
-            )[section]
-        for (section, feature), route_key in self._workspace_navigation_keys.items():
-            self._navigation_labels[route_key] = self._workspace_feature_hosts[
-                section
-            ].feature_label(feature)
+        self._navigation_labels.update({
+            route_key: label for _s, _f, route_key, _icon, label, _subtitle in workspace_navigation
+        })
         panel = self.navigationInterface.panel
         try:
             panel.menuButton.clicked.disconnect(panel.toggle)
@@ -1158,6 +1150,10 @@ class MainFrame(FluentWindow):
             pass
         panel.returnButton.clicked.connect(self._navigate_back)
         panel.expandAni.finished.connect(self._on_navigation_animation_finished)
+        panel.expandAni.stateChanged.connect(
+            self._on_navigation_animation_state_changed
+        )
+        self.navigationInterface.setUpdateIndicatorPosOnCollapseFinished(True)
         self.navigationInterface.displayModeChanged.connect(
             self._on_navigation_display_mode_changed
         )
@@ -1166,7 +1162,6 @@ class MainFrame(FluentWindow):
         for page in (
             *self._workspace_pages.values(),
             self._tasks_page,
-            self._logs_page,
         ):
             page.header.theme_button.clicked.connect(self._toggle_theme)
 
@@ -1198,6 +1193,8 @@ class MainFrame(FluentWindow):
         panel = self.left_panel._scrcpy_tab
         if panel is None:
             return device_id
+        device_id = str(getattr(panel, "_active_device", "") or device_id)
+        panel.set_device_selected(device_id in self.left_panel.selected_devices)
         devices_host = self._workspace_feature_hosts.get("devices")
         connected = bool(
             devices_host is not None
@@ -1291,22 +1288,8 @@ class MainFrame(FluentWindow):
         navigation = getattr(self, "navigationInterface", None)
         if navigation is None:
             return
-        can_go_back = bool(getattr(self, "_navigation_history", ())) or (
-            getattr(self, "_transient_navigation_origin", None) is not None
-        )
+        can_go_back = bool(getattr(self, "_navigation_history", ()))
         navigation.panel.returnButton.setEnabled(can_go_back)
-
-    def _cancel_pending_workspace_navigation(self) -> None:
-        """取消临时设备选择，并从历史语义中移除该中转页。"""
-
-        if getattr(self, "_pending_workspace_route", None) is None:
-            return
-        self._pending_workspace_route = None
-        origin = getattr(self, "_transient_navigation_origin", None)
-        self._transient_navigation_origin = None
-        if origin is not None:
-            self._current_navigation_location = origin
-        MainFrame._update_navigation_back_button(self)
 
     def _navigate_to_location(self, location: str | WorkspaceRoute) -> bool:
         """在不产生新历史项的前提下恢复一个语义位置。"""
@@ -1326,19 +1309,11 @@ class MainFrame(FluentWindow):
         return False
 
     def _navigate_back(self, *_args) -> None:
-        """返回上一个功能叶节点，并跳过临时设备选择中转页。"""
+        """返回上一个功能入口；设备弹层不改变页面或返回历史。"""
 
-        self._close_navigation_flyouts()
         self._navigation_reopen_after_collapse = False
         self._navigation_reopen_requires_wide = False
         self._collapse_navigation_menu_after_switch()
-        origin = getattr(self, "_transient_navigation_origin", None)
-        if origin is not None:
-            self._pending_workspace_route = None
-            self._transient_navigation_origin = None
-            self._navigate_to_location(origin)
-            self._update_navigation_back_button()
-            return
         history = getattr(self, "_navigation_history", [])
         if not history:
             self._update_navigation_back_button()
@@ -1362,8 +1337,6 @@ class MainFrame(FluentWindow):
             (key for key, page in workspace_pages.items() if page is interface),
             None,
         )
-        if self._pending_workspace_route is not None and next_section != "devices":
-            self._cancel_pending_workspace_navigation()
         target_location = _target_location or self._navigation_location_for_page(interface)
         self._commit_navigation_location(
             target_location,
@@ -1379,8 +1352,6 @@ class MainFrame(FluentWindow):
             # FluentWindow 默认等页面过渡结束才更新 NavigationPanel。业务页面已经
             # 切换时选中态若仍停在旧项，会让快速连续点击看起来没有响应。
             self.navigationInterface.setCurrentItem(route_key)
-            self._set_workspace_navigation_group_expanded(None)
-        self._close_navigation_flyouts()
         self._navigation_reopen_after_collapse = False
         self._navigation_reopen_requires_wide = False
         self._collapse_navigation_menu_after_switch()
@@ -1388,18 +1359,19 @@ class MainFrame(FluentWindow):
     def _on_stacked_page_changed(self, index: int) -> None:
         """统一处理点击导航和历史返回造成的业务宿主页可见性变化。"""
 
+        self._global_device_bar.dismiss_popups()
         workspace_pages = getattr(self, "_workspace_pages", {})
         current = self.stackedWidget.widget(index)
-        if getattr(self, "_transient_navigation_origin", None) is None:
-            self._commit_navigation_location(
-                self._navigation_location_for_page(current),
-                record_history=True,
-            )
+        self._commit_navigation_location(
+            self._navigation_location_for_page(current),
+            record_history=True,
+        )
         next_section = next(
             (key for key, page in workspace_pages.items() if page is current),
             None,
         )
         previous_section = getattr(self, "_visible_workspace_section", None)
+        self._sync_global_session_controls()
         if previous_section == next_section:
             return
         if previous_section is not None:
@@ -1410,6 +1382,7 @@ class MainFrame(FluentWindow):
         page = workspace_pages[next_section]
         page.activate()
         self._sync_workspace_navigation_selection(page.current_route)
+        self._sync_global_session_controls()
 
     def _collapse_navigation_menu_after_switch(self) -> None:
         """切页后收起窄窗覆盖菜单，包括尚在执行的展开动画。"""
@@ -1417,7 +1390,7 @@ class MainFrame(FluentWindow):
         panel = self.navigationInterface.panel
         if panel.displayMode != NavigationDisplayMode.MENU:
             return
-        self._stabilize_workspace_navigation_roots(None)
+        self._prepare_navigation_collapse()
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             # NavigationPanel.collapse() 会忽略运行中的动画；若当前已在收起，
@@ -1430,13 +1403,11 @@ class MainFrame(FluentWindow):
     def _toggle_navigation_panel(self, *_args) -> None:
         """按内容可用宽度切换常驻左栏或覆盖菜单。"""
 
-        self._close_navigation_flyouts()
         panel = self.navigationInterface.panel
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             if bool(animation.property("expand")):
                 animation.stop()
-                self._stabilize_workspace_navigation_roots(None)
                 panel.collapse()
             else:
                 # NavigationPanel 会忽略动画期间的 collapse/expand。记住第二次
@@ -1450,7 +1421,38 @@ class MainFrame(FluentWindow):
         }:
             self._expand_navigation_panel(use_animation=True)
             return
+        self._prepare_navigation_collapse()
         panel.collapse()
+
+    def _prepare_navigation_collapse(self) -> None:
+        """在 MENU 收缩前隐藏标签，规避上游动画末端的窄栏文字裁切。"""
+
+        navigation = getattr(self, "navigationInterface", None)
+        if navigation is None:
+            return
+        panel = navigation.panel
+        if panel.displayMode not in {
+            NavigationDisplayMode.EXPAND,
+            NavigationDisplayMode.MENU,
+        }:
+            return
+        for item in panel.items.values():
+            item.widget.setCompacted(True)
+        panel.update()
+
+    def _on_navigation_animation_state_changed(
+        self,
+        state: QAbstractAnimation.State,
+        _previous: QAbstractAnimation.State,
+    ) -> None:
+        """覆盖上游所有收缩入口，在动画首帧前提交紧凑控件状态。"""
+
+        panel = self.navigationInterface.panel
+        if (
+            state == QAbstractAnimation.State.Running
+            and not bool(panel.expandAni.property("expand"))
+        ):
+            self._prepare_navigation_collapse()
 
     def _expand_navigation_panel(self, *, use_animation: bool) -> None:
         """消除自定义左栏宽度造成的展开断点偏移。"""
@@ -1512,35 +1514,20 @@ class MainFrame(FluentWindow):
         self,
         mode: NavigationDisplayMode,
     ) -> None:
-        """导航形态稳定前先恢复当前分组，再在动画尾沿重排内容。"""
+        """导航形态变化后同步当前入口并在动画尾沿重排内容。"""
 
         self._sync_navigation_accessibility()
         self._navigation_wide_state = (
             mode == NavigationDisplayMode.EXPAND
             and self.width() >= self.NAVIGATION_EXPAND_BREAKPOINT
         )
-        if mode in {
-            NavigationDisplayMode.EXPAND,
-            NavigationDisplayMode.MENU,
-        }:
-            current = self.stackedWidget.currentWidget()
-            active_section = next(
-                (
-                    section
-                    for section, page in getattr(
-                        self,
-                        "_workspace_pages",
-                        {},
-                    ).items()
-                    if page is current
-                ),
-                None,
-            )
-            if active_section is None:
-                self._set_workspace_navigation_group_expanded(None)
-            else:
-                page = self._workspace_pages[active_section]
-                self._sync_workspace_navigation_selection(page.current_route)
+        current = self.stackedWidget.currentWidget()
+        for section, page in getattr(self, "_workspace_pages", {}).items():
+            if page is current:
+                self._sync_workspace_navigation_selection(
+                    self._workspace_pages[section].current_route
+                )
+                break
         delay = (
             self.navigationInterface.panel.expandAni.duration() + 20
             if mode
@@ -1551,36 +1538,18 @@ class MainFrame(FluentWindow):
             else 0
         )
         self._navigation_reflow_timer.start(delay)
-        if mode in {
-            NavigationDisplayMode.COMPACT,
-            NavigationDisplayMode.MINIMAL,
-        }:
-            self._navigation_layout_timer.start(0)
+        # 宽度协调由显示和缩放事件触发；模式通知也会来自用户主动收起，
+        # 若在此重新按宽度展开，宽窗的收起选择会在动画尾沿立即被覆盖。
 
     def _on_navigation_animation_finished(self) -> None:
         """在导航最终宽度提交后刷新当前项位置和响应式布局。"""
 
         panel = self.navigationInterface.panel
-        if panel.displayMode in {
-            NavigationDisplayMode.COMPACT,
-            NavigationDisplayMode.MINIMAL,
-        }:
-            self._stabilize_workspace_navigation_roots(None)
-        else:
-            current = self.stackedWidget.currentWidget()
-            active_section = next(
-                (
-                    section
-                    for section, page in getattr(
-                        self,
-                        "_workspace_pages",
-                        {},
-                    ).items()
-                    if page is current
-                ),
-                None,
-            )
-            self._stabilize_workspace_navigation_roots(active_section)
+        if panel.displayMode == NavigationDisplayMode.COMPACT:
+            # 上游收起尾沿会重新设置 QStyle，清除面板背景填充和调色板。
+            # 外层导航本身透明，此处恢复实色表面，避免图标落在透明背景上。
+            panel.setPalette(self.navigationInterface.palette())
+            panel.setAutoFillBackground(True)
         if self._navigation_reopen_after_collapse and panel.displayMode in {
             NavigationDisplayMode.COMPACT,
             NavigationDisplayMode.MINIMAL,
@@ -1597,7 +1566,7 @@ class MainFrame(FluentWindow):
                 )
                 return
         current = self.navigationInterface.panel.currentItem()
-        if current is not None and current.property("parentRouteKey"):
+        if current is not None:
             self._pending_navigation_scroll_key = str(
                 current.property("routeKey") or ""
             )
@@ -1610,77 +1579,6 @@ class MainFrame(FluentWindow):
         if getattr(self, "_closing", False):
             return
         self._request_side_panel_reflow(self, ReflowReason.RESIZE)
-
-    def _on_workspace_navigation_group_clicked(self, section: str) -> None:
-        """手动展开父组时折叠兄弟组，控制短窗口中的列表长度。"""
-
-        if self.navigationInterface.panel.displayMode == NavigationDisplayMode.COMPACT:
-            QTimer.singleShot(0, self._retain_latest_navigation_flyout)
-        roots = getattr(self, "_workspace_navigation_roots", {})
-        current = roots.get(section)
-        if current is None or not current.isExpanded:
-            return
-        for other_section, item in roots.items():
-            if other_section != section:
-                self._stabilize_workspace_navigation_root(item, False)
-        self._navigation_reflow_timer.start(0)
-
-    def _navigation_flyouts(self) -> list[Flyout]:
-        """返回当前窗口创建的原生导航 Flyout，不影响其他提示浮层。"""
-
-        return [
-            flyout
-            for flyout in self.findChildren(Flyout)
-            if any(
-                type(child).__name__ == "NavigationFlyoutMenu"
-                for child in flyout.findChildren(QWidget)
-            )
-        ]
-
-    def _close_navigation_flyouts(self) -> None:
-        """关闭已打开的导航 Flyout，避免切页后残留在新内容上方。"""
-
-        for flyout in self._navigation_flyouts():
-            flyout.close()
-        self._navigation_flyout_window = None
-
-    def _retain_latest_navigation_flyout(self) -> None:
-        """窄栏父组只保留本次点击创建的一个 Flyout。"""
-
-        flyouts = [flyout for flyout in self._navigation_flyouts() if flyout.isVisible()]
-        if not flyouts:
-            self._navigation_flyout_window = None
-            return
-        previous = self._navigation_flyout_window
-        fresh = [flyout for flyout in flyouts if flyout is not previous]
-        latest = fresh[-1] if fresh else flyouts[-1]
-        for flyout in flyouts:
-            if flyout is not latest:
-                flyout.close()
-        self._navigation_flyout_window = latest
-
-    @staticmethod
-    def _stabilize_workspace_navigation_root(item, expanded: bool) -> None:
-        """终止树动画并提交与逻辑展开态一致的最终几何。"""
-
-        item.expandAni.stop()
-        if item.isExpanded != expanded:
-            item.setExpanded(expanded, ani=False)
-        item.setFixedSize(item.sizeHint())
-
-    def _stabilize_workspace_navigation_roots(
-        self,
-        active_section: str | None,
-    ) -> None:
-        for section, item in getattr(
-            self,
-            "_workspace_navigation_roots",
-            {},
-        ).items():
-            self._stabilize_workspace_navigation_root(
-                item,
-                section == active_section,
-            )
 
     def _navigation_widget(self, route_key: str):
         """按键读取导航控件；缺失键返回 None，不依赖异常控制流。"""
@@ -1710,48 +1608,23 @@ class MainFrame(FluentWindow):
             item.setAccessibleName(label)
             item.setToolTip(label)
 
-    @staticmethod
-    def _workspace_navigation_route_key(section: str, feature: str) -> str:
-        """生成只属于左侧导航的稳定键，不冒充物理 QWidget 路由。"""
-
-        return f"workspace:{section}:{feature}"
-
-    def _workspace_navigation_handler(
-        self,
-        section: str,
-        feature: str,
-    ) -> Callable[[], None]:
-        """创建无 Qt 信号参数歧义的功能导航回调。"""
-
-        route = WorkspaceRoute(section, feature)
-
-        def open_route() -> None:
-            self._on_nav_requested(route)
-
-        return open_route
-
     def _sync_workspace_navigation_selection(self, route: WorkspaceRoute) -> None:
-        """让共享宿主中的当前功能与主左栏选中态保持一致。"""
+        """把当前规范功能映射到左栏一级入口，不以物理宿主代替用户所在页面。"""
 
         navigation = getattr(self, "navigationInterface", None)
         if navigation is None:
             return
-        route_key = getattr(self, "_workspace_navigation_keys", {}).get(
-            (route.section, route.feature)
-        )
+        host = getattr(self, "_workspace_feature_hosts", {}).get(route.section)
+        feature = host.canonical_feature(route.feature) if host is not None else route.feature
+        route_key = getattr(self, "_workspace_navigation_keys", {}).get((route.section, feature))
         if route_key is None:
             return
-        self._set_workspace_navigation_group_expanded(route.section)
         navigation.setCurrentItem(route_key)
-        if navigation.panel.displayMode in {
-            NavigationDisplayMode.EXPAND,
-            NavigationDisplayMode.MENU,
-        }:
-            self._pending_navigation_scroll_key = route_key
-            self._navigation_scroll_timer.start(0)
+        self._pending_navigation_scroll_key = route_key
+        self._navigation_scroll_timer.start(0)
 
     def _ensure_current_navigation_item_visible(self) -> None:
-        """展开父组后把当前叶节点滚入主导航 viewport。"""
+        """把当前一级入口滚入主导航 viewport。"""
 
         route_key = self._pending_navigation_scroll_key
         self._pending_navigation_scroll_key = ""
@@ -1765,44 +1638,14 @@ class MainFrame(FluentWindow):
             return
         navigation.panel.scrollArea.ensureWidgetVisible(item, 0, 12)
 
-    def _set_workspace_navigation_group_expanded(
-        self,
-        active_section: str | None,
-    ) -> None:
-        """展开当前业务分组并折叠其他分组，避免主左栏堆满模块。"""
-
-        navigation = getattr(self, "navigationInterface", None)
-        if navigation is None:
-            return
-        panel = navigation.panel
-        if panel.displayMode not in {
-            NavigationDisplayMode.EXPAND,
-            NavigationDisplayMode.MENU,
-        }:
-            return
-        animation = panel.expandAni
-        if (
-            animation.state() == QAbstractAnimation.State.Running
-            and not bool(animation.property("expand"))
-        ):
-            return
-        for section, item in getattr(
-            self,
-            "_workspace_navigation_roots",
-            {},
-        ).items():
-            self._stabilize_workspace_navigation_root(
-                item,
-                section == active_section,
-            )
-
     def _on_workspace_route_changed(self, route: WorkspaceRoute) -> None:
         page = getattr(self, "_workspace_pages", {}).get(route.section)
         if page is self.stackedWidget.currentWidget():
-            if (
-                not getattr(self, "_workspace_navigation_in_progress", False)
-                and getattr(self, "_transient_navigation_origin", None) is None
-            ):
+            location = (route.section, route.feature)
+            if location != getattr(self, "_device_popup_location", None):
+                self._global_device_bar.dismiss_popups()
+                self._device_popup_location = location
+            if not getattr(self, "_workspace_navigation_in_progress", False):
                 self._commit_navigation_location(
                     route,
                     record_history=False,
@@ -1815,19 +1658,130 @@ class MainFrame(FluentWindow):
         if panel is None:
             return
         selected = list(panel.selected_devices)
+        if self._pending_package_device and selected != [self._pending_package_device]:
+            self._package_query_invalidated = True
         connected = list(getattr(panel, "_connected_device_cache", []))
         state = str(getattr(panel, "_device_discovery_state", "empty"))
+        remote = getattr(panel, "_scrcpy_tab", None)
+        if remote is not None:
+            remote_device = str(getattr(remote, "_workspace_device_id", "") or "")
+            remote.set_device_selected(remote_device in selected)
+        bar = getattr(self, "_global_device_bar", None)
+        if bar is not None:
+            bar.set_context(selected, connected, state)
         pages = [getattr(self, "_home_page", None)]
+        pages.append(getattr(self, "_device_hub", None))
         pages.extend(getattr(self, "_workspace_pages", {}).values())
         for page in pages:
             setter = getattr(page, "set_device_context", None)
             if callable(setter):
                 setter(selected, connected, state)
+        hub = getattr(self, "_device_hub", None)
+        if hub is not None:
+            records = {info["ip"]: info for info in DeviceStore.get_full_devices_info(connected)}
+            for device in connected:
+                records.setdefault(device, {"ip": device}).update(
+                    self._device_metadata.get(device, {})
+                )
+            hub.set_device_metadata(list(records.values()))
+        self._sync_global_session_controls()
+
+    def _on_device_info_updated(self, device: str, info: dict) -> None:
+        """只保留在线设备的展示字段；补充信息不写入用户配置或缓存唯一标识。"""
+
+        if self._closing or device not in self.left_panel._connected_device_cache:
+            return
+        metrics = (
+            "Resolution", "Density", "Total Memory", "Available Memory", "Storage Total",
+            "Storage Available", "Battery Level", "Battery Status",
+        )
+        fields = (
+            "Brand", "Model", "Aversion", "SDK Version", "CPU Architecture", "Hardware", *metrics,
+        )
+        metadata = self._device_metadata.setdefault(device, {})
+        # 每次刷新都是新的设备快照，缺失的动态指标不能继续冒充本轮读取结果。
+        for field in metrics:
+            metadata.pop(field, None)
+        for field in fields:
+            value = str(info.get(field, "")).strip()
+            if value and value.casefold() not in ("unknown", "n/a", "-"):
+                metadata[field] = value
+        self._sync_device_context()
+
+    def _open_device_tool(self, section: str, feature: str, device_id: str) -> None:
+        """概览快捷入口只接受已选在线目标，多选时保持其他目标不变。"""
+
+        if (self.left_panel._device_discovery_state != "ready"
+                or device_id not in self.left_panel.selected_devices):
+            return
+        self._open_workspace_feature(section, feature, device_id=device_id)
+
+    def _current_feature_host(self) -> WorkspaceFeatureHost | None:
+        """只从当前可见物理页面解析宿主，后台会话不改变全局栏。"""
+
+        current = self.stackedWidget.currentWidget()
+        for section, page in getattr(self, "_workspace_pages", {}).items():
+            if page is current:
+                return self._workspace_feature_hosts[section]
+        return None
+
+    def _sync_global_session_controls(self) -> None:
+        """按当前功能显示设备栏；概览使用页内设备卡，设置不占用设备栏空间。"""
+
+        bar = getattr(self, "_global_device_bar", None)
+        if bar is None:
+            return
+        host = self._current_feature_host()
+        current = self.stackedWidget.currentWidget()
+        standalone = current in (
+            getattr(self, "_home_page", None), getattr(self, "_settings_page", None)
+        )
+        device_overview = (
+            host is not None and host.section_key == "devices"
+            and host.current_feature == "overview"
+        )
+        bar.setVisible(not standalone and not device_overview)
+        if host is None:
+            bar.set_session_context(None, None)
+            return
+        requires = host.feature_requires_device(host.current_feature)
+        close = host.close_session_button
+        bar.set_session_context(
+            host.device_combo if requires else None,
+            close if not close.isHidden() else None,
+        )
+
+    def _choose_global_session(self, device_id: str) -> None:
+        """会话切换走原宿主入口，运行锁生效且不改写批量目标。"""
+
+        host = self._current_feature_host()
+        if host is None or not host.device_combo.isEnabled():
+            return
+        for index in range(host.device_combo.count()):
+            if host.device_combo.itemData(index) == device_id:
+                host.device_combo.setCurrentIndex(index)
+                break
+
+    def _close_global_session(self) -> None:
+        host = self._current_feature_host()
+        if host is not None and host.close_session_button.isEnabled():
+            host.close_current_session()
+            self._sync_global_session_controls()
+
+    def _show_global_connection(self) -> None:
+        """使用设备管理器已经加载的地址历史，不额外读取用户存储。"""
+
+        source = self.left_panel._devices_tab.ip_entry
+        history = [
+            (source.itemText(index), str(source.itemData(index) or ""))
+            for index in range(source.count())
+        ]
+        anchor = self._device_hub.connect_button if self._device_hub.isVisible() else None
+        self._global_device_bar.open_connection(history, anchor=anchor)
 
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
         """把业务键映射到对应的 FluentWindow 主页面。"""
 
-        MainFrame._cancel_pending_workspace_navigation(self)
         if isinstance(key, WorkspaceRoute):
             self._open_workspace_feature(
                 key.section,
@@ -1843,7 +1797,6 @@ class MainFrame(FluentWindow):
             "apps": getattr(self, "_apps_page", None),
             "system": getattr(self, "_system_page", None),
             "tasks": getattr(self, "_tasks_page", None),
-            "logs": getattr(self, "_logs_page", None),
             "settings": getattr(self, "_settings_page", None),
         }
         if key == "remote":
@@ -1858,9 +1811,16 @@ class MainFrame(FluentWindow):
         self.switchTo(page)
         if key == "tasks":
             self._task_page.refresh()
-        elif key == "logs":
-            self.log_panel.text_output.setFocus(Qt.FocusReason.ShortcutFocusReason)
-            self.log_panel.text_output.ensureCursorVisible()
+
+    def _show_selected_device_info(self) -> None:
+        """用户主动查询设备详情时先展开结果位置，异步结果不再抢占后续导航。"""
+
+        devices = list(self.left_panel.selected_devices)
+        if not devices:
+            return
+        self._on_nav_requested("tasks")
+        self._task_page.show_runtime_records()
+        self.left_panel.signals.device_info_requested.emit(devices)
 
     def _open_workspace_feature(
         self,
@@ -1869,14 +1829,10 @@ class MainFrame(FluentWindow):
         *,
         device_id: str = "",
         payload=None,
-        _preserve_pending: bool = False,
         _record_history: bool = True,
-        _update_location: bool = True,
     ) -> bool:
         """在所属主页面打开内嵌功能，不创建独立业务窗口。"""
 
-        if not _preserve_pending:
-            MainFrame._cancel_pending_workspace_navigation(self)
         if section == "remote":
             section = "devices"
             feature = "remote" if feature == "overview" else feature
@@ -1907,71 +1863,17 @@ class MainFrame(FluentWindow):
             )
             return False
         stable_route = MainFrame._stable_workspace_route(page.current_route)
-        if _update_location:
-            MainFrame._commit_navigation_location(
-                self,
-                stable_route,
-                record_history=_record_history,
-            )
-        target_location = (
-            stable_route
-            if _update_location
-            else getattr(self, "_current_navigation_location", None)
+        MainFrame._commit_navigation_location(
+            self,
+            stable_route,
+            record_history=_record_history,
         )
         self.switchTo(
             page,
             _record_history=False,
-            _target_location=target_location,
+            _target_location=stable_route,
         )
         return opened
-
-    def _show_device_selection(self, route: WorkspaceRoute | None = None) -> None:
-        """从空态进入设备概览，并记住选择完成后要恢复的功能。"""
-
-        if route is None:
-            self._open_workspace_feature("devices", "overview")
-            return
-        if self._transient_navigation_origin is None:
-            self._transient_navigation_origin = self._current_navigation_location
-        self._pending_workspace_route = route
-        self._open_workspace_feature(
-            "devices",
-            "overview",
-            _preserve_pending=True,
-            _record_history=False,
-            _update_location=False,
-        )
-        self._update_navigation_back_button()
-
-    def _resume_pending_workspace_route(self, devices: list[str]) -> None:
-        """用户完成设备选择后仅恢复一次此前请求的功能路由。"""
-
-        if getattr(self, "_closing", False):
-            return
-        normalized = tuple(
-            dict.fromkeys(
-                str(device).strip() for device in devices if str(device).strip()
-            )
-        )
-        if len(normalized) != 1:
-            return
-        route = self._pending_workspace_route
-        if route is None:
-            return
-        origin = self._transient_navigation_origin
-        self._pending_workspace_route = None
-        self._transient_navigation_origin = None
-        opened = self._open_workspace_feature(
-            route.section,
-            route.feature,
-            device_id=normalized[0],
-            payload=route.payload,
-            _record_history=False,
-        )
-        if not opened:
-            self._pending_workspace_route = route
-            self._transient_navigation_origin = origin
-        self._update_navigation_back_button()
 
     def _setup_shortcuts(self) -> None:
         self._actions.setup_shortcuts()
@@ -2016,7 +1918,6 @@ class MainFrame(FluentWindow):
             "_apps_page",
             "_system_page",
             "_tasks_page",
-            "_logs_page",
             "_settings_page",
         ):
             page = getattr(self, name, None)
@@ -2034,7 +1935,6 @@ class MainFrame(FluentWindow):
             "_apps_page",
             "_system_page",
             "_tasks_page",
-            "_logs_page",
         ):
             page = getattr(self, name, None)
             header = getattr(page, "header", None)
@@ -2091,7 +1991,6 @@ class MainFrame(FluentWindow):
             "_apps_page",
             "_system_page",
             "_tasks_page",
-            "_logs_page",
             "_settings_page",
         ):
             page = getattr(self, name, None)
@@ -2121,8 +2020,7 @@ class MainFrame(FluentWindow):
             seen.add(identity)
             roots.append(widget)
             widget.setPalette(palette)
-            # FluentWindow 的内部堆栈使用自己的浅色 QSS；页面若保持透明，
-            # 深色模式会露出这层底色。移植页作为完整表面应主动绘制应用底色。
+            # 页面和壳层均主动绘制应用底色，避免内容滚动或重排时透出父层材质。
             widget.setAutoFillBackground(True)
             widget.update()
 
@@ -2174,9 +2072,6 @@ class MainFrame(FluentWindow):
         for signal_, handler in signal_map:
             signal_.connect(handler)
         self.left_panel.selected_devices_changed.connect(self._update_device_actions)
-        self.left_panel.selected_devices_changed.connect(
-            self._resume_pending_workspace_route
-        )
         self._update_device_actions()
 
     def _connect_controller_feedback(self, LP, CTL):
@@ -2185,19 +2080,60 @@ class MainFrame(FluentWindow):
         LP.log_message.connect(self.log_service.log)
         CTL.record_target_finished.connect(self.left_panel.on_recording_target_finished)
         CTL.monkey_target_finished.connect(self.left_panel.on_monkey_target_finished)
+        apps_panel = self.left_panel._apps_tab
+        if apps_panel is None:
+            raise RuntimeError("apps panel was not initialized before signal binding")
+        apps_panel.monkey_preparation_requested.connect(self.adb_controller.prepare_monkey_targets)
+        CTL.monkey_preparation_finished.connect(apps_panel.on_monkey_preparation_finished)
         operation_handler = getattr(
             self,
             "_on_operation_completed",
             self.left_panel.on_operation_completed,
         )
         CTL.operation_completed.connect(operation_handler)
-        CTL.current_package_received.connect(self.left_panel.update_current_package)
-        CTL.device_info_updated.connect(
-            lambda _ip, info: self.log_service.log(
-                "INFO",
-                f"Device information updated: field_count={len(info)}",
-            )
-        )
+        CTL.current_package_received.connect(self._on_current_package_received)
+        apps_panel.program_edit.textChanged.connect(self._invalidate_package_query)
+        CTL.device_info_updated.connect(self._on_device_info_updated)
+
+    def _request_current_package(self, devices: list[str]) -> None:
+        """唯一输入框一次只接收一台明确目标的查询，禁止重复请求争用回填。"""
+
+        targets = list(dict.fromkeys(devices))
+        apps = self.left_panel._apps_tab
+        if (apps is None or self._pending_package_device or len(targets) != 1
+                or targets != self.left_panel.selected_devices):
+            return
+        self._pending_package_device = targets[0]
+        self._package_query_invalidated = False
+        apps.set_package_query_pending(True)
+        try:
+            self.adb_controller.get_current_package(targets)
+        except Exception:
+            self._finish_package_query()
+            raise
+
+    def _invalidate_package_query(self, *_args) -> None:
+        """编辑输入或变更目标后，已发出的读取只完成自身，不再覆盖当前输入。"""
+
+        if self._pending_package_device:
+            self._package_query_invalidated = True
+
+    def _finish_package_query(self) -> None:
+        self._pending_package_device = ""
+        apps = self.left_panel._apps_tab
+        if apps is not None:
+            apps.set_package_query_pending(False)
+
+    def _on_current_package_received(self, device: str, package: str) -> None:
+        """在 GUI 主线程核对请求与选择后同步回填，避免额外队列间隙覆盖编辑。"""
+
+        if device != self._pending_package_device or self._closing:
+            return
+        accepted = (not self._package_query_invalidated
+                    and self.left_panel.selected_devices == [device])
+        self._finish_package_query()
+        if accepted:
+            self.left_panel.update_current_package(device, package)
 
     def _on_screenshot_batch_ready(self, image_paths: list[str]) -> None:
         """把截图结果送入 Apps 分区的持久媒体页。"""
@@ -2236,6 +2172,8 @@ class MainFrame(FluentWindow):
     def _on_operation_completed(self, operation: str, success: bool, message: str) -> None:
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""
 
+        if operation == "get_package" and not success:
+            self._finish_package_query()
         self.left_panel.on_operation_completed(operation, success, message)
         task_history = getattr(self, "_task_history", None)
         if task_history is not None:
@@ -2280,7 +2218,7 @@ class MainFrame(FluentWindow):
 
     def _app_signal_map(self, LP, AC):
         return [
-            (LP.get_program_requested, AC.get_current_package),
+            (LP.get_program_requested, self._request_current_package),
             (LP.uninstall_app_requested, AC.uninstall_apk),
             (LP.clear_app_data_requested, AC.clear_app_data),
             (LP.restart_app_requested, AC.restart_app),
@@ -2344,6 +2282,9 @@ class MainFrame(FluentWindow):
 
     def _on_devices_updated(self, devices: list[str]):
         """仅在设备列表变化后刷新设备界面。"""
+        self._device_metadata = {
+            device: info for device, info in self._device_metadata.items() if device in devices
+        }
         self.left_panel.update_device_list(devices)
         self.left_panel.refresh_device_choices()
         self._update_device_actions()
@@ -2617,8 +2558,6 @@ class MainFrame(FluentWindow):
 
     def resizeEvent(self, event: QResizeEvent):
         super().resizeEvent(event)
-        if getattr(self, "_layout_ready", False):
-            self._close_navigation_flyouts()
         forced_size = getattr(self, "_workspace_forced_size", None)
         if (
             not getattr(self, "_applying_workspace_constraints", False)
@@ -2639,7 +2578,7 @@ class MainFrame(FluentWindow):
         # FluentWidget.showEvent 会在 Win11 再次应用 Mica；必须在它之后覆盖
         # 标题栏和导航壳层，否则“浅色 + 系统深色”首次启动会出现黑色侧栏。
         self._refresh_window_chrome_theme()
-        QTimer.singleShot(0, self._refresh_window_chrome_theme)
+        QTimer.singleShot(0, self, self._refresh_window_chrome_theme)
         self._navigation_layout_timer.start(0)
 
     def changeEvent(self, event):

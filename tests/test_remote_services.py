@@ -519,6 +519,7 @@ def test_remote_window_manager_focus_retries_after_set_foreground():
 
 def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
     panel._launch_worker = None
     panel._active_device = "device-1"
     panel._status_label = Mock()
@@ -571,6 +572,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
 
 def test_remote_panel_launch_failure_returns_controls_to_idle():
     panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
     panel._closing = False
     panel._launch_worker = None
     panel._active_device = "device-1"
@@ -1220,6 +1222,7 @@ def test_remote_shutdown_capture_rejects_late_input_without_sync_fallback():
     """注册关闭资源后立即拒绝输入，不因 executor 已摘除而同步执行。"""
 
     panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
     panel._closing = False
     panel._remote_input_closing = False
     panel._remote_executor = Mock()
@@ -1269,6 +1272,7 @@ def test_remote_submit_registration_is_atomic_with_shutdown_capture():
     panel._closing = False
     panel._remote_input_closing = False
     panel._remote_executor = GatedExecutor()
+    panel.panel = Mock(selected_devices=["device-1"])
     panel._remote_futures = set()
     panel._remote_futures_lock = threading.Lock()
     panel._warmup_threads = set()
@@ -1369,6 +1373,7 @@ def test_remote_warmup_publish_and_start_are_atomic_for_shutdown_capture():
     panel._remote_input_shutdown = None
     panel._adb = Mock()
     panel._adb.close_input_sessions.side_effect = session_closed.set
+    panel.panel = Mock(selected_devices=["device-1"])
 
     def warmup():
         warmup_running.set()
@@ -1432,6 +1437,7 @@ def test_remote_shutdown_joins_all_overlapping_warmups_before_closing_sessions()
     session_closed = threading.Event()
 
     panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1"])
     panel._closing = False
     panel._remote_input_closing = False
     panel._remote_executor = None
@@ -1881,6 +1887,7 @@ def test_remote_panel_controls_follow_full_session_state(qt_application):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked)
         side_panel._devices_tab.listbox_devices.addItem(item)
+        side_panel._connected_device_cache = ["device-1"]
         remote.update_action_states()
 
         assert remote.btn_start.isEnabled() is True

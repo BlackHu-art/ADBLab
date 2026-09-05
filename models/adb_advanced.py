@@ -20,6 +20,17 @@ from .adb_network import ADBNetworkMixin
 from .adb_system import ADBSystemMixin
 
 
+def _recording_positive_integer(value: object, label: str) -> int:
+    """校验录屏数值参数，避免动态值被设备端 shell 再次解释。"""
+    text = str(value).strip()
+    if not re.fullmatch(r"[0-9]+", text):
+        raise ValueError(f"{label} must be a positive integer")
+    number = int(text)
+    if number <= 0:
+        raise ValueError(f"{label} must be a positive integer")
+    return number
+
+
 class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
     """组合核心、网络和系统级 ADB 操作。"""
 
@@ -43,7 +54,15 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         bitrate: str = "8000000",
         batch_id: str = "",
     ) -> dict:
+        """校验录屏参数后启动受控进程；非法参数不创建设备任务。"""
         try:
+            duration = _recording_positive_integer(duration, "Recording duration")
+            if duration > 3600:
+                raise ValueError("Recording duration must be between 1 and 3600 seconds")
+            bitrate = str(_recording_positive_integer(bitrate, "Recording bitrate"))
+            if width or height:
+                width = str(_recording_positive_integer(width, "Recording width"))
+                height = str(_recording_positive_integer(height, "Recording height"))
             sanitized = re.sub(r"\W+", "_", device_ip)
             timestamp = datetime.now().strftime("%H%M%S")
             filename = f"record_{sanitized}_{timestamp}.mp4"

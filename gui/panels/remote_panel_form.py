@@ -4,7 +4,7 @@ import os
 import re
 from datetime import datetime
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QObject, QSize, Qt, Slot
 from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, InfoBadge
 
@@ -21,14 +21,18 @@ from gui.widgets.responsive_layout import (
 )
 
 
-class RemotePanelForm:
-    """组合进 RemotePanel 的表单控制器，通过 ``self._frame`` 访问面板。"""
+class RemotePanelForm(QObject):
+    """随表单根控件销毁的控制器，通过 ``self._frame`` 访问 Remote 面板。"""
 
     def __init__(self, frame):
+        super().__init__()
         self._frame = frame
 
     def build_ui(self) -> QWidget:
         w = QWidget()
+        # RemotePanel 是隐藏的协调对象，可能晚于可见表单释放；全局样式信号必须
+        # 归属实际视图，Qt 才能在根控件销毁时断连，避免访问已释放的设备与徽标。
+        self.setParent(w)
         lo = QVBoxLayout(w)
         lo.setSpacing(10)
         lo.setContentsMargins(0, 0, 0, 0)
@@ -39,14 +43,19 @@ class RemotePanelForm:
         self._frame._remote_section_groups.extend((mirroring, control))
         self._frame.category_stack = AdaptiveCategoryStack("remote", w)
         self._frame.category_stack.setObjectName("remoteCategoryStack")
-        self._frame.category_stack.add_category("mirroring", "镜像配置", (mirroring,))
-        self._frame.category_stack.add_category("control", "按键与手势", (control,))
+        self._frame.category_stack.add_category(
+            "mirroring", "远程控制", (mirroring, control)
+        )
+        self._frame.category_stack.add_alias("control", "mirroring")
         self._frame.category_stack.current_changed.connect(
             lambda _key: self._frame.apply_responsive_width(0)
         )
         self._frame._on_theme_changed_remote("")
         self._frame._set_session_state(self._frame._SESSION_IDLE)
-        BaseStyles.theme_changed.connect(self._on_theme_changed_remote)
+        BaseStyles.theme_changed.connect(
+            self._on_theme_changed_remote,
+            Qt.ConnectionType.UniqueConnection,
+        )
         lo.addWidget(self._frame.category_stack, 1)
         return w
 
@@ -91,10 +100,11 @@ class RemotePanelForm:
         lo.addWidget(header)
         self._frame._apply_remote_header_style()
 
-    def _on_theme_changed_remote(self, _name: str) -> None:
+    @Slot()
+    def _on_theme_changed_remote(self) -> None:
         """主题切换时重建页头与分区卡片样式（委托给面板持有者）。"""
 
-        self._frame._on_theme_changed_remote(_name)
+        self._frame._on_theme_changed_remote(BaseStyles.current_theme())
 
     def _build_mirroring(self) -> QWidget:
         g = self._frame._card("屏幕镜像")

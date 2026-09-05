@@ -18,7 +18,16 @@ class RemotePanelInput:
 
     def _submit_remote_input(self, task):
         """遥控输入放入单线程队列，并把队列状态回写到 UI。"""
+        if not self._frame._can_operate_device():
+            return
+        revision = getattr(self._frame, "_device_admission_revision", 0)
+
         def _wrapped():
+            if self._input_closing() or revision != getattr(
+                self._frame, "_device_admission_revision", 0
+            ):
+                self._frame._mark_remote_completed("failed")
+                return
             try:
                 service_result = task()
                 result = "sent" if self._frame._remote_input_succeeded(service_result) else "failed"
@@ -128,7 +137,11 @@ class RemotePanelInput:
         self._frame._submit_remote_input(_run)
 
     def _warm_remote_input_session(self):
-        if self._input_closing():
+        if (
+            self._input_closing()
+            or not getattr(self._frame, "_device_selected", True)
+            or getattr(self._frame, "_workspace_device_connected", None) is False
+        ):
             return
         active_device = getattr(self._frame, "_active_device", None)
         if not active_device:
@@ -145,7 +158,7 @@ class RemotePanelInput:
     def _start_warm_remote_input_session(self):
         """启动并保留 warmup producer，供 Remote 关闭屏障等待。"""
 
-        if self._input_closing():
+        if self._input_closing() or not self._frame._can_operate_device():
             return None
         lock = getattr(self._frame, "_warmup_threads_lock", None)
         if lock is None:
@@ -155,9 +168,12 @@ class RemotePanelInput:
         if threads is None:
             threads = set()
             self._frame._warmup_threads = threads
+        revision = getattr(self._frame, "_device_admission_revision", 0)
 
         def warmup() -> None:
             try:
+                if revision != getattr(self._frame, "_device_admission_revision", 0):
+                    return
                 self._frame._warm_remote_input_session()
             finally:
                 current = threading.current_thread()

@@ -3,11 +3,32 @@
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QTableWidgetItem
+from qfluentwidgets import TableItemDelegate
 
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
-from gui.styles.icon_loader import get_themed_icon
+from gui.styles.icon_loader import get_fluent_icon
 from services import file_explorer as explorer_service
+
+
+def file_explorer_icon(name: str) -> QIcon:
+    """使用 Qt 原生 SVG 引擎，由页面主题回调重新绑定颜色。
+
+    文件页反复创建和释放表格及工具按钮时，Fluent 的 Python QIconEngine
+    在 Windows 退出阶段可触发堆损坏；此边界交给 Qt 管理图标拷贝及释放。
+    """
+    return get_fluent_icon(name).icon()
+
+
+class FileExplorerItemDelegate(TableItemDelegate):
+    """仅隐藏类型的绘制文字，保留 Qt 排序和 Fluent 行状态绘制。"""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        if index.column() == 0:
+            # PySide6 的类型桩未列出此公开结构字段，实际 Qt 委托使用 text 绘制。
+            setattr(option, "text", "")
 
 
 class FileExplorerList:
@@ -75,8 +96,8 @@ class FileExplorerList:
     ):
         if self._frame._closing:
             return
-        if not getattr(self._frame, "_device_connected", True):
-            self._frame.status_bar.setText("Device offline; reconnect or choose another device")
+        if not self._frame._can_operate():
+            self._frame.status_bar.setText("Select an online device before browsing files")
             return
         requested_path = str(requested_path or self._frame.current_path).strip()
         if not requested_path:
@@ -107,6 +128,8 @@ class FileExplorerList:
         cmd = explorer_service.ls_command(requested_path)
         shell_cmd = self._root(cmd)
         worker = self._frame._run_adb("shell", shell_cmd)
+        if worker is None:
+            return
         self._frame._active_refresh_worker = worker
         worker.setProperty("refreshRequestId", request_id)
         worker.setProperty("requestedPath", requested_path)
@@ -204,6 +227,7 @@ class FileExplorerList:
         type_item = QTableWidgetItem(file_type)
         type_item.setIcon(self._file_type_icon(name, file_type))
         type_item.setToolTip(file_type)
+        type_item.setData(Qt.ItemDataRole.AccessibleTextRole, file_type)
         name_item = QTableWidgetItem(name)
         name_item.setToolTip(name)
         self._frame.table.setItem(row, self._frame.TYPE_COL, type_item)
@@ -220,7 +244,7 @@ class FileExplorerList:
         return item.text() if item else ""
 
     def _file_type_icon(self, name: str, file_type: str):
-        return get_themed_icon(self._file_type_icon_name(name, file_type))
+        return file_explorer_icon(self._file_type_icon_name(name, file_type))
 
     def _file_type_icon_name(self, name: str, file_type: str) -> str:
         if name == "..":
@@ -280,6 +304,8 @@ class FileExplorerList:
     # ── 双击操作 ────────────────────────────────────────────────────────
 
     def _on_double_click(self, row, col):
+        if not self._frame._can_operate():
+            return
         name = self._file_name_at(row)
         ftype = self._file_type_at(row)
         if name == "..":

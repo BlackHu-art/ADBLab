@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from builtins import ExceptionGroup
 from dataclasses import replace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QWidget
+from shiboken6 import delete, isValid
 
 from gui.styles import BaseStyles
 from gui.styles.typography import typography_manager
+from tests.conftest import isolated_ui_state
 from tests.ui_geometry_helpers import (
     assert_contained,
     assert_elided_accessible_text,
@@ -141,10 +144,10 @@ def test_isolated_ui_state_restores_state_and_stops_hidden_window_timer(
         assert hidden_cleanup["timer_stopped"]
         assert visible_cleanup["timer_was_active"]
         assert visible_cleanup["timer_stopped"]
-        assert not hidden_window.isVisible()
+        assert not isValid(hidden_window)
         QCoreApplication.processEvents()
         assert timed_out == []
-        QCoreApplication.sendPostedEvents(visible_window, QEvent.Type.DeferredDelete)
+        assert not isValid(visible_window)
         assert visible_timer_destroyed == [True]
         assert visible_window_destroyed == [True]
         assert BaseStyles.current_theme() == previous_theme
@@ -182,3 +185,55 @@ def test_isolated_ui_state_stops_timers_before_and_after_reentrant_shutdown(
         assert window.timeouts == []
 
     isolated_ui_state_probe["assertions"].append(assert_after_isolation)
+
+
+def test_isolated_ui_state_releases_already_closed_windows(isolated_ui_state_probe):
+    window = QWidget()
+    destroyed = []
+    window.destroyed.connect(lambda: destroyed.append(True))
+    window.show()
+    window.close()
+
+    def assert_after_isolation(_probe):
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert not isValid(window)
+        assert destroyed == [True]
+
+    isolated_ui_state_probe["assertions"].append(assert_after_isolation)
+
+
+def test_isolated_ui_state_reports_shutdown_failure_and_still_releases_windows(qt_application):
+    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}})
+    next(isolation)
+    failure = RuntimeError("shutdown failed while the Qt window is still alive")
+
+    class FailingShutdownWindow(QWidget):
+        def shutdown(self):
+            raise failure
+
+    failed_window = FailingShutdownWindow()
+    other_window = QWidget()
+    try:
+        with pytest.raises(ExceptionGroup, match="UI window cleanup failed") as captured:
+            next(isolation)
+        assert captured.value.exceptions == (failure,)
+        assert not isValid(failed_window)
+        assert not isValid(other_window)
+    finally:
+        for window in (failed_window, other_window):
+            if isValid(window):
+                delete(window)
+
+
+def test_isolated_ui_state_accepts_window_deleted_by_its_shutdown(qt_application):
+    isolation = isolated_ui_state.__wrapped__(qt_application, {"cleanup": {}})
+    next(isolation)
+
+    class SelfDeletingWindow(QWidget):
+        def shutdown(self):
+            delete(self)
+
+    window = SelfDeletingWindow()
+    with pytest.raises(StopIteration):
+        next(isolation)
+    assert not isValid(window)

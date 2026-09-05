@@ -5,9 +5,10 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt, Signal
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import ComboBox, FluentIcon
+from shiboken6 import isValid
 
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.pages.fluent_pages import WorkspaceAreaPage, WorkspaceSectionPage
@@ -43,6 +44,41 @@ class _LifecyclePage(QWidget):
 class _TallLifecyclePage(_LifecyclePage):
     def minimumSizeHint(self) -> QSize:
         return QSize(700, 500)
+
+
+def test_host_projects_selection_before_connection_and_activation(qt_application):
+    events = []
+
+    class GuardedPage(_LifecyclePage):
+        def set_device_selected(self, selected):
+            events.append((self.key.device_id, "selected", selected))
+
+        def set_device_connected(self, connected):
+            events.append((self.key.device_id, "connected", connected))
+
+        def activate(self, payload=None):
+            events.append((self.key.device_id, "activate", payload))
+
+    host = WorkspaceFeatureHost("system", "系统工具", QWidget())
+    host.register_feature("logcat", "实时日志", FluentIcon.SCROLL, GuardedPage)
+    host.set_device_context(["device-a"], ["device-a", "device-b"])
+    host.open_feature("logcat", preferred_device="device-a")
+    assert events[-3:] == [
+        ("device-a", "selected", True), ("device-a", "connected", True),
+        ("device-a", "activate", None),
+    ]
+    host.open_feature("logcat", preferred_device="device-b")
+    assert events[-3:] == [
+        ("device-b", "selected", False), ("device-b", "connected", True),
+        ("device-b", "activate", None),
+    ]
+    events.clear()
+    host.set_device_context([], ["device-a", "device-b"])
+    assert events == [
+        ("device-a", "selected", False), ("device-a", "connected", True),
+        ("device-b", "selected", False), ("device-b", "connected", True),
+    ]
+    assert "未选" in host.session_badge.text()
 
 
 class _AdaptiveLifecyclePage(_LifecyclePage):
@@ -155,7 +191,7 @@ def test_workspace_host_uses_inline_lazy_device_sessions(qt_application):
     assert len(created) == 2
 
 
-def test_host_exposes_navigation_catalog_without_a_local_feature_selector(
+def test_host_exposes_function_navigation_separate_from_device_selection(
     qt_application,
 ):
     overview = QWidget()
@@ -184,8 +220,11 @@ def test_host_exposes_navigation_catalog_without_a_local_feature_selector(
         ("overview", "连接与选择"),
         ("remote", "屏幕镜像"),
     ]
-    assert host.findChildren(ComboBox) == [host.device_combo]
+    assert host.findChildren(ComboBox) == [host.feature_combo, host.device_combo]
+    assert host.feature_combo.count() == 2
     assert host.open_route(WorkspaceRoute("devices", "remote")) is True
+    assert host.feature_combo.currentData() == "remote"
+    assert host.feature_pivot.currentRouteKey() == "devices:feature:remote"
     assert host.stack.currentWidget() is host.no_device_page
     assert activated == []
 
@@ -281,6 +320,26 @@ def test_workspace_scroll_extent_tracks_current_page_layout_changes(qt_applicati
 
     assert host.stack.minimumHeight() == 600
     assert host.content_scroll.verticalScrollBar().maximum() > initial_maximum
+
+
+def test_workspace_destruction_cancels_pending_layout_refresh(qt_application):
+    refreshes = []
+
+    class TrackedHost(WorkspaceFeatureHost):
+        def _finish_content_extent_sync(self):
+            refreshes.append(isValid(self))
+            if isValid(self):
+                super()._finish_content_extent_sync()
+
+    host = TrackedHost("apps", "快捷操作", QWidget())
+    qt_application.processEvents()
+    refreshes.clear()
+    host._schedule_content_extent_sync()
+    host.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not isValid(host)
+    qt_application.processEvents()
+    assert refreshes == []
 
 
 def test_workspace_route_rejects_wrong_host_and_back_does_not_dispose(qt_application):
@@ -646,7 +705,7 @@ def test_shutdown_registration_failure_does_not_skip_later_sessions(qt_applicati
     second.register_shutdown_tasks.assert_called_once()
 
 
-def test_narrow_workspace_keeps_only_the_session_device_combo(qt_application):
+def test_narrow_workspace_keeps_function_and_session_device_selection(qt_application):
     host = WorkspaceFeatureHost("system", "系统工具", QWidget())
     host.register_feature("logcat", "实时 Logcat", FluentIcon.SCROLL, _LifecyclePage)
     host.register_feature(
@@ -657,13 +716,16 @@ def test_narrow_workspace_keeps_only_the_session_device_combo(qt_application):
     )
     host.set_device_context(["device-1"], ["device-1"])
     host.open_feature("performance")
-    host.resize(650, 480)
+    host.resize(500, 480)
     host.show()
     qt_application.processEvents()
 
-    assert host.findChildren(ComboBox) == [host.device_combo]
+    assert host.findChildren(ComboBox) == [host.feature_combo, host.device_combo]
+    assert host.feature_combo.isVisibleTo(host)
+    assert host.feature_combo.currentData() == "performance"
+    assert host.feature_pivot.isHidden()
     assert host.device_combo.isVisibleTo(host)
-    assert host.session_toolbar.minimumSizeHint().width() <= 650
+    assert host.session_toolbar.minimumSizeHint().width() <= 500
 
 
 def test_wide_workspace_keeps_session_toolbar_inside_content(qt_application):
@@ -680,7 +742,10 @@ def test_wide_workspace_keeps_session_toolbar_inside_content(qt_application):
     host.show()
     qt_application.processEvents()
 
-    assert host.findChildren(ComboBox) == [host.device_combo]
+    assert host.findChildren(ComboBox) == [host.feature_combo, host.device_combo]
+    assert host.feature_combo.isHidden()
+    assert host.feature_pivot.isVisibleTo(host)
+    assert host.feature_pivot.currentRouteKey() == "system:feature:performance"
     assert host.device_combo.isVisibleTo(host)
     assert host.content_column.width() >= 1000
     combo_rect = host.device_combo.geometry()

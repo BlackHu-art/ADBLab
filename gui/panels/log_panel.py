@@ -144,9 +144,10 @@ class LogPanel(QWidget):
     def _init_ui(self):
         self.text_output = TextEdit(self)
         self.text_output.setReadOnly(True)
-        self.text_output.setAccessibleName("操作日志")
-        self.text_output.setPlaceholderText("操作日志将在这里显示。")
+        self.text_output.setAccessibleName("运行记录")
+        self.text_output.setPlaceholderText("应用操作结果与异常记录将在这里显示。")
         self.text_output.setUndoRedoEnabled(False)
+        self.setFocusProxy(self.text_output)
 
         self.text_output.setFont(BaseStyles.font_for_role(FontRole.LOG))
 
@@ -199,7 +200,7 @@ class LogPanel(QWidget):
         configure_button(
             self.logClearButton,
             text="",
-            tooltip="清空操作日志",
+            tooltip="清空运行记录",
         )
         self.logClearButton.setIcon(get_themed_icon("broom.svg"))
         self.logClearButton.setIconSize(QSize(16, 16))

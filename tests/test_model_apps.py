@@ -21,6 +21,55 @@ from models.adb_testing import ADBTesting
 from models.base.focus_detector import detect_current_package, extract_package_name
 
 
+def test_restart_app_does_not_launch_after_force_stop_failure():
+    model = Mock()
+    model._run.side_effect = [
+        {"success": False, "error": "force-stop denied"},
+        {"success": True, "output": "Events injected: 1"},
+    ]
+
+    result = ADBApp.restart_app_async.__wrapped__(model, "device-1", "com.example.app", 2)
+
+    model._run.assert_called_once()
+    assert result["success"] is False
+    assert result["error"] == "force-stop denied"
+    assert result["output"] == "force-stop denied"
+    assert result["package_name"] == "com.example.app"
+    assert result["index"] == 2
+
+
+def test_restart_app_preserves_launch_failure_and_stop_output():
+    model = Mock()
+    model._run.side_effect = [
+        {"success": True, "output": "stopped"},
+        {"success": False, "error": "launcher unavailable"},
+    ]
+
+    result = ADBApp.restart_app_async.__wrapped__(model, "device-1", "com.example.app", 1)
+
+    assert model._run.call_count == 2
+    assert result["success"] is False
+    assert result["error"] == "launcher unavailable"
+    assert result["output"] == "stopped\nlauncher unavailable"
+
+
+def test_restart_app_launches_after_successful_stop():
+    model = Mock()
+    model._run.side_effect = [
+        {"success": True, "output": "stopped"},
+        {"success": True, "output": "Events injected: 1"},
+    ]
+
+    result = ADBApp.restart_app_async.__wrapped__(model, "device-1", "com.example.app", 1)
+
+    assert model._run.call_count == 2
+    assert model._run.call_args_list[0].args[0][4:6] == ["am", "force-stop"]
+    assert model._run.call_args_list[1].args[0][4] == "monkey"
+    assert result["success"] is True
+    assert result["output"] == "stopped\nEvents injected: 1"
+    assert "error" not in result
+
+
 def _app_manager_for_unit_tests():
     class UnitDialog:
         pass
@@ -47,6 +96,8 @@ def _app_manager_for_unit_tests():
     dialog._detail_timer.start = Mock()
     dialog._detail_timer.stop = Mock()
     dialog._filter = Mock()
+    dialog._form_controller = Mock(spec_set=["_update_view_geometry"])
+    dialog._icons_controller = Mock(spec_set=["reset", "decorate", "schedule"])
     dialog.model = Mock()
     dialog.model.rowCount.return_value = 0
     dialog.model.removeRows = Mock()
@@ -85,6 +136,7 @@ def test_app_manager_populate_schedules_visible_details_only():
     assert dialog._detail_row_by_pkg == {"com.example.demo": 0}
     assert "com.example.demo" in dialog._detail_icon_by_pkg
     dialog.status_bar.setText.assert_called()
+    dialog._form_controller._update_view_geometry.assert_called_once_with()
 
 
 def test_app_manager_detail_update_uses_cached_indexes():

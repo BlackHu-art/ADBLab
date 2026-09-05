@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import io
+import subprocess
 import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
+
+import pytest
 
 from core.exec import ProcessRunner
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
@@ -121,6 +124,53 @@ class _TrackingProcessRunner:
             return False
         process.stopped_by_runner = True
         return True
+
+
+def test_mobileperf_failed_stop_keeps_running_state_and_can_be_retried(tmp_path):
+    """停止未确认退出时保留准入屏障和进程跟踪，后续停止必须能重试。"""
+    process = _StoppableProcess(None, None)
+
+    def wait_for_exit(timeout=None):
+        if process.returncode is None:
+            raise subprocess.TimeoutExpired("mobileperf-test", timeout)
+        return process.returncode
+
+    process.wait = wait_for_exit
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.return_value = process
+    stop_attempts = []
+
+    def stop_process(key, timeout=5):
+        stop_attempts.append(key)
+        if len(stop_attempts) > 1:
+            process.returncode = 0
+        return process.returncode
+
+    process_runner.stop.side_effect = stop_process
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    runner.PIPE_EXIT_POLL_SECONDS = 0
+    finished = Mock()
+    config = MobilePerfRunConfig(package="com.example.retry")
+    runner.start(config, on_finished=finished)
+    context = runner._active_context
+    runner._join_context_readers(context, timeout=1)
+
+    try:
+        assert runner.stop(timeout=0) is None
+        assert runner.is_running() is True
+        assert runner.last_exit_code is None
+        finished.assert_not_called()
+        with pytest.raises(RuntimeError, match="already running"):
+            runner.start(config)
+        assert runner.stop(timeout=0) == 0
+    finally:
+        process.returncode = 0
+        runner.stop(timeout=0)
+
+    assert len(stop_attempts) == 2
+    assert stop_attempts[0] == stop_attempts[1]
+    assert runner.is_running() is False
+    finished.assert_called_once_with()
 
 
 def test_mobileperf_runner_drains_real_stdout_and_stderr_before_finish(tmp_path, monkeypatch):

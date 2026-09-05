@@ -29,6 +29,8 @@ from qfluentwidgets import (
 )
 
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
+from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.adaptive_navigation import AdaptiveNavigation
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +54,7 @@ class WorkspaceRoute:
 
 @dataclass(frozen=True, slots=True)
 class WorkspaceNavigationItem:
-    """供主窗口左侧导航注册的稳定功能入口。"""
+    """供工作区功能导航注册的稳定入口。"""
 
     feature: str
     label: str
@@ -95,7 +97,7 @@ class _NoDevicePage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.choose_button = PrimaryPushButton(FluentIcon.PHONE, "选择设备", self)
+        self.choose_button = PrimaryPushButton(DEVICE_ICON, "选择设备", self)
         self.choose_button.clicked.connect(self.choose_device_requested)
 
         layout = QVBoxLayout(self)
@@ -115,12 +117,12 @@ class _NoDevicePage(CardWidget):
 
         if available:
             self.message_label.setText(
-                "检测到多台可用设备。请在上方“会话设备”中明确选择一台。"
+                "请在上方设备选项中明确选择当前查看的一台，或在设备概览中选择操作设备。"
             )
             self.choose_button.setVisible(False)
             return
         self.message_label.setText(
-            "当前没有可用设备。可前往“连接与选择”完成连接，随后返回此功能。"
+            "当前没有可用设备。请使用顶部设备栏连接或刷新，选择后即可打开此功能。"
         )
         self.choose_button.setVisible(True)
 
@@ -186,7 +188,10 @@ class WorkspaceFeatureHost(QWidget):
     """在一个任务领域页内承载概览和按设备懒创建的功能页面。"""
 
     route_changed = Signal(object)
+    route_requested = Signal(object)
     choose_device_requested = Signal()
+    FEATURE_SELECTOR_MIN_PIVOT_WIDTH = 520
+    controls_changed = Signal()
 
     def __init__(
         self,
@@ -200,6 +205,8 @@ class WorkspaceFeatureHost(QWidget):
         if not self.section_key:
             raise ValueError("section_key must not be empty")
         self._definitions: dict[str, _FeatureDefinition] = {}
+        self._feature_aliases: dict[str, str] = {}
+        self._external_device_controls = False
         self._overview_definitions: dict[str, _OverviewDefinition] = {}
         self._navigation_order: list[str] = ["overview"]
         self._selected_devices: tuple[str, ...] = ()
@@ -217,10 +224,28 @@ class WorkspaceFeatureHost(QWidget):
         self._activating_route_from_background = False
         self._pending_route: WorkspaceRoute | None = None
         self._extent_update_scheduled = False
+        self._extent_timer = QTimer(self)
+        self._extent_timer.setSingleShot(True)
+        self._extent_timer.timeout.connect(self._finish_content_extent_sync)
         self._session_badge_in_toolbar = True
 
         self.registry = FeatureSessionRegistry(self)
         self.registry.session_removed.connect(self._on_session_removed)
+
+        self.feature_selector = AdaptiveNavigation(
+            f"{self.section_key}:feature",
+            accessible_name="工作区功能",
+            minimum_pivot_width=self.FEATURE_SELECTOR_MIN_PIVOT_WIDTH,
+            parent=self,
+        )
+        self.feature_pivot = self.feature_selector.pivot
+        self.feature_pivot.setObjectName(f"{self.section_key}FeaturePivot")
+        self.feature_pivot.setAccessibleName("工作区功能")
+        self.feature_combo = self.feature_selector.combo
+        self.feature_combo.setObjectName(f"{self.section_key}FeatureCombo")
+        self.feature_combo.setAccessibleName("工作区功能")
+        self.feature_combo.setToolTip("选择当前工作区功能")
+        self.feature_selector.current_requested.connect(self._open_selected_feature)
 
         self.session_toolbar = QWidget(self)
         self.session_toolbar.setObjectName(f"{self.section_key}SessionToolbar")
@@ -285,6 +310,7 @@ class WorkspaceFeatureHost(QWidget):
         content_layout = QVBoxLayout(self.content_column)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(10)
+        content_layout.addWidget(self.feature_selector)
         content_layout.addWidget(self.session_toolbar)
         content_layout.addWidget(self.content_scroll, 1)
 
@@ -300,6 +326,8 @@ class WorkspaceFeatureHost(QWidget):
             False,
             None,
         )
+        self._register_feature_selector_item("overview", overview_label)
+        self._sync_feature_selector("overview")
         self.stack.currentChanged.connect(self._on_current_page_changed)
         self.show_overview()
 
@@ -325,6 +353,7 @@ class WorkspaceFeatureHost(QWidget):
         return self.session_badge
 
     def feature_label(self, feature: str) -> str:
+        feature = self.canonical_feature(feature)
         definition = self._definitions.get(feature)
         if definition is not None:
             return definition.label
@@ -332,7 +361,7 @@ class WorkspaceFeatureHost(QWidget):
         return overview.label if overview is not None else ""
 
     def navigation_items(self) -> tuple[WorkspaceNavigationItem, ...]:
-        """按界面信息架构顺序返回主导航需要注册的功能入口。"""
+        """按工作区内部信息架构顺序返回功能入口。"""
 
         items: list[WorkspaceNavigationItem] = []
         for feature in self._navigation_order:
@@ -346,14 +375,35 @@ class WorkspaceFeatureHost(QWidget):
             )
         return tuple(items)
 
+    def _register_feature_selector_item(self, feature: str, label: str) -> None:
+        """把功能登记到宽屏 Pivot 和窄屏 ComboBox 的同一顺序。"""
+
+        self.feature_selector.add_item(feature, label)
+
+    def _sync_feature_selector(self, feature: str) -> None:
+        """原子同步两种选择控件，不重复触发功能切换。"""
+
+        self.feature_selector.set_current(feature)
+
+    def _open_selected_feature(self, feature: str) -> None:
+        """处理页面内功能选择；当前项不重复启动或重置会话。"""
+
+        if (
+            not feature
+            or feature == self._current_feature
+        ):
+            return
+        self.route_requested.emit(WorkspaceRoute(self.section_key, feature))
+
     def is_overview_feature(self, feature: str) -> bool:
         """返回路由是否属于不创建独立会话的概览内容。"""
 
-        return feature in self._overview_definitions
+        return self.canonical_feature(feature) in self._overview_definitions
 
     def feature_requires_device(self, feature: str) -> bool:
         """返回功能是否要求一个明确的单设备上下文。"""
 
+        feature = self.canonical_feature(feature)
         definition = self._definitions.get(feature)
         if definition is not None:
             return definition.requires_device
@@ -368,7 +418,26 @@ class WorkspaceFeatureHost(QWidget):
     def has_feature(self, feature: str) -> bool:
         """返回此宿主是否支持给定二级功能。"""
 
+        feature = self.canonical_feature(feature)
         return feature in self._overview_definitions or feature in self._definitions
+
+    def canonical_feature(self, feature: str) -> str:
+        """旧入口解析到合并后的功能，不增加导航项或复制会话。"""
+
+        return self._feature_aliases.get(feature, feature)
+
+    def register_alias(self, alias: str, target: str) -> None:
+        """只接受已有真实功能，避免别名循环和隐藏的重复页面。"""
+
+        if not alias or self.has_feature(alias) or target not in self._navigation_order:
+            raise ValueError("invalid feature alias")
+        self._feature_aliases[alias] = target
+
+    def set_external_device_controls(self, enabled: bool) -> None:
+        """主窗口可投影设备控件到全局栏；独立宿主保留原工具栏契约。"""
+
+        self._external_device_controls = bool(enabled)
+        self._sync_session_toolbar_visibility()
 
     @property
     def pending_route(self) -> WorkspaceRoute | None:
@@ -399,6 +468,7 @@ class WorkspaceFeatureHost(QWidget):
             close_label=str(close_label).strip() or "关闭会话",
         )
         self._navigation_order.append(key)
+        self._register_feature_selector_item(key, label)
 
     def register_overview_category(
         self,
@@ -427,11 +497,13 @@ class WorkspaceFeatureHost(QWidget):
             activate,
         )
         self._navigation_order.append(key)
+        self._register_feature_selector_item(key, label)
 
     def configure_overview_category(
         self,
         key: str,
         *,
+        icon=None,
         requires_device: bool | None = None,
         activate: Callable[[str], object] | None = None,
     ) -> None:
@@ -442,7 +514,7 @@ class WorkspaceFeatureHost(QWidget):
             raise ValueError(f"unknown overview key: {key!r}")
         self._overview_definitions[key] = _OverviewDefinition(
             definition.label,
-            definition.icon,
+            definition.icon if icon is None else icon,
             definition.page,
             definition.requires_device if requires_device is None else requires_device,
             activate,
@@ -457,14 +529,12 @@ class WorkspaceFeatureHost(QWidget):
         self._connected_devices = self._normalized_devices(connected_devices)
         for key in self.registry.keys():
             page = self.registry.get(key)
-            callback = getattr(page, "set_device_connected", None)
-            if callable(callback):
-                callback(key.device_id in self._connected_devices)
+            self._sync_page_device_context(page, key.device_id)
 
         resumed_pending = False
         if self._pending_route is not None:
-            # 隐藏分区必须保留一次性 payload，交给首次前台激活或主窗口
-            # 的待恢复路由消费，避免设备快照更新在后台提前创建页面。
+            # 隐藏分区必须保留一次性 payload，交给首次前台激活消费，
+            # 避免设备快照更新在后台提前创建页面。
             if self._active:
                 resumed_pending = self._resume_pending_route_if_possible()
             if self._pending_route is not None:
@@ -484,6 +554,16 @@ class WorkspaceFeatureHost(QWidget):
         self._sync_feature_controls(current_definition or current_overview)
         self._sync_device_combo()
 
+    def _sync_page_device_context(self, page: QWidget | None, device_id: str) -> None:
+        """先撤销操作资格再更新在线状态，避免重连回调沿用历史会话启动命令。"""
+
+        selected = getattr(page, "set_device_selected", None)
+        if callable(selected):
+            selected(device_id in self._selected_devices)
+        connected = getattr(page, "set_device_connected", None)
+        if callable(connected):
+            connected(device_id in self._connected_devices)
+
     def set_device_selection_locked(
         self,
         feature: str,
@@ -492,6 +572,7 @@ class WorkspaceFeatureHost(QWidget):
     ) -> None:
         """锁定指定功能的会话设备，供运行中的单设备任务维持目标。"""
 
+        feature = self.canonical_feature(feature)
         if not self.has_feature(feature):
             raise ValueError(f"unknown feature key: {feature!r}")
         if locked:
@@ -507,6 +588,9 @@ class WorkspaceFeatureHost(QWidget):
     def open_route(self, route: WorkspaceRoute) -> bool:
         if route.section != self.section_key:
             return False
+        route = WorkspaceRoute(
+            route.section, self.canonical_feature(route.feature), route.device_id, route.payload
+        )
         if route.feature in self._overview_definitions:
             return self.show_overview(
                 route.feature,
@@ -543,6 +627,7 @@ class WorkspaceFeatureHost(QWidget):
         if definition is None:
             return False
         self._current_feature = feature
+        self._sync_feature_selector(feature)
         self._sync_feature_controls(definition)
 
         device_id = preferred_device.strip()
@@ -594,9 +679,8 @@ class WorkspaceFeatureHost(QWidget):
             self.stack.addWidget(page)
             page.installEventFilter(self)
             self._page_keys[page] = key
-        set_connected = getattr(page, "set_device_connected", None)
-        if callable(set_connected) and definition.requires_device:
-            set_connected(device_id in self._connected_devices)
+        if definition.requires_device:
+            self._sync_page_device_context(page, device_id)
         self.registry.activate(
             key,
             payload,
@@ -649,9 +733,8 @@ class WorkspaceFeatureHost(QWidget):
             self.stack.addWidget(page)
             page.installEventFilter(self)
             self._page_keys[page] = key
-        set_connected = getattr(page, "set_device_connected", None)
-        if callable(set_connected) and definition.requires_device:
-            set_connected(device_id in self._connected_devices)
+        if definition.requires_device:
+            self._sync_page_device_context(page, device_id)
         receiver = getattr(page, "receive_payload", None)
         if callable(receiver):
             receiver(payload)
@@ -671,6 +754,7 @@ class WorkspaceFeatureHost(QWidget):
         *,
         preferred_device: str = "",
     ) -> bool:
+        category = self.canonical_feature(category)
         definition = self._overview_definitions.get(category)
         if definition is None:
             return False
@@ -680,6 +764,7 @@ class WorkspaceFeatureHost(QWidget):
         )
         self._pending_route = None
         self._current_feature = category
+        self._sync_feature_selector(category)
 
         device_id = preferred_device.strip()
         if device_id:
@@ -872,6 +957,10 @@ class WorkspaceFeatureHost(QWidget):
     def _sync_session_toolbar_visibility(self) -> None:
         """仅在工具栏仍有实际控件时占用内容区高度。"""
 
+        if self._external_device_controls:
+            self.session_toolbar.hide()
+            self.controls_changed.emit()
+            return
         controls = [
             self.device_label,
             self.device_combo,
@@ -882,6 +971,7 @@ class WorkspaceFeatureHost(QWidget):
         self.session_toolbar.setVisible(
             any(not control.isHidden() for control in controls)
         )
+        self.controls_changed.emit()
 
     def _sync_feature_controls(
         self,
@@ -896,7 +986,10 @@ class WorkspaceFeatureHost(QWidget):
         self.device_combo.setEnabled(not lock_reason)
         self.close_session_button.setVisible(closable)
         self.close_session_button.setEnabled(closable)
-        self.session_badge.setVisible(requires_device or closable or is_overview)
+        # 外置设备栏和设备概览摘要已呈现目标数量，页头只保留会话相关状态。
+        self.session_badge.setVisible(
+            requires_device or closable or (is_overview and not self._external_device_controls)
+        )
         if closable:
             self.close_session_button.setText(definition.close_label)
         connected = bool(
@@ -904,9 +997,13 @@ class WorkspaceFeatureHost(QWidget):
             and self._active_device_id in self._connected_devices
         )
         if requires_device and self._active_device_id:
-            status = "在线" if connected else "离线"
-            level = InfoLevel.SUCCESS if connected else InfoLevel.WARNING
-            description = f"当前会话设备{status}"
+            selected = self._active_device_id in self._selected_devices
+            status = ("在线" if selected else "未选为操作目标") if connected else "离线"
+            level = InfoLevel.SUCCESS if connected and selected else InfoLevel.WARNING
+            description = (
+                "当前设备可执行操作" if connected and selected
+                else "请选择当前设备作为操作目标后再执行；已有内容仍可查看，原任务仍可停止"
+            )
         elif requires_device:
             status = "等待选择设备"
             level = InfoLevel.INFOAMTION
@@ -916,9 +1013,9 @@ class WorkspaceFeatureHost(QWidget):
             status = f"操作目标：{count} 台" if count else "操作目标：未选择"
             level = InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION
             description = (
-                f"设备页已勾选 {count} 台批量操作目标"
+                f"已勾选 {count} 台操作目标"
                 if count
-                else "可在连接与选择中勾选批量操作目标"
+                else "可在顶部设备栏中勾选操作目标"
             )
         else:
             status = "已打开"
@@ -956,7 +1053,8 @@ class WorkspaceFeatureHost(QWidget):
         if self._extent_update_scheduled:
             return
         self._extent_update_scheduled = True
-        QTimer.singleShot(0, self._finish_content_extent_sync)
+        # 定时器属于宿主，宿主销毁时 Qt 自动取消排队回调。
+        self._extent_timer.start(0)
 
     def _finish_content_extent_sync(self) -> None:
         self._extent_update_scheduled = False
@@ -999,12 +1097,11 @@ class WorkspaceFeatureHost(QWidget):
         return tuple(values)
 
     def _automatic_device_candidate(self) -> str:
-        """仅在候选唯一时自动选中，禁止多设备场景静默取第一台。"""
+        """仅沿用唯一且在线的操作目标；连接状态本身不代表用户选择。"""
 
-        if len(self._selected_devices) == 1:
+        if (len(self._selected_devices) == 1
+                and self._selected_devices[0] in self._connected_devices):
             return self._selected_devices[0]
-        if not self._selected_devices and len(self._connected_devices) == 1:
-            return self._connected_devices[0]
         return ""
 
     def _resume_pending_route_if_possible(self) -> bool:
@@ -1037,6 +1134,7 @@ class WorkspaceFeatureHost(QWidget):
         if current_definition is None:
             return
         self._current_feature = route.feature
+        self._sync_feature_selector(route.feature)
         candidates = self._device_candidates(route.feature)
         self.no_device_page.set_feature_label(current_definition.label)
         self.no_device_page.set_candidates_available(bool(candidates))
@@ -1093,6 +1191,7 @@ class WorkspaceFeatureHost(QWidget):
         """显示资源退出屏障，禁止重新激活正在销毁的页面。"""
 
         self._current_feature = key.feature
+        self._sync_feature_selector(key.feature)
         self._active_device_id = key.device_id
         self._last_device_by_feature[key.feature] = key.device_id
         self.closing_page.set_feature_label(definition.label)
