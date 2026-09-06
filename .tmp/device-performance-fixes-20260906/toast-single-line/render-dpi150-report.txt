@@ -1,0 +1,6 @@
+
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+toast-single-light-860-font12-dpi1.5 toast PySide6.QtCore.QRect(320, 60, 516, 48) title ��ͼ����� body PySide6.QtCore.QRect(131, 10, 228, 28) body text width 220 action �鿴���
+toast-single-dark-860-font22-dpi1.5 toast PySide6.QtCore.QRect(24, 60, 812, 61) title ��ͼ����� body PySide6.QtCore.QRect(196, 8, 407, 44) body text width 399 action �鿴���
+toast-single-dark-360-font22-dpi1.5 toast PySide6.QtCore.QRect(24, 24, 312, 61) title �� body PySide6.QtCore.QRect(84, 8, 67, 44) body text width 399 action �顭

@@ -1,6 +1,11 @@
 """mobileperf 解析器对空/畸形输入的健壮性契约测试（对应 B1/B2/B4 修复）。"""
 
+from unittest.mock import Mock
+
+import pytest
+
 from mobileperf.android.cpu_top import PckCpuinfo
+from mobileperf.android.tools.androiddevice import ADB
 from mobileperf.android.trafficstats import NetDevInfo, TrafficSnapshot
 
 
@@ -67,3 +72,27 @@ def test_meminfo_package_short_or_non_numeric_total_is_skipped():
 
     assert MemInfoPackage("TOTAL\n").totalAllocHeap == 0
     assert MemInfoPackage("TOTAL abc\n").totalAllocHeap == 0
+
+
+@pytest.mark.parametrize("detail", [
+    "Warning: Activity not started: intent delivered to existing instance",
+    "Error: Permission Denial: cannot start activity",
+    "Starting: Intent { cmp=com.example/.Main note=source: preview }",
+])
+def test_start_activity_preserves_values_containing_colon_separators(detail):
+    adb = ADB.__new__(ADB)
+    adb.run_shell_cmd = Mock(return_value=f"{detail}\nStatus: ok\nComplete\n")
+
+    result = adb.start_activity("com.example/.Main")
+
+    key, value = detail.split(": ", 1)
+    assert result == {key: value, "Status": "ok"}
+    assert adb.run_shell_cmd.call_args.kwargs["timeout"] == 30
+
+
+def test_start_activity_keeps_empty_and_unstructured_output_compatible():
+    adb = ADB.__new__(ADB)
+    adb.run_shell_cmd = Mock(side_effect=["", "Starting an activity\nComplete"])
+
+    assert adb.start_activity("com.example/.Main") == {}
+    assert adb.start_activity("com.example/.Main", wait=False) == {}

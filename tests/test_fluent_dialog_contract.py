@@ -1,29 +1,30 @@
-"""Fluent 瞬态弹窗外壳及原生 Qt 弹窗防回流契约。"""
+"""验证 Fluent 输入与短表单保留模态契约，纯消息使用非模态通知。"""
 
 from __future__ import annotations
 
 import ast
+import posixpath
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QPushButton, QVBoxLayout, QWidget
 from qfluentwidgets import FluentTitleBar, InfoBarIcon
 
-import gui.dialogs.fluent_dialog as fluent_dialog_module
+import gui.dialogs.file_explorer_ops as file_ops_module
+from gui.dialogs.file_explorer_ops import FileExplorerOps
 from gui.dialogs.fluent_dialog import (
     FluentDialog,
     FluentInputDialog,
     FluentMessageBox,
-    MessageLevel,
-    _FluentMessageDialog,
 )
 from gui.features import AboutPanel
 from gui.features.logcat import LiveLogcatPage
 from gui.features.performance import PerformancePage
+from gui.notifications import ToastNotification, show_toast
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_themed_icon
 
@@ -201,12 +202,8 @@ def test_fluent_dialog_role_fonts_survive_qfluent_qss_polish(qt_application):
     try:
         with patch.object(BaseStyles, "font_for_role", return_value=role_font):
             shell = FluentDialog(owner)
-            message = _FluentMessageDialog(
-                owner,
-                "Title",
-                "Body",
-                MessageLevel.INFORMATION,
-            )
+            message = show_toast(owner, "Title", "Body", duration=-1)
+            assert message is not None
             input_dialog = FluentInputDialog(owner, "Title", "Prompt", text="value")
             dialogs.extend((shell, message, input_dialog))
             for dialog in dialogs:
@@ -216,8 +213,7 @@ def test_fluent_dialog_role_fonts_survive_qfluent_qss_polish(qt_application):
             widgets = (
                 shell.titleBar.titleLabel,
                 message.titleLabel,
-                message.contentLabel,
-                message.yesButton,
+                message.content_edit,
                 input_dialog.titleLabel,
                 input_dialog.label,
                 input_dialog.lineEdit,
@@ -231,7 +227,11 @@ def test_fluent_dialog_role_fonts_survive_qfluent_qss_polish(qt_application):
                 assert widget.font().bold()
     finally:
         for dialog in dialogs:
-            _dispose_dialog(qt_application, dialog)
+            if isinstance(dialog, ToastNotification):
+                dialog.close()
+            else:
+                _dispose_dialog(qt_application, dialog)
+        _flush_deferred_deletes(qt_application)
         owner.close()
 
 
@@ -268,93 +268,203 @@ def test_fluent_input_dialog_exec_result_and_deferred_delete(qt_application):
     parent.close()
 
 
+@pytest.mark.parametrize("action", ["accept", "cancel", "escape"])
+def test_fluent_input_static_result_owns_lifetime_with_upstream_auto_delete(
+    qt_application, action
+):
+    destroyed = []
+
+    class UpstreamAutoDeleteInputDialog(FluentInputDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self.destroyed.connect(lambda: destroyed.append(True))
+            QTimer.singleShot(240, self.finish_input)
+
+        def finish_input(self):
+            self.lineEdit.setText("updated name")
+            if action == "escape":
+                QTest.keyClick(self.lineEdit, Qt.Key.Key_Escape)
+            else:
+                button = self.yesButton if action == "accept" else self.cancelButton
+                QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+    owner = QWidget()
+    owner.resize(720, 540)
+    owner.show()
+    value, accepted = UpstreamAutoDeleteInputDialog.getText(
+        owner, "Name", "Enter a name", text="original"
+    )
+
+    assert value == "updated name"
+    assert accepted is (action == "accept")
+    assert destroyed == []
+    _flush_deferred_deletes(qt_application)
+    assert destroyed == [True]
+    assert not owner.findChildren(UpstreamAutoDeleteInputDialog)
+    owner.close()
+
+
+def test_fluent_message_box_returns_without_modal_loop_and_keeps_owner_interactive(
+    qt_application,
+):
+    owner = QWidget()
+    owner.resize(720, 540)
+    button = QPushButton("Continue", owner)
+    button.move(24, 440)
+    clicked = []
+    button.clicked.connect(lambda: clicked.append(True))
+    owner.show()
+    deferred = []
+    QTimer.singleShot(0, lambda: deferred.append(True))
+    try:
+        result = FluentMessageBox.warning(button, "Warning", "Check input")
+        assert result is None
+        assert deferred == []
+        assert qt_application.activeModalWidget() is None
+        toast, = owner.findChildren(ToastNotification)
+        assert toast.isVisible()
+        assert not toast.isWindow()
+        assert toast.window() is owner
+
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert clicked == [True]
+        assert deferred == [True]
+    finally:
+        for toast in owner.findChildren(ToastNotification):
+            toast.close()
+        _flush_deferred_deletes(qt_application)
+        owner.close()
+
+
+@pytest.mark.parametrize("operation", ["_mkdir", "_touch", "_rename_item"])
+@pytest.mark.parametrize("accept", [True, False])
+def test_file_operations_use_real_input_result_before_submitting(
+    qt_application, monkeypatch, operation, accept
+):
+    owner = QWidget()
+    owner.resize(720, 540)
+    owner._can_operate = lambda: True
+    owner._safe_name = lambda name: name == "new-name"
+    owner.current_path = "/sdcard"
+    owner._dpath = posixpath.join
+    owner._root = lambda command: command
+    owner._run_adb = Mock(return_value=None)
+    owner.show()
+    seen = []
+
+    class FileNameInputDialog(FluentInputDialog):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            QTimer.singleShot(240, self.finish_input)
+
+        def finish_input(self):
+            seen.append(self.lineEdit.text())
+            self.lineEdit.setText("new-name")
+            button = self.yesButton if accept else self.cancelButton
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+    monkeypatch.setattr(file_ops_module, "FluentInputDialog", FileNameInputDialog)
+    args = ("old-name",) if operation == "_rename_item" else ()
+    getattr(FileExplorerOps(owner), operation)(*args)
+    assert seen == ["old-name" if args else ""]
+    if accept:
+        owner._run_adb.assert_called_once()
+        arguments = owner._run_adb.call_args.args
+        assert arguments[0] == "shell"
+        assert "/sdcard/new-name" in arguments[1]
+    else:
+        owner._run_adb.assert_not_called()
+    _flush_deferred_deletes(qt_application)
+    assert not owner.findChildren(FileNameInputDialog)
+    owner.close()
+
+
 @pytest.mark.parametrize(
-    ("method", "level", "icon"),
+    ("method", "icon"),
     [
         pytest.param(
             "information",
-            MessageLevel.INFORMATION,
             InfoBarIcon.INFORMATION,
             id="information",
         ),
         pytest.param(
             "warning",
-            MessageLevel.WARNING,
             InfoBarIcon.WARNING,
             id="warning",
         ),
         pytest.param(
             "critical",
-            MessageLevel.ERROR,
             InfoBarIcon.ERROR,
             id="error",
         ),
     ],
 )
-def test_fluent_message_box_exec_visual_level_and_deferred_delete(
+def test_fluent_message_box_toast_visual_level_and_close_release(
     qt_application,
     method,
-    level,
     icon,
 ):
     destroyed = []
-    captured = {}
-
-    def create_dialog(parent, title, content, actual_level):
-        dialog = _FluentMessageDialog(parent, title, content, actual_level)
-        captured["dialog"] = dialog
-        dialog.destroyed.connect(lambda *_args: destroyed.append(True))
-        QTimer.singleShot(0, dialog.accept)
-        return dialog
-
     parent = QWidget()
     parent.resize(640, 480)
     parent.show()
-    with patch.object(
-        fluent_dialog_module,
-        "_FluentMessageDialog",
-        side_effect=create_dialog,
-    ):
+    try:
         result = getattr(FluentMessageBox, method)(parent, "Title", "Content")
+        toast, = parent.findChildren(ToastNotification)
+        toast.destroyed.connect(lambda *_args: destroyed.append(True))
+        assert result is None
+        assert toast.icon is icon
+        assert toast.titleLabel.text() == "Title"
+        assert toast.content_edit.text() == "Content"
+        assert toast.closeButton.isVisible()
+        assert qt_application.activeModalWidget() is None
 
-    dialog = captured["dialog"]
-    assert result == 1
-    assert dialog.level is level
-    assert dialog.widget.property("messageLevel") == level.value
-    assert dialog.iconWidget.accessibleName() == level.value
-    assert dialog.iconWidget._icon is icon
-    assert dialog.cancelButton.isHidden()
-    assert parent.findChildren(_FluentMessageDialog)
-
-    _flush_deferred_deletes(qt_application)
-
-    assert destroyed == [True]
-    assert not parent.findChildren(_FluentMessageDialog)
-    parent.close()
+        QTest.mouseClick(toast.closeButton, Qt.MouseButton.LeftButton)
+        _flush_deferred_deletes(qt_application)
+        assert destroyed == [True]
+        assert not parent.findChildren(ToastNotification)
+        assert parent.isVisible()
+    finally:
+        for toast in parent.findChildren(ToastNotification):
+            toast.close()
+        _flush_deferred_deletes(qt_application)
+        parent.close()
 
 
-def test_long_message_content_scrolls_without_exceeding_owner(qt_application):
+def test_long_message_toast_preserves_selectable_text_in_bounded_view(qt_application):
     owner = QWidget()
     owner.resize(640, 468)
     owner.show()
-    dialog = _FluentMessageDialog(
+    content = "A long diagnostic line with selectable details. " * 120 + "\n" + "x" * 1200
+    toast = show_toast(
         owner,
         "Long message",
-        "A long diagnostic line with selectable details. " * 120,
-        MessageLevel.ERROR,
+        content,
+        level="error",
+        duration=-1,
     )
+    assert toast is not None
     try:
-        dialog.show()
         qt_application.processEvents()
-
-        assert dialog.size().width() <= owner.width()
-        assert dialog.size().height() <= owner.height()
-        assert dialog.widget.width() <= owner.width()
-        assert dialog.widget.height() <= owner.height()
-        assert dialog.contentScroll.verticalScrollBar().maximum() > 0
-        assert dialog.contentScroll.horizontalScrollBar().maximum() == 0
+        assert toast.isVisible()
+        assert owner.rect().contains(toast.geometry())
+        assert toast.height() < owner.height()
+        assert toast.content_edit.isReadOnly()
+        displayed = content.replace("\n", " ")
+        assert toast.content_edit.text() == displayed
+        assert toast.content_edit.toolTip() == content
+        assert not toast.titleLabel.wordWrap()
+        toast.content_edit.selectAll()
+        assert toast.content_edit.selectedText() == displayed
+        toast.content_edit.setCursorPosition(len(displayed))
+        qt_application.processEvents()
+        assert toast.content_edit.rect().contains(toast.content_edit.cursorRect().center())
     finally:
-        _dispose_dialog(qt_application, dialog)
+        toast.close()
+        _flush_deferred_deletes(qt_application)
         owner.close()
 
 

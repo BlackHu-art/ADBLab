@@ -32,6 +32,7 @@ from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.i18n import tr
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
+from gui.widgets.performance_sessions import PerformanceSessions
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ class _FeatureDefinition:
     factory: Callable[[FeatureSessionKey], QWidget]
     requires_device: bool
     close_label: str
+    show_close_action: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,6 +317,9 @@ class WorkspaceFeatureHost(QWidget):
         content_layout.setSpacing(10)
         content_layout.addWidget(self.feature_selector)
         content_layout.addWidget(self.session_toolbar)
+        self.performance_sessions = PerformanceSessions(self.registry, self.content_column)
+        self.performance_sessions.device_requested.connect(self._open_performance_device)
+        content_layout.addWidget(self.performance_sessions)
         content_layout.addWidget(self.content_scroll, 1)
 
         self._layout = QVBoxLayout(self)
@@ -455,6 +460,7 @@ class WorkspaceFeatureHost(QWidget):
         *,
         requires_device: bool = True,
         close_label: str = "关闭会话",
+        show_close_action: bool = True,
     ) -> None:
         key = key.strip()
         if (
@@ -468,6 +474,7 @@ class WorkspaceFeatureHost(QWidget):
             icon=icon,
             factory=factory,
             requires_device=requires_device,
+            show_close_action=show_close_action,
             close_label=(
                 tr("关闭会话")
                 if not str(close_label).strip() or close_label == "关闭会话"
@@ -961,9 +968,22 @@ class WorkspaceFeatureHost(QWidget):
         self.device_combo.setAccessibleDescription(tooltip)
         self._sync_session_toolbar_visibility()
 
+    def _open_performance_device(self, device_id: str) -> None:
+        """状态列表只选择稳定会话，不改写勾选目标、不复制参数或启动采集。"""
+        if self._shutting_down or self._current_feature != "performance":
+            return
+        if self._device_selection_locks.get("performance"):
+            return
+        payload = self._pending_route.payload if self._pending_route is not None else None
+        self.open_feature("performance", preferred_device=device_id, payload=payload)
+
     def _sync_session_toolbar_visibility(self) -> None:
         """仅在工具栏仍有实际控件时占用内容区高度。"""
 
+        self.performance_sessions.set_context(
+            self._selected_devices, self._connected_devices, self._active_device_id,
+            enabled=self._current_feature == "performance",
+        )
         if self._external_device_controls:
             self.session_toolbar.hide()
             self.controls_changed.emit()
@@ -991,8 +1011,9 @@ class WorkspaceFeatureHost(QWidget):
         self.device_combo.setVisible(requires_device)
         lock_reason = self._device_selection_locks.get(self._current_feature, "")
         self.device_combo.setEnabled(not lock_reason)
-        self.close_session_button.setVisible(closable)
-        self.close_session_button.setEnabled(closable)
+        show_close = closable and definition.show_close_action
+        self.close_session_button.setVisible(show_close)
+        self.close_session_button.setEnabled(show_close)
         # 外置设备栏和设备概览摘要已呈现目标数量，页头只保留会话相关状态。
         self.session_badge.setVisible(
             requires_device or closable or (is_overview and not self._external_device_controls)

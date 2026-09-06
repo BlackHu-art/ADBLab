@@ -15,7 +15,7 @@ from mobileperf.android.fps import FPSMonitor
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.logcat import LogcatMonitor
 from mobileperf.android.meminfos import MemMonitor
-from mobileperf.android.monkey import Monkey
+from mobileperf.android.monkey import Monkey, MonkeyError
 from mobileperf.android.report import Report
 from mobileperf.android.thread_num import ThreadNumMonitor
 from mobileperf.android.tools.androiddevice import AndroidDevice
@@ -287,6 +287,8 @@ class StartUp:
 
     def run(self, time_out=None):
         """启动所有采集器并等待超时、停止文件或异常退出信号。"""
+        self._stop_called = False
+        monkey_monitor = None
         self.clear_heapdump()
         # 启动采集前检查目标设备是否可用。
         if not self.serialnum:
@@ -329,14 +331,13 @@ class StartUp:
                 ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
             )
             if self.config_dic["monkey"] == "true":
-                self.add_monitor(
-                    Monkey(
-                        self.serialnum,
-                        self.packages[0],
-                        timeout=self.timeout,
-                        **self._monkey_options(),
-                    )
+                monkey_monitor = Monkey(
+                    self.serialnum,
+                    self.packages[0],
+                    timeout=self.timeout,
+                    **self._monkey_options(),
                 )
+                self.add_monitor(monkey_monitor)
             if self.config_dic["main_activity"] and self.config_dic["activity_list"]:
                 self.add_monitor(
                     DeviceMonitor(
@@ -363,11 +364,15 @@ class StartUp:
                 FileUtils.makedir(RuntimeData.package_save_path)
                 self.save_device_info()
                 for monitor in self.monitors:
-                    # 单个监控器启动失败不阻止其他指标继续采集。
+                    # 可选指标允许部分失败；用户明确启用的 Monkey 必须真实启动。
                     try:
                         monitor.start(start_time)
                     except Exception as e:
                         logger.error(e)
+                        if monitor is monkey_monitor:
+                            raise MonkeyError("Monkey 启动失败，已停止本次采集。") from e
+                if monkey_monitor is not None:
+                    monkey_monitor.raise_if_failed()
                 # Logcat 具有独立的阻塞读取生命周期，因此与其他监控器分开管理。
                 try:
                     self.logcat_monitor = LogcatMonitor(self.serialnum, self.packages[0])
@@ -390,9 +395,21 @@ class StartUp:
                     if self.check_stop_file_quit():
                         logger.info("stop file detected, finish mobileperf and create report")
                         break
+                    if monkey_monitor is not None:
+                        monkey_monitor.raise_if_failed()
                     time.sleep(self.frequency)
+                if monkey_monitor is not None:
+                    monkey_monitor.raise_if_failed()
                 logger.debug("time is up,finish!!!")
                 self.stop()
+                if monkey_monitor is not None:
+                    # reader 在 stop() 内完成退出，最后检查其晚到的失败结果。
+                    monkey_monitor.raise_if_failed()
+        except MonkeyError:
+            # 先保留已采集的数据并回收其他监控器，再让父进程收到非零退出。
+            if not self._stop_called:
+                self.stop()
+            raise
         except KeyboardInterrupt:  # 捕获命令行中断并执行统一收尾。
             logger.debug(" catch keyboardInterrupt, goodbye!!!")
             self.stop()
@@ -413,11 +430,15 @@ class StartUp:
 
     def stop(self):
         """停止监控器、生成报告并回收本次采集产生的设备侧文件。"""
+        self._stop_called = True
+        monkey_failure = None
         for monitor in self.monitors:
             try:
                 monitor.stop()
             except Exception as e:  # 单个监控器停止失败不得阻断其余监控器的清理。
                 logger.error(e)
+                if isinstance(e, MonkeyError):
+                    monkey_failure = e
 
         try:
             if self.logcat_monitor:
@@ -425,8 +446,6 @@ class StartUp:
         except Exception as e:
             logger.error("stop exception for logcat monitor")
             logger.error(e)
-        if self.config_dic["monkey"] == "true":
-            self.device.adb.kill_process("com.android.commands.monkey")
         try:
             # 将测试时长追加到设备信息文件。
             cost_time = round(
@@ -460,6 +479,8 @@ class StartUp:
         # 结构化收口：采集线程均为 daemon，stop 完成后进程随 run 返回正常退出，
         # 由父进程 MobilePerfRunner 按退出码与报告存在性判定结果（ADR-0004）。
         RuntimeData.end_run()
+        if monkey_failure is not None:
+            raise monkey_failure
 
     def pull_heapdump(self):
         """将目标应用的设备侧堆转储拉取到本次结果目录。"""

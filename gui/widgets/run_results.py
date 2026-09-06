@@ -1,0 +1,433 @@
+"""以有界表格浏览历史测试结果，附件访问交给共享控制器。"""
+
+from __future__ import annotations
+
+import copy
+import json
+
+from PySide6.QtCore import QDateTime, QSignalBlocker, Qt, Signal, Slot
+from PySide6.QtGui import QResizeEvent
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QGridLayout,
+    QHeaderView,
+    QPlainTextEdit,
+    QSizePolicy,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import (
+    BodyLabel,
+    ComboBox,
+    LineEdit,
+    PlainTextEdit,
+    PushButton,
+    TableWidget,
+    setCustomStyleSheet,
+)
+
+from gui.i18n import tr
+from gui.run_library import RunLibraryController
+from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import (
+    apply_label_role,
+    apply_reading_surface,
+    configure_button,
+    configure_fluent_control,
+)
+from gui.widgets.collapsible_tools import CollapsibleTools
+from services.run_library import RunRecord
+
+
+def _date_text(timestamp: float, *, compact: bool = False) -> str:
+    """使用 Qt 的本地时间格式，避免平台日期范围差异影响历史展示。"""
+    pattern = "MM-dd HH:mm" if compact else "yyyy-MM-dd HH:mm:ss"
+    return QDateTime.fromSecsSinceEpoch(int(timestamp)).toLocalTime().toString(pattern)
+
+
+def _record_context(record: RunRecord) -> list[str]:
+    """只展示运行时保存的设备别名和应用版本，不从当前设备状态推断历史。"""
+    context = []
+    if record.device_label:
+        context.append(tr("设备：{device}").format(device=record.device_label))
+    if record.app_version:
+        context.append(tr("应用版本：{version}").format(version=record.app_version))
+    hours, seconds = divmod(max(0, int(record.finished_at - record.started_at)), 3600)
+    minutes, seconds = divmod(seconds, 60)
+    context.append(tr("耗时 {duration}").format(duration=f"{hours:02}:{minutes:02}:{seconds:02}"))
+    return context
+
+
+class RunResultsWidget(QWidget):
+    """展示已落盘结果；载入只传递快照，不选择设备或启动任何测试。"""
+
+    reuse_requested = Signal(object)
+
+    def __init__(self, library: RunLibraryController, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._library = library
+        self._visible_records: tuple[RunRecord, ...] = ()
+        self._selected: RunRecord | None = None
+        self._layout_mode: tuple[bool, bool, int, bool] | None = None
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        self.filters = QWidget(self)
+        self._filter_layout = QGridLayout(self.filters)
+        self._filter_layout.setContentsMargins(0, 0, 0, 0)
+        self._filter_layout.setSpacing(8)
+        self.search_edit = LineEdit(self.filters)
+        self.search_edit.setPlaceholderText(tr("搜索应用或日期"))
+        self.search_edit.setAccessibleName(tr("搜索应用或日期"))
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.setToolTip(tr("按应用包名或日期筛选，例如 2026-09-06"))
+        self.kind_combo = ComboBox(self.filters)
+        self.kind_combo.setAccessibleName(tr("测试类型"))
+        self.kind_combo.addItem(tr("全部类型"), userData="")
+        self.kind_combo.addItem("Monkey", userData="monkey")
+        self.kind_combo.addItem(tr("性能"), userData="performance")
+        self.state_combo = ComboBox(self.filters)
+        self.state_combo.setAccessibleName(tr("结果状态"))
+        for label, state in (
+            ("全部状态", ""),
+            ("成功", "succeeded"),
+            ("失败", "failed"),
+            ("已取消", "cancelled"),
+            ("结果不完整", "partial"),
+        ):
+            self.state_combo.addItem(tr(label), userData=state)
+        layout.addWidget(self.filters)
+
+        self.count_label = apply_label_role(
+            BodyLabel(self), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        layout.addWidget(self.count_label)
+        self.empty_label = apply_label_role(
+            BodyLabel(self), FontRole.UI, color_key="TEXT_SECONDARY"
+        )
+        self.empty_label.setWordWrap(True)
+        self.empty_label.setTextFormat(Qt.TextFormat.PlainText)
+        layout.addWidget(self.empty_label)
+        self.table = TableWidget(self)
+        self.table.setColumnCount(4)
+        self.table.setHorizontalHeaderLabels([tr("完成时间"), tr("类型"), tr("应用"), tr("状态")])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.table.setMinimumWidth(0)
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.table.setAccessibleName(tr("历史测试结果"))
+        self.table.verticalHeader().hide()
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setMinimumSectionSize(48)
+        layout.addWidget(self.table)
+
+        self.details = QWidget(self)
+        detail_layout = QVBoxLayout(self.details)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(8)
+        self.summary_edit = PlainTextEdit(self.details)
+        self.summary_edit.setReadOnly(True)
+        apply_reading_surface(self.summary_edit)
+        self.summary_edit.setAccessibleName(tr("运行摘要"))
+        detail_layout.addWidget(self.summary_edit)
+        self.parameters_edit = PlainTextEdit(self.details)
+        self.parameters_edit.setReadOnly(True)
+        apply_reading_surface(self.parameters_edit)
+        self.parameters_edit.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.parameters_edit.setAccessibleName(tr("本次运行参数"))
+        self.parameters_section = CollapsibleTools(
+            "本次运行参数",
+            self.parameters_edit,
+            self.details,
+            tooltip="查看并复制本次运行的参数快照",
+        )
+        detail_layout.addWidget(self.parameters_section)
+        self.action_row = QWidget(self.details)
+        self._action_layout = QGridLayout(self.action_row)
+        self._action_layout.setContentsMargins(0, 0, 0, 0)
+        self._action_layout.setSpacing(8)
+        self.artifact_combo = ComboBox(self.action_row)
+        self.artifact_combo.setAccessibleName(tr("结果附件"))
+        self.artifact_combo.setMinimumWidth(0)
+        self.artifact_combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.open_button = configure_button(
+            PushButton(self.action_row),
+            text="打开附件",
+            tooltip="打开所选本地附件；文件已移动或删除时会提示",
+        )
+        self.folder_button = configure_button(
+            PushButton(self.action_row),
+            text="所在目录",
+            tooltip="打开所选附件的本地目录",
+        )
+        self.reuse_button = configure_button(
+            PushButton(self.action_row),
+            text="载入参数",
+            tooltip="只载入参数，由您选择设备后开始测试",
+        )
+        detail_layout.addWidget(self.action_row)
+        layout.addWidget(self.details)
+
+        self.search_edit.textChanged.connect(self.refresh)
+        self.kind_combo.currentIndexChanged.connect(self.refresh)
+        self.state_combo.currentIndexChanged.connect(self.refresh)
+        self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.artifact_combo.currentIndexChanged.connect(self._update_artifact_actions)
+        self.open_button.clicked.connect(self._open_artifact)
+        self.folder_button.clicked.connect(self._open_folder)
+        self.reuse_button.clicked.connect(self._reuse)
+        library.changed.connect(self.refresh)
+        BaseStyles.ui_font_changed.connect(self._apply_fonts)
+        self._apply_fonts()
+        self.refresh()
+
+    @property
+    def selected_record(self) -> RunRecord | None:
+        """返回当前筛选结果中选中的运行快照。"""
+        return copy.deepcopy(self._selected)
+
+    @Slot()
+    def refresh(self, *_args) -> None:
+        """刷新最多 200 条结果，按稳定标识保留选择并重查筛选条件。"""
+        selected_id = self._selected.run_id if self._selected is not None else ""
+        records = self._library.records
+        query = self.search_edit.text().strip().casefold()
+        kind, state = self.kind_combo.currentData(), self.state_combo.currentData()
+        self._visible_records = tuple(
+            record
+            for record in records
+            if (not kind or record.kind == kind)
+            and (not state or record.state == state)
+            and (
+                not query
+                or query in f"{record.package_name} {_date_text(record.finished_at)}".casefold()
+            )
+        )
+        self.count_label.setText(
+            tr("显示 {visible} / {total} 条结果").format(
+                visible=len(self._visible_records),
+                total=len(records),
+            )
+        )
+        has_rows = bool(self._visible_records)
+        self.table.setVisible(has_rows)
+        self.empty_label.setVisible(not has_rows)
+        self.empty_label.setText(
+            tr("没有匹配的结果，请调整筛选条件")
+            if records
+            else tr("尚无测试结果，完成 Monkey 或性能测试后会显示在这里")
+        )
+        with QSignalBlocker(self.table):
+            self.table.setRowCount(len(self._visible_records))
+            selected_row = 0
+            for row, record in enumerate(self._visible_records):
+                values = (
+                    _date_text(record.finished_at, compact=True),
+                    "Monkey" if record.kind == "monkey" else tr("性能"),
+                    record.package_name or tr("未指定应用"),
+                    self._state_label(record.state),
+                )
+                for column, value in enumerate(values):
+                    item = QTableWidgetItem(value)
+                    item.setFont(self.table.font())
+                    tooltip = _date_text(record.finished_at) if column == 0 else value
+                    if column == 2:
+                        tooltip = "\n".join((value, *_record_context(record)))
+                    item.setToolTip(tooltip)
+                    self.table.setItem(row, column, item)
+                if record.run_id == selected_id:
+                    selected_row = row
+            if has_rows:
+                self.table.selectRow(selected_row)
+        self._selection_changed()
+
+    @staticmethod
+    def _state_label(state: str) -> str:
+        return tr(
+            {
+                "succeeded": "成功",
+                "failed": "失败",
+                "cancelled": "已取消",
+                "partial": "结果不完整",
+            }.get(state, state)
+        )
+
+    def _selection_changed(self) -> None:
+        rows = self.table.selectionModel().selectedRows()
+        row = rows[0].row() if rows else -1
+        self._selected = (
+            self._visible_records[row] if 0 <= row < len(self._visible_records) else None
+        )
+        self.details.setVisible(self._selected is not None)
+        self.reuse_button.setEnabled(self._selected is not None)
+        self.artifact_combo.clear()
+        if self._selected is None:
+            self._update_artifact_actions()
+            return
+        record = self._selected
+        summary = [
+            record.package_name or tr("未指定应用"),
+            " · ".join(_record_context(record)),
+            tr("{started} 至 {finished} · {state}").format(
+                started=_date_text(record.started_at),
+                finished=_date_text(record.finished_at),
+                state=self._state_label(record.state),
+            ),
+        ]
+        if record.message:
+            summary.append(record.message)
+        self.summary_edit.setPlainText("\n".join(summary))
+        self.parameters_edit.setPlainText(
+            json.dumps(record.parameters, ensure_ascii=False, indent=2)
+        )
+        for artifact in record.artifacts:
+            self.artifact_combo.addItem(artifact.label, userData=artifact.path)
+        if not record.artifacts:
+            self.artifact_combo.addItem(tr("无可用附件"), userData=None)
+        self._update_artifact_actions()
+
+    def _update_artifact_actions(self, *_args) -> None:
+        path = self.artifact_combo.currentData()
+        enabled = self._selected is not None and isinstance(path, str) and bool(path)
+        self.artifact_combo.setEnabled(enabled)
+        self.open_button.setEnabled(enabled)
+        self.folder_button.setEnabled(enabled)
+        self.artifact_combo.setToolTip(
+            path if isinstance(path, str) and enabled else tr("此记录没有保存附件")
+        )
+
+    def _open_artifact(self) -> None:
+        """控制器异步核验本地路径；页面不在 GUI 线程执行文件探测。"""
+        path = self.artifact_combo.currentData()
+        if self.open_button.isEnabled() and isinstance(path, str):
+            self._library.open_artifact(path)
+
+    def _open_folder(self) -> None:
+        path = self.artifact_combo.currentData()
+        if self.folder_button.isEnabled() and isinstance(path, str):
+            self._library.open_artifact(path, folder=True)
+
+    def _reuse(self) -> None:
+        if self._selected is not None:
+            self.reuse_requested.emit(copy.deepcopy(self._selected))
+
+    def _apply_fonts(self, *_args) -> None:
+        font = BaseStyles.font_for_role(FontRole.UI)
+        self.setFont(font)
+        for control in (self.search_edit, self.kind_combo, self.state_combo, self.artifact_combo):
+            configure_fluent_control(control)
+        for button in (self.open_button, self.folder_button, self.reuse_button):
+            configure_fluent_control(button)
+        self.table.setFont(font)
+        # Fluent 表格委托优先读取单元格字体，否则会退回固定 13 像素字体。
+        for row in range(self.table.rowCount()):
+            for column in range(self.table.columnCount()):
+                item = self.table.item(row, column)
+                if item is not None:
+                    item.setFont(font)
+        for column in range(self.table.columnCount()):
+            header_item = self.table.horizontalHeaderItem(column)
+            if header_item is not None:
+                header_item.setFont(font)
+        apply_label_role(self.count_label, FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
+        apply_label_role(self.empty_label, FontRole.UI, color_key="TEXT_SECONDARY")
+        self.table.horizontalHeader().setFont(font)
+        header_font_size = (
+            f"{font.pointSizeF()}pt" if font.pointSizeF() > 0 else f"{font.pixelSize()}px"
+        )
+        header_style = f"QHeaderView, QHeaderView::section {{ font-size: {header_font_size}; }}"
+        setCustomStyleSheet(self.table, header_style, header_style)
+        self.table.verticalHeader().setDefaultSectionSize(max(36, self.fontMetrics().height() + 14))
+        self.table.horizontalHeader().setMinimumHeight(self.fontMetrics().height() + 14)
+        row_height = self.table.verticalHeader().defaultSectionSize()
+        self.table.setFixedHeight(
+            6 * row_height + self.table.horizontalHeader().minimumHeight() + 8
+        )
+        self.summary_edit.setFont(font)
+        self.summary_edit.setFixedHeight(4 * self.fontMetrics().lineSpacing() + 24)
+        self.parameters_edit.setFont(BaseStyles.font_for_role(FontRole.MONO))
+        self.parameters_edit.setFixedHeight(
+            5 * self.parameters_edit.fontMetrics().lineSpacing() + 24
+        )
+        self._layout_mode = None
+        self._reflow()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        """只移动既有控件；窄宽度让筛选与附件操作换行，保留焦点和选择。"""
+        width = max(0, self.contentsRect().width())
+        search_width = max(160, self.fontMetrics().horizontalAdvance("yyyy-mm-dd") + 40)
+        inline = (
+            width
+            >= search_width
+            + self.kind_combo.sizeHint().width()
+            + self.state_combo.sizeHint().width()
+            + 16
+        )
+        buttons = (self.open_button, self.folder_button, self.reuse_button)
+        button_width = max(button.sizeHint().width() for button in buttons)
+        columns = min(3, max(1, (width + 8) // (button_width + 8)))
+        actions_inline = (
+            width >= search_width + sum(button.sizeHint().width() for button in buttons) + 24
+        )
+        table_width = sum(
+            self.fontMetrics().horizontalAdvance(text) + 32
+            for text in ("MM-dd HH:mm", "Monkey", tr("应用"), tr("结果不完整"))
+        )
+        compact_table = width < table_width
+        mode = (inline, actions_inline, columns, compact_table)
+        if mode == self._layout_mode:
+            return
+        self._layout_mode = mode
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+            if compact_table
+            else QHeaderView.ResizeMode.ResizeToContents
+        )
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        filters = self._filter_layout
+        while filters.count():
+            filters.takeAt(0)
+        for column in range(3):
+            filters.setColumnStretch(column, 0)
+        if inline:
+            filters.addWidget(self.search_edit, 0, 0)
+            filters.addWidget(self.kind_combo, 0, 1)
+            filters.addWidget(self.state_combo, 0, 2)
+            filters.setColumnStretch(0, 2)
+        else:
+            filters.addWidget(self.search_edit, 0, 0, 1, 2)
+            filters.addWidget(self.kind_combo, 1, 0)
+            filters.addWidget(self.state_combo, 1, 1)
+            filters.setColumnStretch(0, 1)
+            filters.setColumnStretch(1, 1)
+        actions = self._action_layout
+        while actions.count():
+            actions.takeAt(0)
+        for column in range(4):
+            actions.setColumnStretch(column, 0)
+        if actions_inline:
+            actions.addWidget(self.artifact_combo, 0, 0)
+            actions.setColumnStretch(0, 2)
+            for column, button in enumerate(buttons, 1):
+                actions.addWidget(button, 0, column)
+        else:
+            actions.addWidget(self.artifact_combo, 0, 0, 1, columns)
+            for index, button in enumerate(buttons):
+                actions.addWidget(button, 1 + index // columns, index % columns)
+            for column in range(columns):
+                actions.setColumnStretch(column, 1)
+        self.updateGeometry()

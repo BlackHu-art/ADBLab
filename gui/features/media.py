@@ -5,20 +5,24 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QPixmap, QWheelEvent
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QFrame,
     QGraphicsPixmapItem,
     QGraphicsScene,
+    QGraphicsView,
     QListWidgetItem,
     QWidget,
 )
-from qfluentwidgets import TransparentToolButton
+from qfluentwidgets import HeaderCardWidget, TransparentToolButton
+from shiboken6 import isValid
 
 from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
 from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
 from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
+from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
 
 
@@ -36,6 +40,7 @@ class ScreenshotPage(QWidget):
 
     DELETE_CONFIRM_TIMEOUT_MS = 4000
     _scene: QGraphicsScene
+    _view: QGraphicsView
 
     def __init__(
         self,
@@ -62,14 +67,13 @@ class ScreenshotPage(QWidget):
         self._disposed = False
         self._style_signals_connected = False
         self._pending_delete_path = ""
+        self._device_tools: QWidget | None = None
+        self._device_tools_parking: QWidget | None = None
+        self._device_tools_header_was_hidden = False
 
         self._init_page()
         self._init_shortcuts()
         self._init_ui()
-        self._status_restore_text = ""
-        self._status_restore_timer = QTimer(self)
-        self._status_restore_timer.setSingleShot(True)
-        self._status_restore_timer.timeout.connect(self._restore_info_status)
         self._fit_resize_timer = QTimer(self)
         self._fit_resize_timer.setSingleShot(True)
         self._fit_resize_timer.timeout.connect(self._apply_fit)
@@ -152,6 +156,43 @@ class ScreenshotPage(QWidget):
 
         self._ui_controller.prepare_for_workspace()
 
+    def set_device_tools(self, tools: QWidget, parking: QWidget) -> None:
+        """借用现有设备操作控件；清除截图时归还宿主，不重建信号或录屏状态。"""
+
+        if self._disposed or self._device_tools is tools:
+            return
+        self._release_device_tools()
+        self._device_tools = tools
+        self._device_tools_parking = parking
+        if isinstance(tools, HeaderCardWidget):
+            self._device_tools_header_was_hidden = tools.headerView.isHidden()
+            tools.headerView.hide()
+        layout = self.layout()
+        assert isinstance(layout, QBoxLayout)
+        layout.insertWidget(1, tools)
+        self._view.setMinimumHeight(160)
+        self._view.viewport().installEventFilter(self)
+        tools.show()
+
+    def heightForWidth(self, width: int) -> int:
+        """工具行按宽度换行，画布按剩余空间伸展，不用图像自然高度撑大宿主。"""
+
+        layout = self.layout()
+        if self._device_tools is not None and isinstance(layout, QBoxLayout):
+            return layout.minimumHeightForWidth(width)
+        return super().heightForWidth(width)
+
+    def _release_device_tools(self) -> None:
+        """截图页不拥有设备操作生命周期，销毁前将原控件移回隐藏宿主。"""
+
+        tools, parking = self._device_tools, self._device_tools_parking
+        self._device_tools = self._device_tools_parking = None
+        if tools is not None and parking is not None and isValid(tools) and isValid(parking):
+            tools.hide()
+            if isinstance(tools, HeaderCardWidget):
+                tools.headerView.setVisible(not self._device_tools_header_was_hidden)
+            tools.setParent(parking)
+
     def receive_payload(self, payload=None) -> None:
         """接收后台完成的截图批次，不要求页面当前位于前台。"""
 
@@ -192,7 +233,6 @@ class ScreenshotPage(QWidget):
 
         self._active = False
         self.setProperty("deactivation_reason", reason)
-        self._status_restore_timer.stop()
         self._fit_resize_timer.stop()
         self._bottom_bar_reflow_timer.stop()
         self._reset_delete_confirmation()
@@ -204,6 +244,7 @@ class ScreenshotPage(QWidget):
             return True
         self.deactivate(reason)
         self._disposed = True
+        self._release_device_tools()
         self._disconnect_style_signals()
         self._scene.clear()
         self._placeholder_text = None
@@ -441,15 +482,12 @@ class ScreenshotPage(QWidget):
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
         ).copy_to_clipboard()
 
-    def _flash_status(self, text: str, timeout_ms: int = 1800):
+    def _flash_status(
+        self, text: str, timeout_ms: int | None = None, *, level: ToastLevel = "info",
+    ):
         return (
             getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._flash_status(text, timeout_ms)
-
-    def _restore_info_status(self) -> None:
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._restore_info_status()
+        )._flash_status(text, timeout_ms, level=level)
 
     def _open_file_location(self):
         return (
@@ -472,6 +510,18 @@ class ScreenshotPage(QWidget):
         )._on_context_menu(pos)
 
     # ── 生命周期与事件 ─────────────────────────────────────────────────────
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.Resize
+            and self._active
+            and not self._disposed
+            and self._fit_to_window
+            and watched is self._view.viewport()
+        ):
+            # 工具换行可能只改变内部画布，页面本身不会收到 resizeEvent。
+            self._fit_resize_timer.start(0)
+        return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
         self.request_dispose("widget_close")

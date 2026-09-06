@@ -172,6 +172,20 @@ class CloseController:
         self._frame._shutdown_finalizer_started = True
         self._frame._shutdown_results = tuple(results)
         self._frame._shutdown_residual = tuple(residual)
+        self._frame._shutdown_archive_failed = False
+        # 生产者退出后在 GUI 线程提交最后一条测试记录，再由后台收尾排空写入队列。
+        for host in getattr(self._frame, "_workspace_feature_hosts", {}).values():
+            for page in host.registry.pages():
+                archive = getattr(page, "archive_finished_run", None)
+                if callable(archive):
+                    try:
+                        archive()
+                    except (OSError, ValueError, TypeError, RuntimeError) as exc:
+                        # 单页归档失败仍要收尾其他生产者，最终状态必须保留失败事实。
+                        self._frame._shutdown_archive_failed = True
+                        self._frame.log_service.log(
+                            "ERROR", f"Test result archive failed: {type(exc).__name__}"
+                        )
         self._frame.log_service.log(
             "DEBUG",
             (
@@ -185,6 +199,15 @@ class CloseController:
             for result in self._frame._shutdown_results
             if getattr(result, "disposition", None) == StopDisposition.FAILED
         ]
+        archive_monkey = getattr(self._frame.adb_controller, "archive_finished_monkey_runs", None)
+        if callable(archive_monkey):
+            try:
+                archive_monkey(resources_stopped=not self._frame._shutdown_residual and not failed)
+            except (OSError, ValueError, TypeError, RuntimeError) as exc:
+                self._frame._shutdown_archive_failed = True
+                self._frame.log_service.log(
+                    "ERROR", f"Monkey result archive failed: {type(exc).__name__}"
+                )
         if failed:
             error_types = sorted({result.error_type or "UnknownError" for result in failed})
             self._frame.log_service.log(
@@ -234,10 +257,17 @@ class CloseController:
         """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""
         from core.settings_manager import AppSettings
 
+        library = getattr(self._frame, "run_library", None)
+        library_saved = True
+        if library is not None:
+            remaining = max(0.0, self._frame._shutdown_deadline_at - time.monotonic())
+            library_saved = library.shutdown(remaining)
         s = AppSettings.instance()
         if s._save_timer:
             s._save_timer.cancel()
         s._save_atomic()
+        if not library_saved or getattr(self._frame, "_shutdown_archive_failed", False):
+            raise RuntimeError("测试结果库未能完成落盘")
 
     def _on_application_finalized(
         self,

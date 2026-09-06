@@ -29,12 +29,9 @@ from qfluentwidgets import (
     FluentIcon,
     FluentStyleSheet,
     FluentWindow,
-    InfoBar,
-    InfoBarPosition,
     NavigationDisplayMode,
     NavigationItemPosition,
     NavigationPanel,
-    PushButton,
     SmoothScrollArea,
     setCustomStyleSheet,
 )
@@ -49,6 +46,7 @@ from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
 from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
+from gui.notifications import show_toast
 from gui.pages.device_hub import DeviceHubPage
 from gui.pages.fluent_pages import (
     GalleryPage,
@@ -61,6 +59,7 @@ from gui.pages.tasks_page import TaskCenterPage
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
+from gui.run_library import RunLibraryController
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.device_context_bar import DeviceContextBar
@@ -73,6 +72,7 @@ from gui.window_layout import (
     normalize_window_size,
 )
 from models.device_store import DeviceStore
+from services.run_library import RunLibrary, RunRecord
 from services.task_history import TaskHistoryStore
 from utils.resource_path import resource_path
 
@@ -804,6 +804,8 @@ class MainFrame(FluentWindow):
         from gui.features.performance import PerformancePage
 
         self._central_widget = self.stackedWidget
+        self.run_library = RunLibraryController(RunLibrary.for_user(), self)
+        self.run_library.error.connect(self._on_run_library_error)
 
         self._global_device_bar = DeviceContextBar(self)
         self.widgetLayout.removeWidget(self.stackedWidget)
@@ -903,13 +905,13 @@ class MainFrame(FluentWindow):
 
         apps_host = WorkspaceFeatureHost(
             "apps",
-            tr("截图与诊断"),
+            tr("应用与诊断"),
             apps_overview,
             self,
         )
         apps_host.configure_overview_category(
             "overview",
-            icon=FluentIcon.PLAY,
+            icon=FluentIcon.CODE,
             activate=lambda _device_id: apps_panel.category_stack.set_current("daily"),
         )
         apps_host.register_feature(
@@ -925,13 +927,16 @@ class MainFrame(FluentWindow):
 
         def create_screenshot_page(_key):
             page = ScreenshotPage()
+            page.set_device_tools(
+                apps_panel.text_screen_tools, apps_panel.text_screen_tools_parking,
+            )
             page.back_requested.connect(apps_host.show_overview)
             return page
 
         apps_host.register_feature(
             "media",
-            tr("截图结果"),
-            FluentIcon.PHOTO,
+            tr("截图与屏幕"),
+            FluentIcon.CAMERA,
             create_screenshot_page,
             requires_device=False,
             close_label=tr("清除截图结果"),
@@ -970,17 +975,23 @@ class MainFrame(FluentWindow):
                 package_name = self.left_panel.current_package_text()
             except RuntimeError:
                 package_name = ""
-            return PerformancePage(
+            page = PerformancePage(
                 device_ip=key.device_id,
                 package_name=package_name,
             )
+            info = self._device_metadata.get(key.device_id, {})
+            page.setProperty("run_device_label", " ".join(
+                str(info.get(field, "")).strip() for field in ("Brand", "Model")
+            ).strip())
+            page.set_run_library(self.run_library)
+            return page
 
         system_host.register_feature(
             "performance",
             tr("性能采集"),
             FluentIcon.SPEED_HIGH,
             create_performance_page,
-            close_label=tr("结束性能采集"),
+            show_close_action=False,
         )
 
         self._workspace_feature_hosts = {
@@ -1037,8 +1048,8 @@ class MainFrame(FluentWindow):
         self._apps_page = WorkspaceAreaPage(
             "appsPage",
             "apps",
-            tr("截图与诊断"),
-            tr("截图录屏、诊断应用并收集报告"),
+            tr("应用与诊断"),
+            tr("应用包操作、Monkey 测试与诊断报告"),
             apps_host,
             feature_host=apps_host,
             parent=self,
@@ -1064,7 +1075,10 @@ class MainFrame(FluentWindow):
             history_store=self._task_history,
             stop_hook=self._stop_operation_from_task_center,
             runtime_log=self.log_panel,
+            run_library=self.run_library,
         )
+        assert self._task_page.run_results is not None
+        self._task_page.run_results.reuse_requested.connect(self._reuse_test_run)
         self._tasks_page = GalleryPage(
             "tasksPage",
             tr("任务中心"),
@@ -1090,10 +1104,10 @@ class MainFrame(FluentWindow):
              tr("屏幕镜像、按键和手势在同一页面操作")),
             ("apps", "manager", "appManagerPage", FluentIcon.APPLICATION, tr("应用管理"),
              tr("查看已安装应用，管理列表中的应用")),
-            ("apps", "overview", "appsPage", FluentIcon.CAMERA, tr("截图与诊断"),
-             tr("应用包操作、截图录屏、Monkey 测试与诊断")),
-            ("apps", "media", "screenshotsPage", FluentIcon.PHOTO, tr("截图结果"),
-             tr("查看并保存设备截图，切页后保留结果")),
+            ("apps", "overview", "appsPage", FluentIcon.CODE, tr("应用与诊断"),
+             tr("应用包操作、Monkey 测试与诊断报告")),
+            ("apps", "media", "screenshotsPage", FluentIcon.CAMERA, tr("截图与屏幕"),
+             tr("发送文本、截图录屏，查看并保存截图")),
             ("system", "overview", "systemPage", FluentIcon.DEVELOPER_TOOLS, tr("系统工具"),
              tr("系统命令、设备配置、网络与模拟器操作")),
             ("system", "logcat", "logcatPage", FluentIcon.SCROLL, tr("实时 Logcat"),
@@ -1823,6 +1837,31 @@ class MainFrame(FluentWindow):
         self._task_page.show_runtime_records()
         self.left_panel.signals.device_info_requested.emit(devices)
 
+    def _on_run_library_error(self, message: str) -> None:
+        """保存错误在当前页提示，不导航或把底层设备路径写入日志。"""
+        if self._closing:
+            return
+        show_toast(
+            self, title=tr("测试结果"), content=message, level="warning",
+        )
+
+    def _reuse_test_run(self, record: RunRecord) -> None:
+        """只恢复参数；设备仍由当前会话准入决定，历史记录不能自动执行。"""
+        if record.kind == "performance":
+            self._open_workspace_feature(
+                "system", "performance", payload={"run_parameters": record.parameters},
+            )
+        elif record.kind == "monkey":
+            panel = self.left_panel._apps_tab
+            if panel is None:
+                return
+            try:
+                panel.apply_run_parameters(record.parameters)
+            except (TypeError, ValueError):
+                self._on_run_library_error(tr("请先停止当前测试，并检查方案参数是否完整有效。"))
+                return
+            self._open_workspace_feature("apps", "overview")
+
     def _open_workspace_feature(
         self,
         section: str,
@@ -1968,7 +2007,7 @@ class MainFrame(FluentWindow):
         content_surface = getattr(self, "_content_surface", None)
         if content_surface is not None:
             light_style = (
-                "background-color: rgba(255, 255, 255, 0.5); "
+                "background-color: rgba(242, 244, 246, 0.20); "
                 "border: 1px solid rgba(0, 0, 0, 0.068); border-top-left-radius: 10px;"
                 if mica else f"background-color: {light}; border: none; border-radius: 0px;"
             )
@@ -1984,7 +2023,7 @@ class MainFrame(FluentWindow):
                 f"QWidget#workspaceSurface {{ {dark_style} border-right: none; "
                 "border-bottom: none; }",
             )
-        # 云母沿用 FluentWindow 的明暗遮罩，页面透明后仍保留内容区的阅读层次。
+        # 浅色使用轻量中性遮罩，避免白色与卡片再次合成后冲淡云母；深色保持原层次。
         for surface, selector, light_color, dark_color in (
             (
                 self.stackedWidget,
@@ -2154,6 +2193,8 @@ class MainFrame(FluentWindow):
         apps_panel = self.left_panel._apps_tab
         if apps_panel is None:
             raise RuntimeError("apps panel was not initialized before signal binding")
+        apps_panel.set_run_library(self.run_library)
+        CTL.run_record_ready.connect(self.run_library.record_run)
         apps_panel.monkey_preparation_requested.connect(self.adb_controller.prepare_monkey_targets)
         CTL.monkey_preparation_finished.connect(apps_panel.on_monkey_preparation_finished)
         operation_handler = getattr(
@@ -2225,20 +2266,14 @@ class MainFrame(FluentWindow):
         if page is None:
             self.log_service.log("WARNING", "Screenshot result page is still closing")
             return
-        notice = InfoBar.success(
-            title=tr("截图已完成"),
-            content=tr("结果已加入“截图结果”页面。"),
-            duration=5000,
-            position=InfoBarPosition.TOP_RIGHT,
-            parent=self,
+        show_toast(
+            self,
+            tr("截图已完成"),
+            tr("结果已加入“截图与屏幕”页面。"),
+            level="success",
+            action_text=tr("查看结果"),
+            on_action=lambda: self._open_workspace_feature("apps", "media"),
         )
-        view_button = PushButton(tr("查看结果"), notice)
-        view_button.setToolTip(tr("在当前主窗口打开截图结果页"))
-        view_button.clicked.connect(
-            lambda: self._open_workspace_feature("apps", "media")
-        )
-        notice.addWidget(view_button)
-        notice.show()
 
     def _on_operation_completed(self, operation: str, success: bool, message: str) -> None:
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""

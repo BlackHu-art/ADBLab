@@ -11,7 +11,6 @@ from qfluentwidgets import (
     HeaderCardWidget,
     InfoBadge,
     InfoLevel,
-    SimpleCardWidget,
 )
 
 from adblab.application.cancellation import CancellationToken
@@ -29,6 +28,8 @@ from gui.widgets.responsive_layout import (
     WidthPolicy,
     span_tail_mode,
 )
+from gui.widgets.run_preset_bar import RunPresetBar
+from utils.adb_values import normalize_android_package
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,12 @@ class AppPanel(BasePanel):
         self.category_stack = AdaptiveCategoryStack("apps", w)
 
         g_ts = self._card_group(tr("文本与屏幕"))
+        self.text_screen_tools = g_ts
+        # 截图页可清除并重建；控件与录屏状态归本面板，暂存宿主不参与可见布局。
+        self.text_screen_tools_parking = QWidget(self)
+        self.text_screen_tools_parking.hide()
+        g_ts.setParent(self.text_screen_tools_parking)
+        g_ts.hide()
         gts_l = g_ts.viewLayout
         gts_l.setSpacing(2)
         self.email_text_sender = self._in(tr("输入邮箱、验证码或其他文本…"))
@@ -211,7 +218,7 @@ class AppPanel(BasePanel):
         self.monkey_section = g_m
         gm_l = g_m.viewLayout
         gm_l.setSpacing(16)
-        self.monkey_package_card = SimpleCardWidget(g_m)
+        self.monkey_package_card = QWidget(g_m)
         package_info_layout = QVBoxLayout(self.monkey_package_card)
         package_info_layout.setContentsMargins(16, 16, 16, 16)
         package_info_layout.setSpacing(12)
@@ -258,12 +265,21 @@ class AppPanel(BasePanel):
         package_info_layout.addWidget(self.monkey_package_info)
         gm_l.addWidget(self.monkey_package_card)
 
-        self.monkey_parameters_card = SimpleCardWidget(g_m)
+        self.monkey_parameters_card = QWidget(g_m)
         parameter_layout = QVBoxLayout(self.monkey_parameters_card)
         parameter_layout.setContentsMargins(16, 16, 16, 16)
         parameter_layout.setSpacing(16)
         self.monkey_parameters_heading = self._monkey_group_heading(tr("运行参数"))
-        parameter_layout.addWidget(self.monkey_parameters_heading)
+        self.monkey_preset_bar = RunPresetBar(
+            "monkey", self.capture_run_parameters, self.apply_run_parameters,
+            self.monkey_parameters_card,
+        )
+        # 方案栏自己按宽度换行；普通纵向布局保留完整行高，避免第二层网格裁剪按钮。
+        preset_header = QVBoxLayout()
+        preset_header.setSpacing(8)
+        preset_header.addWidget(self.monkey_parameters_heading)
+        preset_header.addWidget(self.monkey_preset_bar)
+        parameter_layout.addLayout(preset_header)
 
         EVENTS_OPTS = ["100", "500", "1000", "5000", "10000", "50000", "100000", "500000"]
         THROTTLE_OPTS = [
@@ -345,6 +361,30 @@ class AppPanel(BasePanel):
                 self._monkey_field_mode("stacked", 1, 1, 2),
             ),
         )
+        self.monkey_seed_mode_label = self._label(tr("随机种子"))
+        self.monkey_seed_mode = self._combo()
+        self.monkey_seed_mode.addItem(tr("每次随机"), userData="random")
+        self.monkey_seed_mode.addItem(tr("固定种子"), userData="fixed")
+        self.monkey_seed_label = self._label(tr("种子值"))
+        self.monkey_seed = _mk_combo(["1", "42", "2026"])
+        self._set_combo_int_validator(self.monkey_seed, 0, 2147483647)
+        self.monkey_seed.setText("1")
+        self.monkey_seed.setToolTip(tr("固定种子可重复相同事件序列；实际种子会保存在运行记录中"))
+        self.monkey_seed.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
+        self.monkey_seed.setProperty(RESPONSIVE_MINIMUM_TEXT_PROPERTY, "2147483647")
+        self._refresh_responsive_widget_minimum(self.monkey_seed)
+        self.monkey_seed_binding = self._add_responsive_row(
+            parameter_layout, self.monkey_seed_mode_label, self.monkey_seed_mode,
+            self.monkey_seed_label, self.monkey_seed,
+            spacing=10,
+            policies=(WidthPolicy.NATURAL, WidthPolicy.SHRINKABLE) * 2,
+            modes=(
+                self._monkey_field_mode("wide", 2, 0, 2),
+                self._monkey_field_mode("stacked", 1, 1, 2),
+            ),
+        )
+        self.monkey_seed_mode.currentIndexChanged.connect(self._update_monkey_seed_state)
+        self._update_monkey_seed_state()
         self.monkey_distribution_heading = self._monkey_group_heading(tr("事件分布"))
         self.monkey_distribution_header_binding = self._add_responsive_row(
             parameter_layout,
@@ -502,7 +542,7 @@ class AppPanel(BasePanel):
             wide_columns=4,
         )
         self.category_stack.add_category(
-            "daily", tr("截图与诊断"), (g_pm, g_ts, g_m, g_r, g_perf)
+            "daily", tr("应用与诊断"), (g_pm, g_m, g_r, g_perf)
         )
         self.category_stack.add_alias("monkey", "daily")
         self.category_stack.add_alias("packages", "daily")
@@ -714,6 +754,9 @@ class AppPanel(BasePanel):
 
     def _collect_monkey_params(self) -> dict | None:
         fields = [self.monkey_events, self.monkey_throttle, *self._monkey_pct_combos.values()]
+        seed_mode = self.monkey_seed_mode.currentData()
+        if seed_mode == "fixed":
+            fields.append(self.monkey_seed)
         if not self._validate_fields(*fields):
             return None
         p = {
@@ -722,10 +765,78 @@ class AppPanel(BasePanel):
             "ignore_crashes": self.monkey_chk_crashes.isChecked(),
             "ignore_timeouts": self.monkey_chk_timeouts.isChecked(),
             "ignore_security": self.monkey_chk_security.isChecked(),
+            "seed_mode": seed_mode,
+            "seed": int(self.monkey_seed.currentText().strip()) if seed_mode == "fixed" else None,
         }
         for key, c in self._monkey_pct_combos.items():
             p[key] = int(c.currentText().strip())
         return p
+
+    def set_run_library(self, controller) -> None:
+        """绑定共享测试库；方案读写继续由主窗口持有的控制器负责。"""
+        self.monkey_preset_bar.set_library(controller)
+
+    def _update_monkey_seed_state(self, *_args) -> None:
+        """随机模式不校验未使用的固定值，切回固定模式后保留原输入。"""
+        self.monkey_seed.setEnabled(self.monkey_seed_mode.currentData() == "fixed")
+
+    def capture_run_parameters(self) -> dict | None:
+        """复制可复用的 Monkey 表单值，省略设备身份、准备请求和运行代次。"""
+        if self._monkey_closed or self._monkey_preparation is not None or self._monkey_running:
+            return None
+        parameters = self._collect_monkey_params()
+        if parameters is None:
+            return None
+        if sum(parameters[key] for key in self._monkey_pct_combos) != 100:
+            raise ValueError(tr("事件比例合计必须为 100%"))
+        package = self.package_text.strip()
+        parameters["package_name"] = normalize_android_package(package) if package else ""
+        return parameters
+
+    def apply_run_parameters(self, parameters: dict) -> None:
+        """完整校验后仅载入表单，不更改设备选择、不查询设备，也不自动开始运行。"""
+        if self._monkey_closed or self._monkey_preparation is not None or self._monkey_running:
+            raise ValueError(tr("请等待当前 Monkey 操作结束后再载入方案"))
+        if not isinstance(parameters, dict):
+            raise ValueError(tr("Monkey 方案参数无效"))
+        values = {}
+        ranges = {"events": (1, 1000000), "throttle": (0, 60000)}
+        ranges.update({key: (0, 100) for key in self._monkey_pct_combos})
+        for key, (minimum, maximum) in ranges.items():
+            value = parameters.get(key)
+            if (isinstance(value, bool) or not isinstance(value, int)
+                    or not minimum <= value <= maximum):
+                raise ValueError(tr("Monkey 方案参数无效"))
+            values[key] = value
+        if sum(values[key] for key in self._monkey_pct_combos) != 100:
+            raise ValueError(tr("事件比例合计必须为 100%"))
+        flags = ("ignore_crashes", "ignore_timeouts", "ignore_security")
+        if any(not isinstance(parameters.get(key, True), bool) for key in flags):
+            raise ValueError(tr("Monkey 方案参数无效"))
+        mode = parameters.get(
+            "seed_mode", "fixed" if parameters.get("seed") is not None else "random",
+        )
+        seed = parameters.get("seed")
+        if mode not in ("random", "fixed") or (mode == "fixed" and (
+            isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2147483647
+        )):
+            raise ValueError(tr("Monkey 方案参数无效"))
+        package = parameters.get("package_name", "")
+        package = normalize_android_package(package) if package else ""
+        self.monkey_events.setText(str(values["events"]))
+        self.monkey_throttle.setText(self._format_monkey_throttle(values["throttle"]))
+        for key, field in self._monkey_pct_combos.items():
+            field.setText(str(values[key]))
+        for key, field in zip(flags, (
+            self.monkey_chk_crashes, self.monkey_chk_timeouts, self.monkey_chk_security,
+        )):
+            field.setChecked(parameters.get(key, True))
+        self.monkey_seed_mode.setCurrentIndex(1 if mode == "fixed" else 0)
+        if mode == "fixed":
+            self.monkey_seed.setText(str(seed))
+        self.program_edit.setText(package)
+        self._update_pct_total()
+        self._update_action_states()
 
     def _update_pct_total(self, *_args):
         total = 0
@@ -937,16 +1048,30 @@ class AppPanel(BasePanel):
         if pending.parameters != self._collect_monkey_params():
             self.monkey_package_info.setText(tr("测试参数已改变，请重新开始以核对本次配置"))
             return
-        self._start_prepared_monkey(pending.devices, package, pending.parameters)
+        metadata = {}
+        for index, info in enumerate(packages, 1):
+            version = str(info.get("version_name") or "")
+            code = str(info.get("version_code") or "")
+            metadata[str(info["device_ip"])] = {
+                "device_label": tr("设备 {index}").format(index=index),
+                "app_version": f"{version} ({code})" if version and code else version or code,
+            }
+        self._start_prepared_monkey(pending.devices, package, pending.parameters, metadata)
 
     def _start_prepared_monkey(
         self, devices: tuple[str, ...], package: str, parameters: dict,
+        metadata: dict | None = None,
     ) -> None:
         """准备成功后使用原目标和参数快照启动，既有运行/停止批次归属保持不变。"""
-        params = dict(parameters, package_name=package)
+        params: dict = dict(parameters, package_name=package)
         from core.settings_manager import AppSettings
 
-        AppSettings.instance().set("monkey_params", params)
+        # 原全局设置保持既有字段；seed 和命名方案只通过独立测试库存储。
+        AppSettings.instance().set("monkey_params", {
+            key: value for key, value in params.items() if key not in ("seed", "seed_mode")
+        })
+        if metadata:
+            params["_target_metadata"] = metadata
         self._monkey_active_devices = devices
         self._monkey_pending_count = len(devices)
         self._monkey_pending_devices = set(devices)
@@ -1084,6 +1209,9 @@ class AppPanel(BasePanel):
         )
         monkey_running = bool(getattr(self, "_monkey_running", False))
         preparing = self._monkey_preparation is not None
+        self.monkey_parameters_card.setEnabled(
+            not (monkey_running or preparing or self._monkey_closed)
+        )
         if self._monkey_closed:
             monkey_blocked_reason = tr("页面正在关闭")
         elif preparing:

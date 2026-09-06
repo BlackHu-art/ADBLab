@@ -1,0 +1,124 @@
+FFF                                                                      [100%]
+================================== FAILURES ===================================
+___ test_screenshot_copy_notifies_without_replacing_current_image_metadata ____
+
+qt_application = <PySide6.QtWidgets.QApplication(0x1fcc76b3a40) at 0x000001FCC9B6BE00>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-400/test_screenshot_copy_notifies_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FCC9B78ED0>
+
+    def test_screenshot_copy_notifies_without_replacing_current_image_metadata(
+        qt_application, tmp_path, monkeypatch,
+    ):
+        """���Ƴɹ�ʹ�����������ʾ������������ǰͼ��Ϣ��������Ҳ���ָ������ݡ�"""
+    
+        from gui.dialogs import screenshot_viewer_actions as actions
+    
+        first = _write_image(tmp_path / "first.png", Qt.GlobalColor.red)
+        second = _write_image(tmp_path / "second.png", Qt.GlobalColor.blue)
+        notices = []
+        monkeypatch.setattr(
+            actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+            raising=False,
+        )
+        page = ScreenshotPage([first, second])
+        try:
+            page.show()
+            metadata = page._info_label.text()
+            page.copy_to_clipboard()
+    
+            assert qt_application.clipboard().pixmap().toImage() == QPixmap(first).toImage()
+>           assert page._info_label.text() == metadata
+E           AssertionError: assert 'Image copied' == '48 x 32 | 134 B | 20:49:30'
+E             
+E             - 48 x 32 | 134 B | 20:49:30
+E             + Image copied
+
+tests\test_screenshot_page.py:224: AssertionError
+_ test_screenshot_delete_confirmation_notifies_full_text_and_still_requires_second_click _
+
+qt_application = <PySide6.QtWidgets.QApplication(0x1fcc76b3a40) at 0x000001FCC9B6BE00>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-400/test_screenshot_delete_confirm0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FCC9B7A150>
+
+    def test_screenshot_delete_confirmation_notifies_full_text_and_still_requires_second_click(
+        qt_application, tmp_path, monkeypatch,
+    ):
+        """��ȷ����ʾ�������� Toast���״ε��ֻȷ����ͼ��������ǰɾ���ļ���"""
+    
+        from gui.dialogs import screenshot_viewer_actions as actions
+    
+        path = _write_image(tmp_path / "confirm.png", Qt.GlobalColor.green)
+        confirmation = "���ٴε��ɾ����ȷ��ɾ�����Ž�ͼ��" * 12
+        notices = []
+        original_tr = actions.tr
+        monkeypatch.setattr(
+            actions, "tr",
+            lambda text: confirmation if text == "Click Delete again to confirm" else original_tr(text),
+        )
+        monkeypatch.setattr(
+            actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+            raising=False,
+        )
+        page = ScreenshotPage([path])
+        try:
+            page.show()
+            metadata = page._info_label.text()
+            page._delete_file()
+    
+            assert os.path.exists(path)
+            assert page._pending_delete_path == path
+            assert page._delete_confirm_timer.isActive()
+>           assert page._info_label.text() == metadata
+E           AssertionError: assert '���ٴε��ɾ����ȷ��ɾ��...��ɾ����ȷ��ɾ�����Ž�ͼ��' == '48 x 32 | 135 B | 20:49:30'
+E             
+E             - 48 x 32 | 135 B | 20:49:30
+E             + ���ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ�����ٴε��ɾ����ȷ��ɾ�����Ž�ͼ��
+
+tests\test_screenshot_page.py:266: AssertionError
+__ test_screenshot_delete_error_notifies_complete_message_and_preserves_file __
+
+qt_application = <PySide6.QtWidgets.QApplication(0x1fcc76b3a40) at 0x000001FCC9B6BE00>
+tmp_path = WindowsPath('C:/Users/Administrator/AppData/Local/Temp/pytest-of-Administrator/pytest-400/test_screenshot_delete_error_n0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001FCC9B7A850>
+
+    def test_screenshot_delete_error_notifies_complete_message_and_preserves_file(
+        qt_application, tmp_path, monkeypatch,
+    ):
+        """ɾ��ʧ��ͨ��������������ʾ���������쳣��������ͼ������ȷ����ͼ��"""
+    
+        from gui.dialogs import screenshot_viewer_actions as actions
+        from gui.dialogs.fluent_dialog import FluentMessageBox
+    
+        path = _write_image(tmp_path / "cannot-delete.png", Qt.GlobalColor.cyan)
+        error_text = "�޷�ɾ����ͼ���ļ�����ʹ�á�\n" + str(tmp_path / ("long-name-" * 15 + ".png"))
+        notices, dialogs = [], []
+        monkeypatch.setattr(
+            actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+            raising=False,
+        )
+        monkeypatch.setattr(
+            FluentMessageBox, "warning", lambda *args: dialogs.append(args),
+        )
+    
+        def fail_remove(_path):
+            raise PermissionError(error_text)
+    
+        monkeypatch.setattr(actions.os, "remove", fail_remove)
+        page = ScreenshotPage([path])
+        try:
+            page.show()
+            page._delete_file()
+            page._delete_file()
+    
+>           assert dialogs == []
+E           assert [(<gui.featur...g-name-.png')] == []
+E             
+E             Left contains one more item: (<gui.features.media.ScreenshotPage(0x1fcc8d81a30, name="screenshotPage") at 0x000001FCC9B69D00>, 'Delete Failed', '�޷�...me-long-name-long-name-long-name-long-name-long-name-long-name-long-name-long-name-long-name-long-name-long-name-.png')
+E             Use -v to get more diff
+
+tests\test_screenshot_page.py:307: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_screenshot_page.py::test_screenshot_copy_notifies_without_replacing_current_image_metadata
+FAILED tests/test_screenshot_page.py::test_screenshot_delete_confirmation_notifies_full_text_and_still_requires_second_click
+FAILED tests/test_screenshot_page.py::test_screenshot_delete_error_notifies_complete_message_and_preserves_file
+3 failed, 7 deselected in 0.60s

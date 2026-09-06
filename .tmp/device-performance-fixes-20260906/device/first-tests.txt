@@ -1,0 +1,86 @@
+.FF.......                                                               [100%]
+================================== FAILURES ===================================
+_ test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts[12-1000-Light] _
+
+qt_application = <PySide6.QtWidgets.QApplication(0x26e14368620) at 0x0000026E156D9F80>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000026E156DA110>
+theme = 'Light', font_size = 12, width = 1000
+
+    @pytest.mark.parametrize("theme", ["Light", "Dark"])
+    @pytest.mark.parametrize("font_size, width", [(12, 1000), (22, 380)])
+    def test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts(
+        qt_application, monkeypatch, theme, font_size, width
+    ):
+        monkeypatch.setattr(
+            BaseStyles, "font_for_role",
+            classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
+        )
+        BaseStyles.switch_theme(theme)
+        window, page = _show_page(qt_application, width)
+        page.set_device_metadata(_rich_metadata())
+        card = page.device_cards[0]
+        card.details_button.click()
+        _settle_cards(qt_application, page)
+        assert window.width() == width
+        fields = [*card.summary_fields.values(), *card.detail_fields.values(), card.identifier_field]
+        bounds = []
+        for field in fields:
+            assert field.isVisible()
+            rect = QRect(field.mapTo(card, QPoint()), field.size())
+            assert card.rect().contains(rect)
+            assert all(not rect.intersects(other) for other in bounds)
+            bounds.append(rect)
+            assert field.value.height() >= field.value.heightForWidth(field.value.width())
+            assert field.caption.height() >= field.caption.fontMetrics().height()
+        summary_positions = {
+            field.mapTo(card, QPoint()).x() for field in card.summary_fields.values()
+        }
+>       assert len(summary_positions) == (4 if width == 1000 else 1)
+E       assert 2 == 4
+E        +  where 2 = len({14, 497})
+
+tests\test_device_hub_page.py:150: AssertionError
+_ test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts[12-1000-Dark] _
+
+qt_application = <PySide6.QtWidgets.QApplication(0x26e14368620) at 0x0000026E156D9F80>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000026E156BB790>
+theme = 'Dark', font_size = 12, width = 1000
+
+    @pytest.mark.parametrize("theme", ["Light", "Dark"])
+    @pytest.mark.parametrize("font_size, width", [(12, 1000), (22, 380)])
+    def test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts(
+        qt_application, monkeypatch, theme, font_size, width
+    ):
+        monkeypatch.setattr(
+            BaseStyles, "font_for_role",
+            classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
+        )
+        BaseStyles.switch_theme(theme)
+        window, page = _show_page(qt_application, width)
+        page.set_device_metadata(_rich_metadata())
+        card = page.device_cards[0]
+        card.details_button.click()
+        _settle_cards(qt_application, page)
+        assert window.width() == width
+        fields = [*card.summary_fields.values(), *card.detail_fields.values(), card.identifier_field]
+        bounds = []
+        for field in fields:
+            assert field.isVisible()
+            rect = QRect(field.mapTo(card, QPoint()), field.size())
+            assert card.rect().contains(rect)
+            assert all(not rect.intersects(other) for other in bounds)
+            bounds.append(rect)
+            assert field.value.height() >= field.value.heightForWidth(field.value.width())
+            assert field.caption.height() >= field.caption.fontMetrics().height()
+        summary_positions = {
+            field.mapTo(card, QPoint()).x() for field in card.summary_fields.values()
+        }
+>       assert len(summary_positions) == (4 if width == 1000 else 1)
+E       assert 2 == 4
+E        +  where 2 = len({14, 497})
+
+tests\test_device_hub_page.py:150: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/test_device_hub_page.py::test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts[12-1000-Light]
+FAILED tests/test_device_hub_page.py::test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts[12-1000-Dark]
+2 failed, 8 passed, 61 deselected in 1.45s

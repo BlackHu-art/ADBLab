@@ -179,11 +179,14 @@ def _assert_stack_gap_matches_surface(frame, context):
     scale = image.devicePixelRatio()
     expected = QColor(BaseStyles.color("WINDOW_BG"))
     if frame.isMicaEffectEnabled():
-        # 离屏使用已知根背景模拟系统材质，再核对 Fluent 内容遮罩的合成结果。
+        # 离屏使用已知根背景模拟系统材质，再核对当前设计遮罩的准确合成结果。
         sample = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
         sample.fill(frame.backgroundColor)
         painter = QPainter(sample)
-        tint = QColor(255, 255, 255, 8 if BaseStyles.resolved_theme() == "Dark" else 127)
+        tint = (
+            QColor(255, 255, 255, 8) if BaseStyles.resolved_theme() == "Dark"
+            else QColor(242, 244, 246, 51)
+        )
         painter.fillRect(sample.rect(), tint)
         painter.end()
         expected = sample.pixelColor(0, 0)
@@ -236,6 +239,37 @@ def test_mica_toggle_reveals_backdrop_and_restores_opaque_surfaces(
     assert frame.navigationInterface.panel.autoFillBackground()
     assert _navigation_background_pixel(frame) == QColor(BaseStyles.color("WINDOW_BG"))
     _assert_stack_gap_matches_surface(frame, "mica disabled")
+
+
+def test_light_material_preserves_backdrop_color_instead_of_washing_it_out(
+    qt_application, monkeypatch, theme_probe_frame
+):
+    """浅色阅读层保留至少七成底色差异，避免多层白色把云母冲淡。"""
+    frame = theme_probe_frame("Light", True)
+    frame._on_nav_requested("settings")
+    animation = frame.stackedWidget.view._ani
+    animation.setCurrentTime(animation.duration())
+    sources = (QColor("#DCE5EF"), QColor("#E8E2DC"))
+    samples = []
+    for source in sources:
+        monkeypatch.setattr(frame, "_normalBackgroundColor", lambda color=source: color)
+        frame._refresh_window_chrome_theme()
+        qt_application.processEvents()
+        point = frame.stackedWidget.mapTo(frame, QPoint(frame.stackedWidget.width() // 2, 2))
+        rendered = frame.grab().toImage()
+        scale = rendered.devicePixelRatio()
+        samples.append(rendered.pixelColor(round(point.x() * scale), round(point.y() * scale)))
+    # 比较颜色距离而非读取实现中的透明度，检出额外覆盖的实色或重复白色层。
+    source_distance = sum(
+        abs(a - b) for a, b in zip(sources[0].getRgb()[:3], sources[1].getRgb()[:3])
+    )
+    result_distance = sum(
+        abs(a - b) for a, b in zip(samples[0].getRgb()[:3], samples[1].getRgb()[:3])
+    )
+    assert result_distance >= source_distance * .7
+    assert all(
+        sample != source and sample.alpha() == 255 for sample, source in zip(samples, sources)
+    )
 
 
 def test_unsupported_mica_request_keeps_opaque_surfaces(monkeypatch, theme_probe_frame):
@@ -317,7 +351,20 @@ def test_all_navigation_pages_share_material_without_covering_reading_controls(
         for name in ("appManagerMasterPanel", "performanceConfig"):
             surface = page.findChild(QWidget, name)
             if surface is not None and surface.isVisibleTo(frame):
-                surfaces.append((surface, QPoint(2, 2)))
+                point = QPoint(2, 2)
+                if name == "performanceConfig":
+                    # 两卡布局的 (2, 2) 落在 headerView 圆角，必须取实际卡片间距。
+                    layout = surface.layout()
+                    first = layout.itemAt(0).widget().geometry()
+                    second = layout.itemAt(1).widget().geometry()
+                    if first.right() < second.left():
+                        point = QPoint((first.right() + second.left()) // 2, first.center().y())
+                    else:
+                        assert first.bottom() < second.top()
+                        point = QPoint(first.center().x(), (first.bottom() + second.top()) // 2)
+                    assert surface.rect().contains(point)
+                    assert surface.childAt(point) is None
+                surfaces.append((surface, point))
         if key == "tasksPage":
             surfaces.append((frame._task_page._scroll.widget(), QPoint(2, 2)))
         image = frame.grab().toImage()
@@ -329,7 +376,9 @@ def test_all_navigation_pages_share_material_without_covering_reading_controls(
 
         expected = sample(frame._content_surface, QPoint(frame._content_surface.width() - 3, 20))
         for surface, point in surfaces:
-            assert sample(surface, point) == expected, (key, surface.objectName())
+            assert sample(surface, point) == expected, (
+                key, surface.objectName(), surface.childAt(point),
+            )
         checked.append(key)
     assert len(checked) == 12
 
@@ -347,7 +396,8 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
         composite.fill(frame.backgroundColor)
         painter = QPainter(composite)
         painter.fillRect(
-            composite.rect(), QColor(255, 255, 255, 8 if theme_name == "Dark" else 127)
+            composite.rect(),
+            QColor(255, 255, 255, 8) if theme_name == "Dark" else QColor(242, 244, 246, 51),
         )
         painter.end()
         expected = composite.pixelColor(0, 0)
@@ -419,6 +469,20 @@ def test_native_palette_event_preserves_mica_theme(theme_probe_frame, theme_name
     QTest.qWait(20)
 
     dark = ctypes.c_int(-1)
+    assert getter(int(frame.winId()), 20, ctypes.byref(dark), ctypes.sizeof(dark)) == 0
+    assert dark.value == int(theme_name == "Dark")
+    modern_backdrop = window_effects.sys.getwindowsversion().build >= 22523
+    attribute = 38 if modern_backdrop else 1029
+    backdrop = ctypes.c_int(-1)
+    assert getter(
+        int(frame.winId()), attribute, ctypes.byref(backdrop), ctypes.sizeof(backdrop)
+    ) == 0
+    assert backdrop.value == (2 if modern_backdrop else 1)
+    frame.setMicaEffectEnabled(False)
+    assert getter(
+        int(frame.winId()), attribute, ctypes.byref(backdrop), ctypes.sizeof(backdrop)
+    ) == 0
+    assert backdrop.value == (1 if modern_backdrop else 0)
     assert getter(int(frame.winId()), 20, ctypes.byref(dark), ctypes.sizeof(dark)) == 0
     assert dark.value == int(theme_name == "Dark")
 

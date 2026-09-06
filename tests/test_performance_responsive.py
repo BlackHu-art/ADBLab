@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QPoint, QSize, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -16,9 +16,11 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QTabWidget,
     QToolButton,
+    QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import EditableComboBox, HeaderCardWidget
+from qfluentwidgets import EditableComboBox, HeaderCardWidget, SmoothScrollArea
+from shiboken6 import isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
 from gui.dialogs.fluent_dialog import FluentMessageBox
@@ -32,7 +34,9 @@ from gui.widgets.collapsible_tools import CollapsibleTools
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 from tests.ui_geometry_helpers import (
     assert_contained,
+    assert_non_overlapping,
     assert_scroll_target_reachable,
+    mapped_rect,
     wait_for_stable_geometry,
     wait_until,
 )
@@ -150,7 +154,10 @@ def test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner(
         assert dialog.findChild(QTabWidget, "performanceCompactTabs") is None
         assert dialog.findChild(QToolButton, "performanceMoreActions") is None
         assert len(dialog._configuration_sections) == 1
-        assert isinstance(dialog._diagnostic_tools, CollapsibleTools)
+        assert not isinstance(dialog._diagnostic_tools, CollapsibleTools)
+        assert all(field.isVisibleTo(dialog) for field in (
+            dialog.dumpheap_input, dialog.exception_edit, dialog.phone_log_edit,
+        ))
 
         section_ids = tuple(map(id, dialog._configuration_sections))
         for size in (
@@ -173,8 +180,16 @@ def test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner(
             )
             assert dialog.findChildren(QScrollArea) == [dialog._config_scroll]
             assert dialog._config_scroll.widget() is config_group
-            dialog._diagnostic_tools.toggle_button.setChecked(True)
             qt_application.processEvents()
+            diagnostic_fields = (
+                dialog.dumpheap_input, dialog.exception_edit, dialog.phone_log_edit,
+            )
+            assert all(field.isVisibleTo(dialog) for field in diagnostic_fields)
+            assert_non_overlapping(diagnostic_fields, dialog._diagnostic_tools)
+            assert len({
+                mapped_rect(field, dialog._diagnostic_tools).top()
+                for field in diagnostic_fields
+            }) == 1
             assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
     finally:
         dialog.close()
@@ -274,6 +289,68 @@ def test_performance_groups_fields_and_results_in_reference_header_cards(qt_appl
         dialog.close()
 
 
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_performance_sections_inherit_blank_surface_but_keep_log_reading_background(
+    qt_application, theme,
+):
+    """真实像素区分结构底板与阅读底板，悬停和主题往返不能重新叠加卡片白层。"""
+
+    original_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    base = QColor("#b8cad8" if theme == "Light" else "#243849")
+    palette = host.palette()
+    palette.setColor(QPalette.ColorRole.Window, base)
+    host.setPalette(palette)
+    host.setAutoFillBackground(True)
+    dialog, _runner = _build_performance_page()
+    layout = QVBoxLayout(host)
+    layout.addWidget(dialog)
+    dialog.prepare_for_workspace()
+    dialog.log_view.clear()
+    host.resize(1200, 1250)
+    host.show()
+    try:
+        wait_for_stable_geometry(qt_application, (host, dialog, dialog._results_group))
+        for current_theme in (theme, "Dark" if theme == "Light" else "Light", theme):
+            BaseStyles.switch_theme(current_theme)
+            QTest.mouseMove(dialog._action_row, QPoint(4, 10))
+            QTest.qWait(180)
+            surfaces = {
+                "actions": (dialog._action_row, QPoint(4, 10)),
+                "plan_header": (dialog._configuration_sections[0], QPoint(4, 10)),
+                "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 10)),
+                "results_header": (dialog._results_group, QPoint(4, 10)),
+                "results_body": (dialog._results_group.view, QPoint(4, 10)),
+                "progress_container": (dialog.progress_display.indicators, QPoint(2, 2)),
+            }
+            image = host.grab().toImage()
+            scale = image.devicePixelRatio()
+            colors = {}
+            for name, (widget, point) in surfaces.items():
+                position = widget.mapTo(host, point)
+                colors[name] = image.pixelColor(
+                    round(position.x() * scale), round(position.y() * scale)
+                ).name()
+            assert set(colors.values()) == {base.name()}, colors
+            for section in (*dialog._configuration_sections, dialog._results_group):
+                assert not section.separator.isVisible()
+            viewport = dialog.log_view.viewport()
+            position = viewport.mapTo(host, QPoint(3, viewport.height() // 2))
+            log_background = image.pixelColor(
+                round(position.x() * scale), round(position.y() * scale)
+            )
+            assert log_background != base
+            if current_theme == "Light":
+                assert log_background == QColor(
+                    BaseStyles.color_for("Light", "LOG_BACKGROUND")
+                )
+    finally:
+        dialog.close()
+        host.close()
+        BaseStyles.switch_theme(original_theme)
+
+
 def test_performance_keeps_configuration_help_on_fields_and_accessibility(qt_application):
     """收起常驻说明后，字段与无障碍描述仍提供完整输入规则。"""
 
@@ -320,9 +397,9 @@ def test_performance_bounds_configuration_and_results_in_one_scroll(
         assert dialog._config_scroll.widget() is config_group
         assert config_group.isVisibleTo(dialog)
         assert_contained(dialog._config_scroll, dialog)
-        assert dialog._configuration_group.x() < dialog._results_group.x()
+        assert dialog._configuration_group.x() == dialog._results_group.x()
+        assert dialog._results_group.y() > dialog._configuration_group.geometry().bottom()
         assert_scroll_target_reachable(dialog._config_scroll, dialog.log_view)
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         qt_application.processEvents()
         assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
         assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
@@ -347,7 +424,6 @@ def test_performance_small_window_keeps_configuration_fields_reachable(qt_applic
         assert dialog.size() == QSize(640, 420)
         assert dialog._config_scroll.verticalScrollBar().maximum() > 0
         assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         qt_application.processEvents()
         assert_scroll_target_reachable(dialog._config_scroll, dialog.package_edit)
         assert_scroll_target_reachable(dialog._config_scroll, dialog.phone_log_edit)
@@ -526,6 +602,12 @@ def test_running_locks_only_configuration_and_keeps_log_and_actions_available(
         qt_application.processEvents()
 
         assert all(not section.isEnabled() for section in dialog._configuration_sections)
+        diagnostic_fields = (
+            dialog.dumpheap_input, dialog.exception_edit, dialog.phone_log_edit,
+        )
+        assert all(
+            field.isVisibleTo(dialog) and not field.isEnabled() for field in diagnostic_fields
+        )
         assert dialog.log_view.isEnabled()
         assert dialog.status_label.isEnabled()
         assert dialog.progress_bar.isEnabled()
@@ -534,6 +616,7 @@ def test_running_locks_only_configuration_and_keeps_log_and_actions_available(
 
         dialog._set_running(False)
         assert all(section.isEnabled() for section in dialog._configuration_sections)
+        assert all(field.isVisibleTo(dialog) and field.isEnabled() for field in diagnostic_fields)
     finally:
         dialog._set_running(False)
         dialog.close()
@@ -626,7 +709,6 @@ def test_performance_cards_reflow_without_horizontal_scroll_or_clipped_controls(
         dialog.resize(width, 720)
         dialog.show()
         dialog.monkey_check.setChecked(True)
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
         assert dialog.size() == QSize(width, 720)
         assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
@@ -638,6 +720,7 @@ def test_performance_cards_reflow_without_horizontal_scroll_or_clipped_controls(
             dialog.frequency_input,
             dialog.timeout_input,
             dialog.dumpheap_input,
+            dialog.exception_edit,
             dialog.phone_log_edit,
             dialog.monkey_seed_input,
             *dialog.monkey_pct_inputs.values(),
@@ -649,6 +732,75 @@ def test_performance_cards_reflow_without_horizontal_scroll_or_clipped_controls(
         assert dialog._results_group not in dialog._configuration_sections
     finally:
         dialog.close()
+
+
+def test_duration_first_preset_click_reaches_collection_config(qt_application):
+    """采集时长默认 600 后点击首项 10，配置提交必须使用用户实际选中的值。"""
+    dialog, _runner = _build_performance_page()
+    dialog.resize(1100, 800)
+    dialog.show()
+    field = dialog.timeout_input
+    try:
+        assert_scroll_target_reachable(dialog._config_scroll, field)
+        QTest.mouseClick(field.dropButton, Qt.MouseButton.LeftButton)
+        wait_until(
+            qt_application, lambda: field.dropMenu is not None and field.dropMenu.isVisible()
+        )
+        menu = field.dropMenu
+        first = menu.view.item(0)
+        menu.view.scrollToItem(first)
+        QTest.mouseClick(
+            menu.view.viewport(), Qt.MouseButton.LeftButton,
+            pos=menu.view.visualItemRect(first).center(),
+        )
+        dialog.package_edit.setFocus()
+        assert field.text() == "10"
+        assert field.value() == 10
+        assert dialog.build_config().timeout_minutes == 10
+    finally:
+        if field.dropMenu is not None:
+            field.dropMenu.close()
+        dialog.close()
+
+
+@pytest.mark.parametrize(
+    "embedded,theme,width,font_size",
+    [(False, "Light", 640, 12), (False, "Dark", 640, 22),
+     (True, "Light", 1100, 12), (True, "Dark", 780, 22)],
+)
+def test_performance_cards_leave_overlay_scrollbar_clearance(
+    qt_application, monkeypatch, embedded, theme, width, font_size,
+):
+    """实际 Fluent 覆盖式滚动条与卡片、输入和动作区域保持分离。"""
+    BaseStyles.switch_theme(theme)
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    dialog, _runner = _build_performance_page()
+    workspace = SmoothScrollArea() if embedded else None
+    if workspace is not None:
+        workspace.setWidgetResizable(True)
+        dialog.prepare_for_workspace()
+        workspace.setWidget(dialog)
+    owner = workspace or dialog
+    scroll = workspace or dialog._config_scroll
+    try:
+        owner.resize(width, 600)
+        owner.show()
+        dialog.monkey_check.setChecked(True)
+        wait_for_stable_geometry(qt_application, (owner, dialog, dialog._config_group))
+        bar = scroll.delegate.vScrollBar
+        assert bar.maximum() > 0
+        bar_rect = mapped_rect(bar, scroll)
+        for card in (dialog.header_card, dialog._configuration_group, dialog._results_group):
+            card_rect = mapped_rect(card, scroll)
+            assert card_rect.right() < bar_rect.left()
+        for control in (dialog.timeout_input, dialog.save_path_edit, dialog.result_btn):
+            assert_scroll_target_reachable(scroll, control)
+            assert mapped_rect(control, scroll).right() < bar_rect.left()
+        assert scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        dialog.close()
+        if workspace is not None:
+            workspace.close()
 
 
 def test_performance_monkey_expansion_keeps_invalid_input_and_shared_scroll_owner(
@@ -671,7 +823,6 @@ def test_performance_monkey_expansion_keeps_invalid_input_and_shared_scroll_owne
         dialog.monkey_check.setChecked(False)
         assert not dialog._monkey_details.isVisibleTo(dialog)
         dialog.monkey_check.setChecked(True)
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         wait_for_stable_geometry(qt_application, (workspace, dialog, dialog._config_group))
         assert dialog.monkey_pct_inputs["pct_touch"] is field
         assert field.text() == "101"
@@ -696,6 +847,7 @@ def test_performance_result_view_switch_keeps_large_font_chart_plot_readable(
     try:
         dialog.resize(900, 720)
         dialog.show()
+        wait_for_stable_geometry(qt_application, (dialog, dialog._chart_stack))
         dialog.log_view.setPlainText("保留日志内容")
         log_height = dialog._chart_stack.height()
         dialog.chart_view.set_series({"CPU": [(0, 10), (1, 30), (2, 20)]})
@@ -718,40 +870,205 @@ def test_performance_result_view_switch_keeps_large_font_chart_plot_readable(
         dialog.close()
 
 
-def test_performance_plan_and_results_share_first_row_on_wide_pages(qt_application):
-    """宽屏首行同时提供配置和日志，窄屏纵排且切换宽度不重建输入。"""
+def test_performance_plan_and_results_stay_full_width_without_shared_height(qt_application):
+    """配置与日志始终纵排且分别测高，切换宽度不重建输入或放大配置空白。"""
 
     dialog, _runner = _build_performance_page()
     field = dialog.frequency_input
     try:
         dialog.show()
-        for width, wide in ((1200, True), (640, False), (1200, True)):
+        for width in (1200, 640, 1200):
             dialog.resize(width, 900)
             wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
             plan = dialog._configuration_group.geometry()
             results = dialog._results_group.geometry()
-            if wide:
-                assert results.left() > plan.right()
-                assert results.top() == plan.top()
-                assert dialog._configuration_sections[0].height() == dialog._results_group.height()
-                assert dialog._chart_toggle.height() == dialog._chart_toggle.sizeHint().height()
-                assert_scroll_target_reachable(dialog._config_scroll, dialog.log_view)
-                assert dialog.frequency_input.mapTo(dialog, QPoint()).y() == (
-                    dialog.timeout_input.mapTo(dialog, QPoint()).y()
-                )
-            else:
-                assert results.top() > plan.bottom()
-                assert results.left() == plan.left()
+            assert results.top() == plan.bottom() + 17
+            assert results.left() == plan.left() == 0
+            content_width = dialog._config_group.layout().contentsRect().width()
+            assert results.width() == plan.width() == content_width
+            assert dialog._chart_toggle.height() == dialog._chart_toggle.sizeHint().height()
+            assert_scroll_target_reachable(dialog._config_scroll, dialog.log_view)
+            configuration_height = dialog._configuration_group.height()
+            dialog._chart_stack.setCurrentIndex(1)
+            wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
+            assert dialog._configuration_group.height() == configuration_height
+            dialog._chart_stack.setCurrentIndex(0)
+            wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
+            if width == 1200:
+                centers = [
+                    mapped_rect(field, dialog).center().y()
+                    for field in (dialog.package_edit, dialog.frequency_input, dialog.timeout_input)
+                ]
+                assert max(centers) - min(centers) <= 1
+                assert len({
+                    mapped_rect(label, dialog).top()
+                    for label in dialog.findChildren(QLabel, "fieldLabel")
+                    if label.property("configurationKey") in {"package", "frequency", "timeout"}
+                }) == 1
             assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
             assert dialog.frequency_input is field
     finally:
         dialog.close()
 
 
-def test_invalid_collapsed_diagnostic_field_is_expanded_and_focused(
+@pytest.mark.parametrize("font_size,width", ((12, 1200), (22, 1200), (22, 420)))
+def test_performance_preset_and_common_fields_follow_one_clear_vertical_order(
+    qt_application, monkeypatch, font_size, width,
+):
+    """方案独占首行，常用参数和保存目录顺序稳定，窄屏仍能完整操作。"""
+
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", font_size)
+    dialog, _runner = _build_performance_page()
+    dialog.run_preset_bar.show()
+    try:
+        dialog.resize(width, 900)
+        dialog.show()
+        wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
+        card = dialog._configuration_sections[0]
+        preset = mapped_rect(dialog.run_preset_bar, card.view)
+        common = (dialog.package_edit, dialog.frequency_input, dialog.timeout_input)
+        rectangles = tuple(mapped_rect(field, card.view) for field in common)
+        save = mapped_rect(dialog.save_path_edit, card.view)
+        margins = card.viewLayout.contentsMargins()
+        assert preset.left() == margins.left()
+        assert preset.right() == card.view.width() - margins.right() - 1
+        assert preset.bottom() < min(rect.top() for rect in rectangles)
+        assert max(rect.bottom() for rect in rectangles) < save.top()
+        assert save.bottom() < mapped_rect(dialog._diagnostic_tools, card.view).top()
+        assert_non_overlapping(common, card.view)
+        for field in (*common, dialog.save_path_edit):
+            assert_contained(field, card.view)
+            assert_scroll_target_reachable(dialog._config_scroll, field)
+        for control in (
+            dialog.run_preset_bar.combo, dialog.run_preset_bar.load_button,
+            dialog.run_preset_bar.save_button, dialog.run_preset_bar.delete_button,
+        ):
+            assert_contained(control, dialog.run_preset_bar)
+            assert_scroll_target_reachable(dialog._config_scroll, control)
+        assert dialog._config_scroll.horizontalScrollBar().maximum() == 0
+    finally:
+        dialog.close()
+
+
+@pytest.mark.parametrize("width", (420, 764, 1200))
+def test_performance_large_font_running_summary_and_actions_remain_readable(
+    qt_application, monkeypatch, width,
+):
+    """运行详情变长后按实际换行测高，百分比与时间不能被状态卡裁掉。"""
+
+    monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", 22)
+    dialog, _runner = _build_performance_page()
+    dialog.prepare_for_workspace()
+    try:
+        dialog.resize(width, 900)
+        dialog.show()
+        dialog._run_duration_seconds = 3600
+        dialog._run_elapsed_seconds = 1512
+        dialog._set_running(True)
+        dialog._set_progress(42)
+        wait_for_stable_geometry(qt_application, (dialog, dialog.header_card))
+        progress = dialog.progress_display
+        for label in (progress.status_label, progress.detail_label):
+            assert_contained(label, progress)
+            assert label.height() >= label.heightForWidth(label.width())
+        assert "00:25:12" in progress.detail_label.text()
+        assert "01:00:00" in progress.detail_label.text()
+        assert progress.ring.width() == progress.ring.height()
+        assert progress.ring.width() >= progress.ring.fontMetrics().horizontalAdvance("100%") + 16
+        assert_non_overlapping(
+            (progress, dialog.start_btn, dialog.stop_btn), dialog.header_card,
+        )
+        for button in (dialog.start_btn, dialog.stop_btn):
+            assert_contained(button, dialog.header_card)
+            assert button.width() >= button.sizeHint().width()
+    finally:
+        dialog._set_running(False)
+        dialog.close()
+
+
+@pytest.mark.parametrize("width", (420, 1200))
+def test_performance_result_buttons_sync_click_keyboard_and_programmatic_selection(
+    qt_application, width,
+):
+    """切换入口保持单选；点击、空格、方向键和程序切图都只发布一次变化。"""
+
+    dialog, _runner = _build_performance_page()
+    try:
+        dialog.resize(width, 900)
+        dialog.show()
+        toggle = dialog._chart_toggle
+        log_button, chart_button = (toggle.items[key] for key in ("log", "chart"))
+        for button in (log_button, chart_button):
+            assert button.accessibleName() == button.text()
+            assert button.accessibleDescription() == button.toolTip()
+            assert button.accessibleDescription()
+        changes = QSignalSpy(toggle.currentItemChanged)
+        views = QSignalSpy(dialog._chart_stack.currentChanged)
+        assert log_button.isChecked() and not chart_button.isChecked()
+        assert toggle._group.exclusive()
+        assert toggle._group.parent() is toggle
+        assert_scroll_target_reachable(dialog._config_scroll, chart_button)
+        QTest.mouseClick(chart_button, Qt.MouseButton.LeftButton)
+        assert dialog._chart_stack.currentIndex() == 1
+        assert chart_button.isChecked() and not log_button.isChecked()
+        assert changes.count() == views.count() == 1
+        QTest.mouseClick(chart_button, Qt.MouseButton.LeftButton)
+        assert chart_button.isChecked()
+        assert changes.count() == views.count() == 1
+        dialog._chart_stack.setCurrentIndex(0)
+        assert log_button.isChecked() and not chart_button.isChecked()
+        assert changes.count() == views.count() == 2
+        chart_button.setFocus()
+        QTest.keyClick(chart_button, Qt.Key.Key_Space)
+        assert chart_button.isChecked() and dialog._chart_stack.currentIndex() == 1
+        assert changes.count() == views.count() == 3
+        QTest.keyClick(chart_button, Qt.Key.Key_Left)
+        assert log_button.hasFocus() and log_button.isChecked()
+        assert dialog._chart_stack.currentIndex() == 0
+        assert changes.count() == views.count() == 4
+        QTest.keyClick(log_button, Qt.Key.Key_Tab)
+        focused = dialog.focusWidget()
+        assert focused is not None and not toggle.isAncestorOf(focused)
+        QTest.keyClick(focused, Qt.Key.Key_Backtab)
+        assert log_button.hasFocus()
+        assert_non_overlapping((log_button, chart_button), toggle)
+        assert abs(log_button.width() - chart_button.width()) <= 1
+    finally:
+        dialog.close()
+
+
+def test_performance_close_stops_progress_and_releases_result_button_group(qt_application):
+    """关闭先停止绘制动画，页面与互斥组随后在同一对象树中释放一次。"""
+
+    dialog, _runner = _build_performance_page()
+    dialog.show()
+    toggle = dialog._chart_toggle
+    group = toggle._group
+    stack = dialog._chart_stack
+    controls = (toggle, group, stack, *toggle.items.values())
+    destroyed = tuple(QSignalSpy(control.destroyed) for control in controls)
+    try:
+        dialog._set_running(True)
+        dialog._set_progress(42)
+        assert dialog.request_dispose()
+        assert dialog.progress_bar.ani.state() == QAbstractAnimation.State.Stopped
+        assert (
+            dialog.progress_display.busy_ring.aniGroup.state() == QAbstractAnimation.State.Stopped
+        )
+        dialog.close()
+        dialog.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert all(signal.count() == 1 for signal in destroyed)
+        assert not any(isValid(control) for control in controls)
+    finally:
+        if isValid(dialog):
+            dialog.close()
+
+
+def test_invalid_visible_diagnostic_field_is_focused_without_committing_other_fields(
     qt_application, monkeypatch
 ):
-    """隐藏配置校验失败必须展开并定位原文，不能启动或改掉有效字段。"""
+    """常显诊断校验失败必须定位原文，不能启动或改掉其他有效字段。"""
 
     dialog, runner = _build_performance_page()
     monkeypatch.setattr(FluentMessageBox, "warning", lambda *_args, **_kwargs: None)
@@ -760,14 +1077,12 @@ def test_invalid_collapsed_diagnostic_field_is_expanded_and_focused(
         dialog.show()
         dialog.dumpheap_input.setText("bad")
         dialog.frequency_input.setText("7")
-        assert not dialog._diagnostic_tools.toggle_button.isChecked()
-        assert not dialog.dumpheap_input.isVisibleTo(dialog)
+        assert dialog.dumpheap_input.isVisibleTo(dialog)
 
         dialog.start_mobileperf()
         wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
 
         assert runner.start_count == 0
-        assert dialog._diagnostic_tools.toggle_button.isChecked()
         assert dialog.dumpheap_input.isVisibleTo(dialog)
         assert dialog.dumpheap_input.hasFocus()
         assert dialog.dumpheap_input.text() == "bad"
@@ -844,7 +1159,6 @@ def test_large_font_sampling_units_stay_beside_editors(qt_application, monkeypat
     try:
         dialog.resize(width, 900)
         dialog.show()
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         dialog.monkey_check.setChecked(True)
         wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
 
@@ -865,6 +1179,19 @@ def test_large_font_sampling_units_stay_beside_editors(qt_application, monkeypat
 
         frequency = dialog.frequency_input.mapTo(dialog, QPoint())
         timeout = dialog.timeout_input.mapTo(dialog, QPoint())
+        diagnostic_fields = (
+            dialog.dumpheap_input, dialog.exception_edit, dialog.phone_log_edit,
+        )
+        diagnostic_labels = {
+            label.property("configurationKey"): label
+            for label in dialog._diagnostic_tools.findChildren(QLabel, "fieldLabel")
+        }
+        for key in ("dumpheap_freq", "exceptionlog", "phone_log_path"):
+            label = diagnostic_labels[key]
+            assert label.width() >= label.fontMetrics().horizontalAdvance(label.text())
+        assert len({
+            mapped_rect(field, dialog._diagnostic_tools).top() for field in diagnostic_fields
+        }) >= 2
         if frequency.x() != timeout.x():
             assert frequency.y() == timeout.y()
             labels = {
@@ -895,7 +1222,6 @@ def test_embedded_expanded_performance_keeps_result_content_inside_card(
         workspace.setWidget(dialog)
         workspace.resize(780, 900)
         workspace.show()
-        dialog._diagnostic_tools.toggle_button.setChecked(True)
         dialog.monkey_check.setChecked(True)
         for result_index in (0, 1, 0):
             dialog._chart_stack.setCurrentIndex(result_index)

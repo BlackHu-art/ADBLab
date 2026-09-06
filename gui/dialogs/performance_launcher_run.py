@@ -49,6 +49,9 @@ class PerformanceLauncherRun:
         self._frame._last_result_root = ""
         self._frame._update_result_action()
         self._frame._runner_finished_handled = False
+        self._frame._run_cancel_requested = False
+        self._frame._run_elapsed_seconds = 0
+        self._frame._library_controller.begin(config)
         self._frame.log_received.emit("INFO", tr("Starting mobileperf"))
         try:
             self._frame._runner.start(
@@ -57,10 +60,12 @@ class PerformanceLauncherRun:
                 on_finished=alive_signal_emitter(self._frame, "runner_finished"),
             )
         except Exception as exc:
+            self._frame._library_controller.finish(start_error=str(exc))
             self._frame.log_received.emit("ERROR", tr('Start failed: {value0}').format(value0=exc))
             self._frame._runner_finished_handled = True
             self._frame._reset_progress()
             self._set_running(False)
+            self._set_status(tr("Failed"), "failed")
             return
         self._frame._run_started_at = time.monotonic()
         self._frame._run_duration_seconds = max(1, int(config.timeout_minutes) * 60)
@@ -76,6 +81,8 @@ class PerformanceLauncherRun:
             self._mark_runner_finished()
             return
         self._frame._stopping = True
+        self._frame._run_cancel_requested = True
+        self._frame._library_controller.request_cancel()
         self._frame.log_received.emit("INFO", tr("Stopping mobileperf and generating report..."))
         self._frame._poll_timer.stop()
         self._update_progress()
@@ -113,6 +120,7 @@ class PerformanceLauncherRun:
         self._mark_runner_finished()
 
     def _mark_runner_finished(self):
+        self._frame._library_controller.finish()
         if self._frame._closing or self._frame._runner_finished_handled:
             return
         if self._frame._runner.is_running():
@@ -131,7 +139,18 @@ class PerformanceLauncherRun:
         self._frame._stopping = False
         self._frame._poll_timer.stop()
         self._frame._run_started_at = None
-        result_dir = self._frame._runner.latest_result_dir() or ""
+        artifact_error = False
+        result_dir = ""
+        report_file = ""
+        # 输出目录可能在运行结束时失联；探测失败也必须释放配置锁和停止计时器。
+        try:
+            result_dir = self._frame._runner.latest_result_dir() or ""
+        except OSError:
+            artifact_error = True
+        try:
+            report_file = self._frame._runner.latest_report_file() or ""
+        except OSError:
+            artifact_error = True
         self._frame._last_result_root = result_dir
         # P3：加载静态 CSV 指标到图表视图（空结果保持空态，不阻塞完成流程）。
         loader = getattr(self._frame, "_load_chart_metrics", None)
@@ -141,9 +160,20 @@ class PerformanceLauncherRun:
             except Exception:
                 pass
         self._frame._update_result_action()
-        report_file = self._frame._runner.latest_report_file()
+        if artifact_error:
+            self._set_running(False)
+            self._frame._set_progress(min(99, self._frame.progress_bar.value()))
+            self._frame.log_received.emit("WARNING", tr("采集已结束，结果可能不完整。"))
+            self._set_status(tr("Warning"), "warning")
+            return
         last_config = getattr(self._frame._runner, "last_config", None)
         exit_code = getattr(self._frame._runner, "last_exit_code", None)
+
+        if self._frame._run_cancel_requested:
+            self._set_running(False)
+            self._frame._set_progress(min(99, self._frame.progress_bar.value()))
+            self._set_status(tr("已停止"), "cancelled")
+            return
 
         # 保留既有调用方依赖的轻量启动前界面契约；真实采集总会记录 last_config。
         if last_config is None:
@@ -239,12 +269,17 @@ class PerformanceLauncherRun:
         self._frame.status_label.setStyleSheet(
             f"color: {BaseStyles.color(color_key)}; font-weight: {weight};"
         )
+        self._frame.progress_display.refresh(
+            self._frame._status_state,
+            active=self._frame._configuration_locked and not self._frame._closing,
+        )
+        self._frame.session_state_changed.emit()
 
     def _update_progress(self):
         if self._frame._run_started_at is None or self._frame._run_duration_seconds <= 0:
             return
         elapsed = max(0.0, time.monotonic() - self._frame._run_started_at)
-        percent = int((elapsed / self._frame._run_duration_seconds) * 100)
-        if self._frame._runner.is_running():
-            percent = min(99, percent)
+        self._frame._run_elapsed_seconds = int(elapsed)
+        # 时间只是估算，进程退出到结果确认之间也不能提前显示 100%。
+        percent = min(99, int((elapsed / self._frame._run_duration_seconds) * 100))
         self._frame._set_progress(percent)

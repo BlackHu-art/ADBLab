@@ -1,0 +1,12 @@
+..................                                                       [100%]
+============================== warnings summary ===============================
+tests/test_flat_feature_navigation.py: 15 warnings
+  D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\qframelesswindow\titlebar\title_bar_buttons.py:206: DeprecationWarning: Function: 'QDomDocument.setContent(const QByteArray &text, QString *errorMsg, int *errorLine, int *errorColumn)' is marked as deprecated, please check the documentation for more information.
+    self._svgDom.setContent(f.readAll())
+
+tests/test_flat_feature_navigation.py: 59 warnings
+  D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\qfluentwidgets\common\icon.py:196: DeprecationWarning: Function: 'QDomDocument.setContent(const QByteArray &text, QString *errorMsg, int *errorLine, int *errorColumn)' is marked as deprecated, please check the documentation for more information.
+    dom.setContent(f.readAll())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+18 passed, 26 deselected, 74 warnings in 18.32s

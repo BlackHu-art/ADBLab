@@ -11,7 +11,7 @@ from qfluentwidgets import FluentIcon
 
 from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceFeatureHost
-from tests.ui_geometry_helpers import wait_for_stable_geometry
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 def _write_image(path, color: Qt.GlobalColor) -> str:
@@ -19,6 +19,61 @@ def _write_image(path, color: Qt.GlobalColor) -> str:
     image.fill(color)
     assert image.save(str(path))
     return str(path)
+
+
+def test_borrowed_screen_tools_keep_fit_current_and_preserve_manual_zoom(
+    qt_application, tmp_path,
+):
+    """工具高度变化只重算适应窗口模式；手动缩放和归还控件不受影响。"""
+    parking = QWidget()
+    tools = QWidget(parking)
+    tools.setFixedHeight(100)
+    image_path = tmp_path / "portrait.png"
+    portrait = QPixmap(540, 960)
+    portrait.fill(Qt.GlobalColor.blue)
+    assert portrait.save(str(image_path))
+    page = ScreenshotPage([str(image_path)])
+    page.prepare_for_workspace()
+    page.set_device_tools(tools, parking)
+    page.activate()
+    page.resize(800, 700)
+    page.show()
+
+    def image_fits_current_viewport():
+        image_height = 960 * page._zoom_factor
+        view_height = page._view.viewport().height()
+        return view_height - 18 <= image_height <= view_height
+
+    try:
+        wait_for_stable_geometry(qt_application, (page, tools, page._view))
+        page._reset_zoom()
+        QTest.qWait(30)
+        assert image_fits_current_viewport()
+        original_page_size = page.size()
+        original_view_height = page._view.height()
+        tools.setFixedHeight(220)
+        QTest.qWait(30)
+        assert page._view.height() < original_view_height
+        wait_until(qt_application, image_fits_current_viewport)
+        assert page.size() == original_page_size
+        assert page._fit_to_window
+
+        page.zoom_in()
+        manual_zoom = page._zoom_factor
+        tools.setFixedHeight(80)
+        page.resize(900, 800)
+        wait_for_stable_geometry(qt_application, (page, tools, page._view))
+        assert not page._fit_to_window
+        assert page._zoom_factor == manual_zoom
+        assert page.request_dispose()
+        assert not page._fit_resize_timer.isActive()
+        assert tools.parentWidget() is parking
+        assert tools.isHidden()
+    finally:
+        page.close()
+        page.deleteLater()
+        parking.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.mark.parametrize("with_image", [False, True], ids=["empty", "loaded"])
@@ -196,5 +251,160 @@ def test_screenshot_page_escape_requests_back_navigation_without_closing(
         assert back_spy.count() == 1
         assert page.isVisible()
         assert page.is_disposed is False
+    finally:
+        page.close()
+
+
+def test_screenshot_copy_notifies_without_replacing_current_image_metadata(
+    qt_application, tmp_path, monkeypatch,
+):
+    """复制成功使用完整结果提示，底栏保留当前图信息，导航后也不恢复旧内容。"""
+
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    first = _write_image(tmp_path / "first.png", Qt.GlobalColor.red)
+    second = _write_image(tmp_path / "second.png", Qt.GlobalColor.blue)
+    notices = []
+    monkeypatch.setattr(
+        actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+        raising=False,
+    )
+    page = ScreenshotPage([first, second])
+    try:
+        page.show()
+        metadata = page._info_label.text()
+        page.copy_to_clipboard()
+
+        assert qt_application.clipboard().pixmap().toImage() == QPixmap(first).toImage()
+        assert page._info_label.text() == metadata
+        assert page._info_label.toolTip() == metadata
+        assert len(notices) == 1
+        args, options = notices[0]
+        assert args[0] is page
+        assert args[2] == "Image copied"
+        assert options["duration"] is None
+        page.navigate_next()
+        assert page._current_path() == second
+        assert page._info_label.text() == page._info_label.toolTip()
+    finally:
+        page.close()
+
+
+def test_screenshot_delete_confirmation_notifies_full_text_and_still_requires_second_click(
+    qt_application, tmp_path, monkeypatch,
+):
+    """长确认提示完整交给 Toast，首次点击只确认意图，不能提前删除文件。"""
+
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    path = _write_image(tmp_path / "confirm.png", Qt.GlobalColor.green)
+    confirmation = "请再次点击删除以确认删除这张截图。" * 12
+    notices = []
+    original_tr = actions.tr
+    monkeypatch.setattr(
+        actions, "tr",
+        lambda text: confirmation if text == "Click Delete again to confirm" else original_tr(text),
+    )
+    monkeypatch.setattr(
+        actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+        raising=False,
+    )
+    page = ScreenshotPage([path])
+    try:
+        page.show()
+        metadata = page._info_label.text()
+        page._delete_file()
+
+        assert os.path.exists(path)
+        assert page._pending_delete_path == path
+        assert page._delete_confirm_timer.isActive()
+        assert page._info_label.text() == metadata
+        args, options = notices[0]
+        assert args[2] == confirmation
+        assert options["duration"] == page.DELETE_CONFIRM_TIMEOUT_MS
+
+        page._delete_file()
+        assert not os.path.exists(path)
+        assert page._image_paths == []
+    finally:
+        page.close()
+
+
+def test_screenshot_delete_error_notifies_complete_message_and_preserves_file(
+    qt_application, tmp_path, monkeypatch,
+):
+    """删除失败通过非阻塞错误提示返回完整异常，保留截图并重置确认意图。"""
+
+    from gui.dialogs import screenshot_viewer_actions as actions
+    from gui.dialogs.fluent_dialog import FluentMessageBox
+
+    path = _write_image(tmp_path / "cannot-delete.png", Qt.GlobalColor.cyan)
+    error_text = "无法删除截图：文件正在使用。\n" + str(tmp_path / ("long-name-" * 15 + ".png"))
+    notices, dialogs = [], []
+    monkeypatch.setattr(
+        actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        FluentMessageBox, "warning", lambda *args: dialogs.append(args),
+    )
+
+    def fail_remove(_path):
+        raise PermissionError(error_text)
+
+    monkeypatch.setattr(actions.os, "remove", fail_remove)
+    page = ScreenshotPage([path])
+    try:
+        page.show()
+        page._delete_file()
+        page._delete_file()
+
+        assert dialogs == []
+        assert os.path.exists(path)
+        assert page._image_paths == [path]
+        assert page._pending_delete_path == ""
+        assert not page._delete_confirm_timer.isActive()
+        args, options = notices[-1]
+        assert args == (page, "Delete Failed", error_text)
+        assert options["level"] == "error"
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("reset", ["expired", "navigation"])
+def test_screenshot_delete_confirmation_notice_closes_when_intent_expires(
+    qt_application, tmp_path, monkeypatch, reset,
+):
+    """提示悬停可以延长阅读，但删除意图结束后不得继续显示失效确认。"""
+
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    first = _write_image(tmp_path / "first.png", Qt.GlobalColor.red)
+    second = _write_image(tmp_path / "second.png", Qt.GlobalColor.blue)
+    notices = []
+
+    def show_notice(parent, *_args, **_kwargs):
+        notice = QWidget(parent)
+        notice.show()
+        notices.append(notice)
+        return notice
+
+    monkeypatch.setattr(actions, "show_toast", show_notice)
+    page = ScreenshotPage([first, second])
+    try:
+        page.show()
+        page._delete_file()
+        assert notices[0].isVisible()
+        assert page._pending_delete_path == first
+
+        if reset == "expired":
+            page._delete_confirm_timer.timeout.emit()
+        else:
+            page.navigate_next()
+
+        assert not notices[0].isVisible()
+        assert not page._delete_confirm_timer.isActive()
+        assert page._pending_delete_path == ""
+        assert os.path.exists(first)
     finally:
         page.close()

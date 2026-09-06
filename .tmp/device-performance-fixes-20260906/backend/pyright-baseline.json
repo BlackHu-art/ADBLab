@@ -1,0 +1,862 @@
+{
+    "version": "1.1.411",
+    "time": "1788700303810",
+    "generalDiagnostics": [
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"run_shell_cmd\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 108,
+                    "character": 41
+                },
+                "end": {
+                    "line": 108,
+                    "character": 54
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"poll\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 194,
+                    "character": 30
+                },
+                "end": {
+                    "line": 194,
+                    "character": 34
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"terminate\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 195,
+                    "character": 31
+                },
+                "end": {
+                    "line": 195,
+                    "character": 40
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"kill_process\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 197,
+                    "character": 28
+                },
+                "end": {
+                    "line": 197,
+                    "character": 40
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"start_time\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"start_time\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 212,
+                    "character": 24
+                },
+                "end": {
+                    "line": 212,
+                    "character": 34
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"stdout\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 215,
+                    "character": 37
+                },
+                "end": {
+                    "line": 215,
+                    "character": 43
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"run_shell_cmd\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 236,
+                    "character": 40
+                },
+                "end": {
+                    "line": 236,
+                    "character": 53
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"is_process_running\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 254,
+                    "character": 48
+                },
+                "end": {
+                    "line": 254,
+                    "character": 66
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"kill_process\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 257,
+                    "character": 44
+                },
+                "end": {
+                    "line": 257,
+                    "character": 56
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "\"run_shell_cmd\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 258,
+                    "character": 61
+                },
+                "end": {
+                    "line": 258,
+                    "character": 74
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"top_dir\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"top_dir\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 284,
+                    "character": 16
+                },
+                "end": {
+                    "line": 284,
+                    "character": 23
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 285,
+                    "character": 36
+                },
+                "end": {
+                    "line": 287,
+                    "character": 5
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\monkey.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 286,
+                    "character": 8
+                },
+                "end": {
+                    "line": 286,
+                    "character": 27
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"top_dir\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"top_dir\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 64,
+                    "character": 20
+                },
+                "end": {
+                    "line": 64,
+                    "character": 27
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Operator \"in\" not supported for types \"Literal['android']\" and \"None\"",
+            "range": {
+                "start": {
+                    "line": 65,
+                    "character": 11
+                },
+                "end": {
+                    "line": 65,
+                    "character": 43
+                }
+            },
+            "rule": "reportOperatorIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"top_dir\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"top_dir\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 66,
+                    "character": 24
+                },
+                "end": {
+                    "line": 66,
+                    "character": 31
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Operator \"+\" not supported for types \"Literal['RuntimeData.top_dir:']\" and \"None\"",
+            "range": {
+                "start": {
+                    "line": 67,
+                    "character": 21
+                },
+                "end": {
+                    "line": 67,
+                    "character": 65
+                }
+            },
+            "rule": "reportOperatorIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"packages\" for class \"type[RuntimeData]\"\n  Expression of type \"list[Unknown]\" cannot be assigned to attribute \"packages\" of class \"RuntimeData\"\n    \"list[Unknown]\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 82,
+                    "character": 20
+                },
+                "end": {
+                    "line": 82,
+                    "character": 28
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 121,
+                    "character": 41
+                },
+                "end": {
+                    "line": 123,
+                    "character": 9
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 122,
+                    "character": 12
+                },
+                "end": {
+                    "line": 122,
+                    "character": 31
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"is_connected\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 296,
+                    "character": 31
+                },
+                "end": {
+                    "line": 296,
+                    "character": 43
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"is_app_installed\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 306,
+                    "character": 31
+                },
+                "end": {
+                    "line": 306,
+                    "character": 47
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"start_time\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"start_time\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 353,
+                    "character": 28
+                },
+                "end": {
+                    "line": 353,
+                    "character": 38
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Cannot assign to attribute \"package_save_path\" for class \"type[RuntimeData]\"\n  Expression of type \"str\" cannot be assigned to attribute \"package_save_path\" of class \"RuntimeData\"\n    \"str\" is not assignable to \"None\"",
+            "range": {
+                "start": {
+                    "line": 355,
+                    "character": 32
+                },
+                "end": {
+                    "line": 355,
+                    "character": 49
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 359,
+                    "character": 52
+                },
+                "end": {
+                    "line": 361,
+                    "character": 21
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 360,
+                    "character": 24
+                },
+                "end": {
+                    "line": 360,
+                    "character": 43
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"list_dir\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 405,
+                    "character": 35
+                },
+                "end": {
+                    "line": 405,
+                    "character": 43
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"is_overtime_days\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 408,
+                    "character": 64
+                },
+                "end": {
+                    "line": 408,
+                    "character": 80
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"delete_file\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 411,
+                    "character": 36
+                },
+                "end": {
+                    "line": 411,
+                    "character": 47
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"kill_process\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 428,
+                    "character": 28
+                },
+                "end": {
+                    "line": 428,
+                    "character": 40
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"list_dir\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 465,
+                    "character": 35
+                },
+                "end": {
+                    "line": 465,
+                    "character": 43
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"pull_file\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 469,
+                    "character": 36
+                },
+                "end": {
+                    "line": 469,
+                    "character": 45
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"pull_file\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 477,
+                    "character": 32
+                },
+                "end": {
+                    "line": 477,
+                    "character": 41
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 481,
+                    "character": 22
+                },
+                "end": {
+                    "line": 481,
+                    "character": 89
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 481,
+                    "character": 35
+                },
+                "end": {
+                    "line": 481,
+                    "character": 64
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Operator \"+\" not supported for types \"Literal['device model:']\" and \"Unknown | None\"\n  Operator \"+\" not supported for types \"Literal['device model:']\" and \"None\"",
+            "range": {
+                "start": {
+                    "line": 485,
+                    "character": 16
+                },
+                "end": {
+                    "line": 486,
+                    "character": 51
+                }
+            },
+            "rule": "reportOperatorIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"get_phone_brand\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 486,
+                    "character": 34
+                },
+                "end": {
+                    "line": 486,
+                    "character": 49
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"get_phone_model\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 488,
+                    "character": 34
+                },
+                "end": {
+                    "line": 488,
+                    "character": 49
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Operator \"+\" not supported for types \"Literal['system version:']\" and \"Unknown | None\"\n  Operator \"+\" not supported for types \"Literal['system version:']\" and \"None\"",
+            "range": {
+                "start": {
+                    "line": 492,
+                    "character": 25
+                },
+                "end": {
+                    "line": 492,
+                    "character": 81
+                }
+            },
+            "rule": "reportOperatorIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"get_system_version\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 492,
+                    "character": 61
+                },
+                "end": {
+                    "line": 492,
+                    "character": 79
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "\"get_package_ver\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 494,
+                    "character": 54
+                },
+                "end": {
+                    "line": 494,
+                    "character": 69
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 498,
+                    "character": 22
+                },
+                "end": {
+                    "line": 498,
+                    "character": 89
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\startup.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 498,
+                    "character": 35
+                },
+                "end": {
+                    "line": 498,
+                    "character": 64
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "No overloads for \"join\" match the provided arguments",
+            "range": {
+                "start": {
+                    "line": 386,
+                    "character": 30
+                },
+                "end": {
+                    "line": 386,
+                    "character": 87
+                }
+            },
+            "rule": "reportCallIssue"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "Argument of type \"None\" cannot be assigned to parameter \"path\" of type \"StrPath\" in function \"join\"\n  Type \"None\" is not assignable to type \"StrPath\"\n    \"None\" is not assignable to \"str\"\n    \"None\" is incompatible with protocol \"PathLike[str]\"\n      \"__fspath__\" is not present",
+            "range": {
+                "start": {
+                    "line": 386,
+                    "character": 43
+                },
+                "end": {
+                    "line": 386,
+                    "character": 72
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"stdout\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 411,
+                    "character": 37
+                },
+                "end": {
+                    "line": 411,
+                    "character": 43
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"poll\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 511,
+                    "character": 30
+                },
+                "end": {
+                    "line": 511,
+                    "character": 34
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"terminate\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 512,
+                    "character": 31
+                },
+                "end": {
+                    "line": 512,
+                    "character": 40
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"splitlines\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 628,
+                    "character": 27
+                },
+                "end": {
+                    "line": 628,
+                    "character": 37
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"split\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 642,
+                    "character": 45
+                },
+                "end": {
+                    "line": 642,
+                    "character": 50
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"Unknown | None\" is not assignable to type \"ConvertibleToInt\"\n    Type \"None\" is not assignable to type \"ConvertibleToInt\"\n      \"None\" is not assignable to \"str\"\n      \"None\" is incompatible with protocol \"Buffer\"\n        \"__buffer__\" is not present\n      \"None\" is incompatible with protocol \"SupportsInt\"\n        \"__int__\" is not present\n      \"None\" is incompatible with protocol \"SupportsIndex\"\n  ...",
+            "range": {
+                "start": {
+                    "line": 800,
+                    "character": 40
+                },
+                "end": {
+                    "line": 800,
+                    "character": 90
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "Argument of type \"Unknown | None\" cannot be assigned to parameter \"x\" of type \"ConvertibleToInt\" in function \"__new__\"\n  Type \"Unknown | None\" is not assignable to type \"ConvertibleToInt\"\n    Type \"None\" is not assignable to type \"ConvertibleToInt\"\n      \"None\" is not assignable to \"str\"\n      \"None\" is incompatible with protocol \"Buffer\"\n        \"__buffer__\" is not present\n      \"None\" is incompatible with protocol \"SupportsInt\"\n        \"__int__\" is not present\n      \"None\" is incompatible with protocol \"SupportsIndex\"",
+            "range": {
+                "start": {
+                    "line": 800,
+                    "character": 40
+                },
+                "end": {
+                    "line": 800,
+                    "character": 90
+                }
+            },
+            "rule": "reportArgumentType"
+        },
+        {
+            "file": "d:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\device-performance-fixes-20260906\\backend\\type-baseline\\mobileperf\\android\\tools\\androiddevice.py",
+            "severity": "error",
+            "message": "\"replace\" is not a known attribute of \"None\"",
+            "range": {
+                "start": {
+                    "line": 858,
+                    "character": 24
+                },
+                "end": {
+                    "line": 858,
+                    "character": 31
+                }
+            },
+            "rule": "reportOptionalMemberAccess"
+        }
+    ],
+    "summary": {
+        "filesAnalyzed": 3,
+        "errorCount": 53,
+        "warningCount": 0,
+        "informationCount": 0,
+        "timeInSec": 0.668
+    }
+}
+

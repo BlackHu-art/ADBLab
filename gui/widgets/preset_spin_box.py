@@ -74,6 +74,8 @@ class StrictIntComboBox(EditableComboBox):
         editor = self
         blocker = QSignalBlocker(editor)
         editor.setText(str(value))
+        # 程序赋值屏蔽 textChanged 时仍需同步原生索引，否则首项会被误认为已选中。
+        super()._onComboTextChanged(str(value))
         del blocker
         self._set_input_validity(True)
         if changed:

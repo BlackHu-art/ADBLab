@@ -1,0 +1,4 @@
+
+[1;33m📢 Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+{"tag": "before-light-1000-font12-zh_CN", "window_width": 1000, "card_height": 361, "summary_height": 41, "details_height": 139, "horizontal_scroll_max": 0, "copy_details_reachable": true}

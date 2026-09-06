@@ -98,7 +98,7 @@ def test_category_alias_rejects_ambiguous_or_missing_targets(qt_application, ali
         (
             AppPanel,
             {
-                "daily": ("应用包管理", "文本与屏幕", "Monkey", "报告与日志", "性能诊断"),
+                "daily": ("应用包管理", "Monkey", "报告与日志", "性能诊断"),
             },
             {"packages": "daily", "diagnostics": "daily", "monkey": "daily"},
         ),
@@ -161,9 +161,14 @@ def test_merged_panels_keep_every_card_and_responsive_control(
         widget for binding in panel._responsive_rows for widget in binding.widgets()
     ) == controls
     assert all(widget.parentWidget() is parent for widget, parent in ownership.items())
-    assert all(
-        sum(stack.page(key).isAncestorOf(widget) for key in expected) == 1 for widget in controls
-    )
+    visual_roots = [stack.page(key) for key in expected]
+    if isinstance(panel, AppPanel):
+        assert panel.text_screen_tools.headerLabel.text() == "文本与屏幕"
+        assert panel.text_screen_tools.parentWidget() is panel.text_screen_tools_parking
+        assert panel.text_screen_tools_parking.parentWidget() is panel
+        assert panel.text_screen_tools.isHidden()
+        visual_roots.append(panel.text_screen_tools)
+    assert all(sum(root.isAncestorOf(widget) for root in visual_roots) == 1 for widget in controls)
     if isinstance(panel, RemotePanel):
         assert panel._form_controller.parent() is root
 

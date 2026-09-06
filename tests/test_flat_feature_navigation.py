@@ -1,12 +1,14 @@
 """验证一级功能导航、共享应用工具和设备工作台的集成行为。"""
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QSize
+from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt
+from PySide6.QtGui import QPixmap
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QPushButton
 from shiboken6 import isValid
 
 from gui.features.app_manager import AppManagerPage
+from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from tests.test_main_window_layout import (
@@ -15,7 +17,14 @@ from tests.test_main_window_layout import (
     _MainFrameSettings,
     build_main_frame,
 )
-from tests.ui_geometry_helpers import assert_scroll_target_reachable, wait_for_stable_geometry
+from tests.ui_geometry_helpers import (
+    assert_contained,
+    assert_non_overlapping,
+    assert_scroll_target_reachable,
+    assert_text_fits,
+    mapped_rect,
+    wait_for_stable_geometry,
+)
 
 
 @pytest.fixture
@@ -36,8 +45,8 @@ def frame(qt_application):
         ("devices", "files", "filesPage", "文件管理"),
         ("devices", "remote", "remotePage", "远程控制"),
         ("apps", "manager", "appManagerPage", "应用管理"),
-        ("apps", "overview", "appsPage", "截图与诊断"),
-        ("apps", "media", "screenshotsPage", "截图结果"),
+        ("apps", "overview", "appsPage", "应用与诊断"),
+        ("apps", "media", "screenshotsPage", "截图与屏幕"),
         ("system", "overview", "systemPage", "系统工具"),
         ("system", "logcat", "logcatPage", "实时 Logcat"),
         ("system", "performance", "performancePage", "性能采集"),
@@ -219,8 +228,169 @@ def test_manager_contains_its_session_and_diagnostics_owns_package_controls(fram
     assert apps.program_edit.isVisible()
     daily = apps.category_stack.page("daily")
     assert not daily.findChildren(CollapsibleTools)
-    titles = [daily.layout().itemAt(i).widget().headerLabel.text() for i in range(5)]
-    assert titles == ["应用包管理", "文本与屏幕", "Monkey", "报告与日志", "性能诊断"]
+    titles = [daily.layout().itemAt(i).widget().headerLabel.text() for i in range(4)]
+    assert titles == ["应用包管理", "Monkey", "报告与日志", "性能诊断"]
+
+
+def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tmp_path):
+    """没有设备仍可查看图片，原设备动作只在全局选择存在时启用。"""
+    apps = frame.left_panel._apps_tab
+    tools = apps.text_screen_tools
+    assert tools.parentWidget() is apps.text_screen_tools_parking
+    image_path = tmp_path / "preview.png"
+    pixmap = QPixmap(120, 80)
+    pixmap.fill(Qt.GlobalColor.blue)
+    assert pixmap.save(str(image_path))
+    assert frame._open_workspace_feature("apps", "media", payload=[str(image_path)])
+    page = frame._workspace_feature_hosts["apps"].stack.currentWidget()
+    assert isinstance(page, ScreenshotPage)
+    assert page.image_paths == (str(image_path),)
+    assert page._copy_btn.isEnabled()
+    assert page.isAncestorOf(tools)
+    assert tools.isVisibleTo(frame)
+    assert tools.headerView.isHidden()
+    assert not apps.category_stack.page("daily").isAncestorOf(tools)
+    for button in (apps.btn_send_text, apps.btn_screenshot, apps.btn_screen_record):
+        assert not button.isEnabled()
+    assert not apps.btn_stop_record.isEnabled()
+
+
+def test_screen_tools_follow_batch_selection_and_preserve_recording_targets_after_clear(
+    frame, qt_application,
+):
+    """清除截图只重建图片页；原录屏批次、输入和一次性信号连接继续有效。"""
+    frame._on_devices_updated(["device-a", "device-b"])
+    frame._global_device_bar.selection_requested.emit(["device-a", "device-b"])
+    frame.navigationInterface.widget("screenshotsPage").click()
+    host = frame._workspace_feature_hosts["apps"]
+    apps = frame.left_panel._apps_tab
+    controls = (
+        apps.email_text_sender, apps.btn_send_text, apps.btn_screenshot,
+        apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
+    )
+    text_requests = QSignalSpy(apps.signals.send_text_requested)
+    starts = QSignalSpy(apps.signals.screen_record_batch_requested)
+    stops = QSignalSpy(apps.signals.stop_screen_record_batch_requested)
+    screenshots = QSignalSpy(apps.signals.screenshot_requested)
+    apps.email_text_sender.setText("hello screen")
+    apps.record_duration.setCurrentText("60s")
+    apps.btn_screen_record.click()
+    batch_id = apps._recording_batch_id
+    assert starts.count() == 1
+    assert starts.at(0) == [["device-a", "device-b"], 60, batch_id]
+
+    frame._global_device_bar.selection_requested.emit(["device-b"])
+    apps.btn_send_text.click()
+    assert text_requests.count() == 1
+    assert text_requests.at(0) == [["device-b"], "hello screen"]
+    assert apps.btn_stop_record.isEnabled()
+    original_page = host.stack.currentWidget()
+    key = host.registry.current_key
+    host.close_current_session()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert host.registry.get(key) is None
+    assert not isValid(original_page)
+    assert all(isValid(widget) for widget in controls)
+    assert apps.text_screen_tools.parentWidget() is apps.text_screen_tools_parking
+    assert apps.text_screen_tools.isHidden()
+    assert not apps.text_screen_tools.headerView.isHidden()
+    assert apps._recording_batch_id == batch_id
+
+    frame._global_device_bar.selection_requested.emit([])
+    frame.navigationInterface.widget("screenshotsPage").click()
+    page = host.stack.currentWidget()
+    assert isinstance(page, ScreenshotPage)
+    assert page.image_paths == ()
+    assert all(page.isAncestorOf(widget) for widget in controls)
+    assert apps.text_screen_tools.headerView.isHidden()
+    assert apps.email_text_sender.text() == "hello screen"
+    assert apps.record_duration.currentText() == "60s"
+    apps.btn_stop_record.click()
+    apps.btn_stop_record.click()
+    assert stops.count() == 1
+    assert stops.at(0) == [["device-a", "device-b"], batch_id]
+    for device in ("device-a", "device-b"):
+        apps.on_recording_target_finished(batch_id, device)
+    frame._global_device_bar.selection_requested.emit(["device-a"])
+    apps.btn_send_text.click()
+    assert text_requests.count() == 2
+    assert text_requests.at(1) == [["device-a"], "hello screen"]
+    apps.email_text_sender.returnPressed.emit()
+    assert text_requests.count() == 3
+    apps.btn_screenshot.click()
+    assert screenshots.count() == 1
+    assert screenshots.at(0) == [["device-a"]]
+
+
+@pytest.mark.parametrize(("width", "font_size", "theme"), [(1100, 12, "Light"), (500, 22, "Dark")])
+def test_screen_tools_reflow_and_refresh_fonts_after_transfer(
+    qt_application, monkeypatch, request, tmp_path, width, font_size, theme,
+):
+    """迁移后仍走共享主题/字体刷新，窄窗允许纵向滚动而不裁切动作控件。"""
+    from core.settings_manager import AppSettings
+
+    settings = _MainFrameSettings()
+    settings.values.update(
+        ui_font_size=font_size, theme=theme, window_width=width, window_height=900,
+    )
+    monkeypatch.setattr(AppSettings, "instance", lambda: settings)
+    frame = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("screen-tools", QSize(width, 900))),
+    )
+
+    def close_frame():
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+    request.addfinalizer(close_frame)
+    frame.show()
+    frame.navigationInterface.widget("screenshotsPage").click()
+    apps = frame.left_panel._apps_tab
+    icon_updates = []
+    original_set_icon = apps.btn_screenshot.setIcon
+
+    def observe_icon(icon):
+        icon_updates.append(icon)
+        original_set_icon(icon)
+
+    monkeypatch.setattr(apps.btn_screenshot, "setIcon", observe_icon)
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+    BaseStyles.switch_theme(theme)
+    assert icon_updates
+    assert not apps.btn_screenshot.icon().isNull()
+    assert apps.btn_screenshot.font() == BaseStyles.font_for_role(FontRole.UI)
+    assert apps.text_screen_tools.headerLabel.font() == BaseStyles.font_for_role(FontRole.TITLE)
+    host = frame._workspace_feature_hosts["apps"]
+    frame.resize(width, 900)
+    page = host.stack.currentWidget()
+    image_path = tmp_path / "portrait.png"
+    portrait = QPixmap(540, 960)
+    portrait.fill(Qt.GlobalColor.blue)
+    assert portrait.save(str(image_path))
+    page.receive_payload([str(image_path)])
+    controls = (
+        apps.email_text_sender, apps.btn_send_text, apps.btn_screenshot,
+        apps.record_duration, apps.btn_screen_record, apps.btn_stop_record,
+    )
+    wait_for_stable_geometry(qt_application, (frame, page, apps.text_screen_tools, *controls))
+    assert frame.width() == width
+    assert_non_overlapping(controls, apps.text_screen_tools)
+    for control in controls:
+        assert_contained(control, apps.text_screen_tools)
+        assert_scroll_target_reachable(host.content_scroll, control)
+    for button in (
+        apps.btn_send_text, apps.btn_screenshot, apps.btn_screen_record, apps.btn_stop_record,
+    ):
+        assert_text_fits(button)
+    assert mapped_rect(apps.text_screen_tools, page).bottom() < mapped_rect(page._view, page).top()
+    assert page._view.height() >= 160
+    assert host.content_scroll.horizontalScrollBar().maximum() == 0
+    if font_size == 12:
+        assert host.content_scroll.verticalScrollBar().maximum() == 0
+        assert_scroll_target_reachable(host.content_scroll, page._bottom_bar)
 
 
 def test_package_tools_follow_live_font_changes_and_keep_unique_history(frame, monkeypatch):

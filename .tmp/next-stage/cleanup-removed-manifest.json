@@ -1,0 +1,60 @@
+{
+  "files": [
+    {
+      "path": ".tmp/localize_panels.py",
+      "bytes": 5120,
+      "sha256": "b05851bec2a50243113b7e9357de52510d5d13936de4aaed9ee4dfaf101100d1"
+    },
+    {
+      "path": ".tmp/build_panels_translations.py",
+      "bytes": 5473,
+      "sha256": "0c294d1c2a08fd6701f4fdf135cf1e509c58b422ff809c5ab8fa9805a9597851"
+    },
+    {
+      "path": ".tmp/panel-task-translations.tsv",
+      "bytes": 1837,
+      "sha256": "58448a42589c36724ff1b08f242336e738abf91eee646f0d78faca1045d829ab"
+    },
+    {
+      "path": ".tmp/panels-english.tsv",
+      "bytes": 13615,
+      "sha256": "5bd7de7cd661893fdc79afff4c2992009ba34d017b18f12170819878477ee05b"
+    },
+    {
+      "path": ".tmp/panels-source.txt",
+      "bytes": 18765,
+      "sha256": "80e4c3d37e5ee04dc4b3c2823ccc6ef1b75b29d93c037173460fab2396daae56"
+    },
+    {
+      "path": ".tmp/panels-sources.json",
+      "bytes": 13497,
+      "sha256": "d4be0f1a1ec79792c4661d5b03f24b8910910d7f05e114bb314988fb76a9d7fb"
+    }
+  ],
+  "catalog_checks": {
+    "zh_CN": {
+      "staged_sources": 452,
+      "preserved_sources": 451,
+      "explicitly_excluded_by_stage_script": [
+        "设"
+      ],
+      "extra_sources_preserved": 55
+    },
+    "en_US": {
+      "staged_sources": 452,
+      "preserved_sources": 451,
+      "explicitly_excluded_by_stage_script": [
+        "设"
+      ],
+      "extra_sources_preserved": 55
+    },
+    "zh_HK": {
+      "staged_sources": 452,
+      "preserved_sources": 451,
+      "explicitly_excluded_by_stage_script": [
+        "设"
+      ],
+      "extra_sources_preserved": 55
+    }
+  }
+}

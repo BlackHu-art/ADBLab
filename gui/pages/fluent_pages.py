@@ -39,7 +39,6 @@ from qfluentwidgets import (
     FluentIcon,
     IconWidget,
     InfoBadge,
-    InfoBar,
     InfoLevel,
     PrimaryPushButton,
     PushButton,
@@ -59,6 +58,7 @@ from qfluentwidgets import (
 from core.settings_manager import AppSettings, normalise_language, normalise_ui_scale
 from gui.features import AboutPanel
 from gui.i18n import tr
+from gui.notifications import show_toast
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_font_role, apply_label_role
@@ -962,7 +962,7 @@ class HomePage(ScrollArea):
                 tr("设备概览"),
                 tr("查看连接状态，选择设备并打开工具"),
             ),
-            ("apps", FluentIcon.CAMERA, tr("截图与诊断"), tr("截图录屏、应用诊断与报告收集")),
+            ("apps", FluentIcon.CODE, tr("应用与诊断"), tr("应用包操作、Monkey 测试与诊断报告")),
             (
                 "system", FluentIcon.DEVELOPER_TOOLS,
                 tr("系统工具"), tr("系统命令、设备配置与网络操作"),
@@ -1352,11 +1352,11 @@ class SettingsPage(ScrollArea):
         self._show_language_restart_hint()
 
     def _show_language_restart_hint(self) -> None:
-        InfoBar.success(
-            title=tr("设置已保存"),
-            content=tr("语言设置将在重启应用后生效"),
-            duration=5000,
-            parent=self.window(),
+        show_toast(
+            self.window() or self,
+            tr("设置已保存"),
+            tr("语言设置将在重启应用后生效"),
+            level="success",
         )
 
     def _set_accent_color(self, color: QColor) -> None:

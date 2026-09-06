@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QPushButton, QScrollArea
+from PySide6.QtWidgets import QLabel, QPushButton, QScrollArea
 from qfluentwidgets import HeaderCardWidget
 
 from core.settings_manager import AppSettings
@@ -212,7 +212,9 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             assert about.maximumWidth() > 1_000_000
             assert logcat.btn_get_pkg.minimumWidth() >= logcat.btn_get_pkg.sizeHint().width()
             assert logcat.btn_get_pkg.width() >= logcat.btn_get_pkg.sizeHint().width()
-            assert performance.progress_bar.maximumHeight() == 4
+            ring = performance.progress_bar
+            assert ring.width() == ring.height()
+            assert ring.width() >= ring.fontMetrics().horizontalAdvance("100%") + 16
             performance.resize(900, 700)
             performance.show()
             qt_application.processEvents()
@@ -222,7 +224,9 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
                 _assert_role(section.headerLabel, FontRole.UI)
             _assert_role(performance.dialog_title, FontRole.TITLE)
             _assert_role(performance._results_group.headerLabel, FontRole.UI)
-            _assert_role(performance._diagnostic_tools.toggle_button, FontRole.UI)
+            _assert_role(
+                performance.findChild(QLabel, "performanceDiagnosticsTitle"), FontRole.UI_SMALL
+            )
             assert performance._results_group not in performance._configuration_sections
         finally:
             settings.update(
@@ -268,7 +272,6 @@ def test_performance_large_font_keeps_bounded_scrollable_content(
         assert page.findChildren(QScrollArea) == [page._config_scroll]
         assert page._config_scroll.verticalScrollBar().maximum() > 0
         assert_scroll_target_reachable(page._config_scroll, page.package_edit)
-        page._diagnostic_tools.toggle_button.setChecked(True)
         qt_application.processEvents()
         assert page.phone_log_edit.isVisibleTo(page)
         assert_scroll_target_reachable(page._config_scroll, page.phone_log_edit)

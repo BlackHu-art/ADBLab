@@ -41,11 +41,15 @@ from gui.dialogs.performance_launcher_form import (
 )
 from gui.dialogs.performance_launcher_log import PerformanceLauncherLog
 from gui.dialogs.performance_launcher_run import PerformanceLauncherRun
+from gui.dialogs.performance_library import PerformanceLibrary
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
+from gui.widgets.performance_progress import PerformanceProgress
+from gui.widgets.performance_sessions import PerformanceSnapshot
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
+from gui.widgets.run_preset_bar import RunPresetBar
 from models.base.focus_detector import detect_current_package
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 
@@ -89,6 +93,7 @@ class PerformancePage(QWidget):
     MAX_PENDING_LOG_ROWS = 2000
     log_received = Signal(str, str)
     runner_finished = Signal()
+    session_state_changed = Signal()
     dispose_ready = Signal(object)
 
     # 表单与动作区控件在控制器中创建，此处提供类级类型声明供跨控制器解析。
@@ -120,12 +125,19 @@ class PerformancePage(QWidget):
     status_badge: InfoBadge
     status_label: BodyLabel
     _chart_stack: QStackedWidget
+    run_preset_bar: RunPresetBar
+    progress_display: PerformanceProgress
+    monkey_ignore_crashes: QCheckBox
+    monkey_ignore_timeouts: QCheckBox
+    monkey_ignore_security: QCheckBox
+    monkey_kill_after_error: QCheckBox
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
         super().__init__(parent)
         self._form_controller = PerformanceLauncherForm(self)
         self._run_controller = PerformanceLauncherRun(self)
         self._log_controller = PerformanceLauncherLog(self)
+        self._library_controller = PerformanceLibrary(self)
         self.device_ip = device_ip
         self._device_connected = bool(device_ip)
         self._device_selected = True
@@ -142,6 +154,8 @@ class PerformancePage(QWidget):
         self._status_state = "idle"
         self._run_started_at: float | None = None
         self._run_duration_seconds = 0
+        self._run_elapsed_seconds = 0
+        self._run_cancel_requested = False
         self._max_log_lines = self._configured_log_max_lines()
         self._pending_log_rows: list[str] = []
         self._pending_log_scroll_to_bottom = False
@@ -197,10 +211,15 @@ class PerformancePage(QWidget):
         if self._closing:
             return
         self._view_active = True
+        self.progress_display.set_animation_enabled(True)
         if isinstance(payload, dict):
-            package = str(payload.get("package_name", "") or "").strip()
-            if package and not self._configuration_locked:
-                self.package_edit.setText(package)
+            parameters = payload.get("run_parameters")
+            if isinstance(parameters, dict):
+                self.apply_run_parameters(parameters)
+            else:
+                package = str(payload.get("package_name", "") or "").strip()
+                if package and not self._configuration_locked:
+                    self.package_edit.setText(package)
         self._sync_theme_state(force=True)
         self._theme_sync_timer.start()
         self.show()
@@ -209,7 +228,24 @@ class PerformancePage(QWidget):
         """停止隐藏页的主题轮询，但允许采集和进度轮询继续。"""
 
         self._view_active = False
+        self.progress_display.set_animation_enabled(False)
         self._theme_sync_timer.stop()
+
+    def set_run_library(self, controller) -> None:
+        """接入主窗口拥有的本地结果库，页面不自行创建存储。"""
+        self._library_controller.set_library(controller)
+
+    def capture_run_parameters(self) -> dict | None:
+        """校验并取得可复用参数，不保存会话设备身份。"""
+        return self._library_controller.capture_parameters()
+
+    def apply_run_parameters(self, parameters: dict) -> None:
+        """仅在空闲时载入方案或历史参数，不自动启动采集。"""
+        self._library_controller.apply_parameters(parameters)
+
+    def archive_finished_run(self) -> None:
+        """真实进程停止后幂等归档，供应用关闭屏障在结果库排空之前调用。"""
+        self._library_controller.finish()
 
     def set_device_connected(self, connected: bool) -> None:
         """显示固定设备会话的在线状态，并阻止新的离线采集请求。"""
@@ -546,10 +582,23 @@ class PerformancePage(QWidget):
         value = max(0, min(100, int(percent)))
         self.progress_bar.setValue(value)
         self.progress_bar.setFormat(f"{value}%")
+        self.progress_display.set_timing(
+            self._run_elapsed_seconds, self._run_duration_seconds
+        )
+        self.session_state_changed.emit()
+
+    def performance_snapshot(self) -> PerformanceSnapshot:
+        """提供多设备列表的纯显示快照，隐藏页面沿用现有采集计时更新。"""
+        return PerformanceSnapshot(
+            state=self._status_state, status=self.status_label.text(),
+            percent=self.progress_bar.value(), elapsed=self._run_elapsed_seconds,
+            duration=self._run_duration_seconds, detail=self.progress_display.detail_label.text(),
+        )
 
     def _reset_progress(self):
         self._run_started_at = None
         self._run_duration_seconds = 0
+        self._run_elapsed_seconds = 0
         self._set_progress(0)
 
     def _apply_monkey_control_widths(self):
@@ -635,6 +684,7 @@ class PerformancePage(QWidget):
         self.log_view.setMinimumHeight(0)
         self.log_view.setMaximumHeight(16_777_215)
         self._form_controller.refresh_result_view_height()
+        self.progress_display.refresh_geometry()
 
     @staticmethod
     def _theme_signature() -> tuple[str, str, int, int]:
@@ -673,6 +723,7 @@ class PerformancePage(QWidget):
         stop_thread = self._stop_thread
         runner_active = self._runner.is_running()
         if runner_active or (stop_thread is not None and stop_thread.is_alive()):
+            self._library_controller.request_cancel()
             runner_task_id = f"{task_prefix}-mobileperf"
             if stop_thread is not None and stop_thread.is_alive():
 
@@ -725,10 +776,12 @@ class PerformancePage(QWidget):
 
         self._closing = True
         self._view_active = False
+        self.progress_display.set_animation_enabled(False)
         self._log_flush_timer.stop()
         self._theme_sync_timer.stop()
         self._pending_log_rows = []
         if self._runner.is_running() and not self._stopping:
+            self._library_controller.request_cancel()
             if self._shutdown_registered:
                 # 应用关闭时 runner 已交给全局监督器；这里只发出轻量停止意图，
                 # 避免再创建一个线程并发调用同一个 MobilePerfRunner.stop()。
@@ -768,6 +821,7 @@ class PerformancePage(QWidget):
         if resources_running:
             self._dispose_poll_timer.start(50)
             return
+        self._library_controller.finish()
         self._poll_timer.stop()
         safe_disconnect(self.log_received, self._append_log)
         safe_disconnect(self.runner_finished, self._on_runner_finished)

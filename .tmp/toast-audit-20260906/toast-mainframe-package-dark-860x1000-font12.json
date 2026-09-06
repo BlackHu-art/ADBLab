@@ -1,0 +1,34 @@
+{
+  "scenario": "package",
+  "theme": "Dark",
+  "requested_frame": [
+    860,
+    1000
+  ],
+  "frame": [
+    860,
+    1000
+  ],
+  "font_points": 12,
+  "device_pixel_ratio": 1.0,
+  "titlebar": [
+    46,
+    0,
+    814,
+    48
+  ],
+  "toast": [
+    556,
+    60,
+    280,
+    94
+  ],
+  "title": "需要应用包名",
+  "body": "请输入应用包名。",
+  "body_horizontal_max": 0,
+  "body_vertical_max": 0,
+  "titlebar_overlap": false,
+  "action": null,
+  "runner_starts": 0,
+  "source": "Isolated MainFrame QWidget.grab, no desktop capture or device I/O"
+}

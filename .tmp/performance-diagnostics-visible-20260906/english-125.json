@@ -1,0 +1,92 @@
+{
+  "scenario": "english-125",
+  "theme": "Light",
+  "language": "en_US",
+  "frame": [
+    1100,
+    1000
+  ],
+  "font": 12,
+  "dpr": 1.25,
+  "diagnostics": [
+    16,
+    213,
+    956,
+    86
+  ],
+  "fields": {
+    "dumpheap": [
+      0,
+      56,
+      276,
+      30
+    ],
+    "exception": [
+      323,
+      56,
+      310,
+      30
+    ],
+    "phone_logs": [
+      645,
+      56,
+      311,
+      30
+    ],
+    "dumpheap_unit": [
+      284,
+      56,
+      27,
+      30
+    ]
+  },
+  "labels": {
+    "dumpheap_freq": {
+      "text": "Heap dump interval",
+      "rect": [
+        0,
+        31,
+        311,
+        20
+      ],
+      "required_height": 20,
+      "point_size": 12
+    },
+    "exceptionlog": {
+      "text": "Exception log keywords",
+      "rect": [
+        323,
+        31,
+        310,
+        20
+      ],
+      "required_height": 20,
+      "point_size": 12
+    },
+    "phone_log_path": {
+      "text": "Device logs to pull on completion",
+      "rect": [
+        645,
+        31,
+        311,
+        20
+      ],
+      "required_height": 20,
+      "point_size": 12
+    },
+    "title": {
+      "text": "Diagnostic options",
+      "rect": [
+        0,
+        0,
+        956,
+        19
+      ],
+      "required_height": 19,
+      "point_size": 11
+    }
+  },
+  "errors": [],
+  "horizontal_max": 0,
+  "scrollbar_clearance": 19
+}

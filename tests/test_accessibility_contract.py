@@ -40,7 +40,10 @@ def test_theme_text_tokens_keep_readable_contrast():
     light = THEMES["Light"]
     dark = THEMES["Dark"]
 
-    for token in ("LOG_INFO", "LOG_SUCCESS", "LOG_WARNING"):
+    for token in (
+        "LOG_TEXT_COLOR", "LOG_DEBUG", "LOG_INFO", "LOG_SUCCESS", "LOG_WARNING",
+        "LOG_ERROR", "LOG_CRITICAL", "LOG_TIMESTAMP",
+    ):
         assert _contrast_ratio(light[token], light["LOG_BACKGROUND"]) >= 4.5
     assert _contrast_ratio(light["TEXT_PLACEHOLDER"], light["INPUT_BG"]) >= 4.5
     assert _contrast_ratio(dark["TEXT_PLACEHOLDER"], dark["INPUT_BG"]) >= 4.5

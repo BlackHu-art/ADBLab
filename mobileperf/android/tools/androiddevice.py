@@ -264,7 +264,7 @@ class ADB:
             cmdlet,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT if kwds.get("merge_stderr", False) else subprocess.PIPE,
             shell=False,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
@@ -628,7 +628,8 @@ class ADB:
         ret_dict = {}
         for line in result.splitlines():
             if ": " in line:
-                key, value = line.split(": ")
+                # Activity 警告及 Intent 内容也可能包含分隔符，值必须完整保留。
+                key, value = line.split(": ", 1)
                 ret_dict[key] = value
         return ret_dict
 

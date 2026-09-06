@@ -374,6 +374,9 @@ class SidePanel(QWidget):
             widget = scroll.widget() if scroll is not None else None
             if widget is not None and widget not in roots:
                 roots.append(widget)
+        tools = getattr(self._apps_tab, "text_screen_tools", None)
+        if tools is not None and not any(root.isAncestorOf(tools) for root in roots):
+            roots.append(tools)
         return roots
 
     def _on_theme_changed(self, _):

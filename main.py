@@ -4,6 +4,8 @@ import argparse
 import ctypes
 import os
 import sys
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
@@ -61,7 +63,10 @@ def _self_check_packaging() -> int:
 
     def importable(module_name: str) -> None:
         try:
-            __import__(module_name)
+            if module_name == "qfluentwidgets":
+                _load_fluent_widgets()
+            else:
+                __import__(module_name)
             check(f"import:{module_name}", True)
         except Exception as exc:
             check(f"import:{module_name}", False, str(exc))
@@ -156,6 +161,27 @@ def _self_check_packaging() -> int:
     return 1 if failed else 0
 
 
+def _load_fluent_widgets() -> None:
+    """在启动单线程阶段加载 Fluent，仅移除依赖的固定推广输出。
+
+    其他标准输出在导入结束或失败时原样转发；异常和标准错误保留，
+    不修改安装目录，兼容无控制台的打包进程。
+    """
+    captured = StringIO()
+    try:
+        with redirect_stdout(captured):
+            __import__("qfluentwidgets")
+    finally:
+        output = captured.getvalue()
+        config = sys.modules.get("qfluentwidgets.common.config")
+        alert = getattr(config, "ALERT", "")
+        if isinstance(alert, str) and alert:
+            output = output.replace(alert + "\n", "", 1)
+            output = output.replace(alert.replace("📢", "") + "\n", "", 1)
+        if output and sys.stdout is not None:
+            sys.stdout.write(output)
+
+
 def _configure_gui_scaling(value: object) -> str | float:
     """在 QApplication 创建前设置本进程比例；Auto 保留系统及启动环境。"""
     from core.settings_manager import normalise_ui_scale
@@ -182,6 +208,7 @@ def _run_gui() -> int:
     set_error_sink(lambda level, message: startup_diagnostics.append((level, message)))
     settings = AppSettings.instance()
     _configure_gui_scaling(settings.get("ui_scale", "Auto"))
+    _load_fluent_widgets()
 
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication

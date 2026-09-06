@@ -1,0 +1,14 @@
+{
+  "phase": "after",
+  "theme": "Light",
+  "pixels": {
+    "actions": "#f3f3f3",
+    "plan_header": "#f3f3f3",
+    "plan_body": "#f3f3f3",
+    "results_header": "#f3f3f3",
+    "results_body": "#f3f3f3"
+  },
+  "horizontal_max": 0,
+  "log_background": "#f2f4f6",
+  "source": "Isolated MainFrame QWidget.grab; no desktop/device capture"
+}

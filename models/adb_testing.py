@@ -42,6 +42,7 @@ class ADBTesting(ADBModelCore):
         self._abort_lock = threading.Lock()
         self._abort_condition = threading.Condition(self._abort_lock)
         self._monkey_batches: dict[str, _MonkeyBatchState] = {}
+        self._monkey_archive_results: dict[tuple[str, str], dict] = {}
         self._procs = ProcessRunner()
         self._process_lifecycle_lock = threading.Lock()
 
@@ -65,6 +66,34 @@ class ADBTesting(ADBModelCore):
             self._monkey_batches[device_ip] = _MonkeyBatchState(batch_id)
             self._aborted_devices.discard(device_ip)
             return True
+
+    def monkey_run_archive_snapshot(
+        self, device_ip: str, batch_id: str, *, consume: bool = False,
+    ) -> dict | None:
+        """读取当前批次的归档快照，供 GUI 关闭后拒收普通回调时补齐终态。"""
+        with self._abort_condition:
+            key = (device_ip, batch_id)
+            result = self._monkey_archive_results.get(key)
+            if result is None:
+                return None
+            if consume:
+                self._monkey_archive_results.pop(key, None)
+            return dict(result)
+
+    def _remember_monkey_archive_result(self, result: dict) -> None:
+        """在工作线程保存纯数据快照；普通 Controller 终态消费后立即释放。"""
+        with self._abort_condition:
+            key = (str(result["device_ip"]), str(result["batch_id"]))
+            self._monkey_archive_results[key] = dict(result)
+            # 无 Controller 的直接调用仍有界，不能因多次诊断保留无限历史。
+            while len(self._monkey_archive_results) > 200:
+                terminal_key = next((
+                    item for item, value in self._monkey_archive_results.items()
+                    if value.get("terminal")
+                ), None)
+                if terminal_key is None:
+                    break
+                self._monkey_archive_results.pop(terminal_key)
 
     def discard_prepared_monkey_batch(self, device_ip: str, batch_id: str) -> None:
         """提交失败时释放尚未执行的同批登记，不影响已运行或其他批次。"""
@@ -253,12 +282,21 @@ class ADBTesting(ADBModelCore):
             "error": "",
             "index": index,
             "batch_id": batch_id,
+            "started_at": start_time.timestamp(),
+            "finished_at": start_time.timestamp(),
+            "seed": None,
+            "cancelled": False,
         }
         monkey_fh = None
         logcat_fh = None
         owned_state = None
 
         try:
+            # Controller 在排队前固定 seed；独立调用沿用旧随机语义并回传实际值。
+            seed = params.get("seed")
+            if seed is None:
+                seed = random.randint(1, 99999)
+            result["seed"] = seed
             with self._abort_condition:
                 state = self._monkey_batches.get(device_ip)
                 if state is None:
@@ -272,8 +310,10 @@ class ADBTesting(ADBModelCore):
                 owned_state = state
                 if state.cancelled or "*" in self._aborted_devices:
                     raise RuntimeError("Aborted by user")
+            if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2147483647:
+                raise ValueError("seed must be an integer between 0 and 2147483647")
             package_name = normalize_android_package(package_name)
-            timestamp = datetime.now().strftime("%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             log_dir = os.path.join(save_dir, f"{sanitized_name}_monkey_{timestamp}")
             monkey_log_path = os.path.join(log_dir, "monkey.txt")
             logcat_log_path = os.path.join(log_dir, "logcat.txt")
@@ -281,6 +321,7 @@ class ADBTesting(ADBModelCore):
                 monkey_log=monkey_log_path,
                 logcat_log=logcat_log_path,
             )
+            self._remember_monkey_archive_result(result)
             os.makedirs(log_dir, exist_ok=True)
             log("Clearing previous device logs...")
             self._run(["adb", "-s", device_ip, "logcat", "-c"])
@@ -324,7 +365,7 @@ class ADBTesting(ADBModelCore):
                 "--pct-pinchzoom",
                 str(params.get("pinch", 2)),
                 "-s",
-                str(random.randint(1, 99999)),
+                str(seed),
             ]
             if params.get("ignore_crashes", True):
                 monkey_cmd.append("--ignore-crashes")
@@ -530,6 +571,12 @@ class ADBTesting(ADBModelCore):
                         fh.close()
                 except Exception:
                     pass
+            result["finished_at"] = time.time()
+            result["duration"] = str(datetime.now() - start_time)
+            result["cancelled"] = result["error"] == "Aborted by user"
+            result["terminal"] = True
+            if owned_state is not None:
+                self._remember_monkey_archive_result(result)
 
         return result
 

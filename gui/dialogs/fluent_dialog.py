@@ -4,32 +4,26 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
-    QFrame,
-    QHBoxLayout,
     QLayout,
-    QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 from qfluentwidgets import (
     BodyLabel,
     FluentTitleBar,
-    IconWidget,
-    InfoBarIcon,
     LineEdit,
     MessageBoxBase,
-    SmoothScrollArea,
     SubtitleLabel,
     setCustomStyleSheet,
 )
 from qframelesswindow import FramelessDialog
 
 from gui.i18n import tr
+from gui.notifications import ToastLevel, show_toast
 from gui.styles import BaseStyles
+from gui.styles.fluent import font_qss as _font_rule
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
 
@@ -155,21 +149,6 @@ class MessageLevel(str, Enum):
     ERROR = "error"
 
 
-def _font_rule(font: QFont) -> str:
-    """把项目 QFont 转为可覆盖第三方显式字体 QSS 的声明。"""
-
-    family = font.family().replace("\\", "\\\\").replace("'", "\\'")
-    if font.pointSizeF() > 0:
-        size = f"{font.pointSizeF():g}pt"
-    else:
-        size = f"{max(1, font.pixelSize())}px"
-    style = "italic" if font.italic() else "normal"
-    return (
-        f"font-family: '{family}'; font-size: {size}; "
-        f"font-weight: {int(font.weight())}; font-style: {style};"
-    )
-
-
 def _apply_role_font(widget: QWidget, role: FontRole) -> None:
     """应用字体角色，并以自定义 QSS 覆盖 qfluentwidgets 的固定字号。"""
 
@@ -197,120 +176,29 @@ def _apply_role_font(widget: QWidget, role: FontRole) -> None:
         widget.setStyleSheet(rule)
 
 
-_LEVEL_ICON = {
-    MessageLevel.INFORMATION: InfoBarIcon.INFORMATION,
-    MessageLevel.WARNING: InfoBarIcon.WARNING,
-    MessageLevel.ERROR: InfoBarIcon.ERROR,
-}
-
-
-class _FluentMessageDialog(MessageBoxBase):
-    """带严重级别图标和有界正文滚动区的 Fluent 消息框。"""
-
-    def __init__(
-        self,
-        parent: QWidget,
-        title: str,
-        content: str,
-        level: MessageLevel,
-    ):
-        super().__init__(parent)
-        title, content = tr(str(title)), tr(str(content))
-        self.level = level
-        self.titleLabel = SubtitleLabel(str(title), self.widget)
-        self.titleLabel.setObjectName("messageTitleLabel")
-        self.titleLabel.setTextFormat(Qt.TextFormat.PlainText)
-        self.iconWidget = IconWidget(_LEVEL_ICON[level], self.widget)
-        self.iconWidget.setFixedSize(22, 22)
-        self.iconWidget.setAccessibleName(tr(level.value))
-
-        header = QHBoxLayout()
-        header.setSpacing(10)
-        header.addWidget(self.iconWidget, 0, Qt.AlignmentFlag.AlignTop)
-        header.addWidget(self.titleLabel, 1)
-        self.viewLayout.addLayout(header)
-
-        self.contentLabel = BodyLabel(str(content), self.widget)
-        self.contentLabel.setObjectName("messageContentLabel")
-        self.contentLabel.setTextFormat(Qt.TextFormat.PlainText)
-        self.contentLabel.setWordWrap(True)
-        self.contentLabel.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard
-        )
-        self.contentLabel.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Preferred,
-        )
-
-        self.contentScroll = SmoothScrollArea(self.widget)
-        self.contentScroll.setObjectName("messageContentScroll")
-        self.contentScroll.setWidgetResizable(True)
-        self.contentScroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.contentScroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.contentScroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.contentScroll.setStyleSheet("background: transparent; border: none;")
-        content_host = QWidget()
-        content_host.setStyleSheet("background: transparent;")
-        content_layout = QVBoxLayout(content_host)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.addWidget(self.contentLabel)
-        self.contentScroll.setWidget(content_host)
-        self.viewLayout.addWidget(self.contentScroll)
-
-        owner = parent.window() or parent
-        owner_width = max(parent.width(), owner.width())
-        owner_height = max(parent.height(), owner.height())
-        card_width = max(300, min(560, max(300, owner_width - 48)))
-        body_width = max(220, card_width - 48 - 14)
-        _apply_role_font(self.titleLabel, FontRole.TITLE)
-        _apply_role_font(self.contentLabel, FontRole.UI)
-        _apply_role_font(self.yesButton, FontRole.UI)
-        _apply_role_font(self.cancelButton, FontRole.UI)
-        text_rect = QFontMetrics(self.contentLabel.font()).boundingRect(
-            QRect(0, 0, body_width, 100_000),
-            Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextExpandTabs,
-            str(content),
-        )
-        content_host.setMinimumWidth(body_width)
-        content_host.setMinimumHeight(max(1, text_rect.height()))
-        maximum_body_height = max(80, min(320, max(80, owner_height - 210)))
-        self.contentScroll.setFixedHeight(
-            min(
-                max(QFontMetrics(self.contentLabel.font()).height() + 4, text_rect.height()),
-                maximum_body_height,
-            )
-        )
-        self.widget.setFixedWidth(card_width)
-        self.widget.setAccessibleName(str(title))
-        self.widget.setAccessibleDescription(str(content))
-        self.widget.setProperty("messageLevel", level.value)
-        self.yesButton.setText(tr("确定"))
-        self.hideCancelButton()
-
-
 class FluentMessageBox:
-    """提供与旧静态提示调用等价的 Fluent 单按钮提示框。"""
+    """兼容各页的消息提示入口，统一显示非阻塞的窗口右上角 Toast。"""
 
     @staticmethod
-    def _show(parent: QWidget, title: str, content: str, level: MessageLevel) -> int:
-        dialog = _FluentMessageDialog(parent, str(title), str(content), level)
-        try:
-            return dialog.exec()
-        finally:
-            dialog.deleteLater()
+    def _show(parent: QWidget, title: str, content: str, level: MessageLevel) -> None:
+        levels: dict[MessageLevel, ToastLevel] = {
+            MessageLevel.INFORMATION: "info",
+            MessageLevel.WARNING: "warning",
+            MessageLevel.ERROR: "error",
+        }
+        show_toast(parent, title, content, level=levels[level])
 
     @classmethod
-    def information(cls, parent: QWidget, title: str, content: str) -> int:
-        return cls._show(parent, title, content, MessageLevel.INFORMATION)
+    def information(cls, parent: QWidget, title: str, content: str) -> None:
+        cls._show(parent, title, content, MessageLevel.INFORMATION)
 
     @classmethod
-    def warning(cls, parent: QWidget, title: str, content: str) -> int:
-        return cls._show(parent, title, content, MessageLevel.WARNING)
+    def warning(cls, parent: QWidget, title: str, content: str) -> None:
+        cls._show(parent, title, content, MessageLevel.WARNING)
 
     @classmethod
-    def critical(cls, parent: QWidget, title: str, content: str) -> int:
-        return cls._show(parent, title, content, MessageLevel.ERROR)
+    def critical(cls, parent: QWidget, title: str, content: str) -> None:
+        cls._show(parent, title, content, MessageLevel.ERROR)
 
 
 class FluentInputDialog(MessageBoxBase):
@@ -370,6 +258,8 @@ class FluentInputDialog(MessageBoxBase):
         """显示输入框并保持 ``QInputDialog.getText`` 的返回顺序。"""
 
         dialog = cls(parent, title, label, text=text)
+        # exec 返回后仍需读取输入；其间不能由上游的关闭策略删除控件。
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
         try:
             accepted = bool(dialog.exec())
             return dialog.lineEdit.text(), accepted

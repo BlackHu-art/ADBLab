@@ -1,0 +1,89 @@
+[
+  {
+    "language": "zh_CN",
+    "existing_entries_preserved": 1306,
+    "new_entries": {
+      "采集进度": "采集进度",
+      "进度按计划时长估算，报告生成后才确认完成。": "进度按计划时长估算，报告生成后才确认完成。",
+      "正在停止采集并生成报告，请稍候。": "正在停止采集并生成报告，请稍候。",
+      "已达到计划时长，等待采集结束与报告生成。": "已达到计划时长，等待采集结束与报告生成。",
+      "预计进度 {percent}% · 已用 {elapsed} / 计划 {duration}": "预计进度 {percent}% · 已用 {elapsed} / 计划 {duration}",
+      "报告已生成，可查看图表或打开结果目录。": "报告已生成，可查看图表或打开结果目录。",
+      "采集已停止，已生成的结果会保留。": "采集已停止，已生成的结果会保留。",
+      "采集失败，请查看运行日志后重试。": "采集失败，请查看运行日志后重试。",
+      "配置采集参数后开始，运行期间可查看日志。": "配置采集参数后开始，运行期间可查看日志。",
+      "已停止": "已停止"
+    },
+    "before_sha256": "b0134360caf382ce93960595f317da8fc952a65e61e54e32228b070276ceadcc",
+    "after_sha256": "6a1a42fc17235be9cbe850918ee56c40dc7dfe37f11af1943ff6d0e3f05e7069",
+    "existing_bytes_preserved": true
+  },
+  {
+    "language": "zh_HK",
+    "existing_entries_preserved": 1306,
+    "new_entries": {
+      "采集进度": "採集進度",
+      "进度按计划时长估算，报告生成后才确认完成。": "進度按計劃時長估算，報告產生後才確認完成。",
+      "正在停止采集并生成报告，请稍候。": "正在停止採集並產生報告，請稍候。",
+      "已达到计划时长，等待采集结束与报告生成。": "已達到計劃時長，等待採集結束與報告產生。",
+      "预计进度 {percent}% · 已用 {elapsed} / 计划 {duration}": "預計進度 {percent}% · 已用 {elapsed} / 計劃 {duration}",
+      "报告已生成，可查看图表或打开结果目录。": "報告已產生，可查看圖表或開啟結果目錄。",
+      "采集已停止，已生成的结果会保留。": "採集已停止，已產生的結果會保留。",
+      "采集失败，请查看运行日志后重试。": "採集失敗，請查看執行日誌後重試。",
+      "配置采集参数后开始，运行期间可查看日志。": "設定採集參數後開始，執行期間可查看日誌。",
+      "已停止": "已停止"
+    },
+    "before_sha256": "ca3c5a1d44b61e2944872e73830c800854f9e4ce147948e88640b9de8b159e7a",
+    "after_sha256": "83f3d7929c2c07697eeef5e7a7a155500313b3e5a35ba7b3c5f79a25e2343682",
+    "existing_bytes_preserved": true
+  },
+  {
+    "language": "en_US",
+    "existing_entries_preserved": 1306,
+    "new_entries": {
+      "采集进度": "Collection progress",
+      "进度按计划时长估算，报告生成后才确认完成。": "Progress is estimated from the planned duration. Completion is confirmed after the report is generated.",
+      "正在停止采集并生成报告，请稍候。": "Stopping collection and generating the report. Please wait.",
+      "已达到计划时长，等待采集结束与报告生成。": "Planned duration reached. Waiting for collection to end and the report to be generated.",
+      "预计进度 {percent}% · 已用 {elapsed} / 计划 {duration}": "Estimated progress {percent}% · Elapsed {elapsed} / Planned {duration}",
+      "报告已生成，可查看图表或打开结果目录。": "The report is ready. View charts or open the results folder.",
+      "采集已停止，已生成的结果会保留。": "Collection stopped. Generated results are preserved.",
+      "采集失败，请查看运行日志后重试。": "Collection failed. Check the run log and try again.",
+      "配置采集参数后开始，运行期间可查看日志。": "Configure collection parameters, then start. Logs are available while running.",
+      "已停止": "Stopped"
+    },
+    "before_sha256": "d429bebde485220b16101da57dfe81aa471fb7f147b8f48deff18c92722d93e8",
+    "after_sha256": "6d039307bcae5dd46b8b4fbd243cb3daf505ea7ae956b0a477102a234ffe00bf",
+    "existing_bytes_preserved": true
+  },
+  {
+    "language": "zh_CN",
+    "existing_entries_preserved": 1316,
+    "new_entries": {
+      "暂无方案，请先保存": "暂无方案，请先保存"
+    },
+    "before_sha256": "6a1a42fc17235be9cbe850918ee56c40dc7dfe37f11af1943ff6d0e3f05e7069",
+    "after_sha256": "bb94888cf69162fa2cd41c91c39f7504c51346a94653d77342da26969ada5ee3",
+    "existing_bytes_preserved": true
+  },
+  {
+    "language": "zh_HK",
+    "existing_entries_preserved": 1316,
+    "new_entries": {
+      "暂无方案，请先保存": "暫無方案，請先儲存"
+    },
+    "before_sha256": "83f3d7929c2c07697eeef5e7a7a155500313b3e5a35ba7b3c5f79a25e2343682",
+    "after_sha256": "c3cdafc9746a4c7f8d8c867385243c329b729b3057f44dda10c047d9886749c8",
+    "existing_bytes_preserved": true
+  },
+  {
+    "language": "en_US",
+    "existing_entries_preserved": 1316,
+    "new_entries": {
+      "暂无方案，请先保存": "No presets yet. Save one first"
+    },
+    "before_sha256": "6d039307bcae5dd46b8b4fbd243cb3daf505ea7ae956b0a477102a234ffe00bf",
+    "after_sha256": "2e8875248bfb28fdca8cc1d665fd1e8114e8fdcb90b783399cf0219e749b810f",
+    "existing_bytes_preserved": true
+  }
+]

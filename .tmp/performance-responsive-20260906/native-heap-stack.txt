@@ -1,0 +1,3 @@
+symbols_ready=True; symbol_struct_size=88
+collection=46; modules_refreshed=True
+pytest_return=0

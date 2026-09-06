@@ -1,0 +1,254 @@
+[
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "settings",
+    "focus": false,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": false,
+    "focus_target": "ComboBox",
+    "focus_accessible_name": "应用主题",
+    "window_active": true,
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "after-dce5ef-settings-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "settings",
+    "focus": true,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": true,
+    "focus_target": "ComboBox",
+    "focus_accessible_name": "应用主题",
+    "window_active": true,
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "after-dce5ef-settings-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "tasks",
+    "focus": false,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": false,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "运行摘要",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-dce5ef-tasks-rest.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      736
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "tasks",
+    "focus": true,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": true,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "运行摘要",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-dce5ef-tasks-focus.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      736
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "performance",
+    "focus": false,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": false,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-dce5ef-performance-rest.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      847
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#DCE5EF",
+    "page": "performance",
+    "focus": true,
+    "surface_pixel": "#e0e8f0",
+    "focus_has_focus": true,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-dce5ef-performance-focus.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      847
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "settings",
+    "focus": false,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": false,
+    "focus_target": "ComboBox",
+    "focus_accessible_name": "应用主题",
+    "window_active": true,
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "after-e8e2dc-settings-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "settings",
+    "focus": true,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": true,
+    "focus_target": "ComboBox",
+    "focus_accessible_name": "应用主题",
+    "window_active": true,
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "after-e8e2dc-settings-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "tasks",
+    "focus": false,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": false,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "运行摘要",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-e8e2dc-tasks-rest.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      736
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "tasks",
+    "focus": true,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": true,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "运行摘要",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-e8e2dc-tasks-focus.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      736
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "performance",
+    "focus": false,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": false,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-e8e2dc-performance-rest.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      847
+    ],
+    "text_palette": "#000000"
+  },
+  {
+    "phase": "after",
+    "backdrop": "#E8E2DC",
+    "page": "performance",
+    "focus": true,
+    "surface_pixel": "#eae6e1",
+    "focus_has_focus": true,
+    "focus_target": "PlainTextEdit",
+    "focus_accessible_name": "",
+    "window_active": true,
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "after-e8e2dc-performance-focus.png",
+    "native_dwm": false,
+    "reading_pixel": "#f2f4f6",
+    "reading_sample_point": [
+      1292,
+      847
+    ],
+    "text_palette": "#000000"
+  }
+]

@@ -1,0 +1,92 @@
+{
+  "scenario": "dark-large",
+  "theme": "Dark",
+  "language": "zh_CN",
+  "frame": [
+    860,
+    1000
+  ],
+  "font": 22,
+  "dpr": 1.0,
+  "diagnostics": [
+    16,
+    388,
+    716,
+    170
+  ],
+  "fields": {
+    "dumpheap": [
+      0,
+      88,
+      173,
+      46
+    ],
+    "exception": [
+      243,
+      88,
+      230,
+      46
+    ],
+    "phone_logs": [
+      485,
+      124,
+      231,
+      46
+    ],
+    "dumpheap_unit": [
+      181,
+      88,
+      50,
+      46
+    ]
+  },
+  "labels": {
+    "dumpheap_freq": {
+      "text": "堆快照间隔",
+      "rect": [
+        0,
+        47,
+        231,
+        36
+      ],
+      "required_height": 36,
+      "point_size": 22
+    },
+    "exceptionlog": {
+      "text": "异常日志关键字",
+      "rect": [
+        243,
+        47,
+        230,
+        36
+      ],
+      "required_height": 36,
+      "point_size": 22
+    },
+    "phone_log_path": {
+      "text": "结束后拉取的设备日志",
+      "rect": [
+        485,
+        47,
+        231,
+        72
+      ],
+      "required_height": 72,
+      "point_size": 22
+    },
+    "title": {
+      "text": "诊断选项",
+      "rect": [
+        0,
+        0,
+        716,
+        35
+      ],
+      "required_height": 35,
+      "point_size": 21
+    }
+  },
+  "errors": [],
+  "horizontal_max": 0,
+  "scrollbar_clearance": 19
+}

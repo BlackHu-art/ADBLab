@@ -2,14 +2,18 @@
 
 import math
 import os
+import subprocess
 import threading
-import time
 import traceback
 
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.tools.androiddevice import AndroidDevice
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
+
+
+class MonkeyError(RuntimeError):
+    """所请求的 Monkey 未成功启动、执行或停止，采集不能报告正常完成。"""
 
 
 class Monkey:
@@ -77,12 +81,15 @@ class Monkey:
                 self.timeout = timeout_value
                 self.event_count = self._event_count_for_timeout(timeout_value)
         self._stop_event = threading.Event()
+        self._log_pipe = None
+        self._monkey_thread = None
+        self._owns_process = False
+        self._failure = None
 
     def start(self, start_time):
         """记录开始时间并启动 Monkey。"""
         self.start_time = start_time
         if not self.running:
-            self.running = True
             self.start_monkey(self.package, self.event_count, self.timeout)
 
     def stop(self):
@@ -91,9 +98,11 @@ class Monkey:
 
     def start_monkey(self, package, event_count=None, timeout_seconds=None):
         """构造命令并启动 Monkey 进程及日志读取线程。"""
-        if self.running:
-            logger.warn("monkey process have started,not need start")
+        if self.running or (self._monkey_thread is not None and self._monkey_thread.is_alive()):
+            logger.warning("Monkey 已在运行，忽略重复启动")
             return
+        if self._owns_process:
+            self.stop_monkey()
         event_count = max(1, int(event_count if event_count is not None else self.event_count))
         self.monkey_cmd = self._build_monkey_cmd(package, event_count)
         if timeout_seconds is not None:
@@ -106,13 +115,38 @@ class Monkey:
                 f"start monkey, throttle={self.throttle_ms}ms, "
                 f"events={event_count}, pct_total={self._event_percentage_total()}"
             )
-        self._log_pipe = self.device.adb.run_shell_cmd(self.monkey_cmd, sync=False)
-        self._monkey_thread = threading.Thread(
-            target=self._monkey_thread_func,
-            args=[RuntimeData.package_save_path],
-            daemon=True,
-        )
-        self._monkey_thread.start()
+        self._stop_event.clear()
+        self._failure = None
+        try:
+            # Monkey 的失败诊断可能写入 stderr；合并后由同一个 reader 持续排空。
+            self._log_pipe = self.device.adb.run_shell_cmd(
+                self.monkey_cmd, sync=False, merge_stderr=True
+            )
+            if self._log_pipe is None:
+                raise RuntimeError("Monkey 未返回可读取的进程")
+            self._owns_process = True
+            if self._log_pipe.stdout is None:
+                raise RuntimeError("Monkey 未返回可读取的输出管道")
+            self.running = True
+            self._monkey_thread = threading.Thread(
+                target=self._monkey_thread_func,
+                args=[RuntimeData.package_save_path],
+                daemon=True,
+            )
+            self._monkey_thread.start()
+        except Exception as exc:
+            self.running = False
+            self._failure = MonkeyError("Monkey 启动失败，请检查设备连接和运行日志。")
+            try:
+                self.stop_monkey()
+            except MonkeyError:
+                logger.debug("Monkey 启动失败后的清理仍未完成", exc_info=True)
+            raise self._failure from exc
+
+    def raise_if_failed(self):
+        """将后台 reader 的失败交回采集主线程，避免只留下日志却报告成功。"""
+        if self._failure is not None:
+            raise self._failure
 
     def _build_monkey_cmd(self, package, event_count):
         args = [
@@ -188,32 +222,75 @@ class Monkey:
         return max(1, int(math.ceil((max(1, int(timeout_seconds)) * 1000) / self.throttle_ms)) + 1)
 
     def stop_monkey(self):
+        """停止本实例启动的 Monkey，并有界等待本地进程和日志 reader。"""
         self.running = False
         self._stop_event.set()
-        logger.debug("stop monkey")
-        if hasattr(self, "_log_pipe"):
-            if self._log_pipe.poll() is None:  # 判断 Monkey 进程是否存在。
-                self._log_pipe.terminate()
+        if not self._owns_process:
+            return
+        failure = None
+        try:
+            self._reap_local_process()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            failure = exc
         try:
             self.device.adb.kill_process("com.android.commands.monkey")
-        except Exception as e:
-            logger.debug(f"kill monkey skipped: {e}")
-        if hasattr(self, "_monkey_thread") and self._monkey_thread.is_alive():
+        except Exception as exc:
+            failure = failure or exc
+        if self._monkey_thread is not None and self._monkey_thread.is_alive():
             self._monkey_thread.join(timeout=2)
+            if self._monkey_thread.is_alive():
+                failure = failure or RuntimeError("Monkey 日志线程尚未退出")
+        if failure is not None:
+            raise MonkeyError("Monkey 停止未完成，请检查设备连接和运行日志。") from failure
+        self._close_process_streams()
+        self._owns_process = False
+
+    def _reap_local_process(self):
+        """终止 adb 客户端后确认其退出，避免 reader 留在阻塞读取中。"""
+        process = self._log_pipe
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+    def _close_process_streams(self):
+        """reader 结束后释放本次 Popen 创建的管道。"""
+        if self._log_pipe is None:
+            return
+        for stream in (self._log_pipe.stdin, self._log_pipe.stdout, self._log_pipe.stderr):
+            if stream is not None and not stream.closed:
+                stream.close()
 
     def _monkey_thread_func(self, save_dir):
         """持续读取并分片保存 Monkey 日志，异常关键字由其他监控器处理。"""
         self.append_log_line_num = 0
         self.file_log_line_num = 0
         self.log_file_create_time = None
-        log_is_none = 0
         logs = []
         logger.debug("monkey_thread_func")
         if RuntimeData.start_time is None:
             RuntimeData.start_time = TimeUtils.getCurrentTime()
-        while self.running:
-            try:
-                log = self._log_pipe.stdout.readline().strip()
+        try:
+            process = self._log_pipe
+            if process is None or process.stdout is None:
+                raise RuntimeError("Monkey 进程或输出管道尚未建立")
+            while not self._stop_event.is_set():
+                raw_line = process.stdout.readline()
+                if not raw_line:
+                    exit_code = process.poll()
+                    if exit_code is not None:
+                        if exit_code != 0 and not self._stop_event.is_set():
+                            self._failure = MonkeyError(
+                                f"Monkey 运行失败（退出码 {exit_code}），请查看 Monkey 日志。"
+                            )
+                            logger.error(self._failure)
+                        break
+                    self._stop_event.wait(0.1)
+                    continue
+                log = raw_line.strip()
                 if not isinstance(log, str):
                     # 兼容旧 ADB 接口返回的字节串。
                     try:
@@ -246,23 +323,24 @@ class Monkey:
                         )
                         self.save(log_file, logs)
                         logs = []
-                else:
-                    time.sleep(1)  # readline() 到 EOF 时避免忙等空转。
-                    log_is_none = log_is_none + 1
-                    if log_is_none % 1000 == 0:
-                        logger.info("log is none")
-                        if (
-                            not self.device.adb.is_process_running("com.android.commands.monkey")
-                            and self.running
-                        ):
-                            self.device.adb.kill_process("com.android.commands.monkey")
-                            self._log_pipe = self.device.adb.run_shell_cmd(
-                                self.monkey_cmd, sync=False
-                            )
-            except Exception:
-                logger.error("an exception hanpend in monkey thread, reason unkown!")
-                s = traceback.format_exc()
-                logger.debug(s)
+        except Exception:
+            if not self._stop_event.is_set():
+                self._failure = MonkeyError("Monkey 日志读取失败，请检查设备连接和日志目录。")
+                logger.error(self._failure)
+                logger.debug(traceback.format_exc())
+        finally:
+            try:
+                if logs:
+                    stamp = self.log_file_create_time or TimeUtils.getCurrentTimeUnderline()
+                    self.save(os.path.join(save_dir, f"monkey_{stamp}.log"), logs)
+                self._reap_local_process()
+            except (OSError, subprocess.TimeoutExpired):
+                self._failure = self._failure or MonkeyError("Monkey 日志或进程清理失败。")
+                logger.error(self._failure)
+                logger.debug(traceback.format_exc())
+            finally:
+                self.running = False
+                self._close_process_streams()
 
     def save(self, save_file_path, loglist):
         monkey_file = os.path.join(save_file_path)

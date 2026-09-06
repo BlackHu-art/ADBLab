@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import os
+import random
 import re
+import time
 import uuid
+from dataclasses import dataclass
 
 from adblab.application.cancellation import CancellationToken
 from controllers._base import _ADBControllerBase
@@ -12,6 +16,58 @@ from core.log_service import LogLevel, LogService
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package
+
+
+@dataclass(frozen=True)
+class _MonkeyRunSnapshot:
+    """在排队前固定归档身份与参数；页面后续修改不能改变这次运行。"""
+
+    batch_id: str
+    index: int
+    parameters: dict
+    started_at: float
+    device_label: str
+    app_version: str
+
+
+def _archive_monkey_target(controller, batch_id: str, device: str) -> None:
+    """仅在批次释放时发布一次终态；归档持久化由组合根订阅者负责。"""
+    snapshots = _monkey_state_map(controller, "_monkey_run_snapshots")
+    snapshot = snapshots.get(device)
+    if not isinstance(snapshot, _MonkeyRunSnapshot) or snapshot.batch_id != batch_id:
+        return
+    snapshots.pop(device, None)
+    result = _monkey_state_map(controller, "_monkey_run_results").pop(device, {})
+    controller.testing_model.monkey_run_archive_snapshot(device, batch_id, consume=True)
+    signal_ = getattr(getattr(controller, "signals", None), "run_record_ready", None)
+    if signal_ is None:
+        return
+    from services.run_library import RunArtifact, RunRecord
+
+    parameters = dict(snapshot.parameters)
+    parameters["seed"] = result.get("seed", parameters["seed"])
+    # 历史载入使用本次真实 seed；原方案仍保留随机模式，重复使用方案会重新抽样。
+    parameters["seed_source"] = parameters.get("seed_mode", "random")
+    parameters["seed_mode"] = "fixed"
+    artifacts = tuple(
+        RunArtifact(label=label, path=path)
+        for key, label in (("monkey_log", "Monkey"), ("logcat_log", "Logcat"))
+        if isinstance(path := result.get(key), str) and os.path.isfile(path)
+    )
+    state = "partial" if result.get("archive_incomplete") else (
+        "cancelled" if result.get("cancelled") else
+        "succeeded" if result.get("success") else "failed"
+    )
+    message = str(result.get("error") or "").replace(device, "<device>")[:1000]
+    signal_.emit(RunRecord(
+        run_id=f"{batch_id}-{snapshot.index}", kind="monkey",
+        package_name=str(parameters.get("package_name", "")),
+        started_at=float(result.get("started_at", snapshot.started_at)),
+        finished_at=float(result.get("finished_at", time.time())), state=state,
+        parameters=parameters, artifacts=artifacts,
+        device_label=snapshot.device_label, app_version=snapshot.app_version,
+        message=message,
+    ))
 
 
 def _emit_monkey_target_finished(controller, batch_id: str, device: str) -> None:
@@ -53,6 +109,7 @@ def _finalize_monkey_target(controller, batch_id: str, device: str) -> bool:
             state_map = _monkey_state_map(controller, name)
             if state_map.get(device) == batch_id:
                 state_map.pop(device, None)
+        _archive_monkey_target(controller, batch_id, device)
         _emit_monkey_target_finished(controller, batch_id, device)
         return True
     finally:
@@ -81,6 +138,28 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
     }
 
     # Monkey 测试
+
+    def archive_finished_monkey_runs(self, *, resources_stopped: bool) -> None:
+        """主窗口完成停止阶段后在 GUI 线程补记被关闭栅栏拦截的运行结果。
+
+        resources_stopped 必须来自关闭阶段的实际等待结果；仍有残留时只记录不完整，
+        不将未收到结果的工作误报为成功或已取消。调用本方法不启动或等待任何进程。
+        """
+        snapshots = _monkey_state_map(self, "_monkey_run_snapshots")
+        for device, snapshot in tuple(snapshots.items()):
+            result = self.testing_model.monkey_run_archive_snapshot(device, snapshot.batch_id)
+            if not isinstance(result, dict):
+                result = dict(_monkey_state_map(self, "_monkey_run_results").get(device, {}))
+            if not result.get("terminal"):
+                result.update(
+                    success=False, cancelled=resources_stopped,
+                    archive_incomplete=not resources_stopped,
+                    error=("Application closed before the test completed" if resources_stopped
+                           else "Application closed without confirming all test resources stopped"),
+                    finished_at=time.time(),
+                )
+            _monkey_state_map(self, "_monkey_run_results")[device] = result
+            _finalize_monkey_target(self, snapshot.batch_id, device)
 
     def prepare_monkey_targets(
         self, devices: list[str], package_name: str, request_id: str,
@@ -208,6 +287,9 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 _emit_monkey_target_finished(self, batch_id, device)
             return
         package_name = params["package_name"]
+        target_metadata = params.pop("_target_metadata", {})
+        if not isinstance(target_metadata, dict):
+            target_metadata = {}
         if not package_name:
             return self._emit_operation("monkey", False, "No package name provided")
         # 同一设备只允许一个 Monkey 会话，避免重复启动后无法准确停止。
@@ -226,20 +308,32 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             for d in devices:
                 self._monkey_running.add(d)
                 self._monkey_batch_by_device[d] = batch_id
+        for idx, device_ip in enumerate(devices, 1):
+            target_params = dict(params)
+            if target_params["seed_mode"] == "random":
+                target_params["seed"] = random.randint(1, 99999)
+            metadata = target_metadata.get(device_ip, {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            _monkey_state_map(self, "_monkey_run_snapshots")[device_ip] = _MonkeyRunSnapshot(
+                batch_id=batch_id, index=idx, parameters=dict(target_params),
+                started_at=time.time(),
+                device_label=str(metadata.get("device_label", f"Device {idx}")),
+                app_version=str(metadata.get("app_version", "")),
+            )
         try:
             save_dir = self._get_screenshot_dir()
         except (OSError, RuntimeError, ValueError) as exc:
-            with self._monkey_lock:
-                for d in devices:
-                    self._monkey_running.discard(d)
-                    self._monkey_batch_by_device.pop(d, None)
             self._emit_operation(
                 "monkey",
                 False,
                 f"Failed to prepare Monkey output directory: {exc}",
             )
             for device in devices:
-                _emit_monkey_target_finished(self, batch_id, device)
+                _monkey_state_map(self, "_monkey_run_results")[device] = {
+                    "success": False, "error": str(exc), "finished_at": time.time(),
+                }
+                _finalize_monkey_target(self, batch_id, device)
             return
         log = self.log_service.log
         pct_keys = [
@@ -266,6 +360,8 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         )
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
+            snapshot = _monkey_state_map(self, "_monkey_run_snapshots")[device_ip]
+            target_params = dict(snapshot.parameters)
             prepared = False
             try:
                 prepared = self.testing_model.prepare_monkey_batch(device_ip, batch_id)
@@ -274,7 +370,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 self.testing_model.run_monkey_test_async(
                     device_ip,
                     package_name,
-                    params,
+                    target_params,
                     sanitized_name,
                     save_dir,
                     idx,
@@ -289,6 +385,9 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                     False,
                     f"Failed to submit Monkey test for {device_ip}: {exc}",
                 )
+                _monkey_state_map(self, "_monkey_run_results")[device_ip] = {
+                    "success": False, "error": str(exc), "finished_at": time.time(),
+                }
                 _finalize_monkey_target(self, batch_id, device_ip)
 
     @staticmethod
@@ -305,12 +404,25 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         if not 0 <= throttle <= 60_000:
             raise ValueError("throttle must be between 0 and 60000")
 
-        validated = dict(params)
+        validated = {
+            key: params.get(key, True)
+            for key in ("ignore_crashes", "ignore_timeouts", "ignore_security")
+        }
+        if "_target_metadata" in params:
+            validated["_target_metadata"] = params["_target_metadata"]
         validated.update(
             package_name=package_name,
             events=events,
             throttle=throttle,
         )
+        seed_mode = params.get("seed_mode", "fixed" if params.get("seed") is not None else "random")
+        if seed_mode not in ("random", "fixed"):
+            raise ValueError("seed mode must be random or fixed")
+        seed = params.get("seed")
+        if seed_mode == "fixed":
+            if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2147483647:
+                raise ValueError("seed must be an integer between 0 and 2147483647")
+        validated.update(seed_mode=seed_mode, seed=seed if seed_mode == "fixed" else None)
         for key in (
             "touch",
             "motion",
@@ -341,6 +453,8 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             return
         if current_batch:
             batch_id = current_batch
+        if device_ip in _monkey_state_map(self, "_monkey_run_snapshots"):
+            _monkey_state_map(self, "_monkey_run_results")[device_ip] = dict(result)
         duration = result.get("duration", "N/A")
         monkey_log = result.get("monkey_log", "")
         logcat_log = result.get("logcat_log", "")

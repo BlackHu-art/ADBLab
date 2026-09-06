@@ -1,0 +1,126 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+_ test_performance_sections_inherit_blank_surface_but_keep_log_reading_background[Light] _
+
+qt_application = <PySide6.QtWidgets.QApplication(0x2510b1efa70) at 0x000002510DC27A00>
+theme = 'Light'
+
+    @pytest.mark.parametrize("theme", ("Light", "Dark"))
+    def test_performance_sections_inherit_blank_surface_but_keep_log_reading_background(
+        qt_application, theme,
+    ):
+        """��ʵ�������ֽṹ�װ����Ķ��װ壬��ͣ�����������������µ��ӿ�Ƭ�ײ㡣"""
+    
+        original_theme = BaseStyles.current_theme()
+        BaseStyles.switch_theme(theme)
+        host = QWidget()
+        base = QColor("#b8cad8" if theme == "Light" else "#243849")
+        palette = host.palette()
+        palette.setColor(QPalette.ColorRole.Window, base)
+        host.setPalette(palette)
+        host.setAutoFillBackground(True)
+        dialog, _runner = _build_performance_page()
+        layout = QVBoxLayout(host)
+        layout.addWidget(dialog)
+        dialog.prepare_for_workspace()
+        dialog.log_view.clear()
+        host.resize(1200, 1250)
+        host.show()
+        try:
+            wait_for_stable_geometry(qt_application, (host, dialog, dialog._results_group))
+            for current_theme in (theme, "Dark" if theme == "Light" else "Light", theme):
+                BaseStyles.switch_theme(current_theme)
+                QTest.mouseMove(dialog._action_row, QPoint(4, 10))
+                QTest.qWait(180)
+                surfaces = {
+                    "actions": (dialog._action_row, QPoint(4, 10)),
+                    "plan_header": (dialog._configuration_sections[0], QPoint(4, 10)),
+                    "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 10)),
+                    "results_header": (dialog._results_group, QPoint(4, 10)),
+                    "results_body": (dialog._results_group.view, QPoint(4, 10)),
+                    "progress_container": (dialog.progress_display.indicators, QPoint(2, 2)),
+                }
+                image = host.grab().toImage()
+                colors = {
+                    name: image.pixelColor(widget.mapTo(host, point)).name()
+                    for name, (widget, point) in surfaces.items()
+                }
+>               assert set(colors.values()) == {base.name()}, colors
+E               AssertionError: {'actions': '#cad7e2', 'plan_header': '#e7edf2', 'plan_body': '#e7edf2', 'results_header': '#e7edf2', ...}
+E               assert {'#cad7e2', '#e7edf2'} == {'#b8cad8'}
+E                 
+E                 Extra items in the left set:
+E                 '#e7edf2'
+E                 '#cad7e2'
+E                 Extra items in the right set:
+E                 '#b8cad8'
+E                 Use -v to get more diff
+
+tests\test_performance_responsive.py:321: AssertionError
+_ test_performance_sections_inherit_blank_surface_but_keep_log_reading_background[Dark] _
+
+qt_application = <PySide6.QtWidgets.QApplication(0x2510b1efa70) at 0x000002510DC27A00>
+theme = 'Dark'
+
+    @pytest.mark.parametrize("theme", ("Light", "Dark"))
+    def test_performance_sections_inherit_blank_surface_but_keep_log_reading_background(
+        qt_application, theme,
+    ):
+        """��ʵ�������ֽṹ�װ����Ķ��װ壬��ͣ�����������������µ��ӿ�Ƭ�ײ㡣"""
+    
+        original_theme = BaseStyles.current_theme()
+        BaseStyles.switch_theme(theme)
+        host = QWidget()
+        base = QColor("#b8cad8" if theme == "Light" else "#243849")
+        palette = host.palette()
+        palette.setColor(QPalette.ColorRole.Window, base)
+        host.setPalette(palette)
+        host.setAutoFillBackground(True)
+        dialog, _runner = _build_performance_page()
+        layout = QVBoxLayout(host)
+        layout.addWidget(dialog)
+        dialog.prepare_for_workspace()
+        dialog.log_view.clear()
+        host.resize(1200, 1250)
+        host.show()
+        try:
+            wait_for_stable_geometry(qt_application, (host, dialog, dialog._results_group))
+            for current_theme in (theme, "Dark" if theme == "Light" else "Light", theme):
+                BaseStyles.switch_theme(current_theme)
+                QTest.mouseMove(dialog._action_row, QPoint(4, 10))
+                QTest.qWait(180)
+                surfaces = {
+                    "actions": (dialog._action_row, QPoint(4, 10)),
+                    "plan_header": (dialog._configuration_sections[0], QPoint(4, 10)),
+                    "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 10)),
+                    "results_header": (dialog._results_group, QPoint(4, 10)),
+                    "results_body": (dialog._results_group.view, QPoint(4, 10)),
+                    "progress_container": (dialog.progress_display.indicators, QPoint(2, 2)),
+                }
+                image = host.grab().toImage()
+                colors = {
+                    name: image.pixelColor(widget.mapTo(host, point)).name()
+                    for name, (widget, point) in surfaces.items()
+                }
+>               assert set(colors.values()) == {base.name()}, colors
+E               AssertionError: {'actions': '#364858', 'plan_header': '#2f4252', 'plan_body': '#2f4252', 'results_header': '#2f4252', ...}
+E               assert {'#2f4252', '#364858'} == {'#243849'}
+E                 
+E                 Extra items in the left set:
+E                 '#2f4252'
+E                 '#364858'
+E                 Extra items in the right set:
+E                 '#243849'
+E                 Use -v to get more diff
+
+tests\test_performance_responsive.py:321: AssertionError
+============================== warnings summary ===============================
+tests/test_performance_responsive.py: 28 warnings
+  D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\qfluentwidgets\common\icon.py:196: DeprecationWarning: Function: 'QDomDocument.setContent(const QByteArray &text, QString *errorMsg, int *errorLine, int *errorColumn)' is marked as deprecated, please check the documentation for more information.
+    dom.setContent(f.readAll())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_performance_responsive.py::test_performance_sections_inherit_blank_surface_but_keep_log_reading_background[Light]
+FAILED tests/test_performance_responsive.py::test_performance_sections_inherit_blank_surface_but_keep_log_reading_background[Dark]
+2 failed, 49 deselected, 28 warnings in 1.80s

@@ -284,30 +284,17 @@ class DeviceContextBar(QWidget):
         self.refresh_button.setAccessibleName(tr("刷新设备"))
         self.refresh_button.setToolTip(tr("重新扫描 USB 与无线设备的在线状态"))
         self.refresh_button.clicked.connect(self.refresh_requested)
-        self.info_button = TransparentPushButton(FluentIcon.INFO, tr("设备信息"), self)
-        self.info_button.setAccessibleName(tr("查看所选设备信息"))
-        self.info_button.setToolTip(tr("在任务中心运行记录中查看所选设备信息"))
-        self.info_button.clicked.connect(self.info_requested)
-        self.disconnect_button = TransparentPushButton(FluentIcon.CANCEL, tr("断开所选设备"), self)
-        self.disconnect_button.setAccessibleName(tr("断开所选设备"))
-        self.disconnect_button.setToolTip(tr("断开已勾选设备的 ADB 连接"))
-        self.disconnect_button.clicked.connect(self.disconnect_requested)
         self.more_button = TransparentDropDownToolButton(FluentIcon.MORE, self)
         self.more_button.setAccessibleName(tr("更多设备操作"))
         self.more_button.setToolTip(tr("查看所选设备信息或断开所选设备"))
         self._more_menu = RoundMenu(parent=self)
         self.info_action = Action(FluentIcon.INFO, tr("设备信息"), self)
         self.disconnect_action = Action(FluentIcon.CANCEL, tr("断开所选设备"), self)
+        self.info_action.setToolTip(tr("在任务中心运行记录中查看所选设备信息"))
+        self.disconnect_action.setToolTip(tr("断开已勾选设备的 ADB 连接"))
         self.info_action.triggered.connect(self.info_requested)
         self.disconnect_action.triggered.connect(self.disconnect_requested)
-        # 菜单项直接发出业务信号；旧按钮只保留兼容入口，不参与菜单尺寸与可用状态判断。
-        for button, action in (
-            (self.info_button, self.info_action),
-            (self.disconnect_button, self.disconnect_action),
-        ):
-            button.hide()
-            button.clicked.connect(self._more_menu.close)
-            action.setToolTip(button.toolTip())
+        for action in (self.info_action, self.disconnect_action):
             self._more_menu.addAction(action)
         self.more_button.setMenu(self._more_menu)
         target.addWidget(self.targets_button)
@@ -402,8 +389,6 @@ class DeviceContextBar(QWidget):
             tr("{text}，已选 {count} 台").format(text=text, count=len(self._selected))
         )
         self.refresh_button.setEnabled(state != "scanning")
-        self.info_button.setEnabled(bool(self._selected))
-        self.disconnect_button.setEnabled(bool(self._selected))
         self.info_action.setEnabled(bool(self._selected))
         self.disconnect_action.setEnabled(bool(self._selected))
         if self._picker is not None:

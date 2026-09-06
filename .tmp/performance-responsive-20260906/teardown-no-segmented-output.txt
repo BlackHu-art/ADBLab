@@ -1,0 +1,11 @@
+
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+...........                                                              [100%]
+============================== warnings summary ===============================
+tests/test_performance_responsive.py: 2061 warnings
+  D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\qfluentwidgets\common\icon.py:196: DeprecationWarning: Function: 'QDomDocument.setContent(const QByteArray &text, QString *errorMsg, int *errorLine, int *errorColumn)' is marked as deprecated, please check the documentation for more information.
+    dom.setContent(f.readAll())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+11 passed, 30 deselected, 2061 warnings in 5.95s

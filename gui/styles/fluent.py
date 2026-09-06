@@ -22,6 +22,21 @@ _WidgetT = TypeVar("_WidgetT", bound=QWidget)
 _ButtonT = TypeVar("_ButtonT", bound=QAbstractButton)
 
 
+def font_qss(font: QFont) -> str:
+    """把项目 QFont 转为可覆盖第三方显式字体 QSS 的声明。"""
+
+    family = font.family().replace("\\", "\\\\").replace("'", "\\'")
+    if font.pointSizeF() > 0:
+        size = f"{font.pointSizeF():g}pt"
+    else:
+        size = f"{max(1, font.pixelSize())}px"
+    style = "italic" if font.italic() else "normal"
+    return (
+        f"font-family: '{family}'; font-size: {size}; "
+        f"font-weight: {int(font.weight())}; font-style: {style};"
+    )
+
+
 def _font(role: FontRole | str, *, bold: bool = False) -> QFont:
     resolved = FontRole(role)
     font = FontMixin.font_for_role(resolved)
@@ -92,11 +107,32 @@ def apply_focus_indicator(widget: QWidget, *, selector: str | None = None) -> No
     light = ThemeMixin.color_for("Light", "BORDER_FOCUS")
     dark = ThemeMixin.color_for("Dark", "BORDER_FOCUS")
     radius = ThemeMixin.RADIUS_MD
+    reading_style = ""
+    if widget.property("adblabReadingSurface"):
+        reading_selector = f'{name}[readOnly="true"]'
+        background = ThemeMixin.color_for("Light", "LOG_BACKGROUND")
+        reading_style = (
+            f"{reading_selector}, {reading_selector}:hover, {reading_selector}:focus "
+            f"{{ background-color: {background}; }}"
+        )
     setCustomStyleSheet(
         widget,
-        f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}",
+        reading_style
+        + f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}",
         f"{name}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}",
     )
+
+
+def apply_reading_surface(widget: _WidgetT) -> _WidgetT:
+    """为只读长正文固定浅色阅读底板，焦点及强调色刷新时一并重建。
+
+    通过 readOnly 属性限定背景规则，保留可编辑状态及深色背景的上游行为；
+    本函数不改变正文内容、字体、只读属性或选择复制能力。
+    """
+    widget.setProperty("adblabReadingSurface", True)
+    selector = widget.property("adblabFocusSelector")
+    apply_focus_indicator(widget, selector=str(selector) if selector else None)
+    return widget
 
 
 def _apply_button_custom_style(button: QAbstractButton, *, danger: bool) -> None:
@@ -213,10 +249,12 @@ def add_menu_action(
 
 
 __all__ = [
+    "font_qss",
     "add_menu_action",
     "apply_focus_indicator",
     "apply_font_role",
     "apply_label_role",
+    "apply_reading_surface",
     "configure_button",
     "configure_fluent_control",
     "refresh_fluent_widget_style",

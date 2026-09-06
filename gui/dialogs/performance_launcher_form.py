@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QAbstractButton,
     QAbstractScrollArea,
     QBoxLayout,
+    QButtonGroup,
     QFrame,
     QGridLayout,
+    QHBoxLayout,
     QLayout,
     QLineEdit,
     QScrollArea,
@@ -27,10 +30,9 @@ from qfluentwidgets import (
     LineEdit,
     PlainTextEdit,
     PrimaryPushButton,
-    ProgressBar,
     PushButton,
-    SegmentedWidget,
     SmoothScrollArea,
+    TogglePushButton,
 )
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
@@ -38,7 +40,8 @@ from gui.i18n import tr
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
-from gui.widgets.collapsible_tools import CollapsibleTools
+from gui.widgets.content_section import ContentSection
+from gui.widgets.performance_progress import PerformanceProgress
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 
@@ -46,10 +49,14 @@ from services.mobileperf_runner import MobilePerfMonkeyConfig
 class _PerformanceGrid(QWidget):
     """随可用宽度与字体重排现有字段，保持编辑器身份和键盘焦点。"""
 
-    def __init__(self, widgets: Sequence[QWidget], *, columns: int = 3, parent=None):
+    def __init__(
+        self, widgets: Sequence[QWidget], *, columns: int = 3,
+        minimum_cell_text: str = "", parent=None,
+    ):
         super().__init__(parent)
         self._widgets = widgets
         self._maximum_columns = columns
+        self._minimum_cell_text = minimum_cell_text
         self._columns = 0
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
@@ -61,7 +68,10 @@ class _PerformanceGrid(QWidget):
     def _reflow(self) -> None:
         if not hasattr(self, "_grid"):
             return
-        cell_width = max(176, self.fontMetrics().horizontalAdvance("0" * 12))
+        cell_width = max(
+            176, self.fontMetrics().horizontalAdvance("0" * 12),
+            self.fontMetrics().horizontalAdvance(self._minimum_cell_text),
+        )
         unit_rows = (
             row for widget in self._widgets
             for row in widget.findChildren(_PerformanceRow)
@@ -134,62 +144,6 @@ class _PerformanceRow(QWidget):
         return size if self._keep_inline else QSize(0, size.height())
 
 
-class _PerformanceColumns(QWidget):
-    """配置和结果共用滚动宿主，只调整原控件位置，不重建编辑器。"""
-
-    def __init__(self, configuration: QWidget, results: QWidget):
-        super().__init__()
-        self._configuration = configuration
-        self._results = results
-        self._wide = None
-        self._balanced = True
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(16)
-        self._grid.setVerticalSpacing(16)
-        self._grid.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.setMinimumWidth(0)
-        self._reflow()
-
-    def _reflow(self) -> None:
-        if not hasattr(self, "_grid"):
-            return
-        wide = self.width() >= max(920, self.fontMetrics().horizontalAdvance("M" * 54))
-        if wide == self._wide:
-            return
-        self._grid.removeWidget(self._configuration)
-        self._grid.removeWidget(self._results)
-        alignment = Qt.AlignmentFlag(0) if wide and self._balanced else Qt.AlignmentFlag.AlignTop
-        self._grid.addWidget(self._configuration, 0, 0, alignment)
-        self._grid.addWidget(self._results, 0 if wide else 1, 1 if wide else 0,
-                             alignment)
-        self._grid.setColumnStretch(0, 5 if wide else 1)
-        self._grid.setColumnStretch(1, 6 if wide else 0)
-        self._wide = wide
-        self.updateGeometry()
-
-    def set_balanced(self, balanced: bool) -> None:
-        """默认宽屏对齐卡片底边；展开长参数后使用自然高度，避免结果区空白。"""
-
-        if balanced == self._balanced:
-            return
-        self._balanced = balanced
-        self._wide = None
-        self._reflow()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._reflow()
-
-    def changeEvent(self, event):
-        super().changeEvent(event)
-        if event.type() == QEvent.Type.FontChange:
-            self._reflow()
-
-    def minimumSizeHint(self) -> QSize:
-        return QSize(0, super().minimumSizeHint().height())
-
-
 class _PerformanceResultStack(QStackedWidget):
     """把当前结果视图的高度下限交给父布局，隐藏图表不参与日志测高。"""
 
@@ -198,6 +152,129 @@ class _PerformanceResultStack(QStackedWidget):
 
     def minimumSizeHint(self) -> QSize:
         return QSize(0, self.minimumHeight())
+
+
+class _PerformanceViewToggle(QWidget):
+    """日志与图表使用标准互斥按钮组，选择状态与结果栈双向同步。"""
+
+    currentItemChanged = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.items: dict[str, TogglePushButton] = {}
+        self._current_route_key: str | None = None
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self._group.buttonToggled.connect(self._on_toggled)
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 0)
+        self._row.setSpacing(8)
+
+    def addItem(self, route_key: str, text: str) -> None:
+        button = TogglePushButton(text, self)
+        button.setProperty("routeKey", route_key)
+        button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.items[route_key] = button
+        self._group.addButton(button)
+        self._row.addWidget(button, 1)
+
+    def setCurrentItem(self, route_key: str) -> None:
+        if route_key not in self.items or route_key == self._current_route_key:
+            return
+        self._current_route_key = route_key
+        self.items[route_key].setChecked(True)
+        self.currentItemChanged.emit(route_key)
+
+    def setCurrentIndex(self, index: int) -> None:
+        self.setCurrentItem("chart" if index == 1 else "log")
+
+    def _on_toggled(self, button: QAbstractButton, checked: bool) -> None:
+        if checked:
+            self.setCurrentItem(str(button.property("routeKey")))
+
+
+class _PerformanceActionCard(QWidget):
+    """状态按实际宽度测高，窄屏把操作放下一行，避免长状态挤压按钮。"""
+
+    def __init__(self, progress: PerformanceProgress, stop: QWidget, start: QWidget):
+        super().__init__()
+        self._progress, self._stop, self._start = progress, stop, start
+        self._mode = -1
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(16, 12, 16, 12)
+        self._grid.setHorizontalSpacing(8)
+        self._grid.setVerticalSpacing(12)
+        self._grid.setColumnStretch(0, 1)
+        for column, widget in enumerate((progress, stop, start)):
+            self._grid.addWidget(widget, 0, column)
+        policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setMinimumWidth(0)
+        progress.geometry_changed.connect(self._refresh_geometry)
+
+    def _layout_mode(self, width: int) -> int:
+        actions_width = self._stop.sizeHint().width() + self._start.sizeHint().width() + 8
+        status_width = max(280, self._progress.fontMetrics().horizontalAdvance("0" * 18))
+        if width - 32 >= status_width + actions_width + 8:
+            return 0
+        return 1 if width - 32 >= actions_width else 2
+
+    def heightForWidth(self, width: int) -> int:
+        inner_width = max(1, width - 32)
+        mode = self._layout_mode(width)
+        button_height = max(self._stop.sizeHint().height(), self._start.sizeHint().height())
+        if mode == 0:
+            status_width = (
+                inner_width - self._stop.sizeHint().width() - self._start.sizeHint().width() - 16
+            )
+            return max(self._progress.heightForWidth(status_width), button_height) + 24
+        return self._progress.heightForWidth(inner_width) + (button_height + 12) * mode + 24
+
+    def sizeHint(self) -> QSize:
+        return QSize(720, self.heightForWidth(720))
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self._progress.minimumSizeHint().height() + 24)
+
+    def _refresh_geometry(self) -> None:
+        if self.isVisible():
+            self._reflow()
+        self.updateGeometry()
+
+    def _reflow(self) -> None:
+        mode = self._layout_mode(self.width())
+        if mode != self._mode:
+            self._mode = mode
+            for widget in (self._progress, self._stop, self._start):
+                self._grid.removeWidget(widget)
+            if mode == 0:
+                for column, widget in enumerate((self._progress, self._stop, self._start)):
+                    self._grid.addWidget(widget, 0, column)
+            else:
+                self._grid.addWidget(self._progress, 0, 0, 1, 3)
+                if mode == 1:
+                    self._grid.addWidget(self._stop, 1, 1)
+                    self._grid.addWidget(self._start, 1, 2)
+                else:
+                    self._grid.addWidget(self._stop, 1, 0, 1, 3)
+                    self._grid.addWidget(self._start, 2, 0, 1, 3)
+        height = self.heightForWidth(self.width())
+        if self.height() != height or self.minimumHeight() != height:
+            self.setFixedHeight(height)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._reflow()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange and hasattr(self, "_progress"):
+            self._refresh_geometry()
 
 
 CONFIG_HINTS = {
@@ -265,7 +342,7 @@ class PerformanceLauncherForm:
         self._frame.header_card = QWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
         self._frame.header_card.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         header = QVBoxLayout(self._frame.header_card)
         header.setContentsMargins(0, 0, 0, 0)
@@ -291,7 +368,6 @@ class PerformanceLauncherForm:
         header.addWidget(self._frame.dialog_subtitle)
         self._frame._action_row = self._build_actions()
         header.addWidget(self._frame._action_row)
-        root.addWidget(self._frame.header_card)
 
         # 独立页面由一个滚动容器承载配置和结果；嵌入时将同一内容交给工作区，
         # 避免配置、页面与结果形成三层互相争抢滚轮的视口。
@@ -316,20 +392,19 @@ class PerformanceLauncherForm:
         )
         result_actions.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         results.addWidget(result_actions)
-        self._frame._config_group = _PerformanceColumns(
-            self._frame._configuration_group, self._frame._results_group
-        )
+        self._frame._config_group = QWidget()
         self._frame._config_group.setObjectName("performanceConfig")
-
-        def balance_panels(*_args) -> None:
-            self._frame._config_group.set_balanced(
-                not self._frame.monkey_check.isChecked()
-                and not self._frame._diagnostic_tools.toggle_button.isChecked()
-            )
-
-        self._frame.monkey_check.toggled.connect(balance_panels)
-        self._frame._diagnostic_tools.expanded_changed.connect(balance_panels)
+        content_layout = QVBoxLayout(self._frame._config_group)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(16)
+        content_layout.addWidget(self._frame.header_card)
+        content_layout.addWidget(self._frame._configuration_group)
+        content_layout.addWidget(self._frame._results_group, 1)
         self._frame._config_scroll = SmoothScrollArea()
+        # Fluent 滚动条覆盖在视口内；内容自留通道，移交工作区后仍不压住卡片和操作。
+        content_layout.setContentsMargins(
+            0, 0, self._frame._config_scroll.delegate.vScrollBar.width() + 4, 0
+        )
         self._frame._config_scroll.setObjectName("performanceConfigScroll")
         self._frame._config_scroll.setWidgetResizable(True)
         self._frame._config_scroll.setSizeAdjustPolicy(
@@ -348,8 +423,8 @@ class PerformanceLauncherForm:
         root.addWidget(self._frame._config_scroll, 1)
 
     def _section_card(self, title: str, name: str) -> HeaderCardWidget:
-        card = HeaderCardWidget()
-        card.setTitle(title)
+        # 功能分区沿用统一透明容器，日志和输入控件仍绘制自己的阅读与交互底色。
+        card = ContentSection(title)
         card.setObjectName(name)
         card.setMinimumWidth(0)
         card.headerLayout.setContentsMargins(16, 0, 16, 0)
@@ -401,7 +476,7 @@ class PerformanceLauncherForm:
         return container
 
     def _build_config_section(self, package_name: str) -> QWidget:
-        """常用计划集中展示，诊断折叠与可选压力配置保留所有输入状态。"""
+        """计划与诊断常显并随宽度重排，可选压力配置保留原输入状态。"""
 
         content = QWidget()
         content.setObjectName("performanceConfiguration")
@@ -411,21 +486,18 @@ class PerformanceLauncherForm:
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
         target = self._section_card(tr("采集计划"), "performanceTarget")
-        diagnostic_content = QWidget()
-        diagnostic_content.setMinimumWidth(0)
-        diagnostics = QVBoxLayout(diagnostic_content)
-        diagnostics.setContentsMargins(0, 16, 0, 0)
-        diagnostics.setSpacing(16)
-        self._frame._diagnostic_tools = CollapsibleTools(
-            tr("诊断选项"), diagnostic_content,
-            tooltip=tr("设置堆快照、异常关键字与设备日志；收起时保留配置。"),
-        )
+        self._frame._diagnostic_tools = QWidget()
         self._frame._diagnostic_tools.setObjectName("performanceDiagnostics")
-        diagnostic_layout = self._frame._diagnostic_tools.layout()
-        if diagnostic_layout is not None:
-            diagnostic_layout.setAlignment(
-                self._frame._diagnostic_tools.toggle_button, Qt.AlignmentFlag.AlignLeft
-            )
+        self._frame._diagnostic_tools.setMinimumWidth(0)
+        diagnostics = QVBoxLayout(self._frame._diagnostic_tools)
+        diagnostics.setContentsMargins(0, 0, 0, 0)
+        diagnostics.setSpacing(12)
+        diagnostic_title = apply_label_role(
+            BodyLabel(tr("诊断选项")), FontRole.UI_SMALL,
+            color_key="TEXT_SECONDARY", bold=True,
+        )
+        diagnostic_title.setObjectName("performanceDiagnosticsTitle")
+        diagnostics.addWidget(diagnostic_title)
         monkey = QWidget()
         monkey.setObjectName("performanceMonkey")
         monkey_layout = QVBoxLayout(monkey)
@@ -445,20 +517,17 @@ class PerformanceLauncherForm:
         self._frame.get_package_btn.setIcon(get_fluent_icon("target.svg"))
         self._frame.get_package_btn.setProperty("iconName", "target.svg")
         self._frame.get_package_btn.clicked.connect(self._frame.fetch_current_package)
-        target.viewLayout.addWidget(
-            self._field(
-                "package",
-                tr("应用包名"),
-                self._row_widget(self._frame.package_edit, self._frame.get_package_btn),
-                CONFIG_HINTS["package"],
-            )
+        package_field = self._field(
+            "package",
+            tr("应用包名"),
+            self._row_widget(self._frame.package_edit, self._frame.get_package_btn),
+            CONFIG_HINTS["package"],
         )
         self._frame.package_feedback = apply_label_role(
             BodyLabel(""), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self._frame.package_feedback.setWordWrap(True)
         self._frame.package_feedback.hide()
-        target.viewLayout.addWidget(self._frame.package_feedback)
         self._frame.serialnum_label = apply_label_role(
             BodyLabel(self._frame.device_ip or tr("未选择")), FontRole.MONO, color_key="LOG_SUCCESS"
         )
@@ -472,6 +541,14 @@ class PerformanceLauncherForm:
         )
         self._frame._device_context.setToolTip(tr(CONFIG_HINTS["serialnum"]))
         target.viewLayout.insertWidget(0, self._frame._device_context)
+        from gui.widgets.run_preset_bar import RunPresetBar
+
+        self._frame.run_preset_bar = RunPresetBar(
+            "performance", self._frame.capture_run_parameters, self._frame.apply_run_parameters,
+            parent=target,
+        )
+        self._frame.run_preset_bar.hide()
+        target.viewLayout.insertWidget(0, self._frame.run_preset_bar)
 
         self._frame.frequency_input = StrictIntComboBox(1, 2_147_483_647, 5, presets=(1, 2, 5, 10))
         self._frame.timeout_input = StrictIntComboBox(
@@ -486,46 +563,46 @@ class PerformanceLauncherForm:
         self._frame.frequency_unit_label = self._unit_label("s", tr("seconds"))
         self._frame.timeout_unit_label = self._unit_label("min", tr("minutes"))
         self._frame.dumpheap_unit_label = self._unit_label("min", tr("minutes"))
-        target.viewLayout.addWidget(
-            _PerformanceGrid(
-                [
-                    self._field(
-                        "frequency",
-                        tr("采样间隔"),
-                        self._row_widget(
-                            self._frame.frequency_input, self._frame.frequency_unit_label,
-                            keep_inline=True,
-                        ),
-                        CONFIG_HINTS["frequency"],
+        timing_fields = _PerformanceGrid(
+            [
+                self._field(
+                    "frequency",
+                    tr("采样间隔"),
+                    self._row_widget(
+                        self._frame.frequency_input, self._frame.frequency_unit_label,
+                        keep_inline=True,
                     ),
-                    self._field(
-                        "timeout",
-                        tr("采集时长"),
-                        self._row_widget(
-                            self._frame.timeout_input, self._frame.timeout_unit_label,
-                            keep_inline=True,
-                        ),
-                        CONFIG_HINTS["timeout"],
+                    CONFIG_HINTS["frequency"],
+                ),
+                self._field(
+                    "timeout",
+                    tr("采集时长"),
+                    self._row_widget(
+                        self._frame.timeout_input, self._frame.timeout_unit_label,
+                        keep_inline=True,
                     ),
-                ], columns=2,
-            )
+                    CONFIG_HINTS["timeout"],
+                ),
+            ], columns=2,
         )
-        diagnostics.addWidget(self._field(
+        plan_fields = self._row_widget(package_field, timing_fields)
+        plan_fields.setObjectName("performancePlanFields")
+        target.viewLayout.addWidget(plan_fields)
+        target.viewLayout.addWidget(self._frame.package_feedback)
+        dumpheap_field = self._field(
             "dumpheap_freq", tr("堆快照间隔"),
             self._row_widget(
                 self._frame.dumpheap_input, self._frame.dumpheap_unit_label, keep_inline=True,
             ),
             CONFIG_HINTS["dumpheap_freq"],
-        ))
+        )
         self._frame.exception_edit = LineEdit()
         self._frame.exception_edit.setText("fatal exception;has died")
-        diagnostics.addWidget(
-            self._field(
-                "exceptionlog",
-                tr("异常日志关键字"),
-                self._frame.exception_edit,
-                CONFIG_HINTS["exceptionlog"],
-            )
+        exception_field = self._field(
+            "exceptionlog",
+            tr("异常日志关键字"),
+            self._frame.exception_edit,
+            CONFIG_HINTS["exceptionlog"],
         )
 
         self._frame.save_path_edit = LineEdit()
@@ -547,14 +624,16 @@ class PerformanceLauncherForm:
         )
         self._frame.phone_log_edit = LineEdit()
         self._frame.phone_log_edit.setText("/data/anr")
-        diagnostics.addWidget(
-            self._field(
+        diagnostics.addWidget(_PerformanceGrid(
+            [dumpheap_field, exception_field, self._field(
                 "phone_log_path",
                 tr("结束后拉取的设备日志"),
                 self._frame.phone_log_edit,
                 CONFIG_HINTS["phone_log_path"],
-            )
-        )
+            )],
+            columns=3,
+            minimum_cell_text=tr("结束后拉取的设备日志"),
+        ))
 
         self._frame.monkey_check = CheckBox(tr("同时运行 Monkey"))
         self._frame.monkey_check.toggled.connect(self._frame._on_monkey_enabled_changed)
@@ -564,7 +643,6 @@ class PerformanceLauncherForm:
         monkey_layout.addWidget(self._frame._monkey_details)
         target.viewLayout.addWidget(self._frame._diagnostic_tools)
         target.viewLayout.addWidget(monkey)
-        target.viewLayout.addStretch(1)
         self._frame._configuration_sections = (target,)
         self._on_monkey_enabled_changed(self._frame.monkey_check.isChecked())
         return content
@@ -824,9 +902,12 @@ class PerformanceLauncherForm:
         return container
 
     def _build_log_view(self) -> PlainTextEdit:
+        from gui.styles.fluent import apply_reading_surface
+
         log_view = PlainTextEdit()
         log_view.setObjectName("performanceLog")
         log_view.setReadOnly(True)
+        apply_reading_surface(log_view)
         log_view.setUndoRedoEnabled(False)
         log_view.setPlaceholderText(tr("启动采集后，运行日志会显示在这里。"))
         log_view.document().setMaximumBlockCount(self._frame._max_log_lines)
@@ -835,22 +916,21 @@ class PerformanceLauncherForm:
     def _build_chart_toggle(self) -> tuple[QWidget, QStackedWidget]:
         """构建日志/图表切换条与承载栈（P3）：图表视图由页面注入到栈内。"""
 
-        segmented = SegmentedWidget()
+        segmented = _PerformanceViewToggle()
         segmented.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         segmented.addItem("log", tr("日志"))
         segmented.addItem("chart", tr("图表"))
         segmented.setCurrentItem("log")
-        # 功能提示契约：分段按钮提供英文短描述（tooltip 契约测试）。
         for button, tip in zip(
             segmented.items.values(), (tr("Show run logs"), tr("Show result charts"))
         ):
-            button.setToolTip(tip)
-            button.setProperty("functionalToolTip", tip)
+            configure_button(button, text=button.text(), tooltip=tip)
         stack = _PerformanceResultStack()
         stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         segmented.currentItemChanged.connect(
             lambda route_key: stack.setCurrentIndex(1 if route_key == "chart" else 0)
         )
+        stack.currentChanged.connect(segmented.setCurrentIndex)
         stack.currentChanged.connect(self.refresh_result_view_height)
         return segmented, stack
 
@@ -868,27 +948,11 @@ class PerformanceLauncherForm:
         stack.setMaximumHeight(16_777_215)
 
     def _build_actions(self) -> QWidget:
-        container = QWidget()
-        container.setObjectName("performanceActionRow")
-        container.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        row = QVBoxLayout(container)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(8)
-
-        self._frame.status_label = apply_label_role(
-            BodyLabel(tr("Idle")), FontRole.UI, color_key="TEXT_SECONDARY"
-        )
-        self._frame.status_label.setObjectName("statusLabel")
-        self._frame.status_label.setMinimumWidth(0)
-        self._frame.status_label.setWordWrap(True)
-
-        self._frame.progress_bar = ProgressBar()
+        self._frame.progress_display = PerformanceProgress()
+        self._frame.status_label = self._frame.progress_display.status_label
+        # 保留既有运行控制器的数值接口，显示由参考项目的环形控件承载。
+        self._frame.progress_bar = self._frame.progress_display.ring
         self._frame.progress_bar.setObjectName("performanceProgress")
-        self._frame.progress_bar.setRange(0, 100)
-        self._frame.progress_bar.setValue(0)
-        self._frame.progress_bar.setFormat("0%")
-        self._frame.progress_bar.setTextVisible(True)
-        self._frame.progress_bar.setMinimumWidth(0)
 
         self._frame.perfetto_action = QAction(
             get_themed_icon("speedometer.svg"),
@@ -944,10 +1008,10 @@ class PerformanceLauncherForm:
         self._frame.start_btn.setIconSize(QSize(14, 14))
         self._frame.start_btn.setProperty("iconName", "play.svg")
         self._frame.start_btn.clicked.connect(self._frame.start_mobileperf)
-        row.addWidget(
-            self._row_widget(self._frame.status_label, self._frame.stop_btn, self._frame.start_btn)
+        container = _PerformanceActionCard(
+            self._frame.progress_display, self._frame.stop_btn, self._frame.start_btn,
         )
-        row.addWidget(self._frame.progress_bar)
+        container.setObjectName("performanceActionRow")
         self._sync_perfetto_button()
         self._sync_result_button()
         return container
@@ -1022,10 +1086,7 @@ class PerformanceLauncherForm:
         return True
 
     def _reveal_invalid_field(self, field: QWidget) -> None:
-        """校验失败先展开所属分区，布局刷新后滚动到可编辑字段。"""
-
-        if self._frame._diagnostic_tools.isAncestorOf(field):
-            self._frame._diagnostic_tools.toggle_button.setChecked(True)
+        """校验失败后等布局刷新，再滚动到可编辑字段。"""
 
         def reveal() -> None:
             parent = field.parentWidget()

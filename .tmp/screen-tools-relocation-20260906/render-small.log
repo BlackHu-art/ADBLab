@@ -1,0 +1,11 @@
+
+[1;33m📢 Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+{"frame": [500, 900], "font": 22, "language": "zh_CN", "theme": "Dark", "tools": [10, 8, 491, 229], "canvas": [10, 245, 491, 178], "viewport": [72, 403, 404, 473], "scroll_max": 94, "horizontal_scroll_max": 107, "buttons_readable_and_reachable": true, "bottom_actions_reachable": true, "view_minimum": "PySide6.QtCore.QSize(0, 160)", "view_minimum_hint": "PySide6.QtCore.QSize(68, 68)", "page_minimum": "PySide6.QtCore.QSize(0, 0)", "page_minimum_hint": "PySide6.QtCore.QSize(511, 567)", "page_size_hint": "PySide6.QtCore.QSize(511, 871)", "page_hfw": 567, "layout_hfw": 871, "layout_min_hfw": 567, "view_size_hint": "PySide6.QtCore.QSize(84, 150)", "tools_min_hint": "PySide6.QtCore.QSize(175, 229)", "bottom_min_hint": "PySide6.QtCore.QSize(491, 126)", "header_min_hint": "PySide6.QtCore.QSize(341, 99)"}
+Traceback (most recent call last):
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.tmp\screen-tools-relocation-20260906\render_screen_tools.py", line 155, in <module>
+    main()
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.tmp\screen-tools-relocation-20260906\render_screen_tools.py", line 141, in main
+    assert host.content_scroll.horizontalScrollBar().maximum() == 0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

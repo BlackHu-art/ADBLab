@@ -1,12 +1,13 @@
-"""任务中心页：在途任务轮询视图 + 有界历史视图（P1-B 填充实现）。
+"""任务中心页：在途任务、可持久化测试结果与本次操作记录。
 
 在途数据源为 ``OperationManager.active_snapshot()``（仅 QUEUED/RUNNING/FINALIZING，
 终态即删除、无历史）；历史由 :class:`services.task_history.TaskHistoryStore` 自持有界
-存储消费终态事件。页面可见时以 1000ms ``QTimer`` 轮询并做不可变快照 diff，无变化
+存储消费终态事件，Monkey/性能的跨会话结果由共享测试库异步更新。页面可见时
+以 1000ms ``QTimer`` 轮询并做不可变快照 diff，无变化
 不重建控件；隐藏时停表。取消按钮走双路径：``OperationManager.request_cancel`` +
-注入的资源停止回调 ``stop_hook``（本阶段允许为空实现，接口保留）。
+注入的资源停止回调 ``stop_hook``。
 
-构造契约（兼容 P1-A 占位接口）：``panel`` 预留为 SidePanel 兼容入口；在途视图
+构造契约：``panel`` 预留为 SidePanel 兼容入口；在途视图
 需要注入 ``operation_manager`` 才能读取活动快照，未注入时在途视图退化为空态。
 ``refresh()`` 是本页对组合根的稳定契约：同步重读在途快照与历史并按 diff 决定重建。
 """
@@ -18,7 +19,14 @@ from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QHideEvent, QShowEvent
-from PySide6.QtWidgets import QBoxLayout, QFrame, QHBoxLayout, QLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QBoxLayout,
+    QFrame,
+    QHBoxLayout,
+    QLayout,
+    QVBoxLayout,
+    QWidget,
+)
 from qfluentwidgets import (
     BodyLabel,
     FluentIcon,
@@ -32,10 +40,13 @@ from qfluentwidgets import (
 
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.i18n import tr
+from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role, configure_button
+from gui.widgets.category_stack import AdaptiveCategoryStack
 from gui.widgets.collapsible_tools import CollapsibleTools
 from gui.widgets.content_section import ContentSection
+from gui.widgets.run_results import RunResultsWidget
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
 
 # 在途视图轮询间隔（毫秒）。
@@ -173,10 +184,11 @@ class TaskCenterPage(QWidget):
         poll_interval_ms: int = POLL_INTERVAL_MS,
         history_limit: int | None = DEFAULT_HISTORY_LIMIT,
         runtime_log: QWidget | None = None,
+        run_library: RunLibraryController | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("taskCenterPage")
-        # panel 预留为 SidePanel 兼容接口（P1-A 契约）；本阶段未使用统一信号层。
+        # 保留 SidePanel 调用入口，活动任务通过独立的 operation_manager 注入。
         self._panel = panel
         self._operation_manager = operation_manager
         self._history_store = history_store if history_store is not None else TaskHistoryStore()
@@ -202,7 +214,22 @@ class TaskCenterPage(QWidget):
         content_layout.setContentsMargins(8, 8, 8, 8)
         content_layout.setSpacing(20)
         content_layout.addWidget(self._active_card)
-        content_layout.addWidget(self._history_card)
+        self._idle_label: BodyLabel | None = None
+        self.run_results: RunResultsWidget | None = None
+        if run_library is not None:
+            self._idle_label = apply_label_role(
+                BodyLabel(tr("暂无在途任务"), content), FontRole.UI_SMALL,
+                color_key="TEXT_SECONDARY",
+            )
+            content_layout.insertWidget(0, self._idle_label)
+            self.run_results = RunResultsWidget(run_library, content)
+            self._history_card.headerView.hide()
+            self.history_views = AdaptiveCategoryStack("taskHistory", content)
+            self.history_views.add_category("test_results", tr("测试结果"), (self.run_results,))
+            self.history_views.add_category("operations", tr("本次操作"), (self._history_card,))
+            content_layout.addWidget(self.history_views)
+        else:
+            content_layout.addWidget(self._history_card)
         self.runtime_records: CollapsibleTools | None = None
         if runtime_log is not None:
             # 记录面板继续接收有界日志；折叠只影响显示，不丢失后台错误和操作结果。
@@ -293,6 +320,12 @@ class TaskCenterPage(QWidget):
 
     def _render_active_rows(self, active: tuple[OperationSnapshot, ...]) -> None:
         self._clear_layout(self._active_card.viewLayout)
+        if self._idle_label is not None:
+            # 测试结果是常驻内容；空在途状态只占一行，避免把结果操作推到首屏之外。
+            self._active_card.setVisible(bool(active))
+            self._idle_label.setVisible(not active)
+            if not active:
+                return
         if not active:
             self._active_card.viewLayout.addWidget(
                 self._empty_state(
@@ -422,7 +455,7 @@ class TaskCenterPage(QWidget):
     # ── 主题与辅助 ──────────────────────────────────────────────────────
 
     def _sync_theme_state(self) -> None:
-        """按当前主题重建页面内全部主题化控件样式（P2 接入广播前由组合根触发）。"""
+        """按当前主题重建页面内全部主题化控件样式。"""
 
         for widget in self.findChildren(QWidget):
             sync = getattr(widget, "_sync_theme_state", None)

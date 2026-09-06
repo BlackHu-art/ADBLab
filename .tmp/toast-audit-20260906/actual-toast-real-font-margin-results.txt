@@ -1,0 +1,15 @@
+
+[1;33m Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+width 420 point 12 margin 0 view 274 doc 281.0 hmax 7 naturalRight 274.0 textMatches True
+width 420 point 12 margin 4 view 274 doc 270.0 hmax 0 naturalRight 266.0 textMatches True
+width 420 point 22 margin 0 view 274 doc 273.0 hmax 0 naturalRight 273.0 textMatches True
+width 420 point 22 margin 4 view 274 doc 268.0 hmax 0 naturalRight 264.0 textMatches True
+width 640 point 12 margin 0 view 422 doc 421.0 hmax 0 naturalRight 421.0 textMatches True
+width 640 point 12 margin 4 view 422 doc 422.0 hmax 0 naturalRight 418.0 textMatches True
+width 640 point 22 margin 0 view 422 doc 416.0 hmax 0 naturalRight 416.0 textMatches True
+width 640 point 22 margin 4 view 422 doc 411.0 hmax 0 naturalRight 407.0 textMatches True
+width 900 point 12 margin 0 view 422 doc 421.0 hmax 0 naturalRight 421.0 textMatches True
+width 900 point 12 margin 4 view 422 doc 422.0 hmax 0 naturalRight 418.0 textMatches True
+width 900 point 22 margin 0 view 422 doc 416.0 hmax 0 naturalRight 416.0 textMatches True
+width 900 point 22 margin 4 view 422 doc 411.0 hmax 0 naturalRight 407.0 textMatches True

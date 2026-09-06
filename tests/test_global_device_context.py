@@ -403,21 +403,15 @@ def test_device_bar_groups_fit_real_window_and_wide_session_shares_row(
 def test_more_menu_keeps_device_actions_and_selection_enablement(qt_application):
     bar = DeviceContextBar()
     bar.set_context([], ["demo-a"], "ready")
-    assert not bar.info_button.isEnabled() and not bar.disconnect_button.isEnabled()
     assert not bar.info_action.isEnabled() and not bar.disconnect_action.isEnabled()
+    assert bar.info_action.toolTip() == "在任务中心运行记录中查看所选设备信息"
+    assert bar.disconnect_action.toolTip() == "断开已勾选设备的 ADB 连接"
     info = QSignalSpy(bar.info_requested)
     disconnect = QSignalSpy(bar.disconnect_requested)
     bar.set_context(["demo-a"], ["demo-a"], "ready")
     assert bar.info_action.isEnabled() and bar.disconnect_action.isEnabled()
     bar.show()
-    for row, (button, called) in enumerate(
-        ((bar.info_button, info), (bar.disconnect_button, disconnect))
-    ):
-        assert button.isHidden()
-        button.click()
-        assert called.count() == 1
-        # 菜单行为不依赖隐藏兼容按钮的可用状态或 click 转发。
-        button.setEnabled(False)
+    for row, called in enumerate((info, disconnect)):
         QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
         QTest.qWait(200)
         item = bar._more_menu.view.item(row)
@@ -425,7 +419,7 @@ def test_more_menu_keeps_device_actions_and_selection_enablement(qt_application)
             bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
             pos=bar._more_menu.view.visualItemRect(item).center(),
         )
-        assert called.count() == 2
+        assert called.count() == 1
         assert not bar._more_menu.isVisible()
     bar.set_context([], ["demo-a"], "ready")
     assert not bar.info_action.isEnabled() and not bar.disconnect_action.isEnabled()
@@ -437,7 +431,7 @@ def test_more_menu_keeps_device_actions_and_selection_enablement(qt_application)
             bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
             pos=bar._more_menu.view.visualItemRect(item).center(),
         )
-    assert info.count() == 2 and disconnect.count() == 2
+    assert info.count() == 1 and disconnect.count() == 1
 
 
 @pytest.mark.parametrize("state", ["ready", "scanning", "unavailable", "empty"])

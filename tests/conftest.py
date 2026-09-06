@@ -19,6 +19,14 @@ from gui.styles.typography import typography_manager
 _APPLICATION_REFERENCES = []
 
 
+@pytest.fixture(autouse=True)
+def isolated_run_library_storage(tmp_path, monkeypatch):
+    """主窗口测试的归档库只读写临时目录，绝不加载或覆盖用户历史。"""
+    monkeypatch.setattr(
+        "services.run_library.user_config_path", lambda filename: str(tmp_path / filename),
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def qt_application():
     """在整个测试进程中保留同一个 QApplication 包装对象。"""
@@ -152,6 +160,9 @@ _UI_TEST_FILES = frozenset(
         "test_feature_typography.py",
         "test_fluent_components.py",
         "test_fluent_dialog_contract.py",
+        "test_notifications.py",
+        "test_performance_sessions.py",
+        "test_preset_spin_box.py",
         "test_main_window_layout.py",
         # test_model_execution.py 已按主题拆分为以下文件（ADR-0003 Phase 2）。
         # runner/parser/配置类按本地测试选择需求独立保留，不由此假定 CI 门禁。
@@ -167,12 +178,20 @@ _UI_TEST_FILES = frozenset(
         "test_page_layout.py",
         "test_perf_chart_data.py",
         "test_performance_responsive.py",
+        "test_performance_progress.py",
         "test_responsive_layout_controller.py",
         "test_responsive_panels.py",
         "test_responsive_row_height.py",
         "test_screenshot_page.py",
         "test_system_panel_categories.py",
         "test_task_center.py",
+        "test_run_results.py",
+        "test_reading_surface.py",
+        "test_run_results_host.py",
+        "test_monkey_library.py",
+        "test_performance_library.py",
+        "test_run_library_ui.py",
+        "test_run_library_integration.py",
         "test_typography_core.py",
         "test_ui_geometry_helpers.py",
         "test_window_lifecycle.py",

@@ -91,7 +91,7 @@ class _DeviceIdentifier(CaptionLabel):
 
 
 class _DeviceField(QWidget):
-    """无边框的参数标签与数值，字段缺失时整体隐藏且保留控件实例。"""
+    """单行键值对只省略显示文本，完整快照用于提示、辅助读取与复制。"""
 
     def __init__(self, title: str, parent: QWidget, value=None, *, icon=None) -> None:
         super().__init__(parent)
@@ -103,22 +103,20 @@ class _DeviceField(QWidget):
         )
         self.icon = IconWidget(icon, self) if icon is not None else None
         self.value = value if value is not None else BodyLabel(self)
+        self._full_value = self.value.toolTip() if value is not None else ""
         self.value.setTextFormat(Qt.TextFormat.PlainText)
         self.value.setMinimumWidth(0)
+        self.value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.value.setAccessibleName(title)
         if not isinstance(self.value, _DeviceIdentifier):
-            self.value.setWordWrap(True)
-        layout = QVBoxLayout(self)
+            self.value.setWordWrap(False)
+        layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        heading = QHBoxLayout()
-        heading.setContentsMargins(0, 0, 0, 0)
-        heading.setSpacing(5)
+        layout.setSpacing(8)
         if self.icon is not None:
-            heading.addWidget(self.icon)
-        heading.addWidget(self.caption)
-        heading.addStretch(1)
-        layout.addLayout(heading)
-        layout.addWidget(self.value)
+            layout.addWidget(self.icon)
+        layout.addWidget(self.caption)
+        layout.addWidget(self.value, 1)
         self.value.installEventFilter(self)
         self.apply_fonts()
 
@@ -126,25 +124,39 @@ class _DeviceField(QWidget):
         self.caption.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         role = FontRole.MONO if isinstance(self.value, _DeviceIdentifier) else FontRole.UI
         self.value.setFont(BaseStyles.font_for_role(role))
-        self.caption.setMinimumHeight(self.caption.fontMetrics().height())
+        self.caption.setFixedHeight(self.caption.fontMetrics().height())
         if self.icon is not None:
             edge = max(18, min(24, self.caption.fontMetrics().height() - 3))
             self.icon.setFixedSize(edge, edge)
         self._sync_height()
 
     def set_value(self, text: str) -> None:
-        self.value.setText(text)
+        self._full_value = text
+        self.value.setToolTip(text)
+        self.value.setAccessibleDescription(text)
         self.setVisible(bool(text))
         self._sync_height()
 
+    def full_value(self) -> str:
+        """返回当前快照中的原值，不能从已经省略的 QLabel 文本导出详情。"""
+        return self._full_value
+
     def _sync_height(self) -> None:
         height = self.value.fontMetrics().height()
+        self.value.setFixedHeight(height)
+        self.setFixedHeight(max(
+            height, self.caption.fontMetrics().height(),
+            self.icon.height() if self.icon is not None else 0,
+        ))
         if not isinstance(self.value, _DeviceIdentifier):
-            height = max(height, self.value.fontMetrics().boundingRect(
-                QRect(0, 0, max(1, self.value.width()), 0), Qt.TextFlag.TextWordWrap,
-                self.value.text(),
-            ).height())
-        self.value.setMinimumHeight(height)
+            text = self.value.fontMetrics().elidedText(
+                self._full_value, Qt.TextElideMode.ElideMiddle, max(1, self.value.width()),
+            ) if self.isVisible() else self._full_value
+            self.value.setText(text)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._sync_height()
 
     def eventFilter(self, watched, event) -> bool:
         if watched is self.value and event.type() == QEvent.Type.Resize:
@@ -363,7 +375,7 @@ class _DeviceCard(QWidget):
             (tr("电池"), self.battery_label.text()),
         ]
         entries.extend(
-            (field.caption.text(), field.value.text())
+            (field.caption.text(), field.full_value())
             for field in (*self.summary_fields.values(), *self.detail_fields.values())
         )
         QApplication.clipboard().setText("\n".join(
@@ -466,19 +478,33 @@ class _DeviceCard(QWidget):
         )
         self.status_container.setMinimumWidth(0 if stacked_header else status_width)
         metrics = self.name_label.fontMetrics()
-        metric_width = max(160, metrics.horizontalAdvance("Android 14 · API 34") + 20)
+        summary_fields = tuple(self.summary_fields.values())
+        summary_caption_width = max(
+            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
+            for field in summary_fields
+        )
+        metric_width = max(
+            160,
+            summary_caption_width + 16 + max(
+                field.icon.width() for field in summary_fields if field.icon is not None
+            ) + self.summary_fields["system"].value.fontMetrics().horizontalAdvance(
+                "Android 14 · API 34"
+            ),
+        )
         columns = max(1, min(4, (available + 16) // (metric_width + 16)))
         # 四项摘要在大字号下成对换行，避免三项之后只剩一个孤立指标。
         if columns == 3:
             columns = 2
-        self._place_fields(self._summary_layout, tuple(self.summary_fields.values()), columns)
+        self._place_fields(self._summary_layout, summary_fields, columns)
         self.summary_container.setVisible(any(
             not field.isHidden() for field in self.summary_fields.values()
         ))
+        detail_caption_width = max(
+            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
+            for field in (*self.detail_fields.values(), self.identifier_field)
+        )
         detail_width = max(
-            160, metrics.horizontalAdvance("1080 × 2400") + 20,
-            *(field.caption.fontMetrics().horizontalAdvance(field.caption.text())
-              for field in (*self.detail_fields.values(), self.identifier_field)),
+            160, detail_caption_width + 8 + metrics.horizontalAdvance("arm64-v8a"),
         )
         detail_columns = max(1, min(3, (available + 16) // (detail_width + 16)))
         self._place_fields(
@@ -493,11 +519,17 @@ class _DeviceCard(QWidget):
 
     @staticmethod
     def _place_fields(layout: QGridLayout, fields: tuple[_DeviceField, ...], columns: int) -> None:
+        visible = tuple(field for field in fields if not field.isHidden())
+        caption_width = max((
+            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
+            for field in visible
+        ), default=0)
         for field in fields:
             layout.removeWidget(field)
         for column in range(4):
             layout.setColumnStretch(column, 1 if column < columns else 0)
-        for index, field in enumerate(field for field in fields if not field.isHidden()):
+        for index, field in enumerate(visible):
+            field.caption.setFixedWidth(caption_width)
             layout.addWidget(field, index // columns, index % columns, Qt.AlignmentFlag.AlignTop)
 
     def resizeEvent(self, event) -> None:

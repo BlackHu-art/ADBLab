@@ -1,0 +1,229 @@
+"""供 Monkey 与性能表单共用的紧凑命名方案栏。"""
+
+from __future__ import annotations
+
+import copy
+from collections.abc import Callable
+
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QGridLayout, QSizePolicy, QWidget
+from qfluentwidgets import ComboBox, FluentIcon, PushButton, ToolButton
+
+from gui.dialogs.fluent_dialog import FluentInputDialog, FluentMessageBox
+from gui.i18n import tr
+from gui.run_library import RunLibraryController
+from gui.styles import BaseStyles, FontRole
+
+
+class RunPresetBar(QWidget):
+    """载入只回填表单；保存成功由共享库通知，不自行改变测试运行状态。"""
+
+    def __init__(
+        self,
+        kind: str,
+        collect_parameters: Callable[[], dict | None],
+        apply_parameters: Callable[[dict], None],
+        parent: QWidget | None = None,
+    ):
+        super().__init__(parent)
+        self._kind = kind
+        self._collect = collect_parameters
+        self._apply = apply_parameters
+        self._library: RunLibraryController | None = None
+        self._pending_name = ""
+        layout = QGridLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        self.combo = ComboBox(self)
+        self.combo.setMinimumWidth(90)
+        self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.combo.setAccessibleName(tr("测试方案"))
+        self.load_button = PushButton(tr("载入"), self)
+        self.save_button = PushButton(tr("保存方案"), self)
+        self.delete_button = ToolButton(FluentIcon.DELETE, self)
+        self.delete_button.setToolTip(tr("删除所选方案"))
+        self.delete_button.setAccessibleName(tr("删除所选方案"))
+        self.load_button.setToolTip(tr("只载入参数，由您选择设备后开始测试"))
+        self._grid = layout
+        self._mode: int | None = None
+        policy = QSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.combo.currentIndexChanged.connect(self._update_actions)
+        self.load_button.clicked.connect(self._load)
+        self.save_button.clicked.connect(self._save)
+        self.delete_button.clicked.connect(self._delete)
+        BaseStyles.ui_font_changed.connect(self._refresh_fonts)
+        self._refresh_fonts()
+        self._refresh()
+
+    def _refresh_fonts(self, *_args) -> None:
+        for control in (self.combo, self.load_button, self.save_button, self.delete_button):
+            control.setFont(BaseStyles.font_for_role(FontRole.UI))
+        self._reflow()
+
+    def _row_width(self) -> int:
+        return (
+            120
+            + sum(
+                button.sizeHint().width()
+                for button in (
+                    self.load_button,
+                    self.save_button,
+                    self.delete_button,
+                )
+            )
+            + 18
+        )
+
+    def _layout_mode(self, width: int) -> int:
+        if width >= self._row_width():
+            return 0
+        if width >= self._row_width() - 120:
+            return 1
+        return 2
+
+    def hasHeightForWidth(self) -> bool:
+        return True
+
+    def heightForWidth(self, width: int) -> int:
+        height = max(
+            control.sizeHint().height()
+            for control in (
+                self.combo,
+                self.load_button,
+                self.save_button,
+                self.delete_button,
+            )
+        )
+        rows = self._layout_mode(width) + 1
+        return height * rows + 6 * (rows - 1)
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self._minimum_width(), self.heightForWidth(self.width()))
+
+    def _minimum_width(self) -> int:
+        return max(
+            self.save_button.sizeHint().width(),
+            self.load_button.sizeHint().width() + self.delete_button.sizeHint().width() + 12,
+        )
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._row_width(), self.heightForWidth(self.width()))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        self.setMinimumWidth(self._minimum_width())
+        mode = self._layout_mode(self.width())
+        if self._mode != mode:
+            self._mode = mode
+            controls = (self.combo, self.load_button, self.save_button, self.delete_button)
+            for control in controls:
+                self._grid.removeWidget(control)
+            for column in range(4):
+                self._grid.setColumnStretch(column, 0)
+            if mode == 2:
+                self._grid.addWidget(self.combo, 0, 0, 1, 4)
+                self._grid.addWidget(self.load_button, 1, 0)
+                self._grid.addWidget(self.delete_button, 1, 3)
+                self._grid.addWidget(self.save_button, 2, 0, 1, 4)
+                self._grid.setColumnStretch(1, 1)
+            elif mode == 1:
+                self._grid.addWidget(self.combo, 0, 0, 1, 4)
+                for column, button in enumerate(controls[1:], 1):
+                    self._grid.addWidget(button, 1, column)
+                self._grid.setColumnStretch(0, 1)
+            else:
+                for column, control in enumerate(controls):
+                    self._grid.addWidget(control, 0, column)
+                self._grid.setColumnStretch(0, 1)
+        for button in (self.load_button, self.save_button, self.delete_button):
+            button.setMinimumWidth(button.sizeHint().width())
+        self.setFixedHeight(self.heightForWidth(self.width()))
+        self.updateGeometry()
+
+    def set_library(self, controller: RunLibraryController) -> None:
+        if self._library is controller:
+            return
+        if self._library is not None:
+            self._library.changed.disconnect(self._refresh)
+        self._library = controller
+        controller.changed.connect(self._refresh)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        selected = self.combo.currentData()
+        self.combo.blockSignals(True)
+        self.combo.clear()
+        self.combo.addItem(tr("测试方案"), userData=None)
+        pending_found = False
+        for preset in self._library.presets if self._library is not None else ():
+            if preset.kind != self._kind:
+                continue
+            self.combo.addItem(preset.name, userData=preset.preset_id)
+            if preset.preset_id == selected or preset.name == self._pending_name:
+                self.combo.setCurrentIndex(self.combo.count() - 1)
+                pending_found = pending_found or preset.name == self._pending_name
+        if pending_found:
+            self._pending_name = ""
+        self.combo.blockSignals(False)
+        self._update_actions()
+
+    def _update_actions(self, *_args) -> None:
+        available = self._library is not None
+        self.combo.setToolTip(self.combo.currentText())
+        self.combo.setEnabled(available)
+        self.save_button.setEnabled(available)
+        self.load_button.setEnabled(available and bool(self.combo.currentData()))
+        self.delete_button.setEnabled(available and bool(self.combo.currentData()))
+
+    def _load(self) -> None:
+        if self._library is None or not self.isEnabled():
+            return
+        preset = next(
+            (p for p in self._library.presets if p.preset_id == self.combo.currentData()), None
+        )
+        if preset is not None and preset.kind == self._kind:
+            try:
+                self._apply(copy.deepcopy(preset.parameters))
+            except (TypeError, ValueError):
+                FluentMessageBox.warning(
+                    self,
+                    tr("无法载入方案"),
+                    tr("请先停止当前测试，并检查方案参数是否完整有效。"),
+                )
+
+    def _save(self) -> None:
+        if self._library is None or not self.isEnabled():
+            return
+        try:
+            parameters = self._collect()
+        except (TypeError, ValueError):
+            FluentMessageBox.warning(
+                self, tr("无法保存方案"), tr("请检查当前表单参数是否完整有效。")
+            )
+            return
+        if parameters is None:
+            return
+        current = self.combo.currentText() if self.combo.currentData() else ""
+        name, accepted = FluentInputDialog.getText(
+            self,
+            tr("保存测试方案"),
+            tr("输入方案名称；同名保存会更新已有方案"),
+            text=current,
+        )
+        if not accepted:
+            return
+        if not name.strip() or len(name.strip()) > 80:
+            FluentMessageBox.warning(self, tr("名称无效"), tr("方案名称应为 1 到 80 个字符"))
+            return
+        self._pending_name = name.strip()
+        self._library.save_preset(name.strip(), self._kind, parameters)
+
+    def _delete(self) -> None:
+        identifier = self.combo.currentData()
+        if self._library is not None and self.isEnabled() and isinstance(identifier, str):
+            self._library.delete_preset(identifier)

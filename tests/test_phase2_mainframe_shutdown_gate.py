@@ -532,6 +532,9 @@ def test_feature_tasks_are_registered_before_host_shutdown():
     blocker = threading.Event()
 
     class FeatureHost:
+        registry = Mock()
+        registry.pages.return_value = ()
+
         def register_shutdown_tasks(self, supervisor, *, owner_id, task_prefix):
             events.append("register")
             supervisor.register(

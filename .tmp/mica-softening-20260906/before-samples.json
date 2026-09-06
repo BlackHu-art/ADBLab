@@ -1,0 +1,158 @@
+[
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "settings",
+    "focus": false,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "before-dce5ef-settings-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "settings",
+    "focus": true,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "before-dce5ef-settings-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "tasks",
+    "focus": false,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-dce5ef-tasks-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "tasks",
+    "focus": true,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-dce5ef-tasks-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "performance",
+    "focus": false,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-dce5ef-performance-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#DCE5EF",
+    "page": "performance",
+    "focus": true,
+    "surface_pixel": "#edf2f7",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-dce5ef-performance-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "settings",
+    "focus": false,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "before-e8e2dc-settings-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "settings",
+    "focus": true,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      50
+    ],
+    "image": "before-e8e2dc-settings-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "tasks",
+    "focus": false,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-e8e2dc-tasks-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "tasks",
+    "focus": true,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-e8e2dc-tasks-focus.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "performance",
+    "focus": false,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-e8e2dc-performance-rest.png",
+    "native_dwm": false
+  },
+  {
+    "phase": "before",
+    "backdrop": "#E8E2DC",
+    "page": "performance",
+    "focus": true,
+    "surface_pixel": "#f3f0ed",
+    "sample_point": [
+      790,
+      121
+    ],
+    "image": "before-e8e2dc-performance-focus.png",
+    "native_dwm": false
+  }
+]

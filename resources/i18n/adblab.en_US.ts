@@ -4998,5 +4998,341 @@ Android device management, app tools and diagnostics</translation>
             <source>存储</source>
             <translation>Storage</translation>
         </message>
+        <message>
+            <source>Monkey 方案参数无效</source>
+            <translation>Invalid Monkey preset parameters</translation>
+        </message>
+        <message>
+            <source>{started} 至 {finished} · {state}</source>
+            <translation>{started} to {finished} · {state}</translation>
+        </message>
+        <message>
+            <source>事件比例合计必须为 100%</source>
+            <translation>Event percentages must total 100%</translation>
+        </message>
+        <message>
+            <source>保存方案</source>
+            <translation>Save preset</translation>
+        </message>
+        <message>
+            <source>保存测试方案</source>
+            <translation>Save test preset</translation>
+        </message>
+        <message>
+            <source>全部状态</source>
+            <translation>All statuses</translation>
+        </message>
+        <message>
+            <source>全部类型</source>
+            <translation>All types</translation>
+        </message>
+        <message>
+            <source>删除所选方案</source>
+            <translation>Delete selected preset</translation>
+        </message>
+        <message>
+            <source>历史测试结果</source>
+            <translation>Test result history</translation>
+        </message>
+        <message>
+            <source>参数格式或数值无效，当前设置未更改。</source>
+            <translation>The parameter format or values are invalid. Current settings were not changed.</translation>
+        </message>
+        <message>
+            <source>只载入参数，由您选择设备后开始测试</source>
+            <translation>Load parameters only; select a device before starting the test</translation>
+        </message>
+        <message>
+            <source>名称无效</source>
+            <translation>Invalid name</translation>
+        </message>
+        <message>
+            <source>固定种子</source>
+            <translation>Fixed seed</translation>
+        </message>
+        <message>
+            <source>固定种子可重复相同事件序列；实际种子会保存在运行记录中</source>
+            <translation>A fixed seed repeats the same event sequence. The actual seed is saved in the run record.</translation>
+        </message>
+        <message>
+            <source>完成时间</source>
+            <translation>Finished</translation>
+        </message>
+        <message>
+            <source>尚无测试结果，完成 Monkey 或性能测试后会显示在这里</source>
+            <translation>No test results yet. Completed Monkey and performance tests will appear here.</translation>
+        </message>
+        <message>
+            <source>已载入参数，请确认当前设备后开始采集。</source>
+            <translation>Parameters loaded. Confirm the current device before starting collection.</translation>
+        </message>
+        <message>
+            <source>应用版本：{version}</source>
+            <translation>App version: {version}</translation>
+        </message>
+        <message>
+            <source>性能</source>
+            <translation>Performance</translation>
+        </message>
+        <message>
+            <source>性能报告</source>
+            <translation>Performance report</translation>
+        </message>
+        <message>
+            <source>性能采集启动失败，请查看运行日志。</source>
+            <translation>Performance collection could not start. Check the run log.</translation>
+        </message>
+        <message>
+            <source>所在目录</source>
+            <translation>Show in folder</translation>
+        </message>
+        <message>
+            <source>打开所选本地附件；文件已移动或删除时会提示</source>
+            <translation>Open the selected local attachment; a message appears if it has been moved or deleted</translation>
+        </message>
+        <message>
+            <source>打开所选附件的本地目录</source>
+            <translation>Open the folder containing the selected attachment</translation>
+        </message>
+        <message>
+            <source>打开附件</source>
+            <translation>Open attachment</translation>
+        </message>
+        <message>
+            <source>按应用包名或日期筛选，例如 2026-09-06</source>
+            <translation>Filter by app package or date, such as 2026-09-06</translation>
+        </message>
+        <message>
+            <source>搜索应用或日期</source>
+            <translation>Search app or date</translation>
+        </message>
+        <message>
+            <source>方案名称应为 1 到 80 个字符</source>
+            <translation>Preset names must contain 1 to 80 characters</translation>
+        </message>
+        <message>
+            <source>无可用附件</source>
+            <translation>No attachments available</translation>
+        </message>
+        <message>
+            <source>无法保存方案</source>
+            <translation>Cannot save preset</translation>
+        </message>
+        <message>
+            <source>无法打开结果文件，请检查系统是否安装了对应程序。</source>
+            <translation>Cannot open the result file. Check that a compatible application is installed.</translation>
+        </message>
+        <message>
+            <source>无法载入参数</source>
+            <translation>Cannot load parameters</translation>
+        </message>
+        <message>
+            <source>无法载入方案</source>
+            <translation>Cannot load preset</translation>
+        </message>
+        <message>
+            <source>显示 {visible} / {total} 条结果</source>
+            <translation>Showing {visible} of {total} results</translation>
+        </message>
+        <message>
+            <source>未指定应用</source>
+            <translation>No app specified</translation>
+        </message>
+        <message>
+            <source>本次操作</source>
+            <translation>Current operations</translation>
+        </message>
+        <message>
+            <source>本次运行参数</source>
+            <translation>Run parameters</translation>
+        </message>
+        <message>
+            <source>查看并复制本次运行的参数快照</source>
+            <translation>View and copy the parameter snapshot for this run</translation>
+        </message>
+        <message>
+            <source>此记录没有保存附件</source>
+            <translation>No attachments were saved for this record</translation>
+        </message>
+        <message>
+            <source>每次随机</source>
+            <translation>Random each time</translation>
+        </message>
+        <message>
+            <source>没有匹配的结果，请调整筛选条件</source>
+            <translation>No matching results. Adjust the filters.</translation>
+        </message>
+        <message>
+            <source>测试方案</source>
+            <translation>Test preset</translation>
+        </message>
+        <message>
+            <source>测试类型</source>
+            <translation>Test type</translation>
+        </message>
+        <message>
+            <source>测试结果</source>
+            <translation>Test results</translation>
+        </message>
+        <message>
+            <source>测试记录或方案未能保存，请检查用户数据目录的可写权限和记录文件；原文件已保留。</source>
+            <translation>The test record or preset could not be saved. Check write access to the user data folder and the record file. The original file has been preserved.</translation>
+        </message>
+        <message>
+            <source>种子值</source>
+            <translation>Seed value</translation>
+        </message>
+        <message>
+            <source>结果不完整</source>
+            <translation>Incomplete</translation>
+        </message>
+        <message>
+            <source>结果文件不可用，可能已被移动或删除，请检查原输出目录。</source>
+            <translation>The result file is unavailable and may have been moved or deleted. Check the original output folder.</translation>
+        </message>
+        <message>
+            <source>结果状态</source>
+            <translation>Result status</translation>
+        </message>
+        <message>
+            <source>结果目录</source>
+            <translation>Results folder</translation>
+        </message>
+        <message>
+            <source>结果附件</source>
+            <translation>Result attachments</translation>
+        </message>
+        <message>
+            <source>耗时 {duration}</source>
+            <translation>Duration {duration}</translation>
+        </message>
+        <message>
+            <source>设备 {index}</source>
+            <translation>Device {index}</translation>
+        </message>
+        <message>
+            <source>设备：{device}</source>
+            <translation>Device: {device}</translation>
+        </message>
+        <message>
+            <source>请先停止当前测试，并检查方案参数是否完整有效。</source>
+            <translation>Stop the current test first, then check that the preset parameters are complete and valid.</translation>
+        </message>
+        <message>
+            <source>请检查当前表单参数是否完整有效。</source>
+            <translation>Check that the form parameters are complete and valid.</translation>
+        </message>
+        <message>
+            <source>请等待当前 Monkey 操作结束后再载入方案</source>
+            <translation>Wait for the current Monkey operation to finish before loading a preset</translation>
+        </message>
+        <message>
+            <source>载入</source>
+            <translation>Load</translation>
+        </message>
+        <message>
+            <source>载入参数</source>
+            <translation>Load parameters</translation>
+        </message>
+        <message>
+            <source>输入方案名称；同名保存会更新已有方案</source>
+            <translation>Enter a preset name; saving with an existing name updates that preset</translation>
+        </message>
+        <message>
+            <source>运行摘要</source>
+            <translation>Run summary</translation>
+        </message>
+        <message>
+            <source>采集完成，已生成性能报告。</source>
+            <translation>Collection completed. A performance report is available.</translation>
+        </message>
+        <message>
+            <source>采集已停止，已保留可用结果。</source>
+            <translation>Collection stopped. Available results have been preserved.</translation>
+        </message>
+        <message>
+            <source>采集已结束，结果可能不完整。</source>
+            <translation>Collection ended. Results may be incomplete.</translation>
+        </message>
+        <message>
+            <source>采集结束，但未生成可用结果。</source>
+            <translation>Collection ended without usable results.</translation>
+        </message>
+        <message>
+            <source>采集运行中，无法载入参数。</source>
+            <translation>Cannot load parameters while collection is running.</translation>
+        </message>
+        <message>
+            <source>采集进度</source>
+            <translation>Collection progress</translation>
+        </message>
+        <message>
+            <source>进度按计划时长估算，报告生成后才确认完成。</source>
+            <translation>Progress is estimated from the planned duration. Completion is confirmed after the report is generated.</translation>
+        </message>
+        <message>
+            <source>正在停止采集并生成报告，请稍候。</source>
+            <translation>Stopping collection and generating the report. Please wait.</translation>
+        </message>
+        <message>
+            <source>已达到计划时长，等待采集结束与报告生成。</source>
+            <translation>Planned duration reached. Waiting for collection to end and the report to be generated.</translation>
+        </message>
+        <message>
+            <source>预计进度 {percent}% · 已用 {elapsed} / 计划 {duration}</source>
+            <translation>Estimated progress {percent}% · Elapsed {elapsed} / Planned {duration}</translation>
+        </message>
+        <message>
+            <source>报告已生成，可查看图表或打开结果目录。</source>
+            <translation>The report is ready. View charts or open the results folder.</translation>
+        </message>
+        <message>
+            <source>采集已停止，已生成的结果会保留。</source>
+            <translation>Collection stopped. Generated results are preserved.</translation>
+        </message>
+        <message>
+            <source>采集失败，请查看运行日志后重试。</source>
+            <translation>Collection failed. Check the run log and try again.</translation>
+        </message>
+        <message>
+            <source>配置采集参数后开始，运行期间可查看日志。</source>
+            <translation>Configure collection parameters, then start. Logs are available while running.</translation>
+        </message>
+        <message>
+            <source>已停止</source>
+            <translation>Stopped</translation>
+        </message>
+        <message>
+            <source>暂无方案，请先保存</source>
+            <translation>No presets yet. Save one first</translation>
+        </message>
+        <message>
+            <source>各设备独立采集，点击一行查看并操作该设备。</source>
+            <translation>Each device collects independently. Select a row to view and control it.</translation>
+        </message>
+        <message>
+            <source>各设备采集状态</source>
+            <translation>Collection status by device</translation>
+        </message>
+        <message>
+            <source>应用与诊断</source>
+            <translation>Apps &amp; Diagnostics</translation>
+        </message>
+        <message>
+            <source>截图与屏幕</source>
+            <translation>Screenshots &amp; Screen</translation>
+        </message>
+        <message>
+            <source>应用包操作、Monkey 测试与诊断报告</source>
+            <translation>Package actions, Monkey tests and diagnostic reports</translation>
+        </message>
+        <message>
+            <source>发送文本、截图录屏，查看并保存截图</source>
+            <translation>Send text, capture or record screens, and view or save screenshots</translation>
+        </message>
+        <message>
+            <source>结果已加入“截图与屏幕”页面。</source>
+            <translation>Results have been added to the Screenshots &amp; Screen page.</translation>
+        </message>
     </context>
 </TS>

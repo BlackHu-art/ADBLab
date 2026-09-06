@@ -364,6 +364,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         program_edit=SimpleNamespace(textChanged=Mock()),
         set_package_query_pending=Mock(),
         apply_responsive_width=Mock(),
+        set_run_library=Mock(),
     )
     fake_side_panel._advanced_tab = SimpleNamespace(
         panel_header=QWidget(),

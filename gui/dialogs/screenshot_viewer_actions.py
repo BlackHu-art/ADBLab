@@ -4,12 +4,13 @@ import os
 import sys
 
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import RoundMenu
+from shiboken6 import isValid
 
 from core.exec import ProcessRunner
-from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.i18n import tr
+from gui.notifications import ToastLevel, show_toast
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import add_menu_action
 
@@ -19,6 +20,7 @@ class ScreenshotViewerActions:
 
     def __init__(self, frame):
         self._frame = frame
+        self._delete_confirmation_notice: QWidget | None = None
 
     def copy_to_clipboard(self):
         path = self._frame._current_path()
@@ -27,16 +29,16 @@ class ScreenshotViewerActions:
         pixmap = self._frame._original_pixmap or QPixmap(path)
         if not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
-            self._flash_status(tr("Image copied"))
+            self._flash_status(tr("Image copied"), level="success")
 
-    def _flash_status(self, text: str, timeout_ms: int = 1800):
-        if not self._frame._status_restore_timer.isActive():
-            self._frame._status_restore_text = self._frame._info_label.text()
-        self._frame._info_label.setText(text)
-        self._frame._status_restore_timer.start(max(1, int(timeout_ms)))
+    def _flash_status(
+        self, text: str, timeout_ms: int | None = None, *, level: ToastLevel = "info",
+    ):
+        """完整反馈交给窗口 Toast，底栏始终保留当前截图元数据。"""
 
-    def _restore_info_status(self) -> None:
-        self._frame._info_label.setText(self._frame._status_restore_text)
+        return show_toast(
+            self._frame, tr("截图"), text, level=level, duration=timeout_ms,
+        )
 
     def _open_file_location(self):
         path = self._frame._current_path()
@@ -61,21 +63,21 @@ class ScreenshotViewerActions:
             self._frame._delete_btn.setToolTip(tr("Click again to confirm deletion"))
             self._frame._delete_btn.setAccessibleName(tr("Confirm screenshot deletion"))
             self._frame._delete_confirm_timer.start(self._frame.DELETE_CONFIRM_TIMEOUT_MS)
-            self._flash_status(
+            self._delete_confirmation_notice = self._flash_status(
                 tr("Click Delete again to confirm"),
                 self._frame.DELETE_CONFIRM_TIMEOUT_MS,
             )
             return
 
         self._reset_delete_confirmation()
-        self._frame._status_restore_timer.stop()
         try:
             os.remove(path)
         except OSError as exc:
-            FluentMessageBox.warning(
+            show_toast(
                 self._frame,
                 tr("Delete Failed"),
                 str(exc),
+                level="error",
             )
             return
         del self._frame._image_paths[self._frame._current_idx]
@@ -95,6 +97,9 @@ class ScreenshotViewerActions:
         """撤销尚未二次确认的删除意图，并恢复按钮语义。"""
 
         self._frame._pending_delete_path = ""
+        notice, self._delete_confirmation_notice = self._delete_confirmation_notice, None
+        if notice is not None and isValid(notice):
+            notice.close()
         timer = getattr(self._frame, "_delete_confirm_timer", None)
         if timer is not None:
             timer.stop()

@@ -41,7 +41,7 @@ from qfluentwidgets import (
 from core.log_service import LogService
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import configure_button
+from gui.styles.fluent import apply_reading_surface, configure_button
 from gui.styles.icon_loader import get_themed_icon
 
 _HTML_CACHE_LIMIT = 2048
@@ -112,8 +112,7 @@ class LogPanel(QWidget):
     # ------------------------------------------------------------------
 
     def _apply_style(self):
-        # 正文已收敛为 qfluentwidgets TextEdit，背景/边框/滚动条自维护（随主题切换），
-        # 无需在此套 QSS。
+        # 浅色正文使用稳定阅读底板；深色与滚动条仍由上游组件维护。
         # 卡片容器与工具条包壳已由 CardWidget 自绘制并随主题切换，无需再套 QSS。
         self._refresh_level_badge()
         self.logClearButton.setIcon(get_themed_icon("broom.svg"))
@@ -145,6 +144,7 @@ class LogPanel(QWidget):
     def _init_ui(self):
         self.text_output = TextEdit(self)
         self.text_output.setReadOnly(True)
+        apply_reading_surface(self.text_output)
         self.text_output.setAccessibleName(tr("运行记录"))
         self.text_output.setPlaceholderText(tr("应用操作结果与异常记录将在这里显示。"))
         self.text_output.setUndoRedoEnabled(False)

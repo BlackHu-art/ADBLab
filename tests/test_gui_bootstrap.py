@@ -40,6 +40,7 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         return original_instance()
 
     monkeypatch.setattr(settings_manager.AppSettings, "instance", staticmethod(load_settings))
+    monkeypatch.setattr(main, "_load_fluent_widgets", lambda: steps.append("fluent"))
 
     class FakeApplication:
         def __init__(self, _argv):
@@ -92,7 +93,9 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         )
 
     assert main._run_gui() == 23
-    assert steps == ["settings", "application", "translations", "logger", "fonts", "window"]
+    assert steps == [
+        "settings", "fluent", "application", "translations", "logger", "fonts", "window",
+    ]
     frame.show.assert_called_once_with()
     calls = [call.args for call in logger.log.call_args_list]
     if invalid_json:
@@ -131,3 +134,100 @@ print(json.dumps(calls))
     assert json.loads(result.stdout) == [
         ["worker", ["--config", "synthetic.json"]], ["self-check", ["packaging"]],
     ]
+
+
+def test_real_fluent_startup_import_omits_banner_and_preserves_later_output(tmp_path):
+    """新进程首次导入真实依赖，避免 pytest 已缓存模块掩盖启动推广输出。"""
+
+    script = """
+import sys
+import main
+assert 'qfluentwidgets' not in sys.modules
+print('before-import')
+main._load_fluent_widgets()
+assert 'qfluentwidgets.common.config' in sys.modules
+main._load_fluent_widgets()
+print('after-import')
+print('stderr-marker', file=sys.stderr)
+"""
+    environment = dict(
+        os.environ, LOCALAPPDATA=str(tmp_path), APPDATA=str(tmp_path),
+        XDG_CONFIG_HOME=str(tmp_path), QT_QPA_PLATFORM="offscreen", PYTHONIOENCODING="utf-8",
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], env=environment, capture_output=True,
+        text=True, encoding="utf-8", timeout=15, check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "before-import\nafter-import\n"
+    assert result.stderr == "stderr-marker\n"
+
+
+@pytest.mark.parametrize("without_emoji", [False, True])
+@pytest.mark.parametrize("import_fails", [False, True])
+def test_fluent_loader_preserves_other_output_and_restores_stream_after_failure(
+    monkeypatch, capsys, without_emoji, import_fails,
+):
+    """只移除完整广告，类似提示、stderr、部分行与导入异常均保留。"""
+
+    alert = "\n\033[1;33m📢 Tips:\033[0m Example promotion\n"
+    monkeypatch.setitem(
+        sys.modules, "qfluentwidgets.common.config", SimpleNamespace(ALERT=alert),
+    )
+    error = ImportError("simulated missing GUI dependency")
+    stderr_before = sys.stderr
+    stdout_before = sys.stdout
+    imports = []
+
+    def import_fluent(name):
+        imports.append(name)
+        assert sys.stderr is stderr_before
+        sys.stdout.write("ordinary partial output")
+        print(alert.replace("📢", "") if without_emoji else alert)
+        sys.stdout.write(" continues\n")
+        print("Tips: normal application advice")
+        print("import diagnostic", file=sys.stderr)
+        if import_fails:
+            raise error
+        return SimpleNamespace()
+
+    monkeypatch.setattr(main, "__import__", import_fluent, raising=False)
+    if import_fails:
+        with pytest.raises(ImportError) as raised:
+            main._load_fluent_widgets()
+        assert raised.value is error
+    else:
+        main._load_fluent_widgets()
+
+    assert imports == ["qfluentwidgets"]
+    assert sys.stdout is stdout_before
+    assert sys.stderr is stderr_before
+    captured = capsys.readouterr()
+    assert captured.out == "ordinary partial output continues\nTips: normal application advice\n"
+    assert captured.err == "import diagnostic\n"
+
+
+def test_fluent_loader_supports_windowed_process_without_stdout(monkeypatch, capsys):
+    """无控制台时正常导入，标准错误仍保留且不会制造额外的输出异常。"""
+
+    alert = "\n📢 Tips: Example promotion\n"
+    monkeypatch.setitem(
+        sys.modules, "qfluentwidgets.common.config", SimpleNamespace(ALERT=alert),
+    )
+
+    def import_fluent(name):
+        assert name == "qfluentwidgets"
+        print(alert)
+        print("ordinary stdout without console")
+        print("windowed diagnostic", file=sys.stderr)
+        return SimpleNamespace()
+
+    monkeypatch.setattr(main, "__import__", import_fluent, raising=False)
+    with monkeypatch.context() as context:
+        context.setattr(sys, "stdout", None)
+        main._load_fluent_widgets()
+        assert sys.stdout is None
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == "windowed diagnostic\n"

@@ -1216,6 +1216,9 @@ def test_all_embedded_feature_pages_remain_reachable_on_short_workspace(qt_appli
                 if feature == "performance":
                     assert page._config_scroll.isHidden()
                     assert not page._config_scroll.isVisibleTo(page)
+                    assert host.close_session_button.isHidden()
+                    assert frame._global_device_bar.close_button.isHidden()
+                    assert page.stop_btn.isVisibleTo(page)
 
                 target = getattr(page, target_name)
                 assert page.rect().contains(mapped_rect(target, page))
@@ -1257,13 +1260,20 @@ def test_logcat_route_injects_mainframe_owned_services(qt_application):
 def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
     qt_application,
     tmp_path,
+    monkeypatch,
 ):
     """后台截图更新结果页，但用户主动查看前不抢走当前顶层页面。"""
 
     from PySide6.QtGui import QPixmap
 
+    from gui import main_frame as main_frame_module
     from gui.features.media import ScreenshotPage
 
+    notices = []
+    monkeypatch.setattr(
+        main_frame_module, "show_toast",
+        lambda *args, **kwargs: notices.append((args, kwargs)),
+    )
     image_paths = []
     for name in ("first.png", "second.png", "third.png"):
         path = tmp_path / name
@@ -1293,8 +1303,16 @@ def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
 
         frame._on_screenshot_batch_ready(image_paths[1:])
         assert page.image_paths == tuple(image_paths)
-        frame._open_workspace_feature("apps", "media")
+        assert len(notices) == 2
+        args, options = notices[-1]
+        assert args == (frame, "截图已完成", "结果已加入“截图与屏幕”页面。")
+        assert options["level"] == "success"
+        assert options["action_text"] == "查看结果"
+        options["on_action"]()
         assert host.stack.currentWidget() is page
+        frame._on_screenshot_batch_ready(image_paths)
+        assert page.image_paths == tuple(image_paths)
+        assert len(notices) == 2
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

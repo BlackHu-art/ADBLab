@@ -4,7 +4,8 @@ from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtCore import QPoint
+from PySide6.QtTest import QSignalSpy, QTest
 from qfluentwidgets import PrimaryPushButton
 
 from gui.styles import BaseStyles
@@ -20,6 +21,39 @@ from tests.ui_geometry_helpers import (
     assert_non_overlapping,
     mapped_rect,
 )
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_monkey_inner_sections_share_page_surface_in_hover_and_disabled_states(
+    qt_application, monkeypatch, theme,
+):
+    """嵌套分区在悬停和禁用时也不能重新绘制底板，输入仍保留交互底色。"""
+
+    BaseStyles.switch_theme(theme)
+    owner, apps, _scroll, _content = _show_feature_panel(
+        "apps", 960, 12, qt_application, monkeypatch,
+    )
+    section = apps.monkey_section
+    blocks = (apps.monkey_package_card, apps.monkey_parameters_card)
+    try:
+        for enabled in (True, False, True):
+            for block in blocks:
+                block.setEnabled(enabled)
+                QTest.mouseMove(block, QPoint(8, 8))
+                qt_application.processEvents()
+                rendered = section.grab().toImage()
+                background = rendered.pixelColor(
+                    section.width() - 4, section.headerView.height() // 2,
+                )
+                for point in (QPoint(8, 8), QPoint(1, block.height() // 2)):
+                    assert rendered.pixelColor(block.mapTo(section, point)) == background
+        field = apps.monkey_events
+        rendered = section.grab().toImage()
+        assert rendered.pixelColor(
+            field.mapTo(section, QPoint(field.width() // 2, field.height() // 2)),
+        ) != background
+    finally:
+        _close_feature_panel(owner)
 
 
 @pytest.mark.parametrize("theme", ["light", "dark"])

@@ -1,0 +1,156 @@
+symbols_ready=False; symbol_struct_size=88
+collection=2; modules_refreshed=False
+GC_BEFORE tests/test_performance_responsive.py::test_performance_numeric_aliases_use_original_dropdown_style_with_strict_values
+GC_AFTER tests/test_performance_responsive.py::test_performance_numeric_aliases_use_original_dropdown_style_with_strict_values
+GC_BEFORE tests/test_performance_responsive.py::test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner
+
+HEAP CORRUPTION 0xc0000374: capturing one stack; exception continues unchanged
+frames=72
+exception 0x00007ffd43072165 ntdll.dll+0x112165
+00 0x00007ffcb8a54771 libffi-8.dll+0x4771
+01 0x00007ffcb8a54493 libffi-8.dll+0x4493
+02 0x00007ffcb8a542c2 libffi-8.dll+0x42c2
+03 0x00007ffc12323c05 _ctypes.pyd+0x3c05
+04 0x00007ffc12322aca _ctypes.pyd+0x2aca
+05 0x00007ffc123226c8 _ctypes.pyd+0x26c8
+06 0x00007ffbb64983de python311.dll+0x483de
+07 0x00007ffbb649bddf python311.dll+0x4bddf
+08 0x00007ffbb649d423 python311.dll+0x4d423
+09 0x00007ffbb649ae64 python311.dll+0x4ae64
+10 0x00007ffbb649c13b python311.dll+0x4c13b
+11 0x00007ffc1232cc74 _ctypes.pyd+0xcc74
+12 0x00007ffc1232d051 _ctypes.pyd+0xd051
+13 0x00007ffcb8a545cc libffi-8.dll+0x45cc
+14 0x00007ffcb8a5489e libffi-8.dll+0x489e
+15 0x00007ffd42fa6896 ntdll.dll+0x46896
+16 0x00007ffd42fa5c66 ntdll.dll+0x45c66
+17 0x00007ffd42fed011 ntdll.dll+0x8d011
+18 0x00007ffd43072165 ntdll.dll+0x112165
+19 0x00007ffd42f8da39 ntdll.dll+0x2da39
+20 0x00007ffd42f70472 ntdll.dll+0x10472
+21 0x00007ffd4307bb3a ntdll.dll+0x11bb3a
+22 0x00007ffd42fb6dcb ntdll.dll+0x56dcb
+23 0x00007ffd42fb3aca ntdll.dll+0x53aca
+24 0x00007ffd402b2d7b ucrtbase.dll+0x12d7b
+25 0x00007ffbb45c79fe Qt6Gui.dll+0x179fe
+26 0x00007ffbb45bf721 Qt6Gui.dll+0xf721
+27 0x00007ffbb50cea2b QtGui.pyd+0x23ea2b
+28 0x00007ffbfd86a3f9 shiboken6.abi3.dll+0x2a3f9
+29 0x00007ffbb654b222 python311.dll+0xfb222
+30 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4
+31 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290
+32 0x00007ffbb654abc4 python311.dll+0xfabc4
+33 0x00007ffbb654b222 python311.dll+0xfb222
+34 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4
+35 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290
+36 0x00007ffbb654abc4 python311.dll+0xfabc4
+37 0x00007ffbb654b222 python311.dll+0xfb222
+38 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4
+39 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290
+40 0x00007ffbb654abc4 python311.dll+0xfabc4
+41 0x00007ffbb654b222 python311.dll+0xfb222
+42 0x00007ffbfd86ae1d shiboken6.abi3.dll+0x2ae1d
+43 0x00007ffbb654c4b3 python311.dll+0xfc4b3
+44 0x00007ffbb6548982 python311.dll+0xf8982
+45 0x00007ffbb6493151 python311.dll+0x43151
+46 0x00007ffbb6492d9d python311.dll+0x42d9d
+47 0x00007ffbb6491eb7 python311.dll+0x41eb7
+48 0x00007ffbb64dd2ec python311.dll+0x8d2ec
+49 0x00007ffbb649c13b python311.dll+0x4c13b
+50 0x00007ffbb649d423 python311.dll+0x4d423
+51 0x00007ffbb64d104e python311.dll+0x8104e
+52 0x00007ffbb654c2ff python311.dll+0xfc2ff
+53 0x00007ffbb64ee2ef python311.dll+0x9e2ef
+54 0x00007ffbb649c13b python311.dll+0x4c13b
+55 0x00007ffbb649d423 python311.dll+0x4d423
+56 0x00007ffbb64d104e python311.dll+0x8104e
+57 0x00007ffbb654c2ff python311.dll+0xfc2ff
+58 0x00007ffbb64a0d95 python311.dll+0x50d95
+59 0x00007ffbb649ae64 python311.dll+0x4ae64
+60 0x00007ffbb6477e0e python311.dll+0x27e0e
+61 0x00007ffbb647625b python311.dll+0x2625b
+62 0x00007ffbb6476188 python311.dll+0x26188
+63 0x00007ffbb6544d1d python311.dll+0xf4d1d
+64 0x00007ffbb64a1f7f python311.dll+0x51f7f
+65 0x00007ffbb649ae64 python311.dll+0x4ae64
+66 0x00007ffbb6544cf3 python311.dll+0xf4cf3
+67 0x00007ffbb64a1f7f python311.dll+0x51f7f
+68 0x00007ffbb649ae64 python311.dll+0x4ae64
+69 0x00007ffbb6477e0e python311.dll+0x27e0e
+70 0x00007ffbb647625b python311.dll+0x2625b
+71 0x00007ffbb6476188 python311.dll+0x26188
+RAW STACK SAVED; attempting local symbols
+late_symbols_ready=True
+00 0x00007ffcb8a54771 libffi-8.dll+0x4771 ffi_prep_go_closure+0x71
+01 0x00007ffcb8a54493 libffi-8.dll+0x4493 ffi_call_go+0x1c3
+02 0x00007ffcb8a542c2 libffi-8.dll+0x42c2 ffi_call+0x12
+03 0x00007ffc12323c05 _ctypes.pyd+0x3c05
+04 0x00007ffc12322aca _ctypes.pyd+0x2aca
+05 0x00007ffc123226c8 _ctypes.pyd+0x26c8
+06 0x00007ffbb64983de python311.dll+0x483de PyObject_MakeTpCall+0x37e
+07 0x00007ffbb649bddf python311.dll+0x4bddf PyObject_Vectorcall+0x28f
+08 0x00007ffbb649d423 python311.dll+0x4d423 PyEval_EvalFrameDefault+0x803
+09 0x00007ffbb649ae64 python311.dll+0x4ae64 PyFunction_Vectorcall+0x1a4
+10 0x00007ffbb649c13b python311.dll+0x4c13b PyObject_Vectorcall+0x5eb
+11 0x00007ffc1232cc74 _ctypes.pyd+0xcc74 DllGetClassObject+0x370
+12 0x00007ffc1232d051 _ctypes.pyd+0xd051 DllGetClassObject+0x74d
+13 0x00007ffcb8a545cc libffi-8.dll+0x45cc ffi_call_go+0x2fc
+14 0x00007ffcb8a5489e libffi-8.dll+0x489e ffi_prep_go_closure+0x19e
+15 0x00007ffd42fa6896 ntdll.dll+0x46896 RtlLocateExtendedFeature+0xf96
+16 0x00007ffd42fa5c66 ntdll.dll+0x45c66 RtlLocateExtendedFeature+0x366
+17 0x00007ffd42fed011 ntdll.dll+0x8d011 RtlRaiseException+0x221
+18 0x00007ffd43072165 ntdll.dll+0x112165 RtlpMuiRegCreateRegistryInfo+0x1b5
+19 0x00007ffd42f8da39 ntdll.dll+0x2da39 LdrResSearchResource+0x839
+20 0x00007ffd42f70472 ntdll.dll+0x10472 RtlSetProcessPreferredUILanguages+0xba2
+21 0x00007ffd4307bb3a ntdll.dll+0x11bb3a RtlLengthCurrentClearRunForwardEx+0x41a
+22 0x00007ffd42fb6dcb ntdll.dll+0x56dcb RtlCreateUnicodeString+0x237b
+23 0x00007ffd42fb3aca ntdll.dll+0x53aca RtlFreeHeap+0x6da
+24 0x00007ffd402b2d7b ucrtbase.dll+0x12d7b free_base+0x1b
+25 0x00007ffbb45c79fe Qt6Gui.dll+0x179fe QIconEngine::~QIconEngine+0x8e
+26 0x00007ffbb45bf721 Qt6Gui.dll+0xf721 QIcon::~QIcon+0x41
+27 0x00007ffbb50cea2b QtGui.pyd+0x23ea2b PyInit_QtGui+0x1c0583
+28 0x00007ffbfd86a3f9 shiboken6.abi3.dll+0x2a3f9 SbkDeallocWrapper+0x389
+29 0x00007ffbb654b222 python311.dll+0xfb222 PyUnicodeWriter_Init+0xf96
+30 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4 Shiboken::currentThreadId+0x114
+31 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290 SbkDeallocWrapper+0x220
+32 0x00007ffbb654abc4 python311.dll+0xfabc4 PyUnicodeWriter_Init+0x938
+33 0x00007ffbb654b222 python311.dll+0xfb222 PyUnicodeWriter_Init+0xf96
+34 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4 Shiboken::currentThreadId+0x114
+35 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290 SbkDeallocWrapper+0x220
+36 0x00007ffbb654abc4 python311.dll+0xfabc4 PyUnicodeWriter_Init+0x938
+37 0x00007ffbb654b222 python311.dll+0xfb222 PyUnicodeWriter_Init+0xf96
+38 0x00007ffbfd858bc4 shiboken6.abi3.dll+0x18bc4 Shiboken::currentThreadId+0x114
+39 0x00007ffbfd86a290 shiboken6.abi3.dll+0x2a290 SbkDeallocWrapper+0x220
+40 0x00007ffbb654abc4 python311.dll+0xfabc4 PyUnicodeWriter_Init+0x938
+41 0x00007ffbb654b222 python311.dll+0xfb222 PyUnicodeWriter_Init+0xf96
+42 0x00007ffbfd86ae1d shiboken6.abi3.dll+0x2ae1d SbkObject_TypeF+0x1dd
+43 0x00007ffbb654c4b3 python311.dll+0xfc4b3 PyErr_SetNone+0x14f
+44 0x00007ffbb6548982 python311.dll+0xf8982 Py_Dealloc+0x5e
+45 0x00007ffbb6493151 python311.dll+0x43151 PyCode_CheckLineNumber+0x28d9
+46 0x00007ffbb6492d9d python311.dll+0x42d9d PyCode_CheckLineNumber+0x2525
+47 0x00007ffbb6491eb7 python311.dll+0x41eb7 PyCode_CheckLineNumber+0x163f
+48 0x00007ffbb64dd2ec python311.dll+0x8d2ec PyArg_UnpackTuple+0xe4
+49 0x00007ffbb649c13b python311.dll+0x4c13b PyObject_Vectorcall+0x5eb
+50 0x00007ffbb649d423 python311.dll+0x4d423 PyEval_EvalFrameDefault+0x803
+51 0x00007ffbb64d104e python311.dll+0x8104e Py_BuildValue_SizeT+0x2b2
+52 0x00007ffbb654c2ff python311.dll+0xfc2ff PyObject_ClearWeakRefs+0x347
+53 0x00007ffbb64ee2ef python311.dll+0x9e2ef PyNumber_Index+0x333
+54 0x00007ffbb649c13b python311.dll+0x4c13b PyObject_Vectorcall+0x5eb
+55 0x00007ffbb649d423 python311.dll+0x4d423 PyEval_EvalFrameDefault+0x803
+56 0x00007ffbb64d104e python311.dll+0x8104e Py_BuildValue_SizeT+0x2b2
+57 0x00007ffbb654c2ff python311.dll+0xfc2ff PyObject_ClearWeakRefs+0x347
+58 0x00007ffbb64a0d95 python311.dll+0x50d95 PyEval_EvalFrameDefault+0x4175
+59 0x00007ffbb649ae64 python311.dll+0x4ae64 PyFunction_Vectorcall+0x1a4
+60 0x00007ffbb6477e0e python311.dll+0x27e0e PyObject_FastCallDictTstate+0xc2
+61 0x00007ffbb647625b python311.dll+0x2625b PyObject_Call_Prepend+0x7f
+62 0x00007ffbb6476188 python311.dll+0x26188 Py_parse_inf_or_nan+0x52c
+63 0x00007ffbb6544d1d python311.dll+0xf4d1d PyObject_CallObject+0x431
+64 0x00007ffbb64a1f7f python311.dll+0x51f7f PyEval_EvalFrameDefault+0x535f
+65 0x00007ffbb649ae64 python311.dll+0x4ae64 PyFunction_Vectorcall+0x1a4
+66 0x00007ffbb6544cf3 python311.dll+0xf4cf3 PyObject_CallObject+0x407
+67 0x00007ffbb64a1f7f python311.dll+0x51f7f PyEval_EvalFrameDefault+0x535f
+68 0x00007ffbb649ae64 python311.dll+0x4ae64 PyFunction_Vectorcall+0x1a4
+69 0x00007ffbb6477e0e python311.dll+0x27e0e PyObject_FastCallDictTstate+0xc2
+70 0x00007ffbb647625b python311.dll+0x2625b PyObject_Call_Prepend+0x7f
+71 0x00007ffbb6476188 python311.dll+0x26188 Py_parse_inf_or_nan+0x52c
+END NATIVE STACK

@@ -1,0 +1,48 @@
+{
+  "scenario": "action",
+  "theme": "Light",
+  "requested_frame": [
+    860,
+    800
+  ],
+  "frame": [
+    860,
+    800
+  ],
+  "font_points": 22,
+  "device_pixel_ratio": 1.0,
+  "titlebar": [
+    46,
+    0,
+    814,
+    48
+  ],
+  "toast": [
+    368,
+    60,
+    468,
+    216
+  ],
+  "title": "截图已完成",
+  "body": "结果已加入“截图结果”页面。",
+  "body_horizontal_max": 0,
+  "body_vertical_max": 0,
+  "titlebar_overlap": false,
+  "action": {
+    "text": "查看结果",
+    "frame_rectangle": [
+      412,
+      212,
+      369,
+      49
+    ],
+    "size_hint": [
+      142,
+      49
+    ]
+  },
+  "runner_starts": 0,
+  "source": "Isolated MainFrame QWidget.grab, no desktop capture or device I/O",
+  "action_clicks": 1,
+  "closed_after_action": true
+}

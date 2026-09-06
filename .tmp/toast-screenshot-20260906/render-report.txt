@@ -1,0 +1,4 @@
+
+[1;33m📢 Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+[{"image": "screenshot-copy-dark-860-font22.png", "full_text_length": 5, "toast_rect": [316, 24, 520, 118], "scroll_maximum": 0}, {"image": "screenshot-confirm-dark-860-font22.png", "full_text_length": 9, "toast_rect": [316, 24, 520, 118], "scroll_maximum": 0}, {"image": "screenshot-error-dark-860-font22.png", "full_text_length": 796, "toast_rect": [316, 24, 520, 320], "scroll_maximum": 27}]

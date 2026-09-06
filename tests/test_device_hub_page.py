@@ -670,12 +670,15 @@ def test_expanded_details_and_copy_fit_the_scroll_owner_at_large_font(
     assert len(copied) == 2
 
 
-def test_long_translated_detail_captions_choose_columns_that_fit(qt_application, monkeypatch):
+@pytest.mark.parametrize("width", [380, 860])
+def test_long_translated_detail_captions_choose_columns_that_fit(
+    qt_application, monkeypatch, width,
+):
     monkeypatch.setattr(
         BaseStyles, "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or 22)),
     )
-    _window, page = _show_page(qt_application, 860)
+    _window, page = _show_page(qt_application, width)
     page.set_device_metadata(_rich_metadata())
     card = page.device_cards[0]
     card.detail_fields["Hardware"].caption.setText("Hardware platform")
@@ -689,3 +692,67 @@ def test_long_translated_detail_captions_choose_columns_that_fit(qt_application,
         )
         caption_bounds = QRect(field.caption.mapTo(field, QPoint()), field.caption.size())
         assert field.rect().contains(caption_bounds)
+
+
+@pytest.mark.parametrize("font_size,width", [(12, 1000), (22, 1000), (12, 380), (22, 380)])
+def test_device_parameters_keep_keys_and_values_on_one_compact_row(
+    qt_application, monkeypatch, font_size, width,
+):
+    """摘要与展开详情按单行键值对展示，字体和窗口变化不会重新叠成两行。"""
+
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
+    )
+    window, page = _show_page(qt_application, width)
+    page.set_device_metadata(_rich_metadata())
+    card = page.device_cards[0]
+    card.details_button.click()
+    _settle_cards(qt_application, page)
+    assert window.width() == width
+    for fields in (
+        tuple(card.summary_fields.values()), (*card.detail_fields.values(), card.identifier_field),
+    ):
+        value_starts = {}
+        for field in fields:
+            caption = QRect(field.caption.mapTo(field, QPoint()), field.caption.size())
+            value = QRect(field.value.mapTo(field, QPoint()), field.value.size())
+            assert caption.right() < value.left()
+            assert abs(caption.center().y() - value.center().y()) <= 1
+            assert field.height() <= max(
+                field.caption.fontMetrics().height(), field.value.fontMetrics().height(), 24,
+            ) + 2
+            assert field.rect().contains(caption)
+            assert field.rect().contains(value)
+            value_starts.setdefault(field.x(), set()).add(value.x())
+        assert all(len(starts) == 1 for starts in value_starts.values())
+
+
+def test_compact_long_parameter_keeps_complete_tooltip_and_copied_snapshot(
+    qt_application, monkeypatch,
+):
+    """长数值只省略显示文本，完整值随缓存更新并用于无障碍与复制详情。"""
+
+    copied = _capture_copied_details(monkeypatch)
+    _window, page = _show_page(qt_application, 380)
+    records = _rich_metadata()
+    full_value = "arm64-hardware-platform-" * 14 + "complete-end"
+    records[0]["Hardware"] = full_value
+    page.set_device_metadata(records)
+    card = page.device_cards[0]
+    card.details_button.click()
+    _settle_cards(qt_application, page)
+    field = card.detail_fields["Hardware"]
+    assert field.value.toolTip() == full_value
+    assert field.value.accessibleDescription() == full_value
+    assert field.value.text() != full_value and "…" in field.value.text()
+    assert field.height() <= max(field.caption.height(), field.value.height()) + 2
+    card.copy_details_button.click()
+    assert f"硬件平台：{full_value}" in copied[-1]
+
+    records[0]["Hardware"] = "new-platform"
+    page.set_device_metadata(records)
+    card.copy_details_button.click()
+    assert "硬件平台：new-platform" in copied[-1]
+    assert full_value not in copied[-1]
+    assert field.value.toolTip() == "new-platform"

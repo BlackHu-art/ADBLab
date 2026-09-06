@@ -27,6 +27,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
 | 任务历史 | MainFrame 当前接收的兼容 `operation_completed` 信号 | `TaskHistoryStore.record_completed` 转换消息并按容量保留最新项；store 也提供终态快照写入接口，但 MainFrame 尚未订阅该来源 | Tasks 页面内存列表 | 仅进程内有界保留；应用重启后清空 |
+| 测试结果与方案 | Monkey 设备终态、性能采集退出快照、用户保存的参数 | `RunRecord` / `RunPreset` 经 `RunLibraryController` 后台串行校验和原子写入；Qt 信号更新页面 | 用户配置 `test_runs.json`、任务中心测试结果、两页方案栏 | 跨重启；索引有界，原始产物由用户保管；不自动绑定或执行历史设备 |
 | 安装批次状态 | Apps 面板批量安装请求 | `InstallBatchUseCase` 的 start/complete/fail/cancel/retry 状态机按 operation/unit 收口 | 内存 registry（`OperationManager`）、Qt signals、日志 | 批次生命周期；终态原子移除 |
 | 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时按版本检查第一层条目类型和文件大小，失配时覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
 
@@ -118,7 +119,7 @@ flowchart TD
 `pending_route` 保留。设备上下文在宿主后台变化只更新等待态，不能提前消费 payload 或创建目标页。
 
 截图是特殊的无设备功能会话：批次完成信号先通过 `WorkspaceFeatureHost.update_feature()` 后台追加
-到 ScreenshotPage；如果用户当前不在截图页，MainFrame 只显示带“查看结果”动作的 InfoBar，不
+到 ScreenshotPage；如果用户当前不在截图页，MainFrame 只显示带“查看结果”动作的统一 Toast，不
 切换顶层导航、当前分区或尚待恢复的设备路由。
 
 深层功能页将当前内容的最小尺寸交给 `WorkspaceFeatureHost`；宿主在短屏上扩展当前页面并
@@ -204,10 +205,20 @@ JSON、YAML 和普通文件持久化，下表是等价的存储地图。
 | 设备元数据 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<id>` | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 设备标识属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
+| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
 | 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层条目类型/文件大小校验，失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
+
+### 测试结果与方案
+
+测试方案与旧 `monkey_params` 设置分别维护，不修改 AppSettings schema，也不迁移应用管理的包名预设。
+方案同类型同名保存为更新，其他名称另存；方案与历史参数均不携带设备身份、worker 或会话代次。
+独立 Monkey 的随机模式在每台设备启动前确定实际种子，历史参数以固定模式保留真实种子和原模式，
+从方案重复启动则继续遵守所选随机/固定模式。相同种子不保证不同设备状态下重现相同结果。
+性能参数保留基础输出目录，实际设备后缀由当前会话重新生成。记录只收录新运行，不自动扫描旧目录。
+记录附件使用本地绝对路径；打开前在后台检查，文件被移动或删除时明确提示，不从消息文本猜测路径。
 
 ### 设置字段
 

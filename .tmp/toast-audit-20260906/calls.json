@@ -1,0 +1,306 @@
+[
+  {
+    "path": "gui/dialogs/app_manager_batch.py",
+    "line": 187,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppManagerBatch._modify_selected",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"未选择应用\"),\n                tr(\"请先选择应用。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/app_manager_batch.py",
+    "line": 260,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppManagerBatch._backup_selected",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"未选择应用\"),\n                tr(\"请先选择应用。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/app_manager_batch.py",
+    "line": 312,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppManagerBatch._show_details",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"未选择应用\"),\n                tr(\"请先选择一个应用。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/app_manager_batch.py",
+    "line": 324,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppManagerBatch._create_preset",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"未选择应用\"),\n                tr(\"请先选择应用。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/app_manager_batch.py",
+    "line": 459,
+    "call": "FluentMessageBox.critical",
+    "entry": "AppManagerBatch._report_preset_error",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n            self._frame,\n            tr(\"预设错误\"),\n            message,\n        )"
+  },
+  {
+    "path": "gui/dialogs/app_manager_details.py",
+    "line": 413,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppDetailsPage._mp",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self,\n                tr(\"未选择权限\"),\n                tr(\"请先选择要授权或撤销的权限。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer.py",
+    "line": 1054,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerPage._show_props_file",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self,\n                tr('Properties Error: {value0}').format(value0=name),\n                output or tr(\"Unable to read file properties\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer.py",
+    "line": 1080,
+    "call": "FluentMessageBox.information",
+    "entry": "FileExplorerPage._show_props_file",
+    "use": "Expr",
+    "text": "FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)"
+  },
+  {
+    "path": "gui/dialogs/file_explorer.py",
+    "line": 1084,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerPage._show_props_done",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self,\n                tr('Properties Error: {value0}').format(value0=name),\n                size or tr(\"Unable to read folder properties\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer.py",
+    "line": 1096,
+    "call": "FluentMessageBox.information",
+    "entry": "FileExplorerPage._show_props_done",
+    "use": "Expr",
+    "text": "FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 63,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._on_save_result",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self._frame,\n                tr(\"Error\"),\n                tr('Save failed: {value0}').format(value0=output),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 119,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._finish_root_pull",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self._frame,\n                tr(\"Error\"),\n                o,\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 209,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._on_transfer_done",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self._frame,\n                tr(\"Error\"),\n                o,\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 221,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._on_file_op_done",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                self._frame,\n                tr(\"Error\"),\n                output,\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 236,
+    "call": "FluentInputDialog.getText",
+    "entry": "FileExplorerOps._mkdir",
+    "use": "Assign",
+    "text": "FluentInputDialog.getText(self._frame, tr(\"New Folder\"), tr(\"Name:\"))"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 240,
+    "call": "FluentMessageBox.warning",
+    "entry": "FileExplorerOps._mkdir",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Invalid Name\"),\n                tr(\"Folder name contains invalid characters\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 262,
+    "call": "FluentInputDialog.getText",
+    "entry": "FileExplorerOps._touch",
+    "use": "Assign",
+    "text": "FluentInputDialog.getText(self._frame, tr(\"New File\"), tr(\"Name:\"))"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 266,
+    "call": "FluentMessageBox.warning",
+    "entry": "FileExplorerOps._touch",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Invalid Name\"),\n                tr(\"Filename contains invalid characters\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 288,
+    "call": "FluentInputDialog.getText",
+    "entry": "FileExplorerOps._rename_item",
+    "use": "Assign",
+    "text": "FluentInputDialog.getText(self._frame, tr(\"Rename\"), tr(\"New name:\"), text=name)"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 292,
+    "call": "FluentMessageBox.warning",
+    "entry": "FileExplorerOps._rename_item",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Invalid Name\"),\n                tr(\"New name contains invalid characters\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 499,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._show_chmod._on_stat",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                    dlg,\n                    tr(\"Permissions Error\"),\n                    o or tr(\"Permission read failed\"),\n                )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 508,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._show_chmod._on_stat",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                    dlg,\n                    tr(\"Permissions Error\"),\n                    tr(\"The device returned an invalid permission mode.\"),\n                )"
+  },
+  {
+    "path": "gui/dialogs/file_explorer_ops.py",
+    "line": 554,
+    "call": "FluentMessageBox.critical",
+    "entry": "FileExplorerOps._show_chmod._apply_permissions._on_chmod",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                        dlg,\n                        tr(\"Permissions Error\"),\n                        output or tr(\"Permission update failed\"),\n                    )"
+  },
+  {
+    "path": "gui/dialogs/live_logcat_stream.py",
+    "line": 348,
+    "call": "FluentMessageBox.critical",
+    "entry": "LiveLogcatStream._export",
+    "use": "Expr",
+    "text": "FluentMessageBox.critical(\n                    self._frame,\n                    tr(\"日志导出失败\"),\n                    str(e),\n                )"
+  },
+  {
+    "path": "gui/dialogs/performance_launcher.py",
+    "line": 561,
+    "call": "FluentMessageBox.information",
+    "entry": "PerformancePage.open_result",
+    "use": "Expr",
+    "text": "FluentMessageBox.information(\n                self,\n                tr(\"Result Not Available\"),\n                tr(\"No MobilePerf result is available yet.\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/performance_launcher_form.py",
+    "line": 1063,
+    "call": "FluentMessageBox.warning",
+    "entry": "PerformanceLauncherForm._commit_numeric_inputs",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Invalid Number\"),\n                tr(\"Please enter a valid {value0} value within the allowed range.\").format(\n                    value0=label\n                ),\n            )"
+  },
+  {
+    "path": "gui/dialogs/performance_launcher_run.py",
+    "line": 24,
+    "call": "FluentMessageBox.warning",
+    "entry": "PerformanceLauncherRun.start_mobileperf",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"未选择当前设备\"),\n                tr(\"请在顶部勾选并连接当前设备，再开始性能采集。\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/performance_launcher_run.py",
+    "line": 35,
+    "call": "FluentMessageBox.warning",
+    "entry": "PerformanceLauncherRun.start_mobileperf",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Package Required\"),\n                tr(\"Please enter a package name.\"),\n            )"
+  },
+  {
+    "path": "gui/dialogs/performance_library.py",
+    "line": 124,
+    "call": "FluentMessageBox.warning",
+    "entry": "PerformanceLibrary.apply_parameters",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                frame, tr(\"无法载入参数\"), tr(\"参数格式或数值无效，当前设置未更改。\")\n            )"
+  },
+  {
+    "path": "gui/dialogs/screenshot_viewer_actions.py",
+    "line": 75,
+    "call": "FluentMessageBox.warning",
+    "entry": "ScreenshotViewerActions._delete_file",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self._frame,\n                tr(\"Delete Failed\"),\n                str(exc),\n            )"
+  },
+  {
+    "path": "gui/main_frame.py",
+    "line": 1843,
+    "call": "InfoBar.warning",
+    "entry": "MainFrame._on_run_library_error",
+    "use": "Expr",
+    "text": "InfoBar.warning(\n            title=tr(\"测试结果\"), content=message, parent=self,\n            duration=7000, position=InfoBarPosition.TOP,\n        )"
+  },
+  {
+    "path": "gui/main_frame.py",
+    "line": 2269,
+    "call": "InfoBar.success",
+    "entry": "MainFrame._on_screenshot_batch_ready",
+    "use": "Assign",
+    "text": "InfoBar.success(\n            title=tr(\"截图已完成\"),\n            content=tr(\"结果已加入“截图结果”页面。\"),\n            duration=5000,\n            position=InfoBarPosition.TOP_RIGHT,\n            parent=self,\n        )"
+  },
+  {
+    "path": "gui/pages/fluent_pages.py",
+    "line": 1355,
+    "call": "InfoBar.success",
+    "entry": "SettingsPage._show_language_restart_hint",
+    "use": "Expr",
+    "text": "InfoBar.success(\n            title=tr(\"设置已保存\"),\n            content=tr(\"语言设置将在重启应用后生效\"),\n            duration=5000,\n            parent=self.window(),\n        )"
+  },
+  {
+    "path": "gui/panels/app_panel.py",
+    "line": 956,
+    "call": "FluentMessageBox.warning",
+    "entry": "AppPanel._on_start_monkey",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self,\n                tr(\"事件比例未达到 100%\"),\n                tr(\n                    \"当前事件比例合计为 {total}%，不是 100%。\\n\"\n                    \"Monkey 仍会运行，但事件分布可能不符合预期。\\n\\n\"\n                    \"建议调整各项比例，使合计达到 100%。\"\n                ).format(total=total),\n            )"
+  },
+  {
+    "path": "gui/widgets/run_preset_bar.py",
+    "line": 195,
+    "call": "FluentMessageBox.warning",
+    "entry": "RunPresetBar._load",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                    self.window() or self,\n                    tr(\"无法载入方案\"),\n                    tr(\"请先停止当前测试，并检查方案参数是否完整有效。\"),\n                )"
+  },
+  {
+    "path": "gui/widgets/run_preset_bar.py",
+    "line": 207,
+    "call": "FluentMessageBox.warning",
+    "entry": "RunPresetBar._save",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self.window() or self, tr(\"无法保存方案\"),\n                tr(\"请检查当前表单参数是否完整有效。\"),\n            )"
+  },
+  {
+    "path": "gui/widgets/run_preset_bar.py",
+    "line": 216,
+    "call": "FluentInputDialog.getText",
+    "entry": "RunPresetBar._save",
+    "use": "Assign",
+    "text": "FluentInputDialog.getText(\n            self.window() or self,\n            tr(\"保存测试方案\"),\n            tr(\"输入方案名称；同名保存会更新已有方案\"),\n            text=current,\n        )"
+  },
+  {
+    "path": "gui/widgets/run_preset_bar.py",
+    "line": 225,
+    "call": "FluentMessageBox.warning",
+    "entry": "RunPresetBar._save",
+    "use": "Expr",
+    "text": "FluentMessageBox.warning(\n                self.window() or self, tr(\"名称无效\"), tr(\"方案名称应为 1 到 80 个字符\")\n            )"
+  }
+]
