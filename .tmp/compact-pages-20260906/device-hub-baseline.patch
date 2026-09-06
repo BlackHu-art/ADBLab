@@ -1,0 +1,220 @@
+diff --git a/gui/pages/device_hub.py b/gui/pages/device_hub.py
+index 136e6f7..4b1e1f1 100644
+--- a/gui/pages/device_hub.py
++++ b/gui/pages/device_hub.py
+@@ -25,6 +25,7 @@ from qfluentwidgets import (
+     TransparentPushButton,
+ )
+ 
++from gui.i18n import tr
+ from gui.styles import BaseStyles, FontRole
+ from gui.styles.icon_loader import get_themed_icon
+ 
+@@ -37,8 +38,8 @@ def _metadata_text(value: object) -> str:
+ 
+ def _connection_kind(device_id: str) -> str:
+     if device_id.startswith("emulator-"):
+-        return "模拟器"
+-    return "无线" if ":" in device_id else "USB"
++        return tr("模拟器")
++    return tr("无线") if ":" in device_id else "USB"
+ 
+ 
+ def _device_name(device_id: str, metadata: Mapping[str, object]) -> str:
+@@ -53,7 +54,10 @@ def _device_name(device_id: str, metadata: Mapping[str, object]) -> str:
+         if brand and not model.casefold().startswith(brand.casefold()):
+             return f"{brand} {model}"
+         return model
+-    return f"{brand} Android 设备" if brand else f"Android {_connection_kind(device_id)}设备"
++    return (
++        tr("{brand} Android 设备").format(brand=brand) if brand
++        else tr("Android {value}设备").format(value=_connection_kind(device_id))
++    )
+ 
+ 
+ class _DeviceIdentifier(CaptionLabel):
+@@ -66,7 +70,7 @@ class _DeviceIdentifier(CaptionLabel):
+         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+         self.setMinimumWidth(0)
+         self.setToolTip(device_id)
+-        self.setAccessibleName("设备标识")
++        self.setAccessibleName(tr("设备标识"))
+         self.setAccessibleDescription(device_id)
+         self._refresh_text()
+ 
+@@ -149,7 +153,7 @@ class _DeviceCard(QWidget):
+         self.setObjectName("deviceWorkCard")
+         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+         self.selection = CheckBox(self)
+-        self.selection.setToolTip("勾选为批量操作目标，不切换已打开的设备会话")
++        self.selection.setToolTip(tr("勾选为批量操作目标，不切换已打开的设备会话"))
+         self.selection.clicked.connect(
+             lambda checked: self.selection_toggled.emit(self.device_id, checked)
+         )
+@@ -190,7 +194,9 @@ class _DeviceCard(QWidget):
+         self._summary_layout.setVerticalSpacing(12)
+         self.summary_fields = {
+             key: _DeviceField(title, self.summary_container)
+-            for key, title in (("system", "系统"), ("screen", "屏幕"), ("memory", "内存"))
++            for key, title in (
++                ("system", tr("系统")), ("screen", tr("屏幕")), ("memory", tr("内存"))
++            )
+         }
+         self.details_label = self.summary_fields["system"].value
+         self.screen_label = self.summary_fields["screen"].value
+@@ -203,28 +209,32 @@ class _DeviceCard(QWidget):
+         self.detail_fields = {
+             key: _DeviceField(title, self.details_container)
+             for key, title in (
+-                ("CPU Architecture", "CPU 架构"), ("Hardware", "硬件平台"),
+-                ("Density", "屏幕密度"), ("Available Memory", "可用内存"),
+-                ("Storage Total", "存储总量"), ("Storage Available", "可用存储"),
++                ("CPU Architecture", tr("CPU 架构")), ("Hardware", tr("硬件平台")),
++                ("Density", tr("屏幕密度")), ("Available Memory", tr("可用内存")),
++                ("Storage Total", tr("存储总量")), ("Storage Available", tr("可用存储")),
+             )
+         }
+         self.identifier = _DeviceIdentifier(device_id, self.details_container)
+-        self.identifier_field = _DeviceField("设备标识", self.details_container, self.identifier)
++        self.identifier_field = _DeviceField(
++            tr("设备标识"), self.details_container, self.identifier
++        )
+         self.properties_label = self.detail_fields["CPU Architecture"].value
+         self.details_container.hide()
+-        self.details_button = TransparentPushButton("详细信息", self)
++        self.details_button = TransparentPushButton(tr("详细信息"), self)
+         self.details_button.setCheckable(True)
+-        self.details_button.setAccessibleName("展开或收起此设备的详细信息")
++        self.details_button.setAccessibleName(tr("展开或收起此设备的详细信息"))
+         self.details_button.toggled.connect(self._set_details_expanded)
+         self.action_container = QWidget(self)
+         self._action_layout = FlowLayout(self.action_container)
+         self._action_layout.setContentsMargins(0, 0, 0, 0)
+         self._action_layout.setHorizontalSpacing(8)
+         self._action_layout.setVerticalSpacing(8)
+-        self.files_button = self._action_button(FluentIcon.FOLDER, "文件", "devices", "files")
+-        self.remote_button = self._action_button(FluentIcon.PROJECTOR, "远程", "devices", "remote")
++        self.files_button = self._action_button(FluentIcon.FOLDER, tr("文件"), "devices", "files")
++        self.remote_button = self._action_button(
++            FluentIcon.PROJECTOR, tr("远程"), "devices", "remote"
++        )
+         self.apps_button = self._action_button(
+-            FluentIcon.APPLICATION, "应用管理", "apps", "manager"
++            FluentIcon.APPLICATION, tr("应用管理"), "apps", "manager"
+         )
+         self._buttons = (self.files_button, self.remote_button, self.apps_button)
+         self._footer_layout = QBoxLayout(QBoxLayout.Direction.LeftToRight)
+@@ -242,7 +252,7 @@ class _DeviceCard(QWidget):
+         for widget in self.findChildren(QWidget):
+             if not isinstance(widget, QAbstractButton):
+                 widget.installEventFilter(self)
+-        self.setAccessibleDescription("双击设备名称或空白处选择、取消操作目标")
++        self.setAccessibleDescription(tr("双击设备名称或空白处选择、取消操作目标"))
+         self.apply_fonts()
+ 
+     def _action_button(self, icon, text: str, section: str, feature: str) -> PushButton:
+@@ -274,26 +284,31 @@ class _DeviceCard(QWidget):
+             field.set_value(_metadata_text(metadata.get(key)))
+         battery = _metadata_text(metadata.get("Battery Level"))
+         charging = _metadata_text(metadata.get("Battery Status"))
++        if charging in {"充电中", "使用电池", "未充电", "已充满"}:
++            charging = tr(charging)
+         self.battery_label.setText(" · ".join(filter(None, (
+-            f"电量 {battery}" if battery else "", charging,
++            tr("电量 {battery}").format(battery=battery) if battery else "", charging,
+         ))))
+         self.battery_label.setVisible(bool(battery or charging))
+         connection_state = {
+-            "ready": "在线", "scanning": "扫描中", "unavailable": "连接待确认",
+-        }.get(state, "已离线")
++            "ready": tr("在线"), "scanning": tr("扫描中"), "unavailable": tr("连接待确认"),
++        }.get(state, tr("已离线"))
+         self.status_label.setText(" · ".join(filter(None, (
+-            _connection_kind(self.device_id), connection_state, "已选" if selected else "",
++            _connection_kind(self.device_id), connection_state, tr("已选") if selected else "",
+         ))))
+-        self.selection.setAccessibleName(f"将 {name} 设为操作目标")
++        self.selection.setAccessibleName(tr("将 {name} 设为操作目标").format(name=name))
+         blocker = QSignalBlocker(self.selection)
+         self.selection.setChecked(selected)
+         del blocker
+         self.selection.setEnabled(available)
+-        for button, action in zip(self._buttons, ("管理文件", "打开远程控制", "管理应用")):
++        for button, action in zip(
++            self._buttons, (tr("管理文件"), tr("打开远程控制"), tr("管理应用"))
++        ):
+             button.setEnabled(available and selected)
+             description = (
+-                f"为 {name} {action}；保留其他已选设备" if selected
+-                else f"请先选中 {name}，再{action}"
++                tr("为 {name} {action}；保留其他已选设备").format(name=name, action=action)
++                if selected
++                else tr("请先选中 {name}，再{action}").format(name=name, action=action)
+             )
+             button.setToolTip(description)
+             button.setAccessibleName(f"{name}：{action}")
+@@ -301,7 +316,7 @@ class _DeviceCard(QWidget):
+         self.update()
+ 
+     def _set_details_expanded(self, expanded: bool) -> None:
+-        self.details_button.setText("收起详情" if expanded else "详细信息")
++        self.details_button.setText(tr("收起详情") if expanded else tr("详细信息"))
+         self.details_container.setVisible(expanded)
+         self._reflow()
+ 
+@@ -459,12 +474,12 @@ class DeviceHubPage(QWidget):
+         action_layout = QHBoxLayout(self._toolbar_actions)
+         action_layout.setContentsMargins(0, 0, 0, 0)
+         action_layout.setSpacing(8)
+-        self.connect_button = PushButton(FluentIcon.CONNECT, "连接设备", self._toolbar_actions)
+-        self.connect_button.setToolTip("输入无线调试地址，或使用已保存的连接历史")
++        self.connect_button = PushButton(FluentIcon.CONNECT, tr("连接设备"), self._toolbar_actions)
++        self.connect_button.setToolTip(tr("输入无线调试地址，或使用已保存的连接历史"))
+         self.connect_button.clicked.connect(self.connect_requested)
+         self.refresh_button = ToolButton(FluentIcon.SYNC, self._toolbar_actions)
+-        self.refresh_button.setAccessibleName("刷新设备")
+-        self.refresh_button.setToolTip("重新扫描 USB 与无线设备的在线状态")
++        self.refresh_button.setAccessibleName(tr("刷新设备"))
++        self.refresh_button.setToolTip(tr("重新扫描 USB 与无线设备的在线状态"))
+         self.refresh_button.clicked.connect(self.refresh_requested)
+         action_layout.addWidget(self.connect_button)
+         action_layout.addWidget(self.refresh_button)
+@@ -537,21 +552,29 @@ class DeviceHubPage(QWidget):
+         count = len(self._connected)
+         selected = sum(device in self._connected for device in self._selected)
+         if self._state == "unavailable":
+-            self.summary.setText(f"连接状态待确认 · 保留上次发现的 {count} 台设备")
++            self.summary.setText(
++                tr("连接状态待确认 · 保留上次发现的 {count} 台设备").format(count=count)
++            )
+         elif self._state == "scanning":
+-            self.summary.setText(f"正在发现设备… · 上次发现 {count} 台")
++            self.summary.setText(tr("正在发现设备… · 上次发现 {count} 台").format(count=count))
+         else:
+-            self.summary.setText(f"{count} 台设备在线 · {selected} 台已选为操作目标")
++            self.summary.setText(
++                tr("{count} 台设备在线 · {selected} 台已选为操作目标").format(
++                    count=count, selected=selected
++                )
++            )
+         self.empty_card.setVisible(not count)
+         self.cards_container.setVisible(bool(count))
+         self.empty_title.setText({
+-            "scanning": "正在查找 Android 设备",
+-            "unavailable": "暂时无法连接 ADB",
+-        }.get(self._state, "连接第一台 Android 设备"))
++            "scanning": tr("正在查找 Android 设备"),
++            "unavailable": tr("暂时无法连接 ADB"),
++        }.get(self._state, tr("连接第一台 Android 设备")))
+         self.empty_description.setText({
+-            "scanning": "请稍候。使用 USB 连接时，请在设备上允许 USB 调试。",
+-            "unavailable": "点击设备列表旁的刷新按钮重试；若仍无法发现设备，可在设置中重启 ADB。",
+-        }.get(self._state, "使用 USB 连接并允许设备上的调试授权，或输入无线调试地址。"))
++            "scanning": tr("请稍候。使用 USB 连接时，请在设备上允许 USB 调试。"),
++            "unavailable": tr(
++                "点击设备列表旁的刷新按钮重试；若仍无法发现设备，可在设置中重启 ADB。"
++            ),
++        }.get(self._state, tr("使用 USB 连接并允许设备上的调试授权，或输入无线调试地址。")))
+         self.connect_button.setEnabled(self._state != "scanning")
+         self.refresh_button.setEnabled(self._state != "scanning")
+         self._reflow_toolbar()

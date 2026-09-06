@@ -12,6 +12,7 @@ from gui.dialogs.lifecycle import (
     alive_forwarding_callback,
     is_qobject_alive,
 )
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action
 from gui.styles.icon_loader import get_themed_icon
@@ -61,11 +62,11 @@ class AppManagerViews:
         if not self._frame._can_operate():
             set_state = getattr(self._frame, "_set_load_state", None)
             if callable(set_state):
-                set_state("error", "请在顶部设备栏勾选当前在线设备后刷新。")
+                set_state("error", tr("请在顶部设备栏勾选当前在线设备后刷新。"))
             return False
         if getattr(self._frame, "_load_in_progress", False):
             self._frame._load_refresh_pending = True
-            self._frame.status_bar.setText("刷新已排队，将在当前加载完成后执行。")
+            self._frame.status_bar.setText(tr("刷新已排队，将在当前加载完成后执行。"))
             return False
         self._frame._load_request_id += 1
         request_id = self._frame._load_request_id
@@ -77,7 +78,7 @@ class AppManagerViews:
             self._frame._detail_timer.stop()
         set_state = getattr(self._frame, "_set_load_state", None)
         if callable(set_state):
-            set_state("loading", "正在加载已安装应用…")
+            set_state("loading", tr("正在加载已安装应用…"))
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "load_apps")
         w.log_message.connect(
             lambda message: self._frame._on_load_log(request_id, message),
@@ -146,10 +147,17 @@ class AppManagerViews:
                 item.setData(Qt.ItemDataRole.UserRole, pkg)
                 item.setData(Qt.ItemDataRole.UserRole + 1, at)
                 type_text = {
-                    "User": "用户", "System": "系统", "Vendor": "厂商", "Other": "其他"
+                    "User": tr("用户"),
+                    "System": tr("系统"),
+                    "Vendor": tr("厂商"),
+                    "Other": tr("其他"),
                 }.get(at, at)
-                state_text = "已停用" if st == "Disabled" else "已启用"
-                item.setToolTip(f"{pkg}\n类型：{type_text} | 状态：{state_text}")
+                state_text = tr("已停用") if st == "Disabled" else tr("已启用")
+                item.setToolTip(
+                    tr("{value0}\n类型：{value1} | 状态：{value2}").format(
+                        value0=pkg, value1=type_text, value2=state_text
+                    )
+                )
                 item.setSizeHint(QSize(106, 72))
                 if st == "Disabled":
                     item.setForeground(BaseStyles.get_color("TEXT_DISABLED"))
@@ -170,7 +178,9 @@ class AppManagerViews:
         if callable(record_success) and request_id is not None:
             record_success(request_id, len(apps))
         else:
-            self._frame.status_bar.setText(f"已加载 {len(apps)} 个应用，正在读取详情…")
+            self._frame.status_bar.setText(
+                tr("已加载 {value0} 个应用，正在读取详情…").format(value0=len(apps))
+            )
         details_page = getattr(self._frame, "details_page", None)
         if (
             getattr(self._frame, "_details_open", False)
@@ -225,7 +235,9 @@ class AppManagerViews:
         if self._frame._has_unloaded_details():
             self._frame._schedule_visible_detail_load(delay_ms=80)
             return
-        self._frame.status_bar.setText(f"已加载 {len(self._frame._apps_data)} 个应用")
+        self._frame.status_bar.setText(
+            tr("已加载 {value0} 个应用").format(value0=len(self._frame._apps_data))
+        )
 
     def _schedule_visible_detail_load(self, delay_ms: int = 120):
         if (
@@ -320,7 +332,9 @@ class AppManagerViews:
         self._frame._pending_detail_packages.update(packages)
         self._frame._detail_worker_running = True
         self._frame.status_bar.setText(
-            f"正在读取详情 {len(self._frame._detail_cache)}/{len(self._frame._apps_data)}"
+            tr("正在读取详情 {value0}/{value1}").format(
+                value0=len(self._frame._detail_cache), value1=len(self._frame._apps_data)
+            )
         )
         w = _app_manager.AppManagerWorker(
             self._frame.device_ip, "load_detail_batch", packages=packages
@@ -354,10 +368,10 @@ class AppManagerViews:
         self._frame.view_toggle.setIcon(
             get_themed_icon("list-bullets.svg" if self._frame._view_mode else "squares-four.svg")
         )
-        tooltip = "切换为列表视图" if self._frame._view_mode else "切换为图标视图"
+        tooltip = tr("切换为列表视图") if self._frame._view_mode else tr("切换为图标视图")
         self._frame.view_toggle.setToolTip(tooltip)
         self._frame.view_toggle.setAccessibleName(tooltip)
-        self._frame.refresh_btn.setToolTip("刷新应用列表并重试未读取的图标")
+        self._frame.refresh_btn.setToolTip(tr("刷新应用列表并重试未读取的图标"))
         self._frame._icons_controller.schedule()
         self._frame._schedule_visible_detail_load()
 
@@ -369,21 +383,23 @@ class AppManagerViews:
         if not pkg:
             return
         menu = self._frame._create_context_menu()
-        add_menu_action(menu, "应用详情", callback=lambda: self._frame._show_details_for(pkg))
+        add_menu_action(menu, tr("应用详情"), callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
-        add_menu_action(menu, "启动应用", callback=lambda: self._frame._launch(pkg))
+        add_menu_action(menu, tr("启动应用"), callback=lambda: self._frame._launch(pkg))
         add_menu_action(
-            menu, "强制停止", callback=lambda: self._frame._modify_one("force_stop", pkg)
+            menu, tr("强制停止"), callback=lambda: self._frame._modify_one("force_stop", pkg)
         )
-        add_menu_action(menu, "清除数据", callback=lambda: self._frame._modify_one("clear", pkg))
+        add_menu_action(
+            menu, tr("清除数据"), callback=lambda: self._frame._modify_one("clear", pkg)
+        )
         menu.addSeparator()
         add_menu_action(
-            menu, "卸载", callback=lambda: self._frame._modify_one("uninstall", pkg)
+            menu, tr("卸载"), callback=lambda: self._frame._modify_one("uninstall", pkg)
         )
-        add_menu_action(menu, "停用", callback=lambda: self._frame._modify_one("disable", pkg))
-        add_menu_action(menu, "启用", callback=lambda: self._frame._modify_one("enable", pkg))
+        add_menu_action(menu, tr("停用"), callback=lambda: self._frame._modify_one("disable", pkg))
+        add_menu_action(menu, tr("启用"), callback=lambda: self._frame._modify_one("enable", pkg))
         menu.addSeparator()
-        add_menu_action(menu, "备份", callback=lambda: self._frame._backup_one(pkg))
+        add_menu_action(menu, tr("备份"), callback=lambda: self._frame._backup_one(pkg))
         if self._frame._batch_workers or not self._frame._can_operate():
             for action in menu.actions():
                 if not action.isSeparator():
@@ -499,7 +515,7 @@ class AppManagerViews:
         batch_running = bool(self._frame._batch_workers)
         load_running = bool(getattr(self._frame, "_load_in_progress", False))
         device_connected = self._frame._can_operate()
-        self._frame.selection_label.setText(f"已选 {count} 项")
+        self._frame.selection_label.setText(tr('已选 {value0} 项').format(value0=count))
         for button in self._frame._selection_action_buttons:
             requires_device = bool(button.property("requiresDevice"))
             button.setEnabled(

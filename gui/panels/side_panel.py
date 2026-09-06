@@ -127,6 +127,8 @@ class SidePanel(QWidget):
         prepare_responsive_content(tab_widget)
         tab_widget.setMinimumWidth(0)
         self._tab_scroll_areas[index].setWidget(tab_widget)
+        # 业务面板的根仅组织布局；迁入工作区后也应透出宿主材质。
+        tab_widget.setAutoFillBackground(False)
         setattr(self, attr, tab)
         self._loaded_lazy_tabs.add(index)
         activate_bindings = getattr(tab, "activate_responsive_bindings", None)

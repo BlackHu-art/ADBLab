@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Slot
 from PySide6.QtGui import QIcon, QImage, QPixmap
 
+from gui.i18n import tr
+
 if TYPE_CHECKING:
     from models.app_manager_worker import AppManagerWorker
 
@@ -73,8 +75,8 @@ class AppManagerIcons(QObject):
         if package in self.cache:
             item.setIcon(self.cache[package])
             self.cache.move_to_end(package)
-        elif package in self.failures and "图标未读取" not in item.toolTip():
-            item.setToolTip(item.toolTip() + "\n图标未读取，点击刷新重试。")
+        elif package in self.failures and tr("图标未读取") not in item.toolTip():
+            item.setToolTip(item.toolTip() + tr("\n图标未读取，点击刷新重试。"))
 
     def _visible_packages(self) -> list[str]:
         view = self.page.icon_list

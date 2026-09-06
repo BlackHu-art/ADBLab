@@ -1,0 +1,38 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.9, pytest-9.1.1, pluggy-1.6.0 -- D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Scripts\python.exe
+cachedir: .pytest_cache
+rootdir: D:\Program Files (x86)\JetBrains\PyStation\ADBLab
+configfile: pyproject.toml
+plugins: cov-7.1.0, xdist-3.8.0
+collecting ... 
+[1;33m📢 Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
+
+collected 7 items
+
+tests/test_screenshot_page.py::test_screenshot_workspace_preparation_releases_header_space_without_resetting_content[empty] PASSED
+tests/test_screenshot_page.py::test_screenshot_workspace_preparation_releases_header_space_without_resetting_content[loaded] PASSED
+tests/test_screenshot_page.py::test_screenshot_workspace_entry_hides_header_and_reuses_the_result_page PASSED
+tests/test_screenshot_page.py::test_screenshot_page_is_plain_widget_and_incrementally_appends_batches PASSED
+tests/test_screenshot_page.py::test_screenshot_page_requires_second_delete_click_and_keeps_empty_page_open PASSED
+tests/test_screenshot_page.py::test_screenshot_page_lifecycle_preserves_navigation_state_until_dispose PASSED
+Windows fatal exception: code 0xc0000374
+
+Current thread 0x000090c8 (most recent call first):
+  Garbage-collecting
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 33 in gc_collect_harder
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\unraisableexception.py", line 172 in pytest_unconfigure
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\config\__init__.py", line 1212 in _ensure_unconfigure
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\main.py", line 372 in wrap_session
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\main.py", line 377 in pytest_cmdline_main
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_callers.py", line 121 in _multicall
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_manager.py", line 120 in _hookexec
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pluggy\_hooks.py", line 512 in __call__
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\config\__init__.py", line 229 in _main
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\_pytest\config\__init__.py", line 253 in _console_main
+  File "D:\Program Files (x86)\JetBrains\PyStation\ADBLab\.venv\Lib\site-packages\pytest\__main__.py", line 9 in <module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main
+tests/test_screenshot_page.py::test_screenshot_page_escape_requests_back_navigation_without_closing PASSED

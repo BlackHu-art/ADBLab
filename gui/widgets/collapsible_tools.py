@@ -4,6 +4,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, PushButton
 
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 
 
@@ -18,12 +19,12 @@ class CollapsibleTools(QWidget):
         tooltip: str = "批量操作使用顶部勾选的操作设备；本地 APK 工具无需设备。收起时保留输入",
     ):
         super().__init__(parent)
-        self.title = title
+        self.title = tr(title)
         self.content = content
-        self.toggle_button = PushButton(icon, f"展开 · {title}", self)
+        self.toggle_button = PushButton(icon, tr("展开 · {title}").format(title=self.title), self)
         self.toggle_button.setCheckable(True)
-        self.toggle_button.setAccessibleName(title)
-        self.toggle_button.setToolTip(tooltip)
+        self.toggle_button.setAccessibleName(self.title)
+        self.toggle_button.setToolTip(tr(tooltip))
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -40,6 +41,7 @@ class CollapsibleTools(QWidget):
 
     def _set_expanded(self, expanded: bool):
         self.content.setVisible(expanded)
-        self.toggle_button.setText(f"{'收起' if expanded else '展开'} · {self.title}")
+        template = tr("收起 · {title}") if expanded else tr("展开 · {title}")
+        self.toggle_button.setText(template.format(title=self.title))
         self.updateGeometry()
         self.expanded_changed.emit(expanded)

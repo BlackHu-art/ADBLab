@@ -6,10 +6,11 @@ from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from gui import window_effects
 from gui.dialogs.live_logcat import CurrentPackageWorker
 from gui.features.logcat import LiveLogcatPage
 from gui.styles import BaseStyles, theme
@@ -42,7 +43,7 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
     try:
         with (
             patch.object(theme.sys, "platform", "win32"),
-            patch.object(theme.ctypes, "windll", Mock(dwmapi=DwmApi()), create=True),
+            patch.object(window_effects.ctypes, "WinDLL", Mock(return_value=DwmApi()), create=True),
         ):
             theme.apply_dark_title_bar(window)
     finally:
@@ -50,6 +51,17 @@ def test_apply_dark_title_bar_calls_dwm_without_ctypes_side_effect_imports():
             ctypes.wintypes = original_wintypes
 
     assert len(calls) == 1
+    assert calls[0][:2] == (12345, 20)
+    assert ctypes.cast(calls[0][2], ctypes.POINTER(ctypes.c_int)).contents.value == int(
+        BaseStyles.resolved_theme() == "Dark"
+    )
+
+
+def test_apply_dark_title_bar_on_other_platforms_does_not_create_a_native_handle():
+    window = Mock()
+    with patch.object(theme.sys, "platform", "linux"):
+        theme.apply_dark_title_bar(window)
+    window.winId.assert_not_called()
 
 
 def test_live_logcat_worker_finished_during_close_does_not_touch_deleted_buttons():
@@ -368,3 +380,223 @@ def test_live_logcat_fluent_action_icons_follow_theme():
         assert all(light != dark for light, dark in zip(*icons))
     finally:
         dialog.close()
+
+
+def _bounded_logcat_page(monkeypatch, *, maximum=100):
+    """用真实文档的小缓存复现淘汰，不启动设备 worker。"""
+
+    monkeypatch.setattr(LiveLogcatPage, "MAX_BUFFER", maximum)
+    page = LiveLogcatPage(device_ip="demo-buffer-device")
+    page.resize(700, 430)
+    page.show()
+    QApplication.processEvents()
+    return page
+
+
+def test_live_logcat_evicted_error_disappears_when_only_info_arrives(
+    qt_application, monkeypatch
+):
+    """稀疏等级视图必须淘汰已离开原始缓存的错误，不能永久保留旧正文。"""
+
+    page = _bounded_logcat_page(monkeypatch)
+    error = "09-06 18:00:00.000 1 1 E Demo: oldest error"
+    try:
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        page._on_line(error, "E", 1)
+        page._flush_pending_lines()
+        assert page.output.toPlainText().splitlines() == [error]
+        for index in range(100):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: info {index}", "I", 1)
+        page._flush_pending_lines()
+        assert page.output.toPlainText() == ""
+        assert not page.export_btn.isEnabled()
+    finally:
+        page.close()
+
+
+def test_live_logcat_evicted_pending_error_never_reaches_output(qt_application, monkeypatch):
+    """尚未落屏的错误被原始缓存淘汰后，后续刷新不得重新显示它。"""
+
+    page = _bounded_logcat_page(monkeypatch)
+    try:
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        page._on_line("09-06 18:00:00.000 1 1 E Demo: pending error", "E", 1)
+        for index in range(100):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: info {index}", "I", 1)
+        assert page.output.toPlainText() == ""
+        page._flush_pending_lines()
+        assert page.output.toPlainText() == ""
+        assert not page.export_btn.isEnabled()
+    finally:
+        page.close()
+
+
+def test_live_logcat_duplicate_messages_are_evicted_one_record_at_a_time(
+    qt_application, monkeypatch
+):
+    """相同文本代表不同日志条目，淘汰一条不得保留或删除全部同文记录。"""
+
+    page = _bounded_logcat_page(monkeypatch)
+    error = "09-06 18:00:00.000 1 1 E Demo: repeated error"
+    try:
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        for _index in range(3):
+            page._on_line(error, "E", 1)
+        page._flush_pending_lines()
+        assert page.output.toPlainText().splitlines() == [error] * 3
+        for index in range(98):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: info {index}", "I", 1)
+        page._flush_pending_lines()
+        assert page.output.toPlainText().splitlines() == [error] * 2
+        for remaining in (1, 0):
+            page._on_line(f"09-06 18:00:02.000 1 1 I Demo: next {remaining}", "I", 1)
+            page._flush_pending_lines()
+            assert page.output.toPlainText().splitlines() == [error] * remaining
+    finally:
+        page.close()
+
+
+def test_live_logcat_full_buffer_preserves_retained_history_anchor(
+    qt_application, monkeypatch
+):
+    """缓冲区已满时，上翻阅读仍留在未被淘汰的首条可见日志。"""
+
+    page = _bounded_logcat_page(monkeypatch, maximum=200)
+    try:
+        for index in range(200):
+            page._on_line(f"09-06 18:00:00.000 1 1 I Demo: history {index}", "I", 1)
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        scrollbar = page.output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum() // 2)
+        first_visible = page.output.firstVisibleBlock().text()
+        assert not page.follow_btn.isChecked()
+        for index in range(10):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: new {index}", "I", 1)
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        assert page.output.firstVisibleBlock().text() == first_visible
+        assert not page.follow_btn.isChecked()
+    finally:
+        page.close()
+
+
+def test_live_logcat_explicit_pause_survives_short_filter_wrap_and_resize(
+    qt_application, monkeypatch
+):
+    """明确暂停跟随后，程序引起的滚动范围缩短不能自行恢复跟随。"""
+
+    page = _bounded_logcat_page(monkeypatch, maximum=200)
+    try:
+        page._on_line("09-06 18:00:00.000 1 1 E Demo: only matching error", "E", 1)
+        for index in range(100):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: info {index}", "I", 1)
+        page._flush_pending_lines()
+        assert page.follow_btn.isChecked()
+        page.follow_btn.click()
+        assert not page.follow_btn.isChecked()
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        qt_application.processEvents()
+        assert len(page.output.toPlainText().splitlines()) == 1
+        assert not page.follow_btn.isChecked()
+        for width, height in ((420, 360), (1000, 760)):
+            page.wrap_btn.click()
+            page.resize(width, height)
+            qt_application.processEvents()
+            assert not page.follow_btn.isChecked()
+        page.level_combo.setCurrentIndex(0)
+        page._on_line("09-06 18:00:03.000 1 1 I Demo: after pause", "I", 1)
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        assert not page.follow_btn.isChecked()
+    finally:
+        page.close()
+
+
+def test_live_logcat_wrapped_full_buffer_preserves_visible_line_within_record(
+    qt_application, monkeypatch
+):
+    """长日志换成多行后，淘汰旧记录仍保持当前记录及其中正在阅读的视觉行。"""
+
+    page = _bounded_logcat_page(monkeypatch, maximum=200)
+    try:
+        if not page.wrap_btn.isChecked():
+            page.wrap_btn.click()
+        suffix = " ".join(f"segment-{index:02d}" for index in range(50))
+        for index in range(200):
+            page._on_line(f"09-06 18:00:00.000 1 1 I Demo: {index:03d} {suffix}", "I", 1)
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        scrollbar = page.output.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum() // 2 + 2)
+        qt_application.processEvents()
+        sample_point = QPoint(4, page.output.fontMetrics().height() // 2)
+        visible_cursor = page.output.cursorForPosition(sample_point)
+        for _attempt in range(3):
+            if visible_cursor.positionInBlock() > 0:
+                break
+            scrollbar.setValue(scrollbar.value() + 1)
+            qt_application.processEvents()
+            visible_cursor = page.output.cursorForPosition(sample_point)
+        first_visible = page.output.firstVisibleBlock().text()
+        visible_offset = visible_cursor.positionInBlock()
+        assert visible_offset > 0
+        assert not page.follow_btn.isChecked()
+        for index in range(10):
+            page._on_line(f"09-06 18:00:01.000 1 1 I Demo: new {index:03d} {suffix}", "I", 1)
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        assert page.output.firstVisibleBlock().text() == first_visible
+        assert page.output.cursorForPosition(sample_point).positionInBlock() == visible_offset
+        assert not page.follow_btn.isChecked()
+    finally:
+        page.close()
+
+
+def test_live_logcat_reactivation_applies_eviction_without_matching_new_lines(
+    qt_application, monkeypatch
+):
+    page = _bounded_logcat_page(monkeypatch, maximum=100)
+    try:
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        page._on_line("old error", "E")
+        page._flush_pending_lines()
+        page.deactivate()
+        for index in range(100):
+            page._on_line(f"info {index}", "I")
+        assert page.output.toPlainText() == "old error"
+        assert not page._line_flush_timer.isActive()
+        page.activate()
+        qt_application.processEvents()
+        assert page.output.toPlainText() == ""
+        assert "100 / 100" in page.reading_status.text()
+        assert page.output.placeholderText() == "当前等级下没有匹配的日志，可调整等级或等待新日志。"
+        assert not page.export_btn.isEnabled()
+    finally:
+        page.close()
+
+
+def test_live_logcat_package_switch_discarded_pending_does_not_delete_new_output(
+    monkeypatch,
+):
+    page = _bounded_logcat_page(monkeypatch, maximum=100)
+    worker = Mock()
+    worker.is_active.return_value = True
+    worker.update_package.return_value = True
+    try:
+        for index in range(90):
+            page._on_line(f"old displayed {index}", "I")
+        page._flush_pending_lines()
+        for index in range(10):
+            page._on_line(f"old pending {index}", "I")
+        page.worker = worker
+        page._apply_package_filter("com.example.new")
+        for index in range(100):
+            page._on_line(f"new record {index}", "I")
+            page._flush_pending_lines()
+        assert page.output.toPlainText().splitlines() == [
+            f"new record {index}" for index in range(100)
+        ]
+    finally:
+        page.worker = None
+        page.close()

@@ -69,6 +69,13 @@ def _self_check_packaging() -> int:
     importable("PySide6")
     importable("qfluentwidgets")
     importable("mobileperf.android.startup")
+    importable("gui.generated.translations_rc")
+
+    from PySide6.QtCore import QFile
+
+    for locale in ("zh_CN", "en_US", "zh_HK"):
+        translation = f":/adblab/i18n/adblab.{locale}.qm"
+        check(f"resource:i18n/{locale}", QFile.exists(translation))
 
     check("resource:icon.ico", Path(resource_path("icon.ico")).is_file())
     check("resource:resources", Path(resource_path("resources")).is_dir())
@@ -180,12 +187,16 @@ def _run_gui() -> int:
     from PySide6.QtWidgets import QApplication
 
     from core.log_service import LogService
-    from gui.main_frame import MainFrame
-    from gui.styles import BaseStyles
+    from gui.i18n import install_translators
 
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(resource_path("icon.ico")))
     setup_qt_search_paths()
+    # 翻译器的 Python 引用保留到事件循环退出，并先于页面模块和控件创建。
+    _translators = install_translators(app, settings.get("language", "Auto"))
+
+    from gui.main_frame import MainFrame
+    from gui.styles import BaseStyles
 
     log_service = LogService()
     set_error_sink(log_service.log)

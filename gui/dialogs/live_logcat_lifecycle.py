@@ -7,6 +7,7 @@ from PySide6.QtCore import QTimer
 from adblab.application.supervision import StopDisposition, TaskStopResult
 from gui.dialogs.lifecycle import is_qobject_alive, safe_disconnect
 from gui.dialogs.live_logcat_worker import CurrentPackageWorker, LogcatWorker
+from gui.i18n import tr
 
 
 class LiveLogcatLifecycle:
@@ -31,15 +32,15 @@ class LiveLogcatLifecycle:
         ):
             return
         if result.disposition is StopDisposition.GRACEFUL:
-            self._frame.status_bar.setText("采集已停止")
+            self._frame.status_bar.setText(tr("采集已停止"))
         elif result.disposition is StopDisposition.FORCED:
-            self._frame.status_bar.setText("已强制停止采集")
+            self._frame.status_bar.setText(tr("已强制停止采集"))
         elif result.disposition is StopDisposition.TIMED_OUT:
-            self._frame.status_bar.setText("停止采集超时；任务仍受监督，请等待清理完成")
+            self._frame.status_bar.setText(tr("停止采集超时；任务仍受监督，请等待清理完成"))
         elif result.disposition is StopDisposition.ALREADY_STOPPED:
-            self._frame.status_bar.setText("日志采集已停止")
+            self._frame.status_bar.setText(tr("日志采集已停止"))
         else:
-            self._frame.status_bar.setText("日志任务清理失败，请重试停止操作")
+            self._frame.status_bar.setText(tr("日志任务清理失败，请重试停止操作"))
         worker = self._frame.worker
         if worker is None:
             self._frame._set_running_actions(False)

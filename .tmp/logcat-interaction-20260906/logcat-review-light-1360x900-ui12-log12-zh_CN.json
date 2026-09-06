@@ -1,0 +1,28 @@
+{
+  "suffix": "light-1360x900-ui12-log12-zh_CN",
+  "synthetic": true,
+  "frame": [
+    1360,
+    900
+  ],
+  "page": [
+    1092,
+    662
+  ],
+  "viewport": [
+    1092,
+    662
+  ],
+  "output": [
+    1076,
+    448
+  ],
+  "output_font": 12,
+  "visible_output_height": 448,
+  "outer_scroll_max": 0,
+  "horizontal_output_max": 20624,
+  "records": 165,
+  "visible_records": 85,
+  "paused_new_records": 5,
+  "reading_status": "缓存 165 / 8000 行 · 已暂停跟随（5 行新日志）"
+}

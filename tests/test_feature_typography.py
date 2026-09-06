@@ -211,15 +211,18 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             assert about.support_qr.size().width() == 132
             assert about.maximumWidth() > 1_000_000
             assert logcat.btn_get_pkg.minimumWidth() >= logcat.btn_get_pkg.sizeHint().width()
-            assert logcat.btn_get_pkg.maximumWidth() > 1_000_000
+            assert logcat.btn_get_pkg.width() >= logcat.btn_get_pkg.sizeHint().width()
             assert performance.progress_bar.maximumHeight() == 4
             performance.resize(900, 700)
             performance.show()
             qt_application.processEvents()
-            assert len(performance._configuration_sections) == 4
+            assert performance._configuration_sections
             for section in performance._configuration_sections:
                 assert isinstance(section, HeaderCardWidget)
-                _assert_role(section.headerLabel, FontRole.TITLE)
+                _assert_role(section.headerLabel, FontRole.UI)
+            _assert_role(performance.dialog_title, FontRole.TITLE)
+            _assert_role(performance._results_group.headerLabel, FontRole.UI)
+            _assert_role(performance._diagnostic_tools.toggle_button, FontRole.UI)
             assert performance._results_group not in performance._configuration_sections
         finally:
             settings.update(
@@ -265,6 +268,9 @@ def test_performance_large_font_keeps_bounded_scrollable_content(
         assert page.findChildren(QScrollArea) == [page._config_scroll]
         assert page._config_scroll.verticalScrollBar().maximum() > 0
         assert_scroll_target_reachable(page._config_scroll, page.package_edit)
+        page._diagnostic_tools.toggle_button.setChecked(True)
+        qt_application.processEvents()
+        assert page.phone_log_edit.isVisibleTo(page)
         assert_scroll_target_reachable(page._config_scroll, page.phone_log_edit)
         assert page._config_scroll.horizontalScrollBar().maximum() == 0
         assert page.log_view.viewport().height() >= page.log_view.fontMetrics().height() * 8

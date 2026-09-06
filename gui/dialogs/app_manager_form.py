@@ -34,6 +34,7 @@ from qfluentwidgets import (
     setCustomStyleSheet,
 )
 
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -103,18 +104,18 @@ class AppManagerForm:
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self._frame.dialog_title = apply_label_role(
-            BodyLabel("应用管理"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel(tr("应用管理")), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.status_badge = InfoBadge.info("未选择设备", header_card)
+        self._frame.status_badge = InfoBadge.info(tr("未选择设备"), header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self._frame.status_badge.setToolTip("当前设备的连接状态与操作资格")
+        self._frame.status_badge.setToolTip(tr("当前设备的连接状态与操作资格"))
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
         self._frame.dialog_subtitle = apply_label_role(
-            BodyLabel("查看应用信息、管理启用状态与备份"),
+            BodyLabel(tr("查看应用信息、管理启用状态与备份")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -127,33 +128,33 @@ class AppManagerForm:
 
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
-        self._frame._search_label = apply_label_role(BodyLabel("搜索"), FontRole.UI)
+        self._frame._search_label = apply_label_role(BodyLabel(tr("搜索")), FontRole.UI)
         self._frame.search_input = LineEdit()
-        self._frame.search_input.setPlaceholderText("搜索应用名称或包名")
+        self._frame.search_input.setPlaceholderText(tr("搜索应用名称或包名"))
         self._frame._search_label.setBuddy(self._frame.search_input)
-        self._frame.search_input.setAccessibleName("搜索应用")
+        self._frame.search_input.setAccessibleName(tr("搜索应用"))
         self._frame.search_input.textChanged.connect(self._frame._filter)
-        self._frame._type_label = apply_label_role(BodyLabel("类型"), FontRole.UI)
+        self._frame._type_label = apply_label_role(BodyLabel(tr("类型")), FontRole.UI)
         self._frame.type_filter = ComboBox()
         for label, key in (
-            ("全部应用", "All"), ("用户应用", "User Apps"), ("系统应用", "System Apps")
+            (tr("全部应用"), "All"), (tr("用户应用"), "User Apps"), (tr("系统应用"), "System Apps")
         ):
             self._frame.type_filter.addItem(label, userData=key)
         self._frame._type_label.setBuddy(self._frame.type_filter)
-        self._frame.type_filter.setAccessibleName("筛选应用类型")
+        self._frame.type_filter.setAccessibleName(tr("筛选应用类型"))
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
-        self._frame.selection_label = apply_label_role(BodyLabel("已选 0 项"), FontRole.UI)
+        self._frame.selection_label = apply_label_role(BodyLabel(tr("已选 0 项")), FontRole.UI)
         self._frame.selection_label.setMinimumWidth(82)
         self._frame.view_toggle = PushButton()
         self._frame.view_toggle.setFixedSize(28, 28)
-        self._frame.view_toggle.setToolTip("切换图标或列表视图")
-        self._frame.view_toggle.setAccessibleName("切换图标或列表视图")
+        self._frame.view_toggle.setToolTip(tr("切换图标或列表视图"))
+        self._frame.view_toggle.setAccessibleName(tr("切换图标或列表视图"))
         self._frame.view_toggle.clicked.connect(self._frame._toggle_view)
         self._frame.view_toggle.setIcon(get_themed_icon("list-bullets.svg"))
         self._frame.view_toggle.setIconSize(QSize(16, 16))
         self._frame.refresh_btn = PushButton()
-        self._frame.refresh_btn.setText("刷新")
-        self._frame.refresh_btn.setToolTip("重新加载已安装应用")
+        self._frame.refresh_btn.setText(tr("刷新"))
+        self._frame.refresh_btn.setToolTip(tr("重新加载已安装应用"))
         self._frame.refresh_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.refresh_btn.setIconSize(QSize(14, 14))
         self._frame.refresh_btn.clicked.connect(self._frame._load_apps)
@@ -177,15 +178,15 @@ class AppManagerForm:
         error_layout.setContentsMargins(8, 4, 8, 4)
         error_layout.setSpacing(8)
         self._frame.load_error_label = apply_label_role(
-            CaptionLabel("无法加载应用列表。"),
+            CaptionLabel(tr("无法加载应用列表。")),
             FontRole.UI_SMALL,
             color_key="ERROR_COLOR",
         )
         self._frame.load_error_label.setWordWrap(True)
-        self._frame.load_error_label.setAccessibleName("应用加载错误")
-        self._frame.retry_btn = PushButton("重试")
-        self._frame.retry_btn.setToolTip("重新尝试加载应用列表")
-        self._frame.retry_btn.setAccessibleName("重试加载应用")
+        self._frame.load_error_label.setAccessibleName(tr("应用加载错误"))
+        self._frame.retry_btn = PushButton(tr("重试"))
+        self._frame.retry_btn.setToolTip(tr("重新尝试加载应用列表"))
+        self._frame.retry_btn.setAccessibleName(tr("重试加载应用"))
         self._frame.retry_btn.setIcon(get_themed_icon("arrows-clockwise.svg"))
         self._frame.retry_btn.setIconSize(QSize(14, 14))
         self._frame.retry_btn.setProperty("adaptiveBaseHeight", 28)
@@ -199,7 +200,7 @@ class AppManagerForm:
 
         self._frame.model = QStandardItemModel(0, 6)
         self._frame.model.setHorizontalHeaderLabels(
-            ["", "应用名称", "包名", "版本", "状态", "类型"]
+            ["", tr("应用名称"), tr("包名"), tr("版本"), tr("状态"), tr("类型")]
         )
         self._frame.model.itemChanged.connect(self._frame._on_table_item_changed)
         self._frame.proxy = _app_manager.AppSortProxy()
@@ -262,24 +263,24 @@ class AppManagerForm:
         self._frame._selection_action_buttons = []
         labels_actions = [
             (
-                "卸载所选",
+                tr("卸载所选"),
                 "uninstall",
                 "trash.svg",
-                "卸载已选择的应用",
+                tr("卸载已选择的应用"),
             ),
             (
-                "停用所选",
+                tr("停用所选"),
                 "disable",
                 "prohibit.svg",
-                "停用已选择的应用",
+                tr("停用已选择的应用"),
             ),
             (
-                "启用所选",
+                tr("启用所选"),
                 "enable",
                 "check-circle.svg",
-                "启用已选择的应用",
+                tr("启用已选择的应用"),
             ),
-            ("取消全选", None, "square.svg", "清除当前应用选择"),
+            (tr("取消全选"), None, "square.svg", tr("清除当前应用选择")),
         ]
         for t, a, icon, tooltip in labels_actions:
             b = PushButton()
@@ -303,36 +304,41 @@ class AppManagerForm:
         self._frame._preset_action_layout = QGridLayout()
         self._frame._preset_action_layout.setSpacing(4)
         self._frame._preset_action_buttons = []
-        for t, fn, icon, tooltip in [
+        for t, fn, icon, tooltip, requires_device, requires_selection in [
             (
-                "创建预设",
+                tr("创建预设"),
                 self._frame._create_preset,
                 "floppy-disk.svg",
-                "将所选应用列表保存为预设",
+                tr("将所选应用列表保存为预设"),
+                False, True,
             ),
             (
-                "加载预设",
+                tr("加载预设"),
                 self._frame._load_preset,
                 "folder-open.svg",
-                "根据已保存的预设选择应用",
+                tr("根据已保存的预设选择应用"),
+                False, False,
             ),
             (
-                "备份所选",
+                tr("备份所选"),
                 self._frame._backup_selected,
                 "archive.svg",
-                "备份已选择的应用",
+                tr("备份已选择的应用"),
+                True, True,
             ),
             (
-                "恢复备份",
+                tr("恢复备份"),
                 self._frame._restore_apps,
                 "cloud-arrow-down.svg",
-                "从备份文件恢复应用",
+                tr("从备份文件恢复应用"),
+                True, False,
             ),
             (
-                "应用详情",
+                tr("应用详情"),
                 self._frame._show_details,
                 "info.svg",
-                "查看所选应用的详情",
+                tr("查看所选应用的详情"),
+                True, True,
             ),
         ]:
             b = PushButton()
@@ -343,17 +349,11 @@ class AppManagerForm:
             b.setToolTip(tooltip)
             b.setAccessibleName(t)
             b.setAccessibleDescription(tooltip)
-            b.setProperty(
-                "requiresDevice",
-                t in {"备份所选", "恢复备份", "应用详情"},
-            )
-            b.setProperty(
-                "requiresSelection",
-                t in {"创建预设", "备份所选", "应用详情"},
-            )
+            b.setProperty("requiresDevice", requires_device)
+            b.setProperty("requiresSelection", requires_selection)
             b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             b.clicked.connect(fn)
-            if t in {"创建预设", "备份所选", "应用详情"}:
+            if requires_selection:
                 self._frame._selection_action_buttons.append(b)
             self._frame._preset_action_buttons.append(b)
         layout.addLayout(self._frame._preset_action_layout)
@@ -361,15 +361,15 @@ class AppManagerForm:
         self._frame.log_output = TextEdit()
         self._frame.log_output.setReadOnly(True)
         self._frame.log_output.setMaximumHeight(96)
-        self._frame.log_output.setPlaceholderText("操作过程将在此显示")
+        self._frame.log_output.setPlaceholderText(tr("操作过程将在此显示"))
         log_header = QHBoxLayout()
-        log_header.addWidget(apply_label_role(BodyLabel("操作记录"), FontRole.UI))
+        log_header.addWidget(apply_label_role(BodyLabel(tr("操作记录")), FontRole.UI))
         log_header.addStretch(1)
-        self._frame.log_toggle = PushButton("展开记录")
+        self._frame.log_toggle = PushButton(tr("展开记录"))
         self._frame.log_toggle.setCheckable(True)
         self._frame.log_toggle.setChecked(False)
-        self._frame.log_toggle.setAccessibleName("显示或收起操作记录")
-        self._frame.log_toggle.setToolTip("查看或收起本页操作过程，收起后保留记录内容")
+        self._frame.log_toggle.setAccessibleName(tr("显示或收起操作记录"))
+        self._frame.log_toggle.setToolTip(tr("查看或收起本页操作过程，收起后保留记录内容"))
         self._frame.log_toggle.setAccessibleDescription(self._frame.log_toggle.toolTip())
         self._frame.log_toggle.toggled.connect(self._toggle_log)
         log_header.addWidget(self._frame.log_toggle)
@@ -378,9 +378,9 @@ class AppManagerForm:
         self._frame.log_output.hide()
 
         self._frame.status_bar = apply_label_role(
-            CaptionLabel("就绪"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            CaptionLabel(tr("就绪")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
-        self._frame.status_bar.setAccessibleName("应用管理状态")
+        self._frame.status_bar.setAccessibleName(tr("应用管理状态"))
         self._frame.status_bar.setWordWrap(True)
         layout.addWidget(self._frame.status_bar)
         self._frame._update_selection_ui()
@@ -411,10 +411,10 @@ class AppManagerForm:
         ui_font = bs.font_for_role(FontRole.UI)
         log_font = bs.font_for_role(FontRole.LOG)
         self._frame.setFont(ui_font)
-        # 工作区滚动容器可能保留创建时的调色板，页面表面自行提交当前主题底色。
+        # 布局面板透出宿主材质，表格与日志仍分别维护自己的可读底色。
         self._frame._master_panel.setStyleSheet(
             "QWidget#appManagerMasterPanel {"
-            f"background-color: {bs.color('WINDOW_BG')};"
+            "background-color: transparent;"
             "}"
         )
         bg = bs.color("INPUT_BG")
@@ -434,8 +434,8 @@ class AppManagerForm:
                 column, Qt.Orientation.Horizontal, ui_font, Qt.ItemDataRole.FontRole
             )
         metrics = QFontMetrics(ui_font)
-        self._frame.tree.setColumnWidth(4, max(96, metrics.horizontalAdvance("已停用") + 40))
-        self._frame.tree.setColumnWidth(5, max(80, metrics.horizontalAdvance("厂商") + 40))
+        self._frame.tree.setColumnWidth(4, max(96, metrics.horizontalAdvance(tr("已停用")) + 40))
+        self._frame.tree.setColumnWidth(5, max(80, metrics.horizontalAdvance(tr("厂商")) + 40))
         row_height = max(36, QFontMetrics(ui_font).height() + 12)
         header_font_size = (
             f"{ui_font.pointSizeF()}pt" if ui_font.pointSizeF() > 0 else f"{ui_font.pixelSize()}px"
@@ -509,7 +509,7 @@ class AppManagerForm:
         metrics = QFontMetrics(font)
         spacing = icons.spacing()
         grid = QSize(
-            max(128, metrics.horizontalAdvance("应用名称") + 24),
+            max(128, metrics.horizontalAdvance(tr("应用名称")) + 24),
             icons.iconSize().height() + metrics.height() * 2 + 16,
         )
         icons.setGridSize(grid)
@@ -527,7 +527,7 @@ class AppManagerForm:
     def _toggle_log(self, expanded: bool) -> None:
         """收起操作记录只释放布局空间，日志内容与后台写入保持不变。"""
         self._frame.log_output.setVisible(expanded)
-        self._frame.log_toggle.setText("收起记录" if expanded else "展开记录")
+        self._frame.log_toggle.setText(tr("收起记录") if expanded else tr("展开记录"))
 
     # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
 
@@ -546,13 +546,13 @@ class AppManagerForm:
         has_device = bool(self._frame.device_ip)
         connected = bool(getattr(self._frame, "_device_connected", has_device))
         if not has_device:
-            text, level = "未选择设备", InfoLevel.INFOAMTION
+            text, level = tr("未选择设备"), InfoLevel.INFOAMTION
         elif not connected:
-            text, level = "离线", InfoLevel.WARNING
+            text, level = tr("离线"), InfoLevel.WARNING
         elif not self._frame._device_selected:
-            text, level = "未选为操作目标", InfoLevel.INFOAMTION
+            text, level = tr("未选为操作目标"), InfoLevel.INFOAMTION
         else:
-            text, level = "就绪", InfoLevel.SUCCESS
+            text, level = tr("就绪"), InfoLevel.SUCCESS
         self._frame.status_badge.setText(text)
         self._frame.status_badge.setLevel(level)
 
@@ -634,13 +634,13 @@ class AppManagerForm:
         self._frame._reflow_action_group(
             self._frame._selection_action_layout,
             self._frame._selection_action_buttons[:4],
-            ("卸载", "停用", "启用", "清除"),
+            (tr("卸载"), tr("停用"), tr("启用"), tr("清除")),
             4,
         )
         self._frame._reflow_action_group(
             self._frame._preset_action_layout,
             self._frame._preset_action_buttons,
-            ("保存", "加载", "备份", "恢复", "详情"),
+            (tr("保存"), tr("加载"), tr("备份"), tr("恢复"), tr("详情")),
             5,
             span_last_in_two_columns=True,
         )

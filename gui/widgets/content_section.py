@@ -3,6 +3,8 @@
 from PySide6.QtWidgets import QBoxLayout, QWidget
 from qfluentwidgets import HeaderCardWidget
 
+from gui.i18n import tr
+
 
 class ContentSection(HeaderCardWidget):
     """通过标题与留白区分内容，不为结构容器绘制卡片底板和边框。"""
@@ -10,7 +12,7 @@ class ContentSection(HeaderCardWidget):
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         # 上游标题重载会再次调用 self.__init__，子类需走父对象重载后单独设置标题。
         super().__init__(parent)
-        self.setTitle(title)
+        self.setTitle(tr(title))
         self.separator.hide()
         self.headerLayout.setContentsMargins(0, 0, 0, 0)
         self.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)

@@ -14,6 +14,7 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
     safe_disconnect,
 )
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from models.app_manager_worker import AppManagerWorker  # noqa: F401  供测试通过本模块命名空间补丁。
 
@@ -35,12 +36,12 @@ class AppSortProxy(QSortFilterProxyModel):
         self.invalidateFilter()
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
-        """展示中文状态；源模型继续保存 worker 返回的稳定业务值。"""
+        """展示当前语言的状态；源模型继续保存 worker 返回的稳定业务值。"""
         value = super().data(index, role)
         if role == Qt.ItemDataRole.DisplayRole and index.column() in (4, 5):
             return {
-                "Enabled": "已启用", "Disabled": "已停用", "User": "用户",
-                "System": "系统", "Vendor": "厂商", "Other": "其他",
+                "Enabled": tr("已启用"), "Disabled": tr("已停用"), "User": tr("用户"),
+                "System": tr("系统"), "Vendor": tr("厂商"), "Other": tr("其他"),
             }.get(value, value)
         return value
 
@@ -224,9 +225,9 @@ class AppManagerPage(QWidget):
             self._load_refresh_pending = False
             if is_qobject_alive(self._detail_timer):
                 self._detail_timer.stop()
-            self.status_bar.setText("设备已离线，仍可查看缓存的应用列表。")
+            self.status_bar.setText(tr("设备已离线，仍可查看缓存的应用列表。"))
         elif changed:
-            self.status_bar.setText("设备已重新连接，刷新可更新应用列表。")
+            self.status_bar.setText(tr("设备已重新连接，刷新可更新应用列表。"))
         if self._can_operate():
             self._icons_controller.schedule()
         else:
@@ -256,7 +257,7 @@ class AppManagerPage(QWidget):
             self._icons_controller.schedule()
         self._update_selection_ui()
         if not self._device_selected:
-            self.status_bar.setText("请在顶部设备栏勾选当前设备后执行应用操作；已加载内容仍可查看。")
+            self.status_bar.setText(tr("请在顶部设备栏勾选当前设备后执行应用操作；已加载内容仍可查看。"))
 
     def open_details(self, package_name: str):
         """在当前管理页内打开指定包详情，不创建顶层窗口。"""
@@ -365,7 +366,7 @@ class AppManagerPage(QWidget):
         self.load_state = state
         self.setProperty("loadState", state)
         is_error = state == "error"
-        self.load_error_label.setText(message or "无法加载应用列表。")
+        self.load_error_label.setText(message or tr("无法加载应用列表。"))
         self.load_error_panel.setVisible(is_error)
         self.status_bar.setText(message)
         self._update_selection_ui()
@@ -384,9 +385,9 @@ class AppManagerPage(QWidget):
             return
         self._load_result_received = True
         if self._device_connected:
-            message = f"已加载 {count} 个应用，正在读取详情…"
+            message = tr('已加载 {value0} 个应用，正在读取详情…').format(value0=count)
         else:
-            message = f"设备已离线，显示 {count} 个缓存应用。"
+            message = tr('设备已离线，显示 {value0} 个缓存应用。').format(value0=count)
         self._set_load_state("ready", message)
 
     def _on_load_worker_finished(self, request_id: int) -> None:
@@ -396,7 +397,7 @@ class AppManagerPage(QWidget):
         self._load_in_progress = False
         if not self._closing and not self._load_result_received:
             message = self._last_load_error or (
-                "无法加载应用，请检查设备后重试。"
+                tr("无法加载应用，请检查设备后重试。")
             )
             self._set_load_state("error", message)
         if not self._closing and self._load_refresh_pending and self._active:

@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QTableWidgetItem
 from qfluentwidgets import TableItemDelegate
 
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
+from gui.i18n import tr
 from gui.styles.icon_loader import get_fluent_icon
 from services import file_explorer as explorer_service
 
@@ -83,7 +84,7 @@ class FileExplorerList:
         )
 
     def _go_parent(self):
-        self._frame.status_bar.setText("Opening parent folder...")
+        self._frame.status_bar.setText(tr("Opening parent folder..."))
         self._navigate(os.path.dirname(self._frame.current_path))
 
     # ── 目录列表 ────────────────────────────────────────────────────────
@@ -97,7 +98,7 @@ class FileExplorerList:
         if self._frame._closing:
             return
         if not self._frame._can_operate():
-            self._frame.status_bar.setText("Select an online device before browsing files")
+            self._frame.status_bar.setText(tr("Select an online device before browsing files"))
             return
         requested_path = str(requested_path or self._frame.current_path).strip()
         if not requested_path:
@@ -121,7 +122,7 @@ class FileExplorerList:
             except RuntimeError:
                 pass
         self._frame.search_field.clear()
-        self._frame.status_bar.setText(f"Opening {requested_path}…")
+        self._frame.status_bar.setText(tr('Opening {value0}…').format(value0=requested_path))
         self._frame.status_bar.setToolTip("")
         self._set_loading(True)
 
@@ -165,8 +166,10 @@ class FileExplorerList:
                 self._frame._pending_navigation = None
             self._set_loading(False)
             self._frame.path_field.setText(self._frame.current_path)
-            self._frame.status_bar.setText(f"Unable to open {requested_path}")
-            self._frame.status_bar.setToolTip(str(output or "Directory loading failed"))
+            self._frame.status_bar.setText(
+                tr("Unable to open {value0}").format(value0=requested_path)
+            )
+            self._frame.status_bar.setToolTip(str(output or tr("Directory loading failed")))
             return
         if request_id is not None:
             pending = getattr(self._frame, "_pending_navigation", None)
@@ -198,7 +201,11 @@ class FileExplorerList:
         if request_id is not None:
             self._frame._active_refresh = None
         self._frame.status_bar.setToolTip("")
-        self._frame.status_bar.setText(f"{requested_path}  |  {folders} folders, {files} files")
+        self._frame.status_bar.setText(
+            tr("{value0}  |  {value1} folders, {value2} files").format(
+                value0=requested_path, value1=folders, value2=files
+            )
+        )
 
     def _commit_navigation(self, action: str, target: str) -> None:
         """仅在目录读取成功后原子提交路径和前进/后退历史。"""
@@ -224,10 +231,13 @@ class FileExplorerList:
             sync_controls()
 
     def _set_file_row(self, row: int, name: str, file_type: str, size: str, modified: str):
-        type_item = QTableWidgetItem(file_type)
+        display_type = tr(file_type) if file_type in {"Folder", "File"} else file_type
+        type_item = QTableWidgetItem(display_type)
+        # 类型文字可随语言变化；目录导航和图标选择始终读取原始业务类型。
+        type_item.setData(Qt.ItemDataRole.UserRole, file_type)
         type_item.setIcon(self._file_type_icon(name, file_type))
-        type_item.setToolTip(file_type)
-        type_item.setData(Qt.ItemDataRole.AccessibleTextRole, file_type)
+        type_item.setToolTip(display_type)
+        type_item.setData(Qt.ItemDataRole.AccessibleTextRole, display_type)
         name_item = QTableWidgetItem(name)
         name_item.setToolTip(name)
         self._frame.table.setItem(row, self._frame.TYPE_COL, type_item)
@@ -241,7 +251,7 @@ class FileExplorerList:
 
     def _file_type_at(self, row: int) -> str:
         item = self._frame.table.item(row, self._frame.TYPE_COL)
-        return item.text() if item else ""
+        return str(item.data(Qt.ItemDataRole.UserRole) or item.text()) if item else ""
 
     def _file_type_icon(self, name: str, file_type: str):
         return file_explorer_icon(self._file_type_icon_name(name, file_type))

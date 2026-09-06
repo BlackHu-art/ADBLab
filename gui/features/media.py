@@ -147,6 +147,11 @@ class ScreenshotPage(QWidget):
         self._active = True
         self.receive_payload(payload)
 
+    def prepare_for_workspace(self) -> None:
+        """复用工作区页头，只调整呈现并保留截图与导航状态。"""
+
+        self._ui_controller.prepare_for_workspace()
+
     def receive_payload(self, payload=None) -> None:
         """接收后台完成的截图批次，不要求页面当前位于前台。"""
 

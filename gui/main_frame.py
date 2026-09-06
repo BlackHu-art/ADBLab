@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     CardWidget,
     FluentIcon,
+    FluentStyleSheet,
     FluentWindow,
     InfoBar,
     InfoBarPosition,
@@ -37,6 +38,7 @@ from qfluentwidgets import (
     SmoothScrollArea,
     setCustomStyleSheet,
 )
+from shiboken6 import isValid
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
@@ -45,6 +47,7 @@ from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
 from gui.close_controller import CloseController
+from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
 from gui.pages.device_hub import DeviceHubPage
 from gui.pages.fluent_pages import (
@@ -229,22 +232,7 @@ class MainFrame(FluentWindow):
         mouse_buttons_provider: Callable[[], Qt.MouseButton] | None = None,
     ):
         super().__init__()
-        # 切页动画会露出内容栈，导航收起又会重设 QStyle 后重新挂回父级。
-        # 这两层由主题 QSS 持续绘制实色，不能依赖页面遮挡或动画完成后补色；
-        # 同时去掉透明边框与圆角，避免 Mica 在边缘合成出亮线。
-        light_surface = BaseStyles.color_for("Light", "WINDOW_BG")
-        dark_surface = BaseStyles.color_for("Dark", "WINDOW_BG")
-        for surface, selector in (
-            (self.stackedWidget, "StackedWidget"),
-            (self.navigationInterface.panel, "NavigationPanel[menu=false]"),
-        ):
-            setCustomStyleSheet(
-                surface,
-                f"{selector} {{ background-color: {light_surface}; "
-                "border: none; border-radius: 0px; }",
-                f"{selector} {{ background-color: {dark_surface}; "
-                "border: none; border-radius: 0px; }",
-            )
+        self._sync_material_surface_styles()
         self._screen_adapter = screen_adapter or QtScreenAdapter()
         self._mouse_buttons_provider = mouse_buttons_provider or QApplication.mouseButtons
         self._window_screen_token = None
@@ -532,12 +520,16 @@ class MainFrame(FluentWindow):
             handle is not self._bound_window_handle or self._window_screen_token is None
         )
         if rebound_window:
+            previous_handle = self._bound_window_handle
+            if previous_handle is not None and isValid(previous_handle):
+                previous_handle.removeEventFilter(self)
             self._disconnect_screen_token(self._window_screen_token)
             self._window_screen_token = self._screen_adapter.connect_window_screen_changed(
                 self,
                 self._on_window_screen_changed,
             )
             self._bound_window_handle = handle
+            handle.installEventFilter(self)
 
         screen = self._resolve_window_screen()
         rebound_screen = self._bind_screen_metrics(screen)
@@ -590,6 +582,9 @@ class MainFrame(FluentWindow):
         metric_tokens = tuple(getattr(self, "_screen_metric_tokens", ()))
         self._window_screen_token = None
         self._screen_metric_tokens = []
+        handle = getattr(self, "_bound_window_handle", None)
+        if handle is not None and isValid(handle):
+            handle.removeEventFilter(self)
         self._bound_window_handle = None
         self._bound_screen = None
         self._disconnect_screen_token(window_token)
@@ -812,12 +807,18 @@ class MainFrame(FluentWindow):
 
         self._global_device_bar = DeviceContextBar(self)
         self.widgetLayout.removeWidget(self.stackedWidget)
-        self._content_layout = QVBoxLayout()
+        # 设备栏与页面共用一个材质面，避免两次半透明合成或接缝处出现色带。
+        self._content_surface = QWidget(self)
+        self._content_surface.setObjectName("workspaceSurface")
+        self._content_surface.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        FluentStyleSheet.FLUENT_WINDOW.apply(self._content_surface)
+        self._content_layout = QVBoxLayout(self._content_surface)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
         self._content_layout.addWidget(self._global_device_bar)
         self._content_layout.addWidget(self.stackedWidget, 1)
-        self.widgetLayout.addLayout(self._content_layout, 1)
+        self.widgetLayout.addWidget(self._content_surface, 1)
+        self._sync_material_surface_styles()
         self._device_hub = DeviceHubPage(self)
         # 旧设备视图作为兼容状态源保留在协调器下；不拆走仍被响应式绑定引用的控件。
         self.left_panel.device_widget.setParent(self.left_panel)
@@ -872,7 +873,7 @@ class MainFrame(FluentWindow):
 
         devices_host = WorkspaceFeatureHost(
             "devices",
-            "设备概览",
+            tr("设备概览"),
             devices_overview,
             self,
         )
@@ -882,14 +883,14 @@ class MainFrame(FluentWindow):
         )
         devices_host.register_feature(
             "files",
-            "文件管理",
+            tr("文件管理"),
             FluentIcon.FOLDER,
             lambda key: FileExplorerPage(device_ip=key.device_id),
-            close_label="关闭文件管理",
+            close_label=tr("关闭文件管理"),
         )
         devices_host.register_overview_category(
             "remote",
-            "远程控制",
+            tr("远程控制"),
             FluentIcon.PROJECTOR,
             page=remote_overview,
             requires_device=True,
@@ -902,7 +903,7 @@ class MainFrame(FluentWindow):
 
         apps_host = WorkspaceFeatureHost(
             "apps",
-            "截图与诊断",
+            tr("截图与诊断"),
             apps_overview,
             self,
         )
@@ -913,10 +914,10 @@ class MainFrame(FluentWindow):
         )
         apps_host.register_feature(
             "manager",
-            "应用管理",
+            tr("应用管理"),
             FluentIcon.APPLICATION,
             lambda key: AppManagerPage(device_ip=key.device_id),
-            close_label="关闭应用管理",
+            close_label=tr("关闭应用管理"),
         )
         apps_host.register_alias("packages", "manager")
         apps_host.register_alias("monkey", "overview")
@@ -929,16 +930,16 @@ class MainFrame(FluentWindow):
 
         apps_host.register_feature(
             "media",
-            "截图结果",
+            tr("截图结果"),
             FluentIcon.PHOTO,
             create_screenshot_page,
             requires_device=False,
-            close_label="清除截图结果",
+            close_label=tr("清除截图结果"),
         )
 
         system_host = WorkspaceFeatureHost(
             "system",
-            "系统工具",
+            tr("系统工具"),
             system_overview,
             self,
         )
@@ -954,14 +955,14 @@ class MainFrame(FluentWindow):
         system_host.register_alias("device", "overview")
         system_host.register_feature(
             "logcat",
-            "实时 Logcat",
+            tr("实时 Logcat"),
             FluentIcon.SCROLL,
             lambda key: LiveLogcatPage(
                 device_ip=key.device_id,
                 task_supervisor=self.task_supervisor,
                 log_service=self.log_service,
             ),
-            close_label="关闭日志会话",
+            close_label=tr("关闭日志会话"),
         )
 
         def create_performance_page(key):
@@ -976,10 +977,10 @@ class MainFrame(FluentWindow):
 
         system_host.register_feature(
             "performance",
-            "性能采集",
+            tr("性能采集"),
             FluentIcon.SPEED_HIGH,
             create_performance_page,
-            close_label="结束性能采集",
+            close_label=tr("结束性能采集"),
         )
 
         self._workspace_feature_hosts = {
@@ -1027,8 +1028,8 @@ class MainFrame(FluentWindow):
         self._devices_page = WorkspaceAreaPage(
             "devicesPage",
             "devices",
-            "设备概览",
-            "双击设备行选择或取消操作目标，右侧按钮打开该设备工具",
+            tr("设备概览"),
+            tr("双击设备行选择或取消操作目标，右侧按钮打开该设备工具"),
             devices_host,
             feature_host=devices_host,
             parent=self,
@@ -1036,8 +1037,8 @@ class MainFrame(FluentWindow):
         self._apps_page = WorkspaceAreaPage(
             "appsPage",
             "apps",
-            "截图与诊断",
-            "截图录屏、诊断应用并收集报告",
+            tr("截图与诊断"),
+            tr("截图录屏、诊断应用并收集报告"),
             apps_host,
             feature_host=apps_host,
             parent=self,
@@ -1045,8 +1046,8 @@ class MainFrame(FluentWindow):
         self._system_page = WorkspaceAreaPage(
             "systemPage",
             "system",
-            "系统工具",
-            "系统命令、设备配置、网络与模拟器操作",
+            tr("系统工具"),
+            tr("系统命令、设备配置、网络与模拟器操作"),
             system_host,
             feature_host=system_host,
             parent=self,
@@ -1066,8 +1067,8 @@ class MainFrame(FluentWindow):
         )
         self._tasks_page = GalleryPage(
             "tasksPage",
-            "任务中心",
-            "查看任务进度、历史结果与运行记录",
+            tr("任务中心"),
+            tr("查看任务进度、历史结果与运行记录"),
             self._task_page,
             scroll=False,
             parent=self,
@@ -1076,29 +1077,29 @@ class MainFrame(FluentWindow):
         self._home_page = HomePage(self, self)
 
         self.navigationInterface.setAcrylicEnabled(True)
-        self.addSubInterface(self._home_page, FluentIcon.HOME, "首页")
+        self.addSubInterface(self._home_page, FluentIcon.HOME, tr("首页"))
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
         self._workspace_navigation_page_keys: dict[str, str] = {}
         self._workspace_navigation_keys: dict[tuple[str, str], str] = {}
         workspace_navigation = (
-            ("devices", "overview", "devicesPage", DEVICE_ICON, "设备概览",
-             "双击设备行选择或取消操作目标，右侧按钮打开该设备工具"),
-            ("devices", "files", "filesPage", FluentIcon.FOLDER, "文件管理",
-             "浏览、传输和管理当前设备的文件"),
-            ("devices", "remote", "remotePage", FluentIcon.PROJECTOR, "远程控制",
-             "屏幕镜像、按键和手势在同一页面操作"),
-            ("apps", "manager", "appManagerPage", FluentIcon.APPLICATION, "应用管理",
-             "查看已安装应用，管理列表中的应用"),
-            ("apps", "overview", "appsPage", FluentIcon.CAMERA, "截图与诊断",
-             "应用包操作、截图录屏、Monkey 测试与诊断"),
-            ("apps", "media", "screenshotsPage", FluentIcon.PHOTO, "截图结果",
-             "查看并保存设备截图，切页后保留结果"),
-            ("system", "overview", "systemPage", FluentIcon.DEVELOPER_TOOLS, "系统工具",
-             "系统命令、设备配置、网络与模拟器操作"),
-            ("system", "logcat", "logcatPage", FluentIcon.SCROLL, "实时 Logcat",
-             "持续读取当前设备日志，支持应用过滤"),
-            ("system", "performance", "performancePage", FluentIcon.SPEED_HIGH, "性能采集",
-             "配置采样，查看运行状态与采集结果"),
+            ("devices", "overview", "devicesPage", DEVICE_ICON, tr("设备概览"),
+             tr("双击设备行选择或取消操作目标，右侧按钮打开该设备工具")),
+            ("devices", "files", "filesPage", FluentIcon.FOLDER, tr("文件管理"),
+             tr("浏览、传输和管理当前设备的文件")),
+            ("devices", "remote", "remotePage", FluentIcon.PROJECTOR, tr("远程控制"),
+             tr("屏幕镜像、按键和手势在同一页面操作")),
+            ("apps", "manager", "appManagerPage", FluentIcon.APPLICATION, tr("应用管理"),
+             tr("查看已安装应用，管理列表中的应用")),
+            ("apps", "overview", "appsPage", FluentIcon.CAMERA, tr("截图与诊断"),
+             tr("应用包操作、截图录屏、Monkey 测试与诊断")),
+            ("apps", "media", "screenshotsPage", FluentIcon.PHOTO, tr("截图结果"),
+             tr("查看并保存设备截图，切页后保留结果")),
+            ("system", "overview", "systemPage", FluentIcon.DEVELOPER_TOOLS, tr("系统工具"),
+             tr("系统命令、设备配置、网络与模拟器操作")),
+            ("system", "logcat", "logcatPage", FluentIcon.SCROLL, tr("实时 Logcat"),
+             tr("持续读取当前设备日志，支持应用过滤")),
+            ("system", "performance", "performancePage", FluentIcon.SPEED_HIGH, tr("性能采集"),
+             tr("配置采样，查看运行状态与采集结果")),
         )
         for section, page in self._workspace_pages.items():
             # 物理宿主继续保有会话，左栏直接选择语义功能；不重复创建页面或业务资源。
@@ -1117,19 +1118,19 @@ class MainFrame(FluentWindow):
             self._workspace_pages[section].set_route_presentation(feature, label, subtitle)
         self.navigationInterface.addSeparator(NavigationItemPosition.SCROLL)
         for page, icon, label in (
-            (self._tasks_page, FluentIcon.HISTORY, "任务中心"),
+            (self._tasks_page, FluentIcon.HISTORY, tr("任务中心")),
         ):
             self.addSubInterface(page, icon, label, NavigationItemPosition.SCROLL)
         self.addSubInterface(
             self._settings_page,
             FluentIcon.SETTING,
-            "设置",
+            tr("设置"),
             NavigationItemPosition.BOTTOM,
         )
         self._navigation_labels = {
-            self._home_page.objectName(): "首页",
-            self._tasks_page.objectName(): "任务中心",
-            self._settings_page.objectName(): "设置",
+            self._home_page.objectName(): tr("首页"),
+            self._tasks_page.objectName(): tr("任务中心"),
+            self._settings_page.objectName(): tr("设置"),
         }
         self._navigation_labels.update({
             route_key: label for _s, _f, route_key, _icon, label, _subtitle in workspace_navigation
@@ -1214,7 +1215,7 @@ class MainFrame(FluentWindow):
         host = self._workspace_feature_hosts.get("devices")
         if host is None:
             return
-        reason = "远程控制运行中，停止后可切换设备"
+        reason = tr("远程控制运行中，停止后可切换设备")
         for feature in ("remote", "remote-control"):
             host.set_device_selection_locked(feature, locked, reason)
 
@@ -1547,9 +1548,9 @@ class MainFrame(FluentWindow):
         panel = self.navigationInterface.panel
         if panel.displayMode == NavigationDisplayMode.COMPACT:
             # 上游收起尾沿会重新设置 QStyle，清除面板背景填充和调色板。
-            # 外层导航本身透明，此处恢复实色表面，避免图标落在透明背景上。
+            # 恢复当前材质策略，避免关闭云母后透明或开启后重新被实色遮挡。
             panel.setPalette(self.navigationInterface.palette())
-            panel.setAutoFillBackground(True)
+            panel.setAutoFillBackground(not self.isMicaEffectEnabled())
         if self._navigation_reopen_after_collapse and panel.displayMode in {
             NavigationDisplayMode.COMPACT,
             NavigationDisplayMode.MINIMAL,
@@ -1595,12 +1596,12 @@ class MainFrame(FluentWindow):
         navigation = getattr(self, "navigationInterface", None)
         if navigation is None:
             return
-        navigation.setAccessibleName("主导航")
+        navigation.setAccessibleName(tr("主导航"))
         panel = navigation.panel
-        panel.menuButton.setAccessibleName("展开或收起主导航")
-        panel.menuButton.setToolTip("展开或收起主导航")
-        panel.returnButton.setAccessibleName("返回上一页")
-        panel.returnButton.setToolTip("返回上一页")
+        panel.menuButton.setAccessibleName(tr("展开或收起主导航"))
+        panel.menuButton.setToolTip(tr("展开或收起主导航"))
+        panel.returnButton.setAccessibleName(tr("返回上一页"))
+        panel.returnButton.setToolTip(tr("返回上一页"))
         for route_key, label in getattr(self, "_navigation_labels", {}).items():
             item = self._navigation_widget(route_key)
             if item is None:
@@ -1892,7 +1893,7 @@ class MainFrame(FluentWindow):
 
         settings_page = getattr(self, "_settings_page", None)
         if settings_page is not None:
-            label = settings_page.THEME_LABELS.get(_name, "跟随系统")
+            label = settings_page.THEME_LABELS.get(_name, tr("跟随系统"))
             blocker = QSignalBlocker(settings_page.theme_card.combo_box)
             settings_page.theme_card.combo_box.setCurrentText(label)
             del blocker
@@ -1942,15 +1943,86 @@ class MainFrame(FluentWindow):
             if callable(sync):
                 sync()
 
+    def setMicaEffectEnabled(self, isEnabled: bool) -> None:
+        """切换系统云母并同步 Qt 表面；不支持的平台保留实际生效的实色模式。"""
+
+        super().setMicaEffectEnabled(isEnabled)
+        # FluentWidget 构造期间也会调用此公开边界，此时尚无导航和内容栈。
+        if getattr(self, "navigationInterface", None) is None:
+            return
+        if QApplication.platformName() == "windows":
+            from gui.window_effects import sync_mica_backdrop
+
+            applied = sync_mica_backdrop(int(self.winId()), self.isMicaEffectEnabled())
+            if self.isMicaEffectEnabled() and not applied:
+                super().setMicaEffectEnabled(False)
+        self._sync_material_surface_styles()
+        self._refresh_window_chrome_theme()
+
+    def _sync_material_surface_styles(self) -> None:
+        """按生效材质绘制内容与导航底层，确保切页及折叠中间帧同样正确。"""
+
+        mica = self.isMicaEffectEnabled()
+        light = BaseStyles.color_for("Light", "WINDOW_BG")
+        dark = BaseStyles.color_for("Dark", "WINDOW_BG")
+        content_surface = getattr(self, "_content_surface", None)
+        if content_surface is not None:
+            light_style = (
+                "background-color: rgba(255, 255, 255, 0.5); "
+                "border: 1px solid rgba(0, 0, 0, 0.068); border-top-left-radius: 10px;"
+                if mica else f"background-color: {light}; border: none; border-radius: 0px;"
+            )
+            dark_style = (
+                "background-color: rgba(255, 255, 255, 0.0314); "
+                "border: 1px solid rgba(0, 0, 0, 0.18); border-top-left-radius: 10px;"
+                if mica else f"background-color: {dark}; border: none; border-radius: 0px;"
+            )
+            setCustomStyleSheet(
+                content_surface,
+                f"QWidget#workspaceSurface {{ {light_style} border-right: none; "
+                "border-bottom: none; }",
+                f"QWidget#workspaceSurface {{ {dark_style} border-right: none; "
+                "border-bottom: none; }",
+            )
+        # 云母沿用 FluentWindow 的明暗遮罩，页面透明后仍保留内容区的阅读层次。
+        for surface, selector, light_color, dark_color in (
+            (
+                self.stackedWidget,
+                "StackedWidget",
+                "transparent" if content_surface is not None else light,
+                "transparent" if content_surface is not None else dark,
+            ),
+            (
+                self.navigationInterface.panel,
+                "NavigationPanel[menu=false]",
+                "transparent" if mica else light,
+                "transparent" if mica else dark,
+            ),
+        ):
+            setCustomStyleSheet(
+                surface,
+                f"{selector} {{ background-color: {light_color}; "
+                "border: none; border-radius: 0px; }",
+                f"{selector} {{ background-color: {dark_color}; "
+                "border: none; border-radius: 0px; }",
+            )
+
     def _refresh_window_chrome_theme(self) -> None:
         """在 Mica/DWM 更新之后重新同步 FluentWindow 壳层的实际明暗外观。"""
 
+        if getattr(self, "_closing", False):
+            return
         # FluentWindow 默认用 120 ms 动画切换根背景，但外层堆栈的主题 QSS
         # 会立即生效。两者不同步时，暗色半透明边框会短暂叠在浅色背景上。
         self.backgroundColorAni.stop()
         self.setBackgroundColor(self._normalBackgroundColor())
         self._sync_plain_container_palettes()
         apply_dark_title_bar(self)
+
+    def _onThemeChangedFinished(self) -> None:
+        """沿用 Gallery 的延后同步，覆盖 Windows 主题消息晚于 Qt 样式提交的情况。"""
+        super()._onThemeChangedFinished()
+        QTimer.singleShot(100, self, self._refresh_window_chrome_theme)
 
     def _bind_system_theme_changes(self) -> None:
         """跟随 Qt 的系统配色信号，在应用运行中重新解析 System 主题。"""
@@ -2020,12 +2092,11 @@ class MainFrame(FluentWindow):
             seen.add(identity)
             roots.append(widget)
             widget.setPalette(palette)
-            # 页面和壳层均主动绘制应用底色，避免内容滚动或重排时透出父层材质。
-            widget.setAutoFillBackground(True)
+            # 云母由根窗口及内容栈统一合成，普通容器不能再次覆盖实色底板。
+            widget.setAutoFillBackground(not self.isMicaEffectEnabled())
             widget.update()
 
-        # Mica 下 FluentWindow 壳层默认透明。Windows 原生主题切换后若不更新
-        # 壳层子控件调色板，浅色页面会继续透出深色 DWM 背景。
+        # 壳层透明不等于沿用旧调色板；文字、图标仍需同步当前主题。
         for root in shell_roots:
             for child in root.findChildren(QWidget):
                 child.setPalette(palette)
@@ -2155,14 +2226,14 @@ class MainFrame(FluentWindow):
             self.log_service.log("WARNING", "Screenshot result page is still closing")
             return
         notice = InfoBar.success(
-            title="截图已完成",
-            content="结果已加入“应用与自动化 / 截图结果”。",
+            title=tr("截图已完成"),
+            content=tr("结果已加入“截图结果”页面。"),
             duration=5000,
             position=InfoBarPosition.TOP_RIGHT,
             parent=self,
         )
-        view_button = PushButton("查看结果", notice)
-        view_button.setToolTip("在当前主窗口打开截图结果页")
+        view_button = PushButton(tr("查看结果"), notice)
+        view_button.setToolTip(tr("在当前主窗口打开截图结果页"))
         view_button.clicked.connect(
             lambda: self._open_workspace_feature("apps", "media")
         )
@@ -2299,7 +2370,7 @@ class MainFrame(FluentWindow):
             if card is not None:
                 card.setEnabled(True)
                 card.setToolTip(
-                    "" if selected_count else "打开后可前往设备页选择操作设备"
+                    "" if selected_count else tr("打开后可前往设备页选择操作设备")
                 )
         self._sync_device_context()
 
@@ -2550,7 +2621,7 @@ class MainFrame(FluentWindow):
         path = str(settings.save_directory or "")
         card = getattr(getattr(self, "_settings_page", None), "save_card", None)
         if card is not None:
-            card.setContent(path or "系统默认目录")
+            card.setContent(path or tr("系统默认目录"))
         return path
 
     def _on_save_path_clicked(self):
@@ -2588,6 +2659,18 @@ class MainFrame(FluentWindow):
             controller = getattr(self, "_resize_controller", None)
             if controller is not None:
                 controller.update_geometry()
+
+    def eventFilter(self, watched, event):
+        """在 Qt 原生窗口处理调色板后恢复云母明暗，不再触发 Qt 样式更新。"""
+        if (
+            watched is getattr(self, "_bound_window_handle", None)
+            and event.type() == QEvent.Type.ApplicationPaletteChange
+            and not getattr(self, "_closing", False)
+        ):
+            # QApplication 先向平台窗口分发，再调用对象过滤器。Qt 6.8 在前一步
+            # 会清除无边框窗口的 DWM 深色属性；云母也使用它，必须在此处重申。
+            apply_dark_title_bar(self)
+        return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
         (getattr(self, "_close_controller", None) or CloseController(self)).handle_close_event(

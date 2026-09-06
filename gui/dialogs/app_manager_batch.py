@@ -18,6 +18,7 @@ from gui.dialogs.lifecycle import (
     fit_secondary_window_to_owner_screen,
     is_qobject_alive,
 )
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action, apply_label_role, configure_button
 from gui.styles.typography import FontRole
@@ -32,7 +33,9 @@ class AppManagerBatch:
     @staticmethod
     def _action_label(action: str) -> str:
         """仅翻译展示名称，worker 继续接收原有动作键。"""
-        return {"uninstall": "卸载", "disable": "停用", "enable": "启用"}.get(action, action)
+        return {"uninstall": tr("卸载"), "disable": tr("停用"), "enable": tr("启用")}.get(
+            action, action
+        )
 
     def _context_menu(self, pos):
         idx = self._frame.tree.indexAt(pos)
@@ -47,24 +50,28 @@ class AppManagerBatch:
         pkg = pkg_item.text()
         atype = atype_item.text()
         menu = self._frame._create_context_menu()
-        add_menu_action(menu, "应用详情", callback=lambda: self._frame._show_details_for(pkg))
+        add_menu_action(menu, tr("应用详情"), callback=lambda: self._frame._show_details_for(pkg))
         menu.addSeparator()
-        add_menu_action(menu, "启动应用", callback=lambda: self._frame._launch(pkg))
+        add_menu_action(menu, tr("启动应用"), callback=lambda: self._frame._launch(pkg))
         add_menu_action(
-            menu, "强制停止", callback=lambda: self._frame._modify_one("force_stop", pkg)
+            menu, tr("强制停止"), callback=lambda: self._frame._modify_one("force_stop", pkg)
         )
-        add_menu_action(menu, "清除数据", callback=lambda: self._frame._modify_one("clear", pkg))
+        add_menu_action(
+            menu, tr("清除数据"), callback=lambda: self._frame._modify_one("clear", pkg)
+        )
         menu.addSeparator()
         add_menu_action(
-            menu, "卸载", callback=lambda: self._frame._modify_one("uninstall", pkg)
+            menu, tr("卸载"), callback=lambda: self._frame._modify_one("uninstall", pkg)
         )
         if atype in ("System", "Vendor"):
             add_menu_action(
-                menu, "停用", callback=lambda: self._frame._modify_one("disable", pkg)
+                menu, tr("停用"), callback=lambda: self._frame._modify_one("disable", pkg)
             )
-            add_menu_action(menu, "启用", callback=lambda: self._frame._modify_one("enable", pkg))
+            add_menu_action(
+                menu, tr("启用"), callback=lambda: self._frame._modify_one("enable", pkg)
+            )
         menu.addSeparator()
-        add_menu_action(menu, "备份", callback=lambda: self._frame._backup_one(pkg))
+        add_menu_action(menu, tr("备份"), callback=lambda: self._frame._backup_one(pkg))
         if self._frame._batch_workers or not self._frame._can_operate():
             for action in menu.actions():
                 if not action.isSeparator():
@@ -77,12 +84,12 @@ class AppManagerBatch:
     def _batch_action_blocked(self) -> bool:
         if not self._frame._can_operate():
             self._frame.status_bar.setText(
-                "请在顶部设备栏勾选当前在线设备后执行应用操作。"
+                tr("请在顶部设备栏勾选当前在线设备后执行应用操作。")
             )
             return True
         if not self._frame._batch_workers:
             return False
-        self._frame.status_bar.setText("正在执行批量操作，请等待完成。")
+        self._frame.status_bar.setText(tr("正在执行批量操作，请等待完成。"))
         return True
 
     def _launch(self, pkg):
@@ -142,7 +149,7 @@ class AppManagerBatch:
         if self._batch_action_blocked():
             return
         sd = QFileDialog.getExistingDirectory(
-            self._frame, "选择备份目录", self._frame._global_save_dir()
+            self._frame, tr("选择备份目录"), self._frame._global_save_dir()
         )
         if not sd or self._batch_action_blocked():
             return
@@ -162,7 +169,7 @@ class AppManagerBatch:
     def _deselect_all(self):
         self._frame.selected_packages.clear()
         self._frame._sync_selection_views()
-        self._frame.log("已取消全部应用选择。")
+        self._frame.log(tr("已取消全部应用选择。"))
 
     def _log_backup_progress(self, progress, message) -> None:
         self._frame.log(f"[{progress}] {message}")
@@ -179,8 +186,8 @@ class AppManagerBatch:
         if not pkgs:
             FluentMessageBox.warning(
                 self._frame,
-                "未选择应用",
-                "请先选择应用。",
+                tr("未选择应用"),
+                tr("请先选择应用。"),
             )
             return
         workers = []
@@ -202,7 +209,9 @@ class AppManagerBatch:
         self._frame._batch_total = len(workers)
         self._frame._batch_action = action
         self._frame.status_bar.setText(
-            f"{self._action_label(action)}：已完成 0/{self._frame._batch_total}"
+            tr("{value0}：已完成 0/{value1}").format(
+                value0=self._action_label(action), value1=self._frame._batch_total
+            )
         )
         self._frame._update_selection_ui()
         for w in workers:
@@ -220,8 +229,11 @@ class AppManagerBatch:
         completed = self._frame._batch_total - remaining
         if remaining:
             self._frame.status_bar.setText(
-                f"{self._action_label(self._frame._batch_action)}："
-                f"已完成 {completed}/{self._frame._batch_total}"
+                tr("{value0}：已完成 {value1}/{value2}").format(
+                    value0=self._action_label(self._frame._batch_action),
+                    value1=completed,
+                    value2=self._frame._batch_total,
+                )
             )
             self._frame._update_selection_ui()
             return
@@ -231,7 +243,9 @@ class AppManagerBatch:
         self._frame._batch_action = ""
         self._frame._batch_total = 0
         self._frame.status_bar.setText(
-            f"已完成 {total} 个应用的{self._action_label(action)}操作，正在刷新…"
+            tr("已完成 {value0} 个应用的{value1}操作，正在刷新…").format(
+                value0=total, value1=self._action_label(action)
+            )
         )
         self._frame._update_selection_ui()
         self._frame._load_apps()
@@ -245,12 +259,12 @@ class AppManagerBatch:
         if not pkgs:
             FluentMessageBox.warning(
                 self._frame,
-                "未选择应用",
-                "请先选择应用。",
+                tr("未选择应用"),
+                tr("请先选择应用。"),
             )
             return
         sd = QFileDialog.getExistingDirectory(
-            self._frame, "备份目录", self._frame._global_save_dir()
+            self._frame, tr("备份目录"), self._frame._global_save_dir()
         )
         if not sd or self._batch_action_blocked():
             return
@@ -274,7 +288,7 @@ class AppManagerBatch:
         if self._batch_action_blocked():
             return
         files, _ = QFileDialog.getOpenFileNames(
-            self._frame, "选择备份 ZIP 文件", "", "ZIP 文件 (*.zip)"
+            self._frame, tr("选择备份 ZIP 文件"), "", tr("ZIP 文件 (*.zip)")
         )
         if not files or self._batch_action_blocked():
             return
@@ -297,8 +311,8 @@ class AppManagerBatch:
         if not packages:
             FluentMessageBox.warning(
                 self._frame,
-                "未选择应用",
-                "请先选择一个应用。",
+                tr("未选择应用"),
+                tr("请先选择一个应用。"),
             )
             return
         pkg = packages[0]
@@ -309,23 +323,23 @@ class AppManagerBatch:
         if not self._frame.selected_packages:
             FluentMessageBox.warning(
                 self._frame,
-                "未选择应用",
-                "请先选择应用。",
+                tr("未选择应用"),
+                tr("请先选择应用。"),
             )
             return
         dlg = FluentDialog(self._frame)
-        dlg.setWindowTitle("创建预设")
+        dlg.setWindowTitle(tr("创建预设"))
         dlg.setMinimumSize(380, 280 + dlg.TITLE_BAR_HEIGHT)
         dlg.resize(380, 280 + dlg.TITLE_BAR_HEIGHT)
         dlg.setFont(BaseStyles.font_for_role(FontRole.UI))
         lo = QVBoxLayout(dlg)
-        lo.addWidget(apply_label_role(BodyLabel("预设名称"), FontRole.UI))
+        lo.addWidget(apply_label_role(BodyLabel(tr("预设名称")), FontRole.UI))
         ni = LineEdit()
         lo.addWidget(ni)
-        lo.addWidget(apply_label_role(BodyLabel("作者（可选）"), FontRole.UI))
+        lo.addWidget(apply_label_role(BodyLabel(tr("作者（可选）")), FontRole.UI))
         ai = LineEdit()
         lo.addWidget(ai)
-        lo.addWidget(apply_label_role(BodyLabel("说明（可选）"), FontRole.UI))
+        lo.addWidget(apply_label_role(BodyLabel(tr("说明（可选）")), FontRole.UI))
         di = TextEdit()
         di.setMaximumHeight(60)
         lo.addWidget(di)
@@ -334,14 +348,14 @@ class AppManagerBatch:
         cancel_button = PushButton()
         configure_button(
             cancel_button,
-            text="取消",
-            tooltip="关闭并取消创建预设",
+            text=tr("取消"),
+            tooltip=tr("关闭并取消创建预设"),
         )
         create_button = PrimaryPushButton()
         configure_button(
             create_button,
-            text="创建",
-            tooltip="创建此应用预设",
+            text=tr("创建"),
+            tooltip=tr("创建此应用预设"),
         )
         create_button.setDefault(True)
         cancel_button.clicked.connect(dlg.reject)
@@ -371,7 +385,7 @@ class AppManagerBatch:
         if not accepted or preset_fields is None:
             return
         name, author, description = preset_fields
-        name = name or "新建预设"
+        name = name or tr("新建预设")
         data = {
             "name": name,
             "author": author,
@@ -379,7 +393,7 @@ class AppManagerBatch:
             "selected_packages": sorted(list(self._frame.selected_packages)),
         }
         fp, _ = QFileDialog.getSaveFileName(
-            self._frame, "保存预设", name + ".json", "JSON (*.json)"
+            self._frame, tr("保存预设"), name + ".json", "JSON (*.json)"
         )
         if fp:
             try:
@@ -388,10 +402,14 @@ class AppManagerBatch:
             except (OSError, TypeError, ValueError) as exc:
                 self._frame._report_preset_error("save", exc)
                 return
-            self._frame.log(f"已保存预设“{name}”，包含 {len(data['selected_packages'])} 个应用。")
+            self._frame.log(
+                tr("已保存预设“{value0}”，包含 {value1} 个应用。").format(
+                    value0=name, value1=len(data["selected_packages"])
+                )
+            )
 
     def _load_preset(self):
-        fp, _ = QFileDialog.getOpenFileName(self._frame, "加载预设", "", "JSON (*.json)")
+        fp, _ = QFileDialog.getOpenFileName(self._frame, tr("加载预设"), "", "JSON (*.json)")
         if not fp:
             return
         try:
@@ -403,7 +421,7 @@ class AppManagerBatch:
             return
         pkgs = set(data.get("selected_packages", []))
         if not pkgs:
-            self._frame.log("预设没有包含应用。")
+            self._frame.log(tr("预设没有包含应用。"))
             return
         available_packages = set()
         for r in range(self._frame.model.rowCount()):
@@ -417,29 +435,30 @@ class AppManagerBatch:
         self._frame.selected_packages.update(pkgs & available_packages)
         self._frame._sync_selection_views()
         self._frame.log(
-            f"已加载预设“{data.get('name', '?')}”，"
-            f"选中 {len(self._frame.selected_packages)} 个应用。"
+            tr("已加载预设“{value0}”，选中 {value1} 个应用。").format(
+                value0=data.get("name", "?"), value1=len(self._frame.selected_packages)
+            )
         )
 
     @staticmethod
     def _validate_preset(data) -> None:
         if not isinstance(data, dict):
-            raise ValueError("预设根节点必须是 JSON 对象。")
+            raise ValueError(tr("预设根节点必须是 JSON 对象。"))
         packages = data.get("selected_packages")
         if not isinstance(packages, list) or any(
             not isinstance(package, str) or not package.strip() for package in packages
         ):
-            raise ValueError("预设 selected_packages 必须是有效包名列表。")
+            raise ValueError(tr("预设 selected_packages 必须是有效包名列表。"))
         for field in ("name", "author", "description"):
             if field in data and not isinstance(data[field], str):
-                raise ValueError(f"预设字段 {field} 必须是文本。")
+                raise ValueError(tr('预设字段 {value0} 必须是文本。').format(value0=field))
 
     def _report_preset_error(self, action: str, error: Exception) -> None:
-        action_text = "保存" if action == "save" else "加载"
-        message = f"无法{action_text}预设：{error}"
+        action_text = tr("保存") if action == "save" else tr("加载")
+        message = tr('无法{value0}预设：{value1}').format(value0=action_text, value1=error)
         FluentMessageBox.critical(
             self._frame,
-            "预设错误",
+            tr("预设错误"),
             message,
         )
         self._frame.status_bar.setText(message)

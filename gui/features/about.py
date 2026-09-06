@@ -14,6 +14,7 @@ from qfluentwidgets import (
     setCustomStyleSheet,
 )
 
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_font_role, configure_button, refresh_fluent_widget_style
 from gui.styles.typography import FontRole
@@ -26,14 +27,16 @@ class AboutPanel(SettingCardGroup):
     """按 Gallery 的关于分组展示项目与支持信息，不主动访问网络。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("关于", parent)
+        super().__init__(tr("关于"), parent)
         self.setObjectName("aboutPanel")
         self.project_card = HyperlinkCard(
             "https://github.com/BlackHu-art/ADBLab",
-            "项目主页",
+            tr("项目主页"),
             FluentIcon.INFO,
             "ADBLab",
-            f"版本 {APP_VERSION} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台",
+            tr("版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台").format(
+                version=APP_VERSION
+            ),
             self,
         )
         self.title_label = self.project_card.titleLabel
@@ -41,13 +44,13 @@ class AboutPanel(SettingCardGroup):
         self.project_button = self.project_card.linkButton
         configure_button(
             self.project_button,
-            text="项目主页",
-            tooltip="在浏览器中打开 ADBLab 项目主页",
+            text=tr("项目主页"),
+            tooltip=tr("在浏览器中打开 ADBLab 项目主页"),
         )
         self.support_card = SettingCard(
             FluentIcon.HEART,
-            "支持作者",
-            "扫描二维码支持 ADBLab 的开发与维护",
+            tr("支持作者"),
+            tr("扫描二维码支持 ADBLab 的开发与维护"),
             self,
         )
         self.support_qr = ImageLabel(self.support_card)
@@ -61,7 +64,7 @@ class AboutPanel(SettingCardGroup):
             SettingsCardPresentation(self.project_card, self.project_button),
             SettingsCardPresentation(self.support_card, self.support_qr),
         )
-        self.support_qr.setAccessibleName("作者支持二维码")
+        self.support_qr.setAccessibleName(tr("作者支持二维码"))
         self.addSettingCards([self.project_card, self.support_card])
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)

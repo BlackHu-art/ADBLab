@@ -30,8 +30,8 @@ def test_app_manager_rows_keep_readable_background_after_theme_switch(qt_applica
         BaseStyles.switch_theme(theme)
         QTest.qWait(20)
         surface = page._master_panel.grab().toImage().pixelColor(0, 0)
-        assert surface.alpha() == 255
-        assert surface.lightness() > 220 if theme == "Light" else surface.lightness() < 70
+        # 普通布局留白透出工作区材质；下面的列表行仍需独立保持实色可读。
+        assert surface.alpha() == 0
         image = page.tree.viewport().grab().toImage()
         colors = []
         for row in range(4):

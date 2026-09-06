@@ -56,7 +56,12 @@ class SettingsCardPresentation:
 
         card = self.card
         body_width = max(1, width - 64)
-        action_width = self.control.sizeHint().width()
+        # ColorPickerButton 等控件的最小宽度可大于 sizeHint；按实际布局约束
+        # 预留操作空间，避免较长译文按过宽的文本列测高后被裁切。
+        action_width = max(
+            self.control.minimumWidth(), self.control.minimumSizeHint().width(),
+            self.control.sizeHint().width(),
+        )
         text_minimum = max(
             card.titleLabel.fontMetrics().horizontalAdvance(card.titleLabel.text()),
             card.contentLabel.fontMetrics().averageCharWidth() * 22,

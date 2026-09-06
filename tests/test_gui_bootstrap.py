@@ -21,7 +21,9 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
 ):
     settings_file = tmp_path / "settings.json"
     settings_file.write_text(
-        "{" if invalid_json else json.dumps({"schema_version": 3, "ui_scale": 1.5}),
+        "{" if invalid_json else json.dumps({
+            "schema_version": 3, "ui_scale": 1.5, "language": "en_US",
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(settings_manager, "SETTINGS_FILE", str(settings_file))
@@ -48,7 +50,14 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
             pass
 
         def exec(self):
+            assert steps.index("translations") < steps.index("window")
             return 23
+
+    def install_translators(app, language):
+        assert isinstance(app, FakeApplication)
+        assert language == ("Auto" if invalid_json else "en_US")
+        steps.append("translations")
+        return ()
 
     logger = Mock()
 
@@ -61,6 +70,10 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         settings_manager._log_error("INFO", "late-diagnostic")
 
     frame = Mock()
+
+    def create_frame():
+        steps.append("window")
+        return frame
     styles = SimpleNamespace(
         reload_from_settings=reload_fonts, set_accent_color=Mock(), switch_theme=Mock(),
     )
@@ -68,7 +81,10 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
     monkeypatch.setattr("PySide6.QtGui.QIcon", Mock())
     monkeypatch.setattr(main, "setup_qt_search_paths", Mock())
     monkeypatch.setitem(sys.modules, "core.log_service", SimpleNamespace(LogService=create_logger))
-    monkeypatch.setitem(sys.modules, "gui.main_frame", SimpleNamespace(MainFrame=lambda: frame))
+    monkeypatch.setitem(sys.modules, "gui.main_frame", SimpleNamespace(MainFrame=create_frame))
+    monkeypatch.setitem(
+        sys.modules, "gui.i18n", SimpleNamespace(install_translators=install_translators),
+    )
     monkeypatch.setitem(sys.modules, "gui.styles", SimpleNamespace(BaseStyles=styles))
     if sys.platform == "win32":
         monkeypatch.setattr(
@@ -76,7 +92,7 @@ def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnost
         )
 
     assert main._run_gui() == 23
-    assert steps == ["settings", "application", "logger", "fonts"]
+    assert steps == ["settings", "application", "translations", "logger", "fonts", "window"]
     frame.show.assert_called_once_with()
     calls = [call.args for call in logger.log.call_args_list]
     if invalid_json:

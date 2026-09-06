@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import BodyLabel, HeaderCardWidget, InfoBadge, InfoLevel
 
+from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
@@ -35,12 +36,12 @@ class SystemPanel(BasePanel):
         self._build_system_header(lo)
         self.category_stack = AdaptiveCategoryStack("system", w)
 
-        g1 = self._card_group("Shell 命令")
+        g1 = self._card_group(tr("Shell 命令"))
         gl1 = g1.viewLayout
         gl1.setSpacing(2)
-        self.shell_cmd_input = self._in("输入 adb shell 命令…")
+        self.shell_cmd_input = self._in(tr("输入 adb shell 命令…"))
         self.btn_shell_run = self._b(
-            "执行", "terminal-window.svg", tooltip="执行输入的 Shell 命令"
+            tr("执行"), "terminal-window.svg", tooltip=tr("执行输入的 Shell 命令")
         )
         self.shell_action_binding = self._add_responsive_row(
             gl1,
@@ -50,18 +51,18 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        g_rb = self._card_group("重启与模式")
+        g_rb = self._card_group(tr("重启与模式"))
         gl_rb = g_rb.viewLayout
         gl_rb.setSpacing(2)
         self.reboot_mode_combo = self._combo(["System", "Bootloader", "Recovery", "Fastboot"])
         self.btn_reboot_mode = self._b(
-            "重启", "power.svg", tooltip="将所选设备重启到指定模式"
+            tr("重启"), "power.svg", tooltip=tr("将所选设备重启到指定模式")
         )
         self.tcpip_port_input = self._in_int("5555", 1, 65535)
         self._register_input_minimum(self.tcpip_port_input, "65535")
         self.tcpip_port_input.setText("5555")
         self.btn_tcpip_mode = self._b(
-            "启用 TCP/IP", "wifi-high.svg", tooltip="在指定端口启用无线 ADB"
+            tr("启用 TCP/IP"), "wifi-high.svg", tooltip=tr("在指定端口启用无线 ADB")
         )
         self._add_responsive_row(
             gl_rb,
@@ -73,12 +74,12 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        gb = self._card_group("广播与 Intent")
+        gb = self._card_group(tr("广播与 Intent"))
         glb = gb.viewLayout
         glb.setSpacing(2)
-        self.broadcast_action = self._in("输入广播 Action")
+        self.broadcast_action = self._in(tr("输入广播 Action"))
         self.btn_broadcast = self._b(
-            "发送广播", "broadcast.svg", tooltip="发送输入的 Android 广播"
+            tr("发送广播"), "broadcast.svg", tooltip=tr("发送输入的 Android 广播")
         )
         self._add_responsive_row(
             glb,
@@ -88,9 +89,9 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        self.activity_spec = self._in("组件（包名/.Activity）或 Action")
+        self.activity_spec = self._in(tr("组件（包名/.Activity）或 Action"))
         self.btn_start_activity = self._b(
-            "启动 Activity", "play.svg", tooltip="启动输入的 Activity 或 Intent"
+            tr("启动 Activity"), "play.svg", tooltip=tr("启动输入的 Activity 或 Intent")
         )
         self._add_responsive_row(
             glb,
@@ -100,12 +101,12 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        self.deep_link_uri = self._in("输入深层链接 URL")
+        self.deep_link_uri = self._in(tr("输入深层链接 URL"))
         self.deep_link_uri.setValidator(
             QRegularExpressionValidator(QRegularExpression(r"https?://\S+"), self.deep_link_uri)
         )
         self.btn_deep_link = self._b(
-            "打开链接", "link.svg", tooltip="在所选设备上打开输入的 URL"
+            tr("打开链接"), "link.svg", tooltip=tr("在所选设备上打开输入的 URL")
         )
         self._add_responsive_row(
             glb,
@@ -115,18 +116,18 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        g3 = self._card_group("端口转发")
+        g3 = self._card_group(tr("端口转发"))
         gl3 = g3.viewLayout
         gl3.setSpacing(2)
-        self.fwd_local = self._in_int("本机端口", 1, 65535)
-        self.fwd_remote = self._in_int("设备端口", 1, 65535)
+        self.fwd_local = self._in_int(tr("本机端口"), 1, 65535)
+        self.fwd_remote = self._in_int(tr("设备端口"), 1, 65535)
         self._register_input_minimum(self.fwd_local, "65535")
         self._register_input_minimum(self.fwd_remote, "65535")
         self.btn_forward = self._b(
-            "正向转发", "arrow-square-out.svg", tooltip="将本机端口转发到设备"
+            tr("正向转发"), "arrow-square-out.svg", tooltip=tr("将本机端口转发到设备")
         )
         self.btn_reverse = self._b(
-            "反向转发", "arrow-square-in.svg", tooltip="将设备端口转发到电脑"
+            tr("反向转发"), "arrow-square-in.svg", tooltip=tr("将设备端口转发到电脑")
         )
         self._add_responsive_row(
             gl3,
@@ -139,16 +140,16 @@ class SystemPanel(BasePanel):
             wide_columns=4,
         )
         self.btn_list_fwd = self._b(
-            "正向规则", "list-bullets.svg", tooltip="显示当前正向端口转发规则"
+            tr("正向规则"), "list-bullets.svg", tooltip=tr("显示当前正向端口转发规则")
         )
         self.btn_remove_fwd = self._b(
-            "移除正向", "x-circle.svg", tooltip="移除输入的正向端口转发规则"
+            tr("移除正向"), "x-circle.svg", tooltip=tr("移除输入的正向端口转发规则")
         )
         self.btn_list_rev = self._b(
-            "反向规则", "list-bullets.svg", tooltip="显示当前反向端口转发规则"
+            tr("反向规则"), "list-bullets.svg", tooltip=tr("显示当前反向端口转发规则")
         )
         self.btn_remove_rev = self._b(
-            "移除反向", "x-circle.svg", tooltip="移除输入的反向端口转发规则"
+            tr("移除反向"), "x-circle.svg", tooltip=tr("移除输入的反向端口转发规则")
         )
         self._add_responsive_row(
             gl3,
@@ -160,7 +161,7 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        gs = self._card_group("系统服务开关 (svc)")
+        gs = self._card_group(tr("系统服务开关 (svc)"))
         gsl = gs.viewLayout
         gsl.setSpacing(2)
         _toggle_icons = {
@@ -171,16 +172,16 @@ class SystemPanel(BasePanel):
         }
         for row_cmds in [
             [
-                ("启用 WiFi", "svc wifi enable"),
-                ("关闭 WiFi", "svc wifi disable"),
-                ("启用数据", "svc data enable"),
-                ("关闭数据", "svc data disable"),
+                (tr("启用 WiFi"), "svc wifi enable"),
+                (tr("关闭 WiFi"), "svc wifi disable"),
+                (tr("启用数据"), "svc data enable"),
+                (tr("关闭数据"), "svc data disable"),
             ],
             [
-                ("启用蓝牙", "svc bluetooth enable"),
-                ("关闭蓝牙", "svc bluetooth disable"),
-                ("启用 NFC", "svc nfc enable"),
-                ("关闭 NFC", "svc nfc disable"),
+                (tr("启用蓝牙"), "svc bluetooth enable"),
+                (tr("关闭蓝牙"), "svc bluetooth disable"),
+                (tr("启用 NFC"), "svc nfc enable"),
+                (tr("关闭 NFC"), "svc nfc disable"),
             ],
         ]:
             row_buttons = []
@@ -193,7 +194,7 @@ class SystemPanel(BasePanel):
                     "nfc": "NFC",
                 }[service]
                 icon = _toggle_icons.get(icon_key, "info.svg")
-                b = self._b(n, icon, tooltip=f"{n} 服务")
+                b = self._b(n, icon, tooltip=tr("{n} 服务").format(n=n))
                 b.clicked.connect(lambda _, c=cmd: self._sh(c))
                 row_buttons.append((b, 1))
             self._add_responsive_row(
@@ -203,12 +204,12 @@ class SystemPanel(BasePanel):
                 medium_columns=2,
                 wide_columns=4,
             )
-        g4 = self._card_group("Android 设置")
+        g4 = self._card_group(tr("Android 设置"))
         gl4 = g4.viewLayout
         gl4.setSpacing(2)
         self.settings_ns = self._combo(["system", "global", "secure"])
-        self.settings_key = self._in("设置键")
-        self.settings_val = self._in("设置值")
+        self.settings_key = self._in(tr("设置键"))
+        self.settings_val = self._in(tr("设置值"))
         self._register_input_minimum(self.settings_key)
         self._register_input_minimum(self.settings_val)
         self._add_responsive_row(
@@ -221,13 +222,13 @@ class SystemPanel(BasePanel):
             wide_columns=3,
         )
         self.btn_settings_list = self._b(
-            "列出全部", "list.svg", tooltip="显示所选命名空间中的设置"
+            tr("列出全部"), "list.svg", tooltip=tr("显示所选命名空间中的设置")
         )
         self.btn_settings_get = self._b(
-            "读取值", "magnifying-glass.svg", tooltip="读取指定 Android 设置"
+            tr("读取值"), "magnifying-glass.svg", tooltip=tr("读取指定 Android 设置")
         )
         self.btn_settings_put = self._b(
-            "写入值", "pencil-simple.svg", tooltip="写入指定 Android 设置"
+            tr("写入值"), "pencil-simple.svg", tooltip=tr("写入指定 Android 设置")
         )
         self._add_responsive_row(
             gl4,
@@ -238,12 +239,12 @@ class SystemPanel(BasePanel):
             medium_columns=3,
             wide_columns=3,
         )
-        g5 = self._card_group("系统工具")
+        g5 = self._card_group(tr("系统工具"))
         gl5 = g5.viewLayout
         gl5.setSpacing(2)
-        self.content_uri = self._in("输入 Content URI")
+        self.content_uri = self._in(tr("输入 Content URI"))
         self.btn_content_query = self._b(
-            "查询", "database.svg", tooltip="查询输入的 Content Provider URI"
+            tr("查询"), "database.svg", tooltip=tr("查询输入的 Content Provider URI")
         )
         self._add_responsive_row(
             gl5,
@@ -254,15 +255,15 @@ class SystemPanel(BasePanel):
             wide_columns=2,
         )
         self.btn_ps_list = self._b(
-            "进程列表", "tree-structure.svg", tooltip="显示设备上正在运行的进程"
+            tr("进程列表"), "tree-structure.svg", tooltip=tr("显示设备上正在运行的进程")
         )
         self.kill_pid_input = self._in_int("PID", 1, 2_147_483_647)
         self._register_input_minimum(self.kill_pid_input, "2147483647")
         self.btn_kill_pid = self._b(
-            "结束 PID", "skull.svg", tooltip="结束输入的进程 ID"
+            tr("结束 PID"), "skull.svg", tooltip=tr("结束输入的进程 ID")
         )
         self.btn_pm_features = self._b(
-            "设备特性", "star.svg", tooltip="显示设备支持的系统特性"
+            tr("设备特性"), "star.svg", tooltip=tr("显示设备支持的系统特性")
         )
         self._add_responsive_row(
             gl5,
@@ -296,11 +297,11 @@ class SystemPanel(BasePanel):
             ]
         )
         self.btn_dumpsys = self._b(
-            "运行 Dumpsys", "clipboard-text.svg", tooltip="对所选服务运行 dumpsys"
+            tr("运行 Dumpsys"), "clipboard-text.svg", tooltip=tr("对所选服务运行 dumpsys")
         )
-        self.btn_kernel = self._b("内核版本", "cpu.svg", tooltip="显示设备内核版本")
+        self.btn_kernel = self._b(tr("内核版本"), "cpu.svg", tooltip=tr("显示设备内核版本"))
         self.btn_cpuinfo_dev = self._b(
-            "CPU 信息", "cpu.svg", tooltip="显示设备处理器详情"
+            tr("CPU 信息"), "cpu.svg", tooltip=tr("显示设备处理器详情")
         )
         self._add_responsive_row(
             gl5,
@@ -312,19 +313,19 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
-        g6 = self._card_group("电池与快捷设置")
+        g6 = self._card_group(tr("电池与快捷设置"))
         gl6 = g6.viewLayout
         gl6.setSpacing(2)
         self.battery_param = self._combo(["level", "status"])
-        self.battery_val = self._in_int("数值", 0, 100)
+        self.battery_val = self._in_int(tr("数值"), 0, 100)
         self._register_input_minimum(self.battery_val, "100")
         self.btn_battery_set = self._b(
-            "应用", "pencil-simple.svg", tooltip="应用模拟电池数值"
+            tr("应用"), "pencil-simple.svg", tooltip=tr("应用模拟电池数值")
         )
         self.btn_battery_reset = self._b(
-            "重置", "arrow-u-up-left.svg", tooltip="清除模拟电池数值"
+            tr("重置"), "arrow-u-up-left.svg", tooltip=tr("清除模拟电池数值")
         )
-        self.battery_label = self._label("电池")
+        self.battery_label = self._label(tr("电池"))
         self._battery_value_pair = self._atomic_form_pair(
             self.battery_label,
             self.battery_val,
@@ -346,11 +347,11 @@ class SystemPanel(BasePanel):
             wide_columns=4,
         )
         self.quick_setting_combo = self._combo()
-        self.quick_setting_combo.addItem("关闭动画", "anim_off")
-        self.quick_setting_combo.addItem("启用动画", "anim_on")
-        self.quick_setting_combo.addItem("保持唤醒", "stay_awake")
+        self.quick_setting_combo.addItem(tr("关闭动画"), "anim_off")
+        self.quick_setting_combo.addItem(tr("启用动画"), "anim_on")
+        self.quick_setting_combo.addItem(tr("保持唤醒"), "stay_awake")
         self.btn_quick_setting = self._b(
-            "应用设置", "check-circle.svg", tooltip="应用所选快捷设置"
+            tr("应用设置"), "check-circle.svg", tooltip=tr("应用所选快捷设置")
         )
         self._add_responsive_row(
             gl6,
@@ -360,16 +361,16 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=2,
         )
-        g7 = self._card_group("输入法与模拟器控制")
+        g7 = self._card_group(tr("输入法与模拟器控制"))
         gl7 = g7.viewLayout
         gl7.setSpacing(2)
         self.btn_ime_list = self._b(
-            "输入法列表", "keyboard.svg", tooltip="显示已安装的输入法"
+            tr("输入法列表"), "keyboard.svg", tooltip=tr("显示已安装的输入法")
         )
-        self.ime_id_input = self._in("输入法 ID")
+        self.ime_id_input = self._in(tr("输入法 ID"))
         self._register_input_minimum(self.ime_id_input)
         self.btn_ime_set = self._b(
-            "切换输入法", "pencil-simple.svg", tooltip="启用输入的输入法 ID"
+            tr("切换输入法"), "pencil-simple.svg", tooltip=tr("启用输入的输入法 ID")
         )
         self._add_responsive_row(
             gl7,
@@ -380,14 +381,14 @@ class SystemPanel(BasePanel):
             medium_columns=3,
             wide_columns=3,
         )
-        self.emu_sms_sender = self._in("发件人")
-        self.emu_sms_text = self._in("短信内容")
+        self.emu_sms_sender = self._in(tr("发件人"))
+        self.emu_sms_text = self._in(tr("短信内容"))
         self._register_input_minimum(self.emu_sms_sender)
         self._register_input_minimum(self.emu_sms_text)
         self.btn_emu_sms = self._b(
-            "模拟短信", "chat-text.svg", tooltip="模拟一条收到的短信"
+            tr("模拟短信"), "chat-text.svg", tooltip=tr("模拟一条收到的短信")
         )
-        self.emu_label = self._label("模拟器")
+        self.emu_label = self._label(tr("模拟器"))
         self._emu_sender_pair = self._atomic_form_pair(self.emu_label, self.emu_sms_sender)
         self.emu_sms_binding = self._add_responsive_row(
             gl7,
@@ -404,17 +405,17 @@ class SystemPanel(BasePanel):
             medium_columns=2,
             wide_columns=3,
         )
-        self.emu_call_num = self._in("电话号码")
+        self.emu_call_num = self._in(tr("电话号码"))
         self._register_input_minimum(self.emu_call_num)
         self.btn_emu_call = self._b(
-            "模拟来电", "phone-call.svg", tooltip="模拟模拟器收到来电"
+            tr("模拟来电"), "phone-call.svg", tooltip=tr("模拟模拟器收到来电")
         )
-        self.emu_geo_lon = self._in_float("经度", -180.0, 180.0)
-        self.emu_geo_lat = self._in_float("纬度", -90.0, 90.0)
+        self.emu_geo_lon = self._in_float(tr("经度"), -180.0, 180.0)
+        self.emu_geo_lat = self._in_float(tr("纬度"), -90.0, 90.0)
         self._register_input_minimum(self.emu_geo_lon, "-180.000000")
         self._register_input_minimum(self.emu_geo_lat, "-90.000000")
         self.btn_emu_geo = self._b(
-            "设置 GPS", "map-pin.svg", tooltip="设置模拟器位置坐标"
+            tr("设置 GPS"), "map-pin.svg", tooltip=tr("设置模拟器位置坐标")
         )
         self._add_responsive_row(
             gl7,
@@ -430,7 +431,7 @@ class SystemPanel(BasePanel):
         )
         self.category_stack.add_category(
             "commands",
-            "系统工具",
+            tr("系统工具"),
             (g1, gb, g4, g_rb, g3, gs, g6, g7, g5),
         )
         self.category_stack.add_alias("connectivity", "commands")
@@ -441,7 +442,11 @@ class SystemPanel(BasePanel):
         )
         lo.addWidget(self.category_stack)
         lo.addStretch()
-        self.battery_param.currentTextChanged.connect(self._on_battery_param_changed)
+        self.battery_param.currentIndexChanged.connect(
+            lambda _index: self._on_battery_param_changed(
+                str(self.battery_param.currentData() or "level")
+            )
+        )
         for field in (
             self.shell_cmd_input,
             self.tcpip_port_input,
@@ -526,9 +531,9 @@ class SystemPanel(BasePanel):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self.system_title = apply_label_role(
-            BodyLabel("系统与诊断"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel(tr("系统与诊断")), FontRole.TITLE, color_key="TITLE_COLOR"
         )
-        self.system_status_badge = InfoBadge("未选择", self)
+        self.system_status_badge = InfoBadge(tr("未选择"), self)
         self.system_status_badge.setObjectName("systemStatusBadge")
         self.system_status_badge.setProperty("fontRole", FontRole.UI.value)
         self.system_status_badge.setFont(self._font_sm)
@@ -536,12 +541,12 @@ class SystemPanel(BasePanel):
         self.system_status_badge.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
         )
-        self.system_status_badge.setToolTip("系统操作的设备选择状态")
+        self.system_status_badge.setToolTip(tr("系统操作的设备选择状态"))
         title_row.addWidget(self.system_title)
         title_row.addStretch(1)
         title_row.addWidget(self.system_status_badge)
         self.system_subtitle = apply_label_role(
-            BodyLabel("Shell、系统设置、端口转发和模拟器工具"),
+            BodyLabel(tr("Shell、系统设置、端口转发和模拟器工具")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -566,7 +571,7 @@ class SystemPanel(BasePanel):
         if not hasattr(self, "system_status_badge"):
             return
         has_device = bool(self.selected_devices)
-        self.system_status_badge.setText("可操作" if has_device else "未选择")
+        self.system_status_badge.setText(tr("可操作") if has_device else tr("未选择"))
         self.system_status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
 
     def _on_theme_changed_system(self, _name: str) -> None:
@@ -590,7 +595,8 @@ class SystemPanel(BasePanel):
         )
         self.btn_reboot_mode.clicked.connect(
             lambda: self._emit_device_action(
-                LP.reboot_mode_requested, self.reboot_mode_combo.currentText().lower()
+                LP.reboot_mode_requested,
+                str(self.reboot_mode_combo.currentData() or "System").lower(),
             )
         )
         self.btn_tcpip_mode.clicked.connect(
@@ -651,13 +657,13 @@ class SystemPanel(BasePanel):
         )
         self.btn_settings_list.clicked.connect(
             lambda: self._emit_device_action(
-                LP.settings_list_requested, self.settings_ns.currentText()
+                LP.settings_list_requested, self.settings_ns.currentData()
             )
         )
         self.btn_settings_get.clicked.connect(
             lambda: self._emit_device_action(
                 LP.settings_get_requested,
-                self.settings_ns.currentText(),
+                self.settings_ns.currentData(),
                 self.settings_key.text().strip(),
                 fields=(self.settings_key,),
             )
@@ -665,7 +671,7 @@ class SystemPanel(BasePanel):
         self.btn_settings_put.clicked.connect(
             lambda: self._emit_device_action(
                 LP.settings_put_requested,
-                self.settings_ns.currentText(),
+                self.settings_ns.currentData(),
                 self.settings_key.text().strip(),
                 self.settings_val.text().strip(),
                 fields=(self.settings_key, self.settings_val),
@@ -693,7 +699,7 @@ class SystemPanel(BasePanel):
                 (self.battery_val,),
                 lambda devices: LP.battery_set_requested.emit(
                     devices,
-                    self.battery_param.currentText(),
+                    self.battery_param.currentData(),
                     self.battery_val.text().strip(),
                 ),
             )

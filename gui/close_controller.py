@@ -10,6 +10,7 @@ from adblab.application.supervision import (
     ThreadedShutdownTask,
 )
 from core.exec import ProcessRunner
+from gui.i18n import tr
 
 
 class CloseController:
@@ -41,7 +42,7 @@ class CloseController:
                 f"deadline_seconds={float(self._frame.SHUTDOWN_DEADLINE_SECONDS):.1f}"
             ),
         )
-        self._frame.setWindowTitle("ADBLab - Closing...")
+        self._frame.setWindowTitle(tr("ADBLab - Closing..."))
         self._frame.setEnabled(False)
         self._frame.task_supervisor.begin_application_shutdown()
         self._frame._register_application_shutdown_tasks()
@@ -194,7 +195,9 @@ class CloseController:
         if self._frame._shutdown_residual:
             kinds = sorted({item.kind for item in self._frame._shutdown_residual})
             self._frame.setWindowTitle(
-                f"ADBLab - Closing ({len(self._frame._shutdown_residual)} residual resources)"
+                tr("ADBLab - Closing ({count} residual resources)").format(
+                    count=len(self._frame._shutdown_residual)
+                )
             )
             self._frame.log_service.log(
                 "WARNING",
@@ -254,13 +257,16 @@ class CloseController:
         if finalizer_failed:
             assert result is not None  # finalizer_failed 蕴含 result 非 None
             self._frame.setWindowTitle(
-                "ADBLab - Closing "
-                f"(finalizer {result.disposition.value}, "
-                f"{len(self._frame._shutdown_residual)} residual resources)"
+                tr("ADBLab - Closing (finalizer {status}, {count} residual resources)").format(
+                    status=result.disposition.value,
+                    count=len(self._frame._shutdown_residual),
+                )
             )
         if self._frame._shutdown_residual:
             self._frame.setWindowTitle(
-                f"ADBLab - Closing ({len(self._frame._shutdown_residual)} residual resources)"
+                tr("ADBLab - Closing ({count} residual resources)").format(
+                    count=len(self._frame._shutdown_residual)
+                )
             )
         self._frame._close_ready = True
         QTimer.singleShot(0, self._frame.close)

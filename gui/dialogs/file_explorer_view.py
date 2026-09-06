@@ -6,6 +6,7 @@ import tempfile
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache
 
+from gui.i18n import tr
 from gui.styles.fluent import add_menu_action
 from services import file_explorer as explorer_service
 
@@ -49,10 +50,10 @@ class FileExplorerView:
         if not self._frame._can_operate():
             return
         menu = self._frame._create_context_menu()
-        pull = add_menu_action(menu, "Pull File")
+        pull = add_menu_action(menu, tr("Pull File"))
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self._frame.TEXT_EXTS or ext in self._frame.IMAGE_EXTS
-        view = add_menu_action(menu, "View") if viewable else None
+        view = add_menu_action(menu, tr("View")) if viewable else None
         act = menu.exec(
             self._frame.table.mapToGlobal(
                 self._frame.table.visualItemRect(
@@ -97,8 +98,8 @@ class FileExplorerView:
             return
         if not explorer_service.safe_name(name):
             self._frame._show_preview_error(
-                "Invalid file name",
-                f"Refusing to open image with unsafe name: {name}",
+                tr("Invalid file name"),
+                tr('Refusing to open image with unsafe name: {value0}').format(value0=name),
             )
             return
         request_id = self._frame._begin_preview_request(name)
@@ -127,7 +128,7 @@ class FileExplorerView:
                 if error:
                     self._frame._show_preview_error(
                         name,
-                        output or "Unable to prepare image preview",
+                        output or tr("Unable to prepare image preview"),
                     )
                     self._remove_temporary_file(tmp_path)
                     return
@@ -187,11 +188,13 @@ class FileExplorerView:
             if not self._frame._preview_request_is_current(request_id):
                 return
             if error:
-                self._frame._show_preview_error(name, output or "Unable to pull image")
+                self._frame._show_preview_error(name, output or tr("Unable to pull image"))
                 return
             pixmap = _load_image_preview(tmp_path)
             if pixmap.isNull():
-                self._frame._show_preview_error(name, "The downloaded image could not be decoded")
+                self._frame._show_preview_error(
+                    name, tr("The downloaded image could not be decoded")
+                )
                 return
             self._frame._show_image_preview(name, pixmap)
         finally:

@@ -14,6 +14,7 @@ from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
 from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen, safe_disconnect
+from gui.i18n import tr
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -36,7 +37,7 @@ class FileExplorerOps:
 
     def _save_as(self, name, content):
         fp, _ = QFileDialog.getSaveFileName(
-            self._frame, "Save As", os.path.join(self._global_save_dir(), name)
+            self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
         )
         if fp:
             with open(fp, "w", encoding="utf-8") as f:
@@ -61,11 +62,11 @@ class FileExplorerOps:
         if error:
             FluentMessageBox.critical(
                 self._frame,
-                "Error",
-                f"Save failed: {output}",
+                tr("Error"),
+                tr('Save failed: {value0}').format(value0=output),
             )
         else:
-            self._frame.status_bar.setText(f"Saved {name}")
+            self._frame.status_bar.setText(tr('Saved {value0}').format(value0=name))
             self._frame._refresh()
 
     # ── 拉取与推送 ──────────────────────────────────────────────────────
@@ -75,11 +76,11 @@ class FileExplorerOps:
             return
         full = self._frame._dpath(self._frame.current_path, name)
         save_path, _ = QFileDialog.getSaveFileName(
-            self._frame, "Save As", os.path.join(self._global_save_dir(), name)
+            self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
         )
         if not save_path:
             return
-        self._frame.status_bar.setText(f"Pulling {name}...")
+        self._frame.status_bar.setText(tr('Pulling {value0}...').format(value0=name))
         if self._frame.root_cb.isChecked():
             dt = f"/data/local/tmp/{name}"
             w = self._frame._run_adb(
@@ -107,7 +108,9 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
-                lambda o, e, d: self._on_transfer_done(o, e, f"Pulled {name}"),
+                lambda o, e, d: self._on_transfer_done(
+                    o, e, tr("Pulled {value0}").format(value0=name)
+                ),
             )
             w.start()
 
@@ -115,10 +118,10 @@ class FileExplorerOps:
         if e:
             FluentMessageBox.critical(
                 self._frame,
-                "Error",
+                tr("Error"),
                 o,
             )
-            self._frame.status_bar.setText(f"Failed: {o}")
+            self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=o))
             return
         if not self._frame._can_operate():
             self._frame._cleanup_remote_file(dev_tmp, root=True)
@@ -136,7 +139,7 @@ class FileExplorerOps:
             w.result_ready,
             lambda o2, e2, d: (
                 self._frame._cleanup_remote_file(dev_tmp, root=True),
-                self._on_transfer_done(o2, e2, f"Pulled {name}"),
+                self._on_transfer_done(o2, e2, tr('Pulled {value0}').format(value0=name)),
             ),
         )
         w.start()
@@ -147,7 +150,9 @@ class FileExplorerOps:
         rows = set(i.row() for i in self._frame.table.selectedIndexes())
         if not rows:
             return
-        dest = QFileDialog.getExistingDirectory(self._frame, "Destination", self._global_save_dir())
+        dest = QFileDialog.getExistingDirectory(
+            self._frame, tr("Destination"), self._global_save_dir()
+        )
         if not dest:
             return
         for row in rows:
@@ -167,14 +172,16 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
-                lambda o, e, d, n=name: self._on_transfer_done(o, e, f"Pulled {n}"),
+                lambda o, e, d, n=name: self._on_transfer_done(
+                    o, e, tr("Pulled {value0}").format(value0=n)
+                ),
             )
             w.start()
 
     def _push_file(self):
         if not self._frame._can_operate():
             return
-        files, _ = QFileDialog.getOpenFileNames(self._frame, "Select Files to Push")
+        files, _ = QFileDialog.getOpenFileNames(self._frame, tr("Select Files to Push"))
         if not files:
             return
         for fp in files:
@@ -191,7 +198,9 @@ class FileExplorerOps:
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
-                lambda o, e, d, n=bn: self._on_transfer_done(o, e, f"Pushed {n}"),
+                lambda o, e, d, n=bn: self._on_transfer_done(
+                    o, e, tr("Pushed {value0}").format(value0=n)
+                ),
             )
             w.start()
 
@@ -199,10 +208,10 @@ class FileExplorerOps:
         if e:
             FluentMessageBox.critical(
                 self._frame,
-                "Error",
+                tr("Error"),
                 o,
             )
-            self._frame.status_bar.setText(f"Failed: {o}")
+            self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=o))
             return
         self._frame.status_bar.setText(msg)
         self._frame._refresh()
@@ -211,10 +220,10 @@ class FileExplorerOps:
         if error:
             FluentMessageBox.critical(
                 self._frame,
-                "Error",
+                tr("Error"),
                 output,
             )
-            self._frame.status_bar.setText(f"Failed: {output}")
+            self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=output))
             return
         self._frame.status_bar.setText(success_msg)
         self._frame._refresh()
@@ -224,14 +233,14 @@ class FileExplorerOps:
     def _mkdir(self):
         if not self._frame._can_operate():
             return
-        name, ok = FluentInputDialog.getText(self._frame, "New Folder", "Name:")
+        name, ok = FluentInputDialog.getText(self._frame, tr("New Folder"), tr("Name:"))
         if not ok or not name or "/" in name:
             return
         if not self._frame._safe_name(name):
             FluentMessageBox.warning(
                 self._frame,
-                "Invalid Name",
-                "Folder name contains invalid characters",
+                tr("Invalid Name"),
+                tr("Folder name contains invalid characters"),
             )
             return
         full = self._frame._dpath(self._frame.current_path, name)
@@ -241,21 +250,23 @@ class FileExplorerOps:
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"),
+            lambda o, e, n=name: self._on_file_op_done(
+                o, e, tr("Created {value0}").format(value0=n)
+            ),
         )
         w.start()
 
     def _touch(self):
         if not self._frame._can_operate():
             return
-        name, ok = FluentInputDialog.getText(self._frame, "New File", "Name:")
+        name, ok = FluentInputDialog.getText(self._frame, tr("New File"), tr("Name:"))
         if not ok or not name or "/" in name:
             return
         if not self._frame._safe_name(name):
             FluentMessageBox.warning(
                 self._frame,
-                "Invalid Name",
-                "Filename contains invalid characters",
+                tr("Invalid Name"),
+                tr("Filename contains invalid characters"),
             )
             return
         full = self._frame._dpath(self._frame.current_path, name)
@@ -265,21 +276,23 @@ class FileExplorerOps:
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Created {n}"),
+            lambda o, e, n=name: self._on_file_op_done(
+                o, e, tr("Created {value0}").format(value0=n)
+            ),
         )
         w.start()
 
     def _rename_item(self, name: str):
         if not self._frame._can_operate():
             return
-        new, ok = FluentInputDialog.getText(self._frame, "Rename", "New name:", text=name)
+        new, ok = FluentInputDialog.getText(self._frame, tr("Rename"), tr("New name:"), text=name)
         if not ok or not new or new == name:
             return
         if not self._frame._safe_name(new):
             FluentMessageBox.warning(
                 self._frame,
-                "Invalid Name",
-                "New name contains invalid characters",
+                tr("Invalid Name"),
+                tr("New name contains invalid characters"),
             )
             return
         old = self._frame._dpath(self._frame.current_path, name)
@@ -293,7 +306,7 @@ class FileExplorerOps:
             w,
             w.result_ready,
             lambda o, e, old_name=name, new_name=new: self._on_file_op_done(
-                o, e, f"Renamed {old_name} -> {new_name}"
+                o, e, tr('Renamed {value0} -> {value1}').format(value0=old_name, value1=new_name)
             ),
         )
         w.start()
@@ -302,14 +315,16 @@ class FileExplorerOps:
         if not self._frame._can_operate():
             return
         full = self._frame._dpath(self._frame.current_path, name)
-        self._frame.status_bar.setText(f"Deleting {name}...")
+        self._frame.status_bar.setText(tr('Deleting {value0}...').format(value0=name))
         w = self._frame._run_adb("shell", self._frame._root(explorer_service.delete_command(full)))
         if w is None:
             return
         self._frame._connect_worker_ui(
             w,
             w.result_ready,
-            lambda o, e, n=name: self._on_file_op_done(o, e, f"Deleted {n}"),
+            lambda o, e, n=name: self._on_file_op_done(
+                o, e, tr("Deleted {value0}").format(value0=n)
+            ),
         )
         w.start()
 
@@ -341,7 +356,9 @@ class FileExplorerOps:
         ]
         self._frame.copy_mode = copy_mode
         self._frame.status_bar.setText(
-            f"{'Copied' if copy_mode else 'Cut'} {len(self._frame.clipboard)} item(s)"
+            tr("{value0} {value1} item(s)").format(
+                value0=tr("Copied") if copy_mode else tr("Cut"), value1=len(self._frame.clipboard)
+            )
         )
 
     def _paste_items(self):
@@ -365,7 +382,7 @@ class FileExplorerOps:
                     w,
                     w.result_ready,
                     lambda o, e, n=os.path.basename(src): self._on_file_op_done(
-                        o, e, f"Pasted {n}"
+                        o, e, tr('Pasted {value0}').format(value0=n)
                     ),
                 )
                 w.start()
@@ -380,10 +397,14 @@ class FileExplorerOps:
                 self._frame._connect_worker_ui(
                     w,
                     w.result_ready,
-                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(o, e, f"Moved {n}"),
+                    lambda o, e, n=os.path.basename(src): self._on_file_op_done(
+                        o, e, tr("Moved {value0}").format(value0=n)
+                    ),
                 )
                 w.start()
-        self._frame.status_bar.setText(f"Paste submitted: {len(self._frame.clipboard)} item(s)")
+        self._frame.status_bar.setText(
+            tr("Paste submitted: {value0} item(s)").format(value0=len(self._frame.clipboard))
+        )
         self._frame.clipboard = []
 
     # ── 文件权限（chmod）────────────────────────────────────────────────
@@ -394,13 +415,13 @@ class FileExplorerOps:
         full = self._frame._dpath(self._frame.current_path, name)
         dlg = FluentDialog(self._frame)
         dlg.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-        dlg.setWindowTitle(f"Permissions - {name}")
+        dlg.setWindowTitle(tr('Permissions - {value0}').format(value0=name))
         dlg.setModal(True)
         lo = QVBoxLayout(dlg)
 
         grid = QGridLayout()
         grid.addWidget(apply_label_role(BodyLabel(""), FontRole.UI), 0, 0)
-        for c, col in enumerate(["Owner", "Group", "Other"], 1):
+        for c, col in enumerate([tr("Owner"), tr("Group"), tr("Other")], 1):
             grid.addWidget(
                 apply_label_role(BodyLabel(col), FontRole.UI, bold=True),
                 0,
@@ -408,7 +429,9 @@ class FileExplorerOps:
                 alignment=Qt.AlignmentFlag.AlignCenter,
             )
         cbs = {}
-        for r, (label, key) in enumerate([("Read", "r"), ("Write", "w"), ("Execute", "x")], 1):
+        for r, (label, key) in enumerate(
+            [(tr("Read"), "r"), (tr("Write"), "w"), (tr("Execute"), "x")], 1
+        ):
             grid.addWidget(apply_label_role(BodyLabel(label), FontRole.UI), r, 0)
             for c, col in enumerate(["owner", "group", "other"], 1):
                 cb = CheckBox()
@@ -420,20 +443,20 @@ class FileExplorerOps:
         lo.addWidget(preview)
         btn_row = QHBoxLayout()
         apply_btn = PushButton()
-        apply_btn.setText("Apply")
-        apply_btn.setToolTip("Apply the selected file permissions")
+        apply_btn.setText(tr("Apply"))
+        apply_btn.setToolTip(tr("Apply the selected file permissions"))
         apply_btn.setIcon(get_themed_icon("check-circle.svg"))
         apply_btn.setIconSize(QSize(14, 14))
         apply_btn.setEnabled(False)
         revert_btn = PushButton()
-        revert_btn.setText("Revert")
-        revert_btn.setToolTip("Restore the original file permissions")
+        revert_btn.setText(tr("Revert"))
+        revert_btn.setToolTip(tr("Restore the original file permissions"))
         revert_btn.setIcon(get_themed_icon("arrow-u-up-left.svg"))
         revert_btn.setIconSize(QSize(14, 14))
         revert_btn.setEnabled(False)
         close_btn = PushButton()
-        close_btn.setText("Close")
-        close_btn.setToolTip("Close the permissions window")
+        close_btn.setText(tr("Close"))
+        close_btn.setToolTip(tr("Close the permissions window"))
         close_btn.setIcon(get_themed_icon("x.svg"))
         close_btn.setIconSize(QSize(14, 14))
         btn_row.addStretch()
@@ -472,20 +495,20 @@ class FileExplorerOps:
 
         def _on_stat(o, e):
             if e:
-                preview.setText("Unable to read current permissions")
+                preview.setText(tr("Unable to read current permissions"))
                 FluentMessageBox.critical(
                     dlg,
-                    "Permissions Error",
-                    o or "Permission read failed",
+                    tr("Permissions Error"),
+                    o or tr("Permission read failed"),
                 )
                 return
             mode = explorer_service.parse_mode(o)
             if mode is None:
-                preview.setText("Unable to read current permissions")
+                preview.setText(tr("Unable to read current permissions"))
                 FluentMessageBox.critical(
                     dlg,
-                    "Permissions Error",
-                    "The device returned an invalid permission mode.",
+                    tr("Permissions Error"),
+                    tr("The device returned an invalid permission mode."),
                 )
                 return
             orig[0] = mode
@@ -510,7 +533,9 @@ class FileExplorerOps:
             apply_btn.setEnabled(False)
             revert_btn.setEnabled(False)
             mode = to_mode()
-            preview.setText(f"Applying chmod {mode}  {full}...")
+            preview.setText(
+                tr("Applying chmod {value0}  {value1}...").format(value0=mode, value1=full)
+            )
             chmod_worker = self._frame._run_adb(
                 "shell",
                 self._frame._root(explorer_service.chmod_command(mode, full)),
@@ -525,14 +550,16 @@ class FileExplorerOps:
                     applying[0] = False
                     _sync_apply_access()
                     revert_btn.setEnabled(True)
-                    preview.setText(f"chmod failed for {full}")
+                    preview.setText(tr('chmod failed for {value0}').format(value0=full))
                     FluentMessageBox.critical(
                         dlg,
-                        "Permissions Error",
-                        output or "Permission update failed",
+                        tr("Permissions Error"),
+                        output or tr("Permission update failed"),
                     )
                     return
-                self._frame.status_bar.setText(f"Permissions updated for {name}")
+                self._frame.status_bar.setText(
+                    tr("Permissions updated for {value0}").format(value0=name)
+                )
                 self._frame._refresh()
                 dlg.accept()
 

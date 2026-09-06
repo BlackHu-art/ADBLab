@@ -6,6 +6,7 @@ from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtWidgets import QApplication, QLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, Pivot
 
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 
 
@@ -38,9 +39,9 @@ class AdaptiveNavigation(QWidget):
 
         self.pivot = Pivot(self)
         self.combo = ComboBox(self)
-        self.pivot.setAccessibleName(accessible_name)
-        self.combo.setAccessibleName(accessible_name)
-        self.combo.setToolTip(f"选择{accessible_name}")
+        self.pivot.setAccessibleName(tr(accessible_name))
+        self.combo.setAccessibleName(tr(accessible_name))
+        self.combo.setToolTip(tr("选择{category}").format(category=tr(accessible_name)))
         self.combo.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.combo.setMinimumWidth(0)
 
@@ -62,13 +63,14 @@ class AdaptiveNavigation(QWidget):
         if not key or key in self._keys:
             raise ValueError("navigation key must be nonempty and unique")
         self._keys.append(key)
+        label = tr(label)
         pivot_blocker = QSignalBlocker(self.pivot)
         combo_blocker = QSignalBlocker(self.combo)
         self.pivot.addItem(routeKey=f"{self._prefix}:{key}", text=label)
         item = self.pivot.widget(f"{self._prefix}:{key}")
         item.setFont(BaseStyles.font_for_role(FontRole.UI))
-        item.setAccessibleName(f"切换到“{label}”")
-        item.setToolTip(f"切换到“{label}”")
+        item.setAccessibleName(tr("切换到“{label}”").format(label=label))
+        item.setToolTip(tr("切换到“{label}”").format(label=label))
         self.combo.addItem(label, userData=key)
         del combo_blocker, pivot_blocker
         if not self._current_key:

@@ -71,6 +71,25 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 自检和 MobilePerf worker 不应用 GUI 比例。窗口内容仍按实际可用宽高重排，缩放不改变屏幕分辨率。
 字体沿用已保存的族和字号（pt），默认 12 pt；可选 11 pt 获得更紧凑的界面，日志字号单独配置。
 
+设置页的“语言”支持跟随系统、简体中文、繁體中文和 English，保存后重启生效。云母效果在
+Windows 11 上即时切换；不支持的系统禁用该开关并使用主题实色。离屏 Qt 测试验证透明层合成与
+主题切换，桌面最终材质仍需在 Windows 11 实机观察。
+
+应用翻译源文件在 `resources/i18n/`；历史页面混用中文和英文源文案，简中、繁中、英文均安装
+应用词库。修改 `.ts` 后，用项目环境提供的 Qt 工具更新 `.qm` 和静态导入的
+`gui/generated/translations_rc.py`：
+
+```powershell
+.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_CN.ts -qm resources/i18n/adblab.zh_CN.qm
+.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.en_US.ts -qm resources/i18n/adblab.en_US.qm
+.\.venv\Scripts\pyside6-lrelease.exe resources/i18n/adblab.zh_HK.ts -qm resources/i18n/adblab.zh_HK.qm
+.\.venv\Scripts\pyside6-rcc.exe --compress 9 --threshold 0 resources/i18n/translations.qrc -o gui/generated/translations_rc.py
+```
+
+资源随 Python 模块进入现有 PyInstaller 构建，无需安装目录可写，也不依赖运行时读取参考项目。
+源码与产物的 `--self-check packaging` 同时检查三种语言的内嵌资源；词库回归测试核对 `.ts`、编译资源
+和格式占位符一致性。当前翻译覆盖范围见 [DATA_FLOW](../project-knowledge/DATA_FLOW.md#设置字段)。
+
 ## 测试与检查
 
 日常修复按 [TESTING_GUIDE 的增量验证策略](TESTING_GUIDE.md#增量验证策略) 选择直接和受影响模块

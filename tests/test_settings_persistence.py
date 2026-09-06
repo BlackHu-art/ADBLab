@@ -176,6 +176,45 @@ def test_current_settings_gain_auto_scale_without_rewriting_existing_fonts(isola
     assert {key: stored[key] for key in saved} == saved
 
 
+@pytest.mark.parametrize("language", settings_manager.LANGUAGE_OPTIONS)
+def test_language_round_trip_keeps_the_current_schema(isolated_settings, language):
+    settings = settings_manager.AppSettings.instance()
+    settings.set("language", language)
+    settings._save_timer.cancel()
+    settings._save_atomic()
+    settings_manager.AppSettings._instance = None
+
+    assert settings_manager.AppSettings.instance().get("language") == language
+    stored = json.loads(isolated_settings.read_text(encoding="utf-8"))
+    assert stored["schema_version"] == 3
+
+
+@pytest.mark.parametrize("language", [None, True, 42, [], {}, "zh_TW", "unsupported"])
+def test_invalid_language_uses_auto_on_load_and_update(isolated_settings, language):
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(
+        json.dumps({"schema_version": 3, "language": language}), encoding="utf-8",
+    )
+    settings = settings_manager.AppSettings.instance()
+    assert settings.get("language") == "Auto"
+    settings.set("language", "en_US")
+    settings.set("language", language)
+    assert settings.get("language") == "Auto"
+
+
+def test_current_settings_gain_auto_language_without_rewriting_the_file(isolated_settings):
+    saved = '{"schema_version": 3, "theme": "Dark", "font_family": "Arial"}'
+    isolated_settings.parent.mkdir(parents=True)
+    isolated_settings.write_text(saved, encoding="utf-8")
+
+    settings = settings_manager.AppSettings.instance()
+
+    assert settings.get("language") == "Auto"
+    assert settings.get("theme") == "Dark"
+    assert settings.get("font_family") == "Arial"
+    assert isolated_settings.read_text(encoding="utf-8") == saved
+
+
 def test_v1_file_migrates_and_stamps_current_schema_version(isolated_settings):
     legacy = {
         "theme": "Dark",

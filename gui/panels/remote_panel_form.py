@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, 
 from qfluentwidgets import BodyLabel, InfoBadge
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
 from gui.widgets.category_stack import AdaptiveCategoryStack
@@ -44,7 +45,7 @@ class RemotePanelForm(QObject):
         self._frame.category_stack = AdaptiveCategoryStack("remote", w)
         self._frame.category_stack.setObjectName("remoteCategoryStack")
         self._frame.category_stack.add_category(
-            "mirroring", "远程控制", (mirroring, control)
+            "mirroring", tr("远程控制"), (mirroring, control)
         )
         self._frame.category_stack.add_alias("control", "mirroring")
         self._frame.category_stack.current_changed.connect(
@@ -73,9 +74,9 @@ class RemotePanelForm(QObject):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self._frame.remote_title = apply_label_role(
-            BodyLabel("远程控制"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel(tr("远程控制")), FontRole.TITLE, color_key="TITLE_COLOR"
         )
-        self._frame.remote_status_badge = InfoBadge("未选择", self._frame)
+        self._frame.remote_status_badge = InfoBadge(tr("未选择"), self._frame)
         self._frame.remote_status_badge.setObjectName("remoteStatusBadge")
         self._frame.remote_status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.remote_status_badge.setFont(self._frame._font_sm)
@@ -83,12 +84,12 @@ class RemotePanelForm(QObject):
         self._frame.remote_status_badge.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents, False
         )
-        self._frame.remote_status_badge.setToolTip("远程控制的设备选择状态")
+        self._frame.remote_status_badge.setToolTip(tr("远程控制的设备选择状态"))
         title_row.addWidget(self._frame.remote_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.remote_status_badge)
         self._frame.remote_subtitle = apply_label_role(
-            BodyLabel("屏幕镜像、设备按键与手势控制"),
+            BodyLabel(tr("屏幕镜像、设备按键与手势控制")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -107,11 +108,11 @@ class RemotePanelForm(QObject):
         self._frame._on_theme_changed_remote(BaseStyles.current_theme())
 
     def _build_mirroring(self) -> QWidget:
-        g = self._frame._card("屏幕镜像")
+        g = self._frame._card(tr("屏幕镜像"))
         gl = g.viewLayout
         gl.setSpacing(4)
 
-        preset_label = self._frame._label("预设：")
+        preset_label = self._frame._label(tr("预设："))
         preset_label.setWordWrap(False)
         preset_label.setMinimumWidth(56)
         preset_label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
@@ -119,20 +120,18 @@ class RemotePanelForm(QObject):
 
         self._frame.preset = self._frame._combo(self._frame._PRESET_NAMES)
         saved_preset = self._frame._load("preset")
-        self._frame.preset.setCurrentText(saved_preset)
-        if self._frame.preset.currentText() != saved_preset:
-            self._frame.preset.setCurrentIndex(-1)  # 自定义值不对应任何预设。
+        self._frame.preset.setCurrentIndex(self._frame.preset.findData(saved_preset))
         self._frame.preset.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
         self._frame._refresh_responsive_widget_minimum(self._frame.preset)
 
-        self._frame._status_label = self._frame._status_text("状态：空闲")
-        self._frame._remote_queue_label = self._frame._status_text("队列：0")
-        self._frame._status_label.setAccessibleName("远程会话状态")
-        initial_status = "状态：空闲"
+        self._frame._status_label = self._frame._status_text(tr("状态：空闲"))
+        self._frame._remote_queue_label = self._frame._status_text(tr("队列：0"))
+        self._frame._status_label.setAccessibleName(tr("远程会话状态"))
+        initial_status = tr("状态：空闲")
         self._frame._status_label.setToolTip(initial_status)
         self._frame._status_label.setAccessibleDescription(initial_status)
-        self._frame._remote_queue_label.setAccessibleName("远程输入队列状态")
-        queue_details = "排队：0 · 已发送：0 · 失败：0"
+        self._frame._remote_queue_label.setAccessibleName(tr("远程输入队列状态"))
+        queue_details = tr("排队：0 · 已发送：0 · 失败：0")
         self._frame._remote_queue_label.setToolTip(queue_details)
         self._frame._remote_queue_label.setAccessibleDescription(queue_details)
         for label in (self._frame._status_label, self._frame._remote_queue_label):
@@ -141,12 +140,12 @@ class RemotePanelForm(QObject):
             label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
         settings = [
-            ("尺寸：", "maxsize", self._frame._SIZES),
+            (tr("尺寸："), "maxsize", self._frame._SIZES),
             ("FPS:", "fps", self._frame._FPS),
-            ("编码：", "codec", self._frame._CODECS),
-            ("缓冲：", "buffer", self._frame._BUFFERS),
-            ("码率：", "bitrate", self._frame._BITRATES),
-            ("方向：", "orientation", self._frame._ORIENTATIONS),
+            (tr("编码："), "codec", self._frame._CODECS),
+            (tr("缓冲："), "buffer", self._frame._BUFFERS),
+            (tr("码率："), "bitrate", self._frame._BITRATES),
+            (tr("方向："), "orientation", self._frame._ORIENTATIONS),
         ]
         setting_widgets = []
         self._frame._parameter_labels = []
@@ -157,13 +156,15 @@ class RemotePanelForm(QObject):
             label.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             combo = self._frame._combo(items)
-            combo.setCurrentText(self._frame._load(attr))
+            saved_index = combo.findData(self._frame._load(attr))
+            if saved_index >= 0:
+                combo.setCurrentIndex(saved_index)
             combo.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
             self._frame._refresh_responsive_widget_minimum(combo)
             setattr(self._frame, attr, combo)
             self._frame._parameter_labels.append(label)
             setting_widgets.extend((label, combo))
-        self._frame.orientation.setToolTip("锁定屏幕方向（0 为自动）")
+        self._frame.orientation.setToolTip(tr("锁定屏幕方向（0 为自动）"))
 
         # Preset、Status、Queue 与六个参数必须共享同一个响应式网格。
         # 分属两个 binding 时，上下两行会各自计算列宽和断点（尤其 medium
@@ -273,11 +274,11 @@ class RemotePanelForm(QObject):
         self._frame.status_binding = self._frame.mirroring_binding
         self._frame.parameter_binding = self._frame.mirroring_binding
         self._frame.preset_binding = self._frame.mirroring_binding
-        self._frame.chk_record = self._frame._create_checkbox("保存录屏")
-        self._frame.chk_record.setToolTip("将镜像画面录制到文件")
+        self._frame.chk_record = self._frame._create_checkbox(tr("保存录屏"))
+        self._frame.chk_record.setToolTip(tr("将镜像画面录制到文件"))
         self._frame.chk_record.toggled.connect(self._frame._on_record_toggled)
         self._frame.record_path = self._frame._status_text("")
-        self._frame.record_path.setAccessibleName("录屏保存路径")
+        self._frame.record_path.setAccessibleName(tr("录屏保存路径"))
         # 录制路径保持单行，避免长文件名无限拉高启动选项；
         # 完整内容由 tooltip 与辅助描述提供。
         self._frame.record_path.setWordWrap(False)
@@ -295,14 +296,14 @@ class RemotePanelForm(QObject):
             wide_columns=2,
         )
 
-        self._frame.chk_fullscreen = self._frame._create_checkbox("全屏")
-        self._frame.chk_fullscreen.setToolTip("以全屏模式启动")
-        self._frame.chk_aot = self._frame._create_checkbox("窗口置顶")
-        self._frame.chk_aot.setToolTip("让镜像窗口保持在其他窗口上方")
-        self._frame.chk_showtouches = self._frame._create_checkbox("显示触点")
-        self._frame.chk_showtouches.setToolTip("在屏幕上显示触摸位置")
-        self._frame.chk_stayawake = self._frame._create_checkbox("保持唤醒")
-        self._frame.chk_stayawake.setToolTip("镜像期间保持设备屏幕唤醒")
+        self._frame.chk_fullscreen = self._frame._create_checkbox(tr("全屏"))
+        self._frame.chk_fullscreen.setToolTip(tr("以全屏模式启动"))
+        self._frame.chk_aot = self._frame._create_checkbox(tr("窗口置顶"))
+        self._frame.chk_aot.setToolTip(tr("让镜像窗口保持在其他窗口上方"))
+        self._frame.chk_showtouches = self._frame._create_checkbox(tr("显示触点"))
+        self._frame.chk_showtouches.setToolTip(tr("在屏幕上显示触摸位置"))
+        self._frame.chk_stayawake = self._frame._create_checkbox(tr("保持唤醒"))
+        self._frame.chk_stayawake.setToolTip(tr("镜像期间保持设备屏幕唤醒"))
         self._frame._add_responsive_row(
             gl,
             self._frame.chk_fullscreen,
@@ -315,15 +316,15 @@ class RemotePanelForm(QObject):
             wide_columns=4,
         )
 
-        self._frame.chk_turnscreenoff = self._frame._create_checkbox("关闭设备屏幕")
-        self._frame.chk_turnscreenoff.setToolTip("连接后关闭设备屏幕")
-        self._frame.chk_hw_encoder = self._frame._create_checkbox("硬件编码")
-        self._frame.chk_hw_encoder.setToolTip("强制使用硬件编码器（可能造成卡顿）")
-        self._frame.chk_noplayback = self._frame._create_checkbox("仅录制")
-        self._frame.chk_noplayback.setToolTip("只录制文件，不显示镜像窗口")
-        self._frame.chk_noaudio = self._frame._create_checkbox("禁用音频")
+        self._frame.chk_turnscreenoff = self._frame._create_checkbox(tr("关闭设备屏幕"))
+        self._frame.chk_turnscreenoff.setToolTip(tr("连接后关闭设备屏幕"))
+        self._frame.chk_hw_encoder = self._frame._create_checkbox(tr("硬件编码"))
+        self._frame.chk_hw_encoder.setToolTip(tr("强制使用硬件编码器（可能造成卡顿）"))
+        self._frame.chk_noplayback = self._frame._create_checkbox(tr("仅录制"))
+        self._frame.chk_noplayback.setToolTip(tr("只录制文件，不显示镜像窗口"))
+        self._frame.chk_noaudio = self._frame._create_checkbox(tr("禁用音频"))
         self._frame.chk_noaudio.setChecked(True)
-        self._frame.chk_noaudio.setToolTip("不转发设备音频")
+        self._frame.chk_noaudio.setToolTip(tr("不转发设备音频"))
         self._frame._add_responsive_row(
             gl,
             self._frame.chk_turnscreenoff,
@@ -337,15 +338,15 @@ class RemotePanelForm(QObject):
         )
 
         self._frame.btn_start = self._frame._b(
-            "开始镜像", "monitor-play.svg", "accent", tooltip="开始屏幕镜像（Ctrl+Enter）"
+            tr("开始镜像"), "monitor-play.svg", "accent", tooltip=tr("开始屏幕镜像（Ctrl+Enter）")
         )
         self._frame.btn_start.setMinimumHeight(32)
         self._frame.btn_start.setIconSize(QSize(16, 16))
         self._frame.btn_stop = self._frame._b(
-            "停止镜像",
+            tr("停止镜像"),
             "stop-circle.svg",
             "danger",
-            tooltip="停止屏幕镜像（Ctrl+Shift+Return）",
+            tooltip=tr("停止屏幕镜像（Ctrl+Shift+Return）"),
         )
         self._frame.btn_stop.setMinimumHeight(32)
         self._frame.btn_stop.setIconSize(QSize(16, 16))
@@ -366,7 +367,7 @@ class RemotePanelForm(QObject):
         return self._frame._checkbox(text)
 
     def _build_control(self) -> QWidget:
-        g = self._frame._card("远程按键与手势")
+        g = self._frame._card(tr("远程按键与手势"))
         outer = g.viewLayout
         outer.setSpacing(6)
         self._frame._remote_control_buttons = []
@@ -375,19 +376,19 @@ class RemotePanelForm(QObject):
 
         # RECENTS 已覆盖 APP_SWITCH；通知栏操作由下方手势处理。
         key_specs = [
-            ("主页", "HOME"),
-            ("返回", "BACK"),
-            ("最近", "RECENTS"),
-            ("菜单", "MENU"),
-            ("电源", "POWER"),
-            ("设置", "SETTINGS"),
-            ("相机", "CAMERA"),
-            ("搜索", "SEARCH"),
-            ("确认", "ENTER"),
-            ("删除", "DEL"),
+            (tr("主页"), "HOME"),
+            (tr("返回"), "BACK"),
+            (tr("最近"), "RECENTS"),
+            (tr("菜单"), "MENU"),
+            (tr("电源"), "POWER"),
+            (tr("设置"), "SETTINGS"),
+            (tr("相机"), "CAMERA"),
+            (tr("搜索"), "SEARCH"),
+            (tr("确认"), "ENTER"),
+            (tr("删除"), "DEL"),
         ]
         for label, code in key_specs:
-            self._frame._remote_key_button(label, code, f"发送按键事件 {code}")
+            self._frame._remote_key_button(label, code, tr("发送按键事件 {code}").format(code=code))
         self._frame._remote_primary_key_buttons = tuple(self._frame._remote_key_buttons)
         control_modes = (
             span_tail_mode("four", 4, 0, column_stretches=(1, 1, 1, 1)),
@@ -404,12 +405,12 @@ class RemotePanelForm(QObject):
         media_specs = [
             ("VOL-", "VOL_DOWN"),
             ("VOL+", "VOL_UP"),
-            ("播放", "MEDIA_PLAY"),
-            ("上一个", "MEDIA_PREV"),
-            ("下一个", "MEDIA_NEXT"),
+            (tr("播放"), "MEDIA_PLAY"),
+            (tr("上一个"), "MEDIA_PREV"),
+            (tr("下一个"), "MEDIA_NEXT"),
         ]
         for label, code in media_specs:
-            self._frame._remote_key_button(label, code, f"发送按键事件 {code}")
+            self._frame._remote_key_button(label, code, tr("发送按键事件 {code}").format(code=code))
         self._frame._remote_media_buttons = tuple(
             self._frame._remote_key_buttons[len(self._frame._remote_primary_key_buttons) :]
         )
@@ -422,14 +423,14 @@ class RemotePanelForm(QObject):
         )
 
         action_specs = [
-            ("上滑", "swipe_up", "发送向上滑动手势"),
-            ("下滑", "swipe_down", "发送向下滑动手势"),
-            ("左滑", "swipe_left", "发送向左滑动手势"),
-            ("右滑", "swipe_right", "发送向右滑动手势"),
-            ("展开通知", "notif_expand", "展开通知栏"),
-            ("收起通知", "notif_collapse", "收起通知栏"),
-            ("竖屏", "rotate_portrait", "切换到竖屏方向"),
-            ("横屏", "rotate_landscape", "切换到横屏方向"),
+            (tr("上滑"), "swipe_up", tr("发送向上滑动手势")),
+            (tr("下滑"), "swipe_down", tr("发送向下滑动手势")),
+            (tr("左滑"), "swipe_left", tr("发送向左滑动手势")),
+            (tr("右滑"), "swipe_right", tr("发送向右滑动手势")),
+            (tr("展开通知"), "notif_expand", tr("展开通知栏")),
+            (tr("收起通知"), "notif_collapse", tr("收起通知栏")),
+            (tr("竖屏"), "rotate_portrait", tr("切换到竖屏方向")),
+            (tr("横屏"), "rotate_landscape", tr("切换到横屏方向")),
         ]
         for label, action, tooltip in action_specs:
             self._frame._remote_action_button(label, action, tooltip)
@@ -493,10 +494,10 @@ class RemotePanelForm(QObject):
         self._frame._settings.set(f"scrcpy_{key}", value)
 
     def _save_all(self):
-        p = self._frame.preset.currentText()
+        p = self._frame.preset.currentData()
         self._frame._settings.set("scrcpy_preset", p if p else "Custom")
         for k in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
-            self._frame._settings.set(f"scrcpy_{k}", getattr(self._frame, k).currentText())
+            self._frame._settings.set(f"scrcpy_{k}", getattr(self._frame, k).currentData())
 
     def _load(self, key: str) -> str:
         setting_key = f"scrcpy_{key}"
@@ -520,10 +521,13 @@ class RemotePanelForm(QObject):
         self._frame._loading = True
         try:
             saved_preset = self._frame._load("preset")
-            preset_index = self._frame.preset.findText(saved_preset)
+            preset_index = self._frame.preset.findData(saved_preset)
             self._frame.preset.setCurrentIndex(preset_index)
             for key in ("maxsize", "fps", "codec", "buffer", "bitrate", "orientation"):
-                getattr(self._frame, key).setCurrentText(self._frame._load(key))
+                combo = getattr(self._frame, key)
+                saved_index = combo.findData(self._frame._load(key))
+                if saved_index >= 0:
+                    combo.setCurrentIndex(saved_index)
         finally:
             self._frame._loading = was_loading
         self._frame._update_action_states()
@@ -536,11 +540,9 @@ class RemotePanelForm(QObject):
             was_loading = getattr(self._frame, "_loading", False)
             self._frame._loading = True
             p = self._frame._PRESETS[idx]
-            self._frame.maxsize.setCurrentText(p["maxsize"])
-            self._frame.fps.setCurrentText(p["fps"])
-            self._frame.bitrate.setCurrentText(p["bitrate"])
-            self._frame.codec.setCurrentText(p["codec"])
-            self._frame.buffer.setCurrentText(p["buffer"])
+            for key in ("maxsize", "fps", "bitrate", "codec", "buffer"):
+                combo = getattr(self._frame, key)
+                combo.setCurrentIndex(combo.findData(p[key]))
             self._frame._loading = was_loading
             if not was_loading:
                 self._frame._save_all()
@@ -553,7 +555,7 @@ class RemotePanelForm(QObject):
             self._frame.record_path.setToolTip("")
             self._frame.record_path.setAccessibleDescription("")
             return
-        details = "开始镜像时创建录屏文件"
+        details = tr("开始镜像时创建录屏文件")
         self._frame.record_path.setText(details)
         self._frame.record_path.setToolTip(details)
         self._frame.record_path.setAccessibleDescription(details)

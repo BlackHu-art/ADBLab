@@ -1,0 +1,55 @@
+APK 信息	APK information
+安装应用	Install app
+重置电池状态	Reset battery state
+设置电池状态	Set battery state
+错误报告	Bug report
+清理设备日志	Clean device logs
+清除应用数据	Clear app data
+查询内容提供者	Query content provider
+当前 Activity	Current Activity
+设备运行时间	Device uptime
+禁用应用	Disable app
+对当前用户禁用应用	Disable app for current user
+断开设备	Disconnect device
+电池信息	Battery information
+CPU 使用情况	CPU usage
+内存信息	Memory information
+查询系统服务	Query system service
+模拟位置	Simulate location
+列出文件	List files
+下载文件	Download files
+上传文件	Upload files
+强行停止应用	Force stop app
+添加端口转发	Add port forwarding
+获取设备信息	Get device information
+获取前台应用	Get foreground app
+图形渲染信息	Graphics rendering information
+授予权限	Grant permission
+列出输入法	List input methods
+设置输入法	Set input method
+发送按键事件	Send key event
+发送滑动手势	Send swipe gesture
+发送点击	Send tap
+已安装应用	Installed apps
+停止 Monkey	Stop Monkey
+结束进程	End process
+列出端口转发	List port forwarding
+列出反向转发	List reverse forwarding
+筛选 Logcat	Filter Logcat
+Monkey 测试	Monkey test
+配对设备	Pair device
+设备功能	Device features
+获取 ANR	Retrieve ANR
+下载录屏	Download recording
+快捷设置	Quick settings
+移除端口转发	Remove port forwarding
+移除反向转发	Remove reverse forwarding
+获取设备日志	Retrieve device logs
+添加反向转发	Add reverse forwarding
+撤销权限	Revoke permission
+录制屏幕	Record screen
+读取系统设置	Read system setting
+列出系统设置	List system settings
+写入系统设置	Write system setting
+执行 Shell	Run Shell
+开启 TCP/IP	Enable TCP/IP

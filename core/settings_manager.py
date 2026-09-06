@@ -62,6 +62,12 @@ SCRCPY_SETTING_DEFAULTS = {
 
 # Auto 保留平台的 DPI 策略；手动比例只在下一次 GUI 启动前传给 Qt。
 UI_SCALE_OPTIONS = ("Auto", 1.0, 1.25, 1.5, 1.75, 2.0)
+LANGUAGE_OPTIONS = ("Auto", "zh_CN", "zh_HK", "en_US")
+
+
+def normalise_language(value: Any) -> str:
+    """限定为受支持的界面语言；无效值回退到跟随系统。"""
+    return value if isinstance(value, str) and value in LANGUAGE_OPTIONS else "Auto"
 
 
 def normalise_ui_scale(value: Any) -> str | float:
@@ -82,6 +88,7 @@ DEFAULTS = {
     "font_family": "",
     "ui_font_size": 12,
     "ui_scale": "Auto",
+    "language": "Auto",
     "log_font_size": 9,
     "save_directory": "",
     "log_max_lines": 2000,
@@ -140,6 +147,9 @@ def _normalise_setting(key: str, value: Any) -> Any:
 
     if key == "ui_scale":
         return normalise_ui_scale(value)
+
+    if key == "language":
+        return normalise_language(value)
 
     if key == "save_directory":
         # 路径中的首尾空白可能属于真实目录名，不能随类型校验一并裁剪。

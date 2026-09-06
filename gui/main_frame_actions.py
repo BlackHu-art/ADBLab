@@ -8,6 +8,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QFileDialog
 
 from core.settings_manager import AppSettings
+from gui.i18n import tr
 from gui.styles import BaseStyles
 
 
@@ -49,7 +50,7 @@ class MainFrameActions:
         current = settings.save_directory
         directory = QFileDialog.getExistingDirectory(
             self._frame,
-            "Select Default Save Directory",
+            tr("Select Default Save Directory"),
             current if os.path.isdir(current) else "",
         )
         if not directory:

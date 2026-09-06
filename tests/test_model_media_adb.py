@@ -23,6 +23,7 @@ from gui.dialogs.file_explorer_view import _load_image_preview
 from gui.dialogs.screenshot_viewer_nav import _load_pixmap
 from gui.features.file_explorer import FileExplorerPage
 from gui.features.media import ScreenshotPage
+from gui.i18n import tr
 from gui.panels.log_panel import LogPanel
 from gui.styles import BaseStyles
 from models.adb_advanced import ADBAdvanced
@@ -274,11 +275,11 @@ def test_file_explorer_offline_first_activation_defers_load_until_reconnect(qt_a
         page.activate()
 
         page._refresh.assert_not_called()
-        assert page.status_badge.text() == "Device offline"
+        assert page.status_badge.text() == tr("离线")
 
         page.set_device_connected(True)
         page._refresh.assert_called_once_with()
-        assert page.status_badge.text() == "Ready"
+        assert page.status_badge.text() == tr("就绪")
     finally:
         page.close()
         qt_application.processEvents()

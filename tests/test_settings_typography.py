@@ -9,6 +9,7 @@ from PySide6.QtCore import QPoint
 from qfluentwidgets import FluentIcon, FluentWindow
 
 from core.settings_manager import DEFAULTS, AppSettings
+from gui.i18n import install_translators
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
 from tests.ui_geometry_helpers import wait_for_stable_geometry
@@ -22,6 +23,7 @@ def _setting_card_controls(page):
         (page.log_lines_card, page.log_lines_card.combo_box),
         (page.theme_card, page.theme_card.combo_box),
         (page.scale_card, page.scale_card.combo_box),
+        (page.language_card, page.language_card.combo_box),
         (page.accent_card, page.accent_card.color_button),
         (page.mica_card, page.mica_card.switchButton),
         (page.pin_card, page.pin_card.switchButton),
@@ -95,7 +97,10 @@ def test_setting_cards_keep_full_text_and_actions_inside_viewport(
         assert control.font().pointSizeF() == BaseStyles.font_for_role(FontRole.UI).pointSizeF()
         assert control.height() >= control.fontMetrics().height() + 14
         for label in (card.titleLabel, card.contentLabel):
-            assert label.height() >= label.heightForWidth(label.width())
+            assert label.height() >= label.heightForWidth(label.width()), (
+                card.titleLabel.text(), label.text(), label.geometry(),
+                control.geometry(), control.sizeHint(), card.size(),
+            )
             assert label.height() >= label.fontMetrics().height()
         point = control.mapTo(card, QPoint())
         assert 0 <= point.x() and point.x() + control.width() <= card.width()
@@ -203,6 +208,86 @@ def test_settings_restore_resets_scale_card_without_an_extra_save(settings_page)
     assert values["ui_scale"] == "Auto"
     assert page.scale_card.value() == "跟随系统"
     assert writes == [{"ui_scale": 1.75}, {"reset": True}]
+
+
+def test_language_selection_saves_stable_values_and_waits_for_restart(settings_page, monkeypatch):
+    page, values, writes, _frame = settings_page
+    show_hint = Mock()
+    monkeypatch.setattr(page, "_show_language_restart_hint", show_hint)
+
+    assert list(page._language_values.values()) == ["Auto", "zh_CN", "zh_HK", "en_US"]
+    page.language_card.combo_box.setCurrentText("English")
+    page.language_card.combo_box.setCurrentText("English")
+
+    assert values["language"] == "en_US"
+    assert writes == [{"language": "en_US"}]
+    assert page.title_label.text() == "设置"
+    assert "重启" in page.language_card.contentLabel.text()
+    show_hint.assert_called_once_with()
+
+    page._reset_settings()
+    assert values["language"] == "Auto"
+    assert page.language_card.value() == "跟随系统"
+    assert writes == [{"language": "en_US"}, {"reset": True}]
+    assert show_hint.call_count == 2
+
+
+@pytest.mark.parametrize("supported", [False, True])
+def test_mica_setting_gates_unsupported_systems_without_overwriting_preference(
+    settings_page, monkeypatch, supported,
+):
+    _original, values, writes, frame = settings_page
+    monkeypatch.setattr("gui.pages.fluent_pages.is_mica_supported", lambda: supported)
+    page = SettingsPage(frame)
+    try:
+        assert page.mica_card.isEnabled() is supported
+        assert values["mica_enabled"] is True
+        assert not writes
+        if supported:
+            page.mica_card.setChecked(False)
+            assert writes == [{"mica_enabled": False}]
+            frame.setMicaEffectEnabled.assert_called_once_with(False)
+            frame._refresh_window_chrome_theme.assert_called_once_with()
+        else:
+            assert "Windows 11" in page.mica_card.contentLabel.text()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("language,title", [("en_US", "Settings"), ("zh_HK", "設定")])
+@pytest.mark.parametrize("width,font_size", [(900, 12), (420, 12), (900, 22), (420, 22)])
+def test_translated_settings_keep_controls_visible_and_persist_language_independent_values(
+    qt_application, settings_page, language, title, width, font_size,
+):
+    _original, values, writes, frame = settings_page
+    translators = install_translators(qt_application, language)
+    page = SettingsPage(frame)
+    try:
+        test_setting_cards_keep_full_text_and_actions_inside_viewport(
+            qt_application, (page, values, writes, frame), width, font_size,
+        )
+        assert page.title_label.text() == title
+        assert page.language_card.titleLabel.text() == (
+            "Language" if language == "en_US" else "語言"
+        )
+        page.theme_card.combo_box.setCurrentText(page.THEME_LABELS["Dark"])
+        # 独立设置页发主题信号，持久化由真实 MainFrame 消费者负责。
+        assert BaseStyles.current_theme() == "Dark"
+        page.font_family_card.combo_box.setCurrentText(page.font_family_card.combo_box.itemText(0))
+        assert values["font_family"] == ""
+        page._reset_settings()
+        assert values["language"] == "Auto"
+        assert page.language_card.value() == page.LANGUAGE_LABELS["Auto"]
+        for card in (page.scan_card, page.mica_card, page.pin_card):
+            expected = ("On" if card.isChecked() else "Off") if language == "en_US" else (
+                "開" if card.isChecked() else "關"
+            )
+            assert card.switchButton.label.text() == expected
+    finally:
+        page.close()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

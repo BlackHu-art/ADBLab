@@ -34,6 +34,7 @@ from qfluentwidgets import (
     TransparentPushButton,
 )
 
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.icon_loader import DEVICE_ICON
 from utils.adb_targets import normalize_adb_connect_target
@@ -84,22 +85,22 @@ class DevicePicker(FlyoutViewBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
-        layout.addWidget(StrongBodyLabel("选择操作设备", self))
-        self.description = BodyLabel("可多选。正在运行的会话继续使用原设备。", self)
+        layout.addWidget(StrongBodyLabel(tr("选择操作设备"), self))
+        self.description = BodyLabel(tr("可多选。正在运行的会话继续使用原设备。"), self)
         self.description.setWordWrap(True)
         layout.addWidget(self.description)
         self.device_list = _DeviceCheckList(self)
-        self.device_list.setAccessibleName("操作设备多选列表")
+        self.device_list.setAccessibleName(tr("操作设备多选列表"))
         self.device_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.device_list.setMinimumHeight(120)
         self.device_list.setMaximumHeight(240)
         self.device_list.itemChanged.connect(self._submit)
         layout.addWidget(self.device_list)
         actions = QHBoxLayout()
-        self.select_all_button = PushButton("全选", self)
-        self.clear_button = PushButton("清空选择", self)
-        self.select_all_button.setToolTip("勾选所有在线设备作为操作目标")
-        self.clear_button.setToolTip("取消操作目标勾选，保留已打开的设备会话")
+        self.select_all_button = PushButton(tr("全选"), self)
+        self.clear_button = PushButton(tr("清空选择"), self)
+        self.select_all_button.setToolTip(tr("勾选所有在线设备作为操作目标"))
+        self.clear_button.setToolTip(tr("取消操作目标勾选，保留已打开的设备会话"))
         self.select_all_button.clicked.connect(lambda: self._set_all(True))
         self.clear_button.clicked.connect(lambda: self._set_all(False))
         actions.addWidget(self.select_all_button)
@@ -139,7 +140,7 @@ class DevicePicker(FlyoutViewBase):
                 item.setToolTip(device)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             if not devices:
-                item = QListWidgetItem("尚未发现设备，请连接或刷新", self.device_list)
+                item = QListWidgetItem(tr("尚未发现设备，请连接或刷新"), self.device_list)
                 item.setFlags(Qt.ItemFlag.NoItemFlags)
             self._rendered_devices = devices
         # 勾选回调会同步投影状态，保留同一批条目避免在原生点击事件中销毁发送方。
@@ -183,14 +184,14 @@ class DeviceConnectionForm(FlyoutViewBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
-        layout.addWidget(StrongBodyLabel("连接设备", self))
-        hint = BodyLabel("USB 设备连接后点击刷新；无线设备填写 IP 地址及端口。", self)
+        layout.addWidget(StrongBodyLabel(tr("连接设备"), self))
+        hint = BodyLabel(tr("USB 设备连接后点击刷新；无线设备填写 IP 地址及端口。"), self)
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.address = EditableComboBox(self)
-        self.address.setAccessibleName("设备地址")
+        self.address.setAccessibleName(tr("设备地址"))
         self.address.setMinimumWidth(0)
-        self.address.setPlaceholderText("IP 地址:端口")
+        self.address.setPlaceholderText(tr("IP 地址:端口"))
         for label, target in history:
             self.address.addItem(label, userData=target)
         self.address.setCurrentIndex(-1)
@@ -201,8 +202,8 @@ class DeviceConnectionForm(FlyoutViewBase):
         self.error_label.setWordWrap(True)
         self.error_label.hide()
         layout.addWidget(self.error_label)
-        self.connect_button = PrimaryPushButton(FluentIcon.CONNECT, "连接", self)
-        self.connect_button.setToolTip("校验输入地址并连接无线设备")
+        self.connect_button = PrimaryPushButton(FluentIcon.CONNECT, tr("连接"), self)
+        self.connect_button.setToolTip(tr("校验输入地址并连接无线设备"))
         self.connect_button.clicked.connect(self._connect)
         self.address.returnPressed.connect(self._connect)
         layout.addWidget(self.connect_button, 0, Qt.AlignmentFlag.AlignRight)
@@ -219,7 +220,7 @@ class DeviceConnectionForm(FlyoutViewBase):
 
     def _connect(self) -> None:
         target, error = normalize_adb_connect_target(self.address.currentText())
-        self.error_label.setText(error or "")
+        self.error_label.setText(tr(error) if error else "")
         self.error_label.setVisible(bool(error))
         if error:
             self.address.setFocus()
@@ -270,33 +271,33 @@ class DeviceContextBar(QWidget):
         action_layout = QHBoxLayout(self._actions)
         action_layout.setContentsMargins(0, 0, 0, 0)
         action_layout.setSpacing(8)
-        self.targets_button = PushButton(DEVICE_ICON, "操作设备", self)
-        self.targets_button.setAccessibleName("操作设备（支持多选）")
+        self.targets_button = PushButton(DEVICE_ICON, tr("操作设备"), self)
+        self.targets_button.setAccessibleName(tr("操作设备（支持多选）"))
         self.targets_button.clicked.connect(self.open_picker)
-        self.status_label = BodyLabel("未发现设备", self)
+        self.status_label = BodyLabel(tr("未发现设备"), self)
         self.status_label.setWordWrap(True)
         self.status_label.setMinimumWidth(0)
-        self.connect_button = TransparentPushButton(FluentIcon.CONNECT, "连接", self)
-        self.connect_button.setToolTip("输入无线地址，或使用已保存的连接历史")
+        self.connect_button = TransparentPushButton(FluentIcon.CONNECT, tr("连接"), self)
+        self.connect_button.setToolTip(tr("输入无线地址，或使用已保存的连接历史"))
         self.connect_button.clicked.connect(self.connection_requested)
         self.refresh_button = ToolButton(FluentIcon.SYNC, self)
-        self.refresh_button.setAccessibleName("刷新设备")
-        self.refresh_button.setToolTip("重新扫描 USB 与无线设备的在线状态")
+        self.refresh_button.setAccessibleName(tr("刷新设备"))
+        self.refresh_button.setToolTip(tr("重新扫描 USB 与无线设备的在线状态"))
         self.refresh_button.clicked.connect(self.refresh_requested)
-        self.info_button = TransparentPushButton(FluentIcon.INFO, "设备信息", self)
-        self.info_button.setAccessibleName("查看所选设备信息")
-        self.info_button.setToolTip("在任务中心运行记录中查看所选设备信息")
+        self.info_button = TransparentPushButton(FluentIcon.INFO, tr("设备信息"), self)
+        self.info_button.setAccessibleName(tr("查看所选设备信息"))
+        self.info_button.setToolTip(tr("在任务中心运行记录中查看所选设备信息"))
         self.info_button.clicked.connect(self.info_requested)
-        self.disconnect_button = TransparentPushButton(FluentIcon.CANCEL, "断开所选设备", self)
-        self.disconnect_button.setAccessibleName("断开所选设备")
-        self.disconnect_button.setToolTip("断开已勾选设备的 ADB 连接")
+        self.disconnect_button = TransparentPushButton(FluentIcon.CANCEL, tr("断开所选设备"), self)
+        self.disconnect_button.setAccessibleName(tr("断开所选设备"))
+        self.disconnect_button.setToolTip(tr("断开已勾选设备的 ADB 连接"))
         self.disconnect_button.clicked.connect(self.disconnect_requested)
         self.more_button = TransparentDropDownToolButton(FluentIcon.MORE, self)
-        self.more_button.setAccessibleName("更多设备操作")
-        self.more_button.setToolTip("查看所选设备信息或断开所选设备")
+        self.more_button.setAccessibleName(tr("更多设备操作"))
+        self.more_button.setToolTip(tr("查看所选设备信息或断开所选设备"))
         self._more_menu = RoundMenu(parent=self)
-        self.info_action = Action(FluentIcon.INFO, "设备信息", self)
-        self.disconnect_action = Action(FluentIcon.CANCEL, "断开所选设备", self)
+        self.info_action = Action(FluentIcon.INFO, tr("设备信息"), self)
+        self.disconnect_action = Action(FluentIcon.CANCEL, tr("断开所选设备"), self)
         self.info_action.triggered.connect(self.info_requested)
         self.disconnect_action.triggered.connect(self.disconnect_requested)
         # 菜单项直接发出业务信号；旧按钮只保留兼容入口，不参与菜单尺寸与可用状态判断。
@@ -320,17 +321,17 @@ class DeviceContextBar(QWidget):
         self._session_layout = session
         session.setContentsMargins(0, 0, 0, 0)
         session.setSpacing(8)
-        self.session_label = BodyLabel("当前查看", self)
+        self.session_label = BodyLabel(tr("当前查看"), self)
         self.session_combo = ComboBox(self)
         self.session_combo.setMinimumWidth(0)
-        self.session_combo.setAccessibleName("当前查看的会话设备")
+        self.session_combo.setAccessibleName(tr("当前查看的会话设备"))
         self.session_combo.currentIndexChanged.connect(self._choose_session)
         self.session_label.setBuddy(self.session_combo)
         self.session_hint = BodyLabel("", self)
-        self.close_button = PushButton("关闭会话", self)
+        self.close_button = PushButton(tr("关闭会话"), self)
         self.close_button.clicked.connect(self.close_session_requested)
-        self.close_button.setAccessibleName("关闭当前功能会话")
-        self.close_button.setToolTip("停止并关闭当前功能的设备会话")
+        self.close_button.setAccessibleName(tr("关闭当前功能会话"))
+        self.close_button.setToolTip(tr("停止并关闭当前功能的设备会话"))
         session.addWidget(self.session_label, 0, 0)
         session.addWidget(self.session_combo, 0, 1)
         session.addWidget(self.session_hint, 0, 2)
@@ -359,13 +360,13 @@ class DeviceContextBar(QWidget):
         self._sync_compact_mode()
 
     def _apply_theme(self, *_args) -> None:
-        """原生透明壳层会保留旧 palette，设备栏主动同步不透明主题底色。"""
+        """同步控件调色板，设备栏背景由与页面共用的父级材质面提供。"""
         application = QApplication.instance()
         if not isinstance(application, QApplication):
             return
         palette = application.palette()
         self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        self.setAutoFillBackground(False)
         self._surface.setPalette(palette)
         for widget in (self.target_row, self._actions, self.session_row):
             widget.setPalette(palette)
@@ -388,14 +389,18 @@ class DeviceContextBar(QWidget):
         self._selected = tuple(dict.fromkeys(selected))
         self._connected = tuple(dict.fromkeys(connected))
         self.targets_button.setText(
-            f"操作设备 · {len(self._selected)} 台" if self._selected else "操作设备 · 未选择"
+            tr("操作设备 · {count} 台").format(count=len(self._selected))
+            if self._selected else tr("操作设备 · 未选择")
         )
-        self.targets_button.setToolTip("选择一台或多台设备；已运行的会话保持原设备")
-        text = {"scanning": "正在扫描", "unavailable": "ADB 暂不可用"}.get(
-            state, f"在线 {len(self._connected)} 台" if self._connected else "未发现设备"
+        self.targets_button.setToolTip(tr("选择一台或多台设备；已运行的会话保持原设备"))
+        text = {"scanning": tr("正在扫描"), "unavailable": tr("ADB 暂不可用")}.get(
+            state, tr("在线 {count} 台").format(count=len(self._connected))
+            if self._connected else tr("未发现设备")
         )
         self.status_label.setText(text)
-        self.targets_button.setAccessibleDescription(f"{text}，已选 {len(self._selected)} 台")
+        self.targets_button.setAccessibleDescription(
+            tr("{text}，已选 {count} 台").format(text=text, count=len(self._selected))
+        )
         self.refresh_button.setEnabled(state != "scanning")
         self.info_button.setEnabled(bool(self._selected))
         self.disconnect_button.setEnabled(bool(self._selected))
@@ -429,7 +434,7 @@ class DeviceContextBar(QWidget):
             if source.count():
                 self.session_combo.setCurrentIndex(source.currentIndex())
             else:
-                self.session_combo.addItem("请先连接设备", userData="")
+                self.session_combo.addItem(tr("请先连接设备"), userData="")
             self.session_combo.setEnabled(source.isEnabled())
             self.session_combo.setToolTip(source.toolTip())
         del blocker

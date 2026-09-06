@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
 
+from gui.i18n import tr
 from gui.panels.side_panel_signals import BlockSignals
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
@@ -232,7 +233,7 @@ class DeviceManagerView:
             str(info.get("Brand", "")) == "ADB" and str(info.get("Model", "")) == "Detecting"
         )
         badge_kind = "detecting" if placeholder else "ready"
-        badge_text = "检测中" if placeholder else "就绪"
+        badge_text = tr("检测中") if placeholder else tr("就绪")
         card = listbox.itemWidget(item)
         if card is None:
             card = _DeviceCardRow(txt, badge_text, badge_kind)
@@ -276,31 +277,31 @@ class DeviceManagerView:
         device_list = getattr(self._frame, "listbox_devices", None)
         device_count = device_list.count() if device_list is not None else 0
         descriptions = {
-            "scanning": ("扫描中…", "正在扫描 Android 设备"),
-            "empty": ("无设备", "当前没有已连接的 Android 设备"),
+            "scanning": (tr("扫描中…"), tr("正在扫描 Android 设备")),
+            "empty": (tr("无设备"), tr("当前没有已连接的 Android 设备")),
             "unavailable": (
-                "ADB 不可用",
-                "ADB 当前不可用，请检查程序和服务后刷新",
+                tr("ADB 不可用"),
+                tr("ADB 当前不可用，请检查程序和服务后刷新"),
             ),
             "ready": (
-                f"已连接 {device_count} 台",
-                f"当前有 {device_count} 台 Android 设备可用",
+                tr("已连接 {device_count} 台").format(device_count=device_count),
+                tr("当前有 {device_count} 台 Android 设备可用").format(device_count=device_count),
             ),
         }
         if state not in descriptions:
             state = "empty"
         text, description = descriptions[state]
-        title = "设备与连接"
+        title = tr("设备与连接")
         self._frame._device_group.setTitle(title)
         self._frame._device_group.setAccessibleName(f"{title}: {text}")
         self._frame._device_group.setAccessibleDescription(description)
         self._frame._device_group.setToolTip(description)
         # 徽标只补充标题区视觉；状态字符串、标题与可访问文本契约均保持不变。
         badge_labels = {
-            "scanning": ("扫描中", "scanning"),
-            "empty": ("无设备", "empty"),
-            "unavailable": ("不可用", "unavailable"),
-            "ready": ("已连接", "ready"),
+            "scanning": (tr("扫描中"), "scanning"),
+            "empty": (tr("无设备"), "empty"),
+            "unavailable": (tr("不可用"), "unavailable"),
+            "ready": (tr("已连接"), "ready"),
         }
         badge_text, badge_kind = badge_labels[state]
         badge = getattr(self._frame, "_discovery_badge", None)
@@ -314,9 +315,9 @@ class DeviceManagerView:
             scanning = state == "scanning"
             refresh_button.setEnabled(not scanning)
             tooltip = (
-                "正在扫描已连接的 Android 设备"
+                tr("正在扫描已连接的 Android 设备")
                 if scanning
-                else str(refresh_button.property("functionalToolTip") or "扫描已连接设备")
+                else str(refresh_button.property("functionalToolTip") or tr("扫描已连接设备"))
             )
             refresh_button.setToolTip(tooltip)
             refresh_button.setAccessibleDescription(tooltip)
@@ -401,9 +402,9 @@ class DeviceManagerView:
             if has_selection:
                 button.setToolTip(str(button.property("functionalToolTip") or ""))
             elif button is getattr(self._frame, "btn_info", None):
-                button.setToolTip("请先选择设备；设备信息会显示在任务中心运行记录中")
+                button.setToolTip(tr("请先选择设备；设备信息会显示在任务中心运行记录中"))
             else:
-                button.setToolTip("请先选择设备")
+                button.setToolTip(tr("请先选择设备"))
         select_all = getattr(self._frame, "btn_all", None)
         deselect_all = getattr(self._frame, "btn_none", None)
         if select_all is not None:
@@ -428,7 +429,7 @@ class DeviceManagerView:
         """配置参考组件自己的弹出菜单，不再注入原生表格模型。"""
 
         self._frame.ip_entry.setMaxVisibleItems(8)
-        self._frame.ip_entry.setPlaceholderText("选择或输入 IP:端口")
+        self._frame.ip_entry.setPlaceholderText(tr("选择或输入 IP:端口"))
 
     def _refresh_device_combobox(self):
         if not hasattr(self._frame, "ip_entry"):
@@ -450,8 +451,8 @@ class DeviceManagerView:
             combo.setCurrentIndex(-1)
             combo.setText(current_text)
             combo.setCursorPosition(min(cursor_position, len(current_text)))
-        combo.setPlaceholderText("选择或输入 IP:端口")
-        combo.setAccessibleName("设备地址")
+        combo.setPlaceholderText(tr("选择或输入 IP:端口"))
+        combo.setAccessibleName(tr("设备地址"))
 
     def _on_ip_selected(self, i):
         combo = self._frame.ip_entry

@@ -19,6 +19,7 @@ from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
 
 from core.adb_bridge import ADBBridge
 from core.settings_manager import AppSettings
+from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
 from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
@@ -201,7 +202,7 @@ class RemotePanel(BasePanel):
         0: {"maxsize": "1024", "fps": "30", "bitrate": "4", "codec": "h264", "buffer": "50"},
         1: {"maxsize": "1280", "fps": "30", "bitrate": "8", "codec": "h264", "buffer": "20"},
         2: {"maxsize": "1920", "fps": "60", "bitrate": "12", "codec": "h265", "buffer": "50"},
-        3: {"maxsize": "720", "fps": "24", "bitrate": "2", "codec": "h264", "buffer": "0"},
+        3: {"maxsize": "720p", "fps": "24", "bitrate": "2", "codec": "h264", "buffer": "0"},
     }
 
     _PRESET_NAMES = ["Smooth", "Balanced", "Quality", "Low Latency"]
@@ -406,22 +407,22 @@ class RemotePanel(BasePanel):
             getattr(self, "_workspace_device_id", "")
             and getattr(self, "_workspace_device_connected", None) is False
         ):
-            self.remote_status_badge.setText("设备离线")
+            self.remote_status_badge.setText(tr("设备离线"))
             self.remote_status_badge.setLevel(InfoLevel.WARNING)
-            description = "当前远程会话设备已离线，停止会话后可重新选择"
+            description = tr("当前远程会话设备已离线，停止会话后可重新选择")
             self.remote_status_badge.setToolTip(description)
             self.remote_status_badge.setAccessibleDescription(description)
             return
         count = len(self.selected_devices)
         if count == 1:
-            text, level = "可启动", InfoLevel.SUCCESS
-            description = "已选择一台设备，可以启动远程控制"
+            text, level = tr("可启动"), InfoLevel.SUCCESS
+            description = tr("已选择一台设备，可以启动远程控制")
         elif count > 1:
-            text, level = "请选择一台", InfoLevel.WARNING
-            description = "远程控制只能操作一台已选择设备"
+            text, level = tr("请选择一台"), InfoLevel.WARNING
+            description = tr("远程控制只能操作一台已选择设备")
         else:
-            text, level = "未选择", InfoLevel.INFOAMTION
-            description = "请先选择一台设备再使用远程控制"
+            text, level = tr("未选择"), InfoLevel.INFOAMTION
+            description = tr("请先选择一台设备再使用远程控制")
         self.remote_status_badge.setText(text)
         self.remote_status_badge.setLevel(level)
         self.remote_status_badge.setToolTip(description)
@@ -444,18 +445,21 @@ class RemotePanel(BasePanel):
         self._status_label.setStyleSheet("font-weight: bold;")
         del color
         localized = {
-            "Checking...": "正在检查…",
-            "Error": "错误",
-            "Running": "运行中",
-            "Idle": "空闲",
-            "Disconnected": "已断开",
-            "Stopping...": "正在停止…",
-            "Stop Failed": "停止失败",
+            "Checking...": tr("正在检查…"),
+            "Error": tr("错误"),
+            "Running": tr("运行中"),
+            "Idle": tr("空闲"),
+            "Disconnected": tr("已断开"),
+            "Stopping...": tr("正在停止…"),
+            "Stop Failed": tr("停止失败"),
         }.get(text, text)
-        status = f"状态：{localized}"
+        status = tr("状态：{localized}").format(localized=localized)
         self._status_label.setText(status)
         device_info = str(getattr(self, "_status_device_info", "") or "").strip()
-        details = f"{status}\n设备：{device_info}" if device_info else status
+        details = (
+            tr("{status}\n设备：{device_info}").format(status=status, device_info=device_info)
+            if device_info else status
+        )
         self._status_label.setToolTip(details)
         self._status_label.setAccessibleDescription(details)
 

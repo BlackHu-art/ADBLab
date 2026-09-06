@@ -28,6 +28,7 @@ from qfluentwidgets import (
 )
 from qframelesswindow import FramelessDialog
 
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.theme import apply_dark_title_bar
 from gui.styles.typography import FontRole
@@ -214,13 +215,14 @@ class _FluentMessageDialog(MessageBoxBase):
         level: MessageLevel,
     ):
         super().__init__(parent)
+        title, content = tr(str(title)), tr(str(content))
         self.level = level
         self.titleLabel = SubtitleLabel(str(title), self.widget)
         self.titleLabel.setObjectName("messageTitleLabel")
         self.titleLabel.setTextFormat(Qt.TextFormat.PlainText)
         self.iconWidget = IconWidget(_LEVEL_ICON[level], self.widget)
         self.iconWidget.setFixedSize(22, 22)
-        self.iconWidget.setAccessibleName(level.value)
+        self.iconWidget.setAccessibleName(tr(level.value))
 
         header = QHBoxLayout()
         header.setSpacing(10)
@@ -283,7 +285,7 @@ class _FluentMessageDialog(MessageBoxBase):
         self.widget.setAccessibleName(str(title))
         self.widget.setAccessibleDescription(str(content))
         self.widget.setProperty("messageLevel", level.value)
-        self.yesButton.setText("确定")
+        self.yesButton.setText(tr("确定"))
         self.hideCancelButton()
 
 
@@ -323,6 +325,7 @@ class FluentInputDialog(MessageBoxBase):
         text: str = "",
     ):
         super().__init__(parent)
+        title, label = tr(str(title)), tr(str(label))
         self.titleLabel = SubtitleLabel(str(title), self.widget)
         self.titleLabel.setObjectName("inputTitleLabel")
         self.titleLabel.setTextFormat(Qt.TextFormat.PlainText)
@@ -337,8 +340,8 @@ class FluentInputDialog(MessageBoxBase):
         self.lineEdit.setClearButtonEnabled(True)
         self.lineEdit.setAccessibleName(str(label))
         self.lineEdit.returnPressed.connect(self.accept)
-        self.yesButton.setText("确定")
-        self.cancelButton.setText("取消")
+        self.yesButton.setText(tr("确定"))
+        self.cancelButton.setText(tr("取消"))
         self.viewLayout.addWidget(self.titleLabel)
         self.viewLayout.addWidget(self.label)
         self.viewLayout.addWidget(self.lineEdit)

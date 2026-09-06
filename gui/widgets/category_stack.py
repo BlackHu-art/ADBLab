@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import QStackedLayout, QVBoxLayout, QWidget
 
+from gui.i18n import tr
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 
 
@@ -77,11 +78,11 @@ class AdaptiveCategoryStack(QWidget):
         )
         self.pivot = self.navigation.pivot
         self.pivot.setObjectName(f"{prefix}CategoryPivot")
-        self.pivot.setAccessibleName("功能分类")
+        self.pivot.setAccessibleName(tr("功能分类"))
         self.combo = self.navigation.combo
         self.combo.setObjectName(f"{prefix}CategoryCombo")
-        self.combo.setAccessibleName("功能分类")
-        self.combo.setToolTip("选择当前功能分类")
+        self.combo.setAccessibleName(tr("功能分类"))
+        self.combo.setToolTip(tr("选择当前功能分类"))
         self.stack = _CurrentPageStack(self)
         self.stack.setObjectName(f"{prefix}CategoryStack")
 

@@ -1,0 +1,65 @@
+--- tests/test_navigation_rendering.py (turn baseline)
++++ tests/test_navigation_rendering.py
+@@ -6,7 +6,7 @@
+ from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize
+ from PySide6.QtGui import QColor, QImage, QPainter
+ from PySide6.QtTest import QSignalSpy, QTest
+-from PySide6.QtWidgets import QWidget
++from PySide6.QtWidgets import QApplication, QWidget
+ from qfluentwidgets import FluentWindow, NavigationDisplayMode
+ 
+ from core.exec import CommandResult, CommandRunner
+@@ -401,6 +401,53 @@
+ 
+ 
+ @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
++def test_native_palette_event_preserves_mica_theme(theme_probe_frame, theme_name):
++    """Qt 的原生调色板事件处理完毕后，无边框窗口的云母仍遵循应用主题。"""
++    if QApplication.platformName() != "windows" or not window_effects.is_mica_supported():
++        pytest.skip("需要 Windows 11 原生窗口验证 DWM 属性")
++    import ctypes
++    from ctypes import wintypes
++
++    frame = theme_probe_frame(theme_name, True)
++    assert frame.isMicaEffectEnabled()
++    QTest.qWait(160)
++    getter = ctypes.WinDLL("dwmapi").DwmGetWindowAttribute
++    getter.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
++    getter.restype = ctypes.c_long
++
++    QCoreApplication.sendEvent(frame.windowHandle(), QEvent(QEvent.Type.ApplicationPaletteChange))
++    QTest.qWait(20)
++
++    dark = ctypes.c_int(-1)
++    assert getter(int(frame.winId()), 20, ctypes.byref(dark), ctypes.sizeof(dark)) == 0
++    assert dark.value == int(theme_name == "Dark")
++
++
++@pytest.mark.parametrize("state", ["closing", "unbound"])
++def test_native_palette_sync_stops_at_window_cleanup(monkeypatch, theme_probe_frame, state):
++    """关闭或解除窗口绑定后，晚到的原生事件不能再修改窗口效果。"""
++    from gui import main_frame
++
++    frame = theme_probe_frame("Dark", True)
++    QTest.qWait(160)
++    handle = frame.windowHandle()
++    updates = []
++    monkeypatch.setattr(main_frame, "apply_dark_title_bar", updates.append)
++    # 重复显示/绑定不应形成多个主题监听。
++    frame._bind_window_screen()
++    frame._bind_window_screen()
++    QCoreApplication.sendEvent(handle, QEvent(QEvent.Type.ApplicationPaletteChange))
++    assert updates == [frame]
++
++    if state == "closing":
++        frame._closing = True
++    else:
++        frame._unbind_window_screen()
++    QCoreApplication.sendEvent(handle, QEvent(QEvent.Type.ApplicationPaletteChange))
++    assert updates == [frame]
++
++
++@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+ @pytest.mark.parametrize("mica", [False, True])
+ def test_route_animation_and_device_bar_visibility_keep_same_theme_surface(
+     qt_application, theme_probe_frame, theme_name, mica

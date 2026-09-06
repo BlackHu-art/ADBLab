@@ -43,6 +43,7 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
     safe_disconnect,
 )
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action, apply_label_role
 from gui.styles.typography import FontRole
@@ -128,7 +129,7 @@ class FileExplorerPage(QWidget):
         self._sort_col = 0
         self._sort_order = Qt.SortOrder.AscendingOrder
 
-        self.setWindowTitle(f"File Explorer - {device_ip}")
+        self.setWindowTitle(tr('File Explorer - {value0}').format(value0=device_ip))
         self.setWindowIcon(file_explorer_icon("folder-open.svg"))
         self.setObjectName("fileExplorerPage")
         self.setProperty("feature", "file_explorer")
@@ -168,18 +169,18 @@ class FileExplorerPage(QWidget):
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self.dialog_title = apply_label_role(
-            BodyLabel("File Explorer"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel(tr("File Explorer")), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self.dialog_title.setObjectName("dialogTitle")
-        self.status_badge = InfoBadge.info("No device", self.header_card)
+        self.status_badge = InfoBadge.info(tr("No device"), self.header_card)
         self.status_badge.setProperty("fontRole", FontRole.UI.value)
         self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self.status_badge.setToolTip("Device availability for file operations")
+        self.status_badge.setToolTip(tr("Device availability for file operations"))
         title_row.addWidget(self.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self.status_badge)
         self.dialog_subtitle = apply_label_role(
-            BodyLabel("Browse and manage device files"),
+            BodyLabel(tr("Browse and manage device files")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -191,17 +192,17 @@ class FileExplorerPage(QWidget):
 
         self._path_layout = QGridLayout()
         self._path_layout.setSpacing(4)
-        self._path_label = apply_label_role(BodyLabel("Path:"), FontRole.UI)
+        self._path_label = apply_label_role(BodyLabel(tr("Path:")), FontRole.UI)
         self.path_field = LineEdit()
         self.path_field.setText(self.current_path)
         self._path_label.setBuddy(self.path_field)
-        self.path_field.setAccessibleName("Remote path")
+        self.path_field.setAccessibleName(tr("Remote path"))
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
         self.search_field = LineEdit()
-        self.search_field.setPlaceholderText("Search...")
-        self.search_field.setAccessibleName("File search")
+        self.search_field.setPlaceholderText(tr("Search..."))
+        self.search_field.setAccessibleName(tr("File search"))
         self.search_field.textChanged.connect(self._filter)
         layout.addLayout(self._path_layout)
 
@@ -210,56 +211,56 @@ class FileExplorerPage(QWidget):
         self.back_btn = PushButton()
         self.back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
-        self.back_btn.setToolTip("Return to the previous folder")
-        self.back_btn.setAccessibleName("Back")
+        self.back_btn.setToolTip(tr("Return to the previous folder"))
+        self.back_btn.setAccessibleName(tr("Back"))
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
         self.fwd_btn = PushButton()
         self.fwd_btn.setIcon(file_explorer_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
-        self.fwd_btn.setToolTip("Return to the next folder")
-        self.fwd_btn.setAccessibleName("Forward")
+        self.fwd_btn.setToolTip(tr("Return to the next folder"))
+        self.fwd_btn.setAccessibleName(tr("Forward"))
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
         self.up_btn = PushButton()
         self.up_btn.setIcon(file_explorer_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
-        self.up_btn.setToolTip("Open the parent folder")
-        self.up_btn.setAccessibleName("Parent folder")
+        self.up_btn.setToolTip(tr("Open the parent folder"))
+        self.up_btn.setAccessibleName(tr("Parent folder"))
         self.up_btn.clicked.connect(self._go_parent)
         self.refresh_btn = PushButton()
-        self.refresh_btn.setText("Refresh")
-        self.refresh_btn.setToolTip("Reload the current device folder")
+        self.refresh_btn.setText(tr("Refresh"))
+        self.refresh_btn.setToolTip(tr("Reload the current device folder"))
         self.refresh_btn.setIcon(file_explorer_icon("arrows-clockwise.svg"))
         self.refresh_btn.setIconSize(QSize(14, 14))
         self.refresh_btn.clicked.connect(self._refresh)
         self.mkdir_btn = PushButton()
-        self.mkdir_btn.setText("New Folder")
-        self.mkdir_btn.setToolTip("Create a folder in the current location")
+        self.mkdir_btn.setText(tr("New Folder"))
+        self.mkdir_btn.setToolTip(tr("Create a folder in the current location"))
         self.mkdir_btn.setIcon(file_explorer_icon("folder-plus.svg"))
         self.mkdir_btn.setIconSize(QSize(14, 14))
         self.mkdir_btn.clicked.connect(self._mkdir)
         self.touch_btn = PushButton()
-        self.touch_btn.setText("New File")
-        self.touch_btn.setToolTip("Create an empty file in the current location")
+        self.touch_btn.setText(tr("New File"))
+        self.touch_btn.setToolTip(tr("Create an empty file in the current location"))
         self.touch_btn.setIcon(file_explorer_icon("file-plus.svg"))
         self.touch_btn.setIconSize(QSize(14, 14))
         self.touch_btn.clicked.connect(self._touch)
         self.pull_btn = PushButton()
-        self.pull_btn.setText("Pull")
-        self.pull_btn.setToolTip("Copy selected items to the computer")
+        self.pull_btn.setText(tr("Pull"))
+        self.pull_btn.setToolTip(tr("Copy selected items to the computer"))
         self.pull_btn.setIcon(file_explorer_icon("download-simple.svg"))
         self.pull_btn.setIconSize(QSize(14, 14))
         self.pull_btn.clicked.connect(self._pull_selected)
         self.push_btn = PushButton()
-        self.push_btn.setText("Push")
-        self.push_btn.setToolTip("Copy a local file to the current device folder")
+        self.push_btn.setText(tr("Push"))
+        self.push_btn.setToolTip(tr("Copy a local file to the current device folder"))
         self.push_btn.setIcon(file_explorer_icon("upload-simple.svg"))
         self.push_btn.setIconSize(QSize(14, 14))
         self.push_btn.clicked.connect(self._push_file)
         self.delete_btn = PushButton()
-        self.delete_btn.setText("Delete")
-        self.delete_btn.setToolTip("Remove the selected device items")
+        self.delete_btn.setText(tr("Delete"))
+        self.delete_btn.setToolTip(tr("Remove the selected device items"))
         self.delete_btn.setIcon(file_explorer_icon("trash.svg"))
         self.delete_btn.setIconSize(QSize(14, 14))
         self.delete_btn.clicked.connect(self._delete_selected)
@@ -275,9 +276,9 @@ class FileExplorerPage(QWidget):
             self.delete_btn,
         )
         self.root_cb = CheckBox()
-        self.root_cb.setText("Root")
-        self.root_cb.setToolTip("Use root access (su)")
-        self.root_cb.setAccessibleName("Use root access")
+        self.root_cb.setText(tr("Root"))
+        self.root_cb.setToolTip(tr("Use root access (su)"))
+        self.root_cb.setAccessibleName(tr("Use root access"))
         layout.addLayout(self._toolbar_layout)
         self._reflow_top_controls()
 
@@ -292,7 +293,7 @@ class FileExplorerPage(QWidget):
         self.table.setFrameShape(QFrame.Shape.NoFrame)
         self.table.setIconSize(QSize(16, 16))
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels(["Type", "Name", "Size", "Modified"])
+        self.table.setHorizontalHeaderLabels([tr("Type"), tr("Name"), tr("Size"), tr("Modified")])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
             self.NAME_COL, QHeaderView.ResizeMode.Stretch
@@ -310,7 +311,7 @@ class FileExplorerPage(QWidget):
         type_header = self.table.horizontalHeader()
         type_width = max(
             self.table.iconSize().width() + 24,
-            type_header.fontMetrics().horizontalAdvance("Type") + 24,
+            type_header.fontMetrics().horizontalAdvance(tr("Type")) + 24,
         )
         self.table.setColumnWidth(self.TYPE_COL, type_width)
         self.table.setColumnWidth(self.SIZE_COL, 92)
@@ -318,9 +319,9 @@ class FileExplorerPage(QWidget):
         browser_layout.addWidget(self.table, 1)
 
         self.status_bar = apply_label_role(
-            CaptionLabel("Ready"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            CaptionLabel(tr("Ready")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
-        self.status_bar.setAccessibleName("File explorer status")
+        self.status_bar.setAccessibleName(tr("File explorer status"))
         browser_layout.addWidget(self.status_bar)
 
         self.preview_panel = self._build_preview_panel()
@@ -351,20 +352,20 @@ class FileExplorerPage(QWidget):
         header.setSpacing(6)
         self.preview_back_btn = PushButton(panel)
         self.preview_back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
-        self.preview_back_btn.setToolTip("Back to file list")
-        self.preview_back_btn.setAccessibleName("Back to file list")
+        self.preview_back_btn.setToolTip(tr("Back to file list"))
+        self.preview_back_btn.setAccessibleName(tr("Back to file list"))
         self.preview_back_btn.clicked.connect(self._close_preview)
         header.addWidget(self.preview_back_btn)
         self.preview_title = apply_label_role(
-            BodyLabel("Preview"), FontRole.UI, color_key="TITLE_COLOR"
+            BodyLabel(tr("Preview")), FontRole.UI, color_key="TITLE_COLOR"
         )
         self.preview_title.setWordWrap(True)
         self.preview_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header.addWidget(self.preview_title, 1)
         self.preview_close_btn = PushButton(panel)
         self.preview_close_btn.setIcon(file_explorer_icon("x.svg"))
-        self.preview_close_btn.setToolTip("Close preview")
-        self.preview_close_btn.setAccessibleName("Close preview")
+        self.preview_close_btn.setToolTip(tr("Close preview"))
+        self.preview_close_btn.setAccessibleName(tr("Close preview"))
         self.preview_close_btn.clicked.connect(self._close_preview)
         header.addWidget(self.preview_close_btn)
         panel_layout.addLayout(header)
@@ -375,7 +376,7 @@ class FileExplorerPage(QWidget):
         self.preview_empty_page = QWidget(self.preview_stack)
         empty_layout = QVBoxLayout(self.preview_empty_page)
         self.preview_empty_label = apply_label_role(
-            BodyLabel("Select a text file, image, or script output to preview it here."),
+            BodyLabel(tr("Select a text file, image, or script output to preview it here.")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -389,7 +390,7 @@ class FileExplorerPage(QWidget):
         self.preview_loading_page = QWidget(self.preview_stack)
         loading_layout = QVBoxLayout(self.preview_loading_page)
         self.preview_loading_label = apply_label_role(
-            BodyLabel("Loading preview…"), FontRole.UI, color_key="TEXT_SECONDARY"
+            BodyLabel(tr("Loading preview…")), FontRole.UI, color_key="TEXT_SECONDARY"
         )
         self.preview_loading_label.setWordWrap(True)
         self.preview_loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -402,14 +403,14 @@ class FileExplorerPage(QWidget):
         text_layout = QVBoxLayout(self.preview_text_page)
         text_layout.setContentsMargins(0, 0, 0, 0)
         self.preview_text_edit = PlainTextEdit(self.preview_text_page)
-        self.preview_text_edit.setAccessibleName("File text preview")
+        self.preview_text_edit.setAccessibleName(tr("File text preview"))
         text_layout.addWidget(self.preview_text_edit, 1)
         text_actions = QHBoxLayout()
-        self.preview_save_as_btn = PushButton("Save As…", self.preview_text_page)
-        self.preview_save_as_btn.setToolTip("Save the edited text to the computer")
+        self.preview_save_as_btn = PushButton(tr("Save As…"), self.preview_text_page)
+        self.preview_save_as_btn.setToolTip(tr("Save the edited text to the computer"))
         self.preview_save_as_btn.clicked.connect(self._save_preview_as)
-        self.preview_save_device_btn = PushButton("Save to Device", self.preview_text_page)
-        self.preview_save_device_btn.setToolTip("Write the edited text back to the device")
+        self.preview_save_device_btn = PushButton(tr("Save to Device"), self.preview_text_page)
+        self.preview_save_device_btn.setToolTip(tr("Write the edited text back to the device"))
         self.preview_save_device_btn.clicked.connect(self._save_preview_to_device)
         text_actions.addWidget(self.preview_save_as_btn)
         text_actions.addWidget(self.preview_save_device_btn)
@@ -424,7 +425,7 @@ class FileExplorerPage(QWidget):
 
         self.preview_output = PlainTextEdit(self.preview_stack)
         self.preview_output.setReadOnly(True)
-        self.preview_output.setAccessibleName("Script output preview")
+        self.preview_output.setAccessibleName(tr("Script output preview"))
         self.preview_stack.addWidget(self.preview_output)
 
         panel_layout.addWidget(self.preview_stack, 1)
@@ -434,7 +435,7 @@ class FileExplorerPage(QWidget):
     def _show_preview_loading(self, title: str) -> None:
         self._preview_active = True
         self.preview_title.setText(title)
-        self.preview_loading_label.setText(f"Loading {title}…")
+        self.preview_loading_label.setText(tr('Loading {value0}…').format(value0=title))
         self.preview_stack.setCurrentWidget(self.preview_loading_page)
         self._sync_preview_layout()
 
@@ -465,9 +466,9 @@ class FileExplorerPage(QWidget):
         self.preview_stack.setCurrentWidget(self.preview_text_page)
         self._sync_preview_layout()
         if not editable:
-            self.status_bar.setText("Preview truncated; editing is disabled")
+            self.status_bar.setText(tr("Preview truncated; editing is disabled"))
         else:
-            self.status_bar.setText(f"Previewing {name}")
+            self.status_bar.setText(tr('Previewing {value0}').format(value0=name))
         self.preview_text_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _show_image_preview(self, name: str, pixmap) -> None:
@@ -483,21 +484,25 @@ class FileExplorerPage(QWidget):
         self._preview_active = True
         self._preview_name = name
         self._preview_full_path = ""
-        self.preview_title.setText(f"Output: {name}")
+        self.preview_title.setText(tr('Output: {value0}').format(value0=name))
         self.preview_output.setPlainText(output)
         self.preview_output.setProperty("previewError", bool(error))
         self.preview_stack.setCurrentWidget(self.preview_output)
-        self.status_bar.setText(f"Script failed: {name}" if error else f"Script finished: {name}")
+        self.status_bar.setText(
+            tr("Script failed: {value0}").format(value0=name)
+            if error
+            else tr("Script finished: {value0}").format(value0=name)
+        )
         self._sync_preview_layout()
         self.preview_output.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _show_preview_error(self, title: str, message: str) -> None:
         self._preview_active = True
         self.preview_title.setText(title)
-        self.preview_output.setPlainText(message or "Unable to load preview")
+        self.preview_output.setPlainText(message or tr("Unable to load preview"))
         self.preview_output.setProperty("previewError", True)
         self.preview_stack.setCurrentWidget(self.preview_output)
-        self.status_bar.setText(f"Preview failed: {title}")
+        self.status_bar.setText(tr('Preview failed: {value0}').format(value0=title))
         self._sync_preview_layout()
 
     def _close_preview(self) -> None:
@@ -506,7 +511,7 @@ class FileExplorerPage(QWidget):
         self._preview_active = False
         self._preview_name = ""
         self._preview_full_path = ""
-        self.preview_title.setText("Preview")
+        self.preview_title.setText(tr("Preview"))
         self.preview_stack.setCurrentWidget(self.preview_empty_page)
         self._sync_preview_layout()
         if self.browser_panel.isVisible():
@@ -948,29 +953,29 @@ class FileExplorerPage(QWidget):
         is_dir = self._file_type_at(row) == "Folder"
         menu = self._create_context_menu()
         if is_dir:
-            add_menu_action(menu, "Open", callback=lambda: self._on_double_click(row, 0))
+            add_menu_action(menu, tr("Open"), callback=lambda: self._on_double_click(row, 0))
         else:
             is_image = self._ext(name).lower() in self.IMAGE_EXTS
-            add_menu_action(menu, "View", callback=lambda: self._view_file(name, is_image))
+            add_menu_action(menu, tr("View"), callback=lambda: self._view_file(name, is_image))
         menu.addSeparator()
-        add_menu_action(menu, "Pull", callback=lambda: self._pull_file(name))
+        add_menu_action(menu, tr("Pull"), callback=lambda: self._pull_file(name))
         if not is_dir:
-            add_menu_action(menu, "Push Here", callback=self._push_file)
+            add_menu_action(menu, tr("Push Here"), callback=self._push_file)
         if not is_dir and name.endswith(".apk"):
-            add_menu_action(menu, "Install APK", callback=lambda: self._install_apk(name))
+            add_menu_action(menu, tr("Install APK"), callback=lambda: self._install_apk(name))
         if not is_dir and name.endswith(".sh"):
-            add_menu_action(menu, "Execute Script", callback=lambda: self._exec_script(name))
-        add_menu_action(menu, "Permissions", callback=lambda: self._show_chmod(name, is_dir))
+            add_menu_action(menu, tr("Execute Script"), callback=lambda: self._exec_script(name))
+        add_menu_action(menu, tr("Permissions"), callback=lambda: self._show_chmod(name, is_dir))
         menu.addSeparator()
-        add_menu_action(menu, "Rename", callback=lambda: self._rename_item(name))
-        add_menu_action(menu, "Delete", callback=lambda: self._request_delete(name))
+        add_menu_action(menu, tr("Rename"), callback=lambda: self._rename_item(name))
+        add_menu_action(menu, tr("Delete"), callback=lambda: self._request_delete(name))
         menu.addSeparator()
-        add_menu_action(menu, "Copy", callback=lambda: self._copy_items(True))
-        add_menu_action(menu, "Cut", callback=lambda: self._copy_items(False))
+        add_menu_action(menu, tr("Copy"), callback=lambda: self._copy_items(True))
+        add_menu_action(menu, tr("Cut"), callback=lambda: self._copy_items(False))
         if self.clipboard:
-            add_menu_action(menu, "Paste", callback=self._paste_items)
+            add_menu_action(menu, tr("Paste"), callback=self._paste_items)
         menu.addSeparator()
-        add_menu_action(menu, "Properties", callback=lambda: self._show_props(name, is_dir))
+        add_menu_action(menu, tr("Properties"), callback=lambda: self._show_props(name, is_dir))
         menu.exec(self.table.mapToGlobal(pos))
 
     def _install_apk(self, name: str):
@@ -985,7 +990,9 @@ class FileExplorerPage(QWidget):
             w,
             w.result_ready,
             lambda o, e: self.status_bar.setText(
-                f"APK {name} installed" if not e else f"APK install failed: {o}"
+                tr("APK {value0} installed").format(value0=name)
+                if not e
+                else tr("APK install failed: {value0}").format(value0=o)
             ),
         )
         w.start()
@@ -995,7 +1002,7 @@ class FileExplorerPage(QWidget):
             return
         full = self._dpath(self.current_path, name)
         cmd = explorer_service.script_command(full, self.root_cb.isChecked())
-        request_id = self._begin_preview_request(f"Output: {name}")
+        request_id = self._begin_preview_request(tr('Output: {value0}').format(value0=name))
         w = self._run_adb("shell", self._root(cmd) if self.root_cb.isChecked() else cmd)
         if w is None:
             return
@@ -1046,35 +1053,47 @@ class FileExplorerPage(QWidget):
         if error:
             FluentMessageBox.critical(
                 self,
-                f"Properties Error: {name}",
-                output or "Unable to read file properties",
+                tr('Properties Error: {value0}').format(value0=name),
+                output or tr("Unable to read file properties"),
             )
-            self.status_bar.setText(f"Failed to read properties for {name}")
+            self.status_bar.setText(
+                tr("Failed to read properties for {value0}").format(value0=name)
+            )
             return
         entry = self._parse_ls(output.splitlines()[0] if output.strip() else "")
         if entry:
-            info = (
-                f"Name: {name}\nType: {self._ext(name)}\n"
-                f"Size: {self._fmt_size(entry['size'])}\nPath: {full}\n"
-                f"Permissions: {entry['perms']}\n"
-                f"Owner: {entry['owner']}:{entry['group']}\n"
-                f"Modified: {entry['modified']}"
+            info = tr(
+                "Name: {value0}\nType: {value1}\nSize: {value2}\nPath: {value3}\n"
+                "Permissions: {value4}\nOwner: {value5}:{value6}\nModified: {value7}"
+            ).format(
+                value0=name,
+                value1=tr(self._ext(name)),
+                value2=self._fmt_size(entry["size"]),
+                value3=full,
+                value4=entry["perms"],
+                value5=entry["owner"],
+                value6=entry["group"],
+                value7=entry["modified"],
             )
         else:
-            info = f"Name: {name}\nPath: {full}"
-        FluentMessageBox.information(self, f"Properties: {name}", info)
+            info = tr('Name: {value0}\nPath: {value1}').format(value0=name, value1=full)
+        FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)
 
     def _show_props_done(self, name, full, ftype, size, error):
         if error:
             FluentMessageBox.critical(
                 self,
-                f"Properties Error: {name}",
-                size or "Unable to read folder properties",
+                tr('Properties Error: {value0}').format(value0=name),
+                size or tr("Unable to read folder properties"),
             )
-            self.status_bar.setText(f"Failed to read properties for {name}")
+            self.status_bar.setText(
+                tr("Failed to read properties for {value0}").format(value0=name)
+            )
             return
-        info = f"Name: {name}\nType: {ftype}\nSize: {size}\nPath: {full}"
-        FluentMessageBox.information(self, f"Properties: {name}", info)
+        info = tr("Name: {value0}\nType: {value1}\nSize: {value2}\nPath: {value3}").format(
+            value0=name, value1=tr(ftype), value2=size, value3=full
+        )
+        FluentMessageBox.information(self, tr('Properties: {value0}').format(value0=name), info)
 
     # ── 页会话生命周期 ──────────────────────────────────────────────────
 
@@ -1092,7 +1111,7 @@ class FileExplorerPage(QWidget):
         self._activated_once = True
         if not self._loaded_once:
             if not self._can_operate():
-                self.status_bar.setText("Select a device to browse files")
+                self.status_bar.setText(tr("Select a device to browse files"))
                 return
             self._loaded_once = True
             if requested_path and requested_path != self.current_path:
@@ -1118,13 +1137,13 @@ class FileExplorerPage(QWidget):
     def _refresh_status_badge(self) -> None:
         """连接、选择和主题更新共用同一状态展示，在线不等于已获操作资格。"""
         if not self.device_ip:
-            text, level = "未选择设备", InfoLevel.INFOAMTION
+            text, level = tr("未选择设备"), InfoLevel.INFOAMTION
         elif not self._device_connected:
-            text, level = "离线", InfoLevel.ERROR
+            text, level = tr("离线"), InfoLevel.ERROR
         elif not self._device_selected:
-            text, level = "未选为操作目标", InfoLevel.INFOAMTION
+            text, level = tr("未选为操作目标"), InfoLevel.INFOAMTION
         else:
-            text, level = "就绪", InfoLevel.SUCCESS
+            text, level = tr("就绪"), InfoLevel.SUCCESS
         self.status_badge.setText(text)
         self.status_badge.setLevel(level)
 
@@ -1135,7 +1154,7 @@ class FileExplorerPage(QWidget):
         self._sync_directory_controls()
         if not self._device_selected:
             self.status_bar.setText(
-                "Select this device in the device bar to perform file operations"
+                tr("Select this device in the device bar to perform file operations")
             )
 
     def set_device_connected(self, connected: bool) -> None:
@@ -1158,7 +1177,7 @@ class FileExplorerPage(QWidget):
             self._set_directory_loading(False)
         self._sync_directory_controls()
         if not connected:
-            self.status_bar.setText("Device offline; reconnect or choose another device")
+            self.status_bar.setText(tr("Device offline; reconnect or choose another device"))
         elif (became_available and self._can_operate() and self._active
               and self._activated_once and not self._loaded_once):
             self._loaded_once = True

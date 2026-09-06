@@ -5,6 +5,7 @@ from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
 
+from gui.i18n import tr
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -40,12 +41,12 @@ class FileExplorerImagePreview(QWidget):
         self.image_info.setMinimumWidth(0)
         self.image_info.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.image_info.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.image_info.setAccessibleName("Image details")
+        self.image_info.setAccessibleName(tr("Image details"))
         layout.addWidget(self.image_info)
 
         self.image_close = PushButton()
-        self.image_close.setText("Close")
-        self.image_close.setToolTip("Close the image preview")
+        self.image_close.setText(tr("Close"))
+        self.image_close.setToolTip(tr("Close the image preview"))
         self.image_close.setIcon(get_themed_icon("x.svg"))
         self.image_close.setIconSize(QSize(14, 14))
         self.image_close.clicked.connect(self.closeRequested.emit)

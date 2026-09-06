@@ -269,10 +269,10 @@ def test_performance_page_config_and_log_use_distinct_font_roles():
         assert effective_size(dialog.frequency_combo) == 18
         assert effective_size(dialog.monkey_check) == 18
         assert effective_size(dialog.log_view) == 10
-        hints = [w for w in dialog.findChildren(QLabel) if w.objectName() == "configHint"]
-        assert hints
-        assert all(label.text().strip() for label in hints)
-        assert all(effective_size(label) == 18 for label in hints)
+        # 内部卡片标题使用 UI 字号，低频帮助归属输入框的提示和无障碍描述。
+        sections = (*dialog._configuration_sections, dialog._results_group)
+        assert all(section.headerLabel.text().strip() for section in sections)
+        assert all(effective_size(section.headerLabel) == 18 for section in sections)
         expected_ui_font = BaseStyles.font_for_role(FontRole.UI)
         ui_described_fields = (
             dialog.frequency_input,

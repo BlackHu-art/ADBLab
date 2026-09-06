@@ -1585,7 +1585,7 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
     qt_application,
     monkeypatch,
 ):
-    """Monkey 参数、九组比例和内嵌单位/Total 在各模式中保持语义归属。"""
+    """Monkey 参数、九组比例、内嵌单位和独立合计在各模式中保持语义归属。"""
 
     panel, app_panel, scroll, _content = _show_feature_panel(
         "apps",
@@ -1613,17 +1613,11 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
                 field_index = percentage_widgets.index(field)
                 label_pos = positions[label_index]
                 field_pos = positions[field_index]
-                # 并排模式：同一行、字段紧跟标签右侧；堆叠模式（极窄宽度）：
-                # 同一列、字段紧跟标签下方，两种布局都保持语义归属。
-                side_by_side = (
-                    label_pos.row == field_pos.row
-                    and field_pos.column == label_pos.column + 1
-                )
-                stacked = (
+                # 宽窄布局均保持标签在字段正上方，只改变一行可容纳的字段组数。
+                assert (
                     label_pos.column == field_pos.column
                     and field_pos.row == label_pos.row + 1
-                )
-                assert side_by_side or stacked, (label_pos, field_pos)
+                ), (label_pos, field_pos)
 
         before = parameter_binding.applied_plan
         assert before is not None
@@ -1637,6 +1631,9 @@ def test_monkey_parameter_and_percentage_pairs_survive_reflow(
         assert after is not None
         assert after.mode.name == before.mode.name
         assert app_panel._pct_total_lbl.text() == "合计：100%"
+        assert app_panel._pct_total_lbl.parentWidget() is (
+            app_panel.monkey_distribution_heading.parentWidget()
+        )
         assert BaseStyles.color("LOG_SUCCESS") in app_panel._pct_total_lbl.styleSheet()
     finally:
         _close_feature_panel(panel)
@@ -1661,7 +1658,6 @@ def test_monkey_fields_stay_visible_at_minimum_panel_width(
         parameter_fields = (
             app_panel.monkey_events,
             app_panel.monkey_throttle,
-            app_panel._pct_total_lbl,
         )
         percentage_fields = tuple(app_panel._monkey_pct_combos.values())
         for binding, fields in (
@@ -1675,6 +1671,9 @@ def test_monkey_fields_stay_visible_at_minimum_panel_width(
                 left = field.mapTo(content, field.rect().topLeft()).x()
                 assert 0 <= left < viewport_width, (plan.mode.name, left, viewport_width)
                 assert field.width() > 0
+        total = app_panel._pct_total_lbl
+        assert 0 <= total.mapTo(content, total.rect().topLeft()).x() < viewport_width
+        assert total.width() > 0
     finally:
         _close_feature_panel(panel)
 

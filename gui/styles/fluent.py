@@ -13,6 +13,7 @@ from PySide6.QtGui import QAction, QColor, QFont
 from PySide6.QtWidgets import QAbstractButton, QWidget
 from qfluentwidgets import RoundMenu, setCustomStyleSheet
 
+from gui.i18n import tr
 from gui.styles.fonts import FontMixin
 from gui.styles.theme import ThemeMixin
 from gui.styles.typography import FontRole
@@ -75,7 +76,7 @@ def apply_label_role(
 def set_function_tooltip(widget: QWidget, tooltip: str | None) -> None:
     """保存功能提示与可访问描述；交互按钮不允许缺少提示。"""
 
-    description = str(tooltip or "").strip()
+    description = tr(str(tooltip or "").strip())
     if not description:
         raise ValueError("Interactive controls must provide a functional tooltip")
     widget.setToolTip(description)
@@ -177,8 +178,8 @@ def configure_button(
 ) -> _ButtonT:
     """配置直接使用的 qfluentwidgets 按钮；危险色使用 light/dark 自定义 QSS。"""
 
-    button.setText(text)
-    button.setAccessibleName(text or str(tooltip or ""))
+    button.setText(tr(text))
+    button.setAccessibleName(tr(text or str(tooltip or "")))
     set_function_tooltip(button, tooltip)
     apply_font_role(button, role, ensure_height=True)
     button.setProperty("adblabConfiguredButton", True)
@@ -201,7 +202,7 @@ def add_menu_action(
 ) -> QAction:
     """向 qfluentwidgets RoundMenu 添加带业务数据的 QAction。"""
 
-    action = QAction(text, menu)
+    action = QAction(tr(text), menu)
     action.setData(data)
     action.setCheckable(checkable)
     action.setChecked(checked)

@@ -29,6 +29,7 @@ from qfluentwidgets import (
 )
 
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
+from gui.i18n import tr
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
 
@@ -86,9 +87,9 @@ class _NoDevicePage(CardWidget):
         super().__init__(parent)
         self.setObjectName("workspaceFeatureNoDevice")
         self.setBorderRadius(10)
-        self.title_label = StrongBodyLabel("需要选择设备", self)
+        self.title_label = StrongBodyLabel(tr("需要选择设备"), self)
         self.message_label = BodyLabel(
-            "此功能需要一个稳定的设备会话。选择后将自动返回并在当前面板打开。",
+            tr("此功能需要一个稳定的设备会话。选择后将自动返回并在当前面板打开。"),
             self,
         )
         self.message_label.setWordWrap(True)
@@ -97,7 +98,7 @@ class _NoDevicePage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.choose_button = PrimaryPushButton(DEVICE_ICON, "选择设备", self)
+        self.choose_button = PrimaryPushButton(DEVICE_ICON, tr("选择设备"), self)
         self.choose_button.clicked.connect(self.choose_device_requested)
 
         layout = QVBoxLayout(self)
@@ -110,19 +111,19 @@ class _NoDevicePage(CardWidget):
         layout.addStretch(1)
 
     def set_feature_label(self, label: str) -> None:
-        self.title_label.setText(f"{label}需要选择设备")
+        self.title_label.setText(tr("{label}需要选择设备").format(label=label))
 
     def set_candidates_available(self, available: bool) -> None:
         """区分存在多台候选设备与完全没有设备的空态。"""
 
         if available:
             self.message_label.setText(
-                "请在上方设备选项中明确选择当前查看的一台，或在设备概览中选择操作设备。"
+                tr("请在上方设备选项中明确选择当前查看的一台，或在设备概览中选择操作设备。")
             )
             self.choose_button.setVisible(False)
             return
         self.message_label.setText(
-            "当前没有可用设备。请使用顶部设备栏连接或刷新，选择后即可打开此功能。"
+            tr("当前没有可用设备。请使用顶部设备栏连接或刷新，选择后即可打开此功能。")
         )
         self.choose_button.setVisible(True)
 
@@ -134,9 +135,9 @@ class _ClosingSessionPage(CardWidget):
         super().__init__(parent)
         self.setObjectName("workspaceFeatureClosing")
         self.setBorderRadius(10)
-        self.title_label = StrongBodyLabel("正在关闭会话", self)
+        self.title_label = StrongBodyLabel(tr("正在关闭会话"), self)
         self.message_label = BodyLabel(
-            "后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。",
+            tr("后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。"),
             self,
         )
         self.message_label.setWordWrap(True)
@@ -145,7 +146,7 @@ class _ClosingSessionPage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.back_button = PushButton(FluentIcon.LEFT_ARROW, "返回概览", self)
+        self.back_button = PushButton(FluentIcon.LEFT_ARROW, tr("返回概览"), self)
         self.back_button.clicked.connect(self.back_requested)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -157,7 +158,7 @@ class _ClosingSessionPage(CardWidget):
         layout.addStretch(1)
 
     def set_feature_label(self, label: str) -> None:
-        self.title_label.setText(f"正在关闭{label}会话")
+        self.title_label.setText(tr("正在关闭{label}会话").format(label=label))
 
 
 class _FeatureStack(QStackedWidget):
@@ -234,40 +235,40 @@ class WorkspaceFeatureHost(QWidget):
 
         self.feature_selector = AdaptiveNavigation(
             f"{self.section_key}:feature",
-            accessible_name="工作区功能",
+            accessible_name=tr("工作区功能"),
             minimum_pivot_width=self.FEATURE_SELECTOR_MIN_PIVOT_WIDTH,
             parent=self,
         )
         self.feature_pivot = self.feature_selector.pivot
         self.feature_pivot.setObjectName(f"{self.section_key}FeaturePivot")
-        self.feature_pivot.setAccessibleName("工作区功能")
+        self.feature_pivot.setAccessibleName(tr("工作区功能"))
         self.feature_combo = self.feature_selector.combo
         self.feature_combo.setObjectName(f"{self.section_key}FeatureCombo")
-        self.feature_combo.setAccessibleName("工作区功能")
-        self.feature_combo.setToolTip("选择当前工作区功能")
+        self.feature_combo.setAccessibleName(tr("工作区功能"))
+        self.feature_combo.setToolTip(tr("选择当前工作区功能"))
         self.feature_selector.current_requested.connect(self._open_selected_feature)
 
         self.session_toolbar = QWidget(self)
         self.session_toolbar.setObjectName(f"{self.section_key}SessionToolbar")
-        self.device_label = BodyLabel("会话设备", self.session_toolbar)
-        self.device_label.setAccessibleName("会话设备")
+        self.device_label = BodyLabel(tr("会话设备"), self.session_toolbar)
+        self.device_label.setAccessibleName(tr("会话设备"))
         self.device_combo = ComboBox(self.session_toolbar)
         self.device_combo.setObjectName(f"{self.section_key}FeatureDevice")
-        self.device_combo.setAccessibleName("会话设备")
-        self.device_combo.setToolTip("选择当前单设备功能使用的设备")
+        self.device_combo.setAccessibleName(tr("会话设备"))
+        self.device_combo.setToolTip(tr("选择当前单设备功能使用的设备"))
         self.device_combo.setMinimumWidth(220)
         self.device_combo.setMaximumWidth(420)
         self.device_label.setBuddy(self.device_combo)
         self.device_combo.currentIndexChanged.connect(self._on_device_changed)
         self.session_badge = InfoBadge(self.session_toolbar, InfoLevel.INFOAMTION)
-        self.session_badge.setAccessibleName("会话状态")
+        self.session_badge.setAccessibleName(tr("会话状态"))
         self.session_badge.setAttribute(
             Qt.WidgetAttribute.WA_TransparentForMouseEvents,
             False,
         )
-        self.close_session_button = PushButton("关闭会话", self.session_toolbar)
-        self.close_session_button.setAccessibleName("关闭当前功能会话")
-        self.close_session_button.setToolTip("释放当前功能为此设备保留的后台资源")
+        self.close_session_button = PushButton(tr("关闭会话"), self.session_toolbar)
+        self.close_session_button.setAccessibleName(tr("关闭当前功能会话"))
+        self.close_session_button.setToolTip(tr("释放当前功能为此设备保留的后台资源"))
         self.close_session_button.clicked.connect(self.close_current_session)
         toolbar_layout = QHBoxLayout(self.session_toolbar)
         toolbar_layout.setContentsMargins(0, 2, 0, 2)
@@ -305,6 +306,8 @@ class WorkspaceFeatureHost(QWidget):
         self.closing_page.back_requested.connect(self.show_overview)
         self.stack.addWidget(self.closing_page)
         self.content_scroll.setWidget(self.stack)
+        # QScrollArea 默认开启内容填充；布局栈应承接窗口材质，业务页面自管底色。
+        self.stack.setAutoFillBackground(False)
 
         self.content_column = QWidget(self)
         content_layout = QVBoxLayout(self.content_column)
@@ -465,7 +468,11 @@ class WorkspaceFeatureHost(QWidget):
             icon=icon,
             factory=factory,
             requires_device=requires_device,
-            close_label=str(close_label).strip() or "关闭会话",
+            close_label=(
+                tr("关闭会话")
+                if not str(close_label).strip() or close_label == "关闭会话"
+                else str(close_label).strip()
+            ),
         )
         self._navigation_order.append(key)
         self._register_feature_selector_item(key, label)
@@ -818,7 +825,7 @@ class WorkspaceFeatureHost(QWidget):
             self.show_overview()
             return
         self.close_session_button.setEnabled(False)
-        self.session_badge.setText("正在关闭")
+        self.session_badge.setText(tr("正在关闭"))
         self.session_badge.setLevel(InfoLevel.WARNING)
         if not self.registry.request_dispose(key, "user"):
             self.registry.deactivate_current("disposing")
@@ -923,11 +930,11 @@ class WorkspaceFeatureHost(QWidget):
         blocker = QSignalBlocker(self.device_combo)
         self.device_combo.clear()
         if not current and candidates:
-            self.device_combo.addItem("请选择一台设备", userData="")
+            self.device_combo.addItem(tr("请选择一台设备"), userData="")
         for device_id in candidates:
             label = device_id
             if device_id not in self._connected_devices:
-                label = f"{device_id}（离线会话）"
+                label = tr("{device_id}（离线会话）").format(device_id=device_id)
             self.device_combo.addItem(label, userData=device_id)
         if current:
             for index in range(self.device_combo.count()):
@@ -945,11 +952,11 @@ class WorkspaceFeatureHost(QWidget):
         if lock_reason:
             tooltip = lock_reason
         elif not current and candidates:
-            tooltip = "请选择当前功能使用的一台设备"
+            tooltip = tr("请选择当前功能使用的一台设备")
         elif len(candidates) <= 1:
-            tooltip = "当前只有这一台会话设备"
+            tooltip = tr("当前只有这一台会话设备")
         else:
-            tooltip = "选择当前单设备功能使用的设备"
+            tooltip = tr("选择当前单设备功能使用的设备")
         self.device_combo.setToolTip(tooltip)
         self.device_combo.setAccessibleDescription(tooltip)
         self._sync_session_toolbar_visibility()
@@ -998,29 +1005,32 @@ class WorkspaceFeatureHost(QWidget):
         )
         if requires_device and self._active_device_id:
             selected = self._active_device_id in self._selected_devices
-            status = ("在线" if selected else "未选为操作目标") if connected else "离线"
+            status = (tr("在线") if selected else tr("未选为操作目标")) if connected else tr("离线")
             level = InfoLevel.SUCCESS if connected and selected else InfoLevel.WARNING
             description = (
-                "当前设备可执行操作" if connected and selected
-                else "请选择当前设备作为操作目标后再执行；已有内容仍可查看，原任务仍可停止"
+                tr("当前设备可执行操作") if connected and selected
+                else tr("请选择当前设备作为操作目标后再执行；已有内容仍可查看，原任务仍可停止")
             )
         elif requires_device:
-            status = "等待选择设备"
+            status = tr("等待选择设备")
             level = InfoLevel.INFOAMTION
-            description = "请明确选择当前功能使用的一台设备"
+            description = tr("请明确选择当前功能使用的一台设备")
         elif is_overview:
             count = len(self._selected_devices)
-            status = f"操作目标：{count} 台" if count else "操作目标：未选择"
+            status = (
+                tr("操作目标：{count} 台").format(count=count)
+                if count else tr("操作目标：未选择")
+            )
             level = InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION
             description = (
-                f"已勾选 {count} 台操作目标"
+                tr("已勾选 {count} 台操作目标").format(count=count)
                 if count
-                else "可在顶部设备栏中勾选操作目标"
+                else tr("可在顶部设备栏中勾选操作目标")
             )
         else:
-            status = "已打开"
+            status = tr("已打开")
             level = InfoLevel.INFOAMTION
-            description = "当前功能已打开"
+            description = tr("当前功能已打开")
         self.session_badge.setText(status)
         self.session_badge.setLevel(level)
         self.session_badge.setToolTip(description)
@@ -1143,11 +1153,11 @@ class WorkspaceFeatureHost(QWidget):
         self._sync_device_combo()
         self.close_session_button.setVisible(False)
         self.close_session_button.setEnabled(False)
-        self.session_badge.setText("等待选择设备")
+        self.session_badge.setText(tr("等待选择设备"))
         self.session_badge.setLevel(InfoLevel.INFOAMTION)
-        self.session_badge.setToolTip("请在会话设备列表中明确选择一台设备")
+        self.session_badge.setToolTip(tr("请在会话设备列表中明确选择一台设备"))
         self.session_badge.setAccessibleDescription(
-            "请在会话设备列表中明确选择一台设备"
+            tr("请在会话设备列表中明确选择一台设备")
         )
         self._sync_session_toolbar_visibility()
 
@@ -1198,7 +1208,7 @@ class WorkspaceFeatureHost(QWidget):
         self.stack.setCurrentWidget(self.closing_page)
         self._sync_feature_controls(definition)
         self.close_session_button.setEnabled(False)
-        self.session_badge.setText("正在关闭")
+        self.session_badge.setText(tr("正在关闭"))
         self.session_badge.setLevel(InfoLevel.WARNING)
         self._sync_device_combo()
         self.route_changed.emit(

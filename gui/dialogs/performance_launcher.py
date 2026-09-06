@@ -17,7 +17,14 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel, ProgressBar, PushButton
+from qfluentwidgets import (
+    BodyLabel,
+    HeaderCardWidget,
+    InfoBadge,
+    InfoLevel,
+    ProgressBar,
+    PushButton,
+)
 
 from adblab.application.supervision import ThreadedShutdownTask
 from core.settings_manager import AppSettings
@@ -34,6 +41,7 @@ from gui.dialogs.performance_launcher_form import (
 )
 from gui.dialogs.performance_launcher_log import PerformanceLauncherLog
 from gui.dialogs.performance_launcher_run import PerformanceLauncherRun
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
@@ -88,6 +96,7 @@ class PerformancePage(QWidget):
     save_path_edit: QLineEdit
     get_package_btn: QPushButton
     package_edit: QLineEdit
+    package_feedback: BodyLabel
     frequency_input: StrictIntComboBox
     timeout_input: StrictIntComboBox
     dumpheap_input: StrictIntComboBox
@@ -109,6 +118,7 @@ class PerformancePage(QWidget):
     dialog_title: BodyLabel
     dialog_subtitle: BodyLabel
     status_badge: InfoBadge
+    status_label: BodyLabel
     _chart_stack: QStackedWidget
 
     def __init__(self, device_ip: str = "", package_name: str = "", parent=None):
@@ -122,6 +132,7 @@ class PerformancePage(QWidget):
         self._device_admission_revision = 0
         self._runner = MobilePerfRunner()
         self._package_worker: CurrentPackageWorker | None = None
+        self._package_query_succeeded = False
         self._stop_thread: threading.Thread | None = None
         self._shutdown_registered = False
         self._last_result_root = ""
@@ -152,7 +163,11 @@ class PerformancePage(QWidget):
         self._dispose_poll_timer = QTimer(self)
         self._dispose_poll_timer.setSingleShot(True)
         self._dispose_poll_timer.timeout.connect(self._poll_dispose_ready)
-        self.setWindowTitle(f"Performance - {device_ip}" if device_ip else "Performance")
+        self.setWindowTitle(
+            tr("Performance - {value0}").format(value0=device_ip)
+            if device_ip
+            else tr("Performance")
+        )
         self.setWindowIcon(get_themed_icon("speedometer.svg"))
         self.setMinimumSize(0, 0)
         self.log_received.connect(self._append_log)
@@ -238,14 +253,18 @@ class PerformancePage(QWidget):
             and not running
             and self._package_worker is None
         )
-        self.status_badge.setText("设备在线" if self._device_connected else "设备离线")
+        self.status_badge.setText(tr("设备在线") if self._device_connected else tr("设备离线"))
         self.status_badge.setLevel(
             InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
         )
         if not self._device_connected and not running:
-            self._set_status("Device offline", "failed")
+            self._set_status(tr("Device offline"), "failed")
         elif not self._device_selected and not running:
-            self._set_status("请在顶部勾选当前设备后操作", "idle")
+            self._set_status(tr("请在顶部勾选当前设备后操作"), "idle")
+        elif not running and self.status_label.text() in (
+            tr("Device offline"), tr("请在顶部勾选当前设备后操作")
+        ):
+            self._set_status(tr("Idle"), "idle")
 
     def request_dispose(self, _reason: str = "user") -> bool:
         """请求异步停止页面资源，并在真实资源归零后通知宿主。"""
@@ -423,7 +442,7 @@ class PerformancePage(QWidget):
         current = self.save_path_edit.text().strip()
         selected = QFileDialog.getExistingDirectory(
             self,
-            "Select MobilePerf Result Directory",
+            tr("Select MobilePerf Result Directory"),
             current if os.path.isdir(current) else AppSettings.instance().save_directory,
         )
         if selected:
@@ -435,10 +454,14 @@ class PerformancePage(QWidget):
         if self._package_worker and self._package_worker.isRunning():
             return
         if not self._can_operate_device():
-            self.log_received.emit("WARNING", "请先勾选并连接当前设备，再获取当前应用")
+            self.log_received.emit("WARNING", tr("请先勾选并连接当前设备，再获取当前应用"))
             return
         self.get_package_btn.setEnabled(False)
-        self.log_received.emit("INFO", "Fetching current package...")
+        self.get_package_btn.setText(tr("读取中…"))
+        self._package_query_succeeded = False
+        self.package_feedback.setText(tr("正在读取当前应用…"))
+        self.package_feedback.show()
+        self.log_received.emit("INFO", tr("Fetching current package..."))
         worker = CurrentPackageWorker(self.device_ip)
         worker._device_admission_revision = self._device_admission_revision
         worker.package_ready.connect(self._on_current_package)
@@ -459,11 +482,26 @@ class PerformancePage(QWidget):
         ) != self._device_admission_revision:
             return
         self.package_edit.setText(package_name)
-        self.log_received.emit("SUCCESS", f"Current package: {package_name}")
+        self._package_query_succeeded = True
+        self.package_feedback.setText(tr("已填入当前应用，可继续编辑包名。"))
+        self.package_feedback.show()
+        self.log_received.emit(
+            "SUCCESS", tr("Current package: {value0}").format(value0=package_name)
+        )
 
     def _on_package_worker_finished(self, worker: CurrentPackageWorker):
         if self._package_worker is worker:
             self._package_worker = None
+            self.get_package_btn.setText(tr("获取当前应用"))
+            if (
+                not self._package_query_succeeded
+                and not self._configuration_locked
+                and self._can_operate_device()
+            ):
+                self.package_feedback.setText(tr("未能读取当前应用，请手动输入包名或重试。"))
+                self.package_feedback.show()
+            elif self._configuration_locked or not self._can_operate_device():
+                self.package_feedback.hide()
         if self.get_package_btn:
             self._sync_device_actions()
         worker.deleteLater()
@@ -488,8 +526,8 @@ class PerformancePage(QWidget):
         if not path or not os.path.isdir(path):
             FluentMessageBox.information(
                 self,
-                "Result Not Available",
-                "No MobilePerf result is available yet.",
+                tr("Result Not Available"),
+                tr("No MobilePerf result is available yet."),
             )
             self._update_result_action()
             return
@@ -536,7 +574,7 @@ class PerformancePage(QWidget):
             self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))
             self.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
             has_device = bool(self.device_ip and self._device_connected)
-            self.status_badge.setText("设备在线" if has_device else "未连接设备")
+            self.status_badge.setText(tr("设备在线") if has_device else tr("未连接设备"))
             self.status_badge.setLevel(InfoLevel.SUCCESS if has_device else InfoLevel.INFOAMTION)
         self.log_view.document().setMaximumBlockCount(self._max_log_lines)
         self._apply_widget_fonts()
@@ -582,12 +620,14 @@ class PerformancePage(QWidget):
             self.serialnum_label,
         ):
             widget.setFont(mono_font)
-        # 加粗字段标签：字体遍历会覆盖 bold，这里按 objectName 补回。
+        # 字体遍历后只恢复区块标题的字重，字段标签保持普通正文层级。
         for label in self.findChildren(QWidget):
-            if label.objectName() in ("fieldLabel", "dialogTitle"):
+            if label.objectName() == "dialogTitle" or label.property("performanceSectionTitle"):
                 font = label.font()
                 font.setBold(True)
                 label.setFont(font)
+        for card in self.findChildren(HeaderCardWidget):
+            card.headerView.setFixedHeight(max(48, card.headerLabel.fontMetrics().height() + 32))
         self.log_view.setFont(log_font)
         self.log_view.viewport().setFont(log_font)
         self.log_view.document().setDefaultFont(log_font)

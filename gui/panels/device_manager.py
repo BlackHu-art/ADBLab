@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import InfoBadge
 
+from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager_layout import DeviceManagerLayout
 from gui.panels.device_manager_responsive import (
@@ -58,10 +59,10 @@ class DeviceManager(BasePanel):
         # 响应式高度收敛期间因像素取整把按钮边缘留在 viewport 外。
         lo.setContentsMargins(0, 0, 0, 8)
 
-        g_dev = self._g("设备与连接")
+        g_dev = self._g(tr("设备与连接"))
         self._device_group = g_dev
         g_dev.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        g_dev.setAccessibleName("设备与连接")
+        g_dev.setAccessibleName(tr("设备与连接"))
         # HeaderCardWidget 公开 headerLayout，状态徽标直接进入参考组件标题区。
         self._discovery_badge = InfoBadge(g_dev.headerView)
         self._discovery_badge.setProperty("fontRole", FontRole.UI.value)
@@ -81,17 +82,17 @@ class DeviceManager(BasePanel):
         rc.setContentsMargins(0, 0, 0, 0)
         self._connect_layout = rc
         self.ip_entry = self._combo_editable(font_role=FontRole.MONO)
-        self.ip_entry.setAccessibleName("设备地址")
+        self.ip_entry.setAccessibleName(tr("设备地址"))
         self.ip_entry.setMinimumWidth(0)
         self.ip_entry.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self._build_combo_view()
         self._refresh_device_combobox()
         self.ip_entry.currentIndexChanged.connect(self._on_ip_selected)
         self.btn_connect_devices = self._b(
-            "连接",
+            tr("连接"),
             "plug.svg",
             variant="accent",
-            tooltip="连接输入的设备地址",
+            tooltip=tr("连接输入的设备地址"),
         )
         rc.addWidget(self.ip_entry, 0, 0)
         rc.addWidget(self.btn_connect_devices, 0, 1)
@@ -120,9 +121,9 @@ class DeviceManager(BasePanel):
 
         self.listbox_devices = _ShrinkableDeviceList()
         self.listbox_devices.setObjectName("deviceList")
-        self.listbox_devices.setAccessibleName("已连接设备")
+        self.listbox_devices.setAccessibleName(tr("已连接设备"))
         self.listbox_devices.setAccessibleDescription(
-            "使用复选框选择一台或多台设备执行操作"
+            tr("使用复选框选择一台或多台设备执行操作")
         )
         self.listbox_devices.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.listbox_devices.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -142,35 +143,35 @@ class DeviceManager(BasePanel):
         sl.setContentsMargins(0, 0, 0, 0)
         self._device_actions_layout = sl
         self.btn_refresh = self._b(
-            "刷新", "arrows-clockwise.svg", tooltip="扫描已连接设备"
+            tr("刷新"), "arrows-clockwise.svg", tooltip=tr("扫描已连接设备")
         )
         self.btn_info = self._b(
-            "设备信息",
+            tr("设备信息"),
             "info.svg",
-            tooltip="在任务中心运行记录中显示所选设备详情",
+            tooltip=tr("在任务中心运行记录中显示所选设备详情"),
         )
         self.btn_disconnect = self._b(
-            "断开连接",
+            tr("断开连接"),
             "link-break.svg",
             variant="danger",
-            tooltip="断开所选设备",
+            tooltip=tr("断开所选设备"),
         )
         self.btn_restart_dev = self._b(
-            "重启设备", "arrow-counter-clockwise.svg", tooltip="重启所选设备"
+            tr("重启设备"), "arrow-counter-clockwise.svg", tooltip=tr("重启所选设备")
         )
         self.btn_restart_adb = self._b(
-            "重启 ADB", "arrow-u-up-left.svg", tooltip="重启本机 ADB 服务"
+            tr("重启 ADB"), "arrow-u-up-left.svg", tooltip=tr("重启本机 ADB 服务")
         )
         self.btn_restart_adb.setAccessibleDescription(
-            "确认后重启本机 ADB 服务"
+            tr("确认后重启本机 ADB 服务")
         )
         self.btn_batch = self._b(
-            "批量安装", "stack-plus.svg", tooltip="向所选设备安装 APK 文件"
+            tr("批量安装"), "stack-plus.svg", tooltip=tr("向所选设备安装 APK 文件")
         )
         self.btn_all = self._b(
-            "全选", "check-square.svg", tooltip="选择列表中的全部设备"
+            tr("全选"), "check-square.svg", tooltip=tr("选择列表中的全部设备")
         )
-        self.btn_none = self._b("取消全选", "square.svg", tooltip="清除设备选择")
+        self.btn_none = self._b(tr("取消全选"), "square.svg", tooltip=tr("清除设备选择"))
         self._device_action_buttons = (
             self.btn_refresh,
             self.btn_info,
@@ -192,7 +193,7 @@ class DeviceManager(BasePanel):
 
         action_scroll = _ShrinkableActionScroll()
         action_scroll.setObjectName("deviceActionScroll")
-        action_scroll.setAccessibleName("设备操作")
+        action_scroll.setAccessibleName(tr("设备操作"))
         action_scroll.setFrameShape(QFrame.Shape.NoFrame)
         action_scroll.setWidgetResizable(True)
         action_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)

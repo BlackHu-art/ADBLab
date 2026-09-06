@@ -31,6 +31,7 @@ from qfluentwidgets import (
 )
 
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.widgets.collapsible_tools import CollapsibleTools
@@ -64,6 +65,43 @@ _STATE_TONES = {
     OperationState.FAILED: "danger",
     OperationState.CANCELLED: "danger",
 }
+
+
+# 操作类型只在展示边界映射，历史记录、取消路由和未知扩展类型保留原始标识。
+_OPERATION_LABELS = {
+    "apk_info": "APK 信息", "batch_install": "批量安装", "install": "安装应用",
+    "battery_reset": "重置电池状态", "battery_set": "设置电池状态", "bugreport": "错误报告",
+    "cleanup_device_logs": "清理设备日志", "clear_data": "清除应用数据", "connect": "连接设备",
+    "content_query": "查询内容提供者", "cpu_info": "CPU 信息", "current_activity": "当前 Activity",
+    "deep_link": "打开链接", "device_uptime": "设备运行时间", "disable_app": "禁用应用",
+    "disable_app_for_user": "对当前用户禁用应用", "disconnect": "断开设备",
+    "dumpsys_battery": "电池信息", "dumpsys_cpuinfo": "CPU 使用情况",
+    "dumpsys_meminfo": "内存信息", "dumpsys_service": "查询系统服务", "emu_call": "模拟来电",
+    "emu_geo": "模拟位置", "emu_sms": "模拟短信", "enable_app": "启用应用",
+    "file_list": "列出文件", "file_pull": "下载文件", "file_push": "上传文件",
+    "force_stop": "强行停止应用", "forward_port": "添加端口转发", "get_info": "获取设备信息",
+    "get_package": "获取前台应用", "gfxinfo": "图形渲染信息", "grant_permission": "授予权限",
+    "ime_list": "列出输入法", "ime_set": "设置输入法", "input_keyevent": "发送按键事件",
+    "input_swipe": "发送滑动手势", "input_tap": "发送点击", "input_text": "发送文本",
+    "installed_packages": "已安装应用", "kernel_version": "内核版本",
+    "kill_monkey": "停止 Monkey", "kill_process": "结束进程", "list_forwards": "列出端口转发",
+    "list_processes": "进程列表", "list_reverse": "列出反向转发", "logcat_filtered": "筛选 Logcat",
+    "monkey": "Monkey 测试", "netstats_detail": "网络统计", "pair_device": "配对设备",
+    "pm_features": "设备功能", "pull_anr": "获取 ANR", "pull_recording": "下载录屏",
+    "quick_setting": "快捷设置", "reboot_mode": "重启设备", "refresh": "刷新设备",
+    "remove_forwards": "移除端口转发", "remove_reverse": "移除反向转发", "restart": "重启设备",
+    "restart_adb": "重启 ADB", "restart_app": "重启应用", "retrieve_device_logs": "获取设备日志",
+    "reverse_port": "添加反向转发", "revoke_permission": "撤销权限", "screen_record": "录制屏幕",
+    "screenshot": "截图", "send_broadcast": "发送广播", "settings_get": "读取系统设置",
+    "settings_list": "列出系统设置", "settings_put": "写入系统设置", "shell_command": "执行 Shell",
+    "start_activity": "启动 Activity", "stop_recording": "停止录屏", "tcpip_mode": "开启 TCP/IP",
+    "top_snapshot": "进程快照", "uninstall": "卸载应用", "wakelocks": "唤醒锁",
+}
+
+
+def _operation_label(kind: str) -> str:
+    source = _OPERATION_LABELS.get(kind)
+    return tr(source) if source is not None else kind
 
 
 def _resolve_state(state: str, success: bool) -> OperationState:
@@ -149,14 +187,15 @@ class TaskCenterPage(QWidget):
         self._active_cache: tuple[OperationSnapshot, ...] | None = None
         self._history_cache: tuple[TaskHistoryEntry, ...] | None = None
 
-        self._active_card = self._make_card("在途任务")
-        self._history_card = self._make_card("历史记录")
+        self._active_card = self._make_card(tr("在途任务"))
+        self._history_card = self._make_card(tr("历史记录"))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self._scroll = SmoothScrollArea()
         self._scroll.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll.setWidgetResizable(True)
+        self._scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         content_layout = QVBoxLayout(content)
@@ -169,13 +208,14 @@ class TaskCenterPage(QWidget):
             # 记录面板继续接收有界日志；折叠只影响显示，不丢失后台错误和操作结果。
             runtime_log.setMinimumHeight(300)
             self.runtime_records = CollapsibleTools(
-                "运行记录", runtime_log, content,
+                tr("运行记录"), runtime_log, content,
                 icon=FluentIcon.SCROLL,
-                tooltip="查看应用操作与异常记录，可按级别筛选或清空显示",
+                tooltip=tr("查看应用操作与异常记录，可按级别筛选或清空显示"),
             )
             content_layout.addWidget(self.runtime_records)
         content_layout.addStretch(1)
         self._scroll.setWidget(content)
+        content.setAutoFillBackground(False)
         layout.addWidget(self._scroll)
 
         self._poll_timer = QTimer(self)
@@ -256,8 +296,8 @@ class TaskCenterPage(QWidget):
         if not active:
             self._active_card.viewLayout.addWidget(
                 self._empty_state(
-                    "暂无在途任务",
-                    "操作结果与异常信息可在下方运行记录中查看。",
+                    tr("暂无在途任务"),
+                    tr("操作结果与异常信息可在下方运行记录中查看。"),
                 )
             )
             return
@@ -271,7 +311,9 @@ class TaskCenterPage(QWidget):
         layout.setSpacing(8)
 
         summary = apply_label_role(
-            BodyLabel(f"{snapshot.kind} · {self._short_id(snapshot.operation_id)}"),
+            BodyLabel(
+                f"{_operation_label(snapshot.kind)} · {self._short_id(snapshot.operation_id)}"
+            ),
             FontRole.UI,
         )
         summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -279,7 +321,7 @@ class TaskCenterPage(QWidget):
         layout.addWidget(summary, 1)
 
         badge = _StatusBadge(
-            _STATE_LABELS.get(snapshot.state, snapshot.state.value),
+            tr(_STATE_LABELS.get(snapshot.state, snapshot.state.value)),
             tone=_STATE_TONES.get(snapshot.state, "neutral"),
         )
         layout.addWidget(badge)
@@ -293,8 +335,8 @@ class TaskCenterPage(QWidget):
         cancel = PrimaryPushButton()
         configure_button(
             cancel,
-            text="取消",
-            tooltip=f"取消任务 {snapshot.operation_id}",
+            text=tr("取消"),
+            tooltip=tr("取消任务 {operation_id}").format(operation_id=snapshot.operation_id),
             danger=True,
         )
         cancel.clicked.connect(lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid))
@@ -307,7 +349,7 @@ class TaskCenterPage(QWidget):
         self._clear_layout(self._history_card.viewLayout)
         if not history:
             self._history_card.viewLayout.addWidget(
-                self._empty_state("暂无历史记录", "已完成的任务会显示在这里。")
+                self._empty_state(tr("暂无历史记录"), tr("已完成的任务会显示在这里。"))
             )
             return
         for entry in history:
@@ -327,14 +369,15 @@ class TaskCenterPage(QWidget):
         layout.addWidget(time_label)
 
         summary = apply_label_role(
-            BodyLabel(f"{entry.kind} · {self._short_id(entry.task_id)}"), FontRole.UI
+            BodyLabel(f"{_operation_label(entry.kind)} · {self._short_id(entry.task_id)}"),
+            FontRole.UI,
         )
         summary.setToolTip(entry.detail or entry.task_id)
         layout.addWidget(summary, 1)
 
         state = _resolve_state(entry.state, entry.success)
         badge = _StatusBadge(
-            _STATE_LABELS.get(state, state.value),
+            tr(_STATE_LABELS.get(state, state.value)),
             tone=_STATE_TONES.get(state, "danger"),
         )
         layout.addWidget(badge)

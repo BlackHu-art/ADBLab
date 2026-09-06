@@ -21,6 +21,8 @@
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
 | Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
 | UI、主题与响应式 | `test_main_window_layout.py`、`test_responsive_*.py`、`test_*typography.py` | 导航、主题、字体、DPI、断点重排、无障碍与瞬态交互 |
+| Monkey 与性能页交互 | `test_monkey_layout.py`、`test_monkey_preparation.py`、`test_performance_responsive.py` | 分组布局、查询显隐、输入保留、诊断展开与日志结果可达；这些 Qt 用例纳入 `ui` marker |
+| 界面语言与材质 | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_navigation_rendering.py` | 词库与格式参数、实际主导航及业务页语言、显示标签与设备参数隔离、共享材质及动画中间帧；这些 Qt 用例纳入 `ui` marker |
 | App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py` | 应用管理、路径/传输、截图批次和页面交互 |
 | Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空 |
 | 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`live_logcat_close_probe.py` | 关闭准入、QObject 晚到回调、线程/进程释放 |

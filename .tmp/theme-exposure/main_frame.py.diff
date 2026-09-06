@@ -1,0 +1,56 @@
+--- gui/main_frame.py (turn baseline)
++++ gui/main_frame.py
+@@ -38,6 +38,7 @@
+     SmoothScrollArea,
+     setCustomStyleSheet,
+ )
++from shiboken6 import isValid
+ 
+ from adblab.application.supervision import TaskStopResult
+ from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+@@ -519,12 +520,16 @@
+             handle is not self._bound_window_handle or self._window_screen_token is None
+         )
+         if rebound_window:
++            previous_handle = self._bound_window_handle
++            if previous_handle is not None and isValid(previous_handle):
++                previous_handle.removeEventFilter(self)
+             self._disconnect_screen_token(self._window_screen_token)
+             self._window_screen_token = self._screen_adapter.connect_window_screen_changed(
+                 self,
+                 self._on_window_screen_changed,
+             )
+             self._bound_window_handle = handle
++            handle.installEventFilter(self)
+ 
+         screen = self._resolve_window_screen()
+         rebound_screen = self._bind_screen_metrics(screen)
+@@ -577,6 +582,9 @@
+         metric_tokens = tuple(getattr(self, "_screen_metric_tokens", ()))
+         self._window_screen_token = None
+         self._screen_metric_tokens = []
++        handle = getattr(self, "_bound_window_handle", None)
++        if handle is not None and isValid(handle):
++            handle.removeEventFilter(self)
+         self._bound_window_handle = None
+         self._bound_screen = None
+         self._disconnect_screen_token(window_token)
+@@ -2652,6 +2660,18 @@
+             if controller is not None:
+                 controller.update_geometry()
+ 
++    def eventFilter(self, watched, event):
++        """在 Qt 原生窗口处理调色板后恢复云母明暗，不再触发 Qt 样式更新。"""
++        if (
++            watched is getattr(self, "_bound_window_handle", None)
++            and event.type() == QEvent.Type.ApplicationPaletteChange
++            and not getattr(self, "_closing", False)
++        ):
++            # QApplication 先向平台窗口分发，再调用对象过滤器。Qt 6.8 在前一步
++            # 会清除无边框窗口的 DWM 深色属性；云母也使用它，必须在此处重申。
++            apply_dark_title_bar(self)
++        return super().eventFilter(watched, event)
++
+     def closeEvent(self, event):
+         (getattr(self, "_close_controller", None) or CloseController(self)).handle_close_event(
+             event

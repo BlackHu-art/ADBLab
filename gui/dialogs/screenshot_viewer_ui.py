@@ -24,6 +24,7 @@ from qfluentwidgets import (
 )
 
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotBottomBar, ScreenshotGraphicsView
+from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -41,6 +42,11 @@ class ScreenshotViewerUI:
         self._frame.setFont(BaseStyles.font_for_role(FontRole.UI))
         self._frame.setMinimumSize(0, 0)
         self._frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def prepare_for_workspace(self) -> None:
+        """隐藏独立页头整组，让布局把标题、说明与徽标占用的空间归还画布。"""
+
+        self._frame.header_card.hide()
 
     def _init_shortcuts(self):
         QShortcut(QKeySequence("Esc"), self._frame, self._frame.back_requested.emit)
@@ -71,7 +77,9 @@ class ScreenshotViewerUI:
             self._frame.dialog_subtitle.setFont(ui_font)
             self._frame.status_badge.setFont(ui_font)
             count = len(getattr(self._frame, "_image_paths", ()))
-            self._frame.status_badge.setText(f"{count} images" if count else "Empty")
+            self._frame.status_badge.setText(
+                tr("{value0} images").format(value0=count) if count else tr("Empty")
+            )
             self._frame.status_badge.setLevel(InfoLevel.SUCCESS if count else InfoLevel.INFOAMTION)
 
         self._frame.setStyleSheet(
@@ -165,7 +173,7 @@ class ScreenshotViewerUI:
         root.setSpacing(8)
 
         # ── 页头卡片：标题、副标题与截图数量状态徽标 ─────────────────────
-        # 页面内容顶部统一为 Fluent CardWidget 卡片页头。
+        # 独立使用时保留页头，嵌入工作区后由公开钩子隐藏整组。
         # 副标题保持 UI 字体角色并以 TEXT_SECONDARY 次级文字色维持视觉层级。
         self._frame.header_card = CardWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
@@ -176,18 +184,18 @@ class ScreenshotViewerUI:
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         self._frame.dialog_title = apply_label_role(
-            BodyLabel("Screenshot Viewer"), FontRole.TITLE, color_key="TITLE_COLOR"
+            BodyLabel(tr("Screenshot Viewer")), FontRole.TITLE, color_key="TITLE_COLOR"
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
-        self._frame.status_badge = InfoBadge.info("Empty", self._frame.header_card)
+        self._frame.status_badge = InfoBadge.info(tr("Empty"), self._frame.header_card)
         self._frame.status_badge.setProperty("fontRole", FontRole.UI.value)
         self._frame.status_badge.setFont(BaseStyles.font_for_role(FontRole.UI))
-        self._frame.status_badge.setToolTip("Number of loaded screenshots")
+        self._frame.status_badge.setToolTip(tr("Number of loaded screenshots"))
         title_row.addWidget(self._frame.dialog_title)
         title_row.addStretch(1)
         title_row.addWidget(self._frame.status_badge)
         self._frame.dialog_subtitle = apply_label_role(
-            BodyLabel("Inspect captured device screenshots"),
+            BodyLabel(tr("Inspect captured device screenshots")),
             FontRole.UI,
             color_key="TEXT_SECONDARY",
         )
@@ -266,8 +274,8 @@ class ScreenshotViewerUI:
         self._frame._path_label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        self._frame._path_label.setToolTip("Screenshot file path")
-        self._frame._path_label.setAccessibleName("Screenshot file path")
+        self._frame._path_label.setToolTip(tr("Screenshot file path"))
+        self._frame._path_label.setAccessibleName(tr("Screenshot file path"))
         self._frame._path_label.setProperty("screenshotFullFileName", "")
         self._frame._path_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
@@ -281,14 +289,16 @@ class ScreenshotViewerUI:
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
         self._frame._info_label.setMinimumWidth(150)
-        self._frame._info_label.setToolTip("Image size, file size, and modified time")
-        self._frame._info_label.setAccessibleName("Screenshot metadata")
+        self._frame._info_label.setToolTip(tr("Image size, file size, and modified time"))
+        self._frame._info_label.setAccessibleName(tr("Screenshot metadata"))
         self._frame._info_label.setWordWrap(True)
         self._frame._info_label.setSizePolicy(
             QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
         )
 
-        self._frame._prev_btn = self._tool_button("caret-left.svg", "Previous screenshot (Left)")
+        self._frame._prev_btn = self._tool_button(
+            "caret-left.svg", tr("Previous screenshot (Left)")
+        )
         self._frame._prev_btn.clicked.connect(self._frame.navigate_prev)
 
         self._frame._nav_label = apply_label_role(
@@ -297,42 +307,46 @@ class ScreenshotViewerUI:
         self._frame._nav_label.setObjectName("navLabel")
         self._frame._nav_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._nav_label.setMinimumWidth(52)
-        self._frame._nav_label.setToolTip("Current screenshot index")
+        self._frame._nav_label.setToolTip(tr("Current screenshot index"))
 
-        self._frame._next_btn = self._tool_button("caret-right.svg", "Next screenshot (Right)")
+        self._frame._next_btn = self._tool_button("caret-right.svg", tr("Next screenshot (Right)"))
         self._frame._next_btn.clicked.connect(self._frame.navigate_next)
 
         self._frame._zoom_out_btn = self._tool_button(
-            "magnifying-glass-minus.svg", "Zoom out (Ctrl+-)"
+            "magnifying-glass-minus.svg", tr("Zoom out (Ctrl+-)")
         )
         self._frame._zoom_out_btn.clicked.connect(self._frame.zoom_out)
 
         self._frame._zoom_label = apply_label_role(
-            BodyLabel("Fit"), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            BodyLabel(tr("Fit")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         self._frame._zoom_label.setObjectName("zoomLabel")
         self._frame._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._frame._zoom_label.setMinimumWidth(56)
-        self._frame._zoom_label.setToolTip("Current zoom")
+        self._frame._zoom_label.setToolTip(tr("Current zoom"))
 
         self._frame._zoom_in_btn = self._tool_button(
-            "magnifying-glass-plus.svg", "Zoom in (Ctrl+=)"
+            "magnifying-glass-plus.svg", tr("Zoom in (Ctrl+=)")
         )
         self._frame._zoom_in_btn.clicked.connect(self._frame.zoom_in)
 
-        self._frame._fit_btn = self._tool_button("frame-corners.svg", "Fit to window (Ctrl+0)")
+        self._frame._fit_btn = self._tool_button("frame-corners.svg", tr("Fit to window (Ctrl+0)"))
         self._frame._fit_btn.clicked.connect(self._frame._reset_zoom)
 
-        self._frame._actual_btn = self._tool_button("number-square-one.svg", "Actual size (Ctrl+1)")
+        self._frame._actual_btn = self._tool_button(
+            "number-square-one.svg", tr("Actual size (Ctrl+1)")
+        )
         self._frame._actual_btn.clicked.connect(self._frame._actual_size)
 
-        self._frame._copy_btn = self._tool_button("copy.svg", "Copy image to clipboard (Ctrl+C)")
+        self._frame._copy_btn = self._tool_button(
+            "copy.svg", tr("Copy image to clipboard (Ctrl+C)")
+        )
         self._frame._copy_btn.clicked.connect(self._frame.copy_to_clipboard)
 
-        self._frame._folder_btn = self._tool_button("folder-open.svg", "Open file location")
+        self._frame._folder_btn = self._tool_button("folder-open.svg", tr("Open file location"))
         self._frame._folder_btn.clicked.connect(self._frame._open_file_location)
 
-        self._frame._delete_btn = self._tool_button("trash.svg", "Delete screenshot")
+        self._frame._delete_btn = self._tool_button("trash.svg", tr("Delete screenshot"))
         self._frame._delete_btn.setObjectName("danger")
         self._frame._delete_btn.clicked.connect(self._frame._delete_file)
 

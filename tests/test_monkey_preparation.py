@@ -306,11 +306,23 @@ def test_package_information_and_prepare_actions_reflow_without_overlap(
         panel.on_monkey_preparation_finished(pending.request_id, _success(pending))
         _resize_feature_viewport(qt_application, owner, panel, scroll, width)
         info = panel.monkey_package_info
-        controls = (info, panel.monkey_get_package_btn, panel.monkey_cancel_prepare_btn)
+        controls = (info, panel.monkey_get_package_btn)
+        assert panel.monkey_cancel_prepare_btn.isHidden()
         assert info.font().pointSize() == font_size
         assert info.height() >= info.heightForWidth(info.width())
         assert_non_overlapping(controls, content)
         for button in controls[1:]:
+            assert button.width() >= button.minimumSizeHint().width()
+            assert button.height() >= button.minimumSizeHint().height()
+            assert mapped_rect(button, content).bottom() < content.height()
+            assert button.toolTip()
+        panel.monkey_get_package_btn.click()
+        _resize_feature_viewport(qt_application, owner, panel, scroll, width)
+        assert panel.monkey_cancel_prepare_btn.isVisibleTo(content)
+        assert panel.monkey_get_package_btn.isHidden()
+        query_controls = (info, panel.monkey_cancel_prepare_btn)
+        assert_non_overlapping(query_controls, content)
+        for button in query_controls[1:]:
             assert button.width() >= button.minimumSizeHint().width()
             assert button.height() >= button.minimumSizeHint().height()
             assert mapped_rect(button, content).bottom() < content.height()

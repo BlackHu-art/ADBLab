@@ -39,6 +39,7 @@ from qfluentwidgets import (
 )
 
 from core.log_service import LogService
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import configure_button
 from gui.styles.icon_loader import get_themed_icon
@@ -144,8 +145,8 @@ class LogPanel(QWidget):
     def _init_ui(self):
         self.text_output = TextEdit(self)
         self.text_output.setReadOnly(True)
-        self.text_output.setAccessibleName("运行记录")
-        self.text_output.setPlaceholderText("应用操作结果与异常记录将在这里显示。")
+        self.text_output.setAccessibleName(tr("运行记录"))
+        self.text_output.setPlaceholderText(tr("应用操作结果与异常记录将在这里显示。"))
         self.text_output.setUndoRedoEnabled(False)
         self.setFocusProxy(self.text_output)
 
@@ -181,7 +182,7 @@ class LogPanel(QWidget):
         self.logToolbarCard.setObjectName("logToolbarCard")
         self.logToolbarCard.setBorderRadius(BaseStyles.RADIUS_LG)
 
-        self.logLevelBadge = InfoBadge("全部", self.logToolbarCard)
+        self.logLevelBadge = InfoBadge(tr("全部"), self.logToolbarCard)
         self.logLevelBadge.setObjectName("logLevelBadge")
         self.logLevelBadge.setProperty("fontRole", FontRole.UI.value)
         self.logLevelBadge.setFont(BaseStyles.font_for_role(FontRole.UI))
@@ -189,9 +190,9 @@ class LogPanel(QWidget):
 
         self.logLevelFilter = ComboBox(parent=self.logToolbarCard)
         self.logLevelFilter.setObjectName("logLevelFilter")
-        self.logLevelFilter.setAccessibleName("日志级别筛选")
+        self.logLevelFilter.setAccessibleName(tr("日志级别筛选"))
         for label, data in self._LEVEL_FILTER_OPTIONS:
-            self.logLevelFilter.addItem(label, userData=data)
+            self.logLevelFilter.addItem(tr(label), userData=data)
         self.logLevelFilter.setMinimumWidth(110)
         # 先填项再连接：避免 set_items 清空动作触发未初始化的槽。
         self.logLevelFilter.currentIndexChanged.connect(self._on_level_filter_changed)
@@ -200,7 +201,7 @@ class LogPanel(QWidget):
         configure_button(
             self.logClearButton,
             text="",
-            tooltip="清空运行记录",
+            tooltip=tr("清空运行记录"),
         )
         self.logClearButton.setIcon(get_themed_icon("broom.svg"))
         self.logClearButton.setIconSize(QSize(16, 16))
@@ -237,7 +238,7 @@ class LogPanel(QWidget):
         """按当前过滤级别刷新徽标（InfoBadge 按语义级别着色）。"""
 
         level = self._current_filter_level()
-        self.logLevelBadge.setText(level or "全部")
+        self.logLevelBadge.setText(level or tr("全部"))
         self.logLevelBadge.setLevel(_LOG_LEVEL_INFO_LEVEL.get(level, InfoLevel.INFOAMTION))
 
     # ------------------------------------------------------------------

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QAbstractScrollArea,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QLayout,
     QLineEdit,
+    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
@@ -33,10 +34,11 @@ from qfluentwidgets import (
 )
 
 from gui.dialogs.fluent_dialog import FluentMessageBox
+from gui.i18n import tr
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
-from gui.widgets.content_section import ContentSection
+from gui.widgets.collapsible_tools import CollapsibleTools
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from services.mobileperf_runner import MobilePerfMonkeyConfig
 
@@ -59,7 +61,13 @@ class _PerformanceGrid(QWidget):
     def _reflow(self) -> None:
         if not hasattr(self, "_grid"):
             return
-        cell_width = max(176, self.fontMetrics().horizontalAdvance("M" * 15))
+        cell_width = max(176, self.fontMetrics().horizontalAdvance("0" * 12))
+        unit_rows = (
+            row for widget in self._widgets
+            for row in widget.findChildren(_PerformanceRow)
+            if row._keep_inline
+        )
+        cell_width = max([cell_width, *(row.minimumSizeHint().width() for row in unit_rows)])
         columns = max(1, min(self._maximum_columns, (self.width() + 12) // (cell_width + 12)))
         if columns == self._columns:
             return
@@ -68,7 +76,9 @@ class _PerformanceGrid(QWidget):
         for column in range(self._maximum_columns):
             self._grid.setColumnStretch(column, 1 if column < columns else 0)
         for index, widget in enumerate(self._widgets):
-            self._grid.addWidget(widget, index // columns, index % columns)
+            self._grid.addWidget(
+                widget, index // columns, index % columns, Qt.AlignmentFlag.AlignTop
+            )
         self._columns = columns
         self.updateGeometry()
 
@@ -89,9 +99,13 @@ class _PerformanceGrid(QWidget):
 class _PerformanceRow(QWidget):
     """字段与动作按自然尺寸并排，空间不足时移至下一行。"""
 
-    def __init__(self, widgets: tuple[QWidget, ...], *, stretch_first: bool = True):
+    def __init__(
+        self, widgets: tuple[QWidget, ...], *, stretch_first: bool = True,
+        keep_inline: bool = False,
+    ):
         super().__init__()
         self._widgets = widgets
+        self._keep_inline = keep_inline
         self._box = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
         self._box.setContentsMargins(0, 0, 0, 0)
         self._box.setSpacing(8)
@@ -103,6 +117,8 @@ class _PerformanceRow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if self._keep_inline:
+            return
         required = sum(
             max(widget.minimumWidth(), widget.sizeHint().width()) for widget in self._widgets
         )
@@ -114,7 +130,74 @@ class _PerformanceRow(QWidget):
         )
 
     def minimumSizeHint(self) -> QSize:
+        size = super().minimumSizeHint()
+        return size if self._keep_inline else QSize(0, size.height())
+
+
+class _PerformanceColumns(QWidget):
+    """配置和结果共用滚动宿主，只调整原控件位置，不重建编辑器。"""
+
+    def __init__(self, configuration: QWidget, results: QWidget):
+        super().__init__()
+        self._configuration = configuration
+        self._results = results
+        self._wide = None
+        self._balanced = True
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(16)
+        self._grid.setVerticalSpacing(16)
+        self._grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.setMinimumWidth(0)
+        self._reflow()
+
+    def _reflow(self) -> None:
+        if not hasattr(self, "_grid"):
+            return
+        wide = self.width() >= max(920, self.fontMetrics().horizontalAdvance("M" * 54))
+        if wide == self._wide:
+            return
+        self._grid.removeWidget(self._configuration)
+        self._grid.removeWidget(self._results)
+        alignment = Qt.AlignmentFlag(0) if wide and self._balanced else Qt.AlignmentFlag.AlignTop
+        self._grid.addWidget(self._configuration, 0, 0, alignment)
+        self._grid.addWidget(self._results, 0 if wide else 1, 1 if wide else 0,
+                             alignment)
+        self._grid.setColumnStretch(0, 5 if wide else 1)
+        self._grid.setColumnStretch(1, 6 if wide else 0)
+        self._wide = wide
+        self.updateGeometry()
+
+    def set_balanced(self, balanced: bool) -> None:
+        """默认宽屏对齐卡片底边；展开长参数后使用自然高度，避免结果区空白。"""
+
+        if balanced == self._balanced:
+            return
+        self._balanced = balanced
+        self._wide = None
+        self._reflow()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._reflow()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._reflow()
+
+    def minimumSizeHint(self) -> QSize:
         return QSize(0, super().minimumSizeHint().height())
+
+
+class _PerformanceResultStack(QStackedWidget):
+    """把当前结果视图的高度下限交给父布局，隐藏图表不参与日志测高。"""
+
+    def sizeHint(self) -> QSize:
+        return QSize(super().sizeHint().width(), self.minimumHeight())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(0, self.minimumHeight())
 
 
 CONFIG_HINTS = {
@@ -154,6 +237,7 @@ class PerformanceLauncherForm:
 
         self._frame._header_title_row.hide()
         self._frame.dialog_subtitle.hide()
+        self._frame._device_context.hide()
         if bool(getattr(self._frame, "_workspace_scroll_prepared", False)):
             return
         scroll = self._frame._config_scroll
@@ -165,6 +249,8 @@ class PerformanceLauncherForm:
         root.removeWidget(scroll)
         scroll.hide()
         content.setParent(self._frame)
+        # takeWidget 保留原滚动区设置的背景填充，内嵌布局应继承工作区材质。
+        content.setAutoFillBackground(False)
         root.insertWidget(max(0, index), content)
         content.show()
         self._frame._workspace_scroll_prepared = True
@@ -172,28 +258,31 @@ class PerformanceLauncherForm:
     def _build_ui(self, package_name: str):
         root = QVBoxLayout(self._frame)
         root.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(12)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(16)
         self._frame._root_layout = root
 
         self._frame.header_card = QWidget()
         self._frame.header_card.setObjectName("dialogHeaderCard")
+        self._frame.header_card.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
         header = QVBoxLayout(self._frame.header_card)
         header.setContentsMargins(0, 0, 0, 0)
         header.setSpacing(10)
         self._frame.dialog_title = apply_label_role(
-            BodyLabel("性能采集"), FontRole.TITLE, color_key="TITLE_COLOR", bold=True
+            BodyLabel(tr("性能采集")), FontRole.TITLE, color_key="TITLE_COLOR", bold=True
         )
         self._frame.dialog_title.setObjectName("dialogTitle")
         self._frame.dialog_title.setWordWrap(True)
-        self._frame.status_badge = InfoBadge.info("未选择设备", self._frame.header_card)
-        self._frame.status_badge.setToolTip("当前性能采集会话的设备连接状态")
+        self._frame.status_badge = InfoBadge.info(tr("未选择设备"), self._frame.header_card)
+        self._frame.status_badge.setToolTip(tr("当前性能采集会话的设备连接状态"))
         self._frame._header_title_row = self._row_widget(
             self._frame.dialog_title, self._frame.status_badge
         )
         header.addWidget(self._frame._header_title_row)
         self._frame.dialog_subtitle = apply_label_role(
-            BodyLabel("设置采样计划，运行后在此查看日志与结果。"),
+            BodyLabel(tr("设置采样计划，运行后在此查看日志与结果。")),
             FontRole.UI_SMALL,
             color_key="TEXT_SECONDARY",
         )
@@ -206,7 +295,40 @@ class PerformanceLauncherForm:
 
         # 独立页面由一个滚动容器承载配置和结果；嵌入时将同一内容交给工作区，
         # 避免配置、页面与结果形成三层互相争抢滚轮的视口。
-        self._frame._config_group = self._build_config_section(package_name)
+        self._frame._configuration_group = self._build_config_section(package_name)
+
+        self._frame._results_group = self._section_card(tr("运行日志与结果"), "performanceResults")
+        results = self._frame._results_group.viewLayout
+        self._frame.log_view = self._build_log_view()
+        self._frame._chart_toggle, self._frame._chart_stack = self._build_chart_toggle()
+        self._frame._chart_stack.addWidget(self._frame.log_view)
+        results.addWidget(self._frame._chart_toggle)
+        results.addWidget(self._frame._chart_stack, 1)
+        result_hint = apply_label_role(
+            BodyLabel(tr("图表在采集结束后生成；运行期间可查看日志。")),
+            FontRole.UI_SMALL, color_key="TEXT_SECONDARY",
+        )
+        result_hint.setWordWrap(True)
+        result_hint.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        results.addWidget(result_hint)
+        result_actions = _PerformanceRow(
+            (self._frame.result_btn, self._frame.perfetto_btn), stretch_first=False
+        )
+        result_actions.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        results.addWidget(result_actions)
+        self._frame._config_group = _PerformanceColumns(
+            self._frame._configuration_group, self._frame._results_group
+        )
+        self._frame._config_group.setObjectName("performanceConfig")
+
+        def balance_panels(*_args) -> None:
+            self._frame._config_group.set_balanced(
+                not self._frame.monkey_check.isChecked()
+                and not self._frame._diagnostic_tools.toggle_button.isChecked()
+            )
+
+        self._frame.monkey_check.toggled.connect(balance_panels)
+        self._frame._diagnostic_tools.expanded_changed.connect(balance_panels)
         self._frame._config_scroll = SmoothScrollArea()
         self._frame._config_scroll.setObjectName("performanceConfigScroll")
         self._frame._config_scroll.setWidgetResizable(True)
@@ -225,37 +347,30 @@ class PerformanceLauncherForm:
         self._frame._config_scroll.setWidget(self._frame._config_group)
         root.addWidget(self._frame._config_scroll, 1)
 
-        self._frame._results_group = self._section_card("运行日志与结果", "performanceResults")
-        results = self._frame._results_group.viewLayout
-        result_actions = _PerformanceRow(
-            (self._frame.perfetto_btn, self._frame.result_btn), stretch_first=False
-        )
-        results.addWidget(result_actions)
-        self._frame.log_view = self._build_log_view()
-        self._frame._chart_toggle, self._frame._chart_stack = self._build_chart_toggle()
-        self._frame._chart_stack.addWidget(self._frame.log_view)
-        results.addWidget(self._frame._chart_toggle)
-        results.addWidget(self._frame._chart_stack)
-        self._frame._content_layout.addWidget(self._frame._results_group)
-
     def _section_card(self, title: str, name: str) -> HeaderCardWidget:
-        card = ContentSection(title)
+        card = HeaderCardWidget()
+        card.setTitle(title)
         card.setObjectName(name)
         card.setMinimumWidth(0)
+        card.headerLayout.setContentsMargins(16, 0, 16, 0)
         card.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        card.viewLayout.setContentsMargins(0, 8, 0, 18)
-        card.viewLayout.setSpacing(12)
-        apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR", bold=True)
+        card.viewLayout.setContentsMargins(16, 16, 16, 16)
+        card.viewLayout.setSpacing(16)
+        card.viewLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        card.headerLabel.setProperty("performanceSectionTitle", True)
+        apply_label_role(card.headerLabel, FontRole.UI, color_key="TITLE_COLOR", bold=True)
         card.headerLabel.setWordWrap(True)
         return card
 
     def _field(self, key: str, title: str, field: QWidget, hint: str) -> QWidget:
+        title, hint = tr(title), tr(hint)
         container = QWidget()
         container.setMinimumWidth(0)
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(5)
-        label = apply_label_role(BodyLabel(title), FontRole.UI, bold=True)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        label = apply_label_role(BodyLabel(title), FontRole.UI)
         label.setObjectName("fieldLabel")
         label.setProperty("configurationKey", key)
         label.setWordWrap(True)
@@ -281,37 +396,51 @@ class PerformanceLauncherForm:
         if hint:
             # 字段说明归输入目标所有，同一行的辅助按钮保留各自的操作提示。
             self._apply_hint(target if target is not None else field, hint)
-            help_label = apply_label_role(BodyLabel(hint), FontRole.UI, color_key="TEXT_SECONDARY")
-            help_label.setObjectName("configHint")
-            help_label.setWordWrap(True)
-            help_label.setMinimumWidth(0)
-            help_label.setAccessibleName(f"{title}说明")
-            layout.addWidget(help_label)
+            label.setToolTip(hint)
+            label.setAccessibleDescription(hint)
         return container
 
     def _build_config_section(self, package_name: str) -> QWidget:
-        """将采集目标、采样、输出与可选压力测试分为持久配置卡片。"""
+        """常用计划集中展示，诊断折叠与可选压力配置保留所有输入状态。"""
 
         content = QWidget()
-        content.setObjectName("performanceConfig")
+        content.setObjectName("performanceConfiguration")
         content.setMinimumWidth(0)
         layout = QVBoxLayout(content)
         self._frame._content_layout = layout
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        target = self._section_card("采集目标", "performanceTarget")
-        sampling = self._section_card("采样与诊断", "performanceSampling")
-        output = self._section_card("结果输出", "performanceOutput")
-        monkey = self._section_card("Monkey 压力测试", "performanceMonkey")
-        for section in (target, sampling, output, monkey):
-            layout.addWidget(section)
+        layout.setSpacing(16)
+        target = self._section_card(tr("采集计划"), "performanceTarget")
+        diagnostic_content = QWidget()
+        diagnostic_content.setMinimumWidth(0)
+        diagnostics = QVBoxLayout(diagnostic_content)
+        diagnostics.setContentsMargins(0, 16, 0, 0)
+        diagnostics.setSpacing(16)
+        self._frame._diagnostic_tools = CollapsibleTools(
+            tr("诊断选项"), diagnostic_content,
+            tooltip=tr("设置堆快照、异常关键字与设备日志；收起时保留配置。"),
+        )
+        self._frame._diagnostic_tools.setObjectName("performanceDiagnostics")
+        diagnostic_layout = self._frame._diagnostic_tools.layout()
+        if diagnostic_layout is not None:
+            diagnostic_layout.setAlignment(
+                self._frame._diagnostic_tools.toggle_button, Qt.AlignmentFlag.AlignLeft
+            )
+        monkey = QWidget()
+        monkey.setObjectName("performanceMonkey")
+        monkey_layout = QVBoxLayout(monkey)
+        monkey_layout.setContentsMargins(0, 0, 0, 0)
+        monkey_layout.setSpacing(16)
+        layout.addWidget(target)
 
         self._frame.package_edit = LineEdit()
         self._frame.package_edit.setText(package_name)
         self._frame.package_edit.setPlaceholderText("com.example.app")
         self._frame.get_package_btn = PushButton()
         configure_button(
-            self._frame.get_package_btn, text="获取当前应用", tooltip="读取所选设备的前台应用包名"
+            self._frame.get_package_btn,
+            text=tr("获取当前应用"),
+            tooltip=tr("读取所选设备的前台应用包名"),
         )
         self._frame.get_package_btn.setIcon(get_fluent_icon("target.svg"))
         self._frame.get_package_btn.setProperty("iconName", "target.svg")
@@ -319,27 +448,30 @@ class PerformanceLauncherForm:
         target.viewLayout.addWidget(
             self._field(
                 "package",
-                "应用包名",
+                tr("应用包名"),
                 self._row_widget(self._frame.package_edit, self._frame.get_package_btn),
                 CONFIG_HINTS["package"],
             )
         )
+        self._frame.package_feedback = apply_label_role(
+            BodyLabel(""), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self._frame.package_feedback.setWordWrap(True)
+        self._frame.package_feedback.hide()
+        target.viewLayout.addWidget(self._frame.package_feedback)
         self._frame.serialnum_label = apply_label_role(
-            BodyLabel(self._frame.device_ip or "未选择"), FontRole.MONO, color_key="LOG_SUCCESS"
+            BodyLabel(self._frame.device_ip or tr("未选择")), FontRole.MONO, color_key="LOG_SUCCESS"
         )
         self._frame.serialnum_label.setObjectName("onlineDeviceLabel")
         self._frame.serialnum_label.setWordWrap(True)
         self._frame.serialnum_label.setAccessibleName(
-            f"采集设备：{self._frame.device_ip or '未选择'}"
+            tr('采集设备：{value0}').format(value0=self._frame.device_ip or tr('未选择'))
         )
-        target.viewLayout.addWidget(
-            self._field(
-                "serialnum",
-                "会话设备",
-                self._frame.serialnum_label,
-                CONFIG_HINTS["serialnum"],
-            )
+        self._frame._device_context = self._row_widget(
+            BodyLabel(tr("会话设备")), self._frame.serialnum_label
         )
+        self._frame._device_context.setToolTip(tr(CONFIG_HINTS["serialnum"]))
+        target.viewLayout.insertWidget(0, self._frame._device_context)
 
         self._frame.frequency_input = StrictIntComboBox(1, 2_147_483_647, 5, presets=(1, 2, 5, 10))
         self._frame.timeout_input = StrictIntComboBox(
@@ -351,43 +483,46 @@ class PerformanceLauncherForm:
         self._frame.frequency_combo = self._frame.frequency_input
         self._frame.timeout_combo = self._frame.timeout_input
         self._frame.dumpheap_combo = self._frame.dumpheap_input
-        self._frame.frequency_unit_label = self._unit_label("s", "seconds")
-        self._frame.timeout_unit_label = self._unit_label("min", "minutes")
-        self._frame.dumpheap_unit_label = self._unit_label("min", "minutes")
-        sampling.viewLayout.addWidget(
+        self._frame.frequency_unit_label = self._unit_label("s", tr("seconds"))
+        self._frame.timeout_unit_label = self._unit_label("min", tr("minutes"))
+        self._frame.dumpheap_unit_label = self._unit_label("min", tr("minutes"))
+        target.viewLayout.addWidget(
             _PerformanceGrid(
                 [
                     self._field(
                         "frequency",
-                        "采样间隔",
+                        tr("采样间隔"),
                         self._row_widget(
-                            self._frame.frequency_input, self._frame.frequency_unit_label
+                            self._frame.frequency_input, self._frame.frequency_unit_label,
+                            keep_inline=True,
                         ),
                         CONFIG_HINTS["frequency"],
                     ),
                     self._field(
                         "timeout",
-                        "采集时长",
-                        self._row_widget(self._frame.timeout_input, self._frame.timeout_unit_label),
+                        tr("采集时长"),
+                        self._row_widget(
+                            self._frame.timeout_input, self._frame.timeout_unit_label,
+                            keep_inline=True,
+                        ),
                         CONFIG_HINTS["timeout"],
                     ),
-                    self._field(
-                        "dumpheap_freq",
-                        "堆快照间隔",
-                        self._row_widget(
-                            self._frame.dumpheap_input, self._frame.dumpheap_unit_label
-                        ),
-                        CONFIG_HINTS["dumpheap_freq"],
-                    ),
-                ]
+                ], columns=2,
             )
         )
+        diagnostics.addWidget(self._field(
+            "dumpheap_freq", tr("堆快照间隔"),
+            self._row_widget(
+                self._frame.dumpheap_input, self._frame.dumpheap_unit_label, keep_inline=True,
+            ),
+            CONFIG_HINTS["dumpheap_freq"],
+        ))
         self._frame.exception_edit = LineEdit()
         self._frame.exception_edit.setText("fatal exception;has died")
-        sampling.viewLayout.addWidget(
+        diagnostics.addWidget(
             self._field(
                 "exceptionlog",
-                "异常日志关键字",
+                tr("异常日志关键字"),
                 self._frame.exception_edit,
                 CONFIG_HINTS["exceptionlog"],
             )
@@ -397,40 +532,40 @@ class PerformanceLauncherForm:
         self._frame.save_path_edit.setText(self._frame._default_save_path())
         self._frame.pick_save_btn = PushButton()
         configure_button(
-            self._frame.pick_save_btn, text="选择目录", tooltip="选择性能采集结果的保存目录"
+            self._frame.pick_save_btn, text=tr("选择目录"), tooltip=tr("选择性能采集结果的保存目录")
         )
         self._frame.pick_save_btn.setIcon(get_fluent_icon("folder.svg"))
         self._frame.pick_save_btn.setProperty("iconName", "folder.svg")
         self._frame.pick_save_btn.clicked.connect(self._frame._pick_save_path)
-        output.viewLayout.addWidget(
+        target.viewLayout.addWidget(
             self._field(
                 "save_path",
-                "保存位置",
+                tr("保存位置"),
                 self._row_widget(self._frame.save_path_edit, self._frame.pick_save_btn),
                 CONFIG_HINTS["save_path"],
             )
         )
         self._frame.phone_log_edit = LineEdit()
         self._frame.phone_log_edit.setText("/data/anr")
-        output.viewLayout.addWidget(
+        diagnostics.addWidget(
             self._field(
                 "phone_log_path",
-                "结束后拉取的设备日志",
+                tr("结束后拉取的设备日志"),
                 self._frame.phone_log_edit,
                 CONFIG_HINTS["phone_log_path"],
             )
         )
 
-        self._frame.monkey_check = CheckBox("同时运行 Monkey")
+        self._frame.monkey_check = CheckBox(tr("同时运行 Monkey"))
         self._frame.monkey_check.toggled.connect(self._frame._on_monkey_enabled_changed)
-        monkey.viewLayout.addWidget(
-            self._field(
-                "monkey", "随机操作压力测试", self._frame.monkey_check, CONFIG_HINTS["monkey"]
-            )
-        )
+        monkey_layout.addWidget(self._frame.monkey_check)
+        self._apply_hint(self._frame.monkey_check, tr(CONFIG_HINTS["monkey"]))
         self._frame._monkey_details = self._build_monkey_row()
-        monkey.viewLayout.addWidget(self._frame._monkey_details)
-        self._frame._configuration_sections = (target, sampling, output, monkey)
+        monkey_layout.addWidget(self._frame._monkey_details)
+        target.viewLayout.addWidget(self._frame._diagnostic_tools)
+        target.viewLayout.addWidget(monkey)
+        target.viewLayout.addStretch(1)
+        self._frame._configuration_sections = (target,)
         self._on_monkey_enabled_changed(self._frame.monkey_check.isChecked())
         return content
 
@@ -439,7 +574,7 @@ class PerformanceLauncherForm:
         container.setObjectName("performanceMonkeyOptions")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
+        layout.setSpacing(16)
         self._frame.monkey_throttle_input = StrictIntComboBox(
             1, 2_147_483_647, 500, presets=(100, 200, 300, 500, 1000, 2000)
         )
@@ -454,20 +589,21 @@ class PerformanceLauncherForm:
                 [
                     self._field(
                         "monkey_throttle",
-                        "操作间隔",
+                        tr("操作间隔"),
                         self._row_widget(
                             self._frame.monkey_throttle_input,
                             self._frame.monkey_throttle_unit_label,
+                            keep_inline=True,
                         ),
                         "",
                     ),
-                    self._field("monkey_seed", "随机种子", self._frame.monkey_seed_input, ""),
+                    self._field("monkey_seed", tr("随机种子"), self._frame.monkey_seed_input, ""),
                 ],
                 columns=2,
             )
         )
         self._frame.monkey_total_label = apply_label_role(
-            BodyLabel("Total: 100%"), FontRole.UI, color_key="LOG_SUCCESS", bold=True
+            BodyLabel(tr("Total: 100%")), FontRole.UI, color_key="LOG_SUCCESS", bold=True
         )
         self._frame.monkey_total_label.setObjectName("monkeyTotalLabel")
         self._frame.monkey_total_label.setWordWrap(True)
@@ -478,33 +614,39 @@ class PerformanceLauncherForm:
         defaults = MobilePerfMonkeyConfig()
         percent_fields = []
         event_titles = (
-            "触摸",
-            "滑动",
-            "轨迹球",
-            "导航",
-            "主要导航",
-            "系统按键",
-            "应用切换",
-            "其他事件",
-            "键盘翻转",
-            "双指缩放",
+            tr("触摸"),
+            tr("滑动"),
+            tr("轨迹球"),
+            tr("导航"),
+            tr("主要导航"),
+            tr("系统按键"),
+            tr("应用切换"),
+            tr("其他事件"),
+            tr("键盘翻转"),
+            tr("双指缩放"),
         )
         for display_title, (title, attr, option_name) in zip(event_titles, MONKEY_PERCENT_FIELDS):
+            title = tr(title)
             field = StrictIntComboBox(
                 0, 100, getattr(defaults, attr), presets=(0, 5, 10, 15, 20, 25, 30, 40, 50, 100)
             )
-            self._apply_hint(field, f"{display_title}占比（{option_name}），单位为百分比。")
-            field.setAccessibleName(f"{title} percentage")
+            self._apply_hint(
+                field,
+                tr("{value0}占比（{value1}），单位为百分比。").format(
+                    value0=display_title, value1=option_name
+                ),
+            )
+            field.setAccessibleName(tr('{value0} percentage').format(value0=title))
             field.valueChanged.connect(self._frame._update_monkey_total)
             field.validityChanged.connect(self._frame._update_monkey_total)
             self._frame.monkey_pct_inputs[attr] = field
             percent_fields.append(self._field(attr, f"{display_title}（%）", field, ""))
         layout.addWidget(_PerformanceGrid(percent_fields, columns=3))
 
-        self._frame.monkey_ignore_crashes = CheckBox("忽略应用崩溃")
-        self._frame.monkey_ignore_timeouts = CheckBox("忽略无响应")
-        self._frame.monkey_ignore_security = CheckBox("忽略安全异常")
-        self._frame.monkey_kill_after_error = CheckBox("出错后结束 Monkey")
+        self._frame.monkey_ignore_crashes = CheckBox(tr("忽略应用崩溃"))
+        self._frame.monkey_ignore_timeouts = CheckBox(tr("忽略无响应"))
+        self._frame.monkey_ignore_security = CheckBox(tr("忽略安全异常"))
+        self._frame.monkey_kill_after_error = CheckBox(tr("出错后结束 Monkey"))
         flags = [
             self._frame.monkey_ignore_crashes,
             self._frame.monkey_ignore_timeouts,
@@ -512,8 +654,8 @@ class PerformanceLauncherForm:
             self._frame.monkey_kill_after_error,
         ]
         accessible_names = (
-            "Ignore application crashes", "Ignore application timeouts",
-            "Ignore security exceptions", "Kill Monkey after error",
+            tr("Ignore application crashes"), tr("Ignore application timeouts"),
+            tr("Ignore security exceptions"), tr("Kill Monkey after error"),
         )
         for checkbox, accessible_name in zip(flags, accessible_names):
             checkbox.setChecked(True)
@@ -539,7 +681,7 @@ class PerformanceLauncherForm:
 
         label = apply_label_role(BodyLabel(text), FontRole.UI_SMALL, color_key="TEXT_SECONDARY")
         label.setObjectName("unitLabel")
-        label.setAccessibleName(f"Unit: {semantic_name or text}")
+        label.setAccessibleName(tr('Unit: {value0}').format(value0=tr(semantic_name or text)))
         return label
 
     def _monkey_option_widgets(self) -> list[QWidget]:
@@ -589,10 +731,10 @@ class PerformanceLauncherForm:
             for label in getattr(
                 self._frame, "_monkey_total_labels", (self._frame.monkey_total_label,)
             ):
-                label.setText("Total: Invalid")
-                label.setToolTip("Total: Invalid")
-                label.setAccessibleName("Total: Invalid")
-                label.setAccessibleDescription("Monkey event percentage total is invalid")
+                label.setText(tr("Total: Invalid"))
+                label.setToolTip(tr("Total: Invalid"))
+                label.setAccessibleName(tr("Total: Invalid"))
+                label.setAccessibleDescription(tr("Monkey event percentage total is invalid"))
                 apply_label_role(label, FontRole.UI, color_key="LOG_ERROR", bold=True)
             return
         total = sum(field.value() for field in self._frame.monkey_pct_combos.values())
@@ -600,11 +742,13 @@ class PerformanceLauncherForm:
         for label in getattr(
             self._frame, "_monkey_total_labels", (self._frame.monkey_total_label,)
         ):
-            full_text = f"Total: {total}%"
+            full_text = tr('Total: {value0}%').format(value0=total)
             label.setText(full_text)
             label.setToolTip(full_text)
             label.setAccessibleName(full_text)
-            label.setAccessibleDescription(f"Monkey event percentage total: {total}%")
+            label.setAccessibleDescription(
+                tr("Monkey event percentage total: {value0}%").format(value0=total)
+            )
             apply_label_role(label, FontRole.UI, color_key=color_key, bold=True)
 
     def _collect_monkey_config(self) -> MobilePerfMonkeyConfig:
@@ -627,7 +771,8 @@ class PerformanceLauncherForm:
         field: QWidget,
         hint: str,
     ) -> int:
-        label = apply_label_role(BodyLabel(key), FontRole.UI, bold=True)
+        hint = tr(hint)
+        label = apply_label_role(BodyLabel(tr(key)), FontRole.UI, bold=True)
         label.setObjectName("fieldLabel")
         label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
         buddy = field
@@ -655,13 +800,14 @@ class PerformanceLauncherForm:
         hint_label = apply_label_role(BodyLabel(hint), FontRole.UI, color_key="TEXT_SECONDARY")
         hint_label.setObjectName("configHint")
         hint_label.setWordWrap(True)
-        hint_label.setAccessibleName(f"{key} help")
+        hint_label.setAccessibleName(tr('{value0} help').format(value0=key))
         hint_label.setAccessibleDescription(hint)
         grid.addWidget(hint_label, row + 1, 1)
         return row + 2
 
     @staticmethod
     def _apply_hint(widget: QWidget, hint: str):
+        hint = tr(hint)
         current = widget.toolTip().strip()
         if not current:
             widget.setToolTip(hint)
@@ -670,8 +816,10 @@ class PerformanceLauncherForm:
         if not widget.accessibleDescription().strip():
             widget.setAccessibleDescription(hint)
 
-    def _row_widget(self, *widgets: QWidget) -> QWidget:
-        container = _PerformanceRow(widgets)
+    def _row_widget(self, *widgets: QWidget, keep_inline: bool = False) -> QWidget:
+        """数值与单位始终同排，其他字段和动作可按可用宽度换行。"""
+
+        container = _PerformanceRow(widgets, keep_inline=keep_inline)
         container.setObjectName("inlineRow")
         return container
 
@@ -680,7 +828,7 @@ class PerformanceLauncherForm:
         log_view.setObjectName("performanceLog")
         log_view.setReadOnly(True)
         log_view.setUndoRedoEnabled(False)
-        log_view.setPlaceholderText("启动采集后，运行日志会显示在这里。")
+        log_view.setPlaceholderText(tr("启动采集后，运行日志会显示在这里。"))
         log_view.document().setMaximumBlockCount(self._frame._max_log_lines)
         return log_view
 
@@ -688,14 +836,18 @@ class PerformanceLauncherForm:
         """构建日志/图表切换条与承载栈（P3）：图表视图由页面注入到栈内。"""
 
         segmented = SegmentedWidget()
-        segmented.addItem("log", "日志")
-        segmented.addItem("chart", "图表")
+        segmented.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        segmented.addItem("log", tr("日志"))
+        segmented.addItem("chart", tr("图表"))
         segmented.setCurrentItem("log")
         # 功能提示契约：分段按钮提供英文短描述（tooltip 契约测试）。
-        for button, tip in zip(segmented.items.values(), ("Show run logs", "Show result charts")):
+        for button, tip in zip(
+            segmented.items.values(), (tr("Show run logs"), tr("Show result charts"))
+        ):
             button.setToolTip(tip)
             button.setProperty("functionalToolTip", tip)
-        stack = QStackedWidget()
+        stack = _PerformanceResultStack()
+        stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         segmented.currentItemChanged.connect(
             lambda route_key: stack.setCurrentIndex(1 if route_key == "chart" else 0)
         )
@@ -709,10 +861,11 @@ class PerformanceLauncherForm:
         if stack is None or not hasattr(self._frame, "log_view"):
             return
         if stack.currentIndex() == 1:
-            height = max(260, self._frame.fontMetrics().height() * 10)
+            height = max(380, self._frame.fontMetrics().height() * 12)
         else:
-            height = max(180, self._frame.log_view.fontMetrics().height() * 8 + 24)
-        stack.setFixedHeight(height)
+            height = max(320, self._frame.log_view.fontMetrics().height() * 10 + 24)
+        stack.setMinimumHeight(height)
+        stack.setMaximumHeight(16_777_215)
 
     def _build_actions(self) -> QWidget:
         container = QWidget()
@@ -723,7 +876,7 @@ class PerformanceLauncherForm:
         row.setSpacing(8)
 
         self._frame.status_label = apply_label_role(
-            BodyLabel("Idle"), FontRole.UI, color_key="TEXT_SECONDARY"
+            BodyLabel(tr("Idle")), FontRole.UI, color_key="TEXT_SECONDARY"
         )
         self._frame.status_label.setObjectName("statusLabel")
         self._frame.status_label.setMinimumWidth(0)
@@ -739,24 +892,24 @@ class PerformanceLauncherForm:
 
         self._frame.perfetto_action = QAction(
             get_themed_icon("speedometer.svg"),
-            "打开 Perfetto",
+            tr("打开 Perfetto"),
             self._frame,
         )
         self._frame.perfetto_action.setObjectName("performancePerfettoAction")
-        self._frame.perfetto_action.setToolTip("Open Perfetto trace viewer")
+        self._frame.perfetto_action.setToolTip(tr("Open Perfetto trace viewer"))
         self._frame.perfetto_action.triggered.connect(self._frame._trigger_open_perfetto)
         self._frame.result_action = QAction(
             get_themed_icon("folder-open.svg"),
-            "查看结果目录",
+            tr("查看结果目录"),
             self._frame,
         )
         self._frame.result_action.setObjectName("performanceResultAction")
-        self._frame.result_action.setToolTip("Open the latest MobilePerf result")
+        self._frame.result_action.setToolTip(tr("Open the latest MobilePerf result"))
         self._frame.result_action.triggered.connect(self._frame._trigger_open_result)
         self._frame.result_action.setEnabled(False)
 
         self._frame.perfetto_btn = PushButton()
-        self._frame.perfetto_btn.setText("Open Perfetto")
+        self._frame.perfetto_btn.setText(tr("Open Perfetto"))
         self._frame.perfetto_btn.setIcon(get_fluent_icon("speedometer.svg"))
         self._frame.perfetto_btn.setIconSize(QSize(14, 14))
         self._frame.perfetto_btn.setProperty("iconName", "speedometer.svg")
@@ -764,7 +917,7 @@ class PerformanceLauncherForm:
         self._frame.perfetto_action.changed.connect(self._frame._sync_perfetto_button)
 
         self._frame.result_btn = PushButton()
-        self._frame.result_btn.setText("Open Result")
+        self._frame.result_btn.setText(tr("Open Result"))
         self._frame.result_btn.setIcon(get_fluent_icon("folder-open.svg"))
         self._frame.result_btn.setIconSize(QSize(14, 14))
         self._frame.result_btn.setProperty("iconName", "folder-open.svg")
@@ -774,8 +927,8 @@ class PerformanceLauncherForm:
         self._frame.stop_btn = PrimaryPushButton()
         configure_button(
             self._frame.stop_btn,
-            text="停止采集",
-            tooltip="Stop the active performance collection",
+            text=tr("停止采集"),
+            tooltip=tr("Stop the active performance collection"),
             danger=True,
         )
         self._frame.stop_btn.setIcon(get_fluent_icon("stop-circle.svg"))
@@ -785,8 +938,8 @@ class PerformanceLauncherForm:
         self._frame.stop_btn.setEnabled(False)
 
         self._frame.start_btn = PrimaryPushButton()
-        self._frame.start_btn.setText("开始采集")
-        self._frame.start_btn.setToolTip("Start performance collection with this configuration")
+        self._frame.start_btn.setText(tr("开始采集"))
+        self._frame.start_btn.setToolTip(tr("Start performance collection with this configuration"))
         self._frame.start_btn.setIcon(get_fluent_icon("play.svg"))
         self._frame.start_btn.setIconSize(QSize(14, 14))
         self._frame.start_btn.setProperty("iconName", "play.svg")
@@ -821,18 +974,21 @@ class PerformanceLauncherForm:
         """返回当前业务语义下必须有效并提交的数字字段。"""
 
         fields: tuple[tuple[str, StrictIntComboBox | StrictIntLineEdit], ...] = (
-            ("frequency", self._frame.frequency_input),
-            ("timeout", self._frame.timeout_input),
-            ("dumpheap frequency", self._frame.dumpheap_input),
+            (tr("frequency"), self._frame.frequency_input),
+            (tr("timeout"), self._frame.timeout_input),
+            (tr("dumpheap frequency"), self._frame.dumpheap_input),
         )
         if self._frame.monkey_check.isChecked():
+            event_names = {attr: tr(title) for title, attr, _option in MONKEY_PERCENT_FIELDS}
             fields += (
-                ("Monkey throttle", self._frame.monkey_throttle_input),
-                ("Monkey seed", self._frame.monkey_seed_input),
+                (tr("Monkey throttle"), self._frame.monkey_throttle_input),
+                (tr("Monkey seed"), self._frame.monkey_seed_input),
             )
             fields += tuple(
                 (
-                    f"Monkey {name.replace('pct_', '').replace('_', ' ')} percentage",
+                    tr("Monkey {value0} percentage").format(
+                        value0=event_names[name]
+                    ),
                     field,
                 )
                 for name, field in self._frame.monkey_pct_combos.items()
@@ -846,20 +1002,39 @@ class PerformanceLauncherForm:
         for label, field in fields:
             if field.input_is_acceptable():
                 continue
+            self._reveal_invalid_field(field)
             FluentMessageBox.warning(
                 self._frame,
-                "Invalid Number",
-                f"Please enter a valid {label} value within the allowed range.",
+                tr("Invalid Number"),
+                tr("Please enter a valid {value0} value within the allowed range.").format(
+                    value0=label
+                ),
             )
             field.focus_editor()
             self._update_monkey_total()
             return False
         for _label, field in fields:
             if not field.commit_value():
+                self._reveal_invalid_field(field)
                 field.focus_editor()
                 self._update_monkey_total()
                 return False
         return True
+
+    def _reveal_invalid_field(self, field: QWidget) -> None:
+        """校验失败先展开所属分区，布局刷新后滚动到可编辑字段。"""
+
+        if self._frame._diagnostic_tools.isAncestorOf(field):
+            self._frame._diagnostic_tools.toggle_button.setChecked(True)
+
+        def reveal() -> None:
+            parent = field.parentWidget()
+            while parent is not None:
+                if isinstance(parent, QScrollArea):
+                    parent.ensureWidgetVisible(field, 12, 24)
+                parent = parent.parentWidget()
+
+        QTimer.singleShot(0, self._frame, reveal)
 
     def _all_numeric_inputs(self) -> tuple[StrictIntComboBox | StrictIntLineEdit, ...]:
         return (

@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import PushButton
 from shiboken6 import isValid
 
@@ -64,11 +64,14 @@ def test_normalized_device_metrics_have_named_summary_fields_and_hidden_details(
         assert card.summary_fields["system"].caption.text() == "系统"
         assert card.summary_fields["screen"].caption.text() == "屏幕"
         assert card.summary_fields["memory"].caption.text() == "内存"
+        assert card.summary_fields["storage"].caption.text() == "存储"
         assert card.screen_label.text() == record["Resolution"]
         assert card.memory_label.text() == record["Total Memory"]
+        assert card.summary_fields["storage"].value.text() == record["Storage Total"]
         assert record["Battery Level"] in card.battery_label.text()
         assert record["Battery Status"] in card.battery_label.text()
         assert all(field.isVisible() for field in card.summary_fields.values())
+        assert all(field.icon.isVisible() for field in card.summary_fields.values())
         assert not card.details_container.isVisible()
         assert not card.identifier.isVisible()
         assert not any(field.isVisible() for field in card.detail_fields.values())
@@ -144,8 +147,8 @@ def test_expanded_parameter_columns_fit_narrow_windows_and_large_fonts(
     summary_positions = {
         field.mapTo(card, QPoint()).x() for field in card.summary_fields.values()
     }
-    assert len(summary_positions) == (3 if width == 1000 else 1)
-    for button in (*card._buttons, card.details_button):
+    assert len(summary_positions) == (4 if width == 1000 else 1)
+    for button in (*card._buttons, card.details_button, card.copy_details_button):
         assert card.rect().contains(QRect(button.mapTo(card, QPoint()), button.size()))
 
 
@@ -547,3 +550,142 @@ def test_existing_rows_shrink_after_font_change_without_expanding_window(
             first_bounds = QRect(first.mapTo(card, QPoint()), first.size())
             second_bounds = QRect(second.mapTo(card, QPoint()), second.size())
             assert not first_bounds.intersects(second_bounds)
+
+
+def _capture_copied_details(monkeypatch):
+    import gui.pages.device_hub as device_hub
+
+    copied = []
+
+    class FakeClipboard:
+        def setText(self, text):
+            copied.append(text)
+
+    monkeypatch.setattr(device_hub.QApplication, "clipboard", lambda: FakeClipboard())
+    return copied
+
+
+def test_copy_details_is_explicit_local_and_contains_the_current_complete_card(
+    qt_application, monkeypatch,
+):
+    copied = _capture_copied_details(monkeypatch)
+    _window, page = _show_page(qt_application)
+    records = _rich_metadata()
+    page.set_device_metadata(records)
+    first, card = page.device_cards
+    assert not card.copy_details_button.isVisible()
+    card.details_button.click()
+    assert card.copy_details_button.isVisible()
+    assert not first.copy_details_button.isVisible()
+    assert copied == []
+    records[1]["Storage Available"] = "19 GiB"
+    records[1]["Battery Level"] = "0%"
+    page.set_device_metadata(records)
+    page.set_device_context([], [row.device_id for row in page.device_cards], "scanning")
+    assert page.device_cards[1] is card and card.details_button.isChecked()
+    assert card.copy_details_button.isEnabled()
+    requests = QSignalSpy(page.selection_requested)
+    card.copy_details_button.click()
+    assert len(copied) == 1 and requests.count() == 0
+    values = dict(line.split("：", 1) for line in copied[0].splitlines())
+    assert values == {
+        "设备名称": "示例 测试平板 B", "设备标识": "192.0.2.15:5555",
+        "连接状态": "无线 · 扫描中", "电池": "电量 0% · 使用电池",
+        "系统": "Android 13 · API 33", "屏幕": "1600 × 2560",
+        "内存": "6.0 GiB", "存储": "64 GiB", "品牌": "示例", "型号": "测试平板 B",
+        "CPU 架构": "arm64-v8a", "硬件平台": "mt-demo", "屏幕密度": "320 dpi",
+        "可用内存": "2.1 GiB", "可用存储": "19 GiB",
+    }
+    assert card.copy_details_button.text() == "已复制"
+    card._copy_feedback_timer.stop()
+    card._copy_feedback_timer.timeout.emit()
+    assert card.copy_details_button.text() == "复制详情"
+    assert len(copied) == 1
+
+
+def test_copy_details_keeps_full_identifier_and_omits_missing_or_raw_metadata(
+    qt_application, monkeypatch,
+):
+    copied = _capture_copied_details(monkeypatch)
+    _window, page = _show_page(qt_application, 380)
+    device_id = "demo-" + "synthetic-identifier-" * 5
+    page.set_device_metadata([{
+        "ip": device_id, "name": "<b>测试设备</b>", "Aversion": "14",
+        "Hardware": "unknown", "Density": "N/A", "Serial Number": "private-raw-value",
+        "IMEI": "private-raw-value", "Mac": "private-raw-value",
+    }])
+    page.set_device_context([], [device_id], "unavailable")
+    card = page.device_cards[0]
+    card.details_button.click()
+    _settle_cards(qt_application, page)
+    assert len(card.identifier.text()) < len(device_id)
+    assert copied == []
+    card.copy_details_button.setFocus()
+    QTest.keyClick(card.copy_details_button, Qt.Key.Key_Space)
+    assert copied == [
+        f"设备名称：<b>测试设备</b>\n设备标识：{device_id}\n"
+        "连接状态：USB · 连接待确认\n系统：Android 14"
+    ]
+    requests = QSignalSpy(page.selection_requested)
+    QTest.mouseDClick(card.copy_details_button, Qt.MouseButton.LeftButton)
+    assert requests.count() == 0
+
+
+@pytest.mark.parametrize("width", [380, 860])
+def test_expanded_details_and_copy_fit_the_scroll_owner_at_large_font(
+    qt_application, monkeypatch, width,
+):
+    copied = _capture_copied_details(monkeypatch)
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or 22)),
+    )
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    page = DeviceHubPage()
+    scroll.setWidget(page)
+    page.set_device_metadata(_rich_metadata())
+    page.set_device_context([], [record["ip"] for record in _rich_metadata()], "ready")
+    scroll.resize(width, 700)
+    scroll.show()
+    for card in page.device_cards:
+        card.details_button.click()
+    _settle_cards(qt_application, page)
+    assert scroll.width() == width
+    assert scroll.horizontalScrollBar().maximum() == 0
+    for card in page.device_cards:
+        summary_columns = {field.x() for field in card.summary_fields.values()}
+        assert len(summary_columns) == (2 if width == 860 else 1)
+        assert all(field.icon.width() <= 24 for field in card.summary_fields.values())
+        for widget in (card.summary_container, card.details_container, card.copy_details_button):
+            rect = QRect(widget.mapTo(card, QPoint()), widget.size())
+            assert card.rect().contains(rect)
+        button = card.copy_details_button
+        scroll.ensureWidgetVisible(button)
+        qt_application.processEvents()
+        bounds = QRect(button.mapTo(scroll.viewport(), QPoint()), button.size())
+        assert scroll.viewport().rect().contains(bounds)
+        assert button.width() >= button.sizeHint().width()
+        button.click()
+    assert len(copied) == 2
+
+
+def test_long_translated_detail_captions_choose_columns_that_fit(qt_application, monkeypatch):
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or 22)),
+    )
+    _window, page = _show_page(qt_application, 860)
+    page.set_device_metadata(_rich_metadata())
+    card = page.device_cards[0]
+    card.detail_fields["Hardware"].caption.setText("Hardware platform")
+    card.detail_fields["Available Memory"].caption.setText("Available memory")
+    card.detail_fields["Storage Available"].caption.setText("Available storage")
+    card.details_button.click()
+    _settle_cards(qt_application, page)
+    for field in (*card.detail_fields.values(), card.identifier_field):
+        assert field.caption.width() >= field.caption.fontMetrics().horizontalAdvance(
+            field.caption.text()
+        )
+        caption_bounds = QRect(field.caption.mapTo(field, QPoint()), field.caption.size())
+        assert field.rect().contains(caption_bounds)

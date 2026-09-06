@@ -29,6 +29,7 @@ from qfluentwidgets import (
     TransparentPushButton,
 )
 
+from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import (
     apply_focus_indicator,
@@ -161,6 +162,7 @@ class BasePanel(QWidget):
     def _card(self, title: str, *, parent=None) -> HeaderCardWidget:
         """用标题和留白组织分区，复用原生卡片布局与子控件交互。"""
 
+        title = tr(title)
         card = ContentSection(title, parent)
         apply_label_role(card.headerLabel, FontRole.TITLE, color_key="TITLE_COLOR")
         card.setProperty("fontRole", FontRole.UI.value)
@@ -176,7 +178,7 @@ class BasePanel(QWidget):
 
     def _label(self, text: str, *, small: bool = False, align=None) -> QLabel:
         role = FontRole.UI_SMALL if small else FontRole.UI
-        label = BodyLabel(text, self)
+        label = BodyLabel(tr(text), self)
         apply_label_role(label, role)
         label.setWordWrap(True)
         if align is not None:
@@ -189,16 +191,18 @@ class BasePanel(QWidget):
         return label
 
     def _checkbox(self, text: str, tooltip: str | None = None) -> QCheckBox:
+        text = tr(text)
         cb = CheckBox()
         cb.setText(text)
         cb.setAccessibleName(text)
         configure_fluent_control(cb)
         if tooltip:
-            cb.setToolTip(tooltip)
+            cb.setToolTip(tr(tooltip))
         return cb
 
     def _b(self, t, i, variant="", tooltip=None):
         """直接创建 qfluentwidgets 图标按钮并配置项目语义。"""
+        t = tr(t)
         if variant == "accent":
             b = PrimaryPushButton()
         elif variant == "ghost":
@@ -604,6 +608,7 @@ class BasePanel(QWidget):
 
     def _in(self, p, w=0):
         """创建 qfluentwidgets 输入框。"""
+        p = tr(p)
         i = LineEdit()
         configure_fluent_control(i)
         i.setPlaceholderText(p)
@@ -698,7 +703,9 @@ class BasePanel(QWidget):
             c.setFont(font)
         c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         if items:
-            c.addItems(items)
+            # 显示标签可以翻译；命令参数及持久化始终使用原始 userData。
+            for item in items:
+                c.addItem(tr(item), userData=item)
             # 最小宽度容纳最长项，避免闭合态文本被响应式网格压窄裁剪。
             texts = [c.itemText(index) for index in range(c.count())]
             c.setMinimumWidth(self._combo_closed_minimum_width(c, texts))
@@ -712,7 +719,7 @@ class BasePanel(QWidget):
         c = EditableComboBox()
         configure_fluent_control(c, role)
         c.setFont(resolved_font)
-        c.dropButton.setAccessibleName("展开选项")
+        c.dropButton.setAccessibleName(tr("展开选项"))
         apply_focus_indicator(c.dropButton)
         if items:
             c.addItems(items)

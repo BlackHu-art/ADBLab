@@ -2,6 +2,8 @@
 
 import threading
 
+from gui.i18n import tr
+
 
 class RemotePanelInput:
     """组合进 RemotePanel 的输入执行控制器，通过 ``self._frame`` 访问面板。"""
@@ -106,11 +108,13 @@ class RemotePanelInput:
             with self._lock:
                 sent = getattr(self._frame, "_remote_sent", 0)
                 failed = getattr(self._frame, "_remote_failed", 0)
-            text = f"队列：{queued}"
+            text = tr("队列：{queued}").format(queued=queued)
             if failed:
-                text += f" · 失败：{failed}"
+                text += tr(" · 失败：{failed}").format(failed=failed)
             label.setText(text)
-            details = f"排队：{queued} · 已发送：{sent} · 失败：{failed}"
+            details = tr("排队：{queued} · 已发送：{sent} · 失败：{failed}").format(
+                queued=queued, sent=sent, failed=failed
+            )
             label.setToolTip(details)
             label.setAccessibleDescription(details)
 

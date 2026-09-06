@@ -1,0 +1,28 @@
+{
+  "suffix": "light-1100x800-ui12-log12-en_US",
+  "synthetic": true,
+  "frame": [
+    1100,
+    800
+  ],
+  "page": [
+    1004,
+    562
+  ],
+  "viewport": [
+    1004,
+    562
+  ],
+  "output": [
+    988,
+    424
+  ],
+  "output_font": 12,
+  "visible_output_height": 424,
+  "outer_scroll_max": 0,
+  "horizontal_output_max": 20712,
+  "records": 165,
+  "visible_records": 85,
+  "paused_new_records": 5,
+  "reading_status": "Buffered 165 / 8000 lines · Following paused (5 new lines)"
+}

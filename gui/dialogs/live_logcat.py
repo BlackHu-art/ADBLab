@@ -27,6 +27,7 @@ from gui.dialogs.live_logcat_worker import (
     LogcatTermination,
     LogcatWorker,
 )
+from gui.i18n import tr
 from gui.styles import BaseStyles
 
 
@@ -68,6 +69,12 @@ class LiveLogcatPage(QWidget):
         self._pkg_worker = None
         self.entries = deque(maxlen=self.MAX_BUFFER)
         self._pending_visible_lines = deque(maxlen=self.MAX_BUFFER)
+        # 原始记录引用用于区分已显示、待显示和已取消的批次，淘汰不依赖消息内容唯一。
+        self._rendered_visible_entries = deque()
+        self._pending_visible_entries = deque()
+        self._pending_evicted_visible = 0
+        self._updating_output = False
+        self._unseen_lines = 0
         self._closing = False
         self._close_pending = False
         self._close_ready = False
@@ -92,7 +99,7 @@ class LiveLogcatPage(QWidget):
         self._worker_release_timer.setSingleShot(True)
         self._worker_release_timer.timeout.connect(self._poll_worker_release)
 
-        self.setWindowTitle(f"实时 Logcat - {device_ip}")
+        self.setWindowTitle(tr('实时 Logcat - {value0}').format(value0=device_ip))
         self.setWindowIcon(FluentIcon.SCROLL.icon())
         self.setMinimumSize(0, 0)
         self._init_ui()
@@ -117,16 +124,13 @@ class LiveLogcatPage(QWidget):
         self._reflow_filters()
 
     def minimumSizeHint(self):
-        """以过滤区可换行时的宽度为下限，避免宽行反向阻止窗口收窄。"""
+        """最窄布局保留两行工具区，按钮以带提示的图标形式保持可达。"""
         size = super().minimumSizeHint()
         layout = self.layout()
         if not getattr(self, "_filter_controls", ()) or layout is None:
             return size
-        labels = max(self._level_label.minimumSizeHint().width(),
-                     self._package_label.minimumSizeHint().width())
-        fields = max(self.level_combo.minimumWidth(), self.pkg_input.minimumSizeHint().width(),
-                     self.btn_get_pkg.minimumWidth())
-        width = labels + fields + self._filters_layout.horizontalSpacing()
+        side = max(32, self.btn_get_pkg.fontMetrics().height() + 16)
+        width = max(120 + 80 + side + 16, 6 * side + 48)
         if not self.header_card.isHidden():
             width = max(width, self.header_card.minimumSizeHint().width())
         margins = layout.contentsMargins()
@@ -146,7 +150,7 @@ class LiveLogcatPage(QWidget):
                 if package_input is not None:
                     package_input.setText(package)
                 self._apply_package_filter(package)
-        if self._pending_visible_lines and not self._line_flush_timer.isActive():
+        if not self._line_flush_timer.isActive():
             self._line_flush_timer.start(0)
         self.show()
 
@@ -192,14 +196,14 @@ class LiveLogcatPage(QWidget):
     def _sync_device_actions(self) -> None:
         active = bool(self.worker is not None and self.worker.is_active())
         self._set_running_actions(active, stopping=self._logcat_stopping)
-        self.status_badge.setText("设备已连接" if self._device_connected else "设备离线")
+        self.status_badge.setText(tr("设备已连接") if self._device_connected else tr("设备离线"))
         self.status_badge.setLevel(
             InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
         )
         if not self._device_connected and not active:
-            self.status_bar.setText("设备已离线，请重新连接后开始采集")
+            self.status_bar.setText(tr("设备已离线，请重新连接后开始采集"))
         elif not self._device_selected:
-            self.status_bar.setText("请在顶部勾选当前设备后操作；已有采集仍可停止")
+            self.status_bar.setText(tr("请在顶部勾选当前设备后操作；已有采集仍可停止"))
 
     def request_dispose(self, _reason: str = "user") -> bool:
         """非阻塞停止日志会话；资源归零后由 ``dispose_ready`` 通知宿主。"""
