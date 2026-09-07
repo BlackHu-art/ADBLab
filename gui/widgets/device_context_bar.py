@@ -24,6 +24,7 @@ from qfluentwidgets import (
     FluentIcon,
     Flyout,
     FlyoutViewBase,
+    InfoBadge,
     ListWidget,
     PrimaryPushButton,
     PushButton,
@@ -252,7 +253,7 @@ class DeviceContextBar(QWidget):
         self._connection_flyout: Flyout | None = None
         self._session_required = False
         self._session_signature: tuple | None = None
-        self._session_wrapped = False
+        self._session_layout_mode: tuple[bool, bool] | None = None
         self._layout_mode: tuple[bool, bool] | None = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 8, 16, 8)
@@ -314,7 +315,10 @@ class DeviceContextBar(QWidget):
         self.session_combo.setAccessibleName(tr("当前查看的会话设备"))
         self.session_combo.currentIndexChanged.connect(self._choose_session)
         self.session_label.setBuddy(self.session_combo)
-        self.session_hint = BodyLabel("", self)
+        self.session_hint = InfoBadge(self)
+        self.session_hint.setAccessibleName(tr("会话状态"))
+        self.session_hint.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        self.session_hint.hide()
         self.close_button = PushButton(tr("关闭会话"), self)
         self.close_button.clicked.connect(self.close_session_requested)
         self.close_button.setAccessibleName(tr("关闭当前功能会话"))
@@ -361,7 +365,7 @@ class DeviceContextBar(QWidget):
         # 状态标签由 Fluent 的明暗主题文字色管理，通用色板会覆盖其语义色。
         for widget in (self.targets_button, self.connect_button,
                        self.refresh_button, self.more_button, self.session_label,
-                       self.session_combo, self.session_hint, self.close_button):
+                       self.session_combo, self.close_button):
             widget.setPalette(palette)
         self.update()
 
@@ -403,9 +407,19 @@ class DeviceContextBar(QWidget):
             self._picker.set_context(self._selected, self._connected)
         self._sync_compact_mode()
 
-    def set_session_context(self, source: ComboBox | None, close: PushButton | None) -> None:
-        """投影宿主的候选、锁和关闭状态，不接管会话生命周期。"""
+    def set_session_context(
+        self,
+        source: ComboBox | None,
+        close: PushButton | None,
+        status: InfoBadge | None = None,
+    ) -> None:
+        """投影宿主的候选、锁、状态和关闭动作，不接管会话生命周期。
 
+        宿主工具栏本身可隐藏；徽标自身的显隐仍决定是否呈现会话状态。
+        不保留源控件引用，切换会话后不会访问已释放的页面控件。
+        """
+
+        status_visible = status is not None and not status.isHidden()
         signature = (
             tuple((source.itemText(i), source.itemData(i)) for i in range(source.count()))
             if source is not None
@@ -414,6 +428,10 @@ class DeviceContextBar(QWidget):
             source.isEnabled() if source is not None else False,
             source.toolTip() if source is not None else "",
             (close.text(), close.isEnabled(), close.toolTip()) if close is not None else None,
+            (
+                status.text(), status.level, status.toolTip(), status.accessibleName(),
+                status.accessibleDescription(),
+            ) if status_visible and status is not None else None,
         )
         if signature == self._session_signature:
             return
@@ -433,13 +451,23 @@ class DeviceContextBar(QWidget):
         del blocker
         self.session_label.setVisible(source is not None)
         self.session_combo.setVisible(source is not None)
-        self.session_hint.setText("")
+        self.session_hint.setVisible(status_visible)
+        if status_visible and status is not None:
+            self.session_hint.setText(status.text())
+            self.session_hint.setLevel(status.level)
+            self.session_hint.setToolTip(status.toolTip())
+            self.session_hint.setAccessibleName(status.accessibleName())
+            self.session_hint.setAccessibleDescription(status.accessibleDescription())
+        else:
+            self.session_hint.clear()
+            self.session_hint.setToolTip("")
+            self.session_hint.setAccessibleDescription("")
         self.close_button.setVisible(close is not None)
         if close is not None:
             self.close_button.setText(close.text())
             self.close_button.setEnabled(close.isEnabled())
             self.close_button.setToolTip(close.toolTip())
-        self.session_row.setVisible(source is not None or close is not None)
+        self.session_row.setVisible(source is not None or close is not None or status_visible)
         self._sync_compact_mode()
 
     def _choose_session(self, _index: int) -> None:
@@ -548,7 +576,6 @@ class DeviceContextBar(QWidget):
             + self.status_label.fontMetrics().horizontalAdvance(self.status_label.text()) + 8
         )
         actions_width = self._actions.sizeHint().width()
-        self.session_hint.hide()
         label_width = self.session_label.sizeHint().width() if self._session_required else 0
         combo_width = (
             self.session_combo.fontMetrics().horizontalAdvance(self.session_combo.currentText())
@@ -559,8 +586,11 @@ class DeviceContextBar(QWidget):
         close_width = (
             self.close_button.sizeHint().width() if not self.close_button.isHidden() else 0
         )
+        status_width = (
+            self.session_hint.sizeHint().width() if not self.session_hint.isHidden() else 0
+        )
         self.close_button.setMinimumWidth(close_width)
-        session_width = label_width + combo_width + close_width + 24
+        session_width = label_width + combo_width + status_width + close_width + 24
         actions_below = target_width + actions_width + 16 > width
         session_below = actions_below or target_width + actions_width + session_width + 32 > width
         mode = (actions_below, session_below)
@@ -583,16 +613,34 @@ class DeviceContextBar(QWidget):
                 self._layout.addWidget(self.session_row, 0, 1)
                 self._layout.setColumnStretch(1, 1)
         session_available = width if session_below else width - target_width - actions_width - 32
-        self.session_combo.setMinimumWidth(
-            min(combo_width, max(40, session_available - label_width - 16))
-        )
-        wrapped = self._session_required and session_width > session_available
-        if wrapped != self._session_wrapped:
-            self._session_wrapped = wrapped
-            self._session_layout.removeWidget(self.close_button)
+        wrapped = session_width > session_available
+        separate_actions = status_width + close_width + 8 > session_available
+        combo_available = session_available - label_width - 8
+        if not wrapped:
+            combo_available -= status_width + close_width + 16
+        self.session_combo.setMinimumWidth(min(combo_width, max(40, combo_available)))
+        session_mode = (wrapped, separate_actions)
+        if session_mode != self._session_layout_mode:
+            self._session_layout_mode = session_mode
+            for widget in (
+                self.session_label, self.session_combo, self.session_hint, self.close_button
+            ):
+                self._session_layout.removeWidget(widget)
             if wrapped:
+                # 状态与关闭动作优先保持完整文字，空间不足时分别占一行。
+                self._session_layout.addWidget(self.session_label, 0, 0)
+                self._session_layout.addWidget(self.session_combo, 0, 1, 1, 3)
                 self._session_layout.addWidget(
-                    self.close_button, 1, 0, 1, 4, Qt.AlignmentFlag.AlignRight
+                    self.session_hint, 1, 0, 1, 4 if separate_actions else 2,
+                    Qt.AlignmentFlag.AlignLeft,
+                )
+                self._session_layout.addWidget(
+                    self.close_button, 2 if separate_actions else 1,
+                    0 if separate_actions else 2, 1, 4 if separate_actions else 2,
+                    Qt.AlignmentFlag.AlignRight,
                 )
             else:
+                self._session_layout.addWidget(self.session_label, 0, 0)
+                self._session_layout.addWidget(self.session_combo, 0, 1)
+                self._session_layout.addWidget(self.session_hint, 0, 2)
                 self._session_layout.addWidget(self.close_button, 0, 3)

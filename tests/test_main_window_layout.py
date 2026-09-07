@@ -821,8 +821,8 @@ def test_programmatic_workspace_route_selects_native_navigation_item(qt_applicat
             frame.navigationInterface.widget(route_key)
         )
         assert frame._workspace_feature_hosts["system"].feature_selector.isHidden()
-        assert frame._system_page.header.title_label.text() == "系统工具"
-        assert "设备配置" in frame._system_page.header.subtitle_label.text()
+        assert frame._system_page.accessibleName() == "系统工具"
+        assert "设备配置" in frame._system_page.accessibleDescription()
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -973,8 +973,8 @@ def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_appli
         frame.close()
 
 
-def test_workspace_header_owns_status_and_aligns_overview_content(qt_application):
-    """状态归入页头，概览内容与标题使用同一条左侧基线。"""
+def test_workspace_status_stays_visible_above_full_height_overview_content(qt_application):
+    """共享设备栏承载状态，工作区内容不再为装饰标题预留空间。"""
 
     settings = _MainFrameSettings()
     settings.values.update(window_width=1120, window_height=640)
@@ -984,22 +984,26 @@ def test_workspace_header_owns_status_and_aligns_overview_content(qt_application
     )
     try:
         frame.show()
+        frame._on_devices_updated(["device-1"])
         assert frame._open_workspace_feature("apps", "overview") is True
         page = frame._apps_page
         host = frame._workspace_feature_hosts["apps"]
-        qt_application.processEvents()
+        wait_for_stable_geometry(qt_application, (page, host, host.overview))
 
-        assert host.session_badge.parentWidget() is page.header
-        assert page.header.actions_layout.indexOf(host.session_badge) >= 0
+        status = frame._global_device_bar.status_label
+        assert status.isVisibleTo(frame)
+        assert status.text() == "在线 1 台"
+        assert frame._global_device_bar.session_hint.isHidden()
         assert host.session_toolbar.isHidden()
+        assert page.body.geometry() == page.rect()
         wrapper = host.overview.body.widget()
         assert wrapper is not None and wrapper.layout() is not None
-        title_left = page.header.title_label.mapTo(page, QPoint()).x()
         content_left = wrapper.mapTo(
             page,
             QPoint(wrapper.layout().contentsRect().left(), 0),
         ).x()
-        assert abs(title_left - content_left) <= 2
+        assert abs(content_left - 32) <= 2
+        assert host.overview.body.geometry() == host.overview.rect()
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -1013,7 +1017,7 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
     try:
         frame.show()
         host = frame._workspace_feature_hosts["devices"]
-        host.set_device_context([], ["device-1", "device-2"])
+        frame._on_devices_updated(["device-1", "device-2"])
 
         assert frame._open_workspace_feature("devices", "remote") is True
         assert host.stack.currentWidget() is host.no_device_page
@@ -1023,8 +1027,17 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
         assert host.current_device_id == "device-2"
         assert frame.left_panel._scrcpy_tab is not None
         remote = frame.left_panel._scrcpy_tab
-        assert remote.selected_devices == ["device-2"]
+        assert remote.selected_devices == []
         assert remote.category_stack.current_key == "mirroring"
+
+        status = frame._global_device_bar.session_hint
+        assert status.isVisibleTo(frame)
+        assert status.text() == "未选为操作目标"
+        frame._global_device_bar.selection_requested.emit(["device-2"])
+        assert status.text() == "在线"
+        assert remote.selected_devices == ["device-2"]
+        assert status.accessibleDescription() == host.session_badge.accessibleDescription()
+        assert status.toolTip() == host.session_badge.toolTip()
 
         remote._set_session_state(remote._SESSION_STARTING)
         assert host.device_combo.isEnabled() is False
@@ -1032,8 +1045,11 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
         remote._set_session_state(remote._SESSION_IDLE)
         assert host.device_combo.isEnabled() is True
 
-        host.set_device_context([], [])
+        frame._on_devices_updated([])
         assert host.session_badge.text() == "离线"
+        assert status.isVisibleTo(frame)
+        assert status.text() == "离线"
+        assert status.accessibleDescription() == host.session_badge.accessibleDescription()
         assert remote.selected_devices == []
         assert remote.btn_start.isEnabled() is False
     finally:
@@ -2950,25 +2966,23 @@ def test_settings_page_applies_typography_in_one_batch(qt_application):
         frame.close()
 
 
-def test_gallery_page_header_height_does_not_follow_vertical_window_resize(
+def test_workspace_content_uses_full_page_height_during_window_resize(
     qt_application,
 ):
-    """紧凑页头保持固定高度，剩余空间交给页面内容。"""
+    """不同窗口高度都由内容占满页面，不遗留原有标题块的固定空间。"""
 
     frame = build_main_frame()
     try:
         frame.show()
         frame._on_nav_requested("apps")
-        header = frame._apps_page.header
-        heights = []
+        page = frame._apps_page
         body_heights = []
         for height in (500, 640, 800):
             frame.resize(1120, height)
-            qt_application.processEvents()
-            heights.append(header.height())
-            body_heights.append(frame._apps_page.body.height())
+            wait_for_stable_geometry(qt_application, (page, page.body))
+            assert page.body.geometry() == page.rect()
+            body_heights.append(page.body.height())
 
-        assert heights == [88, 88, 88]
         assert body_heights[-1] > body_heights[0]
         assert not hasattr(frame, "_toolbar")
         assert frame._settings_page.save_card.contentLabel.text()

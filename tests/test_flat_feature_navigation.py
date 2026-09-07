@@ -52,14 +52,16 @@ def frame(qt_application):
         ("system", "performance", "performancePage", "性能采集"),
     ),
 )
-def test_sidebar_directly_selects_feature_and_page_title(frame, section, feature, key, title):
+def test_sidebar_directly_selects_feature_and_accessible_page_identity(
+    frame, section, feature, key, title,
+):
     item = frame.navigationInterface.widget(key)
     assert item.treeParent is None
     item.click()
     page = frame._workspace_pages[section]
     assert frame.stackedWidget.currentWidget() is page
     assert page.current_route == WorkspaceRoute(section, feature)
-    assert page.header.title_label.text() == title
+    assert page.accessibleName() == title
     assert frame.navigationInterface.panel.currentItem() is item
     host = frame._workspace_feature_hosts[section]
     assert host.feature_pivot.isHidden()
@@ -93,7 +95,7 @@ def test_translated_shell_keeps_navigation_routes_and_empty_state(
         item.click()
         host = window._workspace_feature_hosts["devices"]
         assert window._devices_page.current_route == WorkspaceRoute("devices", "files")
-        assert window._devices_page.header.title_label.text() == file_title
+        assert window._devices_page.accessibleName() == file_title
         assert item.accessibleName() == file_title
         assert item.toolTip() == file_title
         assert host.no_device_page.isVisible()

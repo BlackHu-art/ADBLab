@@ -64,6 +64,7 @@ from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.device_context_bar import DeviceContextBar
 from gui.widgets.frameless_resize import FramelessResizeController
+from gui.widgets.navigation_theme import NavigationThemeToggle
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
     DEFAULT_WINDOW_SIZE,
@@ -1135,6 +1136,14 @@ class MainFrame(FluentWindow):
             (self._tasks_page, FluentIcon.HISTORY, tr("任务中心")),
         ):
             self.addSubInterface(page, icon, label, NavigationItemPosition.SCROLL)
+        self._theme_navigation_widget = NavigationThemeToggle(self.navigationInterface)
+        self.navigationInterface.addWidget(
+            routeKey="themeToggle",
+            widget=self._theme_navigation_widget,
+            onClick=self._toggle_theme,
+            position=NavigationItemPosition.BOTTOM,
+            tooltip=self._theme_navigation_widget.toolTip(),
+        )
         self.addSubInterface(
             self._settings_page,
             FluentIcon.SETTING,
@@ -1173,12 +1182,6 @@ class MainFrame(FluentWindow):
             self._on_navigation_display_mode_changed
         )
         self._sync_navigation_accessibility()
-
-        for page in (
-            *self._workspace_pages.values(),
-            self._tasks_page,
-        ):
-            page.header.theme_button.clicked.connect(self._toggle_theme)
 
         self._connect_all_signals()
         for page in self._workspace_pages.values():
@@ -1764,6 +1767,7 @@ class MainFrame(FluentWindow):
         bar.set_session_context(
             host.device_combo if requires else None,
             close if not close.isHidden() else None,
+            host.session_badge if not host.session_badge.isHidden() else None,
         )
 
     def _choose_global_session(self, device_id: str) -> None:
@@ -1939,7 +1943,7 @@ class MainFrame(FluentWindow):
 
         self._refresh_save_path()
         self._refresh_window_chrome_theme()
-        self._sync_page_header_theme_actions()
+        self._theme_navigation_widget.sync_theme()
         self.left_panel.apply_device_theme()
         task_page = getattr(self, "_task_page", None)
         if task_page is not None:
@@ -1966,21 +1970,6 @@ class MainFrame(FluentWindow):
             page.update()
             for child in page.findChildren(QWidget):
                 child.update()
-
-    def _sync_page_header_theme_actions(self) -> None:
-        """让每个 Gallery 页的主题动作显示下一步操作，而不是固定图标。"""
-
-        for name in (
-            "_devices_page",
-            "_apps_page",
-            "_system_page",
-            "_tasks_page",
-        ):
-            page = getattr(self, name, None)
-            header = getattr(page, "header", None)
-            sync = getattr(header, "sync_theme_action", None)
-            if callable(sync):
-                sync()
 
     def setMicaEffectEnabled(self, isEnabled: bool) -> None:
         """切换系统云母并同步 Qt 表面；不支持的平台保留实际生效的实色模式。"""

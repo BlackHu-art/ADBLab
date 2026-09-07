@@ -386,10 +386,11 @@ def test_all_navigation_pages_share_material_without_covering_reading_controls(
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
 @pytest.mark.parametrize("mica", [False, True])
 def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_name, mica):
-    """首页原生滚动区的 Base 画刷不能覆盖横幅和快捷卡片之间的材质留白。"""
+    """首页原生滚动区的 Base 画刷不能覆盖功能区之间的材质留白。"""
     frame = theme_probe_frame(theme_name, mica)
     view = frame._home_page.widget()
-    banner = view.layout().itemAt(0).widget()
+    tools = frame._home_page.tool_cards["app_mgr"].parentWidget()
+    assert tools is not None and tools.isVisibleTo(frame)
     expected = QColor(BaseStyles.color("WINDOW_BG"))
     if frame.isMicaEffectEnabled():
         composite = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
@@ -401,7 +402,9 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
         )
         painter.end()
         expected = composite.pixelColor(0, 0)
-    point = view.mapTo(frame, QPoint(2, banner.geometry().bottom() + 3))
+    gap = QPoint(2, tools.geometry().bottom() + 3)
+    assert view.childAt(gap) is None
+    point = view.mapTo(frame, gap)
     image = frame.grab().toImage()
     scale = image.devicePixelRatio()
     assert image.pixelColor(round(point.x() * scale), round(point.y() * scale)) == expected

@@ -45,7 +45,7 @@ class ScreenshotViewerUI:
         self._frame.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
     def prepare_for_workspace(self) -> None:
-        """工作区拥有统一页头，嵌入时归还整组重复标题占用的空间。"""
+        """嵌入时归还整组标题占用的空间，由主导航标识当前功能。"""
 
         self._frame.header_card.hide()
 

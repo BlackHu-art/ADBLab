@@ -141,7 +141,7 @@ class ScreenshotPage(QWidget):
         self.receive_payload(payload)
 
     def prepare_for_workspace(self) -> None:
-        """复用工作区页头，只调整呈现并保留截图与导航状态。"""
+        """嵌入时隐藏重复标题，只调整呈现并保留截图与导航状态。"""
 
         self._ui_controller.prepare_for_workspace()
 

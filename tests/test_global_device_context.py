@@ -306,16 +306,19 @@ def test_device_popups_follow_fonts_and_compact_row_count(
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_main_window_device_bar_surface_tracks_theme_switch(frame, qt_application, theme):
     """从整窗取像素，防止原生窗口继承旧调色板导致白条或白色按钮。"""
+    # 本例验证实色表面；云母的半透明遮罩及圆角由独立材质测试覆盖。
+    frame.setMicaEffectEnabled(False)
     frame.show()
     BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
     QTest.qWait(200)
     BaseStyles.switch_theme(theme)
     QTest.qWait(200)
     bar = frame._global_device_bar
+    assert bar.isVisible()
     background = QColor(BaseStyles.color("WINDOW_BG"))
     assert bar.palette().color(QPalette.ColorRole.Window) == background
     rendered = frame.grab().toImage()
-    point = bar.mapTo(frame, QPoint(2, 2))
+    point = bar._surface.mapTo(frame, QPoint(2, 2))
     scale = rendered.devicePixelRatio()
     assert rendered.pixelColor(round(point.x() * scale), round(point.y() * scale)) == background
     button = bar.targets_button

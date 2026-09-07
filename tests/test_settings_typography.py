@@ -82,6 +82,7 @@ def test_setting_cards_keep_full_text_and_actions_inside_viewport(
     _settle_settings(qt_application, page)
 
     assert not writes
+    assert page.viewport().geometry().top() == 0
     assert page.horizontalScrollBar().maximum() == 0
     for card, control in _setting_card_controls(page):
         assert card.isVisibleTo(page)
@@ -221,7 +222,7 @@ def test_language_selection_saves_stable_values_and_waits_for_restart(settings_p
 
     assert values["language"] == "en_US"
     assert writes == [{"language": "en_US"}]
-    assert page.title_label.text() == "设置"
+    assert page.accessibleName() == "设置"
     assert "重启" in page.language_card.contentLabel.text()
     show_hint.assert_called_once_with()
 
@@ -266,7 +267,7 @@ def test_translated_settings_keep_controls_visible_and_persist_language_independ
         test_setting_cards_keep_full_text_and_actions_inside_viewport(
             qt_application, (page, values, writes, frame), width, font_size,
         )
-        assert page.title_label.text() == title
+        assert page.accessibleName() == title
         assert page.language_card.titleLabel.text() == (
             "Language" if language == "en_US" else "語言"
         )

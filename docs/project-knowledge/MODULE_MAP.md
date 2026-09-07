@@ -17,7 +17,8 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 内嵌功能路由与会话 | WorkspaceRoute 映射、会话设备、内容宿主，以及页面的懒创建、激活、停用与释放 | `gui/pages/workspace_features.py`、`gui/features/base.py` | `test_workspace_feature_host.py`、`test_workspace_route_payload.py`、`test_workspace_device_recovery.py` |
 | 设备操作准入 | 固定会话的新命令要求设备已选且在线；停止使用原任务目标 | `gui/pages/workspace_features.py`、各功能页的 `set_device_selected` 与提交边界 | `test_session_device_admission.py`、`test_file_app_device_admission.py` |
 | 全局设备上下文与概览 | 功能页设备栏与会话投影；概览页内连接刷新、缓存元数据、设备卡选择与单设备工具入口 | `gui/widgets/device_context_bar.py`、`gui/pages/device_hub.py` | `test_global_device_context.py`、`test_device_hub_page.py` |
-| 一级功能与应用包工具 | 左栏语义导航、功能标题映射、应用与诊断顶部常显的应用包卡、截图与屏幕页复用的设备工具；与单设备会话分开所有权 | `gui/main_frame.py`、`gui/panels/app_panel.py` | `test_flat_feature_navigation.py`、`test_workspace_consolidation.py` |
+| 一级功能与应用包工具 | 左栏语义导航、可访问名称映射、应用与诊断顶部常显的应用包卡、截图与屏幕页复用的设备工具；与单设备会话分开所有权 | `gui/main_frame.py`、`gui/panels/app_panel.py` | `test_flat_feature_navigation.py`、`test_workspace_consolidation.py` |
+| 侧栏主题入口 | 收起时图标切换、展开时原生深色开关；复用应用主题状态和设置持久化，不参与页面导航 | `gui/widgets/navigation_theme.py`、`gui/main_frame.py` | `test_navigation_theme.py` |
 | 自适应功能导航 | 独立宿主与分类栈的 Pivot/ComboBox 呈现、选择提交和焦点连续性；主窗口中隐藏，不拥有业务会话 | `gui/widgets/adaptive_navigation.py` | `test_adaptive_navigation.py`、`test_adaptive_category_stack.py` |
 | 任务中心 | 展示活动 operation、测试结果、本次操作和运行记录；接收取消意图并桥接部分停止动作 | `gui/pages/tasks_page.py`、`services/task_history.py` | `test_task_center.py`、`test_task_history.py` |
 | 测试结果与方案 | 跨重启的有界结果索引、命名参数方案、附件打开与历史参数回填 | `services/run_library.py`、`gui/run_library.py`、`gui/widgets/run_results.py`、`gui/widgets/run_preset_bar.py`、`gui/dialogs/performance_library.py` | `test_run_library.py`、`test_run_library_ui.py`、`test_run_results.py`、`test_run_library_integration.py`、`test_monkey_library.py`、`test_performance_library.py` |

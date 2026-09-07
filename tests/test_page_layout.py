@@ -1,4 +1,4 @@
-"""首页卡片与页面标题在实际字体度量下的布局回归。"""
+"""首页卡片与无标题占位页面在实际字体度量下的布局回归。"""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,9 +10,9 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon, PushButton
 
 from core.settings_manager import AppSettings
-from gui.pages.fluent_pages import ActionCardView, DeviceContextCard, HomePage, PageHeader
+from gui.pages.fluent_pages import ActionCardView, DeviceContextCard, GalleryPage, HomePage
 from gui.styles import BaseStyles, FontRole
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
 
 
 @pytest.fixture
@@ -82,31 +82,39 @@ def test_action_card_font_change_preserves_identity_focus_and_activation(
     callback.assert_called_once_with()
 
 
-def test_page_header_wraps_large_text_without_overlapping_actions(
-    qt_application, page_font_settings,
+@pytest.mark.parametrize("scroll", [False, True])
+def test_gallery_content_uses_full_page_and_keeps_large_font_action_accessible(
+    qt_application, page_font_settings, scroll,
 ):
     page_font_settings["ui_font_size"] = 22
     BaseStyles.reload_from_settings()
-    container = QWidget()
-    layout = QVBoxLayout(container)
-    header = PageHeader("应用与自动化", "Monkey 测试 · 使用设备页中勾选的批量操作目标")
+    content = QWidget()
+    layout = QVBoxLayout(content)
     action = PushButton("已选择设备")
-    header.add_action_widget(action)
-    layout.addWidget(header)
+    action.setFont(BaseStyles.font_for_role(FontRole.UI))
+    callback = Mock()
+    action.clicked.connect(callback)
+    layout.addWidget(action)
     layout.addStretch(1)
-    container.resize(420, 600)
-    container.show()
-    qt_application.processEvents()
+    page = GalleryPage(
+        "samplePage", "应用与自动化", "使用已选择设备执行操作", content, scroll=scroll,
+    )
+    page.resize(420, 600)
+    page.show()
+    wait_for_stable_geometry(qt_application, (page, page.body, content, action))
 
-    expected_title_size = BaseStyles.font_for_role(FontRole.TITLE).pointSize()
-    assert header.title_label.font().pointSize() == expected_title_size
-    assert header.subtitle_label.font().pointSize() == 21
-    assert header.height() > 88
-    for label in (header.title_label, header.subtitle_label):
-        assert label.height() >= label.heightForWidth(label.width())
-        assert label.geometry().bottom() < header.height()
-    assert not header.subtitle_label.geometry().intersects(action.geometry())
-    assert header.theme_button.isVisibleTo(container)
+    assert page.accessibleName() == "应用与自动化"
+    assert page.accessibleDescription() == "使用已选择设备执行操作"
+    assert page.body.geometry() == page.rect()
+    viewport = page.body.viewport() if scroll else page.body
+    assert viewport.rect().contains(mapped_rect(action, viewport))
+    assert action.isVisibleTo(page)
+    assert action.font().pointSize() == 22
+    assert action.height() >= action.fontMetrics().height()
+    action.setFocus()
+    assert action.hasFocus()
+    QTest.keyClick(action, Qt.Key.Key_Space)
+    callback.assert_called_once()
 
 
 def test_device_context_uses_compact_height_and_follows_font_changes(
@@ -142,3 +150,6 @@ def test_home_wide_layout_does_not_keep_empty_vertical_scroll_range(
     wait_until(qt_application, lambda: page.verticalScrollBar().maximum() == 0)
     assert page.horizontalScrollBar().maximum() == 0
     assert page.verticalScrollBar().maximum() == 0
+    tools = page.tool_cards["app_mgr"].parentWidget()
+    assert tools is not None and tools.isVisibleTo(page)
+    assert tools.mapTo(page.viewport(), QPoint()).y() == 16

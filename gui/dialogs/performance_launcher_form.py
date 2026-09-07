@@ -310,7 +310,7 @@ class PerformanceLauncherForm:
         self._frame = frame
 
     def use_workspace_scroll_container(self) -> None:
-        """嵌入时复用工作区页头和滚动，保留启动、停止等功能操作。"""
+        """嵌入时隐藏重复标题并复用工作区滚动，保留启动、停止等功能操作。"""
 
         self._frame._header_title_row.hide()
         self._frame.dialog_subtitle.hide()

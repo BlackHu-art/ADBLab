@@ -1,6 +1,6 @@
 """基于 PyQt-Fluent-Widgets Gallery 示例（GPL-3.0）移植的主界面页面组件。
 
-页面骨架、标题区和流式操作卡片直接沿用参考项目的组织方式，并改写为
+页面骨架和流式操作卡片直接沿用参考项目的组织方式，并改写为
 PySide6 与 ADBLab 业务入口。这里不再复刻旧主窗口的分栏、工具条或页签体系。
 来源与许可说明见仓库根目录 ``THIRD_PARTY_NOTICES.md``。
 """
@@ -9,18 +9,15 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QRectF, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFontDatabase,
-    QLinearGradient,
     QPainter,
-    QPainterPath,
     QPalette,
     QPen,
 )
 from PySide6.QtWidgets import (
-    QBoxLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -49,9 +46,6 @@ from qfluentwidgets import (
     SmoothScrollArea,
     StrongBodyLabel,
     SwitchSettingCard,
-    TitleLabel,
-    ToolButton,
-    isDarkTheme,
     setCustomStyleSheet,
 )
 
@@ -70,109 +64,8 @@ from gui.widgets.setting_card_layout import apply_setting_text_style
 from gui.window_effects import is_mica_supported
 
 
-class PageHeader(QWidget):
-    """参考 Gallery ``ToolBar`` 的页面标题区。"""
-
-    def __init__(self, title: str, subtitle: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setMinimumHeight(88)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-        self.title_label = TitleLabel(title, self)
-        self.subtitle_label = CaptionLabel(subtitle, self)
-        self.theme_button = ToolButton(FluentIcon.CONSTRACT, self)
-        self.sync_theme_action()
-        for label in (self.title_label, self.subtitle_label):
-            label.setWordWrap(True)
-            label.setMinimumWidth(0)
-            label.setSizePolicy(
-                QSizePolicy.Policy.Ignored,
-                QSizePolicy.Policy.Preferred,
-            )
-
-        text_layout = QVBoxLayout()
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(4)
-        text_layout.addWidget(self.title_label)
-        text_layout.addWidget(self.subtitle_label)
-
-        actions = QHBoxLayout()
-        actions.setContentsMargins(0, 0, 0, 0)
-        actions.setSpacing(8)
-        actions.addWidget(self.theme_button)
-        self.actions_layout = actions
-
-        layout = QBoxLayout(QBoxLayout.Direction.LeftToRight, self)
-        layout.setContentsMargins(32, 14, 32, 12)
-        layout.setSpacing(16)
-        layout.addLayout(text_layout, 1)
-        layout.addLayout(actions)
-        self._header_layout = layout
-        BaseStyles.ui_font_changed.connect(self._sync_font)
-        self._sync_font()
-
-    def _sync_font(self, _config=None) -> None:
-        """页头参与全局字号设置，换行后的高度由布局而非固定像素决定。"""
-
-        apply_label_role(self.title_label, FontRole.TITLE)
-        apply_label_role(self.subtitle_label, FontRole.UI_SMALL)
-        self._sync_layout_direction()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._sync_layout_direction()
-
-    def _sync_layout_direction(self) -> None:
-        """在标题与动作无法并排时把动作放在下一行，保留完整文字和焦点。"""
-
-        margins = self._header_layout.contentsMargins()
-        needed = (
-            self.title_label.fontMetrics().horizontalAdvance(self.title_label.text())
-            + self.actions_layout.sizeHint().width()
-            + margins.left() + margins.right() + self._header_layout.spacing()
-        )
-        direction = (
-            QBoxLayout.Direction.TopToBottom
-            if self.width() < needed
-            else QBoxLayout.Direction.LeftToRight
-        )
-        self._header_layout.setDirection(direction)
-        self.updateGeometry()
-
-    def set_subtitle(self, text: str) -> None:
-        """更新页面位置说明，为内嵌功能切换提供即时反馈。"""
-
-        self.subtitle_label.setText(text)
-        self.updateGeometry()
-
-    def set_title(self, text: str) -> None:
-        """更新页面标题，使工作区导航与内容位置保持一致。"""
-
-        self.title_label.setText(text)
-        self._sync_layout_direction()
-
-    def add_action_widget(self, widget: QWidget) -> None:
-        """把页面状态或动作放到主题按钮之前，避免重复构建业务页头。"""
-
-        widget.setParent(self)
-        self.actions_layout.insertWidget(self.actions_layout.count() - 1, widget)
-        widget.show()
-        self._sync_layout_direction()
-
-    def sync_theme_action(self) -> None:
-        """按已解析主题显示切换目标，避免固定图标造成动作语义含糊。"""
-
-        dark = BaseStyles.resolved_theme() == "Dark"
-        target = tr("浅色") if dark else tr("深色")
-        self.theme_button.setIcon(
-            FluentIcon.BRIGHTNESS if dark else FluentIcon.QUIET_HOURS
-        )
-        action = tr("切换到{theme}主题").format(theme=target)
-        self.theme_button.setToolTip(action)
-        self.theme_button.setAccessibleName(action)
-
-
 class GalleryPage(QWidget):
-    """参考 GalleryInterface 的独立功能页，标题和内容不再共享旧分栏。"""
+    """参考 GalleryInterface 的独立功能页，内容直接占满页面承载区。"""
 
     def __init__(
         self,
@@ -187,12 +80,12 @@ class GalleryPage(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName(route_key)
-        self.header = PageHeader(title, subtitle, self)
+        self.setAccessibleName(title)
+        self.setAccessibleDescription(subtitle)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.header)
 
         if scroll:
             body = scroll_area or SmoothScrollArea(self)
@@ -407,69 +300,6 @@ class ActionCardView(QWidget):
         return card
 
 
-class BannerWidget(QWidget):
-    """参考 Gallery BannerWidget 的 ADBLab 首页横幅。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setMinimumHeight(168)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-
-        title = TitleLabel("ADBLab", self)
-        title.setStyleSheet("font-size: 42px; font-weight: 600; background: transparent;")
-        subtitle = BodyLabel(tr("Android 设备实验室"), self)
-        description = CaptionLabel(
-            tr("选择设备后，从左侧直接打开文件、远程控制、应用管理和诊断工具。"), self
-        )
-        self._subtitle_label = subtitle
-        self._description_label = description
-        description.setWordWrap(True)
-        description.setMinimumWidth(0)
-        description.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 20, 32, 20)
-        layout.setSpacing(8)
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
-        layout.addWidget(description)
-        layout.addStretch(1)
-        BaseStyles.ui_font_changed.connect(self._sync_font)
-        self._sync_font()
-
-    def _sync_font(self, _config=None) -> None:
-        apply_label_role(self._subtitle_label, FontRole.UI)
-        apply_label_role(self._description_label, FontRole.UI_SMALL)
-        self.updateGeometry()
-
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
-        painter = QPainter(self)
-        painter.setRenderHints(
-            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
-        )
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(self.rect()), 10, 10)
-        gradient = QLinearGradient(0, 0, self.width(), self.height())
-        accent = QColor(BaseStyles.accent_color())
-        accent.setAlpha(165 if isDarkTheme() else 72)
-        surface = QColor("#202020" if isDarkTheme() else "#FBFBFB")
-        surface.setAlpha(24)
-        gradient.setColorAt(0, accent)
-        gradient.setColorAt(1, surface)
-        painter.fillPath(path, gradient)
-        # 参考 Gallery 把横幅插画作为绘制层，不让它参与文字布局；窄屏隐藏，
-        # 避免大字号把首页撑出水平滚动条。
-        description_width = self._description_label.fontMetrics().horizontalAdvance(
-            self._description_label.text()
-        )
-        if self.width() >= max(600, description_width + 228):
-            DEVICE_ICON.render(
-                painter,
-                QRectF(self.width() - 164, (self.height() - 112) / 2, 112, 112),
-            )
-
-
 class DeviceContextCard(CardWidget):
     """在首页和工作台持续展示当前操作设备。"""
 
@@ -667,7 +497,7 @@ class WorkspaceSectionPage(QWidget):
         wrapper.setObjectName(f"{route_key}View")
         wrapper_layout = QVBoxLayout(wrapper)
         # WorkspaceFeatureHost 已提供 24px 外边距；这里补足到与 32px
-        # 页头基线一致，避免嵌套滚动页再次叠加一整层 32px 留白。
+        # 顶部设备栏基线一致，避免嵌套滚动页再次叠加一整层 32px 留白。
         wrapper_layout.setContentsMargins(8, 8, 8, 20)
         wrapper_layout.setSpacing(18)
         wrapper_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -724,13 +554,13 @@ class WorkspaceAreaPage(QWidget):
         self._current_route = WorkspaceRoute(self.section_key)
         self._queued_route: WorkspaceRoute | None = None
         self._active = False
-        self.header = PageHeader(title, subtitle, self)
+        self.setAccessibleName(title)
+        self.setAccessibleDescription(subtitle)
 
         content.setParent(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(self.header)
         layout.addWidget(content, 1)
         content.show()
         self.body = content
@@ -743,7 +573,6 @@ class WorkspaceAreaPage(QWidget):
                 feature_host.current_feature,
                 feature_host.current_device_id,
             )
-            self.header.add_action_widget(feature_host.take_session_badge())
             feature_host.route_changed.connect(self._on_feature_route_changed)
             feature_host.deactivate("page_hidden")
 
@@ -752,7 +581,7 @@ class WorkspaceAreaPage(QWidget):
         return self._current_route
 
     def set_route_presentation(self, feature: str, title: str, subtitle: str) -> None:
-        """一级导航直接展示具体功能标题，物理宿主仅作为内部资源容器。"""
+        """为一级导航保留具体功能的可访问名称，物理宿主仅作为内部资源容器。"""
 
         self._route_presentations[feature] = (title, subtitle)
         if self._current_route.feature == feature:
@@ -795,7 +624,7 @@ class WorkspaceAreaPage(QWidget):
             return self._feature_host.open_route(route)
         stable_route = self._stable_route(route)
         self._current_route = stable_route
-        self.header.set_subtitle(self._base_subtitle)
+        self._set_route_presentation(stable_route)
         self.routeChanged.emit(stable_route)
         return True
 
@@ -837,14 +666,14 @@ class WorkspaceAreaPage(QWidget):
         self.routeChanged.emit(stable_route)
 
     def _set_route_presentation(self, route: WorkspaceRoute) -> None:
-        """同步已选路由及页头，不触发功能会话生命周期。"""
+        """同步已选路由和可访问名称，不触发功能会话生命周期。"""
 
         self._current_route = self._stable_route(route)
         host = self._feature_host
         presentation = self._route_presentations.get(route.feature)
         if presentation is not None:
-            self.header.set_title(presentation[0])
-            self.header.set_subtitle(presentation[1])
+            self.setAccessibleName(presentation[0])
+            self.setAccessibleDescription(presentation[1])
             return
         title = self._base_title
         if route.feature == "overview":
@@ -865,8 +694,8 @@ class WorkspaceAreaPage(QWidget):
                 subtitle = f"{label} · {context}"
             else:
                 subtitle = label
-        self.header.set_title(title)
-        self.header.set_subtitle(subtitle)
+        self.setAccessibleName(title)
+        self.setAccessibleDescription(subtitle)
 
     @staticmethod
     def _stable_route(route: WorkspaceRoute) -> WorkspaceRoute:
@@ -880,6 +709,7 @@ class HomePage(ScrollArea):
     def __init__(self, frame, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("homePage")
+        self.setAccessibleName(tr("首页"))
         # Windows 原生滚动区在透明窗口上仍会绘制 Base 底色，须限定清除首页承载层。
         self.setStyleSheet("#homePage, #homeView { background: transparent; border: none; }")
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -888,10 +718,9 @@ class HomePage(ScrollArea):
         view = QWidget(self)
         view.setObjectName("homeView")
         layout = QVBoxLayout(view)
-        layout.setContentsMargins(0, 0, 0, 28)
+        layout.setContentsMargins(0, 16, 0, 28)
         layout.setSpacing(24)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        layout.addWidget(BannerWidget(view))
 
         self.device_context = DeviceContextCard(view)
         self.device_context.manageRequested.connect(
@@ -1046,18 +875,16 @@ class SettingsPage(ScrollArea):
         self.LANGUAGE_LABELS = {**type(self).LANGUAGE_LABELS, "Auto": tr("跟随系统")}
         self._language_values = {label: value for value, label in self.LANGUAGE_LABELS.items()}
         self.setObjectName("settingsPage")
+        self.setAccessibleName(tr("设置"))
         self.setFrameShape(ScrollArea.Shape.NoFrame)
-        # Gallery 的固定标题和底部留白与内容使用同一透明表面，避免 Qt 默认
-        # ScrollArea 底色把 viewportMargins 画成两条独立色带。
+        # 内容和底部留白使用同一透明表面，避免滚动区出现独立色带。
         self.setStyleSheet(
             "#settingsPage, #settingsView { background: transparent; border: none; }"
         )
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidgetResizable(True)
-        self.setViewportMargins(0, 80, 0, 20)
+        self.setViewportMargins(0, 0, 0, 20)
 
-        self.title_label = TitleLabel(tr("设置"), self)
-        self.title_label.move(36, 30)
         view = QWidget(self)
         view.setObjectName("settingsView")
         self.expand_layout = ExpandLayout(view)
@@ -1264,9 +1091,6 @@ class SettingsPage(ScrollArea):
     def _refresh_typography(self, _config=None) -> None:
         """设置字号本身也可即时阅读；仅更新呈现，不触发任何配置写入。"""
 
-        apply_label_role(self.title_label, FontRole.TITLE)
-        self.title_label.adjustSize()
-        self.setViewportMargins(0, self.title_label.height() + 52, 0, 20)
         for group in self._setting_groups:
             apply_label_role(group.titleLabel, FontRole.UI, bold=True)
             self._set_setting_font(group.titleLabel, FontRole.UI, bold=True)
@@ -1528,12 +1352,10 @@ __all__ = [
     "ActionCard",
     "ActionCardView",
     "AccentColorSettingCard",
-    "BannerWidget",
     "ComboSettingCard",
     "DeviceContextCard",
     "GalleryPage",
     "HomePage",
-    "PageHeader",
     "SettingsPage",
     "WorkspaceAreaPage",
     "WorkspaceSectionPage",

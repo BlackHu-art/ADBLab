@@ -291,7 +291,7 @@ class AppManagerPage(QWidget):
         return QSize(max(0, hint.width()), max(0, hint.height()))
 
     def prepare_for_workspace(self) -> None:
-        """嵌入工作区时复用宿主页头，将设备状态保留在本页工具栏。"""
+        """嵌入工作区时隐藏重复标题，将设备状态保留在本页工具栏。"""
         self.set_device_selected(False)
         self._form_controller.prepare_for_workspace()
 

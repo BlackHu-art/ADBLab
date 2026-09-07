@@ -387,7 +387,7 @@ class AppManagerForm:
         self._frame._reflow_action_buttons()
 
     def prepare_for_workspace(self) -> None:
-        """工作区已有页头，保留同一状态控件并避免重复创建工具栏容器。"""
+        """嵌入时隐藏标题，保留同一状态控件并避免重复创建工具栏容器。"""
         if getattr(self._frame, "_workspace_prepared", False):
             return
         self._frame._workspace_prepared = True

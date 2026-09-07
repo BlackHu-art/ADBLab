@@ -617,7 +617,7 @@ class PerformancePage(QWidget):
         self._max_log_lines = self._configured_log_max_lines()
         self._flush_pending_logs()
         self.setFont(BaseStyles.font_for_role(FontRole.UI))
-        # 独立页头保留设备状态；嵌入时由工作区页头提供相同信息。
+        # 独立页头保留设备状态；嵌入时由顶部设备栏提供相同信息。
         if hasattr(self, "header_card"):
             self.dialog_title.setFont(BaseStyles.font_for_role(FontRole.TITLE))
             self.dialog_subtitle.setFont(BaseStyles.font_for_role(FontRole.UI))

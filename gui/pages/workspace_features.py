@@ -235,7 +235,6 @@ class WorkspaceFeatureHost(QWidget):
         self._extent_timer = QTimer(self)
         self._extent_timer.setSingleShot(True)
         self._extent_timer.timeout.connect(self._finish_content_extent_sync)
-        self._session_badge_in_toolbar = True
 
         self.registry = FeatureSessionRegistry(self)
         self.registry.session_removed.connect(self._on_session_removed)
@@ -351,19 +350,6 @@ class WorkspaceFeatureHost(QWidget):
     @property
     def current_device_id(self) -> str:
         return self._active_device_id
-
-    def take_session_badge(self) -> InfoBadge:
-        """把会话状态交给页面标题区，宿主只保留设备和关闭动作。"""
-
-        if self._session_badge_in_toolbar:
-            layout = self.session_toolbar.layout()
-            if layout is not None:
-                layout.removeWidget(self.session_badge)
-            self._session_badge_in_toolbar = False
-            definition = self._definitions.get(self._current_feature)
-            overview = self._overview_definitions.get(self._current_feature)
-            self._sync_feature_controls(definition or overview)
-        return self.session_badge
 
     def feature_label(self, feature: str) -> str:
         feature = self.canonical_feature(feature)
@@ -997,9 +983,8 @@ class WorkspaceFeatureHost(QWidget):
             self.device_label,
             self.device_combo,
             self.close_session_button,
+            self.session_badge,
         ]
-        if self._session_badge_in_toolbar:
-            controls.append(self.session_badge)
         self.session_toolbar.setVisible(
             any(not control.isHidden() for control in controls)
         )
@@ -1019,7 +1004,7 @@ class WorkspaceFeatureHost(QWidget):
         show_close = closable and definition.show_close_action
         self.close_session_button.setVisible(show_close)
         self.close_session_button.setEnabled(show_close)
-        # 外置设备栏和设备概览摘要已呈现目标数量，页头只保留会话相关状态。
+        # 外置设备栏和设备概览摘要已呈现目标数量，徽标只保留会话相关状态。
         self.session_badge.setVisible(
             requires_device or closable or (is_overview and not self._external_device_controls)
         )

@@ -131,6 +131,9 @@ flowchart LR
 - `BaseStyles` 协调主题、强调色和应用色板；`gui/window_effects.py` 管 Windows 材质，
   `gui/window_layout.py` 与 ScreenAdapter 管窗口尺寸及屏幕变化。配置键见
   [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
+- `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
+  设置持久化；它不参与导航选中或历史。页面名称保留为可访问信息，不生成标题区。
+  会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部 `DeviceContextBar`。
 - `LogService` 跨线程缓冲并批量发出用户日志；源码 DEBUG 单独进入 stderr，不进入 GUI，
   frozen 或无 stderr 时不输出该调试流。`shutdown()` 保留停止态单例并拒绝晚到日志。
 - 任务中心复用唯一 LogPanel，折叠和切页不丢内容。MobilePerf 父进程分别排空 stdout/stderr，
