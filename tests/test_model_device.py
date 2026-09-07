@@ -33,7 +33,7 @@ def test_device_store_load_migrates_legacy_file(tmp_path):
     legacy_file = tmp_path / "legacy.yaml"
     user_file = tmp_path / "config" / "connected_devices.yaml"
     legacy_file.write_text(
-        "device_1:\n  ip: device-1\n  Brand: Demo\n  Model: Phone\n  Aversion: '14'\n",
+        "device_1:\n  ip: 192.0.2.1:5555\n  Brand: Demo\n  Model: Phone\n  Aversion: '14'\n",
         encoding="utf-8",
     )
     old_file_path = DeviceStore._file_path
@@ -45,7 +45,7 @@ def test_device_store_load_migrates_legacy_file(tmp_path):
         DeviceStore.load()
 
         assert user_file.exists()
-        assert DeviceStore.get_basic_devices_info() == [("Demo", "Phone", "device-1")]
+        assert DeviceStore.get_basic_devices_info() == [("Demo", "Phone", "192.0.2.1:5555")]
     finally:
         DeviceStore._file_path = old_file_path
         DeviceStore._legacy_file_path = old_legacy_path

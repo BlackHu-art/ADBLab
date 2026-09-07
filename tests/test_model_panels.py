@@ -387,6 +387,40 @@ def test_device_history_refresh_preserves_current_input_and_cursor():
     assert manager.ip_entry.itemData(0) == "device-1"
 
 
+def test_connection_picker_reads_only_ip_history_and_keeps_live_usb_metadata(
+    qt_application, monkeypatch,
+):
+    from gui.widgets.device_context_bar import DeviceConnectionForm
+    from models.device_store import DeviceStore
+
+    monkeypatch.setattr(DeviceStore, "_devices", {
+        "usb": {"ip": "usb-demo", "Model": "USB Phone"},
+        "wifi": {"ip": "192.0.2.10:5555", "Brand": "Demo", "Model": "WiFi Phone"},
+        "ipv6": {"ip": "[2001:db8::1]:5555", "Model": "IPv6 Phone"},
+    })
+    manager = SimpleNamespace(panel=Mock(), ip_entry=EditableComboBox())
+    manager.ip_entry.setText("192.0.2.20:5555")
+    DeviceManager._refresh_device_combobox(manager)
+    assert manager.ip_entry.currentText() == "192.0.2.20:5555"
+    assert manager.ip_entry.count() == 2
+    history = [
+        (manager.ip_entry.itemText(i), manager.ip_entry.itemData(i))
+        for i in range(manager.ip_entry.count())
+    ]
+    assert {target for _label, target in history} == {
+        "192.0.2.10:5555", "[2001:db8::1]:5555",
+    }
+    assert "WiFi Phone" in history[0][0]
+    form = DeviceConnectionForm(history)
+    connected = QSignalSpy(form.connect_requested)
+    for index, (_label, target) in enumerate(history):
+        form.address.setCurrentIndex(index)
+        form.connect_button.click()
+        assert connected.at(index)[0] == target
+    assert connected.count() == 2
+    assert DeviceStore.get_full_devices_info(["usb-demo"])[0]["Model"] == "USB Phone"
+
+
 def test_side_panel_refresh_owns_scanning_state_and_rejects_duplicates():
     _app = QApplication.instance() or QApplication([])
     with patch("gui.panels.device_manager.DeviceStore.get_basic_devices_info", return_value=[]):

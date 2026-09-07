@@ -1,4 +1,4 @@
-"""在线程安全的内存快照与用户 YAML 文件之间持久化设备信息。"""
+"""缓存当前设备信息，并仅持久化可用于 IP 连接的历史记录。"""
 
 import copy
 import os
@@ -11,13 +11,15 @@ from threading import RLock
 import yaml
 
 from core.log_service import LogService
+from utils.adb_targets import normalize_adb_connect_target
 from utils.resource_path import resource_path
 from utils.user_data import user_config_path
 
 
 class DeviceStore:
-    """维护设备信息快照，并以原子替换方式写入用户配置目录。
+    """维护设备信息快照，并以原子替换方式保存 IP 连接历史。
 
+    USB、模拟器等非 IP 设备的属性仅供当前进程展示，不进入连接历史或磁盘文件。
     加载失败时尝试备份损坏的用户文件，并保留已有内存快照；写入失败会清理临时文件并
     将异常交给调用方处理。
     """
@@ -50,13 +52,26 @@ class DeviceStore:
             loaded = cls._read_snapshot(source_path)
             if loaded is None:
                 return
-            if source_path != cls._file_path and loaded:
+            history = cls._connection_snapshot(loaded)
+            if history != loaded or (source_path != cls._file_path and history):
                 try:
-                    cls._persist_snapshot(copy.deepcopy(loaded))
+                    cls._persist_snapshot(history)
                 except OSError:
-                    # 旧版数据迁移写入失败不阻断本次加载结果。
-                    cls._note_load_failure("OSError")
-            cls._devices = loaded
+                    # 清理或迁移失败仍可使用合法地址，后续保存会再次过滤并重试。
+                    LogService().log("WARNING", "连接历史清理未能写入，已过滤显示；下次保存时重试")
+            cls._devices = history
+
+    @staticmethod
+    def _connection_snapshot(snapshot: dict) -> dict:
+        """复用连接准入边界筛选 IP:port，保留合法记录的别名及完整元数据。"""
+        history = {}
+        for alias, info in snapshot.items():
+            if not isinstance(info, dict):
+                continue
+            target, error = normalize_adb_connect_target(str(info.get("ip", "")))
+            if not error:
+                history[alias] = {**copy.deepcopy(info), "ip": target}
+        return history
 
     @classmethod
     def _read_snapshot(cls, source_path: str) -> dict | None:
@@ -143,13 +158,14 @@ class DeviceStore:
 
     @classmethod
     def save(cls):
-        """在线程锁内保存当前设备快照。"""
+        """在线程锁内保存 IP 连接历史，不清除当前进程的 USB 属性缓存。"""
         with cls._lock:
             cls._persist_snapshot(copy.deepcopy(cls._devices))
 
     @classmethod
     def _persist_snapshot(cls, snapshot: dict) -> None:
-        """按瞬态错误重试一次原子写盘；仍失败时向调用方抛出。"""
+        """所有写入路径只保存 IP 历史；原子写盘重试后仍失败则向调用方抛出。"""
+        snapshot = cls._connection_snapshot(snapshot)
         for attempt in range(cls._SAVE_RETRIES + 1):
             try:
                 cls._write_snapshot_atomic(snapshot)
@@ -219,7 +235,7 @@ class DeviceStore:
 
     @classmethod
     def upsert_devices(cls, devices: list[dict]):
-        """批量写入设备信息，一轮刷新只落盘一次，减少 YAML I/O 抖动。"""
+        """批量更新属性；涉及 IP 记录时落盘一次，USB 属性保留在内存。"""
         with cls._lock:
             changed = False
             for device in devices:
@@ -229,13 +245,17 @@ class DeviceStore:
                 if not ip:
                     continue
                 alias = str(device.get("alias") or f"device_{ip}")
-                cls._devices[alias] = {
+                info = {
                     "ip": ip,
                     "Brand": device.get("Brand", "Unknown"),
                     "Model": device.get("Model", "Unknown"),
                     "Aversion": str(device.get("Aversion", "")),
                 }
-                changed = True
+                previous = cls._devices.get(alias)
+                cls._devices[alias] = info
+                # 同一别名从 IP 改为 USB 时，也要删除磁盘中的旧连接地址。
+                if cls._connection_snapshot({"old": previous, "new": info}):
+                    changed = True
             if changed:
                 cls._persist_snapshot(copy.deepcopy(cls._devices))
 
@@ -246,10 +266,11 @@ class DeviceStore:
 
     @classmethod
     def get_basic_devices_info(cls):
+        """返回连接下拉框的 IP 历史；在线 USB 属性仍可通过完整信息接口读取。"""
         with cls._lock:
             return [
                 (data.get("Brand", "Unknown"), data.get("Model", "Unknown"), data.get("ip", ""))
-                for data in cls._devices.values()
+                for data in cls._connection_snapshot(cls._devices).values()
                 if isinstance(data, dict)
             ]
 

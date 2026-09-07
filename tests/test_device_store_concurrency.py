@@ -20,6 +20,80 @@ class _DeviceStoreState:
         DeviceStore._devices = self.devices
 
 
+def test_history_persists_only_ip_targets_but_keeps_usb_metadata_in_memory(tmp_path):
+    with _DeviceStoreState():
+        store_path = tmp_path / "connected_devices.yaml"
+        DeviceStore._file_path = str(store_path)
+        DeviceStore.initialize_empty()
+        DeviceStore.upsert_devices([
+            {"ip": "usb-demo", "Brand": "Demo", "Model": "USB Phone"},
+            {"ip": "emulator-5554"},
+        ])
+        assert not store_path.exists()
+        assert DeviceStore.get_full_devices_info(["usb-demo"])[0]["Model"] == "USB Phone"
+        assert DeviceStore.get_basic_devices_info() == []
+
+        DeviceStore.upsert_devices([
+            {"alias": "wifi", "ip": "192.0.2.10:5555", "Brand": "Demo", "Model": "WiFi"},
+            {"alias": "ipv6", "ip": "[2001:db8::1]:5555", "Model": "IPv6"},
+            {"ip": "192.0.2.11:70000"},
+            {"ip": "adb-demo._adb-tls-connect._tcp"},
+        ])
+        DeviceStore.save()
+        stored = yaml.safe_load(store_path.read_text("utf-8"))
+        assert set(stored) == {"wifi", "ipv6"}
+        assert {item[2] for item in DeviceStore.get_basic_devices_info()} == {
+            "192.0.2.10:5555", "[2001:db8::1]:5555",
+        }
+        assert DeviceStore.get_full_devices_info(["usb-demo"])[0]["Model"] == "USB Phone"
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_loading_old_history_cleans_non_ip_entries_and_preserves_ip_metadata(tmp_path, legacy):
+    with _DeviceStoreState():
+        user_path = tmp_path / "connected_devices.yaml"
+        legacy_path = tmp_path / "legacy.yaml"
+        source = legacy_path if legacy else user_path
+        DeviceStore._file_path = str(user_path)
+        DeviceStore._legacy_file_path = str(legacy_path)
+        snapshot = {
+            "usb": {"ip": "usb-demo", "Model": "USB"},
+            "emulator": {"ip": "emulator-5554"},
+            "missing": {"Model": "Missing"},
+            "bad_port": {"ip": "192.0.2.1:0"},
+            "wifi": {"ip": "192.0.2.10:5555", "Brand": "Demo", "Model": "WiFi", "custom": "kept"},
+            "ipv6": {"ip": "[2001:db8::1]:5555", "Aversion": "14"},
+        }
+        source.write_text(yaml.safe_dump(snapshot), encoding="utf-8")
+        DeviceStore.initialize_empty()
+        DeviceStore.load()
+        expected = {key: snapshot[key] for key in ("wifi", "ipv6")}
+        assert dict(DeviceStore.get_all()) == expected
+        assert yaml.safe_load(user_path.read_text("utf-8")) == expected
+        if legacy:
+            assert yaml.safe_load(legacy_path.read_text("utf-8")) == snapshot
+        with patch.object(DeviceStore, "_persist_snapshot") as persist:
+            DeviceStore.load()
+        persist.assert_not_called()
+
+
+def test_history_cleanup_write_failure_still_filters_list_and_can_retry(tmp_path):
+    with _DeviceStoreState(), patch("models.device_store.LogService") as log_service:
+        store_path = tmp_path / "connected_devices.yaml"
+        snapshot = {"usb": {"ip": "usb-demo"}, "wifi": {"ip": "192.0.2.10:5555"}}
+        store_path.write_text(yaml.safe_dump(snapshot), encoding="utf-8")
+        DeviceStore._file_path = str(store_path)
+        DeviceStore._legacy_file_path = str(tmp_path / "missing.yaml")
+        DeviceStore.initialize_empty()
+        with patch.object(DeviceStore, "_persist_snapshot", side_effect=OSError("blocked")):
+            DeviceStore.load()
+        assert dict(DeviceStore.get_all()) == {"wifi": snapshot["wifi"]}
+        assert yaml.safe_load(store_path.read_text("utf-8")) == snapshot
+        assert log_service.return_value.log.call_args.args[0] == "WARNING"
+        DeviceStore.save()
+        assert yaml.safe_load(store_path.read_text("utf-8")) == {"wifi": snapshot["wifi"]}
+
+
 def test_device_store_concurrent_upserts_keep_all_devices(tmp_path):
     with _DeviceStoreState():
         DeviceStore._file_path = str(tmp_path / "config" / "connected_devices.yaml")
@@ -29,7 +103,7 @@ def test_device_store_concurrent_upserts_keep_all_devices(tmp_path):
         threads = [
             threading.Thread(
                 target=DeviceStore.upsert_devices,
-                args=([{"alias": f"d{i}", "ip": f"device-{i}", "Model": f"M{i}"}],),
+                args=([{"alias": f"d{i}", "ip": f"192.0.2.{i + 1}:5555", "Model": f"M{i}"}],),
             )
             for i in range(20)
         ]
@@ -40,7 +114,9 @@ def test_device_store_concurrent_upserts_keep_all_devices(tmp_path):
 
         stored = yaml.safe_load((tmp_path / "config" / "connected_devices.yaml").read_text("utf-8"))
         assert len(stored) == 20
-        assert {item["ip"] for item in stored.values()} == {f"device-{i}" for i in range(20)}
+        assert {item["ip"] for item in stored.values()} == {
+            f"192.0.2.{i + 1}:5555" for i in range(20)
+        }
 
 
 def test_device_store_failed_replace_keeps_previous_file(tmp_path, monkeypatch):
@@ -132,7 +208,7 @@ def test_device_store_load_tolerates_trailing_garbage_and_rewrites(tmp_path):
         store_path.parent.mkdir(parents=True)
         # 模拟端点防护在文件尾部附加的 4KB 扫描块：首个文档合法，尾部是二进制垃圾。
         store_path.write_bytes(
-            b"device_a:\n  ip: a\n" + b"\x00\x01\x02" + b"\x00" * 4096
+            b"device_a:\n  ip: 192.0.2.1:5555\n" + b"\x00\x01\x02" + b"\x00" * 4096
         )
         DeviceStore._file_path = str(store_path)
         DeviceStore._legacy_file_path = str(tmp_path / "missing.yaml")
@@ -140,10 +216,10 @@ def test_device_store_load_tolerates_trailing_garbage_and_rewrites(tmp_path):
 
         DeviceStore.load()
 
-        assert DeviceStore.get_all() == [("device_a", {"ip": "a"})]
+        assert DeviceStore.get_all() == [("device_a", {"ip": "192.0.2.1:5555"})]
         # 宽容解析成功后回写规范化文件，且不产生 corrupt 备份。
         rewritten = yaml.safe_load(store_path.read_text("utf-8"))
-        assert rewritten == {"device_a": {"ip": "a"}}
+        assert rewritten == {"device_a": {"ip": "192.0.2.1:5555"}}
         assert not list(store_path.parent.glob("connected_devices.yaml.corrupt-*"))
         log_service.return_value.log.assert_called_once()
 
@@ -152,7 +228,7 @@ def test_device_store_load_retries_transient_oserror(tmp_path, monkeypatch):
     with _DeviceStoreState(), patch("models.device_store.LogService") as log_service:
         store_path = tmp_path / "config" / "connected_devices.yaml"
         store_path.parent.mkdir(parents=True)
-        store_path.write_text("device_a:\n  ip: a\n", encoding="utf-8")
+        store_path.write_text("device_a:\n  ip: 192.0.2.1:5555\n", encoding="utf-8")
         DeviceStore._file_path = str(store_path)
         DeviceStore._legacy_file_path = str(tmp_path / "missing.yaml")
         DeviceStore.initialize_empty()
@@ -171,7 +247,7 @@ def test_device_store_load_retries_transient_oserror(tmp_path, monkeypatch):
             DeviceStore.load()
 
         assert calls["count"] == 2
-        assert DeviceStore.get_all() == [("device_a", {"ip": "a"})]
+        assert DeviceStore.get_all() == [("device_a", {"ip": "192.0.2.1:5555"})]
         log_service.write_developer_console.assert_not_called()
 
 
