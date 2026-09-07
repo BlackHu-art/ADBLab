@@ -32,6 +32,7 @@ from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     assert_text_fits,
     mapped_rect,
+    wait_for_stable_geometry,
     wait_until,
 )
 
@@ -1185,7 +1186,7 @@ def test_all_embedded_feature_pages_remain_reachable_on_short_workspace(qt_appli
         targets = (
             ("devices", "files", "status_bar", True),
             ("apps", "manager", "status_bar", True),
-            ("apps", "media", "_bottom_bar", False),
+            ("apps", "media", "_details_bar", False),
             ("system", "logcat", "status_bar", True),
             ("system", "performance", "start_btn", True),
         )
@@ -1206,6 +1207,11 @@ def test_all_embedded_feature_pages_remain_reachable_on_short_workspace(qt_appli
                 qt_application.processEvents()
 
                 page = host.stack.currentWidget()
+                if feature == "media":
+                    # 元数据按实际宽度异步重排，滚动边界必须在尺寸收敛后取样。
+                    wait_for_stable_geometry(qt_application, (
+                        frame, host.content_scroll.viewport(), page, page._details_bar,
+                    ))
                 provider = getattr(page, "workspace_content_minimum_size", None)
                 minimum = provider() if callable(provider) else page.minimumSizeHint()
                 minimum = minimum.expandedTo(page.minimumSize())

@@ -168,6 +168,11 @@ class _FeatureStack(QStackedWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        # 当前页实际铺满叠页区域；清除 QStackedLayout 的默认边距，避免响应式
+        # 控件在布局几何尚不可用时把默认左右留白重复扣入可用宽度。
+        stack_layout = self.layout()
+        assert stack_layout is not None
+        stack_layout.setContentsMargins(0, 0, 0, 0)
         self._content_minimum = QSize()
 
     def set_content_minimum_size(self, size: QSize) -> None:

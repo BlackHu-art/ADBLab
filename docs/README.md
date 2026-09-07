@@ -1,82 +1,50 @@
 # ADBLab 项目知识库
 
-本知识库是 ADBLab 当前实现的长期维护入口，按四区组织：现状事实、决策、操作指南和过程归档。
-结论以仓库代码、配置、测试和构建脚本为依据；不能由仓库确认的内容统一标记为"待确认"。修改代码时，
-先从本页定位必读文档，再追踪入口、调用链、失败路径、线程/进程清理和现有测试。
+本知识库描述当前实现。代码、配置与可执行测试是事实来源；实机、许可或部署条件无法从仓库
+确认时标记为“待确认”。历史 ADR 和验收记录只供追溯，不作为当前实现或门禁要求。
 
-## 四区说明
+## 按任务查阅
 
-| 分区 | 目录 | 内容 | 更新规则 |
-| --- | --- | --- | --- |
-| 现状事实 | `docs/project-knowledge/` | 当前实现的架构、模块、流程、数据、依赖、术语和风险账本 | 代码/配置变化时同步更新 |
-| 决策 | `docs/architecture/` | ADR 决策留痕 | 新增决策时追加，不回改历史 ADR |
-| 操作指南 | `docs/guides/` | 已验证的构建、运行、测试命令与注释风格规范 | 命令/门禁变化时同步更新 |
-| 过程归档 | `docs/archive/` | 阶段账本和历史卫生检查 | 只归档不更新 |
-
-单源规则：每个事实只在一篇文档展开，其余文档用链接指回，不复述；风险条目只进
-[project-knowledge/RISKS_AND_DEBT.md](project-knowledge/RISKS_AND_DEBT.md)。完整约定见
-[CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)。
-
-## 当前约束入口
-
-| 约束 | 唯一维护位置 |
+| 需要了解或修改 | 文档与维护边界 |
 | --- | --- |
-| 协作、授权、修改与清理边界 | [AGENTS.md](../AGENTS.md) |
-| 测试范围、规范、隔离、注释 | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 环境、构建、版本与发布 | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
-| 事实核实、链接、归档与清理 | [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md) |
+| 项目用途与能力 | [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md) |
+| 功能在哪、从哪里测试 | [MODULE_MAP](project-knowledge/MODULE_MAP.md) |
+| 分层、对象归属、并发与关闭 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md) |
+| 导航、设备目标、业务成功/失败/取消路径 | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md) |
+| 数据对象、配置字段、存储与保留 | [DATA_FLOW](project-knowledge/DATA_FLOW.md) |
+| 依赖、外部工具及命令边界 | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md) |
+| 未闭环问题与验证缺口 | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
+| 项目专有术语 | [glossary](project-knowledge/glossary.md) |
+| 环境、运行、翻译资源、打包与版本 | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
+| 测试选择、隔离、质量工具与注释规范 | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
+| 协作、授权与修改范围 | [AGENTS.md](../AGENTS.md) |
+| 文档组织、事实核实与清理 | [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md) |
 
-历史 ADR 中的“每步全量”及归档测试结果只适用于当时任务。当前验证按测试指南选择；打开历史
-文档、进行项目审计或结束长任务都不会自动触发全量测试。
+快速入门先读概览和模块地图；修改具体行为时再读对应流程、架构或数据章节，沿代码调用链
+核对失败、取消和清理路径。仅阅读知识库或修改文档不触发全量测试，验证按测试指南选择。
 
-## 快速阅读路径
+## 分区
 
-| 场景 | 先读 | 再读 |
-| --- | --- | --- |
-| 快速理解项目 | [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)、[glossary](project-knowledge/glossary.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
-| 修改启动、分层、线程或关闭逻辑 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)、[MODULE_MAP](project-knowledge/MODULE_MAP.md) | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 修改具体功能模块 | [MODULE_MAP](project-knowledge/MODULE_MAP.md) | 对应 [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md) 章节、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 修改 ADB/外部命令/平台服务边界 | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
-| 修改配置、持久化或用户数据 | [DATA_FLOW](project-knowledge/DATA_FLOW.md) | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
-| 修改 Remote 或 MobilePerf | [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)、[MODULE_MAP](project-knowledge/MODULE_MAP.md) | [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 修改日志、注释或文档字符串 | [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md)（注释规范章节） | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
-| 构建、打包、发布或 CI | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)、[TESTING_GUIDE](guides/TESTING_GUIDE.md) | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
+| 分区 | 内容与更新方式 |
+| --- | --- |
+| `project-knowledge/` | 当前事实；与代码同步，带核实日期 |
+| `guides/` | 运行和维护方法；命令及规则变化时更新 |
+| `architecture/adr/` | 决策缘由；保留历史，不维护当前进度 |
+| `archive/` | 有追溯价值的阶段材料；不回改正文 |
 
-## 文档地图
+每项事实只在一处展开，其他页面链接引用；界面局部排版和已修复问题不逐条堆入架构页。
+未闭环事项集中在风险账本，临时分支、测试数量和验收结果不进入现状文档。
 
-### 现状事实（project-knowledge/）
+## 决策索引
 
-- [PROJECT_OVERVIEW](project-knowledge/PROJECT_OVERVIEW.md)：项目目标、用户、能力、技术栈、运行环境和当前实现边界。
-- [glossary](project-knowledge/glossary.md)：项目专有名词及对应代码概念。
-- [ARCHITECTURE](project-knowledge/ARCHITECTURE.md)：总体分层、运行时组件、初始化/关闭、线程/进程模型和架构边界。
-- [MODULE_MAP](project-knowledge/MODULE_MAP.md)：模块位置、职责边界、主要入口和代表性测试。
-- [BUSINESS_FLOW](project-knowledge/BUSINESS_FLOW.md)：启动、设备、应用、安装批次、Monkey、诊断、文件、Remote、MobilePerf 和关闭链路。
-- [DATA_FLOW](project-knowledge/DATA_FLOW.md)：核心数据对象、来源、转换、存储、生命周期、状态变化，以及文件型存储、设置字段与无数据库结论。
-- [DEPENDENCY_MAP](project-knowledge/DEPENDENCY_MAP.md)：内部依赖方向、第三方依赖、外部系统、外部边界与 ADB 命令接口、依赖治理建议。
-- [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)：仅保留尚未闭环的缺陷、安全风险和技术债。
+- [0001 增量迁移](architecture/adr/0001-incremental-vnext.md)
+- [0002 Operation 契约](architecture/adr/0002-operation-contract.md)
+- [0003 项目结构](architecture/adr/0003-project-structure.md)
+- [0004 Services 与 MobilePerf 隔离](architecture/adr/0004-services-package.md)
+- [0005 命令/进程执行接口](architecture/adr/0005-exec-interface.md)
+- [0006 设置 schema](architecture/adr/0006-appsettings-schema.md)
 
-### 决策（architecture/）
+历史阶段与验收索引见 [archive/README](archive/README.md)。
 
-- [0001-incremental-vnext](architecture/adr/0001-incremental-vnext.md)：vNext 增量迁移决策。
-- [0002-operation-contract](architecture/adr/0002-operation-contract.md)：OperationManager 契约决策。
-- [0003-project-structure](architecture/adr/0003-project-structure.md)：项目结构优化的分阶段决策。
-- [0004-services-package](architecture/adr/0004-services-package.md)：services/ 顶层包移动与 MobilePerf 内核实例化决策。
-- [0005-exec-interface](architecture/adr/0005-exec-interface.md)：命令/进程执行接口迁移到 `core/exec.py` 的决策。
-- [0006-appsettings-schema](architecture/adr/0006-appsettings-schema.md)：AppSettings schema 迁移与数据清理决策。
-
-### 操作指南（guides/）
-
-- [BUILD_AND_RUN](guides/BUILD_AND_RUN.md)：经仓库或实际执行验证的安装、启动、测试、PyInstaller 和 CI/CD 方法。
-- [TESTING_GUIDE](guides/TESTING_GUIDE.md)：测试分层、目录、Mock 方式、验证命令、风险账本入口、提交前门禁，以及中文注释与文档风格规范。
-
-## 维护与归档
-
-- 修改代码时按“入口 → 调用链 → 失败/取消 → 清理 → 测试”追踪；模块入口见
-  [MODULE_MAP](project-knowledge/MODULE_MAP.md)，未解决事项只记录在
-  [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md)。
-- 不在长期知识库保存分支、HEAD、提交数、测试数或临时工作树状态；版本以
-  `utils/app_metadata.py` 为准，验证结果写入对应任务或发布记录。
-- 写作、frontmatter、单源和陈旧检查规则见 [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md)；文档修改后运行
-  `.\.venv\Scripts\python.exe scripts/check_doc_links.py`。
-- 阶段账本和历史检查见 [archive/](archive/README.md)。归档只用于追溯；当前事实以代码、测试和
-  `project-knowledge/` 为准，ADR 只解释决策缘由。
+文档修改后运行 `.\.venv\Scripts\python.exe scripts/check_doc_links.py` 和 `git diff --check`；
+链接/frontmatter 校验不能替代正文与代码的核对。

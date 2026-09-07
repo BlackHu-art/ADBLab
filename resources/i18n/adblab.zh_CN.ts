@@ -69,8 +69,20 @@
             <translation>实际大小	Ctrl+1</translation>
         </message>
         <message>
+            <source>Actual size</source>
+            <translation>实际大小</translation>
+        </message>
+        <message>
             <source>Actual size (Ctrl+1)</source>
             <translation>实际大小（Ctrl+1）</translation>
+        </message>
+        <message>
+            <source>Add images</source>
+            <translation>添加图片</translation>
+        </message>
+        <message>
+            <source>Add local images (Ctrl+O)</source>
+            <translation>添加本地图片 (Ctrl+O)</translation>
         </message>
         <message>
             <source>Android {value}设备</source>
@@ -143,6 +155,10 @@
         <message>
             <source>CPU 负载</source>
             <translation>CPU 负载</translation>
+        </message>
+        <message>
+            <source>Choose screenshot</source>
+            <translation>选择截图</translation>
         </message>
         <message>
             <source>Click Delete again to confirm</source>
@@ -413,6 +429,18 @@
             <translation>图片尺寸、文件大小和修改时间</translation>
         </message>
         <message>
+            <source>Image zoom</source>
+            <translation>图片缩放</translation>
+        </message>
+        <message>
+            <source>Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)</source>
+            <translation>图片 (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;所有文件 (*)</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>信息</translation>
+        </message>
+        <message>
             <source>Inspect captured device screenshots</source>
             <translation>查看已捕获的设备截图</translation>
         </message>
@@ -527,6 +555,10 @@
         <message>
             <source>Monkey 测试正在运行，请先停止测试</source>
             <translation>Monkey 测试正在运行，请先停止测试</translation>
+        </message>
+        <message>
+            <source>More image actions</source>
+            <translation>更多图片操作</translation>
         </message>
         <message>
             <source>Motion events</source>
@@ -651,6 +683,10 @@ Modified: {value7}</source>
         <message>
             <source>Open file location</source>
             <translation>打开文件位置</translation>
+        </message>
+        <message>
+            <source>Open folder</source>
+            <translation>打开文件夹</translation>
         </message>
         <message>
             <source>Open the latest MobilePerf result</source>
@@ -909,6 +945,14 @@ Modified: {value7}</source>
             <translation>Root</translation>
         </message>
         <message>
+            <source>Rotate</source>
+            <translation>旋转</translation>
+        </message>
+        <message>
+            <source>Rotate preview clockwise (Ctrl+R)</source>
+            <translation>顺时针旋转预览 (Ctrl+R)</translation>
+        </message>
+        <message>
             <source>Running</source>
             <translation>正在运行</translation>
         </message>
@@ -1001,6 +1045,10 @@ Modified: {value7}</source>
             <translation>Shell、系统设置、端口转发和模拟器工具</translation>
         </message>
         <message>
+            <source>Show image details</source>
+            <translation>显示图片详情</translation>
+        </message>
+        <message>
             <source>Show result charts</source>
             <translation>显示结果图表</translation>
         </message>
@@ -1015,6 +1063,10 @@ Modified: {value7}</source>
         <message>
             <source>Smooth</source>
             <translation>流畅</translation>
+        </message>
+        <message>
+            <source>Some selected files could not be opened as images</source>
+            <translation>部分所选文件无法作为图片打开</translation>
         </message>
         <message>
             <source>Start failed: {value0}</source>
@@ -1169,8 +1221,16 @@ Modified: {value7}</source>
             <translation>缩小	Ctrl+-</translation>
         </message>
         <message>
+            <source>Zoom in</source>
+            <translation>放大</translation>
+        </message>
+        <message>
             <source>Zoom in (Ctrl+=)</source>
             <translation>放大（Ctrl+=）</translation>
+        </message>
+        <message>
+            <source>Zoom out</source>
+            <translation>缩小</translation>
         </message>
         <message>
             <source>Zoom out (Ctrl+-)</source>

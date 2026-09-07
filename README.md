@@ -71,7 +71,7 @@ py -3.11 -m venv .venv
 ## 开发约束
 
 协作、修改、清理和授权边界统一维护在 [`AGENTS.md`](AGENTS.md)，
-各类约束的索引见 [`docs/README.md`](docs/README.md#当前约束入口)。实现契约见
+各类约束的索引见 [`docs/README.md`](docs/README.md#按任务查阅)。实现契约见
 [`ARCHITECTURE.md`](docs/project-knowledge/ARCHITECTURE.md) 和
 [`DEPENDENCY_MAP.md`](docs/project-knowledge/DEPENDENCY_MAP.md)。
 

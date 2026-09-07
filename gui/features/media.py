@@ -5,23 +5,17 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap, QWheelEvent
-from PySide6.QtWidgets import (
-    QBoxLayout,
-    QFrame,
-    QGraphicsPixmapItem,
-    QGraphicsScene,
-    QGraphicsView,
-    QListWidgetItem,
-    QWidget,
-)
-from qfluentwidgets import HeaderCardWidget, TransparentToolButton
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtGui import QPixmap, QWheelEvent
+from PySide6.QtWidgets import QBoxLayout, QWidget
+from qfluentwidgets import HeaderCardWidget
 from shiboken6 import isValid
 
 from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
 from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
 from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
+from gui.dialogs.screenshot_viewer_widgets import ScreenshotFlipView, ScreenshotPipsPager
+from gui.i18n import tr
 from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
 
@@ -38,9 +32,8 @@ class ScreenshotPage(QWidget):
     back_requested = Signal()
     image_count_changed = Signal(int)
 
-    DELETE_CONFIRM_TIMEOUT_MS = 4000
-    _scene: QGraphicsScene
-    _view: QGraphicsView
+    _view: ScreenshotFlipView
+    _pager: ScreenshotPipsPager
 
     def __init__(
         self,
@@ -59,14 +52,13 @@ class ScreenshotPage(QWidget):
         self._zoom_factor = 1.0
         self._fit_to_window = True
         self._original_pixmap: QPixmap | None = None
-        self._pixmap_item: QGraphicsPixmapItem | None = None
-        self._icon_buttons: list[TransparentToolButton] = []
-        self._reflowing_bottom_bar = False
-        self._bottom_bar_plan_fingerprint: tuple[object, ...] | None = None
+        self._display_pixmap: QPixmap | None = None
+        self._display_path = ""
+        self._rotation_by_path: dict[str, int] = {}
+        self._reported_image_count = 0
         self._active = False
         self._disposed = False
         self._style_signals_connected = False
-        self._pending_delete_path = ""
         self._device_tools: QWidget | None = None
         self._device_tools_parking: QWidget | None = None
         self._device_tools_header_was_hidden = False
@@ -77,19 +69,16 @@ class ScreenshotPage(QWidget):
         self._fit_resize_timer = QTimer(self)
         self._fit_resize_timer.setSingleShot(True)
         self._fit_resize_timer.timeout.connect(self._apply_fit)
-        self._bottom_bar_reflow_timer = QTimer(self)
-        self._bottom_bar_reflow_timer.setSingleShot(True)
-        self._bottom_bar_reflow_timer.timeout.connect(self._reflow_bottom_bar)
-        self._delete_confirm_timer = QTimer(self)
-        self._delete_confirm_timer.setSingleShot(True)
-        self._delete_confirm_timer.timeout.connect(self._reset_delete_confirmation)
+        self._metadata_reflow_timer = QTimer(self)
+        self._metadata_reflow_timer.setSingleShot(True)
+        self._metadata_reflow_timer.timeout.connect(self._refresh_metadata)
         self._apply_theme()
-        self._rebuild_thumbnails()
+        self._rebuild_images()
 
         if self._image_paths:
             self._navigate_to(self._current_idx)
         else:
-            self._show_placeholder("No screenshot available")
+            self._show_placeholder(tr("No screenshot available"))
         self._update_nav_visibility()
         self._apply_theme()
         self._connect_style_signals()
@@ -198,7 +187,6 @@ class ScreenshotPage(QWidget):
 
         if self._disposed:
             return
-        previous_count = len(self._image_paths)
         incoming, explicit_index, focus_new = self._paths_from_payload(payload)
         existing = {
             os.path.normcase(os.path.abspath(path)) for path in self._image_paths
@@ -214,7 +202,7 @@ class ScreenshotPage(QWidget):
             existing.add(identity)
 
         if first_added_index is not None:
-            self._rebuild_thumbnails()
+            self._rebuild_images()
             target_index = first_added_index if focus_new else self._current_idx
             if explicit_index is not None:
                 target_index = max(0, min(explicit_index, len(self._image_paths) - 1))
@@ -222,11 +210,10 @@ class ScreenshotPage(QWidget):
         elif self._image_paths:
             self._navigate_to(self._current_idx)
         else:
-            self._show_placeholder("No screenshot available")
-        if len(self._image_paths) != previous_count:
-            self.image_count_changed.emit(len(self._image_paths))
+            self._show_placeholder(tr("No screenshot available"))
+        self._notify_image_count()
         self._apply_theme()
-        self._schedule_bottom_bar_reflow()
+        self._schedule_metadata_reflow()
 
     def deactivate(self, reason: str = "navigation") -> None:
         """暂停瞬态 UI 工作；截图列表保留供同一会话再次激活。"""
@@ -234,8 +221,9 @@ class ScreenshotPage(QWidget):
         self._active = False
         self.setProperty("deactivation_reason", reason)
         self._fit_resize_timer.stop()
-        self._bottom_bar_reflow_timer.stop()
-        self._reset_delete_confirmation()
+        self._metadata_reflow_timer.stop()
+        self._view.stop_animations()
+        self._pager.stop_animations()
 
     def request_dispose(self, reason: str = "user") -> bool:
         """同步释放页面资源；返回 ``True`` 表示宿主可立即移除页面。"""
@@ -246,12 +234,14 @@ class ScreenshotPage(QWidget):
         self._disposed = True
         self._release_device_tools()
         self._disconnect_style_signals()
-        self._scene.clear()
-        self._placeholder_text = None
-        self._original_pixmap = None
-        self._pixmap_item = None
+        self._original_pixmap = self._display_pixmap = None
+        self._display_path = ""
         self._image_paths.clear()
-        self.image_count_changed.emit(0)
+        self._rotation_by_path.clear()
+        self._view.clear()
+        self._pager.clear()
+        self._update_actions_enabled(False)
+        self._notify_image_count()
         return True
 
     def register_shutdown_tasks(
@@ -292,165 +282,131 @@ class ScreenshotPage(QWidget):
                 pass
         self._style_signals_connected = False
 
-    # ── 主题与界面控制器委托 wrapper ──────────────────────────────────────
+    def _notify_image_count(self) -> None:
+        """每次实际数量变化只通知一次，批次过滤和删除共用此边界。"""
+
+        count = len(self._image_paths)
+        if count != self._reported_image_count:
+            self._reported_image_count = count
+            if not self._disposed:
+                self._apply_theme()
+            self.image_count_changed.emit(count)
+
+    def _schedule_fit(self) -> None:
+        """工具换行也会改变画布，适应模式在事件循环收敛后重新计算比例。"""
+
+        timer = getattr(self, "_fit_resize_timer", None)
+        if timer is not None and not self._disposed and self._fit_to_window:
+            timer.start(0)
 
     def _init_page(self):
-        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_page()
+        return self._ui_controller._init_page()
 
     def _init_shortcuts(self):
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._init_shortcuts()
-
-    @staticmethod
-    def _theme_color(key: str) -> str:
-        return ScreenshotViewerUI._theme_color(key)
-
-    def _apply_theme(self, _value=None):
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._apply_theme(_value)
+        return self._ui_controller._init_shortcuts()
 
     def _init_ui(self):
-        return (getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self))._init_ui()
+        return self._ui_controller._init_ui()
 
-    def _build_canvas(self) -> QFrame:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._build_canvas()
+    def _apply_theme(self, _value=None):
+        return self._ui_controller._apply_theme(_value)
 
-    def _build_bottom_dock(self) -> QFrame:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._build_bottom_dock()
+    def _refresh_metadata(self):
+        return self._ui_controller._refresh_metadata()
 
-    def _build_bottom_bar(self) -> QFrame:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._build_bottom_bar()
+    def _schedule_metadata_reflow(self):
+        return self._ui_controller._schedule_metadata_reflow()
 
-    @staticmethod
-    def _bottom_bar_group(object_name: str) -> QFrame:
-        return ScreenshotViewerUI._bottom_bar_group(object_name)
-
-    @staticmethod
-    def _group_minimum_size(group: QFrame) -> QSize:
-        return ScreenshotViewerUI._group_minimum_size(group)
-
-    def _reflow_bottom_bar(self) -> None:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._reflow_bottom_bar()
-
-    def _schedule_bottom_bar_reflow(self) -> None:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._schedule_bottom_bar_reflow()
-
-    def _tool_button(self, icon_name: str, tooltip: str) -> TransparentToolButton:
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._tool_button(icon_name, tooltip)
-
-    def _refresh_button_icons(self):
-        return (
-            getattr(self, "_ui_controller", None) or ScreenshotViewerUI(self)
-        )._refresh_button_icons()
-
-    # ── 导航/缩放控制器委托 wrapper ───────────────────────────────────────
-
-    def _current_path(self) -> str:
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._current_path()
+    def _current_path(self):
+        return self._nav_controller._current_path()
 
     def _navigate_to(self, index: int):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._navigate_to(index)
+        return self._nav_controller._navigate_to(index)
 
     def _show_pixmap(self, pixmap: QPixmap):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._show_pixmap(pixmap)
+        return self._nav_controller._show_pixmap(pixmap)
 
     def _show_placeholder(self, text: str):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._show_placeholder(text)
+        return self._nav_controller._show_placeholder(text)
 
-    def _refresh_placeholder_color(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._refresh_placeholder_color()
+    def _rebuild_images(self):
+        return self._nav_controller._rebuild_images()
 
-    def _rebuild_thumbnails(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._rebuild_thumbnails()
-
-    def _thumbnail_icon(self, path: str) -> QIcon:
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._thumbnail_icon(path)
-
-    def _on_thumbnail_clicked(self, item: QListWidgetItem):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._on_thumbnail_clicked(item)
-
-    def _sync_thumbnail_selection(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._sync_thumbnail_selection()
+    def _sync_image_selection(self):
+        return self._nav_controller._sync_image_selection()
 
     def navigate_prev(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        ).navigate_prev()
+        return self._nav_controller.navigate_prev()
 
     def navigate_next(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        ).navigate_next()
+        return self._nav_controller.navigate_next()
 
     def _apply_fit(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._apply_fit()
+        return self._nav_controller._apply_fit()
 
-    def _set_zoom(self, factor: float, *, fit: bool = False, anchor_under_mouse: bool = False):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._set_zoom(factor, fit=fit, anchor_under_mouse=anchor_under_mouse)
+    def _set_zoom(self, factor: float, *, fit: bool = False):
+        return self._nav_controller._set_zoom(factor, fit=fit)
 
     def _zoom_from_wheel(self, delta: int):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._zoom_from_wheel(delta)
+        return self._nav_controller._zoom_from_wheel(delta)
 
     def zoom_in(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)).zoom_in()
+        return self._nav_controller.zoom_in()
 
     def zoom_out(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)).zoom_out()
+        return self._nav_controller.zoom_out()
 
     def _reset_zoom(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._reset_zoom()
+        return self._nav_controller._reset_zoom()
 
     def _actual_size(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._actual_size()
+        return self._nav_controller._actual_size()
 
     def toggle_fit_actual(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        ).toggle_fit_actual()
+        return self._nav_controller.toggle_fit_actual()
 
     def _update_zoom_label(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._update_zoom_label()
+        return self._nav_controller._update_zoom_label()
 
     def _update_info(self):
-        return (getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self))._update_info()
+        return self._nav_controller._update_info()
+
+    def _update_nav_visibility(self):
+        return self._nav_controller._update_nav_visibility()
+
+    def _update_nav_label(self):
+        return self._nav_controller._update_nav_label()
+
+    def _update_actions_enabled(self, enabled: bool):
+        return self._nav_controller._update_actions_enabled(enabled)
+
+    def _add_images(self):
+        return self._actions_controller._add_images()
+
+    def _rotate_image(self):
+        return self._actions_controller._rotate_image()
+
+    def _show_image_info(self):
+        return self._actions_controller._show_image_info()
+
+    def copy_to_clipboard(self):
+        return self._actions_controller.copy_to_clipboard()
+
+    def _delete_file(self):
+        return self._actions_controller._delete_file()
+
+    def _on_context_menu(self, pos):
+        return self._actions_controller._on_context_menu(pos)
+
+    def _open_file_location(self):
+        return (
+            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
+        )._open_file_location()
+
+    def _flash_status(
+        self, text: str, timeout_ms: int | None = None, *, level: ToastLevel = "info",
+    ):
+        return self._actions_controller._flash_status(text, timeout_ms, level=level)
 
     @staticmethod
     def _format_size(path: str) -> str:
@@ -460,67 +416,9 @@ class ScreenshotPage(QWidget):
     def _format_modified_time(path: str) -> str:
         return ScreenshotViewerNav._format_modified_time(path)
 
-    def _update_nav_visibility(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._update_nav_visibility()
-
-    def _update_nav_label(self):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._update_nav_label()
-
-    def _update_actions_enabled(self, enabled: bool):
-        return (
-            getattr(self, "_nav_controller", None) or ScreenshotViewerNav(self)
-        )._update_actions_enabled(enabled)
-
-    # ── 操作控制器委托 wrapper ─────────────────────────────────────────────
-
-    def copy_to_clipboard(self):
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        ).copy_to_clipboard()
-
-    def _flash_status(
-        self, text: str, timeout_ms: int | None = None, *, level: ToastLevel = "info",
-    ):
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._flash_status(text, timeout_ms, level=level)
-
-    def _open_file_location(self):
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._open_file_location()
-
-    def _delete_file(self):
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._delete_file()
-
-    def _reset_delete_confirmation(self) -> None:
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._reset_delete_confirmation()
-
-    def _on_context_menu(self, pos):
-        return (
-            getattr(self, "_actions_controller", None) or ScreenshotViewerActions(self)
-        )._on_context_menu(pos)
-
-    # ── 生命周期与事件 ─────────────────────────────────────────────────────
-
     def eventFilter(self, watched, event):
-        if (
-            event.type() == QEvent.Type.Resize
-            and self._active
-            and not self._disposed
-            and self._fit_to_window
-            and watched is self._view.viewport()
-        ):
-            # 工具换行可能只改变内部画布，页面本身不会收到 resizeEvent。
-            self._fit_resize_timer.start(0)
+        if event.type() == QEvent.Type.Resize and watched is self._view.viewport():
+            self._schedule_fit()
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
@@ -536,9 +434,9 @@ class ScreenshotPage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "_bottom_bar"):
-            self._schedule_bottom_bar_reflow()
-        if getattr(self, "_fit_to_window", False):
-            self._fit_resize_timer.start(0)
+        if hasattr(self, "_details_bar"):
+            self._schedule_metadata_reflow()
+        self._schedule_fit()
+
 
 __all__ = ["ScreenshotPage"]

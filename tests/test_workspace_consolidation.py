@@ -4,16 +4,20 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QFrame, QWidget
 from qfluentwidgets import HeaderCardWidget
 
 from gui.panels.app_panel import AppPanel
 from gui.panels.remote_panel import RemotePanel
 from gui.panels.side_panel_signals import SidePanelSignals
 from gui.panels.system_panel import SystemPanel
+from gui.styles import BaseStyles
 from gui.widgets.category_stack import AdaptiveCategoryStack
+from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
 
 
 @pytest.fixture
@@ -209,3 +213,53 @@ def test_merged_system_keeps_reboot_mode_action_for_batch_targets(qt_application
     system.btn_reboot_mode.click()
     assert requests.count() == 1
     assert requests.at(0) == [["device-a", "device-b"], "recovery"]
+
+
+@pytest.mark.parametrize("width", (860, 1280))
+@pytest.mark.parametrize("font_size", (12, 18))
+def test_screen_action_rows_align_with_preview_in_real_workspace(
+    qt_application, monkeypatch, width, font_size,
+):
+    """工具借入截图页后，窄宽窗口与大字体下都使用画布相同的左右边界。"""
+
+    monkeypatch.setattr(
+        BaseStyles,
+        "font_for_role",
+        classmethod(
+            lambda _cls, _role, size=None: QFont("Segoe UI", font_size if size is None else size)
+        ),
+    )
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("large", QSize(1920, 1080))),
+    )
+    frame.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
+    try:
+        frame.show()
+        frame.resize(width, 840)
+        assert frame._open_workspace_feature("apps", "media")
+        host = frame._workspace_feature_hosts["apps"]
+        page = host.stack.currentWidget()
+        apps = frame.left_panel._apps_tab
+        canvas = page.findChild(QFrame, "canvasFrame")
+        assert canvas is not None
+        groups = (
+            (apps.email_text_sender, apps.btn_send_text),
+            (
+                apps.btn_screenshot, apps.record_duration,
+                apps.btn_screen_record, apps.btn_stop_record,
+            ),
+        )
+        coordinator = frame.left_panel._responsive_coordinator
+        wait_until(qt_application, lambda: coordinator.diagnostics.stable)
+        wait_for_stable_geometry(qt_application, (page, canvas, *groups[0], *groups[1]))
+        assert canvas.isVisibleTo(frame)
+        canvas_rect = mapped_rect(canvas, page)
+        for controls in groups:
+            assert all(control.isVisibleTo(frame) for control in controls)
+            rects = tuple(mapped_rect(control, page) for control in controls)
+            assert abs(min(rect.left() for rect in rects) - canvas_rect.left()) <= 2
+            assert abs(max(rect.right() for rect in rects) - canvas_rect.right()) <= 2
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()

@@ -3,8 +3,8 @@
 import os
 import sys
 
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QImageReader
+from PySide6.QtWidgets import QApplication, QFileDialog
 from qfluentwidgets import RoundMenu
 from shiboken6 import isValid
 
@@ -12,7 +12,6 @@ from core.exec import ProcessRunner
 from gui.i18n import tr
 from gui.notifications import ToastLevel, show_toast
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import add_menu_action
 
 
 class ScreenshotViewerActions:
@@ -20,21 +19,70 @@ class ScreenshotViewerActions:
 
     def __init__(self, frame):
         self._frame = frame
-        self._delete_confirmation_notice: QWidget | None = None
+        self._image_dialog_open = False
+
+    def _add_images(self) -> None:
+        """本地多选只追加可解码图片；弹窗取消、重入或页面释放后不再改变会话。"""
+
+        frame = self._frame
+        if self._image_dialog_open or frame._disposed or not isValid(frame):
+            return
+        self._image_dialog_open = True
+        frame._add_action.setEnabled(False)
+        try:
+            paths, _selected_filter = QFileDialog.getOpenFileNames(
+                frame,
+                tr("Add images"),
+                os.path.dirname(frame._current_path()),
+                tr("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)"),
+            )
+            if not isValid(frame) or frame._disposed or not paths:
+                return
+            accepted = [
+                path for path in paths if os.path.isfile(path) and QImageReader(path).canRead()
+            ]
+            if accepted:
+                frame.receive_payload({"paths": accepted, "focus_new": True})
+            if len(accepted) != len(paths):
+                self._flash_status(
+                    tr("Some selected files could not be opened as images"), level="warning"
+                )
+        finally:
+            self._image_dialog_open = False
+            if isValid(frame) and not frame._disposed:
+                frame._add_action.setEnabled(True)
+
+    def _rotate_image(self) -> None:
+        """旋转只影响当前预览与复制方向，原始文件保持不变。"""
+
+        if not self._frame._disposed:
+            self._frame._nav_controller._rotate_image()
+
+    def _show_image_info(self) -> None:
+        """信息动作在命令栏和更多菜单中共享勾选状态，不替换当前图片。"""
+
+        if self._frame._disposed:
+            return
+        self._frame._info_label.setVisible(self._frame._info_action.isChecked())
+        self._frame._schedule_metadata_reflow()
 
     def copy_to_clipboard(self):
+        """复制当前浏览方向的完整图像，不使用降采样后的翻页预览。"""
+
+        if self._frame._disposed:
+            return
         path = self._frame._current_path()
         if not path:
             return
-        pixmap = self._frame._original_pixmap or QPixmap(path)
-        if not pixmap.isNull():
+        pixmap = self._frame._display_pixmap
+        if pixmap is not None and not pixmap.isNull():
             QApplication.clipboard().setPixmap(pixmap)
             self._flash_status(tr("Image copied"), level="success")
 
     def _flash_status(
         self, text: str, timeout_ms: int | None = None, *, level: ToastLevel = "info",
     ):
-        """完整反馈交给窗口 Toast，底栏始终保留当前截图元数据。"""
+        """完整反馈交给窗口 Toast，图片详情始终保留当前截图元数据。"""
 
         return show_toast(
             self._frame, tr("截图"), text, level=level, duration=timeout_ms,
@@ -54,22 +102,13 @@ class ScreenshotViewerActions:
         ProcessRunner().spawn(command)
 
     def _delete_file(self):
+        """单次触发删除当前截图文件；失败保留图片，成功后同步图库和圆点分页。"""
+
+        if self._frame._disposed:
+            return
         path = self._frame._current_path()
         if not path or not os.path.exists(path):
             return
-        if self._frame._pending_delete_path != path:
-            self._reset_delete_confirmation()
-            self._frame._pending_delete_path = path
-            self._frame._delete_btn.setToolTip(tr("Click again to confirm deletion"))
-            self._frame._delete_btn.setAccessibleName(tr("Confirm screenshot deletion"))
-            self._frame._delete_confirm_timer.start(self._frame.DELETE_CONFIRM_TIMEOUT_MS)
-            self._delete_confirmation_notice = self._flash_status(
-                tr("Click Delete again to confirm"),
-                self._frame.DELETE_CONFIRM_TIMEOUT_MS,
-            )
-            return
-
-        self._reset_delete_confirmation()
         try:
             os.remove(path)
         except OSError as exc:
@@ -81,60 +120,32 @@ class ScreenshotViewerActions:
             )
             return
         del self._frame._image_paths[self._frame._current_idx]
-        self._frame.image_count_changed.emit(len(self._frame._image_paths))
+        self._frame._current_idx = max(
+            0, min(self._frame._current_idx, len(self._frame._image_paths) - 1)
+        )
+        self._frame._rebuild_images()
         if not self._frame._image_paths:
-            self._frame._current_idx = 0
-            self._frame._rebuild_thumbnails()
             self._frame._show_placeholder(tr("No screenshot available"))
-            self._frame._apply_theme()
-            return
-        self._frame._rebuild_thumbnails()
-        self._frame._current_idx = min(self._frame._current_idx, len(self._frame._image_paths) - 1)
-        self._frame._navigate_to(self._frame._current_idx)
+        else:
+            self._frame._navigate_to(self._frame._current_idx)
+        self._frame._notify_image_count()
         self._frame._apply_theme()
 
-    def _reset_delete_confirmation(self) -> None:
-        """撤销尚未二次确认的删除意图，并恢复按钮语义。"""
-
-        self._frame._pending_delete_path = ""
-        notice, self._delete_confirmation_notice = self._delete_confirmation_notice, None
-        if notice is not None and isValid(notice):
-            notice.close()
-        timer = getattr(self._frame, "_delete_confirm_timer", None)
-        if timer is not None:
-            timer.stop()
-        button = getattr(self._frame, "_delete_btn", None)
-        if button is not None:
-            button.setToolTip(tr("Delete screenshot"))
-            button.setAccessibleName(tr("Delete screenshot"))
-
     def _on_context_menu(self, pos):
-        path = self._frame._current_path()
-        has_file = bool(path and os.path.exists(path))
+        """上下文菜单复用同一批 Action，不额外连接回调或产生独立启用状态。"""
+
+        if self._frame._disposed:
+            return
         menu = RoundMenu(parent=self._frame)
         menu.setFont(BaseStyles.font_for_role(FontRole.UI))
-
-        copy_action = add_menu_action(menu, tr("Copy Image\tCtrl+C"))
-        copy_action.triggered.connect(self._frame.copy_to_clipboard)
-        copy_action.setEnabled(has_file)
-
+        menu.addAction(self._frame._copy_action)
+        menu.addAction(self._frame._folder_action)
         menu.addSeparator()
-
-        folder_action = add_menu_action(menu, tr("Open File Location"))
-        folder_action.triggered.connect(self._frame._open_file_location)
-        folder_action.setEnabled(has_file)
-
-        delete_action = add_menu_action(menu, tr("Delete Screenshot"))
-        delete_action.triggered.connect(self._frame._delete_file)
-        delete_action.setEnabled(has_file)
-
+        menu.addAction(self._frame._rotate_action)
+        menu.addAction(self._frame._zoom_in_action)
+        menu.addAction(self._frame._zoom_out_action)
+        menu.addAction(self._frame._fit_action)
+        menu.addAction(self._frame._actual_action)
         menu.addSeparator()
-
-        add_menu_action(menu, tr("Zoom In\tCtrl+=")).triggered.connect(self._frame.zoom_in)
-        add_menu_action(menu, tr("Zoom Out\tCtrl+-")).triggered.connect(self._frame.zoom_out)
-        add_menu_action(menu, tr("Fit to Window\tCtrl+0")).triggered.connect(
-            self._frame._reset_zoom
-        )
-        add_menu_action(menu, tr("Actual Size\tCtrl+1")).triggered.connect(self._frame._actual_size)
-
-        menu.exec(self._frame._view.mapToGlobal(pos))
+        menu.addAction(self._frame._delete_action)
+        menu.exec(self._frame._view.viewport().mapToGlobal(pos))

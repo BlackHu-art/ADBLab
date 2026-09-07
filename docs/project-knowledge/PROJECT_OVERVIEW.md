@@ -12,14 +12,6 @@ ADBLab 是面向 Android 设备调试、应用测试和性能诊断的 PySide6 �
 logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，主入口为
 `main.py::_run_gui()`；版本只以 `utils/app_metadata.py::APP_VERSION` 为准。
 
-## 核心用户
-
-- Android 开发、测试和设备实验室人员：连接设备、查看属性、执行应用生命周期操作和收集诊断材料。
-- 性能与稳定性测试人员：运行 Monkey、MobilePerf、logcat、bugreport、ANR 和基础性能命令。
-- 需要低门槛投屏和远程输入的调试人员：通过 scrcpy 和持久 ADB shell 控制设备。
-
-仓库没有用户研究、权限角色或商业部署资料，因此实际用户规模、组织方式和生产 SLA 均为待确认。
-
 ## 主要业务能力
 
 1. 设备发现与连接：轮询 `adb devices`，连接/断开 TCP 设备，读取并持久化设备元数据；全局设备栏
@@ -31,8 +23,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出 CSV/XLSX 与设备信息。
 7. 辅助工具：主题/字体/窗口设置（含响应式重排与屏幕适配）、日志面板和结果文件查看。
 
-当前主界面是一个 qfluentwidgets `FluentWindow` 工作台，长期功能在主窗口内运行，消息、输入和系统
-文件选择等短生命周期交互仍使用瞬态窗口。完整页面路由与设备选择规则见
+当前主界面是 qfluentwidgets `FluentWindow` 工作台；长期功能内嵌，纯消息在窗口内提示，
+输入与系统文件选择保留瞬态交互。完整页面路由与设备选择规则见
 [BUSINESS_FLOW](BUSINESS_FLOW.md#workspace-路由目录)，组件与会话边界见 [ARCHITECTURE](ARCHITECTURE.md)。
 
 ## 应用类型与边界
@@ -56,21 +48,10 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 | 测试与静态检查 | pytest、Ruff、Pyright | `requirements-dev.txt`、`ruff.toml`、`pyproject.toml`、`tests/` |
 | 打包/发布 | PyInstaller、GitHub Actions、GitHub Release | `requirements-build.txt`、`ADBLab.spec`、`.github/workflows/Build-exe.yaml` |
 
-## 运行环境
+## 运行环境入口
 
-- CI 和 README 的标准解释器为 Python 3.11；仓库内开发环境统一为 `.venv`，完整工具链由
-  `requirements-dev.txt` 安装。Black/Ruff 配置目标为 Python 3.10 语法兼容，Pyright 的
-  `pyrightconfig.json` 使用 Python 3.11；这些目标不构成 Python 3.10 运行兼容性承诺。
-- Windows 开发运行优先使用仓库内 `scrcpy-win64/adb.exe` 和 `scrcpy.exe`；具体版本以工具本身为准。
-- 用户可写数据根目录由 `utils/user_data.py::user_data_root()` 决定：Windows 默认 `%LOCALAPPDATA%/ADBLab`；非 Windows 使用 XDG 配置目录或 `~/.config/ADBLab`。
-- 开发模式直接引用仓库资源；PyInstaller onefile 场景由 `utils/runtime_tools.py::bundled_tool_path()` 把长生命周期工具复制到稳定的用户运行时缓存。
+Python 与平台支持、环境安装和打包方法见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md)。
+配置与结果进入平台用户目录；资源定位和 onefile 工具缓存见 [DATA_FLOW](DATA_FLOW.md#文件型存储)。
 
-## 当前实现边界
-
-- 这是本地桌面应用，不提供 Web/RPC 服务；长期功能会话属于主窗口，瞬态交互不承担后台任务。
-  具体导航、设备上下文和会话生命周期由 [BUSINESS_FLOW](BUSINESS_FLOW.md) 与
-  [ARCHITECTURE](ARCHITECTURE.md) 单源维护。
-- 打包 CI 当前不运行 pytest；验证策略见 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。
-- 当前未解决的安全、并发、平台和发布问题只在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md) 维护。
-
-项目术语统一见 [glossary.md](glossary.md)。
+当前页面和设备选择规则见 [BUSINESS_FLOW](BUSINESS_FLOW.md)，未闭环事项见
+[RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

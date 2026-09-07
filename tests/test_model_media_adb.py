@@ -14,6 +14,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QWidget
+from qfluentwidgets import CommandBar, HorizontalFlipView, HorizontalPipsPager
 
 from core.adb_bridge import ADBBridge, ADBInputSession
 from core.exec import CommandResult
@@ -31,6 +32,7 @@ from models.adb_app import ADBApp
 from models.adb_system import ADBSystemMixin
 from models.adb_testing import ADBTesting
 from models.file_explorer_worker import ADBWorker, TransferWorker
+from tests.ui_geometry_helpers import wait_for_stable_geometry
 
 
 def test_screenshot_page_opens_folder_via_process_runner():
@@ -73,38 +75,31 @@ def test_file_explorer_image_preview_reuses_qpixmap_cache(tmp_path):
         QPixmapCache.clear()
 
 
-def test_screenshot_thumbnail_reuses_qpixmap_cache(tmp_path):
+def test_screenshot_main_image_reuses_qpixmap_cache(tmp_path):
     _app = QApplication.instance() or QApplication([])
-    image_path = tmp_path / "thumbnail.png"
+    image_path = tmp_path / "main-image.png"
     pixmap = QPixmap(80, 60)
     pixmap.fill(Qt.GlobalColor.blue)
     assert pixmap.save(str(image_path))
 
     QPixmapCache.clear()
     try:
-        first = _load_pixmap(
-            str(image_path),
-            kind="thumb",
-            max_size=QSize(20, 20),
-        )
+        first = _load_pixmap(str(image_path), kind="main")
         assert not first.isNull()
 
         with patch(
-            "gui.dialogs.screenshot_viewer_nav.QImageReader",
-            side_effect=AssertionError("cache hit must not decode the image again"),
+            "gui.dialogs.screenshot_viewer_nav.QPixmap",
+            side_effect=lambda: QPixmap(),
         ):
-            cached = _load_pixmap(
-                str(image_path),
-                kind="thumb",
-                max_size=QSize(20, 20),
-            )
+            cached = _load_pixmap(str(image_path), kind="main")
 
+        assert cached.size() == QSize(80, 60)
         assert cached.cacheKey() == first.cacheKey()
     finally:
         QPixmapCache.clear()
 
 
-def test_screenshot_page_uses_bottom_toolbar_with_tooltips(tmp_path):
+def test_screenshot_page_uses_native_image_controls_and_command_tooltips(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "shot.png"
     pixmap = QPixmap(120, 80)
@@ -117,22 +112,26 @@ def test_screenshot_page_uses_bottom_toolbar_with_tooltips(tmp_path):
         assert "shot.png" not in viewer._info_label.text()
         assert viewer._path_label.text().endswith("shot.png")
         assert viewer._path_label.toolTip() == str(image_path)
-        assert viewer._copy_btn.text() == ""
-        assert viewer._bottom_bar.objectName() == "bottomBar"
-        assert viewer._bottom_dock.objectName() == "bottomDock"
-        assert viewer._thumb_list.isHidden()
+        assert isinstance(viewer._view, HorizontalFlipView)
+        assert isinstance(viewer._pager, HorizontalPipsPager)
+        assert isinstance(viewer._command_bar, CommandBar)
+        assert viewer._pager.isHidden()
         expected_tips = {
-            viewer._prev_btn: "Previous screenshot (Left)",
-            viewer._next_btn: "Next screenshot (Right)",
-            viewer._zoom_out_btn: "Zoom out (Ctrl+-)",
-            viewer._zoom_in_btn: "Zoom in (Ctrl+=)",
-            viewer._fit_btn: "Fit to window (Ctrl+0)",
-            viewer._actual_btn: "Actual size (Ctrl+1)",
-            viewer._copy_btn: "Copy image to clipboard (Ctrl+C)",
-            viewer._folder_btn: "Open file location",
-            viewer._delete_btn: "Delete screenshot",
+            viewer._zoom_out_action: "Zoom out (Ctrl+-)",
+            viewer._zoom_in_action: "Zoom in (Ctrl+=)",
+            viewer._fit_action: "Fit to window (Ctrl+0)",
+            viewer._actual_action: "Actual size (Ctrl+1)",
+            viewer._copy_action: "Copy image to clipboard (Ctrl+C)",
+            viewer._folder_action: "Open file location",
+            viewer._delete_action: "Delete screenshot",
         }
-        assert all(button.toolTip() == tooltip for button, tooltip in expected_tips.items())
+        assert all(action.toolTip() == tooltip for action, tooltip in expected_tips.items())
+        assert all(action.text() and action.toolTip() for action in (
+            viewer._add_action, viewer._rotate_action, viewer._info_action,
+        ))
+        for button in viewer._command_bar.commandButtons:
+            assert button.action() in viewer._command_bar.actions()
+            assert button.accessibleName().strip()
     finally:
         viewer.close()
 
@@ -160,16 +159,14 @@ def test_screenshot_metadata_reflows_and_long_name_stays_accessible(
     page = ScreenshotPage([str(image_path)], parent=host)
     layout.addWidget(page)
     try:
+        page._info_action.trigger()
         host.show()
-        for _attempt in range(4):
-            _app.processEvents()
-        page._reflow_bottom_bar()
-        _app.processEvents()
+        wait_for_stable_geometry(_app, (host, page, page._path_label, page._info_label))
 
         assert host.size() == QSize(760, 520)
         assert page.size() == host.contentsRect().size()
-        assert page._metadata_layout_mode == "stacked"
         assert page._info_label.wordWrap() is True
+        assert page._info_label.isVisibleTo(host)
         assert page._path_label.text() != file_name
         assert "…" in page._path_label.text()
         assert page._path_label.toolTip() == os.path.abspath(image_path)
@@ -285,7 +282,7 @@ def test_file_explorer_offline_first_activation_defers_load_until_reconnect(qt_a
         qt_application.processEvents()
 
 
-def test_screenshot_page_thumbnail_and_navigation_update_current_image(tmp_path):
+def test_screenshot_page_pips_and_arrows_update_current_image(tmp_path):
     _app = QApplication.instance() or QApplication([])
     paths = []
     for name, color in (
@@ -301,17 +298,17 @@ def test_screenshot_page_thumbnail_and_navigation_update_current_image(tmp_path)
 
     viewer = ScreenshotPage(paths)
     try:
-        assert not viewer._thumb_list.isHidden()
-        assert viewer._thumb_list.count() == 3
+        assert not viewer._pager.isHidden()
+        assert viewer._pager.count() == viewer._view.count() == 3
         assert viewer._nav_label.text() == "1 / 3"
 
         viewer.navigate_next()
         assert viewer._current_idx == 1
         assert viewer._path_label.text() == "second.png"
         assert viewer._nav_label.text() == "2 / 3"
-        assert viewer._thumb_list.currentRow() == 1
+        assert viewer._pager.currentIndex() == viewer._view.currentIndex() == 1
 
-        viewer._on_thumbnail_clicked(viewer._thumb_list.item(2))
+        viewer._pager.setCurrentIndex(2)
         assert viewer._current_idx == 2
         assert viewer._path_label.text() == "third.png"
         assert viewer._nav_label.text() == "3 / 3"
@@ -332,14 +329,17 @@ def test_screenshot_page_refreshes_themed_icons(tmp_path):
 
     viewer = ScreenshotPage([str(image_path)])
     try:
-        with patch(
-            "gui.dialogs.screenshot_viewer_ui.get_themed_icon", return_value=QIcon()
-        ) as themed_icon:
-            viewer._refresh_button_icons()
-
-        icon_names = [call.args[0] for call in themed_icon.call_args_list]
-        assert "camera.svg" not in icon_names
-        assert {button.property("iconName") for button in viewer._icon_buttons}.issubset(icon_names)
+        images = {}
+        for theme in ("Light", "Dark"):
+            BaseStyles.switch_theme(theme)
+            _app.processEvents()
+            actions = tuple(
+                action for action in viewer._command_bar.actions() if not action.isSeparator()
+            )
+            assert actions
+            assert all(not action.icon().isNull() for action in actions)
+            images[theme] = tuple(action.icon().pixmap(16, 16).toImage() for action in actions)
+        assert any(light != dark for light, dark in zip(images["Light"], images["Dark"]))
     finally:
         viewer.close()
 

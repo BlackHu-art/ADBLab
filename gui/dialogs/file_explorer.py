@@ -506,6 +506,8 @@ class FileExplorerPage(QWidget):
         self._sync_preview_layout()
 
     def _close_preview(self) -> None:
+        """收起预览并使在途结果失效，释放图片后把焦点还给文件列表。"""
+
         self._preview_request_id += 1
         self.preview_image.release_image_source()
         self._preview_active = False
@@ -530,7 +532,7 @@ class FileExplorerPage(QWidget):
             )
 
     def _sync_preview_layout(self) -> None:
-        """宽屏并排显示预览；窄屏把预览作为带返回按钮的内容子页。"""
+        """仅为活动预览分配空间；宽屏并排显示，窄屏以带返回按钮的子页显示。"""
 
         if not hasattr(self, "content_splitter"):
             return
@@ -546,8 +548,8 @@ class FileExplorerPage(QWidget):
                 self.content_splitter.setSizes([max(1, self.content_splitter.width()), 0])
         else:
             self.browser_panel.show()
-            self.preview_panel.show()
-            if min(self.content_splitter.sizes() or [0]) <= 0:
+            self.preview_panel.setVisible(self._preview_active)
+            if self._preview_active and min(self.content_splitter.sizes() or [0]) <= 0:
                 self.content_splitter.setSizes([620, 380])
 
     def _set_directory_loading(self, loading: bool) -> None:

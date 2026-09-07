@@ -1,232 +1,199 @@
-"""提供截图页面的导航、缩放与信息显示控制器。"""
+"""管理截图路径、主图变换及 FlipView 与圆点分页的同步。"""
 
 import os
 from datetime import datetime
 
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QIcon, QImageReader, QPixmap, QPixmapCache, QTransform
-from PySide6.QtWidgets import QAbstractItemView, QGraphicsView, QListWidgetItem
+from PySide6.QtCore import QSignalBlocker, QSize, Qt
+from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache, QTransform
 
 from gui.i18n import tr
-from gui.styles import BaseStyles
-from gui.styles.icon_loader import get_themed_icon
-from gui.styles.typography import FontRole
 
-MIN_ZOOM = 0.10
-MAX_ZOOM = 5.00
+MIN_ZOOM = 0.05
+MAX_ZOOM = 5.0
 ZOOM_STEP = 0.10
-
-THUMB_W = 86
-THUMB_H = 58
 
 
 def _image_cache_key(path: str, kind: str) -> str:
     try:
-        mtime = os.path.getmtime(path)
+        mtime = os.stat(path).st_mtime_ns
     except OSError:
         mtime = 0
     return f"adblab:screenshot:{kind}:{path}:{mtime}"
 
 
 def _load_pixmap(path: str, *, kind: str, max_size: QSize | None = None) -> QPixmap:
-    """按 (path, mtime) 缓存解码结果；缩略图用 QImageReader 直接降采样。"""
+    """按路径及修改时间复用解码；可选尺寸用于限制调用方要求的图像大小。"""
+
     key = _image_cache_key(path, kind)
     cached = QPixmap()
     if QPixmapCache.find(key, cached) and not cached.isNull():
         return cached
+    reader = QImageReader(path)
     if max_size is not None:
-        reader = QImageReader(path)
         native = reader.size()
         if native.isValid() and not native.isEmpty():
-            reader.setScaledSize(
-                native.scaled(
-                    max_size.width(),
-                    max_size.height(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                )
-            )
-        pixmap = QPixmap.fromImage(reader.read())
-    else:
-        pixmap = QPixmap(path)
+            reader.setScaledSize(native.scaled(max_size, Qt.AspectRatioMode.KeepAspectRatio))
+    pixmap = QPixmap.fromImage(reader.read())
     if not pixmap.isNull():
         QPixmapCache.insert(key, pixmap)
     return pixmap
 
 
 class ScreenshotViewerNav:
-    """组合进 ScreenshotPage 的导航与缩放控制器。"""
+    """页面是索引唯一来源；控件同步阻塞信号，避免圆点重建递归或抢走当前图。"""
 
     def __init__(self, frame):
         self._frame = frame
 
     def _current_path(self) -> str:
-        if 0 <= self._frame._current_idx < len(self._frame._image_paths):
-            return self._frame._image_paths[self._frame._current_idx]
+        frame = self._frame
+        if 0 <= frame._current_idx < len(frame._image_paths):
+            return frame._image_paths[frame._current_idx]
         return ""
 
     def _navigate_to(self, index: int):
-        self._frame._reset_delete_confirmation()
-        if not self._frame._image_paths:
+        frame = self._frame
+        if frame._disposed:
+            return
+        if not frame._image_paths:
             self._show_placeholder(tr("No screenshot available"))
             return
-        if index < 0 or index >= len(self._frame._image_paths):
+        if not 0 <= index < len(frame._image_paths):
             return
-        self._frame._current_idx = index
+        frame._current_idx = index
         paths_changed = False
-        while self._frame._image_paths:
+        while frame._image_paths:
             path = self._current_path()
-            if not path or not os.path.exists(path):
-                del self._frame._image_paths[self._frame._current_idx]
-                paths_changed = True
-            else:
-                pixmap = _load_pixmap(path, kind="main")
-                if not pixmap.isNull():
-                    if paths_changed:
-                        self._rebuild_thumbnails()
-                    self._show_pixmap(pixmap)
-                    self._update_info()
-                    self._update_nav_visibility()
-                    self._sync_thumbnail_selection()
-                    return
-                del self._frame._image_paths[self._frame._current_idx]
-                paths_changed = True
-            if self._frame._current_idx >= len(self._frame._image_paths):
-                self._frame._current_idx = max(0, len(self._frame._image_paths) - 1)
-        self._rebuild_thumbnails()
+            pixmap = _load_pixmap(path, kind="main") if os.path.isfile(path) else QPixmap()
+            if not pixmap.isNull():
+                if paths_changed:
+                    self._rebuild_images()
+                changed_image = frame._display_path != path
+                frame._display_path = path
+                if changed_image:
+                    frame._fit_to_window = True
+                    frame._view.reset_pan()
+                self._show_pixmap(pixmap)
+                self._sync_image_selection()
+                self._update_info()
+                self._update_nav_visibility()
+                frame._view.release_distant_images()
+                frame._notify_image_count()
+                return
+            del frame._image_paths[frame._current_idx]
+            paths_changed = True
+            frame._current_idx = min(frame._current_idx, max(0, len(frame._image_paths) - 1))
+        self._rebuild_images()
         self._show_placeholder(tr("No valid screenshots"))
+        frame._notify_image_count()
 
     def _show_pixmap(self, pixmap: QPixmap):
-        self._frame._scene.clear()
-        self._frame._placeholder_text = None
-        self._frame._original_pixmap = pixmap
-        self._frame._pixmap_item = self._frame._scene.addPixmap(pixmap)
-        self._frame._pixmap_item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        self._frame._scene.setSceneRect(QRectF(pixmap.rect()))
-        self._frame._fit_to_window = True
-        self._frame._zoom_factor = 1.0
-        self._apply_fit()
+        frame = self._frame
+        frame._original_pixmap = pixmap
+        angle = frame._rotation_by_path.get(self._current_path(), 0)
+        frame._display_pixmap = (
+            pixmap.transformed(
+                QTransform().rotate(angle), Qt.TransformationMode.SmoothTransformation
+            )
+            if angle else pixmap
+        )
+        frame._view.setItemImage(frame._current_idx, frame._display_pixmap)
+        frame._image_stack.setCurrentWidget(frame._view)
+        if frame._fit_to_window:
+            self._apply_fit()
+        else:
+            frame._view.viewport().update()
+            self._update_zoom_label()
 
     def _show_placeholder(self, text: str):
-        self._frame._scene.clear()
-        self._frame._original_pixmap = None
-        self._frame._pixmap_item = None
-        self._frame._placeholder_text = self._frame._scene.addText(text)
-        self._frame._placeholder_text.setFont(
-            BaseStyles.font_for_role(FontRole.UI, size=max(12, BaseStyles.DEFAULT_FONT_SIZE + 1))
-        )
-        self._frame._scene.setSceneRect(QRectF(0, 0, 420, 240))
-        bounds = self._frame._placeholder_text.boundingRect()
-        self._frame._placeholder_text.setPos(
-            (420 - bounds.width()) / 2, (240 - bounds.height()) / 2
-        )
-        self._refresh_placeholder_color()
-        self._frame._path_label.setProperty("screenshotFullFileName", "")
-        self._frame._path_label.setText("")
-        self._frame._path_label.setToolTip("")
-        self._frame._path_label.setAccessibleDescription("")
-        self._frame._info_label.setText(text)
-        self._frame._info_label.setToolTip(text)
-        self._frame._info_label.setAccessibleDescription(text)
-        self._frame._zoom_label.setText(tr("Fit"))
-        self._frame._schedule_bottom_bar_reflow()
+        frame = self._frame
+        frame._original_pixmap = frame._display_pixmap = None
+        frame._display_path = ""
+        frame._current_idx = 0
+        frame._fit_to_window = True
+        frame._zoom_factor = 1.0
+        frame._view.stop_animations()
+        frame._empty_label.setText(text)
+        frame._image_stack.setCurrentWidget(frame._empty_label)
+        frame._path_label.setProperty("screenshotFullFileName", "")
+        for label in (frame._path_label, frame._info_label):
+            label.setText("")
+            label.setToolTip("")
+            label.setAccessibleDescription("")
+        frame._zoom_label.setText(tr("Fit"))
+        frame._schedule_metadata_reflow()
         self._update_nav_visibility()
 
-    def _refresh_placeholder_color(self):
-        item = getattr(self._frame, "_placeholder_text", None)
-        if item is not None:
-            try:
-                item.setDefaultTextColor(QColor(self._frame._theme_color("TEXT_DISABLED")))
-            except RuntimeError:
-                self._frame._placeholder_text = None
+    def _rebuild_images(self):
+        """仅登记文件路径，主图按需解码；重建圆点时保留页面期望的索引。"""
 
-    def _rebuild_thumbnails(self):
-        if not hasattr(self._frame, "_thumb_list"):
-            return
-        self._frame._thumb_list.clear()
-        for index, path in enumerate(self._frame._image_paths):
-            item = QListWidgetItem(self._thumbnail_icon(path), os.path.basename(path))
-            item.setData(Qt.ItemDataRole.UserRole, index)
-            item.setToolTip(os.path.abspath(path))
-            item.setSizeHint(QSize(116, 78))
-            self._frame._thumb_list.addItem(item)
-        self._sync_thumbnail_selection()
+        frame = self._frame
+        frame._rotation_by_path = {
+            path: angle for path, angle in frame._rotation_by_path.items()
+            if path in frame._image_paths
+        }
+        frame._current_idx = min(frame._current_idx, max(0, len(frame._image_paths) - 1))
+        with QSignalBlocker(frame._view), QSignalBlocker(frame._pager):
+            frame._view.clear()
+            frame._view.addImages(frame._image_paths)
+            frame._view.doItemsLayout()
+            frame._pager.stop_animations()
+            count = len(frame._image_paths)
+            frame._pager.setVisibleNumber(min(count, 7))
+            frame._pager.setPageNumber(count)
+            frame._pager.doItemsLayout()
+            for index, path in enumerate(frame._image_paths):
+                text = f"{index + 1} / {count} · {os.path.basename(path)}"
+                for widget in (frame._view, frame._pager):
+                    item = widget.item(index)
+                    item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
+                    item.setToolTip(os.path.basename(path))
+            if count:
+                frame._view.scrollToIndex(frame._current_idx)
+        self._sync_image_selection()
         self._update_nav_visibility()
 
-    def _thumbnail_icon(self, path: str) -> QIcon:
-        thumb = _load_pixmap(path, kind="thumb", max_size=QSize(THUMB_W, THUMB_H))
-        if thumb.isNull():
-            return get_themed_icon("image-broken.svg")
-        return QIcon(thumb)
-
-    def _on_thumbnail_clicked(self, item: QListWidgetItem):
-        index = item.data(Qt.ItemDataRole.UserRole)
-        if isinstance(index, int):
-            self._navigate_to(index)
-
-    def _sync_thumbnail_selection(self):
-        if not hasattr(self._frame, "_thumb_list"):
+    def _sync_image_selection(self):
+        frame = self._frame
+        if not frame._image_paths:
             return
-        self._frame._thumb_list.blockSignals(True)
-        try:
-            if 0 <= self._frame._current_idx < self._frame._thumb_list.count():
-                self._frame._thumb_list.setCurrentRow(self._frame._current_idx)
-                self._frame._thumb_list.scrollToItem(
-                    self._frame._thumb_list.currentItem(),
-                    QAbstractItemView.ScrollHint.PositionAtCenter,
-                )
-            else:
-                self._frame._thumb_list.clearSelection()
-        finally:
-            self._frame._thumb_list.blockSignals(False)
+        with QSignalBlocker(frame._view), QSignalBlocker(frame._pager):
+            frame._view.setCurrentRow(frame._current_idx)
+            frame._view.setCurrentIndex(frame._current_idx)
+            frame._pager.setCurrentIndex(frame._current_idx)
+        frame._view.viewport().update()
 
     def navigate_prev(self):
-        if len(self._frame._image_paths) <= 1:
-            return
-        self._navigate_to((self._frame._current_idx - 1) % len(self._frame._image_paths))
+        if self._frame._current_idx > 0:
+            self._navigate_to(self._frame._current_idx - 1)
 
     def navigate_next(self):
-        if len(self._frame._image_paths) <= 1:
-            return
-        self._navigate_to((self._frame._current_idx + 1) % len(self._frame._image_paths))
+        if self._frame._current_idx + 1 < len(self._frame._image_paths):
+            self._navigate_to(self._frame._current_idx + 1)
 
     def _apply_fit(self):
-        if (
-            self._frame._original_pixmap is None
-            or self._frame._original_pixmap.isNull()
-            or self._frame._pixmap_item is None
-        ):
+        frame = self._frame
+        pixmap = frame._display_pixmap
+        if frame._disposed or not frame._fit_to_window or pixmap is None or pixmap.isNull():
             return
-        viewport = self._frame._view.viewport().size()
-        max_w = max(viewport.width() - 16, 200)
-        max_h = max(viewport.height() - 16, 150)
-        pw = max(1, self._frame._original_pixmap.width())
-        ph = max(1, self._frame._original_pixmap.height())
-        scale = min(max_w / pw, max_h / ph, 1.0)
-        self._set_zoom(scale, fit=True)
-        self._frame._view.centerOn(self._frame._pixmap_item)
+        size = frame._view.image_area_size()
+        factor = min(size.width() / pixmap.width(), size.height() / pixmap.height(), 1.0)
+        self._set_zoom(factor, fit=True)
 
-    def _set_zoom(self, factor: float, *, fit: bool = False, anchor_under_mouse: bool = False):
-        if self._frame._original_pixmap is None or self._frame._original_pixmap.isNull():
+    def _set_zoom(self, factor: float, *, fit: bool = False):
+        frame = self._frame
+        if frame._disposed or frame._display_pixmap is None:
             return
-        self._frame._zoom_factor = max(MIN_ZOOM, min(MAX_ZOOM, float(factor)))
-        self._frame._fit_to_window = fit
-        previous_anchor = self._frame._view.transformationAnchor()
-        self._frame._view.setTransformationAnchor(
-            QGraphicsView.ViewportAnchor.AnchorUnderMouse
-            if anchor_under_mouse
-            else QGraphicsView.ViewportAnchor.AnchorViewCenter
-        )
-        self._frame._view.setTransform(
-            QTransform().scale(self._frame._zoom_factor, self._frame._zoom_factor)
-        )
-        self._frame._view.setTransformationAnchor(previous_anchor)
+        frame._zoom_factor = float(factor) if fit else max(MIN_ZOOM, min(MAX_ZOOM, float(factor)))
+        frame._fit_to_window = fit
+        frame._view.reset_pan()
+        frame._view.viewport().update()
         self._update_zoom_label()
 
     def _zoom_from_wheel(self, delta: int):
-        if self._frame._original_pixmap is None or self._frame._original_pixmap.isNull():
-            return
-        multiplier = 1.0 + ZOOM_STEP if delta > 0 else 1.0 - ZOOM_STEP
-        self._set_zoom(self._frame._zoom_factor * multiplier, anchor_under_mouse=True)
+        if delta:
+            factor = 1 + ZOOM_STEP if delta > 0 else 1 - ZOOM_STEP
+            self._set_zoom(self._frame._zoom_factor * factor)
 
     def zoom_in(self):
         self._set_zoom(self._frame._zoom_factor + ZOOM_STEP)
@@ -247,35 +214,46 @@ class ScreenshotViewerNav:
         else:
             self._reset_zoom()
 
+    def _rotate_image(self):
+        """旋转原始像素的显示副本，按路径保留角度；不覆写源文件。"""
+
+        frame = self._frame
+        path = self._current_path()
+        if frame._disposed or not path or frame._original_pixmap is None:
+            return
+        frame._rotation_by_path[path] = (frame._rotation_by_path.get(path, 0) + 90) % 360
+        frame._fit_to_window = True
+        frame._view.reset_pan()
+        self._show_pixmap(frame._original_pixmap)
+
     def _update_zoom_label(self):
-        pct = int(round(self._frame._zoom_factor * 100))
-        if self._frame._fit_to_window:
-            self._frame._zoom_label.setText(
-                tr("Fit") if pct == 100 else tr("Fit {value0}%").format(value0=pct)
-            )
-        else:
-            self._frame._zoom_label.setText(f"{pct}%")
+        frame = self._frame
+        pct = int(round(frame._zoom_factor * 100))
+        frame._zoom_label.setText(
+            (tr("Fit") if pct == 100 else tr("Fit {value0}%").format(value0=pct))
+            if frame._fit_to_window else f"{pct}%"
+        )
+        frame._schedule_metadata_reflow()
 
     def _update_info(self):
+        frame = self._frame
         path = self._current_path()
-        if not path or self._frame._original_pixmap is None:
-            self._frame._info_label.setText("")
+        if not path or frame._original_pixmap is None:
             return
-        pw = self._frame._original_pixmap.width()
-        ph = self._frame._original_pixmap.height()
-        size_str = self._format_size(path)
-        modified = self._format_modified_time(path)
         file_name = os.path.basename(path)
         absolute_path = os.path.abspath(path)
-        self._frame._path_label.setProperty("screenshotFullFileName", file_name)
-        self._frame._path_label.setText(file_name)
-        self._frame._path_label.setToolTip(absolute_path)
-        self._frame._path_label.setAccessibleDescription(absolute_path)
-        metadata = f"{pw} x {ph} | {size_str} | {modified}"
-        self._frame._info_label.setText(metadata)
-        self._frame._info_label.setToolTip(metadata)
-        self._frame._info_label.setAccessibleDescription(metadata)
-        self._frame._schedule_bottom_bar_reflow()
+        frame._path_label.setProperty("screenshotFullFileName", file_name)
+        frame._path_label.setText(file_name)
+        frame._path_label.setToolTip(absolute_path)
+        frame._path_label.setAccessibleDescription(absolute_path)
+        metadata = (
+            f"{frame._original_pixmap.width()} x {frame._original_pixmap.height()}"
+            f" | {self._format_size(path)} | {self._format_modified_time(path)}"
+        )
+        frame._info_label.setText(metadata)
+        frame._info_label.setToolTip(metadata)
+        frame._info_label.setAccessibleDescription(metadata)
+        frame._schedule_metadata_reflow()
         self._update_nav_label()
 
     @staticmethod
@@ -298,30 +276,29 @@ class ScreenshotViewerNav:
             return "-"
 
     def _update_nav_visibility(self):
-        has_image = bool(self._frame._image_paths and self._frame._original_pixmap is not None)
-        multi = len(self._frame._image_paths) > 1
-        self._frame._thumb_list.setVisible(multi)
-        self._frame._prev_btn.setEnabled(multi)
-        self._frame._next_btn.setEnabled(multi)
+        frame = self._frame
+        has_image = bool(frame._image_paths and frame._display_pixmap is not None)
+        multi = len(frame._image_paths) > 1
+        frame._pager.setVisible(multi)
+        frame._nav_label.setVisible(multi)
         self._update_nav_label()
         self._update_actions_enabled(has_image)
 
     def _update_nav_label(self):
-        if self._frame._image_paths:
-            self._frame._nav_label.setText(
-                f"{self._frame._current_idx + 1} / {len(self._frame._image_paths)}"
-            )
-        else:
-            self._frame._nav_label.setText("0 / 0")
+        frame = self._frame
+        frame._nav_label.setText(
+            f"{frame._current_idx + 1} / {len(frame._image_paths)}"
+            if frame._image_paths else "0 / 0"
+        )
 
     def _update_actions_enabled(self, enabled: bool):
-        for button in (
-            self._frame._zoom_out_btn,
-            self._frame._zoom_in_btn,
-            self._frame._fit_btn,
-            self._frame._actual_btn,
-            self._frame._copy_btn,
-            self._frame._folder_btn,
-            self._frame._delete_btn,
+        """命令与溢出菜单共享 QAction 状态，空页只允许添加图片。"""
+
+        frame = self._frame
+        for action in (
+            frame._rotate_action, frame._zoom_out_action, frame._zoom_in_action,
+            frame._fit_action, frame._actual_action, frame._info_action,
+            frame._copy_action, frame._folder_action, frame._delete_action,
         ):
-            button.setEnabled(enabled)
+            action.setEnabled(enabled and not frame._disposed)
+        frame._add_action.setEnabled(not frame._disposed)

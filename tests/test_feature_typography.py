@@ -99,6 +99,12 @@ def test_feature_pages_use_semantic_font_roles(qt_application):
             _assert_role(widget.document().defaultFont(), FontRole.LOG)
 
         _assert_role(screenshots._info_label, FontRole.UI_SMALL)
+        for control in (
+            screenshots._command_bar,
+            *screenshots._command_bar.commandButtons,
+            screenshots._command_bar.moreButton,
+        ):
+            _assert_role(control, FontRole.UI)
         _assert_role(
             about.title_label,
             FontRole.UI,
@@ -196,6 +202,11 @@ def test_loaded_feature_pages_refresh_fonts_and_text_constraints(qt_application,
             _assert_role(logcat.pkg_input, FontRole.MONO)
             _assert_role(performance.log_view, FontRole.LOG)
             _assert_role(pages["screenshots"]._info_label, FontRole.UI_SMALL)
+            screenshots = pages["screenshots"]
+            _assert_role(screenshots._path_label, FontRole.MONO)
+            for button in screenshots._command_bar.commandButtons:
+                _assert_role(button, FontRole.UI)
+                assert button.height() >= button.fontMetrics().height() + 16
 
             adaptive_buttons = [
                 button

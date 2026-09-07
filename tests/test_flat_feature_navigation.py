@@ -245,7 +245,7 @@ def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tm
     page = frame._workspace_feature_hosts["apps"].stack.currentWidget()
     assert isinstance(page, ScreenshotPage)
     assert page.image_paths == (str(image_path),)
-    assert page._copy_btn.isEnabled()
+    assert page._copy_action.isEnabled()
     assert page.isAncestorOf(tools)
     assert tools.isVisibleTo(frame)
     assert tools.headerView.isHidden()
@@ -390,7 +390,8 @@ def test_screen_tools_reflow_and_refresh_fonts_after_transfer(
     assert host.content_scroll.horizontalScrollBar().maximum() == 0
     if font_size == 12:
         assert host.content_scroll.verticalScrollBar().maximum() == 0
-        assert_scroll_target_reachable(host.content_scroll, page._bottom_bar)
+        assert_scroll_target_reachable(host.content_scroll, page._command_bar)
+        assert_scroll_target_reachable(host.content_scroll, page._details_bar)
 
 
 def test_package_tools_follow_live_font_changes_and_keep_unique_history(frame, monkeypatch):

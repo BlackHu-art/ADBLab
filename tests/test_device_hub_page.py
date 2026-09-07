@@ -2,7 +2,7 @@
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import PushButton
@@ -326,6 +326,29 @@ def test_each_cached_device_row_reports_uncertain_connection_and_blocks_selectio
         assert not card.selection.isEnabled()
         assert not card.files_button.isEnabled()
         QTest.mouseDClick(card.name_label, Qt.MouseButton.LeftButton)
+    assert requests.count() == 0
+
+
+def test_connection_status_color_tracks_state_and_theme_without_changing_selection(qt_application):
+    _window, page = _show_page(qt_application)
+    cards = page.device_cards
+    requests = QSignalSpy(page.selection_requested)
+    for state, caption, color_key in (
+        ("ready", "在线", "LOG_SUCCESS"),
+        ("scanning", "扫描中", "LOG_INFO"),
+        ("unavailable", "连接待确认", "LOG_WARNING"),
+        ("ready", "在线", "LOG_SUCCESS"),
+    ):
+        page.set_device_context([cards[0].device_id], [card.device_id for card in cards], state)
+        for theme in ("Light", "Dark"):
+            BaseStyles.switch_theme(theme)
+            qt_application.processEvents()
+            for card in cards:
+                assert caption in card.status_label.text()
+                assert card.status_label.palette().color(QPalette.ColorRole.WindowText) == QColor(
+                    BaseStyles.color_for(theme, color_key)
+                )
+                assert card.selection.isChecked() == (card is cards[0])
     assert requests.count() == 0
 
 

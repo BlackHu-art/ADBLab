@@ -186,10 +186,6 @@ class _DeviceCard(QWidget):
         self.name_label = BodyLabel(self)
         self.status_label = CaptionLabel(self)
         self.battery_label = CaptionLabel(self)
-        self.status_label.setTextColor(
-            QColor(BaseStyles.color_for("Light", "TEXT_SECONDARY")),
-            QColor(BaseStyles.color_for("Dark", "TEXT_SECONDARY")),
-        )
         for label in (self.name_label, self.status_label, self.battery_label):
             label.setWordWrap(True)
             label.setTextFormat(Qt.TextFormat.PlainText)
@@ -342,6 +338,13 @@ class _DeviceCard(QWidget):
         self.status_label.setText(" · ".join(filter(None, (
             _connection_kind(self.device_id), connection_state, tr("已选") if selected else "",
         ))))
+        status_color = {
+            "ready": "LOG_SUCCESS", "scanning": "LOG_INFO", "unavailable": "LOG_WARNING",
+        }.get(state, "TEXT_SECONDARY")
+        self.status_label.setTextColor(
+            QColor(BaseStyles.color_for("Light", status_color)),
+            QColor(BaseStyles.color_for("Dark", status_color)),
+        )
         self.selection.setAccessibleName(tr("将 {name} 设为操作目标").format(name=name))
         blocker = QSignalBlocker(self.selection)
         self.selection.setChecked(selected)

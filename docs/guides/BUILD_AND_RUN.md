@@ -88,7 +88,7 @@ Windows 11 上即时切换；不支持的系统禁用该开关并使用主题实
 
 资源随 Python 模块进入现有 PyInstaller 构建，无需安装目录可写，也不依赖运行时读取参考项目。
 源码与产物的 `--self-check packaging` 同时检查三种语言的内嵌资源；词库回归测试核对 `.ts`、编译资源
-和格式占位符一致性。当前翻译覆盖范围见 [DATA_FLOW](../project-knowledge/DATA_FLOW.md#设置字段)。
+和格式占位符一致性。语言设置及显示值与业务值的边界见 [DATA_FLOW](../project-knowledge/DATA_FLOW.md#设置字段)。
 
 ## 测试与检查
 

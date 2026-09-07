@@ -18,25 +18,13 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 `set_error_sink` 注入。`CommandRunner`/`ProcessRunner` 位于 `core/exec.py`，`core` 不反向依赖
 `models`。
 
-## 主要内部模块依赖
-
-| 上游 | 下游 | 用途 | 方向约束/说明 |
-| --- | --- | --- | --- |
-| `main.py` | `gui.main_frame`、`core.settings_manager` | GUI 组合根 | 启动层依赖应用层 |
-| `gui/main_frame.py` | `controllers`、`gui/panels`、`gui/pages`、`gui/features` | UI 接线、深层路由和会话生命周期 | MainFrame 是最高耦合热点 |
-| `gui/pages/workspace_features.py`、`gui/features/base.py` | `gui/features`、TaskSupervisor | 懒创建、复用、停用和释放按设备功能会话 | 页面不能绕过 registry 自行成为长期顶层窗口 |
-| `controllers/_base.py` | 四个 ADB model、DeviceStore、`adblab.application`（OperationManager/InstallBatchUseCase） | 命令分派和结果聚合 | Controller 不应反向被 model 导入 |
-| `models/adb_*.py` | `core.exec`、`core.adb_bridge` | 执行 ADB 与长进程 | 常规短命令走 CommandRunner，受控长进程走 ProcessRunner |
-| `gui/features/app_manager.py`（实现拆在 `gui/dialogs/app_manager*.py`） | `models/app_manager_worker.py` | 内嵌页专用异步任务 | 跳过统一 Controller |
-| `gui/features/file_explorer.py`（实现拆在 `gui/dialogs/file_explorer*.py`） | `services/file_explorer.py`、`models/file_explorer_worker.py` | 文件命令构建和传输 | 跳过统一 Controller |
-| `gui/panels/remote_panel.py` | `services.remote`、ProcessRunner | scrcpy 与 Remote 输入 | panel 同时承担较多编排状态 |
-| `gui/features/performance.py`（实现拆在 `gui/dialogs/performance_launcher*.py`） | `services.mobileperf_runner` | 性能任务启动、停止和结果 | MobilePerf 内核在独立进程 |
-| `core.settings_manager` | `utils.user_data`、`utils.resource_path` | 用户配置路径与种子资源 | 错误日志经可注入 `set_error_sink` 输出，不直接依赖 log_service |
-| `mobileperf/android/*` | `mobileperf/android/tools/androiddevice.py` | 采集设备指标 | 与主应用执行层重复实现 |
+模块定位及测试入口见 [MODULE_MAP](MODULE_MAP.md)，会话与资源归属见
+[ARCHITECTURE](ARCHITECTURE.md)。MobilePerf 内核在独立子进程中维护自己的 ADB 执行边界。
 
 ## 第三方 Python 依赖
 
-精确版本以三个 requirements 文件为准，长期文档只记录用途和边界。
+依赖清单按 `requirements.txt`（运行）、`requirements-build.txt`（构建）、
+`requirements-dev.txt`（开发）逐层包含；精确版本以这些文件为准。
 
 | 依赖 | 实际用途 | 证据/备注 |
 | --- | --- | --- |
@@ -44,22 +32,20 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
-| PySide6-Fluent-Widgets (qfluentwidgets) | 主窗口、Workspace、内嵌功能页、控件、主题和瞬态消息 | `requirements.txt`、`gui/`；许可分发风险见 RISKS_AND_DEBT |
+| PySide6-Fluent-Widgets (qfluentwidgets) | 窗口、导航、控件、主题和消息 | `requirements.txt`、`gui/`；许可记录见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) |
 | XlsxWriter 移植副本 | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 ### Fluent 运行时来源边界
 
 - 运行时以 `requirements.txt` 固定的 `PySide6-Fluent-Widgets` 为唯一组件来源，生产代码
   直接 `import qfluentwidgets`；`ADBLab.spec` 也从已安装包收集其子模块。
-- Git 不跟踪 `reference/` 上游副本；该目录可作为本地、被忽略的设计参考，不能成为运行或打包
-  依赖。查询实际 API 时，先用项目解释器的 `importlib.util.find_spec()` 定位当前 `qfluentwidgets`
+- Git 不跟踪 `reference/` 上游副本；用户要求拉取时可保留官方 PySide6 分支的本地参考，不能成为运行或打包
+  依赖。截图浏览直接引用已安装的 `HorizontalFlipView`、`HorizontalPipsPager` 与 `CommandBar`，示例归属见
+  [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md)。查询实际 API 时，先用项目解释器的 `importlib.util.find_spec()` 定位当前 `qfluentwidgets`
   安装路径，再按需查看上游
   [PySide6 分支](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6)的单个文件。
 - 上游仓库默认分支是 PyQt5 变体，不能作为本项目 API 依据。历史 Gallery 页面改写及许可归属记录
   在根目录 `THIRD_PARTY_NOTICES.md`；该记录不构成运行时依赖。
-
-依赖按 `requirements.txt`（运行）、`requirements-build.txt`（构建）和
-`requirements-dev.txt`（开发/测试）逐层包含；精确版本只以这些文件为准。
 
 ## 外部系统与工具依赖
 
@@ -85,19 +71,19 @@ ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 只有桌面 GUI、
 ADB 是项目实际最重要的外部操作 API。参数通常以数组传给 subprocess，设备 shell 内的复合命令由
 service/model 构造。
 
-| 能力组 | 主要入口 | 典型外部接口 | 输入 | 输出 | 校验/保护 | 测试 |
-| --- | --- | --- | --- | --- | --- | --- |
-| 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 | 有 |
-| 设备属性 | `ADBDevice.get_device_info_async` | `getprop`、`dumpsys`、`wm` | device | 属性字典 | 批量 labeled section 解析 | 有 |
-| 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | package 校验不统一；批量 worker 有部分校验 | 有，实机缺 |
-| 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | 按键/触控使用持久 shell，成功写入不等于设备执行已确认；文本在 ADBApp 中 quote 后执行短命令 | 有 |
-| 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` | 有 |
-| 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair` | host/device port | CommandResult | forward/reverse 的 TCP 端口在 Controller 校验；tcpip/pair 的端口在 model 校验；直接调用 forward/reverse model 不重复校验 | 有 |
-| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/path | 流、文件、目录 | ZIP 安全解压；部分诊断包名和 dumpsys 服务名经 `utils/adb_values.py` 规范化，LiveLogcat 另有包/PID 过滤边界 | 有 |
-| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | PNG 签名检查和回退；录屏启动前校验时长/码率/成对宽高，pull 与远端 cleanup 分离报告，结果携带 `batch_id` | 有 |
-| 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 移植内核校验较弱、命令实现独立 | 部分 |
-| Shell、Intent 与 Android 设置 | SystemPanel、`ADBAdvanced`、`ADBSystemMixin` | `adb shell ...`、`am start/broadcast`、`settings` | 用户命令或字段 | CommandResult | 自定义 Shell 按用户命令执行；结构化 Intent 的组件/URI/字符串 extras 及设置 namespace/key/value 使用 `shlex.quote` 保持参数边界 | 有 |
-| Monkey | `ADBTesting` | `monkey`、`am force-stop` | package/events/throttle/flags | CommandResult | 前台探测 fail-closed；`_wait_for_monkey_abort` 短轮询探测中止 | 有 |
+| 能力组 | 主要入口 | 典型外部接口 | 输入 | 输出 | 校验/保护 |
+| --- | --- | --- | --- | --- | --- |
+| 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 |
+| 设备属性 | `ADBDevice.get_device_info_async` | `getprop`、`dumpsys`、`wm` | device | 属性字典 | 批量 labeled section 解析 |
+| 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | 校验以各入口实现为准，不能将单一路径的保护推广到全部 model 接口 |
+| 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | 按键/触控使用持久 shell，成功写入不等于设备执行已确认；文本在 ADBApp 中 quote 后执行短命令 |
+| 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` |
+| 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair` | host/device port | CommandResult | forward/reverse 的 TCP 端口在 Controller 校验；tcpip/pair 的端口在 model 校验；直接调用 forward/reverse model 不重复校验 |
+| 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/path | 流、文件、目录 | ZIP 安全解压；部分诊断包名和 dumpsys 服务名经 `utils/adb_values.py` 规范化，LiveLogcat 另有包/PID 过滤边界 |
+| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | PNG 签名检查和回退；录屏启动前校验时长/码率/成对宽高，pull 与远端 cleanup 分离报告，结果携带 `batch_id` |
+| 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 独立参数/配置解析及 ADB 执行边界，不能假设经过主应用 Controller |
+| Shell、Intent 与 Android 设置 | SystemPanel、`ADBAdvanced`、`ADBSystemMixin` | `adb shell ...`、`am start/broadcast`、`settings` | 用户命令或字段 | CommandResult | 自定义 Shell 按用户命令执行；结构化 Intent 的组件/URI/字符串 extras 及设置 namespace/key/value 使用 `shlex.quote` 保持参数边界 |
+| Monkey | `ADBTesting` | `monkey`、`am force-stop` | package/events/throttle/flags | CommandResult | 前台探测 fail-closed；`_wait_for_monkey_abort` 短轮询探测中止 |
 
 ### scrcpy 进程接口
 
@@ -105,17 +91,11 @@ service/model 构造。
 先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stderr 用于状态/FPS 解析。
 Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服务端暴露。
 
-### 文件与进程接口安全约定
+### 执行边界约束
 
-- 主应用短命令优先使用参数数组，不启用宿主 shell。
-- 设备 shell 复合命令必须在 service/model 层集中构造并对动态路径使用 quote。
-- 外部 ZIP 必须用 `utils.archive.safe_extract_zip()`，防止目录穿越。
-- 长进程应注册到 ProcessRunner；带 UI 生命周期的复合 worker/process task 还应注册到
-  TaskSupervisor。只有确认退出后才能移除 tracking，timeout 必须保留 residual snapshot。
-- MobilePerf 内核仍保留独立的直接 Popen/ADB 执行边界，但当前使用参数数组和 `shell=False`；
-  5037 端口清理由 `core.process_utils` 负责；ADB 可执行路径已统一：`get_adb_path()` 的
-  最终回退走 `utils.adb_resolver`（内置平台二进制已移除），与主应用共用同一 ADB 事实来源。
-  详见 [RISKS_AND_DEBT.md](RISKS_AND_DEBT.md)。
+参数 quote、外部 ZIP 和受控进程的协作规则见 [AGENTS.md](../../AGENTS.md)；当前执行器与
+停止语义见 [ARCHITECTURE](ARCHITECTURE.md#协调与执行边界)。
 
-未闭环的依赖方向、平台能力检查和 MobilePerf 执行边界只在
-[RISKS_AND_DEBT.md](RISKS_AND_DEBT.md) 维护。
+MobilePerf 内核仍直接使用 Popen/ADB（参数数组、`shell=False`），5037 端口清理由
+`core.process_utils` 负责；`get_adb_path()` 的最终回退走 `utils.adb_resolver`。
+未闭环的执行、平台与许可问题只在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md) 维护。

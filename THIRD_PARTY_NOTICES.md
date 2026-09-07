@@ -9,7 +9,15 @@ ADBLab 运行时依赖 `PySide6-Fluent-Widgets`。早期页面组织曾参考上
 提交 `356665d9db87090db43305b98ac6cde2071d8f4d` 中的 Gallery 示例；该来源只用于保留
 历史改写归属，不能作为当前 API 依据。当前行为应依次以本项目代码和测试、活动解释器安装的
 包、上游官方 [PySide6 分支](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6)
-中的单个相关文件为准，仓库不保存 `reference/` 副本。
+中的相关文件为准。经用户要求拉取的本地 `reference/` 副本受 Git 忽略，不作为运行或打包来源。
+
+截图浏览参考官方 PySide6 分支提交 `d6f5a01f7f3fe285c6900e476349467810267839` 的
+[`examples/view/flip_view/demo.py`](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/d6f5a01f7f3fe285c6900e476349467810267839/examples/view/flip_view/demo.py)
+与 [`examples/menu/command_bar/demo.py`](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/d6f5a01f7f3fe285c6900e476349467810267839/examples/menu/command_bar/demo.py)。
+ADBLab 直接引用已安装的 `HorizontalFlipView`、`HorizontalPipsPager`、`CommandBar` 和
+`Action`，并沿用示例的 `FlipImageDelegate` 扩展方式适配整页原比例绘制、预览缩放和拖动。
+适配层负责分页同步、尺寸变化与解码缓存释放；不复制示例图片或修改依赖包。
+精确运行版本继续以 `requirements.txt` 为准。
 
 上游项目采用 GNU General Public License v3.0，并提供商业许可选项。许可文本见
 [上游 LICENSE](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/356665d9db87090db43305b98ac6cde2071d8f4d/LICENSE)。

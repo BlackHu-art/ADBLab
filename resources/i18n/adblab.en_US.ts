@@ -69,8 +69,20 @@ Icon unavailable. Click Refresh to try again.</translation>
             <translation>Actual Size	Ctrl+1</translation>
         </message>
         <message>
+            <source>Actual size</source>
+            <translation>Actual size</translation>
+        </message>
+        <message>
             <source>Actual size (Ctrl+1)</source>
             <translation>Actual size (Ctrl+1)</translation>
+        </message>
+        <message>
+            <source>Add images</source>
+            <translation>Add images</translation>
+        </message>
+        <message>
+            <source>Add local images (Ctrl+O)</source>
+            <translation>Add local images (Ctrl+O)</translation>
         </message>
         <message>
             <source>Android {value}设备</source>
@@ -143,6 +155,10 @@ Icon unavailable. Click Refresh to try again.</translation>
         <message>
             <source>CPU 负载</source>
             <translation>CPU load</translation>
+        </message>
+        <message>
+            <source>Choose screenshot</source>
+            <translation>Choose screenshot</translation>
         </message>
         <message>
             <source>Click Delete again to confirm</source>
@@ -413,6 +429,18 @@ Icon unavailable. Click Refresh to try again.</translation>
             <translation>Image size, file size, and modified time</translation>
         </message>
         <message>
+            <source>Image zoom</source>
+            <translation>Image zoom</translation>
+        </message>
+        <message>
+            <source>Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)</source>
+            <translation>Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All files (*)</translation>
+        </message>
+        <message>
+            <source>Info</source>
+            <translation>Info</translation>
+        </message>
+        <message>
             <source>Inspect captured device screenshots</source>
             <translation>Inspect captured device screenshots</translation>
         </message>
@@ -527,6 +555,10 @@ Icon unavailable. Click Refresh to try again.</translation>
         <message>
             <source>Monkey 测试正在运行，请先停止测试</source>
             <translation>A Monkey test is running. Stop it first</translation>
+        </message>
+        <message>
+            <source>More image actions</source>
+            <translation>More image actions</translation>
         </message>
         <message>
             <source>Motion events</source>
@@ -651,6 +683,10 @@ Modified: {value7}</translation>
         <message>
             <source>Open file location</source>
             <translation>Open file location</translation>
+        </message>
+        <message>
+            <source>Open folder</source>
+            <translation>Open folder</translation>
         </message>
         <message>
             <source>Open the latest MobilePerf result</source>
@@ -909,6 +945,14 @@ Modified: {value7}</translation>
             <translation>Root</translation>
         </message>
         <message>
+            <source>Rotate</source>
+            <translation>Rotate</translation>
+        </message>
+        <message>
+            <source>Rotate preview clockwise (Ctrl+R)</source>
+            <translation>Rotate preview clockwise (Ctrl+R)</translation>
+        </message>
+        <message>
             <source>Running</source>
             <translation>Running</translation>
         </message>
@@ -1001,6 +1045,10 @@ Modified: {value7}</translation>
             <translation>Shell, system settings, port forwarding and emulator tools</translation>
         </message>
         <message>
+            <source>Show image details</source>
+            <translation>Show image details</translation>
+        </message>
+        <message>
             <source>Show result charts</source>
             <translation>Show result charts</translation>
         </message>
@@ -1015,6 +1063,10 @@ Modified: {value7}</translation>
         <message>
             <source>Smooth</source>
             <translation>Smooth</translation>
+        </message>
+        <message>
+            <source>Some selected files could not be opened as images</source>
+            <translation>Some selected files could not be opened as images</translation>
         </message>
         <message>
             <source>Start failed: {value0}</source>
@@ -1169,8 +1221,16 @@ Modified: {value7}</translation>
             <translation>Zoom Out	Ctrl+-</translation>
         </message>
         <message>
+            <source>Zoom in</source>
+            <translation>Zoom in</translation>
+        </message>
+        <message>
             <source>Zoom in (Ctrl+=)</source>
             <translation>Zoom in (Ctrl+=)</translation>
+        </message>
+        <message>
+            <source>Zoom out</source>
+            <translation>Zoom out</translation>
         </message>
         <message>
             <source>Zoom out (Ctrl+-)</source>

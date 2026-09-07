@@ -434,6 +434,26 @@ def test_more_menu_keeps_device_actions_and_selection_enablement(qt_application)
     assert info.count() == 1 and disconnect.count() == 1
 
 
+def test_device_bar_status_color_tracks_state_and_theme(qt_application):
+    bar = DeviceContextBar()
+    bar.show()
+    for state, caption, color_key in (
+        ("ready", "在线 1 台", "LOG_SUCCESS"),
+        ("scanning", "正在扫描", "LOG_INFO"),
+        ("unavailable", "ADB 暂不可用", "LOG_WARNING"),
+        ("empty", "未发现设备", "TEXT_SECONDARY"),
+    ):
+        devices = [] if state == "empty" else ["demo-a"]
+        bar.set_context(devices, devices, state)
+        for theme in ("Light", "Dark"):
+            BaseStyles.switch_theme(theme)
+            qt_application.processEvents()
+            assert bar.status_label.text() == caption
+            assert bar.status_label.palette().color(QPalette.ColorRole.WindowText) == QColor(
+                BaseStyles.color_for(theme, color_key)
+            )
+
+
 @pytest.mark.parametrize("state", ["ready", "scanning", "unavailable", "empty"])
 def test_large_font_device_status_remains_visible_in_narrow_bar(
     qt_application, monkeypatch, state

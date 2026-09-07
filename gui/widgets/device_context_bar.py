@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSignalBlocker, QSize, Qt, Signal
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -358,7 +358,8 @@ class DeviceContextBar(QWidget):
         for widget in (self.target_row, self._actions, self.session_row):
             widget.setPalette(palette)
             widget.setAutoFillBackground(False)
-        for widget in (self.targets_button, self.status_label, self.connect_button,
+        # 状态标签由 Fluent 的明暗主题文字色管理，通用色板会覆盖其语义色。
+        for widget in (self.targets_button, self.connect_button,
                        self.refresh_button, self.more_button, self.session_label,
                        self.session_combo, self.session_hint, self.close_button):
             widget.setPalette(palette)
@@ -385,6 +386,13 @@ class DeviceContextBar(QWidget):
             if self._connected else tr("未发现设备")
         )
         self.status_label.setText(text)
+        status_color = {"scanning": "LOG_INFO", "unavailable": "LOG_WARNING"}.get(
+            state, "LOG_SUCCESS" if self._connected else "TEXT_SECONDARY"
+        )
+        self.status_label.setTextColor(
+            QColor(BaseStyles.color_for("Light", status_color)),
+            QColor(BaseStyles.color_for("Dark", status_color)),
+        )
         self.targets_button.setAccessibleDescription(
             tr("{text}，已选 {count} 台").format(text=text, count=len(self._selected))
         )

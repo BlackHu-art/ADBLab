@@ -8,7 +8,8 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
 
 from gui.features.file_explorer import FileExplorerPage
@@ -206,3 +207,122 @@ def test_file_explorer_type_icons_stay_visible_in_narrow_theme_and_font_changes(
     assert right < workspace.viewport().width()
     page.close()
     workspace.close()
+
+
+@pytest.mark.parametrize("width", [700, 1100])
+@pytest.mark.parametrize("content", ["loading", "text", "image", "output", "error"])
+def test_file_preview_close_restores_full_file_list_and_can_reopen(
+    qt_application, width, content
+):
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(width, 700)
+    page._on_ls_result(LISTING, False)
+    page.show()
+    qt_application.processEvents()
+    names = [page._file_name_at(row) for row in range(page.table.rowCount())]
+    image = QPixmap(90, 160)
+    image.fill(Qt.GlobalColor.blue)
+    try:
+        if content == "loading":
+            page._begin_preview_request("notes.txt")
+        elif content == "text":
+            page._show_text_preview("notes.txt", "hello", "/sdcard/notes.txt")
+        elif content == "image":
+            page._show_image_preview("demo.png", image)
+        elif content == "output":
+            page._show_script_output("demo.sh", "done", False)
+        else:
+            page._show_preview_error("notes.txt", "Unable to read file")
+        qt_application.processEvents()
+        assert page.preview_panel.isVisible()
+        close_button = page.preview_back_btn if width < 880 else page.preview_close_btn
+        assert close_button.isVisible()
+        QTest.mouseClick(close_button, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+
+        assert not page.preview_panel.isVisible()
+        assert page.table.isVisible()
+        assert page.table.hasFocus()
+        assert abs(page.browser_panel.width() - page.content_splitter.width()) <= 2
+        assert [page._file_name_at(row) for row in range(page.table.rowCount())] == names
+        assert page.preview_image._source_pixmap.isNull()
+        assert not page.preview_image._fit_timer.isActive()
+
+        for resized_width in (700, 1100, width):
+            page.resize(resized_width, 700)
+            qt_application.processEvents()
+            assert not page.preview_panel.isVisible()
+            assert page.table.isVisible()
+            assert abs(page.browser_panel.width() - page.content_splitter.width()) <= 2
+
+        page._show_image_preview("demo.png", image)
+        qt_application.processEvents()
+        assert page.preview_panel.isVisible()
+        assert page.preview_image.isVisible()
+        assert page.browser_panel.isVisible() is (width >= 880)
+        assert close_button.isVisible()
+        QTest.mouseClick(close_button, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert not page.preview_panel.isVisible()
+        assert page.table.isVisible()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("error", [False, True])
+def test_file_preview_ignores_dismissed_results_and_accepts_new_request(qt_application, error):
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(1100, 700)
+    page.show()
+    try:
+        previous_request = page._begin_preview_request("old.txt")
+        qt_application.processEvents()
+        QTest.mouseClick(page.preview_close_btn, Qt.MouseButton.LeftButton)
+        page._view_controller._show_text_viewer(
+            "old.txt", "late text", error, "/sdcard/old.txt", request_id=previous_request
+        )
+        page._show_script_output("old.sh", "late output", error, request_id=previous_request)
+        qt_application.processEvents()
+        assert not page.preview_panel.isVisible()
+        assert page.table.isVisible()
+
+        current_request = page._begin_preview_request("current.txt")
+        page._view_controller._show_text_viewer(
+            "current.txt", "current text", False, "/sdcard/current.txt", request_id=current_request
+        )
+        page._view_controller._show_text_viewer(
+            "old.txt", "late text", error, "/sdcard/old.txt", request_id=previous_request
+        )
+        qt_application.processEvents()
+        assert page.preview_panel.isVisible()
+        assert page.preview_title.text() == "current.txt"
+        assert page.preview_text_edit.toPlainText() == "current text"
+        assert page.preview_stack.currentWidget() is page.preview_text_page
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("error", [False, True])
+def test_file_preview_closed_image_result_cleans_temporary_download(
+    qt_application, tmp_path, error
+):
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(1100, 700)
+    page.show()
+    image_path = tmp_path / "preview.png"
+    image = QPixmap(90, 160)
+    image.fill(Qt.GlobalColor.blue)
+    assert image.save(str(image_path))
+    page._view_controller._temporary_files.add(str(image_path))
+    try:
+        request = page._begin_preview_request("preview.png")
+        qt_application.processEvents()
+        QTest.mouseClick(page.preview_close_btn, Qt.MouseButton.LeftButton)
+        page._show_image(request, "preview.png", str(image_path), "", error=error)
+        qt_application.processEvents()
+        assert not page.preview_panel.isVisible()
+        assert page.table.isVisible()
+        assert not image_path.exists()
+        assert page.preview_image._source_pixmap.isNull()
+    finally:
+        page.close()

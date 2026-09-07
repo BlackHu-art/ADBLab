@@ -122,15 +122,15 @@ def test_home_actions_use_gallery_cardwidget_container(qt_application):
 def test_screenshot_icon_buttons_have_accessible_names(qt_application):
     viewer = ScreenshotPage([])
     try:
-        # 图标按钮已收敛为 qfluentwidgets TransparentToolButton（QToolButton 子类）；
-        # SmoothScrollDelegate 的内部 ArrowButton 是滚动条子控件，不属于图标按钮，
-        # 故按 TransparentToolButton 精确过滤而非 QToolButton。
-        icon_only = [
-            button for button in viewer.findChildren(TransparentToolButton) if not button.text()
-        ]
-
-        assert icon_only
-        assert all(button.accessibleName().strip() for button in icon_only)
+        controls = (
+            *viewer._command_bar.commandButtons, viewer._command_bar.moreButton,
+            viewer._view.preButton, viewer._view.nextButton,
+            viewer._pager.preButton, viewer._pager.nextButton,
+        )
+        assert controls
+        assert all(button.accessibleName().strip() for button in controls)
+        assert viewer._view.accessibleName().strip()
+        assert viewer._pager.accessibleName().strip()
     finally:
         viewer.close()
 
@@ -149,14 +149,19 @@ def test_screenshot_controls_render_focus_indicators_in_dark_theme(qt_applicatio
     BaseStyles.switch_theme("Dark")
     viewer = ScreenshotPage(image_paths)
     try:
+        viewer.resize(1100, 700)
         viewer.show()
         qt_application.processEvents()
 
         focus_color = BaseStyles.color("BORDER_FOCUS")
-        button = viewer._zoom_in_btn
-        thumbnail_strip = viewer._thumb_list
+        button = next(
+            button for button in viewer._command_bar.commandButtons
+            if button.action() is viewer._zoom_in_action
+        )
+        pager = viewer._pager
 
-        for control in (button, thumbnail_strip):
+        for control in (button, pager):
+            assert control.isVisibleTo(viewer)
             viewer._view.setFocus(Qt.OtherFocusReason)
             qt_application.processEvents()
             before = control.grab().toImage()
