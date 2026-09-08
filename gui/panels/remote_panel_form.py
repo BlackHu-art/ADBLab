@@ -19,7 +19,6 @@ from gui.widgets.responsive_layout import (
     GridMode,
     GridPlacement,
     WidthPolicy,
-    span_tail_mode,
 )
 
 
@@ -391,6 +390,8 @@ class RemotePanelForm(QObject):
         g = self._frame._card(tr("远程按键与手势"))
         outer = g.viewLayout
         outer.setSpacing(6)
+        # 页面有额外高度时仍按自然行高排列，避免空白被分配到按键和媒体组内部。
+        outer.setAlignment(Qt.AlignmentFlag.AlignTop)
         self._frame._remote_control_buttons = []
         self._frame._remote_key_buttons = []
         self._frame._remote_action_buttons = []
@@ -411,16 +412,34 @@ class RemotePanelForm(QObject):
         for label, code in key_specs:
             self._frame._remote_key_button(label, code, tr("发送按键事件 {code}").format(code=code))
         self._frame._remote_primary_key_buttons = tuple(self._frame._remote_key_buttons)
-        control_modes = (
-            span_tail_mode("four", 4, 0, column_stretches=(0, 0, 0, 0)),
-            span_tail_mode("two", 2, 1, column_stretches=(0, 0)),
+        # 按键和媒体共用五列节奏；空间不足时依文字自然宽度减列。
+        # 末行保持逐格排列，避免确认、删除或媒体尾项因跨列而出现断开的空位。
+        key_modes = tuple(
+            GridMode(
+                name,
+                columns,
+                rank,
+                column_stretches=(1,) * columns,
+                equal_column_groups=(tuple(range(columns)),),
+            )
+            for rank, (name, columns) in enumerate((("five", 5), ("three", 3), ("two", 2)))
+        )
+        action_modes = tuple(
+            GridMode(
+                name,
+                columns,
+                rank,
+                column_stretches=(1,) * columns,
+                equal_column_groups=(tuple(range(columns)),),
+            )
+            for rank, (name, columns) in enumerate((("four", 4), ("two", 2)))
         )
         self._frame._remote_key_binding = self._frame._add_responsive_row(
             outer,
             *self._frame._remote_primary_key_buttons,
-            spacing=2,
+            spacing=6,
             policies=(WidthPolicy.NATURAL,) * len(self._frame._remote_primary_key_buttons),
-            modes=control_modes,
+            modes=key_modes,
         )
 
         media_specs = [
@@ -438,9 +457,9 @@ class RemotePanelForm(QObject):
         self._frame._remote_media_binding = self._frame._add_responsive_row(
             outer,
             *self._frame._remote_media_buttons,
-            spacing=2,
+            spacing=6,
             policies=(WidthPolicy.NATURAL,) * len(self._frame._remote_media_buttons),
-            modes=control_modes,
+            modes=key_modes,
         )
 
         action_specs = [
@@ -458,19 +477,15 @@ class RemotePanelForm(QObject):
         self._frame._remote_action_binding = self._frame._add_responsive_row(
             outer,
             *self._frame._remote_action_buttons,
-            spacing=2,
+            spacing=6,
             policies=(WidthPolicy.NATURAL,) * len(self._frame._remote_action_buttons),
-            modes=control_modes,
+            modes=action_modes,
         )
         self._frame.remote_control_bindings = (
             self._frame._remote_key_binding,
             self._frame._remote_media_binding,
             self._frame._remote_action_binding,
         )
-        # 留白由整组右侧吸收，列宽只跟随按钮自然尺寸；窄屏仍沿用四列/两列重排。
-        for binding in self._frame.remote_control_bindings:
-            binding.widgets()[0].parentWidget().layout().setAlignment(Qt.AlignmentFlag.AlignLeft)
-
         return g
 
     def _remote_key_button(self, label: str, code: str, tooltip: str):
@@ -480,7 +495,7 @@ class RemotePanelForm(QObject):
         b.setIconSize(QSize(13, 13))
         b.setMinimumHeight(28)
         b.setMinimumWidth(56)
-        b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         b.clicked.connect(lambda _, cd=code: self._frame._send_keyevent(cd))
         self._frame._remote_control_buttons.append(b)
         self._frame._remote_key_buttons.append(b)
@@ -495,7 +510,7 @@ class RemotePanelForm(QObject):
         b.setIconSize(QSize(13, 13))
         b.setMinimumHeight(28)
         b.setMinimumWidth(76)
-        b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         b.clicked.connect(lambda _, act=action: self._frame._send_remote_action(act))
         self._frame._remote_control_buttons.append(b)
         self._frame._remote_action_buttons.append(b)

@@ -400,9 +400,9 @@ class RemotePanel(BasePanel):
         self._update_action_states()
 
     def activate_responsive_bindings(self) -> None:
-        """在通用页面预处理后恢复遥控按钮的自然宽度，再启动布局规划。"""
+        """在通用页面预处理后保留按钮自然宽度下限，并允许等宽网格扩展。"""
         for button in self._remote_control_buttons:
-            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
         super().activate_responsive_bindings()
 
     def get_remote_session_devices(self) -> list[str]:

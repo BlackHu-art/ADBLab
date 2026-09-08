@@ -2548,11 +2548,11 @@ def _expected_grid_placement(index: int, item_count: int, columns: int, span_tai
     return (tail_row, column, 1, span)
 
 
-def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
+def test_remote_control_real_viewport_scan_uses_group_specific_columns(
     qt_application,
     monkeypatch,
 ):
-    """Remote 三组控制只由真实 applied plan 与 Qt 网格证明可达的四列/两列。"""
+    """真实窗口缩放时各组按内容重排，末行保留连续位置且按钮不重叠。"""
 
     panel, remote, scroll, content = _show_feature_panel(
         "remote",
@@ -2562,6 +2562,7 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
         monkeypatch,
     )
     observed = {id(binding): set() for binding in remote.remote_control_bindings}
+    expected_columns = ({2, 3, 5}, {2, 3, 5}, {2, 4})
     try:
         _activate_feature_category(
             qt_application,
@@ -2574,18 +2575,18 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
         for width in range(180, 901, 8):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             assert remote.category_stack.current_key == "mirroring"
-            for binding in remote.remote_control_bindings:
+            for binding, allowed in zip(remote.remote_control_bindings, expected_columns):
                 plan = binding.applied_plan
                 assert plan is not None
                 columns = plan.mode.columns
-                assert columns in {2, 4}
+                assert columns in allowed
                 observed[id(binding)].add(columns)
 
                 widgets = binding.widgets()
                 assert widgets
                 layout = widgets[0].parentWidget().layout()
                 assert isinstance(layout, QGridLayout)
-                assert layout.columnCount() <= 4
+                assert layout.columnCount() <= max(allowed)
                 span_tail = bool(getattr(plan.mode, "span_tail", False))
                 for index, widget in enumerate(widgets):
                     item_index = layout.indexOf(widget)
@@ -2597,37 +2598,52 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
                     assert_positive_geometry(widget, content)
                 assert_non_overlapping(widgets, content)
 
-        assert all(columns == {2, 4} for columns in observed.values())
+        assert tuple(observed.values()) == expected_columns
     finally:
         _close_feature_panel(panel)
 
 
-def test_remote_controls_keep_natural_width_and_spacing_when_viewport_grows(
-    qt_application, monkeypatch,
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_remote_control_groups_fill_available_width_with_equal_buttons(
+    qt_application, monkeypatch, font_size,
 ):
-    panel, remote, scroll, _content = _show_feature_panel(
-        "remote", 800, 12, qt_application, monkeypatch,
+    """宽屏利用整行，窄屏与大字体保持组内等宽和完整文字。"""
+    panel, remote, scroll, content = _show_feature_panel(
+        "remote", 760, font_size, qt_application, monkeypatch,
     )
     try:
-        geometries = []
-        for width in (800, 1200):
+        for width in (760, 1200, 292, 760):
             _resize_feature_viewport(qt_application, panel, remote, scroll, width)
             assert remote.category_stack.current_key == "mirroring"
-            assert all(
-                binding.applied_plan.mode.columns == 4
-                for binding in remote.remote_control_bindings
-            )
-            geometries.append(tuple(
-                (button.x(), button.width()) for button in remote._remote_control_buttons
-            ))
-        assert all(
-            abs(left_x - right_x) <= 2 and abs(left_width - right_width) <= 2
-            for (left_x, left_width), (right_x, right_width) in zip(*geometries)
-        ), geometries
-        assert all(
-            button.width() <= button.sizeHint().width() + 2
-            for button in remote._remote_control_buttons
-        )
+            if font_size == 12 and width >= 760:
+                assert tuple(
+                    binding.applied_plan.mode.columns
+                    for binding in remote.remote_control_bindings
+                ) == (5, 5, 4)
+            previous_bottom = None
+            for binding in remote.remote_control_bindings:
+                buttons = binding.widgets()
+                columns = binding.applied_plan.mode.columns
+                row = buttons[0].parentWidget()
+                assert abs(buttons[0].x() - row.contentsRect().left()) <= 2
+                assert abs(
+                    buttons[columns - 1].geometry().right() - row.contentsRect().right()
+                ) <= 2
+                widths = [button.width() for button in buttons]
+                assert max(widths) - min(widths) <= 2, widths
+                assert abs(buttons[0].y() - row.contentsRect().top()) <= 2
+                for index in range(columns, len(buttons)):
+                    gap = buttons[index].y() - buttons[index - columns].geometry().bottom() - 1
+                    assert abs(gap - row.layout().verticalSpacing()) <= 2
+                group_top = row.mapTo(content, QPoint(0, 0)).y()
+                if previous_bottom is not None:
+                    spacing = remote._remote_section_groups[1].viewLayout.spacing()
+                    assert abs(group_top - previous_bottom - 1 - spacing) <= 2
+                previous_bottom = group_top + max(button.geometry().bottom() for button in buttons)
+                for button in buttons:
+                    assert button.width() + 2 >= button.sizeHint().width()
+                    assert_positive_geometry(button, content)
+                assert_non_overlapping(buttons, content)
     finally:
         _close_feature_panel(panel)
 
