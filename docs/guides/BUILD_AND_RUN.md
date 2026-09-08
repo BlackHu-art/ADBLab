@@ -45,6 +45,8 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
 - ADB 解析器已按平台门控：Windows 优先内置 `scrcpy-win64/adb.exe`，不存在时回退
   PATH；非 Windows 直接解析 PATH 中的 adb，避免把仓库内 Windows PE 当成 adb 执行。
+- 普通启动会后台检测默认本机 ADB 服务，为受支持短命令选择执行方式；设置页的原生开关只在
+  当前运行生效。支持范围、恢复和自定义服务环境的处理见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
@@ -183,10 +185,15 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 
 ## 调试方法
 
-- 普通 ADB 失败：先运行 packaging self-check 确认 adb 路径，再查看来源功能分区的结果与错误详情；应用自身异常在设置页导出诊断。
-- 设备扫描：检查 `continuous_device_scan` 和 `device_scan_interval_ms`；扫描会在有活跃 CommandRunner 命令时跳过一次轮询。
+- 普通 ADB 失败：packaging self-check 可确认依赖与打包资源存在，Windows 包括内置 adb 文件；
+  它不执行 ADB 或验证设备连接。继续查看任务中心“本次操作”的错误详情及设置页 ADB 维护状态；
+  实时采集内容保留在对应功能页，归属见 [OPERATION_RESULTS](OPERATION_RESULTS.md)。应用自身异常在设置页导出诊断。
+- 设备扫描：检查 `continuous_device_scan` 和 `device_scan_interval_ms`；原生扫描在有活跃
+  CommandRunner 命令时跳过本轮，快速扫描不受该忙碌判断阻塞。能力恢复检查在忙碌判断前提交，
+  细节见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - Remote：观察预检 warning、scrcpy stderr/FPS 状态；Windows 确认内置 scrcpy 完整，非 Windows 确认 PATH。
-- MobilePerf：使用 System/Performance 内嵌页的日志与结果目录；停止会先生成 stop 文件并最多等待报告，再强制停止。
+- MobilePerf：使用左侧“性能采集”页的日志与结果目录；停止先写 `mobileperf.stop`，默认最多等待
+  90 秒供报告收尾，再尝试终止进程；未确认退出时保留运行状态，不能将停止请求视为退出成功。
 - 高并发/关闭问题：重点检查功能页 `request_dispose()`、Workspace 会话 registry、TaskSupervisor、
   `ProcessRunner` 全局进程表和 QThread 是否仍运行；瞬态表单再单独检查 `closeEvent`。
 

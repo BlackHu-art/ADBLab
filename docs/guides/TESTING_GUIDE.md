@@ -18,15 +18,18 @@
 | 测试域 | 代表性入口 | 主要覆盖 |
 | --- | --- | --- |
 | 执行、配置与存储 | `test_model_*.py`、`test_settings_persistence.py`、`test_device_store_concurrency.py` | CommandRunner/ProcessRunner、ADB model、设置迁移、原子写与故障恢复 |
+| ADB 执行环境与快速命令 | `test_adb_runtime.py`、`test_qt_adb_runtime.py`、`test_adb_fast.py` | 能力探测、双后端选择、恢复代次、超时/取消、不重放命令和 Qt 状态投递；业务调用方另选对应 model/service 测试 |
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
 | Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
+| 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_diagnostics.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、诊断容量及原子导出 |
+| 测试归档与参数方案 | `test_run_library.py`、`test_run_library_ui.py`、`test_run_library_integration.py` | 跨重启记录、参数复用不自动执行、损坏/未来版本保护、后台写入失败和关闭排空；页内结果另见 `test_run_results*.py` |
 | UI、主题与响应式 | `test_main_window_layout.py`、`test_responsive_*.py`、`test_*typography.py` | 导航、主题、字体、DPI、断点重排、无障碍与瞬态交互 |
 | Monkey 与性能页交互 | `test_monkey_layout.py`、`test_monkey_preparation.py`、`test_performance_responsive.py` | 分组布局、查询显隐、输入保留、诊断常显与日志结果可达；这些 Qt 用例纳入 `ui` marker |
 | 界面语言与材质 | `test_i18n.py`、`test_application_languages.py`、`test_dialog_languages.py`、`test_navigation_rendering.py` | 词库与格式参数、实际主导航及业务页语言、显示标签与设备参数隔离、共享材质及动画中间帧；这些 Qt 用例纳入 `ui` marker |
-| App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py` | 应用管理、路径/传输、截图批次和页面交互 |
-| Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空 |
+| App、文件与媒体 | `test_app_manager_selection.py`、`test_file_explorer_service.py`、`test_screenshot_page.py`、`test_screenshot_io.py` | 应用管理、路径/传输、截图批次、后台解码缓存、删除快照和页面释放 |
+| Remote 与 MobilePerf | `test_remote_services.py`、`test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` | scrcpy/输入、隔离子进程、报告与并发排空；采样预算与周期共享见 `test_mobileperf_query_budget.py`、`test_mobileperf_sampling.py`，结果图表见 `test_perf_chart_data.py` |
 | 生命周期与探针 | `test_model_shutdown_admission.py`、`test_window_lifecycle.py`、`live_logcat_close_probe.py` | 关闭准入、QObject 晚到回调、线程/进程释放 |
-| 静态与构建契约 | `test_ci_contracts.py`、`test_comment_language.py`、`test_runtime_tools.py` | workflow 权限、注释规则、资源和打包路径 |
+| 静态与构建契约 | `test_ci_contracts.py`、`test_comment_language.py`、`test_doc_links.py`、`test_runtime_tools.py` | workflow 权限、注释/文档检查器、资源和打包路径 |
 
 ## 执行命令
 
@@ -94,6 +97,8 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
 - pytest `monkeypatch` 替换 subprocess、路径解析、设置和 platform/frozen 状态。
 - fake process 实现 `poll/terminate/kill/wait/stdout` 等协议，验证 ProcessRunner 和 MobilePerfRunner。
 - `tmp_path` 隔离 JSON/YAML/截图/报告/临时配置。
+- 全局 `isolated_run_library_storage` 夹具把归档服务和 Qt 协调器的存储入口指向 `tmp_path`；
+  其他设置、设备历史及导出路径仍须由具体测试替换，不能由该夹具推断所有用户数据已隔离。
 - Qt 测试直接验证可观察行为，并替换外部 service；不依赖无业务意义的私有字段不存在断言。
 - fake/stub 必须实现被测边界实际消费的状态与失败语义，不能靠默认成功、随意的 `getattr`
   回退或自动吞错绕过真实协议。断言可以检查必要的调用参数与资源归属，不复制实现步骤。

@@ -56,6 +56,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |
+| Android `app_process` + `resources/app-icon-helper.jar` | 在设备端读取应用图标 | `services/app_icons.py`、`tools/app_icons/Main.java` | 保留占位图并提示刷新；主机正常运行不依赖 Java/Android SDK，重新生成 helper 的要求见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#应用图标读取工具) |
 | Perfetto 网站 | 手动打开性能分析页面 | `PerformancePage.open_perfetto()` | 只影响跳转，不影响采集 |
 | GitHub Actions/API | 构建、制品、Release、清理 | `.github/workflows/` | 只影响 CI/CD |
 
@@ -71,6 +72,10 @@ ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 只有桌面 GUI、
 ADB 是项目实际最重要的外部操作 API。参数通常以数组传给 subprocess，设备 shell 内的复合命令由
 service/model 构造。
 
+`CommandRunner` 的受支持短命令可经 `AdbRuntime` 直连默认本机 ADB 服务，命令和失败结果仍通过
+现有执行接口交付；自定义 Shell、特殊参数、传输和长期进程保留原生边界。自动选择、取消、
+恢复及不重放规则由 [ADB_FAST](../guides/ADB_FAST.md#应用内自动选择) 维护。
+
 | 能力组 | 主要入口 | 典型外部接口 | 输入 | 输出 | 校验/保护 |
 | --- | --- | --- | --- | --- | --- |
 | 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 |
@@ -80,7 +85,7 @@ service/model 构造。
 | 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` |
 | 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair` | host/device port | CommandResult | forward/reverse 的 TCP 端口在 Controller 校验；tcpip/pair 的端口在 model 校验；直接调用 forward/reverse model 不重复校验 |
 | 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/path | 流、文件、目录 | ZIP 安全解压；部分诊断包名和 dumpsys 服务名经 `utils/adb_values.py` 规范化，LiveLogcat 另有包/PID 过滤边界 |
-| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | PNG 签名检查和回退；录屏启动前校验时长/码率/成对宽高，pull 与远端 cleanup 分离报告，结果携带 `batch_id` |
+| 截图/录屏 | `ADBTesting`、`ADBAdvanced` | `exec-out screencap`、`screenrecord`、`pull` | device/path/time/batch_id | PNG/MP4 | 截图在工作线程完整解码 PNG，未取消才原子发布；仅客户端明确不支持 `exec-out` 时兼容回退。录屏启动前校验时长/码率/成对宽高，pull 与远端 cleanup 分离报告，结果携带 `batch_id` |
 | 性能采集 | MobilePerf monitor | `top`、`dumpsys meminfo`、SurfaceFlinger、`/proc` | package/device/interval | CSV 采样 | 独立参数/配置解析及 ADB 执行边界，不能假设经过主应用 Controller |
 | Shell、Intent 与 Android 设置 | SystemPanel、`ADBAdvanced`、`ADBSystemMixin` | `adb shell ...`、`am start/broadcast`、`settings` | 用户命令或字段 | CommandResult | 自定义 Shell 按用户命令执行；结构化 Intent 的组件/URI/字符串 extras 及设置 namespace/key/value 使用 `shlex.quote` 保持参数边界 |
 | Monkey | `ADBTesting` | `monkey`、`am force-stop` | package/events/throttle/flags | CommandResult | 前台探测 fail-closed；`_wait_for_monkey_abort` 短轮询探测中止 |
@@ -96,6 +101,9 @@ Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服�
 参数 quote、外部 ZIP 和受控进程的协作规则见 [AGENTS.md](../../AGENTS.md)；当前执行器与
 停止语义见 [ARCHITECTURE](ARCHITECTURE.md#协调与执行边界)。
 
-MobilePerf 内核仍直接使用 Popen/ADB（参数数组、`shell=False`），5037 端口清理由
-`core.process_utils` 负责；`get_adb_path()` 的最终回退走 `utils.adb_resolver`。
+MobilePerf 的有限超时同步 shell 由单次运行拥有的 `MobilePerfAdbExecutor` 复用核心双后端，保留
+采样所需的原始双流和文本转换；异步调用、文件传输、合并输出和无限等待仍使用原生
+Popen/ADB（参数数组、`shell=False`）。5037 端口清理由 `core.process_utils` 负责；
+`get_adb_path()` 的最终回退走 `utils.adb_resolver`。进程环境与收尾准入见
+[ADB_FAST](../guides/ADB_FAST.md#mobileperf-采集进程)。
 未闭环的执行、平台与许可问题只在 [RISKS_AND_DEBT](RISKS_AND_DEBT.md) 维护。

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-05
+last_verified: 2026-09-08
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -14,14 +14,21 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 
 ## 主要业务能力
 
-1. 设备发现与连接：轮询 `adb devices`，连接/断开 TCP 设备，读取并持久化设备元数据；全局设备栏
-   管理批量操作目标，单设备功能使用独立会话。无线配对已有 Controller/model 接口，当前没有可见配对表单。
-2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、批量安装、当前前台应用检测和 APK 信息解析。
+1. 设备发现与连接：轮询 `adb devices`，连接/断开 TCP 设备，缓存设备属性；仅 IP 连接历史及其元数据
+   跨会话保存，范围见 [DATA_FLOW](DATA_FLOW.md#设备发现与元数据流)。全局设备栏管理操作目标，
+   固定设备功能使用独立会话。无线配对已有 Controller/model 接口，当前没有可见配对表单。
+2. 应用管理：安装、卸载、启停、清数据、权限操作、备份/恢复、批量安装、当前前台应用检测、
+   APK 信息解析和设备端原生应用图标。
 3. 测试与诊断：Monkey、截图、录屏、logcat、bugreport、ANR、进程/电池/系统信息。
 4. 文件操作：浏览设备文件、上传/下载、编辑、复制/移动/删除、权限修改、APK 安装和脚本执行。
 5. Remote：启动 scrcpy、查看 FPS、发送按键/滑动/旋转和窗口聚焦。
-6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出 CSV/XLSX 与设备信息。
-7. 辅助工具：主题/字体/窗口设置（含响应式重排与屏幕适配）、日志面板和结果文件查看。
+6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出
+   CSV/XLSX 与设备信息，采集结束后展示静态结果图表。
+7. 界面与环境设置：主题、云母效果、字体、显示缩放、窗口适配与多语言，支持查看 ADB 自动适配状态
+   和本次运行的原生模式开关；具体生效时机见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#启动)
+   与 [ADB_FAST](../guides/ADB_FAST.md)。
+8. 结果管理：任务中心保留本次操作的逐台结果、正文与附件；Monkey/性能测试另有跨重启归档和命名
+   参数方案，支持回填参数而不自动开始测试。应用诊断可在设置页导出。
 
 当前主界面是 qfluentwidgets `FluentWindow` 工作台；长期功能内嵌，纯消息在窗口内提示，
 输入与系统文件选择保留瞬态交互。完整页面路由与设备选择规则见

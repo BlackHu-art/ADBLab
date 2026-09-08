@@ -17,6 +17,7 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | `WorkspaceRoute` | 首页快捷入口、左侧一级功能导航、设备卡和功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
+| 应用图标 | 设备端 `app_process` 临时执行内置 DEX helper | service 校验有界 PNG 字节；GUI 线程解码并创建 QIcon；每批最多 12 个 | `AppManagerIcons` 的逐设备页面缓存，最多 512 项 | 只在当前页面会话；列表刷新使缓存及旧 worker 代次失效；远端 helper 按本批次精确路径清理，不写主机图标缓存文件 |
 | 截图/录屏 | 设备 screencap/screenrecord | 截图二进制流写同目录临时文件，完整 PNG 解码后原子发布；录屏 pull；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 文件持续存在直到用户单张或全部删除；删除失败项保留；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
 | MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
@@ -111,7 +112,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
 | 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
-| MobilePerf 临时配置 | 临时目录 `config.conf` | INI sections/values | `MobilePerfRunConfig.write_config`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程异常时依赖适配层清理；包含设备/包/路径 |
+| MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop` | INI sections/values；停止文件只作退出信号 | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config` | 每次运行独立临时目录 | 子进程退出及输出 reader 收口后由适配层清理；启动失败也清理；包含设备/包/路径 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
 | 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层条目类型/文件大小校验，失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
@@ -125,6 +126,10 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 性能参数保留基础输出目录，实际设备后缀由当前会话重新生成。记录只收录新运行，不自动扫描旧目录。
 记录附件使用本地绝对路径；打开前在后台检查，文件被移动或删除时明确提示，不从消息文本猜测路径。
 
+主窗口的普通操作由 `ActionResults` 保留当次请求；Monkey 和性能结果由 `RunLibrary` 持久化。
+`TaskHistoryStore` 仅供未注入 `RunLibrary` 的任务中心兼容分支使用；主窗口虽然仍构造并传入该
+对象，`_on_operation_completed()` 已不向其中追加历史，不能将它视为正式跨会话记录链路。
+
 ### 设置字段
 
 当前 `DEFAULTS` 的核心键包括：
@@ -136,7 +141,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 界面语言 | `language` | Auto、zh_CN、zh_HK、en_US；无效值回退 Auto。设置页保存后提示重启，恢复默认回填 Auto；启动时按系统中文脚本/地区选择简繁中文，其他系统语言回退英文。只增加正式默认键，沿用 schema v3 |
 | 窗口 | `window_width`、`window_height`、`always_on_top`；旧分栏键仅在设置层保留 | MainFrame、SettingsPage；默认 1250×700、设计最小 860×500；屏幕工作区不足时由 `gui/window_layout.py` 下调实际最小尺寸 |
 | 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsPage |
-| 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | Log UI、`core.perf_trace` helpers/Controller |
+| 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | 前者由设置页写入并限制性能采集文本缓冲，后者用于 `core.exec`/Controller 的慢操作诊断；通用任务正文容量由 [OPERATION_RESULTS](../guides/OPERATION_RESULTS.md#状态与资源边界) 单独维护 |
 | 文件 | `save_directory` | 截图、日志、备份、MobilePerf、文件浏览器 |
 | Monkey | `monkey_params` | AppPanel/Controller |
 | 旧分栏兼容 | `panel_split_ratio`、`left_panel_width`、`right_panel_width`、`device_log_split_ratio` | 仅为旧配置 schema 兼容保留；新 FluentWindow 运行时不创建 splitter，也不再写入这些键 |
@@ -155,7 +160,7 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 ```mermaid
 flowchart TD
     Form["PerformancePage 表单"] --> Config["MobilePerfRunConfig"]
-    Config --> Temp["临时 config.conf"]
+    Config --> Temp["临时 mobileperf_run.conf"]
     Temp --> Worker["独立 Python/ADBLab worker 进程"]
     Worker --> Monitors["CPU / Mem / Traffic / FPS / FD / Threads / Monkey / Logcat"]
     Monitors --> Device["Android ADB 数据源"]
@@ -177,6 +182,8 @@ flowchart TD
   5,000 条，溢出累计计数由 `dropped_count` 提供；页面不再依赖全局日志看板。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
-- MobilePerf 启动时会清理设备 `/data/local/tmp` 中符合包名且超过约 3 天的 heapdump；这一行为在 `StartUp.clear_heapdump()`。
+- MobilePerf 启动时，`StartUp.clear_heapdump()` 列取设备 `/data/local/tmp`，对文件名包含第一个
+  目标包名且 `ls -l` 修改时间判定超过 3 天的条目调用删除；时间无法解析时保留。实际筛选不检查
+  `.hprof` 后缀或 ADBLab 产物归属，相关边界见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。
 - CI 制品与版本保留规则见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#cicd)。
 - 未决的数据保护与保留要求见 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

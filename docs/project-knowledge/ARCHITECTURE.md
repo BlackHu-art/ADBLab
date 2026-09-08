@@ -50,8 +50,8 @@ flowchart LR
   [设备概览流程](BUSINESS_FLOW.md#workspace-路由目录)。
   连接表单继续由 `DeviceContextBar` 管理瞬态对象，`MainFrame` 显式传入概览连接按钮作为锚点；
   切页或关闭弹层时沿用原清理边界，不另建连接历史或设备状态源。
-- `MainFrame` 在页面堆叠外统一提供 24px 水平边界，滚动区域内部保留 8px 控件安全距。
-  页面分区使用自然标题高度；应用和文件管理采用 Action 驱动的 CommandBar，溢出菜单同步命令可用态。
+- `MainFrame` 统一拥有页面外边界及材质面；页面宿主负责内容滚动和可见会话尺寸，避免不同页面
+  重复叠加背景或边距。具体布局与控件呈现由页面实现及相关 Qt 测试维护。
 - 纯消息使用 `gui/notifications.py` 的窗口内 InfoBar，非阻塞返回；兼容
   `FluentMessageBox.information/warning/critical` 返回 `None`。文本输入、短表单及系统文件选择器
   保留确认/取消语义。同步输入读取结果后再 `deleteLater()`，不承担长期任务。
@@ -100,6 +100,10 @@ flowchart LR
   用来拒绝错代或晚到结果。关闭时先封闭新任务准入，尚未执行的方法体返回取消结果。
   明确只读查询通过 `_run_readonly()` 把模型关闭传递到执行器；后台关闭线程等待 Executor
   和模型线程池真正退出，活动短命令也纳入监督，超时保留 residual。
+- 通用操作结果另以 `ActionJob` 固定 request/job/target 身份，`ActionEnvelope` 在原载荷外包装返回；
+  它与 `OperationMetadata` 可以同时存在。Controller 先校验结果准入，在原请求作用域内处理业务
+  返回和续发命令，再归并 `ActionResults`；已接入 Operation 的单元以校验后的业务终态为准，
+  不用最后一条批次摘要覆盖单元结果。结果呈现与保留范围见 [操作结果](../guides/OPERATION_RESULTS.md)。
 - `CommandRunner` 返回统一 `CommandResult`；超时转换成失败结果，不向调用者抛出
   `subprocess.TimeoutExpired`。`ProcessRunner` 管长进程、同键替换、停止和全局兜底；只有确认
   退出才移除 tracking，停止失败或并发启动冲突产生的残留仍需登记。
@@ -122,10 +126,11 @@ flowchart LR
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
 | 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
-| 应用自有 cleanup QThreadPool | 执行资源停止和等待，与普通命令全局池分离 |
+| QtTaskSupervisor cleanup QThreadPool | 执行单资源及 owner 级停止和等待，与普通命令全局池分离 |
+| 应用关闭与 finalizer 独立线程 | 应用整体停止和最终落盘分别使用独立通道，避免排在 owner 清理任务之后；共用关闭截止时间 |
 | Controller ThreadPoolExecutor | 设备信息等后台查询；Controller.shutdown() 收口 |
 | Remote executor / warmup / readers | 停止输入准入，再等待执行器及预热生产者，最后关闭持久输入会话和相关进程资源 |
-| RunLibraryController 串行线程 | 文件读写及附件探测，空闲退出；关闭时排空最后提交记录 |
+| RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；同步短查询复用核心双后端，采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
 
 ## 应用关闭
@@ -134,8 +139,9 @@ flowchart LR
 
 1. 拒绝新任务、停止界面定时器和晚到回调；向扫描、业务面板、会话及 Controller 广播停止。
 2. TaskSupervisor 在共享 deadline 内后台等待，保留超时或失败资源快照；GUI 不串行阻塞等待。
-3. 生产者停止后在 GUI 线程补交 Monkey/性能终态，后台 finalizer 排空结果库并保存应用设置。
-   某页归档失败仍继续其他收尾，失败不能报告为成功。
+3. 停止阶段返回后在 GUI 线程尝试补交 Monkey/性能终态，保留资源残留及单页归档失败事实；
+   `LogService.shutdown()` 在 GUI 线程刷新并冻结最后的诊断，再由后台 finalizer 排空测试记录及
+   诊断写入队列并保存应用设置。某页归档失败仍继续其他收尾，失败不能报告为成功。
 4. 汇总收尾结果并完成关闭；超时返回不表示资源全部退出。
 
 验证入口：`tests/test_phase2_mainframe_shutdown_gate.py`、`tests/test_window_lifecycle.py`、
@@ -149,13 +155,16 @@ flowchart LR
   `gui/window_layout.py` 与 ScreenAdapter 管窗口尺寸及屏幕变化。配置键见
   [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
 - `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
-  设置持久化；它不参与导航选中或历史。页面名称保留为可访问信息，不生成标题区。
+  设置持久化；它不参与导航选中或历史。设备任务页标题由全局设备栏消费页面的可访问名称。
   会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部会话控件说明。
 - 通用操作由 `ActionResults` 管理请求身份与不可变结果，`ActionEnvelope` 穿过原异步模型边界；
-  `ActionFeedbackPresenter` 集中记录到任务中心，并驱动分级 Toast、报告文件入口及诊断正文阅读器，
+  `ActionFeedbackPresenter` 订阅 `action_result_changed` 并将快照投影到任务中心“本次操作”，
+  同时驱动分级 Toast、报告文件入口及诊断正文阅读器，
   不把过程日志解释为终态；普通功能页不设置通用操作结果面板。
   资源与取消仍由既有 OperationManager、use case 和 supervisor 管理，详见
   [操作结果](../guides/OPERATION_RESULTS.md)。
+- 主窗口向任务中心注入 `RunLibraryController`，由“测试结果”显示持久化测试记录。
+  `TaskHistoryStore` 与旧历史卡保留为兼容入口；主窗口中的旧历史卡隐藏，不是通用操作正文的存储源。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
   文件队列在后台保存并在关闭时排空。源码 DEBUG 单独进入 stderr，frozen 或无 stderr 时不输出。
   `shutdown()` 保留停止态单例并拒绝晚到消息。MobilePerf 继续独立排空 stdout/stderr，
