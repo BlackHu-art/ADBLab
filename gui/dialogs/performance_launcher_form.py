@@ -317,6 +317,10 @@ class PerformanceLauncherForm:
         self._frame._device_context.hide()
         if bool(getattr(self._frame, "_workspace_scroll_prepared", False)):
             return
+        # 操作换行后须向父布局传播真实高度，短页不能把固定高度按钮裁在页头外。
+        header_layout = self._frame.header_card.layout()
+        assert header_layout is not None
+        header_layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         scroll = self._frame._config_scroll
         content = scroll.takeWidget()
         if content is None:
@@ -331,8 +335,8 @@ class PerformanceLauncherForm:
         content_layout = content.layout()
         assert content_layout is not None
         margins = content_layout.contentsMargins()
-        # 宿主已提供外侧留白；移交内容后只保留窄边距，不叠加旧滚动条通道与卡片内缩。
-        content_layout.setContentsMargins(8, margins.top(), 8, margins.bottom())
+        # 留白归内容所有，宿主滚动条可贴页面边缘；独立页面仍保留原滚动条通道。
+        content_layout.setContentsMargins(32, margins.top(), 32, margins.bottom() + 24)
         for section in content.findChildren(ContentSection):
             title_margins = section.headerLayout.contentsMargins()
             body_margins = section.viewLayout.contentsMargins()

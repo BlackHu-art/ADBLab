@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFontDatabase,
     QPainter,
     QPalette,
     QPen,
+    QRegion,
 )
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -57,6 +58,7 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_font_role, apply_label_role
 from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.home_banner import HomeBanner
 from gui.widgets.setting_card_layout import (
     SettingsCardPresentation as _SettingsCardPresentation,
 )
@@ -111,7 +113,7 @@ class GalleryPage(QWidget):
         else:
             body_wrapper = QWidget(self)
             body_layout = QVBoxLayout(body_wrapper)
-            body_layout.setContentsMargins(0, 16, 0, 0)
+            body_layout.setContentsMargins(0, 0, 0, 0)
             body_layout.addWidget(content)
             self.body = body_wrapper
 
@@ -496,8 +498,8 @@ class WorkspaceSectionPage(QWidget):
         wrapper = QWidget(body)
         wrapper.setObjectName(f"{route_key}View")
         wrapper_layout = QVBoxLayout(wrapper)
-        # 页面外边界由主窗口统一提供，此处只保留悬浮滚动条旁的安全距离。
-        wrapper_layout.setContentsMargins(8, 8, 8, 20)
+        # 正文留白随页面滚动，外层滚动容器始终占满内容区。
+        wrapper_layout.setContentsMargins(32, 8, 32, 44)
         wrapper_layout.setSpacing(18)
         wrapper_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         content.setParent(wrapper)
@@ -707,6 +709,7 @@ class HomePage(ScrollArea):
 
     def __init__(self, frame, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._top_left_radius = 0
         self.setObjectName("homePage")
         self.setAccessibleName(tr("首页"))
         # Windows 原生滚动区在透明窗口上仍会绘制 Base 底色，须限定清除首页承载层。
@@ -717,7 +720,7 @@ class HomePage(ScrollArea):
         view = QWidget(self)
         view.setObjectName("homeView")
         layout = QVBoxLayout(view)
-        layout.setContentsMargins(0, 16, 0, 28)
+        layout.setContentsMargins(0, 0, 0, 52)
         layout.setSpacing(24)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
@@ -728,15 +731,14 @@ class HomePage(ScrollArea):
         self.device_context.refreshRequested.connect(frame._request_device_refresh)
         context_host = QWidget(view)
         context_layout = QVBoxLayout(context_host)
-        context_layout.setContentsMargins(8, 0, 8, 0)
+        context_layout.setContentsMargins(32, 0, 32, 0)
         context_layout.addWidget(self.device_context)
-        layout.addWidget(context_host)
         context_host.setVisible(not hasattr(frame, "_global_device_bar"))
 
         tools = ActionCardView(tr("常用工具"), view)
         tools_layout = tools.layout()
         assert tools_layout is not None
-        tools_layout.setContentsMargins(8, 0, 8, 0)
+        tools_layout.setContentsMargins(0, 0, 0, 0)
         self.tool_cards: dict[str, ActionCard] = {}
         for key, icon, title, content, callback in (
             (
@@ -783,12 +785,14 @@ class HomePage(ScrollArea):
             ),
         ):
             self.tool_cards[key] = tools.add_card(icon, title, content, callback)
-        layout.addWidget(tools)
+        self.banner = HomeBanner(tools, view)
+        layout.addWidget(self.banner)
+        layout.addWidget(context_host)
 
         workspace = ActionCardView(tr("设备工作流"), view)
         workspace_layout = workspace.layout()
         assert workspace_layout is not None
-        workspace_layout.setContentsMargins(8, 0, 8, 0)
+        workspace_layout.setContentsMargins(32, 0, 32, 0)
         for key, icon, title, content in (
             (
                 "devices",
@@ -811,6 +815,30 @@ class HomePage(ScrollArea):
         layout.addWidget(workspace)
 
         self.setWidget(view)
+
+    def set_top_left_radius(self, radius: int) -> None:
+        """把材质圆角固定在视口边界，避免滚动中的横幅或卡片覆盖主窗口圆角。"""
+
+        self._top_left_radius = max(0, radius)
+        self.banner.set_top_left_radius(self._top_left_radius)
+        self._update_viewport_mask()
+
+    def _update_viewport_mask(self) -> None:
+        viewport = self.viewport()
+        radius = min(self._top_left_radius, viewport.width() // 2, viewport.height() // 2)
+        if radius == 0:
+            viewport.clearMask()
+            return
+        # 只裁掉左上角圆弧之外的区域，其他三角及贴边滚动条仍占用完整视口。
+        corner = QRegion(QRect(0, 0, radius, radius))
+        circle = QRegion(QRect(0, 0, radius * 2, radius * 2), QRegion.RegionType.Ellipse)
+        viewport.setMask(QRegion(viewport.rect()).subtracted(corner.subtracted(circle)))
+
+    def viewportEvent(self, event: QEvent) -> bool:
+        result = super().viewportEvent(event)
+        if event.type() == QEvent.Type.Resize and hasattr(self, "_top_left_radius"):
+            self._update_viewport_mask()
+        return result
 
     def set_device_context(
         self,
@@ -902,7 +930,7 @@ class SettingsPage(ScrollArea):
         self.expand_layout = _SettingsContentLayout(view)
         self.expand_layout.setSpacing(28)
         # 留白随内容滚动，滚动条保持原生定位及完整视口高度。
-        self.expand_layout.setContentsMargins(8, 16, 8, 20)
+        self.expand_layout.setContentsMargins(32, 16, 32, 44)
 
         general = SettingCardGroup(tr("常规"), view)
         self.save_card = PushSettingCard(

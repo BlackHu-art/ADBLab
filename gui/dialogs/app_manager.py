@@ -335,7 +335,9 @@ class AppManagerPage(QWidget):
         )
 
     def _update_master_detail_layout(self) -> None:
-        wide = self.width() >= self.MASTER_DETAIL_BREAKPOINT
+        margins = self._page_layout.contentsMargins()
+        width = self.width() - margins.left() - margins.right()
+        wide = width >= self.MASTER_DETAIL_BREAKPOINT
         mode = "split" if wide else "stack"
         self.setProperty("masterDetailMode", mode)
         if not self._details_open:

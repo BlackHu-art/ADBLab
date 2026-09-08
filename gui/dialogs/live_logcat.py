@@ -118,9 +118,13 @@ class LiveLogcatPage(QWidget):
         self.set_device_selected(False)
 
     def set_workspace_embedded(self, embedded: bool) -> None:
-        """切换标题呈现，不改变 worker、设备归属或关闭监督。"""
+        """切换标题及内容留白，不改变 worker、设备归属或关闭监督。"""
         self.setProperty("workspace_embedded", bool(embedded))
         self.header_card.setVisible(not embedded)
+        layout = self.layout()
+        assert layout is not None
+        margins = (32, 8, 32, 32) if embedded else (8, 8, 8, 8)
+        layout.setContentsMargins(*margins)
         self._reflow_filters()
 
     def minimumSizeHint(self):

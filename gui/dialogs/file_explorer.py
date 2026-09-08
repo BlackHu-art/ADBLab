@@ -157,9 +157,15 @@ class FileExplorerPage(QWidget):
         self.set_workspace_embedded(True)
 
     def set_workspace_embedded(self, embedded: bool) -> None:
-        """仅切换页头呈现，不改变目录、预览、worker 或关闭契约。"""
+        """切换页头和内容留白，不改变目录、预览、worker 或关闭契约。"""
         self.setProperty("workspace_embedded", bool(embedded))
         self.header_card.setVisible(not embedded)
+        layout = self.layout()
+        assert layout is not None
+        margins = (32, 6, 32, 30) if embedded else (8, 6, 8, 6)
+        layout.setContentsMargins(*margins)
+        self._reflow_top_controls()
+        self._sync_preview_layout()
 
     def _init_ui(self):
         layout = QVBoxLayout(self)
@@ -541,7 +547,11 @@ class FileExplorerPage(QWidget):
 
         if not hasattr(self, "content_splitter"):
             return
-        narrow = self.contentsRect().width() < 880
+        width = self.contentsRect().width()
+        if bool(self.property("workspace_embedded")):
+            # 原窗口左右各 24 像素留白现位于内容中，预览断点仍按原有效宽度计算。
+            width -= 48
+        narrow = width < 880
         self.preview_back_btn.setVisible(narrow)
         self.preview_close_btn.setVisible(not narrow)
         if narrow:

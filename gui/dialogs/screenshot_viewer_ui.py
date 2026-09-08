@@ -49,7 +49,7 @@ class ScreenshotViewerUI:
         self._frame.header_card.hide()
         layout = self._frame.layout()
         if layout is not None:
-            layout.setContentsMargins(8, 8, 8, 10)
+            layout.setContentsMargins(32, 8, 32, 34)
 
     def _init_shortcuts(self):
         frame = self._frame

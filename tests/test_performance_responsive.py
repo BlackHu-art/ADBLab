@@ -212,7 +212,7 @@ def test_workspace_performance_uses_one_title_and_keeps_actions_visible(qt_appli
         assert not start.geometry().intersects(stop.geometry())
         assert dialog._config_scroll.isHidden()
         content_margins = dialog._config_group.layout().contentsMargins()
-        assert (content_margins.left(), content_margins.right()) == (8, 8)
+        assert (content_margins.left(), content_margins.right()) == (32, 32)
         for section in (*dialog._configuration_sections, dialog._results_group):
             title_margins = section.headerLayout.contentsMargins()
             body_margins = section.viewLayout.contentsMargins()
@@ -324,11 +324,18 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
             BaseStyles.switch_theme(current_theme)
             QTest.mouseMove(dialog._action_row, QPoint(4, 10))
             QTest.qWait(180)
+            # 页头标签占满宽度，取文字自然宽度以外的空白，避免把字形当成底色。
+            plan = dialog._configuration_sections[0]
+            results = dialog._results_group
+            for section in (plan, results):
+                assert section.width() - 4 > section.headerLabel.fontMetrics().horizontalAdvance(
+                    section.headerLabel.text()
+                )
             surfaces = {
                 "actions": (dialog._action_row, QPoint(4, 10)),
-                "plan_header": (dialog._configuration_sections[0], QPoint(4, 10)),
+                "plan_header": (plan, QPoint(plan.width() - 4, 10)),
                 "plan_body": (dialog._configuration_sections[0].view, QPoint(4, 10)),
-                "results_header": (dialog._results_group, QPoint(4, 10)),
+                "results_header": (results, QPoint(results.width() - 4, 10)),
                 "results_body": (dialog._results_group.view, QPoint(4, 10)),
                 "progress_container": (dialog.progress_display.indicators, QPoint(2, 2)),
             }
@@ -888,6 +895,10 @@ def test_performance_plan_and_results_stay_full_width_without_shared_height(qt_a
         for width in (1200, 640, 1200):
             dialog.resize(width, 900)
             wait_for_stable_geometry(qt_application, (dialog, dialog._config_group))
+            # 字体同步可能刚使布局失效；等布局矩形提交后再读取正文可用宽度。
+            wait_until(qt_application, lambda: (
+                dialog._config_group.layout().geometry().width() == dialog._config_group.width()
+            ))
             plan = dialog._configuration_group.geometry()
             results = dialog._results_group.geometry()
             assert results.top() == plan.bottom() + 17

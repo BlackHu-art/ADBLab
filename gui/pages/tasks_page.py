@@ -210,7 +210,7 @@ class TaskCenterPage(QWidget):
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(8, 8, 8, 8)
+        content_layout.setContentsMargins(32, 24, 32, 32)
         content_layout.setSpacing(20)
         content_layout.addWidget(self._active_card)
         from gui.widgets.action_result_view import ActionResultView

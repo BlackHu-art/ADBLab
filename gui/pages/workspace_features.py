@@ -82,18 +82,22 @@ class _OverviewDefinition:
     activate: Callable[[str], object] | None
 
 
-class _NoDevicePage(CardWidget):
+class _NoDevicePage(QWidget):
     choose_device_requested = Signal()
     manage_devices_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("workspaceFeatureNoDevice")
-        self.setBorderRadius(10)
-        self.title_label = StrongBodyLabel(tr("需要选择设备"), self)
+        self.card = CardWidget(self)
+        self.card.setBorderRadius(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.card)
+        self.title_label = StrongBodyLabel(tr("需要选择设备"), self.card)
         self.message_label = BodyLabel(
             tr("此功能需要一个稳定的设备会话。选择后将自动返回并在当前面板打开。"),
-            self,
+            self.card,
         )
         self.message_label.setWordWrap(True)
         self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -101,10 +105,10 @@ class _NoDevicePage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.choose_button = PrimaryPushButton(DEVICE_ICON, tr("前往设备概览"), self)
+        self.choose_button = PrimaryPushButton(DEVICE_ICON, tr("前往设备概览"), self.card)
         self.choose_button.clicked.connect(self.manage_devices_requested)
 
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.card)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(10)
         layout.addStretch(1)
@@ -131,17 +135,21 @@ class _NoDevicePage(CardWidget):
         self.choose_button.setVisible(True)
 
 
-class _ClosingSessionPage(CardWidget):
+class _ClosingSessionPage(QWidget):
     back_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("workspaceFeatureClosing")
-        self.setBorderRadius(10)
-        self.title_label = StrongBodyLabel(tr("正在关闭会话"), self)
+        self.card = CardWidget(self)
+        self.card.setBorderRadius(10)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.card)
+        self.title_label = StrongBodyLabel(tr("正在关闭会话"), self.card)
         self.message_label = BodyLabel(
             tr("后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。"),
-            self,
+            self.card,
         )
         self.message_label.setWordWrap(True)
         self.message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -149,9 +157,9 @@ class _ClosingSessionPage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.back_button = PushButton(FluentIcon.LEFT_ARROW, tr("返回概览"), self)
+        self.back_button = PushButton(FluentIcon.LEFT_ARROW, tr("返回概览"), self.card)
         self.back_button.clicked.connect(self.back_requested)
-        layout = QVBoxLayout(self)
+        layout = QVBoxLayout(self.card)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(10)
         layout.addStretch(1)

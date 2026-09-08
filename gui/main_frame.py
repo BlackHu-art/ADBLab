@@ -840,8 +840,8 @@ class MainFrame(FluentWindow):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
         self._content_layout.addWidget(self._global_device_bar)
-        # 页面外边界只由这一层负责，滚动区留在边界内，原生滚动条紧邻内容。
-        self.stackedWidget.hBoxLayout.setContentsMargins(24, 0, 24, 24)
+        # 滚动区铺满材质面；阅读留白由滚动内容承担，避免覆盖滚动条随正文内缩。
+        self.stackedWidget.hBoxLayout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.addWidget(self.stackedWidget, 1)
         self.widgetLayout.addWidget(self._content_surface, 1)
         self._sync_material_surface_styles()
@@ -1080,6 +1080,15 @@ class MainFrame(FluentWindow):
             host_layout = host.layout()
             assert host_layout is not None
             host_layout.setContentsMargins(0, 8, 0, 0)
+            for state in (host.no_device_page, host.closing_page):
+                state_layout = state.layout()
+                assert state_layout is not None
+                # 等待和关闭状态的卡片也属于正文，不能随滚动外壳贴到窗口边缘。
+                state_layout.setContentsMargins(32, 0, 32, 24)
+            sessions_layout = host.performance_sessions.layout()
+            assert sessions_layout is not None
+            # 固定会话控件不属于下方滚动内容，单独与正文阅读边界对齐。
+            sessions_layout.setContentsMargins(32, 0, 32, 0)
             host.manage_devices_requested.connect(lambda: self._on_nav_requested("devices"))
         self._workspace_pages = {
             "devices": self._devices_page,
@@ -1106,6 +1115,7 @@ class MainFrame(FluentWindow):
         )
         self._settings_page = SettingsPage(self, self)
         self._home_page = HomePage(self, self)
+        self._sync_material_surface_styles()
 
         self.navigationInterface.setAcrylicEnabled(True)
         self.addSubInterface(self._home_page, FluentIcon.HOME, tr("首页"))
@@ -2011,6 +2021,9 @@ class MainFrame(FluentWindow):
         """按生效材质绘制内容与导航底层，确保切页及折叠中间帧同样正确。"""
 
         mica = self.isMicaEffectEnabled()
+        home = getattr(self, "_home_page", None)
+        if home is not None:
+            home.set_top_left_radius(10 if mica else 0)
         light = BaseStyles.color_for("Light", "WINDOW_BG")
         dark = BaseStyles.color_for("Dark", "WINDOW_BG")
         content_surface = getattr(self, "_content_surface", None)

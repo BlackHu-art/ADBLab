@@ -353,6 +353,8 @@ class AppManagerForm:
         if getattr(self._frame, "_workspace_prepared", False):
             return
         self._frame._workspace_prepared = True
+        # 窗口留白移入整组主从内容，保留列表和详情原有的内部边距。
+        self._frame._page_layout.setContentsMargins(24, 0, 24, 24)
         self._frame.header_card.hide()
         self._frame.status_badge.hide()
         self._frame._reflow_top_controls()

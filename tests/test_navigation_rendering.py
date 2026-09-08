@@ -366,7 +366,8 @@ def test_all_navigation_pages_share_material_without_covering_reading_controls(
                     assert surface.childAt(point) is None
                 surfaces.append((surface, point))
         if key == "tasksPage":
-            surfaces.append((frame._task_page._scroll.widget(), QPoint(2, 2)))
+            # 页面已铺到材质面的左上角，避开该处有意保留的 10px 圆角。
+            surfaces.append((frame._task_page._scroll.widget(), QPoint(2, 20)))
         image = frame.grab().toImage()
         scale = image.devicePixelRatio()
 
@@ -402,7 +403,11 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
         )
         painter.end()
         expected = composite.pixelColor(0, 0)
-    gap = QPoint(2, tools.geometry().bottom() + 3)
+    # 快捷卡片现在属于横幅；材质探针仍采样横幅与下方分区之间的真实空白。
+    banner_bottom = frame._home_page.banner.mapTo(
+        view, QPoint(0, frame._home_page.banner.height()),
+    ).y()
+    gap = QPoint(2, banner_bottom + 3)
     assert view.childAt(gap) is None
     point = view.mapTo(frame, gap)
     image = frame.grab().toImage()

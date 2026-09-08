@@ -387,7 +387,7 @@ def test_file_explorer_main_window_toolbar_does_not_force_horizontal_scroll(
         ))
         host = frame._workspace_feature_hosts["devices"]
         page = host.stack.currentWidget()
-        for window_width, page_width in ((1048, 952), (860, 764), (1048, 952)):
+        for window_width, page_width in ((1048, 1000), (860, 812), (1048, 1000)):
             frame.resize(window_width, 900)
             qt_application.processEvents()
             frame.navigationInterface.panel.collapse()

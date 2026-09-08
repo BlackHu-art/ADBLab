@@ -152,4 +152,5 @@ def test_home_wide_layout_does_not_keep_empty_vertical_scroll_range(
     assert page.verticalScrollBar().maximum() == 0
     tools = page.tool_cards["app_mgr"].parentWidget()
     assert tools is not None and tools.isVisibleTo(page)
-    assert tools.mapTo(page.viewport(), QPoint()).y() == 16
+    assert page.banner.mapTo(page.viewport(), QPoint()).y() == 0
+    assert tools.mapTo(page.banner, QPoint()).y() > page.banner.title_label.geometry().bottom()

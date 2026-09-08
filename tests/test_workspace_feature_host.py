@@ -265,6 +265,8 @@ def test_small_workspace_state_messages_wrap_without_clipping(qt_application):
         (host.no_device_page, host.no_device_page.choose_button),
         (host.closing_page, host.closing_page.back_button),
     ):
+        # 以真实可见窗口验证短页；隐藏宿主中的子页不会提交嵌套布局几何。
+        page.setParent(None)
         page.resize(623, 149)
         page.show()
         qt_application.processEvents()

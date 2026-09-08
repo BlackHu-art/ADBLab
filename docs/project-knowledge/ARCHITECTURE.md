@@ -50,8 +50,9 @@ flowchart LR
   [设备概览流程](BUSINESS_FLOW.md#workspace-路由目录)。
   连接表单继续由 `DeviceContextBar` 管理瞬态对象，`MainFrame` 显式传入概览连接按钮作为锚点；
   切页或关闭弹层时沿用原清理边界，不另建连接历史或设备状态源。
-- `MainFrame` 统一拥有页面外边界及材质面；页面宿主负责内容滚动和可见会话尺寸，避免不同页面
-  重复叠加背景或边距。具体布局与控件呈现由页面实现及相关 Qt 测试维护。
+- `MainFrame` 统一拥有页面外边界及材质面；页面级滚动区铺满内容边界，阅读留白由滚动内容
+  承担。页面宿主负责内容滚动和可见会话尺寸，列表、日志与画布保留各自内部滚动；窗口缩放
+  热区避开可见 Fluent 滚动条的交互范围。具体布局与控件呈现由页面实现及相关 Qt 测试维护。
 - 纯消息使用 `gui/notifications.py` 的窗口内 InfoBar，非阻塞返回；兼容
   `FluentMessageBox.information/warning/critical` 返回 `None`。文本输入、短表单及系统文件选择器
   保留确认/取消语义。同步输入读取结果后再 `deleteLater()`，不承担长期任务。

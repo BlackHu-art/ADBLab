@@ -168,6 +168,9 @@ _UI_TEST_FILES = frozenset(
         "test_performance_sessions.py",
         "test_preset_spin_box.py",
         "test_main_window_layout.py",
+        "test_page_scroll_edges.py",
+        "test_home_banner.py",
+        "test_scrollbar_resize_hit.py",
         # test_model_execution.py 已按主题拆分为以下文件（ADR-0003 Phase 2）。
         # runner/parser/配置类按本地测试选择需求独立保留，不由此假定 CI 门禁。
         "test_model_apps.py",

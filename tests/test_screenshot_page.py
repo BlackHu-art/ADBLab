@@ -412,6 +412,7 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
         assert page.dialog_subtitle.isVisibleTo(page)
         assert page.status_badge.isVisibleTo(page)
         original_canvas_height = canvas.height()
+        original_content_height = page.layout().contentsRect().height()
         header_height = page.header_card.height()
         count_changes = QSignalSpy(page.image_count_changed)
         original_view = page._view
@@ -425,7 +426,8 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
         assert not page.dialog_title.isVisibleTo(page)
         assert not page.dialog_subtitle.isVisibleTo(page)
         assert not page.status_badge.isVisibleTo(page)
-        assert canvas.height() >= original_canvas_height + header_height
+        content_height_delta = page.layout().contentsRect().height() - original_content_height
+        assert canvas.height() >= original_canvas_height + header_height + content_height_delta
         assert page._command_bar.isVisibleTo(page)
         assert page._view is original_view
         assert page.image_paths == tuple(paths)
@@ -836,7 +838,11 @@ def test_screenshot_metadata_and_pager_live_inside_expanded_canvas(
         assert page._zoom_label.geometry().right() >= canvas.width() - 12
         assert page._zoom_label.geometry().bottom() >= canvas.height() - 12
         assert not page._pager_bar.geometry().intersects(page._zoom_label.geometry())
-        assert canvas.height() >= page.height() - page._command_bar.height() - 30
+        assert canvas.height() == (
+            page.layout().contentsRect().height()
+            - page._command_bar.height()
+            - page.layout().spacing()
+        )
         assert page._nav_label.text() == "1 / 12"
     finally:
         close_screenshot_page(page)

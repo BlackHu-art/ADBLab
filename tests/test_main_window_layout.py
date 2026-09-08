@@ -281,6 +281,7 @@ def begin_native_user_resize(frame, qt_application):
     handle.startSystemResize.return_value = True
     resize_window = SimpleNamespace(
         isMaximized=lambda: False,
+        isFullScreen=lambda: False,
         windowHandle=lambda: handle,
     )
     zone = frame._resize_controller._zones["right"]
@@ -1021,7 +1022,7 @@ def test_workspace_status_stays_visible_above_full_height_overview_content(qt_ap
             page,
             QPoint(wrapper.layout().contentsRect().left(), 0),
         ).x()
-        assert abs(content_left - 8) <= 2
+        assert abs(content_left - 32) <= 2
         assert host.overview.body.geometry() == host.overview.rect()
     finally:
         frame._unbind_window_screen()
