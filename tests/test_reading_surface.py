@@ -11,8 +11,8 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import PlainTextEdit, TextEdit
 
 from gui.dialogs.performance_launcher import PerformancePage
-from gui.panels.log_panel import LogPanel
 from gui.styles import BaseStyles
+from gui.widgets.action_result_view import ActionResultView
 from gui.widgets.run_results import RunResultsWidget
 from services.run_library import RunRecord
 
@@ -37,7 +37,7 @@ def _focus(reader, application):
     assert reader.hasFocus()
 
 
-@pytest.fixture(params=("performance", "log_panel", "summary", "parameters"))
+@pytest.fixture(params=("performance", "action_results", "summary", "parameters"))
 def reading_widget(request, qt_application, monkeypatch, tmp_path):
     values = {"log_max_lines": 2000, "save_path": str(tmp_path)}
     settings = SimpleNamespace(get=values.get, save_directory=str(tmp_path))
@@ -45,10 +45,10 @@ def reading_widget(request, qt_application, monkeypatch, tmp_path):
     if request.param == "performance":
         owner = PerformancePage("", "com.example.demo")
         reader = owner.log_view
-    elif request.param == "log_panel":
-        monkeypatch.setattr(LogPanel, "_connect_services", lambda _self: None)
-        owner = LogPanel()
-        reader = owner.text_output
+    elif request.param == "action_results":
+        owner = ActionResultView()
+        owner.detail_toggle.setChecked(True)
+        reader = owner.output
     else:
         library = _Library()
         owner = RunResultsWidget(library)
@@ -75,7 +75,7 @@ def test_long_readers_keep_light_background_when_focused_hovered_and_unfocused(
     _focus(reader, qt_application)
     assert _background(reader) == expected, (reader.objectName(), _background(reader).name())
     focus_target = (
-        owner.logLevelFilter if isinstance(owner, LogPanel)
+        owner.search if isinstance(owner, ActionResultView)
         else owner.package_edit if isinstance(owner, PerformancePage) else owner.search_edit
     )
     focus_target.setFocus()
@@ -158,9 +158,8 @@ def test_copy_from_reading_surface_preserves_text_parameters_and_log_cache(
     qt_application, reading_widget,
 ):
     owner, reader = reading_widget
-    if isinstance(owner, LogPanel):
-        owner._append_logs([("12:00:00", "INFO", "Synthetic log for copying")])
-        owner._flush_pending_rows()
+    if isinstance(owner, ActionResultView):
+        owner.output.setPlainText("Synthetic action result for copying")
     elif isinstance(owner, PerformancePage):
         owner._append_log("INFO", "Synthetic performance log for copying")
         owner._flush_pending_logs()

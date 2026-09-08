@@ -1,13 +1,41 @@
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import Mock, call, patch
+
+import pytest
 
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_restart_refresh_does_not_claim_unverified_reboot_completion(success):
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.signals = Mock()
+    controller.log_service = Mock()
+    controller.refresh_devices = Mock()
+    result = {
+        "device_ip": "device-1", "success": success, "requires_refresh": True,
+        "error": "Reboot result unknown after timeout",
+    }
+
+    with patch("controllers._device.QTimer.singleShot") as timer:
+        controller._process_restart_devices_result(result)
+
+    controller.signals.operation_completed.emit.assert_called_once()
+    operation, actual_success, message = controller.signals.operation_completed.emit.call_args.args
+    assert operation == "restart"
+    assert actual_success is success
+    assert ("submitted" if success else "unknown") in message.lower()
+    timer.assert_called_once()
+    timer.call_args.args[-1]()
+    controller.refresh_devices.assert_called_once()
+    controller.signals.operation_completed.emit.assert_called_once()
 
 
 def test_cross_platform_builds_do_not_run_full_gui_test_suite():
@@ -169,6 +197,270 @@ def test_async_update_devices_batches_store_write_and_refreshes_ui():
     assert metadata_events[0].args[1]["SDK Version"] == "35"
 
 
+def _device_metadata_controller():
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.executor = Mock()
+    controller.signals = Mock()
+    controller.log_service = Mock()
+    controller._shutting_down = False
+    controller._device_topology_lock = threading.Lock()
+    controller._device_topology_generation = 1
+    controller._device_topology = ("device-1", "device-2")
+    return controller
+
+
+def test_same_topology_refreshes_share_one_job_and_one_followup():
+    controller = _device_metadata_controller()
+    with (
+        patch(
+            "controllers._device.ADBDevice.get_device_overview_info",
+            return_value={"Model": "Phone"},
+        ) as query,
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+    ):
+        for _ in range(5):
+            controller._async_update_devices(["device-1", "device-2"], generation=1)
+        assert controller.executor.submit.call_count == 1
+        controller.executor.submit.call_args.args[0]()
+    assert query.call_count == 4
+    assert write.call_count == 2
+    assert controller.signals.device_info_updated.emit.call_count == 4
+
+
+@pytest.mark.parametrize("invalidation", ["topology", "shutdown"])
+def test_metadata_query_receives_cancellation_when_controller_is_invalidated(invalidation):
+    controller = _device_metadata_controller()
+    callbacks = []
+
+    def query(_device, *, cancelled=None, **_kwargs):
+        callbacks.append(cancelled)
+        if invalidation == "shutdown":
+            controller._shutting_down = True
+        else:
+            with controller._device_topology_lock:
+                controller._device_topology_generation += 1
+                controller._device_topology = ()
+        return {"Model": "Stale"}
+
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=query),
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        controller.executor.submit.call_args.args[0]()
+    assert len(callbacks) == 1
+    assert callable(callbacks[0]) and callbacks[0]()
+    write.assert_not_called()
+    controller.signals.device_info_updated.emit.assert_not_called()
+
+
+def test_metadata_new_topology_can_start_while_old_job_is_waiting():
+    controller = _device_metadata_controller()
+    with (
+        patch(
+            "controllers._device.ADBDevice.get_device_overview_info",
+            return_value={"Model": "Current"},
+        ) as query,
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        first = controller.executor.submit.call_args.args[0]
+        with controller._device_topology_lock:
+            controller._device_topology_generation = 2
+            controller._device_topology = ("device-3",)
+        controller._async_update_devices(["device-3"], generation=2)
+        latest = controller.executor.submit.call_args.args[0]
+        latest()
+        first()
+    assert query.call_count == 1
+    assert query.call_args.args[0] == "device-3"
+    assert [record["ip"] for record in write.call_args.args[0]] == ["device-3"]
+
+
+def test_device_metadata_writes_are_serialized_across_topology_changes():
+    controller = _device_metadata_controller()
+    old_write_started, release_old_write = threading.Event(), threading.Event()
+    new_query_finished, new_write_started = threading.Event(), threading.Event()
+    stored = []
+
+    def query(device, **_kwargs):
+        if device == "device-3":
+            new_query_finished.set()
+        return {"Model": device}
+
+    def write(records):
+        if records[0]["ip"] == "device-1":
+            old_write_started.set()
+            assert release_old_write.wait(3)
+        else:
+            new_write_started.set()
+        stored[:] = [record["ip"] for record in records]
+
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=query),
+        patch("controllers._device.DeviceStore.upsert_devices", side_effect=write),
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        controller.executor = executor
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        try:
+            assert old_write_started.wait(2)
+            with controller._device_topology_lock:
+                controller._device_topology_generation = 2
+                controller._device_topology = ("device-3",)
+            controller._async_update_devices(["device-3"], generation=2)
+            assert new_query_finished.wait(2)
+            assert not new_write_started.wait(0.1), "new disk write overlapped the older write"
+        finally:
+            release_old_write.set()
+    assert stored == ["device-3"]
+
+
+def test_connected_device_save_is_cancelled_before_persistence_on_shutdown():
+    controller = _device_metadata_controller()
+    seen = []
+
+    def query(_device, *, cancelled=None, **_kwargs):
+        controller._shutting_down = True
+        seen.append(callable(cancelled) and cancelled())
+        return {"Model": "Stale"}
+
+    with (
+        patch("controllers._device.ADBDevice.get_devices_basic_info", side_effect=query),
+        patch("controllers._device.DeviceStore.add_device") as write,
+    ):
+        controller._save_device_info("device-1")
+    assert seen == [True]
+    write.assert_not_called()
+
+
+def test_metadata_rechecks_generation_after_waiting_for_disk_lock():
+    controller = _device_metadata_controller()
+    old_at_lock, release_old = threading.Event(), threading.Event()
+    mutex = threading.Lock()
+
+    class PauseFirstWriter:
+        first = True
+
+        def __enter__(self):
+            if self.first:
+                self.first = False
+                old_at_lock.set()
+                assert release_old.wait(3)
+            mutex.acquire()
+
+        def __exit__(self, *_args):
+            mutex.release()
+
+    controller._overview_store_lock = PauseFirstWriter()
+    with (
+        patch(
+            "controllers._device.ADBDevice.get_device_overview_info",
+            return_value={"Model": "Phone"},
+        ),
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+        ThreadPoolExecutor(max_workers=2) as executor,
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        old = executor.submit(controller.executor.submit.call_args.args[0])
+        try:
+            assert old_at_lock.wait(2)
+            with controller._device_topology_lock:
+                controller._device_topology_generation = 2
+                controller._device_topology = ("device-3",)
+            controller._async_update_devices(["device-3"], generation=2)
+            executor.submit(controller.executor.submit.call_args.args[0]).result(timeout=2)
+        finally:
+            release_old.set()
+            old.result(timeout=2)
+    assert write.call_count == 1
+    assert [record["ip"] for record in write.call_args.args[0]] == ["device-3"]
+
+
+@pytest.mark.parametrize("first_failure", [False, True])
+def test_device_metadata_is_published_before_later_queries_finish(first_failure):
+    controller = _device_metadata_controller()
+    second_started = threading.Event()
+    release_second = threading.Event()
+
+    def get_info(device, *, cancelled=None):
+        if device == "device-1":
+            if first_failure:
+                raise RuntimeError("overview unavailable")
+            return {"Model": "First", "Battery Level": "90%"}
+        second_started.set()
+        assert release_second.wait(3), "second query was not released"
+        return {"Model": "Second"}
+
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=get_info),
+        patch("controllers._device.DeviceStore.upsert_devices") as upsert,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        future = executor.submit(controller.executor.submit.call_args.args[0])
+        try:
+            assert second_started.wait(3), "second query did not start"
+            metadata = controller.signals.device_info_updated.emit.call_args_list
+            assert len(metadata) == 1
+            assert metadata[0].args[0] == "device-1"
+            if first_failure:
+                assert metadata[0].args[1] == {}
+            else:
+                assert metadata[0].args[1]["Battery Level"] == "90%"
+            upsert.assert_not_called()
+            controller.signals.devices_updated.emit.assert_not_called()
+        finally:
+            release_second.set()
+            future.result(timeout=3)
+
+    upsert.assert_called_once()
+    assert [record["ip"] for record in upsert.call_args.args[0]] == (
+        ["device-2"] if first_failure else ["device-1", "device-2"]
+    )
+    assert [
+        event.args[0] for event in controller.signals.device_info_updated.emit.call_args_list
+    ] == ["device-1", "device-2"]
+    controller.signals.devices_updated.emit.assert_called_once_with(["device-1", "device-2"])
+
+
+@pytest.mark.parametrize("invalidation", ["topology", "shutdown"])
+def test_late_metadata_and_batch_write_are_suppressed_after_invalidation(invalidation):
+    controller = _device_metadata_controller()
+    second_started = threading.Event()
+    release_second = threading.Event()
+
+    def get_info(device, *, cancelled=None):
+        if device == "device-2":
+            second_started.set()
+            assert release_second.wait(3), "second query was not released"
+        return {"Model": device}
+
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=get_info),
+        patch("controllers._device.DeviceStore.upsert_devices") as upsert,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        future = executor.submit(controller.executor.submit.call_args.args[0])
+        try:
+            assert second_started.wait(3), "second query did not start"
+            assert controller.signals.device_info_updated.emit.call_count == 1
+            if invalidation == "shutdown":
+                controller._shutting_down = True
+            else:
+                with controller._device_topology_lock:
+                    controller._device_topology_generation += 1
+                    controller._device_topology = ()
+        finally:
+            release_second.set()
+            future.result(timeout=3)
+
+    upsert.assert_not_called()
+    controller.signals.devices_updated.emit.assert_not_called()
+    assert controller.signals.device_info_updated.emit.call_count == 1
+
+
 def test_empty_current_package_result_releases_query_as_failure():
     controller = ADBAppMixin.__new__(ADBAppMixin)
     controller._emit_operation = Mock()
@@ -229,7 +521,7 @@ def test_controller_shutdown_stops_model_processes_and_executor():
     controller.testing_model.shutdown.assert_called_once()
     controller.advanced_model.shutdown.assert_called_once()
     stop_all_tracked.assert_called_once()
-    controller.executor.shutdown.assert_called_once_with(wait=False, cancel_futures=True)
+    controller.executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
 
 
 def test_connect_device_result_uses_returned_device_ip():
@@ -342,6 +634,59 @@ def test_connected_devices_success_routes_to_process_device_list():
     controller._process_device_list.assert_called_once_with(["device-1", "device-2"])
     controller._emit_operation.assert_not_called()
     controller.signals.devices_updated.emit.assert_not_called()
+
+
+def test_stale_device_listing_does_not_publish_or_report_failure():
+    controller = _connected_devices_controller()
+
+    controller._handle_async_response(
+        "get_connected_devices_async",
+        {"success": False, "devices": [], "error": "", "stale": True, "cancelled": True},
+    )
+
+    controller._process_device_list.assert_not_called()
+    controller._emit_operation.assert_not_called()
+    controller.signals.devices_updated.emit.assert_not_called()
+    controller.signals.device_refresh_superseded.emit.assert_called_once_with()
+
+
+def test_stale_manual_refresh_finishes_action_as_cancelled():
+    from types import SimpleNamespace
+
+    from PySide6.QtTest import QSignalSpy
+
+    from adblab.application.action_results import ActionResults, ActionSpec
+    from controllers.signals import ADBControllerSignals
+    from core.exec import CommandResult
+    from models.adb_device import ADBDevice
+
+    controller = _connected_devices_controller()
+    controller.signals = ADBControllerSignals()
+    device_updates = QSignalSpy(controller.signals.devices_updated)
+    superseded = QSignalSpy(controller.signals.device_refresh_superseded)
+    results, tasks = [], []
+    controller.action_results = ActionResults(results.append)
+    model = ADBDevice()
+    model.thread_pool = SimpleNamespace(start=tasks.append)
+    model.command_finished.connect(controller._handle_async_response)
+    controller.action_results.run(
+        ActionSpec("refresh_devices", "devices", "刷新设备"), (), model.get_connected_devices_async,
+    )
+    with patch(
+        "models.adb_device.CommandRunner.run",
+        return_value=CommandResult(False, stale=True),
+    ) as run:
+        tasks[0].run()
+
+    assert results[-1].state == "cancelled"
+    assert len(results[-1].items) == 1
+    assert results[-1].items[0].state == "cancelled"
+    assert results[-1].items[0].detail
+    controller._process_device_list.assert_not_called()
+    controller._emit_operation.assert_not_called()
+    assert device_updates.count() == 0
+    assert superseded.count() == 1
+    run.assert_called_once()
 
 
 def test_connected_devices_failure_reports_refresh_without_clearing_list():

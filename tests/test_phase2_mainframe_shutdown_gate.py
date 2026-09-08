@@ -3,6 +3,7 @@ import threading
 import time
 from itertools import pairwise
 from queue import Empty, SimpleQueue
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -177,6 +178,40 @@ def test_application_stop_broadcasts_across_owners_before_any_wait():
     assert events[:first_wait] == [("request", "one"), ("request", "two")]
     assert {result.disposition for result in results} == {StopDisposition.FORCED}
     assert supervisor.active_count == 0
+
+
+def test_controller_supervision_retains_unfinished_native_short_command(monkeypatch):
+    from core import exec as execution
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def native(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution.subprocess, "run", native)
+    worker = threading.Thread(target=lambda: execution.CommandRunner.run(["test-client"]))
+    frame = _frame(lambda: None)
+    try:
+        worker.start()
+        assert entered.wait(1)
+        frame._register_application_shutdown_tasks()
+        supervisor = frame.task_supervisor.supervisor
+        results = supervisor.stop_all(deadline=0.03)
+        result = next(item for item in results if item.task_id.endswith("-controller"))
+        assert result.disposition == StopDisposition.TIMED_OUT
+        assert supervisor.active_count == 1
+        release.set()
+        worker.join(1)
+        completed = supervisor.stop_all(deadline=0.1)
+        assert completed[0].disposition == StopDisposition.ALREADY_STOPPED
+        assert supervisor.active_count == 0
+    finally:
+        release.set()
+        worker.join(2)
 
 
 def test_application_stop_uses_one_wall_clock_deadline_for_many_slow_tasks():

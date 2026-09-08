@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-05
+last_verified: 2026-09-08
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -74,7 +74,7 @@ service/model 构造。
 | 能力组 | 主要入口 | 典型外部接口 | 输入 | 输出 | 校验/保护 |
 | --- | --- | --- | --- | --- | --- |
 | 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 |
-| 设备属性 | `ADBDevice.get_device_info_async` | `getprop`、`dumpsys`、`wm` | device | 属性字典 | 批量 labeled section 解析 |
+| 设备属性 | `ADBDevice.get_device_overview_info` | `getprop`、`dumpsys`、`wm` | device | 概览属性字典 | 分段解析、指标单位规范化；查询失败回退基础属性 |
 | 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | 校验以各入口实现为准，不能将单一路径的保护推广到全部 model 接口 |
 | 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | 按键/触控使用持久 shell，成功写入不等于设备执行已确认；文本在 ADBApp 中 quote 后执行短命令 |
 | 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` |

@@ -1,19 +1,23 @@
 import json
 import os
+import threading
+from time import monotonic
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSize, Qt, QTimer
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication, QGridLayout, QPushButton, QWidget
+from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt, QTimer
+from PySide6.QtGui import QAction, QFont
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QWidget
+from qfluentwidgets import CommandBar, RoundMenu
 
 from gui.dialogs.app_manager_batch import AppManagerBatch
 from gui.dialogs.fluent_dialog import FluentDialog
 from gui.features.app_manager import AppDetailsPage, AppManagerPage
 from gui.styles import BaseStyles
 from gui.styles.typography import FontRole
-from tests.ui_geometry_helpers import assert_non_overlapping
+from tests.ui_geometry_helpers import assert_non_overlapping, mapped_rect
 
 _SELECTION_ACTIONS = (
     "卸载所选",
@@ -40,7 +44,7 @@ def _app_manager_page():
 def _action_buttons(dialog):
     buttons = {
         button.accessibleName(): button
-        for button in dialog.findChildren(QPushButton)
+        for button in dialog._command_bar.commandButtons
         if button.accessibleName() in {*_SELECTION_ACTIONS, *_PRESET_ACTIONS}
     }
     assert set(buttons) == {*_SELECTION_ACTIONS, *_PRESET_ACTIONS}
@@ -48,23 +52,24 @@ def _action_buttons(dialog):
 
 
 def _set_action_font(dialog, point_size):
-    for button in dialog.findChildren(QPushButton):
-        if button.text() in {*_SELECTION_ACTIONS, *_PRESET_ACTIONS}:
-            button.setFont(QFont("Arial", point_size))
-            # qfluentwidgets PushButton 的最小行高由 minimumSizeHint 按点字号给出，
-            # 直接 setFont 不会触发 _apply_adaptive_text_heights，需同步最小高度。
-            button.setMinimumHeight(button.minimumSizeHint().height())
-            button.updateGeometry()
+    dialog._command_bar.setFont(QFont("Arial", point_size))
+    dialog._reflow_action_buttons()
 
 
 def _assert_buttons_fit(dialog, buttons):
-    for button in buttons.values():
-        geometry = button.geometry()
-        minimum = button.minimumSizeHint()
-        assert geometry.width() >= minimum.width()
-        assert geometry.height() >= minimum.height()
-        assert geometry.left() >= dialog.contentsRect().left()
-        assert geometry.right() <= dialog.contentsRect().right()
+    visible = [button for button in buttons.values() if button.isVisibleTo(dialog)]
+    assert visible
+    bar = dialog._command_bar
+    assert bar.height() == max(button.height() for button in buttons.values())
+    if bar.moreButton.isVisibleTo(dialog):
+        visible.append(bar.moreButton)
+    for button in visible:
+        geometry = mapped_rect(button, bar)
+        assert geometry.width() >= button.sizeHint().width()
+        assert geometry.height() >= button.fontMetrics().height() + 16
+        assert bar.contentsRect().contains(geometry)
+    assert len({mapped_rect(button, bar).top() for button in visible}) == 1
+    assert_non_overlapping(visible, bar)
 
 
 def _top_controls(dialog):
@@ -97,6 +102,45 @@ def _patch_font_size(monkeypatch, current_size):
             )
         ),
     )
+
+
+def test_app_manager_command_overflow_keeps_actions_and_device_admission(qt_application):
+    """展开后的更多菜单仍随设备准入更新，同一个 Action 不得继续提交旧目标。"""
+    page = AppManagerPage(device_ip="device-1")
+    try:
+        page.prepare_for_workspace()
+        page.set_device_selected(True)
+        page.selected_packages.add("com.example.demo")
+        page._update_selection_ui()
+        page.resize(500, 720)
+        page.show()
+        qt_application.processEvents()
+        bar = page._command_bar
+        assert isinstance(bar, CommandBar)
+        assert len(bar.actions()) == 9
+        assert all(isinstance(action, QAction) for action in bar.actions())
+        assert bar.moreButton.isVisibleTo(page)
+        QTest.mouseClick(bar.moreButton, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        menu = next(menu for menu in bar.findChildren(RoundMenu) if menu.isVisible())
+        actions = {action.text(): action for action in menu.actions()}
+        assert actions["恢复备份"] in bar.actions()
+        assert actions["恢复备份"].isEnabled()
+        page.set_device_selected(False)
+        assert not actions["恢复备份"].isEnabled()
+        assert actions["加载预设"].isEnabled()
+        with patch.object(page._batch_controller, "_restore_apps") as restore:
+            actions["恢复备份"].trigger()
+        restore.assert_not_called()
+        page.set_device_selected(True)
+        assert actions["恢复备份"].isEnabled()
+        page._batch_workers.add(Mock())
+        page._update_selection_ui()
+        assert not any(action.isEnabled() for action in bar.actions())
+        menu.close()
+    finally:
+        page._batch_workers.clear()
+        page.close()
 
 
 def test_app_manager_family_exposes_pure_widget_pages_without_eager_io():
@@ -181,10 +225,7 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
     try:
         dialog.show()
         for width in (776, 768):
-            # qfluentwidgets ComboBox 比原生 QComboBox 窄，顶部控件在 768px
-            # 以下会触发五列重排并把 "已选 0 项" 标签压到最小宽度以下；
-            # 断点随收敛上移 8px。qfluentwidgets 控件行高比原生高，22pt 下
-            # 内容区至少需要 700px；Fluent 标题栏额外占用 48px。
+            # 视图切换只占图标按钮宽度，真实可容纳时不再被旧硬断点拆行。
             dialog.resize(width, 700)
             app.processEvents()
             controls = _top_controls(dialog)
@@ -211,7 +252,7 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
 
         assert geometry_failures == []
         assert bounds_failures == []
-        assert len({position[0] for position in signatures[0]}) > 1
+        assert {position[0] for position in signatures[0]} == {0}
         assert signatures[0] == signatures[1]
     finally:
         dialog.close()
@@ -254,81 +295,40 @@ def test_app_manager_font_round_trip_restores_action_heights(monkeypatch):
             fresh_dialog.close()
 
 
-def test_app_manager_reflows_action_buttons_to_two_columns_at_776_with_large_font(monkeypatch):
+def test_app_manager_commands_stay_on_one_row_at_776_with_large_font(monkeypatch):
     app, dialog = _app_manager_page()
     try:
         dialog.resize(776, 600)
         dialog.show()
         app.processEvents()
-        monkeypatch.setattr(
-            BaseStyles,
-            "font_for_role",
-            classmethod(
-                lambda _cls, role, size=None: QFont(
-                    "Arial", size or (22 if FontRole(role) == FontRole.UI else 12)
-                )
-            ),
-        )
+        _patch_font_size(monkeypatch, {"ui": 22})
         dialog._apply_theme()
         app.processEvents()
 
         buttons = _action_buttons(dialog)
         assert dialog.width() == 776
-        assert isinstance(dialog._selection_action_layout, QGridLayout)
-        assert isinstance(dialog._preset_action_layout, QGridLayout)
-        assert dialog._selection_action_layout.property("responsiveColumnCount") == 2
-        assert dialog._selection_action_layout.rowCount() == 2
-        assert dialog._preset_action_layout.property("responsiveColumnCount") == 2
-        assert dialog._preset_action_layout.rowCount() == 3
-        assert (
-            abs(
-                buttons["停用所选"].geometry().right()
-                - dialog._selection_action_layout.geometry().right()
-            )
-            <= 2
-        )
-        assert (
-            abs(
-                buttons["应用详情"].geometry().right()
-                - dialog._preset_action_layout.geometry().right()
-            )
-            <= 2
-        )
+        assert isinstance(dialog._command_bar, CommandBar)
+        assert dialog._command_bar.moreButton.isVisibleTo(dialog)
+        assert any(button.isHidden() for button in buttons.values())
         _assert_buttons_fit(dialog, buttons)
-        # 视觉重设计映射：页头卡片固定占用约 60px 纵向空间，600px/22pt 下
-        # 栈区（应用列表/图标视图）可用高度从约 127px 降到约 64px；
-        # 下界相应重映射，仍保证列表区域不会塌缩消失。
-        assert dialog.stack.height() >= 60
+        assert dialog.tree.viewport().height() >= 3 * dialog.tree.sizeHintForRow(0)
+        assert dialog.stack.height() >= dialog.tree.minimumHeight()
     finally:
         dialog.close()
 
 
-def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_narrow():
+def test_app_manager_overflow_keeps_full_action_captions_and_accessibility():
     app, dialog = _app_manager_page()
     try:
         _set_action_font(dialog, 22)
         dialog.setMinimumSize(0, 0)
-        # qfluentwidgets PushButton 比原生 QPushButton 高（22pt 下 42px vs 37px），
-        # 高度从 660 升到 700 后动作按钮行恢复完整最小高度；移除 SCROLLBAR_STYLE 后
-        # 表格/列表滚动条回到 Fluent 默认尺寸再占 4px，高度升到 704，其余断言不变。
         dialog.resize(500, 704)
         dialog.show()
         app.processEvents()
 
         buttons = _action_buttons(dialog)
-        assert [buttons[label].text() for label in _SELECTION_ACTIONS] == [
-            "卸载",
-            "停用",
-            "启用",
-            "清除",
-        ]
-        assert [buttons[label].text() for label in _PRESET_ACTIONS] == [
-            "保存",
-            "加载",
-            "备份",
-            "恢复",
-            "详情",
-        ]
+        assert [buttons[label].text() for label in _SELECTION_ACTIONS] == list(_SELECTION_ACTIONS)
+        assert [buttons[label].text() for label in _PRESET_ACTIONS] == list(_PRESET_ACTIONS)
         expected_help = {
             "卸载所选": "卸载已选择的应用",
             "停用所选": "停用已选择的应用",
@@ -343,12 +343,8 @@ def test_app_manager_short_action_labels_keep_full_accessibility_semantics_when_
         for accessible_name, button in buttons.items():
             assert button.toolTip() == expected_help[accessible_name]
             assert button.accessibleDescription() == expected_help[accessible_name]
-        details_index = dialog._preset_action_layout.indexOf(buttons["应用详情"])
-        _row, column, _row_span, column_span = dialog._preset_action_layout.getItemPosition(
-            details_index
-        )
-        assert column == 0
-        assert column_span == 2
+            assert button.action().text() == accessible_name
+        assert dialog._command_bar.moreButton.accessibleName() == "更多应用操作"
         _assert_buttons_fit(dialog, buttons)
     finally:
         dialog.close()
@@ -373,23 +369,32 @@ def test_app_manager_restores_full_actions_without_rebuilding_buttons_or_duplica
         app.processEvents()
         narrow_buttons = _action_buttons(dialog)
         button_ids = {label: id(button) for label, button in narrow_buttons.items()}
+        actions = dialog._command_bar.actions()
+        assert dialog._command_bar.moreButton.isVisibleTo(dialog)
 
         dialog.resize(2200, 700)
         app.processEvents()
         wide_buttons = _action_buttons(dialog)
         assert {label: id(button) for label, button in wide_buttons.items()} == button_ids
-        assert dialog._selection_action_layout.property("responsiveColumnCount") == 4
-        assert dialog._preset_action_layout.property("responsiveColumnCount") == 5
-        assert [wide_buttons[label].text() for label in _SELECTION_ACTIONS] == list(
-            _SELECTION_ACTIONS
-        )
-        assert [wide_buttons[label].text() for label in _PRESET_ACTIONS] == list(_PRESET_ACTIONS)
+        assert dialog._command_bar.actions() == actions
+        assert all(button.isVisibleTo(dialog) for button in wide_buttons.values())
+        assert dialog._command_bar.moreButton.isHidden()
+        _assert_buttons_fit(dialog, wide_buttons)
 
         dialog.resize(400, 600)
         app.processEvents()
-        wide_buttons["取消全选"].setEnabled(True)
-        wide_buttons["取消全选"].click()
+        dialog.selected_packages.add("com.example.demo")
+        dialog._update_selection_ui()
+        QTest.mouseClick(dialog._command_bar.moreButton, Qt.MouseButton.LeftButton)
+        app.processEvents()
+        menu = next(
+            menu for menu in dialog._command_bar.findChildren(RoundMenu) if menu.isVisible()
+        )
+        action = next(action for action in menu.actions() if action.text() == "取消全选")
+        assert action is wide_buttons["取消全选"].action()
+        action.trigger()
         assert dialog.deselect_calls == 1
+        menu.close()
     finally:
         dialog.close()
 
@@ -416,7 +421,10 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
         assert dialog.selected_packages == {"com.example.one"}
         assert first_icon.isSelected() is True
         assert dialog.selection_label.text() == "已选 1 项"
-        assert all(button.isEnabled() for button in dialog._selection_action_buttons)
+        assert all(
+            action.isEnabled() for action in dialog._command_bar.actions()
+            if action.property("requiresSelection")
+        )
 
         dialog._toggle_view()
         assert dialog._view_mode is True
@@ -433,7 +441,10 @@ def test_app_manager_keeps_table_and_icon_selection_in_sync():
         dialog._deselect_all()
         assert dialog.selected_packages == set()
         assert dialog.selection_label.text() == "已选 0 项"
-        assert not any(button.isEnabled() for button in dialog._selection_action_buttons)
+        assert not any(
+            action.isEnabled() for action in dialog._command_bar.actions()
+            if action.property("requiresSelection")
+        )
     finally:
         dialog.close()
 
@@ -554,7 +565,7 @@ def test_app_manager_load_failure_exposes_retry_state():
 
 def test_app_details_page_loads_on_activate_and_exposes_retry_after_failure():
     app = QApplication.instance() or QApplication([])
-    workers = [Mock(), Mock(), Mock(), Mock()]
+    workers = [Mock(), Mock()]
     for worker in workers:
         worker.isRunning.return_value = False
     with patch(
@@ -565,15 +576,15 @@ def test_app_details_page_loads_on_activate_and_exposes_retry_after_failure():
         try:
             worker_cls.assert_not_called()
             page.activate()
-            assert worker_cls.call_count == 2
+            assert worker_cls.call_count == 1
             generation = page._load_generation
 
-            page._on_load_part_finished(generation, "details")
+            page._on_load_part_finished(generation, "snapshot")
             assert page.load_state == "error"
             assert page.retry_btn.isHidden() is False
 
             page.retry_btn.click()
-            assert worker_cls.call_count == 4
+            assert worker_cls.call_count == 2
             assert page.load_state == "loading"
             assert page.retry_btn.isHidden() is True
         finally:
@@ -702,6 +713,126 @@ def test_app_manager_dispose_waits_for_worker_then_emits_ready():
     finally:
         page.close()
         app.processEvents()
+
+
+def test_app_manager_dispose_cancels_actual_read_worker_and_releases_page(monkeypatch):
+    from core.exec import CommandResult
+    from models.app_manager_worker import AppManagerWorker
+
+    app = QApplication.instance() or QApplication([])
+    page = AppManagerPage(device_ip="device-1")
+    worker = AppManagerWorker("device-1", "load_apps")
+    entered = threading.Event()
+    release = threading.Event()
+    emitted = []
+    disposed = []
+    destroyed = []
+    cancelled_observed = []
+    worker.apps_loaded.connect(emitted.append)
+    page.dispose_ready.connect(lambda: disposed.append(True))
+    page.destroyed.connect(lambda: destroyed.append(True))
+
+    def execute(_cmd, *, timeout, cancelled=None):
+        entered.set()
+        assert callable(cancelled)
+        while not cancelled():
+            if release.wait(0.01):
+                assert cancelled(), "read command did not receive cancellation"
+                break
+        assert release.wait(2)
+        cancelled_observed.append(True)
+        return CommandResult(success=True, output="package:/data/app/one.apk=com.example.one")
+
+    monkeypatch.setattr("models.app_manager_worker.CommandRunner.run", execute)
+    page._track_worker(worker)
+    try:
+        worker.start()
+        assert entered.wait(2)
+        assert page.request_dispose("test") is False
+        release.set()
+        deadline = monotonic() + 3
+        while not disposed and monotonic() < deadline:
+            app.processEvents()
+
+
+            QTest.qWait(1)
+        assert disposed == [True]
+        assert cancelled_observed == [True]
+        assert emitted == []
+        assert page._running_workers() == []
+        assert not page._detail_timer.isActive()
+        page.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert destroyed == [True]
+    finally:
+        release.set()
+        if not destroyed:
+            worker.abort()
+            assert worker.wait(3000)
+            page.close()
+            app.processEvents()
+
+
+def test_app_details_initial_load_uses_one_snapshot_worker():
+    app = QApplication.instance() or QApplication([])
+    worker = Mock()
+    worker.isRunning.return_value = False
+    with patch("gui.dialogs.app_manager_details.AppManagerWorker", return_value=worker) as factory:
+        page = AppDetailsPage(device_ip="device-1", package_name="com.example.app")
+        try:
+            page.activate()
+            assert factory.call_count == 1
+            assert factory.call_args.args[1] == "app_snapshot"
+            assert worker.app_details_loaded.connect.call_count == 1
+            assert worker.permissions_loaded.connect.call_count == 1
+            page._on_load_part_finished(page._load_generation, "snapshot")
+            assert page.load_state == "error"
+            assert page._pending_load_parts == set()
+        finally:
+            page.close()
+            app.processEvents()
+
+
+def test_app_details_real_worker_loads_both_parts_and_refreshes_permissions():
+    from core.exec import CommandResult
+
+    app = QApplication.instance() or QApplication([])
+    page = AppDetailsPage(device_ip="device-1", package_name="com.example.app")
+    outputs = [
+        "versionCode=7\nversionName=1.2\nruntime permissions:\n"
+        "  android.permission.CAMERA: granted=true\n",
+        "versionCode=7\nruntime permissions:\n"
+        "  android.permission.CAMERA: granted=false\n",
+    ]
+    with patch(
+        "models.app_manager_worker.CommandRunner.run",
+        side_effect=[CommandResult(True, output=value) for value in outputs],
+    ) as command:
+        try:
+            page.activate()
+            deadline = monotonic() + 3
+            while (page.load_state == "loading" or page._workers) and monotonic() < deadline:
+                app.processEvents()
+                QTest.qWait(1)
+            assert page.load_state == "ready"
+            assert "1.2 (code 7)" in page.detail_text.toPlainText()
+            assert page.runtime_list.count() == 1
+            first_label = page.runtime_list.item(0).text()
+            assert command.call_count == 1
+            page._rp()
+            deadline = monotonic() + 3
+            while page._workers and monotonic() < deadline:
+                app.processEvents()
+                QTest.qWait(1)
+            assert not page._workers
+            assert command.call_count == 2
+            assert page.runtime_list.item(0).data(Qt.ItemDataRole.UserRole) == (
+                "android.permission.CAMERA"
+            )
+            assert page.runtime_list.item(0).text() != first_label
+        finally:
+            page.close()
+            app.processEvents()
 
 
 def test_app_manager_offline_state_keeps_cached_content_and_blocks_new_adb_work():

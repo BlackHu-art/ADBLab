@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import InfoBadge
 
 from gui.i18n import tr
+from gui.notifications import show_toast
 from gui.panels.base_panel import BasePanel
 from gui.panels.device_manager_layout import DeviceManagerLayout
 from gui.panels.device_manager_responsive import (
@@ -145,11 +146,6 @@ class DeviceManager(BasePanel):
         self.btn_refresh = self._b(
             tr("刷新"), "arrows-clockwise.svg", tooltip=tr("扫描已连接设备")
         )
-        self.btn_info = self._b(
-            tr("设备信息"),
-            "info.svg",
-            tooltip=tr("在任务中心运行记录中显示所选设备详情"),
-        )
         self.btn_disconnect = self._b(
             tr("断开连接"),
             "link-break.svg",
@@ -174,7 +170,6 @@ class DeviceManager(BasePanel):
         self.btn_none = self._b(tr("取消全选"), "square.svg", tooltip=tr("清除设备选择"))
         self._device_action_buttons = (
             self.btn_refresh,
-            self.btn_info,
             self.btn_disconnect,
             self.btn_restart_dev,
             self.btn_restart_adb,
@@ -418,7 +413,7 @@ class DeviceManager(BasePanel):
     def _request_connect(self):
         target, error = normalize_adb_connect_target(self.ip_address)
         if error:
-            self.signals.log_message.emit("WARNING", error)
+            show_toast(self.window() or self, tr("连接设备"), error, level="warning")
             self.ip_entry.setFocus()
             self.ip_entry.selectAll()
             return
@@ -440,7 +435,6 @@ class DeviceManager(BasePanel):
         self.btn_connect_devices.clicked.connect(self._request_connect)
         self.ip_entry.returnPressed.connect(self._request_connect)
         self.btn_refresh.clicked.connect(self._request_refresh)
-        self.btn_info.clicked.connect(lambda: LP.device_info_requested.emit(self.selected_devices))
         self.btn_disconnect.clicked.connect(
             lambda: LP.disconnect_requested.emit(self.selected_devices)
         )

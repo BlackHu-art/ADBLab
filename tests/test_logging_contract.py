@@ -10,11 +10,8 @@ import time
 from collections.abc import Callable, Iterator
 
 import pytest
-from qfluentwidgets import CardWidget, InfoLevel
 
 from core.log_service import LogLevel, LogService
-from gui.panels.log_panel import LogPanel
-from gui.styles import BaseStyles
 
 
 @pytest.fixture
@@ -149,155 +146,16 @@ def test_initialization_preserves_root_logger_handlers(
         root_logger.removeHandler(existing_handler)
 
 
-def test_log_panel_renders_records_verbatim(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    """面板不再二次过滤级别：DEBUG 拦截是 LogService 的单一职责。"""
-
-    create_log_service()
-    panel = LogPanel()
-    try:
-        panel._append_logs(
-            [
-                ("12:00:00", LogLevel.DEBUG, "直接调用可见"),
-                ("12:00:01", LogLevel.INFO, "允许显示"),
-            ]
-        )
-        panel._flush_pending_rows()
-
-        assert [entry[1:] for entry in panel._entries] == [
-            (LogLevel.DEBUG, "直接调用可见"),
-            (LogLevel.INFO, "允许显示"),
-        ]
-        assert "直接调用可见" in panel.text_output.toPlainText()
-        assert "允许显示" in panel.text_output.toPlainText()
-    finally:
-        panel.close()
 
 
-def test_log_panel_batch_records_carry_source_timestamps(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    create_log_service()
-    panel = LogPanel()
-    try:
-        panel._append_logs([("12:00:00", LogLevel.INFO, "带时间戳")])
-        panel._flush_pending_rows()
-
-        timestamp, level, message = panel._entries[0]
-        assert timestamp == "12:00:00"
-        assert level == LogLevel.INFO
-        assert message == "带时间戳"
-        # 数据层保留时间戳，但界面不渲染时间列（避免与级别列重叠）。
-        assert "带时间戳" in panel.text_output.toPlainText()
-        assert "12:00:00" not in panel.text_output.toPlainText()
-    finally:
-        panel.close()
 
 
-def test_log_panel_applies_new_line_limit_immediately(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    create_log_service()
-    panel = LogPanel()
-    try:
-        panel._entries = [("12:00:00", LogLevel.INFO, f"line-{index}") for index in range(105)]
-        panel._rerender_all()
-
-        panel.set_max_lines(100)
-
-        assert panel._max_lines == 100
-        assert panel._entries[0][2] == "line-5"
-        assert "line-0" not in panel.text_output.toPlainText()
-    finally:
-        panel.close()
 
 
-def test_log_panel_text_output_is_wrapped_in_card_container(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    """视觉重设计最小化：正文外包卡片容器，text_output 公开契约保持不变。"""
-
-    create_log_service()
-    panel = LogPanel()
-    try:
-        assert panel.logViewCard.objectName() == "logViewCard"
-        assert panel.text_output.parent() is panel.logViewCard
-        assert panel.text_output.accessibleName() == "操作日志"
-        # 主题钩子：卡片容器已收敛为 CardWidget（自绘制圆角背景，随 qfluentwidgets 主题切换）。
-        assert isinstance(panel.logViewCard, CardWidget)
-        assert panel.logViewCard.borderRadius == BaseStyles.RADIUS_LG
-        # 正文渲染契约不受包壳影响。
-        panel._append_logs([("12:00:00", LogLevel.INFO, "卡片内渲染")])
-        panel._flush_pending_rows()
-        assert "卡片内渲染" in panel.text_output.toPlainText()
-    finally:
-        panel.close()
 
 
-def test_log_panel_toolbar_clear_button_wipes_entries(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    """工具条卡片化：清空图标按钮保留 objectName 契约并复用既有 clear()。"""
-
-    create_log_service()
-    panel = LogPanel()
-    try:
-        panel._append_logs([("12:00:00", LogLevel.INFO, "待清空")])
-        panel._flush_pending_rows()
-        assert "待清空" in panel.text_output.toPlainText()
-
-        assert panel.logToolbarCard.objectName() == "logToolbarCard"
-        assert panel.logClearButton.objectName() == "logClearButton"
-        assert panel.logClearButton.property("iconName") == "broom.svg"
-        assert panel.logClearButton.toolTip() == "清空操作日志"
-
-        panel.logClearButton.click()
-
-        assert panel._entries == []
-        assert panel.text_output.toPlainText() == ""
-    finally:
-        panel.close()
 
 
-def test_log_panel_level_filter_badge_tracks_selection_and_filters_view(
-    create_log_service: Callable[[], LogService],
-) -> None:
-    """彩色徽标映射语义级别；过滤器只改变视图，不丢弃底层记录。"""
-
-    create_log_service()
-    panel = LogPanel()
-    try:
-        panel._append_logs([("12:00:00", LogLevel.INFO, "过滤前历史行")])
-        panel._flush_pending_rows()
-
-        assert panel.logLevelBadge.objectName() == "logLevelBadge"
-        assert panel.logLevelBadge.text() == "全部"
-
-        # 选中 ERROR 项（All/DEBUG/INFO/SUCCESS/WARNING/ERROR/CRITICAL 的第 5 项）。
-        panel.logLevelFilter.setCurrentIndex(5)
-
-        assert panel.logLevelBadge.text() == "ERROR"
-        assert panel.logLevelBadge.property("level") == InfoLevel.ERROR.value
-        assert "过滤前历史行" not in panel.text_output.toPlainText()
-
-        panel._append_logs(
-            [
-                ("12:00:01", LogLevel.INFO, "被级别过滤拦截"),
-                ("12:00:02", LogLevel.ERROR, "保留错误"),
-            ]
-        )
-        panel._flush_pending_rows()
-
-        assert "保留错误" in panel.text_output.toPlainText()
-        assert "被级别过滤拦截" not in panel.text_output.toPlainText()
-
-        panel.logLevelFilter.setCurrentIndex(0)
-        rendered = panel.text_output.toPlainText()
-        assert "过滤前历史行" in rendered
-        assert "被级别过滤拦截" in rendered
-    finally:
-        panel.close()
 
 
 def test_shutdown_is_idempotent_and_rejects_late_logs(

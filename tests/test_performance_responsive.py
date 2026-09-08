@@ -211,6 +211,14 @@ def test_workspace_performance_uses_one_title_and_keeps_actions_visible(qt_appli
         assert dialog.stop_btn is stop and stop.isVisible()
         assert not start.geometry().intersects(stop.geometry())
         assert dialog._config_scroll.isHidden()
+        content_margins = dialog._config_group.layout().contentsMargins()
+        assert (content_margins.left(), content_margins.right()) == (8, 8)
+        for section in (*dialog._configuration_sections, dialog._results_group):
+            title_margins = section.headerLayout.contentsMargins()
+            body_margins = section.viewLayout.contentsMargins()
+            assert (title_margins.left(), title_margins.right()) == (0, 0)
+            assert (body_margins.left(), body_margins.right()) == (0, 0)
+            assert section.headerView.height() == section.headerLayout.sizeHint().height()
         assert all(
             isinstance(section, HeaderCardWidget) for section in dialog._configuration_sections
         )

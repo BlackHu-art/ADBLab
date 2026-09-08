@@ -22,7 +22,6 @@ class MainFrameActions:
         bindings = (
             ("F5", self._frame._request_device_refresh),
             ("Ctrl+,", self._frame._show_settings),
-            ("Ctrl+Shift+L", self._frame.clear_log),
         )
         self._frame._main_shortcuts = []
         for sequence, callback in bindings:

@@ -12,10 +12,13 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Protocol, runtime_checkable
 
+from core.adb_runtime import AdbRuntime, native_capture
+from core.adb_transport import ExecutionResult
 from core.process_utils import kill_process_tree
 
 CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
@@ -24,7 +27,37 @@ CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 _adb_path: str | None = None
 _adb_path_lock = threading.Lock()
 _active_commands = 0
-_active_lock = threading.Lock()
+_active_lock = threading.Condition()
+_adb_runtime: AdbRuntime | None = None
+
+
+def install_adb_runtime(runtime: AdbRuntime | None) -> None:
+    """由应用组合根安装执行策略；模块导入和独立工具默认使用原生后端。"""
+    global _adb_runtime
+    _adb_runtime = runtime
+
+
+def adb_runtime() -> AdbRuntime | None:
+    """返回应用拥有的运行实例；调用方不能从此入口隐式创建或探测。"""
+    return _adb_runtime
+
+
+def _normalise_result(raw: ExecutionResult, timeout: float) -> CommandResult:
+    if raw.kind == "timeout":
+        return CommandResult(success=False, error=f"Timeout({timeout:g}s)")
+    if raw.kind == "cancelled":
+        return CommandResult(success=False, error="Cancelled")
+    if raw.kind == "stale":
+        return CommandResult(success=False, stale=True)
+    stdout = raw.stdout.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
+    stderr = raw.stderr.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
+    if raw.kind != "completed":
+        return CommandResult(success=False, error=stderr.strip() or "ADB connection failed")
+    if raw.returncode:
+        return CommandResult(
+            success=False, error=(stderr or stdout).strip(), returncode=raw.returncode
+        )
+    return CommandResult(success=True, output=stdout.strip(), returncode=0)
 
 
 def resolve_adb_program() -> str:
@@ -71,12 +104,17 @@ class ExecHandle(Protocol):
 
 @dataclass
 class CommandResult:
-    """统一的命令执行结果。"""
+    """统一的命令执行结果。
+
+    ``stale`` 表示设备列表已过期，结果不含可发布的输出或故障信息；扫描保留当前状态，
+    等待下一轮查询。默认值保留普通命令和既有调用方的结果契约。
+    """
 
     success: bool
     output: str = ""
     error: str = ""
     returncode: int = 0
+    stale: bool = False
 
     @property
     def stdout(self) -> str:
@@ -96,28 +134,60 @@ class CommandRunner:
             return _active_commands
 
     @staticmethod
-    def run(cmd: list[str], timeout: int = 30, shell: bool = False) -> CommandResult:
+    def wait_for_idle(timeout: float) -> bool:
+        """在后台关闭线程等待短命令退出；超时仍保留活动计数供监督器报告残留。"""
+        with _active_lock:
+            return _active_lock.wait_for(lambda: _active_commands == 0, max(0.0, timeout))
+
+    @staticmethod
+    def run(
+        cmd: list[str],
+        timeout: float = 30,
+        shell: bool = False,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+        native_only: bool = False,
+    ) -> CommandResult:
         """执行有超时上限的短命令，并将退出码和输出归一为 ``CommandResult``。"""
 
         resolved_cmd = resolve_command(cmd)
         started_at = _mark_started()
         result: CommandResult
         try:
-            proc = subprocess.run(
-                resolved_cmd,
-                capture_output=True,
-                text=True,
-                shell=shell,
-                timeout=timeout,
-                encoding="utf-8",
-                errors="ignore",
-                creationflags=CF,
-            )
-            if proc.returncode != 0:
-                err = (proc.stderr or proc.stdout).strip()
-                result = CommandResult(success=False, returncode=proc.returncode, error=err)
+            runtime = _adb_runtime
+            raw = None
+            if cancelled is not None and cancelled():
+                raw = ExecutionResult(kind="cancelled")
+            elif runtime is not None and not shell and not native_only:
+                raw = runtime.try_run(resolved_cmd, timeout, cancelled)
+            remaining = timeout
+            if runtime is not None or cancelled is not None:
+                remaining -= perf_counter() - started_at
+            if raw is None and remaining <= 0:
+                raw = ExecutionResult(kind="timeout")
+            if raw is None and cancelled is not None and not shell:
+                raw = native_capture(resolved_cmd, remaining, cancelled)
+            if raw is not None:
+                result = _normalise_result(raw, timeout)
             else:
-                result = CommandResult(success=True, output=proc.stdout.strip(), returncode=0)
+                proc = subprocess.run(
+                    resolved_cmd,
+                    capture_output=True,
+                    text=True,
+                    shell=shell,
+                    timeout=remaining if runtime is not None else timeout,
+                    encoding="utf-8",
+                    errors="ignore",
+                    creationflags=CF,
+                )
+                result = _normalise_result(
+                    ExecutionResult(
+                        (proc.stdout or "").encode("utf-8"),
+                        (proc.stderr or "").encode("utf-8"),
+                        proc.returncode,
+                    ),
+                    timeout,
+                )
         except subprocess.TimeoutExpired:
             result = CommandResult(success=False, error=f"Timeout({timeout}s)")
         except Exception as exc:
@@ -131,29 +201,50 @@ class CommandRunner:
     def run_to_file(
         cmd: list[str],
         output_path: str,
-        timeout: int = 30,
+        timeout: float = 30,
         shell: bool = False,
+        *,
+        cancelled: Callable[[], bool] | None = None,
     ) -> CommandResult:
-        """执行命令并将二进制标准输出直接写入文件。"""
+        """流式写出二进制并共享取消及总超时；临时文件与最终发布由调用方负责。"""
 
         resolved_cmd = resolve_command(cmd)
         started_at = _mark_started()
+        deadline = time.monotonic() + timeout
         result: CommandResult
         try:
-            with open(output_path, "wb") as output_file:
-                proc = subprocess.run(
-                    resolved_cmd,
-                    stdout=output_file,
-                    stderr=subprocess.PIPE,
-                    shell=shell,
-                    timeout=timeout,
-                    creationflags=CF,
-                )
-            if proc.returncode != 0:
-                err = (proc.stderr or b"").decode("utf-8", errors="ignore").strip()
-                result = CommandResult(success=False, returncode=proc.returncode, error=err)
+            if cancelled is not None and cancelled():
+                result = CommandResult(success=False, error="Cancelled")
             else:
-                result = CommandResult(success=True, output=output_path, returncode=0)
+                with open(output_path, "wb") as output_file:
+                    raw = None
+                    runtime = adb_runtime()
+                    if runtime is not None and not shell:
+                        raw = runtime.try_run(
+                            resolved_cmd, max(0, deadline - time.monotonic()), cancelled,
+                            stdout_sink=output_file,
+                        )
+                    if raw is None:
+                        remaining = deadline - time.monotonic()
+                        if cancelled is not None and cancelled():
+                            raw = ExecutionResult(kind="cancelled")
+                        elif remaining <= 0:
+                            raw = ExecutionResult(kind="timeout")
+                        elif cancelled is not None and not shell:
+                            raw = native_capture(
+                                resolved_cmd, remaining, cancelled, stdout_sink=output_file,
+                            )
+                        else:
+                            proc = subprocess.run(
+                                resolved_cmd, stdout=output_file, stderr=subprocess.PIPE,
+                                shell=shell, timeout=remaining, creationflags=CF,
+                            )
+                            raw = ExecutionResult(
+                                stderr=proc.stderr or b"", returncode=proc.returncode,
+                            )
+                result = _normalise_result(raw, timeout)
+                if result.success:
+                    result.output = output_path
         except subprocess.TimeoutExpired:
             result = CommandResult(success=False, error=f"Timeout({timeout}s)")
         except Exception as exc:
@@ -175,9 +266,10 @@ def _mark_finished() -> None:
     global _active_commands
     with _active_lock:
         _active_commands = max(0, _active_commands - 1)
+        _active_lock.notify_all()
 
 
-def _log_if_slow(cmd: list[str], started_at: float, result: CommandResult, timeout: int) -> None:
+def _log_if_slow(cmd: list[str], started_at: float, result: CommandResult, timeout: float) -> None:
     elapsed_ms = (perf_counter() - started_at) * 1000.0
     threshold = _slow_threshold_ms()
     if elapsed_ms < threshold:

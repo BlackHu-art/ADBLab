@@ -5,8 +5,9 @@
 
 import re
 import time
+from collections.abc import Callable
 
-from core.exec import CommandRunner
+from core.exec import CommandResult, CommandRunner
 
 from .adb_model import ADBModelCore, async_command
 
@@ -17,26 +18,6 @@ BASIC_PROP_FIELDS = {
     "SDK Version": "ro.build.version.sdk",
     "CPU Architecture": "ro.product.cpu.abi",
     "Hardware": "ro.hardware",
-}
-
-FULL_PROP_FIELDS = {
-    "Model": "ro.product.model",
-    "Brand": "ro.product.brand",
-    "Android Version": "ro.build.version.release",
-    "Serial Number": "ro.serialno",
-    "SDK Version": "ro.build.version.sdk",
-    "CPU Architecture": "ro.product.cpu.abi",
-    "Hardware": "ro.hardware",
-    "Timezone": "persist.sys.timezone",
-}
-
-GETPROP_LINE_RE = re.compile(r"^\[([^\]]+)\]: \[(.*)\]$")
-INFO_MARKERS = {
-    "PROPS": "__ADBLAB_PROPS__",
-    "DF": "__ADBLAB_DF__",
-    "MEMINFO": "__ADBLAB_MEMINFO__",
-    "WM": "__ADBLAB_WM__",
-    "IP": "__ADBLAB_IP__",
 }
 
 OVERVIEW_MARKERS = {
@@ -90,16 +71,6 @@ def parse_connected_devices(output: str) -> list[str]:
     return devices
 
 
-def parse_getprop_output(output: str) -> dict[str, str]:
-    """将 adb shell getprop 输出解析为属性字典。"""
-    props: dict[str, str] = {}
-    for raw_line in output.splitlines():
-        match = GETPROP_LINE_RE.match(raw_line.strip())
-        if match:
-            props[match.group(1)] = match.group(2)
-    return props
-
-
 def parse_labeled_sections(
     output: str, markers: dict[str, str], *, preserve_empty_lines: bool = False,
 ) -> dict[str, str]:
@@ -121,21 +92,17 @@ def parse_labeled_sections(
     return sections
 
 
-def _meminfo_value(output: str, key: str) -> str:
-    prefix = f"{key}:"
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(prefix):
-            return stripped
-    return "N/A"
-
-
-def _line_with_prefix(output: str, prefix: str) -> str:
-    for line in output.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(prefix):
-            return stripped
-    return "N/A"
+def _read_info_command(
+    command: list[str], deadline: float, cancelled: Callable[[], bool] | None,
+    *, max_timeout: float | None = None,
+) -> CommandResult | None:
+    """在同一查询预算内执行只读命令；取消后连成功结果也不交给属性解析。"""
+    remaining = deadline - time.monotonic()
+    if remaining <= 0 or (cancelled is not None and cancelled()):
+        return None
+    timeout = remaining if max_timeout is None else min(remaining, max_timeout)
+    result = CommandRunner.run(command, timeout=timeout, cancelled=cancelled)
+    return None if cancelled is not None and cancelled() else result
 
 
 class ADBDevice(ADBModelCore):
@@ -153,9 +120,15 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def get_connected_devices_async(self) -> dict:
-        r = self._run(["adb", "devices"])
+        """读取在线设备；已被更新结果取代的查询按取消收尾，不发布旧列表或报告连接失败。"""
+        r = self._run_readonly(["adb", "devices"])
+        if r.get("stale"):
+            return {
+                **r, "cancelled": True, "devices": [],
+                "message": "设备列表已更新，本次刷新结果已忽略",
+            }
         if not r["success"]:
-            return {"success": False, "error": r["error"], "devices": []}
+            return {**r, "devices": []}
         return {"success": True, "devices": parse_connected_devices(r["output"])}
 
     @async_command
@@ -169,6 +142,7 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def restart_device_async(self, device: str) -> dict:
+        """提交设备重启；命令成功不代表设备已上线，超时无法确认是否已提交。"""
         r = self._run(["adb", "-s", device, "get-state"])
         if not r["success"] or "device" not in r.get("output", ""):
             return {
@@ -177,13 +151,21 @@ class ADBDevice(ADBModelCore):
                 "error": f"Abnormal device status: {r.get('output', r.get('error', ''))}",
                 "requires_refresh": False,
             }
-        r = self._run(["adb", "-s", device, "reboot"], timeout=3)
-        if r["success"] or (not r["success"] and "Timeout" in r.get("error", "")):
+        # 原生客户端启动可能已超过数秒，沿用统一命令预算，不能把启动超时视为重启成功。
+        r = self._run(["adb", "-s", device, "reboot"])
+        if r["success"]:
             return {
                 "device_ip": device,
                 "success": True,
                 "requires_refresh": True,
-                "raw_result": "The device is starting to restart",
+                "raw_result": "Reboot request submitted; device startup has not been verified",
+            }
+        if "timeout" in r.get("error", "").lower():
+            return {
+                "device_ip": device,
+                "success": False,
+                "error": "Reboot result unknown after timeout; check device status before retrying",
+                "requires_refresh": True,
             }
         return {
             "device_ip": device,
@@ -194,29 +176,30 @@ class ADBDevice(ADBModelCore):
 
     @async_command
     def restart_adb_async(self) -> dict:
+        """重启本机 ADB 服务；启动阶段使用包含原生客户端开销的统一命令预算。"""
         kill = self._run(["adb", "kill-server"])
         if not kill["success"]:
             return {"success": False, "error": f"kill-server: {kill['error']}"}
         time.sleep(1)
-        r = self._run(["adb", "start-server"], timeout=5)
+        r = self._run(["adb", "start-server"])
         return {"success": r["success"], "error": r["error"] if not r["success"] else ""}
 
-    @async_command(long_running=True)
-    def get_device_info_async(self, device: str) -> dict[str, str]:
-        info = self._fetch_full_device_info(device)
-        info["device_ip"] = device
-        info["ip"] = device
-        return info
+    @staticmethod
+    def get_devices_basic_info(
+        device: str, *, timeout: float = 15, cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, str]:
+        """在调用方预算内查询基础属性；兼容回退与首个命令共享截止时间。"""
+        return ADBDevice._fetch_basic_properties(
+            device, deadline=time.monotonic() + max(0, timeout), cancelled=cancelled,
+        )
 
     @staticmethod
-    def get_devices_basic_info(device):
-        """供 DeviceStore 快速查询使用的同步封装。"""
-        return ADBDevice._fetch_properties(device, BASIC_PROP_FIELDS)
+    def get_device_overview_info(
+        device: str, *, timeout: float = 15, cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, str]:
+        """一次读取概览；仅响应格式不兼容时补查基础信息，所有查询共享预算与取消。"""
 
-    @staticmethod
-    def get_device_overview_info(device: str) -> dict[str, str]:
-        """在既有后台发现任务中一次读取概览属性；失败回退基础信息，不增加 GUI 查询。"""
-
+        deadline = time.monotonic() + max(0, timeout)
         commands = {
             "BASIC": "; ".join(f"getprop {prop}" for prop in BASIC_PROP_FIELDS.values()),
             "MEMORY": "cat /proc/meminfo",
@@ -227,108 +210,44 @@ class ADBDevice(ADBModelCore):
         command = "; ".join(
             f"echo {OVERVIEW_MARKERS[key]}; {probe}" for key, probe in commands.items()
         )
-        result = CommandRunner.run(["adb", "-s", device, "shell", command], timeout=15)
-        if result.success and OVERVIEW_MARKERS["BASIC"] in result.output:
+        result = _read_info_command(["adb", "-s", device, "shell", command], deadline, cancelled)
+        if result is None or not result.success:
+            return {}
+        if OVERVIEW_MARKERS["BASIC"] in result.output:
             return parse_device_overview(result.output)
-        return ADBDevice.get_devices_basic_info(device)
+        return ADBDevice._fetch_basic_properties(device, deadline=deadline, cancelled=cancelled)
 
     @staticmethod
-    def _fetch_properties(device: str, field_map: dict[str, str]) -> dict[str, str]:
-        if field_map == BASIC_PROP_FIELDS:
-            return ADBDevice._fetch_basic_properties(device)
-        result = CommandRunner.run(
-            ["adb", "-s", device, "shell", "getprop"],
-            timeout=15,
-        )
-        if result.success:
-            props = parse_getprop_output(result.output)
-            return {label: props.get(prop, "") for label, prop in field_map.items()}
-        commands = {
-            label: ["adb", "-s", device, "shell", "getprop", prop]
-            for label, prop in field_map.items()
-        }
-        return ADBModelCore._fetch_device_info(commands)
-
-    @staticmethod
-    def _fetch_basic_properties(device: str) -> dict[str, str]:
+    def _fetch_basic_properties(
+        device: str, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, str]:
+        """合并基础属性读取；明确的脚本语法不兼容才逐项重查，连接失败不重复请求。"""
+        if deadline is None:
+            deadline = time.monotonic() + 15
         labels = list(BASIC_PROP_FIELDS.keys())
         props = list(BASIC_PROP_FIELDS.values())
-        result = CommandRunner.run(
+        result = _read_info_command(
             ["adb", "-s", device, "shell", "; ".join(f"getprop {prop}" for prop in props)],
-            timeout=15,
+            deadline, cancelled,
         )
+        if result is None:
+            return {}
         if result.success:
             values = result.output.splitlines()
             return {
                 label: values[index].strip() if index < len(values) else ""
                 for index, label in enumerate(labels)
             }
-        commands = {
-            label: ["adb", "-s", device, "shell", "getprop", prop]
-            for label, prop in BASIC_PROP_FIELDS.items()
-        }
-        return ADBModelCore._fetch_device_info(commands)
-
-    @staticmethod
-    def _fetch_full_device_info(device: str) -> dict[str, str]:
-        command = " ; ".join(
-            [
-                f"echo {INFO_MARKERS['PROPS']}",
-                "getprop",
-                f"echo {INFO_MARKERS['DF']}",
-                "df -h /data",
-                f"echo {INFO_MARKERS['MEMINFO']}",
-                "cat /proc/meminfo",
-                f"echo {INFO_MARKERS['WM']}",
-                "wm size; wm density",
-                f"echo {INFO_MARKERS['IP']}",
-                "ip addr show wlan0",
-            ]
-        )
-        result = CommandRunner.run(
-            ["adb", "-s", device, "shell", command],
-            timeout=15,
-        )
-        if not result.success:
-            info = ADBDevice._fetch_properties(device, FULL_PROP_FIELDS)
-            info.update(ADBDevice._fetch_device_probe_info(device))
-            return info
-        sections = parse_labeled_sections(result.output, INFO_MARKERS)
-        props = parse_getprop_output(sections["PROPS"])
-        info = {label: props.get(prop, "") for label, prop in FULL_PROP_FIELDS.items()}
-        wm_output = sections["WM"]
-        info.update(
-            {
-                "Storage": sections["DF"] or "N/A",
-                "Total Memory": _meminfo_value(sections["MEMINFO"], "MemTotal"),
-                "Available Memory": _meminfo_value(sections["MEMINFO"], "MemAvailable"),
-                "Resolution": _line_with_prefix(wm_output, "Physical size:"),
-                "Density": _line_with_prefix(wm_output, "Physical density:"),
-                "Mac": sections["IP"] or "N/A",
-            }
-        )
-        return info
-
-    @staticmethod
-    def _fetch_device_probe_info(device: str) -> dict[str, str]:
-        probes = {
-            "Storage": ["adb", "-s", device, "shell", "df", "-h", "/data"],
-            "Meminfo": ["adb", "-s", device, "shell", "cat", "/proc/meminfo"],
-            "Wm": ["adb", "-s", device, "shell", "wm size; wm density"],
-            "Mac": ["adb", "-s", device, "shell", "ip", "addr", "show", "wlan0"],
-        }
-        raw = {
-            key: result.output if result.success else "N/A"
-            for key, result in (
-                (key, CommandRunner.run(command, timeout=15)) for key, command in probes.items()
+        if result.returncode <= 0 or "syntax error" not in result.error.lower():
+            return {}
+        info = {}
+        for label, prop in BASIC_PROP_FIELDS.items():
+            item = _read_info_command(
+                ["adb", "-s", device, "shell", "getprop", prop], deadline, cancelled,
+                max_timeout=5,
             )
-        }
-        wm_output = raw["Wm"]
-        return {
-            "Storage": raw["Storage"],
-            "Total Memory": _meminfo_value(raw["Meminfo"], "MemTotal"),
-            "Available Memory": _meminfo_value(raw["Meminfo"], "MemAvailable"),
-            "Resolution": _line_with_prefix(wm_output, "Physical size:"),
-            "Density": _line_with_prefix(wm_output, "Physical density:"),
-            "Mac": raw["Mac"],
-        }
+            if item is None or not item.success:
+                break
+            info[label] = item.output
+        return {} if cancelled is not None and cancelled() else info

@@ -3,9 +3,10 @@
 import os
 from datetime import datetime
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt
-from PySide6.QtGui import QImageReader, QPixmap, QPixmapCache, QTransform
+from PySide6.QtCore import QSignalBlocker, Qt
+from PySide6.QtGui import QImageReader, QPixmap, QTransform
 
+from gui.dialogs.screenshot_viewer_tasks import ScreenshotImageCache, ScreenshotReadWorker
 from gui.i18n import tr
 
 MIN_ZOOM = 0.05
@@ -13,37 +14,16 @@ MAX_ZOOM = 5.0
 ZOOM_STEP = 0.10
 
 
-def _image_cache_key(path: str, kind: str) -> str:
-    try:
-        mtime = os.stat(path).st_mtime_ns
-    except OSError:
-        mtime = 0
-    return f"adblab:screenshot:{kind}:{path}:{mtime}"
-
-
-def _load_pixmap(path: str, *, kind: str, max_size: QSize | None = None) -> QPixmap:
-    """按路径及修改时间复用解码；可选尺寸用于限制调用方要求的图像大小。"""
-
-    key = _image_cache_key(path, kind)
-    cached = QPixmap()
-    if QPixmapCache.find(key, cached) and not cached.isNull():
-        return cached
-    reader = QImageReader(path)
-    if max_size is not None:
-        native = reader.size()
-        if native.isValid() and not native.isEmpty():
-            reader.setScaledSize(native.scaled(max_size, Qt.AspectRatioMode.KeepAspectRatio))
-    pixmap = QPixmap.fromImage(reader.read())
-    if not pixmap.isNull():
-        QPixmapCache.insert(key, pixmap)
-    return pixmap
-
-
 class ScreenshotViewerNav:
     """页面是索引唯一来源；控件同步阻塞信号，避免圆点重建递归或抢走当前图。"""
 
     def __init__(self, frame):
         self._frame = frame
+        self._cache = ScreenshotImageCache()
+        self._generation = 0
+        self._worker: ScreenshotReadWorker | None = None
+        self._pending = False
+        self._suspended = False
 
     def _current_path(self) -> str:
         frame = self._frame
@@ -53,39 +33,90 @@ class ScreenshotViewerNav:
 
     def _navigate_to(self, index: int):
         frame = self._frame
-        if frame._disposed:
+        if frame._disposed or frame._disposing:
             return
         if not frame._image_paths:
+            self._pending = False
             self._show_placeholder(tr("No screenshot available"))
             return
         if not 0 <= index < len(frame._image_paths):
             return
         frame._current_idx = index
-        paths_changed = False
-        while frame._image_paths:
-            path = self._current_path()
-            pixmap = _load_pixmap(path, kind="main") if os.path.isfile(path) else QPixmap()
-            if not pixmap.isNull():
-                if paths_changed:
-                    self._rebuild_images()
+        self._generation += 1
+        self._pending = True
+        if frame._display_path != self._current_path():
+            had_image = frame._display_pixmap is not None
+            frame._original_pixmap = frame._display_pixmap = None
+            frame._display_path = ""
+            frame._empty_label.setText(tr("Loading preview…"))
+            if not had_image:
+                frame._image_stack.setCurrentWidget(frame._empty_label)
+        self._sync_image_selection()
+        self._update_nav_visibility()
+        self._start_read()
+
+    def _start_read(self) -> None:
+        """每页只启动一个解码线程，导航请求合并为最新目标。"""
+        frame = self._frame
+        if (self._worker is not None or not self._pending or self._suspended
+                or frame._disposing or frame._disposed or not frame._image_paths):
+            return
+        index = frame._current_idx
+        indices = (index, index - 1, index + 1)
+        paths = tuple(frame._image_paths[i] for i in indices if 0 <= i < len(frame._image_paths))
+        self._pending = False
+        worker = ScreenshotReadWorker(
+            self._generation, paths, dict(self._cache.images), QImageReader, frame,
+        )
+        self._worker = worker
+        frame._start_io_worker(worker)
+
+    def read_finished(self, worker: ScreenshotReadWorker) -> None:
+        """已完成非阻塞 join 后启动最新排队目标，始终只有一个读取线程。"""
+        if self._worker is not worker:
+            return
+        self._worker = None
+        self._start_read()
+
+    def image_ready(self, generation: int, result) -> None:
+        """逐图消费后台结果；旧请求可贡献缓存，但不能替换当前导航目标。"""
+        frame = self._frame
+        if frame._disposing or frame._disposed:
+            return
+        path, key, image, error = result
+        if path not in frame._image_paths:
+            return
+        if key is not None and not image.isNull():
+            self._cache.add(key, image)
+        if generation == self._generation and path == self._current_path():
+            if error == "changed":
+                self._pending = True
+            elif image.isNull():
+                if frame._delete_worker is not None and path in frame._delete_worker.paths:
+                    # 删除批次拥有缺失文件的合并权，避免读取并发产生多次部分计数。
+                    return
+                frame._image_paths.remove(path)
+                self._cache.remove_path(path)
+                self._rebuild_images()
+                self._navigate_to(min(frame._current_idx, max(0, len(frame._image_paths) - 1)))
+                frame._notify_image_count()
+            else:
                 changed_image = frame._display_path != path
                 frame._display_path = path
                 if changed_image:
                     frame._fit_to_window = True
                     frame._view.reset_pan()
-                self._show_pixmap(pixmap)
+                self._show_pixmap(QPixmap.fromImage(image))
                 self._sync_image_selection()
                 self._update_info()
                 self._update_nav_visibility()
-                frame._view.release_distant_images()
                 frame._notify_image_count()
-                return
-            del frame._image_paths[frame._current_idx]
-            paths_changed = True
-            frame._current_idx = min(frame._current_idx, max(0, len(frame._image_paths) - 1))
-        self._rebuild_images()
-        self._show_placeholder(tr("No valid screenshots"))
-        frame._notify_image_count()
+
+    def dispose(self) -> None:
+        """先封闭解码结果准入，再释放页面缓存。"""
+        self._generation += 1
+        self._pending = False
+        self._cache.clear()
 
     def _show_pixmap(self, pixmap: QPixmap):
         frame = self._frame
@@ -97,7 +128,7 @@ class ScreenshotViewerNav:
             )
             if angle else pixmap
         )
-        frame._view.setItemImage(frame._current_idx, frame._display_pixmap)
+        # 当前像素只归页面持有，不能再写入每个历史 item 绕过页内缓存预算。
         frame._image_stack.setCurrentWidget(frame._view)
         if frame._fit_to_window:
             self._apply_fit()
@@ -143,13 +174,32 @@ class ScreenshotViewerNav:
             frame._pager.setPageNumber(count)
             frame._pager.doItemsLayout()
             for index, path in enumerate(frame._image_paths):
-                text = f"{index + 1} / {count} · {os.path.basename(path)}"
+                text = f"{index + 1} · {os.path.basename(path)}"
                 for widget in (frame._view, frame._pager):
                     item = widget.item(index)
                     item.setData(Qt.ItemDataRole.AccessibleTextRole, text)
                     item.setToolTip(os.path.basename(path))
             if count:
                 frame._view.scrollToIndex(frame._current_idx)
+        self._sync_image_selection()
+        self._update_nav_visibility()
+
+    def append_images(self, start: int) -> None:
+        """仅追加新的图片与圆点项，保留既有项、旋转和当前像素。"""
+        frame = self._frame
+        count = len(frame._image_paths)
+        with QSignalBlocker(frame._view), QSignalBlocker(frame._pager):
+            frame._view.addImages(frame._image_paths[start:])
+            frame._pager.append_pages(count - frame._pager.count())
+            frame._pager.setVisibleNumber(min(count, 7))
+            for index in range(start, count):
+                name = os.path.basename(frame._image_paths[index])
+                for widget in (frame._view, frame._pager):
+                    item = widget.item(index)
+                    item.setData(Qt.ItemDataRole.AccessibleTextRole, f"{index + 1} · {name}")
+                    item.setToolTip(name)
+            frame._view.doItemsLayout()
+            frame._pager.doItemsLayout()
         self._sync_image_selection()
         self._update_nav_visibility()
 
@@ -280,9 +330,10 @@ class ScreenshotViewerNav:
         has_image = bool(frame._image_paths and frame._display_pixmap is not None)
         multi = len(frame._image_paths) > 1
         frame._pager.setVisible(multi)
-        frame._nav_label.setVisible(multi)
+        frame._nav_label.setVisible(has_image)
         self._update_nav_label()
         self._update_actions_enabled(has_image)
+        frame._schedule_metadata_reflow()
 
     def _update_nav_label(self):
         frame = self._frame
@@ -298,7 +349,14 @@ class ScreenshotViewerNav:
         for action in (
             frame._rotate_action, frame._zoom_out_action, frame._zoom_in_action,
             frame._fit_action, frame._actual_action, frame._info_action,
-            frame._copy_action, frame._folder_action, frame._delete_action,
+            frame._copy_action, frame._folder_action,
+            frame._delete_action, frame._delete_all_action,
         ):
-            action.setEnabled(enabled and not frame._disposed)
-        frame._add_action.setEnabled(not frame._disposed)
+            action.setEnabled(enabled and not frame._disposed and not frame._disposing)
+        deleting = frame._delete_worker is not None
+        frame._delete_action.setEnabled(enabled and not frame._disposing and not deleting)
+        frame._delete_all_action.setEnabled(
+            bool(frame._image_paths) and not frame._disposed
+            and not frame._disposing and not deleting
+        )
+        frame._add_action.setEnabled(not frame._disposed and not frame._disposing)

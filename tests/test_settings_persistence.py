@@ -339,7 +339,7 @@ def test_malformed_saved_monkey_settings_are_safe_for_panel_loading(
 
 @pytest.mark.parametrize("invalid_count", ["invalid", None, [], True, 0, -1])
 def test_invalid_saved_log_limit_is_safe_for_log_consumer(isolated_settings, invalid_count):
-    from gui.panels.log_panel import LogPanel
+    from gui.dialogs.performance_launcher_log import PerformanceLauncherLog
 
     isolated_settings.parent.mkdir(parents=True)
     isolated_settings.write_text(
@@ -348,7 +348,7 @@ def test_invalid_saved_log_limit_is_safe_for_log_consumer(isolated_settings, inv
     settings = settings_manager.AppSettings.instance()
 
     limit = settings.get("log_max_lines")
-    LogPanel._trim_excess(SimpleNamespace(_entries=[], _max_lines=limit))
+    assert PerformanceLauncherLog._configured_log_max_lines() == limit
 
     assert type(limit) is int
     assert limit == settings_manager.DEFAULTS["log_max_lines"]

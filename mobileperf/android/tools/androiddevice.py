@@ -9,7 +9,10 @@ import subprocess
 import sys
 import threading
 import time
+from typing import Literal, overload
 
+from core.adb_runtime import native_capture
+from mobileperf.android.adb_execution import MobilePerfAdbExecutor
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
 from mobileperf.common.utils import TimeUtils
@@ -87,6 +90,7 @@ class ADB:
 
     os_name = None
     adb_path = None
+    _execution: MobilePerfAdbExecutor | None = None
 
     def __init__(self, device_id=None):
         self._adb_path = ADB.get_adb_path()  # adb.exe程序的绝对路径
@@ -100,6 +104,7 @@ class ADB:
         self._os_name = None
         self.before_connect = True
         self.after_connect = True
+        self._execution = RuntimeData.adb_execution
 
     @property
     def DEVICEID(self):
@@ -153,16 +158,26 @@ class ADB:
         :return: 返回设备列表
         :rtype: list
         """
-        proc = subprocess.run(
-            [ADB.get_adb_path(), "devices"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            timeout=10,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        raw_result = proc.stdout or proc.stderr or ""
+        execution = RuntimeData.adb_execution
+        if execution is not None:
+            result = execution.run([ADB.get_adb_path(), "devices"], 10)
+            if result.kind != "completed":
+                logger.warning("adb devices failed: status=%s", result.kind)
+                return []
+            raw_result = (result.stdout or result.stderr).decode("utf-8", errors="ignore")
+            returncode = result.returncode
+        else:
+            proc = subprocess.run(
+                [ADB.get_adb_path(), "devices"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="ignore",
+                timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            raw_result = proc.stdout or proc.stderr or ""
+            returncode = proc.returncode
         result = raw_result.replace("\r", "").splitlines()
         device_list = []
         for device in result[1:]:
@@ -173,7 +188,7 @@ class ADB:
                 device_list.append(device.split("\t")[0])
         logger.debug(
             "adb devices completed: returncode=%s output_length=%s device_count=%s",
-            proc.returncode,
+            returncode,
             len(raw_result),
             len(device_list),
         )
@@ -253,55 +268,86 @@ class ADB:
             cmdlet.append(arg)
         command_verb = _safe_adb_verb(cmd_parts)
         is_async = "sync" in kwds and not kwds["sync"]
+        cancelled = kwds.get("cancelled")
+        # 旧接口把非正超时解释为无限等待；已取消的同步查询不能因此绕过停止边界。
+        if (
+            not is_async and command_verb == "shell" and len(cmd_parts) + len(argv) > 1
+            and cancelled is not None and cancelled()
+        ):
+            return ""
         logger.debug(
             "adb command started: verb=%s argument_count=%s async=%s",
             command_verb,
             max(0, len(cmdlet) - 1),
             is_async,
         )
-        process = None
-        process = subprocess.Popen(
-            cmdlet,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT if kwds.get("merge_stderr", False) else subprocess.PIPE,
-            shell=False,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if is_async:
-            # 异步执行命令，不等待结果，返回该子进程对象
-            return process
         before = time.time()
-        timeout = 10
-        if "timeout" in kwds:
-            timeout = kwds["timeout"]
+        timeout = kwds.get("timeout", 10)
         if timeout is not None and timeout > 0:
             # timeout = None 或者小于等于0时，一直等待执行结果
             communicate_timeout = timeout
         else:
             communicate_timeout = None
-        try:
-            (out, error) = process.communicate(timeout=communicate_timeout)
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "adb command timeout: verb=%s timeout_seconds=%s",
-                command_verb,
-                communicate_timeout,
+        raw = None
+        # 无限等待、合并双流和异步对象有独立契约，保留其原生进程边界。
+        eligible = (
+            not is_async
+            and communicate_timeout is not None
+            and not kwds.get("merge_stderr", False)
+            and command_verb == "shell"
+            and len(cmd_parts) + len(argv) > 1
+        )
+        if eligible and communicate_timeout is not None:
+            if self._execution is not None:
+                raw = self._execution.run(cmdlet, communicate_timeout, kwds.get("cancelled"))
+            elif kwds.get("cancelled") is not None:
+                raw = native_capture(cmdlet, communicate_timeout, kwds["cancelled"])
+        if raw is not None:
+            if raw.kind in {"cancelled", "timeout"}:
+                logger.debug("adb command interrupted: verb=%s status=%s", command_verb, raw.kind)
+                return ""
+            if raw.kind != "completed":
+                # 协议错误不含原始设备诊断，不能当作采样文本或伪装连接成功。
+                self.before_connect = self.after_connect = False
+                logger.warning("adb command unavailable: verb=%s status=%s", command_verb, raw.kind)
+                return ""
+            out, error = raw.stdout, raw.stderr
+            returncode = raw.returncode
+        else:
+            process = subprocess.Popen(
+                cmdlet,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT if kwds.get("merge_stderr", False) else subprocess.PIPE,
+                shell=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            process.terminate()
+            if is_async:
+                # 异步调用仍交付真实进程，reader 与终止操作继续归调用方所有。
+                return process
             try:
-                (out, error) = process.communicate(timeout=2)
+                (out, error) = process.communicate(timeout=communicate_timeout)
             except subprocess.TimeoutExpired:
-                process.kill()
-                (out, error) = process.communicate()
-            return ""
+                logger.warning(
+                    "adb command timeout: verb=%s timeout_seconds=%s",
+                    command_verb,
+                    communicate_timeout,
+                )
+                process.terminate()
+                try:
+                    (out, error) = process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    (out, error) = process.communicate()
+                return ""
+            returncode = process.poll()
         # 执行错误 mac  out无输出 error有输出 返回值非0
         # 执行错误 windows out有输出 error没有输出，返回值0
-        if process.poll() != 0:  # 返回码为非0，表示命令未执行成功返回
+        if returncode != 0:  # 返回码为非0，表示命令未执行成功返回
             logger.error(
                 ("adb command failed: verb=%s returncode=%s output_length=%s stderr_length=%s"),
                 command_verb,
-                process.poll(),
+                returncode,
                 _payload_length(out),
                 _payload_length(error),
             )
@@ -341,7 +387,7 @@ class ADB:
                 logger.error(
                     "adb command version mismatch: verb=%s returncode=%s",
                     command_verb,
-                    process.poll(),
+                    returncode,
                 )
         if not out:  # bytes 空串即取 stderr，避免对非 UTF-8 输出硬解码崩溃
             out = error
@@ -354,7 +400,7 @@ class ADB:
                 "output_length=%s stderr_length=%s"
             ),
             command_verb,
-            process.poll(),
+            returncode,
             time_consume,
             _payload_length(out),
             _payload_length(error),
@@ -380,19 +426,44 @@ class ADB:
         kwds.pop("retry_count", None)
         return self._run_cmd_once(cmd, *argv, **kwds)
 
+    @overload
+    def run_shell_cmd(
+        self, cmd: str, *, sync: Literal[False], **kwds,
+    ) -> subprocess.Popen[bytes]: ...
+
+    @overload
+    def run_shell_cmd(self, cmd: str, *, sync: Literal[True] = True, **kwds) -> str: ...
+
+    @overload
+    def run_shell_cmd(self, cmd: str, *, sync: bool, **kwds) -> str | subprocess.Popen[bytes]: ...
+
     def run_shell_cmd(self, cmd, **kwds):
-        """执行 adb shell 命令"""
-        # 如果失去连接后，adb又正常连接了
-        if not self.before_connect and self.after_connect:
-            cpu_uptime_file = os.path.join(RuntimeData.package_save_path, "uptime.txt")
-            with open(cpu_uptime_file, "a+", encoding="utf-8") as writer:
-                writer.write(
-                    TimeUtils.getCurrentTimeUnderline()
-                    + " /proc/uptime:"
-                    + self.run_adb_cmd("shell cat /proc/uptime")
-                    + "\n"
-                )
-            self.before_connect = True
+        """执行 Shell 命令；同步重连补查共享预算和取消，异步调用保留真实进程契约。"""
+        # 异步入口不能被同步诊断阻塞；重连记录留待下一次同步查询。
+        if kwds.get("sync", True) and not self.before_connect and self.after_connect:
+            cancelled = kwds.get("cancelled")
+            if cancelled is not None and cancelled():
+                return ""
+            timeout = kwds.get("timeout", 10)
+            deadline = time.monotonic() + timeout if timeout is not None and timeout > 0 else None
+            uptime = self.run_adb_cmd(
+                "shell cat /proc/uptime", timeout=timeout, cancelled=cancelled,
+            )
+            if cancelled is not None and cancelled():
+                return ""
+            if uptime:
+                cpu_uptime_file = os.path.join(RuntimeData.package_save_path, "uptime.txt")
+                with open(cpu_uptime_file, "a+", encoding="utf-8") as writer:
+                    writer.write(
+                        TimeUtils.getCurrentTimeUnderline() + " /proc/uptime:" + uptime + "\n"
+                    )
+                self.before_connect = True
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                # 非正 timeout 在旧接口中代表无限等待，耗尽后必须在此结束。
+                if remaining <= 0:
+                    return ""
+                kwds["timeout"] = remaining
         ret = self.run_adb_cmd("shell", f"{cmd}", **kwds)
         # 当 adb 命令传入 sync=False时，ret是Poen对象
         if ret is None:
@@ -735,24 +806,24 @@ class ADB:
 
     # turandot测试通过
     # android手机测试通过
-    def get_pid_from_pck(self, package_name):
+    def get_pid_from_pck(self, package_name, **query_options):
         """
         从ps信息中通过匹配包名，获取进程pid号，对于双开应用统计值会返回两个不同的pid后面再优化
         :param pckname: 应用包名
         :return: 该进程的pid
         """
         # 跟 get_process_pids 有点区别 这个返回主进程名的pid
-        pckinfo_list = self.get_pckinfo_from_ps(package_name)
+        pckinfo_list = self.get_pckinfo_from_ps(package_name, **query_options)
         if pckinfo_list:
             return pckinfo_list[0]["pid"]
 
-    def get_pckinfo_from_ps(self, packagename):
+    def get_pckinfo_from_ps(self, packagename, **query_options):
         """
         从ps中获取应用的信息:pid,uid,packagename
         :param packagename: 目标包名
         :return: 返回目标包名的列表信息
         """
-        ps_list = self.list_process()
+        ps_list = self.list_process(**query_options)
         pck_list = []
         for item in ps_list:
             if item["proc_name"] == packagename:
@@ -795,11 +866,13 @@ class ADB:
         else:
             return ""
 
-    def get_sdk_version(self):
+    def get_sdk_version(self, **query_options):
         """获取SDK版本，如：16；设备断连或输出不可解析时返回 0。"""
         if not self._sdk_version:
             try:
-                self._sdk_version = int(self.run_shell_cmd("getprop ro.build.version.sdk"))
+                self._sdk_version = int(
+                    self.run_shell_cmd("getprop ro.build.version.sdk", **query_options)
+                )
             except (TypeError, ValueError):
                 self._sdk_version = 0
         return self._sdk_version
@@ -872,13 +945,13 @@ class ADB:
         )
         return installed_app_list
 
-    def list_process(self):
+    def list_process(self, **query_options):
         """获取进程列表"""
         # <= 7.0 用ps, >=8.0 用ps -A android8.0 api level 26
-        if self.get_sdk_version() < 26:
-            result = self.run_shell_cmd("ps")  # 不能使用grep
+        if self.get_sdk_version(**query_options) < 26:
+            result = self.run_shell_cmd("ps", **query_options)  # 不能使用grep
         else:
-            result = self.run_shell_cmd("ps -A")  # 不能使用grep
+            result = self.run_shell_cmd("ps -A", **query_options)  # 不能使用grep
         if not result:
             return []
         result = result.replace("\r", "")

@@ -406,7 +406,8 @@ def test_mobileperf_excel_truncates_long_csv_sheet_names_for_report(tmp_path):
     assert all(len(name) <= 31 for name in excel._worksheet_names)
 
 
-def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
+@pytest.mark.parametrize("native_only", [False, True])
+def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, native_only):
     runner_process = Mock(spec=ProcessRunner)
     proc = Mock()
     proc.stdout = []
@@ -419,7 +420,12 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
     )
     cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
 
-    with patch.object(MobilePerfRunner, "_resolve_adb_path", return_value="adb-test"):
+    runtime = Mock()
+    runtime.snapshot.return_value.native_only = native_only
+    with (
+        patch.object(MobilePerfRunner, "_resolve_adb_path", return_value="adb-test"),
+        patch("services.mobileperf_runner.adb_runtime", return_value=runtime),
+    ):
         runner.start(cfg)
 
     args = runner_process.start.call_args.args
@@ -428,6 +434,7 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path):
     assert "--config" in args[1]
     assert kwargs["cwd"] == str(tmp_path)
     assert kwargs["env"]["ADB_PATH"] == "adb-test"
+    assert kwargs["env"]["MOBILEPERF_ADB_MODE"] == ("native" if native_only else "auto")
     assert "MOBILEPERF_STOP_FILE" in kwargs["env"]
     assert Path(args[1][-1]).name == "mobileperf_run.conf"
     runner.stop()
@@ -616,11 +623,15 @@ def test_mobileperf_monkey_builds_command_from_configurable_options():
     assert monkey._event_percentage_total() == 100
 
 
-def test_mobileperf_startup_passes_collection_timeout_to_monkey():
+def test_mobileperf_startup_passes_collection_timeout_to_monkey(monkeypatch):
     from mobileperf.android import startup as startup_module
     from mobileperf.android.startup import StartUp
 
     startup = StartUp.__new__(StartUp)
+    startup.stop_file = ""
+    execution = Mock()
+    execution.stop_requested.return_value = False
+    monkeypatch.setattr(startup_module, "MobilePerfAdbExecutor", Mock(return_value=execution))
     startup.serialnum = "device-1"
     startup.packages = ["com.example.app"]
     startup.frequency = 5
@@ -664,6 +675,9 @@ def test_mobileperf_startup_passes_collection_timeout_to_monkey():
     ):
         startup.add_monitor = Mock()
         startup.clear_heapdump = Mock()
+        from mobileperf.android.globaldata import RuntimeData
+
+        RuntimeData.begin_run()
         startup.run()
 
     monkey_cls.assert_not_called()
@@ -690,6 +704,7 @@ def test_mobileperf_startup_passes_collection_timeout_to_monkey():
         monkey_cls.return_value = Mock()
 
         try:
+            RuntimeData.begin_run()
             startup.run(time_out=0)
         except SystemExit:
             pass

@@ -16,6 +16,8 @@
 | 未闭环问题与验证缺口 | [RISKS_AND_DEBT](project-knowledge/RISKS_AND_DEBT.md) |
 | 项目专有术语 | [glossary](project-knowledge/glossary.md) |
 | 环境、运行、翻译资源、打包与版本 | [BUILD_AND_RUN](guides/BUILD_AND_RUN.md) |
+| ADB 执行环境自动适配与独立快速命令 | [ADB_FAST](guides/ADB_FAST.md) |
+| 操作结果归属、全文与附件交互、应用诊断 | [OPERATION_RESULTS](guides/OPERATION_RESULTS.md) |
 | 测试选择、隔离、质量工具与注释规范 | [TESTING_GUIDE](guides/TESTING_GUIDE.md) |
 | 协作、授权与修改范围 | [AGENTS.md](../AGENTS.md) |
 | 文档组织、事实核实与清理 | [CONTRIBUTING_DOCS](CONTRIBUTING_DOCS.md) |

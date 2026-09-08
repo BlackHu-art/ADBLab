@@ -1,14 +1,51 @@
 """验证开放分区没有结构底板，原生控件和布局接口保持可用。"""
 
 import pytest
-from PySide6.QtCore import QPoint
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QPoint, QRect
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import HeaderCardWidget, LineEdit, PushButton
 
 from gui.styles import BaseStyles
 from gui.widgets.content_section import ContentSection
+from tests.ui_geometry_helpers import wait_for_stable_geometry
+
+
+@pytest.mark.parametrize("width", [380, 760])
+def test_section_header_follows_wrapped_title_and_action_height(qt_application, width):
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    section = ContentSection("需要在狭窄窗口中完整显示的功能分区标题", host)
+    action = PushButton("执行", section.headerView)
+    section.headerLayout.addWidget(action)
+    field = LineEdit(section)
+    field.setText("保留输入")
+    section.viewLayout.addWidget(field)
+    layout.addWidget(section)
+    host.resize(width, 360)
+    host.show()
+    for size in (12, 22, 12):
+        font = QFont("Microsoft YaHei", size)
+        section.headerLabel.setFont(font)
+        action.setFont(font)
+        action.setMinimumHeight(action.fontMetrics().height() + 12)
+        wait_for_stable_geometry(qt_application, (
+            section, section.headerView, section.headerLabel, action,
+        ))
+        label = section.headerLabel
+        required = max(
+            label.heightForWidth(label.width()), action.sizeHint().height(), action.minimumHeight(),
+        )
+        assert required <= section.headerView.height() <= required + 2
+        for widget in (label, action):
+            bounds = QRect(widget.mapTo(section.headerView, QPoint()), widget.size())
+            assert section.headerView.rect().contains(bounds)
+        assert label.height() >= label.heightForWidth(label.width())
+        assert not label.geometry().intersects(action.geometry())
+        assert host.width() == width
+        assert field.text() == "保留输入"
+    host.close()
 
 
 @pytest.mark.parametrize("theme", ("Light", "Dark"))
@@ -51,7 +88,12 @@ def test_content_section_blends_with_parent_and_preserves_controls(qt_applicatio
             QPoint(section.width() // 2, section.height() - 2),
             QPoint(section.width() // 2, section.headerView.height()),
         ):
-            assert image.pixelColor(section.mapTo(host, point)) == background
+            logical_point = section.mapTo(host, point)
+            ratio = image.devicePixelRatio()
+            physical_point = QPoint(
+                round(logical_point.x() * ratio), round(logical_point.y() * ratio),
+            )
+            assert image.pixelColor(physical_point) == background
 
         button.click()
         assert clicked.count() == 1

@@ -243,7 +243,7 @@ class TrafficCollecor:
                 traffic_snapshot = self._cat_traffic_data(self.packages[0], uid)
 
                 if traffic_snapshot.source == "" or traffic_snapshot.source is None:
-                    time.sleep(self._interval)  # 本轮无结果时等待下一轮，避免空转。
+                    self._stop_event.wait(max(0, min(self._interval, end_time - time.time())))
                     continue
 
                 if self.traffic_init:
@@ -286,7 +286,7 @@ class TrafficCollecor:
                 # 扣除命令执行耗时，使采样周期尽量接近配置间隔。
                 delta_inter = self._interval - time_consume
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
             except RuntimeError as e:
                 logger.error(" trafficstats RuntimeError ")
                 logger.error(e)
@@ -325,7 +325,7 @@ class TrafficCollecor:
                 device_cur_net = self._cat_traffic_device_dev()
 
                 if device_cur_net.source == "" or device_cur_net.source is None:
-                    time.sleep(self._interval)
+                    self._stop_event.wait(max(0, min(self._interval, end_time - time.time())))
                     continue
 
                 if self.traffic_init:
@@ -385,7 +385,7 @@ class TrafficCollecor:
                 # 扣除命令执行耗时，使采样周期尽量接近配置间隔。
                 delta_inter = self._interval - time_consume
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
             except RuntimeError as e:
                 logger.error(" trafficstats RuntimeError ")
                 logger.error(e)

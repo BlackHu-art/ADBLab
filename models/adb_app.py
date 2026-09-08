@@ -20,7 +20,7 @@ class ADBApp(ADBModelCore):
     """封装应用安装、卸载、清理、重启、列表和查询等生命周期操作。"""
 
     def get_current_package(self, device_ip: str) -> dict:
-        return detect_current_package(device_ip)
+        return detect_current_package(device_ip, cancelled=self.is_shutting_down)
 
     @async_command
     def get_current_package_async(self, device_ip: str) -> dict:
@@ -47,10 +47,13 @@ class ADBApp(ADBModelCore):
             if self.is_shutting_down():
                 raise CancellationError("Model is shutting down")
 
+        def is_cancelled() -> bool:
+            return self.is_shutting_down() or cancellation.is_cancelled
+
         class FocusRunner:
-            def run(self, command: list[str], timeout: int = 5):
+            def run(self, command: list[str], timeout: float = 5):
                 check_cancelled()
-                response = CommandRunner.run(command, timeout=timeout)
+                response = CommandRunner.run(command, timeout=timeout, cancelled=is_cancelled)
                 check_cancelled()
                 return response
 
@@ -76,9 +79,10 @@ class ADBApp(ADBModelCore):
             packages = []
             for index, device in enumerate(targets, 1):
                 check_cancelled()
-                installed = self._run(
+                installed = self._run_readonly(
                     ["adb", "-s", device, "shell", "pm", "path", shlex.quote(package)],
                     timeout=5,
+                    cancelled=is_cancelled,
                 )
                 check_cancelled()
                 if not installed.get("success"):
@@ -88,9 +92,10 @@ class ADBApp(ADBModelCore):
                     for line in installed["output"].splitlines()
                 ):
                     raise ValueError(f"第 {index} 台设备未安装目标应用，请先安装后重试")
-                details = self._run(
+                details = self._run_readonly(
                     ["adb", "-s", device, "shell", "dumpsys", "package", shlex.quote(package)],
                     timeout=5,
+                    cancelled=is_cancelled,
                 )
                 check_cancelled()
                 if not details.get("success"):
@@ -218,12 +223,12 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def get_current_activity_async(self, device_ip: str, index: int = 0) -> dict:
-        r1 = self._run(
+        r1 = self._run_readonly(
             ["adb", "-s", device_ip, "shell", "dumpsys", "window"],
             timeout=10,
             device_ip=device_ip,
         )
-        r2 = self._run(
+        r2 = self._run_readonly(
             ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "activities"],
             timeout=10,
             device_ip=device_ip,
@@ -272,7 +277,9 @@ class ADBApp(ADBModelCore):
                 "error": "aapt executable not found in PATH",
                 "apk_path": apk_path,
             }
-        return self._run([aapt, "dump", "badging", apk_path], timeout=15, apk_path=apk_path)
+        return self._run_readonly(
+            [aapt, "dump", "badging", apk_path], timeout=15, apk_path=apk_path,
+        )
 
     @async_command
     def input_text_async(self, device_ip: str, text: str) -> dict:
@@ -283,7 +290,7 @@ class ADBApp(ADBModelCore):
         )
 
     def list_installed_packages(self, device_ip: str, index: int) -> dict:
-        r = self._run(
+        r = self._run_readonly(
             ["adb", "-s", device_ip, "shell", "pm", "list", "packages"], device_ip=device_ip
         )
         if not r["success"]:

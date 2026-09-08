@@ -40,6 +40,7 @@ class SidePanel(QWidget):
         self._package_history = []
         self._connected_device_cache = []
         self._device_discovery_state = "scanning"
+        self._manual_refresh_previous_state: str | None = None
         self._user_selected_ip = False
         self._tabs_connected = False
         self._connected_lazy_tabs = set()
@@ -222,6 +223,8 @@ class SidePanel(QWidget):
             normalized = "empty"
         previous = self._device_discovery_state
         self._device_discovery_state = normalized
+        if normalized != "scanning":
+            self._manual_refresh_previous_state = None
         self._devices_tab.set_discovery_state(normalized)
         if normalized != previous:
             self._refresh_loaded_action_states()
@@ -232,9 +235,18 @@ class SidePanel(QWidget):
 
         if self._device_discovery_state == "scanning":
             return False
+        self._manual_refresh_previous_state = self._device_discovery_state
         self.set_device_discovery_state("scanning")
         self.signals.refresh_devices_requested.emit()
         return True
+
+    def on_device_refresh_superseded(self) -> None:
+        """过期刷新结束后恢复缓存状态；已经到达的新快照始终优先。"""
+
+        previous = self._manual_refresh_previous_state
+        self._manual_refresh_previous_state = None
+        if self._device_discovery_state == "scanning" and previous is not None:
+            self.set_device_discovery_state(previous)
 
     def set_restricted_width_mode(self, restricted: bool) -> None:
         """受限工作区允许右侧页签缩小，并由滚动条保证内容可达。"""

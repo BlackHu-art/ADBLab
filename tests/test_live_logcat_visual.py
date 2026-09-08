@@ -1,14 +1,15 @@
 """Logcat 嵌入模式、中文控件、日志可读性与阅读位置回归。"""
 
 import pytest
-from PySide6.QtCore import QPoint, QRect, QSize
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCore import QAbstractAnimation, QPoint, QRect, QSize
+from PySide6.QtGui import QColor, QFont, QTextCursor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from gui.features.logcat import LiveLogcatPage
 from gui.styles import BaseStyles, FontRole
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 def _contrast(first, second):
@@ -234,6 +235,77 @@ def test_logcat_large_output_keeps_workspace_geometry_and_bounded_document(qt_ap
             page.follow_btn.mapTo(outer.viewport(), QPoint()), page.follow_btn.size()
         )
         assert outer.viewport().rect().contains(button_rect)
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+def test_logcat_return_from_performance_keeps_output_inside_view_and_reading_state(
+    qt_application, monkeypatch,
+):
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr(
+        "models.device_store.DeviceStore.get_full_devices_info", lambda _devices: [],
+    )
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("logcat", QSize(1600, 1100)))
+    )
+    try:
+        frame.show()
+        frame.resize(1048, 650)
+        frame._on_devices_updated(["demo-a"])
+        frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
+        host = frame._workspace_feature_hosts["system"]
+
+        def settle():
+            wait_until(qt_application, lambda: (
+                frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                and frame.navigationInterface.panel.expandAni.state()
+                == QAbstractAnimation.State.Stopped
+            ))
+            wait_for_stable_geometry(qt_application, (
+                frame, host.content_scroll, host.stack, host.stack.currentWidget(),
+            ))
+
+        assert frame._open_workspace_feature("system", "logcat", device_id="demo-a")
+        settle()
+        page = host.stack.currentWidget()
+        for index in range(300):
+            page._on_line(f"synthetic record {index} " + "message " * 30, "I")
+        page._flush_pending_lines()
+        settle()
+        output_size = page.output.size()
+        bar = page.output.verticalScrollBar()
+        bar.setValue(bar.maximum() // 3)
+        anchor = page.output.firstVisibleBlock().text()
+        assert not page.follow_btn.isChecked()
+
+        assert frame._open_workspace_feature("system", "performance", device_id="demo-a")
+        settle()
+        assert frame._open_workspace_feature("system", "logcat", device_id="demo-a")
+        settle()
+
+        assert host.stack.currentWidget() is page
+        assert host.content_scroll.verticalScrollBar().maximum() == 0
+        assert page.height() == host.content_scroll.viewport().height()
+        assert page.output.size() == output_size
+        assert not page.follow_btn.isChecked()
+        page._on_line("record added after return", "W")
+        page._flush_pending_lines()
+        assert page.output.firstVisibleBlock().text() == anchor
+        page.wrap_btn.click()
+        assert page.wrap_btn.isChecked() and not page.follow_btn.isChecked()
+        page.follow_btn.click()
+        settle()
+        assert page.follow_btn.isChecked()
+        assert bar.value() == bar.maximum()
+        cursor = QTextCursor(page.output.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        tail = page.output.viewport().mapTo(
+            host.content_scroll.viewport(), page.output.cursorRect(cursor).center(),
+        )
+        assert host.content_scroll.viewport().rect().contains(tail)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

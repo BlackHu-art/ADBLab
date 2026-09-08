@@ -69,7 +69,7 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 设置页的“显示缩放”支持跟随系统、100%、125%、150%、175%、200%，写入正式键 `ui_scale`，
 重启应用后生效。GUI 入口在创建 QApplication 前应用手动比例；跟随系统保留系统 DPI 和外部启动环境。
 自检和 MobilePerf worker 不应用 GUI 比例。窗口内容仍按实际可用宽高重排，缩放不改变屏幕分辨率。
-字体沿用已保存的族和字号（pt），默认 12 pt；可选 11 pt 获得更紧凑的界面，日志字号单独配置。
+字体沿用已保存的族和字号（pt），默认 12 pt；可选 11 pt 获得更紧凑的界面，输出文本字号单独配置。
 
 设置页的“语言”支持跟随系统、简体中文、繁體中文和 English，保存后重启生效。云母效果在
 Windows 11 上即时切换；不支持的系统禁用该开关并使用主题实色。离屏 Qt 测试验证透明层合成与
@@ -183,7 +183,7 @@ CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需�
 
 ## 调试方法
 
-- 普通 ADB 失败：先运行 packaging self-check 确认 adb 路径，再观察主界面 LogPanel。
+- 普通 ADB 失败：先运行 packaging self-check 确认 adb 路径，再查看来源功能分区的结果与错误详情；应用自身异常在设置页导出诊断。
 - 设备扫描：检查 `continuous_device_scan` 和 `device_scan_interval_ms`；扫描会在有活跃 CommandRunner 命令时跳过一次轮询。
 - Remote：观察预检 warning、scrcpy stderr/FPS 状态；Windows 确认内置 scrcpy 完整，非 Windows 确认 PATH。
 - MobilePerf：使用 System/Performance 内嵌页的日志与结果目录；停止会先生成 stop 文件并最多等待报告，再强制停止。

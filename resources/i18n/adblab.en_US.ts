@@ -3,6 +3,10 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>部分应用详情未读取，点击刷新重试。</source>
+            <translation>Some app details could not be loaded. Click Refresh to try again.</translation>
+        </message>
+        <message>
             <source>
 图标未读取，点击刷新重试。</source>
             <translation>
@@ -1659,19 +1663,11 @@ Type: {value1} | Status: {value2}</translation>
             <translation>Select / deselect all</translation>
         </message>
         <message>
-            <source>全部</source>
-            <translation>All</translation>
-        </message>
-        <message>
             <source>全部应用</source>
             <translation>All apps</translation>
         </message>
         <message>
             <source>全部等级</source>
-            <translation>All levels</translation>
-        </message>
-        <message>
-            <source>全部级别</source>
             <translation>All levels</translation>
         </message>
         <message>
@@ -1897,10 +1893,6 @@ Type: {value1} | Status: {value2}</translation>
         <message>
             <source>即时调整正文大小；推荐 11 pt，已有字号保持不变</source>
             <translation>Adjust text size immediately; 11 pt is recommended</translation>
-        </message>
-        <message>
-            <source>即时调整等宽日志文字大小</source>
-            <translation>Adjust monospace log text size immediately</translation>
         </message>
         <message>
             <source>卸载</source>
@@ -2161,14 +2153,6 @@ Type: {value1} | Status: {value2}</translation>
         <message>
             <source>图表</source>
             <translation>Charts</translation>
-        </message>
-        <message>
-            <source>在任务中心运行记录中显示所选设备详情</source>
-            <translation>Show selected device details in the task activity log</translation>
-        </message>
-        <message>
-            <source>在任务中心运行记录中查看所选设备信息</source>
-            <translation>View selected device information in the task activity log</translation>
         </message>
         <message>
             <source>在屏幕上显示触摸位置</source>
@@ -2619,10 +2603,6 @@ Type: {value1} | Status: {value2}</translation>
             <translation>Device selection status for app operations</translation>
         </message>
         <message>
-            <source>应用操作结果与异常记录将在这里显示。</source>
-            <translation>Application results and errors will appear here.</translation>
-        </message>
-        <message>
             <source>应用模拟电池数值</source>
             <translation>Apply the simulated battery value</translation>
         </message>
@@ -3065,10 +3045,6 @@ Adjust the percentages so they total 100%.</translation>
             <translation>No targets selected</translation>
         </message>
         <message>
-            <source>操作结果与异常信息可在下方运行记录中查看。</source>
-            <translation>View operation results and errors in the activity log below.</translation>
-        </message>
-        <message>
             <source>操作记录</source>
             <translation>Operation records</translation>
         </message>
@@ -3229,24 +3205,12 @@ Adjust the percentages so they total 100%.</translation>
             <translation>Logs appear here. Select an app or log level, then start collection.</translation>
         </message>
         <message>
-            <source>日志保留行数</source>
-            <translation>Log line limit</translation>
-        </message>
-        <message>
-            <source>日志字号（pt）</source>
-            <translation>Log font size (pt)</translation>
-        </message>
-        <message>
             <source>日志导出失败</source>
             <translation>Log export failed</translation>
         </message>
         <message>
             <source>日志已导出：{value0}</source>
             <translation>Logs exported: {value0}</translation>
-        </message>
-        <message>
-            <source>日志级别筛选</source>
-            <translation>Log level filter</translation>
         </message>
         <message>
             <source>日志采集启动失败，请检查设备连接后重试</source>
@@ -3409,10 +3373,6 @@ Adjust the percentages so they total 100%.</translation>
             <translation>View, install and uninstall device apps</translation>
         </message>
         <message>
-            <source>查看任务进度、历史结果与运行记录</source>
-            <translation>View task progress, past results and activity logs</translation>
-        </message>
-        <message>
             <source>查看已安装应用，管理列表中的应用</source>
             <translation>View and manage installed apps</translation>
         </message>
@@ -3435,14 +3395,6 @@ Adjust the percentages so they total 100%.</translation>
         <message>
             <source>查看所选应用的详情</source>
             <translation>View details for the selected app</translation>
-        </message>
-        <message>
-            <source>查看所选设备信息</source>
-            <translation>View selected device information</translation>
-        </message>
-        <message>
-            <source>查看所选设备信息或断开所选设备</source>
-            <translation>View information or disconnect selected devices</translation>
         </message>
         <message>
             <source>查看所选设备各进程的 CPU 负载</source>
@@ -3703,10 +3655,6 @@ Adjust the percentages so they total 100%.</translation>
         <message>
             <source>清空已缓冲和显示的日志，正在运行的采集继续</source>
             <translation>Clear buffered and displayed logs; active collection continues</translation>
-        </message>
-        <message>
-            <source>清空运行记录</source>
-            <translation>Clear activity log</translation>
         </message>
         <message>
             <source>清空选择</source>
@@ -4155,10 +4103,6 @@ Android device management, app tools and diagnostics</translation>
             <translation>Devices &amp; connections</translation>
         </message>
         <message>
-            <source>设备信息</source>
-            <translation>Device info</translation>
-        </message>
-        <message>
             <source>设备功能</source>
             <translation>Device features</translation>
         </message>
@@ -4337,10 +4281,6 @@ Android device management, app tools and diagnostics</translation>
         <message>
             <source>请先选择设备</source>
             <translation>Select a device first</translation>
-        </message>
-        <message>
-            <source>请先选择设备；设备信息会显示在任务中心运行记录中</source>
-            <translation>Select a device first; its information will appear in the task activity log</translation>
         </message>
         <message>
             <source>请在上方设备选项中明确选择当前查看的一台，或在设备概览中选择操作设备。</source>
@@ -4533,10 +4473,6 @@ Android device management, app tools and diagnostics</translation>
         <message>
             <source>运行时长</source>
             <translation>Uptime</translation>
-        </message>
-        <message>
-            <source>运行记录</source>
-            <translation>Activity log</translation>
         </message>
         <message>
             <source>返回</source>
@@ -4867,10 +4803,6 @@ Android device management, app tools and diagnostics</translation>
             <translation>Queue: {queued}</translation>
         </message>
         <message>
-            <source>限制任务中心运行记录的最大行数</source>
-            <translation>Limit the number of log lines in the task center</translation>
-        </message>
-        <message>
             <source>随机操作压力测试</source>
             <translation>Random input stress test</translation>
         </message>
@@ -5109,10 +5041,6 @@ Android device management, app tools and diagnostics</translation>
         <message>
             <source>固定种子</source>
             <translation>Fixed seed</translation>
-        </message>
-        <message>
-            <source>固定种子可重复相同事件序列；实际种子会保存在运行记录中</source>
-            <translation>A fixed seed repeats the same event sequence. The actual seed is saved in the run record.</translation>
         </message>
         <message>
             <source>完成时间</source>
@@ -5393,6 +5321,514 @@ Android device management, app tools and diagnostics</translation>
         <message>
             <source>结果已加入“截图与屏幕”页面。</source>
             <translation>Results have been added to the Screenshots &amp; Screen page.</translation>
+        </message>
+        <message>
+            <source>重新检测</source>
+            <translation>Check again</translation>
+        </message>
+        <message>
+            <source>ADB 执行环境</source>
+            <translation>ADB execution environment</translation>
+        </message>
+        <message>
+            <source>正在检查执行环境</source>
+            <translation>Checking execution environment</translation>
+        </message>
+        <message>
+            <source>使用原生 ADB</source>
+            <translation>Use native ADB</translation>
+        </message>
+        <message>
+            <source>仅本次运行生效；关闭后自动选择兼容且更快的执行方式</source>
+            <translation>For this session only; turn off to automatically select a compatible, faster method</translation>
+        </message>
+        <message>
+            <source>当前使用原生 ADB</source>
+            <translation>Currently using native ADB</translation>
+        </message>
+        <message>
+            <source>快速执行：设备发现 {devices}，Shell {count} 台设备</source>
+            <translation>Fast execution: discovery {devices}, Shell on {count} devices</translation>
+        </message>
+        <message>
+            <source>未启用</source>
+            <translation>disabled</translation>
+        </message>
+        <message>
+            <source>快速执行不可用，保留原生 ADB</source>
+            <translation>Fast execution unavailable; native ADB retained</translation>
+        </message>
+        <message>
+            <source>；正在完成性能检测</source>
+            <translation>; finishing performance checks</translation>
+        </message>
+        <message>
+            <source>Delete all</source>
+            <translation>Delete all</translation>
+        </message>
+        <message>
+            <source>Delete all loaded screenshots</source>
+            <translation>Delete all loaded screenshots</translation>
+        </message>
+        <message>
+            <source>Could not delete {value0} image(s)</source>
+            <translation>Could not delete {value0} image(s)</translation>
+        </message>
+        <message>
+            <source>操作目标</source>
+            <translation>Operation target</translation>
+        </message>
+        <message>
+            <source>将当前查看的设备选为操作目标</source>
+            <translation>Use the viewed device as an operation target</translation>
+        </message>
+        <message>
+            <source>勾选后允许对此设备执行操作；取消勾选仍可查看已加载内容和停止任务</source>
+            <translation>Select to allow operations on this device. Deselecting keeps loaded content and stopping tasks available.</translation>
+        </message>
+        <message>
+            <source>前往设备概览</source>
+            <translation>Open device overview</translation>
+        </message>
+        <message>
+            <source>当前没有可用设备。请前往设备概览连接或刷新设备，再打开此功能。</source>
+            <translation>No devices are available. Connect or refresh devices in Device overview, then open this feature.</translation>
+        </message>
+        <message>
+            <source>更多</source>
+            <translation>More</translation>
+        </message>
+        <message>
+            <source>更多文件操作</source>
+            <translation>More file actions</translation>
+        </message>
+        <message>
+            <source>更多应用操作</source>
+            <translation>More app actions</translation>
+        </message>
+        <message>
+            <source>显示未展开的应用操作</source>
+            <translation>Show additional app actions</translation>
+        </message>
+        <message>
+            <source>可执行应用操作。</source>
+            <translation>App actions are available.</translation>
+        </message>
+        <message>
+            <source>勾选当前在线设备后可执行应用操作，已加载内容仍可查看。</source>
+            <translation>Select the current online device to perform app actions. Loaded content remains available.</translation>
+        </message>
+        <message>
+            <source>当前设备状态：{value0}。{value1}</source>
+            <translation>Current device status: {value0}. {value1}</translation>
+        </message>
+        <message>
+            <source> · {count} 台目标设备</source>
+            <translation> · {count} target devices</translation>
+        </message>
+        <message>
+            <source> · {count} 项返回，{failed} 项失败</source>
+            <translation> · {count} results, {failed} failed</translation>
+        </message>
+        <message>
+            <source>Android 设置列表</source>
+            <translation>Android settings list</translation>
+        </message>
+        <message>
+            <source>写入 Android 设置</source>
+            <translation>Write Android setting</translation>
+        </message>
+        <message>
+            <source>即时调整操作结果、文件预览和采集输出的等宽文字大小</source>
+            <translation>Adjust monospace text in results, file previews and capture output</translation>
+        </message>
+        <message>
+            <source>反向转发列表</source>
+            <translation>Reverse forwarding list</translation>
+        </message>
+        <message>
+            <source>发送按键</source>
+            <translation>Send key</translation>
+        </message>
+        <message>
+            <source>发送滑动</source>
+            <translation>Send swipe</translation>
+        </message>
+        <message>
+            <source>复制完整结果</source>
+            <translation>Copy full result</translation>
+        </message>
+        <message>
+            <source>导出结果</source>
+            <translation>Export result</translation>
+        </message>
+        <message>
+            <source>导出诊断</source>
+            <translation>Export diagnostics</translation>
+        </message>
+        <message>
+            <source>已完成</source>
+            <translation>Completed</translation>
+        </message>
+        <message>
+            <source>已搜索完整结果，当前显示匹配位置附近的内容。</source>
+            <translation>Full result searched. Showing content around the match.</translation>
+        </message>
+        <message>
+            <source>应用提示</source>
+            <translation>Application notice</translation>
+        </message>
+        <message>
+            <source>应用管理最近执行说明</source>
+            <translation>Latest App Manager activity</translation>
+        </message>
+        <message>
+            <source>应用记录了异常，请在设置中查看摘要或导出诊断。</source>
+            <translation>An application issue was recorded. View its summary or export diagnostics in Settings.</translation>
+        </message>
+        <message>
+            <source>应用诊断</source>
+            <translation>Application diagnostics</translation>
+        </message>
+        <message>
+            <source>应用诊断记录未能保存，请检查用户数据目录权限。</source>
+            <translation>Could not save diagnostics. Check permissions for the user data folder.</translation>
+        </message>
+        <message>
+            <source>性能采集输出行数</source>
+            <translation>Performance output line limit</translation>
+        </message>
+        <message>
+            <source>打开文件夹</source>
+            <translation>Open folder</translation>
+        </message>
+        <message>
+            <source>打开结果</source>
+            <translation>Open result</translation>
+        </message>
+        <message>
+            <source>执行中</source>
+            <translation>Running</translation>
+        </message>
+        <message>
+            <source>操作已结束，可返回功能页面查看结果。</source>
+            <translation>The operation has ended. Return to its page to view the result.</translation>
+        </message>
+        <message>
+            <source>操作已结束，无文本输出。</source>
+            <translation>The operation has ended with no text output.</translation>
+        </message>
+        <message>
+            <source>操作结果</source>
+            <translation>Operation result</translation>
+        </message>
+        <message>
+            <source>操作结果正文</source>
+            <translation>Operation result text</translation>
+        </message>
+        <message>
+            <source>文件已保存，可打开查看。</source>
+            <translation>The file has been saved and is ready to open.</translation>
+        </message>
+        <message>
+            <source>未找到匹配内容</source>
+            <translation>No matches found</translation>
+        </message>
+        <message>
+            <source>本分区最近操作</source>
+            <translation>Recent operations in this section</translation>
+        </message>
+        <message>
+            <source>本机</source>
+            <translation>This computer</translation>
+        </message>
+        <message>
+            <source>本次保留 {count} 条异常摘要；最近：{message}</source>
+            <translation>{count} issues retained this session; latest: {message}</translation>
+        </message>
+        <message>
+            <source>本次操作产物</source>
+            <translation>Files from this operation</translation>
+        </message>
+        <message>
+            <source>本次操作的设备结果</source>
+            <translation>Device results for this operation</translation>
+        </message>
+        <message>
+            <source>本次运行尚无应用异常记录</source>
+            <translation>No application issues recorded this session</translation>
+        </message>
+        <message>
+            <source>查找结果</source>
+            <translation>Search result</translation>
+        </message>
+        <message>
+            <source>查找结果，按 Enter 查找下一处</source>
+            <translation>Search full result; press Enter to find next</translation>
+        </message>
+        <message>
+            <source>查看设置</source>
+            <translation>View settings</translation>
+        </message>
+        <message>
+            <source>查看详情</source>
+            <translation>View details</translation>
+        </message>
+        <message>
+            <source>正在执行，请等待结果。</source>
+            <translation>Running. Please wait for the result.</translation>
+        </message>
+        <message>
+            <source>正文较长，当前为预览；复制或导出可获取完整结果。</source>
+            <translation>Showing a preview of a long result. Copy or export to get the full text.</translation>
+        </message>
+        <message>
+            <source>端口转发列表</source>
+            <translation>Port forwarding list</translation>
+        </message>
+        <message>
+            <source>系统服务</source>
+            <translation>System service</translation>
+        </message>
+        <message>
+            <source>系统服务开关</source>
+            <translation>System service switches</translation>
+        </message>
+        <message>
+            <source>结果导出失败，请检查目标目录权限和可用空间。</source>
+            <translation>Export failed. Check folder permissions and available space.</translation>
+        </message>
+        <message>
+            <source>结果已导出</source>
+            <translation>Result exported</translation>
+        </message>
+        <message>
+            <source>设备</source>
+            <translation>Device</translation>
+        </message>
+        <message>
+            <source>设备 {number}</source>
+            <translation>Device {number}</translation>
+        </message>
+        <message>
+            <source>读取 Android 设置</source>
+            <translation>Read Android setting</translation>
+        </message>
+        <message>
+            <source>输出文本字号（pt）</source>
+            <translation>Output text size (pt)</translation>
+        </message>
+        <message>
+            <source>远程控制最近执行说明</source>
+            <translation>Latest Remote Control activity</translation>
+        </message>
+        <message>
+            <source>限制新打开的性能采集页保留的过程输出行数</source>
+            <translation>Limit output lines retained in newly opened Performance pages</translation>
+        </message>
+        <message>
+            <source>页面正在关闭，无法导出结果。</source>
+            <translation>This page is closing. Results cannot be exported.</translation>
+        </message>
+        <message>
+            <source>该操作仍在执行，可查看原请求。</source>
+            <translation>This operation is still running. View the original request.</translation>
+        </message>
+        <message>
+            <source>查看任务进度、测试归档与本次操作结果</source>
+            <translation>View active tasks, test archives and session results</translation>
+        </message>
+        <message>
+            <source>操作结果在来源功能分区显示，也可在本次操作中回看。</source>
+            <translation>Results appear in their source section and in Session operations.</translation>
+        </message>
+        <message>
+            <source>固定种子可重复相同事件序列；实际种子会保存在测试结果中</source>
+            <translation>A fixed seed repeats the same event sequence; the actual seed is saved in test results</translation>
+        </message>
+        <message>
+            <source>本次运行尚无操作结果，执行功能后会在此显示。</source>
+            <translation>No operation results this session. Run a feature to see its result here.</translation>
+        </message>
+        <message>
+            <source>查看执行中的操作（{count}）</source>
+            <translation>View running operations ({count})</translation>
+        </message>
+        <message>
+            <source>展开设备明细</source>
+            <translation>Show device details</translation>
+        </message>
+        <message>
+            <source>收起设备明细</source>
+            <translation>Hide device details</translation>
+        </message>
+        <message>
+            <source>查看每台设备的安装版本和目标 SDK</source>
+            <translation>View the installed version and target SDK on each device</translation>
+        </message>
+        <message>
+            <source>已核对 {count} 台设备 · 版本一致</source>
+            <translation>Checked {count} devices · Versions match</translation>
+        </message>
+        <message>
+            <source>已核对 {count} 台设备 · 版本或 SDK 存在差异</source>
+            <translation>Checked {count} devices · Versions or SDKs differ</translation>
+        </message>
+        <message>
+            <source>允许对当前设备执行操作</source>
+            <translation>Allow operations on this device</translation>
+        </message>
+        <message>
+            <source>已生成文件</source>
+            <translation>Generated files</translation>
+        </message>
+        <message>
+            <source>已生成的报告和日志</source>
+            <translation>Generated reports and logs</translation>
+        </message>
+        <message>
+            <source>已记录操作说明</source>
+            <translation>Operation notes recorded</translation>
+        </message>
+        <message>
+            <source>当前页面查看的设备</source>
+            <translation>Device viewed on this page</translation>
+        </message>
+        <message>
+            <source>打开文件</source>
+            <translation>Open file</translation>
+        </message>
+        <message>
+            <source>执行过程与完整结果在本次操作中回看，完成时通过右上角通知提示。</source>
+            <translation>Review progress and complete results in Current operations. Completion is announced at the top right.</translation>
+        </message>
+        <message>
+            <source>操作失败，请查看任务详情</source>
+            <translation>Operation failed. See task details.</translation>
+        </message>
+        <message>
+            <source>操作已取消</source>
+            <translation>Operation cancelled</translation>
+        </message>
+        <message>
+            <source>操作已完成</source>
+            <translation>Operation completed</translation>
+        </message>
+        <message>
+            <source>操作需要注意，请查看详情</source>
+            <translation>Attention required. See details.</translation>
+        </message>
+        <message>
+            <source>查看任务</source>
+            <translation>View task</translation>
+        </message>
+        <message>
+            <source>正在执行，可在任务中心查看进度。</source>
+            <translation>Running. View progress in Task Center.</translation>
+        </message>
+        <message>
+            <source>该操作仍在执行，可在任务中心查看进度。</source>
+            <translation>This operation is still running. View progress in Task Center.</translation>
+        </message>
+        <message>
+            <source>部分操作失败，请查看任务详情</source>
+            <translation>Some operations failed. See task details.</translation>
+        </message>
+        <message>
+            <source>记录</source>
+            <translation>Notes</translation>
+        </message>
+        <message>
+            <source>注意</source>
+            <translation>Attention</translation>
+        </message>
+        <message>
+            <source>允许操作此设备</source>
+            <translation>Allow operations on this device</translation>
+        </message>
+        <message>
+            <source>当前设备 · {device}</source>
+            <translation>Current device · {device}</translation>
+        </message>
+        <message>
+            <source>成功 {succeeded} 台 · 失败 {failed} 台 · 未完成 {cancelled} 台</source>
+            <translation>{succeeded} succeeded · {failed} failed · {cancelled} unfinished</translation>
+        </message>
+        <message>
+            <source>批量操作设备</source>
+            <translation>Devices for batch operations</translation>
+        </message>
+        <message>
+            <source>操作会发送到全部已勾选设备；已运行任务保持原目标。</source>
+            <translation>Operations run on all checked devices. Running tasks keep their original targets.</translation>
+        </message>
+        <message>
+            <source>未勾选</source>
+            <translation>Not selected</translation>
+        </message>
+        <message>
+            <source>本页仅操作当前设备；下方勾选用于批量功能。</source>
+            <translation>This page operates on the current device only. The checks below select targets for batch tools.</translation>
+        </message>
+        <message>
+            <source>正向转发使用本机共享端口，请只选择一台设备</source>
+            <translation>Forwarding uses a shared host port. Select exactly one device.</translation>
+        </message>
+        <message>
+            <source>将本机端口转发到当前设备；端口已占用时先移除原规则</source>
+            <translation>Forward a host port to the current device. Remove its existing rule first if the port is occupied.</translation>
+        </message>
+        <message>
+            <source>PID 仅属于单台设备，请只选择一台设备</source>
+            <translation>A PID belongs to one device. Select exactly one device.</translation>
+        </message>
+        <message>
+            <source>结束当前设备上的指定 PID</source>
+            <translation>End the specified PID on the current device</translation>
+        </message>
+        <message>
+            <source>移除所选设备的全部正向转发规则</source>
+            <translation>Remove all forward rules owned by the selected devices</translation>
+        </message>
+        <message>
+            <source>{device}：已安装 · {version} ({code}) · target SDK {sdk}</source>
+            <translation>{device}: Installed · {version} ({code}) · target SDK {sdk}</translation>
+        </message>
+        <message>
+            <source>{device}无法获取前台应用，请输入测试包名后重试</source>
+            <translation>Could not read the foreground app on {device}. Enter a test package name and retry.</translation>
+        </message>
+        <message>
+            <source>{device}无法查询已安装应用，请检查连接与调试授权</source>
+            <translation>Could not query installed apps on {device}. Check its connection and debugging authorization.</translation>
+        </message>
+        <message>
+            <source>{device}未安装目标应用，请先安装后重试</source>
+            <translation>The target app is not installed on {device}. Install it and retry.</translation>
+        </message>
+        <message>
+            <source>{device}无法获取测试包信息，请重试</source>
+            <translation>Could not query test package information on {device}. Try again.</translation>
+        </message>
+        <message>
+            <source>{device}返回的包信息不匹配，请重新获取</source>
+            <translation>Package information from {device} does not match. Query it again.</translation>
+        </message>
+        <message>
+            <source>请选择一台操作设备；取消选择仍可查看缓存和停止任务。</source>
+            <translation>Select one device. Clearing the selection keeps cached content and task stop controls available.</translation>
+        </message>
+        <message>
+            <source>操作设备单选列表</source>
+            <translation>Single device selection</translation>
+        </message>
+        <message>
+            <source>远程控制作用于全部已选设备</source>
+            <translation>Remote control applies to all selected devices</translation>
+        </message>
+        <message>
+            <source>请先选择设备再使用远程控制</source>
+            <translation>Select devices before using remote control</translation>
         </message>
     </context>
 </TS>

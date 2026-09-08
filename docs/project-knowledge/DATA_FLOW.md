@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-07
+last_verified: 2026-09-08
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -17,12 +17,12 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 | `WorkspaceRoute` | 首页快捷入口、左侧一级功能导航、设备卡和功能页动作 | section/feature/device 构成稳定语义位置；`payload` 只作为一次性激活参数 | MainFrame 语义历史、WorkspaceAreaPage 当前路由、WorkspaceFeatureHost 待恢复路由 | 稳定位置跨页面切换保留但不含 `payload`；等待设备时 `payload` 保留到首次实际激活后消费 |
 | Workspace 功能会话 | 分区/功能路由、选中设备、会话代次 | `WorkspaceRoute` 解析；`FeatureSessionRegistry` 以 feature/device/generation 建键并转发生命周期 | MainFrame 子树中的 QWidget、会话 registry | 显式关闭或应用关闭前跨导航保留；旧代次释放后不可复用 |
 | 包/权限/进程信息 | pm/dumpsys/ps 等 ADB 输出 | model/worker 文本解析 | 应用管理 UI、日志、预设 JSON | 查询结果通常只在内存；预设跨会话 |
-| 截图/录屏 | 设备 screencap/screenrecord | pull、PNG 校验、文件命名；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 文件持续存在直到用户删除；页面数据持续到会话关闭 |
+| 截图/录屏 | 设备 screencap/screenrecord | 截图二进制流写同目录临时文件，完整 PNG 解码后原子发布；录屏 pull；截图批次后台追加到既有媒体会话 | 用户保存目录、ScreenshotPage | 文件持续存在直到用户单张或全部删除；删除失败项保留；页面数据持续到会话关闭 |
 | logcat/诊断 | adb logcat、bugreport、ANR | 过滤、批量渲染、安全 ZIP 解压、可选 JAR 转换 | UI 缓冲、txt/zip/目录 | UI 缓冲有上限；导出文件持久化 |
 | MobilePerf 配置 | PerformancePage | dataclass 校验/归一化、临时 config | 临时目录、worker 子进程环境 | 进程结束后清理临时配置 |
 | MobilePerf 指标 | dumpsys/proc/SurfaceFlinger/流量等 | 多 monitor 采样、CSV、Report 汇总 | 结果目录 CSV/XLSX/设备信息/heapdump | 运行期间累积，结果持久化 |
 | `OperationMetadata` | Controller/use case 提交时构造 | `async_command` 组装信封，owner/generation token 校验响应归属与代次 | `command_finished(method, result)` 回 Controller；批次终态经 `InstallBatchUseCase` 汇总 | 单次操作；晚到/错代结果被丢弃 |
-| 任务历史 | MainFrame 当前接收的兼容 `operation_completed` 信号 | `TaskHistoryStore.record_completed` 转换消息并按容量保留最新项；store 也提供终态快照写入接口，但 MainFrame 尚未订阅该来源 | Tasks 页面内存列表 | 仅进程内有界保留；应用重启后清空 |
+| 操作结果 | 用户入口、异步命令原始返回、已验证 Operation 单元 | ActionResults 固定请求与目标，完成全部命令后汇总；正文不依赖日志截断 | 任务中心保存快照；Toast 通知终态；报告和诊断呈现专用内容 | 当前会话有界保留，导出才写入用户指定文件 |
 | 测试结果与方案 | Monkey 设备终态、性能采集退出快照、用户保存的参数 | `RunRecord` / `RunPreset` 经 `RunLibraryController` 后台串行校验和原子写入；Qt 信号更新页面 | 用户配置 `test_runs.json`、任务中心测试结果、两页方案栏 | 跨重启；索引有界，原始产物由用户保管；不自动绑定或执行历史设备 |
 | 运行时工具缓存 | PyInstaller onefile bundle | frozen onefile 时按版本检查第一层条目类型和文件大小，失配时覆盖复制 | 平台 cache 目录 `runtime/<version>` | 跨进程复用，可人工清理；开发/onedir 不复制 |
 
@@ -31,35 +31,42 @@ related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ```mermaid
 sequenceDiagram
     participant Scan as "_ScanThread"
-    participant PR as "ProcessRunner"
+    participant PR as "AdbRuntime / ProcessRunner"
     participant ADB as "adb devices / getprop"
     participant Frame as "MainFrame"
     participant C as "ADBController"
     participant DS as "DeviceStore"
     participant UI as "SidePanel / DeviceManager / 全局设备栏"
 
-    Scan->>PR: 启动可停止的 adb devices
-    PR->>ADB: 子进程参数数组
+    Scan->>PR: 请求能力恢复检查，按策略查询 adb devices
+    PR->>ADB: 直连本地服务，或启动可停止的原生客户端
     ADB-->>Scan: stdout 与退出状态
     Scan-->>Frame: devices_changed（仅成功快照）
     Frame->>C: 防抖后 publish_detected_devices
     C-->>Frame: devices_updated（先发布在线标识）
     Frame-->>UI: 更新列表、发现状态与设备上下文
     Note over Scan,UI: 查询失败只发布 unavailable，保留最后成功列表
-    C->>ADB: Executor 批量读取 getprop/屏幕/内存/存储/电池
-    ADB-->>C: 受控解析的属性与带单位指标
-    C->>DS: upsert_devices()
-    DS-->>DS: 写用户 YAML
+    loop 当前拓扑的每台设备
+        C->>ADB: Executor 读取 getprop/屏幕/内存/存储/电池
+        ADB-->>C: 受控解析的属性与带单位指标
+        C-->>Frame: device_info_updated（单台完成即发布，失败发空快照）
+        Frame-->>UI: 更新属性显示，清除本轮缺失的动态指标
+    end
+    C->>DS: upsert_devices()（批次末统一更新成功记录）
+    DS-->>DS: 更新内存缓存，仅 IP 历史写用户 YAML
     C-->>Frame: devices_updated（元数据补全后再次发布）
-    C-->>Frame: device_info_updated（扩展字段仅存主窗内存）
-    Frame-->>UI: 更新属性显示
-    Note over C,UI: 拓扑 generation 丢弃旧元数据回调
+    Frame-->>UI: 更新列表名称
+    Note over C,UI: 每台查询前后检查拓扑 generation 和关闭状态，丢弃晚到结果
 ```
 
 手动刷新由 `ADBController.refresh_devices()` 调用异步 `ADBDevice.get_connected_devices_async()`，
 经 CommandRunner 返回成功列表后复用同一发布链路；不会把定时扫描已取得的列表再查询一次。
+同拓扑并发刷新合并为一个活动任务及一次待处理刷新；概览和兼容补查共用截止时间与关闭信号。
+概览写盘由仅后台使用的写锁串行，并在锁内重查拓扑代次，防止旧查询晚写覆盖新结果。
 DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
 兼容状态源，全局栏提交选择，DeviceHubPage 只显示快照。单设备会话的选择独立于该复选集合。
+DeviceContextBar 在进程内分配固定显示编号，组合根向概览、Monkey、性能列表及 ActionResults
+投影设备名称。操作提交将名称冻结进结果快照；编号映射不持久化，也不参与准入或命令选路。
 
 ## 路由与命令状态
 
@@ -165,8 +172,9 @@ flowchart TD
 
 ## 数据保留与删除
 
-- UI 日志内存默认最多保留 5,000 条服务记录；Log Panel/各功能页另有显示缓冲上限，缓冲溢出时
-  会丢弃最旧行并累计丢弃计数（`LogService.dropped_count` / LogPanel `_pending_dropped_total`）。
+- 通用结果正文、显示预览及应用异常采用独立边界，容量、导出和保存位置见
+  [操作结果与应用诊断](../guides/OPERATION_RESULTS.md)。LogService 的技术传输缓冲上限仍为
+  5,000 条，溢出累计计数由 `dropped_count` 提供；页面不再依赖全局日志看板。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 启动时会清理设备 `/data/local/tmp` 中符合包名且超过约 3 天的 heapdump；这一行为在 `StartUp.clear_heapdump()`。

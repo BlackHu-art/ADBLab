@@ -11,6 +11,7 @@ from gui.features.app_manager import AppManagerPage
 from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
+from tests.screenshot_helpers import wait_for_screenshot
 from tests.test_main_window_layout import (
     _FakeScreen,
     _FakeScreenAdapter,
@@ -247,6 +248,7 @@ def test_screen_tools_share_screenshot_page_without_requiring_a_device(frame, tm
     page = frame._workspace_feature_hosts["apps"].stack.currentWidget()
     assert isinstance(page, ScreenshotPage)
     assert page.image_paths == (str(image_path),)
+    wait_for_screenshot(page)
     assert page._copy_action.isEnabled()
     assert page.isAncestorOf(tools)
     assert tools.isVisibleTo(frame)
@@ -324,7 +326,8 @@ def test_screen_tools_follow_batch_selection_and_preserve_recording_targets_afte
     assert screenshots.at(0) == [["device-a"]]
 
 
-@pytest.mark.parametrize(("width", "font_size", "theme"), [(1100, 12, "Light"), (500, 22, "Dark")])
+@pytest.mark.parametrize(("width", "theme"), [(1100, "Light"), (500, "Dark")])
+@pytest.mark.parametrize("font_size", [8, 12, 18, 22])
 def test_screen_tools_reflow_and_refresh_fonts_after_transfer(
     qt_application, monkeypatch, request, tmp_path, width, font_size, theme,
 ):
@@ -442,7 +445,8 @@ def test_large_font_package_controls_remain_reachable_on_small_screen(
         assert apps.package_tools_card.isVisible()
         for target in (
             apps.program_edit,
-            *apps.package_tools_card.findChildren(QPushButton),
+            *(button for button in apps.package_tools_card.findChildren(QPushButton)
+              if button.isVisibleTo(apps.package_tools_card)),
             apps.btn_netstats,
         ):
             assert_scroll_target_reachable(scroll, target)

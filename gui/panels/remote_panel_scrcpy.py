@@ -2,6 +2,7 @@
 
 import os
 import threading
+import time
 
 from PySide6.QtCore import Qt
 
@@ -17,7 +18,9 @@ class RemotePanelScrcpy:
     def _start_scrcpy(self):
         from gui.panels.remote_panel import ScrcpyLaunchWorker
 
-        if getattr(self._frame, "_closing", False):
+        if getattr(self._frame, "_closing", False) or getattr(
+            self._frame, "_remote_input_closing", False
+        ):
             return
         if (
             getattr(self._frame, "_session_state", self._frame._SESSION_IDLE)
@@ -36,24 +39,35 @@ class RemotePanelScrcpy:
         if not devices:
             self._frame._log("WARNING", "No device selected")
             return
-        if len(devices) != 1:
-            self._frame._log("WARNING", "Select exactly one device for Remote")
-            self._frame._update_action_states()
-            return
-
+        self._frame._session_devices = tuple(devices)
+        self._frame._session_process_keys = ()
+        self._frame._processes = {}
+        self._frame._scrcpy_threads = [
+            thread for thread in getattr(self._frame, "_scrcpy_threads", ()) if thread.is_alive()
+        ]
         self._frame._status_device_info = ""
         self._frame._set_session_state(self._frame._SESSION_STARTING)
         self._frame._update_status("Checking...", None)
         self._frame._active_device = devices[0]
 
-        if (
-            getattr(self._frame, "chk_record", None) is not None
-            and self._frame.chk_record.isChecked()
-        ):
-            self._frame._record_path = self._frame._allocate_record_path(self._frame._active_device)
-            self._frame._display_record_path(self._frame._record_path)
-
-        config = self._frame._scrcpy_config(exe, self._frame._active_device)
+        configs = []
+        try:
+            for device in devices:
+                if (
+                    getattr(self._frame, "chk_record", None) is not None
+                    and self._frame.chk_record.isChecked()
+                ):
+                    self._frame._record_path = self._frame._allocate_record_path(device)
+                    self._frame._display_record_path(self._frame._record_path)
+                configs.append(self._frame._scrcpy_config(exe, device))
+        except Exception as exc:
+            self._frame._active_device = None
+            self._frame._session_devices = ()
+            self._frame._set_running(False)
+            self._frame._update_status("Error", None)
+            self._frame._log("ERROR", f"scrcpy configuration failed: {type(exc).__name__}")
+            return
+        config = configs[0] if len(configs) == 1 else configs
         self._frame._session_config = config
         self._frame._launch_admission_revision = getattr(
             self._frame, "_device_admission_revision", 0
@@ -61,7 +75,10 @@ class RemotePanelScrcpy:
 
         worker = ScrcpyLaunchWorker(config, service=self._frame._scrcpy_service)
         worker.log_message.connect(self._frame._log)
-        worker.launch_ready.connect(self._frame._on_launch_ready)
+        if len(configs) == 1:
+            worker.launch_ready.connect(self._frame._on_launch_ready)
+        else:
+            worker.batch_ready.connect(self._frame._on_batch_launch_ready)
         worker.finished.connect(
             lambda _w=worker: self._frame._on_launch_finished(_w),
             Qt.ConnectionType.QueuedConnection,
@@ -72,13 +89,84 @@ class RemotePanelScrcpy:
         except Exception as exc:
             self._frame._launch_worker = None
             self._frame._active_device = None
+            self._frame._session_devices = ()
             self._frame._set_running(False)
             self._frame._update_status("Error", None)
             self._frame._log("ERROR", f"scrcpy preflight worker failed: {type(exc).__name__}")
             worker.deleteLater()
 
+    def _on_batch_launch_ready(self, plans: list) -> None:
+        """独立启动同一批次的各台设备；单台失败不会丢失其他进程的停止归属。"""
+        frame = self._frame
+        if (
+            getattr(frame, "_closing", False)
+            or getattr(frame, "_remote_input_closing", False)
+            or frame._session_state != frame._SESSION_STARTING
+            or frame._launch_admission_revision != frame._device_admission_revision
+            or (frame._launch_worker and frame._launch_worker.isInterruptionRequested())
+        ):
+            return
+        keys = []
+        processes = {}
+        frame._processes = processes
+        for index, (config, args, device_info) in enumerate(plans):
+            if config.device not in frame.selected_devices:
+                continue
+            key = f"{frame._process_key}_{index}"
+            try:
+                process = frame._scrcpy_service.start(key, args)
+            except Exception as exc:
+                frame._log("ERROR", f"scrcpy start failed: {type(exc).__name__}")
+                continue
+            keys.append(key)
+            processes[config.device] = process
+            frame._session_process_keys = tuple(keys)
+            frame._process = next(iter(processes.values()))
+            if device_info:
+                frame._remote_control.remember_dimensions(config.device, device_info.split("x"))
+            # reader 和焦点任务捕获本次进程/设备，禁止后台再读取可能变化的活动目标。
+            self._start_process_task(self._read_process_stderr, process)
+            title = frame._input_engine.window_title(config.device)
+            self._start_process_task(self._focus_window_title, title)
+        frame._session_process_keys = tuple(keys)
+        frame._processes = processes
+        frame._session_devices = tuple(processes)
+        frame._process = next(iter(processes.values()), None)
+        frame._active_device = next(iter(processes), None)
+        if processes:
+            frame._reset_scrcpy_stop_claim()
+            frame._set_running(True)
+            frame._update_status("Running", None)
+            frame._watchdog.start(500)
+        else:
+            frame._set_running(False)
+            frame._update_status("Error", None)
+
+    def _start_process_task(self, target, argument) -> None:
+        """保留每个镜像 reader/焦点任务，关闭屏障等待它们退出后再释放面板。"""
+        frame = self._frame
+        with frame._shutdown_lifecycle_lock():
+            if getattr(frame, "_closing", False) or getattr(frame, "_remote_input_closing", False):
+                return
+            threads = getattr(frame, "_scrcpy_threads", None)
+            if threads is None:
+                threads = []
+                frame._scrcpy_threads = threads
+            try:
+                thread = threading.Thread(target=target, args=(argument,), daemon=True)
+                thread.start()
+            except Exception as exc:
+                frame._log("WARNING", f"scrcpy background task failed: {type(exc).__name__}")
+                return
+            # 发布与启动共用关闭锁，清理快照不能漏掉已启动但尚未登记的线程。
+            threads.append(thread)
+
     def _on_launch_ready(self, args: list, device_info: str):
-        if getattr(self._frame, "_closing", False):
+        if getattr(self._frame, "_closing", False) or getattr(
+            self._frame, "_remote_input_closing", False
+        ):
+            return
+        if getattr(self._frame, "_session_state", None) == self._frame._SESSION_STOPPING:
             return
         if not self._frame._can_operate_device():
             return
@@ -101,31 +189,44 @@ class RemotePanelScrcpy:
                 self._frame._process_key,
                 args,
             )
-            self._frame._reset_scrcpy_stop_claim()
-            self._frame._set_running(True)
-            self._frame._update_status("Running", None)
-            threading.Thread(target=self._frame._focus_scrcpy_window, daemon=True).start()
-            self._frame._start_warm_remote_input_session()
-            threading.Thread(target=self._frame._read_stderr, daemon=True).start()
-            self._frame._watchdog.start(500)
         except Exception as exc:
             self._frame._log("ERROR", f"scrcpy start failed: {type(exc).__name__}")
             self._frame._active_device = None
+            self._frame._session_devices = ()
             self._frame._status_device_info = ""
             self._frame._set_running(False)
             self._frame._update_status("Error", None)
+            return
+        self._frame._reset_scrcpy_stop_claim()
+        self._frame._set_running(True)
+        self._frame._update_status("Running", None)
+        title = self._frame._input_engine.window_title(active_device)
+        self._start_process_task(self._focus_window_title, title)
+        try:
+            self._frame._start_warm_remote_input_session()
+        except Exception as exc:
+            # 输入预热失败不改变已经启动的镜像归属，后续输入仍可自行建立会话。
+            self._frame._log("WARNING", f"remote input warmup failed: {type(exc).__name__}")
+        self._start_process_task(self._read_process_stderr, self._frame._process)
+        self._frame._watchdog.start(500)
 
     def _on_launch_finished(self, worker):
         if self._frame._launch_worker is not worker:
             worker.deleteLater()
             return
-        interrupted = worker.isInterruptionRequested()
+        interrupted = worker.isInterruptionRequested() or (
+            getattr(self._frame, "_session_state", None) == self._frame._SESSION_STOPPING
+        ) or (
+            getattr(self._frame, "_launch_admission_revision", 0)
+            != getattr(self._frame, "_device_admission_revision", 0)
+        )
         self._frame._launch_worker = None
         worker.deleteLater()
         if getattr(self._frame, "_closing", False):
             return
         if not self._frame._process:
             self._frame._active_device = None
+            self._frame._session_devices = ()
             self._frame._status_device_info = ""
             self._frame._set_running(False)
             if interrupted:
@@ -135,6 +236,10 @@ class RemotePanelScrcpy:
 
     def _read_stderr(self):
         proc = self._frame._process
+        self._read_process_stderr(proc)
+
+    def _read_process_stderr(self, proc):
+        """读取指定进程的诊断流，进程引用不随用户选择变化。"""
         if proc and proc.stderr:
             for line in proc.stderr:
                 if getattr(self._frame, "_closing", False):
@@ -154,6 +259,23 @@ class RemotePanelScrcpy:
                     )
 
     def _poll_process(self):
+        processes = getattr(self._frame, "_processes", {})
+        if processes:
+            for device, process in tuple(processes.items()):
+                rc = process.poll()
+                if rc is not None:
+                    del processes[device]
+                    if rc != 0:
+                        self._frame._log("WARNING", f"scrcpy exited with code {rc}")
+            self._frame._process = next(iter(processes.values()), None)
+            self._frame._active_device = next(iter(processes), None)
+            self._frame._session_devices = tuple(processes)
+            if processes:
+                return
+            self._frame._watchdog.stop()
+            self._frame._set_running(False)
+            self._frame._update_status("Disconnected", None)
+            return
         if not self._frame._process:
             self._frame._watchdog.stop()
             return
@@ -162,6 +284,7 @@ class RemotePanelScrcpy:
             self._frame._watchdog.stop()
             self._frame._process = None
             self._frame._active_device = None
+            self._frame._session_devices = ()
             self._frame._status_device_info = ""
             self._frame._set_running(False)
             self._frame._update_status("Disconnected", None)
@@ -171,11 +294,12 @@ class RemotePanelScrcpy:
     def _stop_scrcpy(self):
         if getattr(self._frame, "_session_state", None) == self._frame._SESSION_STOPPING:
             return
-        if self._frame._launch_worker and self._frame._launch_worker.isRunning():
+        if self._frame._launch_worker:
             self._frame._request_launch_worker_interruption_once(self._frame._launch_worker)
-            self._frame._set_session_state(self._frame._SESSION_STOPPING)
-            self._frame._update_status("Stopping...", None)
-            return
+            if not self._frame._process:
+                self._frame._set_session_state(self._frame._SESSION_STOPPING)
+                self._frame._update_status("Stopping...", None)
+                return
         if not self._frame._process:
             return
         stop_claim = self._frame._claim_scrcpy_stop()
@@ -185,13 +309,24 @@ class RemotePanelScrcpy:
         self._frame._set_session_state(self._frame._SESSION_STOPPING)
         self._frame._update_status("Stopping...", None)
         scrcpy_service = self._frame._scrcpy_service
-        process_key = self._frame._process_key
+        process_keys = self._frame._scrcpy_process_keys()
 
         def _do_stop():
             stopped = False
             try:
-                scrcpy_service.stop(process_key, timeout=2)
-                stopped = not scrcpy_service.is_active(process_key)
+                deadline = time.monotonic() + 2
+                stop_error = None
+                for key in process_keys:
+                    try:
+                        timeout = (
+                            2 if len(process_keys) == 1 else max(0, deadline - time.monotonic())
+                        )
+                        scrcpy_service.stop(key, timeout=timeout)
+                    except Exception as exc:
+                        stop_error = exc
+                if stop_error is not None:
+                    raise stop_error
+                stopped = not any(scrcpy_service.is_active(key) for key in process_keys)
                 if not stopped:
                     self._frame._release_scrcpy_stop_claim(stop_claim)
             except Exception as exc:
@@ -207,7 +342,7 @@ class RemotePanelScrcpy:
             threading.Thread(target=_do_stop, daemon=True).start()
         except Exception:
             self._frame._release_scrcpy_stop_claim(stop_claim)
-            raise
+            self._frame._on_stop_completed(False)
 
     def _on_stop_completed(self, stopped: bool):
         """在 GUI 线程收口停止结果，并避免旧进程尚未退出时提前允许再次启动。"""
@@ -216,6 +351,8 @@ class RemotePanelScrcpy:
             return
         if stopped:
             self._frame._process = None
+            self._frame._processes = {}
+            self._frame._session_devices = ()
             self._frame._active_device = None
             self._frame._status_device_info = ""
             self._frame._set_running(False)
@@ -224,6 +361,13 @@ class RemotePanelScrcpy:
             return
 
         process = getattr(self._frame, "_process", None)
+        processes = getattr(self._frame, "_processes", {})
+        if processes:
+            processes = {device: proc for device, proc in processes.items() if proc.poll() is None}
+            self._frame._processes = processes
+            self._frame._process = process = next(iter(processes.values()), None)
+            self._frame._active_device = next(iter(processes), None)
+            self._frame._session_devices = tuple(processes)
         try:
             process_alive = process is not None and process.poll() is None
         except (AttributeError, OSError):
@@ -263,7 +407,7 @@ class RemotePanelScrcpy:
         can_start = (
             not getattr(self._frame, "_closing", False)
             and state == RemotePanel._SESSION_IDLE
-            and (selected_devices is None or len(selected_devices) == 1)
+            and (selected_devices is None or bool(selected_devices))
         )
         self._frame._set_button_enabled(btn_start, can_start)
         self._frame._set_button_enabled(
@@ -273,7 +417,7 @@ class RemotePanelScrcpy:
         if selected_devices is None:
             can_control = running
         else:
-            can_control = len(selected_devices) == 1
+            can_control = bool(selected_devices)
         can_control = can_control and not getattr(self._frame, "_closing", False)
         for button in getattr(self._frame, "_remote_control_buttons", ()):
             self._frame._set_button_enabled(button, can_control)
@@ -314,6 +458,10 @@ class RemotePanelScrcpy:
         if not active_device:
             return
         title = self._frame._input_engine.window_title(active_device)
+        self._focus_window_title(title)
+
+    def _focus_window_title(self, title: str) -> None:
+        """按启动时捕获的标题定位窗口，不读取后续可能变化的设备选择。"""
         if self._frame._input_engine.focus_window(title):
             self._frame._log("INFO", "scrcpy window focused for keyboard input")
         else:
@@ -394,29 +542,41 @@ class RemotePanelScrcpy:
         lock = self._frame._shutdown_lifecycle_lock()
         with lock:
             self._frame._scrcpy_stop_claim = None
+            self._frame._scrcpy_stop_requested_keys = set()
 
     def _request_scrcpy_stop_once(self, service=None, process_key: str | None = None) -> bool:
         """为一个 scrcpy 会话只发送一次异步停止请求。"""
 
         resolved_service = service or getattr(self._frame, "_scrcpy_service", None)
-        resolved_key = process_key or getattr(self._frame, "_process_key", "")
-        if resolved_service is None or not resolved_key:
+        resolved_keys = (process_key,) if process_key else self._frame._scrcpy_process_keys()
+        if resolved_service is None or not any(resolved_keys):
             return False
         stop_claim = self._frame._claim_scrcpy_stop()
         if stop_claim is None:
             return False
-        try:
-            requested = resolved_service.request_stop(resolved_key)
-        except Exception:
-            self._frame._release_scrcpy_stop_claim(stop_claim)
-            raise
-        if requested is False:
+        first_error = None
+        retry = False
+        requested_keys = getattr(self._frame, "_scrcpy_stop_requested_keys", None)
+        if requested_keys is None:
+            requested_keys = set()
+            self._frame._scrcpy_stop_requested_keys = requested_keys
+        for key in resolved_keys:
+            if key in requested_keys:
+                continue
             try:
-                still_active = bool(resolved_service.is_active(resolved_key))
-            except Exception:
-                still_active = True
-            if still_active:
-                self._frame._release_scrcpy_stop_claim(stop_claim)
+                requested = resolved_service.request_stop(key)
+                if requested is False and resolved_service.is_active(key):
+                    retry = True
+                else:
+                    requested_keys.add(key)
+            except Exception as exc:
+                retry = True
+                if first_error is None:
+                    first_error = exc
+        if retry:
+            self._frame._release_scrcpy_stop_claim(stop_claim)
+        if first_error is not None:
+            raise first_error
         return True
 
     def _request_launch_worker_interruption_once(self, worker) -> bool:

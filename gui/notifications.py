@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Literal
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
 from PySide6.QtWidgets import QFrame, QLayout, QSizePolicy, QWidget
 from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition, LineEdit, PushButton
 from shiboken6 import isValid
@@ -21,10 +21,19 @@ _ICONS = {
     "warning": InfoBarIcon.WARNING,
     "error": InfoBarIcon.ERROR,
 }
+_BACKGROUNDS = {
+    "info": ("#e8f2ff", "#153650"),
+    "success": ("#e5f5e7", "#1b3b29"),
+    "warning": ("#fff4ce", "#4b3b15"),
+    "error": ("#fde7e9", "#4c2429"),
+}
 
 
 def _top_margin(owner: QWidget) -> int:
-    """提示放在窗口标题栏下方，避免遮挡最小化与关闭入口。"""
+    """提示避开窗口标题栏与设备入口，保持导航、设备选择和关闭操作可用。"""
+    context_bar = getattr(owner, "_global_device_bar", None)
+    if isinstance(context_bar, QWidget) and context_bar.isVisibleTo(owner):
+        return context_bar.mapTo(owner, QPoint(0, context_bar.height())).y() + 12
     title_bar = getattr(owner, "titleBar", None)
     if isinstance(title_bar, QWidget) and title_bar.isVisible():
         return title_bar.height() + 12
@@ -41,6 +50,7 @@ class ToastNotification(InfoBar):
         self._ready = False
         self._closed = False
         self.level = level
+        self.feedback_key = ""
         self._on_action = on_action
         self._timeout_ms = duration
         self._remaining_ms = duration
@@ -50,6 +60,7 @@ class ToastNotification(InfoBar):
             _ICONS[level], title, content, orient=Qt.Orientation.Horizontal,
             duration=-1, position=InfoBarPosition.TOP_RIGHT, parent=owner,
         )
+        self.setCustomBackgroundColor(*_BACKGROUNDS[level])
         self.setObjectName("toastNotification")
         self.setAccessibleName(title)
         self.setAccessibleDescription(content)
@@ -262,6 +273,7 @@ def show_toast(
     parent: QWidget, title: str, content: str, *, level: ToastLevel = "info",
     duration: int | None = None, action_text: str | None = None,
     on_action: Callable[[], object] | None = None,
+    key: str = "",
 ) -> ToastNotification | None:
     """在调用页面所属窗口右上角提示并立即返回；仅供 GUI 线程的活页面使用。"""
     if not isValid(parent) or getattr(parent, "_closing", False):
@@ -274,10 +286,13 @@ def show_toast(
     if stack is None:
         stack = _ToastStack(owner)
         setattr(owner, "_adblab_toast_stack", stack)
-    for notice in stack.notices:
+    for notice in tuple(stack.notices):
+        if key and getattr(notice, "feedback_key", "") == key:
+            notice.close()
+            continue
         if (notice.title, notice.content, notice.level, notice._closed) == (
             title, content, level, False,
-        ):
+        ) and not key:
             notice.restart_timeout()
             return notice
     if duration is None:
@@ -289,5 +304,6 @@ def show_toast(
         owner, title, content, level=level, duration=duration,
         action_text=action_text, on_action=on_action,
     )
+    notice.feedback_key = key
     stack.add(notice)
     return notice

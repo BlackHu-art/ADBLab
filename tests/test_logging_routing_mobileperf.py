@@ -30,20 +30,22 @@ def _feedback_controller() -> SimpleNamespace:
         current_package_received=Mock(),
         device_info_updated=Mock(),
         screenshot_batch_ready=Mock(),
+        run_record_ready=Mock(),
     )
 
 
 def test_main_frame_routes_business_log_signal_to_log_service():
     log_service = Mock()
     apps_panel = SimpleNamespace(
+        set_run_library=Mock(),
         monkey_preparation_requested=Mock(),
         on_monkey_preparation_finished=Mock(),
         program_edit=SimpleNamespace(textChanged=Mock()),
     )
     frame = SimpleNamespace(
         log_service=log_service,
-        log_panel=Mock(),
         adb_controller=Mock(),
+        run_library=Mock(),
         left_panel=SimpleNamespace(
             _apps_tab=apps_panel,
             _connected_device_cache=["device-secret"],
@@ -67,11 +69,12 @@ def test_main_frame_routes_business_log_signal_to_log_service():
 
     MainFrame._connect_controller_feedback(frame, left_panel, controller)
 
+    apps_panel.set_run_library.assert_called_once_with(frame.run_library)
+    controller.run_record_ready.connect.assert_called_once_with(frame.run_library.record_run)
     left_panel.log_message.connect.assert_called_once_with(log_service.log)
     business_log_handler = left_panel.log_message.connect.call_args.args[0]
     business_log_handler("INFO", "Operation ready")
     log_service.log.assert_called_once_with("INFO", "Operation ready")
-    assert frame.log_panel._append_log.call_count == 0
     apps_panel.monkey_preparation_requested.connect.assert_called_once_with(
         frame.adb_controller.prepare_monkey_targets
     )
@@ -93,17 +96,6 @@ def test_main_frame_routes_business_log_signal_to_log_service():
     assert "device-secret" not in str(log_service.log.call_args_list)
 
 
-def test_main_frame_local_status_messages_use_log_service():
-    frame = SimpleNamespace(log_service=Mock(), log_panel=Mock())
-
-    MainFrame.clear_log(frame)
-
-    frame.log_panel.clear.assert_called_once_with()
-    assert [call.args for call in frame.log_service.log.call_args_list] == [
-        ("DEBUG", "ui.action action=clear_log phase=requested"),
-        ("INFO", "Log cleared"),
-    ]
-    frame.log_panel._append_log.assert_not_called()
 
 
 def test_main_frame_theme_action_emits_structured_debug():

@@ -21,6 +21,7 @@ from adblab.application.operations import (
     OperationUnitResult,
 )
 from controllers._base import _ADBControllerBase
+from controllers.action_catalog import RECORDING_RESULT
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogService
 from models.adb_advanced import ADBAdvanced
@@ -209,9 +210,19 @@ class ADBMediaMixin(_ADBControllerBase):
         task_id: str,
         generation_token: object,
     ):
+        manager = self.operation_manager
+
+        def cancelled() -> bool:
+            # OperationManager 的锁保护跨线程快照；旧批次终态不能影响新截图。
+            snapshot = manager.get(
+                operation_id, expected_kind="screenshot", expected_generation=generation_token,
+            )
+            return snapshot is None or snapshot.is_terminal or snapshot.cancel_requested
+
         cast(Any, self.testing_model).take_screenshot_async(
             device_ip,
             save_path,
+            cancelled=cancelled,
             _operation_id=operation_id,
             _operation_kind="screenshot",
             _operation_task_id=task_id,
@@ -537,13 +548,21 @@ class ADBMediaMixin(_ADBControllerBase):
         if not self.screen_records.mark_pull_submitted(device_ip, batch_id):
             return False
         try:
-            self.advanced_model.pull_recorded_video_async(
-                device_ip,
-                info["remote_path"],
-                info["save_dir"],
-                info["filename"],
-                batch_id=batch_id,
-            )
+            def submit():
+                self.advanced_model.pull_recorded_video_async(
+                    device_ip, info["remote_path"], info["save_dir"], info["filename"],
+                    batch_id=batch_id,
+                )
+
+            results = getattr(self, "action_results", None)
+            if results is not None:
+                from dataclasses import replace
+
+                # 自动拉取没有按钮作用域；批次和设备共同标识一次独立保存。
+                spec = replace(RECORDING_RESULT, key=f"save_recording:{batch_id}:{device_ip}")
+                results.run(spec, (device_ip,), submit)
+            else:
+                submit()
             return True
         except Exception as exc:
             self.screen_records.finish(device_ip, batch_id)
@@ -880,6 +899,10 @@ class ADBMediaMixin(_ADBControllerBase):
 
     def kill_process(self, devices: list, pid: str):
         if not self._require_devices(devices, "kill_process"):
+            return
+        devices = list(dict.fromkeys(devices))
+        if len(devices) != 1:
+            self._emit_operation("kill_process", False, "PID 仅属于单台设备，请只选择一台设备")
             return
         text = str(pid).strip()
         if not text.isdigit() or not 1 <= int(text) <= 2_147_483_647:

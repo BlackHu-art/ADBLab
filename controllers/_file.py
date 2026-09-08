@@ -98,6 +98,12 @@ class ADBFileMixin(_ADBControllerBase):
     def forward_port(self, devices: list, local_port: str, remote_port: str):
         if not self._require_devices(devices, "forward_port"):
             return
+        devices = list(dict.fromkeys(devices))
+        if len(devices) != 1:
+            self._emit_operation(
+                "forward_port", False, "正向转发使用本机共享端口，请只选择一台设备",
+            )
+            return
         try:
             local_port = normalize_tcp_port(local_port)
             remote_port = normalize_tcp_port(remote_port)

@@ -2,15 +2,111 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from core.exec import CommandResult
 from models.adb_device import (
     OVERVIEW_MARKERS,
     ADBDevice,
     parse_connected_devices,
     parse_device_overview,
-    parse_getprop_output,
     parse_labeled_sections,
 )
+
+
+@pytest.mark.parametrize("error", ["Timeout(15s)", "device offline", "Cancelled"])
+def test_overview_transport_failure_does_not_start_more_queries(error):
+    with patch(
+        "models.adb_device.CommandRunner.run",
+        return_value=CommandResult(False, error=error),
+    ) as run:
+        assert ADBDevice.get_device_overview_info("device-1") == {}
+    assert run.call_count == 1
+
+
+def test_overview_compatibility_fallback_uses_remaining_total_budget():
+    clock = [10.0]
+    budgets = []
+
+    def run(_command, *, timeout, **_kwargs):
+        budgets.append(timeout)
+        clock[0] += 4.0
+        return CommandResult(True, output="unmarked response")
+
+    with (
+        patch("models.adb_device.time.monotonic", side_effect=lambda: clock[0]),
+        patch("models.adb_device.CommandRunner.run", side_effect=run),
+    ):
+        info = ADBDevice.get_device_overview_info("device-1", timeout=6)
+    assert budgets == [6.0, 2.0]
+    assert info["Model"] == "unmarked response"
+
+
+def test_overview_does_not_fallback_after_cancelled_success():
+    stopped = [False]
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        stopped[0] = True
+        assert cancelled is not None and cancelled()
+        return CommandResult(True, output="unmarked response")
+
+    with patch("models.adb_device.CommandRunner.run", side_effect=run) as command:
+        info = ADBDevice.get_device_overview_info("device-1", cancelled=lambda: stopped[0])
+    assert info == {}
+    assert command.call_count == 1
+
+
+def test_basic_compatibility_queries_stop_when_shared_budget_is_spent():
+    clock = [10.0]
+    budgets = []
+
+    def run(_command, *, timeout, **_kwargs):
+        budgets.append(timeout)
+        clock[0] += 2.0
+        if len(budgets) == 1:
+            return CommandResult(False, error="sh: syntax error", returncode=2)
+        return CommandResult(True, output="Example")
+
+    with (
+        patch("models.adb_device.time.monotonic", side_effect=lambda: clock[0]),
+        patch("models.adb_device.CommandRunner.run", side_effect=run),
+    ):
+        info = ADBDevice.get_devices_basic_info("device-1", timeout=4)
+    assert info == {"Model": "Example"}
+    assert budgets == [4.0, 2.0]
+
+
+def test_device_discovery_query_observes_model_shutdown_in_flight():
+    model = ADBDevice()
+    observed = []
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        model.begin_shutdown()
+        observed.append(callable(cancelled) and cancelled())
+        return CommandResult(False, error="Cancelled")
+
+    with patch("models.adb_device.CommandRunner.run", side_effect=run):
+        result = ADBDevice.get_connected_devices_async.__wrapped__(model)
+    assert observed == [True]
+    assert not result["success"]
+    assert result["devices"] == []
+
+
+def test_device_discovery_preserves_stale_result_as_cancelled():
+    model = ADBDevice()
+    with patch(
+        "models.adb_device.CommandRunner.run",
+        return_value=CommandResult(False, stale=True),
+    ) as run:
+        result = ADBDevice.get_connected_devices_async.__wrapped__(model)
+
+    assert result.get("stale") is True
+    assert result.get("cancelled") is True
+    assert not result["success"]
+    assert result["devices"] == []
+    assert result["error"] == ""
+    assert result["message"]
+    run.assert_called_once()
 
 
 def test_parse_connected_devices_ignores_adb_banner_and_header():
@@ -78,21 +174,6 @@ def test_app_settings_load_migrates_legacy_settings_file(tmp_path):
         settings_manager.AppSettings._instance = old_instance
 
 
-def test_parse_getprop_output_extracts_bracketed_properties():
-    output = (
-        "[ro.product.model]: [Pixel 9]\n"
-        "[ro.product.brand]: [Google]\n"
-        "invalid line\n"
-        "[persist.sys.timezone]: []\n"
-    )
-
-    assert parse_getprop_output(output) == {
-        "ro.product.model": "Pixel 9",
-        "ro.product.brand": "Google",
-        "persist.sys.timezone": "",
-    }
-
-
 def test_parse_labeled_sections_splits_batched_device_info_output():
     output = "MARK_A\none\nMARK_B\ntwo\nthree\n"
 
@@ -117,7 +198,7 @@ def test_restart_device_treats_reboot_returncode_zero_as_success():
         "device_ip": "device-1",
         "success": True,
         "requires_refresh": True,
-        "raw_result": "The device is starting to restart",
+        "raw_result": "Reboot request submitted; device startup has not been verified",
     }
 
 
@@ -134,7 +215,8 @@ def test_get_devices_basic_info_uses_single_getprop_call():
         "Model": "22127RK46C", "Brand": "Redmi", "Aversion": "9",
         "SDK Version": "28", "CPU Architecture": "arm64-v8a", "Hardware": "qcom",
     }
-    run.assert_called_once_with(
+    run.assert_called_once()
+    assert run.call_args.args == (
         [
             "adb",
             "-s",
@@ -144,8 +226,9 @@ def test_get_devices_basic_info_uses_single_getprop_call():
             "getprop ro.build.version.release; getprop ro.build.version.sdk; "
             "getprop ro.product.cpu.abi; getprop ro.hardware",
         ],
-        timeout=15,
     )
+    assert 0 < run.call_args.kwargs["timeout"] <= 15
+    assert run.call_args.kwargs["cancelled"] is None
 
 
 def test_overview_reads_screen_memory_storage_and_battery_in_one_command():
@@ -173,7 +256,7 @@ def test_overview_reads_screen_memory_storage_and_battery_in_one_command():
     assert run.call_args.args[0][:4] == ["adb", "-s", "demo-a", "shell"]
     assert "ro.serialno" not in run.call_args.args[0][-1]
     assert "ip addr" not in run.call_args.args[0][-1]
-    assert run.call_args.kwargs["timeout"] == 15
+    assert 0 < run.call_args.kwargs["timeout"] <= 15
 
 
 def test_overview_keeps_empty_basic_fields_and_ignores_invalid_metrics():
@@ -190,78 +273,34 @@ def test_overview_keeps_empty_basic_fields_and_ignores_invalid_metrics():
     }
 
 
-def test_failed_overview_read_falls_back_to_basic_information():
-    with (
-        patch(
-            "models.adb_device.CommandRunner.run",
-            return_value=CommandResult(success=False, error="timeout"),
-        ),
-        patch.object(
-            ADBDevice, "get_devices_basic_info", return_value={"Model": "Example"},
-        ) as basic,
-    ):
-        assert ADBDevice.get_device_overview_info("demo-a") == {"Model": "Example"}
-    basic.assert_called_once_with("demo-a")
+def test_unmarked_overview_read_falls_back_to_basic_information():
+    # 超时不再回退；仍验证设备返回有效但缺少分段标记时的兼容路径。
+    with patch("models.adb_device.CommandRunner.run") as run:
+        run.side_effect = [
+            CommandResult(True, output="unmarked response"),
+            CommandResult(True, output="Example\nBrand\n14\n34\narm64\nqcom"),
+        ]
+        info = ADBDevice.get_device_overview_info("demo-a")
+    assert info["Model"] == "Example"
+    assert info["CPU Architecture"] == "arm64"
+    assert run.call_count == 2
 
 
 def test_get_devices_basic_info_falls_back_to_individual_props():
-    with (
-        patch("models.adb_device.CommandRunner.run") as run,
-        patch("models.adb_device.ADBModelCore._fetch_device_info") as fetch,
-    ):
-        run.return_value = CommandResult(success=False, error="offline")
-        fetch.return_value = {"Model": "N/A", "Brand": "N/A", "Aversion": "N/A"}
-
-        info = ADBDevice.get_devices_basic_info("device-1")
-
-    assert info == {"Model": "N/A", "Brand": "N/A", "Aversion": "N/A"}
-    fetch.assert_called_once()
-    commands = fetch.call_args.args[0]
-    assert list(commands) == [
-        "Model", "Brand", "Aversion", "SDK Version", "CPU Architecture", "Hardware"
-    ]
-    assert commands["Model"] == ["adb", "-s", "device-1", "shell", "getprop", "ro.product.model"]
-
-
-def test_get_device_info_batches_properties_and_probe_commands():
-    model = ADBDevice()
-    batched_output = (
-        "__ADBLAB_PROPS__\n"
-        "[ro.product.model]: [Pixel]\n"
-        "[ro.product.brand]: [Google]\n"
-        "[ro.build.version.release]: [15]\n"
-        "[ro.serialno]: [abc]\n"
-        "[ro.build.version.sdk]: [35]\n"
-        "[ro.product.cpu.abi]: [arm64-v8a]\n"
-        "[ro.hardware]: [ranchu]\n"
-        "[persist.sys.timezone]: [Asia/Shanghai]\n"
-        "__ADBLAB_DF__\n"
-        "Filesystem Size Used Avail Use% Mounted on\n"
-        "__ADBLAB_MEMINFO__\n"
-        "MemTotal: 123 kB\n"
-        "MemAvailable: 45 kB\n"
-        "__ADBLAB_WM__\n"
-        "Physical size: 1080x2400\n"
-        "Physical density: 440\n"
-        "__ADBLAB_IP__\n"
-        "wlan0: inet 192.168.1.2\n"
-    )
-
     with patch("models.adb_device.CommandRunner.run") as run:
-        run.return_value = CommandResult(success=True, output=batched_output)
-
-        info = ADBDevice.get_device_info_async.__wrapped__(model, "device-1")
-
-    assert info["Model"] == "Pixel"
-    assert info["Android Version"] == "15"
-    assert info["Total Memory"] == "MemTotal: 123 kB"
-    assert info["Available Memory"] == "MemAvailable: 45 kB"
-    assert info["Resolution"] == "Physical size: 1080x2400"
-    assert info["Density"] == "Physical density: 440"
-    assert info["device_ip"] == "device-1"
-    assert info["ip"] == "device-1"
-    run.assert_called_once()
-    assert run.call_args.args[0][:4] == ["adb", "-s", "device-1", "shell"]
+        run.side_effect = [CommandResult(False, error="sh: syntax error", returncode=2)] + [
+            CommandResult(True, output=value)
+            for value in ("Example", "Brand", "14", "34", "arm64", "qcom")
+        ]
+        info = ADBDevice.get_devices_basic_info("device-1")
+    assert info == {
+        "Model": "Example", "Brand": "Brand", "Aversion": "14", "SDK Version": "34",
+        "CPU Architecture": "arm64", "Hardware": "qcom",
+    }
+    assert run.call_count == 7
+    assert run.call_args_list[1].args[0] == [
+        "adb", "-s", "device-1", "shell", "getprop", "ro.product.model",
+    ]
 
 
 def test_restart_device_reports_abnormal_status():
@@ -275,7 +314,7 @@ def test_restart_device_reports_abnormal_status():
     assert result["requires_refresh"] is False
 
 
-def test_restart_device_treats_reboot_timeout_as_success():
+def test_restart_device_reports_reboot_timeout_as_unknown():
     model = ADBDevice()
     with patch.object(model, "_run") as run:
         run.side_effect = [
@@ -284,8 +323,44 @@ def test_restart_device_treats_reboot_timeout_as_success():
         ]
         result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
 
+    assert result["success"] is False
+    assert result["requires_refresh"] is True
+    assert "unknown" in result["error"].lower()
+
+
+def test_restart_device_allows_slow_native_launch_and_only_confirms_submission():
+    model = ADBDevice()
+
+    def run(command, *, timeout, **_kwargs):
+        if command[-1] == "get-state":
+            return CommandResult(True, output="device")
+        if timeout <= 6.227:
+            return CommandResult(False, error=f"Timeout({timeout}s)")
+        return CommandResult(True)
+
+    with patch("models.adb_model.CommandRunner.run", side_effect=run):
+        result = ADBDevice.restart_device_async.__wrapped__(model, "device-1")
+
     assert result["success"] is True
     assert result["requires_refresh"] is True
+    assert "submitted" in result["raw_result"].lower()
+
+
+def test_restart_adb_allows_slow_native_server_start():
+    model = ADBDevice()
+
+    def run(_command, *, timeout, **_kwargs):
+        if timeout <= 6.227:
+            return CommandResult(False, error=f"Timeout({timeout}s)")
+        return CommandResult(True)
+
+    with (
+        patch("models.adb_model.CommandRunner.run", side_effect=run),
+        patch("models.adb_device.time.sleep"),
+    ):
+        result = ADBDevice.restart_adb_async.__wrapped__(model)
+
+    assert result["success"] is True
 
 
 def test_restart_device_reports_other_reboot_failure():

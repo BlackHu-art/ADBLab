@@ -466,6 +466,11 @@ class AppManagerBatch:
 
     def _track_worker(self, w):
         w.setParent(self._frame)
+        if hasattr(w, "operation_feedback"):
+            w.operation_feedback.connect(
+                alive_forwarding_callback(self._frame, "_on_operation_feedback"),
+                Qt.ConnectionType.QueuedConnection,
+            )
         w.finished.connect(
             alive_callback(self._frame, "_prune_worker", w), Qt.ConnectionType.QueuedConnection
         )

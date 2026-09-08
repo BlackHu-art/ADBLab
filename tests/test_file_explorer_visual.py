@@ -7,14 +7,16 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QSize, Qt
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
+from qfluentwidgets import CommandBar
 
 from gui.features.file_explorer import FileExplorerPage
 from gui.styles import BaseStyles
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
 
 LISTING = "\n".join([
     "drwxr-xr-x 2 shell shell 4096 Sep 05 Documents",
@@ -86,8 +88,8 @@ def test_file_explorer_theme_round_trip_refreshes_icons_without_replacing_rows(q
             qt_application.processEvents()
             icons = [page.windowIcon(), item.icon()]
             icons.extend(button.icon() for button in (
-                page.back_btn, page.fwd_btn, page.up_btn, page.refresh_btn, page.mkdir_btn,
-                page.touch_btn, page.pull_btn, page.push_btn, page.delete_btn,
+                page.back_btn, page.fwd_btn, page.up_btn, page.refresh_action, page.mkdir_action,
+                page.touch_action, page.pull_action, page.push_action, page.delete_action,
                 page.preview_back_btn, page.preview_close_btn, page.preview_image.image_close,
             ))
             for icon in icons:
@@ -267,6 +269,150 @@ def test_file_preview_close_restores_full_file_list_and_can_reopen(
         assert page.table.isVisible()
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("width", [952, 500])
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_file_explorer_command_bar_keeps_root_inline_and_narrow_actions_reachable(
+    qt_application, monkeypatch, width, font_size
+):
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, role, size=None: QFont("Microsoft YaHei", size or font_size)
+    ))
+    page = FileExplorerPage(device_ip="demo-a")
+    page.prepare_for_workspace()
+    page.resize(width, 800)
+    page.show()
+    qt_application.processEvents()
+    try:
+        assert page.width() == width
+        bar = page.command_bar
+        assert isinstance(bar, CommandBar)
+        assert len(bar.actions()) == 6
+        assert len(bar.commandButtons) == 6
+        assert page.root_cb.parentWidget() is not bar
+        assert abs(page.root_cb.geometry().center().y() - bar.geometry().center().y()) <= 2
+        assert page.root_cb.geometry().left() > bar.geometry().right()
+        assert page.rect().contains(page.root_cb.geometry())
+        path_y = page.path_field.mapTo(page, page.path_field.rect().center()).y()
+        for button in (page.back_btn, page.fwd_btn, page.up_btn):
+            assert abs(button.mapTo(page, button.rect().center()).y() - path_y) <= 2
+        for button in (*bar.commandButtons, bar.moreButton):
+            assert button.height() >= button.fontMetrics().height() + 12
+            if button.isVisible():
+                assert bar.rect().contains(button.geometry())
+        assert bar.height() <= max(button.height() for button in bar.commandButtons) + 2
+        if width == 500:
+            assert bar.moreButton.isVisible()
+            menus = []
+            monkeypatch.setattr(
+                "qfluentwidgets.components.widgets.command_bar.CommandMenu.exec",
+                lambda menu, *_args, **_kwargs: menus.append(menu),
+            )
+            QTest.mouseClick(bar.moreButton, Qt.MouseButton.LeftButton)
+            assert len(menus) == 1
+            visible_actions = {
+                button.action() for button in bar.commandButtons if button.isVisible()
+            }
+            assert set(menus[0].actions()) | visible_actions == set(bar.actions())
+            assert set(menus[0].actions()).isdisjoint(visible_actions)
+    finally:
+        page.close()
+
+
+def test_file_explorer_overflow_actions_follow_selection_and_loading(qt_application, monkeypatch):
+    submitted = []
+    monkeypatch.setattr(
+        "models.file_explorer_worker.ADBWorker.start", lambda worker: submitted.append(worker)
+    )
+    monkeypatch.setattr(
+        "models.file_explorer_worker.TransferWorker.start", lambda worker: submitted.append(worker)
+    )
+    monkeypatch.setattr("core.exec.CommandRunner.run", Mock(side_effect=AssertionError("real ADB")))
+    monkeypatch.setattr(
+        "core.exec.ProcessRunner.start", Mock(side_effect=AssertionError("real process"))
+    )
+    page = FileExplorerPage(device_ip="demo-a")
+    page.prepare_for_workspace()
+    page.resize(500, 700)
+    page.show()
+    qt_application.processEvents()
+    menus = []
+    monkeypatch.setattr(
+        "qfluentwidgets.components.widgets.command_bar.CommandMenu.exec",
+        lambda menu, *_args, **_kwargs: menus.append(menu),
+    )
+    try:
+        page.set_device_selected(True)
+        assert all(action.isEnabled() for action in page.command_bar.actions())
+        QTest.mouseClick(page.command_bar.moreButton, Qt.MouseButton.LeftButton)
+        assert menus and menus[0].actions()
+        page.set_device_selected(False)
+        assert all(not action.isEnabled() for action in menus[0].actions())
+        for action in page.command_bar.actions():
+            action.trigger()
+        assert submitted == []
+        page.set_device_selected(True)
+        page._set_directory_loading(True)
+        assert page.refresh_action.isEnabled()
+        assert all(not action.isEnabled() for action in page.command_bar.actions()
+                   if action is not page.refresh_action)
+        page._set_directory_loading(False)
+        page.refresh_action.trigger()
+        assert len(submitted) == 1
+        assert submitted[0].device_ip == "demo-a"
+    finally:
+        page.close()
+
+
+def test_file_explorer_main_window_toolbar_does_not_force_horizontal_scroll(
+    qt_application, monkeypatch
+):
+    monkeypatch.setattr(FileExplorerPage, "_refresh", Mock())
+    monkeypatch.setattr("core.exec.CommandRunner.run", Mock(side_effect=AssertionError("real ADB")))
+    monkeypatch.setattr(
+        "core.exec.ProcessRunner.start", Mock(side_effect=AssertionError("real process"))
+    )
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("files", QSize(1600, 1100)))
+    )
+    try:
+        frame._on_devices_updated(["demo-a"])
+        frame._global_device_bar.selection_requested.emit(["demo-a"])
+        frame.show()
+        frame.navigationInterface.widget("filesPage").click()
+        wait_until(qt_application, lambda: (
+            frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+            and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+        ))
+        host = frame._workspace_feature_hosts["devices"]
+        page = host.stack.currentWidget()
+        for window_width, page_width in ((1048, 952), (860, 764), (1048, 952)):
+            frame.resize(window_width, 900)
+            qt_application.processEvents()
+            frame.navigationInterface.panel.collapse()
+            wait_until(qt_application, lambda: (
+                frame.navigationInterface.panel.expandAni.state()
+                == QAbstractAnimation.State.Stopped
+                and frame.navigationInterface.width() == 48
+            ))
+            wait_for_stable_geometry(qt_application, (frame, page, page.command_bar, page.table))
+            assert frame.size() == QSize(window_width, 900)
+            assert frame.navigationInterface.width() == 48
+            assert page.width() == page_width
+            assert host.content_scroll.horizontalScrollBar().maximum() == 0
+            assert mapped_rect(page.command_bar, frame).left() == 80
+            assert mapped_rect(page.root_cb, page).bottom() < mapped_rect(page.table, page).top()
+            for selected in (False, True):
+                frame._global_device_bar.selection_requested.emit(["demo-a"] if selected else [])
+                qt_application.processEvents()
+                assert host.content_scroll.horizontalScrollBar().maximum() == 0
+                assert page.command_bar.height() == page.command_bar.commandButtons[0].height()
+                assert all(action.isEnabled() == selected for action in page.command_bar.actions())
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
 @pytest.mark.parametrize("error", [False, True])

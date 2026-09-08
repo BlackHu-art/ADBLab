@@ -9,6 +9,7 @@ from qfluentwidgets import RoundMenu
 from shiboken6 import isValid
 
 from core.exec import ProcessRunner
+from gui.dialogs.screenshot_viewer_tasks import ScreenshotDeleteWorker
 from gui.i18n import tr
 from gui.notifications import ToastLevel, show_toast
 from gui.styles import BaseStyles, FontRole
@@ -104,7 +105,8 @@ class ScreenshotViewerActions:
     def _delete_file(self):
         """单次触发删除当前截图文件；失败保留图片，成功后同步图库和圆点分页。"""
 
-        if self._frame._disposed:
+        if (self._frame._disposed or self._frame._disposing
+                or self._frame._delete_worker is not None):
             return
         path = self._frame._current_path()
         if not path or not os.path.exists(path):
@@ -130,6 +132,48 @@ class ScreenshotViewerActions:
             self._frame._navigate_to(self._frame._current_idx)
         self._frame._notify_image_count()
         self._frame._apply_theme()
+
+    def _delete_all_files(self):
+        """后台删除当前图库快照；忙碌时拒绝重复删除，新到图片不加入旧任务。"""
+        frame = self._frame
+        if (frame._disposed or frame._disposing or not frame._image_paths
+                or frame._delete_worker is not None):
+            return
+        worker = ScreenshotDeleteWorker(
+            tuple(frame._image_paths), dict(frame._path_versions), frame,
+        )
+        frame._delete_worker = worker
+        frame._update_nav_visibility()
+        frame._start_io_worker(worker)
+
+    def delete_finished(self, worker: ScreenshotDeleteWorker) -> None:
+        """仅移除确实删除的快照项，失败与取消剩余项保留在当前图库。"""
+        frame = self._frame
+        if frame._delete_worker is not worker:
+            return
+        frame._delete_worker = None
+        if frame._disposed or frame._disposing:
+            return
+        current = frame._current_path()
+        deleted = {
+            path for path in worker.deleted
+            if frame._path_versions.get(path) == worker.versions.get(path)
+        }
+        frame._image_paths[:] = [path for path in frame._image_paths if path not in deleted]
+        for path in deleted:
+            frame._nav_controller._cache.remove_path(path)
+        frame._current_idx = (
+            frame._image_paths.index(current) if current in frame._image_paths else 0
+        )
+        frame._rebuild_images()
+        frame._navigate_to(frame._current_idx)
+        frame._notify_image_count()
+        frame._apply_theme()
+        if worker.failed:
+            self._flash_status(
+                tr("Could not delete {value0} image(s)").format(value0=len(worker.failed)),
+                level="error",
+            )
 
     def _on_context_menu(self, pos):
         """上下文菜单复用同一批 Action，不额外连接回调或产生独立启用状态。"""

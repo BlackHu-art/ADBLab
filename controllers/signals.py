@@ -10,11 +10,13 @@ class ADBControllerSignals(QObject):
     """集中维护 ADB Controller 的界面输出信号契约。"""
 
     devices_updated = Signal(list)
+    device_refresh_superseded = Signal()  # 过期刷新已结束；界面仅恢复仍等待本次结果的扫描状态。
     device_info_updated = Signal(str, dict)
     screenshot_captured = Signal(str, str)  # 兼容信号：设备、单张截图路径
     screenshot_batch_ready = Signal(list)  # 一次操作终态中的有序成功路径
     logs_retrieved = Signal(str, str)
     operation_completed = Signal(str, bool, str)
+    action_result_changed = Signal(object)  # 参数：带请求身份与来源分区的 ActionResult。
     text_input = Signal(str, str)
     current_package_received = Signal(str, str)
 

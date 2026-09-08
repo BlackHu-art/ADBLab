@@ -12,7 +12,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QIcon, QPixmap, QPixmapCache
+from PySide6.QtGui import QFont, QIcon, QImage, QPixmap, QPixmapCache
 from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QWidget
 from qfluentwidgets import CommandBar, HorizontalFlipView, HorizontalPipsPager
 
@@ -21,18 +21,21 @@ from core.exec import CommandResult
 from core.log_service import LogService
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
 from gui.dialogs.file_explorer_view import _load_image_preview
-from gui.dialogs.screenshot_viewer_nav import _load_pixmap
 from gui.features.file_explorer import FileExplorerPage
 from gui.features.media import ScreenshotPage
 from gui.i18n import tr
-from gui.panels.log_panel import LogPanel
 from gui.styles import BaseStyles
 from models.adb_advanced import ADBAdvanced
 from models.adb_app import ADBApp
 from models.adb_system import ADBSystemMixin
 from models.adb_testing import ADBTesting
 from models.file_explorer_worker import ADBWorker, TransferWorker
-from tests.ui_geometry_helpers import wait_for_stable_geometry
+from tests.screenshot_helpers import (
+    close_screenshot_page,
+    make_screenshot_page,
+    wait_for_screenshot,
+)
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 def test_screenshot_page_opens_folder_via_process_runner():
@@ -75,28 +78,30 @@ def test_file_explorer_image_preview_reuses_qpixmap_cache(tmp_path):
         QPixmapCache.clear()
 
 
-def test_screenshot_main_image_reuses_qpixmap_cache(tmp_path):
+def test_screenshot_main_image_reuses_page_decode_cache(tmp_path):
     _app = QApplication.instance() or QApplication([])
     image_path = tmp_path / "main-image.png"
     pixmap = QPixmap(80, 60)
     pixmap.fill(Qt.GlobalColor.blue)
     assert pixmap.save(str(image_path))
 
-    QPixmapCache.clear()
+    page = make_screenshot_page([str(image_path)])
     try:
-        first = _load_pixmap(str(image_path), kind="main")
-        assert not first.isNull()
+        wait_until(_app, lambda: page._display_pixmap is not None)
+        first = page._display_pixmap.toImage()
 
         with patch(
-            "gui.dialogs.screenshot_viewer_nav.QPixmap",
-            side_effect=lambda: QPixmap(),
+            "gui.dialogs.screenshot_viewer_nav.QImageReader",
+            side_effect=AssertionError("cache hit must not decode the image again"),
         ):
-            cached = _load_pixmap(str(image_path), kind="main")
-
-        assert cached.size() == QSize(80, 60)
-        assert cached.cacheKey() == first.cacheKey()
+            page._navigate_to(0)
+            wait_until(_app, lambda: not page._workers)
+        assert page._display_pixmap.size() == QSize(80, 60)
+        assert page._display_pixmap.toImage() == first
     finally:
-        QPixmapCache.clear()
+        page.request_dispose()
+        wait_until(_app, lambda: page.is_disposed)
+        page.close()
 
 
 def test_screenshot_page_uses_native_image_controls_and_command_tooltips(tmp_path):
@@ -106,8 +111,12 @@ def test_screenshot_page_uses_native_image_controls_and_command_tooltips(tmp_pat
     pixmap.fill(Qt.GlobalColor.red)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotPage([str(image_path)])
+    viewer = make_screenshot_page([str(image_path)])
     try:
+        viewer.resize(800, 600)
+        viewer.show()
+        wait_for_stable_geometry(_app, (viewer, viewer._path_label))
+        wait_until(_app, lambda: not viewer._metadata_reflow_timer.isActive())
         assert "120 x 80" in viewer._info_label.text()
         assert "shot.png" not in viewer._info_label.text()
         assert viewer._path_label.text().endswith("shot.png")
@@ -156,13 +165,14 @@ def test_screenshot_metadata_reflows_and_long_name_stays_accessible(
     host.setFixedSize(760, 520)
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
-    page = ScreenshotPage([str(image_path)], parent=host)
+    page = make_screenshot_page([str(image_path)], parent=host)
     layout.addWidget(page)
     try:
         page._info_action.trigger()
         host.show()
         wait_for_stable_geometry(_app, (host, page, page._path_label, page._info_label))
 
+        wait_until(_app, lambda: not page._metadata_reflow_timer.isActive())
         assert host.size() == QSize(760, 520)
         assert page.size() == host.contentsRect().size()
         assert page._info_label.wordWrap() is True
@@ -296,28 +306,34 @@ def test_screenshot_page_pips_and_arrows_update_current_image(tmp_path):
         assert pixmap.save(str(path))
         paths.append(str(path))
 
-    viewer = ScreenshotPage(paths)
+    viewer = make_screenshot_page(paths)
     try:
+        viewer.resize(760, 620)
+        viewer.show()
+        wait_for_stable_geometry(_app, (viewer, viewer._path_label))
         assert not viewer._pager.isHidden()
         assert viewer._pager.count() == viewer._view.count() == 3
         assert viewer._nav_label.text() == "1 / 3"
 
         viewer.navigate_next()
+        wait_for_screenshot(viewer)
         assert viewer._current_idx == 1
         assert viewer._path_label.text() == "second.png"
         assert viewer._nav_label.text() == "2 / 3"
         assert viewer._pager.currentIndex() == viewer._view.currentIndex() == 1
 
         viewer._pager.setCurrentIndex(2)
+        wait_for_screenshot(viewer)
         assert viewer._current_idx == 2
         assert viewer._path_label.text() == "third.png"
         assert viewer._nav_label.text() == "3 / 3"
 
         viewer.navigate_prev()
+        wait_for_screenshot(viewer)
         assert viewer._current_idx == 1
         assert viewer._path_label.text() == "second.png"
     finally:
-        viewer.close()
+        close_screenshot_page(viewer)
 
 
 def test_screenshot_page_refreshes_themed_icons(tmp_path):
@@ -327,7 +343,7 @@ def test_screenshot_page_refreshes_themed_icons(tmp_path):
     pixmap.fill(Qt.GlobalColor.green)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotPage([str(image_path)])
+    viewer = make_screenshot_page([str(image_path)])
     try:
         images = {}
         for theme in ("Light", "Dark"):
@@ -351,7 +367,7 @@ def test_screenshot_page_actual_size_updates_zoom_label(tmp_path):
     pixmap.fill(Qt.GlobalColor.blue)
     assert pixmap.save(str(image_path))
 
-    viewer = ScreenshotPage([str(image_path)])
+    viewer = make_screenshot_page([str(image_path)])
     try:
         viewer._actual_size()
 
@@ -493,8 +509,15 @@ def test_settings_get_async_returns_value_alias():
         )
 
     assert result["value"] == "1"
+    cancelled = run.call_args.kwargs["cancelled"]
+    assert not cancelled()
+    model.begin_shutdown()
+    assert cancelled()
     run.assert_called_once_with(
         ["adb", "-s", "device-1", "shell", "settings", "get", "system", "show_touches"],
+        timeout=30,
+        shell=False,
+        cancelled=cancelled,
         device_ip="device-1",
         key="show_touches",
     )
@@ -548,9 +571,12 @@ def test_take_screenshot_prefers_exec_out_direct_path(tmp_path):
     model = ADBTesting()
     save_path = tmp_path / "shot.png"
 
-    def write_png(_cmd, path, timeout=30):
-        with open(path, "wb") as image_file:
-            image_file.write(b"\x89PNG\r\n\x1a\npayload")
+    def write_png(_cmd, path, timeout=30, *, cancelled):
+        assert not cancelled()
+        assert path != str(save_path)
+        image = QImage(4, 4, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.red)
+        assert image.save(path, "PNG")
         return CommandResult(success=True, output=path)
 
     with (
@@ -567,11 +593,11 @@ def test_take_screenshot_prefers_exec_out_direct_path(tmp_path):
     run.assert_not_called()
 
 
-def test_take_screenshot_falls_back_when_exec_out_is_invalid_png(tmp_path):
+def test_take_screenshot_rejects_invalid_png_without_repeating_capture(tmp_path):
     model = ADBTesting()
     save_path = tmp_path / "shot.png"
 
-    def write_bad(_cmd, path, timeout=30):
+    def write_bad(_cmd, path, timeout=30, *, cancelled):
         with open(path, "wb") as image_file:
             image_file.write(b"not png")
         return CommandResult(success=True, output=path)
@@ -580,21 +606,17 @@ def test_take_screenshot_falls_back_when_exec_out_is_invalid_png(tmp_path):
         patch("models.adb_testing.CommandRunner.run_to_file", side_effect=write_bad),
         patch.object(model, "_run") as run,
     ):
-        run.side_effect = [
-            {"success": True, "output": ""},
-            {"success": True, "output": "ok"},
-            {"success": True, "output": "pulled"},
-            {"success": True, "output": ""},
-        ]
-
         result = ADBTesting.take_screenshot_async.__wrapped__(
             model,
             "device-1",
             str(save_path),
         )
 
-    assert result == {"success": True, "device_ip": "device-1", "screenshot_path": str(save_path)}
-    assert run.call_count == 4
+    assert not result["success"]
+    assert "incomplete" in result["error"]
+    assert not save_path.exists()
+    assert not list(tmp_path.glob(".adblab-shot-*"))
+    run.assert_not_called()
 
 
 def test_list_installed_packages_parses_command_output():
@@ -631,7 +653,11 @@ def test_file_explorer_worker_uses_command_runner_for_short_commands():
     run.assert_called_once_with(
         ["adb", "-s", "device-1", "shell", "ls", "/sdcard"],
         timeout=30,
+        cancelled=worker._aborted.is_set,
     )
+    assert not run.call_args.kwargs["cancelled"]()
+    worker.abort()
+    assert run.call_args.kwargs["cancelled"]()
 
 
 def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
@@ -648,7 +674,11 @@ def test_file_explorer_worker_passes_custom_timeout_to_command_runner():
     run.assert_called_once_with(
         ["adb", "-s", "device-1", "shell", "du", "-sh", "/sdcard"],
         timeout=120,
+        cancelled=worker._aborted.is_set,
     )
+    assert not run.call_args.kwargs["cancelled"]()
+    worker.abort()
+    assert run.call_args.kwargs["cancelled"]()
 
 
 def test_file_explorer_worker_pre_aborted_does_not_run_dangerous_command():
@@ -921,27 +951,31 @@ def test_file_explorer_deactivate_preserves_state_and_registers_shutdown_task(qt
 
 
 def test_file_explorer_transfer_failure_does_not_refresh():
-    dialog = SimpleNamespace()
+    dialog = SimpleNamespace(device_ip="synthetic-file-device")
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
-    with patch("gui.dialogs.file_explorer_ops.FluentMessageBox.critical") as critical:
+    with patch("gui.dialogs.file_explorer_ops.report_feedback") as feedback:
         FileExplorerPage._on_transfer_done(dialog, "failed to copy", True, "Pulled demo.txt")
 
-    critical.assert_called_once()
+    feedback.assert_called_once()
+    assert feedback.call_args.kwargs["level"] == "error"
+    assert feedback.call_args.args[3] == "failed to copy"
     dialog.status_bar.setText.assert_called_once_with("Failed: failed to copy")
     dialog._refresh.assert_not_called()
 
 
 def test_file_explorer_file_operation_failure_does_not_show_success():
-    dialog = SimpleNamespace()
+    dialog = SimpleNamespace(device_ip="synthetic-file-device")
     dialog.status_bar = Mock()
     dialog._refresh = Mock()
 
-    with patch("gui.dialogs.file_explorer_ops.FluentMessageBox.critical") as critical:
+    with patch("gui.dialogs.file_explorer_ops.report_feedback") as feedback:
         FileExplorerPage._on_file_op_done(dialog, "Permission denied", True, "Deleted demo.txt")
 
-    critical.assert_called_once()
+    feedback.assert_called_once()
+    assert feedback.call_args.kwargs["level"] == "error"
+    assert feedback.call_args.args[3] == "Permission denied"
     dialog.status_bar.setText.assert_called_once_with("Failed: Permission denied")
     dialog._refresh.assert_not_called()
 
@@ -1469,60 +1503,3 @@ def test_log_service_emits_batch_before_compat_single_signals(isolated_log_servi
         ("WARNING", "batched-2"),
     ]
     assert singles[-2:] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
-
-
-def test_log_panel_appends_large_batch_with_a_per_frame_budget(isolated_log_service):
-    _app = QApplication.instance() or QApplication([])
-    assert LogService() is isolated_log_service
-    panel = LogPanel()
-    try:
-        calls = []
-        original = panel._render_entries
-
-        def counted(rows):
-            calls.append(len(rows))
-            return original(rows)
-
-        panel._render_entries = counted
-        records = [("12:00:00", "INFO", f"line-{i}") for i in range(1000)]
-
-        panel._append_logs(records)
-        while panel._pending_rows:
-            panel._flush_pending_rows()
-
-        assert sum(calls) == 1000
-        assert all(size <= panel.FRAME_BATCH_SIZE for size in calls)
-        assert len(calls) > 1
-        assert len(panel._entries) == 1000
-        assert "line-999" in panel.text_output.toPlainText()
-    finally:
-        panel.close()
-
-
-def test_log_panel_coalesces_small_log_batches_before_rendering(isolated_log_service):
-    _app = QApplication.instance() or QApplication([])
-    assert LogService() is isolated_log_service
-    panel = LogPanel()
-    old_debounce = LogPanel.RENDER_DEBOUNCE_MS
-    LogPanel.RENDER_DEBOUNCE_MS = 20
-    try:
-        calls = []
-        original = panel._render_entries
-
-        def counted(rows):
-            calls.append(len(rows))
-            return original(rows)
-
-        panel._render_entries = counted
-
-        panel._append_logs([("12:00:00", "INFO", "small-1")])
-        panel._append_logs([("12:00:01", "INFO", "small-2")])
-
-        assert calls == []
-        panel._flush_pending_rows()
-
-        assert calls == [2]
-        assert "small-2" in panel.text_output.toPlainText()
-    finally:
-        LogPanel.RENDER_DEBOUNCE_MS = old_debounce
-        panel.close()

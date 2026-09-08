@@ -143,7 +143,7 @@ class SystemPanel(BasePanel):
             tr("正向规则"), "list-bullets.svg", tooltip=tr("显示当前正向端口转发规则")
         )
         self.btn_remove_fwd = self._b(
-            tr("移除正向"), "x-circle.svg", tooltip=tr("移除输入的正向端口转发规则")
+            tr("移除正向"), "x-circle.svg", tooltip=tr("移除所选设备的全部正向转发规则")
         )
         self.btn_list_rev = self._b(
             tr("反向规则"), "list-bullets.svg", tooltip=tr("显示当前反向端口转发规则")
@@ -195,7 +195,11 @@ class SystemPanel(BasePanel):
                 }[service]
                 icon = _toggle_icons.get(icon_key, "info.svg")
                 b = self._b(n, icon, tooltip=tr("{n} 服务").format(n=n))
-                b.clicked.connect(lambda _, c=cmd: self._sh(c))
+                b.clicked.connect(
+                    lambda _, c=cmd: self._emit_device_action(
+                        self.signals.system_service_requested, c,
+                    )
+                )
                 row_buttons.append((b, 1))
             self._add_responsive_row(
                 gsl,
@@ -633,6 +637,7 @@ class SystemPanel(BasePanel):
                 lambda devices: LP.forward_port_requested.emit(
                     devices, self.fwd_local.text().strip(), self.fwd_remote.text().strip()
                 ),
+                single_device=True,
             )
         )
         self.btn_list_fwd.clicked.connect(
@@ -692,6 +697,7 @@ class SystemPanel(BasePanel):
                 lambda devices: LP.kill_process_requested.emit(
                     devices, self.kill_pid_input.text().strip()
                 ),
+                single_device=True,
             )
         )
         self.btn_battery_set.clicked.connect(
@@ -799,6 +805,15 @@ class SystemPanel(BasePanel):
                 for field in fields
             )
             self._set_button_enabled(button, has_device and valid)
+        for button, reason, hint in (
+            (self.btn_forward, tr("正向转发使用本机共享端口，请只选择一台设备"),
+             tr("将本机端口转发到当前设备；端口已占用时先移除原规则")),
+            (self.btn_kill_pid, tr("PID 仅属于单台设备，请只选择一台设备"),
+             tr("结束当前设备上的指定 PID")),
+        ):
+            single = len(self.selected_devices) == 1
+            button.setEnabled(button.isEnabled() and single)
+            button.setToolTip(hint if single else reason)
 
     def update_action_states(self) -> None:
         """供设备选择协调层刷新 System 页动作状态。"""

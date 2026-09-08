@@ -63,8 +63,8 @@ class SurfaceStatsCollector:
 
     def stop(self):
         """停止 Surface 统计数据采集线程。"""
+        self.stop_event.set()
         if hasattr(self, "collector_thread") and self.collector_thread:
-            self.stop_event.set()
             self.collector_thread.join(timeout=2)
             self.collector_thread = None
         # 计算线程依赖采集线程写入的 "Stop" 哨兵退出；采集线程异常或未启动时补发，
@@ -222,7 +222,7 @@ class SurfaceStatsCollector:
                 time_consume = time.time() - before
                 delta_inter = self.frequency - time_consume
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self.stop_event.wait(delta_inter)
             except Exception:
                 logger.error("an exception hanpend in fps _calculator_thread ,reason unkown!")
                 s = traceback.format_exc()
@@ -275,7 +275,7 @@ class SurfaceStatsCollector:
                     time_consume = time.time() - before
                     delta_inter = self.frequency - time_consume
                     if delta_inter > 0:
-                        time.sleep(delta_inter)
+                        self.stop_event.wait(delta_inter)
             except Exception:
                 logger.error("an exception hanpend in fps _collector_thread , reason unkown!")
                 s = traceback.format_exc()

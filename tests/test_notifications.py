@@ -276,3 +276,40 @@ def test_toast_sits_below_window_chrome_without_covering_close_button(window):
     assert notice.y() == 60
     assert notice.width() < 520
     assert not notice.geometry().intersects(window.titleBar.geometry())
+
+
+def test_same_request_completion_replaces_running_notice_and_uses_its_action(window):
+    calls = []
+    running = show_toast(window, "查询", "执行中", key="request-a", duration=-1)
+    finished = show_toast(
+        window, "查询", "完成", level="success", key="request-a", duration=-1,
+        action_text="查看任务", on_action=lambda: calls.append("request-a"),
+    )
+    assert running._closed
+    assert finished.level == "success"
+    assert [n for n in window.findChildren(ToastNotification) if n.isVisible()] == [finished]
+    finished.action_button.click()
+    assert calls == ["request-a"]
+
+
+def test_toast_keeps_device_selector_accessible(window):
+    window._global_device_bar = QWidget(window)
+    window._global_device_bar.setGeometry(20, 40, 800, 48)
+    window._global_device_bar.show()
+    notice = show_toast(window, "完成", "结果已记录", duration=-1)
+    assert notice.y() == 100
+    assert not notice.geometry().intersects(window._global_device_bar.geometry())
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_severity_backgrounds_are_distinct_in_each_theme(window, theme):
+    BaseStyles.switch_theme(theme)
+    colors = []
+    for level in ("info", "success", "warning", "error"):
+        notice = show_toast(window, "操作", "状态", level=level, duration=-1)
+        QTest.qWait(20)
+        rendered = notice.grab().toImage()
+        scale = rendered.devicePixelRatio()
+        colors.append(rendered.pixelColor(round(12 * scale), round(5 * scale)).name())
+        notice.close()
+    assert len(set(colors)) == 4, colors

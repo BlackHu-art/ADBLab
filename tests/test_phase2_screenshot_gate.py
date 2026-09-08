@@ -2,6 +2,8 @@ from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import Mock, patch
 
+from PySide6.QtGui import QImage
+
 from adblab.application.envelope import OperationMetadata
 from adblab.application.operations import OperationManager, OperationState
 from controllers._media import ADBMediaMixin
@@ -51,7 +53,9 @@ def _success(call, *, path=None, device=None):
 
 def _write_png(call):
     path = Path(call.args[1])
-    path.write_bytes(PNG_HEADER + b"gate-a")
+    image = QImage(2, 2, QImage.Format.Format_RGB32)
+    image.fill(0xFF123456)
+    assert image.save(str(path), "PNG")
     return path
 
 
@@ -274,6 +278,7 @@ def test_screenshot_cancel_midflight_is_partial_and_late_results_are_ignored(tmp
         )
 
         assert controller.cancel_screenshot(operation_id) is True
+        assert first.kwargs["cancelled"]() and second.kwargs["cancelled"]()
         counts = (
             controller.signals.screenshot_captured.emit.call_count,
             controller.signals.operation_completed.emit.call_count,

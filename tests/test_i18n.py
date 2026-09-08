@@ -151,3 +151,18 @@ def test_embedded_catalog_matches_editable_source_and_preserves_format_fields(la
         assert source and translated
         assert catalog.translate("ADBLab", source) == translated
         assert fields(source) == fields(translated), source
+
+
+@pytest.mark.parametrize("language, expected", [
+    ("zh_CN", "设备 7未安装目标应用，请先安装后重试"),
+    ("zh_HK", "裝置 7未安裝目標應用程式，請先安裝後重試"),
+    ("en_US", "The target app is not installed on Device 7. Install it and retry."),
+])
+def test_monkey_preparation_errors_use_frozen_global_device_label(
+    installed_translators, language, expected,
+):
+    from gui.panels.app_panel import _monkey_error_text
+
+    installed_translators(language)
+    label = {"zh_CN": "设备 7", "zh_HK": "裝置 7", "en_US": "Device 7"}[language]
+    assert _monkey_error_text("第 1 台设备未安装目标应用，请先安装后重试", (label,)) == expected

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QPixmap, QWheelEvent
 from PySide6.QtWidgets import QBoxLayout, QWidget
 from qfluentwidgets import HeaderCardWidget
@@ -13,6 +13,11 @@ from shiboken6 import isValid
 
 from gui.dialogs.screenshot_viewer_actions import ScreenshotViewerActions
 from gui.dialogs.screenshot_viewer_nav import ScreenshotViewerNav
+from gui.dialogs.screenshot_viewer_tasks import (
+    ScreenshotDeleteWorker,
+    ScreenshotIOShutdownTask,
+    ScreenshotReadWorker,
+)
 from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotFlipView, ScreenshotPipsPager
 from gui.i18n import tr
@@ -21,12 +26,7 @@ from gui.styles import BaseStyles
 
 
 class ScreenshotPage(QWidget):
-    """浏览截图批次，并遵循 Workspace 功能页的同步生命周期契约。
-
-    页面不拥有线程或外部进程；``request_dispose`` 因此可同步完成。
-    ``activate`` 只增量追加新批次且默认聚焦首张新增截图，导航离开不会
-    丢弃已加载结果。
-    """
+    """浏览截图批次；像素读取和批量删除由页面监督，完成释放后才移除会话。"""
 
     dispose_ready = Signal(object)
     back_requested = Signal()
@@ -46,6 +46,7 @@ class ScreenshotPage(QWidget):
         self._nav_controller = ScreenshotViewerNav(self)
         self._actions_controller = ScreenshotViewerActions(self)
         self._image_paths = self._normalize_paths(image_paths)
+        self._path_versions = {path: 0 for path in self._image_paths}
         self._current_idx = (
             max(0, min(current_index, len(self._image_paths) - 1)) if self._image_paths else 0
         )
@@ -58,6 +59,13 @@ class ScreenshotPage(QWidget):
         self._reported_image_count = 0
         self._active = False
         self._disposed = False
+        self._disposing = False
+        self._close_when_disposed = False
+        self._workers: set[ScreenshotReadWorker | ScreenshotDeleteWorker] = set()
+        self._delete_worker: ScreenshotDeleteWorker | None = None
+        self._io_finish_timer = QTimer(self)
+        self._io_finish_timer.setSingleShot(True)
+        self._io_finish_timer.timeout.connect(self._reap_io_workers)
         self._style_signals_connected = False
         self._device_tools: QWidget | None = None
         self._device_tools_parking: QWidget | None = None
@@ -135,8 +143,9 @@ class ScreenshotPage(QWidget):
     def activate(self, payload=None) -> None:
         """激活页面并把一次新截图批次追加到现有会话。"""
 
-        if self._disposed:
+        if self._disposed or self._disposing:
             return
+        self._nav_controller._suspended = False
         self._active = True
         self.receive_payload(payload)
 
@@ -185,9 +194,11 @@ class ScreenshotPage(QWidget):
     def receive_payload(self, payload=None) -> None:
         """接收后台完成的截图批次，不要求页面当前位于前台。"""
 
-        if self._disposed:
+        if self._disposed or self._disposing:
             return
         incoming, explicit_index, focus_new = self._paths_from_payload(payload)
+        if not self._active and not self.isVisible():
+            self._nav_controller._suspended = True
         existing = {
             os.path.normcase(os.path.abspath(path)) for path in self._image_paths
         }
@@ -195,14 +206,22 @@ class ScreenshotPage(QWidget):
         for path in incoming:
             identity = os.path.normcase(os.path.abspath(path))
             if identity in existing:
+                if self._delete_worker is not None:
+                    existing_path = next(
+                        candidate for candidate in self._image_paths
+                        if os.path.normcase(os.path.abspath(candidate)) == identity
+                    )
+                    self._path_versions[existing_path] += 1
+                    self._delete_worker.supersede(existing_path)
                 continue
             if first_added_index is None:
                 first_added_index = len(self._image_paths)
             self._image_paths.append(path)
+            self._path_versions[path] = self._path_versions.get(path, -1) + 1
             existing.add(identity)
 
         if first_added_index is not None:
-            self._rebuild_images()
+            self._nav_controller.append_images(first_added_index)
             target_index = first_added_index if focus_new else self._current_idx
             if explicit_index is not None:
                 target_index = max(0, min(explicit_index, len(self._image_paths) - 1))
@@ -219,6 +238,7 @@ class ScreenshotPage(QWidget):
         """暂停瞬态 UI 工作；截图列表保留供同一会话再次激活。"""
 
         self._active = False
+        self._nav_controller._suspended = True
         self.setProperty("deactivation_reason", reason)
         self._fit_resize_timer.stop()
         self._metadata_reflow_timer.stop()
@@ -226,23 +246,90 @@ class ScreenshotPage(QWidget):
         self._pager.stop_animations()
 
     def request_dispose(self, reason: str = "user") -> bool:
-        """同步释放页面资源；返回 ``True`` 表示宿主可立即移除页面。"""
+        """封闭新增 I/O 并请求取消；线程尚未真实退出时维持页面释放屏障。"""
 
         if self._disposed:
             return True
+        self._disposing = True
         self.deactivate(reason)
+        self._nav_controller.dispose()
+        self._disconnect_style_signals()
+        self._update_actions_enabled(False)
+        for worker in tuple(self._workers):
+            worker.abort()
+        if self._workers:
+            self._io_finish_timer.start(0)
+            return False
+        self._finish_dispose(emit_ready=False)
+        return True
+
+    def _finish_dispose(self, *, emit_ready: bool) -> None:
+        """只有线程完成非阻塞 join 后才清空控件并通知宿主。"""
+        if self._disposed:
+            return
         self._disposed = True
         self._release_device_tools()
         self._disconnect_style_signals()
         self._original_pixmap = self._display_pixmap = None
         self._display_path = ""
         self._image_paths.clear()
+        self._path_versions.clear()
         self._rotation_by_path.clear()
         self._view.clear()
         self._pager.clear()
         self._update_actions_enabled(False)
         self._notify_image_count()
-        return True
+        if emit_ready:
+            self.dispose_ready.emit(self)
+        if self._close_when_disposed:
+            self.close()
+
+    def _start_io_worker(self, worker: ScreenshotReadWorker | ScreenshotDeleteWorker) -> None:
+        """登记并启动页面独占 worker，结束信号仅安排主线程收口。"""
+        if self._disposing or self._disposed:
+            worker.deleteLater()
+            return
+        self._workers.add(worker)
+        if isinstance(worker, ScreenshotReadWorker):
+            worker.image_ready.connect(self._receive_image, Qt.ConnectionType.QueuedConnection)
+        worker.finished.connect(self._reap_io_workers, Qt.ConnectionType.QueuedConnection)
+        try:
+            worker.start()
+        except RuntimeError:
+            self._workers.discard(worker)
+            if isinstance(worker, ScreenshotReadWorker):
+                self._nav_controller._worker = None
+            else:
+                self._delete_worker = None
+            worker.deleteLater()
+            self._update_nav_visibility()
+            self._flash_status(
+                tr("Some selected files could not be opened as images"), level="error",
+            )
+
+    def _receive_image(self, generation: int, result: object) -> None:
+        """Qt 信号边界确保后台像素仅在 GUI 线程转成 QPixmap。"""
+        self._nav_controller.image_ready(generation, result)
+
+    def _reap_io_workers(self) -> None:
+        """finished 先于原生退出时延后收口，避免运行中线程被父控件销毁。"""
+        waiting_for_join = False
+        for worker in tuple(self._workers):
+            if not worker.isFinished():
+                continue
+            if not worker.wait(0):
+                waiting_for_join = True
+                continue
+            self._workers.discard(worker)
+            if isinstance(worker, ScreenshotReadWorker):
+                self._nav_controller.read_finished(worker)
+            else:
+                self._actions_controller.delete_finished(worker)
+            worker.deleteLater()
+        if waiting_for_join:
+            self._io_finish_timer.start(1)
+        if self._disposing and not self._workers:
+            self._finish_dispose(emit_ready=True)
 
     def register_shutdown_tasks(
         self,
@@ -251,9 +338,17 @@ class ScreenshotPage(QWidget):
         owner_id: str,
         task_prefix: str,
     ) -> tuple[str, ...]:
-        """截图页没有后台资源，因此无需向关闭协调器注册任务。"""
-
-        return ()
+        """把本次快照中的解码和删除线程纳入应用关闭监督。"""
+        workers: list[QThread] = list(self._workers)
+        if not workers:
+            return ()
+        handle = ScreenshotIOShutdownTask(workers)
+        task_id = f"{task_prefix}-screenshot-io"
+        supervisor.register(
+            task_id, owner_id=owner_id, kind="screenshot_io",
+            request_stop=handle.request_stop, wait=handle.wait, is_running=handle.is_running,
+        )
+        return (task_id,)
 
     @property
     def is_disposed(self) -> bool:
@@ -395,6 +490,9 @@ class ScreenshotPage(QWidget):
     def _delete_file(self):
         return self._actions_controller._delete_file()
 
+    def _delete_all_files(self):
+        return self._actions_controller._delete_all_files()
+
     def _on_context_menu(self, pos):
         return self._actions_controller._on_context_menu(pos)
 
@@ -417,13 +515,27 @@ class ScreenshotPage(QWidget):
         return ScreenshotViewerNav._format_modified_time(path)
 
     def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Resize and watched is getattr(self, "_canvas_frame", None):
+            if hasattr(self, "_metadata_reflow_timer"):
+                self._schedule_metadata_reflow()
         if event.type() == QEvent.Type.Resize and watched is self._view.viewport():
             self._schedule_fit()
         return super().eventFilter(watched, event)
 
     def closeEvent(self, event):
-        self.request_dispose("widget_close")
-        super().closeEvent(event)
+        if self._disposed or self.request_dispose("widget_close"):
+            super().closeEvent(event)
+            return
+        self._close_when_disposed = True
+        self.hide()
+        event.ignore()
+
+    def showEvent(self, event):
+        """独立打开页面时恢复解码，后台批次接收本身不启动图片读取。"""
+        super().showEvent(event)
+        if not self._disposing and not self._disposed:
+            self._nav_controller._suspended = False
+            self._nav_controller._start_read()
 
     def wheelEvent(self, event: QWheelEvent):
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:

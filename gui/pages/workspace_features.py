@@ -84,6 +84,7 @@ class _OverviewDefinition:
 
 class _NoDevicePage(CardWidget):
     choose_device_requested = Signal()
+    manage_devices_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -100,8 +101,8 @@ class _NoDevicePage(CardWidget):
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Preferred,
         )
-        self.choose_button = PrimaryPushButton(DEVICE_ICON, tr("选择设备"), self)
-        self.choose_button.clicked.connect(self.choose_device_requested)
+        self.choose_button = PrimaryPushButton(DEVICE_ICON, tr("前往设备概览"), self)
+        self.choose_button.clicked.connect(self.manage_devices_requested)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
@@ -125,7 +126,7 @@ class _NoDevicePage(CardWidget):
             self.choose_button.setVisible(False)
             return
         self.message_label.setText(
-            tr("当前没有可用设备。请使用顶部设备栏连接或刷新，选择后即可打开此功能。")
+            tr("当前没有可用设备。请前往设备概览连接或刷新设备，再打开此功能。")
         )
         self.choose_button.setVisible(True)
 
@@ -191,6 +192,19 @@ class _FeatureStack(QStackedWidget):
     def sizeHint(self) -> QSize:
         return QSize(self._content_minimum)
 
+    def hasHeightForWidth(self) -> bool:
+        """仅当前页参与宽度相关的高度测量，隐藏会话不能扩大滚动内容。"""
+
+        page = self.currentWidget()
+        return page is not None and page.hasHeightForWidth()
+
+    def heightForWidth(self, width: int) -> int:
+        """QStackedLayout 会合并隐藏页高度，滚动宿主应使用当前页的尺寸契约。"""
+
+        page = self.currentWidget()
+        height = page.heightForWidth(width) if page is not None else -1
+        return max(height, self._content_minimum.height()) if height >= 0 else -1
+
 
 class WorkspaceFeatureHost(QWidget):
     """在一个任务领域页内承载概览和按设备懒创建的功能页面。"""
@@ -198,6 +212,7 @@ class WorkspaceFeatureHost(QWidget):
     route_changed = Signal(object)
     route_requested = Signal(object)
     choose_device_requested = Signal()
+    manage_devices_requested = Signal()
     FEATURE_SELECTOR_MIN_PIVOT_WIDTH = 520
     controls_changed = Signal()
 
@@ -307,6 +322,7 @@ class WorkspaceFeatureHost(QWidget):
         self.stack.addWidget(self.overview)
         self.no_device_page = _NoDevicePage(self.stack)
         self.no_device_page.choose_device_requested.connect(self.choose_device_requested)
+        self.no_device_page.manage_devices_requested.connect(self.manage_devices_requested)
         self.stack.addWidget(self.no_device_page)
         self.closing_page = _ClosingSessionPage(self.stack)
         self.closing_page.back_requested.connect(self.show_overview)
@@ -607,6 +623,10 @@ class WorkspaceFeatureHost(QWidget):
             payload=route.payload,
         )
 
+    def is_device_selection_locked(self) -> bool:
+        """向外部设备入口提供当前功能的运行锁，不由候选数量推断锁定。"""
+        return self._current_feature in self._device_selection_locks
+
     def activate_route(self, route: WorkspaceRoute) -> bool:
         """从后台原子打开目标路由，不短暂恢复上一个会话。"""
 
@@ -825,6 +845,9 @@ class WorkspaceFeatureHost(QWidget):
         self.close_session_button.setEnabled(False)
         self.session_badge.setText(tr("正在关闭"))
         self.session_badge.setLevel(InfoLevel.WARNING)
+        description = tr("后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。")
+        self.session_badge.setToolTip(description)
+        self.session_badge.setAccessibleDescription(description)
         if not self.registry.request_dispose(key, "user"):
             self.registry.deactivate_current("disposing")
             definition = self._definitions.get(key.feature)
@@ -997,13 +1020,19 @@ class WorkspaceFeatureHost(QWidget):
         requires_device = bool(definition and definition.requires_device)
         closable = isinstance(definition, _FeatureDefinition)
         is_overview = isinstance(definition, _OverviewDefinition)
+        disposing = closable and any(
+            key.feature == self._current_feature
+            and key.device_id == self._active_device_id
+            and self.registry.is_disposing(key)
+            for key in self.registry.keys()
+        )
         self.device_label.setVisible(requires_device)
         self.device_combo.setVisible(requires_device)
         lock_reason = self._device_selection_locks.get(self._current_feature, "")
         self.device_combo.setEnabled(not lock_reason)
         show_close = closable and definition.show_close_action
         self.close_session_button.setVisible(show_close)
-        self.close_session_button.setEnabled(show_close)
+        self.close_session_button.setEnabled(show_close and not disposing)
         # 外置设备栏和设备概览摘要已呈现目标数量，徽标只保留会话相关状态。
         self.session_badge.setVisible(
             requires_device or closable or (is_overview and not self._external_device_controls)
@@ -1014,7 +1043,12 @@ class WorkspaceFeatureHost(QWidget):
             self._active_device_id
             and self._active_device_id in self._connected_devices
         )
-        if requires_device and self._active_device_id:
+        if disposing:
+            # 设备选择和在线快照可继续更新，但不能覆盖尚未结束的资源退出屏障。
+            status = tr("正在关闭")
+            level = InfoLevel.WARNING
+            description = tr("后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。")
+        elif requires_device and self._active_device_id:
             selected = self._active_device_id in self._selected_devices
             status = (tr("在线") if selected else tr("未选为操作目标")) if connected else tr("离线")
             level = InfoLevel.SUCCESS if connected and selected else InfoLevel.WARNING
@@ -1221,6 +1255,9 @@ class WorkspaceFeatureHost(QWidget):
         self.close_session_button.setEnabled(False)
         self.session_badge.setText(tr("正在关闭"))
         self.session_badge.setLevel(InfoLevel.WARNING)
+        description = tr("后台资源仍在退出。完成后可重新打开此功能，不会复用正在关闭的页面。")
+        self.session_badge.setToolTip(description)
+        self.session_badge.setAccessibleDescription(description)
         self._sync_device_combo()
         self.route_changed.emit(
             WorkspaceRoute(self.section_key, key.feature, key.device_id)

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
+from _thread import LockType
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 
 from PySide6.QtCore import QTimer
 
@@ -15,6 +18,15 @@ from models.device_store import DeviceStore
 from utils.adb_targets import normalize_adb_connect_target
 
 
+@dataclass
+class _OverviewRefresh:
+    """控制器拥有的单批查询身份；同拓扑请求只保留一个后续刷新意图。"""
+
+    generation: int
+    topology: tuple[str, ...]
+    pending: bool = False
+
+
 class ADBDeviceMixin(_ADBControllerBase):
     """协调设备连接、断开、重启、配对和基础信息持久化。"""
 
@@ -22,13 +34,14 @@ class ADBDeviceMixin(_ADBControllerBase):
     device_model: ADBDevice
     advanced_model: ADBAdvanced
     signals: ADBControllerSignals
+    _overview_refresh: _OverviewRefresh | None = None
+    _overview_store_lock: LockType | None = None
     log_service: LogService
     executor: ThreadPoolExecutor
 
     _handlers = {
         "connect_device": "_process_connect_device_result",
         "disconnect_device": "_process_disconnect_result",
-        "get_device_info": "_process_device_info_result",
         "restart_device": "_process_restart_devices_result",
         "restart_adb": "_process_restart_adb_result",
         "reboot_mode": "_process_reboot_mode_result",
@@ -92,76 +105,121 @@ class ADBDeviceMixin(_ADBControllerBase):
             self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
 
     def _async_update_devices(self, devices: list, *, generation: int):
+        """逐台发布当前拓扑的概览快照，最后统一落盘；旧代次与关闭后的结果不发布。"""
         if not devices:
             return
 
         topology = tuple(devices)
+        with self._device_topology_lock:
+            if (
+                getattr(self, "_shutting_down", False)
+                or generation != self._device_topology_generation
+                or topology != self._device_topology
+            ):
+                return
+            active = self._overview_refresh
+            if active is not None and (
+                active.generation, active.topology
+            ) == (generation, topology):
+                active.pending = True
+                return
+            refresh = _OverviewRefresh(generation, topology)
+            self._overview_refresh = refresh
+            if self._overview_store_lock is None:
+                self._overview_store_lock = threading.Lock()
+            store_lock = self._overview_store_lock
 
         def _is_current_topology() -> bool:
             if getattr(self, "_shutting_down", False):
                 return False
             with self._device_topology_lock:
                 return (
-                    generation == self._device_topology_generation
+                    self._overview_refresh is refresh
+                    and generation == self._device_topology_generation
                     and topology == self._device_topology
                 )
 
-        def _update():
-            if getattr(self, "_shutting_down", False):
-                return
+        def _update_batch():
             records = []
-            failed_devices = []
             for ip in devices:
+                if not _is_current_topology():
+                    return
                 try:
-                    info = ADBDevice.get_device_overview_info(ip)
-                    records.append(
-                        {
-                            **info,
-                            "alias": f"device_{ip}",
-                            "ip": ip,
-                            "Brand": info.get("Brand", "Unknown"),
-                            "Model": info.get("Model", "Unknown"),
-                            "Aversion": info.get("Aversion", "Unknown"),
-                            "SDK Version": info.get("SDK Version", ""),
-                            "CPU Architecture": info.get("CPU Architecture", ""),
-                            "Hardware": info.get("Hardware", ""),
-                        }
+                    info = ADBDevice.get_device_overview_info(
+                        ip, cancelled=lambda: not _is_current_topology(),
                     )
+                    record = {
+                        **info,
+                        "alias": f"device_{ip}",
+                        "ip": ip,
+                        "Brand": info.get("Brand", "Unknown"),
+                        "Model": info.get("Model", "Unknown"),
+                        "Aversion": info.get("Aversion", "Unknown"),
+                        "SDK Version": info.get("SDK Version", ""),
+                        "CPU Architecture": info.get("CPU Architecture", ""),
+                        "Hardware": info.get("Hardware", ""),
+                    }
+                    records.append(record)
                 except Exception:
-                    failed_devices.append(ip)
+                    record = {}
                     self.log_service.log(
                         "WARNING", "设备概览属性读取失败，将清除本轮缺失的动态指标",
                     )
+                if not _is_current_topology():
+                    return
+                # 已完成的设备不等待后续查询；扩展字段仅在窗口内存中展示。
+                self.signals.device_info_updated.emit(ip, record)
             if records:
                 # 设备属性查询可能持续数秒；拓扑已变化时旧结果不得再写盘或刷新 UI，
                 # 否则已离线设备会被晚到的补全任务重新显示。
                 if not _is_current_topology():
                     return
                 try:
-                    DeviceStore.upsert_devices(records)
+                    # 只在后台串行写盘；取得写锁后重查代次，旧结果不能追写覆盖新批次。
+                    with store_lock:
+                        if not _is_current_topology():
+                            return
+                        DeviceStore.upsert_devices(records)
                 except Exception as e:
                     self.log_service.log("ERROR", f"DeviceStore write failed: {str(e)}")
                     return
                 # 后台补全品牌/型号后再推一次列表，让占位行自动替换为真实信息。
                 if _is_current_topology():
                     self.signals.devices_updated.emit(devices)
-                    for record in records:
-                        if not _is_current_topology():
-                            return
-                        # 扩展字段仅供当前窗口展示，DeviceStore 仍按既有白名单落盘。
-                        self.signals.device_info_updated.emit(record["ip"], record)
-            for ip in failed_devices:
-                if not _is_current_topology():
-                    return
-                self.signals.device_info_updated.emit(ip, {})
 
-        self.executor.submit(_update)
+        def _update():
+            try:
+                while _is_current_topology():
+                    _update_batch()
+                    with self._device_topology_lock:
+                        if self._overview_refresh is not refresh:
+                            return
+                        if not refresh.pending or getattr(self, "_shutting_down", False):
+                            self._overview_refresh = None
+                            return
+                        refresh.pending = False
+            finally:
+                with self._device_topology_lock:
+                    if self._overview_refresh is refresh:
+                        self._overview_refresh = None
+
+        try:
+            self.executor.submit(_update)
+        except RuntimeError:
+            with self._device_topology_lock:
+                if self._overview_refresh is refresh:
+                    self._overview_refresh = None
+            raise
 
     def _save_device_info(self, ip: str):
         if getattr(self, "_shutting_down", False):
             return
         try:
-            info = ADBDevice.get_devices_basic_info(ip)
+            info = ADBDevice.get_devices_basic_info(
+                ip, cancelled=lambda: getattr(self, "_shutting_down", False),
+            )
+            if getattr(self, "_shutting_down", False):
+                return
             DeviceStore.add_device(
                 alias=f"device_{ip}",
                 ip=ip,
@@ -171,54 +229,6 @@ class ADBDeviceMixin(_ADBControllerBase):
             )
         except Exception as e:
             self.log_service.log("ERROR", f"Failed to save device info for {ip}: {str(e)}")
-
-    def get_device_info(self, devices: list):
-        if not devices:
-            self._emit_operation("get_info", False, "Please select at least one device")
-            return
-        for ip in devices:
-            self.device_model.get_device_info_async(ip)
-
-    def _process_device_info_result(self, result: dict):
-        device_ip = result.get("device_ip") or result.get("ip", "Unknown")
-        log = self.log_service.log
-        key_fields = ("Model", "Brand", "Android Version", "SDK Version")
-        failed = all(
-            str(result.get(key, "")).strip() in ("", "N/A", "-") for key in key_fields
-        )
-        log("INFO", f"📱 Device Info - {device_ip}")
-        log("INFO", f"  🧭 Model            : {result.get('Model', '-')}")
-        log("INFO", f"  🏷️ Brand            : {result.get('Brand', '-')}")
-        log("INFO", f"  🤖 Android Version  : {result.get('Android Version', '-')}")
-        log("INFO", f"  🧪 SDK Version      : {result.get('SDK Version', '-')}")
-        log("INFO", f"  🧬 CPU Architecture : {result.get('CPU Architecture', '-')}")
-        log("INFO", f"  🔧 Hardware         : {result.get('Hardware', '-')}")
-        log(
-            "INFO",
-            f"  🖼️ Resolution       : {result.get('Resolution', '-')}".replace(
-                "Physical size: ", ""
-            ),
-        )
-        log(
-            "INFO",
-            f"  🧮 Density          : {result.get('Density', '-')}".replace(
-                "Physical density: ", ""
-            ),
-        )
-        log("INFO", f"  🌐 Timezone         : {result.get('Timezone', '-')}")
-        log("INFO", f"  🆔 Serial Number    : {result.get('Serial Number', '-')}")
-        log("INFO", f"  💾 Total Memory     : {result.get('Total Memory', '-')}")
-        log("INFO", f"  📉 Available Memory : {result.get('Available Memory', '-')}")
-        log("INFO", "  📂 Storage          :")
-        for line in result.get("Storage", "").splitlines():
-            log("INFO", f"    {line}")
-        log("INFO", "  📡 MAC / IP Info    :")
-        for line in result.get("Mac", "").splitlines():
-            log("INFO", f"    {line}")
-        if failed:
-            log("WARNING", "  ⚠️ 设备信息采集失败（设备离线或命令失败）\n")
-        else:
-            log("INFO", "  ✅ complete\n")
 
     def disconnect_devices(self, devices: list):
         if not self._require_devices(devices, "disconnect"):
@@ -243,22 +253,18 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.device_model.restart_device_async(ip)
 
     def _process_restart_devices_result(self, result: dict):
+        """报告重启命令的提交结果；延迟刷新只更新设备列表，不推断设备启动完成。"""
         ip = result.get("device_ip") or result.get("ip", "unknown device")
+        if result.get("requires_refresh", result.get("success", False)):
+            QTimer.singleShot(10_000, self.signals, self.refresh_devices)
         if result.get("success"):
-            QTimer.singleShot(
-                10_000,
-                self.signals,
-                lambda: (
-                    self.refresh_devices(),
-                    self._emit_operation(
-                        "restart", True, f"{ip} Restart completed, device list refreshed"
-                    ),
-                ),
+            self._emit_operation(
+                "restart", True,
+                f"{ip} Reboot request submitted; device startup has not been verified",
             )
-            self._emit_operation("restart", True, f"{ip} Restarting in progress...")
         else:
             self._emit_operation(
-                "restart", False, f"{ip} Restart failed: {result.get('error', 'unknown device')}"
+                "restart", False, f"{ip} {result.get('error', 'Restart failed: unknown device')}"
             )
 
     def restart_adb(self):

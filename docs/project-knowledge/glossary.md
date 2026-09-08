@@ -21,7 +21,7 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | DeviceHubPage | 设备概览与工作流入口，只显示发现快照，不持有独立选择或设备命令 | `gui/pages/device_hub.py::DeviceHubPage` |
 | WorkspaceRoute | 定位业务宿主、功能、可选设备和载荷的路由值对象 | `gui/pages/workspace_features.py::WorkspaceRoute` |
 | WorkspaceFeatureHost | 承载 Workspace 路由、设备上下文、内容栈和关闭屏障的宿主 | `gui/pages/workspace_features.py::WorkspaceFeatureHost` |
-| CollapsibleTools | 展开/收起容器；当前用于任务中心运行记录，只管显隐，不拥有业务会话 | `gui/widgets/collapsible_tools.py::CollapsibleTools` |
+| CollapsibleTools | 展开/收起容器；当前用于测试参数和性能会话，只管显隐，不拥有业务会话 | `gui/widgets/collapsible_tools.py::CollapsibleTools` |
 | AdaptiveNavigation | 在页签与下拉框之间自适应切换的功能选择控件，不拥有业务页面与历史 | `gui/widgets/adaptive_navigation.py::AdaptiveNavigation` |
 | AdaptiveCategoryStack | 业务面板内部一次显示一个分类的内容栈 | `gui/widgets/category_stack.py::AdaptiveCategoryStack` |
 | 批量操作目标 | 全局设备栏复选形成的零台或多台设备集合，提交到原设备状态源 | `gui/widgets/device_context_bar.py`、`gui/panels/side_panel.py::SidePanel.selected_devices` |

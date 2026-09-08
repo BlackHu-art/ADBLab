@@ -8,6 +8,7 @@ import sys
 import time
 from configparser import ConfigParser
 
+from mobileperf.android.adb_execution import MobilePerfAdbExecutor
 from mobileperf.android.cpu_top import CpuMonitor
 from mobileperf.android.devicemonitor import DeviceMonitor
 from mobileperf.android.fd import FdMonitor
@@ -16,9 +17,10 @@ from mobileperf.android.globaldata import RuntimeData
 from mobileperf.android.logcat import LogcatMonitor
 from mobileperf.android.meminfos import MemMonitor
 from mobileperf.android.monkey import Monkey, MonkeyError
+from mobileperf.android.process_status import ProcessStatusSampler
 from mobileperf.android.report import Report
 from mobileperf.android.thread_num import ThreadNumMonitor
-from mobileperf.android.tools.androiddevice import AndroidDevice
+from mobileperf.android.tools.androiddevice import ADB, AndroidDevice
 from mobileperf.android.trafficstats import TrafficMonitor
 from mobileperf.common.log import logger
 from mobileperf.common.utils import FileUtils, TimeUtils
@@ -59,6 +61,8 @@ def _is_safe_package(package: str) -> bool:
 
 class StartUp:
     """管理单次 Android 性能采集会话的启动、等待和停止流程。"""
+
+    _adb_execution: MobilePerfAdbExecutor | None = None
 
     def __init__(self, device_id=None, package=None, interval=None, config_path=None):
         RuntimeData.begin_run()
@@ -286,8 +290,33 @@ class StartUp:
         sys.exit(1)
 
     def run(self, time_out=None):
+        """拥有本次采集执行器，启动失败、提前返回和异常均最终释放探测及请求。"""
+        if self.device.adb is None:
+            RuntimeData.end_run()
+            raise ValueError("MobilePerf requires a locally accessible ADB device")
+        execution = MobilePerfAdbExecutor(
+            ADB.get_adb_path, self.serialnum, RuntimeData.exit_event, self.stop_file or ""
+        )
+        self._adb_execution = execution
+        RuntimeData.adb_execution = execution
+        self.device.adb._execution = execution
+        self._stop_called = False
+        try:
+            execution.start()
+            if not execution.stop_requested():
+                self._run_collection(time_out)
+        finally:
+            try:
+                if self.monitors and not self._stop_called:
+                    self.stop()
+            finally:
+                execution.close()
+                RuntimeData.end_run()
+
+    def _run_collection(self, time_out=None):
         """启动所有采集器并等待超时、停止文件或异常退出信号。"""
         self._stop_called = False
+        self._exit_event = RuntimeData.exit_event
         monkey_monitor = None
         self.clear_heapdump()
         # 启动采集前检查目标设备是否可用。
@@ -296,18 +325,23 @@ class StartUp:
             logger.info("serialnum in config file is null,default get connected phone")
         is_device_connect = False
         for i in range(0, 5):
+            if self._adb_execution is not None and self._adb_execution.stop_requested():
+                return
             if self.device.adb.is_connected(self.serialnum):
                 is_device_connect = True
                 break
             else:
                 logger.error("device not found:" + self.serialnum)
-                time.sleep(2)
+                if self._wait_for_stop(2):
+                    return
         if not is_device_connect:
             logger.error("after 5 times check,device not found:" + self.serialnum)
             return
         # 应用安装状态仅在会话启动时检查一次。
         if not self.device.adb.is_app_installed(self.packages[0]):
             logger.error("test app not installed:" + self.packages[0])
+            return
+        if self._adb_execution is not None and self._adb_execution.stop_requested():
             return
         try:
             self.add_monitor(
@@ -324,11 +358,20 @@ class StartUp:
                 FPSMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
             )
             # 高版本 Android 可能限制文件描述符读取权限，监控器自行处理采集失败。
-            self.add_monitor(
-                FdMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
+            process_samples = ProcessStatusSampler(
+                self.device.adb, self.packages[0], self.frequency,
             )
             self.add_monitor(
-                ThreadNumMonitor(self.serialnum, self.packages[0], self.frequency, self.timeout)
+                FdMonitor(
+                    self.serialnum, self.packages[0], self.frequency, self.timeout,
+                    process_samples=process_samples,
+                )
+            )
+            self.add_monitor(
+                ThreadNumMonitor(
+                    self.serialnum, self.packages[0], self.frequency, self.timeout,
+                    process_samples=process_samples,
+                )
             )
             if self.config_dic["monkey"] == "true":
                 monkey_monitor = Monkey(
@@ -351,8 +394,12 @@ class StartUp:
                 )
 
             if len(self.monitors):
+                if self._adb_execution is not None and self._adb_execution.stop_requested():
+                    return
                 start_time = TimeUtils.getCurrentTimeUnderline()
                 RuntimeData.start_time = start_time
+                timeout = time_out if time_out is not None else self.config_dic["timeout"]
+                endtime = time.monotonic() + timeout
                 if self.config_dic["save_path"]:
                     RuntimeData.package_save_path = os.path.join(
                         self.config_dic["save_path"], self.packages[0], start_time
@@ -364,6 +411,8 @@ class StartUp:
                 FileUtils.makedir(RuntimeData.package_save_path)
                 self.save_device_info()
                 for monitor in self.monitors:
+                    if self._collection_finished(endtime):
+                        break
                     # 可选指标允许部分失败；用户明确启用的 Monkey 必须真实启动。
                     try:
                         monitor.start(start_time)
@@ -374,20 +423,23 @@ class StartUp:
                 if monkey_monitor is not None:
                     monkey_monitor.raise_if_failed()
                 # Logcat 具有独立的阻塞读取生命周期，因此与其他监控器分开管理。
-                try:
-                    self.logcat_monitor = LogcatMonitor(self.serialnum, self.packages[0])
-                    # 仅在配置异常关键字后注册异常日志处理器。
-                    if self.exceptionlog_list:
-                        self.logcat_monitor.set_exception_list(self.exceptionlog_list)
-                        self.logcat_monitor.add_log_handle(self.logcat_monitor.handle_exception)
-                    time.sleep(1)
-                    self.logcat_monitor.start(start_time)
-                except Exception as e:
-                    logger.error(e)
+                stopping_before_logcat = self._collection_finished(endtime)
+                if not stopping_before_logcat:
+                    try:
+                        self.logcat_monitor = LogcatMonitor(self.serialnum, self.packages[0])
+                        # 仅在配置异常关键字后注册异常日志处理器。
+                        if self.exceptionlog_list:
+                            self.logcat_monitor.set_exception_list(self.exceptionlog_list)
+                            self.logcat_monitor.add_log_handle(self.logcat_monitor.handle_exception)
+                        stopping_before_logcat = self._wait_for_stop(
+                            min(1, max(0, endtime - time.monotonic())),
+                        ) or self._collection_finished(endtime)
+                        if not stopping_before_logcat:
+                            self.logcat_monitor.start(start_time)
+                    except Exception as e:
+                        logger.error(e)
 
-                timeout = time_out if time_out is not None else self.config_dic["timeout"]
-                endtime = time.time() + timeout
-                while time.time() < endtime:  # 保持主线程存活，直至达到任一退出条件。
+                while not stopping_before_logcat and time.monotonic() < endtime:
                     # 测试过程中优先响应应用异常或外部停止信号。
                     if self.check_exit_signal_quit():
                         logger.error("app " + str(self.packages[0]) + " exit signal, quit!")
@@ -397,7 +449,8 @@ class StartUp:
                         break
                     if monkey_monitor is not None:
                         monkey_monitor.raise_if_failed()
-                    time.sleep(self.frequency)
+                    if self._wait_for_stop(min(self.frequency, max(0, endtime - time.monotonic()))):
+                        break
                 if monkey_monitor is not None:
                     monkey_monitor.raise_if_failed()
                 logger.debug("time is up,finish!!!")
@@ -418,6 +471,21 @@ class StartUp:
             logger.error("Exception in run")
             logger.error(e)
 
+    def _collection_finished(self, deadline: float) -> bool:
+        """启动各监控器前复核同一截止时间，已耗尽预算或收到停止信号时只做收尾。"""
+        return time.monotonic() >= deadline or self._wait_for_stop(0)
+
+    def _wait_for_stop(self, seconds: float) -> bool:
+        """等待采样间隔；退出事件立即唤醒，外部停止文件最多等待一轮短检查。"""
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            if self._exit_event.is_set() or self.check_stop_file_quit():
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            self._exit_event.wait(min(0.1, remaining))
+
     def clear_heapdump(self):
         """删除目标应用超过三天的历史堆转储，避免与本次采集混淆。"""
         filelist = self.device.adb.list_dir("/data/local/tmp")
@@ -431,6 +499,8 @@ class StartUp:
     def stop(self):
         """停止监控器、生成报告并回收本次采集产生的设备侧文件。"""
         self._stop_called = True
+        if self._adb_execution is not None:
+            self._adb_execution.begin_cleanup()
         monkey_failure = None
         for monitor in self.monitors:
             try:

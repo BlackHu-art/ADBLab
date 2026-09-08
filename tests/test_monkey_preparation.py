@@ -84,6 +84,19 @@ def _success(pending, package="com.example.demo"):
     }
 
 
+def test_monkey_subset_keeps_global_device_labels_in_summary_and_run_metadata(apps):
+    apps.set_device_labels({"demo-a": "设备 3 · Phone", "demo-b": "设备 7 · Tablet"})
+    starts = QSignalSpy(apps.signals.start_monkey_batch_requested)
+    apps._on_start_monkey()
+    pending = apps._monkey_preparation
+    apps.set_device_labels({"demo-a": "changed later"})
+    apps.on_monkey_preparation_finished(pending.request_id, _success(pending))
+    assert "设备 3 · Phone" in apps.monkey_package_info.text()
+    assert "设备 7 · Tablet" in apps.monkey_package_info.text()
+    metadata = starts.at(0)[1]["_target_metadata"]
+    assert metadata["demo-a"]["device_label"] == "设备 3 · Phone"
+
+
 def test_all_prepared_targets_start_once_with_snapshot_and_version_differences(apps):
     starts = QSignalSpy(apps.signals.start_monkey_batch_requested)
     apps._on_start_monkey()
@@ -304,6 +317,7 @@ def test_package_information_and_prepare_actions_reflow_without_overlap(
         panel._begin_monkey_preparation()
         pending = panel._monkey_preparation
         panel.on_monkey_preparation_finished(pending.request_id, _success(pending))
+        panel.monkey_package_details_btn.click()
         _resize_feature_viewport(qt_application, owner, panel, scroll, width)
         info = panel.monkey_package_info
         controls = (info, panel.monkey_get_package_btn)

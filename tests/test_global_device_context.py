@@ -1,20 +1,23 @@
 """全局多选、稳定会话及设备功能迁移的可观察契约。"""
 
 import sys
+from dataclasses import replace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QWidget
-from qfluentwidgets import ComboBox, PushButton
+from PySide6.QtWidgets import QAbstractButton, QScrollArea, QWidget
+from qfluentwidgets import CardWidget, ComboBox, PushButton, SettingCard
 from shiboken6 import isValid
 
+from gui.pages.device_hub import DeviceHubPage
 from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceConnectionForm, DeviceContextBar, DevicePicker
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
 
 
 @pytest.fixture
@@ -46,6 +49,111 @@ def test_picker_updates_two_targets_once_and_refresh_does_not_emit(qt_applicatio
     assert spy.at(1)[0] == []
     picker.select_all_button.click()
     assert spy.at(2)[0] == ["demo-a", "demo-b"]
+
+
+def test_single_picker_switches_one_target_once_and_allows_clear(qt_application):
+    picker = DevicePicker()
+    picker.set_selection_mode(single=True)
+    picker.set_context(["demo-a"], ["demo-a", "demo-b"])
+    spy = QSignalSpy(picker.selection_requested)
+    picker.device_list.item(1).setCheckState(Qt.CheckState.Checked)
+    assert spy.count() == 1
+    assert spy.at(0)[0] == ["demo-b"]
+    assert picker.device_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert picker.select_all_button.isHidden()
+    picker.clear_button.click()
+    assert spy.count() == 2 and spy.at(1)[0] == []
+
+
+@pytest.mark.parametrize("section,feature", [
+    ("apps", "manager"), ("devices", "files"), ("system", "logcat"),
+])
+def test_single_feature_picker_selects_and_activates_same_device(
+    frame, qt_application, section, feature,
+):
+    host = frame._workspace_feature_hosts[section]
+    host._definitions[feature] = replace(host._definitions[feature], factory=lambda _key: QWidget())
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame._open_workspace_feature(section, feature)
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    picker.device_list.item(0).setCheckState(Qt.CheckState.Checked)
+    assert host.current_device_id == "demo-a"
+    first_key = host.registry.current_key
+    picker.device_list.item(1).setCheckState(Qt.CheckState.Checked)
+    assert frame.left_panel.selected_devices == ["demo-b"]
+    assert host.current_device_id == "demo-b"
+    assert host.registry.get(first_key) is not None
+    assert picker.select_all_button.isHidden()
+    page = host.stack.currentWidget()
+    picker.clear_button.click()
+    assert frame.left_panel.selected_devices == []
+    assert host.stack.currentWidget() is page
+
+
+def test_performance_picker_keeps_multiple_targets_without_second_selector(frame, qt_application):
+    host = frame._workspace_feature_hosts["system"]
+    host._definitions["performance"] = replace(
+        host._definitions["performance"], factory=lambda _key: QWidget(),
+    )
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame._open_workspace_feature("system", "performance")
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    picker.select_all_button.click()
+    assert frame.left_panel.selected_devices == ["demo-a", "demo-b"]
+    assert host.current_device_id in {"demo-a", "demo-b"}
+    assert picker.session_box.isHidden()
+
+
+def test_remote_picker_updates_all_targets_and_keeps_empty_page(frame, qt_application):
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame._open_workspace_feature("devices", "remote")
+    host = frame._workspace_feature_hosts["devices"]
+    page = host.stack.currentWidget()
+    remote = frame.left_panel._scrcpy_tab
+    bar = frame._global_device_bar
+    bar.open_picker()
+    picker = bar._picker
+    assert remote.selected_devices == []
+    assert not picker.select_all_button.isHidden()
+    picker.select_all_button.click()
+    assert remote.selected_devices == ["demo-a", "demo-b"]
+    picker.device_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+    assert remote.selected_devices == ["demo-b"]
+    picker.clear_button.click()
+    assert remote.selected_devices == []
+    assert host.stack.currentWidget() is page
+
+
+@pytest.mark.parametrize("state", ["ready", "empty", "unavailable"])
+def test_superseded_manual_refresh_restores_state_and_allows_retry(frame, state):
+    panel = frame.left_panel
+    frame.adb_controller.signals.device_refresh_superseded.connect.assert_called_once_with(
+        panel.on_device_refresh_superseded,
+    )
+    panel.set_device_discovery_state(state)
+    assert panel.request_device_refresh()
+    assert panel._device_discovery_state == "scanning"
+    assert not panel.request_device_refresh()
+    panel.on_device_refresh_superseded()
+    assert panel._device_discovery_state == state
+    assert panel.request_device_refresh()
+
+
+def test_superseded_refresh_cannot_replace_new_device_snapshot(frame):
+    panel = frame.left_panel
+    panel.set_device_discovery_state("empty")
+    assert panel.request_device_refresh()
+    frame._on_devices_updated(["demo-a"])
+    panel.on_device_refresh_superseded()
+    assert panel._device_discovery_state == "ready"
+    assert panel._connected_device_cache == ["demo-a"]
 
 
 def test_current_package_result_cannot_overwrite_edited_input(frame, qt_application):
@@ -111,6 +219,30 @@ def test_device_metadata_updates_visible_hub_without_persistence(frame, qt_appli
     assert "demo-a" not in frame._device_metadata
 
 
+def test_system_shared_host_ports_and_device_private_pid_require_one_target(frame):
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame._global_device_bar.selection_requested.emit(["demo-a", "demo-b"])
+    panel = frame.left_panel._advanced_tab
+    panel.fwd_local.setText("8080")
+    panel.fwd_remote.setText("80")
+    panel.kill_pid_input.setText("1234")
+    assert not panel.btn_forward.isEnabled()
+    assert not panel.btn_kill_pid.isEnabled()
+    assert panel.btn_reverse.isEnabled()
+    # 即使直接触发 clicked，也必须重新校验当次目标，不能绕过置灰状态。
+    forward = QSignalSpy(frame.left_panel.signals.forward_port_requested)
+    kill = QSignalSpy(frame.left_panel.signals.kill_process_requested)
+    panel.btn_forward.clicked.emit()
+    panel.btn_kill_pid.clicked.emit()
+    assert forward.count() == kill.count() == 0
+    frame._global_device_bar.selection_requested.emit(["demo-b"])
+    assert panel.btn_forward.isEnabled() and panel.btn_kill_pid.isEnabled()
+    panel.btn_forward.click()
+    panel.btn_kill_pid.click()
+    assert forward.at(0)[0] == ["demo-b"]
+    assert kill.at(0)[0] == ["demo-b"]
+
+
 def test_overview_shortcut_rechecks_selected_device_at_main_window(frame, qt_application):
     frame._on_devices_updated(["demo-a", "demo-b"])
     frame._open_workspace_feature = Mock()
@@ -158,7 +290,7 @@ def test_device_workflows_keep_multiselect_bar_outside_scrolling_content(frame, 
     frame.show()
     frame._on_devices_updated(["demo-a", "demo-b"])
     frame._global_device_bar.selection_requested.emit(["demo-a", "demo-b"])
-    for route in ("apps", "system", "tasks"):
+    for route in ("apps", "system"):
         frame._on_nav_requested(route)
         qt_application.processEvents()
         bar = frame._global_device_bar
@@ -167,7 +299,7 @@ def test_device_workflows_keep_multiselect_bar_outside_scrolling_content(frame, 
         assert frame.left_panel.selected_devices == ["demo-a", "demo-b"]
         assert bar.geometry().bottom() < frame.stackedWidget.geometry().top()
         assert frame.left_panel.device_widget.isHidden()
-    for route in ("settings", "devices", "home"):
+    for route in ("settings", "devices", "home", "tasks"):
         frame._on_nav_requested(route)
         qt_application.processEvents()
         assert frame._global_device_bar.isHidden()
@@ -244,7 +376,10 @@ def test_connection_popup_forwards_only_validated_target(frame, qt_application):
     calls = []
     frame.left_panel.signals.connect_requested.connect(calls.append)
     frame.show()
-    frame._show_global_connection()
+    frame._on_devices_updated([])
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
+    frame._device_hub.connect_button.click()
     form = frame._global_device_bar.findChild(DeviceConnectionForm)
     assert form is not None
     form.address.setText("192.0.2.10:5555")
@@ -264,9 +399,11 @@ def test_top_device_popups_open_below_their_anchor(frame, qt_application, kind):
         view = bar._picker
         anchor = bar.targets_button
     else:
+        frame._on_nav_requested("devices")
+        qt_application.processEvents()
         frame._show_global_connection()
         view = bar.findChild(DeviceConnectionForm)
-        anchor = bar.connect_button
+        anchor = frame._device_hub.connect_button
     QTest.qWait(230)
     assert view is not None and view.isVisible()
     anchor_bottom = anchor.mapToGlobal(QPoint(0, anchor.height())).y()
@@ -352,18 +489,50 @@ def test_picker_row_and_checkbox_clicks_each_toggle_once(qt_application):
 
 def test_connection_popup_repeated_open_preserves_pending_input(frame, qt_application):
     frame.show()
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
     bar = frame._global_device_bar
-    bar.open_connection([])
+    anchor = frame._device_hub.connect_button
+    bar.open_connection([], anchor=anchor)
     first = bar.findChild(DeviceConnectionForm)
     first.address.setText("192.0.2.10:5555")
-    bar.open_connection([])
+    bar.open_connection([], anchor=anchor)
     forms = bar.findChildren(DeviceConnectionForm)
     assert forms == [first]
     assert first.address.currentText() == "192.0.2.10:5555"
     first.parentWidget().close()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    bar.open_connection([])
+    bar.open_connection([], anchor=anchor)
     assert bar.findChild(DeviceConnectionForm) is not first
+
+
+def test_device_management_actions_are_routed_from_overview(frame, qt_application, monkeypatch):
+    """概览入口复用当前多选和原信号，功能页顶部只承担目标及会话选择。"""
+    refresh = Mock()
+    monkeypatch.setattr(frame.left_panel, "request_device_refresh", refresh)
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    frame._on_nav_requested("devices")
+    qt_application.processEvents()
+    hub = frame._device_hub
+    assert hub.isVisibleTo(frame)
+    assert not frame._global_device_bar.isVisibleTo(frame)
+    hub.refresh_button.click()
+    refresh.assert_called_once_with()
+    disconnected = QSignalSpy(frame.left_panel.signals.disconnect_requested)
+    frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
+    frame.left_panel._devices_tab.set_selected_devices(["demo-b"])
+    hub.disconnect_action.trigger()
+    assert disconnected.count() == 1
+    assert disconnected.at(0)[0] == ["demo-b"]
+    frame._on_nav_requested("apps")
+    qt_application.processEvents()
+    bar = frame._global_device_bar
+    assert bar.isVisibleTo(frame)
+    assert [button for button in bar.findChildren(QAbstractButton)
+            if button.isVisibleTo(frame)] == [bar.targets_button]
+    frame._show_global_connection()
+    assert bar._connection is None
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
@@ -389,52 +558,53 @@ def test_device_bar_groups_fit_real_window_and_wide_session_shares_row(
     frame.resize(width, 900)
     QTest.qWait(300)
     assert frame.width() == width
-    for control in (bar.targets_button, bar.status_label, bar.connect_button,
-                    bar.refresh_button, bar.more_button, bar.session_combo, bar.close_button):
+    for control in (bar.targets_button, bar.close_button):
         assert control.isVisibleTo(frame)
         bounds = QRect(control.mapTo(bar, QPoint()), control.size())
         assert bar.rect().contains(bounds), (control.accessibleName(), bounds, bar.rect())
         assert control.height() >= control.fontMetrics().height()
-    if width == 1440 and font_size == 12:
-        assert bar.target_row.geometry().center().y() == bar.session_row.geometry().center().y()
-        assert (
-            bar.connect_button.mapTo(bar, QPoint()).y()
-            == bar.targets_button.mapTo(bar, QPoint()).y()
-        )
+    assert bar.target_row.isVisible()
+    assert mapped_rect(bar.targets_button, bar).top() == mapped_rect(bar.close_button, bar).top()
+    assert bar.session_hint.isHidden()
+    bar.open_picker()
+    picker = bar._picker
+    qt_application.processEvents()
+    for control in (picker.device_list, picker.clear_button):
+        assert control.isVisible()
+        assert picker.rect().contains(mapped_rect(control, picker))
+    assert picker.session_box.isHidden()
+    assert picker.select_all_button.isHidden()
 
 
-def test_more_menu_keeps_device_actions_and_selection_enablement(qt_application):
-    bar = DeviceContextBar()
-    bar.set_context([], ["demo-a"], "ready")
-    assert not bar.info_action.isEnabled() and not bar.disconnect_action.isEnabled()
-    assert bar.info_action.toolTip() == "在任务中心运行记录中查看所选设备信息"
+def test_more_menu_keeps_disconnect_and_selection_enablement(qt_application):
+    bar = DeviceHubPage()
+    bar.set_device_context([], ["demo-a"], "ready")
+    assert not bar.disconnect_action.isEnabled()
     assert bar.disconnect_action.toolTip() == "断开已勾选设备的 ADB 连接"
-    info = QSignalSpy(bar.info_requested)
     disconnect = QSignalSpy(bar.disconnect_requested)
-    bar.set_context(["demo-a"], ["demo-a"], "ready")
-    assert bar.info_action.isEnabled() and bar.disconnect_action.isEnabled()
+    bar.set_device_context(["demo-a"], ["demo-a"], "ready")
+    assert bar.disconnect_action.isEnabled()
     bar.show()
-    for row, called in enumerate((info, disconnect)):
-        QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
-        QTest.qWait(200)
-        item = bar._more_menu.view.item(row)
-        QTest.mouseClick(
-            bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
-            pos=bar._more_menu.view.visualItemRect(item).center(),
-        )
-        assert called.count() == 1
-        assert not bar._more_menu.isVisible()
-    bar.set_context([], ["demo-a"], "ready")
-    assert not bar.info_action.isEnabled() and not bar.disconnect_action.isEnabled()
     QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
     QTest.qWait(200)
-    for row in range(2):
-        item = bar._more_menu.view.item(row)
-        QTest.mouseClick(
-            bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
-            pos=bar._more_menu.view.visualItemRect(item).center(),
-        )
-    assert info.count() == 1 and disconnect.count() == 1
+    assert bar._more_menu.actions() == [bar.disconnect_action]
+    item = bar._more_menu.view.item(0)
+    QTest.mouseClick(
+        bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
+        pos=bar._more_menu.view.visualItemRect(item).center(),
+    )
+    assert disconnect.count() == 1
+    assert not bar._more_menu.isVisible()
+    bar.set_device_context([], ["demo-a"], "ready")
+    assert not bar.disconnect_action.isEnabled()
+    QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
+    QTest.qWait(200)
+    item = bar._more_menu.view.item(0)
+    QTest.mouseClick(
+        bar._more_menu.view.viewport(), Qt.MouseButton.LeftButton,
+        pos=bar._more_menu.view.visualItemRect(item).center(),
+    )
+    assert disconnect.count() == 1
 
 
 def test_device_bar_status_color_tracks_state_and_theme(qt_application):
@@ -458,7 +628,7 @@ def test_device_bar_status_color_tracks_state_and_theme(qt_application):
 
 
 @pytest.mark.parametrize("state", ["ready", "scanning", "unavailable", "empty"])
-def test_large_font_device_status_remains_visible_in_narrow_bar(
+def test_large_font_device_status_remains_accessible_in_narrow_bar(
     qt_application, monkeypatch, state
 ):
     monkeypatch.setattr(
@@ -473,12 +643,11 @@ def test_large_font_device_status_remains_visible_in_narrow_bar(
     bar.show()
     qt_application.processEvents()
     assert bar.width() == 452
-    assert bar.status_label.isVisible()
-    assert bar.target_row.rect().contains(bar.status_label.geometry())
-    assert bar.refresh_button.isEnabled() == (state != "scanning")
+    assert bar.status_label.text() in bar.targets_button.accessibleDescription()
+    assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
 
 
-def test_large_font_session_bar_wraps_close_action_without_clipping(qt_application, monkeypatch):
+def test_large_font_session_bar_compacts_actions_without_wrapping(qt_application, monkeypatch):
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
@@ -494,12 +663,13 @@ def test_large_font_session_bar_wraps_close_action_without_clipping(qt_applicati
     bar.show()
     qt_application.processEvents()
     assert bar.close_button.width() >= bar.close_button.sizeHint().width()
-    assert (
-        bar.session_combo.width()
-        >= bar.session_combo.fontMetrics().horizontalAdvance("demo-a") + 48
-    )
-    assert bar.close_button.geometry().top() > bar.session_combo.geometry().bottom()
+    assert bar.targets_button.isVisible()
+    assert bar.close_button.accessibleName() == "关闭应用管理"
+    assert bar.close_button.text() == ""
+    assert mapped_rect(bar.close_button, bar).top() == mapped_rect(bar.targets_button, bar).top()
     assert bar.close_button.geometry().right() < bar.session_row.width()
+    bar.open_picker()
+    assert bar._picker.session_combo.currentData() == "demo-a"
 
 
 def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_application):
@@ -512,7 +682,9 @@ def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_app
     qt_application.processEvents()
     bar = frame._global_device_bar
     assert host.current_device_id == ""
-    assert bar.session_row.isVisible()
+    assert bar.targets_button.isVisible()
+    bar.open_picker()
+    assert bar._picker.session_box.isHidden()
     frame._choose_global_session("demo-a")
     assert host.current_device_id == "demo-a"
     first = host.registry.current_key
@@ -522,11 +694,214 @@ def test_session_switch_keeps_batch_targets_and_obeys_running_lock(frame, qt_app
     assert frame.left_panel.selected_devices == ["demo-a", "demo-b"]
     host.set_device_selection_locked("probe", True, "运行中")
     assert not bar.session_combo.isEnabled()
+    assert not bar._picker.device_list.isEnabled()
     frame._choose_global_session("demo-a")
     assert host.current_device_id == "demo-b"
     host.set_device_selection_locked("probe", False)
     frame._choose_global_session("demo-a")
     assert host.registry.current_key == first
+
+
+def test_single_list_changes_target_without_losing_cached_page(frame, qt_application):
+    host = frame._workspace_feature_hosts["apps"]
+    host.register_feature("probe", "测试会话", "", lambda _key: QWidget())
+    frame.show()
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    bar = frame._global_device_bar
+    bar.selection_requested.emit(["demo-b"])
+    frame._open_workspace_feature("apps", "probe", device_id="demo-a")
+    qt_application.processEvents()
+    page = host.stack.currentWidget()
+    history = tuple(frame._navigation_history)
+    bar.open_picker()
+    picker = bar._picker
+    item = picker.device_list.item(0)
+    assert item.checkState() == Qt.CheckState.Unchecked
+    picker.device_list.setCurrentItem(item)
+    picker.device_list.setFocus()
+    QTest.keyClick(picker.device_list, Qt.Key.Key_Space)
+    assert frame.left_panel.selected_devices == ["demo-a"]
+    assert item.checkState() == Qt.CheckState.Checked
+    QTest.keyClick(picker.device_list, Qt.Key.Key_Space)
+    assert frame.left_panel.selected_devices == []
+    assert item.checkState() == Qt.CheckState.Unchecked
+    assert host.stack.currentWidget() is page
+    assert bar.session_combo.currentData() == "demo-a"
+    assert tuple(frame._navigation_history) == history
+    frame._on_devices_updated(["demo-b"])
+    assert picker.device_list.count() == 1
+    assert picker.device_list.item(0).data(Qt.ItemDataRole.UserRole) == "demo-b"
+    assert host.stack.currentWidget() is page
+
+
+@pytest.mark.parametrize("section,feature", [
+    ("apps", "manager"), ("devices", "files"), ("system", "logcat"),
+])
+def test_no_device_primary_action_opens_device_management(frame, qt_application, section, feature):
+    frame.show()
+    frame._on_devices_updated([])
+    frame._open_workspace_feature(section, feature)
+    qt_application.processEvents()
+    host = frame._workspace_feature_hosts[section]
+    assert host.stack.currentWidget() is host.no_device_page
+    assert host.no_device_page.choose_button.text() == "前往设备概览"
+    host.no_device_page.choose_button.click()
+    qt_application.processEvents()
+    assert frame.stackedWidget.currentWidget() is frame._devices_page
+    assert frame._devices_page.current_route.feature == "overview"
+    assert frame._device_hub.connect_button.isVisibleTo(frame)
+    assert frame._global_device_bar._picker is None
+
+
+@pytest.mark.parametrize("section,feature", [
+    ("devices", "files"), ("devices", "remote"), ("apps", "manager"),
+    ("apps", "overview"), ("apps", "media"), ("system", "overview"),
+    ("system", "logcat"), ("system", "performance"),
+])
+@pytest.mark.parametrize("window_width", [860, 1017])
+def test_workspace_selection_keeps_visible_page_and_bar_geometry(
+    frame, qt_application, monkeypatch, section, feature, window_width
+):
+    monkeypatch.setattr("gui.dialogs.app_manager.AppManagerPage._load_apps", Mock())
+    monkeypatch.setattr("gui.dialogs.file_explorer.FileExplorerPage._refresh", Mock())
+    frame._on_devices_updated(["demo-device-01", "demo-b"])
+    bar = frame._global_device_bar
+    bar.selection_requested.emit(["demo-device-01"])
+    frame.show()
+    assert frame._open_workspace_feature(section, feature, device_id="demo-device-01")
+    host = frame._workspace_feature_hosts[section]
+    page = host.stack.currentWidget()
+    qt_application.processEvents()
+    wait_until(qt_application, lambda: (
+        frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+    ))
+    # 首次显示会恢复窗口尺寸，必须在恢复完成后检查截图对应的实际可用宽度。
+    frame.resize(window_width, 900)
+    qt_application.processEvents()
+    wait_until(qt_application, lambda: (
+        frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+    ))
+    wait_for_stable_geometry(qt_application, (frame, bar, host, page))
+    assert frame.size() == QSize(window_width, 900)
+    initial = (bar.height(), mapped_rect(host, frame).top(), host.current_device_id)
+    history = tuple(frame._navigation_history)
+    for selected in ([], ["demo-b"], ["demo-device-01"]):
+        # 其他页面更新共享目标时不重定向已有会话；本页下拉切换另有回归覆盖。
+        frame.left_panel._devices_tab.set_selected_devices(selected)
+        wait_for_stable_geometry(qt_application, (frame, bar, host, page))
+        assert bar.isVisibleTo(frame)
+        assert host.stack.currentWidget() is page
+        assert (bar.height(), mapped_rect(host, frame).top(), host.current_device_id) == initial
+        assert tuple(frame._navigation_history) == history
+        if host.feature_requires_device(feature):
+            assert mapped_rect(bar.session_combo, bar).top() == (
+                mapped_rect(bar.session_target, bar).top()
+            )
+            assert bar.session_hint.isHidden()
+            assert bar.session_combo.currentData() == "demo-device-01"
+            assert bar.session_hint.text() == (
+                "在线" if "demo-device-01" in selected else "未选为操作目标"
+            )
+            assert bar.session_hint.text() in bar.session_combo.accessibleDescription()
+
+
+@pytest.mark.parametrize("route", [
+    "homePage", "devicesPage", "filesPage", "remotePage", "appManagerPage", "appsPage",
+    "screenshotsPage", "systemPage", "logcatPage", "performancePage", "tasksPage", "settingsPage",
+])
+def test_page_scrollbars_stay_close_to_content(frame, qt_application, monkeypatch, route):
+    monkeypatch.setattr("gui.dialogs.app_manager.AppManagerPage._load_apps", Mock())
+    monkeypatch.setattr("gui.dialogs.file_explorer.FileExplorerPage._refresh", Mock())
+    frame._on_devices_updated(["demo-a", "demo-b", "demo-c", "demo-d"])
+    frame._global_device_bar.selection_requested.emit(["demo-a"])
+    frame.show()
+    frame.navigationInterface.widget(route).click()
+    qt_application.processEvents()
+    wait_until(qt_application, lambda: (
+        frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+    ))
+    window_width = 860 if route == "homePage" else 1048
+    frame.resize(window_width, 500)
+    qt_application.processEvents()
+    wait_until(qt_application, lambda: (
+        frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+    ))
+    page = frame.stackedWidget.currentWidget()
+    assert frame.navigationInterface.panel.currentItem() is frame.navigationInterface.widget(route)
+    if frame._global_device_bar.isVisibleTo(frame):
+        assert frame._global_device_bar.page_title.text() == page.accessibleName()
+    wait_for_stable_geometry(qt_application, (frame, page))
+    assert frame.size() == QSize(window_width, 500)
+    areas = page.findChildren(QScrollArea)
+    if isinstance(page, QScrollArea):
+        areas.append(page)
+    assert areas
+    checked = 0
+    for area in areas:
+        if not area.isVisibleTo(frame):
+            continue
+        delegate = getattr(area, "delegate", None) or getattr(area, "scrollDelagate", None)
+        if delegate is None or not delegate.vScrollBar.isVisibleTo(frame):
+            continue
+        bar = delegate.vScrollBar
+        assert area.viewport().geometry().adjusted(-2, -2, 2, 2).contains(
+            mapped_rect(bar, area)
+        ), route
+        cards = [card for card in area.widget().findChildren(QWidget)
+                 if isinstance(card, (CardWidget, SettingCard))
+                 and card.isVisibleTo(area.widget())]
+        anchors = cards or [button for button in area.widget().findChildren(QAbstractButton)
+                            if button.isVisibleTo(area.widget())]
+        if anchors:
+            right = max(mapped_rect(anchor, area).right() for anchor in anchors)
+            gap = mapped_rect(bar.handle, area).right() - right
+            assert 0 <= gap <= 14, (route, gap)
+            checked += 1
+    if route in {"homePage", "settingsPage", "appsPage", "systemPage", "performancePage"}:
+        assert checked > 0
+
+
+@pytest.mark.parametrize("route", ["home", "settings"])
+def test_page_scrollbar_uses_full_viewport_and_accepts_drag(frame, qt_application, route):
+    frame.show()
+    frame._on_nav_requested(route)
+    page = frame.stackedWidget.currentWidget()
+    qt_application.processEvents()
+    wait_until(qt_application, lambda: (
+        frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+        and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+    ))
+    for width in (1048, 860, 1048, 860):
+        frame.resize(width, 500)
+        qt_application.processEvents()
+        wait_until(qt_application, lambda: (
+            frame.navigationInterface.panel.expandAni.state() == QAbstractAnimation.State.Stopped
+        ))
+        wait_for_stable_geometry(qt_application, (frame, page, page.viewport()))
+        assert frame.size() == QSize(width, 500)
+        assert page.viewport().geometry() == page.rect()
+        bar = page.scrollDelagate.vScrollBar
+        assert bar.isVisibleTo(frame) is (page.verticalScrollBar().maximum() > 0)
+        assert page.viewport().geometry().contains(mapped_rect(bar, page))
+        assert abs(mapped_rect(bar, page).right() - page.viewport().geometry().right()) <= 2
+        assert page.horizontalScrollBar().maximum() == 0
+    assert bar.isVisibleTo(frame)
+    start = bar.handle.geometry().center()
+    QTest.mousePress(bar, Qt.MouseButton.LeftButton, pos=start)
+    QTest.mouseMove(bar, start + QPoint(0, 60))
+    QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, pos=start + QPoint(0, 60))
+    wait_until(qt_application, lambda: page.verticalScrollBar().value() > 0)
+    page.verticalScrollBar().setValue(page.verticalScrollBar().maximum())
+    wait_for_stable_geometry(qt_application, (page, page.widget(), bar))
+    if route == "settings":
+        last = page.about_panel
+    else:
+        last = page.widget().layout().itemAt(page.widget().layout().count() - 1).widget()
+    assert mapped_rect(last, page.viewport()).bottom() <= page.viewport().rect().bottom()
+    if route == "settings":
+        assert page.viewport().rect().bottom() - mapped_rect(last, page.viewport()).bottom() == 20
 
 
 @pytest.mark.parametrize(

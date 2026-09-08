@@ -92,7 +92,7 @@ class DeviceMonitor:
                 delta_inter = self.interval - time_consume
                 logger.debug("get app activity time consumed: " + str(time_consume))
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self.stop_event.wait(delta_inter)
             except Exception:
                 s = traceback.format_exc()
                 logger.debug(s)  # 堆栈仅进入开发诊断通道。

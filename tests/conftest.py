@@ -22,6 +22,7 @@ _APPLICATION_REFERENCES = []
 @pytest.fixture(autouse=True)
 def isolated_run_library_storage(tmp_path, monkeypatch):
     """主窗口测试的归档库只读写临时目录，绝不加载或覆盖用户历史。"""
+    monkeypatch.setattr("gui.run_library.user_data_root", lambda: tmp_path)
     monkeypatch.setattr(
         "services.run_library.user_config_path", lambda filename: str(tmp_path / filename),
     )
@@ -130,6 +131,7 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe):
 # 新增 UI 类或探针类测试文件时，在这里同步登记并更新 TESTING_GUIDE 的 marker 说明。
 _UI_TEST_FILES = frozenset(
     {
+        "test_qt_adb_runtime.py",
         "test_file_app_device_admission.py",
         "test_session_device_admission.py",
         "test_shell_workflows.py",
@@ -185,6 +187,7 @@ _UI_TEST_FILES = frozenset(
         "test_responsive_panels.py",
         "test_responsive_row_height.py",
         "test_screenshot_page.py",
+        "test_screenshot_io.py",
         "test_system_panel_categories.py",
         "test_task_center.py",
         "test_run_results.py",

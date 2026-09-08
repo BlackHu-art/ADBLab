@@ -1,14 +1,14 @@
 """任务中心页：在途任务、可持久化测试结果与本次操作记录。
 
-在途数据源为 ``OperationManager.active_snapshot()``（仅 QUEUED/RUNNING/FINALIZING，
-终态即删除、无历史）；历史由 :class:`services.task_history.TaskHistoryStore` 自持有界
-存储消费终态事件，Monkey/性能的跨会话结果由共享测试库异步更新。页面可见时
+可取消任务读取 ``OperationManager.active_snapshot()``；通用命令由组合根推送
+ActionResult 快照，包含普通长命令的在途入口与本次操作历史。Monkey/性能的跨会话
+结果由共享测试库异步更新；未注入测试库时保留 TaskHistoryStore 兼容入口。页面可见时
 以 1000ms ``QTimer`` 轮询并做不可变快照 diff，无变化
 不重建控件；隐藏时停表。取消按钮走双路径：``OperationManager.request_cancel`` +
 注入的资源停止回调 ``stop_hook``。
 
 构造契约：``panel`` 预留为 SidePanel 兼容入口；在途视图
-需要注入 ``operation_manager`` 才能读取活动快照，未注入时在途视图退化为空态。
+需要注入 ``operation_manager`` 才能读取可取消任务，普通命令快照不依赖此注入。
 ``refresh()`` 是本页对组合根的稳定契约：同步重读在途快照与历史并按 diff 决定重建。
 """
 
@@ -29,22 +29,22 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
-    FluentIcon,
     HeaderCardWidget,
     InfoBadge,
     InfoLevel,
     PrimaryPushButton,
     ProgressBar,
+    PushButton,
     SmoothScrollArea,
 )
 
+from adblab.application.action_results import ActionResult
 from adblab.application.operations import OperationManager, OperationSnapshot, OperationState
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role, configure_button
 from gui.widgets.category_stack import AdaptiveCategoryStack
-from gui.widgets.collapsible_tools import CollapsibleTools
 from gui.widgets.content_section import ContentSection
 from gui.widgets.run_results import RunResultsWidget
 from services.task_history import TaskHistoryEntry, TaskHistoryStore
@@ -183,7 +183,6 @@ class TaskCenterPage(QWidget):
         parent: QWidget | None = None,
         poll_interval_ms: int = POLL_INTERVAL_MS,
         history_limit: int | None = DEFAULT_HISTORY_LIMIT,
-        runtime_log: QWidget | None = None,
         run_library: RunLibraryController | None = None,
     ) -> None:
         super().__init__(parent)
@@ -214,9 +213,23 @@ class TaskCenterPage(QWidget):
         content_layout.setContentsMargins(8, 8, 8, 8)
         content_layout.setSpacing(20)
         content_layout.addWidget(self._active_card)
+        from gui.widgets.action_result_view import ActionResultView
+
+        self.action_results = ActionResultView(content)
+        self.action_empty_label = apply_label_role(
+            BodyLabel(tr("本次运行尚无操作结果，执行功能后会在此显示。"), content),
+            FontRole.UI_SMALL, color_key="TEXT_SECONDARY",
+        )
+        self.action_empty_label.setWordWrap(True)
+        self.running_actions_button = PushButton(content)
+        self.running_actions_button.hide()
+        self.running_actions_button.clicked.connect(self._open_running_action)
+        content_layout.insertWidget(0, self.running_actions_button)
         self._idle_label: BodyLabel | None = None
         self.run_results: RunResultsWidget | None = None
         if run_library is not None:
+            self._history_card.setParent(self)
+            self._history_card.hide()
             self._idle_label = apply_label_role(
                 BodyLabel(tr("暂无在途任务"), content), FontRole.UI_SMALL,
                 color_key="TEXT_SECONDARY",
@@ -226,20 +239,13 @@ class TaskCenterPage(QWidget):
             self._history_card.headerView.hide()
             self.history_views = AdaptiveCategoryStack("taskHistory", content)
             self.history_views.add_category("test_results", tr("测试结果"), (self.run_results,))
-            self.history_views.add_category("operations", tr("本次操作"), (self._history_card,))
+            self.history_views.add_category(
+                "operations", tr("本次操作"), (self.action_empty_label, self.action_results),
+            )
             content_layout.addWidget(self.history_views)
         else:
+            content_layout.addWidget(self.action_results)
             content_layout.addWidget(self._history_card)
-        self.runtime_records: CollapsibleTools | None = None
-        if runtime_log is not None:
-            # 记录面板继续接收有界日志；折叠只影响显示，不丢失后台错误和操作结果。
-            runtime_log.setMinimumHeight(300)
-            self.runtime_records = CollapsibleTools(
-                tr("运行记录"), runtime_log, content,
-                icon=FluentIcon.SCROLL,
-                tooltip=tr("查看应用操作与异常记录，可按级别筛选或清空显示"),
-            )
-            content_layout.addWidget(self.runtime_records)
         content_layout.addStretch(1)
         self._scroll.setWidget(content)
         content.setAutoFillBackground(False)
@@ -249,50 +255,32 @@ class TaskCenterPage(QWidget):
         self._poll_timer.setInterval(max(0, int(poll_interval_ms)))
         self._poll_timer.timeout.connect(self.refresh)
 
-        self._runtime_reveal_pending = False
-        self._runtime_reveal_timer = QTimer(self)
-        self._runtime_reveal_timer.setSingleShot(True)
-        self._runtime_reveal_timer.setInterval(20)
-        self._runtime_reveal_timer.timeout.connect(self._reveal_runtime_records)
-        self._scroll.verticalScrollBar().rangeChanged.connect(self._reschedule_runtime_reveal)
-        if self.runtime_records is not None:
-            self.runtime_records.expanded_changed.connect(self._on_runtime_records_expanded)
-
         self._sync_theme_state()
-
-    def show_runtime_records(self) -> None:
-        """展开同页记录并移到可读位置，原日志控件继续负责过滤和有界缓存。"""
-
-        if self.runtime_records is None:
-            return
-        self.runtime_records.toggle_button.setChecked(True)
-        self._on_runtime_records_expanded(True)
-
-    def _on_runtime_records_expanded(self, expanded: bool) -> None:
-        """展开和重新定位共享一次请求；折叠后不再响应已排队的滚动。"""
-        self._runtime_reveal_pending = expanded
-        if expanded:
-            self._reschedule_runtime_reveal()
-        else:
-            self._runtime_reveal_timer.stop()
-
-    def _reschedule_runtime_reveal(self, *_args) -> None:
-        # 卡片展开与主窗口高度修正可能分属不同事件循环；合并滚动范围更新，
-        # 等下一帧布局完成后定位，避免按折叠时仍为零的滚动范围丢掉本次请求。
-        if self._runtime_reveal_pending:
-            self._runtime_reveal_timer.start()
-
-    def _reveal_runtime_records(self) -> None:
-        if self.runtime_records is None or not self._runtime_reveal_pending:
-            return
-        self._runtime_reveal_pending = False
-        if not self.isVisible() or self.runtime_records.content.isHidden():
-            return
-        self._scroll.ensureWidgetVisible(self.runtime_records.content, 0, 8)
-        # 日志面板本身也是合法焦点代理，避免依赖它内部控件的名称。
-        self.runtime_records.content.setFocus(Qt.FocusReason.ShortcutFocusReason)
-
     # ── 数据刷新契约 ────────────────────────────────────────────────────
+
+    def present_action_result(self, result: ActionResult) -> None:
+        """普通命令也呈现在途入口，避免仅有 Operation 任务才能被观察。"""
+        self.action_empty_label.hide()
+        self.action_results.present(result)
+        self._refresh_action_status()
+
+    def _refresh_action_status(self) -> None:
+        running = self.action_results.running_results()
+        self.running_actions_button.setText(
+            tr("查看执行中的操作（{count}）").format(count=len(running))
+        )
+        self.running_actions_button.setVisible(bool(running))
+        if self._idle_label is not None:
+            self._idle_label.setVisible(not self._active_cache and not running)
+
+    def _open_running_action(self) -> None:
+        running = self.action_results.running_results()
+        if not running:
+            return
+        if self.run_results is not None:
+            self.history_views.set_current("operations")
+        self.action_results.select_request(running[-1].request_id)
+        self._scroll.ensureWidgetVisible(self.action_results, 0, 12)
 
     def refresh(self) -> None:
         """重读在途快照与历史，并按 diff 决定是否重建控件。"""
@@ -309,6 +297,7 @@ class TaskCenterPage(QWidget):
             return
         self._active_cache = active
         self._render_active_rows(active)
+        self._refresh_action_status()
 
     def _apply_history(self, history: tuple[TaskHistoryEntry, ...]) -> None:
         if history == self._history_cache:
@@ -330,7 +319,7 @@ class TaskCenterPage(QWidget):
             self._active_card.viewLayout.addWidget(
                 self._empty_state(
                     tr("暂无在途任务"),
-                    tr("操作结果与异常信息可在下方运行记录中查看。"),
+                    tr("执行过程与完整结果在本次操作中回看，完成时通过右上角通知提示。"),
                 )
             )
             return
@@ -441,16 +430,12 @@ class TaskCenterPage(QWidget):
 
     def hideEvent(self, event: QHideEvent) -> None:
         self._poll_timer.stop()
-        self._runtime_reveal_pending = False
-        self._runtime_reveal_timer.stop()
         super().hideEvent(event)
 
     def shutdown(self) -> None:
         """停止轮询定时器，供窗口关闭清理调用。"""
 
         self._poll_timer.stop()
-        self._runtime_reveal_pending = False
-        self._runtime_reveal_timer.stop()
 
     # ── 主题与辅助 ──────────────────────────────────────────────────────
 

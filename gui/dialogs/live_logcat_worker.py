@@ -215,9 +215,13 @@ class LogcatWorker(QThread):
                 )
             return
         try:
+            def cancelled() -> bool:
+                return self._stop_event.is_set() or generation != self.filter_generation
+
             result = CommandRunner.run(
                 ["adb", "-s", self.device_ip, "shell", "pidof", package],
                 timeout=self.PID_PROBE_TIMEOUT_SECONDS,
+                cancelled=cancelled,
             )
         except Exception:
             result = None
@@ -517,17 +521,18 @@ class LogcatWorker(QThread):
 
 
 class _InterruptiblePackageRunner:
-    """为共享前台包检测器提供有界、可在命令间取消的执行边界。"""
+    """为共享前台包检测器提供执行中可取消的只读命令边界。"""
 
     def __init__(self, worker: "CurrentPackageWorker"):
         self._worker = worker
 
-    def run(self, command: list[str], timeout: int = 5) -> CommandResult:
+    def run(self, command: list[str], timeout: float = 5) -> CommandResult:
         if self._worker.isInterruptionRequested():
             return CommandResult(False, error="cancelled", returncode=-1)
         return CommandRunner.run(
             command,
             timeout=min(timeout, self._worker.PROBE_COMMAND_TIMEOUT_SECONDS),
+            cancelled=self._worker.isInterruptionRequested,
         )
 
 
@@ -554,6 +559,7 @@ class CurrentPackageWorker(QThread):
             result = detect_current_package(
                 self.device_ip,
                 runner=_InterruptiblePackageRunner(self),
+                cancelled=self.isInterruptionRequested,
             )
             if self.isInterruptionRequested():
                 return

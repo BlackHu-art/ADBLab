@@ -3,6 +3,7 @@
 import weakref
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -19,6 +20,7 @@ from qfluentwidgets import (
     CaptionLabel,
     CardWidget,
     CheckBox,
+    CommandBar,
     InfoBadge,
     InfoLevel,
     LineEdit,
@@ -26,6 +28,7 @@ from qfluentwidgets import (
     PushButton,
     RoundMenu,
     TableWidget,
+    TransparentToolButton,
 )
 
 from gui.dialogs.file_explorer_image import FileExplorerImagePreview
@@ -47,7 +50,6 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import add_menu_action, apply_label_role
 from gui.styles.typography import FontRole
-from gui.widgets.responsive_layout import reflow_widgets
 from models.file_explorer_worker import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
 
@@ -56,6 +58,13 @@ __all__ = ["FileExplorerPage"]
 
 class FileExplorerPage(QWidget):
     """按设备持有状态的页内文件浏览器会话。"""
+
+    refresh_action: QAction
+    mkdir_action: QAction
+    touch_action: QAction
+    pull_action: QAction
+    push_action: QAction
+    delete_action: QAction
 
     dispose_ready = Signal()
     operation_availability_changed = Signal(bool)
@@ -155,7 +164,7 @@ class FileExplorerPage(QWidget):
     def _init_ui(self):
         layout = QVBoxLayout(self)
         layout.setSpacing(4)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(8, 6, 8, 6)
 
         # ── 页头卡片：标题、副标题与设备连接状态徽标 ─────────────────────
         # 页面内容顶部统一为 Fluent CardWidget 卡片页头。
@@ -206,80 +215,76 @@ class FileExplorerPage(QWidget):
         self.search_field.textChanged.connect(self._filter)
         layout.addLayout(self._path_layout)
 
-        self._toolbar_layout = QGridLayout()
-        self._toolbar_layout.setSpacing(3)
-        self.back_btn = PushButton()
+        self._path_navigation = QWidget(self)
+        navigation_layout = QHBoxLayout(self._path_navigation)
+        navigation_layout.setContentsMargins(0, 0, 0, 0)
+        navigation_layout.setSpacing(4)
+        self.back_btn = TransparentToolButton()
         self.back_btn.setIcon(file_explorer_icon("arrow-left.svg"))
         self.back_btn.setIconSize(QSize(14, 14))
         self.back_btn.setToolTip(tr("Return to the previous folder"))
         self.back_btn.setAccessibleName(tr("Back"))
         self.back_btn.clicked.connect(self._go_back)
         self.back_btn.setEnabled(False)
-        self.fwd_btn = PushButton()
+        self.fwd_btn = TransparentToolButton()
         self.fwd_btn.setIcon(file_explorer_icon("arrow-right.svg"))
         self.fwd_btn.setIconSize(QSize(14, 14))
         self.fwd_btn.setToolTip(tr("Return to the next folder"))
         self.fwd_btn.setAccessibleName(tr("Forward"))
         self.fwd_btn.clicked.connect(self._go_forward)
         self.fwd_btn.setEnabled(False)
-        self.up_btn = PushButton()
+        self.up_btn = TransparentToolButton()
         self.up_btn.setIcon(file_explorer_icon("arrow-up.svg"))
         self.up_btn.setIconSize(QSize(14, 14))
         self.up_btn.setToolTip(tr("Open the parent folder"))
         self.up_btn.setAccessibleName(tr("Parent folder"))
         self.up_btn.clicked.connect(self._go_parent)
-        self.refresh_btn = PushButton()
-        self.refresh_btn.setText(tr("Refresh"))
-        self.refresh_btn.setToolTip(tr("Reload the current device folder"))
-        self.refresh_btn.setIcon(file_explorer_icon("arrows-clockwise.svg"))
-        self.refresh_btn.setIconSize(QSize(14, 14))
-        self.refresh_btn.clicked.connect(self._refresh)
-        self.mkdir_btn = PushButton()
-        self.mkdir_btn.setText(tr("New Folder"))
-        self.mkdir_btn.setToolTip(tr("Create a folder in the current location"))
-        self.mkdir_btn.setIcon(file_explorer_icon("folder-plus.svg"))
-        self.mkdir_btn.setIconSize(QSize(14, 14))
-        self.mkdir_btn.clicked.connect(self._mkdir)
-        self.touch_btn = PushButton()
-        self.touch_btn.setText(tr("New File"))
-        self.touch_btn.setToolTip(tr("Create an empty file in the current location"))
-        self.touch_btn.setIcon(file_explorer_icon("file-plus.svg"))
-        self.touch_btn.setIconSize(QSize(14, 14))
-        self.touch_btn.clicked.connect(self._touch)
-        self.pull_btn = PushButton()
-        self.pull_btn.setText(tr("Pull"))
-        self.pull_btn.setToolTip(tr("Copy selected items to the computer"))
-        self.pull_btn.setIcon(file_explorer_icon("download-simple.svg"))
-        self.pull_btn.setIconSize(QSize(14, 14))
-        self.pull_btn.clicked.connect(self._pull_selected)
-        self.push_btn = PushButton()
-        self.push_btn.setText(tr("Push"))
-        self.push_btn.setToolTip(tr("Copy a local file to the current device folder"))
-        self.push_btn.setIcon(file_explorer_icon("upload-simple.svg"))
-        self.push_btn.setIconSize(QSize(14, 14))
-        self.push_btn.clicked.connect(self._push_file)
-        self.delete_btn = PushButton()
-        self.delete_btn.setText(tr("Delete"))
-        self.delete_btn.setToolTip(tr("Remove the selected device items"))
-        self.delete_btn.setIcon(file_explorer_icon("trash.svg"))
-        self.delete_btn.setIconSize(QSize(14, 14))
-        self.delete_btn.clicked.connect(self._delete_selected)
-        self._toolbar_buttons = (
-            self.back_btn,
-            self.fwd_btn,
-            self.up_btn,
-            self.refresh_btn,
-            self.mkdir_btn,
-            self.touch_btn,
-            self.pull_btn,
-            self.push_btn,
-            self.delete_btn,
+        for button in (self.back_btn, self.fwd_btn, self.up_btn):
+            navigation_layout.addWidget(button)
+
+        self.command_bar = CommandBar(self)
+        self.command_bar.setObjectName("fileExplorerCommandBar")
+        self.command_bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        # 按钮自带文字留白，零外间距也避免原生溢出计算遗漏末项间距而裁切更多按钮。
+        self.command_bar.setSpaing(0)
+        self.command_bar.setIconSize(QSize(16, 16))
+        self.command_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.command_bar.moreButton.setAccessibleName(tr("更多"))
+        self.command_bar.moreButton.setToolTip(tr("更多文件操作"))
+        # QAction 同时供主栏和溢出菜单使用，操作资格只能写入这一个状态来源。
+        action_specs = (
+            ("refresh", "Refresh", "Reload the current device folder",
+             "arrows-clockwise.svg", self._refresh),
+            ("mkdir", "New Folder", "Create a folder in the current location",
+             "folder-plus.svg", self._mkdir),
+            ("touch", "New File", "Create an empty file in the current location",
+             "file-plus.svg", self._touch),
+            ("pull", "Pull", "Copy selected items to the computer",
+             "download-simple.svg", self._pull_selected),
+            ("push", "Push", "Copy a local file to the current device folder",
+             "upload-simple.svg", self._push_file),
+            ("delete", "Delete", "Remove the selected device items",
+             "trash.svg", self._delete_selected),
         )
+        for name, text, tooltip, icon, callback in action_specs:
+            action = QAction(file_explorer_icon(icon), tr(text), self)
+            action.setObjectName(f"fileExplorer{name.title()}Action")
+            action.setToolTip(tr(tooltip))
+            action.triggered.connect(callback)
+            setattr(self, f"{name}_action", action)
+            self.command_bar.addAction(action)
+            if name in {"refresh", "touch", "push"}:
+                self.command_bar.addSeparator()
         self.root_cb = CheckBox()
         self.root_cb.setText(tr("Root"))
         self.root_cb.setToolTip(tr("Use root access (su)"))
         self.root_cb.setAccessibleName(tr("Use root access"))
-        layout.addLayout(self._toolbar_layout)
+        command_layout = QHBoxLayout()
+        command_layout.setContentsMargins(0, 0, 0, 0)
+        command_layout.setSpacing(8)
+        command_layout.addWidget(self.command_bar, 1)
+        command_layout.addWidget(self.root_cb)
+        layout.addLayout(command_layout)
         self._reflow_top_controls()
 
         self.browser_panel = QWidget(self)
@@ -559,21 +564,18 @@ class FileExplorerPage(QWidget):
     def _sync_directory_controls(self) -> None:
         """根据设备和目录请求状态统一维护文件操作可用性。"""
 
-        if not hasattr(self, "refresh_btn"):
+        if not hasattr(self, "refresh_action"):
             return
         available = self._can_operate()
         interactive = available and not self._directory_loading
         self.path_field.setEnabled(interactive)
         self.root_cb.setEnabled(interactive)
         self.up_btn.setEnabled(interactive)
-        self.mkdir_btn.setEnabled(interactive)
-        self.touch_btn.setEnabled(interactive)
-        self.pull_btn.setEnabled(interactive)
-        self.push_btn.setEnabled(interactive)
-        self.delete_btn.setEnabled(interactive)
+        for action in self.command_bar.actions():
+            action.setEnabled(interactive)
         self.back_btn.setEnabled(interactive and bool(self.history))
         self.fwd_btn.setEnabled(interactive and bool(self.forward_stack))
-        self.refresh_btn.setEnabled(available)
+        self.refresh_action.setEnabled(available)
         self.table.setEnabled(interactive)
         self.preview_save_device_btn.setEnabled(
             available and bool(self._preview_full_path) and not self.preview_text_edit.isReadOnly()
@@ -581,35 +583,26 @@ class FileExplorerPage(QWidget):
         self.operation_availability_changed.emit(available)
 
     def _reflow_top_controls(self) -> None:
-        """在窄窗口中把路径、搜索和工具按钮重排到多行。"""
+        """窄屏只将搜索移到下一行，文件命令始终由原生溢出菜单承接。"""
 
         if not hasattr(self, "_path_layout"):
             return
-        available_width = max(1, self.contentsRect().width() - 12)
-        for widget in (self._path_label, self.path_field, self.search_field):
+        layout = self.layout()
+        assert layout is not None
+        margins = layout.contentsMargins()
+        available_width = max(1, self.contentsRect().width() - margins.left() - margins.right())
+        for widget in (self._path_navigation, self._path_label, self.path_field, self.search_field):
             self._path_layout.removeWidget(widget)
+        for column in range(4):
+            self._path_layout.setColumnStretch(column, 0)
+        self._path_layout.addWidget(self._path_navigation, 0, 0)
+        self._path_layout.addWidget(self._path_label, 0, 1)
+        self._path_layout.addWidget(self.path_field, 0, 2)
+        self._path_layout.setColumnStretch(2, 1)
         if available_width < 720:
-            self._path_layout.addWidget(self._path_label, 0, 0)
-            self._path_layout.addWidget(self.path_field, 0, 1)
-            self._path_layout.addWidget(self.search_field, 1, 0, 1, 2)
-            self._path_layout.setColumnStretch(1, 1)
+            self._path_layout.addWidget(self.search_field, 1, 0, 1, 3)
         else:
-            self._path_layout.addWidget(self._path_label, 0, 0)
-            self._path_layout.addWidget(self.path_field, 0, 1)
-            self._path_layout.addWidget(self.search_field, 0, 2)
-            self._path_layout.setColumnStretch(1, 1)
-
-        columns = 9 if available_width >= 900 else 5 if available_width >= 560 else 3
-        self._toolbar_layout.removeWidget(self.root_cb)
-        reflow_widgets(self._toolbar_layout, self._toolbar_buttons, columns)
-        remainder = len(self._toolbar_buttons) % columns
-        root_row = len(self._toolbar_buttons) // columns
-        if remainder:
-            self._toolbar_layout.addWidget(self.root_cb, root_row, remainder)
-        else:
-            self._toolbar_layout.addWidget(self.root_cb, root_row, 0, 1, columns)
-        for column in range(columns):
-            self._toolbar_layout.setColumnStretch(column, 1)
+            self._path_layout.addWidget(self.search_field, 0, 3)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -632,12 +625,12 @@ class FileExplorerPage(QWidget):
             (self.back_btn, "arrow-left.svg"),
             (self.fwd_btn, "arrow-right.svg"),
             (self.up_btn, "arrow-up.svg"),
-            (self.refresh_btn, "arrows-clockwise.svg"),
-            (self.mkdir_btn, "folder-plus.svg"),
-            (self.touch_btn, "file-plus.svg"),
-            (self.pull_btn, "download-simple.svg"),
-            (self.push_btn, "upload-simple.svg"),
-            (self.delete_btn, "trash.svg"),
+            (self.refresh_action, "arrows-clockwise.svg"),
+            (self.mkdir_action, "folder-plus.svg"),
+            (self.touch_action, "file-plus.svg"),
+            (self.pull_action, "download-simple.svg"),
+            (self.push_action, "upload-simple.svg"),
+            (self.delete_action, "trash.svg"),
             (self.preview_back_btn, "arrow-left.svg"),
             (self.preview_close_btn, "x.svg"),
             (self.preview_image.image_close, "x.svg"),
@@ -665,6 +658,27 @@ class FileExplorerPage(QWidget):
         # qfluentwidgets LineEdit 默认使用像素字号，这里显式覆盖为点位角色字体。
         self.path_field.setFont(mono_font)
         self.search_field.setFont(ui_font)
+        for field in (self.path_field, self.search_field):
+            field.setFixedHeight(max(34, field.fontMetrics().height() + 12))
+        self.command_bar.setFont(ui_font)
+        self.root_cb.setFont(ui_font)
+        self.root_cb.setMinimumHeight(max(29, self.root_cb.fontMetrics().height() + 8))
+        for button in (*self.command_bar.commandButtons, self.command_bar.moreButton):
+            button.setFont(ui_font)
+            hint = button.sizeHint()
+            button.setFixedSize(
+                hint.width(), max(hint.height(), button.fontMetrics().height() + 16)
+            )
+            if button is not self.command_bar.moreButton:
+                action = button.action()
+                assert action is not None
+                button.setAccessibleName(action.text())
+                button.setAccessibleDescription(action.toolTip())
+        command_height = max(button.height() for button in self.command_bar.commandButtons)
+        self.command_bar.setFixedHeight(command_height)
+        self.command_bar.updateGeometry()
+        for button in (self.back_btn, self.fwd_btn, self.up_btn):
+            button.setFixedSize(34, command_height)
         self.preview_title.setFont(bs.font_for_role(FontRole.UI))
         self.preview_empty_label.setFont(bs.font_for_role(FontRole.UI))
         self.preview_loading_label.setFont(bs.font_for_role(FontRole.UI))

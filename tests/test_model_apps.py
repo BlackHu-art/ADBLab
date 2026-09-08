@@ -5,6 +5,8 @@ import subprocess
 import threading
 from unittest.mock import Mock, call, patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication
@@ -19,6 +21,63 @@ from gui.styles import BaseStyles
 from models.adb_app import ADBApp
 from models.adb_testing import ADBTesting
 from models.base.focus_detector import detect_current_package, extract_package_name
+
+
+def test_app_snapshot_emits_details_and_permissions_from_one_query():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "app_snapshot", package_name="com.example.app")
+    details, permissions = [], []
+    worker.app_details_loaded.connect(details.append)
+    worker.permissions_loaded.connect(lambda *parts: permissions.append(parts))
+    output = (
+        "versionCode=7\nversionName=1.2\n"
+        "requested permissions:\n  android.permission.CAMERA\n"
+        "\nruntime permissions:\n  android.permission.CAMERA: granted=true\n"
+    )
+    with patch(
+        "models.app_manager_worker.CommandRunner.run",
+        return_value=CommandResult(True, output=output),
+    ) as run:
+        worker.run()
+    assert len(details) == len(permissions) == 1
+    assert details[0]["Version"] == "1.2 (code 7)"
+    assert permissions[0][1] == ["android.permission.CAMERA"]
+    assert permissions[0][2] == [("android.permission.CAMERA", True)]
+    assert run.call_count == 1
+
+
+def test_app_snapshot_discards_both_parts_when_cancelled_during_read():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "app_snapshot", package_name="com.example.app")
+    details, permissions = [], []
+    worker.app_details_loaded.connect(details.append)
+    worker.permissions_loaded.connect(lambda *parts: permissions.append(parts))
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        worker.abort()
+        assert cancelled is not None and cancelled()
+        return CommandResult(True, output="versionCode=7\n")
+
+    with patch("models.app_manager_worker.CommandRunner.run", side_effect=run) as command:
+        worker.run()
+    assert command.call_count == 1
+    assert details == permissions == []
+
+
+def test_focus_fallbacks_share_one_total_budget():
+    clock, budgets = [10.0], []
+
+    def run(_command, *, timeout):
+        budgets.append(timeout)
+        clock[0] += timeout
+        return CommandResult(False, error="timeout")
+
+    with patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0], create=True):
+        result = detect_current_package("device-1", runner=Mock(run=run), timeout=6)
+    assert not result["success"]
+    assert budgets == [5, 1]
 
 
 def test_restart_app_does_not_launch_after_force_stop_failure():
@@ -80,6 +139,7 @@ def _app_manager_for_unit_tests():
     dialog._app_labels = {}
     dialog._app_versions = {}
     dialog._detail_cache = {}
+    dialog._failed_detail_packages = set()
     dialog._pending_detail_packages = set()
     dialog._detail_worker_running = False
     dialog._detail_row_by_pkg = {}
@@ -119,6 +179,7 @@ def _app_manager_for_unit_tests():
     dialog._next_unloaded_detail_packages = lambda limit=30: (
         AppManagerPage._next_unloaded_detail_packages(dialog, limit)
     )
+    dialog._can_operate = Mock(return_value=True)
     dialog._schedule_visible_detail_load = lambda delay_ms=120: (
         AppManagerPage._schedule_visible_detail_load(dialog, delay_ms)
     )
@@ -217,8 +278,12 @@ def test_app_manager_detail_worker_continues_after_first_visible_page():
     dialog._apps_data = [
         ("One", "com.example.one", "Enabled", "User"),
         ("Two", "com.example.two", "Enabled", "User"),
+        ("Three", "com.example.three", "Enabled", "User"),
     ]
-    dialog._detail_cache = {"com.example.one": ("One", "1.0", "")}
+    dialog._detail_cache = {
+        "com.example.one": ("One", "1.0", ""),
+        "com.example.two": ("Two", "2.0", ""),
+    }
     dialog._pending_detail_packages = {"com.example.two"}
 
     AppManagerPage._on_detail_worker_finished(dialog, ["com.example.two"])
@@ -421,7 +486,10 @@ def test_get_current_package_uses_shared_detector():
 
     assert result["success"] is True
     assert result["package_name"] == "com.example.app"
-    detect.assert_called_once_with("device-1")
+    detect.assert_called_once_with("device-1", cancelled=model.is_shutting_down)
+    assert not detect.call_args.kwargs["cancelled"]()
+    model.begin_shutdown()
+    assert detect.call_args.kwargs["cancelled"]()
 
 
 def test_install_apk_uses_run_helper_and_preserves_result_fields():
@@ -607,3 +675,254 @@ def test_parse_apk_info_reports_missing_aapt():
 
     assert result["success"] is False
     assert "aapt executable not found" in result["error"]
+
+
+def test_app_manager_visible_details_respect_device_admission():
+    dialog = _app_manager_for_unit_tests()
+    dialog._can_operate.return_value = False
+    with patch("gui.dialogs.app_manager.AppManagerWorker") as worker:
+        AppManagerPage._load_visible_details(dialog)
+        AppManagerPage._schedule_visible_detail_load(dialog)
+    worker.assert_not_called()
+    dialog._detail_timer.start.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "operation", ["load_apps", "load_detail_batch", "app_details", "permissions", "app_snapshot"]
+)
+def test_app_manager_read_queries_cancel_in_flight_without_publishing_results(operation):
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker(
+        "device-1", operation, packages=["com.example.one"], package_name="com.example.one"
+    )
+    emitted = []
+    for signal in (
+        worker.apps_loaded, worker.app_detail_batch,
+        worker.app_details_loaded, worker.permissions_loaded,
+    ):
+        signal.connect(lambda *args: emitted.append(args))
+
+    def run(_cmd, *, timeout, cancelled=None):
+        assert callable(cancelled)
+        assert not cancelled()
+        worker.abort()
+        assert cancelled()
+        return CommandResult(success=False, error="Cancelled")
+
+    with patch("models.app_manager_worker.CommandRunner.run", side_effect=run) as execute:
+        worker.run()
+
+    assert execute.call_count == 1
+    assert worker._aborted.is_set()
+    assert emitted == []
+
+
+def test_app_manager_write_commands_keep_existing_completion_contract():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "clear_app", package_name="com.example.one")
+    with patch(
+        "models.app_manager_worker.CommandRunner.run",
+        return_value=CommandResult(success=True, output="Success"),
+    ) as execute:
+        worker.run()
+    execute.assert_called_once_with(
+        ["adb", "-s", "device-1", "shell", "pm", "clear", "com.example.one"], timeout=30
+    )
+
+
+@pytest.mark.parametrize("error", ["Timeout(5s)", "ADB connection failed", "permission denied"])
+def test_app_detail_batch_failed_command_does_not_fallback_or_publish_empty_details(error):
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "load_detail_batch")
+    emitted = []
+    worker.app_detail_batch.connect(lambda *args: emitted.append(args))
+    with patch.object(
+        worker, "_adb", return_value=CommandResult(success=False, error=error)
+    ) as execute:
+        worker._load_detail_batch(["com.example.one", "com.example.two"])
+    assert execute.call_count == 1
+    assert emitted == []
+
+
+def test_app_detail_batch_parse_fallback_uses_remaining_budget_and_stops_at_deadline(monkeypatch):
+    import models.app_manager_worker as module
+
+    worker = module.AppManagerWorker("device-1", "load_detail_batch")
+    emitted = []
+    timeouts = []
+    now = [100.0]
+    monkeypatch.setattr(module, "monotonic", lambda: now[0], raising=False)
+    worker.app_detail_batch.connect(lambda *args: emitted.append(args))
+
+    def execute(*_args, timeout=30, **_kwargs):
+        timeouts.append(timeout)
+        if len(timeouts) == 1:
+            now[0] += 4.5
+            return CommandResult(success=True, output="legacy output without section markers")
+        now[0] += timeout
+        return CommandResult(success=True, output="versionName=1.0\nversionCode=1")
+
+    with patch.object(worker, "_adb", side_effect=execute):
+        worker._load_detail_batch(["com.example.one", "com.example.two"])
+
+    assert timeouts == [5.0, 0.5]
+    assert emitted == [("com.example.one", "one", "1.0 (1)", "")]
+
+
+def test_app_detail_batch_keeps_completed_sections_and_only_retries_unfinished_package():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "load_detail_batch")
+    emitted = []
+    worker.app_detail_batch.connect(lambda *args: emitted.append(args))
+    output = (
+        "__ADBLAB_PKG_BEGIN_0__\nversionName=1.0\nversionCode=1\n__ADBLAB_PKG_END_0__\n"
+        "__ADBLAB_PKG_BEGIN_1__\nversionName=truncated\nversionCode=0\n"
+    )
+    with patch.object(worker, "_adb", side_effect=[
+        CommandResult(success=True, output=output),
+        CommandResult(success=True, output="versionName=2.0\nversionCode=2"),
+    ]) as execute:
+        worker._load_detail_batch(["com.example.one", "com.example.two"])
+
+    assert execute.call_count == 2
+    assert execute.call_args.args == ("shell", "dumpsys package com.example.two")
+    assert emitted == [
+        ("com.example.one", "one", "1.0 (1)", ""),
+        ("com.example.two", "two", "2.0 (2)", ""),
+    ]
+
+
+def test_app_detail_failed_packages_are_not_automatically_requeued_and_refresh_retries():
+    dialog = _app_manager_for_unit_tests()
+    apps = [("One", "com.example.one", "Enabled", "User")]
+    dialog._apps_data = apps
+    dialog._pending_detail_packages = {"com.example.one"}
+
+    AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one"])
+
+    assert dialog._detail_cache == {}
+    assert not dialog._has_unloaded_details()
+    assert dialog._next_unloaded_detail_packages() == []
+    dialog._detail_timer.start.assert_not_called()
+    with patch("gui.dialogs.app_manager.AppManagerWorker") as worker_cls:
+        dialog._visible_detail_packages = Mock(return_value=["com.example.one"])
+        AppManagerPage._load_visible_details(dialog)
+    worker_cls.assert_not_called()
+
+    AppManagerPage._populate(dialog, apps)
+    assert dialog._has_unloaded_details()
+    assert dialog._next_unloaded_detail_packages() == ["com.example.one"]
+    dialog._detail_timer.start.assert_called_once()
+
+
+def test_app_detail_old_finished_callback_cannot_mark_new_load_failed():
+    dialog = _app_manager_for_unit_tests()
+    dialog._active_load_request = 2
+    dialog._pending_detail_packages = {"com.example.one"}
+    dialog._detail_worker_running = True
+    AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one"], request_id=1)
+    assert dialog._pending_detail_packages == {"com.example.one"}
+    assert dialog._failed_detail_packages == set()
+    assert dialog._detail_worker_running is True
+
+
+@pytest.mark.parametrize("operation", ["app_details", "permissions", "app_snapshot"])
+@pytest.mark.parametrize("success", [False, True])
+def test_app_detail_query_failure_or_missing_package_does_not_publish_success(operation, success):
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", operation, package_name="com.example.one")
+    emitted = []
+    failures = []
+    worker.app_details_loaded.connect(lambda *args: emitted.append(args))
+    worker.permissions_loaded.connect(lambda *args: emitted.append(args))
+    worker.operation_feedback.connect(lambda *args: failures.append(args))
+    with patch.object(worker, "_adb", return_value=CommandResult(
+        success=success, output="Unable to find package: com.example.one",
+        error="device disconnected",
+    )):
+        worker.run()
+    assert emitted == []
+    assert len(failures) == 1
+    assert failures[0][0] == "error"
+
+
+def test_app_manager_cancelled_disabled_query_does_not_publish_partial_app_states():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "load_apps")
+    emitted = []
+    worker.apps_loaded.connect(emitted.append)
+    calls = []
+
+    def execute(_cmd, *, timeout, cancelled):
+        calls.append(_cmd)
+        if len(calls) == 1:
+            return CommandResult(success=True, output="package:/data/app/one.apk=com.example.one")
+        worker.abort()
+        assert cancelled()
+        return CommandResult(success=False, error="Cancelled")
+
+    with patch("models.app_manager_worker.CommandRunner.run", side_effect=execute):
+        worker.run()
+    assert len(calls) == 2
+    assert emitted == []
+
+
+def test_app_detail_failed_batch_preserves_cache_and_schedules_other_untried_packages():
+    dialog = _app_manager_for_unit_tests()
+    dialog._apps_data = [
+        ("One", "com.example.one", "Enabled", "User"),
+        ("Two", "com.example.two", "Enabled", "User"),
+        ("Three", "com.example.three", "Enabled", "User"),
+    ]
+    dialog._detail_cache = {"com.example.one": ("One", "1.0", "")}
+    dialog._pending_detail_packages = {"com.example.one", "com.example.two"}
+    AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one", "com.example.two"])
+    assert dialog._detail_cache == {"com.example.one": ("One", "1.0", "")}
+    assert dialog._next_unloaded_detail_packages() == ["com.example.three"]
+    dialog._detail_timer.start.assert_called_once_with(80)
+
+
+def test_app_detail_complete_missing_package_section_is_not_retried_or_cached():
+    from models.app_manager_worker import AppManagerWorker
+
+    worker = AppManagerWorker("device-1", "load_detail_batch")
+    emitted = []
+    worker.app_detail_batch.connect(lambda *args: emitted.append(args))
+    output = (
+        "__ADBLAB_PKG_BEGIN_0__\nUnable to find package: com.example.one\n__ADBLAB_PKG_END_0__"
+    )
+    with patch.object(
+        worker, "_adb", return_value=CommandResult(success=True, output=output)
+    ) as run:
+        worker._load_detail_batch(["com.example.one"])
+    run.assert_called_once()
+    assert emitted == []
+
+
+@pytest.mark.parametrize("detail_succeeded", [False, True])
+def test_app_detail_last_batch_finishes_status_despite_pending_scroll_timer(detail_succeeded):
+    from gui.i18n import tr
+
+    dialog = _app_manager_for_unit_tests()
+    dialog._apps_data = [("One", "com.example.one", "Enabled", "User")]
+    dialog._pending_detail_packages = {"com.example.one"}
+    dialog._detail_timer.isActive.return_value = True
+    if detail_succeeded:
+        dialog._detail_cache["com.example.one"] = ("One", "1.0", "")
+
+    AppManagerPage._on_detail_worker_finished(dialog, ["com.example.one"])
+
+    message = (
+        tr("已加载 {value0} 个应用").format(value0=1)
+        if detail_succeeded else tr("部分应用详情未读取，点击刷新重试。")
+    )
+    dialog.status_bar.setText.assert_called_once_with(message)
+    dialog._detail_timer.stop.assert_called_once()
+    dialog._detail_timer.start.assert_not_called()
+    assert not dialog._has_unloaded_details()

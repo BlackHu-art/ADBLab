@@ -161,6 +161,10 @@ def build_main_frame(
     if controller is None:
         controller = Mock()
         controller.signals = Mock()
+    from adblab.application.action_results import ActionResults
+
+    if not isinstance(controller.action_results, ActionResults):
+        controller.action_results = ActionResults(controller.signals.action_result_changed.emit)
     controller.operation_manager.active_snapshot.return_value = ()
     with (
         patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
@@ -179,6 +183,19 @@ def populate_device_workbench(frame, count=8):
     frame._on_devices_updated(devices)
     frame.left_panel._devices_tab.set_selected_devices(devices[:1])
     return frame._device_hub.device_cards
+
+
+def test_main_title_bar_hides_icon_without_clearing_window_icon(qt_application):
+    """主标题栏不显示图标，同时保留系统任务栏使用的窗口图标。"""
+
+    frame = build_main_frame()
+    try:
+        assert frame.titleBar.iconLabel.isHidden()
+        assert not frame.windowIcon().isNull()
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
 def test_tasks_navigation_refreshes_task_history(qt_application):
@@ -895,7 +912,7 @@ def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application)
         pending = host.pending_route
         assert pending is not None
         history = tuple(frame._navigation_history)
-        host.no_device_page.choose_button.click()
+        frame._global_device_bar.open_picker()
         assert frame._global_device_bar._picker is not None
         assert frame.stackedWidget.currentWidget() is frame._apps_page
         assert tuple(frame._navigation_history) == history
@@ -963,7 +980,8 @@ def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_appli
             frame._workspace_navigation_keys[("system", "performance")]
         )
         bar = frame._global_device_bar
-        assert bar.targets_button.isVisible()
+        assert bar.target_row.isHidden()
+        assert bar.session_target.isVisible()
         assert bar.session_combo.isVisible()
         assert bar.session_combo.currentData() == "device-1"
         assert bar.session_combo.accessibleName() == "当前查看的会话设备"
@@ -991,8 +1009,9 @@ def test_workspace_status_stays_visible_above_full_height_overview_content(qt_ap
         wait_for_stable_geometry(qt_application, (page, host, host.overview))
 
         status = frame._global_device_bar.status_label
-        assert status.isVisibleTo(frame)
+        assert status.isHidden()
         assert status.text() == "在线 1 台"
+        assert status.text() in frame._global_device_bar.targets_button.accessibleDescription()
         assert frame._global_device_bar.session_hint.isHidden()
         assert host.session_toolbar.isHidden()
         assert page.body.geometry() == page.rect()
@@ -1002,7 +1021,7 @@ def test_workspace_status_stays_visible_above_full_height_overview_content(qt_ap
             page,
             QPoint(wrapper.layout().contentsRect().left(), 0),
         ).x()
-        assert abs(content_left - 32) <= 2
+        assert abs(content_left - 8) <= 2
         assert host.overview.body.geometry() == host.overview.rect()
     finally:
         frame._unbind_window_screen()
@@ -1031,8 +1050,9 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
         assert remote.category_stack.current_key == "mirroring"
 
         status = frame._global_device_bar.session_hint
-        assert status.isVisibleTo(frame)
+        assert status.isHidden()
         assert status.text() == "未选为操作目标"
+        assert status.text() in frame._global_device_bar.session_combo.accessibleDescription()
         frame._global_device_bar.selection_requested.emit(["device-2"])
         assert status.text() == "在线"
         assert remote.selected_devices == ["device-2"]
@@ -1047,8 +1067,9 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
 
         frame._on_devices_updated([])
         assert host.session_badge.text() == "离线"
-        assert status.isVisibleTo(frame)
+        assert status.isHidden()
         assert status.text() == "离线"
+        assert status.text() in frame._global_device_bar.session_combo.accessibleDescription()
         assert status.accessibleDescription() == host.session_badge.accessibleDescription()
         assert remote.selected_devices == []
         assert remote.btn_start.isEnabled() is False
@@ -1113,7 +1134,7 @@ def test_no_device_feature_resumes_inline_after_device_selection(qt_application)
         pending = apps_host.pending_route
         assert pending is not None
 
-        apps_host.no_device_page.choose_button.click()
+        frame._global_device_bar.open_picker()
         assert frame._global_device_bar._picker is not None
         assert apps_host.pending_route == pending
         assert frame.stackedWidget.currentWidget() is frame._apps_page
@@ -1233,7 +1254,9 @@ def test_all_embedded_feature_pages_remain_reachable_on_short_workspace(qt_appli
                 minimum = minimum.expandedTo(page.minimumSize())
                 assert page.width() >= max(0, minimum.width())
                 assert page.height() >= max(0, minimum.height())
-                assert host.content_scroll.verticalScrollBar().maximum() > 0
+                # 紧凑工具栏可能已在短屏完整容纳；滚动范围必须对应当前页真实高度。
+                expected_range = max(0, page.height() - host.content_scroll.viewport().height())
+                assert abs(host.content_scroll.verticalScrollBar().maximum() - expected_range) <= 2
 
                 if feature == "performance":
                     assert page._config_scroll.isHidden()
@@ -1361,7 +1384,7 @@ def test_screenshot_batch_preserves_pending_device_route(qt_application, tmp_pat
         frame.show()
         frame._on_nav_requested(pending)
         host = frame._workspace_feature_hosts["system"]
-        host.no_device_page.choose_button.click()
+        frame._global_device_bar.open_picker()
         assert frame._global_device_bar._picker is not None
         current_route = frame._system_page.current_route
         history = tuple(frame._navigation_history)
@@ -2990,11 +3013,11 @@ def test_workspace_content_uses_full_page_height_during_window_resize(
         frame._close_ready = True
         frame.close()
 
-def test_minimum_window_keeps_task_runtime_records_reachable_with_large_font(
+def test_minimum_window_keeps_task_result_reachable_with_large_font(
     qt_application,
     monkeypatch,
 ):
-    """最大字号展开任务运行记录后自动定位，稳定视口内正文全部可达。"""
+    """最大字号下展开操作结果，正文和文件动作在滚动页面内可达。"""
 
     from tests.ui_geometry_helpers import wait_for_stable_geometry
 
@@ -3008,9 +3031,16 @@ def test_minimum_window_keeps_task_runtime_records_reachable_with_large_font(
         frame.resize(860, 500)
         frame.show()
         frame._on_nav_requested("tasks")
-        frame._task_page.show_runtime_records()
+        from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
+        result = ActionResult(
+            "synthetic", ActionSpec("query", "apps.diagnostics", "内存", "text"), ("demo",), 1,
+            state="succeeded",
+            items=(ActionItem("job", "demo", "设备 1", "succeeded", "完整结果"),), finished_at=2,
+        )
+        frame._task_page.history_views.set_current("operations")
+        frame._action_feedback.present(result)
         scroll = frame._task_page._scroll
-        output = frame.log_panel.text_output
+        output = frame._task_page.action_results.output
         wait_until(
             qt_application,
             lambda: scroll.viewport().rect().contains(mapped_rect(output, scroll.viewport())),
@@ -3019,8 +3049,8 @@ def test_minimum_window_keeps_task_runtime_records_reachable_with_large_font(
 
         assert not hasattr(frame, "_device_log_splitter")
         assert frame.stackedWidget.currentWidget() is frame._tasks_page
-        assert frame.log_panel.isVisibleTo(frame._tasks_page)
-        assert frame.log_panel.text_output.isVisibleTo(frame._tasks_page)
+        assert frame._task_page.action_results.isVisibleTo(frame._tasks_page)
+        assert output.isVisibleTo(frame._tasks_page)
         assert scroll.viewport().rect().contains(mapped_rect(output, scroll.viewport()))
         assert_scroll_target_reachable(scroll, output)
         assert frame.minimumHeight() <= frame.height()

@@ -17,6 +17,7 @@ from gui.features.media import ScreenshotPage
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles
 from gui.styles.typography import FontRole
+from gui.widgets.action_result_view import ActionResultView
 from tests.ui_geometry_helpers import assert_scroll_target_reachable
 
 
@@ -94,7 +95,8 @@ def test_feature_pages_use_semantic_font_roles(qt_application):
         ):
             _assert_role(widget, FontRole.MONO)
 
-        for widget in (apps.log_output, logcat.output, performance.log_view):
+        results = ActionResultView(apps)
+        for widget in (results.output, logcat.output, performance.log_view):
             _assert_role(widget, FontRole.LOG)
             _assert_role(widget.document().defaultFont(), FontRole.LOG)
 

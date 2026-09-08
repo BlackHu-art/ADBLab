@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import os
+import tempfile
 import threading
 from collections import deque
 from collections.abc import Callable
@@ -14,18 +16,21 @@ from PySide6.QtGui import QDesktopServices
 from gui.dialogs.lifecycle import alive_signal_emitter
 from gui.i18n import tr
 from services.run_library import RunLibrary, RunPreset, RunRecord
+from utils.user_data import user_data_root
 
 
 class _LibraryQueue:
     """队列空闲即退出线程；关闭只等待已提交的有界本地写入。"""
 
     def __init__(
-        self, library: RunLibrary, publish: Callable, report: Callable, open_ready: Callable
+        self, library: RunLibrary, publish: Callable, report: Callable, open_ready: Callable,
+        exported: Callable | None = None,
     ):
         self.library = library
         self._publish = publish
         self._report = report
         self._open_ready = open_ready
+        self._exported = exported
         self._lock = threading.Lock()
         self._jobs: deque[tuple[str, tuple]] = deque()
         self._thread: threading.Thread | None = None
@@ -36,6 +41,9 @@ class _LibraryQueue:
         with self._lock:
             if self._closed:
                 return False
+            if method == "write_diagnostics":
+                # 连续异常只需保存最新有界快照，避免磁盘较慢时累积重复写入。
+                self._jobs = deque(job for job in self._jobs if job[0] != method)
             self._jobs.append((method, copy.deepcopy(args)))
             if self._thread is None:
                 self._thread = threading.Thread(
@@ -60,15 +68,38 @@ class _LibraryQueue:
                     if folder and target.is_file():
                         target = target.parent
                     self._open_ready(str(target))
+                elif method in ("export_text", "write_diagnostics"):
+                    path, text = args
+                    target = Path(path)
+                    if not target.is_absolute():
+                        raise ValueError("导出位置必须为绝对路径")
+                    if method == "write_diagnostics":
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = ""
+                    try:
+                        with tempfile.NamedTemporaryFile(
+                            mode="w", encoding="utf-8", dir=target.parent, delete=False,
+                        ) as output:
+                            temporary = output.name
+                            output.write(text)
+                            output.flush()
+                            os.fsync(output.fileno())
+                        os.replace(temporary, target)
+                        temporary = ""
+                        if method == "export_text" and self._exported is not None:
+                            self._exported(str(target))
+                    finally:
+                        if temporary:
+                            os.unlink(temporary)
                 else:
                     getattr(self.library, method)(*args)
             except (OSError, ValueError, TypeError, RecursionError, OverflowError) as exc:
                 # 文件路径和底层异常留在边界内，用户只看到可操作且不泄露设备信息的提示。
                 self._report(f"{method}:{type(exc).__name__}")
-                if method != "open_artifact":
+                if method not in ("open_artifact", "export_text"):
                     self._write_error = True
             else:
-                if method != "open_artifact":
+                if method not in ("open_artifact", "export_text", "write_diagnostics"):
                     self._publish((self.library.records, self.library.presets))
 
     def close(self, timeout: float = 5.0) -> bool:
@@ -91,6 +122,7 @@ class RunLibraryController(QObject):
 
     changed = Signal()
     error = Signal(str)
+    exported = Signal(str)
     _snapshot_ready = Signal(object)
     _write_failed = Signal(str)
     _open_ready = Signal(str)
@@ -107,6 +139,7 @@ class RunLibraryController(QObject):
             alive_signal_emitter(self, "_snapshot_ready"),
             alive_signal_emitter(self, "_write_failed"),
             alive_signal_emitter(self, "_open_ready"),
+            alive_signal_emitter(self, "exported"),
         )
         queue = self._queue
         self.destroyed.connect(lambda: queue.close(0))
@@ -127,6 +160,10 @@ class RunLibraryController(QObject):
     def _report_error(self, _error_type: str) -> None:
         if _error_type.startswith("open_artifact:"):
             self.error.emit(tr("结果文件不可用，可能已被移动或删除，请检查原输出目录。"))
+        elif _error_type.startswith("export_text:"):
+            self.error.emit(tr("结果导出失败，请检查目标目录权限和可用空间。"))
+        elif _error_type.startswith("write_diagnostics:"):
+            self.error.emit(tr("应用诊断记录未能保存，请检查用户数据目录权限。"))
         else:
             self.error.emit(
                 tr("测试记录或方案未能保存，请检查用户数据目录的可写权限和记录文件；原文件已保留。")
@@ -139,6 +176,18 @@ class RunLibraryController(QObject):
     def open_artifact(self, path: str, folder: bool = False) -> None:
         """后台检查单个本地附件；回到 GUI 线程后调用系统关联程序。"""
         self._queue.submit("open_artifact", path, folder)
+
+    def export_text(self, path: str, text: str) -> None:
+        """后台原子导出正文；失败时保留目标文件，不改测试结果库。"""
+        if not self._queue.submit("export_text", path, text):
+            self.error.emit(tr("页面正在关闭，无法导出结果。"))
+
+    def save_diagnostics(self, text: str) -> None:
+        """复用后台队列保存有界异常摘要，应用关闭时随测试库一起排空。"""
+        self._queue.submit(
+            "write_diagnostics",
+            str(user_data_root() / "logs" / "application-diagnostics.log"), text,
+        )
 
     def record_run(self, record: RunRecord) -> None:
         self._queue.submit("record_run", record)

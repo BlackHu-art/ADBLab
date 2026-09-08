@@ -40,13 +40,14 @@ class PerformanceSessions(QWidget):
         self._current = ""
         self._enabled = False
         self._devices: tuple[str, ...] = ()
+        self._labels: dict[str, str] = {}
         self.setMinimumWidth(0)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         self.table = TableWidget(self)
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels([tr("设备标识"), tr("状态"), tr("采集进度")])
+        self.table.setHorizontalHeaderLabels([tr("设备"), tr("状态"), tr("采集进度")])
         self.table.setAccessibleName(tr("各设备采集状态"))
         self.table.setToolTip(tr("各设备独立采集，点击一行查看并操作该设备。"))
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -71,6 +72,11 @@ class PerformanceSessions(QWidget):
         BaseStyles.fonts_changed.connect(self._apply_fonts)
         self._apply_fonts()
         self.hide()
+
+    def set_device_labels(self, labels: dict[str, str]) -> None:
+        """复用全局会话编号，列表排序和离线不改变已运行采集的显示归属。"""
+        self._labels.update(labels)
+        self.refresh()
 
     def set_context(
         self, selected: tuple[str, ...], connected: tuple[str, ...], current: str,
@@ -123,8 +129,11 @@ class PerformanceSessions(QWidget):
                 f"{snapshot.percent}% · {self._clock(snapshot.elapsed)}"
                 if snapshot.duration else "—"
             )
-            full = f"{device}\n{status}\n{snapshot.percent}% · {timing}\n{snapshot.detail}".strip()
-            for column, text in enumerate((device, status, progress)):
+            label = self._labels.setdefault(
+                device, tr("设备 {number}").format(number=len(self._labels) + 1),
+            )
+            full = f"{label}\n{status}\n{snapshot.percent}% · {timing}\n{snapshot.detail}".strip()
+            for column, text in enumerate((label, status, progress)):
                 item = self.table.item(row, column)
                 if item is None:
                     item = QTableWidgetItem()

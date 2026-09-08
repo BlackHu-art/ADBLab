@@ -5,14 +5,16 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, QSize, Qt, Signal
-from PySide6.QtWidgets import QWidget
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QSize, Qt, Signal
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, FluentIcon
 from shiboken6 import isValid
 
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
 from gui.pages.fluent_pages import WorkspaceAreaPage, WorkspaceSectionPage
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
+from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 class _LifecyclePage(QWidget):
@@ -299,6 +301,66 @@ def test_small_workspace_scrolls_deep_feature_without_compressing_it(qt_applicat
     assert host.stack.currentWidget() is host.overview
     assert host.content_scroll.horizontalScrollBar().maximum() == 0
     assert host.content_scroll.verticalScrollBar().maximum() == 0
+
+
+@pytest.mark.parametrize(
+    "section,feature",
+    [("devices", "files"), ("devices", "remote"), ("apps", "manager"), ("system", "logcat")],
+)
+def test_real_feature_size_ignores_hidden_wrapping_page(
+    qt_application, monkeypatch, section, feature,
+):
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr(
+        "models.device_store.DeviceStore.get_full_devices_info", lambda _devices: [],
+    )
+    monkeypatch.setattr("gui.dialogs.app_manager.AppManagerPage._load_apps", Mock())
+    monkeypatch.setattr("gui.dialogs.file_explorer.FileExplorerPage._refresh", Mock())
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("workspace", QSize(1600, 1100)))
+    )
+    try:
+        frame.show()
+        frame._on_devices_updated(["demo-a"])
+        frame.left_panel._devices_tab.set_selected_devices(["demo-a"])
+        assert frame._open_workspace_feature(section, feature, device_id="demo-a")
+        host = frame._workspace_feature_hosts[section]
+        page = host.stack.currentWidget()
+
+        def geometry_at(width):
+            frame.resize(width, 650)
+            wait_until(qt_application, lambda: (
+                frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                and frame.navigationInterface.panel.expandAni.state()
+                == QAbstractAnimation.State.Stopped
+            ))
+            wait_for_stable_geometry(qt_application, (
+                frame, host.content_scroll, host.stack, page,
+            ))
+            return (
+                host.content_scroll.viewport().height(), page.height(),
+                host.content_scroll.verticalScrollBar().maximum(),
+            )
+
+        baseline = {width: geometry_at(width) for width in (1048, 860)}
+        hidden = QWidget()
+        layout = QVBoxLayout(hidden)
+        label = QLabel("synthetic wrapped content " * 1500)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        host.stack.addWidget(hidden)
+        assert hidden.heightForWidth(host.stack.width()) > page.height()
+
+        for width in (1048, 860):
+            assert host.stack.currentWidget() is page
+            assert geometry_at(width) == baseline[width]
+        host.show_overview()
+        geometry_at(1048)
+        assert host.content_scroll.verticalScrollBar().maximum() == 0
+    finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
 def test_workspace_scroll_extent_tracks_current_page_layout_changes(qt_application):
@@ -656,9 +718,10 @@ def test_no_device_page_retains_route_payload_for_resume(qt_application):
     assert host.open_feature("logcat", payload=payload) is True
     assert host.pending_route == WorkspaceRoute("system", "logcat", payload=payload)
     callback = Mock()
-    host.choose_device_requested.connect(callback)
+    host.manage_devices_requested.connect(callback)
     host.no_device_page.choose_button.click()
     callback.assert_called_once_with()
+    assert host.pending_route == WorkspaceRoute("system", "logcat", payload=payload)
 
 
 def test_async_disposal_cannot_reactivate_closing_session(qt_application):

@@ -31,7 +31,10 @@ class ADBWorker(QThread):
         """执行一次短命令，并将失败状态作为信号参数传播。"""
         if self._aborted.is_set() or self.isInterruptionRequested():
             return
-        result = CommandRunner.run(["adb", "-s", self.device_ip] + self.args, timeout=self.timeout)
+        result = CommandRunner.run(
+            ["adb", "-s", self.device_ip] + self.args, timeout=self.timeout,
+            cancelled=self._aborted.is_set,
+        )
         if self._aborted.is_set():
             return
         if result.success:

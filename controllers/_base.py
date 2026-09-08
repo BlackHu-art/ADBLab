@@ -5,6 +5,11 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
+from adblab.application.action_results import (
+    ActionEnvelope,
+    ActionResults,
+    report_action_message,
+)
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
@@ -35,6 +40,7 @@ class _ADBControllerBase:
     def __init__(self, log_service: LogService):
         self.signals = ADBControllerSignals()
         self.log_service = log_service
+        self.action_results = ActionResults(self.signals.action_result_changed.emit)
         self._settings = AppSettings.instance()
         self.device_model = ADBDevice()
         self.app_model = ADBApp()
@@ -85,6 +91,8 @@ class _ADBControllerBase:
         self.app_model.command_finished.connect(self._handle_async_response)
         self.testing_model.command_finished.connect(self._handle_async_response)
         self.advanced_model.command_finished.connect(self._handle_async_response)
+        for model in (self.device_model, self.app_model, self.testing_model, self.advanced_model):
+            model.action_progress.connect(self.action_results.progress)
 
     def _build_handler_map(self):
         self._handler_map = {}
@@ -124,6 +132,7 @@ class _ADBControllerBase:
         level = "INFO" if success else "ERROR"
         if not message.strip():
             return
+        has_result = report_action_message(success, message)
         self._attempt_actions_preserving_first(
             (
                 "operation completion signal",
@@ -136,7 +145,7 @@ class _ADBControllerBase:
                     level,
                     f"{message}",
                     flush_immediately=True,
-                ),
+                ) if not has_result else None,
             ),
         )
 
@@ -166,6 +175,37 @@ class _ADBControllerBase:
     def _handle_async_response(self, method_name: str, result):
         if getattr(self, "_shutting_down", False):
             return
+        if isinstance(result, ActionEnvelope):
+            job = result.job
+            if not self.action_results.accepts(job):
+                return
+            payload, _metadata = split_operation_metadata(result.payload)
+            payload, _perf = split_perf(payload)
+            with self.action_results.scope(job.request_id, job):
+                terminal = self._handle_async_response(method_name, result.payload)
+            if _metadata is not None:
+                snapshot = getattr(terminal, "snapshot", terminal)
+                if snapshot is None:
+                    snapshot = self.operation_manager.get(
+                        _metadata.operation_id, expected_generation=_metadata.generation_token,
+                    )
+                unit = next((
+                    item for item in (snapshot.unit_results if snapshot is not None else ())
+                    if item.unit_id == _metadata.unit_id
+                ), None)
+                payload = dict(payload) if isinstance(payload, dict) else {}
+                payload.update(
+                    _validated_unit=True,
+                    success=unit is not None and unit.state is OperationState.SUCCEEDED,
+                    cancelled=(unit is not None and unit.state is OperationState.CANCELLED)
+                    or bool(payload.get("cancelled")),
+                )
+                if not payload["success"]:
+                    payload["error"] = (
+                        unit.message if unit else "操作结果未通过身份校验或任务已结束"
+                    )
+            self.action_results.complete(job, payload)
+            return
         result, operation_metadata = split_operation_metadata(result)
         result, perf = split_perf(result)
         op_type = method_name.replace("_async", "")
@@ -173,10 +213,13 @@ class _ADBControllerBase:
 
         try:
             if operation_metadata is not None:
-                self._route_operation_response(op_type, result, operation_metadata)
-                return
+                return self._route_operation_response(op_type, result, operation_metadata)
 
             if op_type == "get_connected_devices":
+                if isinstance(result, dict) and result.get("stale"):
+                    # 过期刷新在结果库按取消收尾，不能撤销更新列表建立的发现状态。
+                    self.signals.device_refresh_superseded.emit()
+                    return
                 if isinstance(result, dict) and "devices" in result:
                     if result.get("success", False):
                         getattr(self, "_process_device_list")(result["devices"])
@@ -452,6 +495,7 @@ class _ADBControllerBase:
     def shutdown(self):
         """应用退出时统一收口后台资源，避免 adb/logcat/scrcpy 等子进程残留。"""
         self._shutting_down = True
+        self.action_results.close()
         for model in (
             self.device_model,
             self.app_model,
@@ -467,5 +511,11 @@ class _ADBControllerBase:
             if callable(shutdown):
                 shutdown()
         ProcessRunner.stop_all_tracked()
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.executor.shutdown(wait=True, cancel_futures=True)
+        for model in (
+            self.device_model, self.app_model, self.testing_model, self.advanced_model,
+        ):
+            wait = getattr(model, "wait_for_commands", None)
+            if callable(wait):
+                wait()
         self.log_service.log("DEBUG", "controller shutdown completed")

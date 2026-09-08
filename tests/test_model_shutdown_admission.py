@@ -2,12 +2,131 @@ import threading
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from adblab.application.action_results import ActionResults
 from adblab.application.envelope import split_operation_metadata
 from controllers._base import _ADBControllerBase
 from core.perf_trace import split_perf
 from models.adb_advanced import ADBAdvanced
 from models.adb_model import ADBModelCore, async_command
 from models.adb_testing import ADBTesting
+
+
+def test_native_readonly_query_cancels_in_flight_but_write_keeps_default(monkeypatch):
+    import time
+
+    from core import exec as execution
+    from core.adb_transport import ExecutionResult
+
+    model = ADBAdvanced()
+    entered = threading.Event()
+    release = threading.Event()
+    result = []
+
+    def capture(_cmd, _timeout, cancelled):
+        entered.set()
+        while not release.wait(0.005):
+            if cancelled():
+                return ExecutionResult(kind="cancelled")
+        return ExecutionResult(b"done")
+
+    def native(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return SimpleNamespace(stdout="done", stderr="", returncode=0)
+
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "adb")
+    monkeypatch.setattr(execution, "native_capture", capture)
+    monkeypatch.setattr(execution.subprocess, "run", native)
+    worker = threading.Thread(target=lambda: result.append(
+        ADBAdvanced.get_kernel_version_async.__wrapped__(model, "device-1")
+    ))
+    try:
+        worker.start()
+        assert entered.wait(1)
+        started = time.monotonic()
+        model.begin_shutdown()
+        worker.join(0.5)
+        assert not worker.is_alive(), "只读查询关闭后仍等待原生超时"
+        assert time.monotonic() - started < 0.5
+        assert result[0]["cancelled"] is True
+        assert execution.CommandRunner.active_count() == 0
+    finally:
+        release.set()
+        worker.join(2)
+
+    calls = []
+    monkeypatch.setattr(execution.CommandRunner, "run", lambda cmd, **kw: (
+        calls.append((cmd, kw)) or execution.CommandResult(True)
+    ))
+    ADBAdvanced.settings_put_async.__wrapped__(model, "device-1", "system", "key", "value")
+    assert "cancelled" not in calls[0][1]
+
+
+def test_controller_shutdown_waits_for_owned_queued_commands():
+    entered = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class BlockingModel(ADBModelCore):
+        @async_command
+        def work_async(self):
+            entered.set()
+            release.wait(2)
+            return {"success": True}
+
+    from PySide6.QtCore import QThreadPool
+
+    model = BlockingModel()
+    model.thread_pool = QThreadPool()
+    controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.action_results = ActionResults(lambda _result: None)
+    controller.device_model = model
+    controller.app_model = ADBModelCore()
+    controller.testing_model = ADBModelCore()
+    controller.advanced_model = ADBModelCore()
+    controller.log_service = Mock()
+    controller.executor = Mock()
+    worker = threading.Thread(target=lambda: (controller.shutdown(), finished.set()))
+    try:
+        model.work_async()
+        assert entered.wait(1)
+        worker.start()
+        assert not finished.wait(0.15), "控制器在模型任务尚未退出时报告完成"
+        release.set()
+        worker.join(2)
+        assert finished.is_set()
+        assert model.thread_pool.activeThreadCount() == 0
+    finally:
+        release.set()
+        if worker.ident is not None:
+            worker.join(2)
+        model.thread_pool.waitForDone(2000)
+
+
+def test_short_command_wait_reports_live_command_until_native_exit(monkeypatch):
+    from core import exec as execution
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    def native(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+    monkeypatch.setattr(execution, "_adb_runtime", None)
+    monkeypatch.setattr(execution.subprocess, "run", native)
+    worker = threading.Thread(target=lambda: execution.CommandRunner.run(["test-client"]))
+    try:
+        worker.start()
+        assert entered.wait(1)
+        assert not execution.CommandRunner.wait_for_idle(0.01)
+        release.set()
+        assert execution.CommandRunner.wait_for_idle(1)
+    finally:
+        release.set()
+        worker.join(2)
 
 
 class _QueuedPool:
@@ -81,6 +200,7 @@ def test_controller_closes_every_model_admission_before_model_cleanup():
             events.append(("cleanup", self.name))
 
     controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.action_results = ActionResults(lambda _result: None)
     controller.device_model = ModelProbe("device")
     controller.app_model = ModelProbe("app")
     controller.testing_model = ModelProbe("testing")
@@ -119,6 +239,7 @@ def test_controller_shutdown_cancels_screen_record_already_queued_before_fence()
     assert len(pool.tasks) == 1
 
     controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller.action_results = ActionResults(lambda _result: None)
     controller.device_model = ADBModelCore()
     controller.app_model = ADBModelCore()
     controller.testing_model = SimpleNamespace(begin_shutdown=Mock(), shutdown=Mock())

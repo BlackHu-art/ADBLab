@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWi
     QComboBox,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QWidget,
 )
 from qfluentwidgets import BodyLabel, InfoBadge, InfoLevel
@@ -147,19 +148,46 @@ class ScrcpyLaunchWorker(QThread):
     """在 GUI 线程之外执行可能阻塞的 scrcpy 启动检查。"""
 
     launch_ready = Signal(list, str)
+    batch_ready = Signal(list)
     log_message = Signal(str, str)
 
-    def __init__(self, config: ScrcpyConfig, service: ScrcpyService | None = None):
+    def __init__(
+        self, config: ScrcpyConfig | list[ScrcpyConfig], service: ScrcpyService | None = None,
+    ):
         super().__init__()
         self.config = config
         self.service = service or ScrcpyService()
 
     def run(self):
         # scrcpy 版本、设备预检和编码器探测都可能阻塞，放到 QThread 避免卡住 UI。
+        if isinstance(self.config, list):
+            plans = []
+            for config in self.config:
+                if self.isInterruptionRequested():
+                    return
+                try:
+                    plan = self.service.build_launch_plan(
+                        config, cancelled=self.isInterruptionRequested,
+                    )
+                except InterruptedError:
+                    return
+                except Exception as exc:
+                    self.log_message.emit("ERROR", f"scrcpy preflight failed: {type(exc).__name__}")
+                    continue
+                for level, message in plan.messages:
+                    self.log_message.emit(level, message)
+                plans.append((config, plan.args, plan.device_info))
+            if not self.isInterruptionRequested():
+                self.batch_ready.emit(plans)
+            return
         if self.isInterruptionRequested():
             return
         try:
-            plan = self.service.build_launch_plan(self.config)
+            plan = self.service.build_launch_plan(
+                self.config, cancelled=self.isInterruptionRequested,
+            )
+        except InterruptedError:
+            return
         except Exception as exc:
             self.log_message.emit("ERROR", f"scrcpy preflight failed: {exc}")
             return
@@ -180,6 +208,7 @@ class RemotePanel(BasePanel):
     _LAUNCH_WORKER_DELETE_RETRY_LIMIT = 3
     _LAUNCH_WORKER_DELETE_RETRY_MS = 1
     _status_update_requested = Signal(str, object)
+    _feedback_received = Signal(str, str)
     _remote_queue_status_requested = Signal(int, int, str)
     _stop_completed_requested = Signal(bool)
     workspace_target_lock_changed = Signal(bool)
@@ -193,6 +222,7 @@ class RemotePanel(BasePanel):
     remote_subtitle: BodyLabel
     remote_status_badge: InfoBadge
     _remote_section_groups: list[QWidget]
+    _remote_control_buttons: list[QPushButton]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
         "Could not inject char u+",
         "libpng warning: iCCP: known incorrect sRGB profile",
@@ -257,6 +287,11 @@ class RemotePanel(BasePanel):
         super().__init__(panel, parent)
         self._workspace_device_id = ""
         self._workspace_device_connected: bool | None = None
+        self._target_devices: tuple[str, ...] | None = None
+        self._session_devices: tuple[str, ...] = ()
+        self._session_process_keys: tuple[str, ...] = ()
+        self._processes: dict[str, object] = {}
+        self._scrcpy_threads: list[threading.Thread] = []
         self._device_selected = True
         self._device_admission_revision = 0
         self._form_controller = RemotePanelForm(self)
@@ -337,8 +372,11 @@ class RemotePanel(BasePanel):
 
     @property
     def selected_devices(self) -> list[str]:
-        """会话固定操作设备；查看该设备不能替代全局明确选择。"""
+        """返回当前已选且在线目标；镜像进程另存启动时的归属快照。"""
 
+        targets = getattr(self, "_target_devices", None)
+        if targets is not None:
+            return list(targets)
         workspace_device = str(getattr(self, "_workspace_device_id", "") or "")
         if workspace_device:
             connected = getattr(self, "_workspace_device_connected", None)
@@ -349,7 +387,31 @@ class RemotePanel(BasePanel):
 
     def _can_operate_device(self) -> bool:
         """新启动与遥控输入共用准入；停止既有资源不受当前选择限制。"""
-        return not getattr(self, "_closing", False) and len(self.selected_devices) == 1
+        return not getattr(self, "_closing", False) and bool(self.selected_devices)
+
+    def set_target_devices(self, devices: list[str]) -> None:
+        """接收主窗口的在线选择快照；变更撤销待发请求，但不改向既有镜像。"""
+        targets = tuple(dict.fromkeys(
+            str(device).strip() for device in devices if str(device).strip()
+        ))
+        if targets != getattr(self, "_target_devices", None):
+            self._invalidate_device_admission()
+        self._target_devices = targets
+        self._update_action_states()
+
+    def activate_responsive_bindings(self) -> None:
+        """在通用页面预处理后恢复遥控按钮的自然宽度，再启动布局规划。"""
+        for button in self._remote_control_buttons:
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        super().activate_responsive_bindings()
+
+    def get_remote_session_devices(self) -> list[str]:
+        """返回正在预检或运行的镜像批次设备，不受当前复选变化影响。"""
+        return list(getattr(self, "_session_devices", ()))
+
+    def _scrcpy_process_keys(self) -> tuple[str, ...]:
+        """关闭路径只使用启动时分配的进程键，兼容单设备旧入口。"""
+        return getattr(self, "_session_process_keys", ()) or (getattr(self, "_process_key", ""),)
 
     def _invalidate_device_admission(self) -> None:
         """撤销尚未执行的输入与预检，重新勾选也不恢复旧请求。"""
@@ -399,12 +461,13 @@ class RemotePanel(BasePanel):
         self._refresh_remote_status_badge()
 
     def _refresh_remote_status_badge(self) -> None:
-        """按设备选中数量刷新徽标；Remote 只接受恰好一个设备。"""
+        """按当前在线目标数量刷新可启动状态和广播范围。"""
 
         if not hasattr(self, "remote_status_badge"):
             return
         if (
-            getattr(self, "_workspace_device_id", "")
+            getattr(self, "_target_devices", None) is None
+            and getattr(self, "_workspace_device_id", "")
             and getattr(self, "_workspace_device_connected", None) is False
         ):
             self.remote_status_badge.setText(tr("设备离线"))
@@ -414,15 +477,12 @@ class RemotePanel(BasePanel):
             self.remote_status_badge.setAccessibleDescription(description)
             return
         count = len(self.selected_devices)
-        if count == 1:
+        if count:
             text, level = tr("可启动"), InfoLevel.SUCCESS
-            description = tr("已选择一台设备，可以启动远程控制")
-        elif count > 1:
-            text, level = tr("请选择一台"), InfoLevel.WARNING
-            description = tr("远程控制只能操作一台已选择设备")
+            description = tr("远程控制作用于全部已选设备")
         else:
             text, level = tr("未选择"), InfoLevel.INFOAMTION
-            description = tr("请先选择一台设备再使用远程控制")
+            description = tr("请先选择设备再使用远程控制")
         self.remote_status_badge.setText(text)
         self.remote_status_badge.setLevel(level)
         self.remote_status_badge.setToolTip(description)
@@ -491,14 +551,22 @@ class RemotePanel(BasePanel):
     def _log(self, level: str, msg: str):
         if getattr(self, "_closing", False):
             return
-        self.signals.log_message.emit(level, msg)
+        msg = self._redact_remote_diagnostic(msg)
+        if level.upper() != "DEBUG":
+            self._feedback_received.emit(level, msg)
+        else:
+            self.signals.log_message.emit(level, msg)
 
     def _redact_remote_diagnostic(self, message: str) -> str:
         """移除 Remote 诊断信息中的当前设备标识，并限制异常输出长度。"""
         text = str(message).replace("\r", " ").replace("\n", " ")
         active_device = str(getattr(self, "_active_device", "") or "")
-        if active_device:
-            text = text.replace(active_device, "<device>")
+        devices: set[str] = set(getattr(self, "_session_devices", ()))
+        devices.update(getattr(self, "_target_devices", ()) or ())
+        devices.add(active_device)
+        for device in sorted(devices, key=len, reverse=True):
+            if device:
+                text = text.replace(device, "<device>")
         return text[:1000]
 
     def shutdown(self):
@@ -514,6 +582,7 @@ class RemotePanel(BasePanel):
                 # 其余 executor 与 ADB 会话清理不能被单个服务异常截断。
                 pass
         self._active_device = None
+        self._session_devices = ()
         self._running = False
         try:
             self._stop_launch_worker(wait_ms=0)
@@ -533,17 +602,17 @@ class RemotePanel(BasePanel):
         worker = getattr(self, "_launch_worker", None)
         input_shutdown = self._remote_input_shutdown_handle()
         scrcpy_service = getattr(self, "_scrcpy_service", None)
-        process_key = getattr(self, "_process_key", "")
+        process_keys = self._scrcpy_process_keys()
         process_terminal = threading.Event()
 
         def process_running(*, raise_errors: bool = False) -> bool:
             if process_terminal.is_set():
                 return False
-            if scrcpy_service is None or not process_key:
+            if scrcpy_service is None or not any(process_keys):
                 process_terminal.set()
                 return False
             try:
-                running = bool(scrcpy_service.is_active(process_key))
+                running = any(scrcpy_service.is_active(key) for key in process_keys)
             except Exception:
                 if raise_errors:
                     raise
@@ -585,7 +654,7 @@ class RemotePanel(BasePanel):
                     request_error = exc
             if should_request_process_stop:
                 try:
-                    self._request_scrcpy_stop_once(scrcpy_service, process_key)
+                    self._request_scrcpy_stop_once(scrcpy_service)
                 except Exception as exc:
                     if request_error is None:
                         request_error = exc
@@ -616,7 +685,25 @@ class RemotePanel(BasePanel):
             if not process_running():
                 return False
             assert scrcpy_service is not None  # process_running() 已排除 None
-            forced = bool(scrcpy_service.force_stop(process_key, timeout))
+            deadline = time.monotonic() + max(0.0, timeout)
+            forced = True
+            first_error = None
+            for key in process_keys:
+                try:
+                    active = bool(scrcpy_service.is_active(key))
+                except Exception:
+                    active = True
+                if active:
+                    try:
+                        forced = bool(scrcpy_service.force_stop(
+                            key, max(0.0, deadline - time.monotonic()),
+                        )) and forced
+                    except Exception as exc:
+                        forced = False
+                        if first_error is None:
+                            first_error = exc
+            if first_error is not None:
+                raise first_error
             if forced:
                 process_terminal.set()
             return forced
@@ -681,7 +768,10 @@ class RemotePanel(BasePanel):
                 warmup_lock = threading.Lock()
                 self._warmup_threads_lock = warmup_lock
             with warmup_lock:
-                warmup_threads = tuple(getattr(self, "_warmup_threads", ()))
+                warmup_threads = (
+                    *getattr(self, "_warmup_threads", ()),
+                    *getattr(self, "_scrcpy_threads", ()),
+                )
             adb = getattr(self, "_adb", None)
             close_input = getattr(adb, "close_input_sessions", None)
             handle = _RemoteInputShutdown(
@@ -703,6 +793,11 @@ class RemotePanel(BasePanel):
         return lock
 
     def _disconnect_launch_worker(self, worker: ScrcpyLaunchWorker):
+        if isinstance(worker, ScrcpyLaunchWorker) and isinstance(worker.config, list):
+            try:
+                worker.batch_ready.disconnect(self._on_batch_launch_ready)
+            except (RuntimeError, TypeError):
+                pass
         for disconnect in (
             lambda: worker.log_message.disconnect(self._log),
             lambda: worker.launch_ready.disconnect(self._on_launch_ready),
@@ -970,6 +1065,12 @@ class RemotePanel(BasePanel):
         return (
             getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
         )._on_launch_ready(args, device_info)
+
+    def _on_batch_launch_ready(self, plans: list) -> None:
+        """仅在 GUI 线程接纳当前批次的预检结果并启动独立镜像进程。"""
+        return (
+            getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
+        )._on_batch_launch_ready(plans)
 
     def _on_launch_finished(self, worker):
         return (

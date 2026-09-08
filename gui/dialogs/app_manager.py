@@ -1,7 +1,9 @@
 """应用管理页面，列出、筛选、管理、备份和恢复设备应用。"""
 
+from typing import cast
+
 from PySide6.QtCore import QSize, QSortFilterProxyModel, Qt, QTimer, Signal
-from PySide6.QtWidgets import QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QSizePolicy, QSplitter, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel
 
 from gui.dialogs.app_manager_batch import AppManagerBatch
@@ -14,7 +16,9 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
     safe_disconnect,
 )
+from gui.feedback import report_feedback
 from gui.i18n import tr
+from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
 from models.app_manager_worker import AppManagerWorker  # noqa: F401  供测试通过本模块命名空间补丁。
 
@@ -87,8 +91,6 @@ class AppManagerPage(QWidget):
     detail_opened = Signal(str)
     detail_closed = Signal()
 
-    # 日志区由 AppManagerForm 控制器创建，此处提供类级类型声明供跨控制器解析。
-    log_output: QTextEdit
     status_bar: CaptionLabel
     load_error_label: CaptionLabel
     load_error_panel: QWidget
@@ -115,6 +117,7 @@ class AppManagerPage(QWidget):
         self.load_state = "idle"
         self._apps_data = []
         self._detail_cache = {}
+        self._failed_detail_packages = set()
         self._pending_detail_packages = set()
         self._detail_worker_running = False
         self._closing = False
@@ -423,23 +426,6 @@ class AppManagerPage(QWidget):
             getattr(self, "_form_controller", None) or AppManagerForm(self)
         )._action_layout_available_width()
 
-    @staticmethod
-    def _buttons_fit_columns(buttons, columns, available_width, spacing):
-        return AppManagerForm._buttons_fit_columns(buttons, columns, available_width, spacing)
-
-    def _reflow_action_group(
-        self, layout, buttons, short_labels, wide_columns, *, span_last_in_two_columns=False
-    ):
-        return (
-            getattr(self, "_form_controller", None) or AppManagerForm(self)
-        )._reflow_action_group(
-            layout,
-            buttons,
-            short_labels,
-            wide_columns,
-            span_last_in_two_columns=span_last_in_two_columns,
-        )
-
     def _reflow_action_buttons(self):
         return (
             getattr(self, "_form_controller", None) or AppManagerForm(self)
@@ -644,10 +630,14 @@ class AppManagerPage(QWidget):
     # ── 日志 / 关闭 ──────────────────────────────────────────────────────
 
     def log(self, msg):
-        if self._closing or not is_qobject_alive(self.log_output):
+        if self._closing:
             return
-        self.log_output.append(msg)
-        self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
+        report_feedback(self, "apps.manager", tr("应用管理"), str(msg), target=self.device_ip)
+
+    def _on_operation_feedback(self, level: str, message: str) -> None:
+        """worker 的显式结果级别决定 Toast 颜色，日志正文不承担成功判断。"""
+        report_feedback(self, "apps.manager", tr("应用管理"), message,
+                        level=cast(ToastLevel, level), notify=True, target=self.device_ip)
 
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
         """将仍在运行的应用管理 worker 作为一组资源注册到监督器。"""

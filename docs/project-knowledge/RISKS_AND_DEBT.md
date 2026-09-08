@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-05
+last_verified: 2026-09-08
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -19,10 +19,9 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | 少数公共 model 入口依赖 Controller 的业务参数校验 | 主 UI 的 forward/reverse TCP 端口与 geo 经纬度已有校验；直接调用 `ADBNetworkMixin.forward_port_async/reverse_port_async` 或 `ADBSystemMixin.emu_geo_fix_async` 时未重复完整约束。是否收紧直接调用契约需确认；已 quote 的 URI、组件、设置值和文本不再笼统列为注入缺口 | Partial |
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | 单进程内已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | 关键 CommandResult 已校验，备份使用 staging；补完整性元数据和授权恢复测试 | Partial |
-| Medium | 部分已开始的 QRunnable/Executor 命令仍依赖命令超时，不能按 operation 统一中止；MobilePerf 内核仍有独立 Popen 边界 | model 终态栅栏取消未执行任务；ProcessRunner 保留未退出句柄，MobilePerf 停止失败保留运行锁并允许重试，应用关闭等待停止线程与进程。剩余工作是明确各执行边界的取消覆盖，不重复登记已修复的停止失败/资源归属问题 | Partial |
+| Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 长任务仍有独立 Popen 边界 | 明确只读 model 查询、设备概览、App Manager、Logcat 辅助探测和 Remote 预检支持执行中取消；关闭等待 Executor、模型池和活动短命令，超时保留残留。MobilePerf 同步采集查询与间隔等待可取消。特殊调用保持原契约，真实拔线和平台差异仍需扩展验证 | Partial |
 | Medium | 打包 CI 不运行 pytest，macOS/Linux 也缺少真实功能验证 | Windows 有 Ruff/Pyright 和打包自检；至少恢复非 UI 测试，并补平台启动/ADB/scrcpy 降级检查 | Open |
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
-| Low | 设备信息仍可能把 device id、序列号或 MAC 写入用户可见日志 | 文件日志默认关闭不等于脱敏；应在日志边界统一遮蔽真实设备标识并补契约测试 | Open |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见

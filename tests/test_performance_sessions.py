@@ -90,6 +90,16 @@ def test_multiple_selection_lists_idle_devices_without_creating_or_starting_sess
     assert host.close_session_button.isHidden()
 
 
+def test_collectors_reuse_global_labels_and_keep_raw_identity_only_for_routing(host):
+    host.performance_sessions.set_device_labels({"demo-a": "设备 3 · Phone", "demo-b": "设备 7"})
+    host.set_device_context(["demo-b", "demo-a"], ["demo-a", "demo-b"])
+    host.open_feature("performance")
+    item = host.performance_sessions.table.item(1, 0)
+    assert item.text() == "设备 3 · Phone"
+    assert "demo-a" not in item.toolTip()
+    assert item.data(Qt.ItemDataRole.UserRole) == "demo-a"
+
+
 def test_two_collectors_keep_separate_progress_parameters_and_stop_target(host, qt_application):
     host.set_device_context(["demo-a", "demo-b"], ["demo-a", "demo-b"])
     host.open_feature("performance", preferred_device="demo-a")
@@ -139,7 +149,10 @@ def test_running_session_stays_visible_after_deselection_and_disconnect(host, qt
     host.set_device_context(["demo-b"], ["demo-b"])
     table = host.performance_sessions.table
     assert host.performance_sessions.isVisible()
-    assert [table.item(row, 0).text() for row in range(2)] == ["demo-b", "demo-a"]
+    assert [table.item(row, 0).text() for row in range(2)] == ["设备 2", "设备 1"]
+    assert [table.item(row, 0).data(Qt.ItemDataRole.UserRole) for row in range(2)] == [
+        "demo-b", "demo-a",
+    ]
     assert "离线" in table.item(1, 1).text()
     assert first.stop_btn.isEnabled()
     assert not first.start_btn.isEnabled()
@@ -156,6 +169,9 @@ def test_state_list_bounds_long_devices_and_many_rows(host, qt_application, font
     )
     BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
     devices = [f"demo-{index}-" + "w" * 90 for index in range(8)]
+    labels = {device: f"设备 {index + 1} · " + "Phone" * 24
+              for index, device in enumerate(devices)}
+    host.performance_sessions.set_device_labels(labels)
     host.resize(400, 780)
     host.set_device_context(devices, devices)
     host.open_feature("performance")
@@ -166,8 +182,9 @@ def test_state_list_bounds_long_devices_and_many_rows(host, qt_application, font
     assert table.verticalScrollBar().maximum() > 0
     assert table.height() < 300
     assert table.horizontalScrollBar().maximum() == 0
-    assert table.item(7, 0).text() == devices[7]
-    assert devices[7] in table.item(7, 0).toolTip()
+    assert table.item(7, 0).text() == labels[devices[7]]
+    assert labels[devices[7]] in table.item(7, 0).toolTip()
+    assert table.item(7, 0).data(Qt.ItemDataRole.UserRole) == devices[7]
     assert table.geometry().right() < panel.width()
     option = QStyleOptionViewItem()
     table.itemDelegate().initStyleOption(option, table.model().index(0, 0))

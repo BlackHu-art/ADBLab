@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-07
+last_verified: 2026-09-08
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -41,8 +41,17 @@ flowchart LR
 - `SidePanel` 是隐藏的兼容协调器，持有设备状态和业务面板控制器；可见内容由业务宿主持有。
   原 DeviceManager 列表仍是批量复选的兼容状态源，顶部栏与设备概览提交到同一状态源。
   协调器和 Remote 控制器按 QObject 父子关系随窗口/视图释放，不能仅靠 Python 引用管理寿命。
-- `DeviceContextBar` 在页面堆叠外显示操作目标及当前会话状态，不拥有会话或运行锁。
-  `DeviceHubPage` 消费主窗口缓存快照，不自行发起设备查询。
+- `DeviceContextBar` 在页面堆叠外提供页面标题及当前任务所需的设备入口，不拥有会话或运行锁。
+  批量页显示选择数量，固定设备页显示当前设备；各页面共用一个设备勾选下拉列表，单选页选择目标时
+  同时切换对应会话，多选页保留全部目标，均提交到同一 DeviceManager。具体页面规则见
+  [设备入口](../guides/OPERATION_RESULTS.md)。会话设备编号在当前运行内固定，组合根向结果和采集区域投影显示名称。
+  会话状态投影到可见控件的悬停提示与可访问说明，内部状态徽标不占布局空间。
+  `DeviceHubPage` 消费主窗口缓存快照并经信号请求操作，入口与详情呈现见
+  [设备概览流程](BUSINESS_FLOW.md#workspace-路由目录)。
+  连接表单继续由 `DeviceContextBar` 管理瞬态对象，`MainFrame` 显式传入概览连接按钮作为锚点；
+  切页或关闭弹层时沿用原清理边界，不另建连接历史或设备状态源。
+- `MainFrame` 在页面堆叠外统一提供 24px 水平边界，滚动区域内部保留 8px 控件安全距。
+  页面分区使用自然标题高度；应用和文件管理采用 Action 驱动的 CommandBar，溢出菜单同步命令可用态。
 - 纯消息使用 `gui/notifications.py` 的窗口内 InfoBar，非阻塞返回；兼容
   `FluentMessageBox.information/warning/critical` 返回 `None`。文本输入、短表单及系统文件选择器
   保留确认/取消语义。同步输入读取结果后再 `deleteLater()`，不承担长期任务。
@@ -75,7 +84,8 @@ flowchart LR
   `gui/features/`；部分实现仍在 `gui/dialogs/`，文件名不代表 QDialog 契约。
   Remote 复用 RemotePanel，不进入 registry；About 随 Settings 创建和销毁。
 - AppPanel 持有共用包名及媒体工具，列表会话关闭不释放这些控件；截图页释放前将媒体工具归还
-  AppPanel，重建时再挂载。宿主承接深层功能的滚动范围，隐藏会话不参与当前尺寸计算。
+  AppPanel，重建时再挂载。宿主承接深层功能的滚动范围，隐藏会话不参与当前尺寸计算，
+  包括 Qt 的 `hasHeightForWidth()` / `heightForWidth()` 测量，避免隐藏长页撑大当前输出区。
 
 代码入口：`gui/pages/workspace_features.py`、`gui/features/base.py`、`gui/main_frame.py`。
 验证入口：`test_workspace_feature_host.py`、`test_workspace_route_payload.py`、
@@ -88,9 +98,14 @@ flowchart LR
 - `models/adb_model.py::async_command` 将普通命令放入全局 QThreadPool，长任务放入每模型
   `long_pool`。operation 关键字参数转成 `OperationMetadata`，不传入底层方法；owner/generation
   用来拒绝错代或晚到结果。关闭时先封闭新任务准入，尚未执行的方法体返回取消结果。
+  明确只读查询通过 `_run_readonly()` 把模型关闭传递到执行器；后台关闭线程等待 Executor
+  和模型线程池真正退出，活动短命令也纳入监督，超时保留 residual。
 - `CommandRunner` 返回统一 `CommandResult`；超时转换成失败结果，不向调用者抛出
   `subprocess.TimeoutExpired`。`ProcessRunner` 管长进程、同键替换、停止和全局兜底；只有确认
   退出才移除 tracking，停止失败或并发启动冲突产生的残留仍需登记。
+- GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
+  `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
+  未安装运行实例的工具仍走原生。能力、回退范围和设置入口见 [ADB 自动适配](../guides/ADB_FAST.md)。
 - `ADBBridge` 为每台设备维护持久输入 shell；成功写入不代表设备执行已确认。
   外部命令与参数校验边界见 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - OperationManager 管业务身份、进度、终态与取消意图，不拥有线程/进程；TaskSupervisor 管资源
@@ -103,13 +118,15 @@ flowchart LR
 | --- | --- |
 | Qt 主线程 | 控件、信号槽和渲染；后台结果经 Qt 信号回主线程 |
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
-| `_ScanThread` | ProcessRunner 轮询设备；单次调用超时 15 秒，100ms 检查停止；MainFrame 显式停止和等待 |
+| `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
+| `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
+| 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
 | 应用自有 cleanup QThreadPool | 执行资源停止和等待，与普通命令全局池分离 |
 | Controller ThreadPoolExecutor | 设备信息等后台查询；Controller.shutdown() 收口 |
 | Remote executor / warmup / readers | 停止输入准入，再等待执行器及预热生产者，最后关闭持久输入会话和相关进程资源 |
 | RunLibraryController 串行线程 | 文件读写及附件探测，空闲退出；关闭时排空最后提交记录 |
-| MobilePerf 子进程与内部线程 | 每次运行独立配置与 RuntimeData 上下文；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
+| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；同步短查询复用核心双后端，采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
 
 ## 应用关闭
 
@@ -133,11 +150,16 @@ flowchart LR
   [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
 - `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
   设置持久化；它不参与导航选中或历史。页面名称保留为可访问信息，不生成标题区。
-  会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部 `DeviceContextBar`。
-- `LogService` 跨线程缓冲并批量发出用户日志；源码 DEBUG 单独进入 stderr，不进入 GUI，
-  frozen 或无 stderr 时不输出该调试流。`shutdown()` 保留停止态单例并拒绝晚到日志。
-- 任务中心复用唯一 LogPanel，折叠和切页不丢内容。MobilePerf 父进程分别排空 stdout/stderr，
-  按代次接收、脱敏并隔离 DEBUG；这不等于整个项目的日志已完成脱敏。
+  会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部会话控件说明。
+- 通用操作由 `ActionResults` 管理请求身份与不可变结果，`ActionEnvelope` 穿过原异步模型边界；
+  `ActionFeedbackPresenter` 集中记录到任务中心，并驱动分级 Toast、报告文件入口及诊断正文阅读器，
+  不把过程日志解释为终态；普通功能页不设置通用操作结果面板。
+  资源与取消仍由既有 OperationManager、use case 和 supervisor 管理，详见
+  [操作结果](../guides/OPERATION_RESULTS.md)。
+- `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
+  文件队列在后台保存并在关闭时排空。源码 DEBUG 单独进入 stderr，frozen 或无 stderr 时不输出。
+  `shutdown()` 保留停止态单例并拒绝晚到消息。MobilePerf 继续独立排空 stdout/stderr，
+  按代次接收并遮蔽其运行值；摘要遮蔽不等于采集附件已经脱敏。
 
 架构决策缘由保留在 [ADR 目录](../README.md)，尚未闭环事项见
 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

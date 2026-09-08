@@ -99,6 +99,15 @@ def test_monkey_sections_and_visible_query_actions_fit(
         assert "2.0 (2)" in apps.monkey_package_info.text()
         assert apps.monkey_target_summary.text().count(package) == 1
         assert package not in apps.monkey_package_info.text()
+        assert apps.monkey_package_info.isHidden()
+        assert "2" in apps.monkey_package_overview.text()
+        overview_controls = (apps.monkey_package_overview, apps.monkey_package_details_btn)
+        assert_non_overlapping(overview_controls, apps.monkey_package_card)
+        for control in overview_controls:
+            assert_contained(control, apps.monkey_package_card)
+        apps.monkey_package_details_btn.click()
+        _resize_feature_viewport(qt_application, owner, apps, scroll, width)
+        assert apps.monkey_package_info.isVisibleTo(content)
         for label in (apps.monkey_package_info, apps.monkey_target_summary):
             assert label.height() >= label.heightForWidth(label.width())
             assert label.font().pointSize() == font_size
@@ -205,5 +214,82 @@ def test_monkey_presentation_tracks_cancel_failure_start_stop_and_close(
         assert apps.monkey_cancel_prepare_btn.isHidden()
         assert apps.monkey_run_status.text() == "页面正在关闭"
         assert starts.count() == 1
+    finally:
+        _close_feature_panel(owner)
+
+
+def test_single_monkey_target_uses_compact_inline_summary(qt_application, monkeypatch):
+    """常用单设备状态保留两行信息，不再为独立小标题和内边距预留大块空间。"""
+    owner, apps, scroll, content = _show_feature_panel(
+        "apps", 900, 12, qt_application, monkeypatch,
+    )
+    try:
+        owner._devices_tab.update_device_list(["demo-a"])
+        owner._devices_tab.set_selected_devices(["demo-a"])
+        apps.program_edit.setText("com.google.android.apps.nexuslauncher")
+        apps.monkey_get_package_btn.click()
+        pending = apps._monkey_preparation
+        apps.on_monkey_preparation_finished(
+            pending.request_id, _success(pending, pending.package_name),
+        )
+        _resize_feature_viewport(qt_application, owner, apps, scroll, 900)
+        assert apps.monkey_package_overview_row.isHidden()
+        assert apps.monkey_package_info.isVisibleTo(content)
+        assert apps.monkey_package_card.height() <= 96
+        summary = mapped_rect(apps.monkey_target_summary, apps.monkey_package_card)
+        button = mapped_rect(apps.monkey_get_package_btn, apps.monkey_package_card)
+        assert abs(summary.center().y() - button.center().y()) <= 2
+        assert_non_overlapping(
+            (apps.monkey_target_summary, apps.monkey_get_package_btn, apps.monkey_package_info),
+            apps.monkey_package_card,
+        )
+    finally:
+        _close_feature_panel(owner)
+
+
+def test_multi_monkey_details_expand_without_query_and_errors_remain_visible(
+    qt_application, monkeypatch,
+):
+    """大量设备不会推开参数区；展开仅阅读已有结果，过期与失败信息不能被折叠。"""
+    owner, apps, scroll, content = _show_feature_panel(
+        "apps", 900, 12, qt_application, monkeypatch,
+    )
+    try:
+        devices = [f"demo-{index}" for index in range(12)]
+        owner._devices_tab.update_device_list(devices)
+        owner._devices_tab.set_selected_devices(devices)
+        apps.program_edit.setText("com.example.demo")
+        queries = QSignalSpy(apps.monkey_preparation_requested)
+        starts = QSignalSpy(apps.signals.start_monkey_batch_requested)
+        apps.monkey_get_package_btn.click()
+        pending = apps._monkey_preparation
+        apps.on_monkey_preparation_finished(pending.request_id, _success(pending))
+        _resize_feature_viewport(qt_application, owner, apps, scroll, 900)
+        collapsed_height = apps.monkey_package_card.height()
+        assert collapsed_height <= 96
+        assert apps.monkey_package_info.isHidden()
+        assert "12" in apps.monkey_package_overview.text()
+        assert "差异" in apps.monkey_package_overview.text()
+        apps.monkey_package_details_btn.click()
+        _resize_feature_viewport(qt_application, owner, apps, scroll, 900)
+        assert apps.monkey_package_info.isVisibleTo(content)
+        assert "设备 12" in apps.monkey_package_info.text()
+        assert apps.monkey_package_card.height() > collapsed_height
+        apps.monkey_package_details_btn.click()
+        _resize_feature_viewport(qt_application, owner, apps, scroll, 900)
+        assert apps.monkey_package_card.height() == collapsed_height
+        assert queries.count() == 1 and starts.count() == 0
+        apps.program_edit.setText("com.example.other")
+        assert apps.monkey_package_overview_row.isHidden()
+        assert not apps.monkey_package_info.isHidden()
+        assert "已改变" in apps.monkey_package_info.text()
+        apps.monkey_get_package_btn.click()
+        pending = apps._monkey_preparation
+        apps.on_monkey_preparation_finished(
+            pending.request_id, {"success": False, "error": "连接已断开，请重试"},
+        )
+        assert not apps.monkey_package_info.isHidden()
+        assert apps.monkey_package_info.text() == "连接已断开，请重试"
+        assert starts.count() == 0
     finally:
         _close_feature_panel(owner)

@@ -8,6 +8,8 @@ from typing import Optional
 
 from PySide6.QtCore import QMutex, QObject, Qt, QThread, QTimer, Signal, Slot
 
+from core.diagnostics import DiagnosticJournal
+
 
 @dataclass(frozen=True)
 class LogLevel:
@@ -24,6 +26,7 @@ class LogService(QObject):
 
     log_received = Signal(str, str)  # 兼容信号：参数为日志级别、消息。
     logs_received = Signal(list)  # 批次信号：元素为 (时间戳, 级别, 消息) 三元组。
+    diagnostics_changed = Signal()
     _flush_requested = Signal()
     _flush_now_requested = Signal()
     _stop_requested = Signal()
@@ -56,6 +59,7 @@ class LogService(QObject):
             self._dropped_count = 0
             self._pending_dropped_count = 0
             self._state = self._STATE_ACCEPTING
+            self.diagnostics = DiagnosticJournal()
             self._setup_logging()
 
     def _setup_logging(self) -> None:
@@ -194,6 +198,8 @@ class LogService(QObject):
         """通过兼容信号将单个批次发布给界面。"""
         if not current_batch:
             return
+        if self.diagnostics.accept(current_batch):
+            self.diagnostics_changed.emit()
         # 界面优先消费批次信号，兼容信号继续服务尚未迁移的调用方。
         self.logs_received.emit(current_batch)
         for _timestamp, level, message in current_batch:

@@ -54,7 +54,7 @@ def test_remote_input_is_available_without_a_running_mirroring_session():
     panel._log.assert_not_called()
 
 
-def test_remote_multi_device_start_requires_exactly_one_selection():
+def test_remote_multi_device_start_snapshots_every_selected_target():
     panel = RemotePanel.__new__(RemotePanel)
     panel.panel = Mock(selected_devices=["device-a", "device-b"])
     panel._process = None
@@ -62,9 +62,10 @@ def test_remote_multi_device_start_requires_exactly_one_selection():
     panel._scrcpy_service = Mock()
     panel._scrcpy_service.resolve_executable.return_value = "C:/tools/scrcpy.exe"
     panel._set_running = Mock()
+    panel._set_session_state = Mock()
     panel._update_action_states = Mock()
     panel._update_status = Mock()
-    panel._scrcpy_config = Mock(return_value=Mock())
+    panel._scrcpy_config = Mock(side_effect=lambda _exe, device: Mock(device=device))
     panel._log = Mock()
 
     worker = Mock()
@@ -78,15 +79,13 @@ def test_remote_multi_device_start_requires_exactly_one_selection():
     ):
         RemotePanel._start_scrcpy(panel)
 
-    assert not getattr(panel, "_active_device", None)
-    worker.start.assert_not_called()
-    assert any(
-        call.args[0] == "WARNING" and "exactly one" in call.args[1].lower()
-        for call in panel._log.call_args_list
-    )
+    assert panel.get_remote_session_devices() == ["device-a", "device-b"]
+    assert [config.device for config in panel._session_config] == ["device-a", "device-b"]
+    worker.start.assert_called_once()
+    panel._log.assert_not_called()
 
 
-def test_remote_workspace_device_is_independent_from_batch_selection():
+def test_remote_legacy_workspace_device_is_independent_from_batch_selection():
     panel = _remote_panel(
         active_device=None,
         selected_devices=["batch-a", "batch-b"],

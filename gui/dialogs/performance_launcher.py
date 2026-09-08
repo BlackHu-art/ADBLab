@@ -46,6 +46,7 @@ from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
 from gui.styles.typography import FontRole
+from gui.widgets.content_section import ContentSection
 from gui.widgets.performance_progress import PerformanceProgress
 from gui.widgets.performance_sessions import PerformanceSnapshot
 from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
@@ -676,7 +677,11 @@ class PerformancePage(QWidget):
                 font.setBold(True)
                 label.setFont(font)
         for card in self.findChildren(HeaderCardWidget):
-            card.headerView.setFixedHeight(max(48, card.headerLabel.fontMetrics().height() + 32))
+            # 开放分区按标题和动作自然测高，传统卡片保留既有页头留白。
+            if not isinstance(card, ContentSection):
+                card.headerView.setFixedHeight(
+                    max(48, card.headerLabel.fontMetrics().height() + 32)
+                )
         self.log_view.setFont(log_font)
         self.log_view.viewport().setFont(log_font)
         self.log_view.document().setDefaultFont(log_font)

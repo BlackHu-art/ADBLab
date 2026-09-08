@@ -16,7 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.exec import ExecHandle, ProcessRunner
+from core.exec import ExecHandle, ProcessRunner, adb_runtime
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 
@@ -277,6 +277,11 @@ class MobilePerfRunner:
                 self._stop_path = os.path.join(config_dir.name, "mobileperf.stop")
                 cmd = self._build_command()
                 env = os.environ.copy()
+                runtime = adb_runtime()
+                # 只传递启动时的用户选择，设备能力由子进程独立校验，不持久化策略。
+                env["MOBILEPERF_ADB_MODE"] = (
+                    "native" if runtime is not None and runtime.snapshot().native_only else "auto"
+                )
                 adb_path = self._resolve_adb_path()
                 if adb_path:
                     env["ADB_PATH"] = adb_path

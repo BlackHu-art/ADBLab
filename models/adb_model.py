@@ -12,6 +12,7 @@ from typing import Any, TypeVar, overload
 
 from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 
+from adblab.application.action_results import ActionEnvelope, capture_action_job
 from adblab.application.envelope import OperationMetadata, attach_operation_metadata
 from core.exec import CommandRunner
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
@@ -43,8 +44,22 @@ class CommandTask(QRunnable):
         self.method_ref = method_ref
         self.queued_at = queued_at
         self.metadata = metadata
+        self.action_job = capture_action_job(method_ref.__name__, args[0] if args else "")
         self.args = args
         self.kwargs = kwargs
+        if self.action_job is not None and callable(kwargs.get("callback")):
+            self.kwargs = dict(kwargs)
+            self._original_callback = kwargs["callback"]
+            self._last_progress_at = 0.0
+            self.kwargs["callback"] = self._report_progress
+
+    def _report_progress(self, message: str) -> None:
+        """把阶段说明限频投递到模型所属线程，worker 不访问结果存储或控件。"""
+        self._original_callback(message)
+        now = perf_counter()
+        if now - self._last_progress_at >= 0.2:
+            self._last_progress_at = now
+            self.model.action_progress.emit(self.action_job, str(message))
 
     def run(self):
         import shiboken6
@@ -62,6 +77,8 @@ class CommandTask(QRunnable):
             self.method_ref.__name__, self.queued_at, started_at, finished_at
         )
         result = attach_operation_metadata(attach_perf(result, perf), self.metadata)
+        if self.action_job is not None:
+            result = ActionEnvelope(result, self.action_job)
         try:
             if not shiboken6.isValid(self.model):
                 return
@@ -130,7 +147,16 @@ def async_command(method=None, *, long_running: bool = False) -> Any:
             **kwargs,
         )
         pool = self.long_pool if long_running else self.thread_pool
-        pool.start(task)
+        try:
+            pool.start(task)
+        except Exception as exc:
+            payload = attach_operation_metadata(
+                {"success": False, "error": f"任务提交失败：{type(exc).__name__}"}, metadata,
+            )
+            if task.action_job is not None:
+                payload = ActionEnvelope(payload, task.action_job)
+            self.command_finished.emit(method.__name__, payload)
+            raise
 
     return wrapper
 
@@ -142,6 +168,7 @@ class ADBModelCore(QObject):
     """
 
     command_finished = Signal(str, object)  # 参数依次为方法名和执行结果。
+    action_progress = Signal(object, str)
 
     def __init__(self):
         super().__init__()
@@ -160,16 +187,46 @@ class ADBModelCore(QObject):
 
         return self._shutdown_started.is_set()
 
+    def wait_for_commands(self) -> None:
+        """由后台关闭线程等待已提交任务释放；GUI 主线程不得调用此阻塞边界。"""
+        for pool in (self.thread_pool, self.long_pool):
+            wait = getattr(pool, "waitForDone", None)
+            if callable(wait):
+                wait()
+
+    def _run_readonly(
+        self, cmd: list, timeout: float = 30, shell: bool = False, *,
+        cancelled: Callable[[], bool] | None = None, **extra,
+    ) -> dict:
+        """只读查询共享调用方和模型关闭信号；写操作必须保留独立的取消契约。"""
+        return self._run(
+            cmd, timeout=timeout, shell=shell,
+            cancelled=lambda: self.is_shutting_down() or bool(cancelled and cancelled()),
+            **extra,
+        )
+
     @classmethod
-    def _run(cls, cmd: list, timeout: int = 30, shell: bool = False, **extra) -> dict:
+    def _run(
+        cls, cmd: list, timeout: float = 30, shell: bool = False, *,
+        native_only: bool = False, cancelled: Callable[[], bool] | None = None, **extra,
+    ) -> dict:
         """执行命令，返回 {"success": True, ...} 或 {"success": False, "error": ...}。
 
         extra 关键字参数会合并到返回字典（如 device_ip、package 等）。
         全项目 @async_command 方法的统一入口。shell=False 时仍由设备端 sh 二次解释，动态值需 quote。
         """
-        r = CommandRunner.run(cmd, timeout=timeout, shell=shell)
+        options = {}
+        if native_only:
+            options["native_only"] = True
+        if cancelled is not None:
+            options["cancelled"] = cancelled
+        r = CommandRunner.run(cmd, timeout=timeout, shell=shell, **options)
         if r.success:
             return {"success": True, "output": r.output, **extra}
+        if r.stale:
+            return {"success": False, "stale": True, "error": r.error, **extra}
+        if r.error == "Cancelled":
+            return {"success": False, "cancelled": True, "error": r.error, **extra}
         return {"success": False, "error": r.error, **extra}
 
     @staticmethod

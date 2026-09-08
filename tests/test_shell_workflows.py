@@ -1,4 +1,4 @@
-"""验证移除重复入口后的首页、同页运行记录和原生 Fluent 按钮交互。"""
+"""验证首页入口、功能分区结果和原生 Fluent 按钮交互。"""
 
 from unittest.mock import Mock
 
@@ -13,7 +13,6 @@ from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import DEVICE_ICON, get_fluent_icon, get_themed_icon
 from tests.test_main_window_layout import build_main_frame
-from tests.ui_geometry_helpers import wait_until
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ def test_device_bar_visibility_follows_page_without_retargeting(
     for route in ("devices", "apps", "system", "tasks", "settings"):
         frame._on_nav_requested(route)
         qt_application.processEvents()
-        if route in ("devices", "settings"):
+        if route in ("devices", "tasks", "settings"):
             assert frame._global_device_bar.isHidden()
             assert frame.stackedWidget.y() == home_top
         else:
@@ -50,42 +49,45 @@ def test_device_bar_visibility_follows_page_without_retargeting(
     assert frame.stackedWidget.y() == home_top
 
 
-def test_runtime_records_belong_to_task_center_and_survive_collapsing(frame, qt_application):
+def test_action_results_belong_to_section_and_survive_navigation(frame, qt_application):
+    from adblab.application.action_results import ActionItem, ActionResult, ActionSpec
+
     assert "logsPage" not in frame.navigationInterface.panel.items
-    assert not hasattr(frame, "_logs_page")
-    frame.log_panel._append_log("ERROR", "示例操作失败，请重试")
+    assert not hasattr(frame, "log_panel")
+    result = ActionResult(
+        "synthetic", ActionSpec("query", "apps.diagnostics", "内存", "text"),
+        ("demo",), 1, state="failed",
+        items=(ActionItem("job", "demo", "设备 1", "failed", "示例操作失败，请重试"),),
+        finished_at=2,
+    )
+    frame._action_feedback.present(result)
     frame._on_nav_requested("tasks")
-    task_page = frame._task_page
-    records = task_page.runtime_records
-    assert records is not None
-    assert records.content is frame.log_panel
-    assert task_page.isAncestorOf(frame.log_panel)
-    assert frame.log_panel.isHidden()
-    task_page.show_runtime_records()
-    wait_until(qt_application, lambda: "示例操作失败" in frame.log_panel.text_output.toPlainText())
-    assert frame.log_panel.isVisible()
-    records.toggle_button.click()
+    frame._task_page.history_views.set_current("operations")
+    view = frame._task_page.action_results
+    assert view.isVisibleTo(frame._tasks_page)
+    assert "示例操作失败" in view.output.toPlainText()
+    view.detail_toggle.setChecked(False)
     frame._on_nav_requested("home")
     frame._on_nav_requested("tasks")
-    task_page.show_runtime_records()
-    assert "示例操作失败" in frame.log_panel.text_output.toPlainText()
-    frame.log_panel.logClearButton.click()
-    assert frame.log_panel.text_output.toPlainText() == ""
+    view.detail_toggle.setChecked(True)
+    assert "示例操作失败" in view.output.toPlainText()
+    assert frame._action_feedback._diagnostics._records["synthetic"] is result
 
 
-def test_device_information_opens_the_runtime_records_destination(frame):
+def test_overview_disconnect_uses_current_selection_and_stays_in_device_page(frame):
     frame._on_nav_requested("devices")
     frame._on_devices_updated(["demo-a", "demo-b"])
     frame._global_device_bar.selection_requested.emit(["demo-a", "demo-b"])
-    frame._global_device_bar.info_requested.emit()
-    assert frame.stackedWidget.currentWidget() is frame._tasks_page
-    assert frame.log_panel.isVisible()
-    frame.adb_controller.get_device_info.assert_called_once_with(["demo-a", "demo-b"])
-    frame._global_device_bar.selection_requested.emit([])
-    frame._on_nav_requested("devices")
-    frame._show_selected_device_info()
+    frame._device_hub.disconnect_action.trigger()
     assert frame.stackedWidget.currentWidget() is frame._devices_page
-    assert frame.adb_controller.get_device_info.call_count == 1
+    frame.adb_controller.disconnect_devices.assert_called_once_with(["demo-a", "demo-b"])
+    frame._global_device_bar.selection_requested.emit(["demo-b"])
+    frame._device_hub.disconnect_action.trigger()
+    frame.adb_controller.disconnect_devices.assert_called_with(["demo-b"])
+    frame._global_device_bar.selection_requested.emit([])
+    frame._device_hub.disconnect_action.trigger()
+    assert frame.stackedWidget.currentWidget() is frame._devices_page
+    assert frame.adb_controller.disconnect_devices.call_count == 2
 
 
 def test_monkey_alias_opens_diagnostics_without_duplicate_sidebar_entry(frame):

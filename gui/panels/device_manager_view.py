@@ -392,7 +392,6 @@ class DeviceManagerView:
         for button in filter(
             None,
             (
-                getattr(self._frame, "btn_info", None),
                 getattr(self._frame, "btn_disconnect", None),
                 getattr(self._frame, "btn_restart_dev", None),
                 getattr(self._frame, "btn_batch", None),
@@ -401,8 +400,6 @@ class DeviceManagerView:
             button.setEnabled(has_selection)
             if has_selection:
                 button.setToolTip(str(button.property("functionalToolTip") or ""))
-            elif button is getattr(self._frame, "btn_info", None):
-                button.setToolTip(tr("请先选择设备；设备信息会显示在任务中心运行记录中"))
             else:
                 button.setToolTip(tr("请先选择设备"))
         select_all = getattr(self._frame, "btn_all", None)

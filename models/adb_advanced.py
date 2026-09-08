@@ -268,11 +268,11 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         cmd = ["adb", "-s", device_ip, "shell", "dumpsys", "meminfo"]
         if package:
             cmd.append(shlex.quote(package))
-        return self._run(cmd, timeout=15, device_ip=device_ip, package=package)
+        return self._run_readonly(cmd, timeout=15, device_ip=device_ip, package=package)
 
     @async_command
     def dumpsys_cpuinfo_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "dumpsys", "cpuinfo"],
             timeout=15,
             device_ip=device_ip,
@@ -280,7 +280,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def dumpsys_battery_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "dumpsys", "battery"],
             timeout=15,
             device_ip=device_ip,
@@ -308,7 +308,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             cmd.extend(["-e", regex])
         if max_lines:
             cmd.extend(["-m", max_lines])
-        r = self._run(cmd, timeout=30, device_ip=device_ip)
+        r = self._run_readonly(cmd, timeout=30, device_ip=device_ip)
         if r["success"]:
             atomic_write_text(log_path, r["output"])
             return {
@@ -323,7 +323,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def settings_list_async(self, device_ip: str, namespace: str = "system") -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "settings", "list", shlex.quote(namespace)],
             timeout=15,
             device_ip=device_ip,
@@ -332,7 +332,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def settings_get_async(self, device_ip: str, namespace: str, key: str) -> dict:
-        result = self._run(
+        result = self._run_readonly(
             [
                 "adb", "-s", device_ip, "shell", "settings", "get",
                 shlex.quote(namespace), shlex.quote(key),
@@ -360,8 +360,11 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def run_shell_command_async(self, device_ip: str, command: str, timeout: int = 30) -> dict:
+        """自定义命令可能依赖 stdin；在输入语义明确前保留原生执行。"""
         full_cmd = ["adb", "-s", device_ip, "shell", command]
-        return self._run(full_cmd, timeout=timeout, device_ip=device_ip, command=command)
+        return self._run(
+            full_cmd, timeout=timeout, native_only=True, device_ip=device_ip, command=command,
+        )
 
     # 重启模式
 
@@ -385,7 +388,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def shell_ls_async(self, device_ip: str, path: str = "/sdcard") -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "ls", "-la", shlex.quote(path)],
             timeout=10,
             device_ip=device_ip,
@@ -412,21 +415,21 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
 
     @async_command
     def get_device_uptime_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "uptime"],
             device_ip=device_ip,
         )
 
     @async_command
     def get_cpu_info_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "cat", "/proc/cpuinfo"],
             device_ip=device_ip,
         )
 
     @async_command
     def get_kernel_version_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "cat", "/proc/version"],
             device_ip=device_ip,
         )

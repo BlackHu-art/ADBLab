@@ -6,7 +6,13 @@
 无需改动；无活动运行（例如单测直接设置字段）时回退到类属性。
 """
 
+from __future__ import annotations
+
 import threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mobileperf.android.adb_execution import MobilePerfAdbExecutor
 
 _RUNTIME_FIELDS = frozenset(
     {
@@ -17,6 +23,7 @@ _RUNTIME_FIELDS = frozenset(
         "exit_event",
         "top_dir",
         "config_dic",
+        "adb_execution",
     }
 )
 
@@ -47,22 +54,24 @@ class RuntimeData(metaclass=_RuntimeDataMeta):
     _instance_lock = threading.Lock()
 
     # 无活动运行时的类级回退值。
-    old_pid = None
+    old_pid: int | None = None
     packages = None
     package_save_path = None
     start_time = None
     exit_event = threading.Event()
     top_dir = None
     config_dic = {}
+    adb_execution: MobilePerfAdbExecutor | None = None
 
     def __init__(self):
-        self.old_pid = None
+        self.old_pid: int | None = None
         self.packages = None
         self.package_save_path = None
         self.start_time = None
         self.exit_event = threading.Event()
         self.top_dir = None
         self.config_dic = {}
+        self.adb_execution: MobilePerfAdbExecutor | None = None
 
     @classmethod
     def begin_run(cls):

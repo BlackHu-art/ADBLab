@@ -226,23 +226,20 @@ class CpuCollector:
         logger.debug("INFO: CpuCollector start...")
 
     def stop(self):
-        """停止 CPU 采集线程和仍在运行的 top 进程。"""
+        """取消有限时长的 top 查询，再等待采集线程结束。"""
         logger.debug("INFO: CpuCollector stop...")
+        self._stop_event.set()
         if self.collect_package_cpu_thread.is_alive():
-            self._stop_event.set()
             self.collect_package_cpu_thread.join(timeout=2)
-            self.collect_package_cpu_thread = None
-
-        if hasattr(self, "_top_pipe"):
-            if self._top_pipe.poll() is None:  # 仍在运行时主动终止 top 进程。
-                self._top_pipe.terminate()
 
     def _top_cpuinfo(self):
-        self._top_pipe = self.device.adb.run_shell_cmd(self.top_cmd, sync=False)
-        out = self._top_pipe.stdout.read()
-        error = self._top_pipe.stderr.read()
-        if error:
-            logger.error("into cpuinfos error : " + str(error))
+        # top -n 1 每次产生一个完整样本，不需要持续进程；预算包含设备采样间隔。
+        out = self.device.adb.run_shell_cmd(
+            self.top_cmd,
+            timeout=max(10, self._interval + 5),
+            cancelled=self._stop_event.is_set,
+        )
+        if self._stop_event.is_set():
             return
         if isinstance(out, bytes):
             out = out.decode("utf-8", errors="ignore")
@@ -289,7 +286,7 @@ class CpuCollector:
                 logger.debug("  ============== time consume for cpu info : " + str(time_consume))
                 if cpu_info is None or cpu_info.source == "" or not cpu_info.package_list:
                     logger.debug("cpuinfos, can't get cpu info, continue")
-                    time.sleep(self._interval)
+                    self._stop_event.wait(self._interval)
                     continue
                 self.cpu_list.extend(
                     [
@@ -322,7 +319,7 @@ class CpuCollector:
 
                 delta_inter = self._interval - time_consume
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self._stop_event.wait(delta_inter)
             except Exception as e:
                 logger.error("an exception hanpend in cpu thread , reason unkown!, e:")
                 logger.error(e)

@@ -24,7 +24,7 @@ class ADBNetworkMixin:
         spec = f"{protocol}:{local_port}"
         remote_spec = f"{protocol}:{remote_port}"
         return self._run(
-            ["adb", "-s", device_ip, "forward", spec, remote_spec],
+            ["adb", "-s", device_ip, "forward", "--no-rebind", spec, remote_spec],
             device_ip=device_ip,
             local=spec,
             remote=remote_spec,
@@ -32,14 +32,40 @@ class ADBNetworkMixin:
 
     @async_command
     def list_forwards_async(self, device_ip: str) -> dict:
-        return self._run(["adb", "forward", "--list"], device_ip=device_ip)
+        return self._device_forward_rules(device_ip)
+
+    def _device_forward_rules(self, device_ip: str) -> dict:
+        """正向映射属于本机 ADB server；按精确设备身份过滤，格式异常时拒绝继续删除。"""
+        result = self._run(["adb", "forward", "--list"], device_ip=device_ip)
+        if not result.get("success"):
+            return result
+        rules = []
+        for line in str(result.get("output", "")).splitlines():
+            if not line.strip():
+                continue
+            fields = line.split()
+            if len(fields) != 3:
+                return {**result, "success": False, "error": "Invalid ADB forward list response"}
+            if fields[0] == device_ip:
+                rules.append(" ".join(fields))
+        return {**result, "output": "\n".join(rules)}
 
     @async_command
     def remove_all_forwards_async(self, device_ip: str) -> dict:
-        return self._run(
-            ["adb", "-s", device_ip, "forward", "--remove-all"],
-            device_ip=device_ip,
-        )
+        """只移除该设备的规则，禁止调用会清空其他设备映射的 server 级 remove-all。"""
+        result = self._device_forward_rules(device_ip)
+        if not result.get("success"):
+            return result
+        removed = 0
+        for line in result["output"].splitlines():
+            local = line.split()[1]
+            deletion = self._run(
+                ["adb", "-s", device_ip, "forward", "--remove", local], device_ip=device_ip,
+            )
+            if not deletion.get("success"):
+                return {**deletion, "output": f"Removed {removed} forward rule(s) before failure"}
+            removed += 1
+        return {**result, "output": f"Removed {removed} forward rule(s)"}
 
     @async_command
     def reverse_port_async(

@@ -61,10 +61,9 @@ class ScreenshotImageDelegate(FlipImageDelegate):
 
 
 class ScreenshotFlipView(HorizontalFlipView):
-    """以官方 FlipView 承载整页截图，并管理缩放拖动与有限数量的解码缓存。
+    """以官方 FlipView 承载整页截图，像素缓存由页面按字节数管理。
 
-    文件列表和当前变换归截图页面；本控件只保留页面弱引用。路径仍写在官方
-    DisplayRole 中，清除远处图片的解码缓存后仍可按需重新读取。
+    本控件只保留页面弱引用；绘制过程中不读取文件，不在历史图片项额外持有像素。
     """
 
     def __init__(self, owner: ScreenshotPage):
@@ -82,8 +81,6 @@ class ScreenshotFlipView(HorizontalFlipView):
         self.setAccessibleName(tr("Screenshot Viewer"))
         self.delegate = ScreenshotImageDelegate(self)
         self.setItemDelegate(self.delegate)
-        # 跨多页动画会短暂绘制沿途图片；动画结束后再次回收，保留当前及邻页即可。
-        self.scrollBar.ani.finished.connect(self.release_distant_images)
         for button, text in (
             (self.preButton, tr("Previous screenshot (Left)")),
             (self.nextButton, tr("Next screenshot (Right)")),
@@ -105,7 +102,7 @@ class ScreenshotFlipView(HorizontalFlipView):
         return QSize(max(1, size.width() - 16), max(1, size.height() - 16))
 
     def image_for_index(self, index: int) -> QImage:
-        """当前页使用页面提供的旋转结果，其他图片按官方路径机制懒加载。"""
+        """当前页使用旋转结果，邻图只消费已完成的后台解码缓存。"""
 
         if not 0 <= index < self.count():
             return QImage()
@@ -114,16 +111,10 @@ class ScreenshotFlipView(HorizontalFlipView):
             pixmap = owner._display_pixmap
             if pixmap is not None and not pixmap.isNull():
                 return pixmap.toImage()
-        image = self.itemImage(index)
-        if image is None:
+        if owner is None:
             return QImage()
-        # 官方 delegate 负责回存懒加载结果；替换绘制后在此接续该职责，
-        # 避免相邻动画帧每次重绘都重新读取文件，源路径仍保留在 DisplayRole。
-        item = self.item(index)
-        cached = item.data(Qt.ItemDataRole.UserRole)
-        if not image.isNull() and (cached is None or cached.isNull()):
-            item.setData(Qt.ItemDataRole.UserRole, image)
-        return image
+        # 绘制仅消费后台完成的缓存；不能触发官方 itemImage 的同步文件懒加载。
+        return owner._nav_controller._cache.image(owner._image_paths[index])
 
     def _adjustItemSize(self, item: QListWidgetItem):
         """每张图片独占一个视口，原图横竖比例只影响绘制，不影响分页距离。"""
@@ -165,15 +156,6 @@ class ScreenshotFlipView(HorizontalFlipView):
             item = self.item(self.currentIndex())
             target = self.scrollBar.value() + self.visualItemRect(item).left()
             self.scrollBar.scrollTo(target, useAni=False)
-
-    def release_distant_images(self) -> None:
-        """仅保留当前及相邻图的解码缓存，保留路径供返回时重新加载。"""
-
-        current = self.currentIndex()
-        for index in range(self.count()):
-            item = self.item(index)
-            if abs(index - current) > 1 and item.data(Qt.ItemDataRole.DisplayRole):
-                item.setData(Qt.ItemDataRole.UserRole, QImage())
 
     def clear(self):
         """重建批次前停止旧动画、释放图片并复位官方当前索引。"""
@@ -270,6 +252,16 @@ class ScreenshotPipsPager(HorizontalPipsPager):
             button.setToolTip(text)
             button.setAccessibleName(text)
         self._ready = True
+
+    def append_pages(self, count: int) -> None:
+        """沿用官方圆点数据协议，只创建新增项而不清空既有分页。"""
+        start = self.count()
+        self.addItems([""] * max(0, count))
+        for index in range(start, self.count()):
+            item = self.item(index)
+            item.setData(Qt.ItemDataRole.UserRole, index + 1)
+            item.setSizeHint(self.gridSize())
+        self.adjustSize()
 
     def stop_animations(self) -> None:
         """停止圆点动画并立即定位当前项，防止旧索引动画落到新模型。"""

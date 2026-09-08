@@ -17,6 +17,11 @@ from qfluentwidgets import (
 
 from gui.features.media import ScreenshotPage
 from gui.pages.workspace_features import WorkspaceFeatureHost
+from tests.screenshot_helpers import (
+    close_screenshot_page,
+    make_screenshot_page,
+    wait_for_screenshot,
+)
 from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
@@ -35,7 +40,7 @@ def test_screenshot_flip_view_and_pips_share_navigation_and_batch_selection(
     paths = [_write_image(tmp_path / f"device-{i}.png", color) for i, color in enumerate(
         (Qt.GlobalColor.red, Qt.GlobalColor.green, Qt.GlobalColor.blue)
     )]
-    page = ScreenshotPage(paths[:2])
+    page = make_screenshot_page(paths[:2])
     try:
         page.resize(760, 620)
         page.show()
@@ -56,7 +61,9 @@ def test_screenshot_flip_view_and_pips_share_navigation_and_batch_selection(
         assert page._current_path() == paths[2]
         assert page._nav_label.text() == "3 / 3"
         assert view.currentIndex() == pager.currentIndex() == 2
+        wait_for_screenshot(page)
         page._delete_action.trigger()
+        wait_for_screenshot(page)
         assert page._current_path() == paths[1]
         assert view.count() == pager.count() == 2
         assert view.currentIndex() == pager.currentIndex() == 1
@@ -67,7 +74,7 @@ def test_screenshot_flip_view_and_pips_share_navigation_and_batch_selection(
         QTest.keyClick(pager, Qt.Key.Key_Home)
         assert page._current_path() == paths[0]
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_flip_view_preserves_mixed_image_aspect_ratios(qt_application, tmp_path):
@@ -83,7 +90,7 @@ def test_screenshot_flip_view_preserves_mixed_image_aspect_ratios(qt_application
         pixmap.fill(color)
         assert pixmap.save(str(path))
         paths.append(str(path))
-    page = ScreenshotPage(paths)
+    page = make_screenshot_page(paths)
     try:
         page.resize(760, 660)
         page.show()
@@ -113,7 +120,7 @@ def test_screenshot_flip_view_preserves_mixed_image_aspect_ratios(qt_application
             assert drawn.height() <= view.viewport().height()
             assert view.item(index).data(Qt.ItemDataRole.AccessibleTextRole)
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_flip_view_keeps_eight_image_navigation_visible_through_resize_and_delete(
@@ -125,7 +132,7 @@ def test_screenshot_flip_view_keeps_eight_image_navigation_visible_through_resiz
         _write_image(tmp_path / f"device-{index}.png", Qt.GlobalColor.blue)
         for index in range(8)
     ]
-    page = ScreenshotPage([])
+    page = make_screenshot_page([])
     page.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     try:
         page.resize(1100, 760)
@@ -164,12 +171,16 @@ def test_screenshot_flip_view_keeps_eight_image_navigation_visible_through_resiz
             wait_until(qt_application, current_image_is_visible)
 
         while view.count() > 2:
+            wait_for_screenshot(page)
             page._delete_action.trigger()
+            wait_for_screenshot(page)
         assert page.image_paths == tuple(paths[:2])
         assert view.currentIndex() == pager.currentIndex() == 1
         wait_until(qt_application, current_image_is_visible)
         while page.image_paths:
+            wait_for_screenshot(page)
             page._delete_action.trigger()
+            wait_for_screenshot(page)
         assert view.count() == pager.count() == 0
         assert page._nav_label.text() == "0 / 0"
         assert page._image_stack.currentWidget() is page._empty_label
@@ -180,14 +191,14 @@ def test_screenshot_flip_view_keeps_eight_image_navigation_visible_through_resiz
             page._zoom_in_action, page._info_action,
         ))
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_command_bar_overflow_shares_action_state(qt_application, tmp_path):
     """窄窗菜单复用原始命令，信息勾选和单击删除后的禁用同步到全部入口。"""
 
     path = _write_image(tmp_path / "commands.png", Qt.GlobalColor.blue)
-    page = ScreenshotPage([path])
+    page = make_screenshot_page([path])
     try:
         page.resize(380, 620)
         page.show()
@@ -198,7 +209,7 @@ def test_screenshot_command_bar_overflow_shares_action_state(qt_application, tmp
         QTest.mouseClick(bar.moreButton, Qt.MouseButton.LeftButton)
         menu = next(menu for menu in bar.findChildren(RoundMenu) if menu.isVisible())
         assert page._copy_action in menu.menuActions()
-        assert page._delete_action in menu.menuActions()
+        assert page._delete_all_action in menu.menuActions()
         assert page._info_action in menu.menuActions()
         assert all(action in bar.actions() for action in menu.menuActions())
         page._info_action.trigger()
@@ -211,15 +222,17 @@ def test_screenshot_command_bar_overflow_shares_action_state(qt_application, tmp
         assert page._info_label.isHidden()
         assert page._info_label.text() == metadata
 
-        page._delete_action.trigger()
+        page._delete_all_action.trigger()
+
+        wait_for_screenshot(page)
         assert not os.path.exists(path)
-        for action in (page._copy_action, page._delete_action, page._info_action):
+        for action in (page._copy_action, page._delete_all_action, page._info_action):
             assert not action.isEnabled()
             assert not buttons[action].isEnabled()
             assert action in menu.menuActions()
         menu.close()
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_rotation_copies_display_direction_without_rewriting_original(
@@ -231,7 +244,7 @@ def test_screenshot_rotation_copies_display_direction_without_rewriting_original
     _write_image(path, Qt.GlobalColor.red)
     original_bytes = path.read_bytes()
     original = QPixmap(str(path)).toImage()
-    page = ScreenshotPage([str(path)])
+    page = make_screenshot_page([str(path)])
     try:
         page.resize(760, 620)
         page.show()
@@ -248,7 +261,7 @@ def test_screenshot_rotation_copies_display_direction_without_rewriting_original
         assert page._display_pixmap.toImage() == original
         assert path.read_bytes() == original_bytes
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_add_images_cancellation_and_invalid_files_preserve_current_image(
@@ -268,7 +281,7 @@ def test_screenshot_add_images_cancellation_and_invalid_files_preserve_current_i
     )
     selected = []
     monkeypatch.setattr(actions.QFileDialog, "getOpenFileNames", lambda *_args: (selected, ""))
-    page = ScreenshotPage([first])
+    page = make_screenshot_page([first])
     changes = QSignalSpy(page.image_count_changed)
     try:
         page._add_action.trigger()
@@ -292,7 +305,7 @@ def test_screenshot_add_images_cancellation_and_invalid_files_preserve_current_i
         assert page._view.count() == page._pager.count() == 2
         assert changes.count() == 1
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_add_images_rejects_reentry_and_late_dialog_result_after_dispose(
@@ -303,7 +316,7 @@ def test_screenshot_add_images_rejects_reentry_and_late_dialog_result_after_disp
     from gui.dialogs import screenshot_viewer_actions as actions
 
     path = _write_image(tmp_path / "late.png", Qt.GlobalColor.green)
-    page = ScreenshotPage([])
+    page = make_screenshot_page([])
     calls = []
 
     def choose_images(*_args):
@@ -322,7 +335,7 @@ def test_screenshot_add_images_rejects_reentry_and_late_dialog_result_after_disp
         assert page._view.count() == page._pager.count() == 0
         assert calls == [True]
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_borrowed_screen_tools_keep_fit_current_and_preserve_manual_zoom(
@@ -336,7 +349,7 @@ def test_borrowed_screen_tools_keep_fit_current_and_preserve_manual_zoom(
     portrait = QPixmap(540, 960)
     portrait.fill(Qt.GlobalColor.blue)
     assert portrait.save(str(image_path))
-    page = ScreenshotPage([str(image_path)])
+    page = make_screenshot_page([str(image_path)])
     page.prepare_for_workspace()
     page.set_device_tools(tools, parking)
     page.activate()
@@ -369,12 +382,13 @@ def test_borrowed_screen_tools_keep_fit_current_and_preserve_manual_zoom(
         wait_for_stable_geometry(qt_application, (page, tools, page._view))
         assert not page._fit_to_window
         assert page._zoom_factor == manual_zoom
+        wait_for_screenshot(page)
         assert page.request_dispose()
         assert not page._fit_resize_timer.isActive()
         assert tools.parentWidget() is parking
         assert tools.isHidden()
     finally:
-        page.close()
+        close_screenshot_page(page)
         page.deleteLater()
         parking.deleteLater()
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -387,7 +401,7 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
     """嵌入钩子隐藏整组重复页头，空态与有图态均把空间留给原画布。"""
 
     paths = [_write_image(tmp_path / "shot.png", Qt.GlobalColor.blue)] if with_image else []
-    page = ScreenshotPage(paths)
+    page = make_screenshot_page(paths)
     canvas = page._image_stack
     try:
         page.resize(760, 600)
@@ -419,7 +433,7 @@ def test_screenshot_workspace_preparation_releases_header_space_without_resettin
         assert page._nav_label.text() == ("1 / 1" if with_image else "0 / 0")
         assert page._copy_action.isEnabled() is with_image
     finally:
-        page.close()
+        close_screenshot_page(page)
         page.deleteLater()
         QCoreApplication.sendPostedEvents(page, QEvent.Type.DeferredDelete)
 
@@ -429,7 +443,7 @@ def test_screenshot_workspace_entry_hides_header_and_reuses_the_result_page(qt_a
 
     host = WorkspaceFeatureHost("apps", "应用概览", QWidget())
     host.register_feature(
-        "media", "截图结果", FluentIcon.PHOTO, lambda _key: ScreenshotPage([]),
+        "media", "截图结果", FluentIcon.PHOTO, lambda _key: make_screenshot_page([]),
         requires_device=False,
     )
     try:
@@ -461,7 +475,7 @@ def test_screenshot_page_is_plain_widget_and_incrementally_appends_batches(
 ):
     first = _write_image(tmp_path / "first.png", Qt.GlobalColor.red)
     second = _write_image(tmp_path / "second.png", Qt.GlobalColor.green)
-    page = ScreenshotPage([first])
+    page = make_screenshot_page([first])
     try:
         assert isinstance(page, QWidget)
         assert not isinstance(page, QDialog)
@@ -478,7 +492,7 @@ def test_screenshot_page_is_plain_widget_and_incrementally_appends_batches(
         assert page._image_paths == [first, second]
         assert page._current_path() == second
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_page_deletes_last_image_with_one_click_and_keeps_empty_page_open(
@@ -487,12 +501,14 @@ def test_screenshot_page_deletes_last_image_with_one_click_and_keeps_empty_page_
 ):
     path = _write_image(tmp_path / "last.png", Qt.GlobalColor.blue)
     parent = QWidget()
-    page = ScreenshotPage([path], parent=parent)
+    page = make_screenshot_page([path], parent=parent)
     parent.show()
     page.show()
     qt_application.processEvents()
     try:
+        wait_for_screenshot(page)
         page._delete_action.trigger()
+        wait_for_screenshot(page)
 
         assert not os.path.exists(path)
         assert page._image_paths == []
@@ -515,9 +531,10 @@ def test_screenshot_page_lifecycle_preserves_navigation_state_until_dispose(
     tmp_path,
 ):
     path = _write_image(tmp_path / "shot.png", Qt.GlobalColor.cyan)
-    page = ScreenshotPage([path])
+    page = make_screenshot_page([path])
     try:
         page.activate()
+        wait_for_screenshot(page)
         page.deactivate("overview")
 
         assert page._image_paths == [path]
@@ -533,7 +550,7 @@ def test_screenshot_page_lifecycle_preserves_navigation_state_until_dispose(
         assert page._image_paths == []
         assert page.request_dispose("application_shutdown") is True
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_deactivation_mid_animation_aligns_current_image_before_reactivation(
@@ -545,7 +562,7 @@ def test_screenshot_deactivation_mid_animation_aligns_current_image_before_react
         _write_image(tmp_path / f"animation-{index}.png", Qt.GlobalColor.blue)
         for index in range(8)
     ]
-    page = ScreenshotPage(paths)
+    page = make_screenshot_page(paths)
     try:
         page.resize(760, 620)
         page.show()
@@ -553,6 +570,7 @@ def test_screenshot_deactivation_mid_animation_aligns_current_image_before_react
         view, pager = page._view, page._pager
         wait_for_stable_geometry(qt_application, (page, view, pager))
         view.setCurrentIndex(7)
+        wait_for_screenshot(page)
         assert view.scrollBar.ani.state() == QAbstractAnimation.State.Running
         view.scrollBar.ani.setCurrentTime(view.scrollBar.ani.duration() // 2)
         assert not view.viewport().rect().contains(view.visualItemRect(view.item(7)))
@@ -574,18 +592,19 @@ def test_screenshot_deactivation_mid_animation_aligns_current_image_before_react
         assert view.viewport().rect().adjusted(-2, -2, 2, 2).contains(
             view.visualItemRect(view.item(7))
         )
+        wait_for_screenshot(page)
         assert page.request_dispose()
         assert view.count() == pager.count() == 0
         assert view.scrollBar.ani.state() == QAbstractAnimation.State.Stopped
         assert pager.scrollBar.ani.state() == QAbstractAnimation.State.Stopped
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_page_escape_requests_back_navigation_without_closing(
     qt_application,
 ):
-    page = ScreenshotPage([])
+    page = make_screenshot_page([])
     back_spy = QSignalSpy(page.back_requested)
     try:
         page.show()
@@ -599,7 +618,7 @@ def test_screenshot_page_escape_requests_back_navigation_without_closing(
         assert page.isVisible()
         assert page.is_disposed is False
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_copy_notifies_without_replacing_current_image_metadata(
@@ -616,7 +635,7 @@ def test_screenshot_copy_notifies_without_replacing_current_image_metadata(
         actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
         raising=False,
     )
-    page = ScreenshotPage([first, second])
+    page = make_screenshot_page([first, second])
     try:
         page.show()
         metadata = page._info_label.text()
@@ -634,14 +653,14 @@ def test_screenshot_copy_notifies_without_replacing_current_image_metadata(
         assert page._current_path() == second
         assert page._info_label.text() == page._info_label.toolTip()
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 @pytest.mark.parametrize("entry", ["button", "more_menu", "context_menu"])
-def test_screenshot_delete_entry_click_removes_only_current_image_once(
+def test_screenshot_delete_entries_remove_all_or_current_image_once(
     qt_application, tmp_path, monkeypatch, entry,
 ):
-    """按钮、更多和右键菜单共享一个删除动作，每次点击只删除当前文件并更新一次数量。"""
+    """命令栏和更多菜单删除全部，右键删除当前图；每次点击只更新一次数量。"""
 
     from gui.dialogs import screenshot_viewer_actions as actions
 
@@ -655,18 +674,19 @@ def test_screenshot_delete_entry_click_removes_only_current_image_once(
     monkeypatch.setattr(
         actions, "show_toast", lambda *args, **kwargs: notices.append((args, kwargs)),
     )
-    page = ScreenshotPage(paths)
+    page = make_screenshot_page(paths)
     try:
         page.resize(1500 if entry == "button" else 380, 700)
         page.show()
         page._pager.setCurrentIndex(1)
         wait_for_stable_geometry(qt_application, (page, page._view, page._command_bar))
         changes = QSignalSpy(page.image_count_changed)
+        delete_action = page._delete_action if entry == "context_menu" else page._delete_all_action
         assert page._current_path() == paths[1]
         if entry == "button":
             button = next(
                 button for button in page._command_bar.commandButtons
-                if button.action() is page._delete_action
+                if button.action() is delete_action
             )
             assert button.isVisibleTo(page)
             QTest.mouseClick(button, Qt.MouseButton.LeftButton)
@@ -679,12 +699,12 @@ def test_screenshot_delete_entry_click_removes_only_current_image_once(
                 else:
                     page._view.customContextMenuRequested.emit(page._view.viewport().rect().center())
                 menu = next(menu for menu in page.findChildren(RoundMenu) if menu.isVisible())
-                assert page._delete_action in menu.menuActions()
+                assert delete_action in menu.menuActions()
                 if opening == 0:
                     menu.close()
             item = next(
                 menu.view.item(row) for row in range(menu.view.count())
-                if menu.view.item(row).data(Qt.ItemDataRole.UserRole) is page._delete_action
+                if menu.view.item(row).data(Qt.ItemDataRole.UserRole) is delete_action
             )
             menu.view.scrollToItem(item)
             qt_application.processEvents()
@@ -692,17 +712,25 @@ def test_screenshot_delete_entry_click_removes_only_current_image_once(
             assert menu.view.viewport().rect().contains(target.center())
             QTest.mouseClick(menu.view.viewport(), Qt.MouseButton.LeftButton, pos=target.center())
 
+        wait_for_screenshot(page)
         assert not os.path.exists(paths[1])
-        assert os.path.exists(paths[0]) and os.path.exists(paths[2])
-        assert page.image_paths == (paths[0], paths[2])
-        assert page._current_path() == paths[2]
-        assert page._view.currentIndex() == page._pager.currentIndex() == 1
-        assert page._view.count() == page._pager.count() == 2
-        assert page._display_pixmap.toImage() == QPixmap(paths[2]).toImage()
-        assert changes.count() == 1 and changes.at(0) == [2]
+        if entry == "context_menu":
+            assert os.path.exists(paths[0]) and os.path.exists(paths[2])
+            assert page.image_paths == (paths[0], paths[2])
+            assert page._current_path() == paths[2]
+            assert page._view.currentIndex() == page._pager.currentIndex() == 1
+            assert page._view.count() == page._pager.count() == 2
+            assert page._display_pixmap.toImage() == QPixmap(paths[2]).toImage()
+            assert changes.count() == 1 and changes.at(0) == [2]
+        else:
+            assert all(not os.path.exists(path) for path in paths)
+            assert not page.image_paths and page._display_pixmap is None
+            assert page._view.count() == page._pager.count() == 0
+            assert changes.count() == 1 and changes.at(0) == [0]
+            assert not delete_action.isEnabled()
         assert not notices
     finally:
-        page.close()
+        close_screenshot_page(page)
 
 
 def test_screenshot_delete_error_preserves_image_and_allows_single_click_retry(
@@ -734,13 +762,15 @@ def test_screenshot_delete_error_preserves_image_and_allows_single_click_retry(
         original_remove(selected_path)
 
     monkeypatch.setattr(actions.os, "remove", fail_once_then_remove)
-    page = ScreenshotPage([path])
+    page = make_screenshot_page([path])
     try:
         page.show()
         original = page._original_pixmap.toImage()
         display = page._display_pixmap.toImage()
         changes = QSignalSpy(page.image_count_changed)
+        wait_for_screenshot(page)
         page._delete_action.trigger()
+        wait_for_screenshot(page)
 
         assert dialogs == []
         assert os.path.exists(path)
@@ -755,7 +785,9 @@ def test_screenshot_delete_error_preserves_image_and_allows_single_click_retry(
         args, options = notices[-1]
         assert args == (page, "Delete Failed", error_text)
         assert options["level"] == "error"
+        wait_for_screenshot(page)
         page._delete_action.trigger()
+        wait_for_screenshot(page)
         assert attempts == [path, path]
         assert not os.path.exists(path)
         assert page.image_paths == ()
@@ -763,4 +795,80 @@ def test_screenshot_delete_error_preserves_image_and_allows_single_click_retry(
         assert not page._delete_action.isEnabled()
         assert len(notices) == 1
     finally:
-        page.close()
+        close_screenshot_page(page)
+
+
+@pytest.mark.parametrize(
+    "width,height,font_size", [(380, 620, 12), (760, 520, 22), (1500, 900, 14)],
+)
+def test_screenshot_metadata_and_pager_live_inside_expanded_canvas(
+    qt_application, tmp_path, monkeypatch, width, height, font_size,
+):
+    from PySide6.QtGui import QFont
+
+    from gui.styles import BaseStyles
+
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda cls, role, size=None: QFont("Microsoft YaHei", size or font_size)
+    ))
+    paths = [_write_image(tmp_path / f"image-{i}.png", Qt.GlobalColor.blue) for i in range(12)]
+    page = make_screenshot_page(paths)
+    try:
+        page.prepare_for_workspace()
+        page.resize(width, height)
+        page.show()
+        # 元数据通过零时计时器重排；连续相同的几何快照不代表待处理回调已完成。
+        wait_until(qt_application, lambda: all(
+            page._canvas_frame.rect().contains(overlay.geometry())
+            for overlay in (page._details_bar, page._pager_bar, page._zoom_label)
+        ))
+        wait_for_stable_geometry(qt_application, (
+            page, page._canvas_frame, page._details_bar, page._pager_bar, page._zoom_label,
+        ))
+        canvas = page._canvas_frame
+        for overlay in (page._details_bar, page._pager_bar, page._zoom_label):
+            assert overlay.parentWidget() is canvas
+            assert overlay.isVisibleTo(page)
+            assert canvas.rect().contains(overlay.geometry())
+        assert page._details_bar.y() == 10
+        assert page._details_bar.x() == page._pager_bar.x() == 10
+        assert page._pager_bar.geometry().bottom() > canvas.height() / 2
+        assert page._zoom_label.geometry().right() >= canvas.width() - 12
+        assert page._zoom_label.geometry().bottom() >= canvas.height() - 12
+        assert not page._pager_bar.geometry().intersects(page._zoom_label.geometry())
+        assert canvas.height() >= page.height() - page._command_bar.height() - 30
+        assert page._nav_label.text() == "1 / 12"
+    finally:
+        close_screenshot_page(page)
+
+
+def test_delete_all_keeps_failed_files_and_emits_one_count_change(
+    qt_application, tmp_path, monkeypatch,
+):
+    from gui.dialogs import screenshot_viewer_actions as actions
+
+    paths = [_write_image(tmp_path / f"image-{i}.png", Qt.GlobalColor.blue) for i in range(3)]
+    page = make_screenshot_page(paths)
+    original_remove = os.remove
+    errors = []
+
+    def remove(path):
+        if path == paths[1]:
+            raise PermissionError("locked")
+        original_remove(path)
+
+    monkeypatch.setattr(actions.os, "remove", remove)
+    monkeypatch.setattr(actions, "show_toast", lambda *a, **k: errors.append(k))
+    try:
+        page.show()
+        changes = QSignalSpy(page.image_count_changed)
+        page._delete_all_action.trigger()
+        wait_for_screenshot(page)
+        assert page.image_paths == (paths[1],)
+        assert not os.path.exists(paths[0]) and not os.path.exists(paths[2])
+        assert os.path.exists(paths[1]) and page._current_path() == paths[1]
+        assert changes.count() == 1 and changes.at(0) == [1]
+        assert errors == [{"level": "error", "duration": None}]
+        assert page._delete_all_action.isEnabled()
+    finally:
+        close_screenshot_page(page)

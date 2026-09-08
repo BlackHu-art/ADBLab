@@ -3,16 +3,22 @@
 本模块只依赖核心 adb_model，避免模型之间形成循环依赖。
 """
 
+import logging
 import os
 import random
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+
+from PySide6.QtGui import QImageReader
 
 from core.exec import CommandRunner, ProcessRunner
 from utils.adb_values import normalize_android_package
@@ -195,37 +201,97 @@ class ADBTesting(ADBModelCore):
     # 截图
 
     @async_command(long_running=True)
-    def take_screenshot_async(self, device_ip: str, save_path: str) -> dict:
-        direct = CommandRunner.run_to_file(
-            ["adb", "-s", device_ip, "exec-out", "screencap", "-p"],
-            save_path,
-            timeout=30,
-        )
-        if direct.success and self._is_valid_png(save_path):
-            return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
+    def take_screenshot_async(
+        self, device_ip: str, save_path: str, *, cancelled: Callable[[], bool] | None = None,
+    ) -> dict:
+        """在单次预算内采集并验证完整 PNG，只有成功且未取消时原子发布最终文件。"""
+        deadline = time.monotonic() + 30
+        temporary = ""
 
-        temp_path = "/sdcard/screenshot.png"
-        r = self._run(["adb", "-s", device_ip, "shell", "screencap", "-p", temp_path])
-        if not r["success"]:
-            return {"success": False, "device_ip": device_ip, "error": f"screencap: {r['error']}"}
-        r = self._run(["adb", "-s", device_ip, "shell", f"test -f {temp_path} && echo ok"])
-        if not r["success"] or r.get("output", "").strip() != "ok":
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "error": "screenshot file not found on device after screencap",
-            }
-        r = self._run(["adb", "-s", device_ip, "pull", temp_path, save_path])
-        if not r["success"]:
-            return {"success": False, "device_ip": device_ip, "error": f"pull: {r['error']}"}
-        self._run(["adb", "-s", device_ip, "shell", "rm", temp_path])
-        return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
+        def stopped() -> bool:
+            return self.is_shutting_down() or bool(cancelled and cancelled())
+
+        def failure(message: str) -> dict:
+            return {"success": False, "device_ip": device_ip, "error": message}
+
+        try:
+            if stopped():
+                return failure("Cancelled")
+            with tempfile.NamedTemporaryFile(
+                dir=os.path.dirname(os.path.abspath(save_path)), prefix=".adblab-shot-",
+                suffix=".part", delete=False,
+            ) as staged:
+                temporary = staged.name
+            direct = CommandRunner.run_to_file(
+                ["adb", "-s", device_ip, "exec-out", "screencap", "-p"],
+                temporary, timeout=max(0, deadline - time.monotonic()), cancelled=stopped,
+            )
+            error = direct.error.lower()
+            # 只在客户端明确不识别 exec-out 时启用旧设备兼容路径；传输中断或坏图不重拍。
+            unsupported = (
+                not direct.success and direct.returncode != 0 and "exec-out" in error
+                and any(word in error for word in ("unknown command", "unrecognized command"))
+            )
+            if unsupported and not stopped():
+                direct = self._capture_legacy_screenshot(device_ip, temporary, deadline, stopped)
+            if stopped():
+                return failure("Cancelled")
+            if not direct.success:
+                return failure(direct.error or "Screenshot failed")
+            if not self._is_valid_png(temporary, decode=True):
+                return failure("Invalid or incomplete screenshot")
+            if stopped():
+                return failure("Cancelled")
+            if time.monotonic() >= deadline:
+                return failure("Timeout(30s)")
+            os.replace(temporary, save_path)
+            temporary = ""
+            return {"success": True, "device_ip": device_ip, "screenshot_path": save_path}
+        except OSError:
+            return failure("Unable to save screenshot")
+        finally:
+            if temporary:
+                try:
+                    os.unlink(temporary)
+                except OSError as exc:
+                    # 清理失败不覆盖原始取消或采集错误，也不把本机路径放入结果和日志。
+                    logging.getLogger(__name__).warning(
+                        "Temporary screenshot cleanup failed (%s)", type(exc).__name__,
+                    )
+
+    def _capture_legacy_screenshot(self, device_ip, temporary, deadline, cancelled):
+        """使用本任务独占的设备文件，并在剩余预算内尝试清理；不重启服务。"""
+        remote = f"/sdcard/adblab_screenshot_{uuid.uuid4().hex}.png"
+        try:
+            result = CommandRunner.run(
+                ["adb", "-s", device_ip, "shell", "screencap", "-p", remote],
+                timeout=max(0, deadline - time.monotonic()), cancelled=cancelled,
+            )
+            if not result.success:
+                return result
+            return CommandRunner.run(
+                ["adb", "-s", device_ip, "pull", remote, temporary],
+                timeout=max(0, deadline - time.monotonic()), cancelled=cancelled,
+            )
+        finally:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                CommandRunner.run(
+                    ["adb", "-s", device_ip, "shell", "rm", "-f", remote],
+                    timeout=min(1.0, remaining), cancelled=self.is_shutting_down,
+                )
 
     @staticmethod
-    def _is_valid_png(path: str) -> bool:
+    def _is_valid_png(path: str, *, decode: bool = False) -> bool:
+        """检查 PNG 首尾边界；完整像素解码仅由采集工作线程请求，避免阻塞回调。"""
         try:
             with open(path, "rb") as image_file:
-                return image_file.read(8) == b"\x89PNG\r\n\x1a\n"
+                if image_file.read(8) != b"\x89PNG\r\n\x1a\n":
+                    return False
+                image_file.seek(-12, os.SEEK_END)
+                if image_file.read() != b"\x00\x00\x00\x00IEND\xaeB`\x82":
+                    return False
+            return not decode or not QImageReader(path, b"png").read().isNull()
         except OSError:
             return False
 
@@ -574,6 +640,11 @@ class ADBTesting(ADBModelCore):
             result["finished_at"] = time.time()
             result["duration"] = str(datetime.now() - start_time)
             result["cancelled"] = result["error"] == "Aborted by user"
+            # 失败或用户停止后仍可能产生有效采集文件，显式标记已存在的附件。
+            result["available_artifacts"] = [
+                result[key] for key in ("monkey_log", "logcat_log")
+                if result.get(key) and os.path.isfile(result[key])
+            ]
             result["terminal"] = True
             if owned_state is not None:
                 self._remember_monkey_archive_result(result)
@@ -799,6 +870,7 @@ class ADBTesting(ADBModelCore):
                 "success": True,
                 "index": index,
                 "message": f"ANR files saved to {device_anr_dir}",
+                "artifact_path": device_anr_dir,
             }
         return {
             "device_ip": device_ip,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import subprocess
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -170,8 +171,12 @@ def test_async_adb_can_merge_monkey_stderr_without_changing_default(monkeypatch,
 @pytest.fixture
 def startup_factory(monkeypatch, tmp_path):
     other_monitors = []
+    execution = Mock()
+    execution.stop_requested.return_value = False
+    monkeypatch.setattr(startup_module, "MobilePerfAdbExecutor", Mock(return_value=execution))
+    RuntimeData.begin_run()
 
-    def build_monitor(*_args):
+    def build_monitor(*_args, process_samples=None):
         result = SimpleNamespace(start=Mock(), stop=Mock())
         other_monitors.append(result)
         return result
@@ -181,7 +186,10 @@ def startup_factory(monkeypatch, tmp_path):
     ):
         monkeypatch.setattr(startup_module, name, build_monitor)
     monkeypatch.setattr(startup_module, "LogcatMonitor", Mock())
-    monkeypatch.setattr(startup_module.time, "sleep", lambda _duration: None)
+    clock = [0.0]
+    monkeypatch.setattr(startup_module, "time", SimpleNamespace(
+        monotonic=lambda: clock[0], time=time.time,
+    ))
     report = Mock()
     monkeypatch.setattr(startup_module, "Report", report)
     startup = StartUp.__new__(StartUp)
@@ -206,11 +214,20 @@ def startup_factory(monkeypatch, tmp_path):
         setattr(startup, name, Mock())
     startup.stop_file = None
 
+    def wait(seconds):
+        if startup._exit_event.is_set() or startup.check_stop_file_quit():
+            return True
+        clock[0] += seconds
+        return startup._exit_event.is_set() or startup.check_stop_file_quit()
+
+    startup._wait_for_stop = wait
+
     def build(monitor):
         monkeypatch.setattr(startup_module, "Monkey", Mock(return_value=monitor))
         return startup, other_monitors, report
 
-    return build
+    yield build
+    RuntimeData.end_run()
 
 
 def test_requested_monkey_launch_failure_stops_monitors_and_cannot_report_success(
@@ -221,7 +238,7 @@ def test_requested_monkey_launch_failure_stops_monitors_and_cannot_report_succes
     startup, other_monitors, report = startup_factory(monitor)
 
     with pytest.raises(RuntimeError, match="Monkey"):
-        startup.run(time_out=0)
+        startup.run(time_out=2)
 
     assert len(other_monitors) == 6
     for other in other_monitors:
@@ -283,10 +300,16 @@ def test_startup_success_and_user_stop_reap_monkey_and_preserve_report(
 ):
     monitor, adb = monkey_factory(_Process(block=True))
     startup, other_monitors, report = startup_factory(monitor)
-    stop_check = Mock(return_value=stop_requested)
-    monkeypatch.setattr(startup, "check_stop_file_quit", stop_check)
+    stop_states = []
 
-    startup.run(time_out=60 if stop_requested else 0)
+    def check_stop():
+        stopped = stop_requested and monitor.running
+        stop_states.append(stopped)
+        return stopped
+
+    monkeypatch.setattr(startup, "check_stop_file_quit", check_stop)
+
+    startup.run(time_out=2)
 
     adb.run_shell_cmd.assert_called_once()
     adb.kill_process.assert_called_once()
@@ -295,7 +318,9 @@ def test_startup_success_and_user_stop_reap_monkey_and_preserve_report(
         other.stop.assert_called_once()
     report.assert_called_once()
     if stop_requested:
-        stop_check.assert_called_once()
+        assert stop_states[0] is False and stop_states[-1] is True
+    else:
+        assert stop_states and not any(stop_states)
     monitor.raise_if_failed()
 
 
@@ -312,13 +337,14 @@ def test_startup_propagates_required_monkey_failure_after_preserving_partial_rep
 
     if failure_phase == "running":
         monkeypatch.setattr(
-            startup, "check_stop_file_quit", lambda: (fail(), False)[1],
+            startup, "check_stop_file_quit",
+            lambda: (fail() if monitor.running else None, False)[1],
         )
     else:
         monkeypatch.setattr(monitor, "stop", lambda: (real_stop(), fail()))
 
     with pytest.raises(MonkeyError, match="simulated Monkey failure"):
-        startup.run(time_out=60 if failure_phase == "running" else 0)
+        startup.run(time_out=2)
 
     assert not monitor._monkey_thread.is_alive()
     for other in other_monitors:
@@ -344,7 +370,7 @@ def test_startup_monkey_stop_failure_cleans_other_monitors_and_preserves_report(
     startup, other_monitors, report = startup_factory(monitor)
 
     with pytest.raises(MonkeyError, match="停止未完成"):
-        startup.run(time_out=0)
+        startup.run(time_out=2)
 
     assert not monitor._monkey_thread.is_alive()
     for other in other_monitors:
@@ -365,7 +391,7 @@ def test_optional_metric_failure_does_not_abort_requested_monkey(
     )
     monkeypatch.setattr(startup_module, "FdMonitor", Mock(return_value=optional))
 
-    startup.run(time_out=0)
+    startup.run(time_out=2)
 
     optional.start.assert_called_once()
     optional.stop.assert_called_once()

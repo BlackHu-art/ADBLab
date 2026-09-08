@@ -1,6 +1,6 @@
 """提供与页面背景融合的 Fluent 内容分区，保留原生卡片的布局接口。"""
 
-from PySide6.QtWidgets import QBoxLayout, QWidget
+from PySide6.QtWidgets import QBoxLayout, QSizePolicy, QWidget
 from qfluentwidgets import HeaderCardWidget
 
 from gui.i18n import tr
@@ -15,8 +15,14 @@ class ContentSection(HeaderCardWidget):
         self.setTitle(tr(title))
         self.separator.hide()
         self.headerLayout.setContentsMargins(0, 0, 0, 0)
+        # 开放分区无需传统卡片的固定页头留白，标题换行和操作按钮共同决定自然高度。
+        self.headerView.setMinimumHeight(0)
+        self.headerView.setMaximumHeight(16_777_215)
+        self.headerView.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.vBoxLayout.setStretchFactor(self.view, 1)
+        self.headerLabel.setWordWrap(True)
         self.viewLayout.setDirection(QBoxLayout.Direction.TopToBottom)
-        self.viewLayout.setContentsMargins(0, 8, 0, 18)
+        self.viewLayout.setContentsMargins(0, 8, 0, 12)
         self.viewLayout.setSpacing(8)
 
     def paintEvent(self, event) -> None:

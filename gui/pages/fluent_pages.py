@@ -111,7 +111,7 @@ class GalleryPage(QWidget):
         else:
             body_wrapper = QWidget(self)
             body_layout = QVBoxLayout(body_wrapper)
-            body_layout.setContentsMargins(32, 12, 32, 28)
+            body_layout.setContentsMargins(0, 16, 0, 0)
             body_layout.addWidget(content)
             self.body = body_wrapper
 
@@ -496,8 +496,7 @@ class WorkspaceSectionPage(QWidget):
         wrapper = QWidget(body)
         wrapper.setObjectName(f"{route_key}View")
         wrapper_layout = QVBoxLayout(wrapper)
-        # WorkspaceFeatureHost 已提供 24px 外边距；这里补足到与 32px
-        # 顶部设备栏基线一致，避免嵌套滚动页再次叠加一整层 32px 留白。
+        # 页面外边界由主窗口统一提供，此处只保留悬浮滚动条旁的安全距离。
         wrapper_layout.setContentsMargins(8, 8, 8, 20)
         wrapper_layout.setSpacing(18)
         wrapper_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -729,12 +728,15 @@ class HomePage(ScrollArea):
         self.device_context.refreshRequested.connect(frame._request_device_refresh)
         context_host = QWidget(view)
         context_layout = QVBoxLayout(context_host)
-        context_layout.setContentsMargins(32, 0, 32, 0)
+        context_layout.setContentsMargins(8, 0, 8, 0)
         context_layout.addWidget(self.device_context)
         layout.addWidget(context_host)
         context_host.setVisible(not hasattr(frame, "_global_device_bar"))
 
         tools = ActionCardView(tr("常用工具"), view)
+        tools_layout = tools.layout()
+        assert tools_layout is not None
+        tools_layout.setContentsMargins(8, 0, 8, 0)
         self.tool_cards: dict[str, ActionCard] = {}
         for key, icon, title, content, callback in (
             (
@@ -784,6 +786,9 @@ class HomePage(ScrollArea):
         layout.addWidget(tools)
 
         workspace = ActionCardView(tr("设备工作流"), view)
+        workspace_layout = workspace.layout()
+        assert workspace_layout is not None
+        workspace_layout.setContentsMargins(8, 0, 8, 0)
         for key, icon, title, content in (
             (
                 "devices",
@@ -845,6 +850,14 @@ class _SettingsPathLabel(QLabel):
 
 
 
+class _SettingsContentLayout(ExpandLayout):
+    """将页尾留白计入内容高度，避免可调整滚动区按尺寸提示裁掉底边距。"""
+
+    def heightForWidth(self, width: int) -> int:
+        # 当前 Fluent ExpandLayout 的高度测量只计算到最后一个控件底部。
+        return super().heightForWidth(width) + self.contentsMargins().bottom()
+
+
 class SettingsPage(ScrollArea):
     """使用参考项目 SettingCardGroup 体系重写的设置页。"""
 
@@ -883,13 +896,13 @@ class SettingsPage(ScrollArea):
         )
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setWidgetResizable(True)
-        self.setViewportMargins(0, 0, 0, 20)
 
         view = QWidget(self)
         view.setObjectName("settingsView")
-        self.expand_layout = ExpandLayout(view)
+        self.expand_layout = _SettingsContentLayout(view)
         self.expand_layout.setSpacing(28)
-        self.expand_layout.setContentsMargins(36, 10, 36, 0)
+        # 留白随内容滚动，滚动条保持原生定位及完整视口高度。
+        self.expand_layout.setContentsMargins(8, 16, 8, 20)
 
         general = SettingCardGroup(tr("常规"), view)
         self.save_card = PushSettingCard(
@@ -910,8 +923,8 @@ class SettingsPage(ScrollArea):
         general.addSettingCard(self.scan_card)
         self.log_lines_card = ComboSettingCard(
             FluentIcon.SCROLL,
-            tr("日志保留行数"),
-            tr("限制任务中心运行记录的最大行数"),
+            tr("性能采集输出行数"),
+            tr("限制新打开的性能采集页保留的过程输出行数"),
             ["500", "1000", "2000", "5000", "10000"],
             str(self._settings.get("log_max_lines", 2000)),
             general,
@@ -1004,8 +1017,8 @@ class SettingsPage(ScrollArea):
         )
         self.log_size_card = ComboSettingCard(
             FluentIcon.CODE,
-            tr("日志字号（pt）"),
-            tr("即时调整等宽日志文字大小"),
+            tr("输出文本字号（pt）"),
+            tr("即时调整操作结果、文件预览和采集输出的等宽文字大小"),
             [str(value) for value in range(7, 17)],
             str(self._settings.get("log_font_size", 9)),
             typography,
@@ -1023,6 +1036,12 @@ class SettingsPage(ScrollArea):
             application,
         )
         application.addSettingCard(self.reset_card)
+        self.diagnostics_card = PushSettingCard(
+            tr("导出诊断"), FluentIcon.INFO, tr("应用诊断"),
+            tr("本次运行尚无应用异常记录"), application,
+        )
+        application.addSettingCard(self.diagnostics_card)
+        self.diagnostics_card.button.setEnabled(False)
 
         maintenance = SettingCardGroup(tr("ADB 维护"), view)
         self.restart_adb_card = PushSettingCard(
@@ -1030,6 +1049,22 @@ class SettingsPage(ScrollArea):
             tr("设备发现或连接异常时使用，将影响当前设备连接"), maintenance,
         )
         maintenance.addSettingCard(self.restart_adb_card)
+        self.adb_check_card = PushSettingCard(
+            tr("重新检测"), FluentIcon.SYNC, tr("ADB 执行环境"),
+            tr("正在检查执行环境"), maintenance,
+        )
+        self.adb_native_card = _LocalizedSwitchSettingCard(
+            FluentIcon.COMMAND_PROMPT, tr("使用原生 ADB"),
+            tr("仅本次运行生效；关闭后自动选择兼容且更快的执行方式"), parent=maintenance,
+        )
+        self.adb_native_card.switchButton.setOnText(tr("开"))
+        self.adb_native_card.switchButton.setOffText(tr("关"))
+        maintenance.addSettingCard(self.adb_check_card)
+        maintenance.addSettingCard(self.adb_native_card)
+        self.adb_check_card.clicked.connect(lambda: frame.recheck_adb_environment())
+        self.adb_native_card.checkedChanged.connect(
+            lambda enabled: frame.set_adb_native_only(enabled)
+        )
         self.restart_adb_card.clicked.connect(
             lambda: frame.left_panel.signals.restart_adb_requested.emit()
         )
@@ -1082,11 +1117,33 @@ class SettingsPage(ScrollArea):
                 (self.log_size_card, self.log_size_card.combo_box),
                 (self.reset_card, self.reset_card.button),
                 (self.restart_adb_card, self.restart_adb_card.button),
+                (self.adb_check_card, self.adb_check_card.button),
+                (self.adb_native_card, self.adb_native_card.switchButton),
             )
         ]
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)
         self._refresh_typography()
+
+    def update_adb_environment(self, snapshot) -> None:
+        """按可用能力显示加速范围，检查中也允许已验证的方式继续工作。"""
+        if snapshot.native_only:
+            content = tr("当前使用原生 ADB")
+        elif snapshot.fast_devices or snapshot.fast_shell_devices:
+            content = tr("快速执行：设备发现 {devices}，Shell {count} 台设备").format(
+                devices=tr("已启用") if snapshot.fast_devices else tr("未启用"),
+                count=snapshot.fast_shell_devices,
+            )
+        elif snapshot.checking:
+            content = tr("正在检查执行环境")
+        elif snapshot.available:
+            content = tr("当前使用原生 ADB")
+        else:
+            content = tr("快速执行不可用，保留原生 ADB")
+        if snapshot.checking and (snapshot.fast_devices or snapshot.fast_shell_devices):
+            content += tr("；正在完成性能检测")
+        self.adb_check_card.setContent(content)
+        self.adb_check_card.button.setEnabled(not snapshot.checking)
 
     def _refresh_typography(self, _config=None) -> None:
         """设置字号本身也可即时阅读；仅更新呈现，不触发任何配置写入。"""
@@ -1129,7 +1186,8 @@ class SettingsPage(ScrollArea):
 
         if not hasattr(self, "_card_presentations"):
             return
-        width = max(1, self.viewport().width() - 72)
+        margins = self.expand_layout.contentsMargins()
+        width = max(1, self.viewport().width() - margins.left() - margins.right())
         for presentation in self._card_presentations:
             presentation.reflow(width)
         for group in self._setting_groups:
@@ -1141,7 +1199,7 @@ class SettingsPage(ScrollArea):
         if view is not None:
             view.resize(
                 self.viewport().width(),
-                self.expand_layout.heightForWidth(self.viewport().width()) + 10,
+                self.expand_layout.heightForWidth(self.viewport().width()),
             )
 
     def resizeEvent(self, event) -> None:
@@ -1196,7 +1254,6 @@ class SettingsPage(ScrollArea):
     def _set_log_max_lines(self, value: str) -> None:
         lines = int(value)
         self._settings.set("log_max_lines", lines)
-        self._frame.log_panel.set_max_lines(lines)
 
     def _apply_typography(self, _value: str) -> None:
         family = self.font_family_card.value()
@@ -1270,7 +1327,6 @@ class SettingsPage(ScrollArea):
         self._frame.setMicaEffectEnabled(
             bool(self._settings.get("mica_enabled", True))
         )
-        self._frame.log_panel.set_max_lines(int(self._settings.get("log_max_lines", 2000)))
         self._frame.set_continuous_scan(
             bool(self._settings.get("continuous_device_scan", True))
         )

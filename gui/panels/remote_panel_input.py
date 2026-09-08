@@ -119,26 +119,24 @@ class RemotePanelInput:
             label.setAccessibleDescription(details)
 
     def _send_keyevent(self, key_name: str):
-        device = self._frame._selected_remote_device()
-        if not device:
+        devices = tuple(self._frame.selected_devices)
+        if not devices:
+            self._frame._log("WARNING", "No device selected")
             return
-        self._frame._submit_remote_input(
-            lambda: self._frame._remote_control.send_keyevent(device, key_name)
-        )
+        for device in devices:
+            self._frame._submit_remote_input(
+                lambda target=device: self._frame._remote_control.send_keyevent(target, key_name)
+            )
 
     def _send_remote_action(self, action: str):
-        device = self._frame._selected_remote_device()
-        if not device:
+        devices = tuple(self._frame.selected_devices)
+        if not devices:
+            self._frame._log("WARNING", "No device selected")
             return
-
-        def _run():
-            try:
-                return self._frame._remote_control.perform_action(device, action)
-            except Exception as exc:
-                self._frame._log("ERROR", f"remote action failed: {type(exc).__name__}")
-                raise
-
-        self._frame._submit_remote_input(_run)
+        for device in devices:
+            self._frame._submit_remote_input(
+                lambda target=device: self._frame._remote_control.perform_action(target, action)
+            )
 
     def _warm_remote_input_session(self):
         if (

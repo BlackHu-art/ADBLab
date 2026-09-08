@@ -14,6 +14,7 @@ from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
 from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen, safe_disconnect
+from gui.feedback import report_feedback
 from gui.i18n import tr
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
@@ -59,15 +60,7 @@ class FileExplorerOps:
         w.start()
 
     def _on_save_result(self, output, error, name):
-        if error:
-            FluentMessageBox.critical(
-                self._frame,
-                tr("Error"),
-                tr('Save failed: {value0}').format(value0=output),
-            )
-        else:
-            self._frame.status_bar.setText(tr('Saved {value0}').format(value0=name))
-            self._frame._refresh()
+        self._on_file_op_done(output, error, tr('Saved {value0}').format(value0=name))
 
     # ── 拉取与推送 ──────────────────────────────────────────────────────
 
@@ -116,12 +109,7 @@ class FileExplorerOps:
 
     def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
         if e:
-            FluentMessageBox.critical(
-                self._frame,
-                tr("Error"),
-                o,
-            )
-            self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=o))
+            self._on_file_op_done(o, True, "")
             return
         if not self._frame._can_operate():
             self._frame._cleanup_remote_file(dev_tmp, root=True)
@@ -205,24 +193,17 @@ class FileExplorerOps:
             w.start()
 
     def _on_transfer_done(self, o, e, msg):
-        if e:
-            FluentMessageBox.critical(
-                self._frame,
-                tr("Error"),
-                o,
-            )
-            self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=o))
-            return
-        self._frame.status_bar.setText(msg)
-        self._frame._refresh()
+        self._on_file_op_done(o, e, msg)
 
     def _on_file_op_done(self, output: str, error: bool, success_msg: str):
+        """文件终态进入任务记录并分级通知；列表刷新和传输状态仍归当前页面管理。"""
+        report_feedback(
+            self._frame, "devices.files", tr("文件管理"),
+            str(output) if error else success_msg,
+            level="error" if error else "success", notify=True,
+            target=self._frame.device_ip,
+        )
         if error:
-            FluentMessageBox.critical(
-                self._frame,
-                tr("Error"),
-                output,
-            )
             self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=output))
             return
         self._frame.status_bar.setText(success_msg)

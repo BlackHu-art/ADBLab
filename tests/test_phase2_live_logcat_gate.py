@@ -682,10 +682,11 @@ def test_current_package_probe_cancellation_skips_remaining_fallback_commands():
     release_first_probe = threading.Event()
     command_timeouts = []
 
-    def slow_failed_probe(_command, *, timeout):
+    def slow_failed_probe(_command, *, timeout, cancelled=None):
         command_timeouts.append(timeout)
         first_probe_started.set()
         assert release_first_probe.wait(1)
+        assert callable(cancelled) and cancelled()
         return CommandResult(False, error="timeout", returncode=1)
 
     with patch(
@@ -730,8 +731,50 @@ def test_logcat_pid_probe_uses_device_tolerant_timeout():
     run_command.assert_called_once_with(
         ["adb", "-s", "target", "shell", "pidof", "com.example.app"],
         timeout=5,
+        cancelled=run_command.call_args.kwargs["cancelled"],
     )
+    assert callable(run_command.call_args.kwargs["cancelled"])
+    assert not run_command.call_args.kwargs["cancelled"]()
     assert worker._package_snapshot()[2] == frozenset({321})
+
+
+@pytest.mark.parametrize("change", ["stop", "package"])
+def test_logcat_pid_probe_cancels_the_inflight_old_query(change):
+    worker = LogcatWorker("target", package="com.example.app")
+    seen = []
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        if change == "stop":
+            worker.request_stop()
+        else:
+            worker.update_package("com.example.other")
+        seen.append(callable(cancelled) and cancelled())
+        return CommandResult(True, output="321")
+
+    with patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=run):
+        worker._refresh_filter_pids("com.example.app", 0)
+    assert seen == [True]
+    assert worker._package_snapshot()[2] == frozenset()
+
+
+def test_current_package_probe_forwards_inflight_cancellation():
+    worker = CurrentPackageWorker("target")
+    stopped, seen = [False], []
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        stopped[0] = True
+        seen.append(callable(cancelled) and cancelled())
+        return CommandResult(True, output="mCurrentFocus=com.example.old/.Main")
+
+    packages = []
+    worker.package_ready.connect(packages.append)
+    with (
+        patch.object(worker, "isInterruptionRequested", side_effect=lambda: stopped[0]),
+        patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=run),
+    ):
+        worker.run()
+    assert seen == [True]
+    assert packages == []
 
 
 def test_logcat_clearing_package_filter_accepts_all_device_pids():

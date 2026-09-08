@@ -9,7 +9,7 @@ from adblab.application.supervision import (
     TaskStopResult,
     ThreadedShutdownTask,
 )
-from core.exec import ProcessRunner
+from core.exec import CommandRunner, ProcessRunner
 from gui.i18n import tr
 
 
@@ -57,6 +57,16 @@ class CloseController:
     def _register_application_shutdown_tasks(self):
         """按扫描、面板、内嵌会话和 Controller 顺序注册关闭资源。"""
         supervisor = self._frame.task_supervisor.supervisor
+        environment = getattr(self._frame, "_adb_environment", None)
+        if environment is not None:
+            supervisor.register(
+                f"{self._frame._shutdown_owner_id}-adb-environment",
+                owner_id=self._frame._shutdown_owner_id,
+                kind="adb_environment",
+                request_stop=environment.prepare_shutdown,
+                wait=environment.runtime.wait,
+                is_running=environment.runtime.is_running,
+            )
         thread = self._frame._scan_thread
         if thread is not None:
 
@@ -108,12 +118,20 @@ class CloseController:
         self._frame._shutdown_handles.append(controller_shutdown)
 
         def controller_running():
-            return controller_shutdown.is_running() or ProcessRunner.tracked_active_count() > 0
+            return (
+                controller_shutdown.is_running()
+                or ProcessRunner.tracked_active_count() > 0
+                or CommandRunner.active_count() > 0
+            )
 
         def wait_for_controller(timeout: float):
+            deadline = time.monotonic() + timeout
             if not controller_shutdown.wait(timeout):
                 return False
-            return ProcessRunner.tracked_active_count() == 0
+            return (
+                CommandRunner.wait_for_idle(max(0.0, deadline - time.monotonic()))
+                and ProcessRunner.tracked_active_count() == 0
+            )
 
         supervisor.register(
             f"{self._frame._shutdown_owner_id}-controller",
@@ -128,6 +146,9 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        environment = getattr(self._frame, "_adb_environment", None)
+        if environment is not None:
+            environment.prepare_shutdown()
         if self._frame._initial_refresh_timer.isActive():
             self._frame._initial_refresh_timer.stop()
         if self._frame._scan_refresh_timer.isActive():
@@ -172,6 +193,9 @@ class CloseController:
         self._frame._shutdown_finalizer_started = True
         self._frame._shutdown_results = tuple(results)
         self._frame._shutdown_residual = tuple(residual)
+        environment = getattr(self._frame, "_adb_environment", None)
+        if environment is not None:
+            environment.close()
         self._frame._shutdown_archive_failed = False
         # 生产者退出后在 GUI 线程提交最后一条测试记录，再由后台收尾排空写入队列。
         for host in getattr(self._frame, "_workspace_feature_hosts", {}).values():
@@ -267,7 +291,7 @@ class CloseController:
             s._save_timer.cancel()
         s._save_atomic()
         if not library_saved or getattr(self._frame, "_shutdown_archive_failed", False):
-            raise RuntimeError("测试结果库未能完成落盘")
+            raise RuntimeError("本地结果或诊断记录未能完成保存")
 
     def _on_application_finalized(
         self,

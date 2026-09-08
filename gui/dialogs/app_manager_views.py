@@ -60,9 +60,8 @@ class AppManagerViews:
         if self._frame._closing:
             return False
         if not self._frame._can_operate():
-            set_state = getattr(self._frame, "_set_load_state", None)
-            if callable(set_state):
-                set_state("error", tr("请在顶部设备栏勾选当前在线设备后刷新。"))
+            # 未通过设备准入时没有执行加载，保留原加载结果及真实错误提示。
+            self._frame.status_bar.setText(tr("请在顶部设备栏勾选当前在线设备后刷新。"))
             return False
         if getattr(self._frame, "_load_in_progress", False):
             self._frame._load_refresh_pending = True
@@ -111,6 +110,7 @@ class AppManagerViews:
         self._frame._app_labels = {}
         self._frame._app_versions = {}
         self._frame._detail_cache.clear()
+        self._frame._failed_detail_packages.clear()
         self._frame._pending_detail_packages.clear()
         self._frame._detail_worker_running = False
         self._frame._detail_row_by_pkg = {}
@@ -204,6 +204,7 @@ class AppManagerViews:
         self._frame._app_labels[pkg] = label
         self._frame._app_versions[pkg] = version
         self._frame._detail_cache[pkg] = (label, version, itime)
+        self._frame._failed_detail_packages.discard(pkg)
         item = self._frame._detail_icon_by_pkg.get(pkg)
         if item:
             item.setToolTip(f"{label}\n{pkg}\n{version}")
@@ -221,19 +222,27 @@ class AppManagerViews:
                 version_item.setToolTip(version)
 
     def _on_detail_worker_finished(self, packages=None, request_id=None):
+        """未发布成功详情的包留待刷新重试，避免失败批次在定时器中不断重发。"""
         if request_id is not None and request_id != getattr(self._frame, "_active_load_request", 0):
             return
         if packages:
             self._frame._pending_detail_packages.difference_update(packages)
+            self._frame._failed_detail_packages.update(
+                pkg for pkg in packages if pkg not in self._frame._detail_cache
+            )
         self._frame._detail_worker_running = False
         if self._frame._closing or not is_qobject_alive(self._frame._detail_timer):
             return
         if not self._frame._can_operate():
             return
-        if self._frame._detail_timer.isActive():
-            return
         if self._frame._has_unloaded_details():
-            self._frame._schedule_visible_detail_load(delay_ms=80)
+            if not self._frame._detail_timer.isActive():
+                self._frame._schedule_visible_detail_load(delay_ms=80)
+            return
+        # 滚动或切视图可能已排队定时器；没有剩余工作时仍必须发布本批终态。
+        self._frame._detail_timer.stop()
+        if self._frame._failed_detail_packages:
+            self._frame.status_bar.setText(tr("部分应用详情未读取，点击刷新重试。"))
             return
         self._frame.status_bar.setText(
             tr("已加载 {value0} 个应用").format(value0=len(self._frame._apps_data))
@@ -257,12 +266,17 @@ class AppManagerViews:
             for _name, pkg, _status, _app_type in self._frame._apps_data
             if pkg not in self._frame._detail_cache
             and pkg not in self._frame._pending_detail_packages
+            and pkg not in self._frame._failed_detail_packages
         )
 
     def _next_unloaded_detail_packages(self, limit: int = 30) -> list[str]:
         packages = []
         for _name, pkg, _status, _app_type in self._frame._apps_data:
-            if pkg in self._frame._detail_cache or pkg in self._frame._pending_detail_packages:
+            if (
+                pkg in self._frame._detail_cache
+                or pkg in self._frame._pending_detail_packages
+                or pkg in self._frame._failed_detail_packages
+            ):
                 continue
             packages.append(pkg)
             if len(packages) >= limit:
@@ -275,7 +289,11 @@ class AppManagerViews:
             for i in range(self._frame.icon_list.count()):
                 item = self._frame.icon_list.item(i)
                 pkg = item.data(Qt.ItemDataRole.UserRole) if item else ""
-                if item and not item.isHidden() and pkg and pkg not in self._frame._detail_cache:
+                if (
+                    item and not item.isHidden() and pkg
+                    and pkg not in self._frame._detail_cache
+                    and pkg not in self._frame._failed_detail_packages
+                ):
                     packages.append(pkg)
                     if len(packages) >= limit:
                         break
@@ -295,7 +313,10 @@ class AppManagerViews:
             source_row = source_index.row()
             item = self._frame.model.item(source_row, 2)
             pkg = item.text() if item else ""
-            if pkg and pkg not in seen and pkg not in self._frame._detail_cache:
+            if (
+                pkg and pkg not in seen and pkg not in self._frame._detail_cache
+                and pkg not in self._frame._failed_detail_packages
+            ):
                 seen.add(pkg)
                 packages.append(pkg)
                 if len(packages) >= limit:
@@ -306,7 +327,10 @@ class AppManagerViews:
         for row in range(min(self._frame.model.rowCount(), limit)):
             item = self._frame.model.item(row, 2)
             pkg = item.text() if item else ""
-            if pkg and pkg not in self._frame._detail_cache:
+            if (
+                pkg and pkg not in self._frame._detail_cache
+                and pkg not in self._frame._failed_detail_packages
+            ):
                 packages.append(pkg)
         return packages
 
@@ -324,6 +348,7 @@ class AppManagerViews:
             pkg
             for pkg in self._frame._visible_detail_packages()
             if pkg not in self._frame._pending_detail_packages
+            and pkg not in self._frame._failed_detail_packages
         ]
         if not packages:
             packages = self._frame._next_unloaded_detail_packages()
@@ -516,17 +541,10 @@ class AppManagerViews:
         load_running = bool(getattr(self._frame, "_load_in_progress", False))
         device_connected = self._frame._can_operate()
         self._frame.selection_label.setText(tr('已选 {value0} 项').format(value0=count))
-        for button in self._frame._selection_action_buttons:
-            requires_device = bool(button.property("requiresDevice"))
-            button.setEnabled(
-                count > 0
-                and not batch_running
-                and (device_connected or not requires_device)
-            )
-        for button in self._frame._preset_action_buttons:
-            requires_device = bool(button.property("requiresDevice"))
-            requires_selection = bool(button.property("requiresSelection"))
-            button.setEnabled(
+        for action in self._frame._command_bar.actions():
+            requires_device = bool(action.property("requiresDevice"))
+            requires_selection = bool(action.property("requiresSelection"))
+            action.setEnabled(
                 not batch_running
                 and (device_connected or not requires_device)
                 and (count > 0 or not requires_selection)

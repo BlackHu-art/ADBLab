@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 
 from core.exec import CommandRunner, ExecHandle, ProcessRunner
 from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
@@ -27,9 +28,28 @@ class ScrcpyService:
         self.command_runner = command_runner
         self._version_cache: dict[str, str] = {}
 
-    def run_command(self, cmd: list[str], timeout: int = 5):
-        """通过统一短命令边界执行 scrcpy 或 ADB 预检命令。"""
-        return self.command_runner.run(cmd, timeout=timeout)
+    def run_command(
+        self, cmd: list[str], timeout: float = 5, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ):
+        """预检共用启动预算，取消后不再执行下一条查询或发布启动计划。"""
+        self._check_budget(deadline, cancelled)
+        if deadline is not None:
+            timeout = min(timeout, max(0, deadline - time.monotonic()))
+        if cancelled is None:
+            result = self.command_runner.run(cmd, timeout=timeout)
+        else:
+            result = self.command_runner.run(cmd, timeout=timeout, cancelled=cancelled)
+        self._check_budget(deadline, cancelled)
+        return result
+
+    @staticmethod
+    def _check_budget(deadline: float | None, cancelled: Callable[[], bool] | None) -> None:
+        """取消优先于超时，失败不能退化成继续启动的预检警告。"""
+        if cancelled is not None and cancelled():
+            raise InterruptedError("scrcpy launch cancelled")
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("scrcpy launch preflight timed out")
 
     def resolve_executable(self) -> str:
         """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
@@ -37,63 +57,75 @@ class ScrcpyService:
             return bundled_tool_path(WINDOWS_TOOL_BUNDLE, "scrcpy.exe")
         return shutil.which("scrcpy") or "scrcpy"
 
-    def version(self, exe: str) -> str:
+    def version(
+        self, exe: str, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> str:
         cached = self._version_cache.get(exe)
         if cached:
             return cached
         try:
-            result = self.run_command([exe, "--version"], timeout=3)
+            result = self.run_command(
+                [exe, "--version"], timeout=3, deadline=deadline, cancelled=cancelled,
+            )
             match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.output)
             version = match.group(1) if match else "unknown"
+        except (InterruptedError, TimeoutError):
+            raise
         except Exception:
             version = "unknown"
         self._version_cache[exe] = version
         return version
 
-    def device_info(self, adb: str, device: str) -> str:
+    def device_info(
+        self, adb: str, device: str, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> str:
         try:
-            result = self.run_command([adb, "-s", device, "shell", "wm size"], timeout=5)
+            result = self.run_command(
+                [adb, "-s", device, "shell", "wm size"], timeout=5,
+                deadline=deadline, cancelled=cancelled,
+            )
             for prefix in ("Override size:", "Physical size:"):
                 for line in (result.output or "").splitlines():
                     if prefix in line:
                         return line.split(":", 1)[1].strip()
+        except (InterruptedError, TimeoutError):
+            raise
         except Exception:
             pass
         return ""
 
-    def preflight_check(self, adb: str, device: str) -> PreflightResult:
-        """检查设备响应和基础传输速度，但不因速度警告阻止启动。"""
+    def preflight_check(
+        self, adb: str, device: str, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> PreflightResult:
+        """只查询必要的设备响应，不让附加测速阻塞启动路径。"""
         messages: list[tuple[str, str]] = []
         try:
-            result = self.run_command([adb, "-s", device, "shell", "echo ok"], timeout=5)
-            if (result.output or "").strip() != "ok":
+            result = self.run_command(
+                [adb, "-s", device, "shell", "echo ok"], timeout=5,
+                deadline=deadline, cancelled=cancelled,
+            )
+            if not result.success or (result.output or "").strip() != "ok":
                 messages.append(("WARNING", f"Device {device} not responding"))
                 return PreflightResult(False, messages)
 
-            started = time.monotonic()
-            self.run_command(
-                [adb, "-s", device, "shell", "dd if=/dev/zero bs=1024 count=1 2>/dev/null"],
-                timeout=5,
-            )
-            elapsed = time.monotonic() - started
-            if elapsed > 1.0:
-                messages.append(
-                    (
-                        "WARNING",
-                        f"USB speed: {elapsed:.1f}s (slow). Try a different cable or USB 3.0 port",
-                    )
-                )
-            else:
-                messages.append(("INFO", f"USB speed: {elapsed * 1000:.0f}ms (OK)"))
             return PreflightResult(True, messages)
+        except (InterruptedError, TimeoutError):
+            raise
         except Exception as exc:
             messages.append(("WARNING", f"Pre-flight failed: {exc}"))
             return PreflightResult(False, messages)
 
-    def detect_encoder(self, adb: str, device: str) -> str | None:
+    def detect_encoder(
+        self, adb: str, device: str, *, deadline: float | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> str | None:
         try:
             result = self.run_command(
-                [adb, "-s", device, "shell", "dumpsys media.codec"], timeout=8
+                [adb, "-s", device, "shell", "dumpsys media.codec"], timeout=8,
+                deadline=deadline, cancelled=cancelled,
             )
             for line in (result.output or "").splitlines():
                 lowered = line.lower()
@@ -101,28 +133,41 @@ class ScrcpyService:
                     name = line.strip().split()[0]
                     if "OMX" in name or name.startswith("c2."):
                         return name
+        except (InterruptedError, TimeoutError):
+            raise
         except Exception:
             pass
         return None
 
-    def build_launch_plan(self, config: ScrcpyConfig) -> ScrcpyLaunchPlan:
-        """完成版本、设备和编码器预检，并生成不含运行状态的启动计划。"""
+    def build_launch_plan(
+        self, config: ScrcpyConfig, *, timeout: float = 20,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> ScrcpyLaunchPlan:
+        """在单次预算内完成预检；取消和预算耗尽直接终止，不发布启动计划。"""
+        deadline = time.monotonic() + max(0, timeout)
+        self._check_budget(deadline, cancelled)
         messages: list[tuple[str, str]] = []
-        version = self.version(config.exe)
+        version = self.version(config.exe, deadline=deadline, cancelled=cancelled)
         messages.append(("INFO", f"scrcpy v{version}"))
 
-        # 先做轻量连通性/USB 预检，离线设备可少跑一次耗时的 wm size。
-        preflight = self.preflight_check(config.adb, config.device)
+        # 离线设备不再读取尺寸，兼容现有允许 scrcpy 自行报告连接错误的行为。
+        preflight = self.preflight_check(
+            config.adb, config.device, deadline=deadline, cancelled=cancelled,
+        )
         messages.extend(preflight.messages)
         if not preflight.success:
             messages.append(("WARNING", "Pre-flight check failed - launching anyway..."))
             device_info = ""
         else:
-            device_info = self.device_info(config.adb, config.device)
+            device_info = self.device_info(
+                config.adb, config.device, deadline=deadline, cancelled=cancelled,
+            )
 
         encoder = None
         if config.hw_encoder:
-            encoder = self.detect_encoder(config.adb, config.device)
+            encoder = self.detect_encoder(
+                config.adb, config.device, deadline=deadline, cancelled=cancelled,
+            )
             if encoder:
                 messages.append(("INFO", f"Using encoder: {encoder}"))
             else:

@@ -75,27 +75,24 @@ def test_chinese_application_type_filter_preserves_source_values_and_selection(q
         page.close()
 
 
-def test_operation_log_toggle_reclaims_space_without_losing_messages(qt_application):
-    """操作记录默认收起，展开与再次收起均保留已追加内容并腾出列表空间。"""
+def test_operation_feedback_keeps_list_space_and_forwards_records(qt_application, monkeypatch):
+    """执行反馈交给任务中心，不创建或展开会挤压列表的本地记录区。"""
+    records = []
+    monkeypatch.setattr(
+        "gui.dialogs.app_manager.report_feedback", lambda *a, **kw: records.append(a),
+    )
     page = AppManagerPage(device_ip="visual-demo")
     try:
         page.resize(720, 600)
         page.show()
         qt_application.processEvents()
         page.log("第一条操作记录")
-        collapsed_height = page.stack.height()
-        assert not page.log_output.isVisibleTo(page)
-        page.log_toggle.click()
-        qt_application.processEvents()
-        assert page.log_output.isVisibleTo(page)
-        assert page.stack.height() < collapsed_height
+        height = page.stack.height()
+        assert not hasattr(page, "log_output")
         page.log("第二条操作记录")
-        page.log_toggle.click()
         qt_application.processEvents()
-        assert not page.log_output.isVisibleTo(page)
-        assert page.stack.height() == collapsed_height
-        assert "第一条操作记录" in page.log_output.toPlainText()
-        assert "第二条操作记录" in page.log_output.toPlainText()
+        assert page.stack.height() == height
+        assert [record[3] for record in records] == ["第一条操作记录", "第二条操作记录"]
     finally:
         page.close()
 
@@ -211,8 +208,8 @@ def test_manager_search_and_table_header_fit_large_text(qt_application, monkeypa
         page.close()
 
 
-def test_workspace_preparation_moves_status_and_reclaims_duplicate_header(qt_application):
-    """嵌入只移走一次内部页头，工具栏仍显示状态；独立页面保持完整标题。"""
+def test_workspace_preparation_removes_duplicate_header_and_device_badge(qt_application):
+    """嵌入页面由宿主页头呈现设备，筛选行只保留状态的辅助说明。"""
     page = AppManagerPage(device_ip="visual-demo")
     try:
         page.resize(1000, 900)
@@ -224,13 +221,61 @@ def test_workspace_preparation_moves_status_and_reclaims_duplicate_header(qt_app
         page.prepare_for_workspace()
         qt_application.processEvents()
         assert not page.header_card.isVisibleTo(page)
-        assert page.status_badge.isVisibleTo(page)
-        assert page.status_badge.parentWidget() is page._search_control
-        assert page._search_control.layout().count() == 2
+        assert not page.status_badge.isVisibleTo(page)
+        assert page._search_control is page.search_input
+        assert page.status_badge.text() in page.search_input.accessibleDescription()
         assert page.workspace_content_minimum_size().height() < before
         page.set_device_connected(False)
         assert page.status_badge.text() == "离线"
-        assert page.status_badge.isVisibleTo(page)
+        assert not page.status_badge.isVisibleTo(page)
+        assert "离线" in page.search_input.toolTip()
+        assert "离线" in page.search_input.accessibleDescription()
+    finally:
+        page.close()
+
+
+def test_workspace_filters_use_natural_widths_on_one_row_at_748(qt_application, monkeypatch):
+    """860px 整窗对应的 748px 筛选行仍为单行，类型与视图按钮不吸收多余宽度。"""
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda cls, role, size=None: QFont("Arial", size or 12)),
+    )
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page.prepare_for_workspace()
+        page.resize(764, 700)
+        page.show()
+        qt_application.processEvents()
+        assert page._action_layout_available_width() == 748
+        rows = {
+            page._top_layout.getItemPosition(page._top_layout.indexOf(control))[0]
+            for control in page._top_controls
+        }
+        assert rows == {0}
+        assert abs(page.type_filter.width() - page.type_filter.sizeHint().width()) <= 2
+        assert page.view_toggle.width() <= 40
+        type_width = page.type_filter.width()
+        search_width = page.search_input.width()
+        page.resize(952, 700)
+        qt_application.processEvents()
+        assert page.type_filter.width() == type_width
+        assert page.search_input.width() > search_width
+        assert not page.status_badge.isVisibleTo(page)
+    finally:
+        page.close()
+
+
+def test_standalone_manager_ready_badge_keeps_natural_width(qt_application):
+    """独立页面仍呈现设备徽标，短状态不保留长状态的空白。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page.resize(952, 700)
+        page.show()
+        for selected in (False, True):
+            page.set_device_selected(selected)
+            qt_application.processEvents()
+            assert page.status_badge.isVisibleTo(page)
+            assert abs(page.status_badge.width() - page.status_badge.sizeHint().width()) <= 2
     finally:
         page.close()
 
@@ -264,7 +309,7 @@ def test_narrow_workspace_keeps_tools_visible_with_long_status(
         viewport = host.content_scroll.viewport()
         assert viewport.width() == 404
         assert host.content_scroll.horizontalScrollBar().maximum() == 0
-        for control in (*page._top_controls, page.search_input, page.status_badge):
+        for control in page._top_controls:
             left = control.mapTo(viewport, QPoint()).x()
             assert 0 <= left
             assert left + control.width() <= viewport.width()

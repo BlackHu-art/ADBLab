@@ -44,10 +44,10 @@ class _TestSignal:
     (
         ([], "未选择", InfoLevel.INFOAMTION),
         (["device-1"], "可启动", InfoLevel.SUCCESS),
-        (["device-1", "device-2"], "请选择一台", InfoLevel.WARNING),
+        (["device-1", "device-2"], "可启动", InfoLevel.SUCCESS),
     ),
 )
-def test_remote_status_badge_matches_single_device_requirement(devices, text, level):
+def test_remote_status_badge_matches_selected_device_requirement(devices, text, level):
     panel = RemotePanel.__new__(RemotePanel)
     panel.panel = Mock(selected_devices=devices)
     panel.remote_status_badge = Mock()
@@ -58,6 +58,438 @@ def test_remote_status_badge_matches_single_device_requirement(devices, text, le
     panel.remote_status_badge.setLevel.assert_called_once_with(level)
     panel.remote_status_badge.setToolTip.assert_called_once()
     panel.remote_status_badge.setAccessibleDescription.assert_called_once()
+
+
+def test_remote_target_selection_broadcasts_keys_and_actions_without_changing_mirrors():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=[])
+    panel._update_action_states = Mock()
+    panel._launch_worker = None
+    panel._session_devices = ("mirrored-device",)
+    panel._active_device = "mirrored-device"
+    panel._remote_control = Mock()
+    panel._submit_remote_input = lambda task: task()
+    panel.set_target_devices(["device-1", "device-2", "device-1"])
+
+    panel._send_keyevent("HOME")
+    panel._send_remote_action("swipe_up")
+
+    assert panel.selected_devices == ["device-1", "device-2"]
+    assert panel.get_remote_session_devices() == ["mirrored-device"]
+    assert panel._remote_control.send_keyevent.call_args_list == [
+        (("device-1", "HOME"),), (("device-2", "HOME"),),
+    ]
+    assert panel._remote_control.perform_action.call_args_list == [
+        (("device-1", "swipe_up"),), (("device-2", "swipe_up"),),
+    ]
+
+
+def test_remote_selection_change_cancels_queued_input_even_after_reselection():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=[])
+    panel._update_action_states = Mock()
+    panel._launch_worker = None
+    panel._remote_control = Mock()
+    panel._remote_executor = Mock()
+    panel._emit_remote_queue_status = Mock()
+    panel._log = Mock()
+    panel.set_target_devices(["device-1", "device-2"])
+    panel._send_keyevent("HOME")
+    queued = [call.args[0] for call in panel._remote_executor.submit.call_args_list]
+    assert len(queued) == 2
+
+    panel.set_target_devices([])
+    panel.set_target_devices(["device-1", "device-2"])
+    for task in queued:
+        task()
+
+    panel._remote_control.send_keyevent.assert_not_called()
+    assert panel._remote_failed == 2
+
+
+def test_remote_batch_start_snapshots_configs_for_every_selected_device():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1", "device-2"])
+    panel._process = None
+    panel._launch_worker = None
+    panel._process_key = "scrcpy_test"
+    panel._scrcpy_service = Mock()
+    panel._scrcpy_service.resolve_executable.return_value = "scrcpy.exe"
+    panel._scrcpy_config = lambda exe, device: _scrcpy_config(exe=exe, device=device)
+    panel._set_session_state = Mock()
+    panel._update_status = Mock()
+    panel._log = Mock()
+    with (
+        patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
+        patch("gui.panels.remote_panel.ScrcpyLaunchWorker") as worker_type,
+    ):
+        panel._start_scrcpy()
+
+    configs = worker_type.call_args.args[0]
+    assert [config.device for config in configs] == ["device-1", "device-2"]
+    assert panel.get_remote_session_devices() == ["device-1", "device-2"]
+    worker_type.return_value.start.assert_called_once()
+
+
+def _remote_batch_panel():
+    panel = RemotePanel.__new__(RemotePanel)
+    panel.panel = Mock(selected_devices=["device-1", "device-2"])
+    panel._target_devices = ("device-1", "device-2")
+    panel._session_devices = panel._target_devices
+    panel._session_process_keys = ()
+    panel._processes = {}
+    panel._process = None
+    panel._process_key = "batch"
+    panel._session_state = RemotePanel._SESSION_STARTING
+    panel._device_admission_revision = 0
+    panel._launch_admission_revision = 0
+    panel._launch_worker = None
+    panel._watchdog = Mock()
+    panel._set_running = Mock()
+    panel._set_session_state = Mock()
+    panel._update_status = Mock()
+    panel._update_action_states = Mock()
+    panel._log = Mock()
+    panel._remote_control = Mock()
+    panel._input_engine = Mock()
+    panel._adb = Mock()
+    panel._scrcpy_service = Mock()
+    panel._scrcpy_service.start.side_effect = lambda *_args: Mock(stderr=[], poll=lambda: None)
+    return panel
+
+
+def _remote_batch_plans():
+    return [
+        (_scrcpy_config(device=device), ["scrcpy", "-s", device], "1080x2400")
+        for device in ("device-1", "device-2")
+    ]
+
+
+def test_remote_batch_launches_independent_processes_and_keeps_stop_ownership():
+    panel = _remote_batch_panel()
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    assert panel._scrcpy_service.start.call_args_list == [
+        (("batch_0", ["scrcpy", "-s", "device-1"]),),
+        (("batch_1", ["scrcpy", "-s", "device-2"]),),
+    ]
+    assert tuple(panel._processes) == ("device-1", "device-2")
+    panel._set_running.assert_called_once_with(True)
+
+    panel.set_target_devices(["new-device"])
+    assert panel.get_remote_session_devices() == ["device-1", "device-2"]
+    panel._request_scrcpy_stop_once()
+    panel._request_scrcpy_stop_once()
+    assert panel._scrcpy_service.request_stop.call_args_list == [
+        (("batch_0",),), (("batch_1",),),
+    ]
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+
+
+def test_remote_batch_partial_launch_failure_keeps_successful_mirror_stoppable():
+    panel = _remote_batch_panel()
+    panel._scrcpy_service.start.side_effect = [
+        OSError("failed"), Mock(stderr=[], poll=lambda: None),
+    ]
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    assert panel.get_remote_session_devices() == ["device-2"]
+    assert panel._scrcpy_process_keys() == ("batch_1",)
+    panel._set_running.assert_called_once_with(True)
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+    panel._scrcpy_service.request_stop.assert_called_once_with("batch_1")
+
+
+def test_remote_batch_process_exit_keeps_other_mirror_running():
+    panel = _remote_batch_panel()
+    first = Mock(stderr=[], poll=Mock(return_value=1))
+    second = Mock(stderr=[], poll=Mock(return_value=None))
+    panel._scrcpy_service.start.side_effect = [first, second]
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    panel._set_running.reset_mock()
+    panel._poll_process()
+    assert panel._process is second
+    assert panel.get_remote_session_devices() == ["device-2"]
+    panel._set_running.assert_not_called()
+    second.poll.return_value = 0
+    panel._poll_process()
+    assert panel.get_remote_session_devices() == []
+    panel._set_running.assert_called_once_with(False)
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+
+
+@pytest.mark.parametrize("cancel_by_selection", [False, True])
+def test_remote_batch_rejects_queued_launch_after_cancel_or_selection_change(cancel_by_selection):
+    panel = _remote_batch_panel()
+    if cancel_by_selection:
+        panel.set_target_devices(["device-1"])
+    else:
+        panel._session_state = RemotePanel._SESSION_STOPPING
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    panel._scrcpy_service.start.assert_not_called()
+
+
+def test_remote_batch_background_thread_failure_preserves_process_ownership():
+    panel = _remote_batch_panel()
+    with patch("gui.panels.remote_panel.threading.Thread") as thread_type:
+        thread_type.return_value.start.side_effect = RuntimeError("no thread")
+        panel._on_batch_launch_ready(_remote_batch_plans())
+    assert panel.get_remote_session_devices() == ["device-1", "device-2"]
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+    assert panel._scrcpy_service.request_stop.call_count == 2
+
+
+def test_remote_batch_supervisor_closes_all_processes_after_selection_is_cleared():
+    panel = _remote_batch_panel()
+    active = set()
+
+    def start(key, _args):
+        active.add(key)
+        return Mock(stderr=[], poll=lambda: None)
+
+    def request_stop(key):
+        active.discard(key)
+        return True
+
+    panel._scrcpy_service.start.side_effect = start
+    panel._scrcpy_service.request_stop.side_effect = request_stop
+    panel._scrcpy_service.is_active.side_effect = lambda key: key in active
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    panel.set_target_devices([])
+    supervisor = TaskSupervisor()
+    assert panel.register_shutdown_task(supervisor, owner_id="remote", task_id="batch")
+    panel.shutdown()
+    results = supervisor.stop_all(deadline=1)
+    assert results[0].disposition is StopDisposition.GRACEFUL
+    assert not active
+    assert panel._scrcpy_service.request_stop.call_count == 2
+    assert all(not thread.is_alive() for thread in panel._scrcpy_threads)
+    panel._adb.close_input_sessions.assert_called_once()
+
+
+def test_remote_batch_worker_keeps_successful_plan_when_another_device_fails():
+    from gui.panels.remote_panel import ScrcpyLaunchWorker
+    service = Mock()
+    service.build_launch_plan.side_effect = [
+        OSError("failed"),
+        Mock(args=["scrcpy", "-s", "device-2"], device_info="1080x2400", messages=[]),
+    ]
+    worker = ScrcpyLaunchWorker([item[0] for item in _remote_batch_plans()], service=service)
+    received = []
+    worker.batch_ready.connect(received.append)
+    worker.run()
+    assert len(received) == 1
+    assert [config.device for config, _args, _info in received[0]] == ["device-2"]
+    worker.deleteLater()
+
+
+def test_remote_batch_retry_only_requests_devices_whose_stop_request_failed():
+    panel = _remote_batch_panel()
+    panel._session_process_keys = ("batch_0", "batch_1")
+    panel._scrcpy_service.request_stop.side_effect = [True, OSError("failed"), True]
+    with pytest.raises(OSError):
+        panel._request_scrcpy_stop_once()
+    panel._request_scrcpy_stop_once()
+    assert panel._scrcpy_service.request_stop.call_args_list == [
+        (("batch_0",),), (("batch_1",),), (("batch_1",),),
+    ]
+
+
+def test_remote_batch_user_stop_attempts_all_devices_when_one_stop_fails():
+    panel = _remote_batch_panel()
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    panel._session_state = RemotePanel._SESSION_RUNNING
+    panel._scrcpy_service.stop.side_effect = [OSError("failed"), 0]
+    panel._stop_completed_requested = Mock()
+    with patch("gui.panels.remote_panel.threading.Thread") as thread_type:
+        panel._stop_scrcpy()
+        thread_type.call_args.kwargs["target"]()
+    assert [call.args[0] for call in panel._scrcpy_service.stop.call_args_list] == [
+        "batch_0", "batch_1",
+    ]
+    panel._stop_completed_requested.emit.assert_called_once_with(False)
+    assert panel._scrcpy_stop_claim is None
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+
+
+def test_remote_batch_worker_cancellation_does_not_prepare_or_launch_remaining_devices():
+    from gui.panels.remote_panel import ScrcpyLaunchWorker
+    service = Mock()
+    service.build_launch_plan.side_effect = InterruptedError("cancelled")
+    worker = ScrcpyLaunchWorker([item[0] for item in _remote_batch_plans()], service=service)
+    received = []
+    worker.batch_ready.connect(received.append)
+    worker.run()
+    service.build_launch_plan.assert_called_once()
+    assert received == []
+    worker.deleteLater()
+
+
+def test_remote_batch_does_not_launch_after_shutdown_resource_snapshot():
+    panel = _remote_batch_panel()
+    panel._remote_input_shutdown_handle()
+    panel._on_batch_launch_ready(_remote_batch_plans())
+    panel._scrcpy_service.start.assert_not_called()
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+
+
+def test_remote_input_failure_on_one_device_does_not_skip_other_targets():
+    panel = _remote_batch_panel()
+    panel._remote_executor = Mock()
+    panel._emit_remote_queue_status = Mock()
+    panel._remote_control.send_keyevent.side_effect = [OSError("failed"), True]
+    panel._send_keyevent("HOME")
+    for call in panel._remote_executor.submit.call_args_list:
+        call.args[0]()
+    assert panel._remote_failed == 1
+    assert panel._remote_sent == 1
+    assert panel._remote_completed == 2
+
+
+def test_remote_batch_configuration_failure_leaves_start_available():
+    panel = _remote_batch_panel()
+    panel._session_state = RemotePanel._SESSION_IDLE
+    panel._scrcpy_service.resolve_executable.return_value = "scrcpy.exe"
+    panel._scrcpy_config = Mock(side_effect=OSError("recording directory unavailable"))
+    with (
+        patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
+        patch("gui.panels.remote_panel.ScrcpyLaunchWorker") as worker_type,
+    ):
+        panel._start_scrcpy()
+    worker_type.assert_not_called()
+    assert panel.get_remote_session_devices() == []
+    panel._set_running.assert_called_once_with(False)
+
+
+def test_remote_real_batch_worker_delivers_all_processes_once_and_stops_in_gui(qt_application):
+    service = Mock()
+    service.resolve_executable.return_value = "scrcpy.exe"
+    service.build_launch_plan.side_effect = lambda config, **_kwargs: Mock(
+        args=["scrcpy", "-s", config.device], device_info="1080x2400", messages=[],
+    )
+    active = set()
+
+    def start(key, _args):
+        active.add(key)
+        return Mock(stderr=[], poll=lambda: None)
+
+    service.start.side_effect = start
+    service.stop.side_effect = lambda key, **_kwargs: active.discard(key)
+    service.is_active.side_effect = lambda key: key in active
+    with (
+        patch("gui.panels.remote_panel.ScrcpyService", return_value=service),
+        patch("gui.panels.remote_panel.ADBBridge", return_value=Mock(path="adb")),
+        patch("gui.panels.remote_panel.RemoteControlService"),
+        patch("gui.panels.remote_panel.RemoteInputEngine"),
+        patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
+    ):
+        side = SidePanel()
+        remote = side._ensure_tab_loaded(2)
+        try:
+            remote.set_target_devices(["device-1", "device-2"])
+            remote._start_scrcpy()
+            remote._start_scrcpy()
+            assert _wait_for_qt(qt_application, lambda: (
+                remote._launch_worker is None and len(remote._processes) == 2
+            ))
+            assert service.start.call_count == 2
+            assert remote._session_state == remote._SESSION_RUNNING
+            remote.set_target_devices([])
+            assert remote.btn_stop.isEnabled()
+            remote._stop_scrcpy()
+            remote._stop_scrcpy()
+            assert _wait_for_qt(
+                qt_application, lambda: remote._session_state == remote._SESSION_IDLE,
+            )
+            assert service.stop.call_count == 2
+            assert not active
+            remote.shutdown()
+            assert remote._remote_input_shutdown.wait(1)
+            assert all(not thread.is_alive() for thread in remote._scrcpy_threads)
+        finally:
+            remote.shutdown()
+            side.close()
+
+
+def test_remote_single_mirror_shutdown_waits_for_reader_and_focus_tasks():
+    panel = _remote_batch_panel()
+    panel._target_devices = ("device-1",)
+    panel._session_devices = ("device-1",)
+    panel._active_device = "device-1"
+    panel._start_warm_remote_input_session = Mock()
+    focus_entered = threading.Event()
+    reader_entered = threading.Event()
+    release_focus = threading.Event()
+    release_reader = threading.Event()
+    workers = []
+
+    class BlockingStderr:
+        def __iter__(self):
+            workers.append(threading.current_thread())
+            reader_entered.set()
+            assert release_reader.wait(2)
+            return iter(())
+
+    def focus(_title):
+        workers.append(threading.current_thread())
+        focus_entered.set()
+        assert release_focus.wait(2)
+        return True
+
+    process = Mock(stderr=BlockingStderr(), poll=lambda: None)
+    panel._scrcpy_service.start.return_value = process
+    panel._scrcpy_service.start.side_effect = None
+    panel._input_engine.focus_window.side_effect = focus
+    try:
+        panel._on_launch_ready(["scrcpy", "-s", "device-1"], "1080x2400")
+        assert focus_entered.wait(1) and reader_entered.wait(1)
+        panel.shutdown()
+        assert not panel._remote_input_shutdown.wait(0.05)
+        panel._adb.close_input_sessions.assert_not_called()
+        release_focus.set()
+        assert not panel._remote_input_shutdown.wait(0.05)
+        release_reader.set()
+        assert panel._remote_input_shutdown.wait(1)
+        assert all(not worker.is_alive() for worker in workers)
+        panel._adb.close_input_sessions.assert_called_once()
+        panel._scrcpy_service.request_stop.assert_called_once_with("batch")
+    finally:
+        release_focus.set()
+        release_reader.set()
+        for worker in workers:
+            worker.join(1)
+        panel.shutdown()
+
+
+@pytest.mark.parametrize("failing_thread", ["focus", "reader", "warmup"])
+def test_remote_single_background_start_failure_preserves_running_process(failing_thread):
+    panel = _remote_batch_panel()
+    panel._target_devices = ("device-1",)
+    panel._session_devices = ("device-1",)
+    panel._active_device = "device-1"
+    process = Mock(stderr=[], poll=lambda: None)
+    panel._scrcpy_service.start.return_value = process
+    panel._scrcpy_service.start.side_effect = None
+    panel._start_warm_remote_input_session = Mock()
+    if failing_thread == "warmup":
+        panel._start_warm_remote_input_session.side_effect = RuntimeError("no thread")
+    with patch("gui.panels.remote_panel.threading.Thread") as thread_type:
+        thread_type.return_value.start.side_effect = (
+            [RuntimeError("no thread"), None]
+            if failing_thread == "focus" else [None, RuntimeError("no thread")]
+            if failing_thread == "reader" else None
+        )
+        panel._on_launch_ready(["scrcpy", "-s", "device-1"], "1080x2400")
+    assert panel._process is process
+    assert panel.get_remote_session_devices() == ["device-1"]
+    panel._set_running.assert_called_once_with(True)
+    panel.shutdown()
+    assert panel._remote_input_shutdown.wait(1)
+    panel._scrcpy_service.request_stop.assert_called_once_with("batch")
 
 
 class _FaultInjectingLaunchWorker:
@@ -172,7 +604,6 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
     runner.run.side_effect = [
         CommandResult(success=True, output="scrcpy 4.1"),
         CommandResult(success=True, output="ok"),
-        CommandResult(success=True, output="1024 bytes copied"),
         CommandResult(success=True, output="Physical size: 1080x2400"),
         CommandResult(success=True, output="OMX.qcom.video.encoder.avc h264 encoder"),
     ]
@@ -185,7 +616,7 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
     assert plan.encoder == "OMX.qcom.video.encoder.avc"
     assert "--video-encoder" in plan.args
     assert ("INFO", "Using encoder: OMX.qcom.video.encoder.avc") in plan.messages
-    assert runner.run.call_count == 5
+    assert runner.run.call_count == 4
 
 
 def test_scrcpy_service_device_info_prefers_override_size():
@@ -233,6 +664,74 @@ def test_scrcpy_service_caches_version_per_executable():
     assert service.version("scrcpy.exe") == "4.1"
 
     runner.run.assert_called_once_with(["scrcpy.exe", "--version"], timeout=3)
+
+
+def test_scrcpy_launch_interruption_stops_current_query_and_remaining_plan():
+    """停止发生于版本查询期间时，执行边界收到取消且不再探测设备。"""
+    from gui.panels.remote_panel import ScrcpyLaunchWorker
+
+    entered, release = threading.Event(), threading.Event()
+    commands = []
+    observed_cancel = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if len(commands) == 1:
+            entered.set()
+            assert release.wait(2)
+            cancelled = kwargs.get("cancelled")
+            observed_cancel.append(bool(cancelled and cancelled()))
+        return CommandResult(success=True, output="scrcpy 4.1" if len(commands) == 1 else "ok")
+
+    worker = ScrcpyLaunchWorker(
+        _scrcpy_config(hw_encoder=True), service=ScrcpyService(command_runner=Mock(run=run)),
+    )
+    worker.start()
+    try:
+        assert entered.wait(2)
+        worker.requestInterruption()
+        release.set()
+        assert worker.wait(2000)
+        assert observed_cancel == [True]
+        assert len(commands) == 1
+    finally:
+        release.set()
+        worker.wait(2000)
+
+
+def test_scrcpy_launch_plan_shares_deadline_between_queries():
+    """后续查询仅使用剩余预算，到期后不再生成可启动的计划。"""
+    clock = [100.0]
+    budgets = []
+
+    def run(command, **kwargs):
+        budgets.append(kwargs["timeout"])
+        clock[0] += 2.0
+        outputs = ["scrcpy 4.1", "ok", "Physical size: 1080x2400"]
+        return CommandResult(success=True, output=outputs[len(budgets) - 1])
+
+    service = ScrcpyService(command_runner=Mock(run=run))
+    with patch("services.remote.scrcpy_service.time.monotonic", side_effect=lambda: clock[0]):
+        with pytest.raises(TimeoutError):
+            service.build_launch_plan(_scrcpy_config(), timeout=6)
+    assert budgets == [3, 4, 2]
+
+
+def test_scrcpy_launch_plan_skips_advisory_speed_probe():
+    """启动只等待必要预检，不因额外传输测速延迟产生计划。"""
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        output = "scrcpy 4.1" if "--version" in command else (
+            "ok" if command[-1] == "echo ok" else "Physical size: 1080x2400"
+        )
+        return CommandResult(success=True, output=output)
+
+    plan = ScrcpyService(command_runner=Mock(run=run)).build_launch_plan(_scrcpy_config())
+    assert plan.device_info == "1080x2400"
+    assert len(commands) == 3
+    assert not any("dd if=" in command[-1] for command in commands)
 
 
 def test_scrcpy_service_resolves_bundled_windows_executable():
@@ -527,7 +1026,7 @@ def test_remote_panel_launch_ready_uses_scrcpy_service_start():
     panel._log = Mock()
     panel._scrcpy_service = Mock()
     panel._remote_control = Mock()
-    panel._focus_scrcpy_window = Mock()
+    panel._input_engine = Mock()
     panel._process_key = "scrcpy_test"
     panel._watchdog = Mock()
     panel._set_running = Mock()

@@ -297,33 +297,30 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
     assert frame._scan_thread.started is True
 
 
-def test_adb_bootstrap_pre_starts_bundled_server():
-    frame = SimpleNamespace(_adb_bootstrap_finished=Mock())
-
-    with (
-        patch("utils.adb_resolver.resolve_adb_path", return_value="C:/tools/adb.exe") as resolve,
-        patch("gui.main_frame.CommandRunner.run") as run,
-    ):
+def test_adb_bootstrap_schedules_environment_without_blocking():
+    frame = SimpleNamespace(
+        _start_device_discovery=Mock(), _update_adb_environment=Mock(),
+        _log_adb_environment=Mock(),
+    )
+    with patch("adblab.presentation.qt_adb_runtime.QtAdbRuntime") as adapter:
         MainFrame._bootstrap_adb_async(frame)
-        frame._adb_bootstrap_thread.join(timeout=5)
-
-    resolve.assert_called_once_with()
-    run.assert_called_once_with(["C:/tools/adb.exe", "start-server"], timeout=30)
-    frame._adb_bootstrap_finished.emit.assert_called_once()
+    adapter.assert_called_once_with(frame)
+    adapter.return_value.schedule.assert_called_once_with()
+    adapter.return_value.ready.connect.assert_called_once_with(frame._start_device_discovery)
+    adapter.return_value.changed.connect.assert_called_once_with(frame._update_adb_environment)
 
 
 def test_adb_bootstrap_skips_pre_start_when_path_unresolved():
-    frame = SimpleNamespace(_adb_bootstrap_finished=Mock())
+    from core.adb_runtime import AdbRuntime
 
-    with (
-        patch("utils.adb_resolver.resolve_adb_path", return_value=None),
-        patch("gui.main_frame.CommandRunner.run") as run,
-    ):
-        MainFrame._bootstrap_adb_async(frame)
-        frame._adb_bootstrap_thread.join(timeout=5)
-
-    run.assert_not_called()
-    frame._adb_bootstrap_finished.emit.assert_called_once()
+    ready = Mock()
+    runtime = AdbRuntime(lambda: None, ready=ready)
+    with patch("core.adb_runtime.native_capture") as native:
+        runtime.start()
+        assert runtime.wait(2)
+    native.assert_not_called()
+    ready.assert_called_once_with()
+    assert not runtime.snapshot().available
 
 
 def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
@@ -334,8 +331,6 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         created["central_widget_ready"] = self._central_widget is not None
         created["scan_thread"] = self._scan_thread
 
-    fake_log_panel = QWidget()
-    fake_log_panel._append_log = Mock()
     fake_side_panel = QWidget()
     fake_side_panel.device_widget = QWidget()
     fake_side_panel.signals = Mock()
@@ -350,14 +345,19 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.on_recording_target_finished = Mock()
     fake_side_panel.on_monkey_target_finished = Mock()
     fake_side_panel.on_operation_completed = Mock()
+    fake_side_panel.on_device_refresh_superseded = Mock()
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
+    fake_side_panel._connected_device_cache = []
+    fake_side_panel._device_discovery_state = "empty"
     fake_side_panel._devices_tab = SimpleNamespace(set_selected_devices=Mock())
     fake_side_panel._tab_scroll_areas = {}
     fake_side_panel._apps_tab = SimpleNamespace(
         panel_header=QWidget(),
         apps_status_badge=QWidget(),
+        diagnostic_results=Mock(),
+        report_artifacts=Mock(),
         category_stack=Mock(),
         monkey_preparation_requested=Mock(),
         on_monkey_preparation_finished=Mock(),
@@ -365,6 +365,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         set_package_query_pending=Mock(),
         apply_responsive_width=Mock(),
         set_run_library=Mock(),
+        set_device_labels=Mock(),
     )
     fake_side_panel._advanced_tab = SimpleNamespace(
         panel_header=QWidget(),
@@ -377,6 +378,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         category_stack=Mock(),
         set_workspace_device=Mock(side_effect=lambda device_id: device_id),
         set_device_selected=Mock(),
+        set_target_devices=Mock(),
         apply_responsive_width=Mock(),
     )
 
@@ -390,7 +392,6 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
 
     with (
         patch("gui.main_frame.LogService"),
-        patch("gui.main_frame.LogPanel", return_value=fake_log_panel),
         patch("gui.main_frame.SidePanel") as side_panel_cls,
         patch("gui.main_frame.ADBController") as controller_cls,
         patch("gui.main_frame.resource_path", return_value=""),
@@ -626,17 +627,24 @@ def test_main_frame_unknown_workspace_route_does_not_switch_page():
 def test_main_frame_syncs_device_context_to_every_task_page():
     home = Mock()
     pages = {key: Mock() for key in ("devices", "apps", "system")}
+    labels = {"device-1": "Demo Current model", "device-2": "Device 2"}
+    bar = Mock()
+    bar.device_label.side_effect = labels.__getitem__
+    bar.device_labels.return_value = labels
     frame = SimpleNamespace(
         left_panel=SimpleNamespace(
             selected_devices=["device-1"],
             _connected_device_cache=["device-1", "device-2"],
             _device_discovery_state="ready",
+            _apps_tab=SimpleNamespace(set_device_labels=Mock()),
         ),
+        adb_controller=SimpleNamespace(action_results=SimpleNamespace(set_target_labels=Mock())),
         _home_page=home,
-        _global_device_bar=Mock(),
+        _global_device_bar=bar,
         _device_hub=Mock(),
         _sync_global_session_controls=Mock(),
         _workspace_pages=pages,
+        _workspace_feature_hosts={},
         _pending_package_device="",
         _device_metadata={"device-1": {"Model": "Current model"}},
     )
@@ -652,9 +660,11 @@ def test_main_frame_syncs_device_context_to_every_task_page():
     frame._global_device_bar.set_context.assert_called_once_with(*expected)
     frame._device_hub.set_device_context.assert_called_once_with(*expected)
     frame._device_hub.set_device_metadata.assert_called_once_with([
-        {"ip": "device-1", "Brand": "Demo", "Model": "Current model"},
-        {"ip": "device-2"},
+        {"ip": "device-1", "Brand": "Demo", "Model": "Current model", "name": labels["device-1"]},
+        {"ip": "device-2", "name": labels["device-2"]},
     ])
+    frame.adb_controller.action_results.set_target_labels.assert_called_once_with(labels)
+    frame.left_panel._apps_tab.set_device_labels.assert_called_once_with(labels)
     frame._sync_global_session_controls.assert_called_once_with()
     for page in pages.values():
         page.set_device_context.assert_called_once_with(*expected)
@@ -717,7 +727,12 @@ def test_main_frame_signal_maps_keep_expected_coverage():
         + MainFrame._system_signal_map(frame, lp, ac)
     )
 
-    assert len(signal_map) == 72
+    from controllers.action_catalog import ACTION_SIGNALS
+
+    connected_names = [signal._mock_name for signal, _handler in signal_map]
+    assert set(connected_names) == set(ACTION_SIGNALS)
+    assert len(connected_names) == len(set(connected_names))
+    assert (lp.system_service_requested, ac.run_shell_command) in signal_map
     assert (lp.get_program_requested, frame._request_current_package) in signal_map
     assert (lp.get_program_requested, ac.get_current_package) not in signal_map
     package_handler = next(

@@ -1,6 +1,7 @@
 """应用管理详情页，展示单个应用信息并管理运行时权限。"""
 
 import html
+from typing import cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -21,7 +22,9 @@ from gui.dialogs.lifecycle import (
     is_qobject_alive,
     safe_disconnect,
 )
+from gui.feedback import report_feedback
 from gui.i18n import tr
+from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
@@ -287,19 +290,13 @@ class AppDetailsPage(QWidget):
         self._last_load_error = ""
         self._set_load_state("loading", tr('正在加载 {value0}…').format(value0=self.package_name))
         self._rw(
-            "app_details",
+            "app_snapshot",
             _generation=generation,
-            _finished_part="details",
+            _finished_part="snapshot",
             package_name=self.package_name,
             app_details_loaded=lambda data: self._receive_load_part(
                 generation, "details", self._od, data
             ),
-        )
-        self._rw(
-            "permissions",
-            _generation=generation,
-            _finished_part="permissions",
-            package_name=self.package_name,
             permissions_loaded=lambda declared, requested, runtime: self._receive_load_part(
                 generation,
                 "permissions",
@@ -331,6 +328,13 @@ class AppDetailsPage(QWidget):
 
     def _on_load_part_finished(self, generation: int, part: str) -> None:
         if generation != self._load_generation or self._closing:
+            return
+        if part == "snapshot":
+            if not self._pending_load_parts:
+                return
+            # 同一 worker 同时负责两部分；失败终态一次性结束本轮所有待接收数据。
+            self._pending_load_parts.clear()
+            self._set_load_state("error", self._last_load_error or tr("无法加载应用详情。"))
             return
         if part not in self._pending_load_parts:
             return
@@ -453,6 +457,15 @@ class AppDetailsPage(QWidget):
             lambda message, value=generation: self._on_worker_log(value, message),
             Qt.ConnectionType.QueuedConnection,
         )
+        if hasattr(w, "operation_feedback"):
+            def feedback(level, message, value=generation):
+                if value == self._load_generation and not self._closing:
+                    report_feedback(
+                        self, "apps.manager", tr("应用管理"), message,
+                        level=cast(ToastLevel, level), notify=True, target=self.device_ip,
+                    )
+
+            w.operation_feedback.connect(feedback, Qt.ConnectionType.QueuedConnection)
         if _finished_part is not None:
             w.finished.connect(
                 lambda value=generation, part=str(_finished_part): self._on_load_part_finished(

@@ -40,14 +40,15 @@ from shiboken6 import isValid
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
-from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner
+from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
 from core.log_service import LogService
 from core.settings_manager import AppSettings, set_error_sink
+from gui.action_feedback import ActionFeedbackPresenter
 from gui.close_controller import CloseController
 from gui.i18n import tr
 from gui.main_frame_actions import MainFrameActions
 from gui.notifications import show_toast
-from gui.pages.device_hub import DeviceHubPage
+from gui.pages.device_hub import DeviceHubPage, _device_name
 from gui.pages.fluent_pages import (
     GalleryPage,
     HomePage,
@@ -57,7 +58,6 @@ from gui.pages.fluent_pages import (
 )
 from gui.pages.tasks_page import TaskCenterPage
 from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
-from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.run_library import RunLibraryController
 from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
@@ -126,15 +126,32 @@ class _ScanThread(QThread):
         last_devices = None  # 首次轮询必须发布设备列表。
         last_state = "scanning"
         while not self._stop_flag:
-            if CommandRunner.active_count() != 0:
+            runtime = adb_runtime()
+            if runtime is not None:
+                # 恢复检查独立于原生扫描成功和普通命令忙碌状态，避免慢客户端拖住恢复。
+                runtime.request_device_check()
+            fast_scan = runtime is not None and runtime.can_scan_fast()
+            if not fast_scan and CommandRunner.active_count() != 0:
                 # 有受管命令在执行时跳过本轮，等待完整间隔后再试。
                 if self._sleep_interruptibly(self._interval_ms):
                     return
                 continue
             try:
-                if runner is None:
-                    runner = ProcessRunner()
-                output = self._run_devices_scan(runner)
+                if fast_scan:
+                    result = CommandRunner.run(
+                        ["adb", "devices", "-l"], timeout=self.SCAN_CALL_TIMEOUT_S,
+                        cancelled=lambda: self._stop_flag,
+                    )
+                    if result.stale:
+                        # 晚到列表不代表发现失败，保持当前快照并等待下一轮正常扫描。
+                        if self._sleep_interruptibly(self._interval_ms):
+                            return
+                        continue
+                    output = result.output if result.success else None
+                else:
+                    if runner is None:
+                        runner = ProcessRunner()
+                    output = self._run_devices_scan(runner)
                 if self._stop_flag:
                     return
                 if output is None:
@@ -165,8 +182,8 @@ class _ScanThread(QThread):
     def _run_devices_scan(self, runner: ProcessRunner) -> str | None:
         """执行一次 ``adb devices`` 并返回 stdout 文本。
 
-        端点防护会拖慢每次 adb 进程启动（实测约 7 秒），超时按 15 秒
-        设置；停止请求到来时立即终止子进程并返回 None，使线程可及时退出。
+        原生客户端在部分环境启动缓慢，使用独立超时；停止请求到来时
+        终止本次子进程并返回 None，不推断具体监控软件的因果关系。
         """
         try:
             proc = runner.start(
@@ -224,7 +241,6 @@ class MainFrame(FluentWindow):
     NAVIGATION_EXPAND_BREAKPOINT = 1120
     NAVIGATION_LAYOUT_DEBOUNCE_MS = 60
     _QFLUENT_DEFAULT_EXPAND_WIDTH = 322
-    _adb_bootstrap_finished = Signal()
 
     def __init__(
         self,
@@ -284,7 +300,6 @@ class MainFrame(FluentWindow):
         self._pending_package_device = ""
         self._package_query_invalidated = False
         set_error_sink(self.log_service.log)
-        self.log_panel = LogPanel()
         # 隐藏协调器必须随主窗销毁，不能在工作区视图释放后继续接收全局样式信号。
         self.left_panel = SidePanel(self)
         self.left_panel.hide()
@@ -319,8 +334,6 @@ class MainFrame(FluentWindow):
         self._window_size_save_timer = QTimer(self)
         self._window_size_save_timer.setSingleShot(True)
         self._window_size_save_timer.timeout.connect(self._poll_user_resize_transaction)
-        self._adb_bootstrap_thread = None
-        self._adb_bootstrap_finished.connect(self._start_device_discovery)
         self._always_on_top = False
 
         self._setup_window()
@@ -345,30 +358,36 @@ class MainFrame(FluentWindow):
     # ── 持续设备扫描 ────────────────────────────────────────────────────
 
     def _bootstrap_adb_async(self):
-        """首帧绘制后再解析并预热 ADB，避免文件系统和 PATH 检查阻塞启动界面。
+        """安排后台环境检查；服务可用即开始发现，不等待原生性能基准。"""
+        from adblab.presentation.qt_adb_runtime import QtAdbRuntime
 
-        端点防护环境下每次 adb 进程启动约需数秒；解析路径后直接在后台拉起
-        Server，避免首轮设备扫描在超时窗口内失败并产生误告警。
-        """
-        from utils.adb_resolver import resolve_adb_path
+        self._adb_environment = QtAdbRuntime(self)
+        self._adb_environment.ready.connect(self._start_device_discovery)
+        self._adb_environment.changed.connect(self._update_adb_environment)
+        self._adb_environment.diagnostic.connect(self._log_adb_environment)
+        self._adb_environment.schedule()
 
-        def _bootstrap():
-            try:
-                path = resolve_adb_path()
-                if path:
-                    CommandRunner.run([path, "start-server"], timeout=30)
-            finally:
-                try:
-                    self._adb_bootstrap_finished.emit()
-                except RuntimeError:
-                    pass
+    def _log_adb_environment(self, message: str) -> None:
+        """后台诊断经主线程写日志，内容只有能力和耗时。"""
+        if not self._closing:
+            self.log_service.log("DEBUG", message)
 
-        self._adb_bootstrap_thread = threading.Thread(
-            target=_bootstrap,
-            name="adblab-adb-bootstrap",
-            daemon=True,
-        )
-        self._adb_bootstrap_thread.start()
+    def _update_adb_environment(self, snapshot) -> None:
+        """显示执行范围与检测状态，不把性能策略当作设备在线状态。"""
+        if not self._closing:
+            self._settings_page.update_adb_environment(snapshot)
+
+    def recheck_adb_environment(self) -> None:
+        """重新检测不重启 ADB 服务，也不重复提交用户命令。"""
+        environment = getattr(self, "_adb_environment", None)
+        if environment is not None and not self._closing:
+            environment.recheck()
+
+    def set_adb_native_only(self, enabled: bool) -> None:
+        """临时兼容选项只影响后续操作。"""
+        environment = getattr(self, "_adb_environment", None)
+        if environment is not None and not self._closing:
+            environment.set_native_only(enabled)
 
     def _start_device_discovery(self):
         if getattr(self, "_closing", False):
@@ -463,6 +482,8 @@ class MainFrame(FluentWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
+        # 主标题栏省略品牌图标；windowIcon 仍供任务栏和系统切换器使用。
+        getattr(self.titleBar, "iconLabel").hide()
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()
@@ -819,6 +840,8 @@ class MainFrame(FluentWindow):
         self._content_layout.setContentsMargins(0, 0, 0, 0)
         self._content_layout.setSpacing(0)
         self._content_layout.addWidget(self._global_device_bar)
+        # 页面外边界只由这一层负责，滚动区留在边界内，原生滚动条紧邻内容。
+        self.stackedWidget.hBoxLayout.setContentsMargins(24, 0, 24, 24)
         self._content_layout.addWidget(self.stackedWidget, 1)
         self.widgetLayout.addWidget(self._content_surface, 1)
         self._sync_material_surface_styles()
@@ -896,7 +919,7 @@ class MainFrame(FluentWindow):
             tr("远程控制"),
             FluentIcon.PROJECTOR,
             page=remote_overview,
-            requires_device=True,
+            requires_device=False,
             activate=lambda device_id: self._activate_remote_workspace(
                 "mirroring",
                 device_id,
@@ -980,10 +1003,9 @@ class MainFrame(FluentWindow):
                 device_ip=key.device_id,
                 package_name=package_name,
             )
-            info = self._device_metadata.get(key.device_id, {})
-            page.setProperty("run_device_label", " ".join(
-                str(info.get(field, "")).strip() for field in ("Brand", "Model")
-            ).strip())
+            page.setProperty(
+                "run_device_label", self._global_device_bar.device_label(key.device_id),
+            )
             page.set_run_library(self.run_library)
             return page
 
@@ -1000,13 +1022,6 @@ class MainFrame(FluentWindow):
             "apps": apps_host,
             "system": system_host,
         }
-        target_lock_signal = getattr(
-            remote_panel,
-            "workspace_target_lock_changed",
-            None,
-        )
-        if target_lock_signal is not None:
-            target_lock_signal.connect(self._set_remote_target_locked)
         for host in self._workspace_feature_hosts.values():
             host.feature_selector.set_navigation_visible(False)
             host.set_external_device_controls(True)
@@ -1017,12 +1032,9 @@ class MainFrame(FluentWindow):
             )
 
         bar = self._global_device_bar
-        bar.selection_requested.connect(self.left_panel._devices_tab.set_selected_devices)
-        bar.refresh_requested.connect(self._request_device_refresh)
-        bar.connection_requested.connect(self._show_global_connection)
+        bar.selection_requested.connect(self._select_operation_devices)
         bar.connect_requested.connect(self.left_panel.signals.connect_requested)
-        bar.info_requested.connect(self._show_selected_device_info)
-        bar.disconnect_requested.connect(
+        self._device_hub.disconnect_requested.connect(
             lambda: self.left_panel.signals.disconnect_requested.emit(
                 self.left_panel.selected_devices
             )
@@ -1064,6 +1076,11 @@ class MainFrame(FluentWindow):
             feature_host=system_host,
             parent=self,
         )
+        for host in (devices_host, apps_host, system_host):
+            host_layout = host.layout()
+            assert host_layout is not None
+            host_layout.setContentsMargins(0, 8, 0, 0)
+            host.manage_devices_requested.connect(lambda: self._on_nav_requested("devices"))
         self._workspace_pages = {
             "devices": self._devices_page,
             "apps": self._apps_page,
@@ -1075,7 +1092,6 @@ class MainFrame(FluentWindow):
             self.adb_controller.operation_manager,
             history_store=self._task_history,
             stop_hook=self._stop_operation_from_task_center,
-            runtime_log=self.log_panel,
             run_library=self.run_library,
         )
         assert self._task_page.run_results is not None
@@ -1083,7 +1099,7 @@ class MainFrame(FluentWindow):
         self._tasks_page = GalleryPage(
             "tasksPage",
             tr("任务中心"),
-            tr("查看任务进度、历史结果与运行记录"),
+            tr("查看任务进度、测试归档与本次操作结果"),
             self._task_page,
             scroll=False,
             parent=self,
@@ -1186,6 +1202,7 @@ class MainFrame(FluentWindow):
         self._connect_all_signals()
         for page in self._workspace_pages.values():
             page.routeChanged.connect(self._on_workspace_route_changed)
+            page.routeChanged.connect(self._sync_global_session_controls)
         self._visible_workspace_section: str | None = None
         self.stackedWidget.currentChanged.connect(self._on_stacked_page_changed)
         current = self.stackedWidget.currentWidget()
@@ -1206,35 +1223,23 @@ class MainFrame(FluentWindow):
         self._sync_device_context()
 
     def _activate_remote_workspace(self, category: str, device_id: str) -> str:
-        """同步 Remote 分类和独立会话设备，不改写批量操作目标。"""
+        """远程页面使用全部已选在线目标，已有镜像的停止归属由面板保存。"""
 
         panel = self.left_panel._scrcpy_tab
         if panel is None:
             return device_id
-        device_id = str(getattr(panel, "_active_device", "") or device_id)
-        panel.set_device_selected(device_id in self.left_panel.selected_devices)
-        devices_host = self._workspace_feature_hosts.get("devices")
-        connected = bool(
-            devices_host is not None
-            and devices_host.is_device_connected(device_id)
-        )
-        actual_device = panel.set_workspace_device(
-            device_id,
-            connected=connected,
-        )
+        panel.set_target_devices(self._remote_operation_devices())
         panel.category_stack.set_current(category)
         panel.apply_responsive_width(0)
-        return actual_device
+        return ""
 
-    def _set_remote_target_locked(self, locked: bool) -> None:
-        """Remote 启动后锁定会话设备，停止完成再恢复选择。"""
-
-        host = self._workspace_feature_hosts.get("devices")
-        if host is None:
-            return
-        reason = tr("远程控制运行中，停止后可切换设备")
-        for feature in ("remote", "remote-control"):
-            host.set_device_selection_locked(feature, locked, reason)
+    def _remote_operation_devices(self) -> list[str]:
+        """发现状态不可靠时撤销新操作准入，但不停止已有远程会话。"""
+        panel = self.left_panel
+        if panel._device_discovery_state != "ready":
+            return []
+        return [device for device in panel.selected_devices
+                if device in panel._connected_device_cache]
 
     def _stop_operation_from_task_center(self, operation_id: str) -> None:
         """把任务中心取消动作路由到拥有实际资源的控制器用例。"""
@@ -1682,8 +1687,7 @@ class MainFrame(FluentWindow):
         state = str(getattr(panel, "_device_discovery_state", "empty"))
         remote = getattr(panel, "_scrcpy_tab", None)
         if remote is not None:
-            remote_device = str(getattr(remote, "_workspace_device_id", "") or "")
-            remote.set_device_selected(remote_device in selected)
+            remote.set_target_devices(self._remote_operation_devices())
         bar = getattr(self, "_global_device_bar", None)
         if bar is not None:
             bar.set_context(selected, connected, state)
@@ -1701,6 +1705,15 @@ class MainFrame(FluentWindow):
                 records.setdefault(device, {"ip": device}).update(
                     self._device_metadata.get(device, {})
                 )
+            if bar is not None:
+                bar.set_device_labels({device: _device_name(device, records[device])
+                                       for device in connected})
+                self.adb_controller.action_results.set_target_labels(bar.device_labels())
+                panel._apps_tab.set_device_labels(bar.device_labels())
+                for host in self._workspace_feature_hosts.values():
+                    host.performance_sessions.set_device_labels(bar.device_labels())
+                records = {device: {**info, "name": bar.device_label(device)}
+                           for device, info in records.items()}
             hub.set_device_metadata(list(records.values()))
         self._sync_global_session_controls()
 
@@ -1744,21 +1757,19 @@ class MainFrame(FluentWindow):
         return None
 
     def _sync_global_session_controls(self) -> None:
-        """按当前功能显示设备栏；概览使用页内设备卡，设置不占用设备栏空间。"""
+        """设备任务显示当前页标题和所需目标入口，无设备任务保持独立页面。"""
 
         bar = getattr(self, "_global_device_bar", None)
         if bar is None:
             return
         host = self._current_feature_host()
         current = self.stackedWidget.currentWidget()
-        standalone = current in (
-            getattr(self, "_home_page", None), getattr(self, "_settings_page", None)
-        )
         device_overview = (
             host is not None and host.section_key == "devices"
             and host.current_feature == "overview"
         )
-        bar.setVisible(not standalone and not device_overview)
+        bar.setVisible(host is not None and not device_overview)
+        bar.set_page_title(current.accessibleName() if current is not None else "")
         if host is None:
             bar.set_session_context(None, None)
             return
@@ -1768,7 +1779,25 @@ class MainFrame(FluentWindow):
             host.device_combo if requires else None,
             close if not close.isHidden() else None,
             host.session_badge if not host.session_badge.isHidden() else None,
+            single=requires and host.current_feature != "performance",
+            selection_locked=host.is_device_selection_locked(),
         )
+
+    def _select_operation_devices(self, devices: list[str]) -> None:
+        """一次选择同时提交操作目标并切换单设备会话，避免查看与准入互相脱节。"""
+        host = self._current_feature_host()
+        single = bool(host is not None and host.feature_requires_device(host.current_feature)
+                      and host.current_feature != "performance")
+        if single:
+            devices = devices[-1:]
+            if (host is not None and host.is_device_selection_locked() and devices
+                    and devices[0] != host.current_device_id):
+                return
+        self.left_panel._devices_tab.set_selected_devices(devices)
+        if host is not None and devices:
+            if single or (host.current_feature == "performance"
+                          and host.current_device_id not in devices):
+                self._choose_global_session(devices[0])
 
     def _choose_global_session(self, device_id: str) -> None:
         """会话切换走原宿主入口，运行锁生效且不改写批量目标。"""
@@ -1788,15 +1817,16 @@ class MainFrame(FluentWindow):
             self._sync_global_session_controls()
 
     def _show_global_connection(self) -> None:
-        """使用设备管理器已经加载的地址历史，不额外读取用户存储。"""
+        """只从设备概览打开连接表单，使用已加载历史，不额外读取用户存储。"""
 
+        if not self._device_hub.isVisibleTo(self):
+            return
         source = self.left_panel._devices_tab.ip_entry
         history = [
             (source.itemText(index), str(source.itemData(index) or ""))
             for index in range(source.count())
         ]
-        anchor = self._device_hub.connect_button if self._device_hub.isVisible() else None
-        self._global_device_bar.open_connection(history, anchor=anchor)
+        self._global_device_bar.open_connection(history, anchor=self._device_hub.connect_button)
 
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
         """把业务键映射到对应的 FluentWindow 主页面。"""
@@ -1830,16 +1860,6 @@ class MainFrame(FluentWindow):
         self.switchTo(page)
         if key == "tasks":
             self._task_page.refresh()
-
-    def _show_selected_device_info(self) -> None:
-        """用户主动查询设备详情时先展开结果位置，异步结果不再抢占后续导航。"""
-
-        devices = list(self.left_panel.selected_devices)
-        if not devices:
-            return
-        self._on_nav_requested("tasks")
-        self._task_page.show_runtime_records()
-        self.left_panel.signals.device_info_requested.emit(devices)
 
     def _on_run_library_error(self, message: str) -> None:
         """保存错误在当前页提示，不导航或把底层设备路径写入日志。"""
@@ -2161,6 +2181,7 @@ class MainFrame(FluentWindow):
         CTL = self.adb_controller.signals
         AC = self.adb_controller
 
+        self._action_feedback = ActionFeedbackPresenter(self)
         self._connect_controller_feedback(LP, CTL)
         signal_map = (
             self._device_signal_map(LP, AC)
@@ -2169,12 +2190,13 @@ class MainFrame(FluentWindow):
             + self._system_signal_map(LP, AC)
         )
         for signal_, handler in signal_map:
-            signal_.connect(handler)
+            signal_.connect(self._action_feedback.bind(LP, signal_, handler))
         self.left_panel.selected_devices_changed.connect(self._update_device_actions)
         self._update_device_actions()
 
     def _connect_controller_feedback(self, LP, CTL):
         CTL.devices_updated.connect(self._on_devices_updated)
+        CTL.device_refresh_superseded.connect(self.left_panel.on_device_refresh_superseded)
         CTL.screenshot_batch_ready.connect(self._on_screenshot_batch_ready)
         LP.log_message.connect(self.log_service.log)
         CTL.record_target_finished.connect(self.left_panel.on_recording_target_finished)
@@ -2255,14 +2277,6 @@ class MainFrame(FluentWindow):
         if page is None:
             self.log_service.log("WARNING", "Screenshot result page is still closing")
             return
-        show_toast(
-            self,
-            tr("截图已完成"),
-            tr("结果已加入“截图与屏幕”页面。"),
-            level="success",
-            action_text=tr("查看结果"),
-            on_action=lambda: self._open_workspace_feature("apps", "media"),
-        )
 
     def _on_operation_completed(self, operation: str, success: bool, message: str) -> None:
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""
@@ -2270,9 +2284,6 @@ class MainFrame(FluentWindow):
         if operation == "get_package" and not success:
             self._finish_package_query()
         self.left_panel.on_operation_completed(operation, success, message)
-        task_history = getattr(self, "_task_history", None)
-        if task_history is not None:
-            task_history.record_completed(operation, success, message)
         task_page = getattr(self, "_task_page", None)
         if task_page is not None and task_page.isVisible():
             task_page.refresh()
@@ -2291,7 +2302,6 @@ class MainFrame(FluentWindow):
         return [
             (LP.connect_requested, AC.connect_device),
             (LP.refresh_devices_requested, AC.refresh_devices),
-            (LP.device_info_requested, AC.get_device_info),
             (LP.disconnect_requested, AC.disconnect_devices),
             (LP.restart_devices_requested, AC.restart_devices),
             (LP.restart_adb_requested, AC.restart_adb),
@@ -2348,6 +2358,7 @@ class MainFrame(FluentWindow):
     def _system_signal_map(self, LP, AC):
         return [
             (LP.shell_command_requested, AC.run_shell_command),
+            (LP.system_service_requested, AC.run_shell_command),
             (LP.dumpsys_service_requested, AC.dumpsys_service),
             (LP.kernel_version_requested, AC.kernel_version),
             (LP.cpu_info_requested, AC.cpu_info),
@@ -2398,11 +2409,6 @@ class MainFrame(FluentWindow):
                 )
         self._sync_device_context()
 
-    def clear_log(self):
-        """清空用户日志面板并记录操作结果。"""
-        _debug_log(self, "ui.action", action="clear_log", phase="requested")
-        self.log_panel.clear()
-        self.log_service.log("INFO", "Log cleared")
 
     def _show_settings(self):
         page = getattr(self, "_settings_page", None)

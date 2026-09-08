@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QSizePolicy, QVBoxLayout, 
 from qfluentwidgets import BodyLabel, InfoBadge
 
 from core.settings_manager import SCRCPY_SETTING_DEFAULTS, AppSettings
+from gui.feedback import report_feedback
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
@@ -39,6 +40,7 @@ class RemotePanelForm(QObject):
         lo.setContentsMargins(0, 0, 0, 0)
         self._frame._remote_section_groups = []
         self._build_header(lo)
+        self._frame._feedback_received.connect(self._show_feedback)
         mirroring = self._frame._build_mirroring()
         control = self._frame._build_control()
         self._frame._remote_section_groups.extend((mirroring, control))
@@ -363,6 +365,25 @@ class RemotePanelForm(QObject):
 
         return g
 
+    @Slot(str, str)  # type: ignore[reportArgumentType]  # PySide6 Slot 的桩类型未包含 self 参数。
+    def _show_feedback(self, level: str, message: str) -> None:
+        """表单所属线程转交任务记录；显式异常和完成使用 Toast，过程不刷屏。"""
+        from typing import cast
+
+        from gui.notifications import ToastLevel
+
+        severity = level.lower()
+        if severity not in {"info", "success", "warning", "error"}:
+            severity = "error" if severity == "critical" else "info"
+        host = self.parent()
+        if not isinstance(host, QWidget):
+            return
+        report_feedback(
+            host, "remote", tr("远程控制"), message,
+            level=cast(ToastLevel, severity), notify=severity != "info",
+            target=str(getattr(self._frame, "_active_device", "") or ""),
+        )
+
     def _create_checkbox(self, text: str) -> QCheckBox:
         return self._frame._checkbox(text)
 
@@ -391,8 +412,8 @@ class RemotePanelForm(QObject):
             self._frame._remote_key_button(label, code, tr("发送按键事件 {code}").format(code=code))
         self._frame._remote_primary_key_buttons = tuple(self._frame._remote_key_buttons)
         control_modes = (
-            span_tail_mode("four", 4, 0, column_stretches=(1, 1, 1, 1)),
-            span_tail_mode("two", 2, 1, column_stretches=(1, 1)),
+            span_tail_mode("four", 4, 0, column_stretches=(0, 0, 0, 0)),
+            span_tail_mode("two", 2, 1, column_stretches=(0, 0)),
         )
         self._frame._remote_key_binding = self._frame._add_responsive_row(
             outer,
@@ -446,6 +467,9 @@ class RemotePanelForm(QObject):
             self._frame._remote_media_binding,
             self._frame._remote_action_binding,
         )
+        # 留白由整组右侧吸收，列宽只跟随按钮自然尺寸；窄屏仍沿用四列/两列重排。
+        for binding in self._frame.remote_control_bindings:
+            binding.widgets()[0].parentWidget().layout().setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         return g
 
@@ -456,7 +480,7 @@ class RemotePanelForm(QObject):
         b.setIconSize(QSize(13, 13))
         b.setMinimumHeight(28)
         b.setMinimumWidth(56)
-        b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         b.clicked.connect(lambda _, cd=code: self._frame._send_keyevent(cd))
         self._frame._remote_control_buttons.append(b)
         self._frame._remote_key_buttons.append(b)
@@ -471,7 +495,7 @@ class RemotePanelForm(QObject):
         b.setIconSize(QSize(13, 13))
         b.setMinimumHeight(28)
         b.setMinimumWidth(76)
-        b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        b.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         b.clicked.connect(lambda _, act=action: self._frame._send_remote_action(act))
         self._frame._remote_control_buttons.append(b)
         self._frame._remote_action_buttons.append(b)

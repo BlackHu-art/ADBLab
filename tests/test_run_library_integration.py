@@ -90,7 +90,7 @@ def test_library_failure_does_not_skip_other_settings_finalization(monkeypatch):
     try:
         CloseController(frame)._flush_shutdown_state()
     except RuntimeError as error:
-        assert "结果库" in str(error)
+        assert "本地结果或诊断记录未能完成保存" == str(error)
     else:
         raise AssertionError("保存失败必须报告收尾失败")
     settings._save_atomic.assert_called_once()

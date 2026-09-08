@@ -1,6 +1,8 @@
 """通过多种 Android 系统输出尽力识别设备当前前台应用。"""
 
 import re
+from collections.abc import Callable
+from time import monotonic
 from typing import Protocol
 
 from core.exec import CommandResult, CommandRunner
@@ -16,7 +18,7 @@ class CommandRunnerLike(Protocol):
         self,
         command: list[str],
         /,
-        timeout: int = 30,
+        timeout: float = 30,
     ) -> CommandResult: ...
 
 
@@ -49,8 +51,10 @@ def extract_package_name(output: str) -> str:
 def detect_current_package(
     device_ip: str,
     runner: CommandRunnerLike = CommandRunner,
+    *, timeout: float = 15, cancelled: Callable[[], bool] | None = None,
 ) -> dict:
-    """依次执行兼容性探测命令，任一命令识别成功即返回前台包名。"""
+    """兼容探测共享总预算；默认执行器支持在途取消，自定义执行器负责传递停止意图。"""
+    deadline = monotonic() + max(0, timeout)
     commands = [
         ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],
         [
@@ -65,7 +69,15 @@ def detect_current_package(
         ["adb", "-s", device_ip, "shell", "dumpsys", "activity", "top"],
     ]
     for command in commands:
-        result = runner.run(command, timeout=5)
+        remaining = deadline - monotonic()
+        if remaining <= 0 or (cancelled is not None and cancelled()):
+            break
+        if runner is CommandRunner and cancelled is not None:
+            result = CommandRunner.run(command, timeout=min(5, remaining), cancelled=cancelled)
+        else:
+            result = runner.run(command, timeout=min(5, remaining))
+        if cancelled is not None and cancelled():
+            break
         if not result.success:
             continue
         package_name = extract_package_name(result.output)

@@ -3,7 +3,7 @@
 from typing import cast
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QFontMetrics, QStandardItemModel
+from PySide6.QtGui import QAction, QFontMetrics, QStandardItemModel
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -22,13 +22,14 @@ from qfluentwidgets import (
     CaptionLabel,
     CardWidget,
     ComboBox,
+    CommandBar,
     InfoBadge,
     InfoLevel,
     LineEdit,
     ListWidget,
     PushButton,
     RoundMenu,
-    TextEdit,
+    TransparentToolButton,
     TreeItemDelegate,
     TreeView,
     setCustomStyleSheet,
@@ -36,10 +37,9 @@ from qfluentwidgets import (
 
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_label_role
+from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
-from gui.widgets.responsive_layout import reflow_widgets
 
 
 def _apply_adaptive_text_heights(widget: QWidget) -> None:
@@ -145,7 +145,7 @@ class AppManagerForm:
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
         self._frame.selection_label = apply_label_role(BodyLabel(tr("已选 0 项")), FontRole.UI)
         self._frame.selection_label.setMinimumWidth(82)
-        self._frame.view_toggle = PushButton()
+        self._frame.view_toggle = TransparentToolButton()
         self._frame.view_toggle.setFixedSize(28, 28)
         self._frame.view_toggle.setToolTip(tr("切换图标或列表视图"))
         self._frame.view_toggle.setAccessibleName(tr("切换图标或列表视图"))
@@ -169,6 +169,9 @@ class AppManagerForm:
             self._frame.view_toggle,
             self._frame.refresh_btn,
         )
+        for control in self._frame._top_controls:
+            if control is not self._frame.search_input:
+                control.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         layout.addLayout(self._frame._top_layout)
         self._frame._reflow_top_controls()
 
@@ -257,54 +260,37 @@ class AppManagerForm:
         self._frame._view_mode = False  # False 表示表格视图，True 表示图标视图
         layout.addWidget(self._frame.stack, 2)
 
-        btn_h = 30
-        self._frame._selection_action_layout = QGridLayout()
-        self._frame._selection_action_layout.setSpacing(4)
-        self._frame._selection_action_buttons = []
-        labels_actions = [
+        bar = CommandBar(self._frame._master_panel)
+        self._frame._command_bar = bar
+        bar.setObjectName("appManagerCommandBar")
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        bar.setButtonTight(True)
+        bar.setSpaing(0)
+        bar.setIconSize(QSize(16, 16))
+        bar.setMenuDropDown(False)
+        bar.moreButton.setAccessibleName(tr("更多应用操作"))
+        bar.moreButton.setToolTip(tr("显示未展开的应用操作"))
+        self._frame._command_icons = []
+        for index, (t, fn, icon, tooltip, requires_device, requires_selection) in enumerate([
             (
                 tr("卸载所选"),
-                "uninstall",
-                "trash.svg",
-                tr("卸载已选择的应用"),
+                lambda: self._frame._modify_selected("uninstall"),
+                "trash.svg", tr("卸载已选择的应用"), True, True,
             ),
             (
                 tr("停用所选"),
-                "disable",
-                "prohibit.svg",
-                tr("停用已选择的应用"),
+                lambda: self._frame._modify_selected("disable"),
+                "prohibit.svg", tr("停用已选择的应用"), True, True,
             ),
             (
                 tr("启用所选"),
-                "enable",
-                "check-circle.svg",
-                tr("启用已选择的应用"),
+                lambda: self._frame._modify_selected("enable"),
+                "check-circle.svg", tr("启用已选择的应用"), True, True,
             ),
-            (tr("取消全选"), None, "square.svg", tr("清除当前应用选择")),
-        ]
-        for t, a, icon, tooltip in labels_actions:
-            b = PushButton()
-            b.setText(t)
-            b.setIcon(get_themed_icon(icon))
-            b.setIconSize(QSize(14, 14))
-            b.setProperty("adaptiveBaseHeight", btn_h)
-            b.setToolTip(tooltip)
-            b.setAccessibleName(t)
-            b.setAccessibleDescription(tooltip)
-            b.setProperty("requiresDevice", a is not None)
-            b.setProperty("requiresSelection", True)
-            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            if a:
-                b.clicked.connect(lambda _, act=a: self._frame._modify_selected(act))
-            else:
-                b.clicked.connect(self._frame._deselect_all)
-            self._frame._selection_action_buttons.append(b)
-        layout.addLayout(self._frame._selection_action_layout)
-
-        self._frame._preset_action_layout = QGridLayout()
-        self._frame._preset_action_layout.setSpacing(4)
-        self._frame._preset_action_buttons = []
-        for t, fn, icon, tooltip, requires_device, requires_selection in [
+            (
+                tr("取消全选"), self._frame._deselect_all,
+                "square.svg", tr("清除当前应用选择"), False, True,
+            ),
             (
                 tr("创建预设"),
                 self._frame._create_preset,
@@ -340,42 +326,18 @@ class AppManagerForm:
                 tr("查看所选应用的详情"),
                 True, True,
             ),
-        ]:
-            b = PushButton()
-            b.setText(t)
-            b.setIcon(get_themed_icon(icon))
-            b.setIconSize(QSize(14, 14))
-            b.setProperty("adaptiveBaseHeight", btn_h)
-            b.setToolTip(tooltip)
-            b.setAccessibleName(t)
-            b.setAccessibleDescription(tooltip)
-            b.setProperty("requiresDevice", requires_device)
-            b.setProperty("requiresSelection", requires_selection)
-            b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            b.clicked.connect(fn)
-            if requires_selection:
-                self._frame._selection_action_buttons.append(b)
-            self._frame._preset_action_buttons.append(b)
-        layout.addLayout(self._frame._preset_action_layout)
-
-        self._frame.log_output = TextEdit()
-        self._frame.log_output.setReadOnly(True)
-        self._frame.log_output.setMaximumHeight(96)
-        self._frame.log_output.setPlaceholderText(tr("操作过程将在此显示"))
-        log_header = QHBoxLayout()
-        log_header.addWidget(apply_label_role(BodyLabel(tr("操作记录")), FontRole.UI))
-        log_header.addStretch(1)
-        self._frame.log_toggle = PushButton(tr("展开记录"))
-        self._frame.log_toggle.setCheckable(True)
-        self._frame.log_toggle.setChecked(False)
-        self._frame.log_toggle.setAccessibleName(tr("显示或收起操作记录"))
-        self._frame.log_toggle.setToolTip(tr("查看或收起本页操作过程，收起后保留记录内容"))
-        self._frame.log_toggle.setAccessibleDescription(self._frame.log_toggle.toolTip())
-        self._frame.log_toggle.toggled.connect(self._toggle_log)
-        log_header.addWidget(self._frame.log_toggle)
-        layout.addLayout(log_header)
-        layout.addWidget(self._frame.log_output)
-        self._frame.log_output.hide()
+        ]):
+            if index in (4, 6):
+                bar.addSeparator()
+            action = QAction(get_themed_icon(icon), t, bar)
+            action.setToolTip(tooltip)
+            action.setProperty("requiresDevice", requires_device)
+            action.setProperty("requiresSelection", requires_selection)
+            action.triggered.connect(fn)
+            # 按钮与溢出菜单必须共享动作状态，不能以隐藏按钮作为准入代理。
+            bar.addAction(action)
+            self._frame._command_icons.append((action, icon))
+        layout.addWidget(bar)
 
         self._frame.status_bar = apply_label_role(
             CaptionLabel(tr("就绪")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
@@ -387,21 +349,12 @@ class AppManagerForm:
         self._frame._reflow_action_buttons()
 
     def prepare_for_workspace(self) -> None:
-        """嵌入时隐藏标题，保留同一状态控件并避免重复创建工具栏容器。"""
+        """嵌入时由宿主页头呈现设备状态，筛选行只保留应用筛选与刷新。"""
         if getattr(self._frame, "_workspace_prepared", False):
             return
         self._frame._workspace_prepared = True
         self._frame.header_card.hide()
-        search_control = QWidget(self._frame._master_panel)
-        search_layout = QHBoxLayout(search_control)
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(8)
-        search_layout.addWidget(self._frame.search_input, 1)
-        search_layout.addWidget(self._frame.status_badge, 0, Qt.AlignmentFlag.AlignVCenter)
-        self._frame.status_badge.show()
-        self._frame._search_control = search_control
-        controls = self._frame._top_controls
-        self._frame._top_controls = (controls[0], search_control, *controls[2:])
+        self._frame.status_badge.hide()
         self._frame._reflow_top_controls()
         self._frame._master_panel.updateGeometry()
         self._frame.updateGeometry()
@@ -409,7 +362,6 @@ class AppManagerForm:
     def _apply_theme(self, _value=None):
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
-        log_font = bs.font_for_role(FontRole.LOG)
         self._frame.setFont(ui_font)
         # 布局面板透出宿主材质，表格与日志仍分别维护自己的可读底色。
         self._frame._master_panel.setStyleSheet(
@@ -420,9 +372,6 @@ class AppManagerForm:
         bg = bs.color("INPUT_BG")
         fg = bs.color("TEXT_PRIMARY")
         border = bs.color("BORDER_COLOR")
-        # 日志输出框样式由 qfluentwidgets TextEdit 自维护，这里仅同步等宽字体。
-        self._frame.log_output.setFont(log_font)
-        self._frame.log_output.document().setDefaultFont(log_font)
         self._frame.load_error_label.setFont(bs.font_for_role(FontRole.UI_SMALL))
         self._frame.retry_btn.setFont(ui_font)
         # 上游树控件的透明普通行与 Qt AlternateBase 在切换主题后可能反色。
@@ -472,9 +421,9 @@ class AppManagerForm:
         editor.setMaximumHeight(16777215)
         editor.setMinimumHeight(0)
         editor.setMinimumHeight(max(33, editor.sizeHint().height(), metrics.height() + 12))
-        for button in (*self._frame._selection_action_buttons, *self._frame._preset_action_buttons):
-            button.setFont(ui_font)
-            button.updateGeometry()
+        self._frame._command_bar.setFont(ui_font)
+        for action, icon in self._frame._command_icons:
+            action.setIcon(get_themed_icon(icon))
         view_hint = self._frame.view_toggle.minimumSizeHint()
         self._frame.view_toggle.setFixedSize(
             max(28, view_hint.width()), max(28, view_hint.height())
@@ -524,11 +473,6 @@ class AppManagerForm:
         self._frame._master_panel.updateGeometry()
         self._frame.updateGeometry()
 
-    def _toggle_log(self, expanded: bool) -> None:
-        """收起操作记录只释放布局空间，日志内容与后台写入保持不变。"""
-        self._frame.log_output.setVisible(expanded)
-        self._frame.log_toggle.setText(tr("收起记录") if expanded else tr("展开记录"))
-
     # ── 页头与状态徽标视觉 ──────────────────────────────────────────────
 
     def _apply_header_style(self) -> None:
@@ -555,6 +499,27 @@ class AppManagerForm:
             text, level = tr("就绪"), InfoLevel.SUCCESS
         self._frame.status_badge.setText(text)
         self._frame.status_badge.setLevel(level)
+        reason = (
+            tr("可执行应用操作。") if self._frame._can_operate()
+            else tr("勾选当前在线设备后可执行应用操作，已加载内容仍可查看。")
+        )
+        description = tr("当前设备状态：{value0}。{value1}").format(value0=text, value1=reason)
+        self._frame.search_input.setToolTip(description)
+        self._frame.search_input.setAccessibleDescription(description)
+        if self._frame._can_operate() and self._frame.status_bar.text() in (
+            tr("请在顶部设备栏勾选当前设备后执行应用操作；已加载内容仍可查看。"),
+            tr("请在顶部设备栏勾选当前在线设备后刷新。"),
+        ):
+            # 资格恢复只替换过期准入提示，保留随后到达的业务进度与错误文案。
+            if self._frame._batch_workers:
+                message = tr("正在执行批量操作，请等待完成。")
+            elif self._frame._load_in_progress:
+                message = tr("正在加载已安装应用…")
+            elif self._frame.load_state == "error":
+                message = self._frame.load_error_label.text()
+            else:
+                message = tr("就绪")
+            self._frame.status_bar.setText(message)
 
     def _action_layout_available_width(self) -> int:
         surface = getattr(self._frame, "_master_panel", None)
@@ -570,83 +535,26 @@ class AppManagerForm:
             surface_width = surface.contentsRect().width()
         return max(1, surface_width - margins.left() - margins.right())
 
-    @staticmethod
-    def _buttons_fit_columns(buttons, columns: int, available_width: int, spacing: int) -> bool:
-        rows = [buttons[index : index + columns] for index in range(0, len(buttons), columns)]
-        return all(
-            sum(button.minimumSizeHint().width() for button in row) + spacing * max(0, len(row) - 1)
-            <= available_width
-            for row in rows
-        )
-
-    def _reflow_action_group(
-        self,
-        layout: QGridLayout,
-        buttons: list[QPushButton],
-        short_labels: tuple[str, ...],
-        wide_columns: int,
-        *,
-        span_last_in_two_columns: bool = False,
-    ) -> None:
-        available_width = self._frame._action_layout_available_width()
-        full_labels = tuple(button.accessibleName() for button in buttons)
-        spacing = layout.spacing()
-        for button, label in zip(buttons, full_labels):
-            if button.text() != label:
-                button.setText(label)
-                button.updateGeometry()
-        # 中文短标签不能让窄窗意外挤回整行；保留批量动作两列与紧凑短动词层次。
-        if available_width < 560:
-            for button, label in zip(buttons, short_labels):
-                button.setText(label)
-                button.updateGeometry()
-            columns = (
-                2 if self._frame._buttons_fit_columns(buttons, 2, available_width, spacing) else 1
-            )
-        elif available_width >= 860 and self._frame._buttons_fit_columns(
-            buttons, wide_columns, available_width, spacing
-        ):
-            columns = wide_columns
-        elif self._frame._buttons_fit_columns(buttons, 2, available_width, spacing):
-            columns = 2
-        else:
-            for button, label in zip(buttons, short_labels):
-                button.setText(label)
-                button.updateGeometry()
-            if self._frame._buttons_fit_columns(buttons, 2, available_width, spacing):
-                columns = 2
-            else:
-                columns = 1
-
-        reflow_widgets(layout, buttons, columns)
-        if span_last_in_two_columns and columns == 2:
-            last_button = buttons[-1]
-            last_index = layout.indexOf(last_button)
-            row, _column, _row_span, _column_span = cast(
-                tuple[int, int, int, int], layout.getItemPosition(last_index)
-            )
-            layout.removeWidget(last_button)
-            layout.addWidget(last_button, row, 0, 1, 2)
-
     def _reflow_action_buttons(self) -> None:
-        if not hasattr(self._frame, "_selection_action_layout"):
+        """按当前字体更新原生命令按钮尺寸，宽度不足由命令栏提供溢出菜单。"""
+        bar = getattr(self._frame, "_command_bar", None)
+        if bar is None:
             return
-        self._frame._reflow_action_group(
-            self._frame._selection_action_layout,
-            self._frame._selection_action_buttons[:4],
-            (tr("卸载"), tr("停用"), tr("启用"), tr("清除")),
-            4,
-        )
-        self._frame._reflow_action_group(
-            self._frame._preset_action_layout,
-            self._frame._preset_action_buttons,
-            (tr("保存"), tr("加载"), tr("备份"), tr("恢复"), tr("详情")),
-            5,
-            span_last_in_two_columns=True,
-        )
+        for button in (*bar.commandButtons, bar.moreButton):
+            button.setFont(bar.font())
+            hint = button.sizeHint()
+            button.setFixedSize(
+                hint.width(), max(hint.height(), button.fontMetrics().height() + 16)
+            )
+            if button is not bar.moreButton:
+                button.setAccessibleName(button.action().text())
+                button.setAccessibleDescription(button.action().toolTip())
+            apply_focus_indicator(button, selector="QToolButton")
+        bar.setFixedHeight(max(button.height() for button in (*bar.commandButtons, bar.moreButton)))
+        bar.updateGeometry()
 
     def _top_controls_fit(self, columns: int) -> bool:
-        """检查指定顶部布局的每一行能否容纳控件真实最小宽度。"""
+        """按筛选控件的真实最小宽度选择行数，设备状态不参与内容布局。"""
 
         controls = self._frame._top_controls
         row_groups = {
@@ -657,8 +565,12 @@ class AppManagerForm:
         rows = row_groups[columns]
         spacing = self._frame._top_layout.spacing()
         available_width = self._frame._action_layout_available_width()
+        minimum_widths = {
+            widget: max(widget.minimumWidth(), widget.minimumSizeHint().width())
+            for widget in controls
+        }
         return all(
-            sum(widget.minimumSizeHint().width() for widget in row) + spacing * max(0, len(row) - 1)
+            sum(minimum_widths[widget] for widget in row) + spacing * max(0, len(row) - 1)
             <= available_width
             for row in rows
         )
@@ -673,7 +585,7 @@ class AppManagerForm:
         for column in range(max(7, self._frame._top_layout.columnCount())):
             self._frame._top_layout.setColumnStretch(column, 0)
 
-        if self._frame._action_layout_available_width() >= 860 and self._frame._top_controls_fit(7):
+        if self._frame._top_controls_fit(7):
             for column, widget in enumerate(self._frame._top_controls):
                 self._frame._top_layout.addWidget(widget, 0, column)
             self._frame._top_layout.setColumnStretch(1, 1)
@@ -687,7 +599,7 @@ class AppManagerForm:
             self._frame._top_layout.addWidget(self._frame.selection_label, 1, 2)
             self._frame._top_layout.addWidget(self._frame.view_toggle, 1, 3)
             self._frame._top_layout.addWidget(self._frame.refresh_btn, 1, 4)
-            self._frame._top_layout.setColumnStretch(1, 1)
+            self._frame._top_layout.setColumnStretch(2, 1)
             return
 
         self._frame._top_layout.addWidget(self._frame._search_label, 0, 0)

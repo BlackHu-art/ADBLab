@@ -126,16 +126,21 @@ def test_main_window_updates_hidden_remote_admission_on_global_selection_changes
             return future
 
         with patch.object(remote._remote_executor, "submit", side_effect=run_input) as submit:
-            for selected in ([], ["demo-b"]):
-                window.left_panel._devices_tab.set_selected_devices(selected)
-                remote._send_keyevent("HOME")
-                assert not remote.btn_start.isEnabled()
+            window.left_panel._devices_tab.set_selected_devices([])
+            remote._send_keyevent("HOME")
+            assert not remote.btn_start.isEnabled()
             submit.assert_not_called()
             remote._remote_control.send_keyevent.assert_not_called()
+            window.left_panel._devices_tab.set_selected_devices(["demo-b"])
+            assert remote.btn_start.isEnabled()
+            remote._send_keyevent("HOME")
+            remote._remote_control.send_keyevent.assert_called_once_with("demo-b", "HOME")
             window.left_panel._devices_tab.set_selected_devices(["demo-a"])
             assert remote.btn_start.isEnabled()
             remote._send_keyevent("HOME")
-            remote._remote_control.send_keyevent.assert_called_once_with("demo-a", "HOME")
+            assert remote._remote_control.send_keyevent.call_args_list == [
+                (("demo-b", "HOME"),), (("demo-a", "HOME"),),
+            ]
     finally:
         window.left_panel._scrcpy_tab.shutdown()
         window._unbind_window_screen()

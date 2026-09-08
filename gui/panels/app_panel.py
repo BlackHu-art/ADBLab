@@ -15,6 +15,7 @@ from qfluentwidgets import (
 
 from adblab.application.cancellation import CancellationToken
 from gui.dialogs.fluent_dialog import FluentMessageBox
+from gui.dialogs.lifecycle import is_qobject_alive
 from gui.i18n import tr
 from gui.panels.base_panel import BasePanel
 from gui.styles import BaseStyles, FontRole
@@ -41,9 +42,10 @@ class _MonkeyPreparation:
     package_name: str
     cancellation: CancellationToken
     parameters: dict | None = None
+    target_labels: tuple[str, ...] = ()
 
 
-def _monkey_error_text(message: str) -> str:
+def _monkey_error_text(message: str, target_labels: tuple[str, ...] = ()) -> str:
     """只翻译包信息用例的已知错误模板，保留设备序号和其他原始诊断。"""
 
     templates = (
@@ -57,7 +59,12 @@ def _monkey_error_text(message: str) -> str:
         pattern = re.escape(template).replace(r"\{index\}", r"([0-9]+)")
         match = re.fullmatch(pattern, message)
         if match is not None:
-            return tr(template).format(index=match.group(1))
+            index = int(match.group(1))
+            if 1 <= index <= len(target_labels):
+                return tr(template.replace("第 {index} 台设备", "{device}")).format(
+                    device=target_labels[index - 1],
+                )
+            return tr(template).format(index=index)
     return tr(message)
 
 
@@ -68,6 +75,7 @@ class AppPanel(BasePanel):
 
     def build_ui(self) -> QWidget:
         self._monkey_preparation: _MonkeyPreparation | None = None
+        self._device_labels: dict[str, str] = {}
         self._monkey_information_signature: tuple | None = None
         self._monkey_closed = False
         self._package_query_pending = False
@@ -217,12 +225,11 @@ class AppPanel(BasePanel):
         g_m = self._card_group("Monkey")
         self.monkey_section = g_m
         gm_l = g_m.viewLayout
-        gm_l.setSpacing(16)
+        gm_l.setSpacing(8)
         self.monkey_package_card = QWidget(g_m)
         package_info_layout = QVBoxLayout(self.monkey_package_card)
-        package_info_layout.setContentsMargins(16, 16, 16, 16)
-        package_info_layout.setSpacing(12)
-        self.monkey_target_heading = self._monkey_group_heading(tr("测试目标"))
+        package_info_layout.setContentsMargins(16, 0, 16, 0)
+        package_info_layout.setSpacing(4)
         self.monkey_target_summary = self._label("")
         self.monkey_target_summary.setTextFormat(Qt.TextFormat.PlainText)
         self.monkey_target_summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -252,18 +259,37 @@ class AppPanel(BasePanel):
             prepare_actions_layout.addWidget(button, 0, Qt.AlignmentFlag.AlignRight)
         self.monkey_target_header_binding = self._add_responsive_row(
             package_info_layout,
-            (self.monkey_target_heading, 1),
+            (self.monkey_target_summary, 1),
             self.monkey_prepare_actions,
-            spacing=12,
+            spacing=8,
             compact_columns=1,
             medium_columns=2,
             wide_columns=2,
             policies=(WidthPolicy.WRAPPING, WidthPolicy.NATURAL),
         )
         self.monkey_cancel_prepare_btn.hide()
-        package_info_layout.addWidget(self.monkey_target_summary)
+        self.monkey_package_overview = self._label("")
+        self.monkey_package_overview.setTextFormat(Qt.TextFormat.PlainText)
+        apply_label_role(self.monkey_package_overview, FontRole.UI, color_key="TEXT_SECONDARY")
+        self.monkey_package_details_btn = self._b(
+            tr("展开设备明细"), "list.svg", tooltip=tr("查看每台设备的安装版本和目标 SDK")
+        )
+        self.monkey_package_details_btn.setCheckable(True)
+        self.monkey_package_details_btn.toggled.connect(self._toggle_monkey_package_details)
+        overview_binding = self._add_responsive_row(
+            package_info_layout,
+            (self.monkey_package_overview, 1),
+            self.monkey_package_details_btn,
+            compact_columns=1, medium_columns=2, wide_columns=2,
+            policies=(WidthPolicy.WRAPPING, WidthPolicy.NATURAL),
+        )
+        overview_row = overview_binding._container_ref()
+        assert overview_row is not None
+        self.monkey_package_overview_row = overview_row
+        self.monkey_package_overview_row.hide()
         package_info_layout.addWidget(self.monkey_package_info)
-        gm_l.addWidget(self.monkey_package_card)
+        # 目标摘要按内容取高，不分配表单的剩余高度；长包名仍通过响应式行自然换行。
+        gm_l.addWidget(self.monkey_package_card, 0, Qt.AlignmentFlag.AlignTop)
 
         self.monkey_parameters_card = QWidget(g_m)
         parameter_layout = QVBoxLayout(self.monkey_parameters_card)
@@ -369,7 +395,7 @@ class AppPanel(BasePanel):
         self.monkey_seed = _mk_combo(["1", "42", "2026"])
         self._set_combo_int_validator(self.monkey_seed, 0, 2147483647)
         self.monkey_seed.setText("1")
-        self.monkey_seed.setToolTip(tr("固定种子可重复相同事件序列；实际种子会保存在运行记录中"))
+        self.monkey_seed.setToolTip(tr("固定种子可重复相同事件序列；实际种子会保存在测试结果中"))
         self.monkey_seed.setProperty(RESPONSIVE_SIZE_HINT_MINIMUM_PROPERTY, True)
         self.monkey_seed.setProperty(RESPONSIVE_MINIMUM_TEXT_PROPERTY, "2147483647")
         self._refresh_responsive_widget_minimum(self.monkey_seed)
@@ -541,6 +567,13 @@ class AppPanel(BasePanel):
             medium_columns=2,
             wide_columns=4,
         )
+        from gui.widgets.action_result_view import ActionResultView
+        from gui.widgets.report_artifacts import ReportArtifactsView
+
+        self.diagnostic_results = ActionResultView(g_perf, diagnostic=True)
+        g_perf.viewLayout.addWidget(self.diagnostic_results)
+        self.report_artifacts = ReportArtifactsView(g_r)
+        g_r.viewLayout.addWidget(self.report_artifacts)
         self.category_stack.add_category(
             "daily", tr("应用与诊断"), (g_pm, g_m, g_r, g_perf)
         )
@@ -579,6 +612,21 @@ class AppPanel(BasePanel):
         apply_label_role(label, FontRole.UI, color_key="TITLE_COLOR", bold=True)
         label.setWordWrap(True)
         return label
+
+    def _set_monkey_package_information(self, message: str, *, overview: str = "") -> None:
+        """单设备和错误就地展示；多设备成功结果默认只显示摘要，明细可独立展开。"""
+        self.monkey_package_info.setText(message)
+        self.monkey_package_details_btn.setChecked(False)
+        self.monkey_package_overview.setText(overview)
+        self.monkey_package_overview_row.setVisible(bool(overview))
+        self.monkey_package_info.setVisible(not overview)
+
+    def _toggle_monkey_package_details(self, expanded: bool) -> None:
+        """只切换已返回信息的可见性，展开与收起不会重复查询或改变启动目标。"""
+        self.monkey_package_info.setVisible(expanded)
+        self.monkey_package_details_btn.setText(
+            tr("收起设备明细") if expanded else tr("展开设备明细")
+        )
 
     @staticmethod
     def _monkey_field_mode(name: str, columns: int, rank: int, count: int) -> GridMode:
@@ -969,6 +1017,10 @@ class AppPanel(BasePanel):
             )
         self._begin_monkey_preparation(params)
 
+    def set_device_labels(self, labels: dict[str, str]) -> None:
+        """接收全局会话名称；包信息准备和测试归档冻结提交时的设备归属。"""
+        self._device_labels.update(labels)
+
     def _begin_monkey_preparation(self, parameters: dict | None = None) -> None:
         """获取与开始共用只读准备；只有开始意图携带参数并在核对后提交原批次信号。"""
         if self._monkey_closed or self._monkey_preparation is not None or self._monkey_running:
@@ -980,10 +1032,12 @@ class AppPanel(BasePanel):
         preparation = _MonkeyPreparation(
             uuid.uuid4().hex, devices, self.package_text.strip(), CancellationToken(),
             dict(parameters) if parameters is not None else None,
+            tuple(self._device_labels.get(device, tr("设备 {index}").format(index=index))
+                  for index, device in enumerate(devices, 1)),
         )
         self._monkey_preparation = preparation
         self._monkey_information_signature = None
-        self.monkey_package_info.setText(
+        self._set_monkey_package_information(
             tr("正在核对 {count} 台设备上的测试包信息…").format(count=len(devices))
         )
         self._update_action_states()
@@ -998,7 +1052,11 @@ class AppPanel(BasePanel):
         self._monkey_preparation = None
         if pending is not None:
             pending.cancellation.request()
-            self.monkey_package_info.setText(tr(message))
+        # 可见表单可能先于隐藏协调器释放；表单仍在时呈现关闭态，销毁后只撤销请求。
+        if self._monkey_closed and not is_qobject_alive(self.monkey_package_card):
+            return
+        if pending is not None:
+            self._set_monkey_package_information(tr(message))
         self._update_action_states()
 
     def on_monkey_preparation_finished(self, request_id: str, result: dict) -> None:
@@ -1012,8 +1070,9 @@ class AppPanel(BasePanel):
             return
         self._monkey_preparation = None
         if pending.cancellation.is_cancelled or not result.get("success"):
-            self.monkey_package_info.setText(
-                _monkey_error_text(str(result.get("error") or "获取测试包信息失败，请重试"))
+            self._set_monkey_package_information(
+                _monkey_error_text(str(result.get("error") or "获取测试包信息失败，请重试"),
+                                   pending.target_labels)
             )
             self._update_action_states()
             return
@@ -1025,7 +1084,7 @@ class AppPanel(BasePanel):
                 or [item.get("device_ip") for item in packages] != list(pending.devices)
                 or any(item.get("package_name") != package for item in packages)
                 or (pending.package_name and pending.package_name != package)):
-            self.monkey_package_info.setText(tr("测试包信息与本次目标不匹配，请重新获取"))
+            self._set_monkey_package_information(tr("测试包信息与本次目标不匹配，请重新获取"))
             self._update_action_states()
             return
         if not pending.package_name:
@@ -1037,23 +1096,31 @@ class AppPanel(BasePanel):
             code = info.get("version_code") or "?"
             sdk = info.get("target_sdk") or "?"
             lines.append(
-                tr("设备 {index}：已安装 · {version} ({code}) · target SDK {sdk}").format(
-                    index=index, version=version, code=code, sdk=sdk
+                tr("{device}：已安装 · {version} ({code}) · target SDK {sdk}").format(
+                    device=pending.target_labels[index - 1], version=version, code=code, sdk=sdk
                 )
             )
-        self.monkey_package_info.setText("\n".join(lines))
+        versions = {
+            (info.get("version_name"), info.get("version_code"), info.get("target_sdk"))
+            for info in packages
+        }
+        overview = (
+            tr("已核对 {count} 台设备 · 版本一致")
+            if len(versions) == 1 else tr("已核对 {count} 台设备 · 版本或 SDK 存在差异")
+        ).format(count=len(packages)) if len(packages) > 1 else ""
+        self._set_monkey_package_information("\n".join(lines), overview=overview)
         self._update_action_states()
         if pending.parameters is None:
             return
         if pending.parameters != self._collect_monkey_params():
-            self.monkey_package_info.setText(tr("测试参数已改变，请重新开始以核对本次配置"))
+            self._set_monkey_package_information(tr("测试参数已改变，请重新开始以核对本次配置"))
             return
         metadata = {}
         for index, info in enumerate(packages, 1):
             version = str(info.get("version_name") or "")
             code = str(info.get("version_code") or "")
             metadata[str(info["device_ip"])] = {
-                "device_label": tr("设备 {index}").format(index=index),
+                "device_label": pending.target_labels[index - 1],
                 "app_version": f"{version} ({code})" if version and code else version or code,
             }
         self._start_prepared_monkey(pending.devices, package, pending.parameters, metadata)
@@ -1092,7 +1159,7 @@ class AppPanel(BasePanel):
     def on_monkey_target_finished(self, batch_id: str, device: str) -> None:
         """按批次和设备去重 Monkey 终态，忽略迟到结果。"""
 
-        if batch_id != getattr(self, "_monkey_batch_id", ""):
+        if self._monkey_closed or batch_id != getattr(self, "_monkey_batch_id", ""):
             return
         pending_devices = getattr(self, "_monkey_pending_devices", set())
         if device not in pending_devices:
@@ -1142,7 +1209,7 @@ class AppPanel(BasePanel):
             self._cancel_monkey_preparation(tr("操作目标或包名已改变，请重新获取测试包信息"))
         if self._monkey_information_signature not in (None, signature):
             self._monkey_information_signature = None
-            self.monkey_package_info.setText(tr("操作目标或包名已改变，请重新获取测试包信息"))
+            self._set_monkey_package_information(tr("操作目标或包名已改变，请重新获取测试包信息"))
         has_device = bool(self.selected_devices)
         has_package = bool(self.package_text.strip())
 

@@ -406,7 +406,7 @@ class MemInfoPackageCollector:
                 delta_inter = self._interval - time_consume
                 logger.info("time consume for meminfos: " + str(time_consume))
                 if delta_inter > 0:
-                    time.sleep(delta_inter)
+                    self._stop_event.wait(max(0, min(delta_inter, end_time - time.time())))
             except Exception:
                 logger.error("an exception hanpend in meminfo thread, reason unkown!")
                 s = traceback.format_exc()

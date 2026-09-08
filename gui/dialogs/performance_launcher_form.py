@@ -328,6 +328,18 @@ class PerformanceLauncherForm:
         content.setParent(self._frame)
         # takeWidget 保留原滚动区设置的背景填充，内嵌布局应继承工作区材质。
         content.setAutoFillBackground(False)
+        content_layout = content.layout()
+        assert content_layout is not None
+        margins = content_layout.contentsMargins()
+        # 宿主已提供外侧留白；移交内容后只保留窄边距，不叠加旧滚动条通道与卡片内缩。
+        content_layout.setContentsMargins(8, margins.top(), 8, margins.bottom())
+        for section in content.findChildren(ContentSection):
+            title_margins = section.headerLayout.contentsMargins()
+            body_margins = section.viewLayout.contentsMargins()
+            section.headerLayout.setContentsMargins(
+                0, title_margins.top(), 0, title_margins.bottom(),
+            )
+            section.viewLayout.setContentsMargins(0, body_margins.top(), 0, body_margins.bottom())
         root.insertWidget(max(0, index), content)
         content.show()
         self._frame._workspace_scroll_prepared = True
@@ -401,7 +413,7 @@ class PerformanceLauncherForm:
         content_layout.addWidget(self._frame._configuration_group)
         content_layout.addWidget(self._frame._results_group, 1)
         self._frame._config_scroll = SmoothScrollArea()
-        # Fluent 滚动条覆盖在视口内；内容自留通道，移交工作区后仍不压住卡片和操作。
+        # 独立页面为悬浮滚动条保留通道，移交工作区后由嵌入边距替代。
         content_layout.setContentsMargins(
             0, 0, self._frame._config_scroll.delegate.vScrollBar.width() + 4, 0
         )

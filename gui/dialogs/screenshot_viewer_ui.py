@@ -1,9 +1,8 @@
 """使用官方 Fluent 图片翻页、命令栏和圆点分页构建截图页面。"""
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QBoxLayout,
     QFrame,
     QHBoxLayout,
     QSizePolicy,
@@ -48,6 +47,9 @@ class ScreenshotViewerUI:
         """嵌入时归还整组标题占用的空间，由主导航标识当前功能。"""
 
         self._frame.header_card.hide()
+        layout = self._frame.layout()
+        if layout is not None:
+            layout.setContentsMargins(8, 8, 8, 10)
 
     def _init_shortcuts(self):
         frame = self._frame
@@ -89,6 +91,14 @@ class ScreenshotViewerUI:
         frame._path_label.setFont(BaseStyles.font_for_role(FontRole.MONO))
         for label in (frame._info_label, frame._nav_label, frame._zoom_label):
             label.setFont(small_font)
+        background = QColor(BaseStyles.color("PANEL_BG"))
+        overlay_style = (
+            f"background-color: rgba({background.red()}, {background.green()}, "
+            f"{background.blue()}, 225); border-radius: 6px;"
+        )
+        frame._details_bar.setStyleSheet(f"#screenshotDetails {{ {overlay_style} }}")
+        frame._pager_bar.setStyleSheet(f"#screenshotPagerOverlay {{ {overlay_style} }}")
+        frame._zoom_label.setStyleSheet(f"#zoomLabel {{ {overlay_style} padding: 5px 8px; }}")
 
         bar = frame._command_bar
         bar.setFont(ui_font)
@@ -146,6 +156,7 @@ class ScreenshotViewerUI:
 
         frame._canvas_frame = QFrame(frame)
         frame._canvas_frame.setObjectName("canvasFrame")
+        frame._canvas_frame.installEventFilter(frame)
         canvas = QVBoxLayout(frame._canvas_frame)
         canvas.setContentsMargins(0, 0, 0, 0)
         frame._image_stack = QStackedWidget(frame._canvas_frame)
@@ -166,10 +177,11 @@ class ScreenshotViewerUI:
         canvas.addWidget(frame._image_stack)
         root.addWidget(frame._canvas_frame, 1)
 
-        frame._pager_bar = QWidget(frame)
+        frame._pager_bar = QWidget(frame._canvas_frame)
+        frame._pager_bar.setObjectName("screenshotPagerOverlay")
         pager_row = QHBoxLayout(frame._pager_bar)
-        pager_row.setContentsMargins(0, 0, 0, 0)
-        pager_row.addStretch(1)
+        pager_row.setContentsMargins(6, 4, 8, 4)
+        pager_row.setSpacing(6)
         frame._pager = ScreenshotPipsPager(frame)
         frame._pager.setAccessibleName(tr("Choose screenshot"))
         frame._pager.currentIndexChanged.connect(frame._navigate_to)
@@ -180,9 +192,7 @@ class ScreenshotViewerUI:
         frame._nav_label.setObjectName("navLabel")
         frame._nav_label.setToolTip(tr("Current screenshot index"))
         pager_row.addWidget(frame._nav_label)
-        pager_row.addStretch(1)
-        root.addWidget(frame._pager_bar)
-        root.addWidget(self._build_details())
+        self._build_details()
 
     def _build_command_bar(self) -> CommandBar:
         """按钮和窄屏更多菜单共享同一 Action，确保禁用、确认和图标状态一致。"""
@@ -209,7 +219,8 @@ class ScreenshotViewerUI:
              frame.copy_to_clipboard),
             ("folder", FluentIcon.FOLDER, "Open folder", "Open file location",
              frame._open_file_location),
-            ("delete", FluentIcon.DELETE, "Delete", "Delete screenshot", frame._delete_file),
+            ("delete_all", FluentIcon.DELETE, "Delete all", "Delete all loaded screenshots",
+             frame._delete_all_files),
         )
         for name, icon, title, tooltip, callback in specifications:
             if name in {"fit", "copy"}:
@@ -230,6 +241,11 @@ class ScreenshotViewerUI:
             )
         bar.moreButton.setToolTip(tr("More image actions"))
         bar.moreButton.setAccessibleName(tr("More image actions"))
+        # 右键单张删除保留独立动作，命令栏和更多菜单只暴露删除全部。
+        frame._delete_action = Action(FluentIcon.DELETE.icon(), tr("Delete"), frame)
+        frame._delete_action.setToolTip(tr("Delete screenshot"))
+        frame._delete_action.triggered.connect(frame._delete_file)
+        frame._command_icons.append((frame._delete_action, FluentIcon.DELETE))
         return bar
 
     @staticmethod
@@ -242,12 +258,11 @@ class ScreenshotViewerUI:
     def _build_details(self) -> ScreenshotDetailsBar:
         frame = self._frame
         frame._details_bar = ScreenshotDetailsBar(frame)
+        frame._details_bar.setParent(frame._canvas_frame)
         frame._details_bar.setObjectName("screenshotDetails")
         layout = QVBoxLayout(frame._details_bar)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(8, 5, 8, 5)
         layout.setSpacing(4)
-        frame._metadata_row = QHBoxLayout()
-        frame._metadata_row.setSpacing(8)
         frame._path_label = apply_label_role(BodyLabel(), FontRole.MONO, color_key="TEXT_SECONDARY")
         frame._path_label.setObjectName("pathLabel")
         frame._path_label.setMinimumWidth(0)
@@ -256,14 +271,12 @@ class ScreenshotViewerUI:
         frame._path_label.setAccessibleName(tr("Screenshot file path"))
         frame._path_label.setProperty("screenshotFullFileName", "")
         frame._zoom_label = apply_label_role(
-            BodyLabel(tr("Fit")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+            BodyLabel(tr("Fit"), frame._canvas_frame), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
         frame._zoom_label.setObjectName("zoomLabel")
         frame._zoom_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         frame._zoom_label.setAccessibleName(tr("Image zoom"))
-        frame._metadata_row.addWidget(frame._path_label, 1)
-        frame._metadata_row.addWidget(frame._zoom_label)
-        layout.addLayout(frame._metadata_row)
+        layout.addWidget(frame._path_label)
         frame._info_label = apply_label_role(
             BodyLabel(), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
         )
@@ -278,23 +291,44 @@ class ScreenshotViewerUI:
         return frame._details_bar
 
     def _refresh_metadata(self) -> None:
-        """长文件名只在显示层省略，完整路径及可访问描述由当前图片状态保留。"""
+        """将元数据与分页锚定到画布角落，不再占用图片外部的上下行。"""
 
         frame = self._frame
-        available = frame._details_bar.contentsRect().width()
-        stacked = available < frame._zoom_label.sizeHint().width() + 100
-        direction = (
-            QBoxLayout.Direction.TopToBottom if stacked else QBoxLayout.Direction.LeftToRight
-        )
-        if frame._metadata_row.direction() != direction:
-            frame._metadata_row.setDirection(direction)
+        area = frame._canvas_frame.contentsRect().adjusted(10, 10, -10, -10)
+        available = max(1, area.width())
+        has_image = bool(frame._image_paths and frame._display_pixmap is not None)
+        frame._details_bar.setVisible(has_image)
+        frame._zoom_label.setVisible(has_image)
+        frame._pager_bar.setVisible(has_image)
         label = frame._path_label
         name = str(label.property("screenshotFullFileName") or "")
-        width = max(
-            0, available if stacked else available - frame._zoom_label.sizeHint().width() - 8
-        )
+        width = max(0, available - 16)
         label.setText(label.fontMetrics().elidedText(name, Qt.TextElideMode.ElideMiddle, width))
         frame._info_label.setVisible(frame._info_action.isChecked())
+        details = frame._details_bar
+        details.setFixedWidth(available if frame._info_action.isChecked() else min(
+            available, label.fontMetrics().horizontalAdvance(label.text()) + 18,
+        ))
+        details.layout().activate()
+        details.setFixedHeight(max(
+            details.sizeHint().height(), details.heightForWidth(details.width()),
+        ))
+        details.move(area.topLeft())
+        frame._zoom_label.adjustSize()
+        frame._zoom_label.move(
+            area.right() - frame._zoom_label.width() + 1,
+            area.bottom() - frame._zoom_label.height() + 1,
+        )
+        pager_space = max(1, available - frame._zoom_label.width() - 12)
+        # 窄画布先减少可见圆点，保留当前计数和前后翻页按钮。
+        frame._pager.setVisibleNumber(min(
+            len(frame._image_paths), 7,
+            max(1, (pager_space - frame._nav_label.sizeHint().width() - 90) // 24),
+        ))
+        frame._pager_bar.adjustSize()
+        frame._pager_bar.move(area.left(), area.bottom() - frame._pager_bar.height() + 1)
+        for overlay in (details, frame._pager_bar, frame._zoom_label):
+            overlay.raise_()
 
     def _schedule_metadata_reflow(self) -> None:
         """合并尺寸回调；页面释放后不再启动刷新计时器。"""

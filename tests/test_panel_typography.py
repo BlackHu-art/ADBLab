@@ -8,9 +8,9 @@ from PySide6.QtWidgets import QScrollArea, QWidget
 from qfluentwidgets import HeaderCardWidget, ListWidget
 
 from gui.panels.device_manager import DeviceManager
-from gui.panels.log_panel import LogPanel
 from gui.panels.side_panel import SidePanel
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.action_result_view import ActionResultView
 from gui.widgets.responsive_controller import ReflowReason
 from tests.ui_geometry_helpers import wait_until
 
@@ -65,7 +65,8 @@ def test_side_panel_refreshes_loaded_and_detached_device_widgets(monkeypatch, qt
                     small_widgets.append(widget)
         assert ui_widgets
         assert all(_effective_size(widget.font()) == 18 for widget in ui_widgets)
-        assert small_widgets == []
+        assert small_widgets
+        assert all(_effective_size(widget.font()) == 16 for widget in small_widgets)
     finally:
         panel.close()
 
@@ -158,28 +159,16 @@ def test_device_manager_font_refreshes_direct_reference_controls(monkeypatch):
     manager.ip_entry.setFont.assert_called_once_with(mono_font)
 
 
-def test_log_panel_font_change_rerenders_for_hanging_indent(
-    monkeypatch,
-    qt_application,
-):
-    """字号变化会重绘：悬挂缩进按新字体度量计算（ADR-0005 日志优化）。"""
-
-    monkeypatch.setattr(LogPanel, "_connect_services", lambda _self: None)
-    panel = LogPanel()
-    rerender = Mock()
-    panel._rerender_all = rerender
-
-    def font_for_role(_cls, role, size=None):
-        del size
-        assert FontRole(role) is FontRole.LOG
-        return QFont("Consolas", 13)
-
-    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(font_for_role))
+def test_action_result_font_change_preserves_text(monkeypatch, qt_application):
+    panel = ActionResultView()
+    panel.output.setPlainText("完整正文\n第二行")
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role", classmethod(lambda _cls, _role: QFont("Consolas", 13)),
+    )
     try:
-        panel._on_log_font_changed(None)
-
-        assert _effective_size(panel.text_output.font()) == 13
-        rerender.assert_called_once()
+        panel._refresh_font()
+        assert _effective_size(panel.output.font()) == 13
+        assert panel.output.toPlainText() == "完整正文\n第二行"
     finally:
         panel.close()
 

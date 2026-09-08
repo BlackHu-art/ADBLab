@@ -432,12 +432,41 @@ def _feature_category_slices(feature_panel, content: QWidget) -> tuple:
             )
             if any(membership):
                 assert all(membership), (category_key, widgets)
-                category_bindings.append(binding)
                 assigned.append(binding)
+                # 分类归属仍全量校验；隐藏的条件结果行没有可见几何，显示后的布局由
+                # Monkey 多设备回归覆盖，不能拿 Qt 尚未布局的默认尺寸判断内容溢出。
+                container = binding._container_ref()
+                if container is not None and container.isVisibleTo(category_page):
+                    category_bindings.append(binding)
         slices.append((category_key, category_page, tuple(category_bindings)))
 
-    assert len(assigned) == len(bindings)
-    assert {id(binding) for binding in assigned} == {id(binding) for binding in bindings}
+    screen_bindings = []
+    screen_tools = getattr(feature_panel, "text_screen_tools", None)
+    if screen_tools is not None:
+        for binding in bindings:
+            widgets = binding.widgets()
+            membership = tuple(screen_tools.isAncestorOf(widget) for widget in widgets)
+            if any(membership):
+                assert all(membership), widgets
+                screen_bindings.append(binding)
+        # 两行已迁往截图页；真实几何由下列专用测试覆盖：
+        # test_screen_tools_reflow_and_refresh_fonts_after_transfer。
+        assert len(assigned) == 16
+        assert len(screen_bindings) == 2
+        assert {
+            frozenset(id(widget) for widget in binding.widgets()) for binding in screen_bindings
+        } == {
+            frozenset((id(feature_panel.email_text_sender), id(feature_panel.btn_send_text))),
+            frozenset((
+                id(feature_panel.btn_screenshot), id(feature_panel.record_duration),
+                id(feature_panel.btn_screen_record), id(feature_panel.btn_stop_record),
+            )),
+        }
+
+    covered = (*assigned, *screen_bindings)
+    assert len(covered) == len(bindings)
+    assert len({id(binding) for binding in covered}) == len(covered)
+    assert {id(binding) for binding in covered} == {id(binding) for binding in bindings}
     return tuple(slices)
 
 
@@ -1214,10 +1243,11 @@ def test_feature_panel_real_geometry_and_scroll_contract(
         assert bindings
         assert all(isinstance(binding, ResponsiveGridBinding) for binding in bindings)
         tested_bindings = set()
-        for category_key, category_content, category_bindings in _feature_category_slices(
+        category_slices = _feature_category_slices(
             feature_panel,
             content_widget,
-        ):
+        )
+        for category_key, category_content, category_bindings in category_slices:
             _activate_feature_category(
                 qt_application,
                 panel,
@@ -1372,7 +1402,11 @@ def test_feature_panel_real_geometry_and_scroll_contract(
                     ),
                 )
 
-        assert tested_bindings == {id(binding) for binding in bindings}
+        assert tested_bindings == {
+            id(binding)
+            for _, _, category_bindings in category_slices
+            for binding in category_bindings
+        }
     finally:
         _close_feature_panel(panel)
 
@@ -1398,12 +1432,12 @@ def test_feature_panel_geometry_is_stable_in_light_and_dark_themes(
         monkeypatch,
     )
     try:
-        bindings = tuple(feature_panel._responsive_rows)
         tested_bindings = set()
-        for category_key, category_content, category_bindings in _feature_category_slices(
+        category_slices = _feature_category_slices(
             feature_panel,
             content_widget,
-        ):
+        )
+        for category_key, category_content, category_bindings in category_slices:
             _activate_feature_category(
                 qt_application,
                 panel,
@@ -1433,7 +1467,11 @@ def test_feature_panel_geometry_is_stable_in_light_and_dark_themes(
                 )
             )
             assert (scroll.horizontalScrollBar().maximum() > 0) is has_overflow
-        assert tested_bindings == {id(binding) for binding in bindings}
+        assert tested_bindings == {
+            id(binding)
+            for _, _, category_bindings in category_slices
+            for binding in category_bindings
+        }
     finally:
         _close_feature_panel(panel)
 
@@ -2010,7 +2048,11 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
         assert all(
             binding.applied_plan is not None
             and binding.applied_plan.available_width == binding.responsive_context().width
-            and binding.applied_plan.context_fingerprint == binding.responsive_context().fingerprint
+            # 行高是网格布局反馈，不参与水平断点；与生产稳定性判断保持相同边界。
+            and binding.applied_plan.context_fingerprint[0]
+            == binding.responsive_context().fingerprint[0]
+            and binding.applied_plan.context_fingerprint[2:]
+            == binding.responsive_context().fingerprint[2:]
             for binding in feature_panel._responsive_rows
         )
 
@@ -2560,6 +2602,36 @@ def test_remote_control_real_viewport_scan_observes_only_four_and_two_columns(
         _close_feature_panel(panel)
 
 
+def test_remote_controls_keep_natural_width_and_spacing_when_viewport_grows(
+    qt_application, monkeypatch,
+):
+    panel, remote, scroll, _content = _show_feature_panel(
+        "remote", 800, 12, qt_application, monkeypatch,
+    )
+    try:
+        geometries = []
+        for width in (800, 1200):
+            _resize_feature_viewport(qt_application, panel, remote, scroll, width)
+            assert remote.category_stack.current_key == "mirroring"
+            assert all(
+                binding.applied_plan.mode.columns == 4
+                for binding in remote.remote_control_bindings
+            )
+            geometries.append(tuple(
+                (button.x(), button.width()) for button in remote._remote_control_buttons
+            ))
+        assert all(
+            abs(left_x - right_x) <= 2 and abs(left_width - right_width) <= 2
+            for (left_x, left_width), (right_x, right_width) in zip(*geometries)
+        ), geometries
+        assert all(
+            button.width() <= button.sizeHint().width() + 2
+            for button in remote._remote_control_buttons
+        )
+    finally:
+        _close_feature_panel(panel)
+
+
 def test_remote_reflow_preserves_session_values_identity_and_single_action(
     qt_application,
     monkeypatch,
@@ -3054,6 +3126,7 @@ def test_remote_key_and_action_each_submit_once_after_real_reflow(
             "selected_devices",
             property(lambda _manager: [device]),
         )
+        remote.set_target_devices([device])
         _resize_feature_viewport(qt_application, panel, remote, scroll, 900)
         _resize_feature_viewport(qt_application, panel, remote, scroll, 292)
         remote._set_session_state(RemotePanel._SESSION_IDLE)

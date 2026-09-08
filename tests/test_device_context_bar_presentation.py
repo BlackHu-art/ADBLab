@@ -4,10 +4,11 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, PushButton
 from shiboken6 import isValid
 
+from gui.pages.device_hub import DeviceHubPage
 from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceContextBar
 
@@ -31,15 +32,31 @@ def bar_window(qt_application):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+@pytest.fixture
+def connection_anchor(bar_window, qt_application):
+    window, _bar = bar_window
+    surface = QWidget(window)
+    layout = QHBoxLayout(surface)
+    layout.setContentsMargins(28, 0, 28, 0)
+    layout.addStretch(1)
+    anchor = PushButton("连接设备", surface)
+    layout.addWidget(anchor)
+    window.layout().insertWidget(1, surface)
+    qt_application.processEvents()
+    return anchor
+
+
 @pytest.mark.parametrize("kind", ["picker", "connection"])
-def test_device_popup_aligns_to_action_and_stays_in_content(bar_window, qt_application, kind):
+def test_device_popup_aligns_to_action_and_stays_in_content(
+    bar_window, connection_anchor, qt_application, kind
+):
     window, bar = bar_window
     if kind == "picker":
         bar.open_picker()
         view, anchor = bar._picker, bar.targets_button
     else:
-        bar.open_connection([])
-        view, anchor = bar._connection, bar.connect_button
+        bar.open_connection([], anchor=connection_anchor)
+        view, anchor = bar._connection, connection_anchor
     QTest.qWait(220)
     bounds = QRect(view.mapToGlobal(QPoint()), view.size())
     content = QRect(bar.mapToGlobal(QPoint()), bar.size())
@@ -47,7 +64,7 @@ def test_device_popup_aligns_to_action_and_stays_in_content(bar_window, qt_appli
     assert bounds.right() <= content.right()
     assert bounds.top() >= anchor.mapToGlobal(QPoint(0, anchor.height())).y()
     if kind == "picker":
-        assert abs(bounds.left() - anchor.mapToGlobal(QPoint()).x()) <= 2
+        assert abs(bounds.right() - anchor.mapToGlobal(QPoint(anchor.width() - 1, 0)).x()) <= 2
     else:
         anchor_right = anchor.mapToGlobal(QPoint(anchor.width() - 1, 0)).x()
         screen_right = window.screen().availableGeometry().right()
@@ -63,13 +80,15 @@ def test_device_popup_aligns_to_action_and_stays_in_content(bar_window, qt_appli
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])
-def test_hiding_device_bar_releases_popup_and_allows_immediate_reopen(bar_window, kind):
+def test_hiding_device_bar_releases_popup_and_allows_immediate_reopen(
+    bar_window, connection_anchor, kind
+):
     _window, bar = bar_window
     if kind == "picker":
         bar.open_picker()
         view = bar._picker
     else:
-        bar.open_connection([])
+        bar.open_connection([], anchor=connection_anchor)
         view = bar._connection
     destroyed = QSignalSpy(view.destroyed)
     bar.hide()
@@ -79,7 +98,7 @@ def test_hiding_device_bar_releases_popup_and_allows_immediate_reopen(bar_window
         bar.open_picker()
         replacement = bar._picker
     else:
-        bar.open_connection([])
+        bar.open_connection([], anchor=connection_anchor)
         replacement = bar._connection
     assert replacement is not view and replacement.isVisible()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
@@ -103,13 +122,13 @@ def test_connection_can_anchor_to_visible_overview_while_bar_hidden(bar_window, 
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])
-def test_device_popup_escape_dismisses_and_releases_view(bar_window, kind):
+def test_device_popup_escape_dismisses_and_releases_view(bar_window, connection_anchor, kind):
     _window, bar = bar_window
     if kind == "picker":
         bar.open_picker()
         view = bar._picker
     else:
-        bar.open_connection([])
+        bar.open_connection([], anchor=connection_anchor)
         view = bar._connection
     destroyed = QSignalSpy(view.destroyed)
     QTest.keyClick(view, Qt.Key.Key_Escape)
@@ -119,31 +138,37 @@ def test_device_popup_escape_dismisses_and_releases_view(bar_window, kind):
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
-def test_more_menu_fully_contains_actions_and_accepts_real_clicks(
+def test_overview_more_menu_fully_contains_disconnect_and_accepts_real_clicks(
     bar_window, qt_application, monkeypatch, font_size
 ):
-    _window, bar = bar_window
+    window, bar = bar_window
     monkeypatch.setattr(
         BaseStyles,
         "font_for_role",
         classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
     )
-    bar._apply_fonts()
-    calls = [QSignalSpy(bar.info_requested), QSignalSpy(bar.disconnect_requested)]
-    for row, (action, called) in enumerate(zip((bar.info_action, bar.disconnect_action), calls)):
-        QTest.mouseClick(bar.more_button, Qt.MouseButton.LeftButton)
-        QTest.qWait(220)
-        menu = bar._more_menu
-        viewport = menu.view.viewport()
-        assert menu.isVisible() and action.isEnabled()
-        item = menu.view.item(row)
-        bounds = menu.view.visualItemRect(item)
-        assert viewport.rect().contains(bounds)
-        assert bounds.width() >= menu.view.fontMetrics().horizontalAdvance(action.text()) + 40
-        assert bounds.height() >= menu.view.fontMetrics().height() + 14
-        QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, pos=bounds.center())
-        assert called.count() == 1
-        assert not menu.isVisible()
+    bar.hide()
+    hub = DeviceHubPage(window)
+    window.layout().insertWidget(1, hub)
+    hub.set_device_context(["demo-a"], ["demo-a"], "ready")
+    hub._apply_fonts()
+    qt_application.processEvents()
+    called = QSignalSpy(hub.disconnect_requested)
+    action = hub.disconnect_action
+    QTest.mouseClick(hub.more_button, Qt.MouseButton.LeftButton)
+    QTest.qWait(220)
+    menu = hub._more_menu
+    viewport = menu.view.viewport()
+    assert menu.actions() == [action]
+    assert menu.isVisible() and action.isEnabled()
+    item = menu.view.item(0)
+    bounds = menu.view.visualItemRect(item)
+    assert viewport.rect().contains(bounds)
+    assert bounds.width() >= menu.view.fontMetrics().horizontalAdvance(action.text()) + 40
+    assert bounds.height() >= menu.view.fontMetrics().height() + 14
+    QTest.mouseClick(viewport, Qt.MouseButton.LeftButton, pos=bounds.center())
+    assert called.count() == 1
+    assert not menu.isVisible()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
@@ -162,7 +187,7 @@ def test_device_bar_interior_uses_page_background_without_card_border(bar_window
 @pytest.mark.parametrize("kind", ["picker", "connection"])
 @pytest.mark.parametrize("font_size, width", [(12, 500), (22, 500), (22, 730)])
 def test_popup_large_fonts_and_connection_error_fit_window(
-    bar_window, qt_application, monkeypatch, kind, font_size, width
+    bar_window, connection_anchor, qt_application, monkeypatch, kind, font_size, width
 ):
     window, bar = bar_window
     monkeypatch.setattr(
@@ -179,7 +204,7 @@ def test_popup_large_fonts_and_connection_error_fit_window(
         view = bar._picker
         controls = (view.description, view.device_list, view.select_all_button, view.clear_button)
     else:
-        bar.open_connection([])
+        bar.open_connection([], anchor=connection_anchor)
         view = bar._connection
         view.address.setText("not an address")
         view.connect_button.click()
@@ -214,8 +239,79 @@ def test_existing_session_bar_can_shrink_after_increasing_font(
     bar._apply_fonts()
     qt_application.processEvents()
     assert window.width() == 500
-    for control in (bar.targets_button, bar.status_label, bar.session_combo, bar.close_button):
+    for control in (bar.targets_button, bar.close_button):
+        assert control.isVisible()
         assert bar.rect().contains(QRect(control.mapTo(bar, QPoint()), control.size()))
+        assert control.mapTo(bar, QPoint()).y() == bar.targets_button.mapTo(bar, QPoint()).y()
+    bar.open_picker()
+    assert bar._picker.session_box.isHidden()
+    assert bar._picker.device_list.isVisible()
+    assert bar._picker.select_all_button.isHidden()
+
+
+def test_global_labels_survive_discovery_reorder_offline_and_selection_changes(bar_window):
+    _window, bar = bar_window
+    bar.set_context(["demo-c"], ["demo-a", "demo-b", "demo-c"], "ready")
+    bar.set_device_labels({"demo-c": "Phone"})
+    assert bar.device_label("demo-c") == "设备 3 · Phone"
+    bar.set_context(["demo-c"], ["demo-c", "demo-a"], "ready")
+    bar.open_picker()
+    assert bar._picker.device_list.item(0).text() == "设备 3 · Phone"
+    bar.set_context([], [], "empty")
+    assert bar.device_label("demo-c") == "设备 3 · Phone"
+    bar.set_context(["demo-c"], ["demo-c"], "ready")
+    assert bar._picker.device_list.item(0).text() == "设备 3 · Phone"
+
+
+def test_single_page_header_and_picker_show_only_current_operation_target(bar_window):
+    _window, bar = bar_window
+    source = ComboBox()
+    source.addItem("demo-b", userData="demo-b")
+    bar.set_context(["demo-a", "demo-b"], ["demo-a", "demo-b"], "ready")
+    bar.set_session_context(source, None)
+    assert bar.targets_button.accessibleName() == "当前设备 · 设备 2"
+    bar.open_picker()
+    assert bar._picker.batch_heading.isHidden()
+    assert "请选择一台操作设备" in bar._picker.description.text()
+    assert bar._picker.device_list.item(0).checkState() == Qt.CheckState.Unchecked
+    assert bar._picker.device_list.item(1).checkState() == Qt.CheckState.Checked
+    bar.set_context(["demo-a"], ["demo-a", "demo-b"], "ready")
+    assert "未勾选" in bar.targets_button.accessibleName()
+    assert all(bar._picker.device_list.item(index).checkState() == Qt.CheckState.Unchecked
+               for index in range(bar._picker.device_list.count()))
+    bar.set_context(["demo-a"], ["demo-a"], "ready")
+    assert "离线" in bar.targets_button.accessibleName()
+    bar.set_session_context(None, None)
+    assert bar.targets_button.accessibleName() == "操作设备 · 1 台"
+    assert not bar._picker.batch_heading.isVisible()
+    source.deleteLater()
+
+
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_single_device_popup_keeps_actions_inside_narrow_window(
+    bar_window, qt_application, monkeypatch, font_size,
+):
+    window, bar = bar_window
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size),
+    ))
+    bar._apply_fonts()
+    window.resize(500, 680)
+    devices = ["demo-a", "demo-b", "demo-c"]
+    bar.set_context(devices, devices, "ready")
+    source = ComboBox()
+    for device in devices:
+        source.addItem(device, userData=device)
+    bar.set_session_context(source, None)
+    qt_application.processEvents()
+    bar.open_picker()
+    QTest.qWait(220)
+    picker = bar._picker
+    bounds = QRect(picker.mapToGlobal(QPoint()), picker.size())
+    assert QRect(window.mapToGlobal(QPoint()), window.size()).contains(bounds)
+    for control in (picker.device_list, picker.clear_button):
+        assert picker.rect().contains(QRect(control.mapTo(picker, QPoint()), control.size()))
+    source.deleteLater()
 
 
 def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_update(
@@ -263,7 +359,8 @@ def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_upda
         point = bar.mapTo(frame, QPoint(2, 2))
         scale = image.devicePixelRatio()
         assert image.pixelColor(round(point.x() * scale), round(point.y() * scale)) == background
-        surface_point = bar._surface.mapTo(frame, QPoint(4, bar._surface.height() // 2))
+        # 顶栏加入页面标题后，左侧中点会命中文字笔画；采样顶部留白验证材质。
+        surface_point = bar._surface.mapTo(frame, QPoint(4, 0))
         surface_color = image.pixelColor(
             round(surface_point.x() * scale), round(surface_point.y() * scale)
         )

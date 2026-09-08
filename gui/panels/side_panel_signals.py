@@ -24,7 +24,6 @@ class SidePanelSignals(QObject):
     # ── 设备管理 ──
     connect_requested = Signal(str)
     refresh_devices_requested = Signal()
-    device_info_requested = Signal(list)
     disconnect_requested = Signal(list)
     restart_devices_requested = Signal(list)
     restart_adb_requested = Signal()
@@ -90,6 +89,7 @@ class SidePanelSignals(QObject):
 
     # ── Shell 与文件 ──
     shell_command_requested = Signal(list, str)  # 参数：设备列表、命令
+    system_service_requested = Signal(list, str)
 
     # ── 端口转发 ──
     forward_port_requested = Signal(list, str, str)  # 参数：设备列表、本地端口、远端端口
