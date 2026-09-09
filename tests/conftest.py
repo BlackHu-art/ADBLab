@@ -132,6 +132,7 @@ def isolated_ui_state(qt_application, isolated_ui_state_probe):
 _UI_TEST_FILES = frozenset(
     {
         "test_qt_adb_runtime.py",
+        "test_qt_app_update.py",
         "test_file_app_device_admission.py",
         "test_session_device_admission.py",
         "test_shell_workflows.py",

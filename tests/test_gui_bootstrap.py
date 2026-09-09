@@ -15,6 +15,21 @@ import main
 from core import settings_manager
 
 
+def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypatch, capsys):
+    from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
+
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: False))
+
+    def forbidden_request(*_args):
+        raise AssertionError("Packaging self-check must stay offline")
+
+    monkeypatch.setattr(QNetworkAccessManager, "get", forbidden_request)
+    assert main._self_check_packaging() == 1
+    assert "FAIL network:tls_backend" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("invalid_json", [False, True])
 def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnostics(
     tmp_path, monkeypatch, invalid_json,

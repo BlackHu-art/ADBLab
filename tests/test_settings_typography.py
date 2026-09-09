@@ -1,6 +1,7 @@
 """设置页字号、响应式卡片和配置交互的回归覆盖。"""
 
 import os
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -12,6 +13,7 @@ from core.settings_manager import DEFAULTS, AppSettings
 from gui.i18n import install_translators
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles, FontRole
+from services.app_update import ReleaseInfo, UpdateSnapshot
 from tests.ui_geometry_helpers import wait_for_stable_geometry
 
 
@@ -33,6 +35,8 @@ def _setting_card_controls(page):
         (page.reset_card, page.reset_card.button),
         (page.restart_adb_card, page.restart_adb_card.button),
         (page.about_panel.project_card, page.about_panel.project_button),
+        (page.about_panel.project_card, page.about_panel.check_update_button),
+        (page.about_panel.project_card, page.about_panel.release_button),
     )
 
 
@@ -366,6 +370,128 @@ def test_about_homepage_opens_only_on_explicit_click(settings_page, monkeypatch)
     about.project_button.click()
     opener.assert_called_once()
     assert opener.call_args.args[0].toString() == "https://github.com/BlackHu-art/ADBLab"
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
+@pytest.mark.parametrize("status", ["checking", "available", "error", "current", "ahead"])
+def test_update_card_states_reflow_and_keep_all_actions_reachable(
+    settings_page, qt_application, width, font_size, status,
+):
+    page, values, _writes, _frame = settings_page
+    values["ui_font_size"] = font_size
+    BaseStyles.reload_from_settings()
+    page.resize(width, 640)
+    page.show()
+    about = page.about_panel
+    release = ReleaseInfo(
+        "3.2.12", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.12",
+        datetime(2026, 9, 9, tzinfo=timezone.utc),
+    )
+    about.set_update_snapshot(UpdateSnapshot(
+        status=status, release=release, checked_at=datetime.now(timezone.utc),
+        error="network" if status == "error" else "", can_check=status != "checking",
+    ))
+    _settle_settings(qt_application, page)
+    assert page.horizontalScrollBar().maximum() == 0
+    assert about.check_update_button.isEnabled() == (status != "checking")
+    label = about.project_card.contentLabel
+    assert label.height() >= label.heightForWidth(label.width())
+    for control in (about.check_update_button, about.project_button, about.release_button):
+        assert about.project_card.isAncestorOf(control)
+        page.ensureWidgetVisible(control, 0, 0)
+        qt_application.processEvents()
+        visible = control.mapTo(page.viewport(), QPoint())
+        assert visible.y() >= 0
+        assert visible.y() + control.height() <= page.viewport().height()
+        assert visible.x() >= 0
+        assert visible.x() + control.width() <= page.viewport().width()
+        assert control.font().pointSizeF() == font_size
+
+
+def test_update_card_only_opens_checked_release_on_explicit_click(settings_page, monkeypatch):
+    from utils.app_metadata import APP_VERSION
+
+    page, _values, _writes, _frame = settings_page
+    about = page.about_panel
+    assert about.project_card.isAncestorOf(about.check_update_button)
+    assert about.project_card.isAncestorOf(about.release_button)
+    assert about.project_card.contentLabel.text().count(APP_VERSION) == 1
+    opener = Mock(return_value=True)
+    monkeypatch.setattr("qfluentwidgets.components.widgets.button.QDesktopServices.openUrl", opener)
+    requested = Mock()
+    about.updateRequested.connect(requested)
+    about.check_update_button.click()
+    requested.assert_called_once_with()
+    opener.assert_not_called()
+    about.release_button.click()
+    assert opener.call_args.args[0].toString() == "https://github.com/BlackHu-art/ADBLab/releases"
+    release = ReleaseInfo(
+        "3.2.12", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.12",
+        datetime(2026, 9, 9, tzinfo=timezone.utc),
+    )
+    opener.reset_mock()
+    about.set_update_snapshot(UpdateSnapshot(status="available", release=release))
+    assert about.project_card.contentLabel.text().count(APP_VERSION) == 1
+    opener.assert_not_called()
+    about.release_button.click()
+    assert opener.call_args.args[0].toString() == release.url
+    about.set_update_snapshot(UpdateSnapshot(status="error", error="network", release=release))
+    assert "失败" in about.project_card.contentLabel.text()
+    assert "上次" in about.project_card.contentLabel.text()
+
+
+@pytest.mark.parametrize("published", [
+    "0001-01-01T00:00:00+14:00", "0001-01-01T00:00:00Z", "9999-12-31T23:59:59Z",
+])
+def test_release_date_outside_platform_local_time_range_remains_displayable(
+    settings_page, published,
+):
+    from services.app_update import parse_release
+    from tests.test_app_update import release_payload
+
+    page, _values, _writes, _frame = settings_page
+    release = parse_release(release_payload("v999.0.0", published_at=published))
+    page.about_panel.set_update_snapshot(UpdateSnapshot(status="available", release=release))
+    assert "999.0.0" in page.about_panel.project_card.contentLabel.text()
+
+
+@pytest.mark.parametrize("language,button_text", [
+    ("zh_CN", "检查更新"), ("en_US", "Check for updates"), ("zh_HK", "檢查更新"),
+])
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_update_card_translated_states_at_large_font(
+    qt_application, settings_page, language, button_text, theme,
+):
+    _original, values, _writes, frame = settings_page
+    values["ui_font_size"] = 22
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme(theme)
+    translators = install_translators(qt_application, language)
+    page = SettingsPage(frame)
+    try:
+        page.resize(420, 640)
+        page.show()
+        about = page.about_panel
+        for error in ("network", "tls", "timeout", "rate_limited", "invalid_response"):
+            about.set_update_snapshot(UpdateSnapshot(status="error", error=error))
+            _settle_settings(qt_application, page)
+            assert about.check_update_button.text() == button_text
+            assert page.horizontalScrollBar().maximum() == 0
+            assert about.release_button.font().pointSizeF() == 22
+            label = about.project_card.contentLabel
+            assert label.height() >= label.heightForWidth(label.width())
+            page.ensureWidgetVisible(about.release_button, 0, 0)
+            qt_application.processEvents()
+            point = about.release_button.mapTo(page.viewport(), QPoint())
+            assert point.x() >= 0 and point.y() >= 0
+            assert point.x() + about.release_button.width() <= page.viewport().width()
+            assert point.y() + about.release_button.height() <= page.viewport().height()
+    finally:
+        page.close()
+        page.deleteLater()
+        for translator in reversed(translators):
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 def test_about_support_icon_stays_aligned_with_text_beside_tall_qr(

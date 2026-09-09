@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-09
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -135,6 +135,11 @@ flowchart LR
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；同步短查询复用核心双后端，采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
 
 ## 应用关闭
+
+`MainFrame` 拥有 `QtAppUpdate` 及其 Qt 网络对象和定时器，设置页只发出显式检查信号并呈现
+不可变快照。它不创建业务 worker 或外部进程；关闭时在 GUI 阶段停止定时器，先清空请求身份
+再调用 `abort()` 和 `deleteLater()`，同步取消信号及晚到结果均不能更新界面。对象随主窗口
+QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 
 `gui/close_controller.py::CloseController` 实现两阶段关闭：
 

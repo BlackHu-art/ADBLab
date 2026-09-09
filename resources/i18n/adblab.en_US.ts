@@ -5830,5 +5830,99 @@ Android device management, app tools and diagnostics</translation>
             <source>请先选择设备再使用远程控制</source>
             <translation>Select devices before using remote control</translation>
         </message>
+        <message>
+            <source>检查更新</source>
+            <translation>Check for updates</translation>
+        </message>
+        <message>
+            <source>软件更新</source>
+            <translation>Software update</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}
+点击检查最新正式版</source>
+            <translation>Current version {version}
+Check for the latest stable release</translation>
+        </message>
+        <message>
+            <source>发布页</source>
+            <translation>Releases</translation>
+        </message>
+        <message>
+            <source>检查是否有新的正式版本</source>
+            <translation>Check for a new stable release</translation>
+        </message>
+        <message>
+            <source>在浏览器中查看发布说明和下载文件</source>
+            <translation>View release notes and downloads in your browser</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}</source>
+            <translation>Current version {version}</translation>
+        </message>
+        <message>
+            <source>点击检查最新正式版</source>
+            <translation>Check for the latest stable release</translation>
+        </message>
+        <message>
+            <source>正在检查更新…</source>
+            <translation>Checking for updates…</translation>
+        </message>
+        <message>
+            <source>检查失败：网络连接不可用，请稍后重试</source>
+            <translation>Check failed: no network connection. Try again later.</translation>
+        </message>
+        <message>
+            <source>无法验证安全连接，请检查系统时间或网络设置</source>
+            <translation>Cannot verify the secure connection. Check your system clock or network settings.</translation>
+        </message>
+        <message>
+            <source>检查更新超时，请稍后重试</source>
+            <translation>The update check timed out. Try again later.</translation>
+        </message>
+        <message>
+            <source>访问过于频繁，请稍后重试或查看发布页</source>
+            <translation>Too many requests. Try again later or visit Releases.</translation>
+        </message>
+        <message>
+            <source>更新服务暂不可用，请稍后重试或查看发布页</source>
+            <translation>The update service is unavailable. Try again later or visit Releases.</translation>
+        </message>
+        <message>
+            <source>无法识别版本信息，请查看发布页</source>
+            <translation>Version information could not be recognised. Visit Releases.</translation>
+        </message>
+        <message>
+            <source>检查更新失败，请稍后重试</source>
+            <translation>The update check failed. Try again later.</translation>
+        </message>
+        <message>
+            <source>上次检查的版本：{version}</source>
+            <translation>Previously checked version: {version}</translation>
+        </message>
+        <message>
+            <source>发现新版本 {version} · 发布于 {date}</source>
+            <translation>Version {version} is available · Released {date}</translation>
+        </message>
+        <message>
+            <source>当前已是最新正式版</source>
+            <translation>You have the latest stable release</translation>
+        </message>
+        <message>
+            <source>当前版本高于公开正式版 {version}</source>
+            <translation>Your version is newer than the public stable release {version}</translation>
+        </message>
+        <message>
+            <source>检查时间：{time}</source>
+            <translation>Checked: {time}</translation>
+        </message>
+        <message>
+            <source>请稍后再检查</source>
+            <translation>Please check again later</translation>
+        </message>
+        <message>
+            <source>前往下载</source>
+            <translation>Download</translation>
+        </message>
     </context>
 </TS>

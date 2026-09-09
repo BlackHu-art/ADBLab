@@ -72,11 +72,21 @@ def _self_check_packaging() -> int:
             check(f"import:{module_name}", False, str(exc))
 
     importable("PySide6")
+    importable("PySide6.QtNetwork")
     importable("qfluentwidgets")
     importable("mobileperf.android.startup")
     importable("gui.generated.translations_rc")
 
-    from PySide6.QtCore import QFile
+    from PySide6.QtCore import QCoreApplication, QFile
+
+    # TLS 插件发现需要 Qt 应用对象；自检只加载后端，不访问更新服务。
+    _tls_application = QCoreApplication.instance() or QCoreApplication([])
+    try:
+        from PySide6.QtNetwork import QSslSocket
+
+        check("network:tls_backend", QSslSocket.supportsSsl())
+    except ImportError as exc:
+        check("network:tls_backend", False, str(exc))
 
     for locale in ("zh_CN", "en_US", "zh_HK"):
         translation = f":/adblab/i18n/adblab.{locale}.qm"

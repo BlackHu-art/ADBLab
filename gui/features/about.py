@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QSize, Signal, Slot
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
+    HyperlinkButton,
     HyperlinkCard,
     ImageLabel,
+    PushButton,
     SettingCard,
     SettingCardGroup,
     setCustomStyleSheet,
@@ -19,24 +21,29 @@ from gui.styles import BaseStyles
 from gui.styles.fluent import apply_font_role, configure_button, refresh_fluent_widget_style
 from gui.styles.typography import FontRole
 from gui.widgets.setting_card_layout import SettingsCardPresentation, apply_setting_text_style
-from utils.app_metadata import APP_VERSION
+from services.app_update import UpdateSnapshot
+from utils.app_metadata import APP_PROJECT_URL, APP_RELEASES_URL, APP_VERSION
 from utils.resource_path import resource_path
 
 
 class AboutPanel(SettingCardGroup):
     """按 Gallery 的关于分组展示项目与支持信息，不主动访问网络。"""
 
+    updateRequested = Signal()
+    layoutChanged = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(tr("关于"), parent)
         self.setObjectName("aboutPanel")
+        self._app_description = tr(
+            "版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台"
+        ).format(version=APP_VERSION)
         self.project_card = HyperlinkCard(
-            "https://github.com/BlackHu-art/ADBLab",
+            APP_PROJECT_URL,
             tr("项目主页"),
             FluentIcon.INFO,
             "ADBLab",
-            tr("版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台").format(
-                version=APP_VERSION
-            ),
+            self._app_description,
             self,
         )
         self.title_label = self.project_card.titleLabel
@@ -46,6 +53,22 @@ class AboutPanel(SettingCardGroup):
             self.project_button,
             text=tr("项目主页"),
             tooltip=tr("在浏览器中打开 ADBLab 项目主页"),
+        )
+        self.update_actions = QWidget(self.project_card)
+        self.check_update_button = PushButton(tr("检查更新"), self.update_actions)
+        self.update_action_layout = QHBoxLayout(self.update_actions)
+        self.update_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.update_action_layout.setSpacing(8)
+        self.release_button = HyperlinkButton(APP_RELEASES_URL, tr("发布页"), self.update_actions)
+        self.update_action_layout.addWidget(self.check_update_button)
+        self.update_action_layout.addWidget(self.project_button)
+        self.update_action_layout.addWidget(self.release_button)
+        self.check_update_button.clicked.connect(self.updateRequested)
+        configure_button(
+            self.check_update_button, text=tr("检查更新"), tooltip=tr("检查是否有新的正式版本"),
+        )
+        configure_button(
+            self.release_button, text=tr("发布页"), tooltip=tr("在浏览器中查看发布说明和下载文件"),
         )
         self.support_card = SettingCard(
             FluentIcon.HEART,
@@ -61,14 +84,14 @@ class AboutPanel(SettingCardGroup):
         self.support_qr.setFixedSize(QSize(132, 132))
         self.support_qr.setScaledContents(True)
         self._presentations = (
-            SettingsCardPresentation(self.project_card, self.project_button),
+            SettingsCardPresentation(self.project_card, self.update_actions),
             SettingsCardPresentation(self.support_card, self.support_qr),
         )
         self.support_qr.setAccessibleName(tr("作者支持二维码"))
         self.addSettingCards([self.project_card, self.support_card])
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)
-        self._refresh_typography()
+        self.set_update_snapshot(UpdateSnapshot())
 
     def _refresh_typography(self, *_args) -> None:
         """独立嵌入时也响应字号与主题，控件仍由本组的 QObject 树释放。"""
@@ -79,35 +102,110 @@ class AboutPanel(SettingCardGroup):
         for presentation in self._presentations:
             apply_setting_text_style(presentation.card.titleLabel, FontRole.UI)
             apply_setting_text_style(presentation.card.contentLabel, FontRole.UI_SMALL)
-        apply_font_role(self.project_button, FontRole.UI)
-        # HyperlinkCard 的第三方 QSS 固定按钮为 14px；只覆盖字号并保留
-        # 原生链接配色及项目焦点样式，避免大字号下仍出现一枚微小链接。
-        refresh_fluent_widget_style(self.project_button)
+        for button in (self.project_button, self.check_update_button, self.release_button):
+            self._style_action_button(button)
+        self.reflow(self.width())
+        self.layoutChanged.emit()
+
+    @staticmethod
+    def _style_action_button(button: QAbstractButton) -> None:
+        """让原生操作跟随项目字号，保留参考界面的配色、悬停和焦点样式。"""
+
+        apply_font_role(button, FontRole.UI)
+        # SettingCard 的第三方 QSS 固定按钮为 14px；局部覆盖字号，
+        # 避免大字号下操作仍缩成小字，同时保留原生样式和项目焦点规则。
+        refresh_fluent_widget_style(button)
         font = BaseStyles.font_for_role(FontRole.UI)
         family = font.family().replace("'", "\\'")
         font_rule = (
-            f"HyperlinkButton {{ font-family: '{family}'; "
+            f"{type(button).__name__} {{ font-family: '{family}'; "
             f"font-size: {font.pointSizeF()}pt; }}"
         )
         setCustomStyleSheet(
-            self.project_button,
-            str(self.project_button.property("lightCustomQss") or "") + font_rule,
-            str(self.project_button.property("darkCustomQss") or "") + font_rule,
+            button,
+            str(button.property("lightCustomQss") or "") + font_rule,
+            str(button.property("darkCustomQss") or "") + font_rule,
         )
-        self.project_button.ensurePolished()
-        self.project_button.setMaximumHeight(16777215)
-        self.project_button.setMinimumHeight(
-            max(32, self.project_button.fontMetrics().height() + 14)
+        button.ensurePolished()
+        button.setMaximumHeight(16777215)
+        button.setMinimumHeight(
+            max(32, button.fontMetrics().height() + 14)
         )
-        self.reflow(self.width())
+
+    @Slot(object)  # type: ignore[reportArgumentType]  # PySide6 的 Slot stub 未计入方法 self。
+    def set_update_snapshot(self, snapshot: UpdateSnapshot) -> None:
+        """只呈现检查器已校验的状态；改文案后重新测量卡片和设置页滚动范围。"""
+
+        lines = [self._app_description]
+        if snapshot.status == "idle":
+            lines.append(tr("点击检查最新正式版"))
+        elif snapshot.status == "checking":
+            lines.append(tr("正在检查更新…"))
+        elif snapshot.status == "error":
+            errors = {
+                "network": tr("检查失败：网络连接不可用，请稍后重试"),
+                "tls": tr("无法验证安全连接，请检查系统时间或网络设置"),
+                "timeout": tr("检查更新超时，请稍后重试"),
+                "rate_limited": tr("访问过于频繁，请稍后重试或查看发布页"),
+                "unavailable": tr("更新服务暂不可用，请稍后重试或查看发布页"),
+                "invalid_response": tr("无法识别版本信息，请查看发布页"),
+            }
+            lines.append(errors.get(snapshot.error, tr("检查更新失败，请稍后重试")))
+            if snapshot.release is not None:
+                lines.append(tr("上次检查的版本：{version}").format(version=snapshot.release.version))
+        elif snapshot.release is not None:
+            if snapshot.status == "available":
+                lines.append(tr("发现新版本 {version} · 发布于 {date}").format(
+                    version=snapshot.release.version,
+                    # 发布日沿用服务端时区，避免平台本地时间转换拒绝边界年份。
+                    date=snapshot.release.published_at.date().isoformat(),
+                ))
+            elif snapshot.status == "current":
+                lines.append(tr("当前已是最新正式版"))
+            else:
+                lines.append(tr("当前版本高于公开正式版 {version}").format(
+                    version=snapshot.release.version,
+                ))
+            if snapshot.checked_at is not None:
+                lines.append(tr("检查时间：{time}").format(
+                    time=snapshot.checked_at.astimezone().strftime("%Y-%m-%d %H:%M"),
+                ))
+        content = "\n".join(lines)
+        self.project_card.setContent(content)
+        self.update_actions.setAccessibleDescription(content)
+        configure_button(
+            self.check_update_button,
+            text=tr("正在检查…") if snapshot.status == "checking" else tr("检查更新"),
+            tooltip=tr("检查是否有新的正式版本") if snapshot.can_check else tr("请稍后再检查"),
+        )
+        self.check_update_button.setEnabled(snapshot.can_check)
+        self.release_button.setUrl(snapshot.release.url if snapshot.release else APP_RELEASES_URL)
+        configure_button(
+            self.release_button,
+            text=tr("前往下载") if snapshot.status == "available" else tr("发布页"),
+            tooltip=tr("在浏览器中查看发布说明和下载文件"),
+        )
+        self._refresh_typography()
 
     def reflow(self, width: int) -> None:
         """使用现有卡片度量，让短窗可以滚动到完整主页按钮和二维码。"""
 
+        action_width = (
+            sum(button.sizeHint().width() for button in (
+                self.check_update_button, self.project_button, self.release_button,
+            )) + 2 * self.update_action_layout.spacing()
+        )
+        self.update_action_layout.setDirection(
+            QBoxLayout.Direction.TopToBottom if action_width > max(1, width - 64)
+            else QBoxLayout.Direction.LeftToRight
+        )
+        self.update_action_layout.invalidate()
         for presentation in self._presentations:
             presentation.reflow(width)
         cards_height = sum(item.card.height() for item in self._presentations)
-        self.setFixedHeight(cards_height + 2 + self.titleLabel.height() + 12)
+        self.setFixedHeight(
+            cards_height + max(0, len(self._presentations) - 1) * 2 + self.titleLabel.height() + 12
+        )
         self.updateGeometry()
 
     def resizeEvent(self, event) -> None:

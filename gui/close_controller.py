@@ -146,6 +146,9 @@ class CloseController:
 
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
+        app_update = getattr(self._frame, "_app_update", None)
+        if app_update is not None:
+            app_update.prepare_shutdown()
         environment = getattr(self._frame, "_adb_environment", None)
         if environment is not None:
             environment.prepare_shutdown()

@@ -1098,6 +1098,7 @@ class SettingsPage(ScrollArea):
         )
 
         self.about_panel = AboutPanel(view)
+        self.about_panel.layoutChanged.connect(self._reflow_settings)
 
         self.expand_layout.addWidget(general)
         self.expand_layout.addWidget(appearance)

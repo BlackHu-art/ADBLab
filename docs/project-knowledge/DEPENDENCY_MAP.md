@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-09
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -28,12 +28,16 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 依赖 | 实际用途 | 证据/备注 |
 | --- | --- | --- |
-| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查 | `requirements.txt`、`gui/`、`models/adb_model.py` |
+| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`adblab/presentation/qt_app_update.py` |
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
 | PySide6-Fluent-Widgets (qfluentwidgets) | 窗口、导航、控件、主题和消息 | `requirements.txt`、`gui/`；许可记录见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) |
 | XlsxWriter 移植副本 | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
+
+更新检查匿名读取 GitHub 公共 Releases API，仓库与 URL 统一来自 `utils/app_metadata.py`；
+复用现有 PySide6.QtNetwork 和平台 TLS 后端，不引入独立 HTTP 依赖或客户端令牌。
+用户流程见 [BUSINESS_FLOW](BUSINESS_FLOW.md#11-应用更新检查)。
 
 ### Fluent 运行时来源边界
 

@@ -38,6 +38,7 @@ from qfluentwidgets import (
 from shiboken6 import isValid
 
 from adblab.application.supervision import TaskStopResult
+from adblab.presentation.qt_app_update import QtAppUpdate
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from controllers import ADBController
 from core.exec import CREATE_NEW_CONSOLE, CommandRunner, ProcessRunner, adb_runtime
@@ -1114,6 +1115,9 @@ class MainFrame(FluentWindow):
             parent=self,
         )
         self._settings_page = SettingsPage(self, self)
+        self._app_update = QtAppUpdate(self)
+        self._settings_page.about_panel.updateRequested.connect(self._app_update.check)
+        self._app_update.changed.connect(self._settings_page.about_panel.set_update_snapshot)
         self._home_page = HomePage(self, self)
         self._sync_material_surface_styles()
 

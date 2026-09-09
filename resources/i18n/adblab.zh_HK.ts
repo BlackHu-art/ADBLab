@@ -5830,5 +5830,99 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>请先选择设备再使用远程控制</source>
             <translation>請先選擇裝置再使用遠端控制</translation>
         </message>
+        <message>
+            <source>检查更新</source>
+            <translation>檢查更新</translation>
+        </message>
+        <message>
+            <source>软件更新</source>
+            <translation>軟體更新</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}
+点击检查最新正式版</source>
+            <translation>目前版本 {version}
+點擊檢查最新正式版</translation>
+        </message>
+        <message>
+            <source>发布页</source>
+            <translation>發佈頁</translation>
+        </message>
+        <message>
+            <source>检查是否有新的正式版本</source>
+            <translation>檢查是否有新的正式版本</translation>
+        </message>
+        <message>
+            <source>在浏览器中查看发布说明和下载文件</source>
+            <translation>在瀏覽器中查看發佈說明和下載檔案</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}</source>
+            <translation>目前版本 {version}</translation>
+        </message>
+        <message>
+            <source>点击检查最新正式版</source>
+            <translation>點擊檢查最新正式版</translation>
+        </message>
+        <message>
+            <source>正在检查更新…</source>
+            <translation>正在檢查更新…</translation>
+        </message>
+        <message>
+            <source>检查失败：网络连接不可用，请稍后重试</source>
+            <translation>檢查失敗：網路連線無法使用，請稍後重試</translation>
+        </message>
+        <message>
+            <source>无法验证安全连接，请检查系统时间或网络设置</source>
+            <translation>無法驗證安全連線，請檢查系統時間或網路設定</translation>
+        </message>
+        <message>
+            <source>检查更新超时，请稍后重试</source>
+            <translation>檢查更新逾時，請稍後重試</translation>
+        </message>
+        <message>
+            <source>访问过于频繁，请稍后重试或查看发布页</source>
+            <translation>存取過於頻繁，請稍後重試或查看發佈頁</translation>
+        </message>
+        <message>
+            <source>更新服务暂不可用，请稍后重试或查看发布页</source>
+            <translation>更新服務暫時無法使用，請稍後重試或查看發佈頁</translation>
+        </message>
+        <message>
+            <source>无法识别版本信息，请查看发布页</source>
+            <translation>無法識別版本資訊，請查看發佈頁</translation>
+        </message>
+        <message>
+            <source>检查更新失败，请稍后重试</source>
+            <translation>檢查更新失敗，請稍後重試</translation>
+        </message>
+        <message>
+            <source>上次检查的版本：{version}</source>
+            <translation>上次檢查的版本：{version}</translation>
+        </message>
+        <message>
+            <source>发现新版本 {version} · 发布于 {date}</source>
+            <translation>發現新版本 {version} · 發佈於 {date}</translation>
+        </message>
+        <message>
+            <source>当前已是最新正式版</source>
+            <translation>目前已是最新正式版</translation>
+        </message>
+        <message>
+            <source>当前版本高于公开正式版 {version}</source>
+            <translation>目前版本高於公開正式版 {version}</translation>
+        </message>
+        <message>
+            <source>检查时间：{time}</source>
+            <translation>檢查時間：{time}</translation>
+        </message>
+        <message>
+            <source>请稍后再检查</source>
+            <translation>請稍後再檢查</translation>
+        </message>
+        <message>
+            <source>前往下载</source>
+            <translation>前往下載</translation>
+        </message>
     </context>
 </TS>

@@ -5830,5 +5830,99 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>请先选择设备再使用远程控制</source>
             <translation>请先选择设备再使用远程控制</translation>
         </message>
+        <message>
+            <source>检查更新</source>
+            <translation>检查更新</translation>
+        </message>
+        <message>
+            <source>软件更新</source>
+            <translation>软件更新</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}
+点击检查最新正式版</source>
+            <translation>当前版本 {version}
+点击检查最新正式版</translation>
+        </message>
+        <message>
+            <source>发布页</source>
+            <translation>发布页</translation>
+        </message>
+        <message>
+            <source>检查是否有新的正式版本</source>
+            <translation>检查是否有新的正式版本</translation>
+        </message>
+        <message>
+            <source>在浏览器中查看发布说明和下载文件</source>
+            <translation>在浏览器中查看发布说明和下载文件</translation>
+        </message>
+        <message>
+            <source>当前版本 {version}</source>
+            <translation>当前版本 {version}</translation>
+        </message>
+        <message>
+            <source>点击检查最新正式版</source>
+            <translation>点击检查最新正式版</translation>
+        </message>
+        <message>
+            <source>正在检查更新…</source>
+            <translation>正在检查更新…</translation>
+        </message>
+        <message>
+            <source>检查失败：网络连接不可用，请稍后重试</source>
+            <translation>检查失败：网络连接不可用，请稍后重试</translation>
+        </message>
+        <message>
+            <source>无法验证安全连接，请检查系统时间或网络设置</source>
+            <translation>无法验证安全连接，请检查系统时间或网络设置</translation>
+        </message>
+        <message>
+            <source>检查更新超时，请稍后重试</source>
+            <translation>检查更新超时，请稍后重试</translation>
+        </message>
+        <message>
+            <source>访问过于频繁，请稍后重试或查看发布页</source>
+            <translation>访问过于频繁，请稍后重试或查看发布页</translation>
+        </message>
+        <message>
+            <source>更新服务暂不可用，请稍后重试或查看发布页</source>
+            <translation>更新服务暂不可用，请稍后重试或查看发布页</translation>
+        </message>
+        <message>
+            <source>无法识别版本信息，请查看发布页</source>
+            <translation>无法识别版本信息，请查看发布页</translation>
+        </message>
+        <message>
+            <source>检查更新失败，请稍后重试</source>
+            <translation>检查更新失败，请稍后重试</translation>
+        </message>
+        <message>
+            <source>上次检查的版本：{version}</source>
+            <translation>上次检查的版本：{version}</translation>
+        </message>
+        <message>
+            <source>发现新版本 {version} · 发布于 {date}</source>
+            <translation>发现新版本 {version} · 发布于 {date}</translation>
+        </message>
+        <message>
+            <source>当前已是最新正式版</source>
+            <translation>当前已是最新正式版</translation>
+        </message>
+        <message>
+            <source>当前版本高于公开正式版 {version}</source>
+            <translation>当前版本高于公开正式版 {version}</translation>
+        </message>
+        <message>
+            <source>检查时间：{time}</source>
+            <translation>检查时间：{time}</translation>
+        </message>
+        <message>
+            <source>请稍后再检查</source>
+            <translation>请稍后再检查</translation>
+        </message>
+        <message>
+            <source>前往下载</source>
+            <translation>前往下载</translation>
+        </message>
     </context>
 </TS>
