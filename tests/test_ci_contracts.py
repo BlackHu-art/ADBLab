@@ -1,6 +1,9 @@
 import ast
 import re
+import shlex
 from pathlib import Path
+
+import yaml
 
 WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
@@ -98,6 +101,32 @@ def test_build_workflow_does_not_run_pytest_during_packaging():
     assert "python -m pytest" not in workflow
     assert "Run fast tests" not in workflow
     assert "Run tests" not in workflow
+
+
+def test_linux_build_installs_egl_before_qt_self_check():
+    """Linux 构建必须先补齐 Qt 导入所需的 EGL，且安装步骤只作用于 Linux。"""
+
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    egl_steps = [
+        (index, step) for index, step in enumerate(steps)
+        if "libegl1" in step.get("run", "")
+    ]
+    assert len(egl_steps) == 1, "Linux build is missing its EGL system dependency"
+    install_index, install_step = egl_steps[0]
+    assert install_step.get("if") == "runner.os == 'Linux'"
+    assert install_step.get("shell") == "bash"
+    commands = [shlex.split(line) for line in install_step["run"].splitlines() if line.strip()]
+    assert ["sudo", "apt-get", "update"] in commands
+    assert any(
+        command[:3] == ["sudo", "apt-get", "install"]
+        and "-y" in command and "libegl1" in command
+        for command in commands
+    )
+    qt_import_index = next(
+        index for index, step in enumerate(steps)
+        if "python main.py --self-check packaging" in step.get("run", "")
+    )
+    assert install_index < qt_import_index
 
 
 def test_windows_build_collects_current_scrcpy_bundle():

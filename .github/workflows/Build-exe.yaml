@@ -93,6 +93,13 @@ jobs:
         shell: bash
         run: pip install -r requirements-build.txt
 
+      - name: Install Linux Qt system dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1
+
       - name: Install static analysis dependencies
         if: runner.os == 'Windows'
         shell: bash

@@ -175,7 +175,9 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
 `.github/workflows/Build-exe.yaml` 在 `main` push 或手动触发时：
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
-2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。
+2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
+   通过 apt 安装 `libegl1` 及其依赖，提供 Qt/Fluent 导入所需的 `libEGL.so.1`；仅安装 Python wheel
+   无法补齐该系统库。
 3. Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
    `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
