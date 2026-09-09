@@ -50,21 +50,22 @@ class FileExplorerView:
         if not self._frame._can_operate():
             return
         menu = self._frame._create_context_menu()
-        pull = add_menu_action(menu, tr("Pull File"))
+        # RoundMenu 非阻塞展示且不返回所选动作；业务入口必须连接到动作信号。
+        add_menu_action(menu, tr("Pull File"), callback=lambda: self._frame._pull_file(name))
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         viewable = ext in self._frame.TEXT_EXTS or ext in self._frame.IMAGE_EXTS
-        view = add_menu_action(menu, tr("View")) if viewable else None
-        act = menu.exec(
+        if viewable:
+            add_menu_action(
+                menu, tr("View"),
+                callback=lambda: self._view_file(name, ext in self._frame.IMAGE_EXTS),
+            )
+        menu.exec(
             self._frame.table.mapToGlobal(
                 self._frame.table.visualItemRect(
                     self._frame.table.item(self._frame.table.currentRow(), self._frame.NAME_COL)
                 ).center()
             )
         )
-        if act == pull:
-            self._frame._pull_file(name)
-        elif view and act == view:
-            self._view_file(name, ext in self._frame.IMAGE_EXTS)
 
     # ── 查看与编辑文件 ──────────────────────────────────────────────────
 

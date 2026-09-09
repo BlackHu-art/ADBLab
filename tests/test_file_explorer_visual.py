@@ -1,6 +1,7 @@
 """文件页嵌入标题、图标类型列及保留的浏览语义回归。"""
 
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,7 +12,7 @@ from PySide6.QtCore import QAbstractAnimation, QSize, Qt
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
-from qfluentwidgets import CommandBar
+from qfluentwidgets import CommandBar, RoundMenu
 
 from gui.features.file_explorer import FileExplorerPage
 from gui.styles import BaseStyles
@@ -24,6 +25,139 @@ LISTING = "\n".join([
     "-rw-r--r-- 1 shell shell 4096 Sep 05 demo.png",
     "-rw-r--r-- 1 shell shell 1024 Sep 05 notes.txt",
 ])
+
+
+@pytest.fixture
+def file_menu_page(qt_application, monkeypatch, tmp_path):
+    """保留真实页面、菜单及结果连接，仅截住外部传输和系统保存窗口。"""
+    submitted = []
+    for worker_type in ("ADBWorker", "TransferWorker"):
+        monkeypatch.setattr(
+            f"models.file_explorer_worker.{worker_type}.start",
+            lambda worker: submitted.append(worker),
+        )
+    monkeypatch.setattr(
+        "gui.dialogs.file_explorer_ops.FileExplorerOps._global_save_dir",
+        staticmethod(lambda: str(tmp_path)),
+    )
+    monkeypatch.setattr(
+        "gui.dialogs.file_explorer_ops.QFileDialog.getSaveFileName",
+        lambda _parent, _title, path: (path, ""),
+    )
+    page = FileExplorerPage(device_ip="demo-a")
+    page.resize(900, 700)
+    page._on_ls_result(LISTING, False)
+    page.show()
+    qt_application.processEvents()
+    try:
+        yield page, submitted
+    finally:
+        page.close()
+        qt_application.processEvents()
+
+
+def _open_file_menu(page, name, qt_application):
+    row = next(row for row in range(page.table.rowCount()) if page._file_name_at(row) == name)
+    point = page.table.visualItemRect(page.table.item(row, page.NAME_COL)).center()
+    QTest.mouseClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+    QTest.mouseDClick(page.table.viewport(), Qt.MouseButton.LeftButton, pos=point)
+    menus = [menu for menu in page.findChildren(RoundMenu) if menu.isVisible()]
+    assert len(menus) == 1
+    menu = menus[0]
+    wait_until(
+        qt_application, lambda: menu.aniManager.ani.state() == QAbstractAnimation.State.Stopped,
+    )
+    return menu
+
+
+@pytest.mark.parametrize("name, action_index", [
+    ("notes.txt", 0), ("sample.apk", 0), ("notes.txt", 1), ("demo.png", 1),
+])
+@pytest.mark.parametrize("failed", [False, True])
+def test_file_double_click_menu_reaches_transfer_or_inline_preview(
+    file_menu_page, qt_application, tmp_path, name, action_index, failed,
+):
+    page, submitted = file_menu_page
+    menu = _open_file_menu(page, name, qt_application)
+    assert menu.view.count() == (1 if name == "sample.apk" else 2)
+    assert submitted == []
+    point = menu.view.visualItemRect(menu.view.item(action_index)).center()
+    QTest.mouseClick(menu.view.viewport(), Qt.MouseButton.LeftButton, pos=point)
+    assert len(submitted) == 1
+    worker = submitted[0]
+    assert worker.device_ip == "demo-a"
+    remote_path = f"/storage/emulated/0/{name}"
+    if action_index == 0:
+        assert worker.args == ["pull", remote_path, str(tmp_path / name)]
+        worker.result_ready.emit("permission denied" if failed else "OK", failed, worker.args[-1])
+        qt_application.processEvents()
+        assert len(submitted) == (1 if failed else 2)  # 只有下载成功才刷新目录。
+        if failed:
+            assert "permission denied" in page.status_bar.text()
+        else:
+            assert page._directory_loading
+            assert submitted[1].args[0] == "shell"
+            assert shlex.split(submitted[1].args[1]) == ["ls", "-la", "/storage/emulated/0", "2>&1"]
+    elif name == "notes.txt":
+        assert worker.args[0] == "shell"
+        assert shlex.split(worker.args[1]) == ["head", "-c", "2097153", remote_path]
+        worker.result_ready.emit("permission denied" if failed else "file contents", failed)
+        qt_application.processEvents()
+        expected = page.preview_output if failed else page.preview_text_page
+        assert page.preview_stack.currentWidget() is expected
+        if not failed:
+            assert page.preview_text_edit.toPlainText() == "file contents"
+    else:
+        assert worker.args[:2] == ["pull", remote_path]
+        local_path = worker.args[-1]
+        image = QPixmap(24, 16)
+        image.fill(Qt.GlobalColor.blue)
+        assert image.save(local_path)
+        worker.result_ready.emit("permission denied" if failed else "OK", failed, local_path)
+        qt_application.processEvents()
+        expected = page.preview_output if failed else page.preview_image
+        assert page.preview_stack.currentWidget() is expected
+        if not failed:
+            assert not page.preview_image._source_pixmap.isNull()
+        assert not Path(local_path).exists()
+    if failed and action_index == 1:
+        assert page.preview_output.property("previewError")
+        assert "permission denied" in page.preview_output.toPlainText()
+
+
+@pytest.mark.parametrize("action_index", [0, 1])
+@pytest.mark.parametrize("revoke", ["selection", "close"])
+def test_file_double_click_menu_rechecks_admission_after_open(
+    file_menu_page, qt_application, action_index, revoke,
+):
+    page, submitted = file_menu_page
+    menu = _open_file_menu(page, "notes.txt", qt_application)
+    action = menu.view.item(action_index).data(Qt.ItemDataRole.UserRole)
+    if revoke == "selection":
+        page.set_device_selected(False)
+    else:
+        page.close()
+    action.trigger()
+    assert submitted == []
+
+
+def test_file_double_click_menu_dismissal_does_not_start_work(file_menu_page, qt_application):
+    page, submitted = file_menu_page
+    menu = _open_file_menu(page, "notes.txt", qt_application)
+    menu.close()
+    assert submitted == []
+
+
+def test_file_double_click_menu_cancel_save_does_not_download(
+    file_menu_page, qt_application, monkeypatch,
+):
+    page, submitted = file_menu_page
+    save_dialog = Mock(return_value=("", ""))
+    monkeypatch.setattr("gui.dialogs.file_explorer_ops.QFileDialog.getSaveFileName", save_dialog)
+    menu = _open_file_menu(page, "notes.txt", qt_application)
+    menu.view.item(0).data(Qt.ItemDataRole.UserRole).trigger()
+    save_dialog.assert_called_once()
+    assert submitted == []
 
 
 @pytest.mark.integration
