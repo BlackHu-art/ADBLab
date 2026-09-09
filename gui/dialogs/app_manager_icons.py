@@ -52,6 +52,15 @@ class AppManagerIcons(QObject):
         else:
             self._timer.stop()
 
+    def prioritize_visible(self) -> bool:
+        """可见图标未完成时暂缓详情补全，避免两类设备查询争用首屏时间。"""
+        if not self._allowed():
+            return False
+        if self._worker is not None or self._visible_packages():
+            self.schedule()
+            return True
+        return False
+
     def pause(self) -> None:
         """停止继续加载，已接收的图标保留；在途 worker 由页面原有关闭屏障管理。"""
         self._timer.stop()
@@ -146,3 +155,5 @@ class AppManagerIcons(QObject):
         self._pending.clear()
         self._worker = None
         self.schedule()
+        if not self.page._closing:
+            self.page._schedule_visible_detail_load()

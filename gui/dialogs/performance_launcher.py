@@ -70,7 +70,9 @@ class CurrentPackageWorker(QThread):
         if self.isInterruptionRequested():
             return
         try:
-            result = detect_current_package(self.device_ip)
+            result = detect_current_package(
+                self.device_ip, cancelled=self.isInterruptionRequested,
+            )
         except Exception as exc:
             if not self.isInterruptionRequested():
                 self.log_ready.emit("ERROR", f"Get current package failed: {exc}")

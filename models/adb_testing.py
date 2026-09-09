@@ -7,6 +7,7 @@ import logging
 import os
 import random
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ from datetime import datetime
 
 from PySide6.QtGui import QImageReader
 
+from core.adb_query import query_timeout
 from core.exec import CommandRunner, ProcessRunner
 from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
@@ -139,8 +141,15 @@ class ADBTesting(ADBModelCore):
                 self._abort_condition.wait(remaining)
             return True
 
-    def _get_current_package(self, device_ip: str) -> str:
-        result = detect_current_package(device_ip)
+    def _get_current_package(
+        self, device_ip: str, *, timeout: float = 15,
+        cancelled: Callable[[], bool] | None = None, deadline: float | None = None,
+    ) -> str:
+        """前台读取继承运行批次的取消与截止时间，独立调用也响应模型关闭。"""
+        result = detect_current_package(
+            device_ip, timeout=timeout, deadline=deadline,
+            cancelled=lambda: self.is_shutting_down() or bool(cancelled and cancelled()),
+        )
         if result.get("success"):
             return result.get("package_name", "")
         return ""
@@ -153,9 +162,35 @@ class ADBTesting(ADBModelCore):
         return error.startswith("timeout(") or "timed out" in error
 
     def _probe_current_package(self, device_ip: str) -> dict:
-        """探测前台包名；超时、断连或解析失败时按失败关闭策略返回。"""
+        """前台与连通探针共享截止时间和本设备批次取消，不查询已取消或替换的批次。"""
+        deadline = time.monotonic() + 15
+        with self._abort_condition:
+            owned_state = self._monkey_batches.get(device_ip)
+
+        def stopped() -> bool:
+            if self.is_shutting_down():
+                return True
+            with self._abort_condition:
+                return (
+                    device_ip in self._aborted_devices or "*" in self._aborted_devices
+                    or (owned_state is not None and (
+                        owned_state.cancelled
+                        or self._monkey_batches.get(device_ip) is not owned_state
+                    ))
+                )
+
+        def cancelled_result() -> dict:
+            return {
+                "success": False, "package_name": "", "timed_out": False,
+                "cancelled": True, "error": "Aborted by user",
+            }
+
+        if stopped():
+            return cancelled_result()
         try:
-            package_name = self._get_current_package(device_ip)
+            package_name = self._get_current_package(
+                device_ip, timeout=15, deadline=deadline, cancelled=stopped,
+            )
         except subprocess.TimeoutExpired as exc:
             return {
                 "success": False,
@@ -171,6 +206,14 @@ class ADBTesting(ADBModelCore):
                 "error": str(exc),
             }
 
+        if stopped():
+            return cancelled_result()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return {
+                "success": False, "package_name": "", "timed_out": True,
+                "error": "Timeout(15s)",
+            }
         if package_name:
             return {
                 "success": True,
@@ -183,8 +226,10 @@ class ADBTesting(ADBModelCore):
         # CommandRunner 的真实成功或超时状态。
         connectivity = CommandRunner.run(
             ["adb", "-s", device_ip, "shell", "echo", "ok"],
-            timeout=5,
+            timeout=min(query_timeout(device_ip, 5), remaining), cancelled=stopped,
         )
+        if stopped():
+            return cancelled_result()
         timed_out = self._command_timed_out(connectivity)
         error = str(getattr(connectivity, "error", "") or "").strip()
         if getattr(connectivity, "success", False):
@@ -260,7 +305,7 @@ class ADBTesting(ADBModelCore):
                     )
 
     def _capture_legacy_screenshot(self, device_ip, temporary, deadline, cancelled):
-        """使用本任务独占的设备文件，并在剩余预算内尝试清理；不重启服务。"""
+        """使用本任务独占的设备文件；必要清理独立有界，关闭取消仍由模型拥有。"""
         remote = f"/sdcard/adblab_screenshot_{uuid.uuid4().hex}.png"
         try:
             result = CommandRunner.run(
@@ -274,12 +319,11 @@ class ADBTesting(ADBModelCore):
                 timeout=max(0, deadline - time.monotonic()), cancelled=cancelled,
             )
         finally:
-            remaining = deadline - time.monotonic()
-            if remaining > 0:
-                CommandRunner.run(
-                    ["adb", "-s", device_ip, "shell", "rm", "-f", remote],
-                    timeout=min(1.0, remaining), cancelled=self.is_shutting_down,
-                )
+            # 用户取消或采集耗尽预算后仍回收唯一临时文件；模型关闭可中断本次清理。
+            CommandRunner.run(
+                ["adb", "-s", device_ip, "shell", "rm", "-f", remote],
+                timeout=query_timeout(device_ip, 5), cancelled=self.is_shutting_down,
+            )
 
     @staticmethod
     def _is_valid_png(path: str, *, decode: bool = False) -> bool:
@@ -297,12 +341,23 @@ class ADBTesting(ADBModelCore):
 
     # 设备日志
 
+    @staticmethod
+    def _oneshot_logcat_command(device_ip: str, option: str) -> list[str]:
+        """保留 adb logcat 的主机标签过滤环境和设备默认缓冲区，仅允许有限操作。"""
+        if option not in {"-c", "-d"}:
+            raise ValueError("Invalid one-shot logcat option")
+        # 与 AOSP 客户端一样传递 ANDROID_LOG_TAGS；作为设备 shell 值引用以防命令注入。
+        tags = shlex.quote(os.environ.get("ANDROID_LOG_TAGS", ""))
+        return ["adb", "-s", device_ip, "shell", f"ANDROID_LOG_TAGS={tags}", "logcat", option]
+
     @async_command(long_running=True)
     def retrieve_device_logs_async(self, device_ip: str, log_path: str) -> dict:
         try:
-            r = self._run(["adb", "-s", device_ip, "logcat", "-d"])
+            r = self._run_readonly(self._oneshot_logcat_command(device_ip, "-d"), timeout=30)
             if not r["success"]:
                 return {"success": False, "device_ip": device_ip, "error": r["error"]}
+            if self.is_shutting_down():
+                return {"success": False, "device_ip": device_ip, "error": "Cancelled"}
             atomic_write_text(log_path, r["output"])
             return {"success": True, "device_ip": device_ip, "log_path": log_path}
         except Exception as e:
@@ -310,7 +365,7 @@ class ADBTesting(ADBModelCore):
 
     @async_command
     def cleanup_device_logs_async(self, device_ip: str) -> dict:
-        r = self._run(["adb", "-s", device_ip, "logcat", "-c"])
+        r = self._run(self._oneshot_logcat_command(device_ip, "-c"), timeout=30)
         if not r["success"]:
             return {"success": False, "device_ip": device_ip, "error": r["error"]}
         return {"success": True, "device_ip": device_ip, "output": r["output"]}
@@ -390,7 +445,10 @@ class ADBTesting(ADBModelCore):
             self._remember_monkey_archive_result(result)
             os.makedirs(log_dir, exist_ok=True)
             log("Clearing previous device logs...")
-            self._run(["adb", "-s", device_ip, "logcat", "-c"])
+            cleared = self._run(self._oneshot_logcat_command(device_ip, "-c"), timeout=30)
+            if not cleared["success"]:
+                result["error"] = cleared.get("error") or "Failed to clear device logs"
+                return result
 
             log(f"Starting logcat collection -> {logcat_log_path}")
             logcat_fh = open(logcat_log_path, "w", encoding="utf-8")
@@ -466,6 +524,9 @@ class ADBTesting(ADBModelCore):
                     result["error"] = "Aborted by user"
                     return result
                 probe = self._probe_current_package(device_ip)
+                if probe.get("cancelled") or self._wait_for_monkey_abort(device_ip, 0):
+                    result["error"] = "Aborted by user"
+                    break
                 if not probe["success"]:
                     probe_failures += 1
                     failure_kind = "timed out" if probe["timed_out"] else "failed"

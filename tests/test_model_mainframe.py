@@ -732,7 +732,8 @@ def test_main_frame_signal_maps_keep_expected_coverage():
     connected_names = [signal._mock_name for signal, _handler in signal_map]
     assert set(connected_names) == set(ACTION_SIGNALS)
     assert len(connected_names) == len(set(connected_names))
-    assert (lp.system_service_requested, ac.run_shell_command) in signal_map
+    assert (lp.system_service_requested, ac.system_service) in signal_map
+    assert (lp.shell_command_requested, ac.run_shell_command) in signal_map
     assert (lp.get_program_requested, frame._request_current_package) in signal_map
     assert (lp.get_program_requested, ac.get_current_package) not in signal_map
     package_handler = next(

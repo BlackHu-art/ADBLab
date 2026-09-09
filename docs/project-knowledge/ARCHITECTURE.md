@@ -101,6 +101,8 @@ flowchart LR
   用来拒绝错代或晚到结果。关闭时先封闭新任务准入，尚未执行的方法体返回取消结果。
   明确只读查询通过 `_run_readonly()` 把模型关闭传递到执行器；后台关闭线程等待 Executor
   和模型线程池真正退出，活动短命令也纳入监督，超时保留 residual。
+  `pool_attribute` 可为指定方法选择模型拥有的独立池；录屏等待及保存使用 `ADBAdvanced` 的
+  双槽 `_record_pool`，由其 `wait_for_commands()` 纳入关闭等待，避免占满通用传输长任务池。
 - 通用操作结果另以 `ActionJob` 固定 request/job/target 身份，`ActionEnvelope` 在原载荷外包装返回；
   它与 `OperationMetadata` 可以同时存在。Controller 先校验结果准入，在原请求作用域内处理业务
   返回和续发命令，再归并 `ActionResults`；已接入 Operation 的单元以校验后的业务终态为准，
@@ -124,6 +126,7 @@ flowchart LR
 | --- | --- |
 | Qt 主线程 | 控件、信号槽和渲染；后台结果经 Qt 信号回主线程 |
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
+| `ADBAdvanced._record_pool` | 双槽池等待录屏完成并保存，超过槽位的保存请求排队；模型关闭同时等待运行与排队任务收口 |
 | `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |

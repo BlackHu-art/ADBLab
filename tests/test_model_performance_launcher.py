@@ -1,6 +1,7 @@
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
 import os
+import threading
 import time
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -16,6 +17,41 @@ from adblab.application.supervision import StopDisposition, TaskSupervisor
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles, theme
 from gui.styles.typography import FontRole
+
+
+def test_performance_current_package_interruption_cancels_query_and_joins():
+    from PySide6.QtCore import Qt
+
+    from core.exec import CommandResult
+    from gui.dialogs.performance_launcher import CurrentPackageWorker
+
+    worker = CurrentPackageWorker("device-1")
+    entered, release = threading.Event(), threading.Event()
+    callbacks, packages, logs = [], [], []
+    worker.package_ready.connect(packages.append, Qt.ConnectionType.DirectConnection)
+    worker.log_ready.connect(lambda *args: logs.append(args), Qt.ConnectionType.DirectConnection)
+
+    def run(_command, *, cancelled=None, **_kwargs):
+        entered.set()
+        assert release.wait(2)
+        callbacks.append(bool(cancelled and cancelled()))
+        return CommandResult(False, error="cancelled")
+
+    with patch("models.base.focus_detector.CommandRunner.run", side_effect=run) as command:
+        worker.start()
+        try:
+            assert entered.wait(2)
+            worker.requestInterruption()
+            release.set()
+            assert worker.wait(2000)
+            assert callbacks == [True]
+            assert command.call_count == 1
+            assert packages == logs == []
+            assert not worker.isRunning()
+        finally:
+            release.set()
+            worker.requestInterruption()
+            assert worker.wait(2000)
 
 
 def test_performance_form_keeps_field_help_out_of_adjacent_action_tips(qt_application):

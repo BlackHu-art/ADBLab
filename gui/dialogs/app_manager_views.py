@@ -286,11 +286,13 @@ class AppManagerViews:
     def _visible_detail_packages(self, limit: int = 30) -> list[str]:
         packages: list[str] = []
         if self._frame._view_mode:
+            viewport = self._frame.icon_list.viewport().rect()
             for i in range(self._frame.icon_list.count()):
                 item = self._frame.icon_list.item(i)
                 pkg = item.data(Qt.ItemDataRole.UserRole) if item else ""
                 if (
                     item and not item.isHidden() and pkg
+                    and viewport.intersects(self._frame.icon_list.visualItemRect(item))
                     and pkg not in self._frame._detail_cache
                     and pkg not in self._frame._failed_detail_packages
                 ):
@@ -343,6 +345,8 @@ class AppManagerViews:
             or not self._frame._can_operate()
             or self._frame._detail_worker_running
         ):
+            return
+        if self._frame._view_mode and self._frame._icons_controller.prioritize_visible():
             return
         packages = [
             pkg

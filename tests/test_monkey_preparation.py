@@ -221,7 +221,11 @@ def _installed_details(version="1.0"):
     ]
 
 
-def test_model_collects_each_device_version_and_limits_every_command(qt_application):
+@pytest.mark.parametrize("fast", [False, True])
+def test_model_collects_each_device_version_and_limits_every_command(
+    qt_application, monkeypatch, fast,
+):
+    monkeypatch.setattr("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=fast)))
     model = ADBApp()
     model._run = Mock(side_effect=_installed_details() + _installed_details("2.0"))
     result = ADBApp.prepare_monkey_targets_async.__wrapped__(
@@ -229,7 +233,8 @@ def test_model_collects_each_device_version_and_limits_every_command(qt_applicat
     )
     assert result["success"]
     assert [item["version_name"] for item in result["packages"]] == ["1.0", "2.0"]
-    assert all(call.kwargs["timeout"] == 5 for call in model._run.call_args_list)
+    expected_timeout = 5 if fast else 15
+    assert all(call.kwargs["timeout"] == expected_timeout for call in model._run.call_args_list)
     assert all(call.args[0][4] in {"pm", "dumpsys"} for call in model._run.call_args_list)
     model.deleteLater()
 

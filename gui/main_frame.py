@@ -2375,7 +2375,7 @@ class MainFrame(FluentWindow):
     def _system_signal_map(self, LP, AC):
         return [
             (LP.shell_command_requested, AC.run_shell_command),
-            (LP.system_service_requested, AC.run_shell_command),
+            (LP.system_service_requested, AC.system_service),
             (LP.dumpsys_service_requested, AC.dumpsys_service),
             (LP.kernel_version_requested, AC.kernel_version),
             (LP.cpu_info_requested, AC.cpu_info),

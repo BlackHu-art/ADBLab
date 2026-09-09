@@ -91,23 +91,30 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 
 
 @overload
-def async_command(method: _F, *, long_running: bool = False) -> _F: ...
+def async_command(
+    method: _F, *, long_running: bool = False, pool_attribute: str | None = None,
+) -> _F: ...
 
 
 @overload
 def async_command(
-    method: None = None, *, long_running: bool = False
+    method: None = None, *, long_running: bool = False, pool_attribute: str | None = None,
 ) -> Callable[[_F], _F]: ...
 
 
-def async_command(method=None, *, long_running: bool = False) -> Any:
+def async_command(
+    method=None, *, long_running: bool = False, pool_attribute: str | None = None,
+) -> Any:
     """将同步方法提交到 QThreadPool，并通过信号发送标准化结果。
 
     long_running=True 时提交到专用长任务池，避免长任务占满全局池导致短命令饥饿。
+    pool_attribute 可指定模型拥有的独立线程池；模型必须将其纳入关闭等待。
     """
 
     if method is None:
-        return lambda m: async_command(m, long_running=long_running)
+        return lambda m: async_command(
+            m, long_running=long_running, pool_attribute=pool_attribute,
+        )
 
     @wraps(method)
     def wrapper(self, *args, **kwargs):
@@ -146,8 +153,11 @@ def async_command(method=None, *, long_running: bool = False) -> Any:
             *args,
             **kwargs,
         )
-        pool = self.long_pool if long_running else self.thread_pool
         try:
+            pool = (
+                getattr(self, pool_attribute) if pool_attribute is not None
+                else self.long_pool if long_running else self.thread_pool
+            )
             pool.start(task)
         except Exception as exc:
             payload = attach_operation_metadata(

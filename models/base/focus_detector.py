@@ -5,6 +5,7 @@ from collections.abc import Callable
 from time import monotonic
 from typing import Protocol
 
+from core.adb_query import query_timeout
 from core.exec import CommandResult, CommandRunner
 
 _PACKAGE_RE = re.compile(r"([\w.]+(?:\.[\w.]+)+)/")
@@ -52,9 +53,11 @@ def detect_current_package(
     device_ip: str,
     runner: CommandRunnerLike = CommandRunner,
     *, timeout: float = 15, cancelled: Callable[[], bool] | None = None,
+    deadline: float | None = None,
 ) -> dict:
-    """兼容探测共享总预算；默认执行器支持在途取消，自定义执行器负责传递停止意图。"""
-    deadline = monotonic() + max(0, timeout)
+    """兼容探测不越过调用方截止时间；默认执行器可在途取消，自定义执行器负责传递停止意图。"""
+    timeout_deadline = monotonic() + max(0, timeout)
+    deadline = timeout_deadline if deadline is None else min(deadline, timeout_deadline)
     commands = [
         ["adb", "-s", device_ip, "shell", "cmd", "activity", "stack", "list"],
         [
@@ -72,10 +75,11 @@ def detect_current_package(
         remaining = deadline - monotonic()
         if remaining <= 0 or (cancelled is not None and cancelled()):
             break
+        command_timeout = min(query_timeout(device_ip, 5), remaining)
         if runner is CommandRunner and cancelled is not None:
-            result = CommandRunner.run(command, timeout=min(5, remaining), cancelled=cancelled)
+            result = CommandRunner.run(command, timeout=command_timeout, cancelled=cancelled)
         else:
-            result = runner.run(command, timeout=min(5, remaining))
+            result = runner.run(command, timeout=command_timeout)
         if cancelled is not None and cancelled():
             break
         if not result.success:

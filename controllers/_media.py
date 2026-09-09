@@ -521,17 +521,11 @@ class ADBMediaMixin(_ADBControllerBase):
                 ip, batch_id, result["remote_path"], result["filename"]
             )
             self._emit_operation(
-                "screen_record", True, f"Recording {dur}s on {ip} → {result['filename']}"
+                "screen_record", True,
+                f"Recording request submitted ({dur}s) on {ip} → {result['filename']}"
             )
-            if self.screen_records.is_stop_succeeded(ip, batch_id):
-                self._auto_pull(ip, batch_id)
-            else:
-                # 录制时长结束后预留两秒，让设备完成文件收尾再自动拉取。
-                QTimer.singleShot(
-                    (dur + 2) * 1000,
-                    self.signals,
-                    lambda ip=ip, batch_id=batch_id: self._auto_pull(ip, batch_id),
-                )
+            # 保存任务在后台等待所属进程自然结束，不用本机时长推断设备完成。
+            self._auto_pull(ip, batch_id)
         else:
             self.screen_records.finish(ip, batch_id)
             self.screen_records.clear_stop_request(ip, batch_id)
@@ -544,7 +538,7 @@ class ADBMediaMixin(_ADBControllerBase):
         """每个设备批次只提交一次录屏拉取；提交失败时立即释放终态。"""
 
         batch_id = str(info.get("batch_id", ""))
-        # Stop 结果和自动定时器都在 GUI 线程进入此入口；use case 内原子标记阻断重入。
+        # Stop 结果和启动回调都在 GUI 线程进入此入口；use case 内原子标记阻断重入。
         if not self.screen_records.mark_pull_submitted(device_ip, batch_id):
             return False
         try:
@@ -586,7 +580,7 @@ class ADBMediaMixin(_ADBControllerBase):
             if not submitted:
                 return
             self._emit_operation(
-                "screen_record", True, f"Auto-pulling recording from {device_ip}..."
+                "screen_record", True, f"Waiting for recording completion on {device_ip}..."
             )
 
     def stop_screen_record(self, devices: list, batch_id: str = ""):

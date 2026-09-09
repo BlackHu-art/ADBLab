@@ -9,6 +9,7 @@ import shlex
 import shutil
 
 from adblab.application.cancellation import CancellationError, CancellationToken
+from core.adb_query import query_timeout
 from core.exec import CommandRunner
 from utils.adb_values import normalize_android_package
 
@@ -68,7 +69,7 @@ class ADBApp(ADBModelCore):
             if not package:
                 foreground = []
                 for index, device in enumerate(targets, 1):
-                    detected = detect_current_package(device, FocusRunner())
+                    detected = detect_current_package(device, FocusRunner(), cancelled=is_cancelled)
                     if not detected.get("success"):
                         raise ValueError(f"第 {index} 台设备无法获取前台应用，请输入测试包名后重试")
                     foreground.append(normalize_android_package(detected.get("package_name", "")))
@@ -81,7 +82,7 @@ class ADBApp(ADBModelCore):
                 check_cancelled()
                 installed = self._run_readonly(
                     ["adb", "-s", device, "shell", "pm", "path", shlex.quote(package)],
-                    timeout=5,
+                    timeout=query_timeout(device, 5),
                     cancelled=is_cancelled,
                 )
                 check_cancelled()
@@ -94,7 +95,7 @@ class ADBApp(ADBModelCore):
                     raise ValueError(f"第 {index} 台设备未安装目标应用，请先安装后重试")
                 details = self._run_readonly(
                     ["adb", "-s", device, "shell", "dumpsys", "package", shlex.quote(package)],
-                    timeout=5,
+                    timeout=query_timeout(device, 5),
                     cancelled=is_cancelled,
                 )
                 check_cancelled()

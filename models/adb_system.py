@@ -20,6 +20,7 @@ class ADBSystemMixin:
     """系统级 ADB 操作 mixin；与 ADBModelCore 组合后提供 _run 执行入口。"""
 
     _run: Any
+    _run_readonly: Any
 
     # 应用权限
 
@@ -131,7 +132,7 @@ class ADBSystemMixin:
 
     @async_command
     def list_processes_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "ps", "-A"],
             timeout=10,
             device_ip=device_ip,
@@ -139,7 +140,7 @@ class ADBSystemMixin:
 
     @async_command
     def top_snapshot_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "top", "-b", "-n", "1"],
             timeout=10,
             device_ip=device_ip,
@@ -148,7 +149,7 @@ class ADBSystemMixin:
     @async_command
     def gfxinfo_async(self, device_ip: str, package: str) -> dict:
         package = normalize_android_package(package)
-        return self._run(
+        return self._run_readonly(
             [
                 "adb",
                 "-s",
@@ -166,7 +167,7 @@ class ADBSystemMixin:
 
     @async_command
     def wakelocks_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "cat", "/proc/wakelocks"],
             timeout=10,
             device_ip=device_ip,
@@ -174,7 +175,7 @@ class ADBSystemMixin:
 
     @async_command
     def netstats_detail_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "dumpsys", "netstats", "detail"],
             timeout=20,
             device_ip=device_ip,
@@ -201,7 +202,7 @@ class ADBSystemMixin:
             cmd.extend(["--where", shlex.quote(where)])
         if sort:
             cmd.extend(["--sort", shlex.quote(sort)])
-        return self._run(cmd, timeout=15, device_ip=device_ip)
+        return self._run_readonly(cmd, timeout=15, device_ip=device_ip)
 
     # 电池状态模拟
 
@@ -267,6 +268,18 @@ class ADBSystemMixin:
     # svc 系统服务开关
 
     @async_command
+    def svc_async(self, device_ip: str, service: str, action: str) -> dict:
+        """仅执行固定服务开关；写入失败直接返回，不转入任意 Shell 或重放。"""
+        if service not in {"wifi", "data", "bluetooth", "nfc"} or action not in {
+            "enable", "disable",
+        }:
+            return {"success": False, "device_ip": device_ip, "error": "Invalid svc action"}
+        return self._run(
+            ["adb", "-s", device_ip, "shell", "svc", service, action],
+            timeout=30, device_ip=device_ip, service=service, action=action,
+        )
+
+    @async_command
     def cmd_dumpsys_service_async(self, device_ip: str, service: str = "") -> dict:
         service = normalize_dumpsys_service(service)
         if service:
@@ -275,7 +288,7 @@ class ADBSystemMixin:
         else:
             cmd = ["adb", "-s", device_ip, "shell", "service", "list"]
             timeout = 10
-        return self._run(cmd, timeout=timeout, device_ip=device_ip, service=service)
+        return self._run_readonly(cmd, timeout=timeout, device_ip=device_ip, service=service)
 
     # 模拟器控制
 
@@ -340,7 +353,7 @@ class ADBSystemMixin:
 
     @async_command
     def ime_list_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "ime", "list", "-s"],
             device_ip=device_ip,
         )
@@ -356,7 +369,7 @@ class ADBSystemMixin:
 
     @async_command
     def pm_list_features_async(self, device_ip: str) -> dict:
-        return self._run(
+        return self._run_readonly(
             ["adb", "-s", device_ip, "shell", "pm", "list", "features"],
             timeout=10,
             device_ip=device_ip,

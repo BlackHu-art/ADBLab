@@ -12,6 +12,7 @@ from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
+from core.adb_query import query_timeout
 from core.exec import CommandResult, CommandRunner, ProcessRunner
 from models.base.focus_detector import detect_current_package
 from utils.adb_values import normalize_android_package
@@ -220,7 +221,7 @@ class LogcatWorker(QThread):
 
             result = CommandRunner.run(
                 ["adb", "-s", self.device_ip, "shell", "pidof", package],
-                timeout=self.PID_PROBE_TIMEOUT_SECONDS,
+                timeout=query_timeout(self.device_ip, self.PID_PROBE_TIMEOUT_SECONDS),
                 cancelled=cancelled,
             )
         except Exception:
@@ -531,13 +532,15 @@ class _InterruptiblePackageRunner:
             return CommandResult(False, error="cancelled", returncode=-1)
         return CommandRunner.run(
             command,
-            timeout=min(timeout, self._worker.PROBE_COMMAND_TIMEOUT_SECONDS),
+            timeout=min(timeout, query_timeout(
+                self._worker.device_ip, self._worker.PROBE_COMMAND_TIMEOUT_SECONDS,
+            )),
             cancelled=self._worker.isInterruptionRequested,
         )
 
 
 class CurrentPackageWorker(QThread):
-    # 与共享前台包探测器保持一致；真实设备首次 ADB 查询常超过 1 秒。
+    # 直连就绪时保留紧预算；原生启动由查询策略补足，仍受共享探测总预算限制。
     PROBE_COMMAND_TIMEOUT_SECONDS = 5
 
     package_ready = Signal(str)

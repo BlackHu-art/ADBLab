@@ -22,6 +22,7 @@ class ADBInputMixin(_ADBControllerBase):
         "input_keyevent": "_process_input_keyevent_result",
         "input_text": "_process_input_text_result",
         "run_shell_command": "_process_run_shell_command_result",
+        "svc": "_process_svc_result",
         "settings_list": "_process_settings_list_result",
         "settings_get": "_process_settings_get_result",
         "settings_put": "_process_settings_put_result",
@@ -104,6 +105,31 @@ class ADBInputMixin(_ADBControllerBase):
             )
 
     # Shell 命令
+
+    def system_service(self, devices: list, command: str):
+        """把固定按钮的命令文本转换为结构化服务操作，拒绝额外参数。"""
+        if not self._require_devices(devices, "system_service"):
+            return
+        parts = command.split()
+        if (
+            len(parts) != 3 or parts[0] != "svc"
+            or parts[1] not in {"wifi", "data", "bluetooth", "nfc"}
+            or parts[2] not in {"enable", "disable"}
+        ):
+            self._emit_operation("system_service", False, "Invalid system service action")
+            return
+        for ip in devices:
+            self.advanced_model.svc_async(ip, parts[1], parts[2])
+
+    def _process_svc_result(self, result: dict):
+        """通过既有操作结果通道交付固定服务开关的真实执行状态。"""
+        ip = result.get("device_ip", "")
+        success = bool(result.get("success"))
+        message = (
+            f"Service {result.get('service')} {result.get('action')} on {ip}"
+            if success else f"System service failed on {ip}: {result.get('error')}"
+        )
+        self._emit_operation("system_service", success, message)
 
     def run_shell_command(self, devices: list, command: str):
         if not self._require_devices(devices, "shell_command"):

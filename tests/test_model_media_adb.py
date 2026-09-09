@@ -379,6 +379,8 @@ def test_screenshot_page_actual_size_updates_zoom_label(tmp_path):
 
 def test_pull_recorded_video_reports_pull_failure():
     model = ADBAdvanced()
+    proc = SimpleNamespace(pid=11, poll=lambda: 0)
+    started = _start_owned_recording(model, proc, batch="")
 
     with patch.object(model, "_run") as run:
         run.return_value = {"success": False, "error": "remote object does not exist"}
@@ -386,9 +388,9 @@ def test_pull_recorded_video_reports_pull_failure():
         result = ADBAdvanced.pull_recorded_video_async.__wrapped__(
             model,
             "device-1",
-            "/sdcard/missing.mp4",
+            started["remote_path"],
             "C:/tmp",
-            "missing.mp4",
+            started["filename"],
         )
 
     assert result["success"] is False
@@ -1207,7 +1209,7 @@ def test_adb_advanced_shutdown_stops_recording_and_input_sessions():
     model._adb_bridge.close_input_sessions.assert_called_once_with(None)
 
 
-def test_adb_advanced_reboot_mode_treats_timeout_as_success():
+def test_adb_advanced_reboot_mode_reports_timeout_as_unknown():
     model = ADBAdvanced()
 
     with patch.object(model, "_run") as run:
@@ -1215,9 +1217,14 @@ def test_adb_advanced_reboot_mode_treats_timeout_as_success():
 
         result = ADBAdvanced.reboot_mode_async.__wrapped__(model, "device-1", "recovery")
 
-    assert result["success"] is True
+    assert result["success"] is False
     assert result["mode"] == "recovery"
-    assert "Device rebooting" in result["output"]
+    assert "unknown" in result["error"]
+    assert result["requires_refresh"] is True
+    run.assert_called_once_with(
+        ["adb", "-s", "device-1", "reboot", "recovery"],
+        timeout=30, device_ip="device-1", mode="recovery",
+    )
 
 
 def test_quick_setting_batches_animation_commands_into_one_shell():
@@ -1366,7 +1373,11 @@ def test_testing_model_current_package_uses_shared_detector():
         package_name = model._get_current_package("device-1")
 
     assert package_name == "com.example.app"
-    detect.assert_called_once_with("device-1")
+    cancelled = detect.call_args.kwargs["cancelled"]
+    detect.assert_called_once_with("device-1", timeout=15, deadline=None, cancelled=cancelled)
+    assert not cancelled()
+    model.begin_shutdown()
+    assert cancelled()
 
 
 def test_kill_monkey_treats_empty_device_stop_error_as_idempotent_success():
@@ -1503,3 +1514,378 @@ def test_log_service_emits_batch_before_compat_single_signals(isolated_log_servi
         ("WARNING", "batched-2"),
     ]
     assert singles[-2:] == [("INFO", "batched-1"), ("WARNING", "batched-2")]
+
+
+def _start_owned_recording(model, proc, batch="b1"):
+    with patch.object(model._rec_procs, "start", return_value=proc):
+        return ADBAdvanced.start_screen_record_async.__wrapped__(
+            model, "device-1", "C:/tmp", duration=10, batch_id=batch
+        )
+
+
+def test_recording_pull_waits_for_owned_process_natural_exit():
+    model = ADBAdvanced()
+    exited = threading.Event()
+    waiting = threading.Event()
+    pulled = threading.Event()
+    proc = SimpleNamespace(pid=11, poll=lambda: 0 if exited.is_set() else None)
+    started = _start_owned_recording(model, proc)
+    result = []
+    def poll():
+        waiting.set()
+        return 0 if exited.is_set() else None
+    proc.poll = poll
+    def run(*_args, **_kwargs):
+        pulled.set()
+        return {"success": True}
+    with patch.object(model, "_run", side_effect=run):
+        worker = threading.Thread(target=lambda: result.append(
+            ADBAdvanced.pull_recorded_video_async.__wrapped__(
+                model, "device-1", started["remote_path"], "C:/tmp",
+                started["filename"], batch_id="b1",
+            )
+        ))
+        worker.start()
+        try:
+            assert waiting.wait(1)
+            assert not pulled.is_set()
+        finally:
+            exited.set()
+            worker.join(2)
+    assert not worker.is_alive()
+    assert result[0]["success"] is True
+
+
+def test_recording_stop_timeout_cannot_become_success_from_local_exit():
+    model = ADBAdvanced()
+    proc = SimpleNamespace(pid=11, poll=lambda: None)
+    _start_owned_recording(model, proc)
+    with (
+        patch.object(model, "_run", return_value={"success": False, "error": "Timeout(30s)"}),
+        patch.object(model._rec_procs, "stop", return_value=0) as stop,
+    ):
+        result = ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "b1")
+    assert result["success"] is False
+    assert "Timeout" in result["error"]
+    stop.assert_called_once()
+
+
+@pytest.mark.parametrize("failure", ["exit", "timeout", "shutdown"])
+def test_recording_incomplete_or_cancelled_never_pulls_or_removes_remote(failure):
+    model = ADBAdvanced()
+    proc = SimpleNamespace(pid=11, poll=lambda: None)
+    started = _start_owned_recording(model, proc)
+    if failure == "exit":
+        proc.poll = lambda: 1
+    elif failure == "timeout":
+        model._record_sessions["device-1"].deadline = 0
+    else:
+        model.begin_shutdown()
+    with patch.object(model, "_run") as run, patch.object(model._rec_procs, "stop") as stop:
+        result = ADBAdvanced.pull_recorded_video_async.__wrapped__(
+            model, "device-1", started["remote_path"], "C:/tmp", started["filename"], "b1"
+        )
+    assert result["success"] is False
+    assert bool(result.get("cancelled")) == (failure == "shutdown")
+    run.assert_not_called()
+    stop.assert_called_once()
+
+
+def test_recording_old_batch_cannot_stop_or_pull_new_process():
+    model = ADBAdvanced()
+    started = _start_owned_recording(model, SimpleNamespace(pid=11, poll=lambda: None))
+    with patch.object(model, "_run") as run, patch.object(model._rec_procs, "stop") as stop:
+        stopped = ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "old")
+        pulled = ADBAdvanced.pull_recorded_video_async.__wrapped__(
+            model, "device-1", started["remote_path"], "C:/tmp", started["filename"], "old"
+        )
+    assert stopped["success"] is pulled["success"] is False
+    run.assert_not_called()
+    stop.assert_not_called()
+
+
+def test_recording_stop_waits_for_natural_exit_after_sigint():
+    model = ADBAdvanced()
+    exited = threading.Event()
+    signalled = threading.Event()
+    proc = SimpleNamespace(pid=11, poll=lambda: 0 if exited.is_set() else None)
+    _start_owned_recording(model, proc)
+    results = []
+    def run(*_args, **_kwargs):
+        signalled.set()
+        return {"success": True}
+    with (
+        patch.object(model, "_run", side_effect=run),
+        patch.object(model._rec_procs, "stop") as stop,
+    ):
+        worker = threading.Thread(target=lambda: results.append(
+            ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "b1")
+        ))
+        worker.start()
+        try:
+            assert signalled.wait(1)
+            assert not results
+            stop.assert_not_called()
+        finally:
+            exited.set()
+            worker.join(2)
+    assert not worker.is_alive()
+    assert results[0]["success"] is True
+
+
+def test_recording_shutdown_interrupts_completion_wait():
+    model = ADBAdvanced()
+    waiting = threading.Event()
+    proc = SimpleNamespace(pid=11, poll=lambda: None)
+    started = _start_owned_recording(model, proc)
+    def poll():
+        waiting.set()
+        return None
+    proc.poll = poll
+    results = []
+    with patch.object(model, "_run") as run, patch.object(model._rec_procs, "stop"):
+        worker = threading.Thread(target=lambda: results.append(
+            ADBAdvanced.pull_recorded_video_async.__wrapped__(
+                model, "device-1", started["remote_path"], "C:/tmp", started["filename"], "b1"
+            )
+        ))
+        worker.start()
+        try:
+            assert waiting.wait(1)
+        finally:
+            model.begin_shutdown()
+            worker.join(2)
+    assert not worker.is_alive()
+    assert results[0]["cancelled"] is True
+    run.assert_not_called()
+
+
+def test_recording_start_submits_background_save_once_without_duration_timer():
+    from adblab.application.screen_record import ScreenRecordUseCase
+    from controllers._media import ADBMediaMixin
+
+    records = ScreenRecordUseCase()
+    records.start("device-1", "b1", "C:/tmp", 10)
+    controller = SimpleNamespace(screen_records=records, _emit_operation=Mock(), _auto_pull=Mock())
+    with patch("controllers._media.QTimer.singleShot") as timer:
+        ADBMediaMixin._process_start_screen_record_result(controller, {
+            "success": True, "device_ip": "device-1", "batch_id": "b1",
+            "remote_path": "/sdcard/video.mp4", "filename": "video.mp4", "duration": 10,
+        })
+    timer.assert_not_called()
+    controller._auto_pull.assert_called_once_with("device-1", "b1")
+
+
+@pytest.mark.parametrize("success,error,refresh", [
+    (True, "", True), (False, "device offline", False), (False, "timeout", True),
+])
+def test_reboot_mode_submission_and_failure_are_not_replayed(success, error, refresh):
+    model = ADBAdvanced()
+    with patch.object(model, "_run", return_value={"success": success, "error": error}) as run:
+        result = ADBAdvanced.reboot_mode_async.__wrapped__(model, "device-1", "system")
+    assert result["success"] is success
+    assert result["requires_refresh"] is refresh
+    assert run.call_count == 1
+    assert run.call_args.args[0] == ["adb", "-s", "device-1", "reboot"]
+    if success:
+        assert "submitted" in result["output"]
+
+
+@pytest.mark.parametrize("success,error,refresh", [
+    (True, "", True),
+    (False, "Reboot result unknown after timeout; check device status before retrying", True),
+    (False, "device offline", False),
+])
+def test_reboot_mode_controller_reports_submission_or_unknown_and_refreshes(
+    success, error, refresh,
+):
+    from controllers._device import ADBDeviceMixin
+
+    controller = SimpleNamespace(signals=QObject(), refresh_devices=Mock(), _emit_operation=Mock())
+    with patch("controllers._device.QTimer.singleShot") as timer:
+        ADBDeviceMixin._process_reboot_mode_result(controller, {
+            "success": success, "device_ip": "device-1", "mode": "recovery",
+            "error": error, "requires_refresh": refresh,
+        })
+    assert timer.call_count == int(refresh)
+    if refresh:
+        timer.assert_called_once_with(10_000, controller.signals, controller.refresh_devices)
+    operation, reported_success, message = controller._emit_operation.call_args.args
+    assert operation == "reboot_mode" and reported_success is success
+    assert ("submitted" in message) if success else (error in message)
+    controller.refresh_devices.assert_not_called()
+
+
+def test_recording_failed_stop_prevents_pull_even_after_cleanup_exit_zero():
+    model = ADBAdvanced()
+    exited = threading.Event()
+    started = _start_owned_recording(
+        model, SimpleNamespace(pid=11, poll=lambda: 0 if exited.is_set() else None),
+    )
+    def cleanup(*_args):
+        exited.set()
+        return 0
+    with (
+        patch.object(
+            model, "_run", return_value={"success": False, "error": "signal timeout"},
+        ) as run,
+        patch.object(model._rec_procs, "stop", side_effect=cleanup),
+    ):
+        stopped = ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "b1")
+        saved = ADBAdvanced.pull_recorded_video_async.__wrapped__(
+            model, "device-1", started["remote_path"], "C:/tmp", started["filename"], "b1"
+        )
+    assert stopped["success"] is saved["success"] is False
+    assert saved["error"] == "signal timeout"
+    assert run.call_count == 1
+
+
+def test_recording_stop_before_start_registration_waits_for_same_batch():
+    model = ADBAdvanced()
+    waiting = threading.Event()
+    exited = threading.Event()
+    results = []
+    original_wait = model._shutdown_started.wait
+    def wait(timeout=None):
+        waiting.set()
+        return original_wait(timeout)
+    def run(*_args, **_kwargs):
+        exited.set()
+        return {"success": True}
+    with (
+        patch.object(model._shutdown_started, "wait", side_effect=wait),
+        patch.object(model, "_run", side_effect=run) as command,
+    ):
+        worker = threading.Thread(target=lambda: results.append(
+            ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "b1")
+        ))
+        worker.start()
+        try:
+            assert waiting.wait(1)
+            command.assert_not_called()
+            _start_owned_recording(
+                model, SimpleNamespace(pid=11, poll=lambda: 0 if exited.is_set() else None),
+            )
+            worker.join(2)
+        finally:
+            model.begin_shutdown()
+            worker.join(2)
+    assert not worker.is_alive()
+    assert results[0]["success"] is True
+    assert command.call_count == 1
+
+
+
+def test_recording_duplicate_stop_cannot_bypass_pending_device_verdict():
+    model = ADBAdvanced()
+    proc = SimpleNamespace(pid=11, poll=lambda: None)
+    _start_owned_recording(model, proc)
+    session = model._record_sessions["device-1"]
+    session.stop_pending = True
+    proc.poll = lambda: 0
+    with patch.object(model, "_run") as run:
+        result = ADBAdvanced.stop_screen_record_async.__wrapped__(model, "device-1", "b1")
+    assert result["success"] is False
+    assert "pending" in result["error"]
+    run.assert_not_called()
+
+
+
+def test_two_recording_waits_do_not_starve_unrelated_long_transfer():
+    model = ADBAdvanced()
+    model.long_pool.setMaxThreadCount(2)
+    entered = {"batch-a": threading.Event(), "batch-b": threading.Event()}
+    transferred = threading.Event()
+    original_wait = model._wait_recording_complete
+
+    def wait(session):
+        entered[session.batch_id].set()
+        return original_wait(session)
+
+    def run(cmd, **_kwargs):
+        if "push" in cmd:
+            transferred.set()
+        return {"success": True}
+
+    with (
+        patch.object(model, "_wait_recording_complete", side_effect=wait),
+        patch.object(model, "_run", side_effect=run),
+        patch.object(model._rec_procs, "stop"),
+    ):
+        try:
+            for index, batch in enumerate(entered):
+                device = f"device-{index}"
+                with patch.object(model._rec_procs, "start", return_value=SimpleNamespace(
+                    pid=10 + index, poll=lambda: None,
+                )):
+                    started = ADBAdvanced.start_screen_record_async.__wrapped__(
+                        model, device, "C:/tmp", duration=30, batch_id=batch,
+                    )
+                model.pull_recorded_video_async(
+                    device, started["remote_path"], "C:/tmp", started["filename"], batch,
+                )
+            assert all(event.wait(2) for event in entered.values())
+            model.push_file_async("device-extra", "C:/tmp/demo.txt", "/sdcard/demo.txt")
+            assert transferred.wait(2), "Recording waits starved an unrelated long transfer"
+        finally:
+            model.begin_shutdown()
+            assert model.long_pool.waitForDone(2000)
+            record_pool = getattr(model, "_record_pool", None)
+            if record_pool is not None:
+                assert record_pool.waitForDone(2000)
+
+
+
+def test_recording_owned_pool_shutdown_waits_for_running_and_queued_tasks():
+    model = ADBAdvanced()
+    model._record_pool.setMaxThreadCount(1)
+    entered = threading.Event()
+    release = threading.Event()
+    drained = threading.Event()
+    calls = []
+
+    def wait(session):
+        calls.append(session.batch_id)
+        entered.set()
+        assert release.wait(2)
+        return {"success": False, "cancelled": True, "error": "Model is shutting down"}
+
+    def drain():
+        model.wait_for_commands()
+        drained.set()
+
+    waiter = threading.Thread(target=drain)
+    with (
+        patch.object(model, "_wait_recording_complete", side_effect=wait),
+        patch.object(model._rec_procs, "stop"),
+        patch.object(model, "_run") as run,
+    ):
+        try:
+            for index in range(2):
+                device = f"device-{index}"
+                with patch.object(model._rec_procs, "start", return_value=SimpleNamespace(
+                    pid=10 + index, poll=lambda: None,
+                )):
+                    started = ADBAdvanced.start_screen_record_async.__wrapped__(
+                        model, device, "C:/tmp", duration=30, batch_id=f"batch-{index}",
+                    )
+                model.pull_recorded_video_async(
+                    device, started["remote_path"], "C:/tmp", started["filename"],
+                    f"batch-{index}",
+                )
+            assert entered.wait(2)
+            model.begin_shutdown()
+            waiter.start()
+            assert not drained.wait(0.1), "Model released before its recording task returned"
+            release.set()
+            waiter.join(2)
+            assert drained.is_set()
+            assert calls == ["batch-0"]
+            assert model._record_pool.activeThreadCount() == 0
+            run.assert_not_called()
+        finally:
+            release.set()
+            model.begin_shutdown()
+            if waiter.ident is not None:
+                waiter.join(2)
+            assert model._record_pool.waitForDone(2000)

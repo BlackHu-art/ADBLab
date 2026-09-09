@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
 from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
@@ -125,7 +126,8 @@ class ScrcpyService:
     ) -> str:
         try:
             result = self.run_command(
-                [adb, "-s", device, "shell", "wm size"], timeout=5,
+                [adb, "-s", device, "shell", "wm size"],
+                timeout=query_timeout(device, 5, adb_path=adb),
                 deadline=deadline, cancelled=cancelled,
             )
             for prefix in ("Override size:", "Physical size:"):
@@ -146,7 +148,8 @@ class ScrcpyService:
         messages: list[tuple[str, str]] = []
         try:
             result = self.run_command(
-                [adb, "-s", device, "shell", "echo ok"], timeout=5,
+                [adb, "-s", device, "shell", "echo ok"],
+                timeout=query_timeout(device, 5, adb_path=adb),
                 deadline=deadline, cancelled=cancelled,
             )
             if not result.success or (result.output or "").strip() != "ok":

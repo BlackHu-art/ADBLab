@@ -664,3 +664,60 @@ def test_controller_handler_exception_fails_and_cleans_operation_once():
         "Operation handler error" in call.args[1]
         for call in controller.log_service.log.call_args_list
     )
+
+
+
+class _SelectedPoolModel(ADBModelCore):
+    @async_command(long_running=True, pool_attribute="owned_pool")
+    def selected_async(self, value):
+        return value
+
+
+def test_async_command_selected_pool_preserves_envelope_without_using_default_pools():
+    model = _SelectedPoolModel()
+    model.owned_pool = _ImmediatePool()
+    model.thread_pool = _FailingPool()
+    model.long_pool = _FailingPool()
+    received = []
+    model.command_finished.connect(lambda method, result: received.append((method, result)))
+    model.selected_async({"success": True}, _operation_id="selected-operation")
+    method, wrapped = received[0]
+    payload_with_perf, metadata = split_operation_metadata(wrapped)
+    payload, _perf = split_perf(payload_with_perf)
+    assert method == "selected_async"
+    assert payload == {"success": True}
+    assert metadata.operation_id == "selected-operation"
+
+
+def test_async_command_selected_pool_shutdown_rejects_new_and_cancels_queued_work():
+    from types import SimpleNamespace
+
+    model = _SelectedPoolModel()
+    tasks, received = [], []
+    model.owned_pool = SimpleNamespace(start=tasks.append)
+    model.command_finished.connect(lambda _method, result: received.append(result))
+    model.selected_async({"success": True}, _operation_id="selected-operation")
+    assert len(tasks) == 1
+    model.begin_shutdown()
+    model.selected_async({"success": True})
+    assert len(tasks) == 1
+    tasks[0].run()
+    payload_with_perf, metadata = split_operation_metadata(received[0])
+    payload, _perf = split_perf(payload_with_perf)
+    assert payload["cancelled"] is True
+    assert metadata.operation_id == "selected-operation"
+
+
+@pytest.mark.parametrize("missing", [True, False])
+def test_async_command_selected_pool_errors_emit_failure_before_raising(missing):
+    model = _SelectedPoolModel()
+    if not missing:
+        model.owned_pool = _FailingPool()
+    received = []
+    model.command_finished.connect(lambda _method, result: received.append(result))
+    with pytest.raises(AttributeError if missing else RuntimeError):
+        model.selected_async({"success": True}, _operation_id="selected-operation")
+    payload, metadata = split_operation_metadata(received[0])
+    assert payload["success"] is False
+    assert "任务提交失败" in payload["error"]
+    assert metadata.operation_id == "selected-operation"

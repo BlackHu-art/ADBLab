@@ -19,9 +19,15 @@ from utils.resource_path import resource_path
 MAX_BATCH_SIZE = 12
 ICON_SIZE = 96
 MAX_PNG_BYTES = 256 * 1024
+# 原生 adb 启动可能超过 8 秒；渲染预算还需容纳设备端 15 秒退出保护。
+_COMMAND_TIMEOUT = 30
+# 限制编码后的 shell 参数，保留 Windows 原生回退所需的命令行空间。
+_MAX_INLINE_HELPER_BYTES = 16 * 1024
 _MAX_ENCODED_BYTES = 4 * ((MAX_PNG_BYTES + 2) // 3)
 _MAX_OUTPUT_BYTES = MAX_BATCH_SIZE * (_MAX_ENCODED_BYTES + 270)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_CLEANED = "\n__ADBLAB_ICONS_CLEANED__\n"
+_DEPLOY_FAILED = "__ADBLAB_ICONS_DEPLOY_FAILED__"
 _ERRORS = {
     "NOT_FOUND": "当前用户未安装此应用",
     "CONTEXT_UNAVAILABLE": "设备不支持读取应用图标",
@@ -129,7 +135,7 @@ def load_app_icons(
 ) -> None:
     """在 worker 中读取最多 12 个图标，逐包回报结果；取消不再投递，但仍清理远端文件。
 
-    每条命令都有超时，取消在命令边界生效。清理使用本次生成的精确路径；未确认清理成功
+    传输与渲染支持执行中取消，清理不继承取消。清理使用本次生成的精确路径；未确认清理成功
     时返回失败并写无标识日志，不将原始设备错误、本机路径或设备标识带入界面。
     """
     requested = list(dict.fromkeys(packages))
@@ -173,9 +179,17 @@ def _load_batch(
     remote = f"/data/local/tmp/adblab-icons-{uuid.uuid4().hex}.jar"
     target = shlex.quote(remote)
     adb = ["adb", "-s", device_id]
+    try:
+        with helper.open("rb") as source:
+            payload = source.read(_MAX_INLINE_HELPER_BYTES + 1)
+    except OSError:
+        return failure
+    if 0 < len(payload) <= _MAX_INLINE_HELPER_BYTES:
+        return _load_inline_batch(adb, target, payload, packages, cancelled)
     results = failure
     try:
-        pushed = CommandRunner.run([*adb, "push", str(helper), remote], timeout=8)
+        deploy = [*adb, "push", str(helper), remote]
+        pushed = CommandRunner.run(deploy, timeout=_COMMAND_TIMEOUT, cancelled=cancelled)
         if not pushed.success:
             results = {package: (b"", "应用图标组件传输失败") for package in packages}
         elif not cancelled():
@@ -186,7 +200,9 @@ def _load_batch(
                 f"app_process / com.adblab.icons.Main {arguments}; }} "
                 f"2>/dev/null | head -c {_MAX_OUTPUT_BYTES + 1}"
             )
-            result = CommandRunner.run([*adb, "shell", script], timeout=20)
+            result = CommandRunner.run(
+                [*adb, "shell", script], timeout=_COMMAND_TIMEOUT, cancelled=cancelled
+            )
             if result.success and not cancelled():
                 results = _parse_output(result.output, packages)
     except Exception:
@@ -194,10 +210,68 @@ def _load_batch(
         results = failure
     finally:
         try:
-            removed = CommandRunner.run([*adb, "shell", f"rm -f -- {target}"], timeout=5)
+            removed = CommandRunner.run(
+                [*adb, "shell", f"rm -f -- {target}"], timeout=_COMMAND_TIMEOUT
+            )
             cleaned = removed.success
         except Exception:
             cleaned = False
+        if not cleaned:
+            logging.getLogger(__name__).warning("应用图标临时文件清理失败")
+            results = {package: (b"", "应用图标临时文件清理失败") for package in packages}
+    return results
+
+
+def _load_inline_batch(
+    adb: list[str], target: str, payload: bytes, packages: list[str],
+    cancelled: Callable[[], bool],
+) -> dict[str, tuple[bytes, str]]:
+    """一次调用部署、渲染并确认清理；异常才补精确路径清理，绝不重放提取。
+
+    内置小文件受字节上限约束，原生和快速后端共用相同脚本，减少原生启动次数。
+    EXIT trap 在设备上收尾；主机只有收到完整清理标记才省略补偿清理。取消关闭连接
+    不等于设备已收尾，因此缺失标记时仍执行独立且有界的必要清理。
+    """
+    results = {package: (b"", "应用图标读取失败") for package in packages}
+    encoded = base64.b64encode(payload).decode("ascii")
+    arguments = " ".join(shlex.quote(package) for package in packages)
+    cleanup = f"rm -f -- {target} && printf {shlex.quote(_CLEANED)}"
+    # 部署失败也以零码交付协议，避免执行器丢弃 stdout；业务仍按失败标记返回错误。
+    script = (
+        f"trap {shlex.quote(cleanup)} EXIT; trap 'exit 130' HUP INT TERM; "
+        f"umask 077; if ! (printf %s {encoded} | base64 -d > {target}); then "
+        f"printf {shlex.quote(_DEPLOY_FAILED)}; exit 0; fi; "
+        f"chmod 400 {target} || exit 1; "
+        f"{{ CLASSPATH={target} app_process / com.adblab.icons.Main {arguments}; }} "
+        f"2>/dev/null | head -c {_MAX_OUTPUT_BYTES + 1}"
+    )
+    cleaned = False
+    try:
+        result = CommandRunner.run(
+            [*adb, "shell", "sh", "-c", shlex.quote(script)],
+            timeout=_COMMAND_TIMEOUT, cancelled=cancelled,
+        )
+        # 执行器统一去掉输出首尾空白；清理确认以末尾完整协议行判断，不依赖最后一个换行。
+        output = result.output.rstrip("\r\n")
+        marker = _CLEANED.strip()
+        cleaned = output == marker or output.endswith("\n" + marker)
+        if cleaned:
+            output = output[:-len(marker)].rstrip("\r\n")
+        if output == _DEPLOY_FAILED:
+            results = {package: (b"", "应用图标组件传输失败") for package in packages}
+        elif result.success and not cancelled():
+            results = _parse_output(output, packages)
+    except Exception:
+        # 执行器或设备错误只影响本批；界面不暴露底层路径和设备标识。
+        results = {package: (b"", "应用图标读取失败") for package in packages}
+    finally:
+        if not cleaned:
+            try:
+                cleaned = CommandRunner.run(
+                    [*adb, "shell", f"rm -f -- {target}"], timeout=_COMMAND_TIMEOUT,
+                ).success
+            except Exception:
+                cleaned = False
         if not cleaned:
             logging.getLogger(__name__).warning("应用图标临时文件清理失败")
             results = {package: (b"", "应用图标临时文件清理失败") for package in packages}

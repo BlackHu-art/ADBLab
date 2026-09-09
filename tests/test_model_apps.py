@@ -74,10 +74,67 @@ def test_focus_fallbacks_share_one_total_budget():
         clock[0] += timeout
         return CommandResult(False, error="timeout")
 
-    with patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0], create=True):
+    with (
+        patch("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=True))),
+        patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0], create=True),
+    ):
         result = detect_current_package("device-1", runner=Mock(run=run), timeout=6)
     assert not result["success"]
     assert budgets == [5, 1]
+
+
+def test_focus_native_query_accepts_six_second_startup_with_one_total_deadline():
+    clock, budgets = [10.0], []
+
+    def run(_command, *, timeout):
+        budgets.append(timeout)
+        clock[0] += min(timeout, 6)
+        return CommandResult(
+            timeout >= 6, output="mCurrentFocus=com.example.app/.Main" if timeout >= 6 else "",
+        )
+
+    with (
+        patch("core.exec._adb_runtime", None),
+        patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0]),
+    ):
+        result = detect_current_package("device-1", runner=Mock(run=run))
+    assert result["success"] is True
+    assert result["package_name"] == "com.example.app"
+    assert budgets == [15]
+
+
+def test_focus_native_fallback_never_extends_explicit_total_deadline():
+    clock, budgets = [10.0], []
+
+    def run(_command, *, timeout):
+        budgets.append(timeout)
+        clock[0] += timeout
+        return CommandResult(False, error="timeout")
+
+    with (
+        patch("core.exec._adb_runtime", None),
+        patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0]),
+    ):
+        result = detect_current_package("device-1", runner=Mock(run=run), timeout=6)
+    assert not result["success"]
+    assert budgets == [6]
+
+
+def test_focus_query_respects_callers_earlier_absolute_deadline():
+    clock, budgets = [10.0], []
+
+    def run(_command, *, timeout):
+        budgets.append(timeout)
+        clock[0] += timeout
+        return CommandResult(False, error="timeout")
+
+    with (
+        patch("core.exec._adb_runtime", None),
+        patch("models.base.focus_detector.monotonic", side_effect=lambda: clock[0]),
+    ):
+        result = detect_current_package("device-1", runner=Mock(run=run), deadline=12)
+    assert not result["success"]
+    assert budgets == [2]
 
 
 def test_restart_app_does_not_launch_after_force_stop_failure():
@@ -365,7 +422,8 @@ def test_detect_current_package_uses_lightweight_activity_stack_first():
         ),
     )
 
-    result = detect_current_package("device-1", runner=runner)
+    with patch("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=True))):
+        result = detect_current_package("device-1", runner=runner)
 
     assert result == {
         "success": True,
@@ -750,6 +808,7 @@ def test_app_detail_batch_failed_command_does_not_fallback_or_publish_empty_deta
 def test_app_detail_batch_parse_fallback_uses_remaining_budget_and_stops_at_deadline(monkeypatch):
     import models.app_manager_worker as module
 
+    monkeypatch.setattr(module, "query_timeout", lambda *_args: 5.0)
     worker = module.AppManagerWorker("device-1", "load_detail_batch")
     emitted = []
     timeouts = []

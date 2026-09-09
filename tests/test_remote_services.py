@@ -629,6 +629,50 @@ def test_scrcpy_service_builds_launch_plan_with_preflight_and_encoder():
     assert runner.run.call_count == 4
 
 
+def test_scrcpy_native_preflight_accepts_six_second_queries_within_twenty_seconds():
+    clock, budgets = [100.0], []
+
+    def run(command, *, timeout):
+        budgets.append(timeout)
+        if "--version" in command:
+            return CommandResult(True, output="scrcpy 4.1")
+        clock[0] += min(timeout, 6)
+        output = "ok" if command[-1] == "echo ok" else "Physical size: 1080x2400"
+        return CommandResult(timeout >= 6, output=output if timeout >= 6 else "")
+
+    service = ScrcpyService(command_runner=Mock(run=run))
+    with (
+        patch("core.exec._adb_runtime", None),
+        patch("services.remote.scrcpy_service.time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        plan = service.build_launch_plan(_scrcpy_config())
+    assert plan.device_info == "1080x2400"
+    assert budgets == [3, 15, 14]
+    assert clock[0] == 112
+    assert not any(level == "WARNING" for level, _message in plan.messages)
+
+
+def test_scrcpy_ready_fast_preflight_retains_five_second_caps_and_configured_adb():
+    runtime = Mock(spec=["can_shell_fast"])
+    runtime.can_shell_fast.return_value = True
+    runner = Mock()
+    runner.run.side_effect = [
+        CommandResult(True, output="scrcpy 4.1"),
+        CommandResult(True, output="ok"),
+        CommandResult(True, output="Physical size: 1080x2400"),
+    ]
+    config = _scrcpy_config()
+    with patch("core.exec._adb_runtime", runtime):
+        plan = ScrcpyService(command_runner=runner).build_launch_plan(config)
+    assert plan.device_info == "1080x2400"
+    assert [entry.kwargs["timeout"] for entry in runner.run.call_args_list] == [3, 5, 5]
+    assert runtime.can_shell_fast.called
+    assert all(
+        entry.args == (config.adb, config.device)
+        for entry in runtime.can_shell_fast.call_args_list
+    )
+
+
 def test_scrcpy_service_device_info_prefers_override_size():
     runner = Mock()
     runner.run.return_value = CommandResult(

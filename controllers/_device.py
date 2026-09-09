@@ -290,14 +290,19 @@ class ADBDeviceMixin(_ADBControllerBase):
             self.advanced_model.reboot_mode_async(ip, mode)
 
     def _process_reboot_mode_result(self, result: dict):
+        """报告模式重启提交或未知状态；延迟刷新不证明设备已完成启动。"""
         ip = result.get("device_ip", "unknown")
         mode = result.get("mode", "?")
-        if result.get("success"):
+        if result.get("requires_refresh", result.get("success", False)):
             QTimer.singleShot(10_000, self.signals, self.refresh_devices)
-            self._emit_operation("reboot_mode", True, f"{ip} rebooting to {mode}...")
+        if result.get("success"):
+            self._emit_operation(
+                "reboot_mode", True,
+                f"{ip} Reboot request submitted for {mode}; device startup has not been verified",
+            )
         else:
             self._emit_operation(
-                "reboot_mode", False, f"{ip} reboot failed: {result.get('error', '')}"
+                "reboot_mode", False, f"{ip} {result.get('error', 'Reboot failed')}"
             )
 
     def pair_device(self, ip: str, port: str, pairing_code: str):

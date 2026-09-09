@@ -676,6 +676,7 @@ def test_logcat_cancel_before_run_never_spawns_process():
     assert worker.wait_for_stop(0)
 
 
+@patch("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=True)))
 def test_current_package_probe_cancellation_skips_remaining_fallback_commands():
     worker = CurrentPackageWorker("target")
     first_probe_started = threading.Event()
@@ -702,6 +703,7 @@ def test_current_package_probe_cancellation_skips_remaining_fallback_commands():
     assert command_timeouts == [5]
 
 
+@patch("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=True)))
 def test_current_package_probe_bounds_every_compatibility_fallback():
     worker = CurrentPackageWorker("target")
     statuses = []
@@ -718,8 +720,33 @@ def test_current_package_probe_bounds_every_compatibility_fallback():
     assert statuses == ["未找到前台应用，请在设备上打开应用后重试"]
 
 
+@pytest.mark.parametrize("query", ["pid", "package"])
+def test_logcat_native_queries_accept_six_second_startup(query):
+    def run(_command, *, timeout, **_kwargs):
+        output = "321" if query == "pid" else "mCurrentFocus=com.example.app/.Main"
+        return CommandResult(timeout >= 6, output=output if timeout >= 6 else "")
+
+    with (
+        patch("core.exec._adb_runtime", None),
+        patch("gui.dialogs.live_logcat_worker.CommandRunner.run", side_effect=run) as command,
+    ):
+        if query == "pid":
+            worker = LogcatWorker("target", package="com.example.app")
+            worker._refresh_filter_pids("com.example.app", worker.filter_generation)
+            assert worker._package_snapshot()[2] == frozenset({321})
+        else:
+            worker = CurrentPackageWorker("target")
+            packages = []
+            worker.package_ready.connect(packages.append)
+            worker.run()
+            assert packages == ["com.example.app"]
+    assert command.call_count == 1
+    assert 6 < command.call_args.kwargs["timeout"] <= 15
+
+
+@patch("core.exec._adb_runtime", Mock(can_shell_fast=Mock(return_value=True)))
 def test_logcat_pid_probe_uses_device_tolerant_timeout():
-    """周期 PID 查询沿用实机可用的五秒边界，避免慢设备清空有效过滤状态。"""
+    """快速能力已就绪时保留五秒边界，并提交查询得到的 PID。"""
 
     worker = LogcatWorker("target", package="com.example.app")
     with patch(

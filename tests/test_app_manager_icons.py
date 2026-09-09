@@ -11,6 +11,8 @@ from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 class IconWorker(QObject):
     app_icon_loaded = Signal(str, bytes, str)
+    app_detail_batch = Signal(str, str, str, str)
+    log_message = Signal(str)
     finished = Signal()
 
     def __init__(self, device, operation, **kwargs):
@@ -184,3 +186,35 @@ def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_applicati
     worker.finish()
     wait_until(qt_application, lambda: ready.count() == 1)
     assert item.icon().cacheKey() == original
+
+
+def test_visible_icons_finish_before_background_detail_queries(page, qt_application):
+    window, workers = page
+    populate(window, 3)
+    window.view_toggle.click()
+    wait_until(qt_application, lambda: bool(workers))
+    window._load_visible_details()
+    assert [worker.operation for worker in workers] == ["load_icon_batch"]
+    for package in workers[0].packages:
+        workers[0].app_icon_loaded.emit(package, png(), "")
+    workers[0].finish()
+    wait_until(qt_application, lambda: window._icons_controller._worker is None)
+    window._load_visible_details()
+    assert [worker.operation for worker in workers] == ["load_icon_batch", "load_detail_batch"]
+
+
+def test_icon_view_detail_queries_follow_scrolled_viewport(page, qt_application):
+    window, _workers = page
+    populate(window, 120)
+    window.view_toggle.click()
+    wait_for_stable_geometry(qt_application, window.icon_list)
+    window.icon_list.scrollToItem(window.icon_list.item(119))
+    wait_for_stable_geometry(qt_application, window.icon_list)
+    visible = {
+        item.data(Qt.ItemDataRole.UserRole)
+        for index in range(window.icon_list.count())
+        if (item := window.icon_list.item(index)) is not None
+        and window.icon_list.viewport().rect().intersects(window.icon_list.visualItemRect(item))
+    }
+    packages = window._visible_detail_packages()
+    assert packages and set(packages) <= visible

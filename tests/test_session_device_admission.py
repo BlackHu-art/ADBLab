@@ -61,7 +61,15 @@ def test_remote_reselection_does_not_revive_cancelled_queued_input():
 
     panel._send_keyevent("BACK")
     panel._remote_executor.submit.call_args.args[0]()
-    panel._remote_control.send_keyevent.assert_called_once_with("session-device", "BACK")
+    sent = panel._remote_control.send_keyevent
+    sent.assert_called_once()
+    assert sent.call_args.args == ("session-device", "BACK")
+    cancelled = sent.call_args.kwargs["cancelled"]
+    assert callable(cancelled) and not cancelled()
+    panel.set_device_selected(False)
+    assert not cancelled()
+    panel._remote_input_closing = True
+    assert cancelled()
 
 
 def test_remote_reselection_does_not_revive_pending_input_warmup():
@@ -134,13 +142,21 @@ def test_main_window_updates_hidden_remote_admission_on_global_selection_changes
             window.left_panel._devices_tab.set_selected_devices(["demo-b"])
             assert remote.btn_start.isEnabled()
             remote._send_keyevent("HOME")
-            remote._remote_control.send_keyevent.assert_called_once_with("demo-b", "HOME")
+            sent = remote._remote_control.send_keyevent
+            sent.assert_called_once()
+            assert sent.call_args.args == ("demo-b", "HOME")
+            assert callable(sent.call_args.kwargs["cancelled"])
+            assert not sent.call_args.kwargs["cancelled"]()
             window.left_panel._devices_tab.set_selected_devices(["demo-a"])
             assert remote.btn_start.isEnabled()
             remote._send_keyevent("HOME")
-            assert remote._remote_control.send_keyevent.call_args_list == [
-                (("demo-b", "HOME"),), (("demo-a", "HOME"),),
+            assert [entry.args for entry in sent.call_args_list] == [
+                ("demo-b", "HOME"), ("demo-a", "HOME"),
             ]
+            callbacks = [entry.kwargs["cancelled"] for entry in sent.call_args_list]
+            assert all(callable(cancelled) and not cancelled() for cancelled in callbacks)
+            remote._remote_input_closing = True
+            assert all(cancelled() for cancelled in callbacks)
     finally:
         window.left_panel._scrcpy_tab.shutdown()
         window._unbind_window_screen()

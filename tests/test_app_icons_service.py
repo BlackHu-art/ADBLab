@@ -38,12 +38,12 @@ def icon_line(package="com.example.app", png=None):
 @pytest.fixture
 def transport(monkeypatch, tmp_path):
     helper = tmp_path / "icons helper.jar"
-    helper.write_bytes(b"bundled-helper")
+    helper.write_bytes(b"bundled-helper" * 1300)
     monkeypatch.setattr(app_icons, "resource_path", lambda _path: str(helper))
     calls = []
     outputs = [CommandResult(True), CommandResult(True, icon_line()), CommandResult(True)]
 
-    def run(command, timeout):
+    def run(command, timeout, *, cancelled=None):
         calls.append((command, timeout))
         outcome = outputs.pop(0)
         if isinstance(outcome, Exception):
@@ -54,6 +54,53 @@ def transport(monkeypatch, tmp_path):
 
     monkeypatch.setattr(app_icons.CommandRunner, "run", run)
     return calls, outputs
+
+
+def test_large_helper_preserves_native_transfer(transport):
+    calls, _outputs = transport
+    assert collect()[0][1] == make_png()
+    assert calls[0][0][3] == "push"
+
+
+def test_native_batch_budget_includes_slow_client_startup(transport, monkeypatch):
+    calls, _outputs = transport
+    run = app_icons.CommandRunner.run
+
+    def slow_native(command, timeout, **kwargs):
+        # 大 helper 的兼容上传和清理也需启动原生 adb，渲染还包含设备保护预算。
+        required = 27 if "app_process" in command[-1] else 12
+        if timeout < required:
+            return CommandResult(False, error=f"Timeout({timeout}s)")
+        return run(command, timeout, **kwargs)
+
+    monkeypatch.setattr(app_icons.CommandRunner, "run", slow_native)
+    assert collect() == [("com.example.app", make_png(), "")]
+    assert len(calls) == 3
+
+
+@pytest.mark.parametrize("phase", ["deploy", "render"])
+def test_active_legacy_icon_command_receives_cancel_but_cleanup_still_runs(
+    transport, monkeypatch, phase,
+):
+    cancel = threading.Event()
+    seen = []
+
+    def run(command, timeout, *, cancelled=None):
+        is_cleanup = command[-1].startswith("rm ")
+        seen.append((command, cancelled))
+        if len(seen) == (1 if phase == "deploy" else 2):
+            assert callable(cancelled)
+            cancel.set()
+            assert cancelled()
+            return CommandResult(False, error="Cancelled")
+        if is_cleanup:
+            assert cancelled is None
+        return CommandResult(True, icon_line() if "app_process" in command[-1] else "")
+
+    monkeypatch.setattr(app_icons.CommandRunner, "run", run)
+    assert collect(cancelled=cancel.is_set) == []
+    assert seen[-1][0][-1].startswith("rm -f -- /data/local/tmp/adblab-icons-")
+    assert len(seen) == (2 if phase == "deploy" else 3)
 
 
 def collect(packages=None, *, cancelled=lambda: False, device="synthetic-device"):
@@ -79,7 +126,7 @@ def test_load_uses_random_readonly_helper_exact_cleanup_and_bounded_output(trans
     assert f"head -c {app_icons._MAX_OUTPUT_BYTES + 1}" in render[-1]
     assert "2>/dev/null" in render[-1]
     assert cleanup == ["adb", "-s", "synthetic-device", "shell", f"rm -f -- {remote}"]
-    assert [timeout for _command, timeout in calls] == [8, 20, 5]
+    assert [timeout for _command, timeout in calls] == [30, 30, 30]
 
 
 def test_each_batch_uses_its_own_path(transport):

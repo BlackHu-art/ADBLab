@@ -12,6 +12,7 @@ from time import monotonic
 
 from PySide6.QtCore import QThread, Signal
 
+from core.adb_query import query_timeout
 from core.exec import CommandRunner
 from services.app_icons import load_app_icons
 from utils.archive import safe_extract_zip
@@ -191,7 +192,8 @@ class AppManagerWorker(QThread):
         """批量及解析兼容查询共用原批次预算，失败不生成可缓存的空详情。"""
         if not packages or self._cancelled():
             return
-        deadline = monotonic() + max(5, len(packages) * 2)
+        command_budget = query_timeout(self.device_ip, 5)
+        deadline = monotonic() + max(command_budget, len(packages) * 2)
         safe_packages = [pkg for pkg in packages if _safe_pkg(pkg)]
         if len(safe_packages) != len(packages):
             self.log_message.emit("Invalid package names skipped while reading details")
@@ -203,7 +205,8 @@ class AppManagerWorker(QThread):
             if self._cancelled() or remaining <= 0:
                 return
             r = self._adb(
-                "shell", f"dumpsys package {pkg}", timeout=min(5, remaining), cancellable=True
+                "shell", f"dumpsys package {pkg}",
+                timeout=min(command_budget, remaining), cancellable=True,
             )
             if self._cancelled():
                 return
