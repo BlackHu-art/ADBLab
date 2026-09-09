@@ -1,8 +1,0 @@
-{
-  "platform": "windows",
-  "started_at": "2026-09-06T20:16:33.5293948+08:00",
-  "completed_at": "2026-09-06T20:16:44.0563695+08:00",
-  "exit_code": -1073740940,
-  "command": ".venv/Scripts/python.exe -X faulthandler -m pytest -q tests/test_performance_responsive.py -k \"cards_reflow_without or large_font_running_summary\"",
-  "log": "D:\\Program Files (x86)\\JetBrains\\PyStation\\ADBLab\\.tmp\\performance-responsive-20260906\\windows-cards-reflow-running-summary-native.log"
-}

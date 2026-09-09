@@ -1,7 +1,0 @@
-<RCC>
-    <qresource prefix="/adblab/i18n">
-        <file>adblab.zh_CN.qm</file>
-        <file>adblab.en_US.qm</file>
-        <file>adblab.zh_HK.qm</file>
-    </qresource>
-</RCC>

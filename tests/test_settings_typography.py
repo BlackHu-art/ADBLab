@@ -425,8 +425,10 @@ def test_update_card_only_opens_checked_release_on_explicit_click(settings_page,
     opener.assert_not_called()
     about.release_button.click()
     assert opener.call_args.args[0].toString() == "https://github.com/BlackHu-art/ADBLab/releases"
+    major_minor, patch = APP_VERSION.rsplit(".", 1)
+    next_version = f"{major_minor}.{int(patch) + 1}"
     release = ReleaseInfo(
-        "3.2.12", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.12",
+        next_version, f"https://github.com/BlackHu-art/ADBLab/releases/tag/v{next_version}",
         datetime(2026, 9, 9, tzinfo=timezone.utc),
     )
     opener.reset_mock()

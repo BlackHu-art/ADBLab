@@ -1,9 +1,0 @@
-warning: in the working copy of 'gui/features/media.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'gui/main_frame.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'gui/pages/fluent_pages.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'gui/panels/app_panel.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'gui/panels/side_panel.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'tests/test_flat_feature_navigation.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'tests/test_main_window_layout.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'tests/test_screenshot_page.py', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of 'tests/test_workspace_consolidation.py', LF will be replaced by CRLF the next time Git touches it
