@@ -5,8 +5,9 @@ ADB 路径由 utils.adb_resolver 解析，内置 scrcpy ADB 的优先级高于�
 
 import subprocess
 import threading
+from collections.abc import Callable
 
-from core.exec import CommandResult, CommandRunner, ExecHandle, ProcessRunner
+from core.exec import CommandResult, CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from utils.adb_resolver import adb_path, resolve_adb_path
 
 
@@ -33,29 +34,39 @@ class ADBInputSession:
     def _key(self) -> str:
         return f"adb-input-session-{id(self)}"
 
-    def send(self, command: str) -> bool:
-        """通过标准输入发送命令；返回 False 时由调用方执行降级路径。"""
+    def send(
+        self, command: str, *, cancelled: Callable[[], bool] | None = None,
+    ) -> bool:
+        """写入持久管道；失败可能已部分发送，调用方不得据此重放输入。"""
         with self._lock:
+            if cancelled is not None and cancelled():
+                return False
             proc = self._ensure_process()
-            if not proc or not proc.stdin:
+            if not proc or not proc.stdin or (cancelled is not None and cancelled()):
                 return False
             try:
                 proc.stdin.write(f"input {command}\n")
                 proc.stdin.flush()
                 return True
             except (BrokenPipeError, OSError, ValueError):
-                self._close_locked()
+                # 写入失败可能留下部分缓冲，不能以 exit 再次刷新未知输入。
+                self._close_locked(graceful=False)
                 return False
 
     def close(self):
         with self._lock:
             self._close_locked()
 
-    def warm(self) -> bool:
+    def warm(self, *, cancelled: Callable[[], bool] | None = None) -> bool:
         """在第一条真实输入命令前预先打开持久 Shell。"""
         with self._lock:
+            if cancelled is not None and cancelled():
+                return False
             proc = self._ensure_process()
-            return bool(proc and proc.stdin and proc.poll() is None)
+            return bool(
+                proc and proc.stdin and proc.poll() is None
+                and not (cancelled is not None and cancelled())
+            )
 
     def _ensure_process(self) -> ExecHandle | None:
         if self._proc and self._proc.poll() is None:
@@ -81,13 +92,13 @@ class ADBInputSession:
             self._proc = None
             return None
 
-    def _close_locked(self):
+    def _close_locked(self, *, graceful: bool = True):
         proc = self._proc
         self._proc = None
         if proc is None:
             return
         try:
-            if proc.stdin and proc.poll() is None:
+            if graceful and proc.stdin and proc.poll() is None:
                 proc.stdin.write("exit\n")
                 proc.stdin.flush()
         except Exception:
@@ -109,32 +120,60 @@ class ADBBridge:
         if path is None and resolve_adb_path() is None:
             raise FileNotFoundError("ADB not found — install Android SDK Platform Tools")
 
-    def shell(self, command: str, device_id: str | None = None) -> CommandResult:
-        """执行 ADB Shell 命令并返回标准化结果。"""
+    def shell(
+        self, command: str, device_id: str | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
+    ) -> CommandResult:
+        """执行有界 Shell 命令，按调用方取消信号收口并返回标准化结果。"""
         cmd = [self.path]
         if device_id:
             cmd.extend(["-s", device_id])
         cmd.extend(["shell", command])
-        return CommandRunner.run(cmd, timeout=15)
+        if cancelled is None:
+            return CommandRunner.run(cmd, timeout=15)
+        return CommandRunner.run(cmd, timeout=15, cancelled=cancelled)
 
-    def shell_input(self, command: str, device_id: str | None = None) -> bool:
+    def can_input_fast(self, device_id: str | None = None) -> bool:
+        """读取应用运行实例对当前设备的直连选择，不隐式创建实例或探测设备。"""
+        runtime = adb_runtime()
+        return bool(device_id and runtime and runtime.can_shell_fast(self.path, device_id))
+
+    def shell_input(
+        self, command: str, device_id: str | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
+    ) -> bool:
         """向设备 Shell 发送 input 命令，例如 keyevent 或 swipe。
 
-        优先复用持久会话；会话失效时降级为有界同步命令并校验退出码，
-        避免产生无人跟踪、关闭时不被清理的独立进程。
+        已验证设备经统一执行器直连并按远端结果返回；其他设备复用持久会话。
+        仅尚未写入输入的会话准备失败可以降级，写入或直连发送后的失败不重放。
+        取消只阻止后续发送并收口在途请求，不表示已执行的设备操作被撤销。
         """
-        session = self._input_session(device_id)
-        if session.send(command):
-            return True
+        if cancelled is not None and cancelled():
+            return False
+        cancel_options = {"cancelled": cancelled} if cancelled is not None else {}
+        if not self.can_input_fast(device_id):
+            session = self._input_session(device_id)
+            if session.warm(**cancel_options):
+                return session.send(command, **cancel_options)
         cmd = [self.path]
         if device_id:
             cmd.extend(["-s", device_id])
         cmd.extend(["shell", f"input {command}"])
-        return CommandRunner.run(cmd, timeout=15).success
+        if cancelled is None:
+            return CommandRunner.run(cmd, timeout=15).success
+        return CommandRunner.run(cmd, timeout=15, cancelled=cancelled).success
 
-    def warm_input_session(self, device_id: str | None = None) -> bool:
-        """预热持久输入 Shell，缩短首条真实输入命令的等待时间。"""
-        return self._input_session(device_id).warm()
+    def warm_input_session(
+        self, device_id: str | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
+    ) -> bool:
+        """直连能力已就绪时直接返回；仅原生后端预建会话，始终不发送用户输入。"""
+        if cancelled is not None and cancelled():
+            return False
+        if self.can_input_fast(device_id):
+            return True
+        cancel_options = {"cancelled": cancelled} if cancelled is not None else {}
+        return self._input_session(device_id).warm(**cancel_options)
 
     def close_input_sessions(self, device_id: str | None = None):
         """关闭持久输入 Shell 会话，供面板或服务停止时清理资源。"""
@@ -161,10 +200,17 @@ class ADBBridge:
     def _session_key(device_id: str | None) -> str:
         return device_id or "__default__"
 
-    def get_dimensions(self, device_id: str | None = None):
-        """通过 wm size 获取设备屏幕尺寸，返回宽高列表或 None。"""
+    def get_dimensions(
+        self, device_id: str | None = None,
+        *, cancelled: Callable[[], bool] | None = None,
+    ):
+        """通过可取消的 wm size 获取屏幕尺寸，返回宽高列表或 None。"""
         try:
-            result = self.shell("wm size", device_id=device_id)
+            result = (
+                self.shell("wm size", device_id=device_id)
+                if cancelled is None
+                else self.shell("wm size", device_id=device_id, cancelled=cancelled)
+            )
             raw = result.output if result.success else result.error
             for prefix in ("Physical size:", "Override size:"):
                 if prefix in raw:

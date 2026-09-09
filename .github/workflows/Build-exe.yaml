@@ -108,6 +108,10 @@ jobs:
         shell: bash
         run: python -m pyright
 
+      - name: Build scrcpy ADB bridge
+        shell: bash
+        run: python scripts/build_scrcpy_adb_bridge.py
+
       - name: Source self-check
         if: runner.os != 'Windows'
         shell: bash
@@ -121,6 +125,7 @@ jobs:
             ${{ matrix.package_mode }} ${{ matrix.windowed }} \
             ${{ matrix.icon }} \
             --collect-submodules mobileperf \
+            --add-data "build/runtime-helpers:runtime-helpers" \
             ${{ matrix.datas }} \
             main.py
 

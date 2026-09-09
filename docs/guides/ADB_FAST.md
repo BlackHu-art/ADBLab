@@ -20,6 +20,8 @@
 | 用户自定义 Shell、需要输入/PTY、特殊参数 | 原生 ADB |
 | MobilePerf 同步短查询与 CPU 单次 top | 独立采集进程初始化自动执行策略，保留采样器的原始文本转换 |
 | 截图 `exec-out screencap -p` | 按设备策略选择原生 ADB 或服务直连，二进制输出直接写文件 |
+| Remote 按键与手势 | 已验证设备优先执行直连短命令；原生模式复用持久输入 shell |
+| scrcpy 4.1 启动 | 满足设备直连策略且专用入口可用时，通过独立 CLI 连接已有服务；其他情况启动前选定原生 ADB |
 | 安装、传输、其他二进制命令、长期日志/录屏/Monkey | 保留原有执行边界 |
 
 自动比较使用相同只读探针，不重复运行用户操作。首次属性请求最多短等 0.5 秒已排队的能力验证，
@@ -64,6 +66,35 @@
 Logcat 的 PID 查询和前台包探测向执行器传递取消，前台包的兼容探测共用总预算。
 Remote 启动预检默认共用 20 秒预算，版本、响应、尺寸及可选编码器查询均可取消；启动路径
 不再等待附加的 `dd` 测速。
+
+## Remote 投屏与输入
+
+每台投屏在启动前冻结配置与 ADB 后端。独立入口
+[scrcpy_adb_bridge.py](../../scripts/scrcpy_adb_bridge.py) 仅通过 scrcpy 子进程的 `ADB` 环境变量
+传入，不修改全局环境或系统监控。它只支持已有服务验证、设备列表、固定 scrcpy-server 上传、
+本会话端口转发和 scrcpy 4.1 的长连接 `app_process`；普通文件传输仍走原边界。
+入口仍只接受 scrcpy 的固定上传与 CLASSPATH 参数，内部按会话身份映射到独享的临时 JAR；
+同一手机的 USB/无线连接并发启动时，不会因共享默认 JAR 被另一会话删除而相互影响。
+上传前登记清理意图，官方 server 根据自己的 CLASSPATH 删除文件；启动失败或部分上传时，
+应用后台只删除本会话派生的精确文件名，不开放任意远端删除命令。
+只有默认本机服务、当前设备已验证直连、版本 4.1、无额外参数且工具和服务端文件存在时使用。
+选择原生 ADB、自定义服务或 scrcpy 服务端路径、不同版本或缺少专用入口时，在任何 scrcpy 业务请求前选定原生路径。
+专用入口执行失败后不再启动原生 ADB 重试，避免重复上传或运行服务端。
+
+专用协议逐帧转发 stdout/stderr 并传递退出码，握手和上传有预算，运行期保留取消检查。
+普通界面启动由服务为每台投屏分配独立本机端口，跨服务实例保留到清理完成，原生模式同样适用。
+这避免 Windows scrcpy 的 `SO_REUSEADDR` 让多个实例同时监听默认端口；显式自定义端口保持原配置。
+每次快速投屏在用户数据目录创建独立会话，第一次合法隧道原子绑定 scrcpy 自己生成的 scid；
+转发使用 `norebind`，删除前核对归属，不能移除其他投屏的端口。helper 观察 scrcpy 父进程
+及应用进程，父进程消失即取消连接；操作系统文件锁登记存活 helper。后台清理等待租约释放，
+只清理本会话映射和临时 JAR；失败记录脱敏日志并保留会话与端口归属，允许继续停止重试。
+源码先按 [构建指南](BUILD_AND_RUN.md#scrcpy-专用-adb-入口) 构建专用入口；源码摘要变化后
+旧入口不再被选择。正式产物随包提供独立 console onedir 工具，避免每条命令启动主 GUI 或重复解压。
+
+输入后端按当前设备能力读取，不触发新探测。直连预热只报告已验证能力，不启动原生 shell；
+输入返回远端实际结果。原生持久 shell 的成功写入仍不等于设备执行确认，写入/刷新失败后不
+重发，异常清理也不再次刷新可能保留输入的缓冲。仅在预热失败且用户输入尚未发送时允许有界
+兼容执行。关闭取消贯通按键、手势尺寸查询和输入链；改选设备不改向已经开始的操作。
 
 ## 截图采集与浏览
 
@@ -176,6 +207,7 @@ adbf -s <设备序列号> shell getprop ro.build.version.sdk
 | --- | --- | --- |
 | 独立命令与协议 | `tests/test_adb_fast.py` | 模拟 socket 分帧、设备选择、双流/退出码、总超时、取消、参数拒绝和连接清理 |
 | 应用自动选择 | `tests/test_adb_runtime.py`、`tests/test_qt_adb_runtime.py` | 能力与测速分离、故障恢复与代次、共享预算、不重放、Qt 投递、忙碌时快速扫描及关闭 |
+| Remote 投屏与输入 | `tests/test_scrcpy_adb_protocol.py`、`tests/test_scrcpy_session.py`、`tests/test_scrcpy_adb_bridge.py`、`tests/test_scrcpy_backend.py`、`tests/test_remote_input_backend.py`、`tests/test_remote_sessions.py` | 限定协议、流式输出、私有文件/端口归属、启动后端、取消不重放和逐台启动/停止 |
 | 截图采集与浏览 | `tests/test_screenshot_capture.py`、`tests/test_screenshot_io.py` | 完整 PNG 验证、失败保留原文件、临时文件清理、后台解码、缓存、删除快照和原生线程退出 |
 | MobilePerf 同步查询 | `tests/test_mobileperf_adb_execution.py`、`tests/test_mobileperf_query_budget.py` | 原始文本契约、有限超时、重连预算、执行中取消、异步兼容和收尾线程准入 |
 | MobilePerf 采样与停止 | `tests/test_mobileperf_sampling.py`、`tests/test_mobileperf_startup_deadline.py` | FD/线程周期快照、可唤醒等待、采集启动和绝对截止时间 |

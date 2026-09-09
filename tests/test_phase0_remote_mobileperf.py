@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 from PySide6.QtWidgets import QApplication
@@ -36,7 +36,14 @@ def test_remote_input_targets_current_single_selection_independent_of_mirroring(
     queued_task = panel._remote_executor.submit.call_args.args[0]
     queued_task()
 
-    panel._remote_control.perform_action.assert_called_once_with("device-b", "swipe_up")
+    panel._remote_control.perform_action.assert_called_once_with(
+        "device-b", "swipe_up", cancelled=ANY,
+    )
+    cancelled = panel._remote_control.perform_action.call_args.kwargs["cancelled"]
+    assert not cancelled()
+    assert panel._active_device == "device-a"
+    panel._remote_input_closing = True
+    assert cancelled()
 
 
 def test_remote_input_is_available_without_a_running_mirroring_session():
@@ -50,7 +57,11 @@ def test_remote_input_is_available_without_a_running_mirroring_session():
     queued_task = panel._remote_executor.submit.call_args.args[0]
     queued_task()
 
-    panel._remote_control.send_keyevent.assert_called_once_with("device-b", "HOME")
+    panel._remote_control.send_keyevent.assert_called_once_with("device-b", "HOME", cancelled=ANY)
+    cancelled = panel._remote_control.send_keyevent.call_args.kwargs["cancelled"]
+    assert not cancelled()
+    panel._remote_input_closing = True
+    assert cancelled()
     panel._log.assert_not_called()
 
 

@@ -5924,5 +5924,25 @@ Check for the latest stable release</translation>
             <source>前往下载</source>
             <translation>Download</translation>
         </message>
+        <message>
+            <source>追加镜像</source>
+            <translation>Add mirrors</translation>
+        </message>
+        <message>
+            <source>准备中</source>
+            <translation>Preparing</translation>
+        </message>
+        <message>
+            <source>连接中</source>
+            <translation>Connecting</translation>
+        </message>
+        <message>
+            <source>停止或重试此设备的镜像</source>
+            <translation>Stop or retry mirroring this device</translation>
+        </message>
+        <message>
+            <source>{device}：{action}</source>
+            <translation>{device}: {action}</translation>
+        </message>
     </context>
 </TS>

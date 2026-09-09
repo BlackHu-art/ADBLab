@@ -362,7 +362,81 @@ class RemotePanelForm(QObject):
             wide_columns=2,
         )
 
+        self._frame._session_list = QWidget(g)
+        self._frame._session_list.setObjectName("remoteSessionList")
+        self._frame._session_list_layout = QVBoxLayout(self._frame._session_list)
+        self._frame._session_list_layout.setContentsMargins(0, 4, 0, 0)
+        self._frame._session_list_layout.setSpacing(6)
+        self._frame._session_rows = {}
+        gl.addWidget(self._frame._session_list)
+        self._frame._session_list.hide()
+
         return g
+
+    def refresh_session_rows(self) -> None:
+        """各设备使用稳定展示名称，停止与重试入口绑定原设备而非当前选择。"""
+        frame = self._frame
+        if not hasattr(frame, "_session_rows"):
+            return
+        states = {
+            "preparing": tr("准备中"), "connecting": tr("连接中"), "ready": tr("就绪"),
+            "failed": tr("失败"), "stopped": tr("已停止"), "stopping": tr("正在停止…"),
+        }
+        sessions = getattr(frame, "_device_sessions", {})
+        for device, session in sessions.items():
+            row = frame._session_rows.get(device)
+            if row is None:
+                container = QWidget(frame._session_list)
+                layout = QHBoxLayout(container)
+                layout.setContentsMargins(0, 0, 0, 0)
+                layout.setSpacing(8)
+                name = frame._status_text("")
+                name.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+                status = frame._status_text("")
+                action = frame._b(
+                    tr("停止"), "stop-circle.svg", "normal", tooltip=tr("停止或重试此设备的镜像"),
+                )
+                action.clicked.connect(
+                    lambda _checked=False, target=device: self._session_action(target)
+                )
+                layout.addWidget(name, 1)
+                layout.addWidget(status)
+                layout.addWidget(action)
+                frame._session_list_layout.addWidget(container)
+                row = frame._session_rows[device] = (name, status, action)
+            name, status, action = row
+            window = frame.panel.window()
+            bar = getattr(window, "_global_device_bar", None)
+            label = (
+                bar.device_label(device) if bar is not None
+                else tr("设备 {number}").format(number=list(sessions).index(device) + 1)
+            )
+            name.setText(label)
+            name.setToolTip(label)
+            stop_failed = session.resource_owned and session.error_type == "StopFailed"
+            text = tr("停止失败") if stop_failed else states[session.state]
+            status.setText(text)
+            active = session.resource_owned or session.state == "preparing"
+            action.setText(tr("停止") if active else tr("重试"))
+            action.setEnabled(
+                not getattr(frame, "_closing", False)
+                and frame._session_state != frame._SESSION_STOPPING
+                and not session.stop_inflight
+                and (active or device in frame.selected_devices)
+            )
+            action.setAccessibleName(
+                tr("{device}：{action}").format(device=label, action=action.text())
+            )
+        frame._session_list.setVisible(bool(sessions))
+
+    def _session_action(self, device: str) -> None:
+        session = getattr(self._frame, "_device_sessions", {}).get(device)
+        if session is None:
+            return
+        if session.resource_owned or session.state == "preparing":
+            self._frame._stop_device_scrcpy(device)
+        else:
+            self._frame._retry_device_scrcpy(device)
 
     @Slot(str, str)  # type: ignore[reportArgumentType]  # PySide6 Slot 的桩类型未包含 self 参数。
     def _show_feedback(self, level: str, message: str) -> None:

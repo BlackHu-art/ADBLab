@@ -1127,7 +1127,7 @@ def test_adb_bridge_shell_input_falls_back_to_bounded_command():
         patch("core.adb_bridge.CommandRunner.run") as run,
     ):
         run.return_value = CommandResult(success=True, output="")
-        input_session.return_value.send.return_value = False
+        input_session.return_value.warm.return_value = False
         result = bridge.shell_input("keyevent 3", device_id="device-1")
 
     assert result is True

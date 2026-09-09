@@ -195,11 +195,13 @@ Settings 中的 About 随 SettingsPage 创建，不属于 Workspace 路由。未
 ## 7. Remote
 
 - **触发**：在左侧进入远程控制，勾选一台或多台设备后使用屏幕镜像、按键和手势。
-- **主流程**：Remote 直接使用右上角已选在线目标。启动时固定设备批次，逐台预检、生成 LaunchPlan，
-  ProcessRunner 为各设备启动独立 scrcpy；stderr/FPS reader 和 watchdog 更新状态。按键与手势
-  固定当次目标并发送给各设备的持久 ADB shell。改变选择不重定向已启动镜像，停止清理仍使用原批次。
+- **主流程**：Remote 直接使用右上角已选在线目标。启动时固定每台设备的配置，最多三台并发预检；
+  单台 LaunchPlan 就绪即交回 GUI，由 ProcessRunner 启动独立 scrcpy，无需等待慢设备。
+  镜像运行时可勾选新设备并追加，已有镜像保持原目标和配置；每台呈现准备、连接、就绪、停止或失败，
+  提供单台停止/重试及停止全部。只有收到视频就绪信号才显示就绪。按键与手势固定当次目标，
+  执行方式见 [Remote 投屏与输入](../guides/ADB_FAST.md#remote-投屏与输入)。
 - **失败与清理**：没有可用目标时拒绝新操作；单台预检或启动失败不阻断其他设备。关闭时先停止输入
-  准入，停止原批次进程并等待 executor、warmup、reader 和焦点线程，最后关闭持久输入会话；
+  准入，取消预检，停止原会话进程并等待 executor、warmup、reader、焦点线程及专用入口清理，最后关闭持久输入会话；
   非 Windows 缺少 PATH scrcpy 时明确失败。
 
 ## 8. MobilePerf

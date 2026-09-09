@@ -111,6 +111,21 @@ Ruff 的规则、排除项和逐文件例外只以 `ruff.toml` 为准。
 
 ## 本地 PyInstaller 构建
 
+### scrcpy 专用 ADB 入口
+
+源码运行前可用现有构建依赖生成轻量 CLI：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/build_scrcpy_adb_bridge.py
+& .\build\runtime-helpers\adblab-adb-bridge\adblab-adb-bridge.exe --self-check
+```
+
+构建只写项目 `build/`，使用 console onedir 保留标准流并避免逐命令解压；不安装系统工具。
+入口源码摘要不匹配或缺少构建时，源码 Remote 选择原生兼容模式。`ADBLab.spec` 自动先构建该入口，
+CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packaging` 要求入口存在，
+并离线调用其自检确认标准输出与退出码；因此源码执行打包自检前也需先完成此构建。
+支持范围与会话清理见 [ADB_FAST](ADB_FAST.md#remote-投屏与输入)。
+
 ### 应用图标读取工具
 
 `resources/app-icon-helper.jar` 是随应用携带的 DEX 工具，源码位于

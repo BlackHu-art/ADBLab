@@ -1,13 +1,15 @@
 """提供 scrcpy 投屏启动、快捷按键和 Remote 输入控制面板。"""
 
 import os  # noqa: F401  测试通过 remote_panel 命名空间补丁 os.path.isfile。
+import re
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from typing import cast
 
-from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (  # noqa: F401  测试补丁 remote_panel 的 QWidget.closeEvent。
     QComboBox,
@@ -149,6 +151,8 @@ class ScrcpyLaunchWorker(QThread):
 
     launch_ready = Signal(list, str)
     batch_ready = Signal(list)
+    plan_ready = Signal(object, object)
+    plan_failed = Signal(object, str)
     log_message = Signal(str, str)
 
     def __init__(
@@ -157,47 +161,79 @@ class ScrcpyLaunchWorker(QThread):
         super().__init__()
         self.config = config
         self.service = service or ScrcpyService()
+        self._queue_lock = threading.Lock()
+        self._configs = deque(config if isinstance(config, list) else [config])
+        self._cancelled_configs: dict[int, ScrcpyConfig] = {}
+        self._accepting = True
+        self._cancelled = threading.Event()
+
+    def add_configs(self, configs: list[ScrcpyConfig]) -> bool:
+        """在线程仍接收任务时追加配置；调用方负责保留未被接纳的批次。"""
+        with self._queue_lock:
+            if not self._accepting or self._cancelled.is_set():
+                return False
+            self._configs.extend(configs)
+            return True
+
+    def cancel_config(self, config: ScrcpyConfig) -> None:
+        """取消一个配置代次，重试创建的新配置不继承旧代次的取消标记。"""
+        with self._queue_lock:
+            self._cancelled_configs[id(config)] = config
+
+    def requestInterruption(self) -> None:
+        """同时通知准备线程，QThread 结束后仍保留取消证据。"""
+        self._cancelled.set()
+        super().requestInterruption()
+
+    def _config_cancelled(self, config: ScrcpyConfig) -> bool:
+        with self._queue_lock:
+            return self._cancelled.is_set() or id(config) in self._cancelled_configs
 
     def run(self):
-        # scrcpy 版本、设备预检和编码器探测都可能阻塞，放到 QThread 避免卡住 UI。
-        if isinstance(self.config, list):
-            plans = []
-            for config in self.config:
-                if self.isInterruptionRequested():
-                    return
-                try:
-                    plan = self.service.build_launch_plan(
-                        config, cancelled=self.isInterruptionRequested,
-                    )
-                except InterruptedError:
-                    return
-                except Exception as exc:
-                    self.log_message.emit("ERROR", f"scrcpy preflight failed: {type(exc).__name__}")
-                    continue
-                for level, message in plan.messages:
-                    self.log_message.emit(level, message)
-                plans.append((config, plan.args, plan.device_info))
-            if not self.isInterruptionRequested():
+        # 唯一协调 QThread 持有整个有界线程池；finished 代表所有准备线程已经退出。
+        plans = []
+        with ThreadPoolExecutor(max_workers=3, thread_name_prefix="adblab-scrcpy-prepare") as pool:
+            pending: dict[Future, ScrcpyConfig] = {}
+            while True:
+                with self._queue_lock:
+                    while self._configs and len(pending) < 3 and not self._cancelled.is_set():
+                        config = self._configs.popleft()
+                        if id(config) in self._cancelled_configs:
+                            continue
+                        future = pool.submit(
+                            self.service.build_launch_plan, config,
+                            cancelled=lambda current=config: self._config_cancelled(current),
+                        )
+                        pending[future] = config
+                    if not pending:
+                        self._accepting = False
+                        break
+                completed, _ = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    config = pending.pop(future)
+                    try:
+                        plan = future.result()
+                    except InterruptedError:
+                        continue
+                    except Exception as exc:
+                        if not self._config_cancelled(config):
+                            self.plan_failed.emit(config, type(exc).__name__)
+                            self.log_message.emit(
+                                "ERROR", f"scrcpy preflight failed: {type(exc).__name__}",
+                            )
+                        continue
+                    if self._config_cancelled(config):
+                        continue
+                    for level, message in plan.messages:
+                        self.log_message.emit(level, message)
+                    self.plan_ready.emit(config, plan)
+                    plans.append((config, plan.args, plan.device_info))
+        # 旧信号仅供兼容消费者使用；正式面板只连接逐台信号，避免重复启动。
+        if not self._cancelled.is_set():
+            if isinstance(self.config, list):
                 self.batch_ready.emit(plans)
-            return
-        if self.isInterruptionRequested():
-            return
-        try:
-            plan = self.service.build_launch_plan(
-                self.config, cancelled=self.isInterruptionRequested,
-            )
-        except InterruptedError:
-            return
-        except Exception as exc:
-            self.log_message.emit("ERROR", f"scrcpy preflight failed: {exc}")
-            return
-        for level, message in plan.messages:
-            if self.isInterruptionRequested():
-                return
-            self.log_message.emit(level, message)
-        if self.isInterruptionRequested():
-            return
-        self.launch_ready.emit(plan.args, plan.device_info)
+            elif plans:
+                self.launch_ready.emit(plans[0][1], plans[0][2])
 
 class RemotePanel(BasePanel):
     """管理 scrcpy 会话、串行 Remote 输入队列和相关界面状态。"""
@@ -211,6 +247,8 @@ class RemotePanel(BasePanel):
     _feedback_received = Signal(str, str)
     _remote_queue_status_requested = Signal(int, int, str)
     _stop_completed_requested = Signal(bool)
+    _device_stop_completed_requested = Signal(str, object, bool)
+    _scrcpy_output_requested = Signal(object, str)
     workspace_target_lock_changed = Signal(bool)
     _SESSION_IDLE = "idle"
     _SESSION_STARTING = "starting"
@@ -334,6 +372,8 @@ class RemotePanel(BasePanel):
         self._status_update_requested.connect(self._update_status)
         self._remote_queue_status_requested.connect(self._update_remote_queue_status)
         self._stop_completed_requested.connect(self._on_stop_completed)
+        self._device_stop_completed_requested.connect(self._on_device_stop_completed)
+        self._scrcpy_output_requested.connect(self._on_scrcpy_output)
 
     # ── 信号与快捷键 ────────────────────────────────────────────────────
 
@@ -419,6 +459,11 @@ class RemotePanel(BasePanel):
         worker = getattr(self, "_launch_worker", None)
         if worker is not None:
             self._request_launch_worker_interruption_once(worker)
+        for session in getattr(self, "_device_sessions", {}).values():
+            if session.state == "preparing":
+                session.cancel_event.set()
+                session.state = "stopped"
+        self._pending_launch_configs = []
 
     def set_device_selected(self, selected: bool) -> None:
         """由主窗口投影固定会话设备是否在当前全局操作目标中。"""
@@ -508,6 +553,7 @@ class RemotePanel(BasePanel):
             "Checking...": tr("正在检查…"),
             "Error": tr("错误"),
             "Running": tr("运行中"),
+            "Connecting": tr("连接中"),
             "Idle": tr("空闲"),
             "Disconnected": tr("已断开"),
             "Stopping...": tr("正在停止…"),
@@ -558,12 +604,26 @@ class RemotePanel(BasePanel):
             self.signals.log_message.emit(level, msg)
 
     def _redact_remote_diagnostic(self, message: str) -> str:
-        """移除 Remote 诊断信息中的当前设备标识，并限制异常输出长度。"""
+        """移除当前及历史会话的设备标识和已知本机路径，并限制异常输出长度。"""
         text = str(message).replace("\r", " ").replace("\n", " ")
         active_device = str(getattr(self, "_active_device", "") or "")
         devices: set[str] = set(getattr(self, "_session_devices", ()))
+        devices.update(getattr(self, "_device_sessions", {}))
         devices.update(getattr(self, "_target_devices", ()) or ())
         devices.add(active_device)
+        paths = {str(getattr(self, "_record_path", "") or "")}
+        for session in getattr(self, "_device_sessions", {}).values():
+            config = session.config
+            paths.update((config.exe, config.adb, config.record_path))
+        for path in sorted(paths, key=len, reverse=True):
+            if path and ("/" in path or "\\" in path):
+                text = text.replace(path, "<path>")
+        # scrcpy 还会报告派生的 helper、server 和图标路径，这些不在表单配置中。
+        text = re.sub(
+            r"(\bUsing (?:adb|server|icon)(?: \([^)]*\))?:)\s*.+$",
+            r"\1 <path>", text,
+        )
+        # 录制文件名可能包含设备标识，先处理完整路径，避免替换设备后破坏路径匹配。
         for device in sorted(devices, key=len, reverse=True):
             if device:
                 text = text.replace(device, "<device>")
@@ -572,7 +632,9 @@ class RemotePanel(BasePanel):
     def shutdown(self):
         """先停止 scrcpy 和启动 worker，再关闭输入队列及持久 ADB 会话。"""
         self._closing = True
-        if self._process:
+        if self._process or any(
+            session.resource_owned for session in getattr(self, "_device_sessions", {}).values()
+        ):
             self._watchdog.stop()
             self._process = None
             try:
@@ -761,6 +823,8 @@ class RemotePanel(BasePanel):
             # 注册 shutdown task 时主面板尚未调用 shutdown()；必须先单独关闭
             # Remote 输入准入，再摘除 executor，避免晚到输入走同步降级路径。
             self._remote_input_closing = True
+            for session in getattr(self, "_device_sessions", {}).values():
+                session.cancel_event.set()
             executor = getattr(self, "_remote_executor", None)
             self._remote_executor = None
             warmup_lock = getattr(self, "_warmup_threads_lock", None)
@@ -793,11 +857,14 @@ class RemotePanel(BasePanel):
         return lock
 
     def _disconnect_launch_worker(self, worker: ScrcpyLaunchWorker):
-        if isinstance(worker, ScrcpyLaunchWorker) and isinstance(worker.config, list):
-            try:
-                worker.batch_ready.disconnect(self._on_batch_launch_ready)
-            except (RuntimeError, TypeError):
-                pass
+        if isinstance(worker, ScrcpyLaunchWorker):
+            signals = (worker.plan_ready, worker.plan_failed, worker.log_message, worker.finished)
+            for signal in signals:
+                try:
+                    signal.disconnect()
+                except (RuntimeError, TypeError):
+                    pass
+            return
         for disconnect in (
             lambda: worker.log_message.disconnect(self._log),
             lambda: worker.launch_ready.disconnect(self._on_launch_ready),
@@ -1060,6 +1127,34 @@ class RemotePanel(BasePanel):
         return (
             getattr(self, "_scrcpy_controller", None) or RemotePanelScrcpy(self)
         )._start_scrcpy()
+
+    @Slot(object, object)  # type: ignore[reportArgumentType]  # PySide6 Slot 桩未包含 self。
+    def _on_device_plan_ready(self, config, plan) -> None:
+        """逐台准备结果经队列连接回到 GUI 主线程后才能创建进程。"""
+        self._scrcpy_controller._on_device_plan_ready(config, plan)
+
+    @Slot(object, str)  # type: ignore[reportArgumentType]  # PySide6 Slot 桩未包含 self。
+    def _on_device_plan_failed(self, config, error_type: str) -> None:
+        """仅当前设备配置代次接收预检失败结果。"""
+        self._scrcpy_controller._on_device_plan_failed(config, error_type)
+
+    def _stop_device_scrcpy(self, device: str) -> None:
+        """停止指定设备的准备或镜像，保留其他设备的会话。"""
+        self._scrcpy_controller._stop_device_scrcpy(device)
+
+    def _retry_device_scrcpy(self, device: str) -> None:
+        """已选且没有活动进程的设备可以重新准备。"""
+        self._scrcpy_controller._start_scrcpy([device])
+
+    @Slot(str, object, bool)  # type: ignore[reportArgumentType]  # PySide6 Slot 桩未包含 self。
+    def _on_device_stop_completed(self, device: str, session, stopped: bool) -> None:
+        """停止结果按会话代次接收，旧结果不能清空重试后的新镜像。"""
+        self._scrcpy_controller._on_device_stop_completed(device, session, stopped)
+
+    @Slot(object, str)  # type: ignore[reportArgumentType]  # PySide6 Slot 桩未包含 self。
+    def _on_scrcpy_output(self, process, line: str) -> None:
+        """诊断输出与其原进程绑定，GUI 线程据此确认画面就绪。"""
+        self._scrcpy_controller._on_scrcpy_output(process, line)
 
     def _on_launch_ready(self, args: list, device_info: str):
         return (

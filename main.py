@@ -152,6 +152,26 @@ def _self_check_packaging() -> int:
             Path(resource_path(f"{WINDOWS_TOOL_BUNDLE}/adb.exe")).is_file(),
         )
 
+    from utils.scrcpy_bridge import resolve_scrcpy_bridge
+
+    # 自检验证私有 CLI 的标准输出契约，不连接设备或启动 ADB 服务。
+    bridge = resolve_scrcpy_bridge()
+    check("resource:scrcpy-adb-bridge", bridge is not None)
+    if bridge is not None:
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                [bridge, "--self-check"], capture_output=True, timeout=10,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+            )
+            check(
+                "runtime:scrcpy-adb-bridge",
+                result.returncode == 0 and result.stdout == b"scrcpy-adb-bridge: ready\n",
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            check("runtime:scrcpy-adb-bridge", False, "CLI self-check failed")
+
     try:
         root = user_data_root()
         root.mkdir(parents=True, exist_ok=True)

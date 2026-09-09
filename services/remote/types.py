@@ -73,3 +73,5 @@ class ScrcpyLaunchPlan:
     version: str
     encoder: str | None = None
     messages: list[tuple[str, str]] = field(default_factory=list)
+    env: dict[str, str] | None = None
+    backend: str = "native"

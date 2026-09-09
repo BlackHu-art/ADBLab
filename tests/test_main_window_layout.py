@@ -1030,7 +1030,7 @@ def test_workspace_status_stays_visible_above_full_height_overview_content(qt_ap
         frame.close()
 
 
-def test_remote_workspace_requires_an_explicit_session_device_when_multiple_online(
+def test_remote_workspace_uses_shared_multi_selection_and_keeps_running_targets(
     qt_application,
 ):
     frame = build_main_frame()
@@ -1040,40 +1040,49 @@ def test_remote_workspace_requires_an_explicit_session_device_when_multiple_onli
         frame._on_devices_updated(["device-1", "device-2"])
 
         assert frame._open_workspace_feature("devices", "remote") is True
-        assert host.stack.currentWidget() is host.no_device_page
-        assert host.device_combo.currentData() == ""
-
-        host.device_combo.setCurrentIndex(2)
-        assert host.current_device_id == "device-2"
+        page = host.stack.currentWidget()
+        assert page is not host.no_device_page
         assert frame.left_panel._scrcpy_tab is not None
         remote = frame.left_panel._scrcpy_tab
         assert remote.selected_devices == []
         assert remote.category_stack.current_key == "mirroring"
+        assert not remote.btn_start.isEnabled()
+        assert remote.remote_status_badge.text() == "未选择"
 
-        status = frame._global_device_bar.session_hint
-        assert status.isHidden()
-        assert status.text() == "未选为操作目标"
-        assert status.text() in frame._global_device_bar.session_combo.accessibleDescription()
-        frame._global_device_bar.selection_requested.emit(["device-2"])
-        assert status.text() == "在线"
-        assert remote.selected_devices == ["device-2"]
-        assert status.accessibleDescription() == host.session_badge.accessibleDescription()
-        assert status.toolTip() == host.session_badge.toolTip()
+        bar = frame._global_device_bar
+        bar.open_picker()
+        picker = bar._picker
+        assert not picker.select_all_button.isHidden()
+        picker.select_all_button.click()
+        assert remote.selected_devices == ["device-1", "device-2"]
+        assert remote.btn_start.isEnabled()
+        assert remote.remote_status_badge.text() == "可启动"
+        assert bar.session_hint.isHidden()
+        assert bar.device_label("device-1") != "device-1"
 
-        remote._set_session_state(remote._SESSION_STARTING)
-        assert host.device_combo.isEnabled() is False
-        assert "停止后" in host.device_combo.toolTip()
-        remote._set_session_state(remote._SESSION_IDLE)
-        assert host.device_combo.isEnabled() is True
-
-        frame._on_devices_updated([])
-        assert host.session_badge.text() == "离线"
-        assert status.isHidden()
-        assert status.text() == "离线"
-        assert status.text() in frame._global_device_bar.session_combo.accessibleDescription()
-        assert status.accessibleDescription() == host.session_badge.accessibleDescription()
+        remote._session_devices = ("device-1",)
+        remote._set_session_state(remote._SESSION_RUNNING)
+        assert remote.btn_stop.isEnabled()
+        assert not remote.fps.isEnabled()
+        assert not host.is_device_selection_locked()
+        picker.clear_button.click()
         assert remote.selected_devices == []
-        assert remote.btn_start.isEnabled() is False
+        assert remote.get_remote_session_devices() == ["device-1"]
+        assert remote.btn_stop.isEnabled()
+        picker.select_all_button.click()
+        assert remote.selected_devices == ["device-1", "device-2"]
+        assert remote.get_remote_session_devices() == ["device-1"]
+        assert host.stack.currentWidget() is page
+
+        remote._session_devices = ()
+        remote._set_session_state(remote._SESSION_IDLE)
+        assert remote.fps.isEnabled()
+        frame._on_devices_updated([])
+        assert remote.selected_devices == []
+        assert not remote.btn_start.isEnabled()
+        assert not remote.btn_stop.isEnabled()
+        assert remote.remote_status_badge.text() == "未选择"
+        assert host.stack.currentWidget() is page
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

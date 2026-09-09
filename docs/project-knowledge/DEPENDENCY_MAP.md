@@ -85,7 +85,7 @@ service/model 构造。
 | 设备发现/连接 | `_ScanThread`、`ADBDevice`、`ADBNetworkMixin` | `adb devices/connect/disconnect/pair/reboot` | device/target | 文本、设备列表 | connect target 由 UI/Controller 校验 IPv4/IPv6+port；pair 由网络 mixin 实现，当前无可见表单 |
 | 设备属性 | `ADBDevice.get_device_overview_info` | `getprop`、`dumpsys`、`wm` | device | 概览属性字典 | 分段解析、指标单位规范化；查询失败回退基础属性 |
 | 应用生命周期 | `ADBApp`、`ADBSystemMixin` | `pm`、`am`、`monkey` | package/APK/action | CommandResult | 校验以各入口实现为准，不能将单一路径的保护推广到全部 model 接口 |
-| 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | 按键/触控使用持久 shell，成功写入不等于设备执行已确认；文本在 ADBApp 中 quote 后执行短命令 |
+| 输入控制 | `ADBAdvanced`、`ADBApp`、`ADBBridge` | `input tap/swipe/text/keyevent` | 坐标、文本、key code | 命令结果或写入状态 | Remote 优先已验证直连；原生兼容持久 shell 的成功写入不等于设备执行确认；文本在 ADBApp 中 quote 后执行短命令 |
 | 文件与传输 | File Explorer/model | `shell ls/cp/mv/rm/chmod`、`push/pull` | 设备/本地路径 | 列表/文件/状态 | 安全文件名、shell quote；删除校验目标并排除 `..` |
 | 网络/端口 | `ADBNetworkMixin`、Controller file mixin | `forward/reverse/tcpip/pair` | host/device port | CommandResult | forward/reverse 的 TCP 端口在 Controller 校验；tcpip/pair 的端口在 model 校验；直接调用 forward/reverse model 不重复校验 |
 | 日志与诊断 | `ADBTesting`、LiveLogcat | `logcat`、`bugreport`、ANR pull | package/path | 流、文件、目录 | ZIP 安全解压；部分诊断包名和 dumpsys 服务名经 `utils/adb_values.py` 规范化，LiveLogcat 另有包/PID 过滤边界 |
@@ -97,8 +97,12 @@ service/model 构造。
 ### scrcpy 进程接口
 
 `services/remote/scrcpy_args.py` 将 `ScrcpyConfig` 转为参数数组，`ScrcpyService.build_launch_plan()`
-先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stderr 用于状态/FPS 解析。
+先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stdout/stderr 均排空，
+INFO 中的纹理/录制就绪与 FPS 更新页面状态，错误与开发诊断统一脱敏。
 Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服务端暴露。
+受支持计划由 `start_plan()` 通过子进程 `ADB` 指向随包独立 CLI；它复用 `core/adb_transport.py`，
+专用协议、会话归属及失败不重放边界见 [ADB_FAST](../guides/ADB_FAST.md#remote-投屏与输入)。
+CLI 仅依赖 Python 标准库，构建复用现有 PyInstaller，不新增生产依赖。
 
 ### 执行边界约束
 

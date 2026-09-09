@@ -2,9 +2,12 @@
 """PyInstaller spec for ADBLab — ensures resource files are bundled."""
 
 from pathlib import Path
+import subprocess
+import sys
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH)
+subprocess.run([sys.executable, str(ROOT / 'scripts/build_scrcpy_adb_bridge.py')], check=True)
 
 a = Analysis(
     ['main.py'],
@@ -22,6 +25,7 @@ a = Analysis(
         ('mobileperf/extlib/xlsxwriter/LICENSE.txt', 'licenses/xlsxwriter'),
         ('icon.ico', '.'),
         ('scrcpy-win64', 'scrcpy-win64'),
+        ('build/runtime-helpers', 'runtime-helpers'),
     ],
     hiddenimports=collect_submodules('mobileperf') + collect_submodules('qfluentwidgets'),
     hookspath=[],

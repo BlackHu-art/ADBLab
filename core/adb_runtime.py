@@ -465,6 +465,30 @@ class AdbRuntime:
                 and local_server_environment()
             )
 
+    def can_shell_fast(self, adb_path: str, serial: str) -> bool:
+        """只读判断指定路径和当前设备连接能否直连，不触发探测、等待或其他 I/O。
+
+        拓扑更新会替换设备状态，故障会撤销该状态的能力；只从当前映射取值，
+        不复用旧连接或展示快照的汇总计数。实际执行仍须经过运行时再次准入。
+        """
+        with self._condition:
+            if (
+                self._closed or self._draining or self._native_only
+                or not local_server_environment()
+                or not self._path or not adb_path or not serial
+                or any(ord(char) < 33 or ord(char) == 127 for char in serial)
+                or os.path.normcase(os.path.abspath(adb_path))
+                != os.path.normcase(os.path.abspath(self._path))
+            ):
+                return False
+            state = self._shell.get(serial)
+            return (
+                self._host.available
+                and serial in self._topology
+                and state is not None
+                and state.fast
+            )
+
     def request_device_check(self) -> None:
         """扫描和业务入口共用有节流检查，不依赖原生发现成功，也不重做有效基准。"""
         with self._condition:

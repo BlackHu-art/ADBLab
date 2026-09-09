@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-09
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -24,6 +24,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
 | Medium | MobilePerf 启动前的设备临时文件清理未精确限定产物类型和归属 | [StartUp.clear_heapdump](../../mobileperf/android/startup.py) 遍历 `/data/local/tmp`，按首个包名子串及超过 3 天筛选后删除，未检查 `.hprof` 后缀或 ADBLab 产物归属；需收紧清理边界并补保留无关文件的回归。代码条件已确认，未执行设备删除验证 | Open |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
+| Low | scrcpy 端口移交与 ADB 映射删除缺少跨应用原子操作 | 已为应用内会话保留独立端口并在删除前核对 scid；探测端口到 scrcpy 绑定、核对映射到删除之间仍可能被外部 ADB 客户端改写，不应视为跨应用独占保证 | Partial |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见
 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。

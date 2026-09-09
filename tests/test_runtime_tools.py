@@ -1,6 +1,10 @@
 import os
+import shutil
 import sys
 from pathlib import Path
+from unittest.mock import Mock
+
+import pytest
 
 from utils.app_metadata import APP_VERSION
 
@@ -101,3 +105,82 @@ def test_resolve_adb_path_uses_path_on_non_windows(monkeypatch):
     )
 
     assert adb_resolver.resolve_adb_path() == "/usr/bin/adb"
+
+
+@pytest.mark.parametrize(
+    "relative", ["helper.exe", "_internal/python.dll", "_internal/lib/codec.dll"],
+)
+def test_verified_runtime_copy_refreshes_same_length_stale_nested_file(tmp_path, relative):
+    from utils.runtime_tools import _ensure_runtime_copy
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    original = source / "helper" / relative
+    original.parent.mkdir(parents=True)
+    original.write_bytes(b"NEW")
+    shutil.copytree(source, target)
+    stale = target / "helper" / relative
+    stale.write_bytes(b"OLD")
+
+    _ensure_runtime_copy(source, target, verify_tree=True)
+
+    assert stale.read_bytes() == b"NEW"
+
+
+def test_verified_runtime_copy_accepts_complete_tree_without_rewriting(tmp_path, monkeypatch):
+    from utils import runtime_tools
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    source_dependency = source / "helper" / "_internal" / "nested" / "module.dll"
+    source_dependency.parent.mkdir(parents=True)
+    source_dependency.write_bytes(b"complete")
+    shutil.copytree(source, target)
+    cached_dependency = target / "helper" / "_internal" / "nested" / "module.dll"
+    before = cached_dependency.stat().st_mtime_ns
+    copy = Mock(side_effect=AssertionError("valid cache must not be rewritten"))
+    monkeypatch.setattr(runtime_tools.shutil, "copytree", copy)
+
+    runtime_tools._ensure_runtime_copy(source, target, verify_tree=True)
+
+    assert cached_dependency.read_bytes() == b"complete"
+    assert cached_dependency.stat().st_mtime_ns == before
+    copy.assert_not_called()
+
+
+def test_runtime_copy_default_retains_existing_directory_and_size_contract(tmp_path):
+    from utils.runtime_tools import _ensure_runtime_copy
+
+    source, target = tmp_path / "source", tmp_path / "target"
+    (source / "nested").mkdir(parents=True)
+    (source / "nested" / "dependency.dll").write_bytes(b"new dependency")
+    (source / "tool.exe").write_bytes(b"NEW")
+    (target / "nested").mkdir(parents=True)
+    (target / "tool.exe").write_bytes(b"OLD")
+
+    _ensure_runtime_copy(source, target)
+
+    assert (target / "tool.exe").read_bytes() == b"OLD"
+    assert not (target / "nested" / "dependency.dll").exists()
+
+
+def test_frozen_scrcpy_bridge_repairs_empty_nested_cache(tmp_path, monkeypatch):
+    from utils import runtime_tools, scrcpy_bridge
+
+    source, target = tmp_path / "resources", tmp_path / "cache"
+    package = source / "runtime-helpers" / scrcpy_bridge.BRIDGE_NAME
+    (package / "_internal").mkdir(parents=True)
+    filename = scrcpy_bridge.BRIDGE_NAME + ".exe"
+    (package / filename).write_bytes(b"helper")
+    (package / "_internal" / "python.dll").write_bytes(b"runtime")
+    cached_package = target / "runtime-helpers" / scrcpy_bridge.BRIDGE_NAME
+    cached_package.mkdir(parents=True)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(runtime_tools, "resource_path", lambda relative: str(source / relative))
+    monkeypatch.setattr(runtime_tools, "_runtime_root", lambda: target)
+    monkeypatch.setattr(runtime_tools, "_is_onefile_extraction", lambda: True)
+
+    executable = scrcpy_bridge.resolve_scrcpy_bridge()
+
+    assert executable == str(cached_package / filename)
+    assert (cached_package / filename).read_bytes() == b"helper"
+    assert (cached_package / "_internal" / "python.dll").read_bytes() == b"runtime"

@@ -5924,5 +5924,25 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>前往下载</source>
             <translation>前往下载</translation>
         </message>
+        <message>
+            <source>追加镜像</source>
+            <translation>追加镜像</translation>
+        </message>
+        <message>
+            <source>准备中</source>
+            <translation>准备中</translation>
+        </message>
+        <message>
+            <source>连接中</source>
+            <translation>连接中</translation>
+        </message>
+        <message>
+            <source>停止或重试此设备的镜像</source>
+            <translation>停止或重试此设备的镜像</translation>
+        </message>
+        <message>
+            <source>{device}：{action}</source>
+            <translation>{device}：{action}</translation>
+        </message>
     </context>
 </TS>

@@ -13,6 +13,7 @@ class RemotePanelInput:
         self._lock = threading.Lock()
 
     def _input_closing(self) -> bool:
+        """执行中的输入只响应关闭；选择变化由队列启动前的代次检查处理。"""
         return bool(
             getattr(self._frame, "_closing", False)
             or getattr(self._frame, "_remote_input_closing", False)
@@ -125,7 +126,9 @@ class RemotePanelInput:
             return
         for device in devices:
             self._frame._submit_remote_input(
-                lambda target=device: self._frame._remote_control.send_keyevent(target, key_name)
+                lambda target=device: self._frame._remote_control.send_keyevent(
+                    target, key_name, cancelled=self._input_closing,
+                )
             )
 
     def _send_remote_action(self, action: str):
@@ -135,7 +138,9 @@ class RemotePanelInput:
             return
         for device in devices:
             self._frame._submit_remote_input(
-                lambda target=device: self._frame._remote_control.perform_action(target, action)
+                lambda target=device: self._frame._remote_control.perform_action(
+                    target, action, cancelled=self._input_closing,
+                )
             )
 
     def _warm_remote_input_session(self):
@@ -149,7 +154,7 @@ class RemotePanelInput:
         if not active_device:
             return
         try:
-            if self._frame._adb.warm_input_session(active_device):
+            if self._frame._adb.warm_input_session(active_device, cancelled=self._input_closing):
                 self._frame._log("DEBUG", "remote input session warmed")
         except Exception as exc:
             self._frame._log(

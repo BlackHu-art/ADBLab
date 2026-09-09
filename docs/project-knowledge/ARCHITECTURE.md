@@ -111,7 +111,8 @@ flowchart LR
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
   `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
   未安装运行实例的工具仍走原生。能力、回退范围和设置入口见 [ADB 自动适配](../guides/ADB_FAST.md)。
-- `ADBBridge` 为每台设备维护持久输入 shell；成功写入不代表设备执行已确认。
+- `ADBBridge` 对已验证设备使用可取消直连输入，原生兼容路径为每台设备维护持久输入 shell；
+  持久 shell 成功写入不代表设备执行已确认，写入失败不重放。
   外部命令与参数校验边界见 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - OperationManager 管业务身份、进度、终态与取消意图，不拥有线程/进程；TaskSupervisor 管资源
   停止、等待及 residual，不判断业务成功。任务中心的取消覆盖见
@@ -131,6 +132,7 @@ flowchart LR
 | 应用关闭与 finalizer 独立线程 | 应用整体停止和最终落盘分别使用独立通道，避免排在 owner 清理任务之后；共用关闭截止时间 |
 | Controller ThreadPoolExecutor | 设备信息等后台查询；Controller.shutdown() 收口 |
 | Remote executor / warmup / readers | 停止输入准入，再等待执行器及预热生产者，最后关闭持久输入会话和相关进程资源 |
+| Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；同步短查询复用核心双后端，采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
 

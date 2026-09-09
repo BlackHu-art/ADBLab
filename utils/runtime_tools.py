@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
@@ -15,12 +16,13 @@ _copy_lock = threading.Lock()
 WINDOWS_TOOL_BUNDLE = "scrcpy-win64"
 
 
-def bundled_tool_path(bundle_dir: str, *relative_parts: str) -> str:
+def bundled_tool_path(bundle_dir: str, *relative_parts: str, verify_tree: bool = False) -> str:
     """返回内置外部程序或数据文件的可用路径。
 
     PyInstaller onefile 会将二进制文件解压到 ``sys._MEIPASS``。ADB 等长进程可能在
     Qt 应用退出后继续锁定该目录，导致引导程序无法删除临时目录。因此打包运行时先把
-    整个工具目录复制到稳定的用户缓存，再从缓存位置启动。
+    整个工具目录复制到稳定的用户缓存，再从缓存位置启动。``verify_tree=True``
+    会校验整套嵌套文件内容，适用于必须与主入口保持一致的独立运行时。
     """
     source_dir = Path(resource_path(bundle_dir))
     source_path = source_dir.joinpath(*relative_parts)
@@ -32,19 +34,23 @@ def bundled_tool_path(bundle_dir: str, *relative_parts: str) -> str:
     target_dir = _runtime_root() / bundle_dir
     target_path = target_dir.joinpath(*relative_parts)
     try:
-        _ensure_runtime_copy(source_dir, target_dir)
+        _ensure_runtime_copy(source_dir, target_dir, verify_tree=verify_tree)
     except OSError:
         return str(source_path)
     return str(target_path)
 
 
-def _ensure_runtime_copy(source_dir: Path, target_dir: Path) -> None:
-    """在进程内串行补齐用户缓存中的工具目录。"""
+def _ensure_runtime_copy(
+    source_dir: Path, target_dir: Path, *, verify_tree: bool = False,
+) -> None:
+    """进程内串行补齐缓存；可选整树校验识别同长度旧文件和缺失的嵌套依赖。"""
     with _copy_lock:
         if target_dir.exists():
             required_files = list(source_dir.iterdir())
             if required_files and all(
-                _cache_entry_ok(source_dir / item.name, target_dir / item.name)
+                _cache_entry_ok(
+                    source_dir / item.name, target_dir / item.name, verify_tree=verify_tree,
+                )
                 for item in required_files
             ):
                 return
@@ -52,14 +58,31 @@ def _ensure_runtime_copy(source_dir: Path, target_dir: Path) -> None:
         shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
 
 
-def _cache_entry_ok(source: Path, target: Path) -> bool:
-    """目录存在即视为有效；文件额外校验大小，识别截断/损坏的残留副本。"""
+def _cache_entry_ok(source: Path, target: Path, *, verify_tree: bool = False) -> bool:
+    """默认保留目录/大小判定；整树模式递归验证全部源文件的大小和内容摘要。"""
     try:
         if source.is_dir():
-            return target.is_dir()
-        return target.is_file() and target.stat().st_size == source.stat().st_size
+            return target.is_dir() and (
+                not verify_tree or all(
+                    _cache_entry_ok(item, target / item.name, verify_tree=True)
+                    for item in source.iterdir()
+                )
+            )
+        return (
+            target.is_file() and target.stat().st_size == source.stat().st_size
+            and (not verify_tree or _file_digest(source) == _file_digest(target))
+        )
     except OSError:
         return False
+
+
+def _file_digest(path: Path) -> bytes:
+    """分块计算文件 SHA256，避免一次性把独立运行时依赖读入内存。"""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.digest()
 
 
 def _runtime_root() -> Path:

@@ -215,6 +215,7 @@ _UI_TEST_FILES = frozenset(
         "test_phase2_live_logcat_gate.py",
         "test_phase2_mainframe_shutdown_gate.py",
         "test_remote_services.py",
+        "test_remote_sessions.py",
     }
 )
 
