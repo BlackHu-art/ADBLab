@@ -8,7 +8,8 @@ from typing import Optional
 
 from PySide6.QtCore import QMutex, QObject, Qt, QThread, QTimer, Signal, Slot
 
-from core.diagnostics import DiagnosticJournal
+from core.diagnostics import DiagnosticJournal, redact_diagnostic
+from utils.console_colors import colorize_console
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class LogLevel:
 
 
 class LogService(QObject):
-    """在线程间缓冲用户日志，并将开发调试日志隔离到标准错误流。"""
+    """在线程间缓冲用户日志，并按级别将开发诊断输出到控制台。"""
 
     log_received = Signal(str, str)  # 兼容信号：参数为日志级别、消息。
     logs_received = Signal(list)  # 批次信号：元素为 (时间戳, 级别, 消息) 三元组。
@@ -33,7 +34,7 @@ class LogService(QObject):
     _shutdown_requested = Signal()
     _instance: Optional["LogService"] = None
     _lock = QMutex()
-    _stderr_lock = threading.Lock()
+    _console_lock = threading.Lock()
     _STATE_ACCEPTING = "accepting"
     _STATE_STOPPING = "stopping"
     _STATE_STOPPED = "stopped"
@@ -77,13 +78,13 @@ class LogService(QObject):
         )
 
     def log(self, level: str, message: str, *args, **kwargs) -> None:
-        """记录日志；DEBUG 仅在源码运行时写入开发环境控制台。
+        """各级别在源码控制台输出一次；DEBUG 不进入界面和诊断文件。
 
         时间戳在记录产生时生成（而非界面接收时），使排队/背压场景下的
-        显示时间仍反映真实发生时间。
+        显示时间仍反映真实发生时间。控制台复用应用诊断脱敏边界，界面保留原文。
         """
         flush_immediately = kwargs.pop("flush_immediately", False)
-        normalized_level = str(level).upper()
+        normalized_level = str(level).strip().upper()
         rendered_message = str(message)
         if args:
             try:
@@ -96,8 +97,11 @@ class LogService(QObject):
         try:
             if self._state != self._STATE_ACCEPTING:
                 return
+            self.write_developer_console(
+                normalized_level,
+                redact_diagnostic(rendered_message, self.diagnostics.private_values),
+            )
             if normalized_level == LogLevel.DEBUG:
-                self.write_developer_console(LogLevel.DEBUG, rendered_message)
                 return
             self._buffer.append((timestamp, normalized_level, rendered_message))
             # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
@@ -229,18 +233,28 @@ class LogService(QObject):
 
     @classmethod
     def write_developer_console(cls, level: str, message: str) -> None:
-        """仅在源码模式下原子写入 IDE 可见的标准错误流。"""
+        """源码诊断按级别原子写入控制台，避免普通日志被 IDE 标为错误。
+
+        WARNING、ERROR、CRITICAL 使用 stderr，其余级别使用 stdout；打包模式及
+        对应流不可用时静默。颜色仅在最终控制台显示层添加，不进入界面或文件。
+        """
         if getattr(sys, "frozen", False):
             return
-        stream = getattr(sys, "stderr", None)
+        normalized_level = str(level).strip().upper()
+        stream_name = (
+            "stderr"
+            if normalized_level in {LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL}
+            else "stdout"
+        )
+        stream = getattr(sys, stream_name, None)
         if stream is None:
             return
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         thread_name = threading.current_thread().name
-        line = f"{timestamp} [{level}] [{thread_name}] {message}\n"
+        line = f"{timestamp} [{normalized_level}] [{thread_name}] {message}"
         try:
-            with cls._stderr_lock:
-                stream.write(line)
+            with cls._console_lock:
+                stream.write(colorize_console(normalized_level, line, stream) + "\n")
                 stream.flush()
         except Exception:
             # 诊断输出不可用时必须静默，不能反向破坏业务流程。

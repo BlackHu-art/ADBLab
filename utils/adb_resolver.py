@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import sys
 
+from utils import adb_debug
+from utils.resource_path import resource_path
 from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
 
 _adb_path: str | None = None
@@ -22,17 +24,39 @@ def resolve_adb_path() -> str | None:
     """
     global _adb_path, _resolved
     if _resolved:
+        adb_debug.event("resolve_result", selected_adb=_adb_path, cached=True)
         return _adb_path
 
+    if adb_debug.enabled():
+        adb_debug.event(
+            "resolve_start", frozen=bool(getattr(sys, "frozen", False)),
+            application=sys.executable, resource_root=resource_path(""),
+        )
     if sys.platform == "win32":
         bundled = bundled_tool_path(WINDOWS_TOOL_BUNDLE, "adb.exe")
-        if os.path.isfile(bundled):
+        exists = os.path.isfile(bundled)
+        adb_debug.event("resolve_candidate", candidate=bundled, exists=exists)
+        if exists:
             _adb_path = bundled
             _resolved = True
+            if adb_debug.enabled():
+                source_path = resource_path(os.path.join(WINDOWS_TOOL_BUNDLE, "adb.exe"))
+                source = (
+                    "bundled" if os.path.normcase(os.path.abspath(bundled)) == os.path.normcase(
+                        os.path.abspath(source_path)
+                    ) else "runtime_cache"
+                )
+                adb_debug.event(
+                    "resolve_result", selected_adb=_adb_path, source=source, cached=False,
+                )
             return _adb_path
 
     _adb_path = shutil.which("adb")
     _resolved = True
+    adb_debug.event(
+        "resolve_result", selected_adb=_adb_path, source="PATH" if _adb_path else "missing",
+        cached=False,
+    )
     return _adb_path
 
 

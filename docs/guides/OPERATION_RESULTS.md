@@ -105,7 +105,10 @@ Bugreport、ANR、设备日志提取在生成文件后显示紧凑的“已生�
   正文不进入诊断文件。
   队列合并尚未执行的重复诊断写入，仅保留最新快照；后台检查附件后回到 GUI 线程调用系统关联
   程序。退出时先在 GUI 线程刷新并冻结日志，再由 finalizer 排空文件队列。诊断保存失败会进入
-  最终收尾失败结果，手动导出或打开失败则由对应动作提示。DEBUG 的源码 stderr 策略不变。
+  最终收尾失败结果，手动导出或打开失败则由对应动作提示。旧 `LogService.log()` 调用
+  无需迁移，各级别在源码开发控制台显示一次脱敏摘要；DEBUG/INFO/SUCCESS 进入 stdout，
+  WARNING/ERROR/CRITICAL 进入 stderr；详见
+  [日志架构](../project-knowledge/ARCHITECTURE.md#主题字体与日志)。
 - “输出文本字号”兼容 `log_font_size`；`log_max_lines` 作为原性能采集输出兼容配置保留。
   主题、配置 schema、设备历史和采集格式不变。
 

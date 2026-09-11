@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
+from utils.console_colors import colorize_console
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 
@@ -212,6 +213,9 @@ class MobilePerfRunner:
     MODE_SYNC_INTERVAL_SECONDS = 0.1
     REPORT_SHUTDOWN_TIMEOUT_SECONDS = 90.0
     _DEBUG_RECORD_PATTERN = re.compile(r"^\[[^\]]+\]DEBUG:mobileperf:")
+    _DIAGNOSTIC_LEVEL_PATTERN = re.compile(
+        r"^\[[^\]]+\](DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL):mobileperf:"
+    )
 
     def __init__(
         self,
@@ -623,7 +627,7 @@ class MobilePerfRunner:
         message: str,
         redaction_values: tuple[str, ...] | None = None,
     ) -> None:
-        """仅在源码模式把脱敏诊断信息写入当前进程 stderr。"""
+        """在源码模式把脱敏诊断写入 stderr，仅为明确协议级别添加控制台颜色。"""
         if self._is_frozen():
             return
         stream = getattr(sys, "stderr", None)
@@ -635,6 +639,10 @@ class MobilePerfRunner:
             str(message),
             redaction_values=redaction_values,
         )
+        # 子进程管道和文件保留纯文本，仅在最终显示层识别固定日志级别。
+        level_match = self._DIAGNOSTIC_LEVEL_PATTERN.match(text)
+        if level_match:
+            text = colorize_console(level_match.group(1), text, stream)
         try:
             with self._diagnostic_lock:
                 stream.write(text + "\n")

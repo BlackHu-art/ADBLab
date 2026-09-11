@@ -20,6 +20,7 @@ from typing import Any, Protocol, runtime_checkable
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
 from core.process_utils import kill_process_tree
+from utils import adb_debug
 
 CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
@@ -170,6 +171,7 @@ class CommandRunner:
             if raw is not None:
                 result = _normalise_result(raw, timeout)
             else:
+                adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
                 proc = subprocess.run(
                     resolved_cmd,
                     capture_output=True,
@@ -180,6 +182,11 @@ class CommandRunner:
                     errors="ignore",
                     creationflags=CF,
                 )
+                if adb_debug.enabled():
+                    adb_debug.command(
+                        resolved_cmd, backend="native_client", phase="finish", status="completed",
+                        returncode=proc.returncode,
+                    )
                 result = _normalise_result(
                     ExecutionResult(
                         (proc.stdout or "").encode("utf-8"),
@@ -235,6 +242,9 @@ class CommandRunner:
                                 resolved_cmd, remaining, cancelled, stdout_sink=output_file,
                             )
                         else:
+                            adb_debug.command(
+                                resolved_cmd, backend="native_client", timeout=remaining,
+                            )
                             proc = subprocess.run(
                                 resolved_cmd, stdout=output_file, stderr=subprocess.PIPE,
                                 shell=shell, timeout=remaining, creationflags=CF,
@@ -458,7 +468,9 @@ class ProcessRunner:
             popen_kwargs["errors"] = errors
         if env is not None:
             popen_kwargs["env"] = env
-        return subprocess.Popen(resolve_command(cmd), **popen_kwargs)
+        resolved_cmd = resolve_command(cmd)
+        adb_debug.command(resolved_cmd, backend="native_client")
+        return subprocess.Popen(resolved_cmd, **popen_kwargs)
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""

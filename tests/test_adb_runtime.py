@@ -852,9 +852,16 @@ def test_new_device_capability_preempts_old_native_benchmark(backend, monkeypatc
     entered = threading.Event()
     release = threading.Event()
     validated = threading.Event()
+    published = threading.Event()
     preempted = threading.Event()
     original_capture = module.capture
+    original_changed = runtime._changed
     blocked_once = False
+
+    def changed(snapshot):
+        original_changed(snapshot)
+        if snapshot.fast_shell_devices == 2:
+            published.set()
 
     def native(cmd, timeout, cancelled):
         nonlocal blocked_once
@@ -878,12 +885,15 @@ def test_new_device_capability_preempts_old_native_benchmark(backend, monkeypatc
 
     monkeypatch.setattr(module, "native_capture", native)
     monkeypatch.setattr(module, "capture", capture)
+    monkeypatch.setattr(runtime, "_changed", changed)
     try:
         assert runtime.start()
         assert entered.wait(1)
         runtime.observe_devices((LISTING + b"new-device\tdevice transport_id:2\n").decode())
         assert validated.wait(0.5), "新目标仍被已有原生基准阻塞"
         assert preempted.is_set()
+        # 底层响应返回先于能力写入，等待发布完成后才读取共享快照。
+        assert published.wait(0.5), "新目标能力未发布"
         assert runtime.snapshot().fast_shell_devices == 2
         release.set()
         assert runtime.wait(2)

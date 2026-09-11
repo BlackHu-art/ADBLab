@@ -65,7 +65,9 @@ def test_diagnostic_journal_accepts_only_explicit_runtime_info():
 def test_frozen_runtime_diagnostic_is_saved_without_user_log(request, monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     stream = io.StringIO()
-    monkeypatch.setattr(sys, "stderr", stream)
+    error_stream = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(sys, "stderr", error_stream)
     service = request.getfixturevalue("create_log_service")()
     batches, singles, snapshots, errors = [], [], [], []
     service.logs_received.connect(batches.append)
@@ -90,6 +92,7 @@ def test_frozen_runtime_diagnostic_is_saved_without_user_log(request, monkeypatc
     assert errors == []
     assert batches == singles == []
     assert stream.getvalue() == ""
+    assert error_stream.getvalue() == ""
 
 
 @pytest.mark.ui
@@ -99,7 +102,7 @@ def test_runtime_diagnostics_keep_source_console_and_reject_after_shutdown(
 ):
     monkeypatch.delattr(sys, "frozen", raising=False)
     stream = io.StringIO()
-    monkeypatch.setattr(sys, "stderr", stream)
+    monkeypatch.setattr(sys, "stdout", stream)
     service = request.getfixturevalue("create_log_service")()
     notices = []
     service.diagnostics_changed.connect(lambda: notices.append(service.diagnostics.text()))

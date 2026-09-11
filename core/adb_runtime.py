@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import BinaryIO
 
 from core.adb_transport import CancelCheck, ExecutionResult, capture
+from utils import adb_debug
 
 
 def native_capture(
@@ -24,6 +25,7 @@ def native_capture(
     deadline = time.monotonic() + timeout
     if cancelled():
         return ExecutionResult(kind="cancelled")
+    adb_debug.command(cmd, backend="native_client", timeout=timeout)
     try:
         with subprocess.Popen(
             cmd,
@@ -35,12 +37,23 @@ def native_capture(
             try:
                 while True:
                     if cancelled():
+                        adb_debug.command(
+                            cmd, backend="native_client", phase="finish", status="cancelled",
+                        )
                         return ExecutionResult(kind="cancelled")
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
+                        adb_debug.command(
+                            cmd, backend="native_client", phase="finish", status="timeout",
+                        )
                         return ExecutionResult(kind="timeout")
                     try:
                         out, err = proc.communicate(timeout=min(0.1, remaining))
+                        if adb_debug.enabled():
+                            adb_debug.command(
+                                cmd, backend="native_client", phase="finish", status="completed",
+                                returncode=proc.returncode,
+                            )
                         return ExecutionResult(out or b"", err, proc.returncode)
                     except subprocess.TimeoutExpired:
                         continue
@@ -48,7 +61,11 @@ def native_capture(
                 if proc.poll() is None:
                     proc.kill()
                     proc.communicate()
-    except OSError:
+    except OSError as exc:
+        adb_debug.command(
+            cmd, backend="native_client", phase="finish", status="transport",
+            error_type=type(exc).__name__, errno=exc.errno, winerror=getattr(exc, "winerror", None),
+        )
         return ExecutionResult(stderr=b"ADB process failed", kind="transport")
 
 
@@ -233,6 +250,7 @@ class AdbRuntime:
         """实时切换后续请求；只在实际改选且缺少能力时唤起验证，不重放在途业务。"""
         if mode not in {"auto", "fast", "native"}:
             raise ValueError("Invalid ADB selection mode")
+        report = None
         with self._condition:
             if self._closed or self._draining or mode == self._mode:
                 return
@@ -248,6 +266,16 @@ class AdbRuntime:
                     if not state.available:
                         state.next_check = 0
                 self.start(force=False)
+            if adb_debug.enabled():
+                report = self.snapshot(), self._path
+        if report is not None:
+            snapshot, path = report
+            adb_debug.event(
+                "mode", selection_mode=snapshot.selection_mode, host_available=snapshot.available,
+                selected_adb=path, fast_devices=snapshot.fast_devices,
+                fast_shell_devices=snapshot.fast_shell_devices,
+                checked_devices=snapshot.checked_devices, status=snapshot.status,
+            )
         self._publish()
 
     def _service_ready(self) -> None:
@@ -325,6 +353,7 @@ class AdbRuntime:
                     return
         finally:
             self._service_ready()
+            report = None
             with self._condition:
                 # 新一轮可能已取得准入并在 join 当前线程，旧收尾不能清除其 checking。
                 if self._thread is threading.current_thread():
@@ -333,11 +362,29 @@ class AdbRuntime:
                         self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
                     self._publish()
+                    if (
+                        adb_debug.enabled() and not self._closed and not self._draining
+                        and not self._probe_stop.is_set()
+                    ):
+                        report = self.snapshot(), self._path
+            if report is not None:
+                snapshot, path = report
+                adb_debug.event(
+                    "probe_complete", selection_mode=snapshot.selection_mode,
+                    selected_adb=path, host_available=snapshot.available,
+                    fast_devices=snapshot.fast_devices,
+                    fast_shell_devices=snapshot.fast_shell_devices,
+                    checked_devices=snapshot.checked_devices, status=snapshot.status,
+                )
 
     def _probe_once(self) -> None:
         try:
             self._publish()
             path = self._resolver()
+            adb_debug.event(
+                "probe_start", selected_adb=path, selection_mode=self.selection_mode,
+                endpoint="127.0.0.1:5037" if local_server_environment() else "custom",
+            )
             with self._condition:
                 if self._draining:
                     return
@@ -358,6 +405,7 @@ class AdbRuntime:
                 with self._condition:
                     self._status = "missing_adb" if not path else "custom_server"
                 self._diagnostic(f"ADB environment status={self._status}")
+                adb_debug.event("probe_result", status=self._status)
                 return
             stop = self._probe_stop.is_set
             listing, socket_elapsed = self._probe_capability(
@@ -430,6 +478,10 @@ class AdbRuntime:
             cancelled=stop,
         )
         elapsed = time.monotonic() - started
+        adb_debug.event(
+            "probe_result", command=command, backend="server_direct", status=result.kind,
+            elapsed_ms=round(elapsed * 1000, 1), client_spawned=False,
+        )
         remaining = deadline - time.monotonic()
         if retry and result.kind in {"timeout", "transport"} and not stop() and remaining > 0:
             with self._condition:
@@ -448,6 +500,10 @@ class AdbRuntime:
                 command, args, serial=serial, timeout=remaining, cancelled=stop,
             )
             elapsed = time.monotonic() - started
+            adb_debug.event(
+                "probe_result", command=command, backend="server_direct", status=result.kind,
+                elapsed_ms=round(elapsed * 1000, 1), retry=1, client_spawned=False,
+            )
         return result, elapsed
 
     def _probe_backends(
@@ -862,6 +918,7 @@ class AdbRuntime:
             generation = self._generation
             if selected:
                 self._active += 1
+            selection_mode = self._mode
         if not selected or state is None:
             if waited:
                 self._diagnostic(
@@ -876,6 +933,10 @@ class AdbRuntime:
                     f"wait_ms={(time.monotonic() - wait_started) * 1000:.1f}"
                 )
             sink_options = {"stdout_sink": stdout_sink} if stdout_sink is not None else {}
+            adb_debug.command(
+                cmd, backend="server_direct", selection_mode=selection_mode,
+                endpoint="127.0.0.1:5037", client_spawned=False,
+            )
             result = capture(
                 command,
                 args,
@@ -884,6 +945,11 @@ class AdbRuntime:
                 cancelled=lambda: event.is_set() or bool(cancelled and cancelled()),
                 **sink_options,
             )
+            if adb_debug.enabled():
+                adb_debug.command(
+                    cmd, backend="server_direct", phase="finish", status=result.kind,
+                    returncode=result.returncode, client_spawned=False,
+                )
             failed = result.kind in {"unavailable", "protocol", "transport"}
             with self._condition:
                 current = (

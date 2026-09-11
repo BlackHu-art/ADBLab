@@ -178,10 +178,17 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
   `TaskHistoryStore` 与旧历史卡保留为兼容入口；主窗口中的旧历史卡隐藏，不是通用操作正文的存储源。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
   文件队列在后台保存并在关闭时排空。运行时环境检测经对象所属 GUI 线程的专用入口记录 INFO，
-  同样有界保存，但不计入异常摘要或触发异常 Toast。源码 DEBUG 单独进入 stderr，frozen 或
-  无 stderr 时不输出；运行时诊断的文件留存不依赖 stderr。
+  同样有界保存，但不计入异常摘要或触发异常 Toast。既有 `log(level, message, *args)`
+  调用的各级别消息在受理时向源码控制台输出一次，保留 `%` 参数格式化；控制台复用
+  诊断摘要的设备身份、凭据和路径遮蔽，界面原文不变，DEBUG 不进入界面或诊断文件。
+  源码开发控制台按级别分流：
+  DEBUG/INFO/SUCCESS 进入 stdout，WARNING/ERROR/CRITICAL 进入 stderr；frozen 或对应流
+  不可用时不输出。最终显示通过 `utils/console_colors.py` 按灰、青、绿、黄、红、紫红
+  区分六级日志，并在每条记录末尾复位；仅 PyCharm 控制台管道及支持 ANSI 的终端启用，
+  文件、内存捕获、`NO_COLOR` 或 `TERM=dumb` 保留纯文本。运行时诊断的文件留存不依赖控制台。
   `shutdown()` 保留停止态单例并拒绝晚到消息。MobilePerf 继续独立排空 stdout/stderr，
-  按代次接收并遮蔽其运行值；摘要遮蔽不等于采集附件已经脱敏。
+  按代次接收并遮蔽其运行值，仅父进程的最终控制台显示复用明确级别的颜色，不改变子进程
+  日志协议、文件或界面 RAW 原文；摘要遮蔽不等于采集附件已经脱敏。
 
 架构决策缘由保留在 [ADR 目录](../README.md)，尚未闭环事项见
 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。
