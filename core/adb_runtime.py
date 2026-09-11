@@ -347,6 +347,7 @@ class AdbRuntime:
                     self._topology.clear()
                     self._generation += 1
                 self._path = path
+                self._condition.notify_all()
                 host = self._host
                 host_epoch = host.epoch
                 # 未就绪服务需要完整连接窗口，避免延迟拒绝被拆分预算误判为超时。
@@ -400,6 +401,7 @@ class AdbRuntime:
                 host.available = True
                 self._status = "ready"
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
+                self._condition.notify_all()
                 self.observe_devices(listing.stdout.decode("utf-8", errors="ignore"))
             if restored:
                 self._diagnostic(
@@ -723,6 +725,44 @@ class AdbRuntime:
             if due:
                 self.start(force=False)
 
+    def wait_for_device_check(
+        self,
+        timeout: float,
+        cancelled: CancelCheck | None = None,
+        *,
+        adb_path: str | None = None,
+    ) -> ExecutionResult | None:
+        """在调用预算内等待发现准入，不执行设备命令，也不等待已就绪服务的测速。
+
+        ``adb_path`` 省略时表示应用默认扫描入口；显式其他路径仍交还原生执行。
+        路径尚未发布时先等当前解析，之后重新核对路径和能力。返回 ``None`` 仅表示
+        可以重新选择后端；等待中的取消或超时必须直接结束，不能另起原生客户端。
+        清理阶段的新调用保留既有准入，只有关闭前已经等待的调用被原停止信号取消。
+        """
+        deadline = time.monotonic() + timeout
+        with self._condition:
+            stop = self._request_stop
+            requested = False
+            while True:
+                if self._closed or stop.is_set() or (cancelled is not None and cancelled()):
+                    return ExecutionResult(kind="cancelled")
+                if self._native_only or self._draining or not local_server_environment():
+                    return None
+                if adb_path is not None and self._path is not None and os.path.normcase(
+                    os.path.abspath(adb_path)
+                ) != os.path.normcase(os.path.abspath(self._path)):
+                    return None
+                if not requested and (adb_path is None or self._path is not None):
+                    self.request_device_check()
+                    requested = True
+                if not self._checking or (self._path is not None and self._host.available):
+                    return None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return ExecutionResult(kind="timeout")
+                # 释放锁让唯一探测提交结果；外部取消信号最多延迟一个轮询片段。
+                self._condition.wait(min(0.1, remaining))
+
     def _parse(
         self, cmd: list[str], *, binary: bool = False,
     ) -> tuple[str, list[str], str | None] | None:
@@ -769,6 +809,13 @@ class AdbRuntime:
         with self._condition:
             if self._closed:
                 return ExecutionResult(kind="cancelled")
+            args = cmd[3:] if len(cmd) >= 3 and cmd[1] == "-s" else cmd[1:]
+            if stdout_sink is None and args in (["devices"], ["devices", "-l"]):
+                admission = self.wait_for_device_check(
+                    max(0, deadline - time.monotonic()), cancelled, adb_path=cmd[0],
+                )
+                if admission is not None:
+                    return admission
             parsed = (
                 self._parse(cmd, binary=stdout_sink is not None)
                 if cmd and local_server_environment() else None

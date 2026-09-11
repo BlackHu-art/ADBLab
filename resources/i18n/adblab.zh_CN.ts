@@ -6070,5 +6070,17 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>检查到新版本后可前往下载</source>
             <translation>检查到新版本后可前往下载</translation>
         </message>
+        <message>
+            <source>显示二维码</source>
+            <translation>显示二维码</translation>
+        </message>
+        <message>
+            <source>收起二维码</source>
+            <translation>收起二维码</translation>
+        </message>
+        <message>
+            <source>展开或收起作者支持二维码</source>
+            <translation>展开或收起作者支持二维码</translation>
+        </message>
     </context>
 </TS>

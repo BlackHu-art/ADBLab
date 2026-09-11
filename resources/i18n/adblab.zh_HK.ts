@@ -6070,5 +6070,17 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>检查到新版本后可前往下载</source>
             <translation>檢查到新版本後可前往下載</translation>
         </message>
+        <message>
+            <source>显示二维码</source>
+            <translation>顯示二維碼</translation>
+        </message>
+        <message>
+            <source>收起二维码</source>
+            <translation>收起二維碼</translation>
+        </message>
+        <message>
+            <source>展开或收起作者支持二维码</source>
+            <translation>展開或收起作者支持二維碼</translation>
+        </message>
     </context>
 </TS>

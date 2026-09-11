@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QLabel
 from qfluentwidgets import FluentIcon, FluentWindow
 
@@ -38,6 +39,7 @@ def _setting_card_controls(page):
         (page.about_panel.project_card, page.about_panel.project_button),
         (page.about_panel.project_card, page.about_panel.check_update_button),
         (page.about_panel.project_card, page.about_panel.release_button),
+        (page.about_panel.support_card, page.about_panel.support_button),
     )
 
 
@@ -333,10 +335,14 @@ def test_about_cards_keep_metadata_and_actions_reachable_at_bottom_of_short_wind
     page.show()
     _settle_settings(qt_application, page)
     about = page.about_panel
+    assert not about.support_qr.isVisibleTo(page)
+    about.support_button.click()
+    _settle_settings(qt_application, page)
     for theme in ("Light", "Dark"):
         BaseStyles.switch_theme(theme)
         _settle_settings(qt_application, page)
         for control in (about.project_button, about.support_qr):
+            assert control.isVisibleTo(page)
             page.ensureWidgetVisible(control, 0, 0)
             qt_application.processEvents()
             position = control.mapTo(page.viewport(), QPoint())
@@ -356,6 +362,52 @@ def test_about_cards_keep_metadata_and_actions_reachable_at_bottom_of_short_wind
         title = about.support_card.titleLabel
         description = about.support_card.contentLabel
         assert description.y() - (title.y() + title.height()) <= 6
+
+
+@pytest.mark.parametrize("width,font_size", [(1000, 12), (420, 12), (1000, 22), (420, 22)])
+def test_about_support_qr_expands_on_click_and_collapses_with_keyboard(
+    qt_application, settings_page, width, font_size,
+):
+    page, values, writes, _frame = settings_page
+    values["ui_font_size"] = font_size
+    BaseStyles.reload_from_settings()
+    page.resize(width, 640)
+    page.show()
+    _settle_settings(qt_application, page)
+    about = page.about_panel
+    assert not about.support_qr.isVisibleTo(page)
+    button = about.support_button
+    assert button.isVisibleTo(page)
+    assert button.text() == "显示二维码"
+    collapsed_height = about.support_card.height()
+    collapsed_scroll_maximum = page.verticalScrollBar().maximum()
+
+    for _ in range(2):
+        page.ensureWidgetVisible(button, 0, 0)
+        qt_application.processEvents()
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        _settle_settings(qt_application, page)
+        assert about.support_qr.isVisibleTo(page)
+        assert not about.support_qr.image.isNull()
+        assert button.isChecked()
+        assert button.text() == "收起二维码"
+        assert button.accessibleName() == button.text()
+        assert about.support_card.height() > collapsed_height
+        assert page.verticalScrollBar().maximum() > collapsed_scroll_maximum
+        position = about.support_qr.mapTo(about.support_card, QPoint())
+        assert position.y() >= button.mapTo(about.support_card, QPoint()).y() + button.height()
+        assert position.y() + about.support_qr.height() <= about.support_card.height()
+        assert page.horizontalScrollBar().maximum() == 0
+
+        button.setFocus()
+        QTest.keyClick(button, Qt.Key.Key_Space)
+        _settle_settings(qt_application, page)
+        assert not about.support_qr.isVisibleTo(page)
+        assert not button.isChecked()
+        assert button.text() == "显示二维码"
+        assert about.support_card.height() == collapsed_height
+        assert page.verticalScrollBar().maximum() == collapsed_scroll_maximum
+    assert not writes
 
 
 def test_about_homepage_opens_only_on_explicit_click(settings_page, monkeypatch):
@@ -589,6 +641,9 @@ def test_about_support_icon_stays_aligned_with_text_beside_tall_qr(
     page.resize(1120, 800)
     page.show()
     _settle_settings(qt_application, page)
+    page.about_panel.support_button.click()
+    _settle_settings(qt_application, page)
+    assert page.about_panel.support_qr.isVisibleTo(page)
     card = page.about_panel.support_card
     icon = card.iconLabel
     center = icon.mapTo(card, icon.rect().center()).y()

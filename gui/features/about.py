@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, QUrl, Signal, Slot
+from PySide6.QtCore import QSize, Qt, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QPixmap
-from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
     HyperlinkCard,
@@ -56,6 +56,8 @@ class AboutPanel(SettingCardGroup):
             tooltip=tr("在浏览器中打开 ADBLab 项目主页"),
         )
         self.update_actions = QWidget(self.project_card)
+        self.update_actions.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.update_actions.setAccessibleName("ADBLab")
         self.check_update_button = PushButton(tr("检查更新"), self.update_actions)
         self.update_action_layout = QHBoxLayout(self.update_actions)
         self.update_action_layout.setContentsMargins(0, 0, 0, 0)
@@ -75,16 +77,31 @@ class AboutPanel(SettingCardGroup):
             tr("扫描二维码支持 ADBLab 的开发与维护"),
             self,
         )
-        self.support_qr = ImageLabel(self.support_card)
+        self.support_actions = QWidget(self.support_card)
+        self.support_action_layout = QVBoxLayout(self.support_actions)
+        self.support_action_layout.setContentsMargins(0, 0, 0, 0)
+        self.support_action_layout.setSpacing(12)
+        self.support_button = PushButton(tr("显示二维码"), self.support_actions)
+        self.support_button.setCheckable(True)
+        configure_button(
+            self.support_button,
+            text=tr("显示二维码"),
+            tooltip=tr("展开或收起作者支持二维码"),
+        )
+        self.support_qr = ImageLabel(self.support_actions)
         self.support_qr.setObjectName("aboutSupportQr")
         pixmap = QPixmap(resource_path("resources/ZFB.jpg"))
         if not pixmap.isNull():
             self.support_qr.setPixmap(pixmap)
         self.support_qr.setFixedSize(QSize(132, 132))
         self.support_qr.setScaledContents(True)
+        self.support_qr.hide()
+        self.support_action_layout.addWidget(self.support_button, 0, Qt.AlignmentFlag.AlignRight)
+        self.support_action_layout.addWidget(self.support_qr, 0, Qt.AlignmentFlag.AlignRight)
+        self.support_button.toggled.connect(self._set_support_expanded)
         self._presentations = (
             SettingsCardPresentation(self.project_card, self.update_actions),
-            SettingsCardPresentation(self.support_card, self.support_qr),
+            SettingsCardPresentation(self.support_card, self.support_actions),
         )
         self.support_qr.setAccessibleName(tr("作者支持二维码"))
         self.addSettingCards([self.project_card, self.support_card])
@@ -101,8 +118,23 @@ class AboutPanel(SettingCardGroup):
         for presentation in self._presentations:
             apply_setting_text_style(presentation.card.titleLabel, FontRole.UI)
             apply_setting_text_style(presentation.card.contentLabel, FontRole.UI_SMALL)
-        for button in (self.project_button, self.check_update_button, self.release_button):
+        for button in (
+            self.project_button, self.check_update_button, self.release_button, self.support_button,
+        ):
             self._style_action_button(button)
+        self.reflow(self.width())
+        self.layoutChanged.emit()
+
+    def _set_support_expanded(self, expanded: bool) -> None:
+        """只切换本页二维码的可见性，并同步卡片高度与设置页滚动范围。"""
+
+        self.support_qr.setVisible(expanded)
+        configure_button(
+            self.support_button,
+            text=tr("收起二维码") if expanded else tr("显示二维码"),
+            tooltip=tr("展开或收起作者支持二维码"),
+        )
+        self._style_action_button(self.support_button)
         self.reflow(self.width())
         self.layoutChanged.emit()
 
@@ -182,12 +214,20 @@ class AboutPanel(SettingCardGroup):
             text=tr("检查更新"),
             tooltip=tr("检查是否有新的正式版本") if snapshot.can_check else tr("请稍后再检查"),
         )
-        self.check_update_button.setEnabled(snapshot.can_check and snapshot.status != "checking")
+        can_check = snapshot.can_check and snapshot.status != "checking"
         # 重查及失败快照会保留历史发布信息；只有本次确认新版才能开放下载。
         self._download_url = (
             snapshot.release.url
             if snapshot.status == "available" and snapshot.release is not None else None
         )
+        # 先承接即将禁用的操作焦点，避免 Qt 沿全窗 Tab 顺序跳到侧栏主题入口。
+        # 状态通知不抢占其他页面或控件的焦点；空白操作组不执行 Enter/Space 动作。
+        if (
+            self.check_update_button.hasFocus() and not can_check
+            or self.release_button.hasFocus() and self._download_url is None
+        ):
+            self.update_actions.setFocus(Qt.FocusReason.OtherFocusReason)
+        self.check_update_button.setEnabled(can_check)
         self.release_button.setEnabled(self._download_url is not None)
         configure_button(
             self.release_button,
@@ -218,6 +258,8 @@ class AboutPanel(SettingCardGroup):
             else QBoxLayout.Direction.LeftToRight
         )
         self.update_action_layout.invalidate()
+        # 隐藏图片后重新测量容器，避免沿用展开时的 sizeHint 留下空白。
+        self.support_action_layout.invalidate()
         for presentation in self._presentations:
             presentation.reflow(width)
         cards_height = sum(item.card.height() for item in self._presentations)
