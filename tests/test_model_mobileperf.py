@@ -406,8 +406,8 @@ def test_mobileperf_excel_truncates_long_csv_sheet_names_for_report(tmp_path):
     assert all(len(name) <= 31 for name in excel._worksheet_names)
 
 
-@pytest.mark.parametrize("native_only", [False, True])
-def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, native_only):
+@pytest.mark.parametrize("mode", ["auto", "fast", "native"])
+def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, mode):
     runner_process = Mock(spec=ProcessRunner)
     proc = Mock()
     proc.stdout = []
@@ -421,7 +421,7 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, 
     cfg = MobilePerfRunConfig(package="com.example.app", save_path=str(tmp_path / "out"))
 
     runtime = Mock()
-    runtime.snapshot.return_value.native_only = native_only
+    runtime.snapshot.return_value.selection_mode = mode
     with (
         patch.object(MobilePerfRunner, "_resolve_adb_path", return_value="adb-test"),
         patch("services.mobileperf_runner.adb_runtime", return_value=runtime),
@@ -434,7 +434,9 @@ def test_mobileperf_runner_starts_python_module_with_generated_config(tmp_path, 
     assert "--config" in args[1]
     assert kwargs["cwd"] == str(tmp_path)
     assert kwargs["env"]["ADB_PATH"] == "adb-test"
-    assert kwargs["env"]["MOBILEPERF_ADB_MODE"] == ("native" if native_only else "auto")
+    assert kwargs["env"]["MOBILEPERF_ADB_MODE"] == mode
+    mode_path = Path(kwargs["env"]["MOBILEPERF_ADB_MODE_FILE"])
+    assert mode_path.parent == Path(args[1][-1]).parent
     assert "MOBILEPERF_STOP_FILE" in kwargs["env"]
     assert Path(args[1][-1]).name == "mobileperf_run.conf"
     runner.stop()

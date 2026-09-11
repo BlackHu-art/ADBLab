@@ -120,6 +120,28 @@ class LogService(QObject):
         else:
             self._flush_requested.emit()
 
+    def record_runtime_diagnostic(self, message: str) -> None:
+        """仅由 GUI 中的对象所属线程接收已脱敏的运行时诊断。
+
+        INFO 摘要复用有界诊断日志及后台持久化通知，不进入用户操作日志；
+        源码运行仍输出 DEBUG。关闭请求后拒收，后台调用方必须先经 Qt 投递。
+        """
+        if QThread.currentThread() != self.thread():
+            raise RuntimeError("Runtime diagnostics must run on the LogService owner thread")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._buffer_lock.lock()
+        try:
+            if self._state != self._STATE_ACCEPTING:
+                return
+            accepted = self.diagnostics.accept(
+                [(timestamp, LogLevel.INFO, str(message))], include_info=True,
+            )
+        finally:
+            self._buffer_lock.unlock()
+        if accepted:
+            self.write_developer_console(LogLevel.DEBUG, self.diagnostics.entries[-1][2])
+            self.diagnostics_changed.emit()
+
     @Slot()
     def _ensure_flush_timer(self) -> None:
         """确保刷新定时器只在 LogService 所在线程启动，避免跨线程操作 QTimer。"""

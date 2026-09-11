@@ -5944,5 +5944,65 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>{device}：{action}</source>
             <translation>{device}：{action}</translation>
         </message>
+        <message>
+            <source>仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择</source>
+            <translation>仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择</translation>
+        </message>
+        <message>
+            <source>自动选择</source>
+            <translation>自动选择</translation>
+        </message>
+        <message>
+            <source>手动快速</source>
+            <translation>手动快速</translation>
+        </message>
+        <message>
+            <source>手动原生</source>
+            <translation>手动原生</translation>
+        </message>
+        <message>
+            <source>等待执行环境检测</source>
+            <translation>等待执行环境检测</translation>
+        </message>
+        <message>
+            <source>正在恢复执行环境</source>
+            <translation>正在恢复执行环境</translation>
+        </message>
+        <message>
+            <source>执行环境已就绪</source>
+            <translation>执行环境已就绪</translation>
+        </message>
+        <message>
+            <source>未找到 ADB，请检查安装环境</source>
+            <translation>未找到 ADB，请检查安装环境</translation>
+        </message>
+        <message>
+            <source>已配置自定义 ADB 服务，保留原生执行</source>
+            <translation>已配置自定义 ADB 服务，保留原生执行</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务响应超时，可重新检测</source>
+            <translation>本机 ADB 服务响应超时，可重新检测</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务不可用，可重新检测或重启服务</source>
+            <translation>本机 ADB 服务不可用，可重新检测或重启服务</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务协议不兼容，保留原生执行</source>
+            <translation>本机 ADB 服务协议不兼容，保留原生执行</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务通信异常，可重新检测</source>
+            <translation>本机 ADB 服务通信异常，可重新检测</translation>
+        </message>
+        <message>
+            <source>部分设备 Shell 未通过验证，保留原生执行</source>
+            <translation>部分设备 Shell 未通过验证，保留原生执行</translation>
+        </message>
+        <message>
+            <source>{mode}；{scope}；{status}</source>
+            <translation>{mode}；{scope}；{status}</translation>
+        </message>
     </context>
 </TS>

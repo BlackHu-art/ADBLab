@@ -21,6 +21,7 @@ from mobileperf.android.tools.androiddevice import ADB
 @pytest.fixture
 def execution(monkeypatch):
     monkeypatch.delenv("MOBILEPERF_ADB_MODE", raising=False)
+    monkeypatch.delenv("MOBILEPERF_ADB_MODE_FILE", raising=False)
     runtime = Mock()
     runtime.try_run.return_value = ExecutionResult(b"fast\n")
     runtime.wait.return_value = True
@@ -318,9 +319,171 @@ def test_forced_native_skips_environment_probe(monkeypatch):
         assert execution.run(["adb"], 1).stdout == b"native"
         runtime.start.assert_not_called()
         runtime.request_device_check.assert_not_called()
-        runtime.set_native_only.assert_called_once_with(True)
+        runtime.set_mode.assert_called_once_with("native")
     finally:
         execution.close()
+
+
+@pytest.fixture
+def live_execution(monkeypatch, tmp_path):
+    """保留真实策略与文件读取，仅替换对外执行边界。"""
+    from core import adb_runtime as runtime_module
+
+    for key in (
+        "ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS",
+        "ANDROID_ADB_SERVER_PORT", "ANDROID_SERIAL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    mode_path = tmp_path / "mode"
+    mode_path.write_text("auto", encoding="utf-8")
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE", "auto")
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE_FILE", str(mode_path))
+    calls = []
+    listing = ExecutionResult(b"List of devices attached\ndevice-test\tdevice transport_id:1\n")
+    probe = ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
+
+    def capture(command, args, **_kwargs):
+        if command == "devices":
+            return listing
+        if args == [runtime_module.AdbRuntime.PROBE_COMMAND]:
+            return probe
+        calls.append("fast")
+        return ExecutionResult(b"fast")
+
+    def native(cmd, _timeout, _cancelled):
+        if "devices" in cmd:
+            return listing
+        if cmd[-1] == runtime_module.AdbRuntime.PROBE_COMMAND:
+            return probe
+        calls.append("native")
+        return ExecutionResult(b"native")
+
+    monkeypatch.setattr(runtime_module, "capture", capture)
+    monkeypatch.setattr(runtime_module, "native_capture", native)
+    monkeypatch.setattr(adb_execution, "native_capture", native)
+    instance = MobilePerfAdbExecutor(lambda: "fake-adb", "device-test", threading.Event())
+    yield instance, mode_path, calls
+    assert instance.close()
+
+
+def test_live_mode_changes_apply_to_next_command_and_restore_auto(live_execution):
+    execution, mode_path, calls = live_execution
+    execution.start()
+    assert execution.runtime.wait(2)
+    command = ["fake-adb", "-s", "device-test", "shell", "getprop"]
+
+    for mode, expected in (("auto", b"native"), ("fast", b"fast"),
+                           ("native", b"native"), ("auto", b"native")):
+        mode_path.write_text(mode, encoding="utf-8")
+        assert execution.run(command, 1).stdout == expected
+    assert calls == ["native", "fast", "native", "native"]
+
+
+@pytest.mark.parametrize("invalid", [
+    b"", b"invalid", b"native\nfast", b"\xff", b"native" + b" " * 16 + b"fast",
+])
+def test_invalid_live_mode_preserves_previous_valid_choice(live_execution, invalid):
+    execution, mode_path, calls = live_execution
+    execution.start()
+    assert execution.runtime.wait(2)
+    command = ["fake-adb", "-s", "device-test", "shell", "getprop"]
+    mode_path.write_text("fast", encoding="utf-8")
+    assert execution.run(command, 1).stdout == b"fast"
+    mode_path.write_bytes(invalid)
+    assert execution.run(command, 1).stdout == b"fast"
+    mode_path.unlink()
+    assert execution.run(command, 1).stdout == b"fast"
+    assert calls == ["fast", "fast", "fast"]
+
+
+def test_initial_fast_mode_starts_only_after_executor_start(live_execution, monkeypatch):
+    execution, mode_path, calls = live_execution
+    execution.close()
+    mode_path.write_text("fast", encoding="utf-8")
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE", "fast")
+    instance = MobilePerfAdbExecutor(lambda: "fake-adb", "device-test", threading.Event())
+    try:
+        assert instance.runtime._thread is None
+        instance.start()
+        assert instance.runtime.wait(2)
+        command = ["fake-adb", "-s", "device-test", "shell", "getprop"]
+        assert instance.run(command, 1).stdout == b"fast"
+        assert calls == ["fast"]
+    finally:
+        assert instance.close()
+
+
+def test_preexisting_stop_never_starts_fast_mode_probe(live_execution, monkeypatch):
+    execution, mode_path, calls = live_execution
+    execution.close()
+    mode_path.write_text("fast", encoding="utf-8")
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE", "fast")
+    stopped = threading.Event()
+    stopped.set()
+    instance = MobilePerfAdbExecutor(lambda: "fake-adb", "device-test", stopped)
+    try:
+        instance.start()
+        assert instance.run(["fake-adb"], 1).kind == "cancelled"
+        assert instance.runtime._thread is None
+        assert calls == []
+    finally:
+        assert instance.close()
+
+
+def test_native_session_checks_capability_after_switch_to_fast(live_execution, monkeypatch):
+    execution, mode_path, calls = live_execution
+    execution.close()
+    mode_path.write_text("native", encoding="utf-8")
+    monkeypatch.setenv("MOBILEPERF_ADB_MODE", "native")
+    instance = MobilePerfAdbExecutor(lambda: "fake-adb", "device-test", threading.Event())
+    command = ["fake-adb", "-s", "device-test", "shell", "getprop"]
+    try:
+        instance.start()
+        assert instance.runtime._thread is None
+        assert instance.run(command, 1).stdout == b"native"
+        mode_path.write_text("fast", encoding="utf-8")
+        instance.run(command, 1)
+        assert instance.runtime.wait(2)
+        assert instance.run(command, 1).stdout == b"fast"
+        assert instance.runtime.snapshot().checked_devices == 1
+        assert calls[0] == "native" and calls[-1] == "fast"
+    finally:
+        assert instance.close()
+
+
+def test_live_mode_switch_does_not_cancel_or_replay_inflight_command(
+    live_execution, monkeypatch,
+):
+    from core import adb_runtime as runtime_module
+
+    execution, mode_path, calls = live_execution
+    execution.start()
+    assert execution.runtime.wait(2)
+    mode_path.write_text("fast", encoding="utf-8")
+    entered, release = threading.Event(), threading.Event()
+    results = []
+    command = ["fake-adb", "-s", "device-test", "shell", "getprop"]
+
+    def capture(_command, _args, *, cancelled, **_kwargs):
+        calls.append("fast")
+        entered.set()
+        assert release.wait(2)
+        assert not cancelled()
+        return ExecutionResult(kind="transport")
+
+    monkeypatch.setattr(runtime_module, "capture", capture)
+    worker = threading.Thread(target=lambda: results.append(execution.run(command, 3)))
+    worker.start()
+    try:
+        assert entered.wait(1)
+        mode_path.write_text("native", encoding="utf-8")
+        assert execution.run(command, 1).stdout == b"native"
+    finally:
+        release.set()
+        worker.join(2)
+    assert not worker.is_alive()
+    assert len(results) == 1 and results[0].kind == "transport"
+    assert calls == ["fast", "native"]
 
 
 def test_device_instances_keep_original_session(adb):

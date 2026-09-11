@@ -5944,5 +5944,65 @@ Check for the latest stable release</translation>
             <source>{device}：{action}</source>
             <translation>{device}: {action}</translation>
         </message>
+        <message>
+            <source>仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择</source>
+            <translation>Applies to subsequent commands only; on uses native ADB, off prefers fast execution, and Recheck restores automatic selection</translation>
+        </message>
+        <message>
+            <source>自动选择</source>
+            <translation>Automatic selection</translation>
+        </message>
+        <message>
+            <source>手动快速</source>
+            <translation>Manual fast mode</translation>
+        </message>
+        <message>
+            <source>手动原生</source>
+            <translation>Manual native mode</translation>
+        </message>
+        <message>
+            <source>等待执行环境检测</source>
+            <translation>Waiting to check the execution environment</translation>
+        </message>
+        <message>
+            <source>正在恢复执行环境</source>
+            <translation>Restoring the execution environment</translation>
+        </message>
+        <message>
+            <source>执行环境已就绪</source>
+            <translation>Execution environment is ready</translation>
+        </message>
+        <message>
+            <source>未找到 ADB，请检查安装环境</source>
+            <translation>ADB was not found; check the installation</translation>
+        </message>
+        <message>
+            <source>已配置自定义 ADB 服务，保留原生执行</source>
+            <translation>A custom ADB service is configured; using native execution</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务响应超时，可重新检测</source>
+            <translation>The local ADB service timed out; try Recheck</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务不可用，可重新检测或重启服务</source>
+            <translation>The local ADB service is unavailable; recheck or restart the service</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务协议不兼容，保留原生执行</source>
+            <translation>The local ADB service protocol is incompatible; using native execution</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务通信异常，可重新检测</source>
+            <translation>Communication with the local ADB service failed; try Recheck</translation>
+        </message>
+        <message>
+            <source>部分设备 Shell 未通过验证，保留原生执行</source>
+            <translation>Some devices have not passed Shell verification; using native execution for those devices</translation>
+        </message>
+        <message>
+            <source>{mode}；{scope}；{status}</source>
+            <translation>{mode}; {scope}; {status}</translation>
+        </message>
     </context>
 </TS>

@@ -128,7 +128,7 @@ flowchart LR
 | 全局池与每模型 long_pool | 异步 ADB 命令；关闭栅栏拒绝新任务，已开始命令仍依赖各执行边界的超时/停止能力 |
 | `ADBAdvanced._record_pool` | 双槽池等待录屏完成并保存，超过槽位的保存请求排队；模型关闭同时等待运行与排队任务收口 |
 | `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
-| `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；关闭先取消探测和在途请求，清理后最终封闭 |
+| `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；后台通知抵达 GUI 后读取最新快照，模式与实际能力分别投影；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
 | 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
 | QtTaskSupervisor cleanup QThreadPool | 执行单资源及 owner 级停止和等待，与普通命令全局池分离 |
@@ -137,7 +137,7 @@ flowchart LR
 | Remote executor / warmup / readers | 停止输入准入，再等待执行器及预热生产者，最后关闭持久输入会话和相关进程资源 |
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
-| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；同步短查询复用核心双后端，采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空后通知完成 |
+| MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成 |
 
 ## 应用关闭
 
@@ -177,7 +177,9 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 - 主窗口向任务中心注入 `RunLibraryController`，由“测试结果”显示持久化测试记录。
   `TaskHistoryStore` 与旧历史卡保留为兼容入口；主窗口中的旧历史卡隐藏，不是通用操作正文的存储源。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
-  文件队列在后台保存并在关闭时排空。源码 DEBUG 单独进入 stderr，frozen 或无 stderr 时不输出。
+  文件队列在后台保存并在关闭时排空。运行时环境检测经对象所属 GUI 线程的专用入口记录 INFO，
+  同样有界保存，但不计入异常摘要或触发异常 Toast。源码 DEBUG 单独进入 stderr，frozen 或
+  无 stderr 时不输出；运行时诊断的文件留存不依赖 stderr。
   `shutdown()` 保留停止态单例并拒绝晚到消息。MobilePerf 继续独立排空 stdout/stderr，
   按代次接收并遮蔽其运行值；摘要遮蔽不等于采集附件已经脱敏。
 

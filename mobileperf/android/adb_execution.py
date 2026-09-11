@@ -29,14 +29,33 @@ class MobilePerfAdbExecutor:
         self._cleanup_thread: threading.Thread | None = None
         self._closed = False
         self._active = 0
-        self._native_only = os.environ.get("MOBILEPERF_ADB_MODE") == "native"
+        mode = os.environ.get("MOBILEPERF_ADB_MODE", "auto")
+        self._mode = mode if mode in ("auto", "fast", "native") else "auto"
+        self._mode_file = os.environ.get("MOBILEPERF_ADB_MODE_FILE", "")
+        self._mode_lock = threading.Lock()
+        self._applied_mode: str | None = None
         self.runtime = AdbRuntime(
             resolver,
             probe_serial=serial or None,
             changed=self._changed,
             diagnostic=lambda message: logger.debug("MobilePerf %s", message),
         )
-        self.runtime.set_native_only(self._native_only)
+
+    def _sync_mode(self) -> str:
+        """仅在请求准入后应用合法模式；通信失败时保留本次运行的最后有效选择。"""
+        with self._mode_lock:
+            if self._mode_file:
+                try:
+                    with open(self._mode_file, encoding="utf-8") as stream:
+                        mode = stream.read(16)
+                except (OSError, UnicodeError):
+                    mode = ""
+                if mode in ("auto", "fast", "native"):
+                    self._mode = mode
+            if self._mode != self._applied_mode:
+                self.runtime.set_mode(self._mode)
+                self._applied_mode = self._mode
+            return self._mode
 
     def _changed(self, snapshot: RuntimeSnapshot) -> None:
         if snapshot.checked_devices or not snapshot.checking:
@@ -50,10 +69,12 @@ class MobilePerfAdbExecutor:
 
     def start(self) -> None:
         """有界等待目标能力验证，原生测速继续后台运行；原生模式不启动探测。"""
-        if self._native_only or self.stop_requested():
+        if self.stop_requested():
             return
         self._ready.clear()
-        self.runtime.start()
+        if self._sync_mode() == "native":
+            return
+        self.runtime.start(force=False)
         deadline = time.monotonic() + 1.5
         while not self.stop_requested() and time.monotonic() < deadline:
             if self._ready.wait(min(0.1, max(0, deadline - time.monotonic()))):
@@ -84,7 +105,7 @@ class MobilePerfAdbExecutor:
                 return ExecutionResult(kind="cancelled")
             self._active += 1
         try:
-            if not self._native_only:
+            if self._sync_mode() != "native":
                 self.runtime.request_device_check()
             remaining = deadline - time.monotonic()
             if remaining <= 0:

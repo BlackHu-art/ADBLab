@@ -10,6 +10,7 @@ import time
 from collections.abc import Callable, Iterator
 
 import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
 
 from core.log_service import LogLevel, LogService
 
@@ -31,8 +32,12 @@ def create_log_service() -> Iterator[Callable[[], LogService]]:
         yield factory
     finally:
         for service in created:
-            if service._state == service._STATE_ACCEPTING:
-                service.shutdown()
+            service.shutdown()
+            # 测试会反复创建单例；仅停用服务仍留下 Qt 信号回调环与无父级定时器，
+            # 必须在 GUI 线程的安全边界释放原生对象，不能留给后续控件构造时的 GC。
+            service._timer.deleteLater()
+            service.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         LogService._instance = previous_instance
 
 
