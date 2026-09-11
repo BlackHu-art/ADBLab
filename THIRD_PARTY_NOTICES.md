@@ -11,6 +11,14 @@ ADBLab 运行时依赖 `PySide6-Fluent-Widgets`。早期页面组织曾参考上
 包、上游官方 [PySide6 分支](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6)
 中的相关文件为准。经用户要求拉取的本地 `reference/` 副本受 Git 忽略，不作为运行或打包来源。
 
+首页背景 [`resources/images/gallery_header.png`](resources/images/gallery_header.png) 原样复用
+官方 PySide6 分支提交 `d6f5a01f7f3fe285c6900e476349467810267839` 的
+[`examples/gallery/app/resource/images/header1.png`](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/d6f5a01f7f3fe285c6900e476349467810267839/examples/gallery/app/resource/images/header1.png)。
+来源和文件摘要见 [`resources/images/README.md`](resources/images/README.md)；该上游副本附带
+GPL-3.0 许可，未发现此图的独立许可声明。保留的完整文本见
+[`resources/images/LICENSE.gallery.txt`](resources/images/LICENSE.gallery.txt)，该许可文本在构建时收集到
+`licenses/gallery/`。运行与打包只读取仓库内的正式资源，不依赖 `reference/` 路径。
+
 截图浏览参考官方 PySide6 分支提交 `d6f5a01f7f3fe285c6900e476349467810267839` 的
 [`examples/view/flip_view/demo.py`](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/d6f5a01f7f3fe285c6900e476349467810267839/examples/view/flip_view/demo.py)
 与 [`examples/menu/command_bar/demo.py`](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/blob/d6f5a01f7f3fe285c6900e476349467810267839/examples/menu/command_bar/demo.py)。

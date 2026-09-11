@@ -5965,6 +5965,10 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>等待执行环境检测</translation>
         </message>
         <message>
+            <source>正在启动本机 ADB 服务</source>
+            <translation>正在启动本机 ADB 服务</translation>
+        </message>
+        <message>
             <source>正在恢复执行环境</source>
             <translation>正在恢复执行环境</translation>
         </message>
@@ -6003,6 +6007,68 @@ Android 设备管理、应用操作与诊断工作台</translation>
         <message>
             <source>{mode}；{scope}；{status}</source>
             <translation>{mode}；{scope}；{status}</translation>
+        </message>
+        <message>
+            <source>当前版本 {version} · 开源项目
+Android 设备管理、应用操作与诊断工作台</source>
+            <translation>当前版本 {version} · 开源项目
+Android 设备管理、应用操作与诊断工作台</translation>
+        </message>
+        <message>
+            <source>更新状态：尚未检查</source>
+            <translation>更新状态：尚未检查</translation>
+        </message>
+        <message>
+            <source>检查后，有新版本时可前往下载</source>
+            <translation>检查后，有新版本时可前往下载</translation>
+        </message>
+        <message>
+            <source>正在获取最新正式版信息</source>
+            <translation>正在获取最新正式版信息</translation>
+        </message>
+        <message>
+            <source>检查失败：请检查网络后重试</source>
+            <translation>检查失败：请检查网络后重试</translation>
+        </message>
+        <message>
+            <source>检查失败：请检查系统时间或网络设置</source>
+            <translation>检查失败：请检查系统时间或网络设置</translation>
+        </message>
+        <message>
+            <source>检查超时：请稍后重试</source>
+            <translation>检查超时：请稍后重试</translation>
+        </message>
+        <message>
+            <source>检查受限：请稍后重试</source>
+            <translation>检查受限：请稍后重试</translation>
+        </message>
+        <message>
+            <source>更新服务暂不可用，请稍后重试</source>
+            <translation>更新服务暂不可用，请稍后重试</translation>
+        </message>
+        <message>
+            <source>版本信息异常，请稍后重试</source>
+            <translation>版本信息异常，请稍后重试</translation>
+        </message>
+        <message>
+            <source>上次检查版本：{version}（历史结果）</source>
+            <translation>上次检查版本：{version}（历史结果）</translation>
+        </message>
+        <message>
+            <source>可更新至 {version} · {date} 发布</source>
+            <translation>可更新至 {version} · {date} 发布</translation>
+        </message>
+        <message>
+            <source>已是最新正式版，无需更新</source>
+            <translation>已是最新正式版，无需更新</translation>
+        </message>
+        <message>
+            <source>当前版本领先于正式版 {version}</source>
+            <translation>当前版本领先于正式版 {version}</translation>
+        </message>
+        <message>
+            <source>检查到新版本后可前往下载</source>
+            <translation>检查到新版本后可前往下载</translation>
         </message>
     </context>
 </TS>

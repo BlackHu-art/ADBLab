@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtWidgets import QLabel
 from qfluentwidgets import FluentIcon, FluentWindow
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -424,7 +425,8 @@ def test_update_card_only_opens_checked_release_on_explicit_click(settings_page,
     requested.assert_called_once_with()
     opener.assert_not_called()
     about.release_button.click()
-    assert opener.call_args.args[0].toString() == "https://github.com/BlackHu-art/ADBLab/releases"
+    assert not about.release_button.isEnabled()
+    opener.assert_not_called()
     release = ReleaseInfo(
         "3.2.12", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.12",
         datetime(2026, 9, 9, tzinfo=timezone.utc),
@@ -438,6 +440,78 @@ def test_update_card_only_opens_checked_release_on_explicit_click(settings_page,
     about.set_update_snapshot(UpdateSnapshot(status="error", error="network", release=release))
     assert "失败" in about.project_card.contentLabel.text()
     assert "上次" in about.project_card.contentLabel.text()
+    assert not about.release_button.isEnabled()
+
+
+@pytest.mark.parametrize("font_size", [9, 12])
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_update_card_keeps_existing_height_and_button_positions_across_checks(
+    qt_application, settings_page, font_size, theme,
+):
+    page, values, _writes, _frame = settings_page
+    values["ui_font_size"] = font_size
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme(theme)
+    page.resize(1000, 640)
+    page.show()
+    about = page.about_panel
+    checked_at = datetime(2026, 9, 11, 7, 15, tzinfo=timezone.utc)
+    release = ReleaseInfo(
+        "3.2.14", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.14", checked_at,
+    )
+    # 由 Qt 度量修改前的四行文案；分数缩放下标签测高与整数字体高度可差 1px。
+    original_content = QLabel(
+        "版本 3.2.11 · 开源项目\nAndroid 设备管理、应用操作与诊断工作台\n"
+        "发现新版本 3.2.14 · 发布于 2026-09-11\n检查时间：2026-09-11 15:15", page,
+    )
+    original_content.setFont(about.project_card.contentLabel.font())
+    original_content.setWordWrap(True)
+    original_content.hide()
+    original_height = (
+        about.project_card.titleLabel.heightForWidth(1000) + 6
+        + original_content.heightForWidth(1000) + 32
+    )
+    snapshots = [
+        UpdateSnapshot(status="available", release=release, checked_at=checked_at),
+        UpdateSnapshot(),
+        UpdateSnapshot(status="checking", can_check=False),
+        UpdateSnapshot(status="checking", release=release, can_check=False),
+        UpdateSnapshot(status="current", release=release, checked_at=checked_at),
+        UpdateSnapshot(status="ahead", release=release, checked_at=checked_at),
+        UpdateSnapshot(status="available"),
+        *[
+            UpdateSnapshot(status="error", error=error, release=previous)
+            for previous in (None, release)
+            for error in (
+                "network", "tls", "timeout", "rate_limited", "unavailable", "invalid_response",
+            )
+        ],
+    ]
+    original_positions = None
+    for snapshot in snapshots:
+        about.set_update_snapshot(snapshot)
+        _settle_settings(qt_application, page)
+        card = about.project_card
+        # 保留原四行版本说明的高度，检查过程不能撑高或收缩卡片。
+        assert card.height() == original_height
+        buttons = (about.project_button, about.check_update_button, about.release_button)
+        positions = tuple((button.mapTo(card, QPoint()), button.size()) for button in buttons)
+        if original_positions is None:
+            original_positions = positions
+        assert positions == original_positions
+        assert len({button.height() for button in buttons}) == 1
+        assert about.release_button.text() == "前往下载"
+        assert about.release_button.isEnabled() == (
+            snapshot.status == "available" and snapshot.release is not None
+        )
+        for button in buttons:
+            if not button.isEnabled():
+                continue
+            button.setFocus(Qt.FocusReason.TabFocusReason)
+            wait_for_stable_geometry(qt_application, (*buttons, about.update_actions))
+            assert tuple(
+                (action.mapTo(card, QPoint()), action.size()) for action in buttons
+            ) == original_positions
 
 
 @pytest.mark.parametrize("published", [
@@ -472,8 +546,20 @@ def test_update_card_translated_states_at_large_font(
         page.resize(420, 640)
         page.show()
         about = page.about_panel
-        for error in ("network", "tls", "timeout", "rate_limited", "invalid_response"):
-            about.set_update_snapshot(UpdateSnapshot(status="error", error=error))
+        checked_at = datetime(2026, 9, 11, 7, 15, tzinfo=timezone.utc)
+        release = ReleaseInfo(
+            "3.2.14", "https://github.com/BlackHu-art/ADBLab/releases/tag/v3.2.14", checked_at,
+        )
+        snapshots = [
+            UpdateSnapshot(),
+            UpdateSnapshot(status="checking", can_check=False),
+            *[UpdateSnapshot(status=status, release=release, checked_at=checked_at)
+              for status in ("available", "current", "ahead")],
+            *[UpdateSnapshot(status="error", error=error)
+              for error in ("network", "tls", "timeout", "rate_limited", "invalid_response")],
+        ]
+        for snapshot in snapshots:
+            about.set_update_snapshot(snapshot)
             _settle_settings(qt_application, page)
             assert about.check_update_button.text() == button_text
             assert page.horizontalScrollBar().maximum() == 0

@@ -8,8 +8,9 @@ from unittest.mock import Mock
 import pytest
 
 from core import adb_runtime as module
+from core import adb_transport
 from core import exec as execution
-from core.adb_runtime import AdbRuntime
+from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
 
 LISTING = b"List of devices attached\nfake-device\tdevice transport_id:1\n"
@@ -17,45 +18,223 @@ PROBE = ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
 
 
 @pytest.mark.parametrize("command", ["devices", "shell"])
-def test_initial_transient_probe_recovers_within_same_detection(backend, monkeypatch, command):
+@pytest.mark.parametrize("failure", ["timeout", "transport"])
+def test_initial_transient_probe_recovers_within_same_detection(
+    backend, monkeypatch, command, failure,
+):
     runtime, clock, native, _ = backend
     original = module.capture
     budgets = []
+    elapsed = []
 
     def capture(target, args, **kwargs):
         if target == command:
             budgets.append(kwargs["timeout"])
             if len(budgets) == 1:
-                clock[0] += kwargs["timeout"]
-                return ExecutionResult(kind="timeout")
+                # 操作系统也可能在调用方截止时间前报告临时失败，复核只能用余量。
+                clock[0] += 1.0
+                elapsed.append(1.0)
+                return ExecutionResult(kind=failure)
         return original(target, args, **kwargs)
 
     monkeypatch.setattr(module, "capture", capture)
     prepare(runtime)
     assert len(budgets) == 2
-    assert sum(budgets) <= 3.0
+    assert budgets == ([3.0, 2.0] if command == "devices" else [1.0, 2.0])
+    assert elapsed[0] + budgets[1] <= 3.0
     assert runtime.snapshot().status == "ready"
     assert all("start-server" not in cmd for cmd in native)
 
 
-def test_persistent_initial_host_timeout_is_bounded_and_diagnosed(backend, monkeypatch):
-    runtime, clock, native, _ = backend
-    budgets, diagnostics = [], []
+def test_persistent_initial_host_timeout_is_bounded_and_diagnosed(host_transport):
+    runtime, clock, native, server = host_transport
+    diagnostics = []
     runtime._diagnostic = diagnostics.append
-
-    def capture(*_args, **kwargs):
-        budgets.append(kwargs["timeout"])
-        clock[0] += kwargs["timeout"]
-        return ExecutionResult(kind="timeout")
-
-    monkeypatch.setattr(module, "capture", capture)
+    server.response_delay = 4.0
+    started = clock[0]
     assert runtime.start()
-    assert runtime.wait(2)
-    assert len(budgets) == 2 and sum(budgets) <= 3.0
+    wait_for_probe(runtime)
+    assert server.budgets == [3.0]
+    assert clock[0] - started == pytest.approx(3.0)
     assert runtime.snapshot().status == "host_timeout"
     assert runtime.snapshot().effective_native_only
     assert any("timeout" in message for message in diagnostics)
     assert native == []
+    assert all(sock.closed for sock in server.sockets)
+
+
+@pytest.mark.parametrize("bootstrap_delay", [0.0, 16.4])
+def test_delayed_connection_refusal_bootstraps_once_and_enables_fast_discovery(
+    host_transport, bootstrap_delay,
+):
+    runtime, clock, native, server = host_transport
+    server.listening = False
+    server.bootstrap_delay = bootstrap_delay
+    diagnostics, statuses = [], []
+    runtime._diagnostic = diagnostics.append
+    runtime._changed = lambda snapshot: statuses.append(snapshot.status)
+    assert runtime.start()
+    wait_for_probe(runtime)
+    assert runtime.snapshot().status == "ready"
+    assert runtime.can_scan_fast()
+    assert server.budgets[:2] == [3.0, 3.0]
+    assert server.bootstrap_budgets == [30.0]
+    assert "starting_server" in statuses
+    assert any("ADB bootstrap status=starting_server" in line for line in diagnostics)
+    assert any(
+        f"elapsed_ms={bootstrap_delay * 1000:.0f}" in line and "result=completed" in line
+        for line in diagnostics
+    )
+    assert all("C:/test" not in line for line in diagnostics)
+    result = runtime.try_run(["C:/test/adb.exe", "devices", "-l"], 5)
+    assert result is not None and result.kind == "completed"
+    assert result.stdout == b"List of devices attached\n\n"
+
+    # 后续服务再次消失时，自动恢复及手动重测都不能重复启动服务。
+    server.listening = False
+    clock[0] += 11
+    runtime.request_device_check()
+    wait_for_probe(runtime)
+    assert not runtime.can_scan_fast()
+    assert runtime.recheck()
+    wait_for_probe(runtime)
+    assert runtime.snapshot().status == "host_unavailable"
+    assert sum("start-server" in cmd for cmd in native) == 1
+    assert all(sock.closed for sock in server.sockets)
+
+
+@pytest.mark.parametrize("was_available", [False, True])
+def test_unavailable_host_recovers_with_slow_warm_response(host_transport, was_available):
+    runtime, clock, native, server = host_transport
+    if was_available:
+        assert runtime.start()
+        wait_for_probe(runtime)
+        assert runtime.can_scan_fast()
+        server.response_delay = 4.0
+        clock[0] += 11
+        runtime.request_device_check()
+        wait_for_probe(runtime)
+        # 已验证服务的普通健康检查继续只用一秒，失败才进入恢复预算。
+        assert server.budgets[-1] == 1.0
+    else:
+        server.response_delay = 4.0
+        assert runtime.start()
+        wait_for_probe(runtime)
+    assert runtime.snapshot().status == "host_timeout"
+    assert not runtime.can_scan_fast()
+    attempts = len(server.budgets)
+    server.response_delay = 1.2
+    runtime.request_device_check()
+    wait_for_probe(runtime)
+    assert len(server.budgets) == attempts
+
+    clock[0] += 11
+    runtime.request_device_check()
+    wait_for_probe(runtime)
+    assert runtime.snapshot().status == "ready"
+    assert runtime.can_scan_fast()
+    assert server.budgets[-1] == 3.0
+    assert len(native) == 1
+    assert all("start-server" not in cmd for cmd in native)
+    result = runtime.try_run(["C:/test/adb.exe", "devices"], 5)
+    assert result is not None and result.kind == "completed"
+    assert result.stdout == b"List of devices attached\n\n"
+    assert server.budgets[-1] == pytest.approx(5.0)
+    assert all(sock.closed for sock in server.sockets)
+
+
+def test_failed_host_retries_early_transport_failure_within_recovery_budget(backend, monkeypatch):
+    runtime, clock, native, _ = backend
+    original = module.capture
+
+    def timeout(*_args, **kwargs):
+        clock[0] += kwargs["timeout"]
+        return ExecutionResult(kind="timeout")
+
+    monkeypatch.setattr(module, "capture", timeout)
+    assert runtime.start()
+    wait_for_probe(runtime)
+    assert not runtime.can_scan_fast()
+    budgets = []
+
+    def capture(command, args, **kwargs):
+        if command == "devices":
+            budgets.append(kwargs["timeout"])
+            if len(budgets) == 1:
+                clock[0] += 1.0
+                return ExecutionResult(kind="transport")
+        return original(command, args, **kwargs)
+
+    monkeypatch.setattr(module, "capture", capture)
+    clock[0] += 11
+    runtime.request_device_check()
+    wait_for_probe(runtime)
+    assert runtime.snapshot().status == "ready"
+    assert runtime.can_scan_fast()
+    assert budgets == [3.0, 2.0]
+    assert all("start-server" not in cmd for cmd in native)
+
+
+def test_shutdown_cancels_slow_initial_service_bootstrap(host_transport, monkeypatch):
+    runtime, clock, _, server = host_transport
+    server.listening = False
+    entered, release = threading.Event(), threading.Event()
+    diagnostics = []
+    runtime._diagnostic = diagnostics.append
+
+    class BootstrapProcess:
+        returncode = None
+        killed = False
+        drained = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def communicate(self, timeout=None):
+            if timeout is None:
+                assert self.killed
+                self.drained = True
+                return b"", b""
+            assert 0 < timeout <= 0.1
+            entered.set()
+            assert release.wait(2)
+            clock[0] += timeout
+            raise subprocess.TimeoutExpired("offline-bootstrap", timeout)
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+    proc = BootstrapProcess()
+    commands = []
+
+    def popen(cmd, **_kwargs):
+        commands.append(cmd)
+        return proc
+
+    monkeypatch.setattr(module, "native_capture", native_capture)
+    monkeypatch.setattr(module.subprocess, "Popen", popen)
+    try:
+        assert runtime.start() and entered.wait(2)
+        assert runtime.snapshot().status == "starting_server"
+        runtime.prepare_shutdown()
+    finally:
+        runtime.prepare_shutdown()
+        release.set()
+        wait_for_probe(runtime)
+    assert proc.killed and proc.drained
+    assert commands == [["C:/test/adb.exe", "start-server"]]
+    assert server.budgets == [3.0]
+    assert not runtime.snapshot().checking
+    assert runtime.snapshot().status != "starting_server"
+    assert not runtime.snapshot().available
+    assert any("ADB bootstrap result=cancelled" in line for line in diagnostics)
 
 
 def test_shutdown_during_first_probe_does_not_retry(backend, monkeypatch):
@@ -81,8 +260,8 @@ def test_retry_rechecks_budget_and_state_after_notification(backend, monkeypatch
 
     def capture(*_args, **kwargs):
         calls.append(kwargs["timeout"])
-        clock[0] += kwargs["timeout"]
-        return ExecutionResult(kind="timeout")
+        clock[0] += 1.0
+        return ExecutionResult(kind="transport")
 
     def changed(snapshot):
         if snapshot.status == "retrying":
@@ -94,7 +273,7 @@ def test_retry_rechecks_budget_and_state_after_notification(backend, monkeypatch
     runtime._changed = changed
     monkeypatch.setattr(module, "capture", capture)
     assert runtime.start() and runtime.wait(2)
-    assert calls == [1.0]
+    assert calls == [3.0]
 
 
 @pytest.mark.parametrize("failure", [
@@ -351,6 +530,81 @@ def backend(monkeypatch):
     runtime.close()
     assert runtime.wait(2)
     execution.install_adb_runtime(None)
+
+
+@pytest.fixture
+def host_transport(backend, monkeypatch):
+    """保留真实协议和运行实例，只隔离系统连接、服务启动与时钟。"""
+    runtime, clock, native, _ = backend
+    server = SimpleNamespace(
+        listening=True, response_delay=0.01, budgets=[], sockets=[],
+        bootstrap_delay=0.0, bootstrap_budgets=[],
+    )
+
+    class HostSocket:
+        def __init__(self):
+            self.response = bytearray(b"OKAY0000")
+            self.delay = server.response_delay
+            self.timeout = 0.0
+            self.closed = False
+
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def sendall(self, data):
+            assert data in (b"000chost:devices", b"000ehost:devices-l")
+
+        def recv(self, size):
+            elapsed = min(self.delay, self.timeout)
+            clock[0] += elapsed
+            self.delay -= elapsed
+            if self.delay > 0:
+                raise TimeoutError
+            data = bytes(self.response[:size])
+            del self.response[:size]
+            return data
+
+        def close(self):
+            self.closed = True
+
+    def connect(address, timeout):
+        assert address == ("127.0.0.1", 5037)
+        server.budgets.append(timeout)
+        if not server.listening:
+            # 模拟 Windows 未监听端口延后报告拒绝，每次新连接重新计时。
+            clock[0] += min(timeout, 2.031)
+            if timeout < 2.031:
+                raise TimeoutError
+            raise ConnectionRefusedError
+        sock = HostSocket()
+        server.sockets.append(sock)
+        return sock
+
+    original_native = module.native_capture
+
+    def native_capture(cmd, timeout, cancelled):
+        if "start-server" in cmd:
+            native.append(cmd)
+            server.bootstrap_budgets.append(timeout)
+            clock[0] += min(server.bootstrap_delay, timeout)
+            if server.bootstrap_delay > timeout:
+                return ExecutionResult(kind="timeout")
+            server.listening = True
+            return ExecutionResult()
+        return original_native(cmd, timeout, cancelled)
+
+    monkeypatch.setattr(adb_transport, "time", module.time)
+    monkeypatch.setattr(adb_transport.socket, "create_connection", connect)
+    monkeypatch.setattr(module, "capture", adb_transport.capture)
+    monkeypatch.setattr(module, "native_capture", native_capture)
+    return runtime, clock, native, server
+
+
+def wait_for_probe(runtime):
+    """以真实线程退出同步，避免探针推进的模拟时钟耗尽测试等待预算。"""
+    assert runtime._thread is not None
+    runtime._thread.join(2)
+    assert runtime.wait(0)
 
 
 def prepare(runtime):

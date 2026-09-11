@@ -4,6 +4,7 @@ import pytest
 from PySide6.QtCore import QAbstractAnimation, QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
     NavigationDisplayMode,
@@ -23,6 +24,36 @@ from tests.test_main_window_layout import (
     build_main_frame,
 )
 from tests.ui_geometry_helpers import wait_until
+
+
+@pytest.mark.parametrize("compacted", [True, False])
+def test_theme_focus_outline_tracks_navigation_foreground_after_toggle(qt_application, compacted):
+    """真实点击切换明暗后，紧凑按钮和展开开关的焦点框跟随导航前景色。"""
+    BaseStyles.switch_theme("Light")
+    host = QWidget()
+    widget = NavigationThemeToggle(host)
+    widget.setCompacted(compacted)
+    layout = QVBoxLayout(host)
+    layout.addWidget(widget)
+    widget.clicked.connect(BaseStyles.toggle_theme)
+    BaseStyles.theme_changed.connect(widget.sync_theme)
+    target = widget if compacted else widget.switch.indicator
+    try:
+        host.show()
+        host.activateWindow()
+        target.setFocus(Qt.FocusReason.TabFocusReason)
+        wait_until(qt_application, target.hasFocus)
+        for theme, expected in (("Dark", "#ffffff"), ("Light", "#000000")):
+            QTest.mouseClick(target, Qt.MouseButton.LeftButton)
+            qt_application.processEvents()
+            assert BaseStyles.resolved_theme() == theme
+            assert target.hasFocus()
+            image = widget.grab().toImage()
+            scale = image.devicePixelRatio()
+            outline = image.pixelColor(round(scale), round(widget.height() * scale / 2))
+            assert outline.name() == expected
+    finally:
+        host.close()
 
 
 @pytest.mark.parametrize("key", [Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter])

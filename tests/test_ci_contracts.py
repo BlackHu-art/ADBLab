@@ -18,6 +18,8 @@ FIRST_PARTY_PYTHON_PATHS = (
 )
 RUNTIME_RESOURCE_DATA = (
     ("resources/icons", "resources/icons"),
+    ("resources/images/gallery_header.png", "resources/images"),
+    ("resources/images/LICENSE.gallery.txt", "licenses/gallery"),
     ("resources/app_settings.json", "resources"),
     ("resources/connected_devices.yaml", "resources"),
     ("resources/chkbugreport-0.5-215.jar", "resources"),

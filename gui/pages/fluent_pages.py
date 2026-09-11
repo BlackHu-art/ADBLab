@@ -1156,9 +1156,13 @@ class SettingsPage(ScrollArea):
         self._refresh_typography()
 
     def update_adb_environment(self, snapshot) -> None:
-        """投影当前模式、有效能力与检测原因；程序同步开关不反写用户策略。"""
+        """自动模式跟随有效后端；手动模式保留选择，能力回退只更新执行状态说明。"""
+        native_checked = (
+            snapshot.effective_native_only if snapshot.selection_mode == "auto"
+            else snapshot.selection_mode == "native"
+        )
         with QSignalBlocker(self.adb_native_card):
-            self.adb_native_card.setChecked(snapshot.effective_native_only)
+            self.adb_native_card.setChecked(native_checked)
         mode = {
             "auto": tr("自动选择"),
             "fast": tr("手动快速"),
@@ -1174,6 +1178,7 @@ class SettingsPage(ScrollArea):
         status = {
             "idle": tr("等待执行环境检测"),
             "checking": tr("正在检查执行环境"),
+            "starting_server": tr("正在启动本机 ADB 服务"),
             "retrying": tr("正在恢复执行环境"),
             "ready": tr("执行环境已就绪"),
             "missing_adb": tr("未找到 ADB，请检查安装环境"),

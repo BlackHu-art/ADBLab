@@ -10,6 +10,7 @@ from collections.abc import Callable
 from PySide6.QtCore import (
     QAbstractAnimation,
     QEvent,
+    QRect,
     QSignalBlocker,
     QSize,
     Qt,
@@ -17,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QResizeEvent
+from PySide6.QtGui import QColor, QIcon, QRegion, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -242,6 +243,7 @@ class MainFrame(FluentWindow):
     NAVIGATION_EXPAND_BREAKPOINT = 1120
     NAVIGATION_LAYOUT_DEBOUNCE_MS = 60
     _QFLUENT_DEFAULT_EXPAND_WIDTH = 322
+    _CONTENT_CORNER_RADIUS = 10
 
     def __init__(
         self,
@@ -837,6 +839,7 @@ class MainFrame(FluentWindow):
         self._content_surface = QWidget(self)
         self._content_surface.setObjectName("workspaceSurface")
         self._content_surface.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self._content_surface.installEventFilter(self)
         FluentStyleSheet.FLUENT_WINDOW.apply(self._content_surface)
         self._content_layout = QVBoxLayout(self._content_surface)
         self._content_layout.setContentsMargins(0, 0, 0, 0)
@@ -1205,9 +1208,6 @@ class MainFrame(FluentWindow):
             pass
         panel.returnButton.clicked.connect(self._navigate_back)
         panel.expandAni.finished.connect(self._on_navigation_animation_finished)
-        panel.expandAni.stateChanged.connect(
-            self._on_navigation_animation_state_changed
-        )
         self.navigationInterface.setUpdateIndicatorPosOnCollapseFinished(True)
         self.navigationInterface.displayModeChanged.connect(
             self._on_navigation_display_mode_changed
@@ -1428,7 +1428,6 @@ class MainFrame(FluentWindow):
         panel = self.navigationInterface.panel
         if panel.displayMode != NavigationDisplayMode.MENU:
             return
-        self._prepare_navigation_collapse()
         animation = panel.expandAni
         if animation.state() == QAbstractAnimation.State.Running:
             # NavigationPanel.collapse() 会忽略运行中的动画；若当前已在收起，
@@ -1459,38 +1458,7 @@ class MainFrame(FluentWindow):
         }:
             self._expand_navigation_panel(use_animation=True)
             return
-        self._prepare_navigation_collapse()
         panel.collapse()
-
-    def _prepare_navigation_collapse(self) -> None:
-        """在 MENU 收缩前隐藏标签，规避上游动画末端的窄栏文字裁切。"""
-
-        navigation = getattr(self, "navigationInterface", None)
-        if navigation is None:
-            return
-        panel = navigation.panel
-        if panel.displayMode not in {
-            NavigationDisplayMode.EXPAND,
-            NavigationDisplayMode.MENU,
-        }:
-            return
-        for item in panel.items.values():
-            item.widget.setCompacted(True)
-        panel.update()
-
-    def _on_navigation_animation_state_changed(
-        self,
-        state: QAbstractAnimation.State,
-        _previous: QAbstractAnimation.State,
-    ) -> None:
-        """覆盖上游所有收缩入口，在动画首帧前提交紧凑控件状态。"""
-
-        panel = self.navigationInterface.panel
-        if (
-            state == QAbstractAnimation.State.Running
-            and not bool(panel.expandAni.property("expand"))
-        ):
-            self._prepare_navigation_collapse()
 
     def _expand_navigation_panel(self, *, use_animation: bool) -> None:
         """消除自定义左栏宽度造成的展开断点偏移。"""
@@ -1662,7 +1630,7 @@ class MainFrame(FluentWindow):
         self._navigation_scroll_timer.start(0)
 
     def _ensure_current_navigation_item_visible(self) -> None:
-        """把当前一级入口滚入主导航 viewport。"""
+        """只纵向定位当前入口，展开动画不能把图标列横向卷出视口。"""
 
         route_key = self._pending_navigation_scroll_key
         self._pending_navigation_scroll_key = ""
@@ -1674,7 +1642,14 @@ class MainFrame(FluentWindow):
         item = self._navigation_widget(route_key)
         if item is None or item.isHidden():
             return
-        navigation.panel.scrollArea.ensureWidgetVisible(item, 0, 12)
+        panel = navigation.panel
+        panel.scrollArea.horizontalScrollBar().setValue(0)
+        if not panel.scrollWidget.isAncestorOf(item):
+            return
+        # 动画首帧中控件已展开而视口仍窄，ensureWidgetVisible 会同时水平居中。
+        # 用纵向中心与半高保留完整入口及上下留白，固定 x=0 遵循参考导航的图标列。
+        center = item.mapTo(panel.scrollWidget, item.rect().center())
+        panel.scrollArea.ensureVisible(0, center.y(), 0, item.height() // 2 + 12)
 
     def _on_workspace_route_changed(self, route: WorkspaceRoute) -> None:
         page = getattr(self, "_workspace_pages", {}).get(route.section)
@@ -2027,51 +2002,69 @@ class MainFrame(FluentWindow):
 
         mica = self.isMicaEffectEnabled()
         home = getattr(self, "_home_page", None)
+        # 云母只改变材质，页面形状保持一致；滚动视口与内容壳共用左上圆角。
+        corner_radius = self._CONTENT_CORNER_RADIUS
         if home is not None:
-            home.set_top_left_radius(10 if mica else 0)
+            home.set_top_left_radius(corner_radius)
         light = BaseStyles.color_for("Light", "WINDOW_BG")
         dark = BaseStyles.color_for("Dark", "WINDOW_BG")
         content_surface = getattr(self, "_content_surface", None)
         if content_surface is not None:
             light_style = (
                 "background-color: rgba(242, 244, 246, 0.20); "
-                "border: 1px solid rgba(0, 0, 0, 0.068); border-top-left-radius: 10px;"
-                if mica else f"background-color: {light}; border: none; border-radius: 0px;"
+                "border: 1px solid rgba(0, 0, 0, 0.068);"
+                if mica else f"background-color: {light}; border: none;"
             )
             dark_style = (
                 "background-color: rgba(255, 255, 255, 0.0314); "
-                "border: 1px solid rgba(0, 0, 0, 0.18); border-top-left-radius: 10px;"
-                if mica else f"background-color: {dark}; border: none; border-radius: 0px;"
+                "border: 1px solid rgba(0, 0, 0, 0.18);"
+                if mica else f"background-color: {dark}; border: none;"
             )
             setCustomStyleSheet(
                 content_surface,
                 f"QWidget#workspaceSurface {{ {light_style} border-right: none; "
-                "border-bottom: none; }",
+                f"border-bottom: none; border-top-left-radius: {corner_radius}px; }}",
                 f"QWidget#workspaceSurface {{ {dark_style} border-right: none; "
-                "border-bottom: none; }",
+                f"border-bottom: none; border-top-left-radius: {corner_radius}px; }}",
             )
+            self._update_content_surface_mask()
         # 浅色使用轻量中性遮罩，避免白色与卡片再次合成后冲淡云母；深色保持原层次。
-        for surface, selector, light_color, dark_color in (
+        for surface, selector, light_color, dark_color, border in (
             (
                 self.stackedWidget,
                 "StackedWidget",
                 "transparent" if content_surface is not None else light,
                 "transparent" if content_surface is not None else dark,
+                "none",
             ),
             (
                 self.navigationInterface.panel,
                 "NavigationPanel[menu=false]",
                 "transparent" if mica else light,
                 "transparent" if mica else dark,
+                # 与 MENU 保持相同边框占位，避免展开时顶部下移、底部上移。
+                "1px solid transparent",
             ),
         ):
             setCustomStyleSheet(
                 surface,
                 f"{selector} {{ background-color: {light_color}; "
-                "border: none; border-radius: 0px; }",
+                f"border: {border}; border-radius: 0px; }}",
                 f"{selector} {{ background-color: {dark_color}; "
-                "border: none; border-radius: 0px; }",
+                f"border: {border}; border-radius: 0px; }}",
             )
+
+    def _update_content_surface_mask(self) -> None:
+        """裁剪内容壳及其子控件，避免实色页面背景覆盖左上圆角。"""
+
+        surface = self._content_surface
+        radius = min(self._CONTENT_CORNER_RADIUS, surface.width() // 2, surface.height() // 2)
+        if radius <= 0:
+            surface.clearMask()
+            return
+        corner = QRegion(QRect(0, 0, radius, radius))
+        circle = QRegion(QRect(0, 0, radius * 2, radius * 2), QRegion.RegionType.Ellipse)
+        surface.setMask(QRegion(surface.rect()).subtracted(corner.subtracted(circle)))
 
     def _refresh_window_chrome_theme(self) -> None:
         """在 Mica/DWM 更新之后重新同步 FluentWindow 壳层的实际明暗外观。"""
@@ -2709,7 +2702,12 @@ class MainFrame(FluentWindow):
                 controller.update_geometry()
 
     def eventFilter(self, watched, event):
-        """在 Qt 原生窗口处理调色板后恢复云母明暗，不再触发 Qt 样式更新。"""
+        """同步内容边界裁剪，并在原生调色板事件后恢复云母明暗。"""
+        if (
+            watched is getattr(self, "_content_surface", None)
+            and event.type() == QEvent.Type.Resize
+        ):
+            self._update_content_surface_mask()
         if (
             watched is getattr(self, "_bound_window_handle", None)
             and event.type() == QEvent.Type.ApplicationPaletteChange
