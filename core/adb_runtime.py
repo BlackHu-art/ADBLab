@@ -106,6 +106,7 @@ class AdbRuntime:
     PROBE_TIMEOUT = 2.0
     SOCKET_TIMEOUT = 1.0
     CAPABILITY_BUDGET = 3.0
+    BOOTSTRAP_TIMEOUT = 30.0
     CHECK_INTERVAL = 10.0
     PROBE_COMMAND = "printf ADBLAB_OUT; printf ADBLAB_ERR >&2; exit 7"
 
@@ -318,7 +319,7 @@ class AdbRuntime:
                         self._full_probe = False
                         continue
                     self._checking = False
-                    if self._status in {"checking", "retrying"}:
+                    if self._status in {"checking", "retrying", "starting_server"}:
                         self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
                     return
@@ -328,7 +329,7 @@ class AdbRuntime:
                 # 新一轮可能已取得准入并在 join 当前线程，旧收尾不能清除其 checking。
                 if self._thread is threading.current_thread():
                     self._checking = False
-                    if self._status in {"checking", "retrying"}:
+                    if self._status in {"checking", "retrying", "starting_server"}:
                         self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
                     self._publish()
@@ -348,6 +349,8 @@ class AdbRuntime:
                 self._path = path
                 host = self._host
                 host_epoch = host.epoch
+                # 未就绪服务需要完整连接窗口，避免延迟拒绝被拆分预算误判为超时。
+                host_timeout = self.SOCKET_TIMEOUT if host.available else self.CAPABILITY_BUDGET
                 generation = self._generation
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
             if not path or not local_server_environment():
@@ -358,13 +361,28 @@ class AdbRuntime:
             stop = self._probe_stop.is_set
             listing, socket_elapsed = self._probe_capability(
                 "devices", ["-l"], serial=None,
-                retry=self._full_probe or not host.checked,
+                retry=self._full_probe or not host.available,
+                initial_timeout=host_timeout,
                 current=lambda: self._current(host, host_epoch) and generation == self._generation,
             )
             if listing.kind == "unavailable" and self._allow_bootstrap and not stop():
-                native_capture([path, "start-server"], 15.0, stop)
+                with self._condition:
+                    if not self._current(host, host_epoch) or generation != self._generation:
+                        return
+                    self._status = "starting_server"
+                self._diagnostic("ADB bootstrap status=starting_server")
+                self._publish()
+                started = time.monotonic()
+                # 仅首次引导容纳原生客户端和服务冷启动，不延长扫描及业务命令预算。
+                bootstrap = native_capture([path, "start-server"], self.BOOTSTRAP_TIMEOUT, stop)
+                elapsed = time.monotonic() - started
+                self._diagnostic(
+                    f"ADB bootstrap result={bootstrap.kind} returncode={bootstrap.returncode} "
+                    f"elapsed_ms={elapsed * 1000:.0f}"
+                )
                 listing, socket_elapsed = self._probe_capability(
                     "devices", ["-l"], serial=None, retry=True,
+                    initial_timeout=host_timeout,
                     current=lambda: (
                         self._current(host, host_epoch) and generation == self._generation
                     ),
@@ -398,14 +416,16 @@ class AdbRuntime:
 
     def _probe_capability(
         self, command: str, args: list[str], *, serial: str | None, retry: bool,
-        current: Callable[[], bool],
+        current: Callable[[], bool], initial_timeout: float | None = None,
     ) -> tuple[ExecutionResult, float]:
         """仅复核只读能力探针；首试与一次重试共用预算，取消和协议拒绝不重试。"""
         deadline = time.monotonic() + self.CAPABILITY_BUDGET
         stop = self._probe_stop.is_set
         started = time.monotonic()
         result = capture(
-            command, args, serial=serial, timeout=self.SOCKET_TIMEOUT, cancelled=stop,
+            command, args, serial=serial,
+            timeout=self.SOCKET_TIMEOUT if initial_timeout is None else initial_timeout,
+            cancelled=stop,
         )
         elapsed = time.monotonic() - started
         remaining = deadline - time.monotonic()

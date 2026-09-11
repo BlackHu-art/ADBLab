@@ -4,8 +4,10 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QIODevice, QTimer
+from PySide6.QtCore import QIODevice, Qt, QTimer
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtTest import QTest
 from shiboken6 import isValid
 
 from tests.test_app_update import release_payload
@@ -191,6 +193,98 @@ def test_cooldown_reenables_check_and_failed_refresh_retains_previous_release(
     manager.replies[-1].complete(b"bad response")
     assert instance.snapshot.status == "error"
     assert instance.snapshot.release.version == "999.0.0"
+
+
+@pytest.mark.parametrize("next_result", ["current", "ahead", "network_error", "invalid_release"])
+def test_about_download_requires_current_available_result_after_explicit_check(
+    checker, qt_application, monkeypatch, next_result,
+):
+    """历史发布不能授权下载；检查冷却只限制检查，不改变已确认新版的下载准入。"""
+
+    from gui.features.about import AboutPanel
+    from utils.app_metadata import APP_VERSION
+
+    instance, manager, _updates = checker
+    monkeypatch.setattr(instance, "COOLDOWN_SECONDS", 0.02)
+    opened = []
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True,
+    )
+    panel = AboutPanel()
+    panel.updateRequested.connect(instance.check)
+    instance.changed.connect(panel.set_update_snapshot)
+    panel.resize(1100, 600)
+    panel.show()
+    qt_application.processEvents()
+    try:
+        assert manager.requests == []
+        assert instance.snapshot.status == "idle"
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == []
+        assert not panel.release_button.isEnabled()
+
+        panel.check_update_button.click()
+        assert len(manager.requests) == 1
+        assert instance.snapshot.status == "checking"
+        assert not panel.release_button.isEnabled()
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == []
+
+        payload = release_payload("v999.0.0")
+        manager.replies[-1].complete(json.dumps(payload).encode())
+        verified_release = instance.snapshot.release
+        assert verified_release is not None
+        assert instance.snapshot.status == "available"
+        assert not instance.snapshot.can_check
+        assert not panel.check_update_button.isEnabled()
+        assert panel.release_button.isEnabled()
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == [payload["html_url"]]
+
+        wait_until(qt_application, lambda: instance.snapshot.can_check)
+        assert panel.check_update_button.isEnabled()
+        assert panel.release_button.isEnabled()
+        panel.check_update_button.click()
+        assert len(manager.requests) == 2
+        assert instance.snapshot.status == "checking"
+        assert instance.snapshot.release is verified_release
+        assert not panel.release_button.isEnabled()
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == [payload["html_url"]]
+
+        reply = manager.replies[-1]
+        if next_result in {"current", "ahead"}:
+            tag = f"v{APP_VERSION}" if next_result == "current" else "v0.0.0"
+            reply.complete(json.dumps(release_payload(tag)).encode())
+            assert instance.snapshot.status == next_result
+            assert instance.snapshot.release.version == tag.removeprefix("v")
+        else:
+            if next_result == "network_error":
+                reply.complete(status=None, error=QNetworkReply.NetworkError.HostNotFoundError)
+                assert instance.snapshot.error == "network"
+            else:
+                reply.complete(json.dumps(release_payload(
+                    "v999.0.1", html_url="https://example.invalid/untrusted-download",
+                )).encode())
+                assert instance.snapshot.error == "invalid_response"
+            assert instance.snapshot.status == "error"
+            assert instance.snapshot.release is verified_release
+        assert not instance.snapshot.can_check
+        assert not panel.release_button.isEnabled()
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == [payload["html_url"]]
+
+        wait_until(qt_application, lambda: instance.snapshot.can_check)
+        assert panel.check_update_button.isEnabled()
+        assert not panel.release_button.isEnabled()
+        QTest.mouseClick(panel.release_button, Qt.MouseButton.LeftButton)
+        assert opened == [payload["html_url"]]
+        assert len(manager.requests) == 2
+    finally:
+        instance.changed.disconnect(panel.set_update_snapshot)
+        panel.close()
+        panel.deleteLater()
+        wait_until(qt_application, lambda: not isValid(panel))
 
 
 def test_close_aborts_synchronously_and_suppresses_all_late_ui_updates(checker):

@@ -1,17 +1,22 @@
 """首页全宽横幅在主题、字体和滚动状态下的可观察布局契约。"""
 
+from hashlib import sha256
+from importlib import import_module
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QObject, QPoint, QSize, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QImage, QRegion
 from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QLayout, QWidget
 from shiboken6 import isValid
 
 from core.settings_manager import AppSettings
 from gui.pages.fluent_pages import ActionCard, ActionCardView, HomePage
 from gui.styles import BaseStyles, FontRole
+from gui.widgets.home_banner import HomeBanner
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import (
     _FakeScreen,
@@ -25,6 +30,7 @@ from tests.ui_geometry_helpers import (
     wait_for_stable_geometry,
     wait_until,
 )
+from utils.resource_path import resource_path
 
 
 @pytest.fixture
@@ -59,6 +65,83 @@ class _PaintObserver(QObject):
         if event.type() == QEvent.Type.Paint:
             self.count += 1
         return super().eventFilter(watched, event)
+
+
+def test_home_banner_asset_preserves_reference_original():
+    path = Path(resource_path("resources/images/gallery_header.png"))
+    assert sha256(path.read_bytes()).hexdigest() == (
+        "f372b0da602d18b8d8ed3c1c824eafc5522d80504842c31523836cb67867d0b9"
+    )
+    source = QImage(str(path))
+    assert source.size() == QSize(1921, 1203)
+    assert source.hasAlphaChannel()
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])
+@pytest.mark.parametrize("height", [40, 120])
+def test_home_banner_renders_original_pixels_at_device_resolution(
+    qt_application, home_settings, monkeypatch, tmp_path, scale, height,
+):
+    """原图恰好覆盖设备像素时应保留逐列细节，不能先缩到逻辑像素再放大。"""
+    source = QImage(round(128 * scale), round(height * scale), QImage.Format.Format_RGB32)
+    for x in range(source.width()):
+        for y in range(source.height()):
+            source.setPixelColor(x, y, QColor("white" if (x + y) % 2 else "black"))
+    image_path = tmp_path / "resources" / "images" / "gallery_header.png"
+    image_path.parent.mkdir(parents=True)
+    assert source.save(str(image_path))
+    monkeypatch.setattr(import_module("utils.resource_path"), "_base_dir", lambda: str(tmp_path))
+    content = QWidget()
+    banner = HomeBanner(content)
+    # 此处单独验证绘制，避免布局留白把 40px 测试画布撑到 64px。
+    banner.layout().setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+    banner.title_label.hide()
+    content.hide()
+    banner.resize(128, height)
+    rendered = QImage(
+        source.width(), round(height * scale), QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    rendered.setDevicePixelRatio(scale)
+    rendered.fill(Qt.GlobalColor.transparent)
+    banner.render(rendered, QPoint(), QRegion(), QWidget.RenderFlag.DrawWindowBackground)
+    assert banner.size() == QSize(128, height)
+    assert rendered.convertToFormat(QImage.Format.Format_RGB32) == source
+    banner.deleteLater()
+
+
+@pytest.mark.parametrize("scale", [1.0, 1.5, 2.0])
+@pytest.mark.parametrize("height", [40, 120])
+def test_home_banner_keeps_all_image_landmarks_when_aspect_ratio_changes(
+    qt_application, home_settings, monkeypatch, tmp_path, scale, height,
+):
+    """参考横幅完整映射原图；不同长宽比下四个象限都不能被裁掉或留空。"""
+    source = QImage(256, 160, QImage.Format.Format_RGB32)
+    colors = (QColor("red"), QColor("green"), QColor("blue"), QColor("yellow"))
+    for y in range(source.height()):
+        for x in range(source.width()):
+            source.setPixelColor(x, y, colors[(y >= 80) * 2 + (x >= 128)])
+    image_path = tmp_path / "resources" / "images" / "gallery_header.png"
+    image_path.parent.mkdir(parents=True)
+    assert source.save(str(image_path))
+    monkeypatch.setattr(import_module("utils.resource_path"), "_base_dir", lambda: str(tmp_path))
+    content = QWidget()
+    banner = HomeBanner(content)
+    banner.layout().setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+    banner.title_label.hide()
+    content.hide()
+    banner.resize(128, height)
+    rendered = QImage(
+        round(128 * scale), round(height * scale), QImage.Format.Format_ARGB32_Premultiplied,
+    )
+    rendered.setDevicePixelRatio(scale)
+    rendered.fill(Qt.GlobalColor.transparent)
+    banner.render(rendered, QPoint(), QRegion(), QWidget.RenderFlag.DrawWindowBackground)
+    assert banner.size() == QSize(128, height)
+    for index, (x, y) in enumerate(((.1, .1), (.9, .1), (.1, .9), (.9, .9))):
+        assert rendered.pixelColor(
+            round(rendered.width() * x), round(rendered.height() * y),
+        ) == colors[index]
+    banner.deleteLater()
 
 
 @pytest.mark.parametrize("width,font_size", [(1220, 12), (640, 12), (420, 22), (300, 22)])
@@ -169,7 +252,7 @@ def test_home_standalone_device_context_retains_inner_spacing_and_actions(
     frame._on_nav_requested.assert_called_once_with("devices")
 
 
-def test_home_banner_repaints_for_theme_accent_and_survives_parent_destruction(
+def test_home_banner_repaints_for_theme_preserves_image_colors_and_survives_destruction(
     qt_application, home_settings,
 ):
     original_accent = BaseStyles.accent_color()
@@ -188,11 +271,10 @@ def test_home_banner_repaints_for_theme_accent_and_survives_parent_destruction(
         wait_until(qt_application, lambda: observer.count > paint_count)
         dark_pixel = banner.grab().toImage().pixelColor(banner.width() - 20, 12)
         assert light_pixel != dark_pixel
-        paint_count = observer.count
         BaseStyles.set_accent_color("#bd3068")
-        wait_until(qt_application, lambda: observer.count > paint_count)
+        qt_application.processEvents()
         accent_pixel = banner.grab().toImage().pixelColor(banner.width() - 20, 12)
-        assert accent_pixel != dark_pixel
+        assert accent_pixel == dark_pixel
         banner.set_top_left_radius(10)
         rounded = banner.grab().toImage()
         banner.set_top_left_radius(0)
@@ -324,7 +406,8 @@ def test_home_viewport_keeps_mica_corner_clear_while_content_scrolls_and_resizes
 
         frame.setMicaEffectEnabled(False)
         qt_application.processEvents()
-        assert page.viewport().mask().isEmpty()
+        assert page.viewport().mask().boundingRect() == page.viewport().rect()
+        assert not page.viewport().mask().contains(QPoint(0, 0))
         page.verticalScrollBar().setValue(50)
         point = page.viewport().mapTo(frame, QPoint())
         image = frame.grab().toImage()

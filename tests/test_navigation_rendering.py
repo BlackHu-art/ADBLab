@@ -20,11 +20,11 @@ from tests.test_main_window_layout import (
     _MainFrameSettings,
     build_main_frame,
 )
-from tests.ui_geometry_helpers import wait_until
+from tests.ui_geometry_helpers import wait_for_stable_geometry, wait_until
 
 
 def _navigation_background_pixel(frame, panel_point=None):
-    """取顶部空白边距，避免菜单回挂后水平滚动使原边距落入选中项高亮。"""
+    """取顶部空白边距，避开当前项高亮和导航按钮。"""
     point = frame.navigationInterface.panel.mapTo(frame, panel_point or QPoint(1, 5))
     image = frame.grab().toImage()
     scale = image.devicePixelRatio()
@@ -91,6 +91,156 @@ def test_navigation_collapse_preserves_theme_surface(
         assert panel.menuButton.isVisibleTo(frame)
         assert _navigation_background_pixel(frame) == background
     finally:
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+@pytest.mark.parametrize(
+    "width,font_size,theme_name", [(900, 12, "Light"), (1600, 22, "Dark")],
+)
+def test_navigation_animation_keeps_top_scroll_and_bottom_icon_columns_aligned(
+    qt_application, width, font_size, theme_name,
+):
+    """逐帧验证真实导航坐标；可在独立进程设置 QT_SCALE_FACTOR 验收不同缩放。"""
+    settings = _MainFrameSettings()
+    settings.values.update(
+        window_width=width, window_height=750, ui_font_size=font_size, mica_enabled=False,
+    )
+    BaseStyles.switch_theme(theme_name)
+    frame = build_main_frame(
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("navigation-columns", QSize(1920, 1080))),
+        settings=settings,
+    )
+    panel = frame.navigationInterface.panel
+    items = [panel.items[key].widget for key in ("homePage", "appsPage", "settingsPage")]
+    visuals = [item.itemWidget for item in items]
+
+    def assert_columns(stage):
+        columns = [widget.mapTo(frame, QPoint()).x() for widget in visuals]
+        assert panel.scrollArea.horizontalScrollBar().value() == 0, (stage, columns)
+        assert max(columns) - min(columns) <= 2, (stage, columns)
+        assert all(column >= 0 for column in columns), (stage, columns)
+
+    try:
+        frame.show()
+        wait_for_stable_geometry(qt_application, (frame, panel))
+        frame._on_nav_requested("apps")
+        if panel.displayMode != NavigationDisplayMode.COMPACT:
+            frame._toggle_navigation_panel()
+            wait_until(
+                qt_application,
+                lambda: panel.displayMode == NavigationDisplayMode.COMPACT
+                and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+            )
+        for cycle in range(2):
+            for direction in ("expand", "collapse"):
+                panel.menuButton.click()
+                assert panel.expandAni.state() == QAbstractAnimation.State.Running
+                panel.expandAni.pause()
+                for fraction in (0.0, 0.25, 0.5, 0.99):
+                    panel.expandAni.setCurrentTime(int(panel.expandAni.duration() * fraction))
+                    qt_application.processEvents()
+                    assert_columns((cycle, direction, fraction))
+                panel.expandAni.resume()
+                wait_until(
+                    qt_application,
+                    lambda: panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+                )
+                wait_for_stable_geometry(qt_application, (panel, panel.scrollWidget))
+                assert_columns((cycle, direction, "finished"))
+        assert panel.displayMode == NavigationDisplayMode.COMPACT
+        assert panel.width() == 48
+    finally:
+        panel.expandAni.stop()
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
+
+
+@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+@pytest.mark.parametrize("mica", [False, True])
+def test_navigation_animation_keeps_entry_positions_stable(
+    qt_application, monkeypatch, theme_probe_frame, theme_name, mica,
+):
+    """固定生效材质验证 Qt 布局，顶部、中部和底部入口不能随 MENU 边框跳动。"""
+    frame = theme_probe_frame(theme_name, mica, width=900)
+    monkeypatch.setattr(frame, "isMicaEffectEnabled", lambda: mica)
+    frame._sync_material_surface_styles()
+    panel = frame.navigationInterface.panel
+    items = {
+        "menu": panel.menuButton,
+        **{
+            key: getattr(panel.items[key].widget, "itemWidget", panel.items[key].widget)
+            for key in ("homePage", "devicesPage", "appsPage", "tasksPage", "settingsPage")
+        },
+    }
+
+    def positions():
+        return {
+            key: (widget.mapTo(frame, QPoint()).toTuple(), widget.height())
+            for key, widget in items.items()
+        }
+
+    try:
+        wait_for_stable_geometry(qt_application, (frame, panel, panel.scrollWidget))
+        assert panel.displayMode == NavigationDisplayMode.COMPACT
+        initial = positions()
+        for cycle in range(2):
+            for direction in ("expand", "collapse"):
+                panel.menuButton.click()
+                panel.expandAni.pause()
+                for fraction in (0.0, 0.25, 0.5, 0.99):
+                    panel.expandAni.setCurrentTime(int(panel.expandAni.duration() * fraction))
+                    qt_application.processEvents()
+                    assert positions() == initial, (cycle, direction, fraction)
+                panel.expandAni.resume()
+                wait_until(
+                    qt_application,
+                    lambda: panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+                )
+                wait_for_stable_geometry(qt_application, (panel, panel.scrollWidget))
+                assert positions() == initial, (cycle, direction, "finished")
+        assert panel.displayMode == NavigationDisplayMode.COMPACT
+    finally:
+        panel.expandAni.stop()
+
+
+def test_navigation_collapse_keeps_reference_button_width_until_animation_finishes(qt_application):
+    """参考导航在收缩结束才提交 compact，选中背景不能先骤缩成 40px。"""
+    settings = _MainFrameSettings()
+    settings.values.update(window_width=900, window_height=750, mica_enabled=False)
+    frame = build_main_frame(settings=settings)
+    panel = frame.navigationInterface.panel
+    item = panel.items["appsPage"].widget
+    try:
+        frame.show()
+        wait_for_stable_geometry(qt_application, (frame, panel))
+        panel.menuButton.click()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.MENU
+            and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+        )
+        expanded_width = item.width()
+        assert expanded_width > 40
+        panel.menuButton.click()
+        panel.expandAni.pause()
+        for fraction in (0.0, 0.5, 0.99):
+            panel.expandAni.setCurrentTime(int(panel.expandAni.duration() * fraction))
+            qt_application.processEvents()
+            assert item.width() == expanded_width
+            assert not item.isCompacted
+        panel.expandAni.resume()
+        wait_until(
+            qt_application,
+            lambda: panel.displayMode == NavigationDisplayMode.COMPACT
+            and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+        )
+        assert item.isCompacted
+        assert item.width() == 40
+    finally:
+        panel.expandAni.stop()
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()
@@ -416,14 +566,29 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
-def test_shared_content_border_and_round_corner_follow_material(theme_probe_frame, theme_name):
-    """云母的圆角和边界属于设备栏与页面共同的表面，关闭后恢复平整实色。"""
+def test_shared_content_keeps_round_corner_when_material_changes(
+    qt_application, monkeypatch, theme_probe_frame, theme_name,
+):
+    """内容壳的圆角不随云母开关改变；只有底色合成与边框跟随材质。"""
     frame = theme_probe_frame(theme_name, True)
+    backdrop = QColor("#315879")
+    monkeypatch.setattr(frame, "_normalBackgroundColor", lambda: backdrop)
     frame._on_nav_requested("settings")
     animation = frame.stackedWidget.view._ani
     animation.setCurrentTime(animation.duration())
-    for enabled in (True, False):
+    for enabled in (True, False, True):
         frame.setMicaEffectEnabled(enabled)
+        # 原生分数缩放会触发导航重新布局，先等覆盖内容角的展开动画结束。
+        wait_until(
+            qt_application,
+            lambda: frame.navigationInterface.panel.expandAni.state()
+            == QAbstractAnimation.State.Stopped
+            and frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped,
+        )
+        wait_for_stable_geometry(qt_application, (frame, frame._content_surface))
+        frame.backgroundColorAni.stop()
+        frame.setBackgroundColor(backdrop)
+        qt_application.processEvents()
         image = frame.grab().toImage()
         scale = image.devicePixelRatio()
         surface = frame._content_surface
@@ -432,13 +597,45 @@ def test_shared_content_border_and_round_corner_follow_material(theme_probe_fram
             point = surface.mapTo(frame, QPoint(x, y))
             return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 
+        assert sample(0, 0) == backdrop
         if frame.isMicaEffectEnabled():
-            assert sample(0, 0) == frame.backgroundColor
             assert sample(20, 0) != sample(20, 3)
             assert sample(0, 20) != sample(3, 20)
             assert sample(20, 3) != frame.backgroundColor
         else:
-            assert sample(0, 0) == sample(20, 0) == sample(20, 3)
+            assert sample(20, 0) == sample(20, 3) == QColor(BaseStyles.color("WINDOW_BG"))
+
+
+@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+def test_home_corner_mask_is_stable_across_mica_changes_and_navigation(
+    qt_application, theme_probe_frame, theme_name,
+):
+    """实际云母开关、切页和尺寸变化不能把首页固定圆角恢复成直角。"""
+    frame = theme_probe_frame(theme_name, True, width=900)
+    home = frame._home_page
+    viewport = home.viewport()
+    for width in (900, 1120):
+        frame.resize(width, 600)
+        for enabled in (True, False, True):
+            frame._on_nav_requested("settings")
+            frame.setMicaEffectEnabled(enabled)
+            frame._on_nav_requested("home")
+            wait_until(
+                qt_application,
+                lambda: frame.stackedWidget.view._ani.state() == QAbstractAnimation.State.Stopped
+                and frame.navigationInterface.panel.expandAni.state()
+                == QAbstractAnimation.State.Stopped,
+            )
+            wait_for_stable_geometry(qt_application, (frame, home, viewport, home.banner))
+            mask = viewport.mask()
+            assert not mask.isEmpty()
+            assert mask.boundingRect() == viewport.rect()
+            assert not mask.contains(QPoint(0, 0))
+            assert mask.contains(QPoint(10, 0))
+            for scroll in (0, 50, home.verticalScrollBar().maximum()):
+                home.verticalScrollBar().setValue(scroll)
+                qt_application.processEvents()
+                assert viewport.mask() == mask
 
 
 @pytest.mark.parametrize("build, attribute, off_value", [(22000, 1029, 0), (26200, 38, 1)])

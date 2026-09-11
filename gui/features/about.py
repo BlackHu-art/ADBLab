@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Signal, Slot
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QSize, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import QAbstractButton, QBoxLayout, QHBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
-    HyperlinkButton,
     HyperlinkCard,
     ImageLabel,
+    PrimaryPushButton,
     PushButton,
     SettingCard,
     SettingCardGroup,
@@ -22,7 +22,7 @@ from gui.styles.fluent import apply_font_role, configure_button, refresh_fluent_
 from gui.styles.typography import FontRole
 from gui.widgets.setting_card_layout import SettingsCardPresentation, apply_setting_text_style
 from services.app_update import UpdateSnapshot
-from utils.app_metadata import APP_PROJECT_URL, APP_RELEASES_URL, APP_VERSION
+from utils.app_metadata import APP_PROJECT_URL, APP_VERSION
 from utils.resource_path import resource_path
 
 
@@ -35,8 +35,9 @@ class AboutPanel(SettingCardGroup):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(tr("关于"), parent)
         self.setObjectName("aboutPanel")
+        self._download_url: str | None = None
         self._app_description = tr(
-            "版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台"
+            "当前版本 {version} · 开源项目\nAndroid 设备管理、应用操作与诊断工作台"
         ).format(version=APP_VERSION)
         self.project_card = HyperlinkCard(
             APP_PROJECT_URL,
@@ -59,16 +60,14 @@ class AboutPanel(SettingCardGroup):
         self.update_action_layout = QHBoxLayout(self.update_actions)
         self.update_action_layout.setContentsMargins(0, 0, 0, 0)
         self.update_action_layout.setSpacing(8)
-        self.release_button = HyperlinkButton(APP_RELEASES_URL, tr("发布页"), self.update_actions)
-        self.update_action_layout.addWidget(self.check_update_button)
+        self.release_button = PrimaryPushButton(tr("前往下载"), self.update_actions)
         self.update_action_layout.addWidget(self.project_button)
+        self.update_action_layout.addWidget(self.check_update_button)
         self.update_action_layout.addWidget(self.release_button)
         self.check_update_button.clicked.connect(self.updateRequested)
+        self.release_button.clicked.connect(self._open_release)
         configure_button(
             self.check_update_button, text=tr("检查更新"), tooltip=tr("检查是否有新的正式版本"),
-        )
-        configure_button(
-            self.release_button, text=tr("发布页"), tooltip=tr("在浏览器中查看发布说明和下载文件"),
         )
         self.support_card = SettingCard(
             FluentIcon.HEART,
@@ -127,71 +126,90 @@ class AboutPanel(SettingCardGroup):
             str(button.property("darkCustomQss") or "") + font_rule,
         )
         button.ensurePolished()
-        button.setMaximumHeight(16777215)
-        button.setMinimumHeight(
-            max(32, button.fontMetrics().height() + 14)
-        )
+        # 原生按钮左右各有 12px 内边距，再为项目的 2px 焦点框预留空间。
+        # 尺寸只随文字和字号变化，避免禁用导致焦点转移时整组操作横向跳动。
+        button.setFixedWidth(button.fontMetrics().horizontalAdvance(button.text()) + 28)
+        button.setFixedHeight(max(32, button.fontMetrics().height() + 16))
 
     @Slot(object)  # type: ignore[reportArgumentType]  # PySide6 的 Slot stub 未计入方法 self。
     def set_update_snapshot(self, snapshot: UpdateSnapshot) -> None:
         """只呈现检查器已校验的状态；改文案后重新测量卡片和设置页滚动范围。"""
 
-        lines = [self._app_description]
+        status = tr("更新状态：尚未检查")
+        detail = ""
         if snapshot.status == "idle":
-            lines.append(tr("点击检查最新正式版"))
+            detail = tr("检查后，有新版本时可前往下载")
         elif snapshot.status == "checking":
-            lines.append(tr("正在检查更新…"))
+            status = tr("正在检查更新…")
+            detail = tr("正在获取最新正式版信息")
         elif snapshot.status == "error":
             errors = {
-                "network": tr("检查失败：网络连接不可用，请稍后重试"),
-                "tls": tr("无法验证安全连接，请检查系统时间或网络设置"),
-                "timeout": tr("检查更新超时，请稍后重试"),
-                "rate_limited": tr("访问过于频繁，请稍后重试或查看发布页"),
-                "unavailable": tr("更新服务暂不可用，请稍后重试或查看发布页"),
-                "invalid_response": tr("无法识别版本信息，请查看发布页"),
+                "network": tr("检查失败：请检查网络后重试"),
+                "tls": tr("检查失败：请检查系统时间或网络设置"),
+                "timeout": tr("检查超时：请稍后重试"),
+                "rate_limited": tr("检查受限：请稍后重试"),
+                "unavailable": tr("更新服务暂不可用，请稍后重试"),
+                "invalid_response": tr("版本信息异常，请稍后重试"),
             }
-            lines.append(errors.get(snapshot.error, tr("检查更新失败，请稍后重试")))
+            status = errors.get(snapshot.error, tr("检查更新失败，请稍后重试"))
             if snapshot.release is not None:
-                lines.append(tr("上次检查的版本：{version}").format(version=snapshot.release.version))
+                detail = tr("上次检查版本：{version}（历史结果）").format(
+                    version=snapshot.release.version,
+                )
         elif snapshot.release is not None:
             if snapshot.status == "available":
-                lines.append(tr("发现新版本 {version} · 发布于 {date}").format(
+                status = tr("可更新至 {version} · {date} 发布").format(
                     version=snapshot.release.version,
                     # 发布日沿用服务端时区，避免平台本地时间转换拒绝边界年份。
                     date=snapshot.release.published_at.date().isoformat(),
-                ))
+                )
             elif snapshot.status == "current":
-                lines.append(tr("当前已是最新正式版"))
+                status = tr("已是最新正式版，无需更新")
             else:
-                lines.append(tr("当前版本高于公开正式版 {version}").format(
+                status = tr("当前版本领先于正式版 {version}").format(
                     version=snapshot.release.version,
-                ))
+                )
             if snapshot.checked_at is not None:
-                lines.append(tr("检查时间：{time}").format(
+                detail = tr("检查时间：{time}").format(
                     time=snapshot.checked_at.astimezone().strftime("%Y-%m-%d %H:%M"),
-                ))
-        content = "\n".join(lines)
+                )
+        # 保留原四行说明的高度；末行为空时仍占位，避免状态切换推动下方卡片。
+        content = "\n".join((self._app_description, status, detail))
         self.project_card.setContent(content)
         self.update_actions.setAccessibleDescription(content)
         configure_button(
             self.check_update_button,
-            text=tr("正在检查…") if snapshot.status == "checking" else tr("检查更新"),
+            text=tr("检查更新"),
             tooltip=tr("检查是否有新的正式版本") if snapshot.can_check else tr("请稍后再检查"),
         )
-        self.check_update_button.setEnabled(snapshot.can_check)
-        self.release_button.setUrl(snapshot.release.url if snapshot.release else APP_RELEASES_URL)
+        self.check_update_button.setEnabled(snapshot.can_check and snapshot.status != "checking")
+        # 重查及失败快照会保留历史发布信息；只有本次确认新版才能开放下载。
+        self._download_url = (
+            snapshot.release.url
+            if snapshot.status == "available" and snapshot.release is not None else None
+        )
+        self.release_button.setEnabled(self._download_url is not None)
         configure_button(
             self.release_button,
-            text=tr("前往下载") if snapshot.status == "available" else tr("发布页"),
-            tooltip=tr("在浏览器中查看发布说明和下载文件"),
+            text=tr("前往下载"),
+            tooltip=(
+                tr("在浏览器中查看发布说明和下载文件") if self._download_url is not None
+                else tr("检查到新版本后可前往下载")
+            ),
         )
         self._refresh_typography()
+
+    def _open_release(self) -> None:
+        """显式点击才打开本次确认的新版页面，历史结果不提供下载准入。"""
+
+        if self._download_url is not None:
+            QDesktopServices.openUrl(QUrl(self._download_url))
 
     def reflow(self, width: int) -> None:
         """使用现有卡片度量，让短窗可以滚动到完整主页按钮和二维码。"""
 
         action_width = (
-            sum(button.sizeHint().width() for button in (
+            sum(button.width() for button in (
                 self.check_update_button, self.project_button, self.release_button,
             )) + 2 * self.update_action_layout.spacing()
         )

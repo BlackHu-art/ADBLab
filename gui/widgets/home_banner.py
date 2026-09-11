@@ -2,19 +2,21 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
+from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import StrongBodyLabel
 
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role
+from utils.resource_path import resource_path
 
 
 class HomeBanner(QWidget):
-    """承载首页标题与快捷卡片，不固定高度、不持有业务或外部资源。
+    """承载首页标题与快捷卡片，不固定高度、不持有业务状态。
 
-    卡片组件作为子控件随横幅释放；主题和字体使用 QObject 绑定槽，销毁后自动断连。
+    仅持有一份本地横幅原图，不缓存窗口缩放版本；卡片作为子控件随横幅释放。
+    主题和字体使用 QObject 绑定槽，销毁后自动断连。
     左上角半径由主窗口材质策略设置，其余边缘始终贴合页面滚动区。
     """
 
@@ -24,6 +26,7 @@ class HomeBanner(QWidget):
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._top_left_radius = 0
+        self._background = QPixmap(resource_path("resources/images/gallery_header.png"))
         self.title_label = StrongBodyLabel("ADBLab", self)
         self.title_label.setWordWrap(True)
         self.title_label.setMinimumWidth(0)
@@ -37,12 +40,11 @@ class HomeBanner(QWidget):
         layout.addWidget(self.title_label)
         layout.addWidget(content)
         BaseStyles.theme_changed.connect(self._refresh_background)
-        BaseStyles.accent_color_changed.connect(self._refresh_background)
         BaseStyles.ui_font_changed.connect(self._sync_font)
         self._sync_font()
 
     def set_top_left_radius(self, radius: int) -> None:
-        """与主窗口的云母壳同步左上圆角；独立使用时默认为直角。"""
+        """与主窗口的内容壳同步左上圆角；独立使用时默认为直角。"""
 
         radius = max(0, radius)
         if radius != self._top_left_radius:
@@ -68,7 +70,9 @@ class HomeBanner(QWidget):
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHints(
+            QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform,
+        )
         painter.setPen(Qt.PenStyle.NoPen)
         width, height = float(self.width()), float(self.height())
         radius = min(float(self._top_left_radius), width / 2, height / 2)
@@ -82,49 +86,20 @@ class HomeBanner(QWidget):
         clip.closeSubpath()
         painter.setClipPath(clip)
 
-        accent = QColor(BaseStyles.color("BUTTON_ACCENT"))
         dark = BaseStyles.resolved_theme() == "Dark"
         wash = QLinearGradient(0, 0, 0, height)
-        top_color = QColor(accent)
-        top_color.setAlpha(76 if dark else 40)
-        clear_color = QColor(accent)
+        # 沿用 Gallery 的透明渐变底色，原图自身的颜色不随强调色重绘。
+        top_color = QColor(0, 0, 0) if dark else QColor(207, 216, 228)
+        clear_color = QColor(top_color)
         clear_color.setAlpha(0)
         wash.setColorAt(0, top_color)
         wash.setColorAt(1, clear_color)
         painter.fillPath(clip, wash)
 
-        # 曲面仅占横幅上部，窄窗卡片增加行数时不把装饰拉长到正文底部。
-        curve_height = min(height, 360.0)
-        ribbon = QPainterPath()
-        ribbon.moveTo(width * 0.38, 0)
-        ribbon.cubicTo(
-            width * 0.70, curve_height * 0.03,
-            width * 0.45, curve_height * 0.62,
-            width, curve_height * 0.48,
-        )
-        ribbon.lineTo(width, 0)
-        ribbon.closeSubpath()
-        ribbon_fill = QLinearGradient(width * 0.4, 0, width, curve_height * 0.5)
-        ribbon_start = QColor(accent)
-        ribbon_start.setAlpha(24 if dark else 36)
-        ribbon_end = QColor(accent)
-        ribbon_end.setAlpha(124 if dark else 108)
-        ribbon_fill.setColorAt(0, ribbon_start)
-        ribbon_fill.setColorAt(1, ribbon_end)
-        painter.fillPath(ribbon, ribbon_fill)
-
-        fold = QPainterPath()
-        fold.moveTo(width * 0.70, 0)
-        fold.cubicTo(
-            width * 0.91, curve_height * 0.08,
-            width * 0.66, curve_height * 0.35,
-            width, curve_height * 0.32,
-        )
-        fold.lineTo(width, 0)
-        fold.closeSubpath()
-        fold_fill = QLinearGradient(width * 0.70, 0, width, curve_height * 0.35)
-        fold_fill.setColorAt(0, clear_color)
-        fold_end = QColor(accent.lighter(145))
-        fold_end.setAlpha(90 if dark else 100)
-        fold_fill.setColorAt(1, fold_end)
-        painter.fillPath(fold, fold_fill)
+        if not self._background.isNull():
+            # 从原图直接映射至设备像素，避免逻辑分辨率缩略图在高 DPI 下二次放大。
+            # 沿用 Gallery 的完整源图到横幅矩形映射，不能按宽度等比裁掉图案或留空。
+            painter.drawPixmap(
+                QRectF(self.rect()), self._background,
+                QRectF(self._background.rect()),
+            )

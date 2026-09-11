@@ -97,6 +97,7 @@ def _self_check_packaging() -> int:
     for relative_path in (
         "resources/icons",
         "resources/icons/LICENSE.txt",
+        "resources/images/gallery_header.png",
         "resources/app_settings.json",
         "resources/connected_devices.yaml",
         "resources/chkbugreport-0.5-215.jar",
@@ -119,6 +120,16 @@ def _self_check_packaging() -> int:
             for relative_path in (
                 "licenses/THIRD_PARTY_NOTICES.md",
                 "THIRD_PARTY_NOTICES.md",
+            )
+        ),
+    )
+    check(
+        "resource:gallery-license",
+        any(
+            Path(resource_path(relative_path)).is_file()
+            for relative_path in (
+                "licenses/gallery/LICENSE.gallery.txt",
+                "resources/images/LICENSE.gallery.txt",
             )
         ),
     )

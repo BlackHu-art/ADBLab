@@ -30,6 +30,49 @@ def test_packaging_check_reports_missing_tls_without_network(tmp_path, monkeypat
     assert "FAIL network:tls_backend" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("missing_paths", "expected_check"),
+    [
+        (("resources/images/gallery_header.png",), "resource:resources/images/gallery_header.png"),
+        (
+            ("resources/images/LICENSE.gallery.txt", "licenses/gallery/LICENSE.gallery.txt"),
+            "resource:gallery-license",
+        ),
+    ],
+)
+def test_packaging_check_reports_missing_gallery_resource(
+    tmp_path, monkeypatch, capsys, missing_paths, expected_check,
+):
+    """首页原图和随附许可均为发布资源，缺失时自检必须失败而不是只验证目录存在。"""
+
+    from PySide6.QtNetwork import QNetworkAccessManager, QSslSocket
+
+    resolve = main.resource_path
+    monkeypatch.setattr(
+        main, "resource_path",
+        lambda relative: (
+            str(tmp_path / "missing") if relative in missing_paths else resolve(relative)
+        ),
+    )
+    monkeypatch.setattr(main, "user_data_root", lambda: tmp_path)
+    monkeypatch.setenv("MOBILEPERF_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setattr(QSslSocket, "supportsSsl", staticmethod(lambda: True))
+    monkeypatch.setattr("utils.scrcpy_bridge.resolve_scrcpy_bridge", lambda: "synthetic-bridge")
+    monkeypatch.setattr(
+        subprocess, "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0, stdout=b"scrcpy-adb-bridge: ready\n",
+        ),
+    )
+
+    def forbidden_request(*_args):
+        raise AssertionError("Packaging self-check must stay offline")
+
+    monkeypatch.setattr(QNetworkAccessManager, "get", forbidden_request)
+    assert main._self_check_packaging() == 1
+    assert f"FAIL {expected_check}" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("invalid_json", [False, True])
 def test_gui_reads_scale_before_application_and_delivers_early_and_late_diagnostics(
     tmp_path, monkeypatch, invalid_json,

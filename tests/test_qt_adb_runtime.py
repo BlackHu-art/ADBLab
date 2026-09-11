@@ -6,7 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QObject, QPoint
+from PySide6.QtCore import QCoreApplication, QObject, QPoint, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
 
 from adblab.presentation.qt_adb_runtime import QtAdbRuntime
@@ -133,7 +134,9 @@ def test_main_frame_projects_initial_native_scope_without_selecting_manual_nativ
         frame.close()
 
 
-def test_settings_unavailable_fast_choice_keeps_user_intent_and_effective_switch(monkeypatch):
+def test_settings_unavailable_fast_choice_can_be_switched_to_manual_native(
+    monkeypatch, qt_application,
+):
     adapter = QtAdbRuntime()
     monkeypatch.setattr(adapter.runtime, "start", lambda **_kwargs: False)
     frame = SimpleNamespace(
@@ -144,19 +147,37 @@ def test_settings_unavailable_fast_choice_keeps_user_intent_and_effective_switch
         recheck_adb_environment=Mock(),
         set_adb_native_only=adapter.set_native_only,
     )
-    parent = QWidget()
-    page = SettingsPage(frame, parent)
+    page = SettingsPage(frame)
     adapter.changed.connect(page.update_adb_environment)
+    selections = []
+    page.adb_native_card.checkedChanged.connect(selections.append)
     try:
+        page.resize(900, 640)
+        page.show()
         page.update_adb_environment(adapter.snapshot())
         assert page.adb_native_card.isChecked()
         assert adapter.snapshot().selection_mode == "auto"
 
-        page.adb_native_card.setChecked(False)
+        indicator = page.adb_native_card.switchButton.indicator
+        page.ensureWidgetVisible(indicator, 0, 0)
+        wait_for_stable_geometry(qt_application, (page, page.adb_native_card, indicator))
+        assert indicator.isVisibleTo(page)
+        QTest.mouseClick(indicator, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
         assert adapter.snapshot().selection_mode == "fast"
+        assert not page.adb_native_card.isChecked()
+        assert page.adb_native_card.switchButton.label.text() == "关"
+        assert "手动快速" in page.adb_check_card.contentLabel.text()
+        assert "当前使用原生 ADB" in page.adb_check_card.contentLabel.text()
+
+        page.ensureWidgetVisible(indicator, 0, 0)
+        QTest.mouseClick(indicator, Qt.MouseButton.LeftButton)
+        qt_application.processEvents()
+        assert adapter.snapshot().selection_mode == "native"
         assert page.adb_native_card.isChecked()
         assert page.adb_native_card.switchButton.label.text() == "开"
-        assert "手动快速" in page.adb_check_card.contentLabel.text()
+        assert "手动原生" in page.adb_check_card.contentLabel.text()
+        assert selections == [False, True]
     finally:
         adapter.close()
         page.close()
@@ -270,7 +291,7 @@ def test_settings_reports_partial_acceleration_and_session_override():
         page.close()
 
 
-def test_settings_syncs_effective_native_without_rewriting_manual_policy():
+def test_settings_auto_mode_follows_capability_changes_without_selecting_manual_policy():
     frame = SimpleNamespace(
         _always_on_top=False,
         set_always_on_top=Mock(),
@@ -290,6 +311,14 @@ def test_settings_syncs_effective_native_without_rewriting_manual_policy():
         assert not page.adb_native_card.isChecked()
         frame.set_adb_native_only.assert_not_called()
 
+        page.update_adb_environment(RuntimeSnapshot(False, False, False, False, 0, 2))
+        assert page.adb_native_card.isChecked()
+        frame.set_adb_native_only.assert_not_called()
+
+        page.update_adb_environment(RuntimeSnapshot(False, True, False, True, 1, 2))
+        assert not page.adb_native_card.isChecked()
+        frame.set_adb_native_only.assert_not_called()
+
         page.adb_native_card.setChecked(True)
         frame.set_adb_native_only.assert_called_once_with(True)
     finally:
@@ -301,6 +330,7 @@ def test_settings_syncs_effective_native_without_rewriting_manual_policy():
     [
         ("idle", False, False, "等待"),
         ("checking", True, False, "检查"),
+        ("starting_server", True, False, "正在启动本机 ADB 服务"),
         ("retrying", True, False, "恢复"),
         ("ready", False, True, "就绪"),
         ("missing_adb", False, False, "未找到 ADB"),
@@ -377,15 +407,18 @@ def test_settings_distinguishes_manual_mode_from_effective_scope(
 
 
 @pytest.mark.parametrize(
-    ("language", "mode_label", "reason", "on_text"),
+    ("language", "mode_label", "status", "reason", "on_text"),
     [
-        ("zh_CN", "自动选择", "服务不可用", "开"),
-        ("zh_HK", "自動選擇", "服務無法使用", "開"),
-        ("en_US", "Automatic selection", "service is unavailable", "On"),
+        ("zh_CN", "自动选择", "host_unavailable", "服务不可用", "开"),
+        ("zh_HK", "自動選擇", "host_unavailable", "服務無法使用", "開"),
+        ("en_US", "Automatic selection", "host_unavailable", "service is unavailable", "On"),
+        ("zh_CN", "自动选择", "starting_server", "正在启动本机 ADB 服务", "开"),
+        ("zh_HK", "自動選擇", "starting_server", "正在啟動本機 ADB 服務", "開"),
+        ("en_US", "Automatic selection", "starting_server", "Starting the local ADB service", "On"),
     ],
 )
 def test_settings_translated_runtime_status_fits_narrow_large_font_page(
-    monkeypatch, qt_application, language, mode_label, reason, on_text,
+    monkeypatch, qt_application, language, mode_label, status, reason, on_text,
 ):
     values = dict(DEFAULTS, ui_font_size=22, language=language)
     settings = SimpleNamespace(get=values.get)
@@ -399,13 +432,14 @@ def test_settings_translated_runtime_status_fits_narrow_large_font_page(
         page.resize(420, 640)
         page.show()
         page.update_adb_environment(
-            RuntimeSnapshot(False, False, False, False, 0, 0, status="host_unavailable")
+            RuntimeSnapshot(status == "starting_server", False, False, False, 0, 0, status=status)
         )
         cards = (page.adb_check_card, page.adb_native_card)
         wait_for_stable_geometry(qt_application, (page, *cards))
         content = page.adb_check_card.contentLabel.text()
         assert mode_label in content
         assert reason in content
+        assert page.adb_check_card.button.isEnabled() is (status != "starting_server")
         assert page.adb_native_card.switchButton.label.text() == on_text
         assert page.horizontalScrollBar().maximum() == 0
         for card, control in (
