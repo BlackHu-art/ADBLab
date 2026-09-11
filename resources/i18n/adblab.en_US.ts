@@ -6070,5 +6070,17 @@ Android device management, apps and diagnostics</translation>
             <source>检查到新版本后可前往下载</source>
             <translation>Download is enabled when an update is found</translation>
         </message>
+        <message>
+            <source>显示二维码</source>
+            <translation>Show QR code</translation>
+        </message>
+        <message>
+            <source>收起二维码</source>
+            <translation>Hide QR code</translation>
+        </message>
+        <message>
+            <source>展开或收起作者支持二维码</source>
+            <translation>Expand or collapse the QR code to support the author</translation>
+        </message>
     </context>
 </TS>

@@ -4,10 +4,11 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QIODevice, Qt, QTimer
+from PySide6.QtCore import QAbstractAnimation, QIODevice, QSize, Qt, QTimer
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
+from qfluentwidgets import NavigationDisplayMode
 from shiboken6 import isValid
 
 from tests.test_app_update import release_payload
@@ -356,6 +357,119 @@ def test_main_window_wires_settings_to_manual_check_without_startup_request(
         window.navigationInterface.widget("settingsPage").click()
         assert "999.0.0" in about.project_card.contentLabel.text()
         assert len(manager.requests) == 1
+    finally:
+        window._app_update.prepare_shutdown()
+        window._unbind_window_screen()
+        window._close_ready = True
+        window.close()
+        window.deleteLater()
+        manager.deleteLater()
+        wait_until(qt_application, lambda: not isValid(window) and not isValid(manager))
+
+
+@pytest.mark.parametrize("width", [1000, 1280])
+@pytest.mark.parametrize("activate", ["mouse", "space"])
+def test_update_check_keeps_focus_and_theme_independent(
+    qt_application, monkeypatch, width, activate,
+):
+    """检查入口禁用时焦点留在更新卡片，不能跳到侧栏后误操作主题。"""
+
+    from adblab.presentation.qt_app_update import QtAppUpdate
+    from core.settings_manager import DEFAULTS, AppSettings
+    from gui.styles import BaseStyles
+    from models.device_store import DeviceStore
+    from tests.test_main_window_layout import (
+        _FakeScreen,
+        _FakeScreenAdapter,
+        _MainFrameSettings,
+        build_main_frame,
+    )
+
+    manager = Manager()
+    settings = _MainFrameSettings()
+    settings.values.update(
+        DEFAULTS, continuous_device_scan=False, window_width=width, window_height=840,
+        mica_enabled=False,
+    )
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda _devices: [])
+    monkeypatch.setattr(
+        "gui.main_frame.QtAppUpdate", lambda parent: QtAppUpdate(parent, manager=manager),
+    )
+    opened = []
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda url: opened.append(url.toString()) or True,
+    )
+    window = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("update-test", QSize(1920, 1080))),
+    )
+    monkeypatch.setattr(window._app_update, "COOLDOWN_SECONDS", 0.02)
+    try:
+        window.show()
+        window.activateWindow()
+        window.navigationInterface.widget("settingsPage").click()
+        page = window._settings_page
+        panel = window.navigationInterface.panel
+        expected_mode = (
+            NavigationDisplayMode.COMPACT if width < 1120 else NavigationDisplayMode.EXPAND
+        )
+        wait_until(
+            qt_application,
+            lambda: page.isVisible() and panel.displayMode == expected_mode
+            and panel.expandAni.state() == QAbstractAnimation.State.Stopped,
+        )
+        about = page.about_panel
+        theme_button = window._theme_navigation_widget
+        assert theme_button.isCompacted == (width < 1120)
+        theme_calls = QSignalSpy(theme_button.clicked)
+        original_theme = BaseStyles.current_theme()
+        page.ensureWidgetVisible(about.check_update_button, 0, 0)
+        about.check_update_button.setFocus(Qt.FocusReason.TabFocusReason)
+        wait_until(qt_application, about.check_update_button.hasFocus)
+        if activate == "mouse":
+            QTest.mouseClick(about.check_update_button, Qt.MouseButton.LeftButton)
+        else:
+            QTest.keyClick(about.check_update_button, Qt.Key.Key_Space)
+        qt_application.processEvents()
+        assert len(manager.requests) == 1
+        assert not about.check_update_button.isEnabled()
+        assert BaseStyles.current_theme() == original_theme
+        assert theme_calls.count() == 0
+        focus = qt_application.focusWidget()
+        assert focus is not None and about.isAncestorOf(focus), (
+            type(focus).__name__, focus.objectName() if focus else "",
+        )
+        for key in (Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            QTest.keyClick(focus, key)
+        assert len(manager.requests) == 1
+        assert BaseStyles.current_theme() == original_theme
+        assert theme_calls.count() == 0
+        assert opened == []
+
+        payload = release_payload("v999.0.0")
+        manager.replies[-1].complete(json.dumps(payload).encode())
+        assert qt_application.focusWidget() is focus
+        assert about.release_button.isEnabled()
+        QTest.mouseClick(about.release_button, Qt.MouseButton.LeftButton)
+        assert opened == [payload["html_url"]]
+        assert BaseStyles.current_theme() == original_theme
+        assert theme_calls.count() == 0
+
+        # 下载入口有焦点时重查也必须承接焦点，防止旧版下载准入撤销后跳到侧栏。
+        wait_until(qt_application, lambda: window._app_update.snapshot.can_check)
+        about.release_button.setFocus(Qt.FocusReason.TabFocusReason)
+        window._app_update.check()
+        assert not about.release_button.isEnabled()
+        assert qt_application.focusWidget() is focus
+
+        # 后台结果只更新状态，不能从用户随后选中的其他控件抢回焦点。
+        theme_target = theme_button if theme_button.isCompacted else theme_button.switch.indicator
+        theme_target.setFocus(Qt.FocusReason.TabFocusReason)
+        manager.replies[-1].complete(b"bad response")
+        assert theme_target.hasFocus()
+        assert BaseStyles.current_theme() == original_theme
+        assert theme_calls.count() == 0
     finally:
         window._app_update.prepare_shutdown()
         window._unbind_window_screen()

@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QWidget
 from adblab.presentation.qt_adb_runtime import QtAdbRuntime
 from core import adb_transport
 from core import exec as execution
-from core.adb_runtime import RuntimeSnapshot
+from core.adb_runtime import AdbRuntime, RuntimeSnapshot
 from core.settings_manager import DEFAULTS, AppSettings
 from gui.i18n import install_translators
 from gui.main_frame import MainFrame, _ScanThread
@@ -186,6 +186,7 @@ def test_settings_unavailable_fast_choice_can_be_switched_to_manual_native(
 def test_fast_scan_runs_while_other_commands_are_busy(monkeypatch):
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
+    runtime.wait_for_device_check.return_value = None
     monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
     monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 1)
     thread = _ScanThread()
@@ -205,10 +206,107 @@ def test_fast_scan_runs_while_other_commands_are_busy(monkeypatch):
     native.assert_not_called()
 
 
+@pytest.mark.parametrize("completion", ["ready", "native", "stop", "timeout", "close"])
+def test_scan_waits_for_host_without_opening_another_native_client(monkeypatch, completion):
+    for key in (
+        "ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS", "ANDROID_ADB_SERVER_PORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    runtime = AdbRuntime(lambda: "C:/test/adb.exe")
+    runtime._path = "C:/test/adb.exe"
+    runtime._checking = True
+    waiting = threading.Event()
+    original_wait = runtime._condition.wait
+
+    def wait(timeout):
+        waiting.set()
+        return original_wait(timeout)
+
+    monkeypatch.setattr(runtime._condition, "wait", wait)
+    monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
+    monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 0)
+    fast = Mock(return_value=execution.CommandResult(True, "List of devices attached"))
+    monkeypatch.setattr(execution.CommandRunner, "run", fast)
+    native = Mock(return_value="List of devices attached")
+    monkeypatch.setattr("gui.main_frame.ProcessRunner", Mock())
+    scan = _ScanThread()
+    monkeypatch.setattr(scan, "_run_devices_scan", native)
+    monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _: True)
+    if completion == "timeout":
+        scan.SCAN_CALL_TIMEOUT_S = 0.05
+    worker = threading.Thread(target=scan.run)
+    try:
+        worker.start()
+        assert waiting.wait(1), "scanner started native devices before host verification"
+        native.assert_not_called()
+        fast.assert_not_called()
+        if completion == "ready":
+            with runtime._condition:
+                runtime._host.available = True
+                runtime._condition.notify_all()
+        elif completion == "native":
+            runtime.set_mode("native")
+        elif completion == "stop":
+            scan.stop()
+        elif completion == "close":
+            runtime.close()
+        worker.join(1)
+        assert not worker.is_alive()
+        if completion == "ready":
+            fast.assert_called_once()
+            assert 0 < fast.call_args.kwargs["timeout"] <= scan.SCAN_CALL_TIMEOUT_S
+            native.assert_not_called()
+        elif completion == "native":
+            native.assert_called_once()
+            fast.assert_not_called()
+        else:
+            native.assert_not_called()
+            fast.assert_not_called()
+    finally:
+        scan.stop()
+        runtime.close()
+        worker.join(1)
+
+
+@pytest.mark.parametrize("wait_seconds", [12.0, 16.0])
+def test_scan_admission_and_native_process_share_one_deadline(monkeypatch, wait_seconds):
+    clock = [100.0]
+    monkeypatch.setattr("gui.main_frame.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    runtime = Mock()
+    runtime.can_scan_fast.return_value = False
+
+    def wait_for_device_check(timeout, cancelled):
+        assert timeout == 15
+        assert not cancelled()
+        clock[0] += wait_seconds
+        return None
+
+    runtime.wait_for_device_check.side_effect = wait_for_device_check
+    monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
+    monkeypatch.setattr(execution.CommandRunner, "active_count", lambda: 0)
+    proc = Mock()
+    proc.poll.return_value = None
+    runner = Mock()
+    runner.start.return_value = proc
+    monkeypatch.setattr("gui.main_frame.ProcessRunner", lambda: runner)
+    scan = _ScanThread()
+    monkeypatch.setattr(scan, "_sleep_interruptibly", lambda _: True)
+    monkeypatch.setattr(scan, "msleep", lambda ms: clock.__setitem__(0, clock[0] + ms / 1000))
+    scan.run()
+    runtime.wait_for_device_check.assert_called_once()
+    if wait_seconds < 15:
+        runner.start.assert_called_once()
+        runner.stop.assert_called_once_with("device_scan", timeout=2.0)
+        assert clock[0] == pytest.approx(115, abs=0.11)
+    else:
+        runner.start.assert_not_called()
+
+
 @pytest.mark.parametrize("busy", [False, True])
 def test_scan_requests_recovery_before_busy_gate_or_failed_native_scan(monkeypatch, busy):
     runtime = Mock()
     runtime.can_scan_fast.return_value = False
+    runtime.wait_for_device_check.return_value = None
     events = []
     runtime.request_device_check.side_effect = lambda: events.append("check")
     monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
@@ -220,7 +318,7 @@ def test_scan_requests_recovery_before_busy_gate_or_failed_native_scan(monkeypat
     monkeypatch.setattr(execution.CommandRunner, "active_count", active_count)
     thread = _ScanThread()
 
-    def failed_scan(_runner):
+    def failed_scan(_runner, *, deadline):
         events.append("native")
         return None
 
@@ -467,6 +565,7 @@ def test_settings_translated_runtime_status_fits_narrow_large_font_page(
 def test_fast_scan_failure_preserves_last_snapshot(monkeypatch, kind):
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
+    runtime.wait_for_device_check.return_value = None
     monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
     results = iter(
         [
@@ -489,6 +588,7 @@ def test_fast_scan_failure_preserves_last_snapshot(monkeypatch, kind):
 def test_superseded_scan_keeps_snapshot_and_state_and_waits_normally(monkeypatch):
     runtime = Mock()
     runtime.can_scan_fast.return_value = True
+    runtime.wait_for_device_check.return_value = None
     monkeypatch.setattr("gui.main_frame.adb_runtime", lambda: runtime)
     results = iter([
         execution.CommandResult(True, "List of devices attached\ncurrent\tdevice"),

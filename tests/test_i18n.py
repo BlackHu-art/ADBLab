@@ -62,6 +62,29 @@ def test_application_catalog_translates_real_text_and_preserves_unknown_entries(
     assert i18n.tr("未收录的测试词条") == "未收录的测试词条"
 
 
+@pytest.mark.parametrize("language,show_text,hide_text", [
+    ("zh_CN", "显示二维码", "收起二维码"),
+    ("en_US", "Show QR code", "Hide QR code"),
+    ("zh_HK", "顯示二維碼", "收起二維碼"),
+])
+def test_about_support_toggle_translates_both_states(
+    installed_translators, language, show_text, hide_text,
+):
+    from gui.features.about import AboutPanel
+
+    installed_translators(language)
+    panel = AboutPanel()
+    try:
+        assert panel.support_button.text() == show_text
+        panel.support_button.click()
+        assert panel.support_button.text() == hide_text
+        assert panel.support_button.accessibleName() == hide_text
+        panel.support_button.click()
+        assert panel.support_button.text() == show_text
+    finally:
+        panel.close()
+
+
 def test_translation_installation_does_not_change_locale_or_environment(
     qt_application, installed_translators,
 ):

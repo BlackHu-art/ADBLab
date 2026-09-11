@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QAbstractAnimation, QSize, Qt
 from PySide6.QtGui import QFont
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QPushButton, QVBoxLayout, QWidget
 from qfluentwidgets import (
     FluentIcon,
     NavigationDisplayMode,
@@ -27,8 +27,8 @@ from tests.ui_geometry_helpers import wait_until
 
 
 @pytest.mark.parametrize("compacted", [True, False])
-def test_theme_focus_outline_tracks_navigation_foreground_after_toggle(qt_application, compacted):
-    """真实点击切换明暗后，紧凑按钮和展开开关的焦点框跟随导航前景色。"""
+def test_theme_focus_keeps_fluent_background_without_outer_outline(qt_application, compacted):
+    """明暗切换和键盘焦点都不为主题入口增加外围黑白框。"""
     BaseStyles.switch_theme("Light")
     host = QWidget()
     widget = NavigationThemeToggle(host)
@@ -43,15 +43,21 @@ def test_theme_focus_outline_tracks_navigation_foreground_after_toggle(qt_applic
         host.activateWindow()
         target.setFocus(Qt.FocusReason.TabFocusReason)
         wait_until(qt_application, target.hasFocus)
-        for theme, expected in (("Dark", "#ffffff"), ("Light", "#000000")):
+        for theme in ("Dark", "Light"):
             QTest.mouseClick(target, Qt.MouseButton.LeftButton)
             qt_application.processEvents()
             assert BaseStyles.resolved_theme() == theme
             assert target.hasFocus()
-            image = widget.grab().toImage()
-            scale = image.devicePixelRatio()
-            outline = image.pixelColor(round(scale), round(widget.height() * scale / 2))
-            assert outline.name() == expected
+            focused = widget.grab().toImage()
+            target.clearFocus()
+            qt_application.processEvents()
+            unfocused = widget.grab().toImage()
+            scale = focused.devicePixelRatio()
+            edge_x = round(scale)
+            edge_y = round(widget.height() * scale / 2)
+            assert focused.pixelColor(edge_x, edge_y) == unfocused.pixelColor(edge_x, edge_y)
+            target.setFocus(Qt.FocusReason.TabFocusReason)
+            wait_until(qt_application, target.hasFocus)
     finally:
         host.close()
 
@@ -102,7 +108,7 @@ def test_system_theme_sync_is_silent_and_toggle_uses_resolved_theme(
     assert widget.switch.isChecked() == (target == "Dark")
 
 
-@pytest.mark.parametrize("key", [Qt.Key.Key_Space, Qt.Key.Key_Return])
+@pytest.mark.parametrize("key", [Qt.Key.Key_Space, Qt.Key.Key_Return, Qt.Key.Key_Enter])
 def test_expanded_theme_switch_uses_native_checkable_control(qt_application, key):
     BaseStyles.switch_theme("Light")
     widget = NavigationThemeToggle()
@@ -124,6 +130,35 @@ def test_expanded_theme_switch_uses_native_checkable_control(qt_application, key
     assert widget.switch.indicator.focusPolicy() == Qt.FocusPolicy.StrongFocus
     assert widget.switch.indicator.isCheckable()
     assert widget.switch.indicator.accessibleName() == tr("深色")
+
+
+@pytest.mark.parametrize("compacted", [True, False])
+def test_theme_action_remains_a_single_tab_stop_without_outer_outline(qt_application, compacted):
+    """移除外围框后仍可经 Tab 到达唯一主题入口，并用 Space 激活一次。"""
+    host = QWidget()
+    layout = QVBoxLayout(host)
+    before = QPushButton("Before", host)
+    theme = NavigationThemeToggle(host)
+    theme.setCompacted(compacted)
+    after = QPushButton("After", host)
+    for widget in (before, theme, after):
+        layout.addWidget(widget)
+    calls = QSignalSpy(theme.clicked)
+    target = theme if compacted else theme.switch.indicator
+    try:
+        host.show()
+        host.activateWindow()
+        before.setFocus(Qt.FocusReason.TabFocusReason)
+        wait_until(qt_application, before.hasFocus)
+        QTest.keyClick(before, Qt.Key.Key_Tab)
+        assert target.hasFocus()
+        QTest.keyClick(target, Qt.Key.Key_Space)
+        assert calls.count() == 1
+        QTest.keyClick(target, Qt.Key.Key_Tab)
+        assert after.hasFocus()
+        assert calls.count() == 1
+    finally:
+        host.close()
 
 
 @pytest.mark.parametrize("font_size", [12, 18])

@@ -2,6 +2,7 @@
 
 import subprocess
 import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -15,6 +16,217 @@ from core.adb_transport import ExecutionResult
 
 LISTING = b"List of devices attached\nfake-device\tdevice transport_id:1\n"
 PROBE = ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
+
+
+@pytest.fixture
+def pending_discovery(monkeypatch):
+    """固定路径解析、主机验证或启动窗口，并把后续测速保持为未结束。"""
+    for key in (
+        "ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS", "ANDROID_ADB_SERVER_PORT",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    state = SimpleNamespace(
+        entered=threading.Event(), release=threading.Event(), waiting=threading.Event(),
+        benchmark=threading.Event(), finish_benchmark=threading.Event(),
+        bootstrap_done=False, native=[], captures=[], runtime=None,
+        host_result=ExecutionResult(b"List of devices attached\n"),
+    )
+
+    def start(stage):
+        def resolver():
+            if stage == "resolver":
+                state.entered.set()
+                assert state.release.wait(3)
+            return "C:/test/adb.exe"
+
+        runtime = state.runtime = AdbRuntime(resolver)
+
+        def capture(command, args, **kwargs):
+            if threading.current_thread() is runtime._thread:
+                if stage == "bootstrap" and not state.bootstrap_done:
+                    return ExecutionResult(kind="unavailable")
+                if stage == "host":
+                    state.entered.set()
+                    assert state.release.wait(3)
+                return state.host_result
+            else:
+                state.captures.append(kwargs)
+            return ExecutionResult(b"List of devices attached\n")
+
+        def native(cmd, timeout, cancelled):
+            state.native.append(cmd)
+            assert cmd == ["C:/test/adb.exe", "start-server"]
+            state.entered.set()
+            assert state.release.wait(3)
+            state.bootstrap_done = True
+            return ExecutionResult()
+
+        def benchmark(*_):
+            state.benchmark.set()
+            assert state.finish_benchmark.wait(3)
+
+        original_wait = runtime._condition.wait
+
+        def wait(timeout):
+            state.waiting.set()
+            return original_wait(timeout)
+
+        monkeypatch.setattr(module, "capture", capture)
+        monkeypatch.setattr(module, "native_capture", native)
+        monkeypatch.setattr(runtime, "_probe_backends", benchmark)
+        monkeypatch.setattr(runtime._condition, "wait", wait)
+        assert runtime.start()
+        assert state.entered.wait(2)
+        return state
+
+    yield start
+    if state.runtime is not None:
+        state.runtime.close()
+        state.release.set()
+        state.finish_benchmark.set()
+        assert state.runtime.wait(2)
+
+
+@pytest.mark.parametrize("stage", ["resolver", "host", "bootstrap"])
+@pytest.mark.parametrize("args", [["devices"], ["devices", "-l"]])
+def test_discovery_waits_for_host_before_selecting_backend(pending_discovery, stage, args):
+    state = pending_discovery(stage)
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        state.runtime.try_run(["C:/test/adb.exe", *args], 2),
+    ))
+    try:
+        worker.start()
+        assert state.waiting.wait(1), "devices selected a backend before host verification"
+        assert results == []
+        state.release.set()
+        assert state.benchmark.wait(1)
+        worker.join(1)
+        assert not worker.is_alive(), "discovery must not wait for native benchmarking"
+        assert results[0] is not None and results[0].kind == "completed"
+        assert len(state.captures) == 1
+        assert 0 < state.captures[0]["timeout"] <= 2
+        assert state.runtime.snapshot().checking
+        assert state.native == (
+            [["C:/test/adb.exe", "start-server"]] if stage == "bootstrap" else []
+        )
+    finally:
+        state.runtime.close()
+        worker.join(1)
+
+
+@pytest.mark.parametrize("action", ["cancel", "native", "prepare_shutdown", "close"])
+def test_waiting_discovery_obeys_cancellation_and_native_selection(pending_discovery, action):
+    state = pending_discovery("host")
+    stopped = threading.Event()
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        state.runtime.try_run(["C:/test/adb.exe", "devices"], 30, stopped.is_set),
+    ))
+    try:
+        worker.start()
+        assert state.waiting.wait(1)
+        if action == "cancel":
+            stopped.set()
+        elif action == "native":
+            state.runtime.set_mode("native")
+        else:
+            getattr(state.runtime, action)()
+        worker.join(1)
+        assert not worker.is_alive()
+        if action == "native":
+            assert results == [None]
+        else:
+            assert results[0] is not None and results[0].kind == "cancelled"
+        assert not state.captures
+        assert not state.native
+    finally:
+        state.runtime.close()
+        worker.join(1)
+
+
+def test_pending_discovery_exhausts_original_budget_without_native_fallback(
+    pending_discovery, monkeypatch,
+):
+    state = pending_discovery("host")
+    monkeypatch.setattr(execution, "_adb_runtime", state.runtime)
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "C:/test/adb.exe")
+    monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)
+    native = Mock(return_value=ExecutionResult(b"List of devices attached\n"))
+    monkeypatch.setattr(execution, "native_capture", native)
+    started = time.monotonic()
+    result = execution.CommandRunner.run(["adb", "devices"], timeout=0.05, cancelled=lambda: False)
+    assert not result.success and result.error == "Timeout(0.05s)"
+    assert time.monotonic() - started < 1
+    native.assert_not_called()
+
+
+def test_waiting_discovery_rechecks_resolved_path_before_routing(pending_discovery):
+    state = pending_discovery("resolver")
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        state.runtime.try_run(["C:/other/adb.exe", "devices"], 2),
+    ))
+    try:
+        worker.start()
+        assert state.waiting.wait(1)
+        state.release.set()
+        assert state.benchmark.wait(1)
+        worker.join(1)
+        assert not worker.is_alive()
+        assert results == [None]
+        assert not state.captures
+    finally:
+        state.runtime.close()
+        worker.join(1)
+
+
+def test_discovery_for_other_known_path_does_not_wait_for_host(pending_discovery):
+    state = pending_discovery("host")
+    assert state.runtime.try_run(["C:/other/adb.exe", "devices"], 2) is None
+    assert not state.waiting.is_set()
+    assert not state.captures
+
+
+def test_failed_host_verification_uses_only_remaining_native_budget(pending_discovery, monkeypatch):
+    state = pending_discovery("host")
+    state.host_result = ExecutionResult(kind="protocol")
+    clock = [100.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(execution, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(execution, "_adb_runtime", state.runtime)
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "C:/test/adb.exe")
+    monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)
+    native = Mock(return_value=ExecutionResult(b"List of devices attached\n"))
+    monkeypatch.setattr(execution, "native_capture", native)
+    results = []
+    worker = threading.Thread(target=lambda: results.append(
+        execution.CommandRunner.run(["adb", "devices"], timeout=2, cancelled=lambda: False),
+    ))
+    try:
+        worker.start()
+        assert state.waiting.wait(1)
+        native.assert_not_called()
+        clock[0] += 0.6
+        state.release.set()
+        worker.join(1)
+        assert not worker.is_alive()
+        assert results[0].success
+        native.assert_called_once()
+        assert native.call_args.args[1] == pytest.approx(1.4)
+        assert not state.captures
+    finally:
+        state.runtime.close()
+        worker.join(1)
+
+
+def test_discovery_cleanup_after_prepare_shutdown_keeps_original_native_admission(
+    pending_discovery,
+):
+    state = pending_discovery("host")
+    state.runtime.prepare_shutdown()
+    assert state.runtime.try_run(["C:/test/adb.exe", "devices"], 2) is None
+    assert not state.waiting.is_set()
 
 
 @pytest.mark.parametrize("command", ["devices", "shell"])

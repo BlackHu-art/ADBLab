@@ -1,7 +1,7 @@
 """在主导航中提供不参与页面选择的主题开关。"""
 
 from PySide6.QtCore import QEvent, QMargins, QSignalBlocker, Qt
-from PySide6.QtGui import QKeyEvent, QPainter, QPen
+from PySide6.QtGui import QKeyEvent
 from qfluentwidgets import FluentIcon, NavigationPushButton, SwitchButton
 
 from gui.i18n import tr
@@ -114,24 +114,4 @@ class NavigationThemeToggle(NavigationPushButton):
                 if not event.isAutoRepeat():
                     self.switch.indicator.click()
                 return True
-            if event.type() in (QEvent.Type.FocusIn, QEvent.Type.FocusOut):
-                self.update()
         return super().eventFilter(watched, event)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.hasFocus() or self.switch.indicator.hasFocus():
-            # 焦点框跟随导航前景色，避免明暗切换后仍保留原始强调色描边。
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            painter.setPen(QPen(self.textColor(), 2))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 5, 5)
-
-    def focusInEvent(self, event):
-        super().focusInEvent(event)
-        self.update()
-
-    def focusOutEvent(self, event):
-        super().focusOutEvent(event)
-        self.update()

@@ -139,9 +139,23 @@ class _ScanThread(QThread):
                     return
                 continue
             try:
-                if fast_scan:
+                deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
+                admission = (
+                    runtime.wait_for_device_check(
+                        self.SCAN_CALL_TIMEOUT_S, lambda: self._stop_flag,
+                    )
+                    if runtime is not None else None
+                )
+                if admission is not None and admission.kind == "cancelled":
+                    return
+                # 等待期间能力和用户选择都可能改变，重新选择并继续消耗同一轮预算。
+                fast_scan = runtime is not None and runtime.can_scan_fast()
+                remaining = deadline - time.monotonic()
+                if admission is not None or remaining <= 0:
+                    output = None
+                elif fast_scan:
                     result = CommandRunner.run(
-                        ["adb", "devices", "-l"], timeout=self.SCAN_CALL_TIMEOUT_S,
+                        ["adb", "devices", "-l"], timeout=remaining,
                         cancelled=lambda: self._stop_flag,
                     )
                     if result.stale:
@@ -153,7 +167,7 @@ class _ScanThread(QThread):
                 else:
                     if runner is None:
                         runner = ProcessRunner()
-                    output = self._run_devices_scan(runner)
+                    output = self._run_devices_scan(runner, deadline=deadline)
                 if self._stop_flag:
                     return
                 if output is None:
@@ -181,12 +195,18 @@ class _ScanThread(QThread):
             if self._sleep_interruptibly(self._interval_ms):
                 return
 
-    def _run_devices_scan(self, runner: ProcessRunner) -> str | None:
+    def _run_devices_scan(
+        self, runner: ProcessRunner, *, deadline: float | None = None,
+    ) -> str | None:
         """执行一次 ``adb devices`` 并返回 stdout 文本。
 
-        原生客户端在部分环境启动缓慢，使用独立超时；停止请求到来时
+        发现准入与原生客户端共享截止时间；独立调用时仍使用原有扫描预算。停止请求到来时
         终止本次子进程并返回 None，不推断具体监控软件的因果关系。
         """
+        if deadline is None:
+            deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
+        if self._stop_flag or time.monotonic() >= deadline:
+            return None
         try:
             proc = runner.start(
                 "device_scan",
@@ -199,7 +219,6 @@ class _ScanThread(QThread):
             )
         except Exception:
             return None
-        deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
         try:
             return_code = None
             while True:

@@ -68,7 +68,9 @@ related: [MODULE_MAP.md, DATA_FLOW.md, ARCHITECTURE.md]
 | `system/logcat` | 实时 Logcat | 固定一台设备 | 按设备懒创建；关闭会话才停止资源 |
 | `system/performance` | 性能采集 | 固定一台设备 | 按设备懒创建；关闭进入异步停止屏障 |
 
-Settings 中的 About 随 SettingsPage 创建，不属于 Workspace 路由。未知 section/feature 会在主页面
+Settings 中的 About 随 SettingsPage 创建，不属于 Workspace 路由。“支持作者”的二维码默认收起，
+点击“显示二维码”在卡片内展开，再次点击“收起二维码”恢复紧凑布局；展开状态不写入配置。
+未知 section/feature 会在主页面
 切换前被拒绝。
 
 旧入口作为兼容别名保留，不新增可见页签或复制功能会话：`devices/remote-control → devices/remote`；
