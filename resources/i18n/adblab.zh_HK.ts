@@ -5944,5 +5944,65 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>{device}：{action}</source>
             <translation>{device}：{action}</translation>
         </message>
+        <message>
+            <source>仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择</source>
+            <translation>僅影響後續命令；開啟使用原生，關閉優先快速，重新檢測恢復自動選擇</translation>
+        </message>
+        <message>
+            <source>自动选择</source>
+            <translation>自動選擇</translation>
+        </message>
+        <message>
+            <source>手动快速</source>
+            <translation>手動快速</translation>
+        </message>
+        <message>
+            <source>手动原生</source>
+            <translation>手動原生</translation>
+        </message>
+        <message>
+            <source>等待执行环境检测</source>
+            <translation>等待執行環境檢測</translation>
+        </message>
+        <message>
+            <source>正在恢复执行环境</source>
+            <translation>正在恢復執行環境</translation>
+        </message>
+        <message>
+            <source>执行环境已就绪</source>
+            <translation>執行環境已就緒</translation>
+        </message>
+        <message>
+            <source>未找到 ADB，请检查安装环境</source>
+            <translation>找不到 ADB，請檢查安裝環境</translation>
+        </message>
+        <message>
+            <source>已配置自定义 ADB 服务，保留原生执行</source>
+            <translation>已設定自訂 ADB 服務，保留原生執行</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务响应超时，可重新检测</source>
+            <translation>本機 ADB 服務回應逾時，可重新檢測</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务不可用，可重新检测或重启服务</source>
+            <translation>本機 ADB 服務無法使用，可重新檢測或重新啟動服務</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务协议不兼容，保留原生执行</source>
+            <translation>本機 ADB 服務協議不相容，保留原生執行</translation>
+        </message>
+        <message>
+            <source>本机 ADB 服务通信异常，可重新检测</source>
+            <translation>本機 ADB 服務通訊異常，可重新檢測</translation>
+        </message>
+        <message>
+            <source>部分设备 Shell 未通过验证，保留原生执行</source>
+            <translation>部分裝置 Shell 未通過驗證，保留原生執行</translation>
+        </message>
+        <message>
+            <source>{mode}；{scope}；{status}</source>
+            <translation>{mode}；{scope}；{status}</translation>
+        </message>
     </context>
 </TS>

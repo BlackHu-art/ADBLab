@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
@@ -186,12 +187,16 @@ class _MobilePerfRunContext:
     config_dir: tempfile.TemporaryDirectory[str]
     config_path: str
     stop_path: str
+    mode_path: str
+    mode_stop: threading.Event = field(default_factory=threading.Event)
+    mode_done: threading.Event = field(default_factory=threading.Event)
     stdout_done: threading.Event = field(default_factory=threading.Event)
     stderr_done: threading.Event = field(default_factory=threading.Event)
     finish_lock: threading.Lock = field(default_factory=threading.Lock)
     tracking_lock: threading.Lock = field(default_factory=threading.Lock)
     log_thread: threading.Thread | None = None
     diagnostic_thread: threading.Thread | None = None
+    mode_thread: threading.Thread | None = None
     exit_code: int | None = None
     finished_notified: bool = False
     config_cleaned: bool = False
@@ -204,6 +209,7 @@ class MobilePerfRunner:
     LOG_BATCH_SIZE = 50
     LOG_BATCH_INTERVAL_SECONDS = 0.2
     PIPE_EXIT_POLL_SECONDS = 1.0
+    MODE_SYNC_INTERVAL_SECONDS = 0.1
     REPORT_SHUTDOWN_TIMEOUT_SECONDS = 90.0
     _DEBUG_RECORD_PATTERN = re.compile(r"^\[[^\]]+\]DEBUG:mobileperf:")
 
@@ -227,6 +233,7 @@ class MobilePerfRunner:
         self._state_lock = threading.RLock()
         self._generation = 0
         self._active_context: _MobilePerfRunContext | None = None
+        self._mode_contexts: list[_MobilePerfRunContext] = []
         self._last_config: MobilePerfRunConfig | None = None
         self._last_exit_code: int | None = None
         self._baseline_package_root = ""
@@ -250,7 +257,15 @@ class MobilePerfRunner:
         return self._last_exit_code
 
     def is_running(self) -> bool:
-        return self._proc is not None and self._proc.poll() is None
+        """供关闭监督检查进程及各代非 daemon 模式线程，完成事件不能代替线程退出。"""
+        with self._state_lock:
+            self._mode_contexts = [
+                context for context in self._mode_contexts
+                if context.mode_thread is not None and context.mode_thread.is_alive()
+            ]
+            return bool(self._mode_contexts) or (
+                self._proc is not None and self._proc.poll() is None
+            )
 
     def start(
         self,
@@ -261,7 +276,8 @@ class MobilePerfRunner:
     ) -> str:
         """创建临时配置并启动子进程，同时分别消费业务输出和开发诊断。"""
         with self._state_lock:
-            if self.is_running():
+            # 已退出进程的旧代写入可独立收尾；新运行使用不同路径，仍由监督接口保留旧资源。
+            if self._proc is not None and self._proc.poll() is None:
                 raise RuntimeError("mobileperf is already running")
             self._generation += 1
             generation = self._generation
@@ -278,10 +294,11 @@ class MobilePerfRunner:
                 cmd = self._build_command()
                 env = os.environ.copy()
                 runtime = adb_runtime()
-                # 只传递启动时的用户选择，设备能力由子进程独立校验，不持久化策略。
-                env["MOBILEPERF_ADB_MODE"] = (
-                    "native" if runtime is not None and runtime.snapshot().native_only else "auto"
-                )
+                mode = runtime.snapshot().selection_mode if runtime is not None else "auto"
+                mode_path = os.path.join(config_dir.name, "mobileperf.adb-mode")
+                # 模式文件只属于本次运行，设备能力仍由子进程独立校验。
+                env["MOBILEPERF_ADB_MODE"] = mode
+                env["MOBILEPERF_ADB_MODE_FILE"] = mode_path
                 adb_path = self._resolve_adb_path()
                 if adb_path:
                     env["ADB_PATH"] = adb_path
@@ -327,9 +344,18 @@ class MobilePerfRunner:
                 config_dir=config_dir,
                 config_path=self._config_path,
                 stop_path=self._stop_path,
+                mode_path=mode_path,
             )
             self._active_context = context
             self._proc = proc
+            context.mode_thread = threading.Thread(
+                target=self._sync_adb_mode,
+                args=(context, runtime, mode),
+                name=f"adblab-mobileperf-mode-{generation}",
+                daemon=False,
+            )
+            self._mode_contexts.append(context)
+            context.mode_thread.start()
             diagnostic_stream = getattr(proc, "stderr", None)
             if diagnostic_stream is not None:
                 try:
@@ -360,13 +386,51 @@ class MobilePerfRunner:
         )
         return self.expected_result_root(config)
 
+    @staticmethod
+    def _write_adb_mode(path: str, mode: str) -> None:
+        """同目录原子发布有界模式文本，避免子进程读到截断内容。"""
+        temporary = f"{path}.tmp"
+        Path(temporary).write_text(mode, encoding="utf-8")
+        os.replace(temporary, path)
+
+    def _sync_adb_mode(
+        self, context: _MobilePerfRunContext, runtime: AdbRuntime | None, mode: str,
+    ) -> None:
+        """在后台同步后续命令策略；旧运行只持有自己的目录与退出事件。"""
+        write_failed = False
+        published: str | None = None
+        try:
+            while not context.mode_stop.is_set() and context.proc.poll() is None:
+                selected = runtime.snapshot().selection_mode if runtime is not None else mode
+                if selected != published:
+                    try:
+                        self._write_adb_mode(context.mode_path, selected)
+                    except OSError as exc:
+                        if not write_failed:
+                            self._safe_write_diagnostic(
+                                f"MobilePerf ADB mode sync failed: {type(exc).__name__}", context,
+                            )
+                        write_failed = True
+                    else:
+                        published = selected
+                        write_failed = False
+                if runtime is None or context.mode_stop.wait(self.MODE_SYNC_INTERVAL_SECONDS):
+                    return
+        finally:
+            # 模式线程完成最后一次写入后才允许清理目录，仍由原有完成屏障汇合。
+            self._mark_reader_done(context, context.mode_done)
+
     def stop(self, timeout: float = REPORT_SHUTDOWN_TIMEOUT_SECONDS) -> int | None:
         """请求生成报告并等待退出；未确认退出时保留运行状态，允许后续重试。"""
         with self._state_lock:
             context = self._active_context
             proc = context.proc if context is not None else self._proc
             process_key = context.process_key if context is not None else self._process_key
+            mode_contexts = tuple(self._mode_contexts)
         if proc is None:
+            for mode_context in mode_contexts:
+                mode_context.mode_stop.set()
+            self._join_stop_resources(context, mode_contexts, timeout=1.0)
             return None
         code: int | None
         if proc.poll() is None:
@@ -382,11 +446,15 @@ class MobilePerfRunner:
             self._release_process_tracking(context, process_key, timeout=0)
         if context is not None and code is not None:
             context.exit_code = code
+            context.mode_stop.set()
+        if code is not None:
+            for mode_context in mode_contexts:
+                mode_context.mode_stop.set()
         with self._state_lock:
             if code is not None and (context is None or self._active_context is context):
                 self._last_exit_code = code
                 self._proc = None
-        self._join_context_readers(context, timeout=1.0)
+        self._join_stop_resources(context, mode_contexts, timeout=1.0)
         if context is not None:
             self._maybe_notify_finished(context)
         if context is None and code is not None:
@@ -623,8 +691,11 @@ class MobilePerfRunner:
         self._maybe_notify_finished(context)
 
     def _maybe_notify_finished(self, context: _MobilePerfRunContext) -> None:
-        """仅在同一运行的两个管道均排空且进程结束后发送完成通知。"""
-        if not context.stdout_done.is_set() or not context.stderr_done.is_set():
+        """仅在同一运行的管道排空、模式写入结束且进程退出后发送完成通知。"""
+        if (
+            not context.stdout_done.is_set() or not context.stderr_done.is_set()
+            or not context.mode_done.is_set()
+        ):
             return
         with context.finish_lock:
             if context.finished_notified:
@@ -695,12 +766,35 @@ class MobilePerfRunner:
         if context is None:
             return
         deadline = time.monotonic() + max(0.0, float(timeout))
-        for thread in (context.log_thread, context.diagnostic_thread):
+        for thread in (context.log_thread, context.diagnostic_thread, context.mode_thread):
             if thread is None or thread is threading.current_thread() or not thread.is_alive():
                 continue
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
 
+    def _join_stop_resources(
+        self,
+        context: _MobilePerfRunContext | None,
+        mode_contexts: tuple[_MobilePerfRunContext, ...],
+        *,
+        timeout: float,
+    ) -> None:
+        """在同一预算内等待停止快照的管道及各代 writer，不碰随后启动的新运行。"""
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        self._join_context_readers(context, timeout=max(0.0, deadline - time.monotonic()))
+        for mode_context in mode_contexts:
+            if mode_context is context:
+                continue
+            thread = mode_context.mode_thread
+            if (
+                thread is not None and thread is not threading.current_thread()
+                and thread.is_alive()
+            ):
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+
     def _cleanup_run_context(self, context: _MobilePerfRunContext) -> None:
+        context.mode_stop.set()
+        if not context.mode_done.is_set():
+            return
         with context.finish_lock:
             if context.config_cleaned:
                 return

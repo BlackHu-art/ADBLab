@@ -62,6 +62,13 @@ class RuntimeSnapshot:
     fast_devices: bool
     fast_shell_devices: int
     checked_devices: int
+    selection_mode: str = "auto"
+    status: str = "idle"
+
+    @property
+    def effective_native_only(self) -> bool:
+        """反映实际可选后端，不能用来替代用户模式或禁止后续自动恢复。"""
+        return not (self.fast_devices or self.fast_shell_devices)
 
 
 @dataclass
@@ -73,10 +80,11 @@ class _BackendState:
     checked: bool = False
     next_check: float = 0.0
     epoch: int = 0
+    benchmarked: bool = False
 
     @property
     def fast(self) -> bool:
-        """首次能力通过即可使用直连；已知原生更快时保留原生选择。"""
+        """返回自动模式的能力与测速判断；最终选择还须应用用户模式。"""
         return self.available and self.preference is not False
 
 
@@ -97,6 +105,7 @@ class AdbRuntime:
 
     PROBE_TIMEOUT = 2.0
     SOCKET_TIMEOUT = 1.0
+    CAPABILITY_BUDGET = 3.0
     CHECK_INTERVAL = 10.0
     PROBE_COMMAND = "printf ADBLAB_OUT; printf ADBLAB_ERR >&2; exit 7"
 
@@ -123,6 +132,8 @@ class AdbRuntime:
         self._draining = False
         self._checking = False
         self._native_only = False
+        self._mode = "auto"
+        self._status = "idle"
         self._host = _BackendState()
         self._shell: dict[str, _BackendState] = {}
         self._topology: dict[str, str] = {}
@@ -133,25 +144,52 @@ class AdbRuntime:
         self._full_probe = True
         self._bootstrap_pending = True
         self._allow_bootstrap = False
+        self._probe_checked: set[int] = set()
 
     def snapshot(self) -> RuntimeSnapshot:
         """原子读取当前能力状态，不暴露可变策略。"""
         with self._condition:
+            usable = (
+                not self._native_only and not self._closed and not self._draining
+                and local_server_environment()
+            )
+            status = self._status
+            if not local_server_environment():
+                status = "custom_server"
+            elif not self._checking and self._host.available and any(
+                state.checked and not state.available for state in self._shell.values()
+            ):
+                status = "shell_unavailable"
             return RuntimeSnapshot(
                 self._checking,
                 self._host.available,
                 self._native_only,
-                self._host.fast and not self._native_only,
-                sum(state.fast for state in self._shell.values()) if not self._native_only else 0,
+                self._selected(self._host) and usable,
+                sum(self._selected(state) for state in self._shell.values())
+                if usable and self._host.available else 0,
                 sum(state.checked for state in self._shell.values()),
+                self._mode,
+                status,
             )
+
+    @property
+    def selection_mode(self) -> str:
+        """返回用户选择，独立于暂时失效或自动测速形成的实际后端。"""
+        with self._condition:
+            return self._mode
+
+    def _selected(self, state: _BackendState) -> bool:
+        """持锁选择已验证能力；手动快速只覆盖测速偏好，不绕过能力和原生模式。"""
+        return not self._native_only and state.available and (
+            self._mode == "fast" or state.preference is not False
+        )
 
     def _publish(self) -> None:
         if self._probe_stop.is_set():
             return
         self._changed(self.snapshot())
 
-    def start(self, *, force: bool = True) -> bool:
+    def start(self, *, force: bool = True, reset_mode: bool = False) -> bool:
         """启动唯一探测任务；仅首次初始化可启动服务，强制重测不重启服务。"""
         with self._condition:
             if (
@@ -161,7 +199,12 @@ class AdbRuntime:
                 or (self._native_only and not force)
             ):
                 return False
+            if reset_mode:
+                self._mode = "auto"
+                self._native_only = False
             self._checking = True
+            self._status = "checking"
+            self._probe_checked = set()
             self._full_probe = force
             self._allow_bootstrap = self._bootstrap_pending
             self._bootstrap_pending = False
@@ -177,11 +220,33 @@ class AdbRuntime:
             self._thread.start()
         return True
 
+    def recheck(self) -> bool:
+        """用户显式重测原子恢复自动选择；之后的手动选择仍优先于晚到测速。"""
+        return self.start(force=True, reset_mode=True)
+
     def set_native_only(self, enabled: bool) -> None:
         """只改变后续调用的选择，不停止已发送请求，也不写入持久配置。"""
+        self.set_mode("native" if enabled else "fast")
+
+    def set_mode(self, mode: str) -> None:
+        """实时切换后续请求；只在实际改选且缺少能力时唤起验证，不重放在途业务。"""
+        if mode not in {"auto", "fast", "native"}:
+            raise ValueError("Invalid ADB selection mode")
         with self._condition:
-            self._native_only = bool(enabled)
+            if self._closed or self._draining or mode == self._mode:
+                return
+            self._mode = mode
+            self._native_only = mode == "native"
             self._condition.notify_all()
+            if not self._native_only and local_server_environment() and (
+                not self._host.available
+                or any(not state.available for state in self._shell.values())
+            ):
+                self._host.next_check = 0
+                for state in self._shell.values():
+                    if not state.available:
+                        state.next_check = 0
+                self.start(force=False)
         self._publish()
 
     def _service_ready(self) -> None:
@@ -192,11 +257,23 @@ class AdbRuntime:
             self._ready()
 
     @staticmethod
-    def _prefer_socket(native: ExecutionResult, elapsed: float, socket_elapsed: float) -> bool:
-        # 原生探针达到时限只提供耗时下界，不说明设备故障。
+    def _prefer_socket(
+        native: ExecutionResult, elapsed: float, socket_elapsed: float,
+    ) -> bool | None:
+        # 超时仅能证明直连有收益，不能证明原生更快；无效基准不改写已有偏好。
         if native.kind == "timeout":
-            return socket_elapsed < elapsed * 0.8
-        return native.kind == "completed" and socket_elapsed + 0.02 < elapsed * 0.8
+            return True if socket_elapsed < elapsed * 0.8 else None
+        if native.kind != "completed":
+            return None
+        return socket_elapsed + 0.02 < elapsed * 0.8
+
+    @staticmethod
+    def _valid_listing(result: ExecutionResult) -> bool:
+        """原生列表须真正成功；不同采样时刻的设备集合允许正常变化。"""
+        return (
+            result.kind == "completed" and result.returncode == 0
+            and result.stdout.lstrip().startswith(b"List of devices attached")
+        )
 
     def _current(self, state: _BackendState, epoch: int, serial: str | None = None) -> bool:
         """持锁验证结果归属；状态替换、失效和关闭均拒绝晚到结果。"""
@@ -232,7 +309,8 @@ class AdbRuntime:
                         not self._draining and not self._native_only
                         and self._host.available and local_server_environment()
                         and any(
-                            not state.available and time.monotonic() >= state.next_check
+                            id(state) not in self._probe_checked and not state.available
+                            and time.monotonic() >= state.next_check
                             for state in self._shell.values()
                         )
                     ):
@@ -240,6 +318,8 @@ class AdbRuntime:
                         self._full_probe = False
                         continue
                     self._checking = False
+                    if self._status in {"checking", "retrying"}:
+                        self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
                     return
         finally:
@@ -248,6 +328,8 @@ class AdbRuntime:
                 # 新一轮可能已取得准入并在 join 当前线程，旧收尾不能清除其 checking。
                 if self._thread is threading.current_thread():
                     self._checking = False
+                    if self._status in {"checking", "retrying"}:
+                        self._status = "ready" if self._host.available else "idle"
                     self._condition.notify_all()
                     self._publish()
 
@@ -269,55 +351,102 @@ class AdbRuntime:
                 generation = self._generation
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
             if not path or not local_server_environment():
+                with self._condition:
+                    self._status = "missing_adb" if not path else "custom_server"
+                self._diagnostic(f"ADB environment status={self._status}")
                 return
             stop = self._probe_stop.is_set
-            start = time.monotonic()
-            listing = capture(
-                "devices", ["-l"], serial=None, timeout=self.SOCKET_TIMEOUT, cancelled=stop
+            listing, socket_elapsed = self._probe_capability(
+                "devices", ["-l"], serial=None,
+                retry=self._full_probe or not host.checked,
+                current=lambda: self._current(host, host_epoch) and generation == self._generation,
             )
             if listing.kind == "unavailable" and self._allow_bootstrap and not stop():
                 native_capture([path, "start-server"], 15.0, stop)
-                start = time.monotonic()
-                listing = capture(
-                    "devices", ["-l"], serial=None, timeout=self.SOCKET_TIMEOUT, cancelled=stop
+                listing, socket_elapsed = self._probe_capability(
+                    "devices", ["-l"], serial=None, retry=True,
+                    current=lambda: (
+                        self._current(host, host_epoch) and generation == self._generation
+                    ),
                 )
-            socket_elapsed = time.monotonic() - start
             with self._condition:
                 if not self._current(host, host_epoch) or generation != self._generation:
                     return
                 host.checked = True
                 if listing.kind != "completed":
                     self._invalidate(host)
+                    self._status = f"host_{listing.kind}"
+                    self._diagnostic(f"ADB capability devices status={listing.kind}")
                     return
                 restored = not host.available and host.preference is not None
                 host.available = True
+                self._status = "ready"
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
                 self.observe_devices(listing.stdout.decode("utf-8", errors="ignore"))
             if restored:
-                self._diagnostic(f"ADB recovery devices fast={host.fast} benchmark=cached")
+                self._diagnostic(
+                    f"ADB recovery devices fast={self._selected(host)} benchmark=cached"
+                )
             self._service_ready()
             self._publish()
             self._probe_backends(path, host, host_epoch, socket_elapsed)
+            with self._condition:
+                if self._current(host, host_epoch):
+                    self._status = "ready"
         finally:
             self._service_ready()
+
+    def _probe_capability(
+        self, command: str, args: list[str], *, serial: str | None, retry: bool,
+        current: Callable[[], bool],
+    ) -> tuple[ExecutionResult, float]:
+        """仅复核只读能力探针；首试与一次重试共用预算，取消和协议拒绝不重试。"""
+        deadline = time.monotonic() + self.CAPABILITY_BUDGET
+        stop = self._probe_stop.is_set
+        started = time.monotonic()
+        result = capture(
+            command, args, serial=serial, timeout=self.SOCKET_TIMEOUT, cancelled=stop,
+        )
+        elapsed = time.monotonic() - started
+        remaining = deadline - time.monotonic()
+        if retry and result.kind in {"timeout", "transport"} and not stop() and remaining > 0:
+            with self._condition:
+                if not current():
+                    return result, elapsed
+                self._status = "retrying"
+            self._diagnostic(f"ADB capability {command} status={result.kind} retry=1")
+            self._publish()
+            with self._condition:
+                # 通知可能让出执行权；重新确认连接归属及剩余预算再准入复核。
+                remaining = deadline - time.monotonic()
+                if stop() or not current() or remaining <= 0:
+                    return result, elapsed
+            started = time.monotonic()
+            result = capture(
+                command, args, serial=serial, timeout=remaining, cancelled=stop,
+            )
+            elapsed = time.monotonic() - started
+        return result, elapsed
 
     def _probe_backends(
         self, path: str, host: _BackendState, host_epoch: int, socket_elapsed: float,
     ) -> None:
         """唯一探测线程优先消费新能力检查；只有只读基准允许抢占后重测。"""
         stop = self._probe_stop.is_set
-        checked_states: set[int] = set()
+        checked_states = self._probe_checked
         samples: list[tuple[str, _BackendState, int, ExecutionResult, float]] = []
         with self._condition:
-            measure_host = self._full_probe or host.preference is None
+            measure_host = self._full_probe or not host.benchmarked
 
         def next_target():
             # 由持锁调用方读取拓扑；本轮强制验证每个状态一次，失败仍遵守恢复节流。
             return next((
                 (serial, state, state.epoch)
                 for serial, state in self._shell.items()
-                if (self._full_probe and id(state) not in checked_states)
-                or (not state.available and time.monotonic() >= state.next_check)
+                if id(state) not in checked_states and (
+                    self._full_probe
+                    or (not state.available and time.monotonic() >= state.next_check)
+                )
             ), None)
 
         def yield_benchmark() -> bool:
@@ -332,12 +461,12 @@ class AdbRuntime:
             if target is not None:
                 serial, state, epoch = target
                 checked_states.add(id(state))
-                started = time.monotonic()
-                fast = capture(
+                fast, elapsed = self._probe_capability(
                     "shell", [self.PROBE_COMMAND], serial=serial,
-                    timeout=self.SOCKET_TIMEOUT, cancelled=stop,
+                    retry=self._full_probe or not state.checked,
+                    current=lambda: self._current(host, host_epoch)
+                    and self._current(state, epoch, serial),
                 )
-                elapsed = time.monotonic() - started
                 valid = (
                     fast.kind == "completed" and fast.returncode == 7
                     and fast.stdout == b"ADBLAB_OUT" and fast.stderr == b"ADBLAB_ERR"
@@ -353,13 +482,15 @@ class AdbRuntime:
                     if valid:
                         state.available = True
                         state.next_check = time.monotonic() + self.CHECK_INTERVAL
-                        if self._full_probe or state.preference is None:
+                        if self._full_probe or not state.benchmarked:
                             samples.append((serial, state, epoch, fast, elapsed))
                     else:
                         self._invalidate(state)
                     self._condition.notify_all()
                 if restored:
-                    self._diagnostic(f"ADB recovery shell fast={state.fast} benchmark=cached")
+                    self._diagnostic(
+                        f"ADB recovery shell fast={self._selected(state)} benchmark=cached"
+                    )
                 elif not valid:
                     self._diagnostic(
                         f"ADB capability shell status={fast.kind} retry_s={self.CHECK_INTERVAL:.0f}"
@@ -376,17 +507,52 @@ class AdbRuntime:
                     return
                 if baseline.kind == "cancelled":
                     continue
+                selected = (
+                    self._prefer_socket(baseline, native_elapsed, socket_elapsed)
+                    if baseline.kind == "timeout" or self._valid_listing(baseline) else None
+                )
+                if selected is False:
+                    with self._condition:
+                        sample_generation = self._generation
+                        if not self._current(host, host_epoch):
+                            return
+                    # 冷启动样本不能单独证明原生更快；只在准备降级时补一次稳定样本。
+                    started = time.monotonic()
+                    warm = capture(
+                        "devices", ["-l"], serial=None,
+                        timeout=self.SOCKET_TIMEOUT, cancelled=yield_benchmark,
+                    )
+                    warm_elapsed = time.monotonic() - started
+                    if warm.kind == "cancelled":
+                        continue
+                    selected = (
+                        self._prefer_socket(baseline, native_elapsed, warm_elapsed)
+                        if self._valid_listing(warm) else None
+                    )
+                    with self._condition:
+                        if not self._current(host, host_epoch):
+                            return
+                        if sample_generation != self._generation:
+                            selected = None
+                        elif self._valid_listing(warm):
+                            self.observe_devices(warm.stdout.decode("utf-8", errors="ignore"))
+                        if sample_generation != self._generation:
+                            selected = None
+                    self._diagnostic(
+                        f"ADB benchmark devices warm_ms={warm_elapsed * 1000:.1f} "
+                        f"warm_status={warm.kind}"
+                    )
                 with self._condition:
                     current = self._current(host, host_epoch)
                     if current:
-                        host.preference = self._prefer_socket(
-                            baseline, native_elapsed, socket_elapsed,
-                        )
+                        host.benchmarked = True
+                        if selected is not None:
+                            host.preference = selected
                 measure_host = False
                 self._diagnostic(
                     f"ADB probe devices socket_ms={socket_elapsed * 1000:.1f} "
                     f"native_ms={native_elapsed * 1000:.1f} native_status={baseline.kind} "
-                    f"applied={current}"
+                    f"applied={current and selected is not None}"
                 )
                 continue
             if not samples:
@@ -411,19 +577,49 @@ class AdbRuntime:
                 baseline.stdout == fast.stdout and baseline.stderr == fast.stderr
                 and baseline.returncode == fast.returncode
             )
-            selected = (same or baseline.kind == "timeout") and self._prefer_socket(
-                baseline, native_elapsed, elapsed,
+            selected = (
+                self._prefer_socket(baseline, native_elapsed, elapsed)
+                if same or baseline.kind == "timeout" else None
             )
+            if selected is False:
+                with self._condition:
+                    if (
+                        not self._current(host, host_epoch)
+                        or not self._current(state, epoch, serial)
+                    ):
+                        continue
+                started = time.monotonic()
+                warm = capture(
+                    "shell", [self.PROBE_COMMAND], serial=serial,
+                    timeout=self.SOCKET_TIMEOUT, cancelled=yield_benchmark,
+                )
+                warm_elapsed = time.monotonic() - started
+                if warm.kind == "cancelled":
+                    # 新目标抢占时保留这一组基准，避免把取消固化为已经测速。
+                    samples.insert(0, (serial, state, epoch, fast, elapsed))
+                    continue
+                valid = (
+                    warm.kind == "completed" and warm.returncode == fast.returncode
+                    and warm.stdout == fast.stdout and warm.stderr == fast.stderr
+                )
+                selected = (
+                    self._prefer_socket(baseline, native_elapsed, warm_elapsed) if valid else None
+                )
+                self._diagnostic(
+                    f"ADB benchmark shell warm_ms={warm_elapsed * 1000:.1f} warm_status={warm.kind}"
+                )
             with self._condition:
                 current = (
                     self._current(host, host_epoch) and self._current(state, epoch, serial)
                 )
                 if current:
-                    state.preference = selected
+                    state.benchmarked = True
+                    if selected is not None:
+                        state.preference = selected
             self._diagnostic(
                 f"ADB probe shell socket_ms={elapsed * 1000:.1f} "
                 f"native_ms={native_elapsed * 1000:.1f} native_status={baseline.kind} "
-                f"fast={selected} applied={current}"
+                f"fast={self._selected(state)} applied={current and selected is not None}"
             )
             self._publish()
 
@@ -461,7 +657,7 @@ class AdbRuntime:
             return (
                 not self._closed
                 and not self._native_only
-                and self._host.fast
+                and self._selected(self._host)
                 and local_server_environment()
             )
 
@@ -486,7 +682,7 @@ class AdbRuntime:
                 self._host.available
                 and serial in self._topology
                 and state is not None
-                and state.fast
+                and self._selected(state)
             )
 
     def request_device_check(self) -> None:
@@ -594,7 +790,7 @@ class AdbRuntime:
             host = self._host
             host_epoch = host.epoch
             state = host if command == "devices" else self._shell.get(serial or "")
-            selected = state is not None and state.fast
+            selected = state is not None and self._selected(state) and host.available
             epoch = state.epoch if state is not None else 0
             generation = self._generation
             if selected:
@@ -636,6 +832,7 @@ class AdbRuntime:
                     return ExecutionResult(kind="stale")
                 if current and failed:
                     self._invalidate(state)
+                    self._status = f"host_{result.kind}" if state is host else "shell_unavailable"
                 elif (
                     current and result.kind == "completed"
                     and command == "devices" and args == ["-l"]

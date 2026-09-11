@@ -11,6 +11,7 @@ from adblab.application.action_results import ActionResults, ActionSpec, capture
 from controllers.action_catalog import ACTION_SIGNALS
 from controllers.signals import ADBControllerSignals
 from gui.widgets.action_result_view import ActionResultView
+from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
 from tests.test_main_window_layout import build_main_frame
 
 
@@ -27,6 +28,61 @@ def result_frame(qt_application):
     frame._unbind_window_screen()
     frame._close_ready = True
     frame.close()
+
+
+@pytest.fixture
+def diagnostic_frame(request):
+    service = request.getfixturevalue("create_log_service")()
+    frame = request.getfixturevalue("result_frame")
+    assert frame.log_service is service
+    return frame
+
+
+def test_runtime_diagnostic_is_saved_without_exception_summary_or_toast(
+    diagnostic_frame, monkeypatch,
+):
+    frame = diagnostic_frame
+    saved, notices = [], []
+    monkeypatch.setattr(frame.run_library, "save_diagnostics", saved.append)
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
+
+    frame.log_service.record_runtime_diagnostic("ADB environment status=ready")
+
+    assert len(saved) == 1
+    assert "[INFO] ADB environment status=ready" in saved[0]
+    assert frame._settings_page.diagnostics_card.button.isEnabled()
+    assert frame._settings_page.diagnostics_card.contentLabel.text() == "本次运行尚无应用异常记录"
+    assert notices == []
+
+
+@pytest.mark.parametrize("level", ["WARNING", "ERROR", "CRITICAL"])
+def test_runtime_info_preserves_warning_summary_without_repeating_warning_toast(
+    diagnostic_frame, monkeypatch, level,
+):
+    frame = diagnostic_frame
+    saved, notices = [], []
+    monkeypatch.setattr(frame.run_library, "save_diagnostics", saved.append)
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
+    service = frame.log_service
+
+    service.record_runtime_diagnostic("ADB benchmark complete")
+    service.log(level, "配置保存失败", flush_immediately=True)
+    assert len(notices) == 1
+    assert notices[-1]["level"] == "warning"
+    summary = frame._settings_page.diagnostics_card.contentLabel.text()
+    assert "1 条异常摘要" in summary
+    assert "配置保存失败" in summary
+
+    service.record_runtime_diagnostic("ADB recovery devices fast=True")
+    assert frame._settings_page.diagnostics_card.contentLabel.text() == summary
+    assert len(notices) == 1
+    assert "[INFO] ADB recovery devices fast=True" in saved[-1]
+    assert f"[{level}] 配置保存失败" in saved[-1]
+
+    service.log("ERROR", "新的保存失败", flush_immediately=True)
+    assert len(notices) == 2
+    assert "2 条异常摘要" in frame._settings_page.diagnostics_card.contentLabel.text()
+    assert "新的保存失败" in frame._settings_page.diagnostics_card.contentLabel.text()
 
 
 def test_all_declared_actions_record_tasks_and_notify_without_changing_page(

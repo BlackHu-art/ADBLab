@@ -16,6 +16,310 @@ LISTING = b"List of devices attached\nfake-device\tdevice transport_id:1\n"
 PROBE = ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
 
 
+@pytest.mark.parametrize("command", ["devices", "shell"])
+def test_initial_transient_probe_recovers_within_same_detection(backend, monkeypatch, command):
+    runtime, clock, native, _ = backend
+    original = module.capture
+    budgets = []
+
+    def capture(target, args, **kwargs):
+        if target == command:
+            budgets.append(kwargs["timeout"])
+            if len(budgets) == 1:
+                clock[0] += kwargs["timeout"]
+                return ExecutionResult(kind="timeout")
+        return original(target, args, **kwargs)
+
+    monkeypatch.setattr(module, "capture", capture)
+    prepare(runtime)
+    assert len(budgets) == 2
+    assert sum(budgets) <= 3.0
+    assert runtime.snapshot().status == "ready"
+    assert all("start-server" not in cmd for cmd in native)
+
+
+def test_persistent_initial_host_timeout_is_bounded_and_diagnosed(backend, monkeypatch):
+    runtime, clock, native, _ = backend
+    budgets, diagnostics = [], []
+    runtime._diagnostic = diagnostics.append
+
+    def capture(*_args, **kwargs):
+        budgets.append(kwargs["timeout"])
+        clock[0] += kwargs["timeout"]
+        return ExecutionResult(kind="timeout")
+
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.start()
+    assert runtime.wait(2)
+    assert len(budgets) == 2 and sum(budgets) <= 3.0
+    assert runtime.snapshot().status == "host_timeout"
+    assert runtime.snapshot().effective_native_only
+    assert any("timeout" in message for message in diagnostics)
+    assert native == []
+
+
+def test_shutdown_during_first_probe_does_not_retry(backend, monkeypatch):
+    runtime, _, native, _ = backend
+    calls = []
+
+    def capture(*_args, **_kwargs):
+        calls.append(True)
+        runtime.prepare_shutdown()
+        return ExecutionResult(kind="timeout")
+
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.start()
+    assert runtime.wait(2)
+    assert len(calls) == 1
+    assert native == []
+
+
+@pytest.mark.parametrize("invalidate", [False, True])
+def test_retry_rechecks_budget_and_state_after_notification(backend, monkeypatch, invalidate):
+    runtime, clock, _, _ = backend
+    calls = []
+
+    def capture(*_args, **kwargs):
+        calls.append(kwargs["timeout"])
+        clock[0] += kwargs["timeout"]
+        return ExecutionResult(kind="timeout")
+
+    def changed(snapshot):
+        if snapshot.status == "retrying":
+            if invalidate:
+                runtime.observe_devices(LISTING.decode())
+            else:
+                clock[0] += 3.0
+
+    runtime._changed = changed
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.start() and runtime.wait(2)
+    assert calls == [1.0]
+
+
+@pytest.mark.parametrize("failure", [
+    ExecutionResult(kind="transport"),
+    ExecutionResult(stderr=b"native startup failed", returncode=1),
+])
+def test_invalid_native_benchmark_keeps_verified_fast_backend(backend, monkeypatch, failure):
+    runtime, clock, native, _ = backend
+
+    def failed(cmd, _timeout, _cancelled):
+        native.append(cmd)
+        clock[0] += 0.001
+        return failure
+
+    monkeypatch.setattr(module, "native_capture", failed)
+    prepare(runtime)
+    clock[0] += 11
+    runtime.request_device_check()
+    assert runtime.wait(2)
+    assert runtime.can_scan_fast()
+    assert runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+    assert len(native) == 2
+
+
+@pytest.mark.parametrize("cold_command", ["devices", "shell"])
+def test_cold_sample_is_confirmed_before_selecting_native(backend, monkeypatch, cold_command):
+    runtime, clock, _, _ = backend
+    calls = {"devices": 0, "shell": 0}
+
+    def capture(command, _args, **_kwargs):
+        calls[command] += 1
+        clock[0] += 0.9 if command == cold_command and calls[command] == 1 else 0.005
+        return ExecutionResult(LISTING) if command == "devices" else PROBE
+
+    def native(cmd, _timeout, _cancelled):
+        clock[0] += 0.2
+        return PROBE if "shell" in cmd else ExecutionResult(LISTING)
+
+    monkeypatch.setattr(module, "capture", capture)
+    monkeypatch.setattr(module, "native_capture", native)
+    prepare(runtime)
+    assert calls[cold_command] == 2
+
+
+def test_manual_fast_switch_overrides_speed_preference_immediately(backend, monkeypatch):
+    runtime, clock, _, calls = backend
+
+    def native(cmd, _timeout, _cancelled):
+        clock[0] += 0.001
+        return PROBE if "shell" in cmd else ExecutionResult(LISTING)
+
+    monkeypatch.setattr(module, "native_capture", native)
+    assert runtime.start() and runtime.wait(2)
+    assert runtime.snapshot().effective_native_only
+    count = len(calls)
+    runtime.set_native_only(False)
+    assert runtime.snapshot().selection_mode == "fast"
+    assert not runtime.snapshot().effective_native_only
+    assert runtime.can_scan_fast()
+    assert runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+    assert len(calls) == count
+    runtime.set_native_only(True)
+    assert runtime.snapshot().effective_native_only
+    assert runtime.try_run(["C:/test/adb.exe", "devices"], 5) is None
+    assert len(calls) == count
+
+
+def test_explicit_recheck_restores_automatic_selection(backend):
+    runtime, _, _, _ = backend
+    prepare(runtime)
+    runtime.set_native_only(True)
+    assert runtime.recheck() and runtime.wait(2)
+    assert runtime.snapshot().selection_mode == "auto"
+    assert not runtime.snapshot().effective_native_only
+
+
+def test_manual_choice_during_benchmark_survives_detection_completion(backend, monkeypatch):
+    runtime, _, _, _ = backend
+    entered, release = threading.Event(), threading.Event()
+    original = module.native_capture
+
+    def native(*args):
+        entered.set()
+        assert release.wait(2)
+        return original(*args)
+
+    monkeypatch.setattr(module, "native_capture", native)
+    try:
+        assert runtime.start() and entered.wait(1)
+        runtime.set_native_only(True)
+        release.set()
+        assert runtime.wait(2)
+        assert runtime.snapshot().native_only
+        assert runtime.snapshot().selection_mode == "native"
+        assert runtime.snapshot().effective_native_only
+    finally:
+        release.set()
+        assert runtime.wait(2)
+
+
+def test_replaced_device_does_not_receive_capability_retry(backend, monkeypatch):
+    runtime, clock, _, _ = backend
+    original = module.capture
+    old_calls = []
+
+    def capture(command, args, **kwargs):
+        if command == "shell" and kwargs["serial"] == "fake-device":
+            old_calls.append(True)
+            runtime.observe_devices("List of devices attached\nnew-device device transport_id:2\n")
+            clock[0] += kwargs["timeout"]
+            return ExecutionResult(kind="timeout")
+        if command == "devices" and old_calls:
+            clock[0] += 0.01
+            return ExecutionResult(b"List of devices attached\nnew-device device transport_id:2\n")
+        return original(command, args, **kwargs)
+
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.start() and runtime.wait(2)
+    assert len(old_calls) == 1
+    assert runtime.can_shell_fast("C:/test/adb.exe", "new-device")
+
+
+def test_many_unresponsive_devices_finish_one_bounded_detection(backend, monkeypatch):
+    runtime, clock, native, _ = backend
+    calls = []
+    listing = b"List of devices attached\n" + b"".join(
+        f"fake-{i} device transport_id:{i}\n".encode() for i in range(6)
+    )
+
+    def capture(command, _args, **kwargs):
+        if command == "devices":
+            clock[0] += 0.01
+            return ExecutionResult(listing)
+        calls.append(kwargs["serial"])
+        clock[0] += kwargs["timeout"]
+        if len(calls) > 12:
+            runtime.prepare_shutdown()
+        return ExecutionResult(kind="timeout")
+
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.start() and runtime.wait(2)
+    assert len(calls) == 12
+    assert not runtime.snapshot().checking
+    assert runtime.snapshot().checked_devices == 6
+    assert len(native) == 1
+
+
+@pytest.mark.parametrize("kind", ["timeout", "transport", "protocol"])
+def test_failed_warm_sample_does_not_commit_cold_native_preference(backend, monkeypatch, kind):
+    runtime, clock, _, _ = backend
+    counts = {"devices": 0, "shell": 0}
+
+    def capture(command, _args, **_kwargs):
+        counts[command] += 1
+        clock[0] += 0.9 if counts[command] == 1 else 0.01
+        if counts[command] > 1:
+            return ExecutionResult(kind=kind)
+        return ExecutionResult(LISTING) if command == "devices" else PROBE
+
+    def native(cmd, _timeout, _cancelled):
+        clock[0] += 0.2
+        return PROBE if "shell" in cmd else ExecutionResult(LISTING)
+
+    monkeypatch.setattr(module, "capture", capture)
+    monkeypatch.setattr(module, "native_capture", native)
+    prepare(runtime)
+
+
+def test_native_timeout_without_sufficient_advantage_keeps_verified_capability(
+    backend, monkeypatch
+):
+    runtime, clock, _, _ = backend
+
+    def capture(command, _args, **_kwargs):
+        clock[0] += 1.9
+        return ExecutionResult(LISTING) if command == "devices" else PROBE
+
+    monkeypatch.setattr(module, "capture", capture)
+    prepare(runtime)
+
+
+def test_late_warm_listing_does_not_replace_a_newer_device_snapshot(backend, monkeypatch):
+    runtime, clock, _, _ = backend
+    host_calls = []
+    newer = b"List of devices attached\nnew-device device transport_id:2\n"
+
+    def capture(command, _args, **_kwargs):
+        if command == "devices":
+            host_calls.append(True)
+            clock[0] += 0.9 if len(host_calls) == 1 else 0.005
+            if len(host_calls) == 2:
+                runtime.observe_devices(newer.decode())
+            return ExecutionResult(LISTING)
+        clock[0] += 0.005
+        return PROBE
+
+    def native(cmd, _timeout, _cancelled):
+        clock[0] += 0.2
+        return PROBE if "shell" in cmd else ExecutionResult(LISTING)
+
+    monkeypatch.setattr(module, "capture", capture)
+    monkeypatch.setattr(module, "native_capture", native)
+    assert runtime.start() and runtime.wait(2)
+    assert runtime.can_shell_fast("C:/test/adb.exe", "new-device")
+    assert not runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+
+
+def test_superseded_recheck_finishes_without_stale_checking_status(backend, monkeypatch):
+    runtime, _, _, _ = backend
+    prepare(runtime)
+
+    def capture(command, _args, **_kwargs):
+        if command == "devices":
+            runtime.observe_devices("List of devices attached\n")
+            return ExecutionResult(LISTING)
+        return PROBE
+
+    monkeypatch.setattr(module, "capture", capture)
+    assert runtime.recheck() and runtime.wait(2)
+    snapshot = runtime.snapshot()
+    assert not snapshot.checking
+    assert snapshot.status == "ready"
+    assert snapshot.checked_devices == 0
+
+
 @pytest.fixture
 def backend(monkeypatch):
     for key in (
@@ -636,9 +940,12 @@ def test_plain_devices_request_triggers_due_capability_check(backend, monkeypatc
     assert after == before + 1
 
 
-def test_native_preference_survives_health_checks_and_recovery(backend, monkeypatch):
+@pytest.mark.parametrize("mode", ["auto", "fast"])
+def test_native_preference_survives_health_checks_and_recovery(backend, monkeypatch, mode):
     runtime, clock, native, socket_calls = backend
     original_capture = module.capture
+    diagnostics = []
+    runtime._diagnostic = diagnostics.append
 
     def fast_native(cmd, timeout, cancelled):
         native.append(cmd)
@@ -651,6 +958,7 @@ def test_native_preference_survives_health_checks_and_recovery(backend, monkeypa
     assert runtime.snapshot().available
     assert not runtime.snapshot().fast_devices
     assert runtime.snapshot().fast_shell_devices == 0
+    runtime.set_mode(mode)
     shell_count = sum(command == "shell" for command, _, _ in socket_calls)
     clock[0] += 11
     runtime.request_device_check()
@@ -666,8 +974,10 @@ def test_native_preference_survives_health_checks_and_recovery(backend, monkeypa
     runtime.request_device_check()
     assert runtime.wait(2)
     assert runtime.snapshot().available
-    assert not runtime.snapshot().fast_devices
-    assert runtime.snapshot().fast_shell_devices == 0
+    assert runtime.snapshot().fast_devices == (mode == "fast")
+    assert runtime.snapshot().fast_shell_devices == int(mode == "fast")
+    for command in ("devices", "shell"):
+        assert f"ADB recovery {command} fast={mode == 'fast'} benchmark=cached" in diagnostics
     assert len(native) == 2
 
 

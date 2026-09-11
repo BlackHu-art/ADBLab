@@ -6,6 +6,7 @@ import io
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -13,7 +14,15 @@ from unittest.mock import Mock
 import pytest
 
 from core.exec import ProcessRunner
+from services import mobileperf_runner as runner_module
 from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
+
+
+def _wait_for_mode(path: Path, expected: str) -> None:
+    deadline = time.monotonic() + 2
+    while not path.exists() or path.read_text(encoding="utf-8") != expected:
+        assert time.monotonic() < deadline, "mode file was not published"
+        threading.Event().wait(0.01)
 
 
 class _CountingStream:
@@ -358,3 +367,263 @@ def test_mobileperf_runner_old_stop_never_writes_new_generation_stop_file(tmp_pa
     old_stdout.release.set()
     new_stdout.release.set()
     runner.stop(timeout=0)
+
+
+def test_runner_publishes_live_mode_off_caller_thread_and_joins_writer(tmp_path, monkeypatch):
+    """运行中的模式文件随后台状态更新，完成通知前同步线程与临时目录均释放。"""
+    mode = ["native"]
+    runtime = SimpleNamespace(snapshot=lambda: SimpleNamespace(selection_mode=mode[0]))
+    monkeypatch.setattr(runner_module, "adb_runtime", lambda: runtime)
+    stream = _DelayedStream([])
+    process = _StoppableProcess(stream, None)
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.return_value = process
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    finished = threading.Event()
+    published = threading.Event()
+    writes = []
+    original = runner_module.os.replace
+
+    def replace(source, destination):
+        original(source, destination)
+        path = Path(destination)
+        if path.name == "mobileperf.adb-mode":
+            writes.append((path.read_text(encoding="utf-8"), threading.current_thread()))
+            published.set()
+
+    monkeypatch.setattr(runner_module.os, "replace", replace)
+    runner.start(MobilePerfRunConfig(), on_finished=finished.set)
+    context = runner._active_context
+    assert context is not None
+    env = process_runner.start.call_args.kwargs["env"]
+    path = Path(env["MOBILEPERF_ADB_MODE_FILE"])
+    try:
+        assert published.wait(2)
+        assert path.read_text(encoding="utf-8") == "native"
+        for next_mode in ("fast", "auto"):
+            published.clear()
+            mode[0] = next_mode
+            assert published.wait(2)
+            assert path.read_text(encoding="utf-8") == next_mode
+        assert [value for value, _thread in writes] == ["native", "fast", "auto"]
+        assert all(thread is not threading.current_thread() for _value, thread in writes)
+    finally:
+        process.returncode = 0
+        stream.release.set()
+        runner.stop(timeout=0)
+    assert finished.wait(2)
+    assert context.mode_thread is not None and not context.mode_thread.is_alive()
+    assert not path.parent.exists()
+
+
+def test_old_mode_writer_cannot_modify_new_run_file(tmp_path, monkeypatch):
+    """旧代写入延迟到新采集开始后完成时，只能落入旧临时目录。"""
+    mode = ["auto"]
+    runtime = SimpleNamespace(snapshot=lambda: SimpleNamespace(selection_mode=mode[0]))
+    monkeypatch.setattr(runner_module, "adb_runtime", lambda: runtime)
+    first_stream, second_stream = _DelayedStream([]), _DelayedStream([])
+    first = _StoppableProcess(first_stream, None)
+    second = _StoppableProcess(second_stream, None)
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.side_effect = [first, second]
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    entered, release, written = threading.Event(), threading.Event(), threading.Event()
+    runner.start(MobilePerfRunConfig())
+    old_context = runner._active_context
+    assert old_context is not None
+    old_path = Path(process_runner.start.call_args.kwargs["env"]["MOBILEPERF_ADB_MODE_FILE"])
+    _wait_for_mode(old_path, "auto")
+    original = runner_module.os.replace
+
+    def replace(source, destination):
+        if Path(destination) == old_path:
+            entered.set()
+            assert release.wait(3)
+        original(source, destination)
+        if Path(destination) == old_path:
+            written.set()
+
+    monkeypatch.setattr(runner_module.os, "replace", replace)
+    try:
+        mode[0] = "fast"
+        assert entered.wait(2)
+        first.returncode = 0
+        mode[0] = "native"
+        runner.start(MobilePerfRunConfig())
+        new_context = runner._active_context
+        assert new_context is not None
+        new_path = Path(process_runner.start.call_args.kwargs["env"]["MOBILEPERF_ADB_MODE_FILE"])
+        _wait_for_mode(new_path, "native")
+        assert new_path != old_path
+        release.set()
+        assert written.wait(2)
+        assert new_path.read_text(encoding="utf-8") == "native"
+        first_stream.release.set()
+        runner._join_context_readers(old_context, timeout=2)
+        assert not old_path.parent.exists()
+        assert new_path.exists()
+    finally:
+        release.set()
+        first_stream.release.set()
+        second.returncode = 0
+        second_stream.release.set()
+        runner.stop(timeout=0)
+
+
+def test_mode_write_failure_retries_without_publishing_partial_mode(tmp_path, monkeypatch):
+    mode = ["native"]
+    runtime = SimpleNamespace(snapshot=lambda: SimpleNamespace(selection_mode=mode[0]))
+    monkeypatch.setattr(runner_module, "adb_runtime", lambda: runtime)
+    stream = _DelayedStream([])
+    process = _StoppableProcess(stream, None)
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.return_value = process
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    runner.start(MobilePerfRunConfig())
+    path = Path(process_runner.start.call_args.kwargs["env"]["MOBILEPERF_ADB_MODE_FILE"])
+    _wait_for_mode(path, "native")
+    failed, retry, published = threading.Event(), threading.Event(), threading.Event()
+    original = runner_module.os.replace
+
+    def replace(source, destination):
+        if Path(destination) == path:
+            if not failed.is_set():
+                failed.set()
+                raise PermissionError("simulated mode-file contention")
+            assert retry.wait(3)
+        original(source, destination)
+        if Path(destination) == path:
+            published.set()
+
+    monkeypatch.setattr(runner_module.os, "replace", replace)
+    try:
+        mode[0] = "fast"
+        assert failed.wait(2)
+        assert path.read_text(encoding="utf-8") == "native"
+        retry.set()
+        assert published.wait(2)
+        assert path.read_text(encoding="utf-8") == "fast"
+    finally:
+        retry.set()
+        process.returncode = 0
+        stream.release.set()
+        runner.stop(timeout=0)
+
+
+def test_stop_retains_context_until_delayed_mode_write_finishes(tmp_path, monkeypatch):
+    """文件系统写入延迟时保留完成屏障，停止调用沿用有界reader等待。"""
+    mode = ["auto"]
+    runtime = SimpleNamespace(snapshot=lambda: SimpleNamespace(selection_mode=mode[0]))
+    monkeypatch.setattr(runner_module, "adb_runtime", lambda: runtime)
+    stream = _DelayedStream([])
+    process = _StoppableProcess(stream, None)
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.return_value = process
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    finished = threading.Event()
+    runner.start(MobilePerfRunConfig(), on_finished=finished.set)
+    context = runner._active_context
+    assert context is not None
+    path = Path(process_runner.start.call_args.kwargs["env"]["MOBILEPERF_ADB_MODE_FILE"])
+    _wait_for_mode(path, "auto")
+    entered, release, stopped = threading.Event(), threading.Event(), threading.Event()
+    original = runner_module.os.replace
+
+    def replace(source, destination):
+        if Path(destination) == path:
+            entered.set()
+            assert release.wait(4)
+        original(source, destination)
+
+    monkeypatch.setattr(runner_module.os, "replace", replace)
+
+    def stop():
+        runner.stop(timeout=0)
+        stopped.set()
+
+    stopping = threading.Thread(target=stop)
+    try:
+        mode[0] = "fast"
+        assert entered.wait(2)
+        stream.release.set()
+        stopping.start()
+        assert stopped.wait(2)
+        assert not finished.is_set()
+        assert path.parent.exists()
+        assert runner.is_running(), "关闭监督器必须能看到尚未退出的非 daemon 模式线程"
+        release.set()
+        assert finished.wait(2)
+        assert context.mode_thread is not None
+        context.mode_thread.join(1)
+        assert not context.mode_thread.is_alive()
+        assert not path.parent.exists()
+        assert not runner.is_running()
+    finally:
+        release.set()
+        process.returncode = 0
+        stream.release.set()
+        if stopping.ident is not None:
+            stopping.join(2)
+        runner.stop(timeout=0)
+
+
+def test_retired_mode_writer_stays_visible_after_new_run_finishes(tmp_path, monkeypatch):
+    """旧代慢写入不能因新代先退出而脱离监督，空进程停止仍有界等待这些线程。"""
+    mode = ["auto"]
+    runtime = SimpleNamespace(snapshot=lambda: SimpleNamespace(selection_mode=mode[0]))
+    monkeypatch.setattr(runner_module, "adb_runtime", lambda: runtime)
+    first_stream, second_stream = _DelayedStream([]), _DelayedStream([])
+    first = _StoppableProcess(first_stream, None)
+    second = _StoppableProcess(second_stream, None)
+    process_runner = Mock(spec=ProcessRunner)
+    process_runner.start.side_effect = [first, second]
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    entered, release = threading.Event(), threading.Event()
+    runner.start(MobilePerfRunConfig())
+    old_context = runner._active_context
+    assert old_context is not None
+    old_path = Path(old_context.mode_path)
+    _wait_for_mode(old_path, "auto")
+    original = runner_module.os.replace
+
+    def replace(source, destination):
+        if Path(destination) == old_path:
+            entered.set()
+            assert release.wait(5)
+        original(source, destination)
+
+    monkeypatch.setattr(runner_module.os, "replace", replace)
+    new_context = None
+    try:
+        mode[0] = "fast"
+        assert entered.wait(2)
+        first.returncode = 0
+        mode[0] = "native"
+        runner.start(MobilePerfRunConfig())
+        new_context = runner._active_context
+        assert new_context is not None and new_context is not old_context
+        _wait_for_mode(Path(new_context.mode_path), "native")
+        second.returncode = 0
+        second_stream.release.set()
+        runner._join_context_readers(new_context, timeout=2)
+        assert runner._active_context is None
+        first_stream.release.set()
+        assert runner.is_running(), "旧代 writer 仍是 runner 拥有的活动资源"
+        started = time.monotonic()
+        runner.stop(timeout=0)
+        assert time.monotonic() - started < 2
+        assert old_context.mode_stop.is_set()
+        assert runner.is_running()
+        release.set()
+        runner._join_context_readers(old_context, timeout=2)
+        assert not runner.is_running()
+        assert not old_path.parent.exists()
+    finally:
+        release.set()
+        first.returncode = second.returncode = 0
+        first_stream.release.set()
+        second_stream.release.set()
+        runner._join_context_readers(old_context, timeout=2)
+        if new_context is not None:
+            runner._join_context_readers(new_context, timeout=2)
+        runner.stop(timeout=0)

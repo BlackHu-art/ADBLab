@@ -366,12 +366,13 @@ class MainFrame(FluentWindow):
         self._adb_environment.ready.connect(self._start_device_discovery)
         self._adb_environment.changed.connect(self._update_adb_environment)
         self._adb_environment.diagnostic.connect(self._log_adb_environment)
+        self._update_adb_environment(self._adb_environment.snapshot())
         self._adb_environment.schedule()
 
     def _log_adb_environment(self, message: str) -> None:
-        """后台诊断经主线程写日志，内容只有能力和耗时。"""
+        """后台诊断经主线程进入诊断记录，源码与打包环境均保留能力和耗时。"""
         if not self._closing:
-            self.log_service.log("DEBUG", message)
+            self.log_service.record_runtime_diagnostic(message)
 
     def _update_adb_environment(self, snapshot) -> None:
         """显示执行范围与检测状态，不把性能策略当作设备在线状态。"""

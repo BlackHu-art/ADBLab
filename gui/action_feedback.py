@@ -103,19 +103,22 @@ class ActionFeedbackPresenter(QObject):
             )
 
     def _diagnostics_changed(self, *, notify: bool = True) -> None:
-        """应用异常在设置页留摘要并后台保存；普通命令输出不会进入这里。"""
+        """所有诊断后台保存；仅警告及以上更新异常摘要并触发异常提示。"""
         journal = self.frame.log_service.diagnostics
         if not journal.entries:
             return
         self.frame._settings_page.diagnostics_card.button.setEnabled(True)
         self.frame.run_library.save_diagnostics(journal.text())
-        self.frame._settings_page.diagnostics_card.setContent(
-            tr("本次保留 {count} 条异常摘要；最近：{message}").format(
-                count=len(journal.entries),
-                message=journal.entries[-1][2][:100],
+        warning_levels = {"WARNING", "ERROR", "CRITICAL"}
+        warnings = [entry for entry in journal.entries if entry[1] in warning_levels]
+        content = tr("本次运行尚无应用异常记录")
+        if warnings:
+            content = tr("本次保留 {count} 条异常摘要；最近：{message}").format(
+                count=len(warnings), message=warnings[-1][2][:100],
             )
-        )
-        if notify and not self.frame._closing:
+        self.frame._settings_page.diagnostics_card.setContent(content)
+        # 运行时 INFO 也会刷新诊断文件，不能据此重复提示之前保留的异常。
+        if notify and journal.entries[-1][1] in warning_levels and not self.frame._closing:
             show_toast(
                 self.frame,
                 tr("应用提示"),

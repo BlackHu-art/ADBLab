@@ -1083,7 +1083,8 @@ class SettingsPage(ScrollArea):
         )
         self.adb_native_card = _LocalizedSwitchSettingCard(
             FluentIcon.COMMAND_PROMPT, tr("使用原生 ADB"),
-            tr("仅本次运行生效；关闭后自动选择兼容且更快的执行方式"), parent=maintenance,
+            tr("仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择"),
+            parent=maintenance,
         )
         self.adb_native_card.switchButton.setOnText(tr("开"))
         self.adb_native_card.switchButton.setOffText(tr("关"))
@@ -1155,24 +1156,39 @@ class SettingsPage(ScrollArea):
         self._refresh_typography()
 
     def update_adb_environment(self, snapshot) -> None:
-        """按可用能力显示加速范围，检查中也允许已验证的方式继续工作。"""
-        if snapshot.native_only:
-            content = tr("当前使用原生 ADB")
-        elif snapshot.fast_devices or snapshot.fast_shell_devices:
-            content = tr("快速执行：设备发现 {devices}，Shell {count} 台设备").format(
+        """投影当前模式、有效能力与检测原因；程序同步开关不反写用户策略。"""
+        with QSignalBlocker(self.adb_native_card):
+            self.adb_native_card.setChecked(snapshot.effective_native_only)
+        mode = {
+            "auto": tr("自动选择"),
+            "fast": tr("手动快速"),
+            "native": tr("手动原生"),
+        }[snapshot.selection_mode]
+        if snapshot.fast_devices or snapshot.fast_shell_devices:
+            scope = tr("快速执行：设备发现 {devices}，Shell {count} 台设备").format(
                 devices=tr("已启用") if snapshot.fast_devices else tr("未启用"),
                 count=snapshot.fast_shell_devices,
             )
-        elif snapshot.checking:
-            content = tr("正在检查执行环境")
-        elif snapshot.available:
-            content = tr("当前使用原生 ADB")
         else:
-            content = tr("快速执行不可用，保留原生 ADB")
-        if snapshot.checking and (snapshot.fast_devices or snapshot.fast_shell_devices):
-            content += tr("；正在完成性能检测")
-        self.adb_check_card.setContent(content)
+            scope = tr("当前使用原生 ADB")
+        status = {
+            "idle": tr("等待执行环境检测"),
+            "checking": tr("正在检查执行环境"),
+            "retrying": tr("正在恢复执行环境"),
+            "ready": tr("执行环境已就绪"),
+            "missing_adb": tr("未找到 ADB，请检查安装环境"),
+            "custom_server": tr("已配置自定义 ADB 服务，保留原生执行"),
+            "host_timeout": tr("本机 ADB 服务响应超时，可重新检测"),
+            "host_unavailable": tr("本机 ADB 服务不可用，可重新检测或重启服务"),
+            "host_protocol": tr("本机 ADB 服务协议不兼容，保留原生执行"),
+            "host_transport": tr("本机 ADB 服务通信异常，可重新检测"),
+            "shell_unavailable": tr("部分设备 Shell 未通过验证，保留原生执行"),
+        }[snapshot.status]
+        self.adb_check_card.setContent(
+            tr("{mode}；{scope}；{status}").format(mode=mode, scope=scope, status=status)
+        )
         self.adb_check_card.button.setEnabled(not snapshot.checking)
+        self._reflow_settings()
 
     def _refresh_typography(self, _config=None) -> None:
         """设置字号本身也可即时阅读；仅更新呈现，不触发任何配置写入。"""
@@ -1372,7 +1388,8 @@ class _LocalizedSwitchSettingCard(SwitchSettingCard):
         # 上游 setValue 会覆盖 SwitchButton.onText/offText；恢复默认和手动
         # 切换都会经过此边界，因此在原生更新后统一还原当前语言并重新度量。
         super().setValue(isChecked)
-        self.switchButton.setText(tr("开") if isChecked else tr("关"))
+        # 同步策略可能在 checkedChanged 内修正有效状态，标签必须读取最终投影。
+        self.switchButton.setText(tr("开") if self.isChecked() else tr("关"))
 
 
 class ComboSettingCard(SettingCard):
