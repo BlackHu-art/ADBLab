@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-12
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -100,7 +100,10 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 
 ## 文件型存储与设置字段
 
-应用使用 JSON、YAML 与结果文件持久化，没有数据库或跨文件事务。
+应用使用 JSON、YAML 与结果文件持久化，没有数据库或跨文件事务。用户配置根目录由
+`utils/user_data.py` 决定（Windows 为 `%LOCALAPPDATA%\ADBLab`，非 Windows 为
+`$XDG_CONFIG_HOME/ADBLab` 或 `~/.config/ADBLab`），应用设置、设备历史和测试结果文件都存放在
+其 `config/` 子目录。
 
 ### 文件型存储
 
@@ -108,14 +111,14 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | --- | --- | --- | --- | --- | --- |
 | 应用设置 | JSON；用户配置目录 `app_settings.json` | `core.settings_manager.DEFAULTS` 白名单键，顶层携带 `schema_version`（当前 3） | `AppSettings._load/_save_atomic/get/set/update/set_many/reset` | RLock 保护数据、计时器和快照；写锁串行保存并在锁后取最新快照；批量更新只安排一次 500ms 防抖保存；独立临时文件 + `os.replace` | 跨进程没有文件锁；`get()` 不复制嵌套可变值；`schema_version` 由加载/保存托管，`update()` 写入被忽略；受支持版本的未知键加载时剔除并记录 WARNING；未来版本在加载时不立即改写，未知字段经 `_future_extra` 在保存时合并回写 |
 | 旧应用设置 | `resources/app_settings.json` | 首次安装兼容种子；不含本机保存路径，但仍带字体、主题和窗口尺寸等旧默认值 | AppSettings 首次迁移 | 只在用户文件不存在时读取；已知键经当前规则规范化后原子写入用户目录 | 与 `DEFAULTS` 存在差异，修改默认值时需同步评估首次安装行为 |
-| IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<id>` | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
+| IP 连接历史 | YAML；用户配置目录 `connected_devices.yaml` | alias → 含 `ip`、`Brand`、`Model`、`Aversion` 的属性字典；默认 alias 为 `device_<ip>` | `DeviceStore.load/save/upsert_devices` | 同一 RLock 内读写；临时文件 + fsync + `os.replace`；损坏文件备份 | 地址属敏感元数据；无 schema/version；历史条目不代表当前在线或已选中 |
 | 旧设备元数据 | `resources/connected_devices.yaml` | 空映射占位（ADR-0006 清空当前种子文件中的设备标识） | DeviceStore 首次迁移 | 无用户文件时加载；空快照不写用户文件 | 当前种子不含设备记录；这一事实不等于日志、结果文件或 Git 历史已完成隐私审计 |
 | App Manager 预设 | 用户选择的 JSON | name/author/description/selected_packages | `AppManagerPage._create_preset/_load_preset` | UTF-8 读写、结构校验和异常提示 | 无 schema；保存为直接覆盖，非原子写 |
-| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
+| 测试结果与命名方案 | JSON；用户配置目录 `test_runs.json` | version=1、runs、presets；结果包含类型、包、可用版本与型号、起止时间、终态、参数和显式本地附件路径；结果与方案参数拒绝 `device_id`/`device_ip`/`serialnum`/`serial_number` 等设备身份键 | `services/run_library.py`、`gui/run_library.py` | 单进程后台串行；临时文件 + fsync + os.replace，成功后发布快照 | 最近 200 条结果、50 个方案、单文件 4 MiB、参数 16 KiB；损坏或未来版本只读保护；多实例没有合并协议；淘汰索引不删除产物 |
 | MobilePerf 临时配置 | 临时目录 `mobileperf_run.conf`，同目录 `mobileperf.stop`、`mobileperf.adb-mode` | INI sections/values；停止文件只作退出信号；模式文件仅为 auto/fast/native | `MobilePerfRunConfig.write_config`、`MobilePerfRunner`、`StartUp.parse_data_from_config`、`MobilePerfAdbExecutor` | 每次运行独立临时目录；模式由后台线程通过同目录临时文件原子发布 | 子进程退出、输出 reader 和模式线程收口后由适配层清理；启动失败也清理；配置包含设备/包/路径，模式不进入用户设置 |
 | MobilePerf 结果 | 用户结果目录 | CSV/XLSX/txt/log/heapdump | 各 monitor、`Report`、`StartUp.pull_*` | 各文件独立写入，无事务 | 可能包含设备和业务敏感数据；无保留/加密策略 |
 | 截图/视频/诊断 | 用户保存目录 | PNG/MP4/ZIP/txt/目录 | ADBTesting/Advanced、Controller、功能页 | 单文件/目录操作 | 无统一配额、保留或访问控制 |
-| 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录 + 第一层条目类型/文件大小校验，失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
+| 运行时工具缓存 | Windows：`LOCALAPPDATA/<APP>/runtime/<version>`；非 Windows：`XDG_CACHE_HOME` 或 `~/.cache` 下的应用缓存目录 | adb/scrcpy bundle | `utils.runtime_tools.bundled_tool_path` | 仅 frozen onefile 解压场景使用；版本化目录；默认按第一层条目类型和文件大小校验，scrcpy 桥接使用 `verify_tree` 递归比较大小与 SHA-256 内容摘要；失配时覆盖复制；不复用 `user_data_root()` 的配置目录语义；开发模式和 onedir 直接返回资源路径 | 完整性/签名只依赖打包来源；清理策略待确认 |
 
 ### 测试结果与方案
 
@@ -140,7 +143,9 @@ DeviceStore 的读取、快照和写入位于同一可重入锁域，并使用�
 | 显示缩放 | `ui_scale` | GUI 创建 QApplication 前读取；Auto 保留系统/外部环境，数值接受 1、1.25、1.5、1.75、2，无效值回退 Auto；设置后重启生效，不修改 schema v3 |
 | 界面语言 | `language` | Auto、zh_CN、zh_HK、en_US；无效值回退 Auto。设置页保存后提示重启，恢复默认回填 Auto；启动时按系统中文脚本/地区选择简繁中文，其他系统语言回退英文。只增加正式默认键，沿用 schema v3 |
 | 窗口 | `window_width`、`window_height`、`always_on_top`；旧分栏键仅在设置层保留 | MainFrame、SettingsPage；默认 1250×700、设计最小 860×500；屏幕工作区不足时由 `gui/window_layout.py` 下调实际最小尺寸 |
-| 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsPage |
+| 行为 | `continuous_device_scan`、`device_scan_interval_ms`、`confirm_dangerous_ops`（兼容保留，不再驱动弹窗） | MainFrame/SettingsPage；其中 `device_scan_interval_ms` 仅由 MainFrame 读取，`confirm_dangerous_ops` 无生产消费者 |
+| ADB 客户端 | `adb_client` | 设置页「ADB 维护 → 客户端」选定的本地 ADB 客户端：`auto`（默认，按内置 → `ADB_PATH` → Android SDK → PATH）或命名来源/绝对路径；启动时注入 `utils/adb_resolver.set_client_preference()`，切换时清空解析与短命令两层缓存并重新检测 |
+| 控制台日志 | `console_log_level` | 源码运行时的开发控制台阈值：DEBUG（默认，保留现状）/INFO/WARNING/ERROR/OFF；环境变量 `ADBLAB_CONSOLE_LOG_LEVEL` 优先于配置，启动时读取；只过滤控制台显示层，界面缓冲、诊断摘要、诊断落盘与采集日志不受影响 |
 | 日志/性能 | `log_max_lines`、`performance_log_threshold_ms` | 前者由设置页写入并限制性能采集文本缓冲，后者用于 `core.exec`/Controller 的慢操作诊断；通用任务正文容量由 [OPERATION_RESULTS](../guides/OPERATION_RESULTS.md#状态与资源边界) 单独维护 |
 | 文件 | `save_directory` | 截图、日志、备份、MobilePerf、文件浏览器 |
 | Monkey | `monkey_params` | AppPanel/Controller |
@@ -181,7 +186,8 @@ flowchart TD
 
 - 通用结果正文、显示预览及应用异常采用独立边界，容量、导出和保存位置见
   [操作结果与应用诊断](../guides/OPERATION_RESULTS.md)。LogService 的技术传输缓冲上限仍为
-  5,000 条，溢出累计计数由 `dropped_count` 提供；页面不再依赖全局日志看板。
+  5,000 条，溢出累计计数由 `dropped_count` 提供；页面不再依赖全局日志看板。诊断摘要在后台
+  原子写入用户数据目录的 `logs/application-diagnostics.log`（`gui/run_library.py`）。
 - AppSettings 当前使用 schema v3；DeviceStore 没有 schema/version，两者都没有保留期策略。
 - 截图、视频、bugreport、备份、MobilePerf 报告由用户选择目录，应用不会统一清理。
 - MobilePerf 启动时，`StartUp.clear_heapdump()` 列取设备 `/data/local/tmp`，对文件名包含第一个

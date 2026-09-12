@@ -1368,6 +1368,23 @@ def test_automatic_recovery_and_manual_retest_do_not_restart_server(backend, mon
     assert all("start-server" not in cmd for cmd in native)
 
 
+def test_external_server_restart_invalidates_capability_and_reprobes(backend):
+    """重启本机 ADB 服务后立即作废能力并重测，避免沿用已断开的直连状态。"""
+
+    runtime, _clock, _native, captures = backend
+    assert runtime.start()
+    assert runtime.wait(2)
+    assert runtime.can_scan_fast()
+    devices_before = sum(1 for command, _args, _kwargs in captures if command == "devices")
+
+    runtime.note_server_restart()
+    assert runtime.wait(2)
+
+    assert runtime.can_scan_fast()
+    assert runtime.snapshot().status == "ready"
+    assert sum(1 for command, _args, _kwargs in captures if command == "devices") > devices_before
+
+
 @pytest.mark.parametrize("command", ["devices", "shell"])
 def test_old_native_benchmark_cannot_restore_failed_backend(backend, monkeypatch, command):
     runtime, _, _, _ = backend

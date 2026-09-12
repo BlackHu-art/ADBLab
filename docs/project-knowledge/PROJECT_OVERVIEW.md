@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-12
 related: [glossary.md, ARCHITECTURE.md, BUSINESS_FLOW.md, RISKS_AND_DEBT.md]
 ---
 
@@ -24,8 +24,8 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 5. Remote：启动 scrcpy、查看 FPS、发送按键/滑动/旋转和窗口聚焦。
 6. MobilePerf：在隔离子进程中采集 CPU、内存、流量、FPS、FD、线程数和可选 Monkey，输出
    CSV/XLSX 与设备信息，采集结束后展示静态结果图表。
-7. 界面与环境设置：主题、云母效果、字体、显示缩放、窗口适配与多语言，支持查看 ADB 自动适配状态
-   和本次运行的原生模式开关；具体生效时机见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#启动)
+7. 界面与环境设置：主题、云母效果、字体、显示缩放、窗口适配与多语言，支持查看 ADB 自动适配状态、固定本地 ADB 客户端，
+   并选择本次运行的执行模式（自动/手动快速/手动原生）；具体生效时机见 [BUILD_AND_RUN](../guides/BUILD_AND_RUN.md#启动)
    与 [ADB_FAST](../guides/ADB_FAST.md)。
 8. 结果管理：任务中心保留本次操作的逐台结果、正文与附件；Monkey/性能测试另有跨重启归档和命名
    参数方案，支持回填参数而不自动开始测试。应用诊断可在设置页导出。
@@ -39,7 +39,7 @@ logcat、dumpsys、Monkey 和移植版 MobilePerf 组织成图形化工作台，
 - 类型：Qt 桌面应用；MobilePerf、scrcpy、logcat、Monkey 等长任务会派生受控外部进程或线程。
 - 入站接口：没有 Web 服务器、HTTP 路由、RPC 服务或消息消费者。
 - 数据库：没有关系型/文档数据库和 ORM；持久化使用 JSON、YAML 与结果文件。
-- 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）和本地文件系统；主应用没有出站 HTTP 客户端。
+- 主要外部边界：Android ADB server/device、scrcpy、可选 `aapt`、Java/JAR、Perfetto 网站（浏览器打开）、本地文件系统，以及应用更新检查对 GitHub 公共 Releases API 的匿名 HTTPS 只读请求。除该更新检查外，主应用没有其他出站 HTTP 客户端。
 - 主要平台：Windows 是主支持目标并内置 adb/scrcpy；仓库没有 Windows 10/11 的版本兼容矩阵。
   CI 还构建 macOS/Linux，但这两类包不包含 scrcpy，完整功能状态待实机确认。
 

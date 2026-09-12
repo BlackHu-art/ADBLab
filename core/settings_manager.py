@@ -15,6 +15,8 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 from typing import Any
 
+from utils.adb_resolver import CLIENT_SOURCE_TOKENS
+from utils.console_colors import normalise_console_level
 from utils.resource_path import resource_path
 from utils.user_data import user_config_path
 
@@ -92,6 +94,8 @@ DEFAULTS = {
     "log_font_size": 9,
     "save_directory": "",
     "log_max_lines": 2000,
+    "console_log_level": "DEBUG",
+    "adb_client": "auto",
     "confirm_dangerous_ops": True,
     "continuous_device_scan": True,
     "device_scan_interval_ms": 15000,
@@ -142,6 +146,25 @@ def _normalise_integer(value: Any, default: int) -> int:
         return default
 
 
+def _normalise_adb_client(value: Any) -> str:
+    """限定 ADB 客户端选择：自动、命名来源或绝对路径；其余回退自动。
+
+    绝对路径只做形态校验，不检查文件是否存在：盘符临时不可用时不能丢配置，
+    缺失状态由设置界面和运行时诊断显示。
+    """
+
+    if not isinstance(value, str):
+        return DEFAULTS["adb_client"]
+    text = value.strip()
+    if not text:
+        return DEFAULTS["adb_client"]
+    if text in CLIENT_SOURCE_TOKENS:
+        return text
+    if os.path.isabs(text):
+        return text[:512]
+    return DEFAULTS["adb_client"]
+
+
 def _normalise_setting(key: str, value: Any) -> Any:
     """校验需要稳定边界的设置，其他设置保持原有类型与行为。"""
 
@@ -158,6 +181,12 @@ def _normalise_setting(key: str, value: Any) -> Any:
     if key == "log_max_lines":
         count = _normalise_integer(value, DEFAULTS[key])
         return count if count > 0 else DEFAULTS[key]
+
+    if key == "console_log_level":
+        return normalise_console_level(value)
+
+    if key == "adb_client":
+        return _normalise_adb_client(value)
 
     if key == "monkey_params":
         defaults = DEFAULTS[key]

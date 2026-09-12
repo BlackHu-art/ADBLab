@@ -43,6 +43,16 @@ class Connection:
         self._check_cancelled()
         self.deadline = time.monotonic() + timeout
         self.sock = socket.create_connection(("127.0.0.1", 5037), timeout=timeout)
+        self._disable_nagle()
+
+    def _disable_nagle(self) -> None:
+        """关闭 Nagle 合并：ADB 是小请求—小响应的往返协议，合并写会放大单条命令延迟。"""
+
+        try:
+            self.sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except (OSError, AttributeError):
+            # 测试替身或平台不支持时保持默认行为，不影响命令执行。
+            pass
 
     def close(self) -> None:
         """释放本地连接；不保证设备端已脱离会话的后台进程被终止。"""

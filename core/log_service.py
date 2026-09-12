@@ -9,7 +9,7 @@ from typing import Optional
 from PySide6.QtCore import QMutex, QObject, Qt, QThread, QTimer, Signal, Slot
 
 from core.diagnostics import DiagnosticJournal, redact_diagnostic
-from utils.console_colors import colorize_console
+from utils.console_colors import colorize_console, should_emit
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,8 @@ class LogService(QObject):
         """各级别在源码控制台输出一次；DEBUG 不进入界面和诊断文件。
 
         时间戳在记录产生时生成（而非界面接收时），使排队/背压场景下的
-        显示时间仍反映真实发生时间。控制台复用应用诊断脱敏边界，界面保留原文。
+        显示时间仍反映真实发生时间。控制台复用应用诊断脱敏边界，界面保留原文；
+        控制台是否输出由 utils.console_colors 的级别阈值决定，界面与诊断不受影响。
         """
         flush_immediately = kwargs.pop("flush_immediately", False)
         normalized_level = str(level).strip().upper()
@@ -92,26 +93,32 @@ class LogService(QObject):
             except (TypeError, ValueError):
                 rendered_message = str(message)
         timestamp = datetime.now().strftime("%H:%M:%S")
+        is_debug = normalized_level == LogLevel.DEBUG
 
+        # 锁内只做状态判断、入缓冲和脱敏值快照：控制台写入可能阻塞在管道上，
+        # 持锁执行会让界面线程刷新日志时一并卡住。
         self._buffer_lock.lock()
         try:
             if self._state != self._STATE_ACCEPTING:
                 return
-            self.write_developer_console(
-                normalized_level,
-                redact_diagnostic(rendered_message, self.diagnostics.private_values),
-            )
-            if normalized_level == LogLevel.DEBUG:
-                return
-            self._buffer.append((timestamp, normalized_level, rendered_message))
-            # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
-            if len(self._buffer) > self._max_buffer:
-                dropped = len(self._buffer) - self._max_buffer
-                self._dropped_count += dropped
-                self._pending_dropped_count += dropped
-                self._buffer = self._buffer[-self._max_buffer :]
+            private_values = self.diagnostics.sorted_private_values
+            if not is_debug:
+                self._buffer.append((timestamp, normalized_level, rendered_message))
+                # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
+                if len(self._buffer) > self._max_buffer:
+                    dropped = len(self._buffer) - self._max_buffer
+                    self._dropped_count += dropped
+                    self._pending_dropped_count += dropped
+                    self._buffer = self._buffer[-self._max_buffer :]
         finally:
             self._buffer_lock.unlock()
+
+        self.write_developer_console(
+            normalized_level,
+            redact_diagnostic(rendered_message, private_values, presorted=True),
+        )
+        if is_debug:
+            return
 
         is_owner_thread = QThread.currentThread() == self.thread()
         if flush_immediately:
@@ -241,6 +248,9 @@ class LogService(QObject):
         if getattr(sys, "frozen", False):
             return
         normalized_level = str(level).strip().upper()
+        # 控制台级别只影响显示层：界面缓冲、诊断摘要与落盘不经过这里。
+        if not should_emit(normalized_level):
+            return
         stream_name = (
             "stderr"
             if normalized_level in {LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL}

@@ -272,6 +272,11 @@ class ADBDeviceMixin(_ADBControllerBase):
 
     def _process_restart_adb_result(self, result: dict):
         if result.get("success"):
+            # 重启后既有连接与能力状态都已失效，先通知运行时重测再安排刷新。
+            owner = getattr(self, "window_owner", None)
+            notify = getattr(owner, "note_adb_server_restarted", None)
+            if callable(notify):
+                notify()
             QTimer.singleShot(3000, self.signals, self.refresh_devices)
             self._emit_operation(
                 "restart_adb",

@@ -406,6 +406,26 @@ class MainFrame(FluentWindow):
         if environment is not None and not self._closing:
             environment.recheck()
 
+    def note_adb_server_restarted(self) -> None:
+        """本机 ADB 服务重启成功后作废运行时能力并安排一次设备列表刷新。
+
+        重启会切断既有 socket，旧的能力状态与拓扑不再可信；这里先失效并重测，
+        再用一次刷新兜底，避免后续命令先撞一次连接被拒。
+        """
+        environment = getattr(self, "_adb_environment", None)
+        if environment is not None and not self._closing:
+            environment.note_server_restart()
+        thread = getattr(self, "_scan_thread", None)
+        invalidate = getattr(thread, "invalidate_snapshot", None)
+        if callable(invalidate):
+            invalidate()
+
+    def set_adb_selection_mode(self, mode: str) -> None:
+        """切换执行模式（auto/fast/native）；只影响后续命令，不重放在途请求。"""
+        environment = getattr(self, "_adb_environment", None)
+        if environment is not None and not self._closing:
+            environment.set_selection_mode(mode)
+
     def set_adb_native_only(self, enabled: bool) -> None:
         """临时兼容选项只影响后续操作。"""
         environment = getattr(self, "_adb_environment", None)

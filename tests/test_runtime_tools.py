@@ -75,9 +75,17 @@ def test_bundled_tool_path_uses_onedir_bundle_without_copy(tmp_path, monkeypatch
     assert not (local_appdata / "ADBLab").exists()
 
 
+def _clear_adb_candidates(monkeypatch):
+    """隔离候选链依赖的环境变量，避免本机 Android SDK 影响解析断言。"""
+
+    for name in ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def test_resolve_adb_path_prefers_runtime_tool_path(monkeypatch):
     from utils import adb_resolver
 
+    _clear_adb_candidates(monkeypatch)
     monkeypatch.setattr(adb_resolver, "_adb_path", None)
     monkeypatch.setattr(adb_resolver, "_resolved", False)
     monkeypatch.setattr(
@@ -93,6 +101,7 @@ def test_resolve_adb_path_prefers_runtime_tool_path(monkeypatch):
 def test_resolve_adb_path_uses_path_on_non_windows(monkeypatch):
     from utils import adb_resolver
 
+    _clear_adb_candidates(monkeypatch)
     monkeypatch.setattr(adb_resolver, "_adb_path", None)
     monkeypatch.setattr(adb_resolver, "_resolved", False)
     monkeypatch.setattr(adb_resolver.sys, "platform", "linux")

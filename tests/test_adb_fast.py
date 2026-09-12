@@ -1,6 +1,7 @@
 """独立快速 ADB 入口的分帧、错误、目标和清理契约。"""
 
 import io
+import socket
 import struct
 
 import pytest
@@ -15,6 +16,27 @@ def frame(channel, data):
 
 def adb_string(data):
     return f"{len(data):04x}".encode() + data
+
+
+def test_direct_connection_disables_nagle(monkeypatch):
+    """直连短命令关闭 Nagle，避免小请求—小响应被合并写放大单条命令延迟。"""
+
+    recorded = []
+
+    class RecordingSocket:
+        def setsockopt(self, level, option, value):
+            recorded.append((level, option, value))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        adb_transport.socket, "create_connection", lambda *args, **kwargs: RecordingSocket()
+    )
+
+    adb_transport.Connection(1.0)
+
+    assert recorded == [(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)]
 
 
 class FakeSocket:

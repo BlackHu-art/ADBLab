@@ -6082,5 +6082,197 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>展开或收起作者支持二维码</source>
             <translation>展开或收起作者支持二维码</translation>
         </message>
+        <message>
+            <source>设备发现或连接异常时使用；会中断当前连接与投屏，完成后自动重新检测</source>
+            <translation>设备发现或连接异常时使用；会中断当前连接与投屏，完成后自动重新检测</translation>
+        </message>
+        <message>
+            <source>仅影响后续命令；开启＝手动原生，关闭＝手动快速（不等于自动），重新检测恢复自动</source>
+            <translation>仅影响后续命令；开启＝手动原生，关闭＝手动快速（不等于自动），重新检测恢复自动</translation>
+        </message>
+        <message>
+            <source>设备发现：{devices}；设备 Shell {count}/{checked} 台已验证</source>
+            <translation>设备发现：{devices}；设备 Shell {count}/{checked} 台已验证</translation>
+        </message>
+        <message>
+            <source>模式：{mode} · {scope} · {status}</source>
+            <translation>模式：{mode} · {scope} · {status}</translation>
+        </message>
+        <message>
+            <source>检测中…（上次：{previous}）</source>
+            <translation>检测中…（上次：{previous}）</translation>
+        </message>
+        <message>
+            <source>模式：{mode}</source>
+            <translation>模式：{mode}</translation>
+        </message>
+        <message>
+            <source>设备列表：快速直连</source>
+            <translation>设备列表：快速直连</translation>
+        </message>
+        <message>
+            <source>设备列表：原生 ADB</source>
+            <translation>设备列表：原生 ADB</translation>
+        </message>
+        <message>
+            <source>设备 Shell 未检查</source>
+            <translation>设备 Shell 未检查</translation>
+        </message>
+        <message>
+            <source>ADB 客户端</source>
+            <translation>ADB 客户端</translation>
+        </message>
+        <message>
+            <source>客户端</source>
+            <translation>客户端</translation>
+        </message>
+        <message>
+            <source>执行环境</source>
+            <translation>执行环境</translation>
+        </message>
+        <message>
+            <source>选择文件…</source>
+            <translation>选择文件…</translation>
+        </message>
+        <message>
+            <source>重新识别本地 ADB 环境</source>
+            <translation>重新识别本地 ADB 环境</translation>
+        </message>
+        <message>
+            <source>自动选择（推荐）</source>
+            <translation>自动选择（推荐）</translation>
+        </message>
+        <message>
+            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</source>
+            <translation>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</translation>
+        </message>
+        <message>
+            <source>应用自带</source>
+            <translation>应用自带</translation>
+        </message>
+        <message>
+            <source>应用工具缓存</source>
+            <translation>应用工具缓存</translation>
+        </message>
+        <message>
+            <source>环境变量 ADB_PATH</source>
+            <translation>环境变量 ADB_PATH</translation>
+        </message>
+        <message>
+            <source>Android SDK（ANDROID_HOME）</source>
+            <translation>Android SDK（ANDROID_HOME）</translation>
+        </message>
+        <message>
+            <source>Android SDK（ANDROID_SDK_ROOT）</source>
+            <translation>Android SDK（ANDROID_SDK_ROOT）</translation>
+        </message>
+        <message>
+            <source>Android SDK（%LOCALAPPDATA%）</source>
+            <translation>Android SDK（%LOCALAPPDATA%）</translation>
+        </message>
+        <message>
+            <source>系统 PATH</source>
+            <translation>系统 PATH</translation>
+        </message>
+        <message>
+            <source>自定义 adb</source>
+            <translation>自定义 adb</translation>
+        </message>
+        <message>
+            <source>未选择：可直接指定任意 adb 可执行文件</source>
+            <translation>未选择：可直接指定任意 adb 可执行文件</translation>
+        </message>
+        <message>
+            <source>未设置：本机没有这一来源</source>
+            <translation>未设置：本机没有这一来源</translation>
+        </message>
+        <message>
+            <source>未设置或文件不存在</source>
+            <translation>未设置或文件不存在</translation>
+        </message>
+        <message>
+            <source>无法执行</source>
+            <translation>无法执行</translation>
+        </message>
+        <message>
+            <source>执行超时</source>
+            <translation>执行超时</translation>
+        </message>
+        <message>
+            <source>不是 ADB 程序</source>
+            <translation>不是 ADB 程序</translation>
+        </message>
+        <message>
+            <source>识别已取消</source>
+            <translation>识别已取消</translation>
+        </message>
+        <message>
+            <source>正在识别本地 ADB 环境…</source>
+            <translation>正在识别本地 ADB 环境…</translation>
+        </message>
+        <message>
+            <source>识别失败：{reason}</source>
+            <translation>识别失败：{reason}</translation>
+        </message>
+        <message>
+            <source>{version} · {path}</source>
+            <translation>{version} · {path}</translation>
+        </message>
+        <message>
+            <source>{label} · {version}</source>
+            <translation>{label} · {version}</translation>
+        </message>
+        <message>
+            <source>{reason}：{path}</source>
+            <translation>{reason}：{path}</translation>
+        </message>
+        <message>
+            <source>（无路径）</source>
+            <translation>（无路径）</translation>
+        </message>
+        <message>
+            <source>自定义 · {path}</source>
+            <translation>自定义 · {path}</translation>
+        </message>
+        <message>
+            <source>执行模式</source>
+            <translation>执行模式</translation>
+        </message>
+        <message>
+            <source>按服务能力与测速结果选择设备列表与 Shell 的执行方式</source>
+            <translation>按服务能力与测速结果选择设备列表与 Shell 的执行方式</translation>
+        </message>
+        <message>
+            <source>跳过测速偏好、优先 5037 直连，但仍需通过能力验证</source>
+            <translation>跳过测速偏好、优先 5037 直连，但仍需通过能力验证</translation>
+        </message>
+        <message>
+            <source>全部启动 adb.exe 客户端，不使用直连</source>
+            <translation>全部启动 adb.exe 客户端，不使用直连</translation>
+        </message>
+        <message>
+            <source>选择 ADB 可执行文件</source>
+            <translation>选择 ADB 可执行文件</translation>
+        </message>
+        <message>
+            <source>所有文件 (*)</source>
+            <translation>所有文件 (*)</translation>
+        </message>
+        <message>
+            <source>识别超时，可重试</source>
+            <translation>识别超时，可重试</translation>
+        </message>
+        <message>
+            <source>正在识别本地 ADB 环境…可继续选择</source>
+            <translation>正在识别本地 ADB 环境…可继续选择</translation>
+        </message>
+        <message>
+            <source>未检测到结果，可重新识别</source>
+            <translation>未检测到结果，可重新识别</translation>
+        </message>
+        <message>
+            <source>用当前选择的 ADB 客户端重启本机 5037 服务；会中断当前连接与投屏，完成后自动重新检测</source>
+            <translation>用当前选择的 ADB 客户端重启本机 5037 服务；会中断当前连接与投屏，完成后自动重新检测</translation>
+        </message>
     </context>
 </TS>

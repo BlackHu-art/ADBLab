@@ -7,8 +7,8 @@ import weakref
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
 from core.adb_runtime import AdbRuntime, RuntimeSnapshot
-from core.exec import adb_runtime, install_adb_runtime
-from utils.adb_resolver import resolve_adb_path
+from core.exec import adb_runtime, install_adb_runtime, reset_adb_program_cache
+from utils.adb_resolver import invalidate_adb_path_cache, resolve_adb_path
 
 
 class QtAdbRuntime(QObject):
@@ -56,8 +56,24 @@ class QtAdbRuntime(QObject):
         self.runtime.start()
 
     def recheck(self) -> None:
-        """用户显式重新检查并恢复自动选择；运行实例合并重复请求。"""
+        """用户显式重新检查并恢复自动选择；同时重新解析本地 ADB 客户端。
+
+        解析器与短命令执行器各有一层路径缓存，必须同时失效，否则安装或移除
+        platform-tools 之后「重新检测」仍会复用启动时的旧结果。
+        """
+        invalidate_adb_path_cache()
+        reset_adb_program_cache()
         self.runtime.recheck()
+        self._publish_current()
+
+    def note_server_restart(self) -> None:
+        """本机 ADB 服务被外部重启后立即作废能力并重测。"""
+        self.runtime.note_server_restart()
+        self._publish_current()
+
+    def set_selection_mode(self, mode: str) -> None:
+        """切换执行模式（auto/fast/native）；只影响后续命令，不重放在途请求。"""
+        self.runtime.set_mode(mode)
         self._publish_current()
 
     def set_native_only(self, enabled: bool) -> None:

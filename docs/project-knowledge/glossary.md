@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-08
+last_verified: 2026-09-12
 related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 ---
 
@@ -37,6 +37,9 @@ related: [PROJECT_OVERVIEW.md, ARCHITECTURE.md, BUSINESS_FLOW.md]
 | AdbRuntime / QtAdbRuntime | 当前进程的 ADB 能力探测、后端选择和在途请求生命周期；Qt 适配器提供延迟启动及信号投递 | `core/adb_runtime.py`、`adblab/presentation/qt_adb_runtime.py` |
 | ADBBridge | ADB shell 适配，支持持久输入 session | `core/adb_bridge.py` |
 | ADBInputSession | 每设备持久 `adb shell`，用于低延迟 input 命令 | `core/adb_bridge.py` |
+| ADB 客户端选择 | 设置页固定的本地 ADB 客户端（`auto` 或命名来源/绝对路径）；未配置的来源不显示，切换后清两层路径缓存并重新检测 | `utils/adb_resolver.py::set_client_preference`、`gui/widgets/adb_client_card.py::AdbClientSettingCard` |
+| 客户端探测 | 只对候选执行一次 `adb version` 的来源识别，不连接 5037 服务，失败结果不入缓存 | `services/adb_clients.py::detect_clients` |
+| 执行模式 | 本次运行的执行方式三选一（自动选择/手动快速/手动原生），只影响后续命令 | `gui/widgets/adb_client_card.py::AdbEnvironmentSettingCard` |
 | DeviceStore | 按 alias 保存含 `ip` 标识和属性的 YAML 元数据存储；历史记录不代表当前在线设备或复选目标 | `models/device_store.py` |
 | RunLibrary / RunLibraryController | 跨重启测试结果与参数方案；Qt 控制器串行执行存储操作 | `services/run_library.py`、`gui/run_library.py` |
 | TaskHistoryStore | 进程内兼容任务终态历史；主窗口的“本次操作”由 ActionResults 提供，“测试结果”由 RunLibrary 提供 | `services/task_history.py`、`gui/pages/tasks_page.py` |

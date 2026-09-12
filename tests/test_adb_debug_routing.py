@@ -47,6 +47,9 @@ def test_frozen_resolver_logs_internal_candidate_and_actual_source(
     monkeypatch.setattr(sys, "_MEIPASS", str(package / "_internal"), raising=False)
     monkeypatch.setattr(sys, "executable", str(package / "ADBLab.exe"))
     monkeypatch.setattr(sys, "platform", "win32")
+    # 候选链会读取本机 SDK 环境变量，先隔离，避免平台差异影响断言。
+    for name in ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(adb_resolver, "_resolved", False)
     monkeypatch.setattr(adb_resolver, "_adb_path", None)
     monkeypatch.setattr(adb_resolver.shutil, "which", lambda _name: fallback)

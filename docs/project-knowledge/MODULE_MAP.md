@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-09
+last_verified: 2026-09-12
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -28,12 +28,12 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 瞬态交互与样式 | 窗口内非模态消息、模态输入与短操作表单、系统文件选择器，以及主题、字体、无边框内容分区和复合控件 | `gui/notifications.py`、`gui/dialogs/fluent_dialog.py`、`gui/styles/`、`gui/widgets/content_section.py`、`gui/widgets/preset_spin_box.py` | `test_fluent_dialog_contract.py`、`test_fluent_components.py`、`test_content_section.py`、`test_feature_typography.py` |
 | Controller 与业务用例 | Qt 信号路由、结果聚合、operation 身份/所有权/代次和批次状态机；不直接实现 UI | `controllers/`、`adblab/application/` | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
 | ADB model 与执行层 | 设备、应用、系统、网络、测试命令；短命令和长进程统一结果/停止边界 | `models/adb_*.py`、`core/exec.py`、`core/adb_bridge.py` | `test_model_*.py`、`test_process_utils.py` |
-| ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_runtime.py`、`core/adb_query.py`、`adblab/presentation/qt_adb_runtime.py`、`scripts/adb_fast.py` | `test_adb_runtime.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
-| 设置、日志与设备存储 | schema 化 JSON 设置、内存/UI 日志、脱敏应用诊断、性能追踪、设备 YAML 原子读写 | `core/settings_manager.py`、`core/log_service.py`、`core/diagnostics.py`、`models/device_store.py` | `test_settings_persistence.py`、`test_logging_contract.py`、`test_diagnostics.py`、`test_device_store_concurrency.py` |
+| ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_runtime.py`、`core/adb_query.py`、`utils/adb_resolver.py`、`services/adb_clients.py`、`gui/widgets/adb_client_card.py`（客户端卡与执行环境卡）、`adblab/presentation/qt_adb_runtime.py`、`utils/adb_debug.py`、`scripts/adb_fast.py` | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_adb_debug.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
+| 设置、日志与设备存储 | schema 化 JSON 设置、内存/UI 日志、脱敏应用诊断、性能追踪、设备 YAML 原子读写 | `core/settings_manager.py`、`core/log_service.py`、`core/diagnostics.py`、`models/device_store.py`、`utils/console_colors.py` | `test_console_colors.py`、`test_settings_persistence.py`、`test_logging_contract.py`、`test_diagnostics.py`、`test_device_store_concurrency.py` |
 | 应用更新检查 | 设置 About 卡片、公开正式发布解析、异步检查和关闭清理 | `gui/features/about.py`、`services/app_update.py`、`adblab/presentation/qt_app_update.py`、`utils/app_metadata.py` | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` |
 | 应用图标 | 临时设备端 DEX 渲染 Drawable，小组件单次调用部署、提取与清理，可见区优先分批读取与页面缓存 | `services/app_icons.py`、`gui/dialogs/app_manager_icons.py`、`tools/app_icons/Main.java` | `test_app_icons_service.py`、`test_app_icons_inline.py`、`test_app_manager_icons.py` |
 | 文件与 Remote 服务 | 文件命令/传输、scrcpy 多设备并发预检与会话启停、直连/持久输入和 Remote 生命周期 | `services/file_explorer.py`、`models/file_explorer_worker.py`、`services/remote/` | `test_file_explorer_service.py`、`test_remote_services.py`、`test_remote_sessions.py`、`test_remote_input_backend.py` |
-| scrcpy 专用 ADB | 限定协议、独立 CLI、父进程观察、会话端口归属与租约清理 | `core/scrcpy_adb_protocol.py`、`core/scrcpy_session.py`、`scripts/scrcpy_adb_bridge.py`、`utils/scrcpy_bridge.py` | `test_scrcpy_adb_protocol.py`、`test_scrcpy_adb_bridge.py`、`test_scrcpy_backend.py` |
+| scrcpy 专用 ADB | 限定协议、独立 CLI、父进程观察、会话端口归属与租约清理 | `core/scrcpy_adb_protocol.py`、`core/scrcpy_session.py`、`scripts/scrcpy_adb_bridge.py`、`utils/scrcpy_bridge.py` | `test_scrcpy_adb_protocol.py`、`test_scrcpy_adb_bridge.py`、`test_scrcpy_session.py`、`test_scrcpy_backend.py` |
 | MobilePerf | GUI 适配层管理隔离子进程；移植内核负责指标采样和报告 | `services/mobileperf_runner.py`、`mobileperf/android/` | `test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` |
 | 性能进度、会话与图表 | 各设备参数和运行状态投影、估算进度、完成后 CSV 指标解析与 QtCharts 静态图表 | `gui/widgets/performance_sessions.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/performance_launcher_run.py`、`services/perf_chart_data.py`、`gui/widgets/perf_chart_view.py` | `test_performance_sessions.py`、`test_performance_progress.py`、`test_perf_chart_data.py`、`test_performance_responsive.py` |
 | 工具、构建与发布 | 用户/资源/ADB 路径、ZIP 安全、输入校验、PyInstaller 与 GitHub Actions | `utils/`、`ADBLab.spec`、`.github/workflows/` | `test_runtime_tools.py`、`test_ci_contracts.py` |

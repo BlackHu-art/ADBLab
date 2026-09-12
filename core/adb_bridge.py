@@ -1,6 +1,7 @@
 """为 ADBLab 提供轻量的 ADB Shell 调用封装。
 
-ADB 路径由 utils.adb_resolver 解析，内置 scrcpy ADB 的优先级高于系统 PATH。
+ADB 路径由 utils.adb_resolver 统一解析；实例未显式指定路径时按当前解析结果惰性取值，
+使「重新检测」之后无需重建面板即可切换到新的客户端。
 """
 
 import subprocess
@@ -8,7 +9,7 @@ import threading
 from collections.abc import Callable
 
 from core.exec import CommandResult, CommandRunner, ExecHandle, ProcessRunner, adb_runtime
-from utils.adb_resolver import adb_path, resolve_adb_path
+from utils.adb_resolver import adb_path
 
 
 class ADBInputSession:
@@ -113,12 +114,18 @@ class ADBBridge:
     """封装 ADB Shell、输入、屏幕尺寸和设备列表命令。"""
 
     def __init__(self, path: str | None = None):
-        self.path = path or adb_path()
+        # 显式路径冻结在实例上；未指定时惰性读取统一解析结果。缺少 ADB 不再阻止
+        # 窗口构造，改由命令失败结果、设置页 ADB 状态和环境探测提示用户。
+        self._explicit_path = path
         self._process_runner = ProcessRunner()
         self._input_sessions: dict[str, ADBInputSession] = {}
         self._input_sessions_lock = threading.Lock()
-        if path is None and resolve_adb_path() is None:
-            raise FileNotFoundError("ADB not found — install Android SDK Platform Tools")
+
+    @property
+    def path(self) -> str:
+        """返回当前 ADB 可执行文件；未显式指定时跟随统一解析缓存。"""
+
+        return self._explicit_path if self._explicit_path is not None else adb_path()
 
     def shell(
         self, command: str, device_id: str | None = None,

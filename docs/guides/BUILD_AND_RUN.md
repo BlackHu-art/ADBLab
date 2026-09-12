@@ -10,7 +10,7 @@
 | 语法兼容目标 | 静态检查与格式配置目标为 Python 3.10 | `ruff.toml`、`pyproject.toml` |
 | 主平台 | Windows；精确版本兼容矩阵待确认 | README；Windows 内置 adb/scrcpy；CI 未覆盖 OS 版本矩阵 |
 | GUI | PySide6；精确版本见依赖清单 | `requirements.txt` |
-| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器已按平台门控（Windows 用内置 adb.exe、非 Windows 走 PATH） | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
+| ADB/scrcpy | Windows 内置；scrcpy 在非 Windows 走 PATH；ADB 解析器按平台门控，Windows 用内置 adb.exe，随后 `ADB_PATH`、Android SDK platform-tools、PATH 依次兜底，非 Windows 不使用内置 PE | `utils/adb_resolver.py`、`services/remote/scrcpy_service.py` |
 | 可选工具 | aapt 用于 APK 解析；Java 用于 chkbugreport JAR | `models/adb_app.py`、`models/adb_testing.py` |
 
 ## 安装
@@ -43,11 +43,21 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
-- ADB 解析器已按平台门控：Windows 优先内置 `scrcpy-win64/adb.exe`，不存在时回退
-  PATH；非 Windows 直接解析 PATH 中的 adb，避免把仓库内 Windows PE 当成 adb 执行。
-- 普通启动会后台检测默认本机 ADB 服务，为受支持短命令选择执行方式；设置页的原生开关只在
+- ADB 解析器已按平台门控：Windows 依次尝试内置 `scrcpy-win64/adb.exe`、`ADB_PATH`
+  环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
+  最后回退 PATH；非 Windows 按同一顺序但不使用内置的 Windows PE。
+- 解析结果在进程内缓存；设置页「重新检测」会清空解析缓存并重扫候选，因此安装或移除
+  platform-tools 后无需重启应用。
+- 普通启动会后台检测默认本机 ADB 服务，为受支持短命令选择执行方式；设置页的执行模式只在
   当前运行生效。支持范围、恢复和自定义服务环境的处理见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
+- 设置页「ADB 维护 → 客户端」可固定使用的 ADB 客户端，配置键 `adb_client` 默认 `auto`
+  （按内置 → `ADB_PATH` → Android SDK → PATH 顺序）；取值也支持命名来源
+  （`bundled`/`env`/`PATH`，旧配置里的 `sdk_home`/`sdk_root`/`sdk_local` 仍被接受）或绝对路径；界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
+  缓存并重新检测；所选客户端缺失时按选择如实失败，不会静默改用其它 adb。
 - Remote 的非 Windows scrcpy 必须由 PATH 提供。
+- 开发控制台的输出级别由 `console_log_level` 控制（默认 `DEBUG` 保留现状，可选
+  `INFO`/`WARNING`/`ERROR`/`OFF`）；环境变量 `ADBLAB_CONSOLE_LOG_LEVEL` 优先于配置，
+  启动时读取、只影响源码运行的控制台，界面与诊断落盘不受影响。
 - Remote 的 `scrcpy_*` 表单键通过 `core/settings_manager.py::SCRCPY_SETTING_DEFAULTS` 白名单
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
 
@@ -133,8 +143,8 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 应用图标；不安装 APK，不要求 root，主机运行应用时也不需要 Java 或 Android SDK。
 设备不支持相关框架接口时，应用管理保留占位图标并提示刷新重试。
 
-只有修改 Java 源码时才需要重新生成此资源，使用 JDK 17、Android SDK platform 33 和
-build-tools 33.0.2；工具不会自动下载这些开发组件：
+只有修改 Java 源码时才需要重新生成此资源，需要完整 JDK（脚本只校验 `javac`/`java` 是否存在，
+不校验 JDK 版本）、Android SDK platform 33 和 build-tools 33.0.2；工具不会自动下载这些开发组件：
 
 ```powershell
 .\.venv\Scripts\python.exe scripts/build_app_icon_helper.py --sdk <Android-SDK目录> --java-home <JDK目录>
@@ -148,7 +158,7 @@ build-tools 33.0.2；工具不会自动下载这些开发组件：
 
 ### 主应用构建
 
-README 提供的 Windows spec 构建命令：
+本页提供的 Windows spec 构建命令（`README.md` 只给出启动方式并指向本页）：
 
 ```powershell
 .\.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noconfirm --clean
@@ -158,10 +168,11 @@ README 提供的 Windows spec 构建命令：
 `ADBLab.spec`：
 
 - 入口为 `main.py`。
-- 通过白名单收集图标、迁移种子、Bugreport JAR、应用图标 DEX 工具、二维码、第三方许可、`icon.ico` 和
-  `scrcpy-win64/`，不把旧演示图或无关文档带入产物。
-- 通过 hidden imports 收集全部 `mobileperf` 子模块，不再把 `mobileperf/` 源码目录作为 data
-  重复打包；运行配置由 `MobilePerfRunner` 临时生成。
+- 通过白名单收集图标、`resources/images/gallery_header.png`、图库许可、迁移种子、Bugreport JAR、
+  应用图标 DEX 工具、二维码、第三方许可、`icon.ico` 和 `scrcpy-win64/`，不把旧演示图或无关
+  文档带入产物。
+- 通过 hidden imports 收集全部 `mobileperf` 与 `qfluentwidgets` 子模块，不再把 `mobileperf/`
+  源码目录作为 data 重复打包；运行配置由 `MobilePerfRunner` 临时生成。
 - 生成 windowed、onedir 的 `ADBLab`。
 
 完整 PyInstaller 构建会创建 `build/` 和 `dist/`。纯文档或不涉及打包边界的内部修改无需构建或

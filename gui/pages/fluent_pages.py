@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QEvent, QRect, QSignalBlocker, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QRect, QSignalBlocker, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
     QFontDatabase,
@@ -19,6 +19,7 @@ from PySide6.QtGui import (
     QRegion,
 )
 from PySide6.QtWidgets import (
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -50,6 +51,7 @@ from qfluentwidgets import (
     setCustomStyleSheet,
 )
 
+from core.exec import reset_adb_program_cache
 from core.settings_manager import AppSettings, normalise_language, normalise_ui_scale
 from gui.features import AboutPanel
 from gui.i18n import tr
@@ -58,12 +60,20 @@ from gui.pages.workspace_features import WorkspaceFeatureHost, WorkspaceRoute
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_font_role, apply_label_role
 from gui.styles.icon_loader import DEVICE_ICON
+from gui.widgets.adb_client_card import AdbClientSettingCard, AdbEnvironmentSettingCard
 from gui.widgets.home_banner import HomeBanner
 from gui.widgets.setting_card_layout import (
     SettingsCardPresentation as _SettingsCardPresentation,
 )
 from gui.widgets.setting_card_layout import apply_setting_text_style
 from gui.window_effects import is_mica_supported
+from services.adb_clients import clear_client_probe_cache
+from utils.adb_resolver import (
+    CLIENT_PREFERENCE_AUTO,
+    CLIENT_SOURCE_TOKENS,
+    invalidate_adb_path_cache,
+    set_client_preference,
+)
 
 
 class GalleryPage(QWidget):
@@ -1072,32 +1082,42 @@ class SettingsPage(ScrollArea):
         self.diagnostics_card.button.setEnabled(False)
 
         maintenance = SettingCardGroup(tr("ADB 维护"), view)
+        self._last_adb_environment_text = ""
+        # 三张卡平铺：客户端选择 → 执行环境（模式 + 状态 + 重新检测）→ 重启本机服务。
+        self.adb_client_card = AdbClientSettingCard(maintenance)
+        self.adb_check_card = AdbEnvironmentSettingCard(maintenance)
         self.restart_adb_card = PushSettingCard(
             tr("重启 ADB"), FluentIcon.SYNC, tr("重启本机 ADB 服务"),
-            tr("设备发现或连接异常时使用，将影响当前设备连接"), maintenance,
+            tr(
+                "用当前选择的 ADB 客户端重启本机 5037 服务；"
+                "会中断当前连接与投屏，完成后自动重新检测"
+            ),
+            maintenance,
         )
-        maintenance.addSettingCard(self.restart_adb_card)
-        self.adb_check_card = PushSettingCard(
-            tr("重新检测"), FluentIcon.SYNC, tr("ADB 执行环境"),
-            tr("正在检查执行环境"), maintenance,
-        )
-        self.adb_native_card = _LocalizedSwitchSettingCard(
-            FluentIcon.COMMAND_PROMPT, tr("使用原生 ADB"),
-            tr("仅影响后续命令；开启使用原生，关闭优先快速，重新检测恢复自动选择"),
-            parent=maintenance,
-        )
-        self.adb_native_card.switchButton.setOnText(tr("开"))
-        self.adb_native_card.switchButton.setOffText(tr("关"))
+        maintenance.addSettingCard(self.adb_client_card)
         maintenance.addSettingCard(self.adb_check_card)
-        maintenance.addSettingCard(self.adb_native_card)
-        self.adb_check_card.clicked.connect(lambda: frame.recheck_adb_environment())
-        self.adb_native_card.checkedChanged.connect(
-            lambda enabled: frame.set_adb_native_only(enabled)
+        maintenance.addSettingCard(self.restart_adb_card)
+
+        self.adb_check_card.recheck_requested.connect(
+            lambda: frame.recheck_adb_environment()
         )
+        self.adb_check_card.mode_requested.connect(self._apply_adb_mode)
+        self.adb_client_card.client_selected.connect(self._apply_adb_client)
+        self.adb_client_card.custom_requested.connect(self._pick_custom_adb)
+        self.adb_client_card.rescan_requested.connect(self._rescan_adb_clients)
+        # 展开动画结束后卡片高度才稳定，需要重排分组，否则展开内容会被分组固定高度裁掉。
+        self.adb_client_card.expandAni.finished.connect(self._reflow_settings)
+        self.adb_check_card.expandAni.finished.connect(self._reflow_settings)
         self.restart_adb_card.clicked.connect(
             lambda: frame.left_panel.signals.restart_adb_requested.emit()
         )
-
+        current_client = str(self._settings.get("adb_client", CLIENT_PREFERENCE_AUTO))
+        if current_client not in CLIENT_SOURCE_TOKENS:
+            self.adb_client_card.set_custom_path(current_client)
+        self.adb_client_card.set_selection(current_client)
+        # 空闲时预热一次客户端识别：冷启动的第一次 adb 调用偏慢，提前跑完，
+        # 用户展开卡片时通常已能看到结果（结果按 (路径, mtime, size) 缓存）。
+        QTimer.singleShot(0, self.adb_client_card.start_detection)
         self.about_panel = AboutPanel(view)
         self.about_panel.layoutChanged.connect(self._reflow_settings)
 
@@ -1122,7 +1142,10 @@ class SettingsPage(ScrollArea):
         self.ui_size_card.valueChanged.connect(self._apply_typography)
         self.log_size_card.valueChanged.connect(self._apply_typography)
         self.reset_card.clicked.connect(self._reset_settings)
-        self._setting_groups = (general, appearance, typography, application, maintenance)
+        # ADB 分组内含页签容器，卡片不是分组的直接子控件：它的高度由页签内容决定，
+        # 不参与下面的固定高度循环，只在字号刷新时统一处理标题。
+        self._setting_groups = (general, appearance, typography, application)
+        self._adb_group = maintenance
         original_path = self.save_card.contentLabel
         self.save_card.vBoxLayout.removeWidget(original_path)
         self.save_card.contentLabel = _SettingsPathLabel(self.save_card)
@@ -1147,34 +1170,79 @@ class SettingsPage(ScrollArea):
                 (self.log_size_card, self.log_size_card.combo_box),
                 (self.reset_card, self.reset_card.button),
                 (self.restart_adb_card, self.restart_adb_card.button),
-                (self.adb_check_card, self.adb_check_card.button),
-                (self.adb_native_card, self.adb_native_card.switchButton),
             )
         ]
         BaseStyles.ui_font_changed.connect(self._refresh_typography)
         BaseStyles.theme_changed.connect(self._refresh_typography)
         self._refresh_typography()
 
+    # ── ADB 页签与客户端选择 ─────────────────────────────────────────────
+
+    def _apply_adb_mode(self, mode: str) -> None:
+        """切换执行模式：只影响后续命令，不重放在途请求。"""
+
+        self.adb_check_card.set_mode(mode)
+        self._frame.set_adb_selection_mode(mode)
+
+    def _apply_adb_client(self, value: str) -> None:
+        """应用客户端选择：写配置、清两层路径缓存并重新检测执行环境。"""
+
+        text = str(value or "").strip() or CLIENT_PREFERENCE_AUTO
+        set_client_preference(text)
+        clear_client_probe_cache()
+        invalidate_adb_path_cache()
+        reset_adb_program_cache()
+        self._settings.set("adb_client", text)
+        self.adb_client_card.set_selection(text)
+        self._frame.recheck_adb_environment()
+
+    def _pick_custom_adb(self) -> None:
+        """选择自定义 adb 可执行文件；取消选择时恢复原显示。"""
+
+        path, _filter = QFileDialog.getOpenFileName(
+            self, tr("选择 ADB 可执行文件"), "", tr("所有文件 (*)")
+        )
+        if not path:
+            self.adb_client_card.set_selection(
+                str(self._settings.get("adb_client", CLIENT_PREFERENCE_AUTO))
+            )
+            return
+        self.adb_client_card.set_custom_path(path)
+        self._apply_adb_client(path)
+
+    def _rescan_adb_clients(self) -> None:
+        """重新识别本地 ADB 环境：清缓存并让卡片重新探测。"""
+
+        invalidate_adb_path_cache()
+        clear_client_probe_cache()
+        self.adb_client_card.start_detection()
+
     def update_adb_environment(self, snapshot) -> None:
         """自动模式跟随有效后端；手动模式保留选择，能力回退只更新执行状态说明。"""
-        native_checked = (
-            snapshot.effective_native_only if snapshot.selection_mode == "auto"
-            else snapshot.selection_mode == "native"
-        )
-        with QSignalBlocker(self.adb_native_card):
-            self.adb_native_card.setChecked(native_checked)
+        # 手动模式回显用户选择；自动模式只显示实际模式，不改变开关类控件状态。
+        self.adb_check_card.set_mode(snapshot.selection_mode)
         mode = {
             "auto": tr("自动选择"),
             "fast": tr("手动快速"),
             "native": tr("手动原生"),
         }[snapshot.selection_mode]
-        if snapshot.fast_devices or snapshot.fast_shell_devices:
-            scope = tr("快速执行：设备发现 {devices}，Shell {count} 台设备").format(
-                devices=tr("已启用") if snapshot.fast_devices else tr("未启用"),
-                count=snapshot.fast_shell_devices,
+        # 这里的分段只描述"用哪条通道"，与设置里的"持续扫描设备"无关：
+        # fast_devices 表示设备列表查询可走 5037 直连，fast_shell_devices 表示
+        # 逐设备 Shell 已验证通过的数量。
+        segments = [tr("模式：{mode}").format(mode=mode)]
+        if snapshot.fast_devices:
+            segments.append(tr("设备列表：快速直连"))
+        else:
+            segments.append(tr("设备列表：原生 ADB"))
+        if snapshot.checked_devices:
+            segments.append(
+                tr("设备 Shell {count}/{checked} 台已验证").format(
+                    count=snapshot.fast_shell_devices,
+                    checked=snapshot.checked_devices,
+                )
             )
         else:
-            scope = tr("当前使用原生 ADB")
+            segments.append(tr("设备 Shell 未检查"))
         status = {
             "idle": tr("等待执行环境检测"),
             "checking": tr("正在检查执行环境"),
@@ -1189,19 +1257,37 @@ class SettingsPage(ScrollArea):
             "host_transport": tr("本机 ADB 服务通信异常，可重新检测"),
             "shell_unavailable": tr("部分设备 Shell 未通过验证，保留原生执行"),
         }[snapshot.status]
-        self.adb_check_card.setContent(
-            tr("{mode}；{scope}；{status}").format(mode=mode, scope=scope, status=status)
-        )
-        self.adb_check_card.button.setEnabled(not snapshot.checking)
+        segments.append(status)
+        content = " · ".join(segments)
+        if snapshot.checking and self._last_adb_environment_text:
+            # 检测期间保留上一次稳定结果，避免状态行在"检查中"与结果之间来回跳。
+            content = tr("检测中…（上次：{previous}）").format(
+                previous=self._last_adb_environment_text
+            )
+        elif not snapshot.checking:
+            self._last_adb_environment_text = content
+        self.adb_check_card.set_status(content)
+        self.adb_check_card.set_recheck_enabled(not snapshot.checking)
         self._reflow_settings()
 
     def _refresh_typography(self, _config=None) -> None:
         """设置字号本身也可即时阅读；仅更新呈现，不触发任何配置写入。"""
 
-        for group in self._setting_groups:
+        for group in (*self._setting_groups, self._adb_group):
             apply_label_role(group.titleLabel, FontRole.UI, bold=True)
             self._set_setting_font(group.titleLabel, FontRole.UI, bold=True)
             group.titleLabel.adjustSize()
+        for card in (self.adb_client_card, self.adb_check_card):
+            self._set_setting_font(card.card.titleLabel, FontRole.UI)
+            self._set_setting_font(card.card.contentLabel, FontRole.UI_SMALL)
+            for label in card.findChildren(QLabel):
+                self._set_setting_font(label, FontRole.UI_SMALL)
+            for label in (card.card.titleLabel, card.card.contentLabel):
+                # 字号放大后标题可能比 HeaderSettingCard 原算高度高 1-2px，这里补齐。
+                label.setMinimumHeight(
+                    max(label.height(), label.heightForWidth(max(1, label.width())))
+                )
+            card._adjustViewSize()
         for presentation in self._card_presentations:
             card, control = presentation.card, presentation.control
             apply_label_role(card.titleLabel, FontRole.UI)
@@ -1244,6 +1330,14 @@ class SettingsPage(ScrollArea):
             cards = [item.card for item in self._card_presentations if item.card.parent() is group]
             height = sum(card.height() for card in cards) + max(0, len(cards) - 1) * 2
             group.setFixedHeight(height + group.titleLabel.sizeHint().height() + 12)
+        if hasattr(self, "_adb_group"):
+            # 两张展开卡不在 _card_presentations 里（该类会重建卡片内部布局），
+            # 因此 ADB 分组高度在这里按三张卡的实际高度单独测量。
+            adb_cards = (self.adb_client_card, self.adb_check_card, self.restart_adb_card)
+            content = sum(card.height() for card in adb_cards) + 2 * (len(adb_cards) - 1)
+            self._adb_group.setFixedHeight(
+                content + self._adb_group.titleLabel.sizeHint().height() + 12
+            )
         self.about_panel.reflow(width)
         view = self.widget()
         if view is not None:
@@ -1368,6 +1462,13 @@ class SettingsPage(ScrollArea):
             str(self._settings.get("save_directory", "") or tr("系统默认目录"))
         )
         del blockers
+
+        self.adb_check_card.set_mode("auto")
+        self.adb_client_card.set_selection(CLIENT_PREFERENCE_AUTO)
+        set_client_preference(CLIENT_PREFERENCE_AUTO)
+        clear_client_probe_cache()
+        invalidate_adb_path_cache()
+        reset_adb_program_cache()
 
         BaseStyles.switch_theme(theme)
         BaseStyles.set_accent_color(

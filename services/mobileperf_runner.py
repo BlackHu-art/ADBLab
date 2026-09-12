@@ -18,7 +18,7 @@ from pathlib import Path
 
 from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
-from utils.console_colors import colorize_console
+from utils.console_colors import colorize_console, should_emit
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 
@@ -627,7 +627,7 @@ class MobilePerfRunner:
         message: str,
         redaction_values: tuple[str, ...] | None = None,
     ) -> None:
-        """在源码模式把脱敏诊断写入 stderr，仅为明确协议级别添加控制台颜色。"""
+        """在源码模式把脱敏诊断写入 stderr，按控制台级别过滤可分级记录。"""
         if self._is_frozen():
             return
         stream = getattr(sys, "stderr", None)
@@ -635,13 +635,17 @@ class MobilePerfRunner:
             return
         if not callable(getattr(stream, "write", None)):
             return
+        # 只在最终显示层识别固定协议级别；未带级别的原始行（异常栈续行）不过滤，
+        # 避免设置阈值后只剩报错头而丢失上下文。
+        level_match = self._DIAGNOSTIC_LEVEL_PATTERN.match(str(message))
+        if level_match is not None and not should_emit(level_match.group(1)):
+            return
         text = self._redact_runtime_values(
             str(message),
             redaction_values=redaction_values,
         )
-        # 子进程管道和文件保留纯文本，仅在最终显示层识别固定日志级别。
-        level_match = self._DIAGNOSTIC_LEVEL_PATTERN.match(text)
-        if level_match:
+        # 子进程管道和文件保留纯文本，颜色只加在控制台显示层。
+        if level_match is not None:
             text = colorize_console(level_match.group(1), text, stream)
         try:
             with self._diagnostic_lock:

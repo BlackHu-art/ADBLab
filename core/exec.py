@@ -74,6 +74,18 @@ def resolve_adb_program() -> str:
     return _adb_path
 
 
+def reset_adb_program_cache() -> None:
+    """清除本模块缓存的 ADB 可执行路径，使下次调用重新解析。
+
+    与 utils.adb_resolver.invalidate_adb_path_cache() 一起使用：只清解析器缓存
+    时，短命令仍会复用这里缓存的旧路径。
+    """
+
+    global _adb_path
+    with _adb_path_lock:
+        _adb_path = None
+
+
 def resolve_command(cmd: list[str]) -> list[str]:
     """返回解析后的命令副本：首位 ``"adb"`` token 替换为 ADB 可执行路径。"""
 
@@ -731,6 +743,7 @@ __all__ = [
     "CommandRunner",
     "ExecHandle",
     "ProcessRunner",
+    "reset_adb_program_cache",
     "resolve_adb_program",
     "resolve_command",
 ]

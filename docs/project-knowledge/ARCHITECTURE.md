@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-09
+last_verified: 2026-09-12
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -146,7 +146,7 @@ flowchart LR
 再调用 `abort()` 和 `deleteLater()`，同步取消信号及晚到结果均不能更新界面。对象随主窗口
 QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 
-`gui/close_controller.py::CloseController` 实现两阶段关闭：
+`gui/close_controller.py::CloseController` 实现分阶段异步关闭（停止 → 收尾）：
 
 1. 拒绝新任务、停止界面定时器和晚到回调；向扫描、业务面板、会话及 Controller 广播停止。
 2. TaskSupervisor 在共享 deadline 内后台等待，保留超时或失败资源快照；GUI 不串行阻塞等待。
@@ -179,7 +179,9 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
   文件队列在后台保存并在关闭时排空。运行时环境检测经对象所属 GUI 线程的专用入口记录 INFO，
   同样有界保存，但不计入异常摘要或触发异常 Toast。既有 `log(level, message, *args)`
-  调用的各级别消息在受理时向源码控制台输出一次，保留 `%` 参数格式化；控制台复用
+  调用的各级别消息在受理时向源码控制台输出一次，保留 `%` 参数格式化；输出前按
+  `console_log_level`（环境变量 `ADBLAB_CONSOLE_LOG_LEVEL` 优先）过滤，该阈值只作用于
+  控制台显示层，界面缓冲与诊断摘要不受影响；控制台复用
   诊断摘要的设备身份、凭据和路径遮蔽，界面原文不变，DEBUG 不进入界面或诊断文件。
   源码开发控制台按级别分流：
   DEBUG/INFO/SUCCESS 进入 stdout，WARNING/ERROR/CRITICAL 进入 stderr；frozen 或对应流

@@ -109,7 +109,7 @@ Bugreport、ANR、设备日志提取在生成文件后显示紧凑的“已生�
   无需迁移，各级别在源码开发控制台显示一次脱敏摘要；DEBUG/INFO/SUCCESS 进入 stdout，
   WARNING/ERROR/CRITICAL 进入 stderr；详见
   [日志架构](../project-knowledge/ARCHITECTURE.md#主题字体与日志)。
-- “输出文本字号”兼容 `log_font_size`；`log_max_lines` 作为原性能采集输出兼容配置保留。
+- “输出文本字号”兼容 `log_font_size`；`log_max_lines` 沿用旧键名，仍是性能采集文本缓冲的上限。
   主题、配置 schema、设备历史和采集格式不变。
 
 ## 维护验证

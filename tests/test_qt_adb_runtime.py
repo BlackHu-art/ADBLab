@@ -6,8 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QObject, QPoint, Qt
-from PySide6.QtTest import QTest
+from PySide6.QtCore import QCoreApplication, QObject, QPoint
 from PySide6.QtWidgets import QWidget
 
 from adblab.presentation.qt_adb_runtime import QtAdbRuntime
@@ -19,7 +18,10 @@ from gui.i18n import install_translators
 from gui.main_frame import MainFrame, _ScanThread
 from gui.pages.fluent_pages import SettingsPage
 from gui.styles import BaseStyles
+from gui.widgets.adb_client_card import AdbClientSettingCard
+from services.adb_clients import ERROR_MISSING, ClientProbe
 from tests.ui_geometry_helpers import wait_for_stable_geometry
+from utils.adb_resolver import AdbCandidate
 
 
 def test_adapter_defers_resolution_and_cancels_before_event_loop(monkeypatch):
@@ -104,6 +106,47 @@ def test_adapter_recheck_explicitly_requests_automatic_reselection(monkeypatch):
         adapter.close()
 
 
+def test_adapter_selection_mode_is_forwarded_without_touching_requests(monkeypatch):
+    """执行模式切换只影响后续命令：透传给运行实例并刷新快照。"""
+
+    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    adapter = QtAdbRuntime()
+    published: list[object] = []
+    adapter.changed.connect(published.append)
+    try:
+        adapter.set_selection_mode("native")
+        assert adapter.runtime.selection_mode == "native"
+        adapter.set_selection_mode("fast")
+        assert adapter.runtime.selection_mode == "fast"
+        adapter.set_selection_mode("auto")
+        assert adapter.runtime.selection_mode == "auto"
+        assert published
+    finally:
+        adapter.close()
+
+
+def test_adapter_recheck_invalidates_path_caches_before_reselection(monkeypatch):
+    """重新检测必须先清解析缓存，否则安装或移除 platform-tools 后仍用旧路径。"""
+
+    calls: list[str] = []
+    monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
+    monkeypatch.setattr(
+        "adblab.presentation.qt_adb_runtime.invalidate_adb_path_cache",
+        lambda: calls.append("resolver"),
+    )
+    monkeypatch.setattr(
+        "adblab.presentation.qt_adb_runtime.reset_adb_program_cache",
+        lambda: calls.append("program"),
+    )
+    adapter = QtAdbRuntime()
+    monkeypatch.setattr(adapter.runtime, "recheck", lambda: calls.append("recheck") or True)
+    try:
+        adapter.recheck()
+        assert calls == ["resolver", "program", "recheck"]
+    finally:
+        adapter.close()
+
+
 def test_main_frame_projects_initial_native_scope_without_selecting_manual_native(monkeypatch):
     monkeypatch.setattr("adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: None)
     frame = QWidget()
@@ -114,6 +157,7 @@ def test_main_frame_projects_initial_native_scope_without_selecting_manual_nativ
     frame.left_panel = SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock()))
     frame.recheck_adb_environment = Mock()
     frame.set_adb_native_only = lambda enabled: MainFrame.set_adb_native_only(frame, enabled)
+    frame.set_adb_selection_mode = lambda mode: MainFrame.set_adb_selection_mode(frame, mode)
     frame._start_device_discovery = Mock()
     frame._log_adb_environment = Mock()
     frame._update_adb_environment = lambda snapshot: MainFrame._update_adb_environment(
@@ -122,7 +166,9 @@ def test_main_frame_projects_initial_native_scope_without_selecting_manual_nativ
     frame._settings_page = SettingsPage(frame, frame)
     try:
         MainFrame._bootstrap_adb_async(frame)
-        assert frame._settings_page.adb_native_card.isChecked()
+        assert frame._settings_page.adb_check_card.mode() == "auto"
+        # 无可用客户端时执行范围仍是原生，但模式保持自动、不伪装成用户手动选择。
+        assert "设备列表：原生 ADB" in frame._settings_page.adb_check_card.contentLabel.text()
         assert frame._adb_environment.snapshot().selection_mode == "auto"
         assert not frame._adb_environment.snapshot().native_only
         QCoreApplication.processEvents()
@@ -145,39 +191,37 @@ def test_settings_unavailable_fast_choice_can_be_switched_to_manual_native(
         set_continuous_scan=Mock(),
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
-        set_adb_native_only=adapter.set_native_only,
+        set_adb_selection_mode=adapter.set_selection_mode,
     )
     page = SettingsPage(frame)
     adapter.changed.connect(page.update_adb_environment)
-    selections = []
-    page.adb_native_card.checkedChanged.connect(selections.append)
+    modes = []
+    page.adb_check_card.mode_requested.connect(modes.append)
     try:
         page.resize(900, 640)
         page.show()
         page.update_adb_environment(adapter.snapshot())
-        assert page.adb_native_card.isChecked()
+        assert page.adb_check_card.mode() == "auto"
         assert adapter.snapshot().selection_mode == "auto"
 
-        indicator = page.adb_native_card.switchButton.indicator
-        page.ensureWidgetVisible(indicator, 0, 0)
-        wait_for_stable_geometry(qt_application, (page, page.adb_native_card, indicator))
-        assert indicator.isVisibleTo(page)
-        QTest.mouseClick(indicator, Qt.MouseButton.LeftButton)
+        fast = page.adb_check_card.mode_button("fast")
+        page.ensureWidgetVisible(fast, 0, 0)
+        wait_for_stable_geometry(qt_application, (page, page.adb_check_card, fast))
+        assert fast.isVisibleTo(page)
+        fast.click()
         qt_application.processEvents()
         assert adapter.snapshot().selection_mode == "fast"
-        assert not page.adb_native_card.isChecked()
-        assert page.adb_native_card.switchButton.label.text() == "关"
+        assert page.adb_check_card.mode() == "fast"
         assert "手动快速" in page.adb_check_card.contentLabel.text()
-        assert "当前使用原生 ADB" in page.adb_check_card.contentLabel.text()
+        # 手动快速但能力未验证时，界面必须写明实际仍走原生通道。
+        assert "设备列表：原生 ADB" in page.adb_check_card.contentLabel.text()
 
-        page.ensureWidgetVisible(indicator, 0, 0)
-        QTest.mouseClick(indicator, Qt.MouseButton.LeftButton)
+        page.adb_check_card.mode_button("native").click()
         qt_application.processEvents()
         assert adapter.snapshot().selection_mode == "native"
-        assert page.adb_native_card.isChecked()
-        assert page.adb_native_card.switchButton.label.text() == "开"
+        assert page.adb_check_card.mode() == "native"
         assert "手动原生" in page.adb_check_card.contentLabel.text()
-        assert selections == [False, True]
+        assert modes == ["fast", "native"]
     finally:
         adapter.close()
         page.close()
@@ -363,6 +407,138 @@ def test_socket_wait_is_actually_cancellable_and_closes_connection(monkeypatch):
         thread.join(1)
 
 
+def test_adb_client_card_lists_only_configured_sources(qt_application):
+    """未配置的来源不占位；配置之后同一张卡能动态补上该行。"""
+
+    card = AdbClientSettingCard()
+    try:
+        card.set_candidates([AdbCandidate("bundled", "C:/bundle/adb.exe")])
+        assert card.client_button("bundled") is not None
+        assert card.client_button("env") is None
+
+        card.set_candidates([
+            AdbCandidate("bundled", "C:/bundle/adb.exe"),
+            AdbCandidate("env", "C:/env/adb.exe"),
+        ])
+        assert card.client_button("env") is not None
+    finally:
+        card.close()
+
+
+def test_adb_client_card_detection_finishes_and_unlocks_actions(qt_application):
+    """回归：识别完成后必须退出忙态，标题回到当前选择且控件可用。"""
+
+    card = AdbClientSettingCard()
+    try:
+        card.set_busy(True)
+        assert "正在识别" in card.card.contentLabel.text()
+
+        card.apply_probes([
+            ClientProbe(
+                "bundled", "C:/bundle/adb.exe", True, executable=True,
+                version="1.0.41 (37.0.0)",
+            ),
+        ])
+
+        assert card.card.contentLabel.text() == "自动选择"
+        assert card.rescan_button().isEnabled()
+        assert card.choose_button().isEnabled()
+        assert card.client_button("bundled").isEnabled()
+
+        # 忙态复位后必须可以再次识别，否则按钮变成一次性入口。
+        card.set_busy(True)
+        card.apply_probes([])
+        assert card.rescan_button().isEnabled()
+    finally:
+        card.close()
+
+
+def test_adb_client_card_detection_timeout_exits_busy(qt_application):
+    """超时兜底：识别未回填也要退出忙态并提示可重试。"""
+
+    card = AdbClientSettingCard()
+    try:
+        card.set_busy(True)
+        card._on_detection_timeout()
+
+        assert "识别超时" in card.card.contentLabel.text()
+        assert card.rescan_button().isEnabled()
+        assert card.choose_button().isEnabled()
+    finally:
+        card.close()
+
+
+def test_adb_client_selection_applies_preference_and_rechecks(monkeypatch, qt_application):
+    """选择候选客户端后写配置、清两层路径缓存并重新检测执行环境。"""
+
+    calls = []
+    for name in (
+        "set_client_preference", "invalidate_adb_path_cache",
+        "reset_adb_program_cache", "clear_client_probe_cache",
+    ):
+        monkeypatch.setattr(
+            f"gui.pages.fluent_pages.{name}",
+            lambda *_args, _name=name: calls.append(_name),
+        )
+    writes = []
+    values = {"adb_client": "auto"}
+    settings = SimpleNamespace(
+        get=values.get,
+        set=lambda key, value: (values.__setitem__(key, value), writes.append((key, value))),
+    )
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    frame = SimpleNamespace(
+        _always_on_top=False,
+        set_always_on_top=Mock(),
+        set_continuous_scan=Mock(),
+        left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
+        recheck_adb_environment=Mock(),
+        set_adb_selection_mode=Mock(),
+    )
+    page = SettingsPage(frame)
+    try:
+        page._apply_adb_client("sdk_home")
+
+        assert writes == [("adb_client", "sdk_home")]
+        assert values["adb_client"] == "sdk_home"
+        assert calls[0] == "set_client_preference"
+        assert {
+            "invalidate_adb_path_cache", "reset_adb_program_cache", "clear_client_probe_cache",
+        } <= set(calls)
+        frame.recheck_adb_environment.assert_called_once_with()
+        assert page.adb_client_card.selection() == "sdk_home"
+    finally:
+        page.close()
+
+
+def test_adb_client_card_keeps_unusable_candidates_with_reason(qt_application):
+    """识别结果回填：可用项可选中并显示版本，不可用项保留并给出原因。"""
+
+    card = AdbClientSettingCard()
+    try:
+        # 行按实际配置的来源生成，这里显式给出两个来源再回填识别结果。
+        card.set_candidates([
+            AdbCandidate("bundled", "C:/bundle/adb.exe"),
+            AdbCandidate("env", "C:/env/adb.exe"),
+        ])
+        card.apply_probes([
+            ClientProbe(
+                "bundled", "C:/bundle/adb.exe", True, executable=True,
+                version="1.0.41 (37.0.0)",
+            ),
+            ClientProbe("env", "C:/env/adb.exe", False, error=ERROR_MISSING),
+        ])
+
+        assert card.client_button("bundled").isEnabled()
+        assert "1.0.41 (37.0.0)" in card.detail_text("bundled")
+        assert not card.client_button("env").isEnabled()
+        assert "未设置或文件不存在" in card.detail_text("env")
+        # 未配置的来源直接不占位，不再出现"未设置"噪音行。
+        assert card.client_button("PATH") is None
+    finally:
+        card.close()
+
+
 def test_settings_reports_partial_acceleration_and_session_override():
     frame = SimpleNamespace(
         _always_on_top=False,
@@ -370,7 +546,7 @@ def test_settings_reports_partial_acceleration_and_session_override():
         set_continuous_scan=Mock(),
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
-        set_adb_native_only=Mock(),
+        set_adb_selection_mode=Mock(),
     )
     parent = QWidget()
     page = SettingsPage(frame, parent)
@@ -381,44 +557,43 @@ def test_settings_reports_partial_acceleration_and_session_override():
         page.update_adb_environment(RuntimeSnapshot(False, True, False, True, 2, 2))
         page.adb_check_card.button.click()
         frame.recheck_adb_environment.assert_called_once()
-        page.adb_native_card.setChecked(True)
-        frame.set_adb_native_only.assert_called_with(True)
+        page.adb_check_card.mode_button("native").click()
+        frame.set_adb_selection_mode.assert_called_with("native")
         page.update_adb_environment(RuntimeSnapshot(False, True, True, False, 0, 2))
         assert "原生" in page.adb_check_card.contentLabel.text()
     finally:
         page.close()
 
 
-def test_settings_auto_mode_follows_capability_changes_without_selecting_manual_policy():
+def test_settings_auto_mode_keeps_auto_while_scope_follows_capability():
+    """自动模式不因能力变化改写用户选择，只由状态行说明实际执行范围。"""
+
     frame = SimpleNamespace(
         _always_on_top=False,
         set_always_on_top=Mock(),
         set_continuous_scan=Mock(),
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
-        set_adb_native_only=Mock(),
+        set_adb_selection_mode=Mock(),
     )
     parent = QWidget()
     page = SettingsPage(frame, parent)
     try:
         page.update_adb_environment(RuntimeSnapshot(False, True, False, False, 0, 2))
-        assert page.adb_native_card.isChecked()
-        frame.set_adb_native_only.assert_not_called()
+        assert page.adb_check_card.mode() == "auto"
+        assert "设备列表：原生 ADB" in page.adb_check_card.contentLabel.text()
 
         page.update_adb_environment(RuntimeSnapshot(False, True, False, True, 1, 2))
-        assert not page.adb_native_card.isChecked()
-        frame.set_adb_native_only.assert_not_called()
+        assert page.adb_check_card.mode() == "auto"
+        assert "设备列表：快速直连" in page.adb_check_card.contentLabel.text()
 
         page.update_adb_environment(RuntimeSnapshot(False, False, False, False, 0, 2))
-        assert page.adb_native_card.isChecked()
-        frame.set_adb_native_only.assert_not_called()
+        assert page.adb_check_card.mode() == "auto"
+        assert "设备列表：原生 ADB" in page.adb_check_card.contentLabel.text()
 
-        page.update_adb_environment(RuntimeSnapshot(False, True, False, True, 1, 2))
-        assert not page.adb_native_card.isChecked()
-        frame.set_adb_native_only.assert_not_called()
-
-        page.adb_native_card.setChecked(True)
-        frame.set_adb_native_only.assert_called_once_with(True)
+        frame.set_adb_selection_mode.assert_not_called()
+        page.adb_check_card.mode_button("native").click()
+        frame.set_adb_selection_mode.assert_called_once_with("native")
     finally:
         page.close()
 
@@ -447,7 +622,7 @@ def test_settings_explains_detection_status(status, checking, available, expecte
         set_continuous_scan=Mock(),
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
-        set_adb_native_only=Mock(),
+        set_adb_selection_mode=Mock(),
     )
     parent = QWidget()
     page = SettingsPage(frame, parent)
@@ -463,7 +638,7 @@ def test_settings_explains_detection_status(status, checking, available, expecte
         assert "自动选择" in content
         assert "原生 ADB" in content
         assert page.adb_check_card.button.isEnabled() is not checking
-        frame.set_adb_native_only.assert_not_called()
+        frame.set_adb_selection_mode.assert_not_called()
     finally:
         page.close()
 
@@ -481,7 +656,7 @@ def test_settings_distinguishes_manual_mode_from_effective_scope(
         set_continuous_scan=Mock(),
         left_panel=SimpleNamespace(signals=SimpleNamespace(restart_adb_requested=Mock())),
         recheck_adb_environment=Mock(),
-        set_adb_native_only=Mock(),
+        set_adb_selection_mode=Mock(),
     )
     parent = QWidget()
     page = SettingsPage(frame, parent)
@@ -494,29 +669,29 @@ def test_settings_distinguishes_manual_mode_from_effective_scope(
         page.update_adb_environment(snapshot)
         content = page.adb_check_card.contentLabel.text()
         assert label in content
-        assert page.adb_native_card.isChecked() is native_only
+        assert page.adb_check_card.mode() == mode
         if fast_devices:
             assert "Shell 2" in content
         else:
             assert "原生 ADB" in content
-        frame.set_adb_native_only.assert_not_called()
+        frame.set_adb_selection_mode.assert_not_called()
     finally:
         page.close()
 
 
 @pytest.mark.parametrize(
-    ("language", "mode_label", "status", "reason", "on_text"),
+    ("language", "mode_label", "status", "reason"),
     [
-        ("zh_CN", "自动选择", "host_unavailable", "服务不可用", "开"),
-        ("zh_HK", "自動選擇", "host_unavailable", "服務無法使用", "開"),
-        ("en_US", "Automatic selection", "host_unavailable", "service is unavailable", "On"),
-        ("zh_CN", "自动选择", "starting_server", "正在启动本机 ADB 服务", "开"),
-        ("zh_HK", "自動選擇", "starting_server", "正在啟動本機 ADB 服務", "開"),
-        ("en_US", "Automatic selection", "starting_server", "Starting the local ADB service", "On"),
+        ("zh_CN", "自动选择", "host_unavailable", "服务不可用"),
+        ("zh_HK", "自動選擇", "host_unavailable", "服務無法使用"),
+        ("en_US", "Automatic selection", "host_unavailable", "service is unavailable"),
+        ("zh_CN", "自动选择", "starting_server", "正在启动本机 ADB 服务"),
+        ("zh_HK", "自動選擇", "starting_server", "正在啟動本機 ADB 服務"),
+        ("en_US", "Automatic selection", "starting_server", "Starting the local ADB service"),
     ],
 )
 def test_settings_translated_runtime_status_fits_narrow_large_font_page(
-    monkeypatch, qt_application, language, mode_label, status, reason, on_text,
+    monkeypatch, qt_application, language, mode_label, status, reason,
 ):
     values = dict(DEFAULTS, ui_font_size=22, language=language)
     settings = SimpleNamespace(get=values.get)
@@ -532,17 +707,21 @@ def test_settings_translated_runtime_status_fits_narrow_large_font_page(
         page.update_adb_environment(
             RuntimeSnapshot(status == "starting_server", False, False, False, 0, 0, status=status)
         )
-        cards = (page.adb_check_card, page.adb_native_card)
+        cards = (page.adb_check_card, page.adb_check_card)
         wait_for_stable_geometry(qt_application, (page, *cards))
         content = page.adb_check_card.contentLabel.text()
         assert mode_label in content
         assert reason in content
         assert page.adb_check_card.button.isEnabled() is (status != "starting_server")
-        assert page.adb_native_card.switchButton.label.text() == on_text
         assert page.horizontalScrollBar().maximum() == 0
+        # 执行模式卡在窄屏大字号下也必须保持展开按钮可达。
+        expand_button = page.adb_check_card.card.expandButton
+        page.ensureWidgetVisible(expand_button, 0, 0)
+        qt_application.processEvents()
+        assert page.adb_check_card.isVisibleTo(page)
+        assert expand_button.isVisibleTo(page)
         for card, control in (
             (page.adb_check_card, page.adb_check_card.button),
-            (page.adb_native_card, page.adb_native_card.switchButton),
         ):
             page.ensureWidgetVisible(control, 0, 0)
             qt_application.processEvents()
@@ -553,7 +732,7 @@ def test_settings_translated_runtime_status_fits_narrow_large_font_page(
             point = control.mapTo(card, QPoint())
             assert 0 <= point.x() and point.x() + control.width() <= card.width()
             assert 0 <= point.y() and point.y() + control.height() <= card.height()
-        frame.set_adb_native_only.assert_not_called()
+        frame.set_adb_selection_mode.assert_not_called()
     finally:
         page.close()
         for translator in reversed(translators):

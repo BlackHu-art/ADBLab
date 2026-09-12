@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-09
+last_verified: 2026-09-12
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -25,6 +25,11 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | MobilePerf 启动前的设备临时文件清理未精确限定产物类型和归属 | [StartUp.clear_heapdump](../../mobileperf/android/startup.py) 遍历 `/data/local/tmp`，按首个包名子串及超过 3 天筛选后删除，未检查 `.hprof` 后缀或 ADBLab 产物归属；需收紧清理边界并补保留无关文件的回归。代码条件已确认，未执行设备删除验证 | Open |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
 | Low | scrcpy 端口移交与 ADB 映射删除缺少跨应用原子操作 | 已为应用内会话保留独立端口并在删除前核对 scid；探测端口到 scrcpy 绑定、核对映射到删除之间仍可能被外部 ADB 客户端改写，不应视为跨应用独占保证 | Partial |
+
+| Medium | 稳态能力健康检查只保留一次 1 秒尝试，本机服务引导也只在运行实例首次初始化做一次 | 已评估「稳态重试」与「冷却期重试引导」，但会改变 `test_adb_runtime` 固定的行为与 [ADB_FAST](../guides/ADB_FAST.md) 语义，需先做产品决策；当前失败后按 `CHECK_INTERVAL` 在下一轮用完整能力预算恢复 | 待确认 |
+| Low | 设备面板与设置页各有一个「重启 ADB」入口 | 两个入口复用同一 `restart_adb_requested` 信号和同一结果处理器，重启后都会作废能力并重测；是否删除隐藏面板按钮需产品决策 | Open |
+| Low | `models/adb_model.py::_fetch_device_info` 没有生产消费者 | 全仓搜索无引用；删除属清理已核实无消费者的内部代码，需确认后再动 | Open |
+| Low | 首次执行本机 `adb.exe` 可能显著偏慢（Windows 加载与安全扫描），客户端识别依赖预热与护栏 | 设置页构建后空闲预热一次识别、单项 3 秒预算、串行探测、15 秒护栏且失败不入缓存；缺少其它机器与真实设备矩阵验证 | 待确认 |
 
 新增问题和测试缺口只在本表登记；实现事实放入相应主题文档，测试选择与门禁命令见
 [TESTING_GUIDE](../guides/TESTING_GUIDE.md)。

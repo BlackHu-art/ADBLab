@@ -6082,5 +6082,197 @@ Android device management, apps and diagnostics</translation>
             <source>展开或收起作者支持二维码</source>
             <translation>Expand or collapse the QR code to support the author</translation>
         </message>
+        <message>
+            <source>设备发现或连接异常时使用；会中断当前连接与投屏，完成后自动重新检测</source>
+            <translation>Use when discovery or connections fail; it interrupts current connections and casting, then rechecks automatically.</translation>
+        </message>
+        <message>
+            <source>仅影响后续命令；开启＝手动原生，关闭＝手动快速（不等于自动），重新检测恢复自动</source>
+            <translation>Affects later commands only; on = manual native, off = manual fast (not automatic); Recheck restores automatic.</translation>
+        </message>
+        <message>
+            <source>设备发现：{devices}；设备 Shell {count}/{checked} 台已验证</source>
+            <translation>Discovery: {devices}; device shell {count}/{checked} verified</translation>
+        </message>
+        <message>
+            <source>模式：{mode} · {scope} · {status}</source>
+            <translation>Mode: {mode} · {scope} · {status}</translation>
+        </message>
+        <message>
+            <source>检测中…（上次：{previous}）</source>
+            <translation>Checking… (last: {previous})</translation>
+        </message>
+        <message>
+            <source>模式：{mode}</source>
+            <translation>Mode: {mode}</translation>
+        </message>
+        <message>
+            <source>设备列表：快速直连</source>
+            <translation>Device list: fast direct</translation>
+        </message>
+        <message>
+            <source>设备列表：原生 ADB</source>
+            <translation>Device list: native ADB</translation>
+        </message>
+        <message>
+            <source>设备 Shell 未检查</source>
+            <translation>Device shell: not checked</translation>
+        </message>
+        <message>
+            <source>ADB 客户端</source>
+            <translation>ADB client</translation>
+        </message>
+        <message>
+            <source>客户端</source>
+            <translation>Client</translation>
+        </message>
+        <message>
+            <source>执行环境</source>
+            <translation>Environment</translation>
+        </message>
+        <message>
+            <source>选择文件…</source>
+            <translation>Choose file…</translation>
+        </message>
+        <message>
+            <source>重新识别本地 ADB 环境</source>
+            <translation>Detect local ADB environments</translation>
+        </message>
+        <message>
+            <source>自动选择（推荐）</source>
+            <translation>Automatic (recommended)</translation>
+        </message>
+        <message>
+            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</source>
+            <translation>Uses the first available of bundled → ADB_PATH → Android SDK → system PATH</translation>
+        </message>
+        <message>
+            <source>应用自带</source>
+            <translation>Bundled</translation>
+        </message>
+        <message>
+            <source>应用工具缓存</source>
+            <translation>App tool cache</translation>
+        </message>
+        <message>
+            <source>环境变量 ADB_PATH</source>
+            <translation>Environment ADB_PATH</translation>
+        </message>
+        <message>
+            <source>Android SDK（ANDROID_HOME）</source>
+            <translation>Android SDK (ANDROID_HOME)</translation>
+        </message>
+        <message>
+            <source>Android SDK（ANDROID_SDK_ROOT）</source>
+            <translation>Android SDK (ANDROID_SDK_ROOT)</translation>
+        </message>
+        <message>
+            <source>Android SDK（%LOCALAPPDATA%）</source>
+            <translation>Android SDK (%LOCALAPPDATA%)</translation>
+        </message>
+        <message>
+            <source>系统 PATH</source>
+            <translation>System PATH</translation>
+        </message>
+        <message>
+            <source>自定义 adb</source>
+            <translation>Custom adb</translation>
+        </message>
+        <message>
+            <source>未选择：可直接指定任意 adb 可执行文件</source>
+            <translation>Not selected: you can point to any adb executable</translation>
+        </message>
+        <message>
+            <source>未设置：本机没有这一来源</source>
+            <translation>Not configured: this source is unavailable on this PC</translation>
+        </message>
+        <message>
+            <source>未设置或文件不存在</source>
+            <translation>Not configured or file missing</translation>
+        </message>
+        <message>
+            <source>无法执行</source>
+            <translation>Cannot run</translation>
+        </message>
+        <message>
+            <source>执行超时</source>
+            <translation>Timed out</translation>
+        </message>
+        <message>
+            <source>不是 ADB 程序</source>
+            <translation>Not an ADB program</translation>
+        </message>
+        <message>
+            <source>识别已取消</source>
+            <translation>Detection cancelled</translation>
+        </message>
+        <message>
+            <source>正在识别本地 ADB 环境…</source>
+            <translation>Detecting local ADB environments…</translation>
+        </message>
+        <message>
+            <source>识别失败：{reason}</source>
+            <translation>Detection failed: {reason}</translation>
+        </message>
+        <message>
+            <source>{version} · {path}</source>
+            <translation>{version} · {path}</translation>
+        </message>
+        <message>
+            <source>{label} · {version}</source>
+            <translation>{label} · {version}</translation>
+        </message>
+        <message>
+            <source>{reason}：{path}</source>
+            <translation>{reason}: {path}</translation>
+        </message>
+        <message>
+            <source>（无路径）</source>
+            <translation>(no path)</translation>
+        </message>
+        <message>
+            <source>自定义 · {path}</source>
+            <translation>Custom · {path}</translation>
+        </message>
+        <message>
+            <source>执行模式</source>
+            <translation>Execution mode</translation>
+        </message>
+        <message>
+            <source>按服务能力与测速结果选择设备列表与 Shell 的执行方式</source>
+            <translation>Chooses how the device list and shell run based on capability and benchmark results</translation>
+        </message>
+        <message>
+            <source>跳过测速偏好、优先 5037 直连，但仍需通过能力验证</source>
+            <translation>Skips benchmark preference and prefers direct 5037, still requires capability checks</translation>
+        </message>
+        <message>
+            <source>全部启动 adb.exe 客户端，不使用直连</source>
+            <translation>Always launches the adb.exe client, never the direct socket</translation>
+        </message>
+        <message>
+            <source>选择 ADB 可执行文件</source>
+            <translation>Choose ADB executable</translation>
+        </message>
+        <message>
+            <source>所有文件 (*)</source>
+            <translation>All files (*)</translation>
+        </message>
+        <message>
+            <source>识别超时，可重试</source>
+            <translation>Detection timed out; try again</translation>
+        </message>
+        <message>
+            <source>正在识别本地 ADB 环境…可继续选择</source>
+            <translation>Detecting local ADB environments… you can keep choosing</translation>
+        </message>
+        <message>
+            <source>未检测到结果，可重新识别</source>
+            <translation>No result yet; run detection again</translation>
+        </message>
+        <message>
+            <source>用当前选择的 ADB 客户端重启本机 5037 服务；会中断当前连接与投屏，完成后自动重新检测</source>
+            <translation>Restarts the local 5037 service with the selected ADB client; it interrupts current connections and casting, then rechecks automatically</translation>
+        </message>
     </context>
 </TS>

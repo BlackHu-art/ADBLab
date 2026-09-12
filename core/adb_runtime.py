@@ -160,6 +160,7 @@ class AdbRuntime:
         self._path: str | None = None
         self._ready_sent = False
         self._full_probe = True
+        # 本地服务引导只在运行实例首次初始化的连接被明确拒绝时尝试一次。
         self._bootstrap_pending = True
         self._allow_bootstrap = False
         self._probe_checked: set[int] = set()
@@ -326,6 +327,21 @@ class AdbRuntime:
                 device.next_check = min(device.next_check, state.next_check)
         self._condition.notify_all()
 
+    def note_server_restart(self) -> None:
+        """外部重启 5037 服务后作废能力并立即重测，避免沿用已断开的连接状态。
+
+        由「重启 ADB」入口在成功结果到达后调用；只影响后续命令，不重放在途请求。
+        """
+
+        with self._condition:
+            if self._closed or self._draining:
+                return
+            self._invalidate(self._host)
+            self._host.next_check = 0.0
+            for state in self._shell.values():
+                state.next_check = 0.0
+        self.start(force=True)
+
     def _probe(self, previous: threading.Thread | None = None) -> None:
         """原子交接检查准入；新线程先 join 旧线程，保证探测工作从不并行。"""
         if previous is not None:
@@ -408,6 +424,8 @@ class AdbRuntime:
                 adb_debug.event("probe_result", status=self._status)
                 return
             stop = self._probe_stop.is_set
+            # 已验证服务的健康检查刻意只保留一次 1 秒尝试：失败后按 CHECK_INTERVAL
+            # 节流，在下一轮用完整能力预算恢复，避免把抖动放大成连续重试。
             listing, socket_elapsed = self._probe_capability(
                 "devices", ["-l"], serial=None,
                 retry=self._full_probe or not host.available,
@@ -888,6 +906,23 @@ class AdbRuntime:
             ready_deadline = min(deadline, time.monotonic() + 0.5)
             wait_started = time.monotonic()
             waited = False
+            # 新设备可能尚未出现在本轮 listing 的拓扑里：先在共享短预算内等一次列表，
+            # 避免刚插入设备的第一条 shell 命令必然回退原生。
+            while (
+                command == "shell"
+                and bool(serial)
+                and serial not in self._topology
+                and self._checking
+                and not self._draining
+                and not self._native_only
+            ):
+                if cancelled is not None and cancelled():
+                    return ExecutionResult(kind="cancelled")
+                remaining = ready_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                waited = True
+                self._condition.wait(min(0.1, remaining))
             while (
                 command == "shell"
                 and (pending := self._shell.get(serial or "")) is not None
