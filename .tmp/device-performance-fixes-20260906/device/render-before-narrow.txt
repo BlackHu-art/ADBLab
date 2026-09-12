@@ -1,4 +1,0 @@
-
-[1;33m📢 Tips:[0m QFluentWidgets Pro is now released. Click [1;96mhttps://qfluentwidgets.com/pages/pro[0m to learn more about it.
-
-{"tag": "before-dark-380-font22-zh_CN", "window_width": 380, "card_height": 1377, "summary_height": 316, "details_height": 638, "horizontal_scroll_max": 0, "copy_details_reachable": true}

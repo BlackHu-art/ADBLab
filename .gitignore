@@ -22,6 +22,7 @@ logs/
 resources/app.log
 Excalidraw/
 *.tmp.py
+.tmp/
 .obsidian/
 .claudian/
 /reference/
