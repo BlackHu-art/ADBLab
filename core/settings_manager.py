@@ -446,8 +446,8 @@ class AppSettings:
         ):
             self._save_atomic()
 
-    def _save_atomic(self) -> None:
-        """先写临时文件再原子替换，避免中途退出导致配置文件损坏。"""
+    def _save_atomic(self) -> bool:
+        """原子保存并返回成功状态；失败保留原文件和内存值，供下次更新或关闭重试。"""
 
         temporary_path = ""
         try:
@@ -473,13 +473,15 @@ class AppSettings:
                     json.dump(snapshot, file, indent=2, ensure_ascii=False)
                 os.replace(temporary_path, target)
                 temporary_path = ""
+            return True
         except Exception as error:
             if temporary_path and os.path.exists(temporary_path):
                 try:
                     os.unlink(temporary_path)
                 except OSError:
                     pass
-            _log_error("ERROR", f"Failed to save settings: {error}")
+            _log_error("ERROR", f"Failed to save settings: {type(error).__name__}")
+            return False
 
     def _schedule_save(self) -> None:
         """重新启动单个防抖计时器。

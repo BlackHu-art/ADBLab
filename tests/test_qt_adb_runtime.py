@@ -539,6 +539,27 @@ def test_adb_client_card_keeps_unusable_candidates_with_reason(qt_application):
         card.close()
 
 
+@pytest.mark.parametrize("mode,available,count,checked", [
+    ("auto", True, 0, 2), ("native", True, 0, 2),
+    ("fast", True, 2, 2), ("auto", False, 0, 2), ("auto", True, 0, 0),
+])
+def test_settings_shell_summary_describes_routing_not_capability(mode, available, count, checked):
+    page = SettingsPage(Mock())
+    try:
+        page.update_adb_environment(RuntimeSnapshot(
+            False, available, mode == "native", False, count, checked, selection_mode=mode,
+        ))
+        content = page.adb_check_card.contentLabel.text()
+        if checked:
+            assert f"设备 Shell {count}/{checked} 台使用快速通道" in content
+            assert "台已验证" not in content
+        else:
+            assert "设备 Shell 未检查" in content
+    finally:
+        page.close()
+        page.deleteLater()
+
+
 def test_settings_reports_partial_acceleration_and_session_override():
     frame = SimpleNamespace(
         _always_on_top=False,

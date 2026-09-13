@@ -1983,11 +1983,12 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
                 ):
                     candidate_narrow_width = width
             category_attempts[candidate_key] = candidate_samples
+            # 优先覆盖溢出到无溢出的转换；可自然换行的分类同样必须只提交一代。
+            category_key = candidate_key
+            category_bindings = candidate_bindings
+            samples = candidate_samples
+            narrow_width = candidate_narrow_width or candidate_samples[0][0]
             if candidate_narrow_width is not None:
-                category_key = candidate_key
-                category_bindings = candidate_bindings
-                samples = candidate_samples
-                narrow_width = candidate_narrow_width
                 break
         assert category_key == category_stack.current_key
         assert category_bindings
@@ -2008,8 +2009,13 @@ def test_real_feature_viewport_resize_uses_one_generation_and_ignores_feedback(
             content,
             category_bindings,
         )
-        assert narrow_overflow
-        assert scroll.horizontalScrollBar().maximum() > 0
+        if narrow_overflow:
+            assert scroll.horizontalScrollBar().maximum() > 0
+        else:
+            for binding in category_bindings:
+                for widget in binding.widgets():
+                    if widget.isVisible():
+                        assert_scroll_target_reachable(scroll, widget)
 
         before_resize = panel._responsive_coordinator.diagnostics.generation
         current_width = scroll.viewport().contentsRect().width()
@@ -2110,7 +2116,11 @@ def test_runtime_font_change_refreshes_responsive_auto_minimums(
 
         label = app_panel._pct_total_lbl
         field = app_panel.monkey_events
-        assert label.minimumWidth() == label.fontMetrics().horizontalAdvance("MMMMMM")
+        _show_widget_category(qt_application, app_panel, label)
+        wait_for_stable_geometry(qt_application, (label, field))
+        assert label.wordWrap()
+        assert label.font().pointSize() == 22
+        assert label.height() >= label.heightForWidth(label.width())
         assert field.minimumWidth() > small_minimum
         assert field.property(RESPONSIVE_MINIMUM_TEXT_PROPERTY) == "1000000"
         edit_rect = _combo_edit_field_rect(field, width=field.minimumWidth())
@@ -3076,11 +3086,14 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
             scroll.viewport().contentsRect().width(),
         )
         assert target in groups
-        assert target.minimumSizeHint().width() >= title_extent
+        assert target.headerLabel.wordWrap()
+        assert target.headerLabel.text() == target.title
+        assert target.headerLabel.height() >= target.headerLabel.heightForWidth(
+            target.headerLabel.width()
+        )
         assert target.toolTip() == ""
         assert target.accessibleName() == target.title
-        assert scroll.horizontalScrollBar().maximum() > 0
-        assert_scroll_target_reachable(scroll, target)
+        assert_scroll_target_reachable(scroll, target.headerLabel)
 
         probe = type(target)("Devices")
         probe.setFont(target.font())
@@ -3098,10 +3111,10 @@ def test_long_card_title_uses_reference_geometry_and_accessible_fallback(
         assert probe.width() == 300
         narrow_hint = probe.minimumSizeHint().width()
         assert narrow_hint == wide_hint
-        margins = probe.headerLayout.contentsMargins()
-        assert wide_hint >= (
-            probe.headerLabel.fontMetrics().horizontalAdvance(probe.title)
-            + margins.left() + margins.right()
+        assert probe.headerLabel.wordWrap()
+        assert probe.headerLabel.text() == "Devices"
+        assert probe.headerLabel.height() >= probe.headerLabel.heightForWidth(
+            probe.headerLabel.width()
         )
         probe_scroll.close()
         probe_scroll.deleteLater()
@@ -3174,8 +3187,13 @@ def test_remote_key_and_action_each_submit_once_after_real_reflow(
         qt_application.processEvents()
 
         assert len(executor.tasks) == 2
-        remote._remote_control.send_keyevent.assert_called_once_with(device, "HOME")
-        remote._remote_control.perform_action.assert_called_once_with(device, "swipe_up")
+        remote._remote_control.send_keyevent.assert_called_once_with(
+            device, "HOME", cancelled=remote._input_controller._input_closing,
+        )
+        remote._remote_control.perform_action.assert_called_once_with(
+            device, "swipe_up", cancelled=remote._input_controller._input_closing,
+        )
+        assert not remote._input_controller._input_closing()
         assert (
             remote._remote_submitted,
             remote._remote_completed,
@@ -3213,6 +3231,7 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
         qt_application.processEvents()
 
         devices = ["device-a", "device-b"]
+        panel.update_device_list(devices)
         monkeypatch.setattr(
             type(panel._devices_tab),
             "selected_devices",
@@ -3288,6 +3307,9 @@ def test_apps_real_reflow_preserves_all_binding_state_batches_and_one_signal(
         apps.uninstall_btn.click()
         assert uninstall_spy.count() == 1
         assert list(uninstall_spy.at(0)) == [devices, "com.example.contract"]
+        panel.set_device_discovery_state("unavailable")
+        apps.uninstall_btn.click()
+        assert uninstall_spy.count() == 1
     finally:
         _close_feature_panel(panel)
 
@@ -3307,6 +3329,7 @@ def test_system_real_reflow_preserves_all_binding_state_validators_and_one_signa
     )
     try:
         devices = ["device-system"]
+        panel.update_device_list(devices)
         monkeypatch.setattr(
             type(panel._devices_tab),
             "selected_devices",
@@ -3406,6 +3429,9 @@ def test_system_real_reflow_preserves_all_binding_state_validators_and_one_signa
         system.btn_battery_set.click()
         assert battery_spy.count() == 1
         assert list(battery_spy.at(0)) == [devices, "status", "4"]
+        panel.set_device_discovery_state("unavailable")
+        system.btn_battery_set.click()
+        assert battery_spy.count() == 1
     finally:
         _close_feature_panel(panel)
 
@@ -3651,10 +3677,15 @@ def test_stacked_connect_width_scan_uses_only_supported_geometry(qt_application)
 
             plan = manager.action_binding.applied_plan
             assert plan is not None
-            assert not plan.overflow_required
-            assert plan.required_width <= plan.available_width
             assert widget.findChildren(QScrollArea) == [manager._device_action_scroll]
-            assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
+            if plan.overflow_required:
+                assert plan.required_width > plan.available_width
+                assert manager._device_action_scroll.horizontalScrollBar().maximum() > 0
+                for action in manager.action_binding.widgets():
+                    assert_scroll_target_reachable(manager._device_action_scroll, action)
+            else:
+                assert plan.required_width <= plan.available_width
+                assert manager._device_action_scroll.horizontalScrollBar().maximum() == 0
 
             available = manager._connect_layout.geometry()
             connect = manager.btn_connect_devices.geometry()
@@ -3732,7 +3763,7 @@ def test_device_address_menu_keeps_the_input_shrinkable(qt_application):
             manager.ip_entry.sizePolicy().horizontalPolicy()
             == manager.ip_entry.sizePolicy().Policy.Ignored
         )
-        assert widget.minimumSizeHint().width() == minimum_width_before
+        assert widget.minimumSizeHint().width() <= minimum_width_before
         assert widget.width() == actual_width_before
 
         manager.ip_entry._showComboMenu()

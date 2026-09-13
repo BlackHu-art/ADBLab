@@ -6274,5 +6274,29 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>用当前选择的 ADB 客户端重启本机 5037 服务；会中断当前连接与投屏，完成后自动重新检测</source>
             <translation>用目前選擇的 ADB 用戶端重啟本機 5037 服務；會中斷目前連線與投屏，完成後自動重新檢測</translation>
         </message>
+        <message>
+            <source>停止</source>
+            <translation>停止</translation>
+        </message>
+        <message>
+            <source>设备 Shell {count}/{checked} 台使用快速通道</source>
+            <translation>裝置 Shell {count}/{checked} 台使用快速通道</translation>
+        </message>
+        <message>
+            <source>Elapsed time (s)</source>
+            <translation>經過時間（秒）</translation>
+        </message>
+        <message>
+            <source>Loading chart…</source>
+            <translation>正在載入圖表…</translation>
+        </message>
+        <message>
+            <source>Chart data could not be loaded.</source>
+            <translation>無法載入圖表資料。</translation>
+        </message>
+        <message>
+            <source>Count</source>
+            <translation>計數</translation>
+        </message>
     </context>
 </TS>

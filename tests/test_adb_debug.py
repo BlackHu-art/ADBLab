@@ -11,7 +11,15 @@ from unittest.mock import patch
 import pytest
 
 from core.log_service import LogService
-from utils import adb_debug
+from utils import adb_debug, console_colors
+
+
+@pytest.fixture(autouse=True)
+def restore_console_level():
+    """隔离进程级控制台阈值，避免分级诊断用例互相影响。"""
+    original = console_colors.console_level()
+    yield
+    console_colors.set_console_level(original)
 
 
 @pytest.fixture
@@ -149,3 +157,32 @@ def test_missing_client_is_warning_without_claiming_selection():
     assert writer.call_args_list[0].args[0] == "WARNING"
     assert "未找到可用的 ADB" in writer.call_args_list[0].args[1]
     assert all(call.args[0] != "INFO" for call in writer.call_args_list)
+
+
+def test_info_summary_does_not_serialize_disabled_debug_detail(monkeypatch):
+    console_colors.set_console_level("INFO")
+    with patch.object(LogService, "write_developer_console") as writer:
+        with patch.object(adb_debug.json, "dumps", side_effect=AssertionError("debug JSON")):
+            adb_debug.event(
+                "resolve_result", selected_adb="adb.exe", source="PATH", cached=False,
+            )
+    writer.assert_called_once()
+    assert writer.call_args.args[0] == "INFO"
+
+
+def test_disabled_console_skips_adb_summary_and_json(monkeypatch):
+    console_colors.set_console_level("OFF")
+    with patch.object(LogService, "write_developer_console") as writer:
+        with patch.object(adb_debug.json, "dumps", side_effect=AssertionError("disabled JSON")):
+            adb_debug.event(
+                "resolve_result", selected_adb=None, source="missing", cached=False,
+            )
+    writer.assert_not_called()
+
+
+def test_missing_client_warning_survives_debug_filter():
+    console_colors.set_console_level("WARNING")
+    with patch.object(LogService, "write_developer_console") as writer:
+        adb_debug.event("resolve_result", selected_adb=None, source="missing", cached=False)
+    writer.assert_called_once()
+    assert writer.call_args.args[0] == "WARNING"

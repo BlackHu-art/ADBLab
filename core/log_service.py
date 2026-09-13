@@ -94,15 +94,20 @@ class LogService(QObject):
                 rendered_message = str(message)
         timestamp = datetime.now().strftime("%H:%M:%S")
         is_debug = normalized_level == LogLevel.DEBUG
+        console_enabled = self._developer_console_enabled(normalized_level)
+        private_values: tuple[str, ...] = ()
+        needs_wakeup = False
 
-        # 锁内只做状态判断、入缓冲和脱敏值快照：控制台写入可能阻塞在管道上，
-        # 持锁执行会让界面线程刷新日志时一并卡住。
+        # 锁内只做状态判断、入缓冲和必要的脱敏值快照：控制台写入可能阻塞在
+        # 管道上，持锁执行会让界面线程刷新日志时一并卡住。
         self._buffer_lock.lock()
         try:
             if self._state != self._STATE_ACCEPTING:
                 return
-            private_values = self.diagnostics.sorted_private_values
+            if console_enabled:
+                private_values = self.diagnostics.sorted_private_values
             if not is_debug:
+                needs_wakeup = not self._buffer and self._pending_dropped_count <= 0
                 self._buffer.append((timestamp, normalized_level, rendered_message))
                 # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
                 if len(self._buffer) > self._max_buffer:
@@ -113,10 +118,11 @@ class LogService(QObject):
         finally:
             self._buffer_lock.unlock()
 
-        self.write_developer_console(
-            normalized_level,
-            redact_diagnostic(rendered_message, private_values, presorted=True),
-        )
+        if console_enabled:
+            self.write_developer_console(
+                normalized_level,
+                redact_diagnostic(rendered_message, private_values, presorted=True),
+            )
         if is_debug:
             return
 
@@ -127,8 +133,9 @@ class LogService(QObject):
             else:
                 self._flush_now_requested.emit()
         elif is_owner_thread:
-            self._ensure_flush_timer()
-        else:
+            if needs_wakeup:
+                self._ensure_flush_timer()
+        elif needs_wakeup:
             self._flush_requested.emit()
 
     def record_runtime_diagnostic(self, message: str) -> None:
@@ -239,17 +246,28 @@ class LogService(QObject):
             self.log_received.emit(level, message)
 
     @classmethod
+    def _developer_console_enabled(cls, level: str) -> bool:
+        """判断指定级别是否具备可用控制台，供昂贵格式化工作提前旁路。"""
+        if getattr(sys, "frozen", False) or not should_emit(level):
+            return False
+        stream_name = (
+            "stderr"
+            if level in {LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL}
+            else "stdout"
+        )
+        stream = getattr(sys, stream_name, None)
+        return stream is not None and not getattr(stream, "closed", False)
+
+    @classmethod
     def write_developer_console(cls, level: str, message: str) -> None:
         """源码诊断按级别原子写入控制台，避免普通日志被 IDE 标为错误。
 
         WARNING、ERROR、CRITICAL 使用 stderr，其余级别使用 stdout；打包模式及
         对应流不可用时静默。颜色仅在最终控制台显示层添加，不进入界面或文件。
         """
-        if getattr(sys, "frozen", False):
-            return
         normalized_level = str(level).strip().upper()
-        # 控制台级别只影响显示层：界面缓冲、诊断摘要与落盘不经过这里。
-        if not should_emit(normalized_level):
+        # 直接调用者仍在此处受完整显示策略保护。
+        if not cls._developer_console_enabled(normalized_level):
             return
         stream_name = (
             "stderr"

@@ -18,9 +18,11 @@ _ENVIRONMENT_KEYS = ("ADB_PATH", "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDA
 def reset_resolver_cache() -> Iterator[None]:
     """每个用例前后都清空解析缓存与客户端选择，避免用例之间互相影响。"""
 
+    execution.reset_adb_program_cache()
     adb_resolver.invalidate_adb_path_cache()
     adb_resolver.set_client_preference(adb_resolver.CLIENT_PREFERENCE_AUTO)
     yield
+    execution.reset_adb_program_cache()
     adb_resolver.invalidate_adb_path_cache()
     adb_resolver.set_client_preference(adb_resolver.CLIENT_PREFERENCE_AUTO)
 
@@ -194,23 +196,26 @@ def test_preference_pins_single_candidate_without_fallback(monkeypatch):
     assert _same_path(adb_resolver.resolve_adb_path(), "C:/bundle/adb.exe")
 
 
-def test_exec_program_cache_follows_resolver_invalidation(monkeypatch):
-    monkeypatch.setattr(execution, "_adb_path", None)
-    monkeypatch.setattr("utils.adb_resolver.adb_path", lambda: "first-adb")
-    assert execution.resolve_adb_program() == "first-adb"
+def test_exec_program_cache_follows_resolver_invalidation(monkeypatch, tmp_path):
+    first = tmp_path / "first-adb.exe"
+    second = tmp_path / "second-adb.exe"
+    first.touch()
+    second.touch()
+    monkeypatch.setattr("utils.adb_resolver.resolve_adb_path", lambda: str(first))
+    assert execution.resolve_adb_program() == str(first)
 
-    monkeypatch.setattr("utils.adb_resolver.adb_path", lambda: "second-adb")
-    assert execution.resolve_adb_program() == "first-adb"
+    monkeypatch.setattr("utils.adb_resolver.resolve_adb_path", lambda: str(second))
+    assert execution.resolve_adb_program() == str(first)
 
     execution.reset_adb_program_cache()
-    assert execution.resolve_adb_program() == "second-adb"
+    assert execution.resolve_adb_program() == str(second)
 
 
 def test_bridge_defers_missing_adb_and_follows_later_resolution(monkeypatch):
-    monkeypatch.setattr("core.adb_bridge.adb_path", lambda: "adb")
+    monkeypatch.setattr("core.adb_bridge.adb_path", lambda: None)
 
     bridge = ADBBridge()
-    assert bridge.path == "adb"
+    assert bridge.path is None
 
     monkeypatch.setattr("core.adb_bridge.adb_path", lambda: "C:/new/adb.exe")
     assert bridge.path == "C:/new/adb.exe"

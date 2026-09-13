@@ -105,6 +105,7 @@ class AppManagerPage(QWidget):
         self.selected_packages = set()
         self._syncing_selection = False
         self._batch_workers = set()
+        self._batch_pending = []
         self._batch_total = 0
         self._batch_action = ""
         self._workers = []
@@ -225,6 +226,7 @@ class AppManagerPage(QWidget):
         self.details_page.set_device_connected(connected)
         self._form_controller._refresh_status_badge()
         if not connected:
+            self._batch_controller.cancel_pending()
             self._load_refresh_pending = False
             if is_qobject_alive(self._detail_timer):
                 self._detail_timer.stop()
@@ -252,6 +254,7 @@ class AppManagerPage(QWidget):
         self.details_page.set_device_selected(self._device_selected)
         self._form_controller._refresh_status_badge()
         if not self._can_operate():
+            self._batch_controller.cancel_pending()
             self._load_refresh_pending = False
             self._detail_timer.stop()
             self._icons_controller.pause()
@@ -677,6 +680,7 @@ class AppManagerPage(QWidget):
             return True
         self._dispose_requested = True
         self._closing = True
+        self._batch_controller.cancel_pending()
         self._icons_controller.reset()
         self._active = False
         if is_qobject_alive(self._detail_timer):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from datetime import datetime
 
 from PySide6.QtWidgets import QFileDialog
@@ -221,7 +222,7 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
     def _save_single_device_log(self, device_ip: str, save_dir: str):
         timestamp = datetime.now().strftime("%H%M%S")
         sanitized_ip = re.sub(r"\W+", "_", device_ip)
-        log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}.txt")
+        log_path = os.path.join(save_dir, f"log_{timestamp}_{sanitized_ip}_{uuid.uuid4().hex}.txt")
         self.testing_model.retrieve_device_logs_async(device_ip, log_path)
 
     def _process_retrieve_logs_result(self, result: dict):

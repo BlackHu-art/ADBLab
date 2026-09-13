@@ -3,6 +3,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -54,7 +55,7 @@ def test_frozen_resolver_logs_internal_candidate_and_actual_source(
     monkeypatch.setattr(adb_resolver, "_adb_path", None)
     monkeypatch.setattr(adb_resolver.shutil, "which", lambda _name: fallback)
     # 此处只验证打包路径解析的诊断字段，冻结模式的控制台策略由独立测试覆盖。
-    monkeypatch.setattr(adb_debug, "enabled", lambda: True)
+    monkeypatch.setattr(adb_debug, "enabled", lambda _level="DEBUG": True)
     console = sys.stdout
     monkeypatch.setattr(
         LogService, "write_developer_console",
@@ -78,6 +79,8 @@ def test_native_entries_log_resolved_client_without_command_values(
     debug_log, monkeypatch, tmp_path, entry,
 ):
     executable = str(tmp_path / "_internal" / "scrcpy-win64" / "adb.exe")
+    Path(executable).parent.mkdir(parents=True)
+    Path(executable).touch()
     monkeypatch.setattr(execution, "_adb_path", executable)
     monkeypatch.setattr(execution, "_adb_runtime", None)
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)

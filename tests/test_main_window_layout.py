@@ -37,6 +37,12 @@ from tests.ui_geometry_helpers import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_settings_client_detection(monkeypatch):
+    """布局事件可能兑现 Settings 延迟检测；本模块不启动任何本地 ADB 探针。"""
+    monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
+
+
 @dataclass
 class _FakeScreen:
     name: str
@@ -170,6 +176,9 @@ def build_main_frame(
         patch.object(AppSettings, "instance", classmethod(lambda _cls: settings)),
         patch("gui.main_frame.ADBController", lambda _log_service: controller),
         patch.object(MainFrame, "_bootstrap_adb_async", lambda _self: None),
+        patch(
+            "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+        ),
     ):
         return MainFrame(
             screen_adapter=screen_adapter,
@@ -919,7 +928,8 @@ def test_device_picker_is_transient_and_ignores_ambiguous_resume(qt_application)
         assert tuple(frame._navigation_history) == history
 
         frame._on_devices_updated(["device-1", "device-2"])
-        frame._global_device_bar.selection_requested.emit(["device-1", "device-2"])
+        # 多选快照从设备列表广播；当前 manager 的弹层本身只允许单选。
+        frame.left_panel._devices_tab.set_selected_devices(["device-1", "device-2"])
         frame._on_workspace_route_changed(WorkspaceRoute("system", "overview"))
         assert host.pending_route == pending
         assert host.stack.currentWidget() is host.no_device_page
@@ -959,7 +969,8 @@ def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_appli
     try:
         frame.show()
         host = frame._workspace_feature_hosts["system"]
-        host.set_device_context(["device-1"], ["device-1"])
+        frame._on_devices_updated(["device-1"])
+        frame.left_panel._devices_tab.set_selected_devices(["device-1"])
         assert frame._open_workspace_feature(
             "system",
             "performance",
@@ -981,11 +992,18 @@ def test_narrow_workspace_exposes_distinct_function_and_device_controls(qt_appli
             frame._workspace_navigation_keys[("system", "performance")]
         )
         bar = frame._global_device_bar
-        assert bar.target_row.isHidden()
-        assert bar.session_target.isVisible()
-        assert bar.session_combo.isVisible()
-        assert bar.session_combo.currentData() == "device-1"
-        assert bar.session_combo.accessibleName() == "当前查看的会话设备"
+        assert bar.target_row.isVisible()
+        assert bar.targets_button.isVisible()
+        assert bar.close_button.isHidden()
+        assert bar.session_target.isHidden() and bar.session_combo.isHidden()
+        bar.open_picker()
+        qt_application.processEvents()
+        picker = bar._picker
+        assert picker is not None and picker.isVisible()
+        assert picker.device_list.accessibleName() == "操作设备多选列表"
+        assert picker.device_list.count() == 1
+        assert picker.device_list.item(0).data(Qt.ItemDataRole.UserRole) == "device-1"
+        assert picker.device_list.item(0).checkState() == Qt.CheckState.Checked
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

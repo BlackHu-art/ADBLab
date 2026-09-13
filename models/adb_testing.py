@@ -793,10 +793,11 @@ class ADBTesting(ADBModelCore):
             if callback:
                 callback(f"[{device_ip}] {msg}")
 
-        timestamp = datetime.now().strftime("%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         sanitized = re.sub(r"\W+", "_", device_ip)
-        target_dir = os.path.join(save_root, f"{sanitized}_bugreport_{timestamp}")
-        os.makedirs(target_dir, exist_ok=True)
+        os.makedirs(save_root, exist_ok=True)
+        # 独占目录定义本次产物集合，后处理不得借用其他运行的历史文件。
+        target_dir = tempfile.mkdtemp(prefix=f"{sanitized}_bugreport_{timestamp}_", dir=save_root)
         log(f"Created directory: {target_dir}")
 
         log("Getting Android version...")
@@ -822,7 +823,7 @@ class ADBTesting(ADBModelCore):
                 bugreport_cmd = ["adb", "-s", device_ip, "bugreport", target_dir]
             else:
                 log("Running: adb bugreport <file> ... this may take 1-2 minutes")
-                output_file = os.path.join(target_dir, f"bugreport_{device_ip}.txt")
+                output_file = os.path.join(target_dir, "bugreport.txt")
                 bugreport_cmd = ["adb", "-s", device_ip, "bugreport", output_file]
 
             bugreport = self._run(bugreport_cmd, timeout=180)
@@ -918,8 +919,9 @@ class ADBTesting(ADBModelCore):
     def pull_anr_files_async(
         self, device_ip: str, sanitized_name: str, save_dir: str, index: int
     ) -> dict:
-        device_anr_dir = os.path.join(save_dir, sanitized_name)
-        os.makedirs(device_anr_dir, exist_ok=True)
+        os.makedirs(save_dir, exist_ok=True)
+        # 调用者提供展示前缀；目录身份由原子创建决定，不复用历史拉取结果。
+        device_anr_dir = tempfile.mkdtemp(prefix=f"{sanitized_name}_", dir=save_dir)
         r = self._run(
             ["adb", "-s", device_ip, "pull", "/data/anr", device_anr_dir],
             timeout=30,

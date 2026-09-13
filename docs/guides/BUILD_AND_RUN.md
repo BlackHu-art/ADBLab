@@ -46,15 +46,19 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - ADB 解析器已按平台门控：Windows 依次尝试内置 `scrcpy-win64/adb.exe`、`ADB_PATH`
   环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
   最后回退 PATH；非 Windows 按同一顺序但不使用内置的 Windows PE。
-- 解析结果在进程内缓存；设置页「重新检测」会清空解析缓存并重扫候选，因此安装或移除
-  platform-tools 后无需重启应用。
+- 解析结果在进程内缓存，包含明确缺失结果；应用执行要求可用绝对路径，缺失时直接失败，
+  不交给裸命令名重新搜索 PATH。设置页「重新检测」清空解析与执行两层缓存，并作废客户端
+  探测缓存；安装或移除 platform-tools 后无需重启应用。重检合并、持久输入退休和子进程
+  路径冻结契约见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - 普通启动会后台检测默认本机 ADB 服务，为受支持短命令选择执行方式；设置页的执行模式只在
   当前运行生效。支持范围、恢复和自定义服务环境的处理见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - 设置页「ADB 维护 → 客户端」可固定使用的 ADB 客户端，配置键 `adb_client` 默认 `auto`
   （按内置 → `ADB_PATH` → Android SDK → PATH 顺序）；取值也支持命名来源
   （`bundled`/`env`/`PATH`，旧配置里的 `sdk_home`/`sdk_root`/`sdk_local` 仍被接受）或绝对路径；界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
   缓存并重新检测；所选客户端缺失时按选择如实失败，不会静默改用其它 adb。
-- Remote 的非 Windows scrcpy 必须由 PATH 提供。
+- Remote 的非 Windows scrcpy 必须由 PATH 提供。主应用启动 MobilePerf 和 scrcpy 时分别冻结
+  `ADB_PATH` / `ADB` 子进程环境；所选 ADB 缺失会在启动前失败，详情见
+  [Remote 投屏与输入](ADB_FAST.md#remote-投屏与输入) 与 [MobilePerf 采集进程](ADB_FAST.md#mobileperf-采集进程)。
 - 开发控制台的输出级别由 `console_log_level` 控制（默认 `DEBUG` 保留现状，可选
   `INFO`/`WARNING`/`ERROR`/`OFF`）；环境变量 `ADBLAB_CONSOLE_LOG_LEVEL` 优先于配置，
   启动时读取、只影响源码运行的控制台，界面与诊断落盘不受影响。

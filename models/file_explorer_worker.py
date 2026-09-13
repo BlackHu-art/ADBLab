@@ -58,18 +58,43 @@ class TransferWorker(QThread):
         self._process_key = f"transfer_{id(self)}"
         self._process_runner = ProcessRunner()
         self._aborted = threading.Event()
+        self._run_entered = threading.Event()
+        self._run_finished = threading.Event()
 
-    def abort(self):
-        """请求中止并停止当前传输进程。"""
+    def request_stop(self):
+        """非阻塞记录取消意图，并唤醒被进程输出读取阻塞的线程。"""
         self._aborted.set()
         self.requestInterruption()
-        self._process_runner.stop(self._process_key, timeout=2)
+        self._process_runner.request_stop(self._process_key)
+
+    def abort(self):
+        """兼容页面旧取消入口，不在 GUI 线程等待进程退出。"""
+        self.request_stop()
+
+    def is_active(self) -> bool:
+        """线程、执行体或实际进程任一未退出时保留监督记录。"""
+        return (self.isRunning() or not self.wait(0)
+                or (self._run_entered.is_set() and not self._run_finished.is_set())
+                or (self._proc is not None and self._proc.poll() is None))
+
+    def wait_stopped(self, timeout: float) -> bool:
+        """只供后台监督器使用，等待线程并复核实际进程状态。"""
+        self.wait(max(0, int(timeout * 1000)))
+        return not self.is_active()
+
+    def force_stop(self, timeout: float) -> bool:
+        """后台强停保留原进程归属，不能以 kill 已发送推断退出。"""
+        self.request_stop()
+        deadline = time.monotonic() + max(0.0, timeout)
+        self._process_runner.force_stop(self._process_key, timeout=timeout)
+        return self.wait_stopped(max(0.0, deadline - time.monotonic()))
 
     def run(self):
-        """启动传输进程；无论成功、失败或异常都取消进程注册。"""
-        if self._aborted.is_set() or self.isInterruptionRequested():
-            return
+        """启动后再次检查取消；仅在确认进程退出后注销资源。"""
+        self._run_entered.set()
         try:
+            if self._aborted.is_set() or self.isInterruptionRequested():
+                return
             cmd = ["adb", "-s", self.device_ip] + self.args
             self._proc = self._process_runner.start(
                 self._process_key,
@@ -82,6 +107,9 @@ class TransferWorker(QThread):
                 errors="ignore",
                 bufsize=1,
             )
+            if self._aborted.is_set():
+                self._process_runner.request_stop(self._process_key)
+                return
             last = ""
             stdout = self._proc.stdout
             if stdout is None:
@@ -106,6 +134,9 @@ class TransferWorker(QThread):
             else:
                 self.result_ready.emit(last or f"Exit {ret}", True, local)
         except Exception as e:
-            self.result_ready.emit(str(e), True, "")
+            if not self._aborted.is_set():
+                self.result_ready.emit(str(e), True, "")
         finally:
-            self._process_runner.stop(self._process_key, timeout=0)
+            if self._proc is not None and self._proc.poll() is not None:
+                self._process_runner.stop(self._process_key, timeout=0)
+            self._run_finished.set()

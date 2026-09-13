@@ -8,7 +8,7 @@ import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QAbstractButton, QScrollArea, QWidget
+from PySide6.QtWidgets import QAbstractButton, QScrollArea, QVBoxLayout, QWidget
 from qfluentwidgets import CardWidget, ComboBox, PushButton, SettingCard
 from shiboken6 import isValid
 
@@ -17,11 +17,17 @@ from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceConnectionForm, DeviceContextBar, DevicePicker
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
-from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
+from tests.ui_geometry_helpers import (
+    assert_scroll_target_reachable,
+    mapped_rect,
+    wait_for_stable_geometry,
+    wait_until,
+)
 
 
 @pytest.fixture
 def frame(monkeypatch):
+    monkeypatch.setattr("gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", Mock())
     monkeypatch.setattr(DeviceStore, "get_basic_devices_info", lambda: [])
     monkeypatch.setattr(DeviceStore, "get_full_devices_info", lambda devices: [])
     window = build_main_frame(
@@ -849,15 +855,31 @@ def test_page_scrollbars_stay_close_to_content(frame, qt_application, monkeypatc
         assert area.viewport().geometry().adjusted(-2, -2, 2, 2).contains(
             mapped_rect(bar, area)
         ), route
+        # 阅读留白在正文内部；滚动条与 viewport 对齐，不能拿卡片边缘作外壳边界。
+        assert abs(
+            mapped_rect(bar, area).right() - area.viewport().geometry().right()
+        ) <= 2, route
         cards = [card for card in area.widget().findChildren(QWidget)
                  if isinstance(card, (CardWidget, SettingCard))
                  and card.isVisibleTo(area.widget())]
         anchors = cards or [button for button in area.widget().findChildren(QAbstractButton)
                             if button.isVisibleTo(area.widget())]
         if anchors:
-            right = max(mapped_rect(anchor, area).right() for anchor in anchors)
-            gap = mapped_rect(bar.handle, area).right() - right
-            assert 0 <= gap <= 14, (route, gap)
+            for anchor in anchors:
+                if anchor.height() <= area.viewport().height():
+                    assert_scroll_target_reachable(area, anchor)
+                    continue
+                # 长卡片无需同时装进短窗口，但四角和每个动作都必须能滚动到达。
+                rect = anchor.rect()
+                corners = (rect.topLeft(), rect.topRight(), rect.bottomLeft(), rect.bottomRight())
+                for corner in corners:
+                    position = anchor.mapTo(area.widget(), corner)
+                    area.ensureVisible(position.x(), position.y(), 1, 1)
+                    qt_application.processEvents()
+                    assert area.viewport().rect().contains(anchor.mapTo(area.viewport(), corner))
+                for button in anchor.findChildren(QAbstractButton):
+                    if button.isVisibleTo(anchor):
+                        assert_scroll_target_reachable(area, button)
             checked += 1
     if route in {"homePage", "settingsPage", "appsPage", "systemPage", "performancePage"}:
         assert checked > 0
@@ -901,7 +923,10 @@ def test_page_scrollbar_uses_full_viewport_and_accepts_drag(frame, qt_applicatio
         last = page.widget().layout().itemAt(page.widget().layout().count() - 1).widget()
     assert mapped_rect(last, page.viewport()).bottom() <= page.viewport().rect().bottom()
     if route == "settings":
-        assert page.viewport().rect().bottom() - mapped_rect(last, page.viewport()).bottom() == 20
+        assert (
+            page.viewport().rect().bottom() - mapped_rect(last, page.viewport()).bottom()
+            == page.expand_layout.contentsMargins().bottom()
+        )
 
 
 @pytest.mark.parametrize(
@@ -956,3 +981,55 @@ def test_window_destruction_releases_hidden_device_coordinator(
         if isValid(coordinator):
             coordinator.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+@pytest.mark.parametrize("font_size,count", [(12, 1), (22, 4), (22, 20)])
+@pytest.mark.parametrize("language", ["zh_CN", "en_US", "zh_HK"])
+def test_device_picker_respects_short_window_height(
+    monkeypatch, qt_application, font_size, count, language,
+):
+    from gui.i18n import install_translators
+
+    translators = install_translators(qt_application, language)
+    monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+        lambda cls, role, size=None: QFont("Arial", size if size is not None else font_size)
+    ))
+    window = QWidget()
+    layout = QVBoxLayout(window)
+    bar = DeviceContextBar(window)
+    layout.addWidget(bar)
+    layout.addStretch()
+    window.resize(720, 360)
+    window.show()
+    bar.set_context([], [f"device-{index}" for index in range(count)], "ready")
+    qt_application.processEvents()
+    try:
+        bar.open_picker()
+        qt_application.processEvents()
+        picker, popup = bar._picker, bar._picker_flyout
+        assert picker is not None and popup is not None
+        bounds = bar._popup_bounds(bar.targets_button)
+        assert bounds.contains(QRect(popup.pos(), popup.size()))
+        assert picker.rect().contains(mapped_rect(picker.clear_button, picker))
+        last = picker.device_list.item(count - 1)
+        picker.device_list.scrollToItem(last)
+        qt_application.processEvents()
+        assert picker.device_list.viewport().rect().intersects(
+            picker.device_list.visualItemRect(last)
+        )
+        spy = QSignalSpy(picker.selection_requested)
+        picker.select_all_button.click()
+        assert spy.count() == 1 and len(spy.at(0)[0]) == count
+        picker.clear_button.click()
+        assert spy.count() == 2 and list(spy.at(1)[0]) == []
+        picker.device_list.setCurrentItem(last)
+        QTest.keyClick(picker.device_list, Qt.Key.Key_Space)
+        assert spy.count() == 3 and list(spy.at(2)[0]) == [f"device-{count - 1}"]
+        QTest.keyClick(popup, Qt.Key.Key_Escape)
+        qt_application.processEvents()
+        assert not isValid(popup) or not popup.isVisible()
+    finally:
+        bar.dismiss_popups()
+        window.close()
+        window.deleteLater()
+        for translator in translators:
+            qt_application.removeTranslator(translator)

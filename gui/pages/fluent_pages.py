@@ -1105,9 +1105,6 @@ class SettingsPage(ScrollArea):
         self.adb_client_card.client_selected.connect(self._apply_adb_client)
         self.adb_client_card.custom_requested.connect(self._pick_custom_adb)
         self.adb_client_card.rescan_requested.connect(self._rescan_adb_clients)
-        # 展开动画结束后卡片高度才稳定，需要重排分组，否则展开内容会被分组固定高度裁掉。
-        self.adb_client_card.expandAni.finished.connect(self._reflow_settings)
-        self.adb_check_card.expandAni.finished.connect(self._reflow_settings)
         self.restart_adb_card.clicked.connect(
             lambda: frame.left_panel.signals.restart_adb_requested.emit()
         )
@@ -1117,7 +1114,8 @@ class SettingsPage(ScrollArea):
         self.adb_client_card.set_selection(current_client)
         # 空闲时预热一次客户端识别：冷启动的第一次 adb 调用偏慢，提前跑完，
         # 用户展开卡片时通常已能看到结果（结果按 (路径, mtime, size) 缓存）。
-        QTimer.singleShot(0, self.adb_client_card.start_detection)
+        # 以卡片作为接收上下文，销毁前尚未投递的预热不能访问已释放的子控件。
+        QTimer.singleShot(0, self.adb_client_card, self.adb_client_card.start_detection)
         self.about_panel = AboutPanel(view)
         self.about_panel.layoutChanged.connect(self._reflow_settings)
 
@@ -1142,8 +1140,8 @@ class SettingsPage(ScrollArea):
         self.ui_size_card.valueChanged.connect(self._apply_typography)
         self.log_size_card.valueChanged.connect(self._apply_typography)
         self.reset_card.clicked.connect(self._reset_settings)
-        # ADB 分组内含页签容器，卡片不是分组的直接子控件：它的高度由页签内容决定，
-        # 不参与下面的固定高度循环，只在字号刷新时统一处理标题。
+        # ADB 分组包含展开卡，由原生 ExpandLayout 随动画逐帧调整高度，
+        # 不参与普通设置分组的固定高度循环。
         self._setting_groups = (general, appearance, typography, application)
         self._adb_group = maintenance
         original_path = self.save_card.contentLabel
@@ -1192,7 +1190,8 @@ class SettingsPage(ScrollArea):
         clear_client_probe_cache()
         invalidate_adb_path_cache()
         reset_adb_program_cache()
-        self._settings.set("adb_client", text)
+        if self._settings.get("adb_client", CLIENT_PREFERENCE_AUTO) != text:
+            self._settings.set("adb_client", text)
         self.adb_client_card.set_selection(text)
         self._frame.recheck_adb_environment()
 
@@ -1236,7 +1235,7 @@ class SettingsPage(ScrollArea):
             segments.append(tr("设备列表：原生 ADB"))
         if snapshot.checked_devices:
             segments.append(
-                tr("设备 Shell {count}/{checked} 台已验证").format(
+                tr("设备 Shell {count}/{checked} 台使用快速通道").format(
                     count=snapshot.fast_shell_devices,
                     checked=snapshot.checked_devices,
                 )
@@ -1331,12 +1330,13 @@ class SettingsPage(ScrollArea):
             height = sum(card.height() for card in cards) + max(0, len(cards) - 1) * 2
             group.setFixedHeight(height + group.titleLabel.sizeHint().height() + 12)
         if hasattr(self, "_adb_group"):
-            # 两张展开卡不在 _card_presentations 里（该类会重建卡片内部布局），
-            # 因此 ADB 分组高度在这里按三张卡的实际高度单独测量。
+            # 保留分组的自由高度，让原生 ExpandLayout 将卡片动画的高度差
+            # 逐帧传递给页面；锁定高度会裁切中间帧，直到整页重排才突然展开。
             adb_cards = (self.adb_client_card, self.adb_check_card, self.restart_adb_card)
             content = sum(card.height() for card in adb_cards) + 2 * (len(adb_cards) - 1)
-            self._adb_group.setFixedHeight(
-                content + self._adb_group.titleLabel.sizeHint().height() + 12
+            self._adb_group.resize(
+                self._adb_group.width(),
+                content + self._adb_group.titleLabel.sizeHint().height() + 12,
             )
         self.about_panel.reflow(width)
         view = self.widget()
@@ -1464,11 +1464,7 @@ class SettingsPage(ScrollArea):
         del blockers
 
         self.adb_check_card.set_mode("auto")
-        self.adb_client_card.set_selection(CLIENT_PREFERENCE_AUTO)
-        set_client_preference(CLIENT_PREFERENCE_AUTO)
-        clear_client_probe_cache()
-        invalidate_adb_path_cache()
-        reset_adb_program_cache()
+        self._apply_adb_client(CLIENT_PREFERENCE_AUTO)
 
         BaseStyles.switch_theme(theme)
         BaseStyles.set_accent_color(

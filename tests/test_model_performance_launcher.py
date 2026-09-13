@@ -17,6 +17,8 @@ from adblab.application.supervision import StopDisposition, TaskSupervisor
 from gui.features.performance import PerformancePage
 from gui.styles import BaseStyles, theme
 from gui.styles.typography import FontRole
+from services.mobileperf_runner import PerformanceArtifacts
+from tests.ui_geometry_helpers import wait_until
 
 
 def test_performance_current_package_interruption_cancels_query_and_joins():
@@ -469,8 +471,12 @@ def test_performance_page_finished_sets_progress_to_complete():
         dialog._run_duration_seconds = 100
         dialog._runner.latest_result_dir = Mock(return_value="")
         dialog._runner.latest_report_file = Mock(return_value="")
+        dialog._runner.freeze_result_query = Mock(
+            return_value=Mock(discover=Mock(return_value=PerformanceArtifacts())),
+        )
 
         dialog._mark_runner_finished()
+        wait_until(_app, lambda: not dialog._result_loader.is_running())
 
         assert dialog.progress_bar.value() == 100
         assert dialog.progress_bar.format() == "100%"
@@ -593,14 +599,19 @@ def test_performance_page_runner_finished_restores_buttons_once():
         dialog._set_running(True)
         dialog._runner_finished_handled = False
         dialog._poll_timer.start()
+        dialog._runner.freeze_result_query = Mock(
+            return_value=Mock(discover=Mock(return_value=PerformanceArtifacts())),
+        )
 
         dialog._on_runner_finished()
         dialog._on_runner_finished()
+        wait_until(_app, lambda: not dialog._result_loader.is_running())
 
         assert dialog.start_btn.isEnabled() is True
         assert dialog.stop_btn.isEnabled() is False
         assert dialog.status_label.text() == "Idle"
         assert dialog._poll_timer.isActive() is False
         assert dialog.log_view.toPlainText().count("MobilePerf ended") == 1
+        dialog._runner.freeze_result_query.assert_called_once()
     finally:
         dialog.close()

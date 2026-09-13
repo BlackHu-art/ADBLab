@@ -1,6 +1,7 @@
 """应用级异步关闭状态机与最终落盘收尾。"""
 
 import time
+from datetime import datetime
 
 from PySide6.QtCore import QTimer
 
@@ -259,6 +260,8 @@ class CloseController:
             )
         # 最终用户日志必须在 GUI 线程刷新并冻结；后台 finalizer 只负责配置落盘。
         self._frame.log_service.shutdown()
+        # 最后设置写入仍可能失败；给后台传值快照，不在 finalizer 访问 GUI 日志对象。
+        self._frame._shutdown_diagnostic_text = self._frame.log_service.diagnostics.text()
         finalizer = ThreadedShutdownTask(
             self._frame._flush_shutdown_state,
             name="adblab-shutdown-finalizer",
@@ -284,15 +287,26 @@ class CloseController:
         """在后台原子保存待写配置；日志服务已在 GUI 线程提前关闭。"""
         from core.settings_manager import AppSettings
 
-        library = getattr(self._frame, "run_library", None)
-        library_saved = True
-        if library is not None:
-            remaining = max(0.0, self._frame._shutdown_deadline_at - time.monotonic())
-            library_saved = library.shutdown(remaining)
         s = AppSettings.instance()
         if s._save_timer:
             s._save_timer.cancel()
-        s._save_atomic()
+        settings_saved = s._save_atomic()
+        library = getattr(self._frame, "run_library", None)
+        library_saved = True
+        if library is not None:
+            if settings_saved is False:
+                # 日志服务已冻结，直接向尚未关闭的同一文件队列补交有界、无隐私的失败摘要。
+                previous = getattr(self._frame, "_shutdown_diagnostic_text", "")
+                lines = previous.splitlines()[-199:]
+                lines.append(
+                    f"{datetime.now():%H:%M:%S} [ERROR] 应用设置未能完成保存；"
+                    "请检查用户数据目录权限和可用空间。"
+                )
+                library.save_diagnostics("\n".join(lines))
+            remaining = max(0.0, self._frame._shutdown_deadline_at - time.monotonic())
+            library_saved = library.shutdown(remaining)
+        if settings_saved is False:
+            raise RuntimeError("应用设置未能完成保存")
         if not library_saved or getattr(self._frame, "_shutdown_archive_failed", False):
             raise RuntimeError("本地结果或诊断记录未能完成保存")
 

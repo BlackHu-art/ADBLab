@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, replace
 from PySide6.QtCore import Qt
 
 from gui.i18n import tr
-from services.remote import ScrcpyConfig
+from services.remote import ScrcpyConfig, ScrcpyService
 
 
 @dataclass
@@ -69,6 +69,7 @@ class RemotePanelScrcpy:
                         frozen, device=device,
                         window_title=frame._input_engine.window_title(device),
                     )
+                ScrcpyService.require_client(config.adb)
                 if (getattr(frame, "chk_record", None) is not None
                         and frame.chk_record.isChecked()):
                     frame._record_path = frame._allocate_record_path(device)
@@ -80,7 +81,10 @@ class RemotePanelScrcpy:
                 frame._session_devices = ()
                 frame._set_running(False)
                 frame._update_status("Error", None)
-            frame._log("ERROR", f"scrcpy configuration failed: {type(exc).__name__}")
+            if isinstance(exc, FileNotFoundError):
+                frame._log("ERROR", str(exc))
+            else:
+                frame._log("ERROR", f"scrcpy configuration failed: {type(exc).__name__}")
             return
         frame._device_sessions = sessions
         frame._frozen_session_config = frozen or configs[0]
@@ -773,9 +777,10 @@ class RemotePanelScrcpy:
             self._refresh_session_rows()
 
     def _scrcpy_config(self, exe: str, device: str) -> ScrcpyConfig:
+        adb = ScrcpyService.require_client(self._frame._adb.path)
         return ScrcpyConfig(
             exe=exe,
-            adb=self._frame._adb.path,
+            adb=adb,
             device=device,
             maxsize=self._frame.maxsize.currentData(),
             fps=self._frame.fps.currentData(),

@@ -12,8 +12,7 @@ def query_timeout(
     不能据此重放失败请求，也不能延长调用方已经建立的截止时间。
     """
     runtime = adb_runtime()
-    if runtime is not None and runtime.can_shell_fast(
-        resolve_adb_program() if adb_path is None else adb_path, device_id,
-    ):
+    path = resolve_adb_program() if runtime is not None and adb_path is None else adb_path
+    if runtime is not None and path and runtime.can_shell_fast(path, device_id):
         return fast
     return max(fast, native)

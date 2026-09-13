@@ -91,13 +91,14 @@ def test_file_double_click_menu_reaches_transfer_or_inline_preview(
         assert worker.args == ["pull", remote_path, str(tmp_path / name)]
         worker.result_ready.emit("permission denied" if failed else "OK", failed, worker.args[-1])
         qt_application.processEvents()
-        assert len(submitted) == (1 if failed else 2)  # 只有下载成功才刷新目录。
+        assert len(submitted) == 1  # 下载只写本地，不刷新远端目录。
         if failed:
             assert "permission denied" in page.status_bar.text()
         else:
-            assert page._directory_loading
-            assert submitted[1].args[0] == "shell"
-            assert shlex.split(submitted[1].args[1]) == ["ls", "-la", "/storage/emulated/0", "2>&1"]
+            assert not page._directory_loading
+        worker.finished.emit()
+        qt_application.processEvents()
+        assert not page._workers
     elif name == "notes.txt":
         assert worker.args[0] == "shell"
         assert shlex.split(worker.args[1]) == ["head", "-c", "2097153", remote_path]
@@ -108,15 +109,28 @@ def test_file_double_click_menu_reaches_transfer_or_inline_preview(
         if not failed:
             assert page.preview_text_edit.toPlainText() == "file contents"
     else:
+        assert worker.args[0] == "shell"
+        assert shlex.split(worker.args[1]) == [
+            "stat", "-c", "%s|%i|%y|%z", "--", remote_path,
+        ]
+        # 不支持精细 stat 的设备仍能查看图片，缓存旁路后按真实终态续发下载。
+        worker.result_ready.emit("stat: bad format", True)
+        worker.finished.emit()
+        qt_application.processEvents()
+        assert len(submitted) == 2
+        worker = submitted[1]
         assert worker.args[:2] == ["pull", remote_path]
         local_path = worker.args[-1]
         image = QPixmap(24, 16)
         image.fill(Qt.GlobalColor.blue)
         assert image.save(local_path)
         worker.result_ready.emit("permission denied" if failed else "OK", failed, local_path)
-        qt_application.processEvents()
+        worker.finished.emit()
         expected = page.preview_output if failed else page.preview_image
-        assert page.preview_stack.currentWidget() is expected
+        wait_until(
+            qt_application,
+            lambda: page.preview_stack.currentWidget() is expected and not page._workers,
+        )
         if not failed:
             assert not page.preview_image._source_pixmap.isNull()
         assert not Path(local_path).exists()

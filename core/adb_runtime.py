@@ -164,6 +164,9 @@ class AdbRuntime:
         self._bootstrap_pending = True
         self._allow_bootstrap = False
         self._probe_checked: set[int] = set()
+        self._pending_recheck = False
+        self._probe_revision = 0
+        self._active_probe_revision = 0
 
     def snapshot(self) -> RuntimeSnapshot:
         """原子读取当前能力状态，不暴露可变策略。"""
@@ -209,34 +212,41 @@ class AdbRuntime:
         self._changed(self.snapshot())
 
     def start(self, *, force: bool = True, reset_mode: bool = False) -> bool:
-        """启动唯一探测任务；仅首次初始化可启动服务，强制重测不重启服务。"""
+        """接受唯一探测或合并一次强制重检；仅首次初始化允许启动服务。"""
         with self._condition:
             if (
                 self._closed
                 or self._draining
-                or self._checking
-                or (self._native_only and not force)
+                or (self._native_only and not force and not reset_mode)
             ):
                 return False
             if reset_mode:
                 self._mode = "auto"
                 self._native_only = False
-            self._checking = True
-            self._status = "checking"
-            self._probe_checked = set()
-            self._full_probe = force
-            self._allow_bootstrap = self._bootstrap_pending
-            self._bootstrap_pending = False
+            if self._checking and not force:
+                return False
             if force:
-                # 旧业务结果不能覆盖用户显式重测所建立的新状态。
+                # 包括仍在解析路径的旧探测及在途业务，不能覆盖新请求建立的代次。
+                self._probe_revision += 1
                 self._host.epoch += 1
                 for state in self._shell.values():
                     state.epoch += 1
-            previous = self._thread
-            self._thread = threading.Thread(
-                target=self._probe, args=(previous,), name="adblab-adb-probe",
-            )
-            self._thread.start()
+            if self._checking:
+                self._pending_recheck = True
+            else:
+                self._checking = True
+                self._probe_checked = set()
+                self._full_probe = force
+                self._allow_bootstrap = self._bootstrap_pending
+                self._bootstrap_pending = False
+                previous = self._thread
+                self._thread = threading.Thread(
+                    target=self._probe, args=(previous,), name="adblab-adb-probe",
+                )
+                self._thread.start()
+            self._status = "checking"
+            self._condition.notify_all()
+        self._publish()
         return True
 
     def recheck(self) -> bool:
@@ -267,7 +277,7 @@ class AdbRuntime:
                     if not state.available:
                         state.next_check = 0
                 self.start(force=False)
-            if adb_debug.enabled():
+            if adb_debug.enabled("INFO"):
                 report = self.snapshot(), self._path
         if report is not None:
             snapshot, path = report
@@ -348,8 +358,21 @@ class AdbRuntime:
             previous.join()
         try:
             while True:
+                with self._condition:
+                    if self._closed or self._draining:
+                        return
+                    if self._pending_recheck:
+                        # 同一线程收口旧探测后重新解析最新路径，不为重复点击另起线程。
+                        self._pending_recheck = False
+                        self._probe_checked = set()
+                        self._full_probe = True
+                        self._allow_bootstrap = False
+                        self._status = "checking"
+                    self._active_probe_revision = self._probe_revision
                 self._probe_once()
                 with self._condition:
+                    if self._pending_recheck and not self._closed and not self._draining:
+                        continue
                     if (
                         not self._draining and not self._native_only
                         and self._host.available and local_server_environment()
@@ -379,7 +402,7 @@ class AdbRuntime:
                     self._condition.notify_all()
                     self._publish()
                     if (
-                        adb_debug.enabled() and not self._closed and not self._draining
+                        adb_debug.enabled("INFO") and not self._closed and not self._draining
                         and not self._probe_stop.is_set()
                     ):
                         report = self.snapshot(), self._path
@@ -394,6 +417,7 @@ class AdbRuntime:
                 )
 
     def _probe_once(self) -> None:
+        revision = self._active_probe_revision
         try:
             self._publish()
             path = self._resolver()
@@ -402,7 +426,7 @@ class AdbRuntime:
                 endpoint="127.0.0.1:5037" if local_server_environment() else "custom",
             )
             with self._condition:
-                if self._draining:
+                if self._draining or revision != self._probe_revision:
                     return
                 if path != self._path or not local_server_environment():
                     self._host = _BackendState()
@@ -419,6 +443,8 @@ class AdbRuntime:
                 host.next_check = time.monotonic() + self.CHECK_INTERVAL
             if not path or not local_server_environment():
                 with self._condition:
+                    if revision != self._probe_revision or self._draining:
+                        return
                     self._status = "missing_adb" if not path else "custom_server"
                 self._diagnostic(f"ADB environment status={self._status}")
                 adb_debug.event("probe_result", status=self._status)
@@ -1032,6 +1058,7 @@ class AdbRuntime:
             if self._draining:
                 return
             self._draining = True
+            self._pending_recheck = False
             self._probe_stop.set()
             self._request_stop.set()
             self._request_stop = threading.Event()

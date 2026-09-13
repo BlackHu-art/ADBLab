@@ -12,6 +12,7 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
 
+import core.log_service as log_service_module
 from core.exec import ProcessRunner
 from core.log_service import LogLevel, LogService
 from core.settings_manager import DEFAULTS, _normalise_setting
@@ -121,6 +122,70 @@ def test_off_silences_console_but_keeps_diagnostics_and_signals(
     assert streams["stderr"].getvalue() == ""
     assert received == [(LogLevel.WARNING, "关闭控制台后仍要留档")]
     assert "关闭控制台后仍要留档" in service.diagnostics.text()
+
+
+def test_filtered_logs_skip_console_redaction_without_changing_other_routes(
+    create_log_service: Callable[[], LogService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_streams(monkeypatch)
+    service = create_log_service()
+    console_colors.set_console_level("WARNING")
+    redactions: list[str] = []
+    private_snapshots: list[None] = []
+    original_redact = log_service_module.redact_diagnostic
+    journal_type = type(service.diagnostics)
+    original_private_values = journal_type.sorted_private_values.fget
+
+    def track_redaction(message: str, *args, **kwargs) -> str:
+        redactions.append(message)
+        return original_redact(message, *args, **kwargs)
+
+    monkeypatch.setattr(log_service_module, "redact_diagnostic", track_redaction)
+    monkeypatch.setattr(
+        journal_type,
+        "sorted_private_values",
+        property(
+            lambda journal: (
+                private_snapshots.append(None), original_private_values(journal)
+            )[1]
+        ),
+    )
+    received: list[tuple[str, str]] = []
+    service.log_received.connect(lambda level, message: received.append((level, message)))
+
+    service.log(LogLevel.DEBUG, "被过滤的调试日志")
+    service.log(LogLevel.INFO, "被过滤的普通日志")
+    service.log(LogLevel.ERROR, "仍需脱敏的错误日志")
+    service._flush_buffer()
+
+    assert redactions == ["仍需脱敏的错误日志"]
+    assert private_snapshots == [None]
+    assert received == [
+        (LogLevel.INFO, "被过滤的普通日志"),
+        (LogLevel.ERROR, "仍需脱敏的错误日志"),
+    ]
+    assert "被过滤的普通日志" not in service.diagnostics.text()
+    assert "仍需脱敏的错误日志" in service.diagnostics.text()
+
+
+def test_runtime_info_diagnostic_survives_disabled_console_and_frozen_mode(
+    create_log_service: Callable[[], LogService],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = _install_streams(monkeypatch)
+    service = create_log_service()
+    console_colors.set_console_level("OFF")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    changes: list[None] = []
+    service.diagnostics_changed.connect(lambda: changes.append(None))
+
+    service.record_runtime_diagnostic("运行时能力快照")
+
+    assert "运行时能力快照" in service.diagnostics.text()
+    assert changes == [None]
+    assert streams["stdout"].getvalue() == ""
+    assert streams["stderr"].getvalue() == ""
 
 
 def test_success_and_unknown_levels_follow_info_rank(

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import itertools
+import os
 import subprocess
 import sys
 import threading
@@ -26,6 +27,7 @@ CF = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 CREATE_NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 
 _adb_path: str | None = None
+_adb_path_resolved = False
 _adb_path_lock = threading.Lock()
 _active_commands = 0
 _active_lock = threading.Condition()
@@ -61,17 +63,25 @@ def _normalise_result(raw: ExecutionResult, timeout: float) -> CommandResult:
     return CommandResult(success=True, output=stdout.strip(), returncode=0)
 
 
-def resolve_adb_program() -> str:
-    """解析并缓存 ADB 可执行文件路径（唯一解析入口）。"""
+def resolve_adb_program() -> str | None:
+    """缓存当前选择的绝对路径或缺失结果；缺失不转交系统 PATH 再选择。"""
+    global _adb_path, _adb_path_resolved
+    with _adb_path_lock:
+        if not _adb_path_resolved and _adb_path is None:
+            from utils.adb_resolver import resolve_adb_path
 
-    global _adb_path
-    if _adb_path is None:
-        from utils.adb_resolver import adb_path
+            selected = resolve_adb_path()
+            _adb_path = os.path.abspath(selected) if selected else None
+            _adb_path_resolved = True
+        return _adb_path if _adb_path and os.path.isfile(_adb_path) else None
 
-        with _adb_path_lock:
-            if _adb_path is None:
-                _adb_path = adb_path()
-    return _adb_path
+
+def require_adb_program() -> str:
+    """执行准入要求已选客户端；缺失时给出可操作错误，由调用边界转换结果。"""
+    path = resolve_adb_program()
+    if not path:
+        raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择或识别 ADB 客户端。")
+    return path
 
 
 def reset_adb_program_cache() -> None:
@@ -81,9 +91,10 @@ def reset_adb_program_cache() -> None:
     时，短命令仍会复用这里缓存的旧路径。
     """
 
-    global _adb_path
+    global _adb_path, _adb_path_resolved
     with _adb_path_lock:
         _adb_path = None
+        _adb_path_resolved = False
 
 
 def resolve_command(cmd: list[str]) -> list[str]:
@@ -91,7 +102,11 @@ def resolve_command(cmd: list[str]) -> list[str]:
 
     resolved = list(cmd)
     if resolved and resolved[0] == "adb":
-        resolved[0] = resolve_adb_program()
+        resolved[0] = require_adb_program()
+    elif (resolved and os.path.isabs(resolved[0])
+            and os.path.basename(resolved[0]).lower() in {"adb", "adb.exe"}
+            and not os.path.isfile(resolved[0])):
+        raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择或识别 ADB 客户端。")
     return resolved
 
 
@@ -163,10 +178,10 @@ class CommandRunner:
     ) -> CommandResult:
         """执行有超时上限的短命令，并将退出码和输出归一为 ``CommandResult``。"""
 
-        resolved_cmd = resolve_command(cmd)
         started_at = _mark_started()
         result: CommandResult
         try:
+            resolved_cmd = resolve_command(cmd)
             runtime = _adb_runtime
             raw = None
             if cancelled is not None and cancelled():
@@ -227,11 +242,11 @@ class CommandRunner:
     ) -> CommandResult:
         """流式写出二进制并共享取消及总超时；临时文件与最终发布由调用方负责。"""
 
-        resolved_cmd = resolve_command(cmd)
         started_at = _mark_started()
         deadline = time.monotonic() + timeout
         result: CommandResult
         try:
+            resolved_cmd = resolve_command(cmd)
             if cancelled is not None and cancelled():
                 result = CommandResult(success=False, error="Cancelled")
             else:
@@ -404,13 +419,14 @@ class ProcessRunner:
         并发失败方只清理自身进程；未能退出的进程保留内部 key，供后续统一清理。
         """
 
+        resolved_cmd = resolve_command(cmd)
         self.stop(key)
         with self._lock:
             if key in self._procs:
                 raise RuntimeError("Cannot start process while previous process is still running")
 
         proc = self.spawn(
-            cmd,
+            resolved_cmd,
             stdout=subprocess.DEVNULL if stdout is None else stdout,
             stderr=subprocess.DEVNULL if stderr is None else stderr,
             stdin=stdin,
@@ -745,5 +761,6 @@ __all__ = [
     "ProcessRunner",
     "reset_adb_program_cache",
     "resolve_adb_program",
+    "require_adb_program",
     "resolve_command",
 ]

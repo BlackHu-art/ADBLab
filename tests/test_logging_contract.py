@@ -11,6 +11,7 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtTest import QSignalSpy
 
 from core.log_service import LogLevel, LogService
 
@@ -276,6 +277,61 @@ def test_debug_lines_are_atomic_across_worker_threads(
     lines = stream.getvalue().splitlines()
     assert len(lines) == len(workers)
     assert all(line.count("[DEBUG]") == 1 for line in lines)
+
+
+def test_worker_burst_requests_one_flush_until_buffer_is_drained(
+    create_log_service: Callable[[], LogService],
+    qt_application,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    service = create_log_service()
+    wakeups = QSignalSpy(service._flush_requested)
+    batches: list[list[tuple[str, str, str]]] = []
+    service.logs_received.connect(batches.append)
+
+    worker = threading.Thread(
+        target=lambda: [service.log(LogLevel.INFO, f"worker-{index}") for index in range(1000)],
+        daemon=True,
+    )
+    worker.start()
+    worker.join(timeout=1)
+
+    assert not worker.is_alive()
+    assert wakeups.count() == 1
+    qt_application.processEvents()
+    service._flush_buffer()
+    assert sum(len(batch) for batch in batches) == 1000
+
+
+def test_worker_append_between_empty_drain_and_timer_stop_restarts_flushing(
+    create_log_service: Callable[[], LogService],
+    qt_application,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    service = create_log_service()
+    service._timer.start()
+    original_stop = service._request_stop_flush_timer
+    appended = threading.Event()
+
+    def append_before_stop() -> None:
+        worker = threading.Thread(
+            target=lambda: (service.log(LogLevel.INFO, "竞态日志"), appended.set()),
+            daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=1)
+        original_stop()
+
+    monkeypatch.setattr(service, "_request_stop_flush_timer", append_before_stop)
+    service._flush_buffer()
+    assert appended.is_set()
+    qt_application.processEvents()
+
+    assert service._timer.isActive()
+    service._flush_buffer()
+    assert service._buffer == []
 
 
 def test_initialization_preserves_root_logger_handlers(

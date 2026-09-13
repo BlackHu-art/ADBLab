@@ -1,4 +1,5 @@
 import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
@@ -23,6 +24,24 @@ from services.remote import (
     build_scrcpy_args,
 )
 from services.remote.control_mapping import directional_swipe, notification_swipe
+
+_TEST_ADB = ""
+
+
+def _idle_input_bridge(**kwargs):
+    """这些编排用例不创建输入进程，替身明确提供资源已退出的查询协议。"""
+    return Mock(
+        input_sessions_running=Mock(return_value=False),
+        force_stop_input_sessions=Mock(return_value=False), **kwargs,
+    )
+
+
+@pytest.fixture(autouse=True)
+def selected_adb_file(tmp_path, monkeypatch):
+    """启动计划使用真实临时文件路径，进程执行仍全部由测试替身接管。"""
+    path = tmp_path / "adb.exe"
+    path.touch()
+    monkeypatch.setattr(sys.modules[__name__], "_TEST_ADB", str(path))
 
 
 class _TestSignal:
@@ -161,7 +180,7 @@ def _remote_batch_panel():
     panel._log = Mock()
     panel._remote_control = Mock()
     panel._input_engine = Mock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._scrcpy_service = Mock()
     panel._scrcpy_service.start.side_effect = lambda *_args: Mock(stderr=[], poll=lambda: None)
     return panel
@@ -392,7 +411,7 @@ def test_remote_real_batch_worker_delivers_all_processes_once_and_stops_in_gui(q
     service.is_active.side_effect = lambda key: key in active
     with (
         patch("gui.panels.remote_panel.ScrcpyService", return_value=service),
-        patch("gui.panels.remote_panel.ADBBridge", return_value=Mock(path="adb")),
+        patch("gui.panels.remote_panel.ADBBridge", return_value=_idle_input_bridge(path=_TEST_ADB)),
         patch("gui.panels.remote_panel.RemoteControlService"),
         patch("gui.panels.remote_panel.RemoteInputEngine"),
         patch("gui.panels.remote_panel.os.path.isfile", return_value=True),
@@ -596,7 +615,7 @@ def _wait_for_qt(qt_application, predicate, *, attempts: int = 100) -> bool:
 def _scrcpy_config(**overrides):
     values = {
         "exe": "scrcpy.exe",
-        "adb": "adb.exe",
+        "adb": _TEST_ADB,
         "device": "device-1",
         "maxsize": "1080p",
         "fps": "60",
@@ -1253,7 +1272,7 @@ def test_remote_user_stop_claim_prevents_shutdown_and_supervisor_duplicate_termi
     remote._process_key = process_key
     remote._process = process
     remote._active_device = "device-1"
-    remote._adb = Mock()
+    remote._adb = _idle_input_bridge()
     remote._set_session_state(RemotePanel._SESSION_RUNNING)
     remote._set_running = Mock()
     remote._update_status = Mock()
@@ -1436,7 +1455,7 @@ def test_remote_shutdown_request_exception_allows_supervisor_retry_and_input_cle
     panel._process_key = "scrcpy_test"
     panel._launch_worker = None
     panel._remote_executor = Mock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     executor = panel._remote_executor
     supervisor = TaskSupervisor()
     assert RemotePanel.register_shutdown_task(
@@ -1467,7 +1486,7 @@ def test_remote_shutdown_worker_exception_does_not_skip_executor_or_adb_cleanup(
     panel._launch_worker = worker
     panel._disconnect_launch_worker = Mock()
     panel._remote_executor = Mock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     executor = panel._remote_executor
     input_closed = threading.Event()
     panel._adb.close_input_sessions.side_effect = input_closed.set
@@ -1656,7 +1675,7 @@ def test_remote_shutdown_executor_exception_does_not_skip_adb_cleanup():
     panel._launch_worker = None
     panel._remote_executor = Mock()
     panel._remote_executor.shutdown.side_effect = RuntimeError("executor failed")
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     input_closed = threading.Event()
     panel._adb.close_input_sessions.side_effect = input_closed.set
 
@@ -1679,7 +1698,7 @@ def test_registered_remote_shutdown_defers_fast_input_error_to_supervisor():
     panel._remote_futures_lock = threading.Lock()
     panel._warmup_threads = set()
     panel._warmup_threads_lock = threading.Lock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._adb.close_input_sessions.side_effect = OSError("input close failed")
     supervisor = TaskSupervisor()
 
@@ -1732,7 +1751,7 @@ def test_remote_shutdown_waits_for_running_input_before_closing_session_and_repo
     panel._warmup_threads = set()
     panel._warmup_threads_lock = threading.Lock()
     panel._remote_input_shutdown = None
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._adb.close_input_sessions.side_effect = close_input_sessions
     future = executor.submit(input_task)
     RemotePanel._track_remote_future(panel, future)
@@ -1784,7 +1803,7 @@ def test_remote_shutdown_capture_rejects_late_input_without_sync_fallback():
     panel._warmup_threads = set()
     panel._warmup_threads_lock = threading.Lock()
     panel._remote_input_shutdown = None
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._mark_remote_submitted = Mock()
     panel._mark_remote_completed = Mock()
     task = Mock(return_value=True)
@@ -1832,7 +1851,7 @@ def test_remote_submit_registration_is_atomic_with_shutdown_capture():
     panel._warmup_threads_lock = threading.Lock()
     panel._remote_input_shutdown = None
     panel._shutdown_request_lock = threading.Lock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._mark_remote_submitted = Mock()
     panel._mark_remote_completed = Mock()
 
@@ -1924,7 +1943,7 @@ def test_remote_warmup_publish_and_start_are_atomic_for_shutdown_capture():
     panel._warmup_threads = set()
     panel._warmup_threads_lock = threading.Lock()
     panel._remote_input_shutdown = None
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._adb.close_input_sessions.side_effect = session_closed.set
     panel.panel = Mock(selected_devices=["device-1"])
 
@@ -2000,7 +2019,7 @@ def test_remote_shutdown_joins_all_overlapping_warmups_before_closing_sessions()
     panel._warmup_threads_lock = threading.Lock()
     panel._remote_input_shutdown = None
     panel._shutdown_request_lock = threading.Lock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
 
     def warmup():
         nonlocal assigned
@@ -2075,7 +2094,7 @@ def test_remote_supervisor_process_probe_exception_still_requests_all_cleanup():
     panel._launch_worker = None
     panel._scrcpy_service = ProbeFailureService()
     panel._process_key = "scrcpy_test"
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     input_closed = threading.Event()
     panel._adb.close_input_sessions.side_effect = input_closed.set
     supervisor = TaskSupervisor()
@@ -2127,7 +2146,7 @@ def test_remote_supervisor_input_thread_start_failure_completes_with_error():
     panel._scrcpy_service = ImmediateStopService()
     panel._process_key = "scrcpy_test"
     panel._adb = ADBBridge(path="adb")
-    input_session = Mock()
+    input_session = Mock(is_running=Mock(return_value=False))
     panel._adb._input_sessions["device-1"] = input_session
     supervisor = TaskSupervisor()
     assert RemotePanel.register_shutdown_task(
@@ -2178,7 +2197,9 @@ def test_remote_supervisor_input_fallback_failure_stays_visible_and_not_graceful
     panel._scrcpy_service = ImmediateStopService()
     panel._process_key = "scrcpy_test"
     panel._adb = ADBBridge(path="adb")
-    input_session = Mock()
+    input_session = Mock(
+        is_running=Mock(return_value=True), force_stop=Mock(return_value=False),
+    )
     input_session.close.side_effect = OSError("input close failed")
     panel._adb._input_sessions["device-1"] = input_session
     supervisor = TaskSupervisor()
@@ -2194,9 +2215,10 @@ def test_remote_supervisor_input_fallback_failure_stays_visible_and_not_graceful
 
     input_session.close.assert_called_once_with()
     assert len(results) == 1
-    assert results[0].disposition is StopDisposition.FAILED
+    assert results[0].disposition is StopDisposition.TIMED_OUT
     assert results[0].error_type == "OSError"
     assert supervisor.active_count == 1
+    assert panel._adb.input_sessions_running()
 
 
 def test_remote_supervisor_input_fallback_error_survives_process_timeout():
@@ -2363,7 +2385,7 @@ def test_remote_supervisor_async_input_error_survives_process_timeout():
     panel._launch_worker = None
     panel._scrcpy_service = UnstoppableService()
     panel._process_key = "scrcpy_test"
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     input_attempted = threading.Event()
 
     def fail_input_close():
@@ -2525,7 +2547,7 @@ def test_remote_panel_close_requests_scrcpy_stop_without_waiting():
     panel._process_key = "scrcpy_test"
     panel._launch_worker = None
     panel._remote_executor = Mock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     executor = panel._remote_executor
 
     with patch("gui.panels.remote_panel.QWidget.closeEvent"):
@@ -2546,7 +2568,7 @@ def test_remote_panel_shutdown_detaches_launch_worker_without_blocking():
     panel._scrcpy_service = Mock()
     panel._process_key = "scrcpy_test"
     panel._remote_executor = Mock()
-    panel._adb = Mock()
+    panel._adb = _idle_input_bridge()
     panel._log = Mock()
     panel._on_launch_ready = Mock()
     worker = Mock()

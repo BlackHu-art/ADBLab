@@ -96,6 +96,28 @@ def test_library_failure_does_not_skip_other_settings_finalization(monkeypatch):
     settings._save_atomic.assert_called_once()
 
 
+def test_settings_failure_reaches_finalizer_and_is_saved_after_log_freeze(
+    tmp_path, monkeypatch, qt_application,
+):
+    monkeypatch.setattr("gui.run_library.user_data_root", lambda: tmp_path)
+    library = RunLibraryController(RunLibrary(tmp_path / "runs.json"))
+    frame = SimpleNamespace(
+        run_library=library, _shutdown_deadline_at=time.monotonic() + 3,
+        _shutdown_diagnostic_text="12:00:00 [WARNING] previous diagnostic",
+    )
+    settings = Mock()
+    settings._save_timer = None
+    settings._save_atomic.return_value = False
+    monkeypatch.setattr("core.settings_manager.AppSettings.instance", lambda: settings)
+    with pytest.raises(RuntimeError, match="应用设置未能完成保存"):
+        CloseController(frame)._flush_shutdown_state()
+    text = (tmp_path / "logs" / "application-diagnostics.log").read_text(encoding="utf-8")
+    assert "previous diagnostic" in text
+    assert "[ERROR]" in text
+    assert "应用设置未能完成保存" in text
+    assert library.shutdown(0)
+
+
 def test_archive_failure_does_not_block_other_archives_or_settings(monkeypatch):
     failed_archive = Mock(side_effect=PermissionError("private-output-path"))
     next_archive = Mock()

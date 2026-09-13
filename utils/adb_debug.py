@@ -6,6 +6,8 @@ import json
 import ntpath
 import sys
 
+from utils.console_colors import should_emit
+
 _COMMANDS = frozenset({
     "version", "devices", "start-server", "kill-server", "host-features",
     "features", "shell", "exec-out", "exec-in", "install", "install-multiple",
@@ -17,11 +19,13 @@ _COMMANDS = frozenset({
 })
 
 
-def enabled() -> bool:
-    """沿用开发控制台的源码输出策略，调用方可据此避免额外路径计算。"""
-    return not getattr(sys, "frozen", False) and any(
-        getattr(sys, name, None) is not None for name in ("stdout", "stderr")
-    )
+def enabled(level: str = "DEBUG") -> bool:
+    """判断指定级别能否输出，使调用方在序列化前跳过禁用路径。"""
+    if getattr(sys, "frozen", False) or not should_emit(level):
+        return False
+    stream_name = "stderr" if level in {"WARNING", "ERROR", "CRITICAL"} else "stdout"
+    stream = getattr(sys, stream_name, None)
+    return stream is not None and not getattr(stream, "closed", False)
 
 
 def _summary(name: str, fields: dict[str, object]) -> tuple[str, str] | None:
@@ -71,17 +75,16 @@ def _summary(name: str, fields: dict[str, object]) -> tuple[str, str] | None:
 
 def event(name: str, **fields: object) -> None:
     """转交摘要及详细诊断；仅接受明确路径、固定类别和状态，不传业务原文。"""
-    if not enabled():
-        return
     # GUI 先初始化日志服务；独立命令入口不能因为诊断而引入 Qt 依赖。
     service_module = sys.modules.get("core.log_service")
     if service_module is None:
         return
     summary = _summary(name, fields)
-    if summary is not None:
+    if summary is not None and enabled(summary[0]):
         service_module.LogService.write_developer_console(*summary)
-    message = "[ADB] " + json.dumps({**fields, "event": name}, ensure_ascii=False)
-    service_module.LogService.write_developer_console("DEBUG", message)
+    if enabled("DEBUG"):
+        message = "[ADB] " + json.dumps({**fields, "event": name}, ensure_ascii=False)
+        service_module.LogService.write_developer_console("DEBUG", message)
 
 
 def _command_category(arguments: list[str]) -> str:
@@ -102,7 +105,7 @@ def command(
     cmd: list[str], *, backend: str, phase: str = "start", **fields: object,
 ) -> None:
     """记录 ADB 执行路径与命令类别，忽略其他程序及所有原始命令参数。"""
-    if not enabled() or not cmd or ntpath.basename(cmd[0]).lower() not in {"adb", "adb.exe"}:
+    if not cmd or ntpath.basename(cmd[0]).lower() not in {"adb", "adb.exe"}:
         return
     event(
         "execute", **fields, backend=backend, phase=phase,

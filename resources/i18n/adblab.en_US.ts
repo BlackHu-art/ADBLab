@@ -6274,5 +6274,29 @@ Android device management, apps and diagnostics</translation>
             <source>用当前选择的 ADB 客户端重启本机 5037 服务；会中断当前连接与投屏，完成后自动重新检测</source>
             <translation>Restarts the local 5037 service with the selected ADB client; it interrupts current connections and casting, then rechecks automatically</translation>
         </message>
+        <message>
+            <source>停止</source>
+            <translation>Stop</translation>
+        </message>
+        <message>
+            <source>设备 Shell {count}/{checked} 台使用快速通道</source>
+            <translation>Device Shell: {count}/{checked} using the fast route</translation>
+        </message>
+        <message>
+            <source>Elapsed time (s)</source>
+            <translation>Elapsed time (s)</translation>
+        </message>
+        <message>
+            <source>Loading chart…</source>
+            <translation>Loading chart…</translation>
+        </message>
+        <message>
+            <source>Chart data could not be loaded.</source>
+            <translation>Chart data could not be loaded.</translation>
+        </message>
+        <message>
+            <source>Count</source>
+            <translation>Count</translation>
+        </message>
     </context>
 </TS>

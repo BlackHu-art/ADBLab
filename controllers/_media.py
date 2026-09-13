@@ -854,7 +854,9 @@ class ADBMediaMixin(_ADBControllerBase):
         for ip in devices:
             timestamp = datetime.now().strftime("%H%M%S")
             sanitized = re.sub(r"\W+", "_", ip)
-            log_path = os.path.join(save_dir, f"logcat_{timestamp}_{sanitized}.txt")
+            log_path = os.path.join(
+                save_dir, f"logcat_{timestamp}_{sanitized}_{uuid.uuid4().hex}.txt"
+            )
             self.advanced_model.logcat_filtered_async(
                 ip, log_path, buffer, priority, tag_filter, regex
             )

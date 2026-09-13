@@ -12,7 +12,10 @@ from tests.test_remote_services import _scrcpy_config
 
 
 @pytest.fixture
-def service(monkeypatch):
+def service(monkeypatch, tmp_path):
+    adb = tmp_path / "adb.exe"
+    adb.touch()
+    monkeypatch.setattr("tests.test_remote_services._TEST_ADB", str(adb))
     runner = Mock()
     runner.run.side_effect = lambda command, **_kwargs: CommandResult(
         success=True,

@@ -99,6 +99,8 @@ def _probe_one(
         native_only=True,
         cancelled=cancelled,
     )
+    if cancelled is not None and cancelled():
+        return replace(base, error=ERROR_CANCELLED)
     if not result.success:
         reason = (result.error or "").strip().lower()
         if "cancel" in reason:
@@ -113,7 +115,7 @@ def _probe_one(
 
     version = parse_client_version(result.output)
     if not version:
-        return _store(key, replace(base, error=ERROR_NOT_ADB))
+        return replace(base, error=ERROR_NOT_ADB)
     return _store(key, replace(base, executable=True, version=version, error=""))
 
 
@@ -124,7 +126,7 @@ def detect_clients(
     timeout: float = VERSION_TIMEOUT_SECONDS,
     use_cache: bool = True,
 ) -> list[ClientProbe]:
-    """并发探测候选客户端（上限 2 个），只运行 adb version，不连 5037 服务。"""
+    """串行探测候选客户端，只运行 adb version，不连 5037 服务。"""
 
     items = list(candidates if candidates is not None else list_adb_candidates())
     if not items:

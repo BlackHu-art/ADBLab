@@ -404,6 +404,9 @@ class MainFrame(FluentWindow):
         """重新检测不重启 ADB 服务，也不重复提交用户命令。"""
         environment = getattr(self, "_adb_environment", None)
         if environment is not None and not self._closing:
+            panel = getattr(getattr(self, "left_panel", None), "_scrcpy_tab", None)
+            if panel is not None:
+                panel.invalidate_adb_input_sessions()
             environment.recheck()
 
     def note_adb_server_restarted(self) -> None:
@@ -955,7 +958,9 @@ class MainFrame(FluentWindow):
             "files",
             tr("文件管理"),
             FluentIcon.FOLDER,
-            lambda key: FileExplorerPage(device_ip=key.device_id),
+            lambda key: FileExplorerPage(
+                device_ip=key.device_id, task_supervisor=self.task_supervisor,
+            ),
             close_label=tr("关闭文件管理"),
         )
         devices_host.register_overview_category(

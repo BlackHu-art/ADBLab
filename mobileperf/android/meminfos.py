@@ -295,13 +295,10 @@ class MemInfoPackageCollector:
                 if (before - starttime_stamp) > RuntimeData.config_dic[
                     "dumpheap_freq"
                 ] or first_dump:
-                    # 生成新文件前清理目标包遗留的 hprof 文件。
-                    filelist = self.device.adb.list_dir(hprof_path)
-                    if filelist:
-                        for file in filelist:
-                            for package in self.packages:
-                                if package in file:
-                                    self.device.adb.delete_file(hprof_path + "/" + file)
+                    # 只清理本次清单中已成功归档的堆转储，失败文件留待收尾重试。
+                    self.device.adb.cleanup_owned_heapdumps(
+                        RuntimeData.package_save_path, self.packages,
+                    )
                     for package in self.packages:
                         self.device.adb.dumpheap(package, RuntimeData.package_save_path)
                     starttime_stamp = before

@@ -76,7 +76,9 @@ def test_remote_multi_device_start_snapshots_every_selected_target():
     panel._set_session_state = Mock()
     panel._update_action_states = Mock()
     panel._update_status = Mock()
-    panel._scrcpy_config = Mock(side_effect=lambda _exe, device: Mock(device=device))
+    panel._scrcpy_config = Mock(
+        side_effect=lambda _exe, device: Mock(device=device, adb="C:/tools/adb.exe"),
+    )
     panel._log = Mock()
 
     worker = Mock()

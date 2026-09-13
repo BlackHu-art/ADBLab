@@ -23,6 +23,39 @@ class FileEntry:
     is_dir: bool
 
 
+@dataclass(frozen=True)
+class PreviewVersion:
+    """远端原始文件版本；时间保留设备提供的纳秒文本，避免展示格式丢失精度。"""
+
+    size: int
+    inode: int
+    modified: str
+    changed: str
+
+
+def parse_preview_version(output: str) -> PreviewVersion | None:
+    """只接受细粒度 stat 结果；不支持格式或仅整秒时间的设备不复用预览缓存。
+
+    元数据用于页面会话内的新鲜度检查，不代表文件内容哈希；显式刷新始终失效。
+    """
+    parts = output.strip().split("|")
+    if len(parts) != 4 or not parts[0].isdigit() or not parts[1].isdigit():
+        return None
+    timestamp = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.(\d{9}) [+-]\d{4}"
+    modified = re.fullmatch(timestamp, parts[2])
+    changed = re.fullmatch(timestamp, parts[3])
+    if modified is None or changed is None:
+        return None
+    if modified.group(1) == changed.group(1) == "000000000":
+        return None
+    return PreviewVersion(int(parts[0]), int(parts[1]), parts[2], parts[3])
+
+
+def preview_version_command(path: str) -> str:
+    """读取原始字节数、inode 和两个精细时间，不通过 ls 的展示字段判断版本。"""
+    return f"stat -c '%s|%i|%y|%z' -- {shell_quote(path)}"
+
+
 def safe_name(name: str) -> bool:
     """校验单个文件名，阻止路径穿越和 shell 元字符进入命令字符串。"""
     return (

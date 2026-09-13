@@ -497,11 +497,13 @@ def test_app_manager_refreshes_once_after_entire_modify_batch_finishes():
     ]
     assert dialog._load_apps.call_count == 0
     assert dialog._batch_workers == set(workers)
-    assert all(worker.start.call_count == 1 for worker in workers)
+    assert workers[0].start.call_count == 1
+    assert workers[1].start.call_count == 0
 
     finished_callbacks[0]()
     assert dialog._load_apps.call_count == 0
     assert dialog._batch_workers == {workers[1]}
+    assert workers[1].start.call_count == 1
 
     finished_callbacks[1]()
     dialog._load_apps.assert_called_once_with()

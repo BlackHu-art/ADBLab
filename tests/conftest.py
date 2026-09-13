@@ -134,6 +134,10 @@ _UI_TEST_FILES = frozenset(
         "test_qt_adb_runtime.py",
         "test_qt_app_update.py",
         "test_file_app_device_admission.py",
+        "test_adb_client_refresh.py",
+        "test_adb_environment_integration.py",
+        "test_file_explorer_preview.py",
+        "test_file_explorer_transfers.py",
         "test_session_device_admission.py",
         "test_shell_workflows.py",
         "test_live_logcat_visual.py",
@@ -230,6 +234,13 @@ _INTEGRATION_TEST_FILES = frozenset(
 
 # 混合模块按真实 Qt 用例登记，保留同文件纯 Operation 契约的快速选择范围。
 _UI_TEST_FUNCTIONS = {
+    "test_adb_execution_selection.py": frozenset({
+        "test_remote_client_invalidation_queues_cleanup_without_blocking_gui",
+        "test_performance_finish_reuses_discovery_but_retries_after_oserror",
+    }),
+    "test_runtime_recheck.py": frozenset({
+        "test_qt_pending_reset_publishes_auto_and_preserves_later_manual_choice",
+    }),
     "test_app_icons_service.py": frozenset(
         {
             "test_icon_worker_dispatches_packages_and_relays_png",

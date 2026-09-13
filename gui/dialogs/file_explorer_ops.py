@@ -2,6 +2,7 @@
 
 import base64
 import os
+import uuid
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import (
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import BodyLabel, CheckBox, PushButton
 
+from core.log_service import LogService
 from gui.dialogs.fluent_dialog import FluentDialog, FluentInputDialog, FluentMessageBox
 from gui.dialogs.lifecycle import fit_secondary_window_to_owner_screen, safe_disconnect
 from gui.feedback import report_feedback
@@ -27,6 +29,7 @@ class FileExplorerOps:
 
     def __init__(self, frame):
         self._frame = frame
+        self._last_batch_results = ()
 
     # ── 查看与编辑文件 ──────────────────────────────────────────────────
 
@@ -65,135 +68,206 @@ class FileExplorerOps:
     # ── 拉取与推送 ──────────────────────────────────────────────────────
 
     def _pull_file(self, name: str):
+        """单文件下载冻结设备与 Root 模式，独占中转资源直到清理完成。"""
         if not self._frame._can_operate():
             return
         full = self._frame._dpath(self._frame.current_path, name)
+        device = self._frame.device_ip
+        use_root = self._frame.root_cb.isChecked()
         save_path, _ = QFileDialog.getSaveFileName(
             self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
         )
-        if not save_path:
+        if not save_path or not self._frame._can_operate():
             return
         self._frame.status_bar.setText(tr('Pulling {value0}...').format(value0=name))
-        if self._frame.root_cb.isChecked():
-            dt = f"/data/local/tmp/{name}"
-            w = self._frame._run_adb(
-                "shell",
-                self._frame._root(explorer_service.copy_for_root_pull_command(full, dt)),
-                timeout=120,
-            )
-            if w is None:
-                return
-            self._frame._connect_worker_ui(
-                w,
-                w.result_ready,
-                lambda o, e: self._finish_root_pull(o, e, name, dt, save_path),
-            )
-            w.start()
-        else:
-            w = self._frame._run_transfer("pull", full, save_path)
-            if w is None:
-                return
-            self._frame._connect_worker_ui(
-                w,
-                w.progress,
-                lambda msg: self._frame.status_bar.setText(msg),
-            )
-            self._frame._connect_worker_ui(
-                w,
-                w.result_ready,
-                lambda o, e, d: self._on_transfer_done(
-                    o, e, tr("Pulled {value0}").format(value0=name)
-                ),
-            )
-            w.start()
+        if not use_root:
+            self._queue_single_pull(name, full, save_path, device)
+            return
+        remote = f"/data/local/tmp/adblab-pull-{uuid.uuid4().hex}"
+        token = self._frame._transfers.hold_cleanup()
+        command = explorer_service.root_command(
+            explorer_service.copy_for_root_pull_command(full, remote), True
+        )
+        worker = self._frame._run_adb("shell", command, timeout=120, _device_ip=device)
+        if worker is None:
+            self._frame._transfers.release_cleanup(token)
+            return
+        result = []
+        worker.result_ready.connect(
+            lambda output, failed: result.append((output, failed)),
+            Qt.ConnectionType.QueuedConnection,
+        )
 
-    def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
-        if e:
-            self._on_file_op_done(o, True, "")
+        def prepared():
+            if (not result or worker._aborted.is_set() or not self._frame._can_operate()
+                    or result[-1][1]):
+                self._cleanup_owned_pull(remote, device, token)
+                if result and result[-1][1] and not self._frame._closing:
+                    self._on_transfer_done(result[-1][0], True, "")
+                return
+            self._queue_single_pull(
+                name, remote, save_path, device,
+                cleanup=lambda: self._cleanup_owned_pull(remote, device, token),
+            )
+
+        self._frame._transfers.enqueue(worker, on_terminal=prepared)
+
+    def _cleanup_owned_pull(self, remote, device, token):
+        """清理既有请求的精确中转路径；页面关闭和 Root 切换不改变归属。"""
+        command = explorer_service.root_command(explorer_service.delete_command(remote), True)
+        worker = self._frame._run_adb(
+            "shell", command, timeout=15, _cleanup=True, _device_ip=device
+        )
+        if worker is None:
+            self._frame._transfers.release_cleanup(token)
             return
-        if not self._frame._can_operate():
-            self._frame._cleanup_remote_file(dev_tmp, root=True)
-            return
-        w = self._frame._run_transfer("pull", dev_tmp, save_path)
-        if w is None:
+        result = []
+        worker.result_ready.connect(
+            lambda output, failed: result.append((output, failed)),
+            Qt.ConnectionType.QueuedConnection,
+        )
+
+        def cleaned():
+            if not result or result[-1][1]:
+                LogService().log("WARNING", "文件下载的远端临时文件清理失败，设备可能已离线。")
+            self._frame._transfers.release_cleanup(token)
+
+        worker.finished.connect(cleaned, Qt.ConnectionType.QueuedConnection)
+        self._frame._connect_worker_ui(
+            worker, worker.result_ready,
+            lambda output, failed: self._on_transfer_done(output, True, "") if failed else None,
+        )
+        worker.start()
+
+    def _queue_single_pull(self, name, remote, destination, device, cleanup=None):
+        """普通下载与中转下载共用 FIFO，清理回调不依赖界面存活守卫。"""
+        worker = self._frame._run_transfer("pull", remote, destination, _device_ip=device)
+        if worker is None:
+            if cleanup is not None:
+                cleanup()
             return
         self._frame._connect_worker_ui(
-            w,
-            w.progress,
-            lambda msg: self._frame.status_bar.setText(msg),
+            worker, worker.progress, lambda message: self._frame.status_bar.setText(message)
         )
         self._frame._connect_worker_ui(
-            w,
-            w.result_ready,
-            lambda o2, e2, d: (
-                self._frame._cleanup_remote_file(dev_tmp, root=True),
-                self._on_transfer_done(o2, e2, tr('Pulled {value0}').format(value0=name)),
+            worker, worker.result_ready,
+            lambda output, failed, _local: self._on_transfer_done(
+                output, failed, tr("Pulled {value0}").format(value0=name)
             ),
         )
-        w.start()
+        self._frame._transfers.enqueue(worker, cleanup=cleanup)
+
+    def _finish_root_pull(self, o, e, name, dev_tmp, save_path):
+        """兼容已准备中转文件的续发入口，下载失败或取消也履行清理义务。"""
+        device = self._frame.device_ip
+        token = self._frame._transfers.hold_cleanup()
+        def cleanup():
+            self._cleanup_owned_pull(dev_tmp, device, token)
+
+        if e or not self._frame._can_operate():
+            cleanup()
+            if e and not self._frame._closing:
+                self._on_transfer_done(o, True, "")
+            return
+        self._queue_single_pull(name, dev_tmp, save_path, device, cleanup)
 
     def _pull_selected(self):
         if not self._frame._can_operate():
             return
-        rows = set(i.row() for i in self._frame.table.selectedIndexes())
-        if not rows:
+        origin = self._frame.current_path
+        rows = sorted({index.row() for index in self._frame.table.selectedIndexes()})
+        names = [self._frame._file_name_at(row) for row in rows]
+        names = [name for name in names if name != ".."]
+        if not names:
             return
         dest = QFileDialog.getExistingDirectory(
             self._frame, tr("Destination"), self._global_save_dir()
         )
-        if not dest:
-            return
-        for row in rows:
-            name = self._frame._file_name_at(row)
-            if name == "..":
-                continue
-            src = self._frame._dpath(self._frame.current_path, name)
-            dst = os.path.join(dest, name)
-            w = self._frame._run_transfer("pull", src, dst)
-            if w is None:
-                return
-            self._frame._connect_worker_ui(
-                w,
-                w.progress,
-                lambda msg: self._frame.status_bar.setText(msg),
-            )
-            self._frame._connect_worker_ui(
-                w,
-                w.result_ready,
-                lambda o, e, d, n=name: self._on_transfer_done(
-                    o, e, tr("Pulled {value0}").format(value0=n)
-                ),
-            )
-            w.start()
+        if dest:
+            items = [(name, self._frame._dpath(origin, name), os.path.join(dest, name))
+                     for name in names]
+            self._enqueue_batch("pull", items, origin)
 
     def _push_file(self):
         if not self._frame._can_operate():
             return
+        origin = self._frame.current_path
         files, _ = QFileDialog.getOpenFileNames(self._frame, tr("Select Files to Push"))
-        if not files:
+        if files:
+            items = [(os.path.basename(path), path,
+                      self._frame._dpath(origin, os.path.basename(path))) for path in files]
+            self._enqueue_batch("push", items, origin)
+
+    def _enqueue_batch(self, direction, items, origin):
+        """冻结路径后串行调度整批，保留每项结果，终态只刷新一次原目标。"""
+        if not self._frame._can_operate() or not items:
             return
-        for fp in files:
-            dst = self._frame._dpath(self._frame.current_path, os.path.basename(fp))
-            w = self._frame._run_transfer("push", fp, dst)
-            if w is None:
+        records = []
+        remaining = [len(items)]
+        device = self._frame.device_ip
+
+        def finish_item(record):
+            if record["result"] is None:
+                record["result"] = ("cancelled", "")
+            remaining[0] -= 1
+            if remaining[0]:
                 return
-            self._frame._connect_worker_ui(
-                w,
-                w.progress,
-                lambda msg: self._frame.status_bar.setText(msg),
+            self._last_batch_results = tuple(
+                (item["name"], *item["result"]) for item in records
             )
-            bn = os.path.basename(fp)
-            self._frame._connect_worker_ui(
-                w,
-                w.result_ready,
-                lambda o, e, d, n=bn: self._on_transfer_done(
-                    o, e, tr("Pushed {value0}").format(value0=n)
-                ),
+            if self._frame._closing:
+                return
+            success = sum(item["result"][0] == "succeeded" for item in records)
+            failed = sum(item["result"][0] == "failed" for item in records)
+            cancelled = len(records) - success - failed
+            labels = {
+                "succeeded": tr("成功"), "failed": tr("失败"), "cancelled": tr("已取消")
+            }
+            summary = (
+                f"{labels['succeeded']}: {success} | {labels['failed']}: {failed} | "
+                f"{labels['cancelled']}: {cancelled}"
             )
-            w.start()
+            details = "\n".join(
+                f"{name}: {labels[state]}" for name, state, _output in self._last_batch_results
+            )
+            self._frame.status_bar.setText(summary)
+            report_feedback(
+                self._frame, "devices.files", tr("文件管理"), f"{summary}\n{details}",
+                level="error" if failed else "info" if cancelled else "success",
+                notify=not cancelled, target=device,
+            )
+            attempted = any(getattr(item["worker"], "_transfer_dispatched", False)
+                            for item in records)
+            if (direction == "push" and attempted and self._frame._can_operate()
+                    and self._frame.current_path == origin):
+                self._frame._refresh()
+
+        for name, source, target in items:
+            worker = self._frame._run_transfer(direction, source, target, _device_ip=device)
+            if worker is None:
+                return
+            record = {"name": name, "worker": worker, "result": None}
+            records.append(record)
+
+            def remember(output, error, _local, record=record):
+                record["result"] = ("failed" if error else "succeeded", output)
+
+            worker.result_ready.connect(remember, Qt.ConnectionType.QueuedConnection)
+            self._frame._connect_worker_ui(
+                worker, worker.progress, lambda message: self._frame.status_bar.setText(message)
+            )
+        for record in records:
+            self._frame._transfers.enqueue(
+                record["worker"], on_terminal=lambda record=record: finish_item(record)
+            )
 
     def _on_transfer_done(self, o, e, msg):
-        self._on_file_op_done(o, e, msg)
+        """下载终态只更新反馈；本地写入不改变远端目录。"""
+        report_feedback(
+            self._frame, "devices.files", tr("文件管理"), str(o) if e else msg,
+            level="error" if e else "success", notify=True, target=self._frame.device_ip,
+        )
+        self._frame.status_bar.setText(tr('Failed: {value0}').format(value0=o) if e else msg)
 
     def _on_file_op_done(self, output: str, error: bool, success_msg: str):
         """文件终态进入任务记录并分级通知；列表刷新和传输状态仍归当前页面管理。"""

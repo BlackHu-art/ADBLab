@@ -1,7 +1,7 @@
 
 """ADB 客户端设置卡：识别本地候选、单选生效、自定义路径。
 
-参考 qfluentwidgets 强调色卡的展开结构（ExpandGroupSettingCard + 单选列表 +
+参考 qfluentwidgets 强调色卡的展开结构（SimpleExpandGroupSettingCard + 单选列表 +
 自定义行 + 尾部动作），只把颜色换成 ADB 客户端。识别在后台线程执行，
 只运行 adb version，不连接 5037 服务。
 """
@@ -13,6 +13,7 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QApplication,
     QButtonGroup,
     QHBoxLayout,
     QSizePolicy,
@@ -22,11 +23,11 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
-    ExpandGroupSettingCard,
     FluentIcon,
     PrimaryPushButton,
     PushButton,
     RadioButton,
+    SimpleExpandGroupSettingCard,
 )
 
 from gui.i18n import tr
@@ -111,7 +112,7 @@ class _WrappingRow(QWidget):
 
 
 class _ProbeSignals(QObject):
-    finished = Signal(int, list)
+    finished = Signal(int, list, list)
     failed = Signal(int, str)
 
 
@@ -126,14 +127,15 @@ class _ProbeTask(QRunnable):
 
     def run(self) -> None:
         try:
-            probes = detect_clients(cancelled=self._cancelled)
+            candidates = list_adb_candidates()
+            probes = detect_clients(candidates, cancelled=self._cancelled)
         except Exception as exc:  # 识别失败不能影响设置页交互
             self.signals.failed.emit(self._generation, type(exc).__name__)
         else:
-            self.signals.finished.emit(self._generation, probes)
+            self.signals.finished.emit(self._generation, candidates, probes)
 
 
-class AdbClientSettingCard(ExpandGroupSettingCard):
+class AdbClientSettingCard(SimpleExpandGroupSettingCard):
     """ADB 客户端选择卡：自动、命名来源候选与自定义路径。"""
 
     client_selected = Signal(str)
@@ -141,12 +143,15 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
     rescan_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
+        # 换行行使用原生布局测高变体，与展开动画共用 viewLayout 的高度；
+        # 分别累加行高会在窄屏大字号下得到不同的收起终点，留下可见空白。
         super().__init__(FluentIcon.COMMAND_PROMPT, tr("ADB 客户端"), tr("自动选择"), parent)
         self._selection = CLIENT_PREFERENCE_AUTO
         self._custom_path = ""
         self._generation = 0
         self._busy = False
         self._probes: dict[str, ClientProbe] = {}
+        self._candidate_sources: set[str] = set()
         self._rows: dict[str, tuple[QWidget, RadioButton, CaptionLabel]] = {}
         self._tasks: set[_ProbeTask] = set()
         self._detection_timer = QTimer(self)
@@ -207,13 +212,14 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
         self._group.addButton(self._custom_radio)
         column = QVBoxLayout()
         column.setSpacing(1)
-        column.addWidget(BodyLabel(tr("自定义 adb"), row))
+        title = BodyLabel(tr("自定义 adb"), row)
+        column.addWidget(title)
         self._custom_detail = CaptionLabel(tr("未选择：可直接指定任意 adb 可执行文件"), row)
-        self._custom_detail.setWordWrap(True)
-        self._custom_detail.setMinimumWidth(0)
-        self._custom_detail.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
-        )
+        # 标题与说明都允许压缩换行，避免长译文将所有候选共享的 view 撑宽。
+        for label in (title, self._custom_detail):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         column.addWidget(self._custom_detail)
         layout.addWidget(self._custom_radio)
         layout.addLayout(column, 1)
@@ -229,30 +235,55 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
         return row
 
     def set_candidates(self, candidates=None) -> None:
-        """按实际配置的来源重建候选行；未配置的来源不显示。"""
+        """同步实际配置来源，保留既有控件、选择与自定义路径。"""
 
         items = list(candidates) if candidates is not None else list_adb_candidates()
-        for widget in list(self.widgets):
-            self.removeGroupWidget(widget)
-        for button in list(self._group.buttons()):
-            self._group.removeButton(button)
-        self._rows = {}
-
-        self._auto_row, self._auto_radio, _detail = self._build_radio_row(
-            CLIENT_PREFERENCE_AUTO, tr("自动选择（推荐）"),
-            tr("按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项"),
-        )
-        self.addGroupWidget(self._auto_row)
-        for candidate in items:
-            row, radio, detail = self._build_radio_row(
-                candidate.source, tr(source_label(candidate.source)), "",
-            )
-            self._rows[candidate.source] = (row, radio, detail)
-            self.addGroupWidget(row)
-        self.addGroupWidget(self._custom_row)
-        self.addGroupWidget(self._action_row)
-        self.set_selection(self._selection)
+        self._sync_candidates(items)
         self.apply_probes(list(self._probes.values()))
+
+    def _sync_candidates(self, candidates) -> None:
+        """在 GUI 线程增量同步同代候选；消失的选中来源保留为不可用行。"""
+
+        self._candidate_sources = {item.source for item in candidates}
+        keys = list(dict.fromkeys(item.source for item in candidates))
+        # 自动策略由固定推荐行承载，不能作为“已消失的客户端来源”再生成同键单选项。
+        if (
+            self._selection != CLIENT_PREFERENCE_AUTO
+            and self._selection in CLIENT_SOURCE_TOKENS
+            and self._selection not in keys
+        ):
+            keys.append(self._selection)
+        focus = QApplication.focusWidget()
+        restore_focus = focus is not None and self.isAncestorOf(focus)
+        if self._auto_row is None:
+            self._auto_row, self._auto_radio, _detail = self._build_radio_row(
+                CLIENT_PREFERENCE_AUTO, tr("自动选择（推荐）"),
+                tr("按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项"),
+            )
+        for key in list(self._rows):
+            if key in keys:
+                continue
+            row, radio, _detail = self._rows.pop(key)
+            if focus is row or (focus is not None and row.isAncestorOf(focus)):
+                focus = self._action_button if self._action_button.isEnabled() else self._auto_radio
+            self._group.removeButton(radio)
+            self.removeGroupWidget(row)
+            row.hide()
+            row.deleteLater()
+        for key in keys:
+            if key not in self._rows:
+                self._rows[key] = self._build_radio_row(key, tr(source_label(key)), "")
+        desired = [self._auto_row, *(self._rows[key][0] for key in keys),
+                   self._custom_row, self._action_row]
+        if self.widgets != desired:
+            # Fluent 移除布局项不会销毁行；复用存活行，只重建结构变化时的分隔线。
+            for widget in list(self.widgets):
+                self.removeGroupWidget(widget)
+            for widget in desired:
+                self.addGroupWidget(widget)
+        self.set_selection(self._selection)
+        if restore_focus and focus is not None:
+            focus.setFocus()
 
     # ── 对外接口 ──────────────────────────────────────────────────────
 
@@ -324,6 +355,8 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
         key = str(button.property("adbKey") or "")
         if key in (CLIENT_PREFERENCE_AUTO, CUSTOM_KEY):
             return True
+        if key not in self._candidate_sources:
+            return False
         probe = self._probes.get(key)
         return bool(probe is not None and probe.executable)
 
@@ -359,9 +392,10 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
         self.set_busy(False)
         self.card.contentLabel.setText(tr("识别超时，可重试"))
 
-    def _on_probes(self, generation: int, probes: list) -> None:
+    def _on_probes(self, generation: int, candidates: list, probes: list) -> None:
         if generation != self._generation:
             return
+        self._sync_candidates(candidates)
         self.apply_probes(probes)
 
     def _on_probe_failed(self, generation: int, reason: str) -> None:
@@ -377,6 +411,9 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
         self._cancel_detection_timeout()
         self._probes = {probe.source: probe for probe in probes}
         for source, (_row, _radio, detail) in self._rows.items():
+            if source not in self._candidate_sources:
+                detail.setText(tr(error_label(ERROR_MISSING)))
+                continue
             probe = self._probes.get(source)
             if probe is None:
                 detail.setText(tr("未检测到结果，可重新识别"))
@@ -439,6 +476,7 @@ class AdbClientSettingCard(ExpandGroupSettingCard):
 
         self._generation += 1
         self._cancel_detection_timeout()
+        self.set_busy(False)
         super().closeEvent(event)
 
     def setExpand(self, isExpand: bool) -> None:  # noqa: N802 - Qt 风格命名
@@ -484,7 +522,7 @@ def _settings_row(
     return row
 
 
-class AdbEnvironmentSettingCard(ExpandGroupSettingCard):
+class AdbEnvironmentSettingCard(SimpleExpandGroupSettingCard):
     """执行环境卡：折叠态显示检测结果并可重新检测，展开态选择执行模式。"""
 
     mode_requested = Signal(str)

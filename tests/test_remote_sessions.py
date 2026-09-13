@@ -120,10 +120,15 @@ class _Service:
 
 
 @pytest.fixture
-def remote_session(monkeypatch, qt_application):
+def remote_session(monkeypatch, qt_application, tmp_path):
+    adb = tmp_path / "adb.exe"
+    adb.touch()
     service = _Service()
     monkeypatch.setattr("gui.panels.remote_panel.ScrcpyService", lambda: service)
-    monkeypatch.setattr("gui.panels.remote_panel.ADBBridge", lambda: Mock(path="adb"))
+    monkeypatch.setattr("gui.panels.remote_panel.ADBBridge", lambda: Mock(
+        path=str(adb), input_sessions_running=Mock(return_value=False),
+        force_stop_input_sessions=Mock(return_value=False),
+    ))
     monkeypatch.setattr("gui.panels.remote_panel.RemoteControlService", lambda _adb: Mock())
     monkeypatch.setattr("gui.panels.remote_panel.RemoteInputEngine", lambda: Mock())
     monkeypatch.setattr("gui.panels.remote_panel.os.path.isfile", lambda _path: True)

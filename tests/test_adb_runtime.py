@@ -18,6 +18,16 @@ LISTING = b"List of devices attached\nfake-device\tdevice transport_id:1\n"
 PROBE = ExecutionResult(b"ADBLAB_OUT", b"ADBLAB_ERR", 7)
 
 
+ADB = "C:/test/adb.exe"
+
+
+@pytest.fixture(autouse=True)
+def selected_adb_file(tmp_path, monkeypatch):
+    path = tmp_path / "adb.exe"
+    path.touch()
+    monkeypatch.setitem(globals(), "ADB", str(path))
+
+
 @pytest.fixture
 def pending_discovery(monkeypatch):
     """固定路径解析、主机验证或启动窗口，并把后续测速保持为未结束。"""
@@ -37,7 +47,7 @@ def pending_discovery(monkeypatch):
             if stage == "resolver":
                 state.entered.set()
                 assert state.release.wait(3)
-            return "C:/test/adb.exe"
+            return ADB
 
         runtime = state.runtime = AdbRuntime(resolver)
 
@@ -55,7 +65,7 @@ def pending_discovery(monkeypatch):
 
         def native(cmd, timeout, cancelled):
             state.native.append(cmd)
-            assert cmd == ["C:/test/adb.exe", "start-server"]
+            assert cmd == [ADB, "start-server"]
             state.entered.set()
             assert state.release.wait(3)
             state.bootstrap_done = True
@@ -93,7 +103,7 @@ def test_discovery_waits_for_host_before_selecting_backend(pending_discovery, st
     state = pending_discovery(stage)
     results = []
     worker = threading.Thread(target=lambda: results.append(
-        state.runtime.try_run(["C:/test/adb.exe", *args], 2),
+        state.runtime.try_run([ADB, *args], 2),
     ))
     try:
         worker.start()
@@ -108,7 +118,7 @@ def test_discovery_waits_for_host_before_selecting_backend(pending_discovery, st
         assert 0 < state.captures[0]["timeout"] <= 2
         assert state.runtime.snapshot().checking
         assert state.native == (
-            [["C:/test/adb.exe", "start-server"]] if stage == "bootstrap" else []
+            [[ADB, "start-server"]] if stage == "bootstrap" else []
         )
     finally:
         state.runtime.close()
@@ -121,7 +131,7 @@ def test_waiting_discovery_obeys_cancellation_and_native_selection(pending_disco
     stopped = threading.Event()
     results = []
     worker = threading.Thread(target=lambda: results.append(
-        state.runtime.try_run(["C:/test/adb.exe", "devices"], 30, stopped.is_set),
+        state.runtime.try_run([ADB, "devices"], 30, stopped.is_set),
     ))
     try:
         worker.start()
@@ -150,7 +160,7 @@ def test_pending_discovery_exhausts_original_budget_without_native_fallback(
 ):
     state = pending_discovery("host")
     monkeypatch.setattr(execution, "_adb_runtime", state.runtime)
-    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "C:/test/adb.exe")
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: ADB)
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)
     native = Mock(return_value=ExecutionResult(b"List of devices attached\n"))
     monkeypatch.setattr(execution, "native_capture", native)
@@ -195,7 +205,7 @@ def test_failed_host_verification_uses_only_remaining_native_budget(pending_disc
     monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=lambda: clock[0]))
     monkeypatch.setattr(execution, "perf_counter", lambda: clock[0])
     monkeypatch.setattr(execution, "_adb_runtime", state.runtime)
-    monkeypatch.setattr(execution, "resolve_adb_program", lambda: "C:/test/adb.exe")
+    monkeypatch.setattr(execution, "resolve_adb_program", lambda: ADB)
     monkeypatch.setattr(execution, "_log_if_slow", lambda *_: None)
     native = Mock(return_value=ExecutionResult(b"List of devices attached\n"))
     monkeypatch.setattr(execution, "native_capture", native)
@@ -225,7 +235,7 @@ def test_discovery_cleanup_after_prepare_shutdown_keeps_original_native_admissio
 ):
     state = pending_discovery("host")
     state.runtime.prepare_shutdown()
-    assert state.runtime.try_run(["C:/test/adb.exe", "devices"], 2) is None
+    assert state.runtime.try_run([ADB, "devices"], 2) is None
     assert not state.waiting.is_set()
 
 
@@ -298,7 +308,7 @@ def test_delayed_connection_refusal_bootstraps_once_and_enables_fast_discovery(
         for line in diagnostics
     )
     assert all("C:/test" not in line for line in diagnostics)
-    result = runtime.try_run(["C:/test/adb.exe", "devices", "-l"], 5)
+    result = runtime.try_run([ADB, "devices", "-l"], 5)
     assert result is not None and result.kind == "completed"
     assert result.stdout == b"List of devices attached\n\n"
 
@@ -348,7 +358,7 @@ def test_unavailable_host_recovers_with_slow_warm_response(host_transport, was_a
     assert server.budgets[-1] == 3.0
     assert len(native) == 1
     assert all("start-server" not in cmd for cmd in native)
-    result = runtime.try_run(["C:/test/adb.exe", "devices"], 5)
+    result = runtime.try_run([ADB, "devices"], 5)
     assert result is not None and result.kind == "completed"
     assert result.stdout == b"List of devices attached\n\n"
     assert server.budgets[-1] == pytest.approx(5.0)
@@ -441,7 +451,7 @@ def test_shutdown_cancels_slow_initial_service_bootstrap(host_transport, monkeyp
         release.set()
         wait_for_probe(runtime)
     assert proc.killed and proc.drained
-    assert commands == [["C:/test/adb.exe", "start-server"]]
+    assert commands == [[ADB, "start-server"]]
     assert server.budgets == [3.0]
     assert not runtime.snapshot().checking
     assert runtime.snapshot().status != "starting_server"
@@ -506,7 +516,7 @@ def test_invalid_native_benchmark_keeps_verified_fast_backend(backend, monkeypat
     runtime.request_device_check()
     assert runtime.wait(2)
     assert runtime.can_scan_fast()
-    assert runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+    assert runtime.can_shell_fast(ADB, "fake-device")
     assert len(native) == 2
 
 
@@ -545,11 +555,11 @@ def test_manual_fast_switch_overrides_speed_preference_immediately(backend, monk
     assert runtime.snapshot().selection_mode == "fast"
     assert not runtime.snapshot().effective_native_only
     assert runtime.can_scan_fast()
-    assert runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+    assert runtime.can_shell_fast(ADB, "fake-device")
     assert len(calls) == count
     runtime.set_native_only(True)
     assert runtime.snapshot().effective_native_only
-    assert runtime.try_run(["C:/test/adb.exe", "devices"], 5) is None
+    assert runtime.try_run([ADB, "devices"], 5) is None
     assert len(calls) == count
 
 
@@ -605,7 +615,7 @@ def test_replaced_device_does_not_receive_capability_retry(backend, monkeypatch)
     monkeypatch.setattr(module, "capture", capture)
     assert runtime.start() and runtime.wait(2)
     assert len(old_calls) == 1
-    assert runtime.can_shell_fast("C:/test/adb.exe", "new-device")
+    assert runtime.can_shell_fast(ADB, "new-device")
 
 
 def test_many_unresponsive_devices_finish_one_bounded_detection(backend, monkeypatch):
@@ -689,8 +699,8 @@ def test_late_warm_listing_does_not_replace_a_newer_device_snapshot(backend, mon
     monkeypatch.setattr(module, "capture", capture)
     monkeypatch.setattr(module, "native_capture", native)
     assert runtime.start() and runtime.wait(2)
-    assert runtime.can_shell_fast("C:/test/adb.exe", "new-device")
-    assert not runtime.can_shell_fast("C:/test/adb.exe", "fake-device")
+    assert runtime.can_shell_fast(ADB, "new-device")
+    assert not runtime.can_shell_fast(ADB, "fake-device")
 
 
 def test_superseded_recheck_finishes_without_stale_checking_status(backend, monkeypatch):
@@ -737,7 +747,7 @@ def backend(monkeypatch):
 
     monkeypatch.setattr(module, "native_capture", native)
     monkeypatch.setattr(module, "capture", capture)
-    runtime = AdbRuntime(lambda: "C:/test/adb.exe")
+    runtime = AdbRuntime(lambda: ADB)
     yield runtime, clock, native_calls, socket_calls
     runtime.close()
     assert runtime.wait(2)
@@ -1056,7 +1066,7 @@ def test_unsupported_arguments_do_not_enter_socket_backend(backend, tail):
     runtime, _, _, calls = backend
     prepare(runtime)
     count = len(calls)
-    assert runtime.try_run(["C:/test/adb.exe", *tail], 5) is None
+    assert runtime.try_run([ADB, *tail], 5) is None
     assert len(calls) == count
 
 
@@ -1066,7 +1076,7 @@ def test_custom_executable_and_server_are_not_redirected(backend, monkeypatch):
     count = len(calls)
     assert runtime.try_run(["C:/other/adb.exe", "devices"], 5) is None
     monkeypatch.setenv("ADB_SERVER_SOCKET", "tcp:elsewhere:5037")
-    assert runtime.try_run(["C:/test/adb.exe", "devices"], 5) is None
+    assert runtime.try_run([ADB, "devices"], 5) is None
     assert not runtime.can_scan_fast()
     assert len(calls) == count
 
@@ -1088,7 +1098,7 @@ def test_screenshot_stream_preserves_binary_and_avoids_native_client(
     monkeypatch.setattr(execution, "native_capture", Mock(side_effect=AssertionError))
     path = tmp_path / "shot.png"
     result = execution.CommandRunner.run_to_file(
-        ["C:/test/adb.exe", "-s", "fake-device", "exec-out", "screencap", "-p"],
+        [ADB, "-s", "fake-device", "exec-out", "screencap", "-p"],
         str(path), cancelled=lambda: False,
     )
     assert result.success and result.output == str(path)
@@ -1104,7 +1114,7 @@ def test_binary_failure_does_not_fall_back_or_replay(backend, monkeypatch, tmp_p
     native = Mock(side_effect=AssertionError)
     monkeypatch.setattr(execution, "native_capture", native)
     result = execution.CommandRunner.run_to_file(
-        ["C:/test/adb.exe", "-s", "fake-device", "exec-out", "screencap", "-p"],
+        [ADB, "-s", "fake-device", "exec-out", "screencap", "-p"],
         str(tmp_path / "shot.png"), cancelled=lambda: False,
     )
     assert not result.success
@@ -1116,7 +1126,7 @@ def test_binary_failure_does_not_fall_back_or_replay(backend, monkeypatch, tmp_p
 def test_only_explicit_screenshot_binary_command_can_use_shell(backend):
     runtime, _, _, _ = backend
     prepare(runtime)
-    prefix = ["C:/test/adb.exe", "-s", "fake-device"]
+    prefix = [ADB, "-s", "fake-device"]
     for args in (["exec-out", "cat", "/file"], ["shell", "screencap", "-p"], ["devices"]):
         assert runtime._parse(prefix + args, binary=True) is None
 
@@ -1130,7 +1140,7 @@ def test_failure_after_connection_never_replays(backend, monkeypatch, kind):
     native_run = Mock()
     monkeypatch.setattr(execution.subprocess, "run", native_run)
     result = execution.CommandRunner.run(
-        ["C:/test/adb.exe", "-s", "fake-device", "shell", "pm clear x"]
+        [ADB, "-s", "fake-device", "shell", "pm clear x"]
     )
     assert not result.success
     native_run.assert_not_called()
@@ -1146,7 +1156,7 @@ def test_refused_connection_falls_back_once(backend, monkeypatch):
     native = Mock(return_value=subprocess.CompletedProcess([], 0, "ok\n", ""))
     monkeypatch.setattr(execution.subprocess, "run", native)
     result = execution.CommandRunner.run(
-        ["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"]
+        [ADB, "-s", "fake-device", "shell", "echo ok"]
     )
     assert result.success and result.output == "ok"
     native.assert_called_once()
@@ -1166,7 +1176,7 @@ def test_backends_share_result_contract(backend, monkeypatch, raw, expected):
     prepare(runtime)
     execution.install_adb_runtime(runtime)
     monkeypatch.setattr(module, "capture", lambda *a, **k: raw)
-    cmd = ["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"]
+    cmd = [ADB, "-s", "fake-device", "shell", "echo ok"]
     fast = execution.CommandRunner.run(cmd)
     monkeypatch.setattr(
         execution.subprocess,
@@ -1190,7 +1200,7 @@ def test_reconnection_invalidates_policy_before_reprobe(backend, monkeypatch):
     runtime.observe_devices(LISTING.decode().replace("transport_id:1", "transport_id:2"))
     assert runtime.wait(2)
     assert runtime.snapshot().fast_shell_devices == 0
-    assert runtime.try_run(["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"], 5) is None
+    assert runtime.try_run([ADB, "-s", "fake-device", "shell", "echo ok"], 5) is None
 
 
 def test_native_override_applies_only_to_later_requests(backend, monkeypatch):
@@ -1202,7 +1212,7 @@ def test_native_override_applies_only_to_later_requests(backend, monkeypatch):
         return ExecutionResult(b"ok")
 
     monkeypatch.setattr(module, "capture", capture)
-    cmd = ["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"]
+    cmd = [ADB, "-s", "fake-device", "shell", "echo ok"]
     assert runtime.try_run(cmd, 5).stdout == b"ok"
     assert runtime.try_run(cmd, 5) is None
 
@@ -1222,7 +1232,7 @@ def test_shutdown_cancels_active_request_but_allows_cleanup_before_final_close(
         return ExecutionResult(kind="cancelled" if cancelled() else "completed")
 
     monkeypatch.setattr(module, "capture", blocked)
-    cmd = ["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"]
+    cmd = [ADB, "-s", "fake-device", "shell", "echo ok"]
     worker = threading.Thread(target=lambda: results.append(runtime.try_run(cmd, 5)))
     worker.start()
     assert admitted.wait(2)
@@ -1248,7 +1258,10 @@ def test_concurrent_start_is_deduplicated_and_cancellable(backend, monkeypatch):
     runtime._resolver = resolver
     assert runtime.start()
     assert entered.wait(2)
-    assert not runtime.start()
+    original_thread = runtime._thread
+    assert runtime.start()
+    assert runtime._thread is original_thread
+    assert not runtime.start(force=False)
     runtime.close()
     release.set()
     assert runtime.wait(2)
@@ -1259,7 +1272,7 @@ def test_remote_command_timeout_keeps_valid_backend(backend, monkeypatch):
     runtime, _, _, _ = backend
     prepare(runtime)
     monkeypatch.setattr(module, "capture", lambda *a, **k: ExecutionResult(kind="timeout"))
-    result = runtime.try_run(["C:/test/adb.exe", "-s", "fake-device", "shell", "sleep 99"], 1)
+    result = runtime.try_run([ADB, "-s", "fake-device", "shell", "sleep 99"], 1)
     assert result.kind == "timeout"
     assert runtime.snapshot().fast_shell_devices == 1
 
@@ -1285,7 +1298,7 @@ def test_first_query_waits_for_pending_capability_without_running_native(backend
     worker = threading.Thread(
         target=lambda: results.append(
             runtime.try_run(
-                ["C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok"],
+                [ADB, "-s", "fake-device", "shell", "echo ok"],
                 2,
             )
         )
@@ -1343,7 +1356,7 @@ def test_host_recovery_restores_preferences_without_repeating_benchmarks(backend
     prepare(runtime)
     original = module.capture
     monkeypatch.setattr(module, "capture", lambda *a, **k: ExecutionResult(kind="transport"))
-    result = runtime.try_run(["C:/test/adb.exe", "devices"], 5)
+    result = runtime.try_run([ADB, "devices"], 5)
     assert result.kind == "transport"
     assert not runtime.can_scan_fast()
     monkeypatch.setattr(module, "capture", original)
@@ -1409,8 +1422,8 @@ def test_old_native_benchmark_cannot_restore_failed_backend(backend, monkeypatch
     try:
         assert runtime.start()
         assert entered.wait(2)
-        cmd = ["C:/test/adb.exe", "devices"] if command == "devices" else [
-            "C:/test/adb.exe", "-s", "fake-device", "shell", "echo ok",
+        cmd = [ADB, "devices"] if command == "devices" else [
+            ADB, "-s", "fake-device", "shell", "echo ok",
         ]
         assert runtime.try_run(cmd, 5).kind == "transport"
         release.set()
@@ -1427,7 +1440,7 @@ def test_plain_devices_request_triggers_due_capability_check(backend, monkeypatc
     prepare(runtime)
     before = sum(command == "devices" and args == ["-l"] for command, args, _ in socket_calls)
     clock[0] += 11
-    assert runtime.try_run(["C:/test/adb.exe", "devices"], 5).kind == "completed"
+    assert runtime.try_run([ADB, "devices"], 5).kind == "completed"
     assert runtime.wait(2)
     after = sum(command == "devices" and args == ["-l"] for command, args, _ in socket_calls)
     assert after == before + 1
@@ -1494,7 +1507,7 @@ def test_each_device_keeps_its_own_recovery_deadline(backend, monkeypatch):
     assert runtime.snapshot().fast_shell_devices == 2
     for serial, elapsed in [("fake-device", 0), ("other-device", 9)]:
         clock[0] += elapsed
-        result = runtime.try_run(["C:/test/adb.exe", "-s", serial, "shell", "fail"], 5)
+        result = runtime.try_run([ADB, "-s", serial, "shell", "fail"], 5)
         assert result.kind == "transport"
         assert runtime.wait(2)
     clock[0] += 2
@@ -1530,8 +1543,8 @@ def test_old_capability_probe_cannot_restore_newly_failed_backend(backend, monke
     try:
         assert runtime.start(force=True)
         assert entered.wait(2)
-        cmd = ["C:/test/adb.exe", "devices"] if command == "devices" else [
-            "C:/test/adb.exe", "-s", "fake-device", "shell", "fail",
+        cmd = [ADB, "devices"] if command == "devices" else [
+            ADB, "-s", "fake-device", "shell", "fail",
         ]
         assert runtime.try_run(cmd, 5).kind == "transport"
         release.set()
@@ -1563,8 +1576,8 @@ def test_old_business_failure_cannot_invalidate_recovered_backend(backend, monke
         return original(target, args, **kwargs)
 
     monkeypatch.setattr(module, "capture", capture)
-    prefix = ["C:/test/adb.exe", "devices"] if command == "devices" else [
-        "C:/test/adb.exe", "-s", "fake-device", "shell",
+    prefix = [ADB, "devices"] if command == "devices" else [
+        ADB, "-s", "fake-device", "shell",
     ]
     old = prefix + (["-l"] if command == "devices" else ["old"])
     failed = prefix + ([] if command == "devices" else ["fail"])
@@ -1607,7 +1620,7 @@ def test_native_override_suppresses_automatic_checks_but_keeps_manual_retest(bac
     clock[0] += 11
     count = len(calls)
     runtime.request_device_check()
-    assert runtime.try_run(["C:/test/adb.exe", "devices"], 5) is None
+    assert runtime.try_run([ADB, "devices"], 5) is None
     assert runtime.wait(2)
     assert len(calls) == count
     assert runtime.start(force=True)
@@ -1660,7 +1673,7 @@ def test_old_successful_listing_is_stale_after_runtime_refresh(
     monkeypatch.setattr(execution.subprocess, "run", native_run)
     run = execution.CommandRunner.run if use_runner else runtime.try_run
     worker = threading.Thread(
-        target=lambda: results.append(run(["C:/test/adb.exe", "devices", *args], 30))
+        target=lambda: results.append(run([ADB, "devices", *args], 30))
     )
     try:
         worker.start()
@@ -1723,7 +1736,7 @@ def test_completed_shell_result_survives_device_reconnection(backend, monkeypatc
     runtime._changed = changed
     monkeypatch.setattr(module, "capture", capture)
     result = runtime.try_run(
-        ["C:/test/adb.exe", "-s", "fake-device", "shell", "business"], 30,
+        [ADB, "-s", "fake-device", "shell", "business"], 30,
     )
 
     assert result == expected

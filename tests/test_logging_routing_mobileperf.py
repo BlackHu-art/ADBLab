@@ -22,6 +22,7 @@ from services.mobileperf_runner import MobilePerfRunConfig, MobilePerfRunner
 def _feedback_controller() -> SimpleNamespace:
     return SimpleNamespace(
         devices_updated=Mock(),
+        device_refresh_superseded=Mock(),
         record_finished=Mock(),
         record_target_finished=Mock(),
         monkey_target_finished=Mock(),
@@ -49,6 +50,7 @@ def test_main_frame_routes_business_log_signal_to_log_service():
         left_panel=SimpleNamespace(
             _apps_tab=apps_panel,
             _connected_device_cache=["device-secret"],
+            on_device_refresh_superseded=Mock(),
             on_recording_target_finished=Mock(),
             on_monkey_target_finished=Mock(),
             on_operation_completed=Mock(),
@@ -133,12 +135,16 @@ def test_remote_diagnostic_redacts_active_device_and_limits_length():
 def test_remote_launch_log_does_not_expose_command_arguments():
     panel = SimpleNamespace(
         _can_operate_device=lambda: True,
+        _SESSION_STOPPING=RemotePanel._SESSION_STOPPING,
         _closing=False,
         _launch_worker=None,
         _active_device="device-secret",
         _status_label=Mock(),
         _update_status=Mock(),
         _set_running=Mock(),
+        _reset_scrcpy_stop_claim=Mock(),
+        _input_engine=Mock(),
+        _start_warm_remote_input_session=Mock(),
         _log=Mock(),
         _scrcpy_service=Mock(),
         _remote_control=Mock(),
@@ -151,7 +157,7 @@ def test_remote_launch_log_does_not_expose_command_arguments():
     )
     panel._scrcpy_service.start.return_value = Mock()
 
-    with patch("gui.panels.remote_panel.threading.Thread"):
+    with patch("gui.panels.remote_panel_scrcpy.RemotePanelScrcpy._start_process_task"):
         RemotePanel._on_launch_ready(
             panel,
             ["scrcpy.exe", "-s", "device-secret", "--window-title", "secret"],
