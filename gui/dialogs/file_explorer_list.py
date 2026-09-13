@@ -103,6 +103,8 @@ class FileExplorerList:
         requested_path = str(requested_path or self._frame.current_path).strip()
         if not requested_path:
             return
+        if navigation_action == "refresh":
+            self._frame._view_controller.invalidate_cache()
         self._frame._refresh_request_id += 1
         request_id = self._frame._refresh_request_id
         self._frame._active_refresh = (request_id, requested_path)
@@ -190,6 +192,10 @@ class FileExplorerList:
             for index, entry in enumerate(rows, parent_offset):
                 self._set_file_row(
                     index, entry.name, entry.file_type, entry.size_text, entry.modified
+                )
+                # 显示文本会取整；原始列表元数据随对应行保存，不作为精细版本凭据。
+                self._frame.table.item(index, self._frame.NAME_COL).setData(
+                    Qt.ItemDataRole.UserRole, entry,
                 )
         finally:
             self._frame.table.setSortingEnabled(True)

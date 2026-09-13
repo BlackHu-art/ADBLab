@@ -487,14 +487,10 @@ class StartUp:
             self._exit_event.wait(min(0.1, remaining))
 
     def clear_heapdump(self):
-        """删除目标应用超过三天的历史堆转储，避免与本次采集混淆。"""
-        filelist = self.device.adb.list_dir("/data/local/tmp")
-        if filelist:
-            for file in filelist:
-                if self.packages[0] in file and self.device.adb.is_overtime_days(
-                    "/data/local/tmp/" + file, 3
-                ):
-                    self.device.adb.delete_file(f"/data/local/tmp/{file}")
+        """仅清理当前受管清单中已归档的历史文件；无归属记录的旧文件保留。"""
+        self.device.adb.cleanup_owned_heapdumps(
+            RuntimeData.package_save_path, self.packages, older_than_days=3,
+        )
 
     def stop(self):
         """停止监控器、生成报告并回收本次采集产生的设备侧文件。"""
@@ -553,14 +549,8 @@ class StartUp:
             raise monkey_failure
 
     def pull_heapdump(self):
-        """将目标应用的设备侧堆转储拉取到本次结果目录。"""
-        filelist = self.device.adb.list_dir("/data/local/tmp")
-        if filelist:
-            for file in filelist:
-                if self.packages[0] in file:
-                    self.device.adb.pull_file(
-                        f"/data/local/tmp/{file}", RuntimeData.package_save_path
-                    )
+        """重试本次精确清单中的堆转储，未知设备文件不参与拉取或清理。"""
+        self.device.adb.pull_owned_heapdumps(RuntimeData.package_save_path, self.packages)
 
     def pull_log_files(self):
         """将配置的设备日志目录拉取到本次结果目录。"""

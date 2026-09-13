@@ -8,7 +8,8 @@
 - Windows 离屏平台若未提供系统字体库，测试夹具只读注册现有 Windows 字体，确保中文字形和
   实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
 - 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
-- `ui` 与 `integration` marker 由 `tests/conftest.py` 集中附加；新增 Qt 测试文件时同步登记，
+- `ui` 与 `integration` marker 以 `tests/conftest.py` 的集中登记（`_UI_TEST_FUNCTIONS`）为主，
+  少数文件在文件内就地 `pytestmark` 或函数级 `@pytest.mark` 标注；新增 Qt 测试文件时同步登记，
   混合文件按节点标记 Qt 用例，不能因为文件名像纯逻辑就漏标。
   `unit` marker 已注册但尚未系统分配，不能把 `not ui` 等同为显式 unit 集。
 - 当前全局 autouse 夹具仍初始化 QApplication，`not ui` 只改变测试选择，不承诺完全不导入 Qt。
@@ -18,11 +19,11 @@
 | 测试域 | 代表性入口 | 主要覆盖 |
 | --- | --- | --- |
 | 执行、配置与存储 | `test_model_*.py`、`test_settings_persistence.py`、`test_device_store_concurrency.py` | CommandRunner/ProcessRunner、ADB model、设置迁移、原子写与故障恢复 |
-| ADB 执行环境与快速命令 | `test_adb_runtime.py`、`test_qt_adb_runtime.py`、`test_adb_fast.py` | 能力探测、双后端选择、恢复代次、超时/取消、不重放命令和 Qt 状态投递；业务调用方另选对应 model/service 测试 |
+| ADB 执行环境与快速命令 | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_qt_adb_runtime.py`、`test_adb_fast.py` | 客户端候选解析与偏好、只跑 `adb version` 的来源识别与失败分类、能力探测、双后端选择、恢复代次、超时/取消、不重放命令和 Qt 状态投递；业务调用方另选对应 model/service 测试 |
 | 应用更新检查 | `test_app_update.py`、`test_qt_app_update.py`、`test_settings_typography.py` | 正式版本与链接校验、受控网络响应、超时/限流/关闭、主窗口显式触发和多语言卡片；后两者纳入 `ui` marker，测试不依赖外网 |
 | Operation 与 Controller | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_*.py` | operation 身份、批次状态、取消、晚到结果与路由 |
 | Workspace 与任务中心 | `test_workspace_feature_host.py`、`test_task_center.py`、`test_task_history.py` | 深层路由、稳定会话、异步释放、活动任务和进程内历史 |
-| 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_diagnostics.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、诊断容量及原子导出 |
+| 通用操作结果与诊断 | `test_action_results.py`、`test_action_feedback.py`、`test_diagnostics.py`、`test_console_log_level.py`、`test_console_colors.py` | 请求身份、链式子命令与设备计数、忙碌和晚到结果、正文/附件可达、诊断容量及原子导出；控制台级别白名单、阈值过滤与颜色探测缓存 |
 | 测试归档与参数方案 | `test_run_library.py`、`test_run_library_ui.py`、`test_run_library_integration.py` | 跨重启记录、参数复用不自动执行、损坏/未来版本保护、后台写入失败和关闭排空；页内结果另见 `test_run_results*.py` |
 | UI、主题与响应式 | `test_main_window_layout.py`、`test_responsive_*.py`、`test_*typography.py` | 导航、主题、字体、DPI、断点重排、无障碍与瞬态交互 |
 | Monkey 与性能页交互 | `test_monkey_layout.py`、`test_monkey_preparation.py`、`test_performance_responsive.py` | 分组布局、查询显隐、输入保留、诊断常显与日志结果可达；这些 Qt 用例纳入 `ui` marker |
@@ -105,7 +106,8 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
   回退或自动吞错绕过真实协议。断言可以检查必要的调用参数与资源归属，不复制实现步骤。
 - UI 隔离夹具关闭本用例创建的窗口后，对包括已关闭窗口在内的全部新顶层窗口安排删除，再投递
   `DeferredDelete`。仅调用 `close()` 或 `processEvents()` 不能证明 QObject 已释放；生命周期
-  回归同时观察销毁信号、计时器停止和晚到回调。
+  回归同时观察销毁信号、计时器停止和晚到回调。`isolated_ui_state_probe` 夹具记录每个新顶层
+  窗口的 `timer_stopped` 与 shutdown 结果，可直接用于这些断言。
 - 清理夹具是兜底，不替代测试主体对关闭/取消的断言。仅已销毁 QObject 可被识别后跳过；活对象
   的 shutdown/close 异常必须暴露，失败后仍尽力释放资源，不能用宽泛 `except: pass` 掩盖问题。
 - 测试工作流 YAML 的关键文本/结构，防止打包模式和发布资产回归。

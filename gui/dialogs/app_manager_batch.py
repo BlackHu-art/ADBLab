@@ -97,46 +97,22 @@ class AppManagerBatch:
 
         if self._batch_action_blocked():
             return
-        w = _app_manager.AppManagerWorker(self._frame.device_ip, "launch_app", package_name=pkg)
-        w.log_message.connect(
-            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+        worker = _app_manager.AppManagerWorker(
+            self._frame.device_ip, "launch_app", package_name=pkg
         )
-        self._frame._track_worker(w)
-        w.start()
+        self._submit_batch([worker], "launch", refresh=False)
 
     def _modify_one(self, action, pkg):
         from gui.dialogs import app_manager as _app_manager
 
         if self._batch_action_blocked():
             return
-        if action == "force_stop":
-            w = _app_manager.AppManagerWorker(
-                self._frame.device_ip, "modify_app", action="force_stop", package_name=pkg
-            )
-            w.log_message.connect(
-                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-            )
-            self._frame._track_worker(w)
-            w.start()
-        elif action == "clear":
-            w = _app_manager.AppManagerWorker(self._frame.device_ip, "clear_app", package_name=pkg)
-            w.log_message.connect(
-                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-            )
-            self._frame._track_worker(w)
-            w.start()
-        else:
-            w = _app_manager.AppManagerWorker(
-                self._frame.device_ip, "modify_app", action=action, package_name=pkg
-            )
-            w.log_message.connect(
-                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-            )
-            w.operation_done.connect(
-                alive_callback(self._frame, "_load_apps"), Qt.ConnectionType.QueuedConnection
-            )
-            self._frame._track_worker(w)
-            w.start()
+        operation = "clear_app" if action == "clear" else "modify_app"
+        kwargs = {"package_name": pkg}
+        if operation == "modify_app":
+            kwargs["action"] = action
+        worker = _app_manager.AppManagerWorker(self._frame.device_ip, operation, **kwargs)
+        self._submit_batch([worker], action, refresh=action != "force_stop")
 
     @staticmethod
     def _global_save_dir() -> str:
@@ -156,15 +132,7 @@ class AppManagerBatch:
         w = _app_manager.AppManagerWorker(
             self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
         )
-        w.log_message.connect(
-            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-        )
-        w.backup_progress.connect(
-            alive_forwarding_callback(self._frame, "_log_backup_progress"),
-            Qt.ConnectionType.QueuedConnection,
-        )
-        self._frame._track_worker(w)
-        w.start()
+        self._submit_batch([w], "backup", refresh=False)
 
     def _deselect_all(self):
         self._frame.selected_packages.clear()
@@ -190,65 +158,103 @@ class AppManagerBatch:
                 tr("请先选择应用。"),
             )
             return
-        workers = []
-        for pkg in pkgs:
-            w = _app_manager.AppManagerWorker(
+        workers = [
+            _app_manager.AppManagerWorker(
                 self._frame.device_ip, "modify_app", action=action, package_name=pkg
             )
-            w.log_message.connect(
-                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
+            for pkg in pkgs
+        ]
+        self._submit_batch(workers, action, refresh=True)
+
+    def _submit_batch(self, workers, action: str, *, refresh: bool) -> None:
+        """一个固定设备会话只运行一个业务 worker；待启动项不占线程或进程。"""
+        frame = self._frame
+        frame._batch_pending = list(workers)
+        frame._batch_workers.update(workers)
+        frame._batch_total = len(workers)
+        frame._batch_action = action
+        frame._batch_refresh = refresh
+        for worker in workers:
+            worker.log_message.connect(
+                alive_forwarding_callback(frame, "log"), Qt.ConnectionType.QueuedConnection
             )
-            w.finished.connect(
-                alive_callback(self._frame, "_on_batch_worker_finished", w),
+            worker.backup_progress.connect(
+                alive_forwarding_callback(frame, "_log_backup_progress"),
                 Qt.ConnectionType.QueuedConnection,
             )
-            self._frame._track_worker(w)
-            workers.append(w)
-
-        self._frame._batch_workers.update(workers)
-        self._frame._batch_total = len(workers)
-        self._frame._batch_action = action
-        self._frame.status_bar.setText(
-            tr("{value0}：已完成 0/{value1}").format(
-                value0=self._action_label(action), value1=self._frame._batch_total
+            worker.finished.connect(
+                alive_callback(frame, "_on_batch_worker_finished", worker),
+                Qt.ConnectionType.QueuedConnection,
             )
-        )
-        self._frame._update_selection_ui()
-        for w in workers:
-            w.start()
+            frame._track_worker(worker)
+        frame.status_bar.setText(tr("正在执行批量操作，请等待完成。"))
+        frame._update_selection_ui()
+        self._start_next_worker()
+        if not frame._batch_workers:
+            self._finish_batch()
+
+    def cancel_pending(self) -> None:
+        """撤销未启动的任务；在途写操作仍归原设备，关闭方另行请求停止。"""
+        frame = self._frame
+        pending = getattr(frame, "_batch_pending", [])
+        frame._batch_pending = []
+        for worker in pending:
+            worker.abort()
+            frame._batch_workers.discard(worker)
+            frame._prune_worker(worker)
+
+    def _start_next_worker(self) -> None:
+        """仅在上一 worker 完成且原设备仍可操作时消耗下一项。"""
+        frame = self._frame
+        if not frame._can_operate():
+            self.cancel_pending()
+            return
+        pending = getattr(frame, "_batch_pending", [])
+        while pending:
+            worker = pending.pop(0)
+            try:
+                worker.start()
+            except RuntimeError as exc:
+                # 未启动的线程不会发送 finished；显式释放它，再推进其余任务。
+                frame._batch_workers.discard(worker)
+                frame._prune_worker(worker)
+                frame._on_operation_feedback(
+                    "error", f"Unable to start application operation: {type(exc).__name__}",
+                )
+            else:
+                return
 
     def _on_batch_worker_finished(self, worker):
-        """等待当前批次全部结束后统一刷新一次应用列表。"""
+        """串行推进批次；所有终态（包括失败）汇合后至多刷新一次。"""
+        frame = self._frame
+        if worker not in frame._batch_workers:
+            return
+        frame._batch_workers.discard(worker)
+        if frame._closing or not frame._can_operate():
+            self.cancel_pending()
+        else:
+            self._start_next_worker()
+        if frame._batch_workers:
+            completed = frame._batch_total - len(frame._batch_workers)
+            frame.status_bar.setText(tr("{value0}：已完成 {value1}/{value2}").format(
+                value0=self._action_label(frame._batch_action), value1=completed,
+                value2=frame._batch_total,
+            ))
+            frame._update_selection_ui()
+            return
+        self._finish_batch()
 
-        if worker not in self._frame._batch_workers:
-            return
-        self._frame._batch_workers.discard(worker)
-        if self._frame._closing:
-            return
-        remaining = len(self._frame._batch_workers)
-        completed = self._frame._batch_total - remaining
-        if remaining:
-            self._frame.status_bar.setText(
-                tr("{value0}：已完成 {value1}/{value2}").format(
-                    value0=self._action_label(self._frame._batch_action),
-                    value1=completed,
-                    value2=self._frame._batch_total,
-                )
-            )
-            self._frame._update_selection_ui()
-            return
-
-        action = self._frame._batch_action
-        total = self._frame._batch_total
-        self._frame._batch_action = ""
-        self._frame._batch_total = 0
-        self._frame.status_bar.setText(
-            tr("已完成 {value0} 个应用的{value1}操作，正在刷新…").format(
-                value0=total, value1=self._action_label(action)
-            )
-        )
-        self._frame._update_selection_ui()
-        self._frame._load_apps()
+    def _finish_batch(self) -> None:
+        """汇合已完成或启动失败的批次，只恢复准入，不合成业务成功。"""
+        frame = self._frame
+        refresh = getattr(frame, "_batch_refresh", True)
+        frame._batch_action = ""
+        frame._batch_total = 0
+        frame._update_selection_ui()
+        if frame._can_operate():
+            frame.status_bar.setText(tr("就绪"))
+            if refresh:
+                frame._load_apps()
 
     def _backup_selected(self):
         from gui.dialogs import app_manager as _app_manager
@@ -268,19 +274,13 @@ class AppManagerBatch:
         )
         if not sd or self._batch_action_blocked():
             return
-        for pkg in pkgs:
-            w = _app_manager.AppManagerWorker(
+        workers = [
+            _app_manager.AppManagerWorker(
                 self._frame.device_ip, "backup_app", package_name=pkg, save_dir=sd
             )
-            w.log_message.connect(
-                alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-            )
-            w.backup_progress.connect(
-                alive_forwarding_callback(self._frame, "_log_backup_progress"),
-                Qt.ConnectionType.QueuedConnection,
-            )
-            self._frame._track_worker(w)
-            w.start()
+            for pkg in pkgs
+        ]
+        self._submit_batch(workers, "backup", refresh=False)
 
     def _restore_apps(self):
         from gui.dialogs import app_manager as _app_manager
@@ -293,18 +293,7 @@ class AppManagerBatch:
         if not files or self._batch_action_blocked():
             return
         w = _app_manager.AppManagerWorker(self._frame.device_ip, "restore_apps", file_paths=files)
-        w.log_message.connect(
-            alive_forwarding_callback(self._frame, "log"), Qt.ConnectionType.QueuedConnection
-        )
-        w.backup_progress.connect(
-            alive_forwarding_callback(self._frame, "_log_backup_progress"),
-            Qt.ConnectionType.QueuedConnection,
-        )
-        w.operation_done.connect(
-            alive_callback(self._frame, "_load_apps"), Qt.ConnectionType.QueuedConnection
-        )
-        self._frame._track_worker(w)
-        w.start()
+        self._submit_batch([w], "restore", refresh=True)
 
     def _show_details(self):
         packages = self._frame._get_selected_pkgs()

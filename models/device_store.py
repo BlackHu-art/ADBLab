@@ -148,13 +148,12 @@ class DeviceStore:
 
     @classmethod
     def _note_load_failure(cls, error_type: str) -> None:
-        """记录加载失败原因；打包模式下也通过 UI 日志面板可见。"""
+        """复用应用警告入口；仅服务不可用时兜底，避免重复打印或绕过关闭拒收。"""
         message = f"DeviceStore 加载失败：{error_type}，已保留内存中的设备列表"
         try:
             LogService().log("WARNING", message)
         except Exception:
-            pass
-        LogService.write_developer_console("ERROR", message)
+            LogService.write_developer_console("ERROR", message)
 
     @classmethod
     def save(cls):

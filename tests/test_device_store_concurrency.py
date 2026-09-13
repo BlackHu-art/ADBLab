@@ -1,3 +1,5 @@
+import io
+import sys
 import threading
 from unittest.mock import patch
 
@@ -5,6 +7,7 @@ import pytest
 import yaml
 
 from models.device_store import DeviceStore
+from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
 
 
 class _DeviceStoreState:
@@ -164,7 +167,7 @@ def test_device_store_corrupt_yaml_is_backed_up_and_snapshot_kept(tmp_path):
         level, message = log_service.return_value.log.call_args.args
         assert level == "WARNING"
         assert message.startswith("DeviceStore 加载失败：")
-        log_service.write_developer_console.assert_called_once()
+        log_service.write_developer_console.assert_not_called()
 
 
 @pytest.mark.parametrize("invalid_root", ["[]", "false", "0", "''", "[item]", "invalid"])
@@ -276,4 +279,49 @@ def test_device_store_load_unreadable_keeps_snapshot(tmp_path, monkeypatch):
         assert DeviceStore.get_all() == [("stale", {"ip": "old"})]
         backups = list(store_path.parent.glob("connected_devices.yaml.corrupt-*"))
         assert len(backups) == 1
+        log_service.return_value.log.assert_called_once()
+        assert log_service.return_value.log.call_args.args[0] == "WARNING"
+        log_service.write_developer_console.assert_not_called()
+
+
+@pytest.mark.parametrize("closed", [False, True])
+def test_load_failure_prints_once_and_respects_log_service_shutdown(request, monkeypatch, closed):
+    service = request.getfixturevalue("create_log_service")()
+    stream = io.StringIO()
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    monkeypatch.setattr(sys, "stderr", stream)
+    emitted = []
+    service.log_received.connect(lambda level, message: emitted.append((level, message)))
+    if closed:
+        service.shutdown()
+
+    DeviceStore._note_load_failure("ParserError")
+    service._flush_buffer()
+
+    if closed:
+        assert stream.getvalue() == ""
+        assert emitted == []
+        assert service.diagnostics.text() == ""
+    else:
+        assert stream.getvalue().count("DeviceStore") == 1
+        assert "[WARNING]" in stream.getvalue()
+        assert "[ERROR]" not in stream.getvalue()
+        assert len(emitted) == 1 and emitted[0][0] == "WARNING"
+        assert "ParserError" in emitted[0][1]
+        assert service.diagnostics.text().count("DeviceStore") == 1
+
+
+@pytest.mark.parametrize("failure_point", ["construct", "log"])
+def test_load_failure_keeps_console_fallback_when_logging_service_fails(failure_point):
+    with patch("models.device_store.LogService") as log_service:
+        if failure_point == "construct":
+            log_service.side_effect = RuntimeError("service unavailable")
+        else:
+            log_service.return_value.log.side_effect = RuntimeError("service write failed")
+
+        DeviceStore._note_load_failure("PermissionError")
+
         log_service.write_developer_console.assert_called_once()
+        level, message = log_service.write_developer_console.call_args.args
+        assert level == "ERROR"
+        assert "DeviceStore" in message and "PermissionError" in message

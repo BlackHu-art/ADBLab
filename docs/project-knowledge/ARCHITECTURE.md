@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-09
+last_verified: 2026-09-13
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -114,7 +114,9 @@ flowchart LR
   `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
   未安装运行实例的工具仍走原生。能力、回退范围和设置入口见 [ADB 自动适配](../guides/ADB_FAST.md)。
 - `ADBBridge` 对已验证设备使用可取消直连输入，原生兼容路径为每台设备维护持久输入 shell；
-  持久 shell 成功写入不代表设备执行已确认，写入失败不重放。
+  持久 shell 成功写入不代表设备执行已确认，写入失败不重放。客户端变化与重检先永久封闭旧
+  会话准入，再由受监督的 Remote 队列释放；缺失路径和子进程冻结契约见
+  [ADB 自动适配](../guides/ADB_FAST.md#remote-投屏与输入)。
   外部命令与参数校验边界见 [DEPENDENCY_MAP](DEPENDENCY_MAP.md#外部边界与命令接口)。
 - OperationManager 管业务身份、进度、终态与取消意图，不拥有线程/进程；TaskSupervisor 管资源
   停止、等待及 residual，不判断业务成功。任务中心的取消覆盖见
@@ -130,14 +132,23 @@ flowchart LR
 | `_ScanThread` | 快速查询走可取消的 CommandRunner；原生查询走 ProcessRunner，保留 15 秒超时和 100ms 停止检查；快照和防抖契约不变 |
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；后台通知抵达 GUI 后读取最新快照，模式与实际能力分别投影；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
+| FileTransferCoordinator / 文件预览线程 | 页面串行调度传输，预览优先排队但不抢占运行中的普通传输；动态监督 worker、子进程及准备前登记的清理义务，后台等待实际 join 和进程退出；预览线程只交付 QImage，GUI 拥有有界像素缓存 |
 | 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
 | QtTaskSupervisor cleanup QThreadPool | 执行单资源及 owner 级停止和等待，与普通命令全局池分离 |
 | 应用关闭与 finalizer 独立线程 | 应用整体停止和最终落盘分别使用独立通道，避免排在 owner 清理任务之后；共用关闭截止时间 |
 | Controller ThreadPoolExecutor | 设备信息等后台查询；Controller.shutdown() 收口 |
-| Remote executor / warmup / readers | 停止输入准入，再等待执行器及预热生产者，最后关闭持久输入会话和相关进程资源 |
+| Remote executor / warmup / readers | 停止输入准入，先终止持久输入进程解除管道背压，再等待执行器及预热生产者；启动中及终止失败的会话仍计入残留资源 |
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |
+| PerformanceResultLoader / 结果读取 QThread | 按运行快照后台发现附件并单次解析 CSV；新图表代次不覆盖旧运行归档，线程退出、实际 join 和 GUI 归档交付均确认后才释放页面义务 |
 | MobilePerf 子进程与内部线程 | 每次运行独立配置、RuntimeData 与 MobilePerfAdbExecutor；父进程的逐运行后台线程原子同步模式，同步短查询在准入时应用并独立验证能力；采集取消与报告收尾分阶段准入；stop 文件、报告等待及必要时强停，双管道排空且模式线程收口后通知完成 |
+
+File Explorer 的传输协调器由页面持有，排队项取消也交付生命周期终态。Root 单文件准备前
+调用 `hold_cleanup()` 登记归还义务，清理回调完成后释放；停止监督每次读取动态集合，避免
+关闭快照遗漏准备结束后才产生的远端清理 worker。GUI 只发停止请求，受监督后台执行等待
+和必要强停；即使业务完成信号已经发出，线程或子进程仍存活也不能注销资源。像素缓存仅由
+页面主线程读写，关闭预览释放控件当前像素，页面关闭再清空缓存；业务新鲜度与下载归属见
+[文件浏览与传输](BUSINESS_FLOW.md#6-文件浏览与传输)。
 
 ## 应用关闭
 
@@ -146,13 +157,14 @@ flowchart LR
 再调用 `abort()` 和 `deleteLater()`，同步取消信号及晚到结果均不能更新界面。对象随主窗口
 QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 
-`gui/close_controller.py::CloseController` 实现两阶段关闭：
+`gui/close_controller.py::CloseController` 实现分阶段异步关闭（停止 → 收尾）：
 
 1. 拒绝新任务、停止界面定时器和晚到回调；向扫描、业务面板、会话及 Controller 广播停止。
 2. TaskSupervisor 在共享 deadline 内后台等待，保留超时或失败资源快照；GUI 不串行阻塞等待。
 3. 停止阶段返回后在 GUI 线程尝试补交 Monkey/性能终态，保留资源残留及单页归档失败事实；
-   `LogService.shutdown()` 在 GUI 线程刷新并冻结最后的诊断，再由后台 finalizer 排空测试记录及
-   诊断写入队列并保存应用设置。某页归档失败仍继续其他收尾，失败不能报告为成功。
+   `LogService.shutdown()` 在 GUI 线程刷新诊断并冻结字符串快照，再由后台 finalizer 保存应用设置。
+   设置保存返回明确结果；失败保留原文件和内存值，并向尚未关闭的诊断队列补交无隐私的失败摘要。
+   最后排空测试记录及诊断写入队列。某页归档或设置保存失败仍继续其他收尾，失败不能报告为成功。
 4. 汇总收尾结果并完成关闭；超时返回不表示资源全部退出。
 
 验证入口：`tests/test_phase2_mainframe_shutdown_gate.py`、`tests/test_window_lifecycle.py`、
@@ -178,10 +190,22 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
   `TaskHistoryStore` 与旧历史卡保留为兼容入口；主窗口中的旧历史卡隐藏，不是通用操作正文的存储源。
 - `LogService` 跨线程缓冲技术日志；警告/错误进入有界 `DiagnosticJournal`，设置页显示摘要，
   文件队列在后台保存并在关闭时排空。运行时环境检测经对象所属 GUI 线程的专用入口记录 INFO，
-  同样有界保存，但不计入异常摘要或触发异常 Toast。源码 DEBUG 单独进入 stderr，frozen 或
-  无 stderr 时不输出；运行时诊断的文件留存不依赖 stderr。
+  同样有界保存，但不计入异常摘要或触发异常 Toast。既有 `log(level, message, *args)`
+  调用的各级别消息在受理时向源码控制台输出一次，保留 `%` 参数格式化；输出前按
+  `console_log_level`（环境变量 `ADBLAB_CONSOLE_LOG_LEVEL` 优先）过滤，该阈值只作用于
+  控制台显示层，界面缓冲与诊断摘要不受影响；控制台复用
+  诊断摘要的设备身份、凭据和路径遮蔽，界面原文不变，DEBUG 不进入界面或诊断文件。
+  源码开发控制台按级别分流：
+  DEBUG/INFO/SUCCESS 进入 stdout，WARNING/ERROR/CRITICAL 进入 stderr；frozen 或对应流
+  不可用时不输出。最终显示通过 `utils/console_colors.py` 按灰、青、绿、黄、红、紫红
+  区分六级日志，并在每条记录末尾复位；仅 PyCharm 控制台管道及支持 ANSI 的终端启用，
+  文件、内存捕获、`NO_COLOR` 或 `TERM=dumb` 保留纯文本。运行时诊断的文件留存不依赖控制台。
+  控制台阈值在输出专用格式化与脱敏前判断，被过滤的输出不做这些工作；UI 与诊断的准入及
+  留存契约不变。跨线程日志仅在待处理缓冲从空转为非空时唤醒 GUI，GUI 后续仍按原批次规则
+  排空；溢出提示也属于待处理状态，不因合并唤醒丢失。
   `shutdown()` 保留停止态单例并拒绝晚到消息。MobilePerf 继续独立排空 stdout/stderr，
-  按代次接收并遮蔽其运行值；摘要遮蔽不等于采集附件已经脱敏。
+  按代次接收并遮蔽其运行值，仅父进程的最终控制台显示复用明确级别的颜色，不改变子进程
+  日志协议、文件或界面 RAW 原文；摘要遮蔽不等于采集附件已经脱敏。
 
 架构决策缘由保留在 [ADR 目录](../README.md)，尚未闭环事项见
 [RISKS_AND_DEBT](RISKS_AND_DEBT.md)。

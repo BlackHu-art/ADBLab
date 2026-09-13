@@ -1,7 +1,7 @@
 """提供文件浏览器页内复用的图片预览控件。"""
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ImageLabel, PushButton, SmoothScrollArea
 
@@ -52,9 +52,15 @@ class FileExplorerImagePreview(QWidget):
         self.image_close.clicked.connect(self.closeRequested.emit)
         layout.addWidget(self.image_close, alignment=Qt.AlignmentFlag.AlignCenter)
 
-    def set_image_source(self, source: QPixmap, name: str) -> None:
+    def set_image_source(
+        self, source: QPixmap, name: str, native_size: QSize | None = None,
+    ) -> None:
+        """展示有界预览像素，说明文字使用解码前取得的源尺寸。"""
         self._source_pixmap = QPixmap(source)
-        details = f"{source.width()}x{source.height()}  |  {name}"
+        size = (
+            native_size if native_size is not None and not native_size.isEmpty() else source.size()
+        )
+        details = f"{size.width()}x{size.height()}  |  {name}"
         self.image_info.setText(details)
         self.image_info.setToolTip(details)
         self.image_info.setAccessibleDescription(details)
@@ -88,7 +94,8 @@ class FileExplorerImagePreview(QWidget):
         self._fit_timer.stop()
         self._fit_pending = False
         self._source_pixmap = QPixmap()
-        self.image_label.clear()
+        # Fluent 的图像由 image 属性持有，QLabel.clear() 不会释放这份像素。
+        self.image_label.setImage(QImage())
         self.image_label.setFixedSize(QSize())
 
     def _schedule_fit(self) -> None:

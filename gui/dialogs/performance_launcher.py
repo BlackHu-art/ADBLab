@@ -191,10 +191,16 @@ class PerformancePage(QWidget):
         self.runner_finished.connect(self._on_runner_finished)
 
         self._build_ui(package_name)
+        from gui.dialogs.performance_result_tasks import PerformanceResultLoader
+        self._result_loader = PerformanceResultLoader(self)
         # P3 图表视图：注入到双视图栈，运行结束后由 _mark_runner_finished 加载指标。
         from gui.widgets.perf_chart_view import PerfChartView
 
         self.chart_view = PerfChartView(self)
+        self.chart_status = BodyLabel("", self.chart_view)
+        chart_layout = self.chart_view.layout()
+        if chart_layout is not None:
+            chart_layout.addWidget(self.chart_status)
         chart_stack = getattr(self, "_chart_stack", None)
         if chart_stack is not None:
             chart_stack.addWidget(self.chart_view)
@@ -321,15 +327,19 @@ class PerformancePage(QWidget):
         return self._form_controller._build_ui(package_name)
 
     def _load_chart_metrics(self, result_dir: str) -> None:
-        """解析结果目录 CSV 并全量替换图表曲线（P3）。"""
+        """兼容显式载入入口，解析仍进入页面串行后台队列。"""
+        from types import SimpleNamespace
 
-        from services.perf_chart_data import load_result_metrics
-
+        from services.mobileperf_runner import PerformanceArtifacts
         if not result_dir:
             self.chart_view.clear()
             return
-        metrics = load_result_metrics(result_dir)
-        self.chart_view.set_series({name: series.values for name, series in metrics.items()})
+        self._result_loader.invalidate()
+        self.chart_status.setText(tr("Loading chart…"))
+        self._result_loader.submit(
+            SimpleNamespace(discover=lambda: PerformanceArtifacts(result_dir)),
+            present_result=False,
+        )
 
     def _build_config_section(self, package_name):
         return self._form_controller._build_config_section(package_name)
@@ -573,9 +583,8 @@ class PerformancePage(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _update_result_action(self):
-        self.result_action.setEnabled(
-            bool(self._last_result_root and os.path.isdir(self._last_result_root))
-        )
+        # 已验证的后台快照控制入口；用户实际打开时再检查文件是否仍存在。
+        self.result_action.setEnabled(bool(self._last_result_root))
 
     @staticmethod
     def open_perfetto():
@@ -713,6 +722,14 @@ class PerformancePage(QWidget):
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
         """分别注册包名查询线程和 MobilePerf 进程的有限时关闭任务。"""
         task_ids = []
+        if self._result_loader.is_running():
+            result_task = f"{task_prefix}-result-reader"
+            supervisor.register(
+                result_task, owner_id=owner_id, kind="performance_result_reader",
+                request_stop=self._result_loader.request_stop,
+                wait=self._result_loader.wait, is_running=self._result_loader.is_running,
+            )
+            task_ids.append(result_task)
         package_worker = self._package_worker
         if package_worker is not None and package_worker.isRunning():
             package_handle = QThreadGroupShutdownTask([package_worker])
@@ -782,6 +799,7 @@ class PerformancePage(QWidget):
         """隔离界面回调并发起停止，页面对象保留到所有资源退出。"""
 
         self._closing = True
+        self._result_loader.invalidate()
         self._view_active = False
         self.progress_display.set_animation_enabled(False)
         self._log_flush_timer.stop()
@@ -812,6 +830,8 @@ class PerformancePage(QWidget):
     def _poll_dispose_ready(self) -> None:
         """等待 runner、停止线程和包名查询线程全部真实退出。"""
 
+        if not self._runner.is_running() and not self._runner_finished_handled:
+            self._mark_runner_finished()
         retained: list[CurrentPackageWorker] = []
         for worker in self._disposing_package_workers:
             if worker.isRunning():
@@ -822,6 +842,7 @@ class PerformancePage(QWidget):
         stop_thread = self._stop_thread
         resources_running = bool(
             retained
+            or self._result_loader.is_running()
             or self._runner.is_running()
             or (stop_thread is not None and stop_thread.is_alive())
         )

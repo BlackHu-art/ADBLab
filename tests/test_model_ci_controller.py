@@ -3,6 +3,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -11,6 +12,41 @@ from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
 from core.perf_trace import attach_perf, build_async_perf, split_perf
+
+
+def _restart_adb_controller(notified):
+    controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller.signals = Mock()
+    controller.log_service = Mock()
+    controller.refresh_devices = Mock()
+    controller.window_owner = SimpleNamespace(
+        note_adb_server_restarted=lambda: notified.append(True)
+    )
+    return controller
+
+
+def test_restart_adb_success_notifies_runtime_before_refresh():
+    """重启本机 ADB 服务成功后先通知运行时作废能力，再安排设备列表刷新。"""
+
+    notified: list[bool] = []
+    controller = _restart_adb_controller(notified)
+
+    with patch("controllers._device.QTimer.singleShot") as timer:
+        controller._process_restart_adb_result({"success": True, "raw_output": "ok"})
+
+    assert notified == [True]
+    timer.assert_called_once()
+    controller.signals.operation_completed.emit.assert_called_once()
+
+
+def test_restart_adb_failure_keeps_runtime_state_untouched():
+    notified: list[bool] = []
+    controller = _restart_adb_controller(notified)
+
+    controller._process_restart_adb_result({"success": False, "error": "boom"})
+
+    assert notified == []
+    controller.refresh_devices.assert_not_called()
 
 
 @pytest.mark.parametrize("success", [True, False])

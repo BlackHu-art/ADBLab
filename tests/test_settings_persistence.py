@@ -58,6 +58,62 @@ def test_scrcpy_settings_round_trip_across_app_settings_rebuild(isolated_setting
     assert {key: reloaded.get(key) for key in values} == values
 
 
+@pytest.mark.parametrize("failure_boundary", ["replace", "write"])
+def test_failed_atomic_save_preserves_disk_and_retry_saves_latest_state(
+    isolated_settings, monkeypatch, failure_boundary,
+):
+    settings = settings_manager.AppSettings.instance()
+    monkeypatch.setattr(settings, "_schedule_save", lambda: None)
+    errors = Mock()
+    monkeypatch.setattr(settings_manager, "_log_error", errors)
+    settings.set("theme", "Light")
+    settings._save_atomic()
+    original = isolated_settings.read_bytes()
+    settings.set("theme", "Dark")
+    with monkeypatch.context() as failure:
+        if failure_boundary == "replace":
+            failure.setattr(
+                settings_manager.os, "replace", Mock(side_effect=PermissionError("private")),
+            )
+        else:
+            import errno
+
+            failure.setattr(
+                settings_manager.json, "dump", Mock(side_effect=OSError(errno.ENOSPC, "disk full")),
+            )
+        assert settings._save_atomic() is False
+    assert isolated_settings.read_bytes() == original
+    assert settings.get("theme") == "Dark"
+    assert list(isolated_settings.parent.glob("adblab_settings_*.json")) == []
+    errors.assert_called_once()
+    settings.set("theme", "System")
+    assert settings._save_atomic() is True
+    assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "System"
+
+
+def test_adb_client_preference_round_trips_and_rejects_invalid_values(isolated_settings):
+    """客户端选择接受自动、命名来源或绝对路径；其它输入回退自动。"""
+
+    settings = settings_manager.AppSettings.instance()
+    settings.update({"adb_client": "sdk_home"})
+    pending_timer = settings._save_timer
+    if pending_timer is not None:
+        pending_timer.cancel()
+    settings._save_atomic()
+
+    settings_manager.AppSettings._instance = None
+    reloaded = settings_manager.AppSettings.instance()
+    assert reloaded.get("adb_client") == "sdk_home"
+
+    settings.update({"adb_client": "  C:/tools/adb.exe  "})
+    assert settings.get("adb_client") == "C:/tools/adb.exe"
+
+    settings.update({"adb_client": "not-a-source"})
+    assert settings.get("adb_client") == "auto"
+    settings.update({"adb_client": 7})
+    assert settings.get("adb_client") == "auto"
+
+
 def test_existing_json_scrcpy_keys_load_without_migration(isolated_settings):
     existing_values = {
         "theme": "Dark",

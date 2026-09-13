@@ -23,9 +23,12 @@ def _is_frozen_runtime() -> bool:
     return bool(getattr(sys, "frozen", False))
 
 
-def _sensitive_values() -> tuple[str, ...]:
-    """读取父进程提供的本次运行敏感值，解析失败时安全降级为空集合。"""
-    raw = os.environ.get(_SENSITIVE_VALUES_ENV, "")
+_sensitive_cache: tuple[str, tuple[str, ...]] | None = None
+
+
+def _parse_sensitive_values(raw: str) -> tuple[str, ...]:
+    """解析父进程传入的本次运行敏感值，解析失败时安全降级为空集合。"""
+
     if not raw:
         return ()
     try:
@@ -41,6 +44,18 @@ def _sensitive_values() -> tuple[str, ...]:
             reverse=True,
         )
     )
+
+
+def _sensitive_values() -> tuple[str, ...]:
+    """读取本次运行敏感值；同一环境值只解析一次，环境变化时重新解析。"""
+
+    global _sensitive_cache
+    raw = os.environ.get(_SENSITIVE_VALUES_ENV, "")
+    if _sensitive_cache is not None and _sensitive_cache[0] == raw:
+        return _sensitive_cache[1]
+    values = _parse_sensitive_values(raw)
+    _sensitive_cache = (raw, values)
+    return values
 
 
 def _redact_sensitive_text(message: str) -> str:

@@ -31,7 +31,7 @@ from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfi
 
 
 class _RemoteInputShutdown:
-    """在 GUI 线程外按 producer → session 的顺序收口 Remote 输入资源。"""
+    """在 GUI 线程外先终止输入进程解除背压，再等待 producer 并释放会话。"""
 
     def __init__(
         self,
@@ -40,11 +40,17 @@ class _RemoteInputShutdown:
         warmup_threads: tuple[threading.Thread, ...],
         close_input: Callable[[], object] | None,
         has_running_future: Callable[[], bool],
+        request_input_stop: Callable[[], object] | None = None,
+        force_input_stop: Callable[[float], bool] | None = None,
+        input_running: Callable[[], bool] | None = None,
     ) -> None:
         self._executor = executor
         self._warmup_threads = warmup_threads
         self._close_input = close_input
         self._has_running_future = has_running_future
+        self._request_input_stop = request_input_stop
+        self._force_input_stop = force_input_stop
+        self._input_running = input_running
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
         self._finished = threading.Event()
@@ -81,6 +87,11 @@ class _RemoteInputShutdown:
         with self._run_lock:
             if self._finished.is_set():
                 return
+            if self._request_input_stop is not None:
+                try:
+                    self._request_input_stop()
+                except Exception as exc:
+                    self._record_error(exc)
             executor = self._executor
             if executor is not None:
                 try:
@@ -136,10 +147,26 @@ class _RemoteInputShutdown:
         raise start_error
 
     def wait(self, timeout: float) -> bool:
-        return self._finished.wait(max(0.0, float(timeout)))
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while self.is_running():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if not self._finished.is_set():
+                self._finished.wait(remaining)
+            else:
+                # producer 已退出但进程终止失败时，避免对已置位 Event 忙轮询。
+                time.sleep(min(0.01, remaining))
+        return True
 
     def is_running(self) -> bool:
-        return not self._finished.is_set()
+        return not self._finished.is_set() or bool(self._input_running and self._input_running())
+
+    def force_stop(self, timeout: float) -> bool:
+        """强停只通知输入进程，发送 future 仍须自行退出并交回等待屏障。"""
+        if self._force_input_stop is None:
+            return False
+        return self._force_input_stop(timeout)
 
     def error_type(self) -> str:
         with self._lock:
@@ -744,12 +771,19 @@ class RemotePanel(BasePanel):
             return True
 
         def force_stop(timeout: float) -> bool:
-            if not process_running():
-                return False
-            assert scrcpy_service is not None  # process_running() 已排除 None
             deadline = time.monotonic() + max(0.0, timeout)
-            forced = True
             first_error = None
+            input_forced = False
+            try:
+                input_forced = input_shutdown.force_stop(max(0.0, deadline - time.monotonic()))
+            except Exception as exc:
+                first_error = exc
+            if not process_running():
+                if first_error is not None:
+                    raise first_error
+                return input_forced
+            assert scrcpy_service is not None  # process_running() 已排除 None
+            forced = True
             for key in process_keys:
                 try:
                     active = bool(scrcpy_service.is_active(key))
@@ -764,10 +798,10 @@ class RemotePanel(BasePanel):
                         forced = False
                         if first_error is None:
                             first_error = exc
-            if first_error is not None:
-                raise first_error
             if forced:
                 process_terminal.set()
+            if first_error is not None:
+                raise first_error
             return forced
 
         supervisor.register(
@@ -788,6 +822,24 @@ class RemotePanel(BasePanel):
             lock = threading.Lock()
             self._remote_futures_lock = lock
         return lock
+
+    def invalidate_adb_input_sessions(self) -> None:
+        """客户端重检时立即摘除旧输入映射，交给受关闭监督的既有队列释放进程。"""
+        with self._shutdown_lifecycle_lock():
+            if self._closing or self._remote_input_closing:
+                return
+            executor = self._remote_executor
+            if executor is None:
+                return
+            sessions = self._adb.detach_input_sessions()
+            if not sessions:
+                return
+            try:
+                future = executor.submit(self._adb.close_retired_input_sessions)
+                self._track_remote_future(future)
+            except RuntimeError as exc:
+                # 队列关闭时资源仍留在 bridge，最终关闭会接管，不能在 GUI 同步等待。
+                self._log("ERROR", f"ADB input cleanup queue stopped: {type(exc).__name__}")
 
     def _track_remote_future(self, future: Future) -> None:
         """持有 Remote future 到完成，供关闭故障注入和诊断读取。"""
@@ -836,13 +888,24 @@ class RemotePanel(BasePanel):
                     *getattr(self, "_warmup_threads", ()),
                     *getattr(self, "_scrcpy_threads", ()),
                 )
-            adb = getattr(self, "_adb", None)
+            adb = cast(ADBBridge | None, getattr(self, "_adb", None))
             close_input = getattr(adb, "close_input_sessions", None)
+            request_input_stop = getattr(adb, "request_stop_input_sessions", None)
+            force_input_stop = getattr(adb, "force_stop_input_sessions", None)
+            input_running = getattr(adb, "input_sessions_running", None)
             handle = _RemoteInputShutdown(
                 executor=executor,
                 warmup_threads=warmup_threads,
                 close_input=close_input if callable(close_input) else None,
                 has_running_future=self._has_running_remote_future,
+                request_input_stop=request_input_stop if callable(request_input_stop) else None,
+                force_input_stop=(
+                    cast(Callable[[float], bool], force_input_stop)
+                    if callable(force_input_stop) else None
+                ),
+                input_running=(
+                    cast(Callable[[], bool], input_running) if callable(input_running) else None
+                ),
             )
             self._remote_input_shutdown = handle
             return handle

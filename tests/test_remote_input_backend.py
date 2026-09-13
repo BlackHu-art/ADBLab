@@ -21,6 +21,13 @@ SERIAL = "fake-device"
 LISTING = "List of devices attached\nfake-device\tdevice transport_id:1\n"
 
 
+@pytest.fixture(autouse=True)
+def selected_adb_file(tmp_path, monkeypatch):
+    path = tmp_path / "adb.exe"
+    path.touch()
+    monkeypatch.setitem(globals(), "ADB", str(path))
+
+
 @pytest.fixture
 def fast_backend(monkeypatch):
     for key in (

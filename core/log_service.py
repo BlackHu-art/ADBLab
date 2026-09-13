@@ -8,7 +8,8 @@ from typing import Optional
 
 from PySide6.QtCore import QMutex, QObject, Qt, QThread, QTimer, Signal, Slot
 
-from core.diagnostics import DiagnosticJournal
+from core.diagnostics import DiagnosticJournal, redact_diagnostic
+from utils.console_colors import colorize_console, should_emit
 
 
 @dataclass(frozen=True)
@@ -22,7 +23,7 @@ class LogLevel:
 
 
 class LogService(QObject):
-    """在线程间缓冲用户日志，并将开发调试日志隔离到标准错误流。"""
+    """在线程间缓冲用户日志，并按级别将开发诊断输出到控制台。"""
 
     log_received = Signal(str, str)  # 兼容信号：参数为日志级别、消息。
     logs_received = Signal(list)  # 批次信号：元素为 (时间戳, 级别, 消息) 三元组。
@@ -33,7 +34,7 @@ class LogService(QObject):
     _shutdown_requested = Signal()
     _instance: Optional["LogService"] = None
     _lock = QMutex()
-    _stderr_lock = threading.Lock()
+    _console_lock = threading.Lock()
     _STATE_ACCEPTING = "accepting"
     _STATE_STOPPING = "stopping"
     _STATE_STOPPED = "stopped"
@@ -77,13 +78,14 @@ class LogService(QObject):
         )
 
     def log(self, level: str, message: str, *args, **kwargs) -> None:
-        """记录日志；DEBUG 仅在源码运行时写入开发环境控制台。
+        """各级别在源码控制台输出一次；DEBUG 不进入界面和诊断文件。
 
         时间戳在记录产生时生成（而非界面接收时），使排队/背压场景下的
-        显示时间仍反映真实发生时间。
+        显示时间仍反映真实发生时间。控制台复用应用诊断脱敏边界，界面保留原文；
+        控制台是否输出由 utils.console_colors 的级别阈值决定，界面与诊断不受影响。
         """
         flush_immediately = kwargs.pop("flush_immediately", False)
-        normalized_level = str(level).upper()
+        normalized_level = str(level).strip().upper()
         rendered_message = str(message)
         if args:
             try:
@@ -91,23 +93,38 @@ class LogService(QObject):
             except (TypeError, ValueError):
                 rendered_message = str(message)
         timestamp = datetime.now().strftime("%H:%M:%S")
+        is_debug = normalized_level == LogLevel.DEBUG
+        console_enabled = self._developer_console_enabled(normalized_level)
+        private_values: tuple[str, ...] = ()
+        needs_wakeup = False
 
+        # 锁内只做状态判断、入缓冲和必要的脱敏值快照：控制台写入可能阻塞在
+        # 管道上，持锁执行会让界面线程刷新日志时一并卡住。
         self._buffer_lock.lock()
         try:
             if self._state != self._STATE_ACCEPTING:
                 return
-            if normalized_level == LogLevel.DEBUG:
-                self.write_developer_console(LogLevel.DEBUG, rendered_message)
-                return
-            self._buffer.append((timestamp, normalized_level, rendered_message))
-            # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
-            if len(self._buffer) > self._max_buffer:
-                dropped = len(self._buffer) - self._max_buffer
-                self._dropped_count += dropped
-                self._pending_dropped_count += dropped
-                self._buffer = self._buffer[-self._max_buffer :]
+            if console_enabled:
+                private_values = self.diagnostics.sorted_private_values
+            if not is_debug:
+                needs_wakeup = not self._buffer and self._pending_dropped_count <= 0
+                self._buffer.append((timestamp, normalized_level, rendered_message))
+                # 缓冲区达到上限时保留最近的用户可见日志，避免持续占用内存。
+                if len(self._buffer) > self._max_buffer:
+                    dropped = len(self._buffer) - self._max_buffer
+                    self._dropped_count += dropped
+                    self._pending_dropped_count += dropped
+                    self._buffer = self._buffer[-self._max_buffer :]
         finally:
             self._buffer_lock.unlock()
+
+        if console_enabled:
+            self.write_developer_console(
+                normalized_level,
+                redact_diagnostic(rendered_message, private_values, presorted=True),
+            )
+        if is_debug:
+            return
 
         is_owner_thread = QThread.currentThread() == self.thread()
         if flush_immediately:
@@ -116,8 +133,9 @@ class LogService(QObject):
             else:
                 self._flush_now_requested.emit()
         elif is_owner_thread:
-            self._ensure_flush_timer()
-        else:
+            if needs_wakeup:
+                self._ensure_flush_timer()
+        elif needs_wakeup:
             self._flush_requested.emit()
 
     def record_runtime_diagnostic(self, message: str) -> None:
@@ -228,19 +246,43 @@ class LogService(QObject):
             self.log_received.emit(level, message)
 
     @classmethod
+    def _developer_console_enabled(cls, level: str) -> bool:
+        """判断指定级别是否具备可用控制台，供昂贵格式化工作提前旁路。"""
+        if getattr(sys, "frozen", False) or not should_emit(level):
+            return False
+        stream_name = (
+            "stderr"
+            if level in {LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL}
+            else "stdout"
+        )
+        stream = getattr(sys, stream_name, None)
+        return stream is not None and not getattr(stream, "closed", False)
+
+    @classmethod
     def write_developer_console(cls, level: str, message: str) -> None:
-        """仅在源码模式下原子写入 IDE 可见的标准错误流。"""
-        if getattr(sys, "frozen", False):
+        """源码诊断按级别原子写入控制台，避免普通日志被 IDE 标为错误。
+
+        WARNING、ERROR、CRITICAL 使用 stderr，其余级别使用 stdout；打包模式及
+        对应流不可用时静默。颜色仅在最终控制台显示层添加，不进入界面或文件。
+        """
+        normalized_level = str(level).strip().upper()
+        # 直接调用者仍在此处受完整显示策略保护。
+        if not cls._developer_console_enabled(normalized_level):
             return
-        stream = getattr(sys, "stderr", None)
+        stream_name = (
+            "stderr"
+            if normalized_level in {LogLevel.WARNING, LogLevel.ERROR, LogLevel.CRITICAL}
+            else "stdout"
+        )
+        stream = getattr(sys, stream_name, None)
         if stream is None:
             return
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         thread_name = threading.current_thread().name
-        line = f"{timestamp} [{level}] [{thread_name}] {message}\n"
+        line = f"{timestamp} [{normalized_level}] [{thread_name}] {message}"
         try:
-            with cls._stderr_lock:
-                stream.write(line)
+            with cls._console_lock:
+                stream.write(colorize_console(normalized_level, line, stream) + "\n")
                 stream.flush()
         except Exception:
             # 诊断输出不可用时必须静默，不能反向破坏业务流程。

@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-09
+last_verified: 2026-09-12
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -28,7 +28,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 依赖 | 实际用途 | 证据/备注 |
 | --- | --- | --- |
-| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`adblab/presentation/qt_app_update.py` |
+| PySide6 / Addons / Essentials / shiboken6 | GUI、线程、信号槽、Qt 对象有效性检查及 QtNetwork 异步 HTTPS | `requirements.txt`、`gui/`、`models/adb_model.py`、`core/log_service.py`、`adblab/presentation/qt_app_update.py` |
 | PyYAML | DeviceStore YAML | `models/device_store.py` |
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
@@ -55,7 +55,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 外部依赖 | 用途 | 解析/调用位置 | 缺失行为 |
 | --- | --- | --- | --- |
-| ADB | 几乎所有设备操作 | `utils/adb_resolver.py`、CommandRunner、MobilePerf ADB | 操作失败；自检在 Windows 检查内置文件 |
+| ADB | 几乎所有设备操作 | `utils/adb_resolver.py`（内置 → `ADB_PATH` → Android SDK platform-tools → PATH，进程内缓存，重新检测可失效；可用配置 `adb_client` 固定客户端）、`services/adb_clients.py`（候选只跑一次 `adb version`，不连 5037 服务）、CommandRunner、MobilePerf ADB | 操作失败，由设置页 ADB 状态与探测状态提示未找到客户端，不阻止窗口启动；自检在 Windows 检查内置文件 |
 | scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py` | Remote 启动失败；非 Windows 要求 PATH 提供 |
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
@@ -69,7 +69,9 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 只有桌面 GUI、
 `--mobileperf-worker --config <path>` 和 `--self-check packaging` 三种本地入口。
 
-主应用也不调用外部 HTTP API。About 的 GitHub 链接和 Perfetto 链接仅交给系统浏览器打开。
+主应用的出站 HTTP 仅限应用更新检查：匿名读取 `utils/app_metadata.py` 中的 GitHub 公共
+Releases API，复用 QtNetwork 与平台 TLS 后端且不携带令牌。About 的 GitHub 链接和 Perfetto
+链接仍只交给系统浏览器打开。
 
 ### ADB 命令接口地图
 

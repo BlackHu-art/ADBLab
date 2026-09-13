@@ -150,17 +150,33 @@ class PerformanceLibrary:
         if self._active is not None:
             self._active.cancelled = True
 
-    def finish(self, *, start_error: str | None = None) -> None:
+    def finish(
+        self, *, start_error: str | None = None, artifact_snapshot=None,
+        active=None, exit_code=None,
+    ) -> None:
         """实际进程退出后至多登记一次；关闭页面也必须经过此边界。"""
-        active = self._active
-        if active is None or (start_error is None and self._frame._runner.is_running()):
+        active = active if active is not None else self._active
+        if active is None or (artifact_snapshot is None and start_error is None
+                              and self._frame._runner.is_running()):
+            return
+        if (artifact_snapshot is None and start_error is None
+                and getattr(type(self._frame._runner), "freeze_result_query", None) is not None):
+            if not self._frame._runner_finished_handled:
+                self._frame._mark_runner_finished()
             return
         from services.run_library import RunArtifact, RunRecord
 
         artifacts = []
         report_file = ""
         artifact_error = False
-        if start_error is None:
+        if artifact_snapshot is not None:
+            artifact_error = artifact_snapshot.error
+            report_file = artifact_snapshot.report_file
+            if artifact_snapshot.result_dir:
+                artifacts.append(RunArtifact(tr("结果目录"), artifact_snapshot.result_dir))
+            if report_file:
+                artifacts.append(RunArtifact(tr("性能报告"), report_file))
+        elif start_error is None:
             runner = self._frame._runner
             # 分别探测附件，保留仍可读取的部分；文件系统故障不能中断关闭归档。
             try:
@@ -181,7 +197,9 @@ class PerformanceLibrary:
             state, message = "failed", tr("性能采集启动失败，请查看运行日志。")
         elif active.cancelled and not artifact_error:
             state, message = "cancelled", tr("采集已停止，已保留可用结果。")
-        elif report_file and not artifact_error and self._frame._runner.last_exit_code == 0:
+        elif (report_file and not artifact_error
+              and (exit_code if artifact_snapshot is not None
+                   else self._frame._runner.last_exit_code) == 0):
             state, message = "succeeded", tr("采集完成，已生成性能报告。")
         elif artifacts:
             state, message = "partial", tr("采集已结束，结果可能不完整。")
@@ -194,6 +212,7 @@ class PerformanceLibrary:
             parameters=deepcopy(active.parameters), artifacts=tuple(artifacts), message=message,
             device_label=active.device_label,
         )
-        self._active = None
+        if self._active is active:
+            self._active = None
         if self._library is not None:
             self._library.record_run(record)

@@ -9,6 +9,7 @@ from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import alive_signal_emitter
 from gui.i18n import tr
 from gui.styles import BaseStyles
+from services.mobileperf_runner import PerformanceArtifacts
 
 
 class PerformanceLauncherRun:
@@ -46,6 +47,9 @@ class PerformanceLauncherRun:
                     "continuing with this distribution."
                 ).format(value0=config.monkey_config.total_percentage),
             )
+        self._frame._result_loader.invalidate()
+        self._frame.chart_view.clear()
+        self._frame.chart_status.clear()
         self._frame._last_result_root = ""
         self._frame._update_result_action()
         self._frame._runner_finished_handled = False
@@ -120,6 +124,27 @@ class PerformanceLauncherRun:
         self._mark_runner_finished()
 
     def _mark_runner_finished(self):
+        frame = self._frame
+        factory = getattr(type(frame._runner), "freeze_result_query", None)
+        if (factory is not None and not frame._runner.is_running()
+                and not frame._runner_finished_handled):
+            # 冻结归属不做 I/O，先解锁交互，再由受监督任务发现附件和读取图表。
+            query = frame._runner.freeze_result_query()
+            frame._result_loader.submit(
+                query, active=frame._library_controller._active,
+                exit_code=frame._runner.last_exit_code,
+                had_config=frame._runner.last_config is not None,
+                cancelled_run=frame._run_cancel_requested,
+            )
+            frame._runner_finished_handled = True
+            frame._stopping = False
+            frame._poll_timer.stop()
+            frame._run_started_at = None
+            if not frame._closing:
+                self._set_running(False)
+                frame.chart_status.setText(tr("Loading chart…"))
+            return
+        # 注入的旧 runner 未提供冻结快照接口时保留同步兼容边界。
         self._frame._library_controller.finish()
         if self._frame._closing or self._frame._runner_finished_handled:
             return
@@ -148,17 +173,25 @@ class PerformanceLauncherRun:
         except OSError:
             artifact_error = True
         try:
-            report_file = self._frame._runner.latest_report_file() or ""
+            if artifact_error:
+                # 首次目录读取失败时仍保留独立重试机会；正常结果只使用一次目录快照。
+                report_file = self._frame._runner.latest_report_file() or ""
+            elif result_dir:
+                report_file = self._frame._runner.latest_report_file(result_dir=result_dir) or ""
         except OSError:
             artifact_error = True
+        self._present_finished_result(
+            PerformanceArtifacts(result_dir, report_file, artifact_error),
+            getattr(self._frame._runner, "last_config", None) is not None,
+            getattr(self._frame._runner, "last_exit_code", None), self._frame._run_cancel_requested,
+        )
+
+    def _present_finished_result(self, artifacts, had_config, exit_code, cancelled_run):
+        """只展示后台验证过的附件；图表解析失败不改变采集业务终态。"""
+        result_dir, report_file, artifact_error = (
+            artifacts.result_dir, artifacts.report_file, artifacts.error,
+        )
         self._frame._last_result_root = result_dir
-        # P3：加载静态 CSV 指标到图表视图（空结果保持空态，不阻塞完成流程）。
-        loader = getattr(self._frame, "_load_chart_metrics", None)
-        if loader is not None:
-            try:
-                loader(result_dir)
-            except Exception:
-                pass
         self._frame._update_result_action()
         if artifact_error:
             self._set_running(False)
@@ -166,17 +199,15 @@ class PerformanceLauncherRun:
             self._frame.log_received.emit("WARNING", tr("采集已结束，结果可能不完整。"))
             self._set_status(tr("Warning"), "warning")
             return
-        last_config = getattr(self._frame._runner, "last_config", None)
-        exit_code = getattr(self._frame._runner, "last_exit_code", None)
 
-        if self._frame._run_cancel_requested:
+        if cancelled_run:
             self._set_running(False)
             self._frame._set_progress(min(99, self._frame.progress_bar.value()))
             self._set_status(tr("已停止"), "cancelled")
             return
 
         # 保留既有调用方依赖的轻量启动前界面契约；真实采集总会记录 last_config。
-        if last_config is None:
+        if not had_config:
             self._frame._set_progress(100)
             if report_file:
                 self._frame.log_received.emit(

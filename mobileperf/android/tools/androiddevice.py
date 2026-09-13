@@ -845,12 +845,68 @@ class ADB:
         return stack
 
     def dumpheap(self, package, save_path):
-        heapfile = (
-            f"/data/local/tmp/{package}_dumpheap_{TimeUtils.getCurrentTimeUnderline()}.hprof"
+        """先登记工具独占路径，再生成和拉取；取消或失败保留归属记录供重试。"""
+        from mobileperf.android.heap_ownership import HeapOwnership
+
+        if self._heap_cancelled():
+            return
+        owned = HeapOwnership(save_path, self._device_id)
+        heapfile = owned.reserve(package)
+        result = self._owned_heap_command(
+            ["shell", f"am dumpheap {_shq(package)} {_shq(heapfile)}"], 30,
         )
-        self.run_shell_cmd(f"am dumpheap {_shq(package)} {_shq(heapfile)}")
-        time.sleep(10)
-        self.pull_file(heapfile, save_path)
+        if result.kind != "completed" or result.returncode != 0:
+            return
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if self._heap_cancelled():
+                return
+            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+        self.pull_owned_heapdumps(save_path, [package])
+
+    def _heap_cancelled(self) -> bool:
+        """采集阶段服从停止信号，收尾准入由既有执行器阶段决定。"""
+        return self._execution is not None and self._execution._cancelled(None)
+
+    def _owned_heap_command(self, args: list[str], timeout: float):
+        """内部归属操作使用结构化退出状态，避免把错误文本当成拉取成功。"""
+        cmd = [self._adb_path]
+        if self._device_id:
+            cmd.extend(["-s", self._device_id])
+        cmd.extend(args)
+        if self._execution is not None:
+            return self._execution.run(cmd, timeout)
+        return native_capture(cmd, timeout, self._heap_cancelled)
+
+    def pull_owned_heapdumps(self, save_path, packages=None):
+        """只拉取未归档的清单项；成功后再允许精确远端清理。"""
+        from mobileperf.android.heap_ownership import HeapOwnership
+
+        owned = HeapOwnership(save_path, self._device_id)
+        for row in owned.entries(packages):
+            if row["pulled"] or self._heap_cancelled():
+                continue
+            result = self._owned_heap_command(["pull", row["path"], str(save_path)], 180)
+            if result.kind == "completed" and result.returncode == 0:
+                owned.mark_pulled(row["path"])
+            else:
+                logger.warning("MobilePerf owned heap pull failed: status=%s", result.kind)
+        self.cleanup_owned_heapdumps(save_path, packages)
+
+    def cleanup_owned_heapdumps(self, save_path, packages=None, *, older_than_days=0):
+        """仅删除匹配设备和任务命名空间且已成功归档的清单文件，未知文件始终保留。"""
+        from mobileperf.android.heap_ownership import HeapOwnership
+
+        owned = HeapOwnership(save_path, self._device_id)
+        for row in owned.entries(packages):
+            if (not row["pulled"] or self._heap_cancelled()
+                    or time.time() - row["created"] < older_than_days * 86400):
+                continue
+            result = self._owned_heap_command(["shell", f"rm -f -- {_shq(row['path'])}"], 10)
+            if result.kind == "completed" and result.returncode == 0:
+                owned.remove(row["path"])
+            else:
+                logger.warning("MobilePerf owned heap cleanup failed: status=%s", result.kind)
 
     def get_system_version(self):
         """获取系统版本，如：4.1.2"""

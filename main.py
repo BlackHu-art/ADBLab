@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
 
+from utils.adb_resolver import set_client_preference
 from utils.app_metadata import APP_NAME, APP_VERSION, app_major_minor_version
 from utils.resource_path import resource_path, setup_qt_search_paths
 from utils.runtime_tools import WINDOWS_TOOL_BUNDLE
@@ -236,6 +237,21 @@ def _configure_gui_scaling(value: object) -> str | float:
     return factor
 
 
+def _configure_console_logging(settings) -> None:
+    """按环境变量或设置限定开发控制台输出级别。
+
+    环境变量优先，便于在 IDE 运行配置里临时覆盖；根 logger 只按阈值收紧，
+    不因 DEBUG/INFO 阈值打开第三方库的调试输出。打包运行本就不写控制台。
+    """
+    import logging
+
+    from utils.console_colors import set_console_level, stdlib_level
+
+    requested = os.environ.get("ADBLAB_CONSOLE_LOG_LEVEL", "").strip()
+    applied = set_console_level(requested or settings.get("console_log_level", "DEBUG"))
+    logging.getLogger().setLevel(stdlib_level(applied))
+
+
 def _run_gui() -> int:
     """创建 QApplication、加载主题并进入主界面事件循环。"""
     if sys.platform == "win32":
@@ -248,6 +264,9 @@ def _run_gui() -> int:
     startup_diagnostics: list[tuple[str, str]] = []
     set_error_sink(lambda level, message: startup_diagnostics.append((level, message)))
     settings = AppSettings.instance()
+    _configure_console_logging(settings)
+    # 客户端选择必须在首次解析前注入，否则会先缓存内置/自动结果。
+    set_client_preference(settings.get("adb_client", "auto"))
     _configure_gui_scaling(settings.get("ui_scale", "Auto"))
     _load_fluent_widgets()
 

@@ -38,6 +38,7 @@ from gui.dialogs.file_explorer_list import (
     file_explorer_icon,
 )
 from gui.dialogs.file_explorer_ops import FileExplorerOps
+from gui.dialogs.file_explorer_transfers import FileTransferCoordinator
 from gui.dialogs.file_explorer_view import FileExplorerView
 from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
@@ -101,7 +102,7 @@ class FileExplorerPage(QWidget):
     ARCHIVE_EXTS = {"zip", "gz", "tar", "tgz", "xz", "7z", "rar"}
     AUDIO_EXTS = {"mp3", "wav", "ogg", "m4a", "aac", "flac"}
     VIDEO_EXTS = {"mp4", "mkv", "webm", "mov", "avi"}
-    def __init__(self, parent=None, device_ip: str = ""):
+    def __init__(self, parent=None, device_ip: str = "", task_supervisor=None):
         super().__init__(parent)
         self._list_controller = FileExplorerList(self)
         self._view_controller = FileExplorerView(self)
@@ -116,6 +117,8 @@ class FileExplorerPage(QWidget):
         self.copy_mode = False
         self.symlink_targets = {}
         self._workers = []
+        self._cleanup_workers = set()
+        self._transfers = FileTransferCoordinator(self, task_supervisor)
         self._worker_ui_bindings = {}
         self._worker_lifecycle_handlers = {}
         self._refresh_request_id = 0
@@ -451,6 +454,7 @@ class FileExplorerPage(QWidget):
         self._sync_preview_layout()
 
     def _begin_preview_request(self, title: str) -> int:
+        self._view_controller.cancel_preview()
         self._preview_request_id += 1
         self._show_preview_loading(title)
         return self._preview_request_id
@@ -482,12 +486,12 @@ class FileExplorerPage(QWidget):
             self.status_bar.setText(tr('Previewing {value0}').format(value0=name))
         self.preview_text_edit.setFocus(Qt.FocusReason.OtherFocusReason)
 
-    def _show_image_preview(self, name: str, pixmap) -> None:
+    def _show_image_preview(self, name: str, pixmap, native_size=None) -> None:
         self._preview_active = True
         self._preview_name = name
         self._preview_full_path = ""
         self.preview_title.setText(name)
-        self.preview_image.set_image_source(pixmap, name)
+        self.preview_image.set_image_source(pixmap, name, native_size)
         self.preview_stack.setCurrentWidget(self.preview_image)
         self._sync_preview_layout()
 
@@ -519,6 +523,7 @@ class FileExplorerPage(QWidget):
     def _close_preview(self) -> None:
         """收起预览并使在途结果失效，释放图片后把焦点还给文件列表。"""
 
+        self._view_controller.cancel_preview()
         self._preview_request_id += 1
         self.preview_image.release_image_source()
         self._preview_active = False
@@ -726,46 +731,50 @@ class FileExplorerPage(QWidget):
             safe_disconnect(signal, handler)
 
     def _prune_worker(self, worker) -> None:
+        if worker not in self._workers:
+            return
+        if not self._transfers.worker_finished(worker):
+            return
         self._disconnect_worker_ui(worker)
         lifecycle_handler = self._worker_lifecycle_handlers.pop(worker, None)
         if lifecycle_handler is not None:
             safe_disconnect(worker.finished, lifecycle_handler)
         if worker in self._workers:
             self._workers.remove(worker)
+        self._cleanup_workers.discard(worker)
         if self._active_refresh_worker is worker:
             self._active_refresh_worker = None
         try:
             worker.deleteLater()
         except RuntimeError:
             pass
-        if self._disposing and not any(
-            QThreadGroupShutdownTask._running(candidate) for candidate in self._workers
-        ):
+        if self._disposing and not self._transfers.is_running():
             QTimer.singleShot(0, self._finish_async_dispose)
 
-    def _run_adb(self, *args, timeout: int = 30, _cleanup: bool = False):
+    def _track_worker(self, worker):
+        """统一接管线程所有权及终态清理，供传输与图片读取共用。"""
+        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
+        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
+        self._worker_lifecycle_handlers[worker] = lifecycle_handler
+        self._workers.append(worker)
+        worker.setParent(self)
+        return worker
+
+    def _run_adb(self, *args, timeout: int = 30, _cleanup: bool = False, _device_ip=None):
         """新命令必须仍有操作资格；清理仅用于已启动传输留下的临时文件。"""
         if not _cleanup and not self._can_operate():
             return None
-        worker = ADBWorker(self.device_ip, list(args), timeout=timeout)
-        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
-        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
-        self._worker_lifecycle_handlers[worker] = lifecycle_handler
-        self._workers.append(worker)
-        worker.setParent(self)
-        return worker
+        worker = ADBWorker(_device_ip or self.device_ip, list(args), timeout=timeout)
+        if _cleanup:
+            self._cleanup_workers.add(worker)
+        return self._track_worker(worker)
 
-    def _run_transfer(self, *args):
+    def _run_transfer(self, *args, _device_ip=None):
         """在实际创建传输前复核固定设备资格，防止弹窗和回调越过选择变化。"""
         if not self._can_operate():
             return None
-        worker = TransferWorker(self.device_ip, list(args))
-        lifecycle_handler = alive_callback(self, "_prune_worker", worker)
-        worker.finished.connect(lifecycle_handler, Qt.ConnectionType.QueuedConnection)
-        self._worker_lifecycle_handlers[worker] = lifecycle_handler
-        self._workers.append(worker)
-        worker.setParent(self)
-        return worker
+        worker = TransferWorker(_device_ip or self.device_ip, list(args))
+        return self._track_worker(worker)
 
     def _cleanup_remote_file(self, path: str, *, root: bool = False) -> None:
         """原会话传输的临时文件必须在取消选择后继续清理，不能改向新设备。"""
@@ -1175,10 +1184,14 @@ class FileExplorerPage(QWidget):
 
     def set_device_selected(self, selected: bool) -> None:
         """同步操作资格，保留浏览缓存和原会话资源，不自动换设备。"""
-        self._device_selected = bool(selected and self.device_ip)
+        selected = bool(selected and self.device_ip)
+        if selected != self._device_selected:
+            self._view_controller.invalidate_cache()
+        self._device_selected = selected
         self._refresh_status_badge()
         self._sync_directory_controls()
         if not self._device_selected:
+            self._transfers.cancel_pending()
             self.status_bar.setText(
                 tr("Select this device in the device bar to perform file operations")
             )
@@ -1188,6 +1201,8 @@ class FileExplorerPage(QWidget):
 
         connected = bool(connected and self.device_ip)
         became_available = connected and not self._device_connected
+        if connected != self._device_connected:
+            self._view_controller.invalidate_cache()
         self._device_connected = connected
         self.setProperty("deviceConnected", connected)
         self._refresh_status_badge()
@@ -1203,6 +1218,7 @@ class FileExplorerPage(QWidget):
             self._set_directory_loading(False)
         self._sync_directory_controls()
         if not connected:
+            self._transfers.cancel_pending()
             self.status_bar.setText(tr("Device offline; reconnect or choose another device"))
         elif (became_available and self._can_operate() and self._active
               and self._activated_once and not self._loaded_once):
@@ -1215,9 +1231,7 @@ class FileExplorerPage(QWidget):
         if self._disposed:
             return True
         if self._disposing:
-            ready = not any(
-                QThreadGroupShutdownTask._running(worker) for worker in self._workers
-            )
+            ready = not self._transfers.is_running()
             if ready:
                 self._finish_dispose(emit_ready=False)
             return ready
@@ -1228,21 +1242,25 @@ class FileExplorerPage(QWidget):
         self._active_refresh = None
         self._pending_navigation = None
         self._preview_request_id += 1
+        self._transfers.request_stop()
+        self._transfers.cancel_pending()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
 
         workers = list(dict.fromkeys((*self._workers, *self._worker_ui_bindings)))
         for worker in workers:
             self._disconnect_worker_ui(worker)
-            if not QThreadGroupShutdownTask._running(worker):
+            if worker in self._cleanup_workers:
+                continue
+            if not self._transfers.worker_active(worker):
                 self._prune_worker(worker)
                 continue
             try:
-                worker.abort()
+                self._transfers._stop_worker(worker)
             except RuntimeError:
                 continue
 
-        if any(QThreadGroupShutdownTask._running(worker) for worker in self._workers):
+        if self._transfers.is_running():
             return False
         self._finish_dispose(emit_ready=False)
         return True
@@ -1250,7 +1268,7 @@ class FileExplorerPage(QWidget):
     def _finish_async_dispose(self) -> None:
         if not self._disposing or self._disposed:
             return
-        if any(QThreadGroupShutdownTask._running(worker) for worker in self._workers):
+        if self._transfers.is_running():
             return
         self._finish_dispose(emit_ready=True)
 
@@ -1268,11 +1286,10 @@ class FileExplorerPage(QWidget):
             self.dispose_ready.emit()
 
     def register_shutdown_tasks(self, supervisor, *, owner_id: str, task_prefix: str):
-        """将仍在运行的文件 worker 作为一组资源注册到监督器。"""
-        workers = [worker for worker in self._workers if QThreadGroupShutdownTask._running(worker)]
-        if not workers:
+        """动态监督线程与既有请求的清理义务，捕获停止后追加的清理。"""
+        if not self._transfers.is_running():
             return ()
-        handle = QThreadGroupShutdownTask(workers)
+        handle = self._transfers
         supervisor.register(
             f"{task_prefix}-workers",
             owner_id=owner_id,
@@ -1280,6 +1297,7 @@ class FileExplorerPage(QWidget):
             request_stop=handle.request_stop,
             wait=handle.wait,
             is_running=handle.is_running,
+            force_stop=handle.force_stop,
         )
         self._shutdown_registered = True
         return (f"{task_prefix}-workers",)

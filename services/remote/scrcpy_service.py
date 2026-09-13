@@ -184,11 +184,19 @@ class ScrcpyService:
             pass
         return None
 
+    @staticmethod
+    def require_client(path: str | None) -> str:
+        """配置冻结前验证精确客户端，不允许 scrcpy 再按 PATH 自行选择。"""
+        if not path or not os.path.isabs(path) or not os.path.isfile(path):
+            raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择客户端后启动投屏。")
+        return path
+
     def build_launch_plan(
         self, config: ScrcpyConfig, *, timeout: float = 20,
         cancelled: Callable[[], bool] | None = None,
     ) -> ScrcpyLaunchPlan:
         """在单次预算内完成预检；取消和预算耗尽直接终止，不发布启动计划。"""
+        self.require_client(config.adb)
         deadline = time.monotonic() + max(0, timeout)
         self._check_budget(deadline, cancelled)
         messages: list[tuple[str, str]] = []

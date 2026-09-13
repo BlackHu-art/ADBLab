@@ -112,6 +112,7 @@ class DevicePicker(FlyoutViewBase):
         self._selected: tuple[str, ...] = ()
         self._single_selection = False
         self._selection_locked = False
+        self._height_budget: int | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
@@ -192,10 +193,23 @@ class DevicePicker(FlyoutViewBase):
                 item.setFont(self.device_list.font())
                 item.setSizeHint(QSize(0, row_height))
         maximum_rows = 4 if self.session_box.isHidden() else 3
-        self.device_list.setFixedHeight(
-            max(1, min(maximum_rows, self.device_list.count())) * row_height + 8
-        )
+        preferred = max(1, min(maximum_rows, self.device_list.count())) * row_height + 8
+        self.device_list.setFixedHeight(preferred)
+        if self._height_budget is not None:
+            layout = self.layout()
+            assert layout is not None
+            natural = layout.totalHeightForWidth(self.width())
+            if natural < 0:
+                natural = layout.sizeHint().height()
+            # 固定标题和操作区先占预算，列表通过自身滚动条保留全部设备可达。
+            remaining = self._height_budget - (natural - preferred)
+            self.device_list.setFixedHeight(max(1, min(preferred, remaining)))
         del blocker
+
+    def set_height_budget(self, height: int) -> None:
+        """在弹层定位前扣除阴影后分配高度，字体和设备刷新继续使用此预算。"""
+        self._height_budget = max(1, height)
+        self._sync_list_height()
 
     def set_context(
         self, selected: Iterable[str], connected: Iterable[str],
@@ -782,9 +796,11 @@ class DeviceContextBar(QWidget):
         """原生 Popup 处理焦点和 Esc，显式位置避免居中弹层越过应用内容边界。"""
 
         flyout = Flyout.make(view, parent=self)
-        flyout.adjustSize()
         bounds = self._popup_bounds(anchor)
         margins = flyout.hBoxLayout.contentsMargins()
+        if isinstance(view, DevicePicker):
+            view.set_height_budget(bounds.height() - margins.top() - margins.bottom())
+        flyout.adjustSize()
         target = anchor.mapToGlobal(QPoint())
         x = (
             target.x() + anchor.width() - view.width() - margins.left()

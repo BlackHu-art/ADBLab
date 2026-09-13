@@ -1,0 +1,265 @@
+"""ADB 设置重置和候选刷新回归。"""
+
+from types import SimpleNamespace
+from unittest.mock import Mock
+
+import pytest
+from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtWidgets import QWidget
+
+from core.exec import CommandResult
+from core.settings_manager import DEFAULTS, AppSettings
+from gui.pages.fluent_pages import SettingsPage
+from gui.widgets import adb_client_card as cards
+from services import adb_clients
+from services.adb_clients import ClientProbe
+from utils.adb_resolver import AdbCandidate
+
+pytestmark = pytest.mark.ui
+
+
+def _assert_unique_selected_auto(card):
+    buttons = card._group.buttons()
+    auto_buttons = [button for button in buttons if button.property("adbKey") == "auto"]
+    recommended = card.client_button("auto")
+    assert auto_buttons == [recommended]
+    assert [button for button in buttons if button.isChecked()] == [recommended]
+    assert recommended.isEnabled()
+    assert card.selection() == "auto"
+
+
+@pytest.mark.parametrize("sources", [(), ("bundled",), ("bundled", "PATH")])
+def test_auto_choice_stays_unique_and_selected_through_repeated_refresh(
+    monkeypatch, qt_application, sources,
+):
+    candidates = [AdbCandidate(source, f"C:/fixture/{source}/adb.exe") for source in sources]
+    probes = [ClientProbe(item.source, item.path, True, True, "1.0.41") for item in candidates]
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: candidates)
+    card = cards.AdbClientSettingCard()
+    try:
+        _assert_unique_selected_auto(card)
+        recommended = card.client_button("auto")
+        for snapshot, results in ((candidates, probes), ([], []), (candidates, probes)):
+            card._on_probes(card._generation, snapshot, results)
+            _assert_unique_selected_auto(card)
+            assert card.client_button("auto") is recommended
+    finally:
+        card.close()
+
+
+@pytest.mark.parametrize("initial_selection", ["auto", "PATH", "C:/fixture/custom/adb.exe"])
+def test_clicking_recommended_auto_survives_settings_feedback_and_rescan(
+    monkeypatch, qt_application, initial_selection,
+):
+    values = dict(DEFAULTS, adb_client=initial_selection)
+    writes = []
+
+    def save(key, value):
+        values[key] = value
+        writes.append((key, value))
+
+    monkeypatch.setattr(AppSettings, "instance", classmethod(
+        lambda cls: SimpleNamespace(get=values.get, set=save),
+    ))
+    candidates = [AdbCandidate("PATH", "C:/fixture/path/adb.exe")]
+    probes = [ClientProbe("PATH", candidates[0].path, True, True, "1.0.41")]
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: candidates)
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    # 偏好注入是页面对执行层的边界；在此记录真实点击产生的参数，避免污染全局解析状态。
+    preferences = []
+    monkeypatch.setattr("gui.pages.fluent_pages.set_client_preference", preferences.append)
+    frame = Mock()
+    frame._always_on_top = False
+    page = SettingsPage(frame)
+    try:
+        card = page.adb_client_card
+        card._on_probes(card._generation, candidates, probes)
+        card.client_button("auto").click()
+        _assert_unique_selected_auto(card)
+        card._on_probes(card._generation, candidates, probes)
+        _assert_unique_selected_auto(card)
+        assert values["adb_client"] == "auto"
+        assert preferences == ["auto"]
+        assert writes == ([] if initial_selection == "auto" else [("adb_client", "auto")])
+        frame.recheck_adb_environment.assert_called_once_with()
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("cancel_after_run", [False, True])
+def test_failed_or_cancelled_success_does_not_cache(monkeypatch, tmp_path, cancel_after_run):
+    adb_clients.clear_client_probe_cache()
+    path = tmp_path / "adb.exe"
+    path.write_bytes(b"stub")
+    state = {"cancelled": False}
+    calls = []
+
+    def run(*args, **kwargs):
+        calls.append(args)
+        state["cancelled"] = cancel_after_run
+        return CommandResult(True, output=(
+            "Android Debug Bridge version 1.0.41" if cancel_after_run else "invalid"
+        ))
+
+    monkeypatch.setattr(adb_clients.CommandRunner, "run", run)
+    candidates = [AdbCandidate("PATH", str(path))]
+    first = adb_clients.detect_clients(candidates, cancelled=lambda: state["cancelled"])
+    assert not first[0].executable
+    state["cancelled"] = False
+    adb_clients.detect_clients(candidates, cancelled=lambda: state["cancelled"])
+    assert len(calls) == 2
+    adb_clients.clear_client_probe_cache()
+
+
+def test_reset_rechecks_runtime_once(monkeypatch, qt_application):
+    values = dict(DEFAULTS, adb_client="C:/custom/adb.exe")
+    settings = SimpleNamespace(
+        get=values.get, set=lambda k, v: values.update({k: v}),
+        reset=lambda: (values.clear(), values.update(DEFAULTS)),
+    )
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    frame = Mock()
+    frame._always_on_top = False
+    page = SettingsPage(frame)
+    page.adb_check_card.set_mode("native")
+    page.adb_client_card.set_custom_path("C:/custom/adb.exe")
+    page.adb_client_card.set_selection("C:/custom/adb.exe")
+    frame.recheck_adb_environment.reset_mock()
+    page._reset_settings()
+    assert values["adb_client"] == "auto"
+    assert page.adb_client_card.selection() == "auto"
+    assert page.adb_check_card.mode() == "auto"
+    frame.recheck_adb_environment.assert_called_once_with()
+    page.close()
+
+
+def test_scan_adds_and_removes_candidates_from_one_snapshot(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    snapshot = [AdbCandidate("PATH", "C:/new/adb.exe")]
+    calls = []
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: snapshot)
+
+    def detect(candidates=None, **kwargs):
+        calls.append(candidates)
+        return [ClientProbe("PATH", snapshot[0].path, True, True, "1.0.41")]
+
+    monkeypatch.setattr(cards, "detect_clients", detect)
+    task = cards._ProbeTask(card._generation, lambda: False)
+    task.signals.finished.connect(card._on_probes)
+    task.run()
+    assert calls == [snapshot]
+    assert card.client_button("PATH") is not None
+    assert card.client_button("PATH").isEnabled()
+    card.close()
+
+
+def test_refresh_preserves_rows_selection_and_releases_removed_widgets(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    card.set_custom_path("C:/custom/adb.exe")
+    card.set_selection("C:/custom/adb.exe")
+    auto = card.client_button("auto")
+    custom = card.client_button("custom")
+    card.set_candidates([AdbCandidate("PATH", "C:/adb.exe")])
+    card.set_candidates([])
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    base_count = len(card.findChildren(QWidget))
+    for _ in range(8):
+        card.set_candidates([AdbCandidate("PATH", "C:/adb.exe")])
+        card.set_candidates([])
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert card.client_button("auto") is auto
+    assert card.client_button("custom") is custom
+    assert custom.isChecked()
+    assert card.custom_path() == "C:/custom/adb.exe"
+    assert len(card.findChildren(QWidget)) == base_count
+    card.close()
+
+
+def test_timeout_allows_same_generation_but_retry_rejects_old_snapshot(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    tasks = []
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=tasks.append)
+    )
+    card.start_detection()
+    first = card._generation
+    card._on_detection_timeout()
+    card._on_probes(first, [AdbCandidate("PATH", "C:/adb.exe")],
+                    [ClientProbe("PATH", "C:/adb.exe", True, True, "1.0.41")])
+    assert card.client_button("PATH").isEnabled()
+    card.start_detection()
+    card._on_detection_timeout()
+    card.start_detection()
+    current = card._generation
+    card._on_probes(current - 1, [AdbCandidate("env", "C:/old.exe")], [])
+    assert card.client_button("env") is None
+    assert not card.rescan_button().isEnabled()
+    card._on_probes(current, [], [])
+    assert card.client_button("PATH") is None
+    assert card.rescan_button().isEnabled()
+    card.close()
+    card._on_probes(current, [AdbCandidate("env", "C:/late.exe")], [])
+    assert card.client_button("env") is None
+
+
+def test_refresh_preserves_focus_and_moves_it_from_removed_row(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    card.resize(750, 600)
+    card.show()
+    card.setExpand(True)
+    card.set_candidates([AdbCandidate("PATH", "C:/adb.exe")])
+    card.apply_probes([ClientProbe("PATH", "C:/adb.exe", True, True, "1.0.41")])
+    card.choose_button().setFocus()
+    qt_application.processEvents()
+    card.set_candidates([AdbCandidate("PATH", "C:/adb.exe"), AdbCandidate("env", "C:/env.exe")])
+    assert card.choose_button().hasFocus()
+    card.client_button("PATH").setFocus()
+    assert card.client_button("PATH").hasFocus()
+    card.set_candidates([])
+    assert card.rescan_button().hasFocus()
+    card.close()
+
+
+@pytest.mark.parametrize("source", ["PATH", "sdk_home"])
+def test_selected_missing_source_remains_disabled(monkeypatch, qt_application, source):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    card = cards.AdbClientSettingCard()
+    card.set_candidates([AdbCandidate(source, "C:/adb.exe")])
+    card.set_selection(source)
+    selected = card.client_button(source)
+    card.set_candidates([])
+    assert card.client_button(source) is selected
+    assert selected.isChecked()
+    assert not selected.isEnabled()
+    assert "不存在" in card.detail_text(source)
+    card.close()
+
+
+def test_settings_destroyed_before_deferred_detection_never_starts_probe(
+    monkeypatch, qt_application,
+):
+    import shiboken6
+
+    values = dict(DEFAULTS)
+    settings = SimpleNamespace(get=values.get, set=lambda key, value: values.update({key: value}))
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda cls: settings))
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    starts = Mock()
+    monkeypatch.setattr(
+        cards.QThreadPool, "globalInstance", lambda: SimpleNamespace(start=starts)
+    )
+    frame = Mock()
+    frame._always_on_top = False
+    page = SettingsPage(frame)
+    shiboken6.delete(page)
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.MetaCall)
+    qt_application.processEvents()
+
+    starts.assert_not_called()

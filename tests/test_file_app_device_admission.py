@@ -167,6 +167,8 @@ def test_started_transfer_finishes_on_original_device_without_refresh_after_dese
     host.set_device_context(["device-b"], ["device-a", "device-b"])
     submitted_workers.clear()
     callback("", False, "unused")
+    assert submitted_workers == []
+    page._prune_worker(transfer)
     assert len(submitted_workers) == 1
     cleanup = submitted_workers[0]
     assert cleanup.device_ip == "device-a"

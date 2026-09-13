@@ -61,7 +61,7 @@ class _Runner:
     def latest_result_dir(self):
         return self.result_dir
 
-    def latest_report_file(self):
+    def latest_report_file(self, *, result_dir=None):
         return self.report_file
 
 
@@ -295,7 +295,7 @@ def test_attachment_lookup_errors_preserve_parameters_and_do_not_escape_archive(
     runner.result_dir, runner.report_file = str(target), str(report)
     runner.running, runner.last_exit_code = False, 0
 
-    def unavailable_output():
+    def unavailable_output(*, result_dir=None):
         raise PermissionError("synthetic private output path")
 
     for name in unavailable:

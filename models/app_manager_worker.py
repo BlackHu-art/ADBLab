@@ -1,6 +1,5 @@
 """在 QThread 中执行应用列表、管理、备份和恢复操作。"""
 
-import concurrent.futures
 import os
 import re
 import shlex
@@ -436,8 +435,12 @@ class AppManagerWorker(QThread):
             return
         with tempfile.TemporaryDirectory(prefix=f"bk_{pkg}_") as tmp:
             self.backup_progress.emit(pkg, f"Pulling {len(paths)} APKs")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(paths), 5)) as ex:
-                pull_results = list(ex.map(lambda p: self._adb("pull", p, tmp), paths))
+            # 页面按设备串行调度，备份内部也串行，避免嵌套并发放大进程预算。
+            pull_results = []
+            for path in paths:
+                if self._cancelled():
+                    return
+                pull_results.append(self._adb("pull", path, tmp))
             failed_pulls = [
                 self._command_error(result, f"pull failed for {path}")
                 for path, result in zip(paths, pull_results)
@@ -487,14 +490,30 @@ class AppManagerWorker(QThread):
             return
         succeeded = 0
         failed = 0
+        installed = 0
+
+        def cancelled() -> bool:
+            # 安装不可回滚；停止后续写入并保留已完成数量，不能发布完整成功。
+            if not self._cancelled():
+                return False
+            message = (
+                f"Restore cancelled: {installed} APKs installed, "
+                f"{succeeded} archives completed"
+            )
+            self.log_message.emit(message)
+            self.operation_feedback.emit("warning", message)
+            return True
+
         for i, zp in enumerate(files):
-            if self._aborted.is_set() or self.isInterruptionRequested():
+            if cancelled():
                 return
             app = os.path.basename(zp).replace("backup_", "").replace(".zip", "")
             try:
                 with tempfile.TemporaryDirectory(prefix=f"rs_{app}_") as tmp:
                     with zipfile.ZipFile(zp, "r") as zf:
                         safe_extract_zip(zf, tmp)
+                    if cancelled():
+                        return
                     apks = [
                         os.path.join(r, f)
                         for r, _, fs in os.walk(tmp)
@@ -504,19 +523,25 @@ class AppManagerWorker(QThread):
                     if not apks:
                         raise RuntimeError("backup contains no APK files")
                     is_split = len(apks) > 1 and any("base.apk" in a.lower() for a in apks)
+                    if cancelled():
+                        return
                     if is_split:
                         install_result = self._adb("install-multiple", "-r", *apks, timeout=120)
                         if not install_result.success:
                             raise RuntimeError(
                                 self._command_error(install_result, "install-multiple failed")
                             )
+                        installed += len(apks)
                     else:
                         for a in apks:
+                            if cancelled():
+                                return
                             install_result = self._adb("install", "-r", a, timeout=120)
                             if not install_result.success:
                                 raise RuntimeError(
                                     self._command_error(install_result, "install failed")
                                 )
+                            installed += 1
                 succeeded += 1
                 self.log_message.emit(f"Restored ({i + 1}/{len(files)}): {os.path.basename(zp)}")
             except Exception as e:
@@ -524,6 +549,8 @@ class AppManagerWorker(QThread):
                 self._report_failure(
                     f"Restore failed ({i + 1}/{len(files)}) for {os.path.basename(zp)}: {e}"
                 )
+        if cancelled():
+            return
         if failed:
             message = f"Restore incomplete: {succeeded} succeeded, {failed} failed"
             self.log_message.emit(message)

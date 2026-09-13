@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -189,3 +190,42 @@ def test_monkey_preparation_errors_use_frozen_global_device_label(
     installed_translators(language)
     label = {"zh_CN": "设备 7", "zh_HK": "裝置 7", "en_US": "Device 7"}[language]
     assert _monkey_error_text("第 1 台设备未安装目标应用，请先安装后重试", (label,)) == expected
+
+@pytest.mark.parametrize("language,stop,summary", [
+    ("en_US", "Stop", "Device Shell: {count}/{checked} using the fast route"),
+    ("zh_HK", "停止", "裝置 Shell {count}/{checked} 台使用快速通道"),
+    ("zh_CN", "停止", "设备 Shell {count}/{checked} 台使用快速通道"),
+])
+def test_runtime_scope_and_session_stop_have_bundled_translations(
+    installed_translators, language, stop, summary,
+):
+    installed_translators(language)
+    assert i18n.tr("停止") == stop
+    translated = i18n.tr("设备 Shell {count}/{checked} 台使用快速通道")
+    assert translated == summary
+    assert "1/2" in translated.format(count=1, checked=2)
+
+
+@pytest.mark.parametrize("language", ["zh_CN", "en_US", "zh_HK"])
+def test_visible_ui_literals_have_catalog_entries(language):
+    root = Path(__file__).resolve().parents[1]
+    sources = {
+        message.findtext("source")
+        for message in ET.parse(root / f"resources/i18n/adblab.{language}.ts").findall(
+            "./context/message"
+        )
+    }
+    missing = []
+    for path in (root / "gui").rglob("*.py"):
+        if "generated" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if (
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "tr" and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and node.args[0].value not in sources
+            ):
+                missing.append((str(path.relative_to(root)), node.lineno, node.args[0].value))
+    assert not missing

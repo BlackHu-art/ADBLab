@@ -117,6 +117,7 @@ def test_terminal_icon_requires_confirmed_report(
     if report:
         artifact = tmp_path / "report.html"
         artifact.write_text("report", encoding="utf-8")
+        page._runner.latest_result_dir.return_value = str(tmp_path)
         page._runner.latest_report_file.return_value = str(artifact)
     page._on_runner_finished()
     assert page._status_state == expected_state

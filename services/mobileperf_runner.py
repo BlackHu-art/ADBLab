@@ -18,6 +18,7 @@ from pathlib import Path
 
 from core.adb_runtime import AdbRuntime
 from core.exec import ExecHandle, ProcessRunner, adb_runtime
+from utils.console_colors import colorize_console, should_emit
 from utils.resource_path import resource_path
 from utils.user_data import user_data_root
 
@@ -40,6 +41,65 @@ def _primary_package(value: str) -> str:
 
 # 结果目录中的包名片段仅允许字母数字、点、下划线和连字符，其余字符替换为下划线。
 _RESULT_SEGMENT_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+
+
+@dataclass(frozen=True)
+class PerformanceArtifacts:
+    """后台验证过的本次结果快照，GUI 不再重复查询文件系统。"""
+
+    result_dir: str = ""
+    report_file: str = ""
+    error: bool = False
+
+
+@dataclass(frozen=True)
+class PerformanceResultQuery:
+    """在运行终态冻结归属，延迟读取不会借用下一次运行的配置和基线。"""
+
+    root: str
+    baseline_dirs: tuple[tuple[str, tuple[int, int]], ...]
+    baseline_reports: tuple[tuple[str, tuple[int, int]], ...]
+    finished_at_ns: int = field(default_factory=time.time_ns)
+
+    def discover(self) -> PerformanceArtifacts:
+        """在后台单次遍历目录及报告，保留可确认的部分结果和错误事实。"""
+        directories = dict(self.baseline_dirs)
+        reports = dict(self.baseline_reports)
+        found: list[tuple[int, str, str]] = []
+        error = False
+        try:
+            root = Path(self.root)
+            if not root.exists():
+                return PerformanceArtifacts()
+            for folder in root.iterdir():
+                if not folder.is_dir():
+                    continue
+                try:
+                    folder_stat = folder.stat()
+                    signature = folder_stat.st_mtime_ns, folder_stat.st_size
+                    current_reports = []
+                    for report in folder.glob("summary_*.xlsx"):
+                        stat = report.stat()
+                        if (report.is_file() and stat.st_size > 0
+                                and stat.st_mtime_ns <= self.finished_at_ns
+                                and (stat.st_mtime_ns, stat.st_size)
+                                != reports.get(MobilePerfRunner._path_key(report))):
+                            current_reports.append((stat.st_mtime_ns, str(report.absolute())))
+                    if ((folder_stat.st_mtime_ns <= self.finished_at_ns
+                         and signature != directories.get(MobilePerfRunner._path_key(folder)))
+                            or current_reports):
+                        order = (max(current_reports)[0] if current_reports
+                                 else folder_stat.st_mtime_ns)
+                        found.append((order, str(folder.absolute()),
+                                      max(current_reports)[1] if current_reports else ""))
+                except OSError:
+                    error = True
+        except OSError:
+            error = True
+        if not found:
+            return PerformanceArtifacts(error=error)
+        _, folder, report = max(found)
+        return PerformanceArtifacts(folder, report, error)
 
 
 def normalize_local_path(path: str) -> str:
@@ -212,6 +272,9 @@ class MobilePerfRunner:
     MODE_SYNC_INTERVAL_SECONDS = 0.1
     REPORT_SHUTDOWN_TIMEOUT_SECONDS = 90.0
     _DEBUG_RECORD_PATTERN = re.compile(r"^\[[^\]]+\]DEBUG:mobileperf:")
+    _DIAGNOSTIC_LEVEL_PATTERN = re.compile(
+        r"^\[[^\]]+\](DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL):mobileperf:"
+    )
 
     def __init__(
         self,
@@ -300,8 +363,7 @@ class MobilePerfRunner:
                 env["MOBILEPERF_ADB_MODE"] = mode
                 env["MOBILEPERF_ADB_MODE_FILE"] = mode_path
                 adb_path = self._resolve_adb_path()
-                if adb_path:
-                    env["ADB_PATH"] = adb_path
+                env["ADB_PATH"] = adb_path
                 env["MOBILEPERF_STOP_FILE"] = self._stop_path
                 env["MOBILEPERF_LOG_DIR"] = str(user_data_root() / "logs")
                 redaction_values = tuple(
@@ -510,8 +572,21 @@ class MobilePerfRunner:
             return ""
         return str(max(dirs, key=lambda path: path.stat().st_mtime))
 
-    def latest_report_file(self, config: MobilePerfRunConfig | None = None) -> str:
-        result_dir = self.latest_result_dir(config)
+    def freeze_result_query(self) -> PerformanceResultQuery:
+        """只复制运行归属，不执行 I/O；结果发现由页面监督的后台任务完成。"""
+        with self._state_lock:
+            root = self._package_result_root(self._last_config)
+            directories, reports = self._result_baseline_for(root)
+            return PerformanceResultQuery(
+                str(root), tuple(directories.items()), tuple(reports.items()),
+            )
+
+    def latest_report_file(
+        self, config: MobilePerfRunConfig | None = None, *, result_dir: str | None = None,
+    ) -> str:
+        """按本次目录快照找有效新报告；未提供目录时保持独立发现，空字符串表示无结果。"""
+        if result_dir is None:
+            result_dir = self.latest_result_dir(config)
         if not result_dir:
             return ""
         reports = glob.glob(os.path.join(result_dir, "summary_*.xlsx"))
@@ -623,7 +698,7 @@ class MobilePerfRunner:
         message: str,
         redaction_values: tuple[str, ...] | None = None,
     ) -> None:
-        """仅在源码模式把脱敏诊断信息写入当前进程 stderr。"""
+        """在源码模式把脱敏诊断写入 stderr，按控制台级别过滤可分级记录。"""
         if self._is_frozen():
             return
         stream = getattr(sys, "stderr", None)
@@ -631,10 +706,18 @@ class MobilePerfRunner:
             return
         if not callable(getattr(stream, "write", None)):
             return
+        # 只在最终显示层识别固定协议级别；未带级别的原始行（异常栈续行）不过滤，
+        # 避免设置阈值后只剩报错头而丢失上下文。
+        level_match = self._DIAGNOSTIC_LEVEL_PATTERN.match(str(message))
+        if level_match is not None and not should_emit(level_match.group(1)):
+            return
         text = self._redact_runtime_values(
             str(message),
             redaction_values=redaction_values,
         )
+        # 子进程管道和文件保留纯文本，颜色只加在控制台显示层。
+        if level_match is not None:
+            text = colorize_console(level_match.group(1), text, stream)
         try:
             with self._diagnostic_lock:
                 stream.write(text + "\n")
@@ -887,12 +970,10 @@ class MobilePerfRunner:
 
     @staticmethod
     def _resolve_adb_path() -> str:
-        try:
-            from utils.adb_resolver import adb_path
+        """主应用启动子进程必须冻结已选择的 ADB，不能让采集器自行换用环境客户端。"""
+        from core.exec import require_adb_program
 
-            return adb_path()
-        except Exception:
-            return ""
+        return require_adb_program()
 
     def _build_command(self) -> list[str]:
         if self._is_frozen():
