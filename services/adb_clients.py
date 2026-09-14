@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from core.exec import CommandRunner
 from utils.adb_resolver import AdbCandidate, list_adb_candidates
 
-VERSION_TIMEOUT_SECONDS = 3.0
+VERSION_TIMEOUT_SECONDS = 10.0
 _CACHE_LIMIT = 16
 
 _BRIDGE_VERSION = re.compile(r"Android Debug Bridge version ([0-9][0-9.]*)")
@@ -125,8 +125,9 @@ def detect_clients(
     cancelled: Callable[[], bool] | None = None,
     timeout: float = VERSION_TIMEOUT_SECONDS,
     use_cache: bool = True,
+    on_probe: Callable[[ClientProbe], None] | None = None,
 ) -> list[ClientProbe]:
-    """串行探测候选客户端，只运行 adb version，不连 5037 服务。"""
+    """串行探测候选客户端，并在每项完成时回调；仍返回完整结果列表。"""
 
     items = list(candidates if candidates is not None else list_adb_candidates())
     if not items:
@@ -137,9 +138,14 @@ def detect_clients(
             for item in items
         ]
 
-    def probe(candidate: AdbCandidate) -> ClientProbe:
-        return _probe_one(candidate, cancelled=cancelled, timeout=timeout, use_cache=use_cache)
-
     # 串行探测：多个 adb.exe 同时冷启动会互相拖慢（首次执行要等加载器与安全扫描），
     # 逐个执行时只有第一个候选付冷启动成本，其余基本是热态。
-    return [probe(candidate) for candidate in items]
+    probes = []
+    for candidate in items:
+        probe = _probe_one(
+            candidate, cancelled=cancelled, timeout=timeout, use_cache=use_cache,
+        )
+        probes.append(probe)
+        if on_probe is not None:
+            on_probe(probe)
+    return probes

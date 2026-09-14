@@ -508,6 +508,39 @@ class AdbRuntime:
         finally:
             self._service_ready()
 
+    def _record_capability_attempt(
+        self, command: str, result: ExecutionResult, *, attempt: int, elapsed: float,
+        budget: float, remaining: float, current: Callable[[], bool],
+    ) -> None:
+        """通过可落盘通道保留当前探测摘要；健康轮询不挤占有界诊断记录。"""
+        with self._condition:
+            if self._closed or self._draining or self._probe_stop.is_set() or not current():
+                return
+            if result.kind == "completed" and self._host.available and not self._full_probe:
+                return
+            revision = self._active_probe_revision
+        detail = result.diagnostics
+        stage = (
+            detail.stage if detail is not None
+            else "completed" if result.kind == "completed" else "unknown"
+        )
+        reason = detail.reason if detail is not None else result.kind
+        elapsed_ms = detail.elapsed_ms if detail is not None else elapsed * 1000
+        fields = (
+            f"ADB capability command={command} probe_revision={revision} attempt={attempt} "
+            f"backend=server_direct status={result.kind} stage={stage} reason={reason} "
+            f"elapsed_ms={elapsed_ms:.1f} "
+            f"budget_ms={detail.budget_ms if detail is not None else budget * 1000:.1f} "
+            f"remaining_ms={max(0.0, remaining) * 1000:.1f}"
+        )
+        if detail is not None:
+            fields += f" stage_ms={detail.stage_ms:.1f} received_bytes={detail.received_bytes}"
+            if detail.errno is not None:
+                fields += f" errno={detail.errno}"
+            if detail.winerror is not None:
+                fields += f" winerror={detail.winerror}"
+        self._diagnostic(fields)
+
     def _probe_capability(
         self, command: str, args: list[str], *, serial: str | None, retry: bool,
         current: Callable[[], bool], initial_timeout: float | None = None,
@@ -516,9 +549,10 @@ class AdbRuntime:
         deadline = time.monotonic() + self.CAPABILITY_BUDGET
         stop = self._probe_stop.is_set
         started = time.monotonic()
+        budget = self.SOCKET_TIMEOUT if initial_timeout is None else initial_timeout
         result = capture(
             command, args, serial=serial,
-            timeout=self.SOCKET_TIMEOUT if initial_timeout is None else initial_timeout,
+            timeout=budget,
             cancelled=stop,
         )
         elapsed = time.monotonic() - started
@@ -527,6 +561,10 @@ class AdbRuntime:
             elapsed_ms=round(elapsed * 1000, 1), client_spawned=False,
         )
         remaining = deadline - time.monotonic()
+        self._record_capability_attempt(
+            command, result, attempt=1, elapsed=elapsed, budget=budget,
+            remaining=remaining, current=current,
+        )
         if retry and result.kind in {"timeout", "transport"} and not stop() and remaining > 0:
             with self._condition:
                 if not current():
@@ -547,6 +585,10 @@ class AdbRuntime:
             adb_debug.event(
                 "probe_result", command=command, backend="server_direct", status=result.kind,
                 elapsed_ms=round(elapsed * 1000, 1), retry=1, client_spawned=False,
+            )
+            self._record_capability_attempt(
+                command, result, attempt=2, elapsed=elapsed, budget=remaining,
+                remaining=deadline - time.monotonic(), current=current,
             )
         return result, elapsed
 

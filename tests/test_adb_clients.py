@@ -104,12 +104,13 @@ def test_non_adb_output_is_rejected(tmp_path, monkeypatch):
     assert probes[0].error == adb_clients.ERROR_NOT_ADB
 
 
-def test_probe_concurrency_stays_bounded(tmp_path, monkeypatch):
+def test_probes_are_serial_and_publish_each_result(tmp_path, monkeypatch):
     paths = [tmp_path / f"adb{index}.exe" for index in range(4)]
     for path in paths:
         path.write_bytes(b"stub")
     lock = threading.Lock()
     state = {"running": 0, "peak": 0}
+    published = []
 
     def run(_cmd, **_kwargs):
         with lock:
@@ -123,11 +124,32 @@ def test_probe_concurrency_stays_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(adb_clients.CommandRunner, "run", run)
 
     probes = adb_clients.detect_clients(
-        [AdbCandidate("PATH", str(path)) for path in paths]
+        [AdbCandidate(f"source-{index}", str(path)) for index, path in enumerate(paths)],
+        on_probe=published.append,
     )
 
     assert len(probes) == 4
-    assert state["peak"] <= 2
+    assert state["peak"] == 1
+    assert published == probes
+
+
+def test_each_candidate_receives_full_ten_second_budget(tmp_path, monkeypatch):
+    paths = [tmp_path / f"adb{index}.exe" for index in range(3)]
+    for path in paths:
+        path.write_bytes(b"stub")
+    timeouts = []
+
+    def run(_cmd, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return CommandResult(True, output=VERSION_OUTPUT)
+
+    monkeypatch.setattr(adb_clients.CommandRunner, "run", run)
+
+    adb_clients.detect_clients(
+        [AdbCandidate(f"source-{index}", str(path)) for index, path in enumerate(paths)]
+    )
+
+    assert timeouts == [10.0, 10.0, 10.0]
 
 
 def test_cancelled_probe_short_circuits_without_running(tmp_path):

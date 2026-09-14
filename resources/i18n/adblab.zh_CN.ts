@@ -3,6 +3,10 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>识别耗时较长，仍在继续…</source>
+            <translation>识别耗时较长，仍在继续…</translation>
+        </message>
+        <message>
             <source>部分应用详情未读取，点击刷新重试。</source>
             <translation>部分应用详情未读取，点击刷新重试。</translation>
         </message>
