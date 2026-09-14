@@ -2,6 +2,7 @@
 
 import sys
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -128,3 +129,67 @@ def test_probe_shutdown_does_not_announce_normal_completion(output, monkeypatch)
         release.set()
         runtime.close()
         assert runtime.wait(2)
+
+
+def test_frozen_probe_failure_keeps_stage_diagnostic_without_console(monkeypatch):
+    """冻结模式必须通过专用诊断回调保留失败阶段，而不依赖开发控制台。"""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    messages = []
+    detail = SimpleNamespace(
+        stage="read_status", reason="timeout", elapsed_ms=2998.0, stage_ms=2997.0,
+        budget_ms=3000.0, errno=None, winerror=None, received_bytes=2,
+    )
+    result = SimpleNamespace(kind="timeout", diagnostics=detail)
+    monkeypatch.setattr(module, "capture", lambda *_args, **_kwargs: result)
+    runtime = AdbRuntime(lambda: "C:/PRIVATE_PATH/adb.exe", diagnostic=messages.append)
+    try:
+        actual, _elapsed = runtime._probe_capability(
+            "devices", ["-l"], serial=None, retry=False,
+            current=lambda: True, initial_timeout=3.0,
+        )
+        assert actual is result
+        record, = [message for message in messages if "stage=read_status" in message]
+        for field in (
+            "backend=server_direct", "attempt=1", "status=timeout", "reason=timeout",
+            "elapsed_ms=2998.0", "stage_ms=2997.0", "budget_ms=3000.0", "received_bytes=2",
+        ):
+            assert field in record
+        assert "PRIVATE_PATH" not in record
+    finally:
+        runtime.close()
+
+
+def test_obsolete_probe_does_not_publish_stage_diagnostic(monkeypatch):
+    messages = []
+    monkeypatch.setattr(
+        module, "capture", lambda *_args, **_kwargs: ExecutionResult(kind="timeout"),
+    )
+    runtime = AdbRuntime(lambda: None, diagnostic=messages.append)
+    try:
+        runtime._probe_capability(
+            "devices", [], serial=None, retry=False, current=lambda: False,
+        )
+        assert messages == []
+    finally:
+        runtime.close()
+
+
+def test_successful_probe_does_not_invent_unmeasured_stage_fields(monkeypatch):
+    """成功探测只记录已有测量值，不能把未采集的阶段数据写成零。"""
+    messages = []
+    monkeypatch.setattr(
+        module, "capture", lambda *_args, **_kwargs: ExecutionResult(b"ready"),
+    )
+    runtime = AdbRuntime(lambda: None, diagnostic=messages.append)
+    try:
+        runtime._probe_capability(
+            "devices", [], serial=None, retry=False, current=lambda: True,
+        )
+        record, = messages
+        assert "stage=completed" in record
+        assert "elapsed_ms=" in record
+        assert "budget_ms=" in record
+        assert "stage_ms=" not in record
+        assert "received_bytes=" not in record
+    finally:
+        runtime.close()

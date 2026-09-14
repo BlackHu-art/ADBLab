@@ -225,11 +225,18 @@ def test_unsupported_shell_does_not_fallback(connect):
 def test_deadline_expires_despite_incoming_data(connect, monkeypatch):
     install, calls = connect
     sock = install(b"OKAYOKAY" + frame(1, b"lots of output") + frame(3, b"\0"))
-    ticks = iter(range(100))
-    monkeypatch.setattr(adb_transport.time, "monotonic", lambda: next(ticks))
+    now = [0.0]
+    original_recv = sock.recv
+
+    def timed_recv(size):
+        now[0] += 1.0
+        return original_recv(size)
+
+    monkeypatch.setattr(adb_transport.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(sock, "recv", timed_recv)
     with pytest.raises(TimeoutError):
         run_shell()
-    assert sock.timeouts == [2, 1]
+    assert sock.timeouts == [3, 3, 2, 1, 1]
     assert sock.closed
     assert len(calls) == 1
 

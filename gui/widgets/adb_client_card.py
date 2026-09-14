@@ -47,6 +47,9 @@ from utils.adb_resolver import (
 )
 
 DETECTION_TIMEOUT_MS = 15000
+SLOW_DETECTION_MS = 3000
+PROBE_TIMEOUT_MS = 10000
+DETECTION_GRACE_MS = 5000
 
 # 候选行按实际配置的来源动态生成：未配置的来源不占位（不出现"未设置"噪音行）；
 # Android SDK 三处仍留在自动解析链里兜底，但不展示、不探测。
@@ -112,6 +115,8 @@ class _WrappingRow(QWidget):
 
 
 class _ProbeSignals(QObject):
+    candidates_ready = Signal(int, list)
+    progress = Signal(int, object)
     finished = Signal(int, list, list)
     failed = Signal(int, str)
 
@@ -128,7 +133,12 @@ class _ProbeTask(QRunnable):
     def run(self) -> None:
         try:
             candidates = list_adb_candidates()
-            probes = detect_clients(candidates, cancelled=self._cancelled)
+            self.signals.candidates_ready.emit(self._generation, candidates)
+            probes = detect_clients(
+                candidates,
+                cancelled=self._cancelled,
+                on_probe=lambda probe: self.signals.progress.emit(self._generation, probe),
+            )
         except Exception as exc:  # 识别失败不能影响设置页交互
             self.signals.failed.emit(self._generation, type(exc).__name__)
         else:
@@ -150,6 +160,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._custom_path = ""
         self._generation = 0
         self._busy = False
+        self._timed_out_generation: int | None = None
         self._probes: dict[str, ClientProbe] = {}
         self._candidate_sources: set[str] = set()
         self._rows: dict[str, tuple[QWidget, RadioButton, CaptionLabel]] = {}
@@ -157,6 +168,9 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         self._detection_timer = QTimer(self)
         self._detection_timer.setSingleShot(True)
         self._detection_timer.timeout.connect(self._on_detection_timeout)
+        self._slow_timer = QTimer(self)
+        self._slow_timer.setSingleShot(True)
+        self._slow_timer.timeout.connect(self._on_detection_slow)
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -369,8 +383,11 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             return
         self._generation += 1
         generation = self._generation
+        self._timed_out_generation = None
         self.set_busy(True)
         task = _ProbeTask(generation, lambda: generation != self._generation)
+        task.signals.candidates_ready.connect(self._on_candidates_ready)
+        task.signals.progress.connect(self._on_probe_progress)
         task.signals.finished.connect(self._on_probes)
         task.signals.failed.connect(self._on_probe_failed)
         # 持有引用，避免 QRunnable 的 Python 包装在完成前被回收；结束时统一丢弃。
@@ -378,30 +395,82 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         task.signals.finished.connect(lambda *_args: self._tasks.discard(task))
         task.signals.failed.connect(lambda *_args: self._tasks.discard(task))
         self._detection_timer.start(DETECTION_TIMEOUT_MS)
+        self._slow_timer.start(SLOW_DETECTION_MS)
         QThreadPool.globalInstance().start(task)
 
     def _cancel_detection_timeout(self) -> None:
         if self._detection_timer.isActive():
             self._detection_timer.stop()
+        if self._slow_timer.isActive():
+            self._slow_timer.stop()
+
+    def _on_detection_slow(self) -> None:
+        """探测超过三秒时说明仍在继续，不改变忙态和最终预算。"""
+
+        if self._busy:
+            self.card.contentLabel.setText(tr("识别耗时较长，仍在继续…"))
 
     def _on_detection_timeout(self) -> None:
         """识别超时兜底：退出忙态并允许重试，晚到结果仍会正常回填。"""
 
         if not self._busy:
             return
+        self._cancel_detection_timeout()
+        self._timed_out_generation = self._generation
         self.set_busy(False)
         self.card.contentLabel.setText(tr("识别超时，可重试"))
+
+    def _on_candidates_ready(self, generation: int, candidates: list) -> None:
+        if generation != self._generation:
+            return
+        timed_out = self._timed_out_generation == generation
+        terminal_text = self.card.contentLabel.text() if timed_out else ""
+        self._sync_candidates(candidates)
+        paths = {candidate.source: candidate.path for candidate in candidates}
+        self._probes = {
+            source: probe for source, probe in self._probes.items()
+            if source in paths and probe.path == paths[source]
+        }
+        self._render_probe_rows()
+        if timed_out:
+            self.card.contentLabel.setText(terminal_text)
+        if self._busy:
+            budget = max(
+                DETECTION_TIMEOUT_MS,
+                len(candidates) * PROBE_TIMEOUT_MS + DETECTION_GRACE_MS,
+            )
+            self._detection_timer.start(budget)
+
+    def _on_probe_progress(self, generation: int, probe: ClientProbe) -> None:
+        if generation != self._generation:
+            return
+        self._probes[probe.source] = probe
+        self._render_probe_rows()
+        if self.isExpand:
+            self._adjustViewSize()
 
     def _on_probes(self, generation: int, candidates: list, probes: list) -> None:
         if generation != self._generation:
             return
+        timed_out = self._timed_out_generation == generation
+        terminal_text = self.card.contentLabel.text() if timed_out else ""
         self._sync_candidates(candidates)
-        self.apply_probes(probes)
+        self._probes = {probe.source: probe for probe in probes}
+        self._render_probe_rows()
+        self._cancel_detection_timeout()
+        if not timed_out:
+            self.set_busy(False)
+        else:
+            self.card.contentLabel.setText(terminal_text)
+        if self.isExpand:
+            self._adjustViewSize()
 
     def _on_probe_failed(self, generation: int, reason: str) -> None:
         if generation != self._generation:
             return
         self._cancel_detection_timeout()
+        if self._timed_out_generation == generation:
+            return
         self.set_busy(False)
         self.card.contentLabel.setText(tr("识别失败：{reason}").format(reason=reason))
 
@@ -410,6 +479,14 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
 
         self._cancel_detection_timeout()
         self._probes = {probe.source: probe for probe in probes}
+        self._render_probe_rows()
+        self.set_busy(False)
+        if self.isExpand:
+            self._adjustViewSize()
+
+    def _render_probe_rows(self) -> None:
+        """按当前累计结果刷新行，不改变忙态、计时器或标题终态。"""
+
         for source, (_row, _radio, detail) in self._rows.items():
             if source not in self._candidate_sources:
                 detail.setText(tr(error_label(ERROR_MISSING)))
@@ -419,11 +496,8 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
                 detail.setText(tr("未检测到结果，可重新识别"))
                 continue
             detail.setText(self._candidate_detail(probe))
-        # 忙态只在这里收口：成功、失败、取消、关闭四条路径都必须经过 set_busy(False)，
-        # 否则标题会永久停在「正在识别…」并把单选项与按钮全部锁死。
-        self.set_busy(False)
-        if self.isExpand:
-            self._adjustViewSize()
+        for button in self._group.buttons():
+            button.setEnabled(self._radio_enabled(button))
 
     @staticmethod
     def _candidate_detail(probe: ClientProbe) -> str:
@@ -475,6 +549,7 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
         """关闭时让在途识别在下一个检查点退出，避免回调落到已销毁的对象。"""
 
         self._generation += 1
+        self._timed_out_generation = None
         self._cancel_detection_timeout()
         self.set_busy(False)
         super().closeEvent(event)

@@ -3,9 +3,11 @@
 import io
 import sys
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from PySide6.QtCore import QCoreApplication
 
 from core.diagnostics import DiagnosticJournal
 from gui.run_library import _LibraryQueue
@@ -93,6 +95,53 @@ def test_frozen_runtime_diagnostic_is_saved_without_user_log(request, monkeypatc
     assert batches == singles == []
     assert stream.getvalue() == ""
     assert error_stream.getvalue() == ""
+
+
+@pytest.mark.ui
+def test_frozen_probe_stage_crosses_qt_and_persists(request, monkeypatch, tmp_path):
+    """后台协议失败经真实 Qt 适配器进入文件，冻结模式无需开发控制台。"""
+    from adblab.presentation.qt_adb_runtime import QtAdbRuntime
+    from core import adb_runtime as runtime_module
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    for name in ("ADB_SERVER_SOCKET", "ANDROID_ADB_SERVER_ADDRESS", "ANDROID_ADB_SERVER_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        "adblab.presentation.qt_adb_runtime.resolve_adb_path", lambda: "C:/fixture/adb.exe",
+    )
+    detail = SimpleNamespace(
+        stage="read_status", reason="eof", elapsed_ms=20.0, stage_ms=18.0,
+        budget_ms=3000.0, errno=None, winerror=None, received_bytes=2,
+    )
+    monkeypatch.setattr(
+        runtime_module, "capture",
+        lambda *_args, **_kwargs: SimpleNamespace(kind="protocol", diagnostics=detail),
+    )
+    service = request.getfixturevalue("create_log_service")()
+    adapter = QtAdbRuntime()
+    adapter.diagnostic.connect(service.record_runtime_diagnostic)
+    errors, operation_logs = [], []
+    queue = _LibraryQueue(None, lambda _: None, errors.append, lambda _: None)
+    target = tmp_path / "logs" / "application-diagnostics.log"
+    service.logs_received.connect(operation_logs.append)
+    service.diagnostics_changed.connect(
+        lambda: queue.submit("write_diagnostics", str(target), service.diagnostics.text()),
+    )
+    try:
+        assert adapter.runtime.start()
+        assert adapter.runtime.wait(2)
+        QCoreApplication.processEvents()
+        assert adapter.snapshot().status == "host_protocol"
+        assert "stage=read_status reason=eof" in service.diagnostics.text()
+        service._flush_buffer()
+    finally:
+        adapter.close()
+        assert adapter.runtime.wait(2)
+        assert queue.close(2)
+        adapter.deleteLater()
+    assert "stage=read_status reason=eof" in target.read_text(encoding="utf-8")
+    assert "C:/fixture" not in target.read_text(encoding="utf-8")
+    assert errors == operation_logs == []
 
 
 @pytest.mark.ui

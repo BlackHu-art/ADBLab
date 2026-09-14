@@ -3,6 +3,10 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>识别耗时较长，仍在继续…</source>
+            <translation>Detection is taking longer and is still in progress…</translation>
+        </message>
+        <message>
             <source>部分应用详情未读取，点击刷新重试。</source>
             <translation>Some app details could not be loaded. Click Refresh to try again.</translation>
         </message>

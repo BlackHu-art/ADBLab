@@ -141,9 +141,11 @@ def test_scan_adds_and_removes_candidates_from_one_snapshot(monkeypatch, qt_appl
     calls = []
     monkeypatch.setattr(cards, "list_adb_candidates", lambda: snapshot)
 
-    def detect(candidates=None, **kwargs):
+    def detect(candidates=None, on_probe=None, **kwargs):
         calls.append(candidates)
-        return [ClientProbe("PATH", snapshot[0].path, True, True, "1.0.41")]
+        probe = ClientProbe("PATH", snapshot[0].path, True, True, "1.0.41")
+        on_probe(probe)
+        return [probe]
 
     monkeypatch.setattr(cards, "detect_clients", detect)
     task = cards._ProbeTask(card._generation, lambda: False)
@@ -153,6 +155,80 @@ def test_scan_adds_and_removes_candidates_from_one_snapshot(monkeypatch, qt_appl
     assert card.client_button("PATH") is not None
     assert card.client_button("PATH").isEnabled()
     card.close()
+
+
+def test_progress_updates_first_candidate_without_finishing_detection(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    candidates = [
+        AdbCandidate("bundled", "C:/bundle/adb.exe"),
+        AdbCandidate("PATH", "C:/path/adb.exe"),
+    ]
+    try:
+        card.set_busy(True)
+        card._on_candidates_ready(card._generation, candidates)
+        first = ClientProbe("bundled", candidates[0].path, True, True, "1.0.41")
+        card._on_probe_progress(card._generation, first)
+
+        assert card.client_button("bundled").isEnabled()
+        assert "1.0.41" in card.detail_text("bundled")
+        assert not card.client_button("PATH").isEnabled()
+        assert card._busy
+        assert not card.rescan_button().isEnabled()
+    finally:
+        card.close()
+
+
+@pytest.mark.parametrize("late_candidates", [False, True])
+def test_watchdog_progress_keeps_timeout_terminal_but_late_finish_fills_rows(
+    monkeypatch, qt_application, late_candidates,
+):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    generation = card._generation
+    candidates = [AdbCandidate("PATH", "C:/path/adb.exe")]
+    try:
+        card.set_busy(True)
+        if not late_candidates:
+            card._on_candidates_ready(generation, candidates)
+        card._on_detection_timeout()
+        timeout_text = card.card.contentLabel.text()
+        if late_candidates:
+            card._on_candidates_ready(generation, candidates)
+        probe = ClientProbe("PATH", candidates[0].path, True, True, "1.0.41")
+
+        card._on_probe_progress(generation, probe)
+        assert not card._busy
+        assert not card._detection_timer.isActive()
+        assert card.card.contentLabel.text() == timeout_text
+
+        card._on_probes(generation, candidates, [probe])
+        assert card.client_button("PATH").isEnabled()
+        assert card.card.contentLabel.text() == timeout_text
+    finally:
+        card.close()
+
+
+@pytest.mark.parametrize("candidate_count, expected_ms", [(2, 25000), (3, 35000)])
+def test_candidate_snapshot_extends_watchdog_per_probe(
+    monkeypatch, qt_application, candidate_count, expected_ms,
+):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    starts = []
+    monkeypatch.setattr(card._detection_timer, "start", starts.append)
+    try:
+        card.set_busy(True)
+        card._on_candidates_ready(card._generation, [
+            AdbCandidate(f"source-{index}", f"C:/adb{index}.exe")
+            for index in range(candidate_count)
+        ])
+        assert starts == [expected_ms]
+    finally:
+        card.close()
 
 
 def test_refresh_preserves_rows_selection_and_releases_removed_widgets(monkeypatch, qt_application):
@@ -195,6 +271,8 @@ def test_timeout_allows_same_generation_but_retry_rejects_old_snapshot(monkeypat
     card._on_detection_timeout()
     card.start_detection()
     current = card._generation
+    old_probe = ClientProbe("env", "C:/old.exe", True, True, "1.0.39")
+    card._on_probe_progress(current - 1, old_probe)
     card._on_probes(current - 1, [AdbCandidate("env", "C:/old.exe")], [])
     assert card.client_button("env") is None
     assert not card.rescan_button().isEnabled()
@@ -202,8 +280,32 @@ def test_timeout_allows_same_generation_but_retry_rejects_old_snapshot(monkeypat
     assert card.client_button("PATH") is None
     assert card.rescan_button().isEnabled()
     card.close()
+    card._on_probe_progress(current, ClientProbe("env", "C:/late.exe", True, True, "1.0.41"))
     card._on_probes(current, [AdbCandidate("env", "C:/late.exe")], [])
     assert card.client_button("env") is None
+
+
+def test_candidate_path_change_clears_old_version_before_new_probe(monkeypatch, qt_application):
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    generation = card._generation
+    try:
+        old = AdbCandidate("PATH", "C:/old/adb.exe")
+        card._on_candidates_ready(generation, [old])
+        card._on_probe_progress(
+            generation, ClientProbe("PATH", old.path, True, True, "1.0.39"),
+        )
+        assert "1.0.39" in card.detail_text("PATH")
+
+        card._on_candidates_ready(
+            generation, [AdbCandidate("PATH", "C:/new/adb.exe")],
+        )
+
+        assert "1.0.39" not in card.detail_text("PATH")
+        assert not card.client_button("PATH").isEnabled()
+    finally:
+        card.close()
 
 
 def test_refresh_preserves_focus_and_moves_it_from_removed_row(monkeypatch, qt_application):
