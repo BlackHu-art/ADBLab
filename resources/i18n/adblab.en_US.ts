@@ -4091,8 +4091,8 @@ Android device management, app tools and diagnostics</translation>
             <translation>Keep ADBLab above other windows</translation>
         </message>
         <message>
-            <source>让窗口和表面呈现半透明材质</source>
-            <translation>Use translucent materials for the window and surfaces</translation>
+            <source>使用 Windows 云母材质，底色随主题和桌面壁纸变化</source>
+            <translation>Use Windows Mica, with a background tint that follows the theme and desktop wallpaper</translation>
         </message>
         <message>
             <source>让镜像窗口保持在其他窗口上方</source>
@@ -6301,6 +6301,14 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>Count</source>
             <translation>Count</translation>
+        </message>
+        <message>
+            <source>系统拒绝通过 ADB 清除应用数据。请在手机的应用信息页手动清除；若入口也受限，请联系设备管理员或系统厂商。</source>
+            <translation>The system refused to clear app data through ADB. Clear the data manually from the app info page on your phone. If that option is also restricted, contact your device administrator or system vendor.</translation>
+        </message>
+        <message>
+            <source>图标</source>
+            <translation>Icon</translation>
         </message>
     </context>
 </TS>

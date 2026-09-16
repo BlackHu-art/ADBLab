@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import BinaryIO
 
 from core.adb_transport import CancelCheck, ExecutionResult, capture
+from core.native_process import NativeProcess, popen_native
 from utils import adb_debug
 
 
@@ -27,8 +28,9 @@ def native_capture(
         return ExecutionResult(kind="cancelled")
     adb_debug.command(cmd, backend="native_client", timeout=timeout)
     try:
-        with subprocess.Popen(
+        with popen_native(
             cmd,
+            isolate=True,
             stdin=subprocess.DEVNULL,
             stdout=stdout_sink if stdout_sink is not None else subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -59,8 +61,11 @@ def native_capture(
                         continue
             finally:
                 if proc.poll() is None:
-                    proc.kill()
-                    proc.communicate()
+                    if isinstance(proc, NativeProcess):
+                        proc.cancel_and_drain()
+                    else:
+                        proc.kill()
+                        proc.communicate()
     except OSError as exc:
         adb_debug.command(
             cmd, backend="native_client", phase="finish", status="transport",

@@ -149,6 +149,7 @@ class AppManagerPage(QWidget):
         self._icons_controller = AppManagerIcons(self)
         self._apply_theme()
         BaseStyles.theme_changed.connect(self._apply_theme)
+        BaseStyles.accent_color_changed.connect(self._apply_theme)
         BaseStyles.fonts_changed.connect(self._apply_theme)
 
     def _init_master_detail(self) -> None:
@@ -687,7 +688,9 @@ class AppManagerPage(QWidget):
             self._detail_timer.stop()
             safe_disconnect(self._detail_timer.timeout, self._load_visible_details)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
+        safe_disconnect(BaseStyles.accent_color_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        self._form_controller._material.stop()
         self.details_page.request_dispose(_reason)
         for worker in self._running_workers():
             worker.abort()

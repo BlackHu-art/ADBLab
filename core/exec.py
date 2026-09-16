@@ -20,6 +20,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
+from core.native_process import popen_native, run_native, stop_native_process
 from core.process_utils import kill_process_tree
 from utils import adb_debug
 
@@ -108,6 +109,18 @@ def resolve_command(cmd: list[str]) -> list[str]:
             and not os.path.isfile(resolved[0])):
         raise FileNotFoundError("ADB 客户端不可用，请在设置中重新选择或识别 ADB 客户端。")
     return resolved
+
+
+def _is_native_tool(command: list[str]) -> bool:
+    """仅隔离 ADB 和 scrcpy；已选择的改名 ADB 同样处理，本应用 worker 保持原环境。"""
+    if not command:
+        return False
+    program = command[0]
+    if os.path.basename(program).lower() in {"adb", "adb.exe", "scrcpy", "scrcpy.exe"}:
+        return True
+    return bool(_adb_path) and os.path.normcase(os.path.abspath(program)) == os.path.normcase(
+        os.path.abspath(_adb_path)
+    )
 
 
 @runtime_checkable
@@ -199,8 +212,9 @@ class CommandRunner:
                 result = _normalise_result(raw, timeout)
             else:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
-                proc = subprocess.run(
+                proc = run_native(
                     resolved_cmd,
+                    isolate=_is_native_tool(resolved_cmd),
                     capture_output=True,
                     text=True,
                     shell=shell,
@@ -272,8 +286,9 @@ class CommandRunner:
                             adb_debug.command(
                                 resolved_cmd, backend="native_client", timeout=remaining,
                             )
-                            proc = subprocess.run(
-                                resolved_cmd, stdout=output_file, stderr=subprocess.PIPE,
+                            proc = run_native(
+                                resolved_cmd, isolate=_is_native_tool(resolved_cmd),
+                                stdout=output_file, stderr=subprocess.PIPE,
                                 shell=shell, timeout=remaining, creationflags=CF,
                             )
                             raw = ExecutionResult(
@@ -498,7 +513,7 @@ class ProcessRunner:
             popen_kwargs["env"] = env
         resolved_cmd = resolve_command(cmd)
         adb_debug.command(resolved_cmd, backend="native_client")
-        return subprocess.Popen(resolved_cmd, **popen_kwargs)
+        return popen_native(resolved_cmd, isolate=_is_native_tool(resolved_cmd), **popen_kwargs)
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""
@@ -549,13 +564,18 @@ class ProcessRunner:
             return False
 
         deadline = time.monotonic() + max(0.0, float(timeout))
-        attempted = self._kill_process_tree_bounded(proc, deadline)
-        if not attempted:
-            try:
-                proc.kill()
-                attempted = True
-            except OSError:
-                pass
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            # 隔离入口已用本次预算完成合作和强制清理，不能再开启 kill 的独立预算。
+            attempted = native_stopped
+        else:
+            attempted = self._kill_process_tree_bounded(proc, deadline)
+            if not attempted:
+                try:
+                    proc.kill()
+                    attempted = True
+                except OSError:
+                    pass
         remaining = max(0.0, deadline - time.monotonic())
         if remaining:
             try:
@@ -577,6 +597,9 @@ class ProcessRunner:
     def _kill_process_tree_bounded(proc: subprocess.Popen, deadline: float) -> bool:
         """在共享绝对截止时间内通过 psutil 终止进程树（ADR-0005 Step C）。"""
 
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            return native_stopped
         pid = getattr(proc, "pid", None)
         if not pid:
             return False
@@ -596,6 +619,9 @@ class ProcessRunner:
         if proc is None:
             return None
         deadline = time.monotonic() + max(0.0, float(timeout))
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            return proc.returncode if native_stopped else None
         try:
             if proc.poll() is not None:
                 return proc.returncode
@@ -713,9 +739,14 @@ class ProcessRunner:
                 if proc.poll() is not None:
                     stopped = True
                 else:
-                    tree_killed = cls._kill_process_tree_bounded(proc, deadline)
-                    if not tree_killed:
-                        proc.kill()
+                    native_stopped = stop_native_process(
+                        proc, timeout=max(0.0, deadline - time.monotonic()),
+                    )
+                    if native_stopped is None:
+                        tree_killed = cls._kill_process_tree_bounded(proc, deadline)
+                        if not tree_killed:
+                            proc.kill()
+                    # 隔离入口未确认时继续保留跟踪，后续成员只能使用共享截止时间的余量。
                     attempted = True
                     remaining = max(0.0, deadline - time.monotonic())
                     if remaining:

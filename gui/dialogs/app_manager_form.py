@@ -3,8 +3,9 @@
 from typing import cast
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QAction, QFontMetrics, QStandardItemModel
+from PySide6.QtGui import QAction, QFontMetrics, QPainter, QStandardItemModel
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -26,15 +27,15 @@ from qfluentwidgets import (
     InfoBadge,
     InfoLevel,
     LineEdit,
-    ListWidget,
     PushButton,
     RoundMenu,
     TransparentToolButton,
     TreeItemDelegate,
     TreeView,
-    setCustomStyleSheet,
 )
 
+from gui.dialogs.app_manager_material import AppManagerMaterial
+from gui.dialogs.app_manager_rows import STATUS_ROLE, AppManagerIconView, AppManagerRowDelegate
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.fluent import apply_focus_indicator, apply_label_role
@@ -69,6 +70,43 @@ class AppManagerItemDelegate(TreeItemDelegate):
         super().initStyleOption(option, index)
         option.font = cast(QWidget, self.parent()).font()
         option.fontMetrics = QFontMetrics(option.font)
+
+    def sizeHint(self, option, index):
+        size = super().sizeHint(option, index)
+        font_height = QFontMetrics(cast(QWidget, self.parent()).font()).height()
+        size.setHeight(max(size.height(), 48, font_height + 24))
+        return size
+
+
+class AppManagerStatusLabel(CaptionLabel):
+    """状态只占筛选栏一行，省略仅作用于绘制，完整信息保留供悬停和辅助技术读取。"""
+
+    def setText(self, text: str) -> None:
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+
+    def sizeHint(self) -> QSize:
+        width = self.fontMetrics().horizontalAdvance(
+            tr("已加载 {value0} 个应用").format(value0=9999)
+        )
+        return QSize(width + 8, super().sizeHint().height())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(self.fontMetrics().horizontalAdvance("…") + 8, self.sizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(BaseStyles.get_color("TEXT_SECONDARY"))
+        painter.drawText(
+            self.contentsRect(), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            self.fontMetrics().elidedText(
+                self.text().replace("\n", " "), Qt.TextElideMode.ElideRight,
+                self.contentsRect().width(),
+            ),
+        )
+        painter.end()
 
 
 class AppManagerForm:
@@ -130,6 +168,7 @@ class AppManagerForm:
         self._frame._top_layout.setSpacing(6)
         self._frame._search_label = apply_label_role(BodyLabel(tr("搜索")), FontRole.UI)
         self._frame.search_input = LineEdit()
+        self._frame.search_input.setMinimumWidth(160)
         self._frame.search_input.setPlaceholderText(tr("搜索应用名称或包名"))
         self._frame._search_label.setBuddy(self._frame.search_input)
         self._frame.search_input.setAccessibleName(tr("搜索应用"))
@@ -144,7 +183,22 @@ class AppManagerForm:
         self._frame.type_filter.setAccessibleName(tr("筛选应用类型"))
         self._frame.type_filter.currentIndexChanged.connect(self._frame._filter)
         self._frame.selection_label = apply_label_role(BodyLabel(tr("已选 0 项")), FontRole.UI)
-        self._frame.selection_label.setMinimumWidth(82)
+        self._frame.selection_label.setSizePolicy(
+            QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred,
+        )
+        self._frame.status_bar = apply_label_role(
+            AppManagerStatusLabel(tr("就绪")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
+        )
+        self._frame.status_bar.setAccessibleName(tr("应用管理状态"))
+        self._frame.status_bar.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred,
+        )
+        self._frame._summary_group = QWidget()
+        summary_layout = QHBoxLayout(self._frame._summary_group)
+        summary_layout.setContentsMargins(0, 0, 0, 0)
+        summary_layout.setSpacing(12)
+        summary_layout.addWidget(self._frame.status_bar, 1)
+        summary_layout.addWidget(self._frame.selection_label)
         self._frame.view_toggle = TransparentToolButton()
         self._frame.view_toggle.setFixedSize(28, 28)
         self._frame.view_toggle.setToolTip(tr("切换图标或列表视图"))
@@ -165,12 +219,12 @@ class AppManagerForm:
             self._frame.search_input,
             self._frame._type_label,
             self._frame.type_filter,
-            self._frame.selection_label,
+            self._frame._summary_group,
             self._frame.view_toggle,
             self._frame.refresh_btn,
         )
         for control in self._frame._top_controls:
-            if control is not self._frame.search_input:
+            if control not in (self._frame.search_input, self._frame._summary_group):
                 control.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         layout.addLayout(self._frame._top_layout)
         self._frame._reflow_top_controls()
@@ -239,25 +293,44 @@ class AppManagerForm:
         )
         self._frame.stack.addWidget(self._frame.tree)
 
-        self._frame.icon_list = ListWidget()
-        self._frame.icon_list.setViewMode(ListWidget.ViewMode.IconMode)
-        self._frame.icon_list.setResizeMode(ListWidget.ResizeMode.Adjust)
-        self._frame.icon_list.setIconSize(QSize(48, 48))
-        self._frame.icon_list.setSpacing(4)
-        self._frame.icon_list.setGridSize(QSize(110, 80))
-        self._frame.icon_list.setWordWrap(True)
-        self._frame.icon_list.setMovement(ListWidget.Movement.Static)
+        self._frame.icon_list = AppManagerIconView()
+        icons = self._frame.icon_list
+        icons.setObjectName("appManagerIconList")
+        icons.setColumnCount(4)
+        icons.setHeaderLabels([tr("图标"), tr("应用名称"), tr("包名"), tr("状态")])
+        icons.setItemDelegate(AppManagerRowDelegate(icons))
+        icons.setRootIsDecorated(False)
+        icons.setIndentation(0)
+        icons.setItemsExpandable(False)
+        icons.setUniformRowHeights(True)
+        icons.setEditTriggers(QTreeView.EditTrigger.NoEditTriggers)
+        icons.setSelectionBehavior(QTreeView.SelectionBehavior.SelectRows)
+        icons.setAlternatingRowColors(True)
+        icons.setIconSize(QSize(32, 32))
+        icons.setWordWrap(False)
+        icons.setHorizontalScrollMode(QTreeView.ScrollMode.ScrollPerPixel)
+        header = icons.header()
+        header.setStretchLastSection(False)
+        header.setSectionsMovable(False)
+        header.setMinimumSectionSize(48)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        icons.headerItem().setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
+        for column, width in enumerate((64, 220, 320, 110)):
+            icons.setColumnWidth(column, width)
+        icons.enable_auto_column_fill()
         self._frame.icon_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._frame.icon_list.customContextMenuRequested.connect(self._frame._icon_context_menu)
         self._frame.icon_list.itemDoubleClicked.connect(self._frame._icon_double_click)
-        self._frame.icon_list.setSelectionMode(ListWidget.SelectionMode.ExtendedSelection)
+        self._frame.icon_list.setSelectionMode(QTreeView.SelectionMode.ExtendedSelection)
         self._frame.icon_list.itemSelectionChanged.connect(self._frame._on_icon_selection_changed)
         self._frame.icon_list.verticalScrollBar().valueChanged.connect(
             lambda _value: self._frame._schedule_visible_detail_load()
         )
         self._frame.stack.addWidget(self._frame.icon_list)
+        self._material = AppManagerMaterial(self._frame, (self._frame.tree, icons))
 
-        self._frame._view_mode = False  # False 表示表格视图，True 表示图标视图
+        self._frame._view_mode = False  # False 表示表格视图，True 表示四列图文视图
         layout.addWidget(self._frame.stack, 2)
 
         bar = CommandBar(self._frame._master_panel)
@@ -339,12 +412,6 @@ class AppManagerForm:
             self._frame._command_icons.append((action, icon))
         layout.addWidget(bar)
 
-        self._frame.status_bar = apply_label_role(
-            CaptionLabel(tr("就绪")), FontRole.UI_SMALL, color_key="TEXT_SECONDARY"
-        )
-        self._frame.status_bar.setAccessibleName(tr("应用管理状态"))
-        self._frame.status_bar.setWordWrap(True)
-        layout.addWidget(self._frame.status_bar)
         self._frame._update_selection_ui()
         self._frame._reflow_action_buttons()
 
@@ -365,19 +432,14 @@ class AppManagerForm:
         bs = BaseStyles
         ui_font = bs.font_for_role(FontRole.UI)
         self._frame.setFont(ui_font)
-        # 布局面板透出宿主材质，表格与日志仍分别维护自己的可读底色。
+        # 布局面板与列表共用宿主材质，关闭云母时由局部表面恢复主题底色。
         self._frame._master_panel.setStyleSheet(
             "QWidget#appManagerMasterPanel {"
             "background-color: transparent;"
             "}"
         )
-        bg = bs.color("INPUT_BG")
-        fg = bs.color("TEXT_PRIMARY")
-        border = bs.color("BORDER_COLOR")
         self._frame.load_error_label.setFont(bs.font_for_role(FontRole.UI_SMALL))
         self._frame.retry_btn.setFont(ui_font)
-        # 上游树控件的透明普通行与 Qt AlternateBase 在切换主题后可能反色。
-        # 同时声明两套局部实色，并保留 Fluent 的表头、选中态和复选委托。
         self._frame.tree.setFont(ui_font)
         self._frame.tree.header().setFont(ui_font)
         for column in range(self._frame.model.columnCount()):
@@ -387,36 +449,21 @@ class AppManagerForm:
         metrics = QFontMetrics(ui_font)
         self._frame.tree.setColumnWidth(4, max(96, metrics.horizontalAdvance(tr("已停用")) + 40))
         self._frame.tree.setColumnWidth(5, max(80, metrics.horizontalAdvance(tr("厂商")) + 40))
-        row_height = max(36, QFontMetrics(ui_font).height() + 12)
-        header_font_size = (
-            f"{ui_font.pointSizeF()}pt" if ui_font.pointSizeF() > 0 else f"{ui_font.pixelSize()}px"
-        )
-        styles = []
-        for theme in ("Light", "Dark"):
-            styles.append(
-                "QTreeView#appManagerTable {"
-                f"background-color: {bs.color_for(theme, 'INPUT_BG')};"
-                f"alternate-background-color: {bs.color_for(theme, 'INPUT_BG_HOVER')};"
-                f"border: 1px solid {bs.color_for(theme, 'BORDER_COLOR')};"
-                f"border-radius: {bs.RADIUS_MD}px;"
-                "} QTreeView#appManagerTable::item {"
-                f"height: {row_height}px;"
-                "} QHeaderView, QHeaderView::section {"
-                f"font-size: {header_font_size};"
-                "}"
-            )
-        setCustomStyleSheet(self._frame.tree, styles[0], styles[1])
-        self._frame.icon_list.setStyleSheet(
-            "QListWidget { background-color:"
-            f"{bg}; color:{fg}; border:1px solid {border}; border-radius:{bs.RADIUS_MD}px; "
-            "} QListWidget::item:selected { background-color:"
-            f"{bs.color('SELECTION_BG')}; color:{bs.color('SELECTION_TEXT')}; border-radius:4px"
-            "; }"
-        )
+        for index in range(self._frame.icon_list.topLevelItemCount()):
+            item = self._frame.icon_list.topLevelItem(index)
+            color = "TEXT_DISABLED" if item.data(0, STATUS_ROLE) == "Disabled" else "TEXT_PRIMARY"
+            item.setForeground(1, bs.get_color(color))
+        self._frame.icon_list.viewport().update()
         # 状态信息直接使用 qfluentwidgets CaptionLabel。
         for control in self._frame._top_controls:
             control.setFont(ui_font)
             control.updateGeometry()
+        self._frame.selection_label.setFont(ui_font)
+        self._frame.status_bar.setFont(bs.font_for_role(FontRole.UI_SMALL))
+        self._frame._summary_group.setMaximumWidth(
+            self._frame.status_bar.sizeHint().width()
+            + max(82, self._frame.selection_label.sizeHint().width()) + 12
+        )
         # Fluent LineEdit 默认固定为 33px，大字体须重新按实际内容高度留白。
         editor = self._frame.search_input
         editor.setFont(ui_font)
@@ -435,6 +482,7 @@ class AppManagerForm:
         self._frame._reflow_action_buttons()
         self._apply_header_style()
         self._update_view_geometry()
+        self._material.refresh(force=True)
 
     def _update_view_geometry(self) -> None:
         """保留可读的列表视口，超出小工作区的动作区域由宿主外层滚动承接。"""
@@ -457,20 +505,16 @@ class AppManagerForm:
         icons = self._frame.icon_list
         font = BaseStyles.font_for_role(FontRole.UI)
         icons.setFont(font)
-        metrics = QFontMetrics(font)
-        spacing = icons.spacing()
-        grid = QSize(
-            max(128, metrics.horizontalAdvance(tr("应用名称")) + 24),
-            icons.iconSize().height() + metrics.height() * 2 + 16,
-        )
-        icons.setGridSize(grid)
-        for index in range(icons.count()):
-            item = icons.item(index)
-            item.setFont(font)
-            item.setSizeHint(grid - QSize(spacing * 2, spacing * 2))
+        icons.header().setFont(font)
+        row_height = AppManagerRowDelegate.row_height(font)
+        for index in range(icons.topLevelItemCount()):
+            item = icons.topLevelItem(index)
+            for column in range(4):
+                item.setFont(column, font)
+        icons.doItemsLayout()
         icons.setMinimumHeight(
-            grid.height() * 2 + spacing * 2 + 2 * icons.frameWidth()
-            + icons.horizontalScrollBar().sizeHint().height()
+            row_height * 2 + icons.header().sizeHint().height()
+            + 2 * icons.frameWidth() + icons.horizontalScrollBar().sizeHint().height()
         )
         self._frame._master_panel.updateGeometry()
         self._frame.updateGeometry()
@@ -532,7 +576,18 @@ class AppManagerForm:
             return max(1, surface.contentsRect().width())
         margins = layout.contentsMargins()
         if not getattr(self._frame, "_details_open", False):
-            surface_width = self._frame.contentsRect().width()
+            page_margins = self._frame._page_layout.contentsMargins()
+            page_width = self._frame.contentsRect().width()
+            ancestor = self._frame.parentWidget()
+            while ancestor is not None:
+                if isinstance(ancestor, QAbstractScrollArea):
+                    # 页面可能已被旧布局的最小宽度撑大，断点必须受真实宿主视口约束。
+                    page_width = min(page_width, ancestor.viewport().width())
+                    break
+                ancestor = ancestor.parentWidget()
+            surface_width = (
+                page_width - page_margins.left() - page_margins.right()
+            )
         else:
             surface_width = surface.contentsRect().width()
         return max(1, surface_width - margins.left() - margins.right())
@@ -598,7 +653,7 @@ class AppManagerForm:
             self._frame._top_layout.addWidget(self._frame._search_control, 0, 1, 1, 4)
             self._frame._top_layout.addWidget(self._frame._type_label, 1, 0)
             self._frame._top_layout.addWidget(self._frame.type_filter, 1, 1)
-            self._frame._top_layout.addWidget(self._frame.selection_label, 1, 2)
+            self._frame._top_layout.addWidget(self._frame._summary_group, 1, 2)
             self._frame._top_layout.addWidget(self._frame.view_toggle, 1, 3)
             self._frame._top_layout.addWidget(self._frame.refresh_btn, 1, 4)
             self._frame._top_layout.setColumnStretch(2, 1)
@@ -608,7 +663,14 @@ class AppManagerForm:
         self._frame._top_layout.addWidget(self._frame._search_control, 0, 1, 1, 2)
         self._frame._top_layout.addWidget(self._frame._type_label, 1, 0)
         self._frame._top_layout.addWidget(self._frame.type_filter, 1, 1, 1, 2)
-        self._frame._top_layout.addWidget(self._frame.selection_label, 2, 0)
+        if not self._frame._top_controls_fit(3):
+            # 极窄视口或大字体时优先保全选择数量与操作入口，摘要仍留在筛选区。
+            self._frame._top_layout.addWidget(self._frame._summary_group, 2, 0, 1, 3)
+            self._frame._top_layout.addWidget(self._frame.view_toggle, 3, 1)
+            self._frame._top_layout.addWidget(self._frame.refresh_btn, 3, 2)
+            self._frame._top_layout.setColumnStretch(0, 1)
+            return
+        self._frame._top_layout.addWidget(self._frame._summary_group, 2, 0)
         self._frame._top_layout.addWidget(self._frame.view_toggle, 2, 1)
         self._frame._top_layout.addWidget(self._frame.refresh_btn, 2, 2)
         self._frame._top_layout.setColumnStretch(2, 1)

@@ -12,6 +12,7 @@ import time
 from typing import Literal, overload
 
 from core.adb_runtime import native_capture
+from core.native_process import popen_native, run_native
 from mobileperf.android.adb_execution import MobilePerfAdbExecutor
 from mobileperf.android.globaldata import RuntimeData
 from mobileperf.common.log import logger
@@ -167,8 +168,9 @@ class ADB:
             raw_result = (result.stdout or result.stderr).decode("utf-8", errors="ignore")
             returncode = result.returncode
         else:
-            proc = subprocess.run(
+            proc = run_native(
                 [ADB.get_adb_path(), "devices"],
+                isolate=True,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -197,8 +199,9 @@ class ADB:
     @staticmethod
     def kill_server():
         logger.warning("kill-server")
-        subprocess.run(
+        run_native(
             [ADB.get_adb_path(), "kill-server"],
+            isolate=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=10,
@@ -210,8 +213,9 @@ class ADB:
     def start_server():
         ADB.killOccupy5037Process()
         logger.warning("fork-server")
-        subprocess.run(
+        run_native(
             [ADB.get_adb_path(), "fork-server", "server", "-a"],
+            isolate=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=10,
@@ -314,8 +318,9 @@ class ADB:
             out, error = raw.stdout, raw.stderr
             returncode = raw.returncode
         else:
-            process = subprocess.Popen(
+            process = popen_native(
                 cmdlet,
+                isolate=True,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT if kwds.get("merge_stderr", False) else subprocess.PIPE,

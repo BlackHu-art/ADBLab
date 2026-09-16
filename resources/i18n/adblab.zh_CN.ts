@@ -4091,8 +4091,8 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <translation>让 ADBLab 保持在其他窗口上方</translation>
         </message>
         <message>
-            <source>让窗口和表面呈现半透明材质</source>
-            <translation>让窗口和表面呈现半透明材质</translation>
+            <source>使用 Windows 云母材质，底色随主题和桌面壁纸变化</source>
+            <translation>使用 Windows 云母材质，底色随主题和桌面壁纸变化</translation>
         </message>
         <message>
             <source>让镜像窗口保持在其他窗口上方</source>
@@ -6301,6 +6301,14 @@ Android 设备管理、应用操作与诊断工作台</translation>
         <message>
             <source>Count</source>
             <translation>计数</translation>
+        </message>
+        <message>
+            <source>系统拒绝通过 ADB 清除应用数据。请在手机的应用信息页手动清除；若入口也受限，请联系设备管理员或系统厂商。</source>
+            <translation>系统拒绝通过 ADB 清除应用数据。请在手机的应用信息页手动清除；若入口也受限，请联系设备管理员或系统厂商。</translation>
+        </message>
+        <message>
+            <source>图标</source>
+            <translation>图标</translation>
         </message>
     </context>
 </TS>

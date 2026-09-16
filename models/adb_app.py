@@ -8,9 +8,12 @@ import re
 import shlex
 import shutil
 
+from PySide6.QtCore import QCoreApplication
+
 from adblab.application.cancellation import CancellationError, CancellationToken
 from core.adb_query import query_timeout
 from core.exec import CommandRunner
+from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from utils.adb_values import normalize_android_package
 
 from .adb_model import ADBModelCore, async_command
@@ -168,13 +171,22 @@ class ADBApp(ADBModelCore):
 
     @async_command
     def clear_app_data_async(self, device_ip: str, package_name: str, idx: int) -> dict:
-        return self._run(
+        """清数据只执行一次；权限拒绝附加操作提示，完整错误仍由结果记录保留。"""
+        result = self._run(
             ["adb", "-s", device_ip, "shell", "pm", "clear", shlex.quote(package_name)],
             timeout=30,
             device_ip=device_ip,
             package_name=package_name,
             index=idx,
         )
+        if not result.get("success") and not (result.get("cancelled") or result.get("stale")):
+            error_code = clear_data_error_code(result.get("output", ""), result.get("error", ""))
+            if error_code:
+                result["error_code"] = error_code
+                result["user_message"] = QCoreApplication.translate(
+                    "ADBLab", CLEAR_DATA_PERMISSION_MESSAGE,
+                )
+        return result
 
     @async_command
     def restart_app_async(self, device_ip: str, package_name: str, index: int) -> dict:

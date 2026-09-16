@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from PySide6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontMetricsF, QPainter
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter
 from PySide6.QtWidgets import QScrollArea, QVBoxLayout, QWidget
 
 from gui.i18n import tr
@@ -118,6 +118,7 @@ class PerfChartView(QWidget):
         self._chart.legend().setLabelColor(text)
         self._chart.legend().setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         for axis in self._chart.axes():
+            axis.setTitleBrush(QColor(BaseStyles.color("TEXT_SECONDARY")))
             axis.setLabelsColor(BaseStyles.color("TEXT_SECONDARY"))
             axis.setLabelsFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
             axis.setLinePenColor(BaseStyles.color("BORDER_COLOR"))

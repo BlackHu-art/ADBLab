@@ -82,20 +82,21 @@ class AppManagerIcons(QObject):
         if item is None:
             return
         if package in self.cache:
-            item.setIcon(self.cache[package])
+            item.setIcon(0, self.cache[package])
             self.cache.move_to_end(package)
-        elif package in self.failures and tr("图标未读取") not in item.toolTip():
-            item.setToolTip(item.toolTip() + tr("\n图标未读取，点击刷新重试。"))
+        elif package in self.failures and tr("图标未读取") not in item.toolTip(0):
+            for column in range(4):
+                item.setToolTip(column, item.toolTip(column) + tr("\n图标未读取，点击刷新重试。"))
 
     def _visible_packages(self) -> list[str]:
         view = self.page.icon_list
         viewport = view.viewport().rect()
         packages = []
-        for index in range(view.count()):
-            item = view.item(index)
+        for index in range(view.topLevelItemCount()):
+            item = view.topLevelItem(index)
             if item.isHidden() or not viewport.intersects(view.visualItemRect(item)):
                 continue
-            package = item.data(Qt.ItemDataRole.UserRole)
+            package = item.data(0, Qt.ItemDataRole.UserRole)
             if package in self.cache:
                 self.cache.move_to_end(package)
             elif package and package not in self.failures and package not in self._pending:

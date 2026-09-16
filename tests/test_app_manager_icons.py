@@ -79,8 +79,8 @@ def populate(window, count=1, prefix="example.app"):
 def test_icon_view_fetches_real_image_and_keeps_selection_and_cache(page, qt_application):
     window, workers = page
     populate(window)
-    item = window.icon_list.item(0)
-    package = item.data(Qt.ItemDataRole.UserRole)
+    item = window.icon_list.topLevelItem(0)
+    package = item.data(0, Qt.ItemDataRole.UserRole)
     window.model.item(0, 0).setCheckState(Qt.CheckState.Checked)
     window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers), timeout_ms=1000)
@@ -90,7 +90,7 @@ def test_icon_view_fetches_real_image_and_keeps_selection_and_cache(page, qt_app
     assert worker.packages == [package]
     worker.app_icon_loaded.emit(package, png(), "")
     worker.finish()
-    wait_until(qt_application, lambda: item.icon().pixmap(48, 48).toImage().pixelColor(24, 24)
+    wait_until(qt_application, lambda: item.icon(0).pixmap(48, 48).toImage().pixelColor(24, 24)
                == QColor("#e61b72"))
     assert window.selected_packages == {package}
     for _ in range(2):
@@ -107,14 +107,14 @@ def test_icon_requests_follow_viewport_and_filter_instead_of_loading_all_apps(pa
     wait_until(qt_application, lambda: bool(workers))
     first = workers[0]
     visible = {
-        window.icon_list.item(i).data(Qt.ItemDataRole.UserRole)
-        for i in range(window.icon_list.count())
+        window.icon_list.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole)
+        for i in range(window.icon_list.topLevelItemCount())
         if window.icon_list.viewport().rect().intersects(
-            window.icon_list.visualItemRect(window.icon_list.item(i))
+            window.icon_list.visualItemRect(window.icon_list.topLevelItem(i))
         )
     }
     assert set(first.packages) <= visible
-    assert 0 < len(first.packages) <= 12 < window.icon_list.count()
+    assert 0 < len(first.packages) <= 12 < window.icon_list.topLevelItemCount()
     window.search_input.setText("example.app119")
     for package in first.packages:
         first.app_icon_loaded.emit(package, png(), "")
@@ -134,10 +134,10 @@ def test_refresh_discards_old_icon_results_and_requests_new_generation(page, qt_
     old.app_icon_loaded.emit("example.app0", png(), "")
     old.finish()
     wait_until(qt_application, lambda: len(workers) == 2)
-    item = window.icon_list.item(0)
-    assert item.icon().pixmap(48, 48).toImage().pixelColor(24, 24) != QColor("#e61b72")
+    item = window.icon_list.topLevelItem(0)
+    assert item.icon(0).pixmap(48, 48).toImage().pixelColor(24, 24) != QColor("#e61b72")
     workers[1].app_icon_loaded.emit("example.app0", png("#36a960"), "")
-    wait_until(qt_application, lambda: item.icon().pixmap(48, 48).toImage().pixelColor(24, 24)
+    wait_until(qt_application, lambda: item.icon(0).pixmap(48, 48).toImage().pixelColor(24, 24)
                == QColor("#36a960"))
 
 
@@ -146,12 +146,12 @@ def test_failed_icon_keeps_placeholder_and_refresh_allows_retry(page, qt_applica
     populate(window)
     window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
-    item = window.icon_list.item(0)
-    original = item.icon().cacheKey()
+    item = window.icon_list.topLevelItem(0)
+    original = item.icon(0).cacheKey()
     workers[0].app_icon_loaded.emit("example.app0", b"broken image", "")
     workers[0].finish()
-    wait_until(qt_application, lambda: "重试" in item.toolTip())
-    assert item.icon().cacheKey() == original
+    wait_until(qt_application, lambda: "重试" in item.toolTip(0))
+    assert item.icon(0).cacheKey() == original
     populate(window)
     wait_until(qt_application, lambda: len(workers) == 2)
 
@@ -176,8 +176,8 @@ def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_applicati
     populate(window)
     window.view_toggle.click()
     wait_until(qt_application, lambda: bool(workers))
-    item = window.icon_list.item(0)
-    original = item.icon().cacheKey()
+    item = window.icon_list.topLevelItem(0)
+    original = item.icon(0).cacheKey()
     ready = QSignalSpy(window.dispose_ready)
     assert not window.request_dispose()
     worker = workers[0]
@@ -185,7 +185,7 @@ def test_closing_waits_for_icon_worker_and_rejects_late_image(page, qt_applicati
     worker.app_icon_loaded.emit("example.app0", png(), "")
     worker.finish()
     wait_until(qt_application, lambda: ready.count() == 1)
-    assert item.icon().cacheKey() == original
+    assert item.icon(0).cacheKey() == original
 
 
 def test_visible_icons_finish_before_background_detail_queries(page, qt_application):
@@ -208,12 +208,12 @@ def test_icon_view_detail_queries_follow_scrolled_viewport(page, qt_application)
     populate(window, 120)
     window.view_toggle.click()
     wait_for_stable_geometry(qt_application, window.icon_list)
-    window.icon_list.scrollToItem(window.icon_list.item(119))
+    window.icon_list.scrollToItem(window.icon_list.topLevelItem(119))
     wait_for_stable_geometry(qt_application, window.icon_list)
     visible = {
-        item.data(Qt.ItemDataRole.UserRole)
-        for index in range(window.icon_list.count())
-        if (item := window.icon_list.item(index)) is not None
+        item.data(0, Qt.ItemDataRole.UserRole)
+        for index in range(window.icon_list.topLevelItemCount())
+        if (item := window.icon_list.topLevelItem(index)) is not None
         and window.icon_list.viewport().rect().intersects(window.icon_list.visualItemRect(item))
     }
     packages = window._visible_detail_packages()
