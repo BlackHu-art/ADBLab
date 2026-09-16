@@ -9,7 +9,7 @@ from datetime import datetime
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, LineEdit, PlainTextEdit, PushButton
+from qfluentwidgets import BodyLabel, ComboBox, PlainTextEdit, PushButton, SearchLineEdit
 
 from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
@@ -73,7 +73,7 @@ class ActionResultView(QWidget):
         self.detail_host = QWidget()
         detail_layout = QVBoxLayout(self.detail_host)
         detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.search = LineEdit()
+        self.search = SearchLineEdit()
         self.search.setPlaceholderText(tr("查找结果，按 Enter 查找下一处"))
         self.search.setAccessibleName(tr("查找结果"))
         detail_layout.addWidget(self.search)
@@ -113,6 +113,8 @@ class ActionResultView(QWidget):
         self.history.currentIndexChanged.connect(self._choose_history)
         self.targets.currentIndexChanged.connect(self._render_detail)
         self.detail_toggle.toggled.connect(self._toggle_detail)
+        # 正文按原文查找，保留纯空格查询；原生 search() 会先 strip，不适用于此处。
+        self.search.searchButton.clicked.connect(self._find)
         self.search.returnPressed.connect(self._find)
         self.copy_button.clicked.connect(lambda: QApplication.clipboard().setText(self._detail))
         self.export_button.clicked.connect(

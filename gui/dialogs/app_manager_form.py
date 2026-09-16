@@ -26,9 +26,9 @@ from qfluentwidgets import (
     CommandBar,
     InfoBadge,
     InfoLevel,
-    LineEdit,
     PushButton,
     RoundMenu,
+    SearchLineEdit,
     TransparentToolButton,
     TreeItemDelegate,
     TreeView,
@@ -167,12 +167,14 @@ class AppManagerForm:
         self._frame._top_layout = QGridLayout()
         self._frame._top_layout.setSpacing(6)
         self._frame._search_label = apply_label_role(BodyLabel(tr("搜索")), FontRole.UI)
-        self._frame.search_input = LineEdit()
+        self._frame.search_input = SearchLineEdit()
         self._frame.search_input.setMinimumWidth(160)
         self._frame.search_input.setPlaceholderText(tr("搜索应用名称或包名"))
         self._frame._search_label.setBuddy(self._frame.search_input)
         self._frame.search_input.setAccessibleName(tr("搜索应用"))
         self._frame.search_input.textChanged.connect(self._frame._filter)
+        self._frame.search_input.searchSignal.connect(self._frame._filter)
+        self._frame.search_input.returnPressed.connect(self._frame.search_input.search)
         self._frame._type_label = apply_label_role(BodyLabel(tr("类型")), FontRole.UI)
         self._frame.type_filter = ComboBox()
         for label, key in (

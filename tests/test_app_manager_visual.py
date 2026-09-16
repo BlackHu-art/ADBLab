@@ -5,12 +5,66 @@ from PySide6.QtCore import QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QHeaderView, QStyle, QStyleOptionFrame, QStyleOptionViewItem, QWidget
+from qfluentwidgets import SearchLineEdit
 
 from gui.dialogs.app_manager import AppManagerPage
 from gui.pages.workspace_features import WorkspaceFeatureHost
 from gui.styles import BaseStyles
 from gui.styles.fonts import FontMixin
 from tests.ui_geometry_helpers import assert_scroll_target_reachable, wait_until
+
+
+@pytest.mark.ui
+def test_search_buttons_filter_both_views_and_clear_only_text_condition(
+    qt_application, monkeypatch,
+):
+    """原生搜索入口同步两种视图，清空保留类型条件，不重新加载设备应用。"""
+    calls = []
+    original_filter = AppManagerPage._filter
+
+    def filter_apps(page):
+        calls.append(page.search_input.text())
+        original_filter(page)
+
+    monkeypatch.setattr(AppManagerPage, "_filter", filter_apps)
+    loads = []
+    monkeypatch.setattr(AppManagerPage, "_load_apps", lambda page: loads.append(True))
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([
+            ("Alpha", "com.example.alpha", "Enabled", "User"),
+            ("Beta", "com.example.beta", "Enabled", "User"),
+            ("Beta System", "com.example.system", "Enabled", "System"),
+        ])
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        editor = page.search_input
+        assert isinstance(editor, SearchLineEdit)
+        page.type_filter.setCurrentIndex(page.type_filter.findData("User Apps"))
+        editor.setFocus()
+        QTest.keyClicks(editor, "beta")
+        assert page.proxy.rowCount() == 1
+        assert page.proxy.index(0, 1).data() == "Beta"
+        assert [page.icon_list.topLevelItem(i).isHidden() for i in range(3)] == [
+            True, False, True,
+        ]
+        calls.clear()
+        QTest.mouseClick(editor.searchButton, Qt.MouseButton.LeftButton)
+        assert calls == ["beta"]
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        assert calls == ["beta", "beta"]
+        assert editor.clearButton.isVisible()
+        QTest.mouseClick(editor.clearButton, Qt.MouseButton.LeftButton)
+        assert editor.text() == ""
+        assert calls == ["beta", "beta", ""]
+        assert page.proxy.rowCount() == 2
+        assert [page.icon_list.topLevelItem(i).isHidden() for i in range(3)] == [
+            False, False, True,
+        ]
+        assert loads == []
+    finally:
+        page.close()
 
 
 @pytest.mark.ui

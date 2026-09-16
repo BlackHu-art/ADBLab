@@ -3,9 +3,10 @@
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QThread
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtCore import Qt, QThread
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import SearchLineEdit
 
 from adblab.application.action_results import ActionResults, ActionSpec, capture_action_job
 from controllers.action_catalog import ACTION_SIGNALS
@@ -176,6 +177,46 @@ def test_long_text_copy_export_search_and_artifacts_keep_complete_payload(qt_app
         assert len(view.output.toPlainText()) < 64000
         assert view._detail == raw
     finally:
+        view.close()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("query", ["result", " "])
+def test_result_search_button_and_enter_find_once_and_clear_preserves_output(qt_application, query):
+    """正文搜索每次点击或回车只前进一处，清空搜索不清除操作结果。"""
+    view = ActionResultView()
+    store = ActionResults(view.present)
+    jobs = []
+    raw = "alpha result\nbeta result\ngamma result"
+    try:
+        store.run(
+            ActionSpec("report", "apps.reports", "报告", "text"),
+            ("demo",),
+            lambda: jobs.append(capture_action_job("report_async", "demo")),
+        )
+        store.complete(jobs[0], {"success": True, "output": raw})
+        view.resize(640, 600)
+        qt_application.processEvents()
+        assert isinstance(view.search, SearchLineEdit)
+        assert view.search.isVisible()
+        view.search.setFocus()
+        QTest.keyClicks(view.search, query)
+        assert not view.output.textCursor().hasSelection()
+        QTest.mouseClick(view.search.searchButton, Qt.MouseButton.LeftButton)
+        assert view.output.textCursor().selectionStart() == raw.index(query)
+        QTest.keyClick(view.search, Qt.Key.Key_Return)
+        assert view.output.textCursor().selectionStart() == raw.index(query, 12)
+        QTest.keyClick(view.search, Qt.Key.Key_Return)
+        assert view.output.textCursor().selectionStart() == raw.rindex(query)
+        QTest.mouseClick(view.search.searchButton, Qt.MouseButton.LeftButton)
+        assert view.output.textCursor().selectionStart() == raw.index(query)
+        assert view.search.clearButton.isVisible()
+        QTest.mouseClick(view.search.clearButton, Qt.MouseButton.LeftButton)
+        assert view.search.text() == ""
+        assert view.output.toPlainText() == raw
+        assert view._detail == raw
+    finally:
+        store.close()
         view.close()
 
 

@@ -20,9 +20,9 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import (
     BodyLabel,
     ComboBox,
-    LineEdit,
     PlainTextEdit,
     PushButton,
+    SearchLineEdit,
     TableWidget,
     setCustomStyleSheet,
 )
@@ -80,7 +80,7 @@ class RunResultsWidget(QWidget):
         self._filter_layout = QGridLayout(self.filters)
         self._filter_layout.setContentsMargins(0, 0, 0, 0)
         self._filter_layout.setSpacing(8)
-        self.search_edit = LineEdit(self.filters)
+        self.search_edit = SearchLineEdit(self.filters)
         self.search_edit.setPlaceholderText(tr("搜索应用或日期"))
         self.search_edit.setAccessibleName(tr("搜索应用或日期"))
         self.search_edit.setClearButtonEnabled(True)
@@ -178,6 +178,9 @@ class RunResultsWidget(QWidget):
         layout.addWidget(self.details)
 
         self.search_edit.textChanged.connect(self.refresh)
+        self.search_edit.returnPressed.connect(self.search_edit.search)
+        # 搜索图标与 Enter 只重查已有结果；清空仍由 textChanged 撤销文字条件。
+        self.search_edit.searchSignal.connect(self.refresh)
         self.kind_combo.currentIndexChanged.connect(self.refresh)
         self.state_combo.currentIndexChanged.connect(self.refresh)
         self.table.itemSelectionChanged.connect(self._selection_changed)

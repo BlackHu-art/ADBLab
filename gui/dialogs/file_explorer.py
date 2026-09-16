@@ -27,6 +27,7 @@ from qfluentwidgets import (
     PlainTextEdit,
     PushButton,
     RoundMenu,
+    SearchLineEdit,
     TableWidget,
     TransparentToolButton,
 )
@@ -218,10 +219,13 @@ class FileExplorerPage(QWidget):
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
-        self.search_field = LineEdit()
+        self.search_field = SearchLineEdit()
         self.search_field.setPlaceholderText(tr("Search..."))
         self.search_field.setAccessibleName(tr("File search"))
         self.search_field.textChanged.connect(self._filter)
+        self.search_field.returnPressed.connect(self.search_field.search)
+        # 显式搜索沿用当前目录的本地筛选，不导航或重新读取设备目录。
+        self.search_field.searchSignal.connect(self._filter)
         layout.addLayout(self._path_layout)
 
         self._path_navigation = QWidget(self)
