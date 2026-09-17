@@ -6466,5 +6466,57 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>未找到应用</source>
             <translation>未找到应用</translation>
         </message>
+        <message>
+            <source>该操作正在进行，请等待完成。</source>
+            <translation>该操作正在进行，请等待完成。</translation>
+        </message>
+        <message>
+            <source>导出完成</source>
+            <translation>导出完成</translation>
+        </message>
+        <message>
+            <source>结果文件已保存。</source>
+            <translation>结果文件已保存。</translation>
+        </message>
+        <message>
+            <source>发现应用异常</source>
+            <translation>发现应用异常</translation>
+        </message>
+        <message>
+            <source>可在设置中查看详情或导出诊断。</source>
+            <translation>可在设置中查看详情或导出诊断。</translation>
+        </message>
+        <message>
+            <source>部分操作失败</source>
+            <translation>部分操作失败</translation>
+        </message>
+        <message>
+            <source>操作未完成，请查看任务了解原因。</source>
+            <translation>操作未完成，请查看任务了解原因。</translation>
+        </message>
+        <message>
+            <source>请查看任务中的注意事项。</source>
+            <translation>请查看任务中的注意事项。</translation>
+        </message>
+        <message>
+            <source>正在处理，请稍候。</source>
+            <translation>正在处理，请稍候。</translation>
+        </message>
+        <message>
+            <source>成功 {count} 台</source>
+            <translation>成功 {count} 台</translation>
+        </message>
+        <message>
+            <source>失败 {count} 台</source>
+            <translation>失败 {count} 台</translation>
+        </message>
+        <message>
+            <source>未完成 {count} 台</source>
+            <translation>未完成 {count} 台</translation>
+        </message>
+        <message>
+            <source>详情已记录，可在任务中心查看。</source>
+            <translation>详情已记录，可在任务中心查看。</translation>
+        </message>
     </context>
 </TS>

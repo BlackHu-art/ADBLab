@@ -303,7 +303,9 @@ def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkey
     store.complete(jobs[0], {"success": False, "error": "请重新检测 ADB 环境"})
     assert store.recent()[0].spec.section == "settings.maintenance"
     assert notices[-1][1]["level"] == "error"
-    assert "请重新检测" in notices[-1][0][2]
+    assert "请重新检测" not in notices[-1][0][2]
+    assert "请重新检测 ADB 环境" in store.recent()[0].items[0].detail
+    assert notices[-1][1]["action_text"] == "查看任务"
     assert frame.stackedWidget.currentWidget() is frame._settings_page
     notices[-1][1]["on_action"]()
     assert frame._task_page.isVisibleTo(frame)
@@ -367,7 +369,36 @@ def test_toast_counts_devices_and_task_labels_survive_new_selection(result_frame
     assert result.targets == ("demo-c", "demo-a")
     assert notices[-1][1]["level"] == "warning"
     assert "成功 1 台 · 失败 1 台" in notices[-1][0][2]
+    assert "0 台" not in notices[-1][0][2]
     assert "设备 3 · Phone" in frame.left_panel._apps_tab.diagnostic_results.targets.itemText(0)
+
+
+@pytest.mark.parametrize("payload,level,summary", [
+    ({"success": True}, "success", "成功 2 台"),
+    ({"success": False, "error": "adb: transport error"}, "error", "失败 2 台"),
+    ({"success": False, "cancelled": True}, "info", "未完成 2 台"),
+])
+def test_terminal_toast_reports_only_relevant_device_counts(
+    result_frame, monkeypatch, payload, level, summary,
+):
+    notices, jobs = [], []
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
+    result_frame._action_feedback.dispatch(
+        ActionSpec("probe", "system.shell", "查询"),
+        lambda devices: jobs.extend(
+            capture_action_job("query_async", device) for device in devices
+        ),
+        (["demo-a", "demo-b"],),
+    )
+    for job in jobs:
+        result_frame.adb_controller.action_results.complete(job, payload)
+
+    message = notices[-1][0][2]
+    assert summary in message
+    assert "0 台" not in message
+    assert "adb: transport error" not in message
+    assert notices[-1][1]["level"] == level
+    assert notices[-1][1]["key"] == jobs[0].request_id
 
 
 def test_dispatch_copies_and_deduplicates_targets_before_handler(result_frame):
@@ -543,3 +574,38 @@ def test_later_success_does_not_replace_an_independent_failure_notice(result_fra
     presenter.record_notice("probe", "操作", "second item succeeded", "success", notify=True)
     notices = [n for n in result_frame.findChildren(ToastNotification) if n.isVisible()]
     assert {notice.level for notice in notices} == {"error", "success"}
+
+
+@pytest.mark.parametrize("content,summarized", [
+    ("请先填写应用包名，再启动测试。", False),
+    ("设备连接已断开，请重新连接后重试。", False),
+    ("  请先选择应用。\n", False),
+    ("x" * 160, False),
+    ("x" * 161, True),
+    ("ADB 执行失败\nPermission denied", True),
+])
+def test_page_notice_keeps_short_guidance_and_moves_long_details_to_exact_task(
+    result_frame, monkeypatch, content, summarized,
+):
+    notices = []
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
+    original_page = result_frame.stackedWidget.currentWidget()
+    result_frame._action_feedback.record_notice(
+        "probe", "应用操作", content, "warning", notify=True,
+    )
+
+    result = result_frame.adb_controller.action_results.recent()[0]
+    assert content.strip() == result.items[-1].detail.strip()
+    message, options = notices[-1][0][2], notices[-1][1]
+    assert options["level"] == "warning"
+    assert options["action_text"] == "查看任务"
+    if summarized:
+        assert message == "详情已记录，可在任务中心查看。"
+        assert content not in message
+    else:
+        assert message == content.strip()
+    assert result_frame.stackedWidget.currentWidget() is original_page
+
+    options["on_action"]()
+    assert result_frame._task_page.isVisibleTo(result_frame)
+    assert result_frame._task_page.action_results._selected == result.request_id

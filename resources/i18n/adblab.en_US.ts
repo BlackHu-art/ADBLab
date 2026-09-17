@@ -6466,5 +6466,57 @@ Android device management, apps and diagnostics</translation>
             <source>未找到应用</source>
             <translation>App not found</translation>
         </message>
+        <message>
+            <source>该操作正在进行，请等待完成。</source>
+            <translation>This operation is still running. Please wait for it to finish.</translation>
+        </message>
+        <message>
+            <source>导出完成</source>
+            <translation>Export complete</translation>
+        </message>
+        <message>
+            <source>结果文件已保存。</source>
+            <translation>The result file has been saved.</translation>
+        </message>
+        <message>
+            <source>发现应用异常</source>
+            <translation>Application issue detected</translation>
+        </message>
+        <message>
+            <source>可在设置中查看详情或导出诊断。</source>
+            <translation>View details or export diagnostics in Settings.</translation>
+        </message>
+        <message>
+            <source>部分操作失败</source>
+            <translation>Some operations failed</translation>
+        </message>
+        <message>
+            <source>操作未完成，请查看任务了解原因。</source>
+            <translation>The operation could not be completed. See the task for details.</translation>
+        </message>
+        <message>
+            <source>请查看任务中的注意事项。</source>
+            <translation>See the task for items that need your attention.</translation>
+        </message>
+        <message>
+            <source>正在处理，请稍候。</source>
+            <translation>Working. Please wait.</translation>
+        </message>
+        <message>
+            <source>成功 {count} 台</source>
+            <translation>Succeeded: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>失败 {count} 台</source>
+            <translation>Failed: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>未完成 {count} 台</source>
+            <translation>Incomplete: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>详情已记录，可在任务中心查看。</source>
+            <translation>Details were recorded. View them in Task Center.</translation>
+        </message>
     </context>
 </TS>

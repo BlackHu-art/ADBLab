@@ -177,7 +177,7 @@ def _apply_role_font(widget: QWidget, role: FontRole) -> None:
 
 
 class FluentMessageBox:
-    """兼容各页的消息提示入口，统一显示非阻塞的窗口右上角 Toast。"""
+    """兼容各页的消息提示入口，统一显示非阻塞的窗口右下角 Toast。"""
 
     @staticmethod
     def _show(parent: QWidget, title: str, content: str, level: MessageLevel) -> None:
