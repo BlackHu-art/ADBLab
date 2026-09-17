@@ -7,6 +7,7 @@ import pytest
 from PySide6.QtCore import QRunnable
 from PySide6.QtTest import QSignalSpy
 
+from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
 from models.adb_testing import ADBTesting
@@ -149,7 +150,7 @@ def _controller(model, tmp_path):
     controller.log_service = Mock()
     controller._emit_operation = Mock()
     controller._get_screenshot_dir = Mock(return_value=str(tmp_path))
-    controller._monkey_running = set()
+    controller.monkey_batches = MonkeyBatchCoordinator()
     controller._monkey_lock = threading.RLock()
     return controller
 
@@ -170,8 +171,7 @@ def test_controller_submission_failure_finishes_target_and_preserves_other_batch
         "batch-new",
     )
 
-    assert not controller._monkey_running
-    assert not controller._monkey_batch_by_device
+    assert not controller.monkey_batches.pending()
     assert finished.count() == 1 and finished.at(0) == ["batch-new", "demo-a"]
     if failure == "registration":
         submit.assert_not_called()
@@ -200,7 +200,7 @@ def test_controller_registers_before_dispatch_so_immediate_stop_is_retained(
     assert len(results) == 1 and not results[0]["success"]
     model._procs.start.assert_not_called()
     controller._process_run_monkey_test_result(results[0])
-    assert not controller._monkey_running
+    assert not controller.monkey_batches.pending()
 
 
 def test_shutdown_clears_queued_batches_and_rejects_future_registration(model):

@@ -13,6 +13,7 @@ from gui.dialogs.fluent_dialog import FluentInputDialog, FluentMessageBox
 from gui.i18n import tr
 from gui.run_library import RunLibraryController
 from gui.styles import BaseStyles, FontRole
+from gui.styles.fluent import set_function_tooltip
 
 
 class RunPresetBar(QWidget):
@@ -40,6 +41,7 @@ class RunPresetBar(QWidget):
         self.combo.setAccessibleName(tr("测试方案"))
         self.load_button = PushButton(tr("载入"), self)
         self.save_button = PushButton(tr("保存方案"), self)
+        set_function_tooltip(self.save_button, "将当前测试参数保存为命名方案")
         self.delete_button = ToolButton(FluentIcon.DELETE, self)
         self.delete_button.setToolTip(tr("删除所选方案"))
         self.delete_button.setAccessibleName(tr("删除所选方案"))

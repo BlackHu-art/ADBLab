@@ -1,14 +1,16 @@
 """应用管理表格材质跟随实际宿主，像素验证不依赖桌面壁纸或真实设备。"""
 
 import pytest
-from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint
+from PySide6.QtCore import QEvent, QItemSelectionModel, QPoint, Qt
 from PySide6.QtGui import QColor, QPainter, QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QVBoxLayout, QWidget
-from qfluentwidgets import TreeView, TreeWidget, setCustomStyleSheet
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QAbstractItemView, QFrame, QTableWidgetItem, QVBoxLayout, QWidget
+from qfluentwidgets import TableWidget, TreeView, TreeWidget, setCustomStyleSheet
 from shiboken6 import isValid
 
 from gui.dialogs.app_manager import AppManagerPage
 from gui.dialogs.app_manager_material import AppManagerMaterial
+from gui.dialogs.file_explorer_list import FileExplorerItemDelegate
 from gui.styles import BaseStyles
 from tests.ui_geometry_helpers import wait_until
 
@@ -100,19 +102,46 @@ def row_pixel(host, view, row):
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("mica", [False, True])
 @pytest.mark.parametrize("view_type", [TreeView, TreeWidget])
-def test_app_views_mica_rows_header_and_blank_reveal_host(material_view, theme, view_type):
-    host, _owner, view, _material = material_view(theme, True, view_type)
+def test_app_views_match_file_table_rows_header_and_blank(
+    material_view, qt_application, theme, mica, view_type,
+):
+    host, owner, view, _material = material_view(theme, mica, view_type)
+    reference = TableWidget(owner)
+    reference.setItemDelegate(FileExplorerItemDelegate(reference))
+    reference.setFrameShape(QFrame.Shape.NoFrame)
+    reference.setColumnCount(2)
+    reference.setHorizontalHeaderLabels(["Name", "Package"])
+    reference.verticalHeader().hide()
+    reference.setRowCount(3)
+    for row in range(3):
+        reference.setItem(row, 0, QTableWidgetItem(f"App {row}"))
+        reference.setItem(row, 1, QTableWidgetItem(f"example.app{row}"))
+    reference.horizontalHeader().setStretchLastSection(True)
+    owner.layout().addWidget(reference)
+    host.resize(660, 720)
+    host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    host.setFocus()
+    QTest.mouseMove(host, QPoint(0, 0))
+    qt_application.processEvents()
     blank = pixel(host, view.viewport(), QPoint(300, view.viewport().height() - 20))
     header = pixel(host, view.header().viewport(), QPoint(view.header().width() - 35, 15))
     ordinary = row_pixel(host, view, 0)
     alternate = row_pixel(host, view, 1)
 
-    assert blank == host.backdrop
-    assert header == host.backdrop
-    assert ordinary == host.backdrop
-    assert alternate != ordinary
-    assert abs(alternate.lightness() - ordinary.lightness()) <= 16
+    reference_blank = pixel(
+        host, reference.viewport(), QPoint(300, reference.viewport().height() - 20),
+    )
+    assert blank == reference_blank == host.backdrop
+    assert header == pixel(
+        host, reference.horizontalHeader().viewport(),
+        QPoint(reference.horizontalHeader().width() - 35, 15),
+    ) == host.backdrop
+    # Fluent 表格从首行绘制条纹，Qt 树视图从第二行开始；比较相同行状态。
+    assert ordinary == row_pixel(host, reference, 1) == host.backdrop
+    assert alternate == row_pixel(host, reference, 0)
+    assert 0 < abs(alternate.lightness() - ordinary.lightness()) <= 6
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
@@ -121,16 +150,16 @@ def test_mica_toggle_refreshes_visible_and_hidden_views(
     material_view, qt_application, theme, view_type,
 ):
     host, owner, view, _material = material_view(theme, False, view_type)
-    opaque = QColor(BaseStyles.color("INPUT_BG"))
-    assert row_pixel(host, view, 0) == opaque
+    assert row_pixel(host, view, 0) == host.backdrop
     host.setMicaEffectEnabled(True)
     wait_until(qt_application, lambda: row_pixel(host, view, 0) == host.backdrop)
 
     owner.hide()
     host.setMicaEffectEnabled(False)
+    host.backdrop = QColor("#906f45")
     qt_application.processEvents()
     owner.show()
-    wait_until(qt_application, lambda: row_pixel(host, view, 0) == opaque)
+    wait_until(qt_application, lambda: row_pixel(host, view, 0) == host.backdrop)
 
 
 @pytest.mark.parametrize("mica", [False, True])
@@ -144,7 +173,7 @@ def test_material_theme_round_trip_keeps_selection_and_item_identity(
     for theme in ("Dark", "Light"):
         BaseStyles.switch_theme(theme)
         qt_application.processEvents()
-        expected = host.backdrop if mica else QColor(BaseStyles.color("INPUT_BG"))
+        expected = host.backdrop
         assert row_pixel(host, view, 0) == expected
         assert view.currentIndex() == index
         selected = row_pixel(host, view, 1)
@@ -170,7 +199,7 @@ def test_reparenting_rebinds_material_to_actual_window(material_view, qt_applica
         wait_until(qt_application, lambda: row_pixel(target, view, 0) == target.backdrop)
         source.setMicaEffectEnabled(True)
         target.setMicaEffectEnabled(False)
-        expected = QColor(BaseStyles.color("INPUT_BG"))
+        expected = target.backdrop
         wait_until(qt_application, lambda: row_pixel(target, view, 0) == expected)
     finally:
         target.close()
@@ -243,7 +272,7 @@ def test_integrated_app_views_reveal_material_and_preserve_selection(
     app_material_view, qt_application, theme, view_name,
 ):
     host, page, view = app_material_view(theme, view_name)
-    assert row_pixel(host, view, 0) == QColor(BaseStyles.color("INPUT_BG"))
+    assert row_pixel(host, view, 0) == host.backdrop
     host.setMicaEffectEnabled(True)
     wait_until(qt_application, lambda: row_pixel(host, view, 0) == host.backdrop)
 
@@ -252,8 +281,7 @@ def test_integrated_app_views_reveal_material_and_preserve_selection(
     alternate = row_pixel(host, view, 1)
     assert header == host.backdrop
     assert blank == host.backdrop
-    assert alternate != host.backdrop
-    assert abs(alternate.lightness() - host.backdrop.lightness()) <= 16
+    assert 0 < abs(alternate.lightness() - host.backdrop.lightness()) <= 6
 
     index = view.model().index(1, 0)
     view.setCurrentIndex(index)
@@ -266,7 +294,7 @@ def test_integrated_app_views_reveal_material_and_preserve_selection(
     assert view.currentIndex() == index
 
     host.setMicaEffectEnabled(False)
-    expected = QColor(BaseStyles.color("INPUT_BG"))
+    expected = host.backdrop
     wait_until(qt_application, lambda: row_pixel(host, view, 0) == expected)
 
 

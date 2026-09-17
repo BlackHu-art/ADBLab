@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-12
+last_verified: 2026-09-17
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -24,7 +24,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ## 第三方 Python 依赖
 
 依赖清单按 `requirements.txt`（运行）、`requirements-build.txt`（构建）、
-`requirements-dev.txt`（开发）逐层包含；精确版本以这些文件为准。
+`requirements-dev.txt`（开发）逐层包含；直接依赖版本以这些文件为准，活动传递依赖由
+`constraints.txt` 固定。约束快照的环境范围和更新方式见 [构建指南](../guides/BUILD_AND_RUN.md#安装)。
 
 | 依赖 | 实际用途 | 证据/备注 |
 | --- | --- | --- |
@@ -33,6 +34,7 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 | PyInstaller | 本地/CI 打包 | `requirements-build.txt`、`ADBLab.spec`、workflow |
 | psutil | TCP 端口占用查找与进程树终止 | `requirements.txt`、`core/process_utils.py` |
 | PySide6-Fluent-Widgets (qfluentwidgets) | 窗口、导航、控件、主题和消息 | `requirements.txt`、`gui/`；许可记录见 [THIRD_PARTY_NOTICES](../../THIRD_PARTY_NOTICES.md) |
+| PySideSix-Frameless-Window (qframelesswindow) | 项目直接使用的无边框对话框 | `requirements.txt`、`gui/dialogs/fluent_dialog.py`；显式声明，避免依赖 Fluent 的传递安装行为 |
 | XlsxWriter 移植副本 | MobilePerf CSV 转 XLSX | `mobileperf/extlib/xlsxwriter/`、`mobileperf/android/excel.py` |
 
 更新检查匿名读取 GitHub 公共 Releases API，仓库与 URL 统一来自 `utils/app_metadata.py`；
@@ -66,8 +68,9 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 ## 外部边界与命令接口
 
-ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 只有桌面 GUI、
-`--mobileperf-worker --config <path>` 和 `--self-check packaging` 三种本地入口。
+ADBLab 不提供 HTTP/REST/WebSocket/RPC 服务。`main.py` 提供桌面 GUI、
+`--mobileperf-worker --config <path>`、`--self-check packaging`，以及隔离原生工具环境的
+内部 `--native-launch` 入口；后者由 `core/native_process.py` 调用，不是用户设备操作接口。
 
 主应用的出站 HTTP 仅限应用更新检查：匿名读取 `utils/app_metadata.py` 中的 GitHub 公共
 Releases API，复用 QtNetwork 与平台 TLS 后端且不携带令牌。About 的 GitHub 链接和 Perfetto

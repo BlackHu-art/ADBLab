@@ -50,13 +50,17 @@ def test_app_panel_cards_belong_to_expected_categories(qt_application):
     panel, apps, _root = _build_apps_panel()
     try:
         expected = {
-            "daily": ("应用包管理", "文本与屏幕", "Monkey", "报告与日志", "性能诊断"),
+            "daily": ("应用包管理", "Monkey", "报告与日志", "性能诊断"),
         }
 
         assert {
             key: _direct_card_titles(apps.category_stack.page(key))
             for key in apps.category_stack.category_keys
         } == expected
+        # 媒体工具由 AppPanel 保有，等待截图页借用，不占应用概览的分类布局。
+        assert apps.text_screen_tools.title == "文本与屏幕"
+        assert apps.text_screen_tools.parentWidget() is apps.text_screen_tools_parking
+        assert apps.text_screen_tools.isHidden()
     finally:
         panel.deleteLater()
         qt_application.processEvents()

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec for ADBLab — ensures resource files are bundled."""
+"""使用公共资源白名单构建 Windows 窗口模式的 onedir 应用。"""
 
 from pathlib import Path
 import subprocess
@@ -7,29 +7,20 @@ import sys
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH)
+sys.path.insert(0, str(ROOT))
+
+from scripts.packaging_manifest import SUBMODULE_PACKAGES, resource_datas
+
 subprocess.run([sys.executable, str(ROOT / 'scripts/build_scrcpy_adb_bridge.py')], check=True)
 
 a = Analysis(
     ['main.py'],
     pathex=[str(ROOT)],
     binaries=[],
-    datas=[
-        ('resources/icons', 'resources/icons'),
-        ('resources/images/gallery_header.png', 'resources/images'),
-        ('resources/images/LICENSE.gallery.txt', 'licenses/gallery'),
-        ('resources/app_settings.json', 'resources'),
-        ('resources/connected_devices.yaml', 'resources'),
-        ('resources/chkbugreport-0.5-215.jar', 'resources'),
-        ('resources/app-icon-helper.jar', 'resources'),
-        ('resources/ZFB.jpg', 'resources'),
-        ('THIRD_PARTY_NOTICES.md', 'licenses'),
-        ('mobileperf/LICENSE', 'licenses/mobileperf'),
-        ('mobileperf/extlib/xlsxwriter/LICENSE.txt', 'licenses/xlsxwriter'),
-        ('icon.ico', '.'),
-        ('scrcpy-win64', 'scrcpy-win64'),
-        ('build/runtime-helpers', 'runtime-helpers'),
+    datas=resource_datas(),
+    hiddenimports=[
+        module for package in SUBMODULE_PACKAGES for module in collect_submodules(package)
     ],
-    hiddenimports=collect_submodules('mobileperf') + collect_submodules('qfluentwidgets'),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -59,7 +50,7 @@ exe = EXE(
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,  # Windows GUI app — no console window
+    console=False,  # Windows 窗口应用不附带控制台。
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

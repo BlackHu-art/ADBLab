@@ -770,6 +770,24 @@ def test_shutdown_registration_failure_does_not_skip_later_sessions(qt_applicati
     second.register_shutdown_tasks.assert_called_once()
 
 
+@pytest.mark.ui
+def test_dispose_failure_does_not_skip_later_sessions(qt_application):
+    registry = FeatureSessionRegistry()
+    first_key = FeatureSessionKey("files", "device-1")
+    second_key = FeatureSessionKey("files", "device-2")
+    first, _ = registry.get_or_create(first_key, _LifecyclePage)
+    second, _ = registry.get_or_create(second_key, _LifecyclePage)
+    first.request_dispose = Mock(side_effect=ValueError("private device details"))
+
+    with pytest.raises(RuntimeError, match="1 session") as error:
+        registry.request_dispose_all()
+
+    assert second.dispose_reasons == ["application_shutdown"]
+    assert registry.get(second_key) is None
+    assert registry.get(first_key) is first
+    assert "private device details" not in str(error.value)
+
+
 def test_narrow_workspace_keeps_function_and_session_device_selection(qt_application):
     host = WorkspaceFeatureHost("system", "系统工具", QWidget())
     host.register_feature("logcat", "实时 Logcat", FluentIcon.SCROLL, _LifecyclePage)

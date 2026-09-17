@@ -79,8 +79,9 @@ class FramelessResizeController(QObject):
         self._scrollbars: WeakSet[ScrollBar] = WeakSet()
         self._scrollbar_parents: WeakSet[QWidget] = WeakSet()
         self._mask_refresh_pending = False
+        self._zone_geometry_state: tuple[int, int, bool] | None = None
         self._mask_refresh_requested.connect(
-            self._refresh_after_child_removal, Qt.ConnectionType.QueuedConnection,
+            self._refresh_pending_hit_masks, Qt.ConnectionType.QueuedConnection,
         )
         edge = Qt.Edge
         cursor = Qt.CursorShape
@@ -137,16 +138,14 @@ class FramelessResizeController(QObject):
                 self._watch_subtree(child)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        """按显隐和几何事件同步输入遮罩，不在运行中重复扫描整棵控件树。"""
+        """按显隐和几何事件标记遮罩失效，同一布局事件批次只排队计算一次。"""
 
         if not isValid(self._window):
             return False
         event_type = event.type()
         if event_type == QEvent.Type.ChildRemoved:
             # 移除事件可能来自半销毁子树；合并到下一事件边界后才读取存活控件几何。
-            if not self._mask_refresh_pending:
-                self._mask_refresh_pending = True
-                self._mask_refresh_requested.emit()
+            self._request_mask_refresh()
         elif isinstance(event, QChildEvent) and event_type in (
             QEvent.Type.ChildAdded,
             QEvent.Type.ChildPolished,
@@ -165,16 +164,22 @@ class FramelessResizeController(QObject):
             # ChildAdded 可能早于 Python 子类构造完成；首次显示时补登记实际类型。
             if isinstance(watched, ScrollBar):
                 self._scrollbars.add(watched)
-                self._refresh_hit_masks()
+                self._request_mask_refresh()
             elif watched is self._window:
                 self.update_geometry()
             elif watched in self._scrollbar_parents:
-                self._refresh_hit_masks()
+                self._request_mask_refresh()
         return False
 
+    def _request_mask_refresh(self) -> None:
+        """合并窗口、滚动条和祖先的重复几何事件，保留最终可见轨道。"""
+        if not self._mask_refresh_pending:
+            self._mask_refresh_pending = True
+            self._mask_refresh_requested.emit()
+
     @Slot()
-    def _refresh_after_child_removal(self) -> None:
-        """销毁完成后收回轨道空洞；窗口删除会一并取消此 QObject 的排队调用。"""
+    def _refresh_pending_hit_masks(self) -> None:
+        """在事件边界读取最终几何；窗口删除会一并取消此 QObject 的排队调用。"""
 
         self._mask_refresh_pending = False
         if isValid(self._window):
@@ -188,7 +193,8 @@ class FramelessResizeController(QObject):
         occupied = QRegion()
         parents: WeakSet[QWidget] = WeakSet()
         for bar in tuple(self._scrollbars):
-            if not isValid(bar) or bar.window() is not self._window:
+            if (not isValid(bar) or bar.window() is not self._window
+                    or not bar.isVisibleTo(self._window)):
                 continue
             rect = QRect(bar.mapTo(self._window, QPoint()), bar.size())
             ancestor = bar.parentWidget()
@@ -198,8 +204,7 @@ class FramelessResizeController(QObject):
                     QRect(ancestor.mapTo(self._window, QPoint()), ancestor.size())
                 )
                 ancestor = ancestor.parentWidget()
-            if bar.isVisibleTo(self._window):
-                occupied |= QRegion(rect)
+            occupied |= QRegion(rect)
         self._scrollbar_parents = parents
         enabled = not self._window.isMaximized() and not self._window.isFullScreen()
         for zone in self._zones.values():
@@ -208,8 +213,11 @@ class FramelessResizeController(QObject):
             available = QRegion(zone.geometry()).subtracted(occupied)
             available.translate(-zone.pos())
             # Qt 把空 mask 解释为未设置遮罩，因此无剩余面积时必须隐藏热区。
-            zone.setMask(available)
-            zone.setVisible(enabled and not available.isEmpty())
+            if zone.mask() != available:
+                zone.setMask(available)
+            visible = enabled and not available.isEmpty()
+            if zone.isHidden() == visible:
+                zone.setVisible(visible)
 
     @property
     def zones(self) -> tuple[QWidget, ...]:
@@ -222,6 +230,12 @@ class FramelessResizeController(QObject):
 
         width = max(0, self._window.width())
         height = max(0, self._window.height())
+        enabled = not self._window.isMaximized() and not self._window.isFullScreen()
+        state = (width, height, enabled)
+        if self._zone_geometry_state == state:
+            self._request_mask_refresh()
+            return
+        self._zone_geometry_state = state
         edge = min(self._edge_width, width, height)
         corner = min(self._corner_size, width, height)
         horizontal_length = max(0, width - corner * 2)
@@ -237,7 +251,6 @@ class FramelessResizeController(QObject):
             "bottom_left": QRect(0, max(0, height - corner), corner, corner),
             "bottom_right": QRect(max(0, width - corner), max(0, height - corner), corner, corner),
         }
-        enabled = not self._window.isMaximized() and not self._window.isFullScreen()
         for name, zone in self._zones.items():
             if not isValid(zone):
                 continue
@@ -245,4 +258,4 @@ class FramelessResizeController(QObject):
             zone.setVisible(enabled)
             if enabled:
                 zone.raise_()
-        self._refresh_hit_masks()
+        self._request_mask_refresh()

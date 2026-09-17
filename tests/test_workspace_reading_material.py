@@ -4,8 +4,8 @@ import pytest
 from PySide6.QtCore import QEvent, QPoint, QSize, Qt
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
-from qfluentwidgets import FluentWindow, PlainTextEdit
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
+from qfluentwidgets import FluentWindow, TableWidget
 
 from gui.styles import BaseStyles
 from tests.test_live_logcat_visual import _contrast
@@ -23,15 +23,15 @@ def _pixel(root, editor):
     return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 
 
-def _native_reader_color(background, application):
+def _file_list_color(background, application):
     host = QWidget()
     host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     palette = host.palette()
     palette.setColor(QPalette.ColorRole.Window, background)
     host.setPalette(palette)
     host.setAutoFillBackground(True)
-    editor = PlainTextEdit(host)
-    editor.setReadOnly(True)
+    editor = TableWidget(host)
+    editor.setFrameShape(QFrame.Shape.NoFrame)
     QVBoxLayout(host).addWidget(editor)
     host.resize(250, 180)
     host.show()
@@ -48,7 +48,7 @@ def _native_reader_color(background, application):
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_workspace_palette_accent_and_mica_round_trip_preserve_native_readers(
+def test_workspace_palette_accent_and_mica_round_trip_preserve_transparent_log(
     qt_application, monkeypatch, theme,
 ):
     monkeypatch.setattr(
@@ -93,7 +93,8 @@ def test_workspace_palette_accent_and_mica_round_trip_preserve_native_readers(
             page.pkg_input.setFocus()
             qt_application.processEvents()
             content = _native_content_color(frame.backgroundColor)
-            expected = content if mica else _native_reader_color(content, qt_application)
+            expected = _file_list_color(content, qt_application)
+            assert expected == content
             frame.activateWindow()
             page.pkg_input.setFocus()
             for control in (page.output, page.output.viewport()):

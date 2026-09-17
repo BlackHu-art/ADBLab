@@ -11,8 +11,10 @@ from typing import TYPE_CHECKING, Protocol
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
+from core.log_service import LogService
 from gui.dialogs.lifecycle import QThreadGroupShutdownTask
-from models.file_explorer_worker import TransferWorker
+from gui.i18n import tr
+from models.file_explorer_worker import ADBWorker, TransferWorker
 
 if TYPE_CHECKING:
     from gui.dialogs.file_explorer import FileExplorerPage
@@ -38,6 +40,7 @@ class FileTransferCoordinator(QObject):
     """GUI 线程调度队列；后台仅请求停止和读取动态资源快照。"""
 
     drain_requested = Signal()
+    start_failed = Signal(object)
 
     def __init__(self, frame: FileExplorerPage, task_supervisor=None):
         super().__init__(frame if isinstance(frame, QObject) else None)
@@ -51,10 +54,12 @@ class FileTransferCoordinator(QObject):
         self._stopping_workers: set[object] = set()
         self._finishing_workers: set[object] = set()
         self._stop_requested_workers: set[object] = set()
+        self._start_failure_pending: set[object] = set()
         self._timer = QTimer(self)
         self._timer.setInterval(25)
         self._timer.timeout.connect(self._poll)
         self.drain_requested.connect(self.cancel_pending, Qt.ConnectionType.QueuedConnection)
+        self.start_failed.connect(self._finish_start_failure, Qt.ConnectionType.QueuedConnection)
 
     @staticmethod
     def worker_active(worker) -> bool:
@@ -111,19 +116,40 @@ class FileTransferCoordinator(QObject):
             if not self._queue:
                 return
             self._active = self._queue.pop(0)
-        setattr(self._active.worker, "_transfer_dispatched", True)
-        self._active.worker.start()
+        worker = self._active.worker
+        setattr(worker, "_transfer_dispatched", True)
+        try:
+            worker.start()
+        except Exception as exc:
+            self._start_failure_pending.add(worker)
+            LogService().log("ERROR", f"文件传输线程启动失败：{type(exc).__name__}")
+            message = tr("无法启动文件传输，请重试。")
+            if isinstance(worker, TransferWorker):
+                worker.result_ready.emit(message, True, "")
+            elif isinstance(worker, ADBWorker):
+                worker.result_ready.emit(message, True)
+            # 业务结果连接使用 QueuedConnection，终态必须排在失败结果之后。
+            self.start_failed.emit(worker)
+
+    def _finish_start_failure(self, worker) -> None:
+        """启动失败也经过同一终态和回收入口，保持批次失败及清理归属。"""
+        self._start_failure_pending.discard(worker)
+        self._frame._prune_worker(worker)
 
     def _terminal(self, entry):
-        try:
-            if entry.on_terminal is not None:
-                entry.on_terminal()
-        finally:
-            if entry.cleanup is not None:
-                entry.cleanup()
+        for name, callback in (("终态", entry.on_terminal), ("清理", entry.cleanup)):
+            if callback is None:
+                continue
+            try:
+                callback()
+            except Exception as exc:
+                # 单项回调失败不能拦住后续清理或传输；未释放的清理义务仍由 holds 保留。
+                LogService().log("ERROR", f"文件传输{name}回调失败：{type(exc).__name__}")
 
     def worker_finished(self, worker) -> bool:
         """在线程和进程均退出后交付一次终态，供页面随后删除线程。"""
+        if worker in self._start_failure_pending:
+            return False
         if self.worker_active(worker):
             # finished 先于原生线程完全 join；先登记等待，不能被第二次存活检查漏掉。
             self._finishing_workers.add(worker)

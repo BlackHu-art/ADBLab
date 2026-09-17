@@ -518,12 +518,12 @@ class MainFrame(FluentWindow):
         else:
             self._stop_scan_thread()
             panel = getattr(self, "left_panel", None)
-            if (
-                panel is not None
-                and getattr(panel, "_device_discovery_state", None) == "scanning"
-            ):
-                connected = list(getattr(panel, "_connected_device_cache", []))
-                panel.set_device_discovery_state("ready" if connected else "empty")
+            if panel is not None:
+                context = panel.device_context_snapshot()
+                if context.discovery_state == "scanning":
+                    panel.set_device_discovery_state(
+                        "ready" if context.connected_devices else "empty"
+                    )
 
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
@@ -918,9 +918,7 @@ class MainFrame(FluentWindow):
             index: int,
             route: str,
         ) -> WorkspaceSectionPage:
-            self.left_panel._ensure_tab_loaded(index)
-            scroll = self.left_panel._tab_scroll_areas[index]
-            content = scroll.takeWidget()
+            scroll, content = self.left_panel.take_overview_content(index)
             if content is None:
                 content = QWidget()
             return WorkspaceSectionPage(
@@ -934,9 +932,9 @@ class MainFrame(FluentWindow):
         system_overview = build_overview(1, "system")
         remote_overview = build_overview(2, "remote")
 
-        apps_panel = self.left_panel._apps_tab
-        system_panel = self.left_panel._advanced_tab
-        remote_panel = self.left_panel._scrcpy_tab
+        apps_panel = self.left_panel.app_panel
+        system_panel = self.left_panel.system_panel
+        remote_panel = self.left_panel.remote_panel
         if apps_panel is None or system_panel is None or remote_panel is None:
             raise RuntimeError("workspace overview panel was not initialized")
         for panel in (apps_panel, system_panel, remote_panel):
@@ -1093,7 +1091,7 @@ class MainFrame(FluentWindow):
         self._device_hub.connect_requested.connect(self._show_global_connection)
         self._device_hub.refresh_requested.connect(self._request_device_refresh)
         self._device_hub.selection_requested.connect(
-            self.left_panel._devices_tab.set_selected_devices
+            self.left_panel.set_selected_devices
         )
         self._device_hub.device_action_requested.connect(self._open_device_tool)
 
@@ -1283,7 +1281,7 @@ class MainFrame(FluentWindow):
     def _activate_remote_workspace(self, category: str, device_id: str) -> str:
         """远程页面使用全部已选在线目标，已有镜像的停止归属由面板保存。"""
 
-        panel = self.left_panel._scrcpy_tab
+        panel = self.left_panel.remote_panel
         if panel is None:
             return device_id
         panel.set_target_devices(self._remote_operation_devices())
@@ -1293,11 +1291,11 @@ class MainFrame(FluentWindow):
 
     def _remote_operation_devices(self) -> list[str]:
         """发现状态不可靠时撤销新操作准入，但不停止已有远程会话。"""
-        panel = self.left_panel
-        if panel._device_discovery_state != "ready":
+        context = self.left_panel.device_context_snapshot()
+        if context.discovery_state != "ready":
             return []
-        return [device for device in panel.selected_devices
-                if device in panel._connected_device_cache]
+        return [device for device in context.selected_devices
+                if device in context.connected_devices]
 
     def _stop_operation_from_task_center(self, operation_id: str) -> None:
         """把任务中心取消动作路由到拥有实际资源的控制器用例。"""
@@ -1713,12 +1711,13 @@ class MainFrame(FluentWindow):
         panel = getattr(self, "left_panel", None)
         if panel is None:
             return
-        selected = list(panel.selected_devices)
+        context = panel.device_context_snapshot()
+        selected = list(context.selected_devices)
         if self._pending_package_device and selected != [self._pending_package_device]:
             self._package_query_invalidated = True
-        connected = list(getattr(panel, "_connected_device_cache", []))
-        state = str(getattr(panel, "_device_discovery_state", "empty"))
-        remote = getattr(panel, "_scrcpy_tab", None)
+        connected = list(context.connected_devices)
+        state = context.discovery_state
+        remote = panel.remote_panel
         if remote is not None:
             remote.set_target_devices(self._remote_operation_devices())
         bar = getattr(self, "_global_device_bar", None)
@@ -1742,7 +1741,9 @@ class MainFrame(FluentWindow):
                 bar.set_device_labels({device: _device_name(device, records[device])
                                        for device in connected})
                 self.adb_controller.action_results.set_target_labels(bar.device_labels())
-                panel._apps_tab.set_device_labels(bar.device_labels())
+                apps = panel.app_panel
+                if apps is not None:
+                    apps.set_device_labels(bar.device_labels())
                 for host in self._workspace_feature_hosts.values():
                     host.performance_sessions.set_device_labels(bar.device_labels())
                 records = {device: {**info, "name": bar.device_label(device)}
@@ -1753,7 +1754,10 @@ class MainFrame(FluentWindow):
     def _on_device_info_updated(self, device: str, info: dict) -> None:
         """只保留在线设备的展示字段；补充信息不写入用户配置或缓存唯一标识。"""
 
-        if self._closing or device not in self.left_panel._connected_device_cache:
+        if (
+            self._closing
+            or device not in self.left_panel.device_context_snapshot().connected_devices
+        ):
             return
         metrics = (
             "Resolution", "Density", "Total Memory", "Available Memory", "Storage Total",
@@ -1775,8 +1779,8 @@ class MainFrame(FluentWindow):
     def _open_device_tool(self, section: str, feature: str, device_id: str) -> None:
         """概览快捷入口只接受已选在线目标，多选时保持其他目标不变。"""
 
-        if (self.left_panel._device_discovery_state != "ready"
-                or device_id not in self.left_panel.selected_devices):
+        context = self.left_panel.device_context_snapshot()
+        if context.discovery_state != "ready" or device_id not in context.selected_devices:
             return
         self._open_workspace_feature(section, feature, device_id=device_id)
 
@@ -1826,7 +1830,7 @@ class MainFrame(FluentWindow):
             if (host is not None and host.is_device_selection_locked() and devices
                     and devices[0] != host.current_device_id):
                 return
-        self.left_panel._devices_tab.set_selected_devices(devices)
+        self.left_panel.set_selected_devices(devices)
         if host is not None and devices:
             if single or (host.current_feature == "performance"
                           and host.current_device_id not in devices):
@@ -1854,11 +1858,7 @@ class MainFrame(FluentWindow):
 
         if not self._device_hub.isVisibleTo(self):
             return
-        source = self.left_panel._devices_tab.ip_entry
-        history = [
-            (source.itemText(index), str(source.itemData(index) or ""))
-            for index in range(source.count())
-        ]
+        history = self.left_panel.connection_history()
         self._global_device_bar.open_connection(history, anchor=self._device_hub.connect_button)
 
     def _on_nav_requested(self, key: str | WorkspaceRoute) -> None:
@@ -1909,7 +1909,7 @@ class MainFrame(FluentWindow):
                 "system", "performance", payload={"run_parameters": record.parameters},
             )
         elif record.kind == "monkey":
-            panel = self.left_panel._apps_tab
+            panel = self.left_panel.app_panel
             if panel is None:
                 return
             try:
@@ -2256,7 +2256,7 @@ class MainFrame(FluentWindow):
         LP.log_message.connect(self.log_service.log)
         CTL.record_target_finished.connect(self.left_panel.on_recording_target_finished)
         CTL.monkey_target_finished.connect(self.left_panel.on_monkey_target_finished)
-        apps_panel = self.left_panel._apps_tab
+        apps_panel = self.left_panel.app_panel
         if apps_panel is None:
             raise RuntimeError("apps panel was not initialized before signal binding")
         apps_panel.set_run_library(self.run_library)
@@ -2277,7 +2277,7 @@ class MainFrame(FluentWindow):
         """唯一输入框一次只接收一台明确目标的查询，禁止重复请求争用回填。"""
 
         targets = list(dict.fromkeys(devices))
-        apps = self.left_panel._apps_tab
+        apps = self.left_panel.app_panel
         if (apps is None or self._pending_package_device or len(targets) != 1
                 or targets != self.left_panel.selected_devices):
             return
@@ -2298,7 +2298,7 @@ class MainFrame(FluentWindow):
 
     def _finish_package_query(self) -> None:
         self._pending_package_device = ""
-        apps = self.left_panel._apps_tab
+        apps = self.left_panel.app_panel
         if apps is not None:
             apps.set_package_query_pending(False)
 

@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal
 
 from adblab.application.action_results import ActionEnvelope, capture_action_job
 from adblab.application.envelope import OperationMetadata, attach_operation_metadata
-from core.exec import CommandRunner
+from core.exec import CommandRunner, command_outcome
 from core.perf_trace import attach_perf, build_async_perf, perf_counter
 
 
@@ -235,7 +235,7 @@ class ADBModelCore(QObject):
             return {"success": True, "output": r.output, **extra}
         if r.stale:
             return {"success": False, "stale": True, "error": r.error, **extra}
-        if r.error == "Cancelled":
+        if command_outcome(r) == "cancelled":
             return {"success": False, "cancelled": True, "error": r.error, **extra}
         return {"success": False, "error": r.error, **extra}
 

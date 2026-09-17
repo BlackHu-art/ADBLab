@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtCore import QAbstractAnimation, QPoint, Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, EditableComboBox, FluentWindow
 
 from gui.styles import BaseStyles
@@ -55,20 +55,41 @@ def _distance(first, second):
 
 
 def _show_state(app, owner, field, state):
+    def wait_for_state(predicate):
+        try:
+            wait_until(app, predicate)
+        except AssertionError as error:
+            point = field.mapToGlobal(field.rect().center())
+            # 全量顺序中的 Popup/模态窗口可能接管指针；失败时保留真实目标，
+            # 不靠清除弹层或伪造 underMouse 状态绕过原生交互契约。
+            context = {
+                "state": state,
+                "field": repr(field),
+                "field_visible": field.isVisible(),
+                "field_under_mouse": field.underMouse(),
+                "field_has_focus": field.hasFocus(),
+                "target_global": point.toTuple(),
+                "widget_at_target": repr(QApplication.widgetAt(point)),
+                "active_window": repr(app.activeWindow()),
+                "active_popup": repr(app.activePopupWidget()),
+                "active_modal": repr(app.activeModalWidget()),
+            }
+            raise AssertionError(f"dropdown state was not reached: {context}") from error
+
     field.setEnabled(True)
     owner.setFocus(Qt.FocusReason.OtherFocusReason)
     QTest.mouseMove(owner, QPoint(owner.width() - 2, owner.height() - 2))
     if state == "hover":
         QTest.mouseMove(field, QPoint(field.width() // 2, field.height() // 2))
-        wait_until(app, field.underMouse)
+        wait_for_state(field.underMouse)
     elif state == "focus":
         field.setFocus(Qt.FocusReason.TabFocusReason)
-        wait_until(app, field.hasFocus)
+        wait_for_state(field.hasFocus)
     elif state == "disabled":
         field.setEnabled(False)
     app.processEvents()
     # Windows 鼠标离开事件可能晚于 setFocus；只比较相同 hover 状态的实绘结果。
-    wait_until(app, lambda: field.underMouse() == (state == "hover"))
+    wait_for_state(lambda: field.underMouse() == (state == "hover"))
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

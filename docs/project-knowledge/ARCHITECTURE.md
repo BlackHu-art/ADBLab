@@ -32,7 +32,8 @@ flowchart LR
 
 ## 启动与组合根
 
-- `main.py::_dispatch_cli()` 分派打包自检和 MobilePerf worker；普通启动进入 `_run_gui()`。
+- `main.py::_dispatch_cli()` 分派打包自检、MobilePerf worker 和内部原生工具启动器
+  `--native-launch`；普通启动进入 `_run_gui()`。
   GUI 在创建 QApplication 前加载设置、应用缩放并缓冲诊断；创建应用后安装翻译器，再导入页面、
   初始化 LogService、转交诊断和加载主题。翻译器保持到事件循环结束。
 - `MainFrame` 组合 SidePanel、ADBController、QtTaskSupervisor、RunLibraryController 和页面树。
@@ -40,6 +41,9 @@ flowchart LR
   `WorkspaceRoute` 映射到宿主，具体目录只在 [路由表](BUSINESS_FLOW.md#workspace-路由目录)维护。
 - `SidePanel` 是隐藏的兼容协调器，持有设备状态和业务面板控制器；可见内容由业务宿主持有。
   原 DeviceManager 列表仍是批量复选的兼容状态源，顶部栏与设备概览提交到同一状态源。
+  MainFrame 通过 `device_context_snapshot()` 读取不可变选择、在线列表和发现状态，通过
+  `set_selected_devices()` 提交选择；连接历史返回值副本。公开的面板属性及
+  `take_overview_content()` 明确组合与视觉归属，不再由主窗口穿透内部设备控件和缓存。
   协调器和 Remote 控制器按 QObject 父子关系随窗口/视图释放，不能仅靠 Python 引用管理寿命。
 - `DeviceContextBar` 在页面堆叠外提供页面标题及当前任务所需的设备入口，不拥有会话或运行锁。
   批量页显示选择数量，固定设备页显示当前设备；各页面共用一个设备勾选下拉列表，单选页选择目标时
@@ -81,6 +85,9 @@ flowchart LR
   [设备目标规则](BUSINESS_FLOW.md#workspace-路由目录)。
 - 显式关闭调用 `request_dispose()`；worker 与 supervisor owner 未归零前保留关闭屏障，旧代次
   不得重激活。宿主拥有延迟尺寸刷新 QTimer，页面销毁后不能再收到尺寸回调。
+  registry 在发布会话前校验可选生命周期及设备准入回调；未声明或 `None` 保持兼容，显式声明
+  必须可调用。异步释放必须提供可连接的 `dispose_ready`；缺少完成信号时报告契约错误并保留
+  关闭屏障，不能把未知资源状态视为成功。裸 QWidget 和同步释放页面仍可使用原工厂入口。
 - App Manager、File Explorer、Live Logcat、Performance、Screenshot 为内嵌功能页，公开入口在
   `gui/features/`；部分实现仍在 `gui/dialogs/`，文件名不代表 QDialog 契约。
   Remote 复用 RemotePanel，不进入 registry；About 随 Settings 创建和销毁。
@@ -107,7 +114,9 @@ flowchart LR
   它与 `OperationMetadata` 可以同时存在。Controller 先校验结果准入，在原请求作用域内处理业务
   返回和续发命令，再归并 `ActionResults`；已接入 Operation 的单元以校验后的业务终态为准，
   不用最后一条批次摘要覆盖单元结果。结果呈现与保留范围见 [操作结果](../guides/OPERATION_RESULTS.md)。
-- `CommandRunner` 返回统一 `CommandResult`；超时转换成失败结果，不向调用者抛出
+- `CommandRunner` 返回统一 `CommandResult`，以 `outcome` 明确区分成功、失败、取消、超时和
+  过期结果；`success/output/error/returncode/stale` 保持兼容。执行器产生的状态不随诊断文本改变，
+  旧构造只在创建时归一；旧适配结果的兼容判断集中在 `command_outcome()`。超时不向调用者抛出
   `subprocess.TimeoutExpired`。`ProcessRunner` 管长进程、同键替换、停止和全局兜底；只有确认
   退出才移除 tracking，停止失败或并发启动冲突产生的残留仍需登记。
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
@@ -121,6 +130,9 @@ flowchart LR
 - OperationManager 管业务身份、进度、终态与取消意图，不拥有线程/进程；TaskSupervisor 管资源
   停止、等待及 residual，不判断业务成功。任务中心的取消覆盖见
   [任务中心](BUSINESS_FLOW.md#9-任务中心)。
+- `adblab/application/monkey_batch.py::MonkeyBatchCoordinator` 集中保存 Monkey 业务批次、参数
+  快照、运行终态与停止确认，校验代次并只交付一次归档。Controller 保留参数校验、模型调用和
+  信号投递；模型继续拥有取消条件、进程与资源锁，业务协调器不启动或等待外部进程。
 
 ## 运行时并发模型
 
@@ -160,6 +172,8 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 `gui/close_controller.py::CloseController` 实现分阶段异步关闭（停止 → 收尾）：
 
 1. 拒绝新任务、停止界面定时器和晚到回调；向扫描、业务面板、会话及 Controller 广播停止。
+   会话逐页隔离注册和释放异常，全部尝试后汇总；关闭准备失败进入最终停止结果，不能误报
+   全部资源已停止，也不阻断其他宿主的停止请求。
 2. TaskSupervisor 在共享 deadline 内后台等待，保留超时或失败资源快照；GUI 不串行阻塞等待。
 3. 停止阶段返回后在 GUI 线程尝试补交 Monkey/性能终态，保留资源残留及单页归档失败事实；
    `LogService.shutdown()` 在 GUI 线程刷新诊断并冻结字符串快照，再由后台 finalizer 保存应用设置。
@@ -179,8 +193,14 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
   [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
 - 主窗口沿用参考 FluentWindow 的根背景与半透明内容层，关闭云母时仍保留内容层的层次；
   页面承载容器保持透明，避免重复填充遮住材质。下拉框保留原生交互态，独立弹出菜单保留其阅读底板。
-  `gui/styles/reading_surface.py` 统一管理只读输出与详情框：实际宿主开启云母时透出内容层，
+  `gui/styles/reading_surface.py` 提供只读输出与详情框的通用策略：实际宿主开启云母时透出内容层，
   关闭或不支持时恢复原生 Fluent 样式；可编辑文本保留原生输入底板，切换材质不重建文档和阅读状态。
+  应用列表与 Live Log 的局部材质使用持续透明的页面底板，具体行为见
+  [应用管理](BUSINESS_FLOW.md#3-应用管理与安装批次)与 [Live Logcat](BUSINESS_FLOW.md#5-live-logcat)。
+- `FramelessResizeController` 立即更新窗口边缘热区几何，将同一批滚动条及祖先几何事件合并后
+  再计算输入遮罩；只度量可见轨道，页面重新显示时重新登记其裁剪祖先。回调属于窗口 QObject，
+  销毁后不再投递。响应式网格在位置和列数不变时原位更新尺寸与 stretch，保留原布局项，避免
+  连续缩放触发无意义的控件摘除重挂。
 - `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
   设置持久化；它不参与导航选中或历史。设备任务页标题由全局设备栏消费页面的可访问名称。
   会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部会话控件说明。

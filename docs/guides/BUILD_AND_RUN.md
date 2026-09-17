@@ -29,6 +29,10 @@ py -3.11 -m venv .venv
 - `requirements-build.txt`：包含运行依赖，并增加 PyInstaller。
 - `requirements-dev.txt`：包含构建依赖，并增加 pytest、Ruff、coverage、pytest-cov、
   pytest-xdist、pre-commit 和 pyright。
+- `constraints.txt`：由 `requirements.txt` 引入，固定 Python 3.11 / Windows 已验证环境的活动
+  依赖闭包，包括构建 hooks 和开发工具的传递依赖；它只约束版本，不改变三个安装入口的范围。
+  更新依赖时同步更新约束并验证对应安装入口、`pip check` 与受影响测试。该快照不包含制品哈希，
+  也未锁定 macOS 独有依赖，不将它称为所有平台的完整锁文件。
 
 只运行源码时可以改装 `requirements.txt`；执行本地打包时安装 `requirements-build.txt`。开发、
 测试和提交前检查统一安装 `requirements-dev.txt`。项目没有根级 `setup.py`/`setup.cfg`、
@@ -81,6 +85,8 @@ GUI 启动命令来自 README，并由 `main.py` 入口确认：
 ```
 
 第二条是内部 worker 入口，正常用户应通过左侧“性能采集”页启动，不应手写含真实设备/包信息的配置并提交到仓库。
+另有 `core/native_process.py` 调用的内部 `--native-launch` 模式，用于隔离原生工具启动环境，
+不作为日常运行命令。
 
 设置页手动更新检查的状态和重试规则见
 [应用更新检查](../project-knowledge/BUSINESS_FLOW.md#11-应用更新检查)。源码和产物的
@@ -110,6 +116,11 @@ Windows 11 上即时切换；不支持的系统禁用该开关并使用主题实
 资源随 Python 模块进入现有 PyInstaller 构建，无需安装目录可写，也不依赖运行时读取参考项目。
 源码与产物的 `--self-check packaging` 同时检查三种语言的内嵌资源；词库回归测试核对 `.ts`、编译资源
 和格式占位符一致性。语言设置及显示值与业务值的边界见 [DATA_FLOW](../project-knowledge/DATA_FLOW.md#设置字段)。
+
+遇到 `source code string cannot contain null bytes` 或 UTF-8 解码失败时，先运行
+`.\.venv\Scripts\python.exe scripts/check_source_text.py` 确认受影响范围。该检查只报告路径和
+错误类别，不尝试猜测编码或覆盖文件。翻译生成模块可由有效词库重新生成；其他源码应从确认可读的
+版本或备份恢复，并保留原内容用于追溯。
 
 ## 测试与检查
 
@@ -157,8 +168,8 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 
 `--check` 不需要 JDK/SDK，检查 DEX 和内嵌源码摘要；摘要规范化换行以兼容 Windows 检出。
 编译目标为 Android API 23，使用新旧框架共有的用户上下文入口；实际设备覆盖范围以验证记录
-为准，不将编译目标视为完整 Android 版本兼容性认证。修改资源收集时保持 spec、CI 参数与
-`main.py --self-check packaging` 三处一致。
+为准，不将编译目标视为完整 Android 版本兼容性认证。修改资源收集时更新公共打包清单
+`scripts/packaging_manifest.py`，并核对 `main.py --self-check packaging` 的资源验收项。
 
 ### 主应用构建
 
@@ -203,7 +214,16 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
    Release；被保留策略删除的历史版本不再受“存在性检查”保护，但仓库版本规则仍禁止复用版本号。
 
 工作流默认权限为 `contents: read`，使用的第三方 Actions 固定到已核验的 40 字符 commit SHA。
-CI 使用 PyInstaller CLI 参数而不是 `ADBLab.spec`，两套打包描述需要同时维护。
+CI 通过 `scripts/build_app.py` 生成 PyInstaller CLI 参数，和本地 `ADBLab.spec` 共用
+`scripts/packaging_manifest.py` 的资源及子模块白名单。平台产物名、onefile/onedir、windowed
+与图标选择仍由 workflow matrix 决定；`--dry-run` 只显示命令，不构建或写入产物。
+CLI 生成的 spec 位于 `build/app-spec`，资源、入口及图标路径按仓库根解析，避免默认名称
+`ADBLab` 覆盖受控的根目录 spec；生成文件不进入版本控制。
+
+独立 [Tests 工作流](../../.github/workflows/Tests.yaml) 在 push、pull request 或手动触发时，
+使用 Windows/Python 3.11 执行文本完整性、静态检查、文档检查和串行 pytest；它没有发布写权限，
+不构建应用。Build 保留编译发布职责且不执行 pytest。两者都在依赖安装及源码导入前检查文本完整性，
+pip 缓存同时考虑 requirements 和 constraints 的变化。
 
 ### 提交版本规则
 

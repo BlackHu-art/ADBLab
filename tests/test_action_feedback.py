@@ -15,6 +15,8 @@ from gui.widgets.action_result_view import ActionResultView
 from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
 from tests.test_main_window_layout import build_main_frame
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.fixture
 def result_frame(qt_application):
@@ -180,7 +182,6 @@ def test_long_text_copy_export_search_and_artifacts_keep_complete_payload(qt_app
         view.close()
 
 
-@pytest.mark.ui
 @pytest.mark.parametrize("query", ["result", " "])
 def test_result_search_button_and_enter_find_once_and_clear_preserves_output(qt_application, query):
     """正文搜索每次点击或回车只前进一处，清空搜索不清除操作结果。"""
@@ -485,8 +486,9 @@ def test_task_notes_keep_order_and_severity_without_pretending_to_complete(resul
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_file_result_records_task_notifies_and_refreshes_only_on_success(
-    result_frame, monkeypatch, failed,
+@pytest.mark.parametrize("handler", ["_on_transfer_done", "_on_file_op_done"])
+def test_file_result_records_task_notifies_and_refreshes_only_remote_changes(
+    result_frame, monkeypatch, failed, handler,
 ):
     from gui.dialogs.file_explorer import FileExplorerPage
 
@@ -495,12 +497,12 @@ def test_file_result_records_task_notifies_and_refreshes_only_on_success(
     notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
     try:
-        page._ops_controller._on_transfer_done("Permission denied", failed, "文件已传输")
+        getattr(page._ops_controller, handler)("Permission denied", failed, "文件已传输")
         result = result_frame.adb_controller.action_results.recent()[0]
         assert result.spec.section == "devices.files"
         assert result.items[-1].state == ("failed" if failed else "succeeded")
         assert notices[-1]["level"] == ("error" if failed else "success")
-        assert page._refresh.call_count == (0 if failed else 1)
+        assert page._refresh.call_count == int(handler == "_on_file_op_done" and not failed)
     finally:
         page.close()
 

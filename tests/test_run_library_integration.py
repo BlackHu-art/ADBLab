@@ -15,7 +15,7 @@ from services.run_library import RunLibrary, RunRecord
 def test_history_reuse_does_not_choose_old_device_or_start_test():
     panel = Mock()
     frame = SimpleNamespace(
-        left_panel=SimpleNamespace(_apps_tab=panel),
+        left_panel=SimpleNamespace(app_panel=panel),
         _open_workspace_feature=Mock(),
         _on_run_library_error=Mock(),
     )
@@ -54,7 +54,7 @@ def test_busy_monkey_reuse_does_not_change_navigation():
     panel = Mock()
     panel.apply_run_parameters.side_effect = ValueError("busy")
     frame = SimpleNamespace(
-        left_panel=SimpleNamespace(_apps_tab=panel),
+        left_panel=SimpleNamespace(app_panel=panel),
         _open_workspace_feature=Mock(),
         _on_run_library_error=Mock(),
     )

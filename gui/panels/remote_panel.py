@@ -7,7 +7,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from PySide6.QtCore import QCoreApplication, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
@@ -28,6 +28,9 @@ from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
+
+if TYPE_CHECKING:
+    from gui.widgets.category_stack import AdaptiveCategoryStack
 
 
 class _RemoteInputShutdown:
@@ -286,6 +289,8 @@ class RemotePanel(BasePanel):
     remote_title: BodyLabel
     remote_subtitle: BodyLabel
     remote_status_badge: InfoBadge
+    panel_header: QWidget
+    category_stack: "AdaptiveCategoryStack"
     _remote_section_groups: list[QWidget]
     _remote_control_buttons: list[QPushButton]
     _IGNORED_SCRCPY_LOG_PATTERNS = (
@@ -888,7 +893,7 @@ class RemotePanel(BasePanel):
                     *getattr(self, "_warmup_threads", ()),
                     *getattr(self, "_scrcpy_threads", ()),
                 )
-            adb = cast(ADBBridge | None, getattr(self, "_adb", None))
+            adb = cast("ADBBridge | None", getattr(self, "_adb", None))
             close_input = getattr(adb, "close_input_sessions", None)
             request_input_stop = getattr(adb, "request_stop_input_sessions", None)
             force_input_stop = getattr(adb, "force_stop_input_sessions", None)

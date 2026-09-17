@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
+-c constraints.txt
 PySide6==6.8.1.1
 PySide6_Addons==6.8.1.1
 PySide6_Essentials==6.8.1.1
 shiboken6==6.8.1.1
 # GPL-3.0 或商业许可；分发前按 THIRD_PARTY_NOTICES.md 核验许可义务
 PySide6-Fluent-Widgets==1.11.3
+# 项目直接使用 qframelesswindow，不依赖 Fluent 的传递安装契约
+PySideSix-Frameless-Window==0.8.2
 PyYAML==6.0.2
 psutil==7.2.2

@@ -101,10 +101,11 @@ class AppManagerMaterial(QObject):
         font_size = f"{font.pointSizeF()}pt" if font.pointSizeF() > 0 else f"{font.pixelSize()}px"
         styles = []
         for theme in ("Light", "Dark"):
-            background = "transparent" if mica else BaseStyles.color_for(theme, "INPUT_BG")
+            # 与文件列表一致：页面提供底板，交替行仅叠加 Fluent 的轻量条纹。
+            background = "transparent"
             alternate = (
-                "rgba(255, 255, 255, 7)" if theme == "Dark" else "rgba(0, 0, 0, 7)"
-            ) if mica else BaseStyles.color_for(theme, "INPUT_BG_HOVER")
+                "rgba(255, 255, 255, 5)" if theme == "Dark" else "rgba(0, 0, 0, 5)"
+            )
             border = (
                 "rgba(255, 255, 255, 18)" if theme == "Dark" else "rgba(0, 0, 0, 18)"
             ) if mica else BaseStyles.color_for(theme, "BORDER_COLOR")
@@ -112,7 +113,7 @@ class AppManagerMaterial(QObject):
                 f"{selector} {{ background-color: {background}; "
                 f"alternate-background-color: {alternate}; "
                 f"color: {BaseStyles.color_for(theme, 'TEXT_PRIMARY')}; "
-                f"border: 1px solid {border}; border-radius: {BaseStyles.RADIUS_MD}px; }} "
+                "border: none; border-radius: 0px; } "
                 "QHeaderView { background-color: transparent; } "
                 "QHeaderView::section { background-color: transparent; "
                 f"color: {BaseStyles.color_for(theme, 'TEXT_SECONDARY')}; "
@@ -122,17 +123,18 @@ class AppManagerMaterial(QObject):
             )
         setCustomStyleSheet(view, styles[0], styles[1])
         palette = QPalette(view.palette())
-        background_color = QColor(0, 0, 0, 0) if mica else BaseStyles.get_color("INPUT_BG")
+        background_color = QColor(0, 0, 0, 0)
         alternate_color = (
-            QColor(255, 255, 255, 7) if BaseStyles.resolved_theme() == "Dark"
-            else QColor(0, 0, 0, 7)
-        ) if mica else BaseStyles.get_color("INPUT_BG_HOVER")
+            QColor(255, 255, 255, 5) if BaseStyles.resolved_theme() == "Dark"
+            else QColor(0, 0, 0, 5)
+        )
         palette.setColor(QPalette.ColorRole.Base, background_color)
         palette.setColor(QPalette.ColorRole.Window, background_color)
         palette.setColor(QPalette.ColorRole.AlternateBase, alternate_color)
         palette.setColor(QPalette.ColorRole.Text, BaseStyles.get_color("TEXT_PRIMARY"))
         view.viewport().setPalette(palette)
-        view.viewport().setAutoFillBackground(not mica)
+        view.setAutoFillBackground(False)
+        view.viewport().setAutoFillBackground(False)
         if isinstance(view, QTreeView):
             view.header().setAutoFillBackground(False)
             view.header().viewport().setAutoFillBackground(False)

@@ -9,6 +9,8 @@ from typing import Any, cast
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
+from gui.features.contracts import optional_callback
+
 
 @dataclass(frozen=True, slots=True)
 class FeatureSessionKey:
@@ -78,11 +80,16 @@ class FeatureSessionRegistry(QObject):
         page = factory(key)
         if not isinstance(page, QWidget):
             raise TypeError("feature session factory must return QWidget")
+        for name in (
+            "activate", "deactivate", "request_dispose", "register_shutdown_tasks",
+            "set_device_selected", "set_device_connected",
+        ):
+            optional_callback(page, name)
         page.setProperty("feature", key.feature)
         page.setProperty("device_id", key.device_id)
         page.setProperty("session_generation", key.generation)
-        self._sessions[key] = page
         self._connect_dispose_ready(key, page)
+        self._sessions[key] = page
         self.session_added.emit(key, page)
         return page, True
 
@@ -101,6 +108,9 @@ class FeatureSessionRegistry(QObject):
         """
 
         page = self._sessions[key]
+        if key in self._disposing:
+            raise RuntimeError("feature session is disposing")
+        callback = optional_callback(page, "activate")
         previous_key = self._current_key
         if (
             not previous_is_inactive
@@ -108,12 +118,11 @@ class FeatureSessionRegistry(QObject):
             and previous_key != key
         ):
             previous = self._sessions.get(previous_key)
-            callback = getattr(previous, "deactivate", None)
-            if callable(callback):
-                callback("navigation")
+            deactivate = optional_callback(previous, "deactivate")
+            if deactivate is not None:
+                deactivate("navigation")
         self._current_key = key
-        callback = getattr(page, "activate", None)
-        if callable(callback) and (
+        if callback is not None and (
             previous_is_inactive or previous_key != key or payload is not None
         ):
             callback(payload)
@@ -132,8 +141,8 @@ class FeatureSessionRegistry(QObject):
         if key is None:
             return
         page = self._sessions.get(key)
-        callback = getattr(page, "deactivate", None)
-        if callable(callback) and not current_is_inactive:
+        callback = optional_callback(page, "deactivate")
+        if callback is not None and not current_is_inactive:
             callback(reason)
         self.current_changed.emit(key, None)
 
@@ -143,21 +152,35 @@ class FeatureSessionRegistry(QObject):
             return True
         if key in self._disposing:
             return False
-        callback = getattr(page, "request_dispose", None)
-        ready = True if not callable(callback) else bool(callback(reason))
+        callback = optional_callback(page, "request_dispose")
+        ready = True if callback is None else bool(callback(reason))
         if ready:
             removed = self.remove(key)
             if removed is not None:
                 removed.deleteLater()
         elif key in self._sessions:
             self._disposing.add(key)
+            if key not in self._dispose_callbacks:
+                # 未知的资源状态必须继续阻止重用，不能把缺少完成通知当作释放成功。
+                raise RuntimeError("asynchronous feature disposal requires dispose_ready")
         else:
             return True
         return ready
 
     def request_dispose_all(self, reason: str = "application_shutdown") -> None:
+        """逐页发出释放请求，全部尝试后汇总失败且保留失败会话。"""
+        failures: list[tuple[FeatureSessionKey, str]] = []
         for key in tuple(self._sessions):
-            self.request_dispose(key, reason)
+            try:
+                self.request_dispose(key, reason)
+            except Exception as exc:
+                failures.append((key, type(exc).__name__))
+        if failures:
+            first_key, first_error = failures[0]
+            raise RuntimeError(
+                "feature disposal failed "
+                f"for {len(failures)} session(s); first={first_key.feature}:{first_error}"
+            )
 
     def register_shutdown_tasks(
         self,
@@ -169,14 +192,14 @@ class FeatureSessionRegistry(QObject):
         task_ids: list[str] = []
         failures: list[tuple[FeatureSessionKey, str]] = []
         for index, (key, page) in enumerate(tuple(self._sessions.items())):
-            callback = getattr(page, "register_shutdown_tasks", None)
-            if not callable(callback):
-                continue
             safe_feature = "".join(
                 character if character.isalnum() or character in "-_" else "-"
                 for character in key.feature
             )
             try:
+                callback = optional_callback(page, "register_shutdown_tasks")
+                if callback is None:
+                    continue
                 result = cast(
                     Any,
                     callback(
@@ -218,13 +241,18 @@ class FeatureSessionRegistry(QObject):
 
     def _connect_dispose_ready(self, key: FeatureSessionKey, page: QWidget) -> None:
         signal = getattr(page, "dispose_ready", None)
-        if signal is None or not hasattr(signal, "connect"):
+        if signal is None:
             return
+        if not callable(getattr(signal, "connect", None)) or not callable(
+            getattr(signal, "disconnect", None),
+        ):
+            raise TypeError("feature dispose_ready must provide callable connect and disconnect")
 
         def on_dispose_ready(*_args) -> None:
             removed = self.remove(key)
             if removed is not None:
                 removed.deleteLater()
 
-        self._dispose_callbacks[key] = on_dispose_ready
+        # 信号连接失败时不发布半注册会话，也不留下虚假的完成通知归属。
         signal.connect(on_dispose_ready)
+        self._dispose_callbacks[key] = on_dispose_ready

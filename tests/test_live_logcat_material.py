@@ -1,11 +1,11 @@
 """日志材质跟随真实宿主，合成背景验证不读取桌面或连接设备。"""
 
 import pytest
-from PySide6.QtCore import QEvent, QPoint, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette, QTextCursor
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QEnterEvent, QPainter, QPalette, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
-from qfluentwidgets import PlainTextEdit, setCustomStyleSheet
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
+from qfluentwidgets import PlainTextEdit, TableWidget, setCustomStyleSheet
 from shiboken6 import isValid
 
 from gui.dialogs.live_logcat_highlighter import LogcatHighlighter
@@ -118,10 +118,16 @@ def native_surface_colors(application, output, backdrop):
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 @pytest.mark.parametrize("state", ["normal", "hover", "focus", "disabled"])
-def test_mica_output_reveals_host_in_all_interaction_states(
-    log_surface, qt_application, theme, state,
+@pytest.mark.parametrize("mica", [True, False, None], ids=["mica", "no-mica", "unsupported"])
+def test_output_matches_file_list_background_in_all_interaction_states(
+    log_surface, qt_application, theme, state, mica,
 ):
-    host, owner, output, _material = log_surface(theme)
+    host, owner, output, _material = log_surface(theme, bool(mica), supported=mica is not None)
+    # 文件管理使用原生 TableWidget + NoFrame，在同一父层验证空白区域的真实像素。
+    reference = TableWidget(owner)
+    reference.setFrameShape(QFrame.Shape.NoFrame)
+    owner.layout().addWidget(reference)
+    owner.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
     owner.setFocus()
     if state == "hover":
         QTest.mouseMove(output.viewport(), QPoint(30, 30))
@@ -130,8 +136,22 @@ def test_mica_output_reveals_host_in_all_interaction_states(
     elif state == "disabled":
         output.setEnabled(False)
     qt_application.processEvents()
+    # 精确投递交互状态，避免上一参数化用例的真实鼠标位置污染普通态像素。
+    for widget in (output, output.viewport()):
+        if state == "hover":
+            point = QPoint(30, 30)
+            event = QEnterEvent(
+                QPointF(point), QPointF(widget.mapTo(host, point)),
+                QPointF(widget.mapToGlobal(point)),
+            )
+        else:
+            event = QEvent(QEvent.Type.Leave)
+        qt_application.sendEvent(widget, event)
+        assert widget.underMouse() == (state == "hover")
+    assert output.hasFocus() == (state == "focus")
 
-    assert surface_pixel(host, output) == host.backdrop
+    assert surface_pixel(host, output) == surface_pixel(host, reference) == host.backdrop
+    assert output.layer.isHidden()
     for widget in (output, output.viewport()):
         for role in (QPalette.ColorRole.Base, QPalette.ColorRole.Window):
             brush = widget.palette().brush(role)
@@ -146,8 +166,7 @@ def test_mica_toggle_without_theme_signal_and_hidden_page_restore(
     log_surface, qt_application, theme,
 ):
     host, owner, output, _material = log_surface(theme, False)
-    opaque, _text = native_surface_colors(qt_application, output, host.backdrop)
-    assert surface_pixel(host, output) == opaque
+    assert surface_pixel(host, output) == host.backdrop
     host.setMicaEffectEnabled(True)
     wait_until(qt_application, lambda: surface_pixel(host, output) == host.backdrop)
 
@@ -155,14 +174,16 @@ def test_mica_toggle_without_theme_signal_and_hidden_page_restore(
     host.setMicaEffectEnabled(False)
     qt_application.processEvents()
     owner.show()
-    wait_until(qt_application, lambda: surface_pixel(host, output) == opaque)
+    wait_until(qt_application, lambda: surface_pixel(host, output) == host.backdrop)
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_unsupported_host_uses_native_theme_surface(log_surface, qt_application, theme):
+def test_unsupported_host_keeps_transparent_background_and_native_text(
+    log_surface, qt_application, theme,
+):
     host, _owner, output, _material = log_surface(theme, supported=False)
-    background, text = native_surface_colors(qt_application, output, host.backdrop)
-    assert surface_pixel(host, output) == background
+    _background, text = native_surface_colors(qt_application, output, host.backdrop)
+    assert surface_pixel(host, output) == host.backdrop
     assert output.palette().color(QPalette.ColorRole.Text) == text
 
 
@@ -182,8 +203,7 @@ def test_material_rebinds_when_log_page_moves_to_another_window(log_surface, qt_
         wait_until(qt_application, lambda: surface_pixel(target, output) == target.backdrop)
         source.setMicaEffectEnabled(True)
         target.setMicaEffectEnabled(False)
-        opaque, _text = native_surface_colors(qt_application, output, target.backdrop)
-        wait_until(qt_application, lambda: surface_pixel(target, output) == opaque)
+        wait_until(qt_application, lambda: surface_pixel(target, output) == target.backdrop)
     finally:
         target.close()
         target.deleteLater()
@@ -276,8 +296,7 @@ def test_live_page_integration_keeps_reading_state_and_stops_callbacks(
     try:
         qt_application.processEvents()
         output = page.output
-        native, _text = native_surface_colors(qt_application, output, host.backdrop)
-        assert surface_pixel(host, output) == native
+        assert surface_pixel(host, output) == host.backdrop
         text = "\n".join(f"historical log {index:03d}" for index in range(150))
         output.setPlainText(text)
         cursor = QTextCursor(output.document().findBlockByNumber(40))
@@ -302,8 +321,7 @@ def test_live_page_integration_keeps_reading_state_and_stops_callbacks(
         assert not page.follow_btn.isChecked()
 
         host.setMicaEffectEnabled(False)
-        opaque, _text = native_surface_colors(qt_application, output, host.backdrop)
-        wait_until(qt_application, lambda: surface_pixel(host, output) == opaque)
+        wait_until(qt_application, lambda: surface_pixel(host, output) == host.backdrop)
         updates = []
         material = page._form_controller._material
         monkeypatch.setattr(material, "_apply_surface", lambda *args: updates.append(args))

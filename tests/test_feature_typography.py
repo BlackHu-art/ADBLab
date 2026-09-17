@@ -282,7 +282,11 @@ def test_performance_large_font_keeps_bounded_scrollable_content(
 
         assert page.minimumSize().width() == 0
         assert page.minimumSize().height() == 0
-        assert page.findChildren(QScrollArea) == [page._config_scroll]
+        assert page.findChildren(QScrollArea) == [
+            page._config_scroll, page.chart_view._chart_scroll,
+        ]
+        assert not page.chart_view._chart_scroll.isVisibleTo(page)
+        assert page.chart_view._chart_scroll.widget() is page.chart_view._chart_view
         assert page._config_scroll.verticalScrollBar().maximum() > 0
         assert_scroll_target_reachable(page._config_scroll, page.package_edit)
         qt_application.processEvents()

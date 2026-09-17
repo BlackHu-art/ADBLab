@@ -16,7 +16,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
@@ -34,6 +34,8 @@ _active_commands = 0
 _active_lock = threading.Condition()
 _adb_runtime: AdbRuntime | None = None
 
+CommandOutcome = Literal["succeeded", "failed", "cancelled", "timed_out", "stale"]
+
 
 def install_adb_runtime(runtime: AdbRuntime | None) -> None:
     """由应用组合根安装执行策略；模块导入和独立工具默认使用原生后端。"""
@@ -48,20 +50,23 @@ def adb_runtime() -> AdbRuntime | None:
 
 def _normalise_result(raw: ExecutionResult, timeout: float) -> CommandResult:
     if raw.kind == "timeout":
-        return CommandResult(success=False, error=f"Timeout({timeout:g}s)")
+        return CommandResult(success=False, error=f"Timeout({timeout:g}s)", outcome="timed_out")
     if raw.kind == "cancelled":
-        return CommandResult(success=False, error="Cancelled")
+        return CommandResult(success=False, error="Cancelled", outcome="cancelled")
     if raw.kind == "stale":
-        return CommandResult(success=False, stale=True)
+        return CommandResult(success=False, stale=True, outcome="stale")
     stdout = raw.stdout.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
     stderr = raw.stderr.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
     if raw.kind != "completed":
-        return CommandResult(success=False, error=stderr.strip() or "ADB connection failed")
+        return CommandResult(
+            success=False, error=stderr.strip() or "ADB connection failed", outcome="failed",
+        )
     if raw.returncode:
         return CommandResult(
-            success=False, error=(stderr or stdout).strip(), returncode=raw.returncode
+            success=False, error=(stderr or stdout).strip(), returncode=raw.returncode,
+            outcome="failed",
         )
-    return CommandResult(success=True, output=stdout.strip(), returncode=0)
+    return CommandResult(success=True, output=stdout.strip(), returncode=0, outcome="succeeded")
 
 
 def resolve_adb_program() -> str | None:
@@ -156,12 +161,47 @@ class CommandResult:
     error: str = ""
     returncode: int = 0
     stale: bool = False
+    outcome: CommandOutcome | None = None
+
+    def __post_init__(self) -> None:
+        """旧构造只在创建时归一状态，后续诊断文本修改不改变程序判断。"""
+        self.outcome = command_outcome(self)
+
+    @property
+    def cancelled(self) -> bool:
+        """返回执行器确认的取消状态，不依赖显示文案。"""
+        return self.outcome == "cancelled"
+
+    @property
+    def timed_out(self) -> bool:
+        """返回执行预算耗尽状态，远端普通错误不自动视为超时。"""
+        return self.outcome == "timed_out"
 
     @property
     def stdout(self) -> str:
         """为旧调用方保留 stdout 兼容属性。"""
 
         return self.output
+
+
+def command_outcome(result: object) -> CommandOutcome:
+    """读取明确状态；旧调用方和轻量适配结果仅在此兼容历史错误文本。"""
+    outcome = getattr(result, "outcome", None)
+    if isinstance(outcome, str) and outcome in (
+        "succeeded", "failed", "cancelled", "timed_out", "stale",
+    ):
+        return cast(CommandOutcome, outcome)
+    if getattr(result, "success", False) is True:
+        return "succeeded"
+    if getattr(result, "stale", False) is True:
+        return "stale"
+    error = str(getattr(result, "error", "") or "").strip()
+    if getattr(result, "cancelled", False) is True or error == "Cancelled":
+        return "cancelled"
+    if (getattr(result, "timed_out", False) is True
+            or error.lower().startswith("timeout(") or "timed out" in error.lower()):
+        return "timed_out"
+    return "failed"
 
 
 class CommandRunner:
@@ -237,9 +277,11 @@ class CommandRunner:
                     timeout,
                 )
         except subprocess.TimeoutExpired:
-            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+            result = CommandResult(
+                success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
+            )
         except Exception as exc:
-            result = CommandResult(success=False, error=str(exc))
+            result = CommandResult(success=False, error=str(exc), outcome="failed")
         finally:
             _mark_finished()
         _log_if_slow(cmd, started_at, result, timeout)
@@ -262,7 +304,7 @@ class CommandRunner:
         try:
             resolved_cmd = resolve_command(cmd)
             if cancelled is not None and cancelled():
-                result = CommandResult(success=False, error="Cancelled")
+                result = CommandResult(success=False, error="Cancelled", outcome="cancelled")
             else:
                 with open(output_path, "wb") as output_file:
                     raw = None
@@ -298,9 +340,11 @@ class CommandRunner:
                 if result.success:
                     result.output = output_path
         except subprocess.TimeoutExpired:
-            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+            result = CommandResult(
+                success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
+            )
         except Exception as exc:
-            result = CommandResult(success=False, error=str(exc))
+            result = CommandResult(success=False, error=str(exc), outcome="failed")
         finally:
             _mark_finished()
         _log_if_slow(cmd, started_at, result, timeout)

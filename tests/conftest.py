@@ -7,30 +7,29 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer
-from PySide6.QtGui import QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
-from shiboken6 import isValid
-
-from gui.styles import BaseStyles
-from gui.styles.fonts import _font
-from gui.styles.typography import typography_manager
-
 _APPLICATION_REFERENCES = []
 
 
 @pytest.fixture(autouse=True)
 def isolated_run_library_storage(tmp_path, monkeypatch):
     """主窗口测试的归档库只读写临时目录，绝不加载或覆盖用户历史。"""
-    monkeypatch.setattr("gui.run_library.user_data_root", lambda: tmp_path)
+    from services import run_library
+
     monkeypatch.setattr(
-        "services.run_library.user_config_path", lambda filename: str(tmp_path / filename),
+        run_library, "user_config_path", lambda filename: str(tmp_path / filename),
     )
+    # 同进程已加载的 Qt 协调器仍需隔离；纯逻辑单独运行时不为 patch 导入 GUI。
+    coordinator = sys.modules.get("gui.run_library")
+    if coordinator is not None:
+        monkeypatch.setattr(coordinator, "user_data_root", lambda: tmp_path)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def qt_application():
-    """在整个测试进程中保留同一个 QApplication 包装对象。"""
+    """首次需要 Qt 时创建应用，在整个测试进程中保留同一个包装对象。"""
+    from PySide6.QtGui import QFontDatabase
+    from PySide6.QtWidgets import QApplication
+
     application = QApplication.instance() or QApplication([])
     if sys.platform == "win32" and not QFontDatabase.families():
         # Windows 离屏插件不枚举系统字体；显式加载系统现有字体，
@@ -45,6 +44,25 @@ def qt_application():
 
 
 @pytest.fixture
+def isolated_qt_run_library_storage(
+    qt_application, isolated_run_library_storage, tmp_path, monkeypatch,
+):
+    """仅 Qt 测试加载协调器，且在窗口清理结束前保持临时存储入口。"""
+    from gui import run_library
+
+    monkeypatch.setattr(run_library, "user_data_root", lambda: tmp_path)
+
+
+@pytest.fixture(autouse=True)
+def ui_test_context(request):
+    """按 ui 标记或显式夹具依赖隔离 Qt，不从模块导入推断测试分类。"""
+    qt_fixtures = {"qt_application", "isolated_ui_state", "isolated_ui_state_probe"}
+    if request.node.get_closest_marker("ui") or qt_fixtures.intersection(request.fixturenames):
+        request.getfixturevalue("isolated_qt_run_library_storage")
+        request.getfixturevalue("isolated_ui_state")
+
+
+@pytest.fixture
 def isolated_ui_state_probe():
     """为隔离夹具提供可重复的 teardown 断言入口。"""
 
@@ -54,9 +72,16 @@ def isolated_ui_state_probe():
         assertion(probe)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def isolated_ui_state(qt_application, isolated_ui_state_probe):
     """恢复每个用例改动过的全局 UI 状态并清理其顶层窗口。"""
+    from PySide6.QtCore import QCoreApplication, QEvent, QTimer
+    from PySide6.QtGui import QFont
+    from shiboken6 import isValid
+
+    from gui.styles import BaseStyles
+    from gui.styles.fonts import _font
+    from gui.styles.typography import typography_manager
 
     initial_theme = BaseStyles.current_theme()
     initial_font = QFont(qt_application.font())

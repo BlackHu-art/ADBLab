@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 
 import pytest
 
+from adblab.application.monkey_batch import MonkeyBatchCoordinator, MonkeyRunSnapshot
 from controllers._app import ADBAppMixin
 from controllers._base import _ADBControllerBase
 from controllers._device import ADBDeviceMixin
@@ -627,12 +628,17 @@ def test_connect_device_rejects_incomplete_target_before_adb_call():
 
 def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():
     controller = Mock()
-    controller._monkey_running = {"device-1"}
+    controller._monkey_lock = threading.RLock()
+    controller.monkey_batches = MonkeyBatchCoordinator()
+    snapshot = MonkeyRunSnapshot("batch-a", 1, {"seed": 42}, 100, "Device 1", "")
+    controller.monkey_batches.reserve({"device-1": snapshot})
+    controller.monkey_batches.request_stop("device-1", "batch-a")
 
     ADBAppMixin._process_kill_monkey_result(
         controller,
         {
             "device_ip": "device-1",
+            "batch_id": "batch-a",
             "index": 1,
             "success": True,
             "already_stopped": True,
@@ -640,7 +646,7 @@ def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():
         },
     )
 
-    assert controller._monkey_running == {"device-1"}
+    assert controller.monkey_batches.pending() == (("device-1", snapshot),)
     controller._emit_operation.assert_called_once_with(
         "kill_monkey", True, "ℹ️ 1. Monkey was not running on device-1"
     )

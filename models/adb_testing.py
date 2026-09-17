@@ -22,7 +22,7 @@ from datetime import datetime
 from PySide6.QtGui import QImageReader
 
 from core.adb_query import query_timeout
-from core.exec import CommandRunner, ProcessRunner
+from core.exec import CommandRunner, ProcessRunner, command_outcome
 from utils.adb_values import normalize_android_package
 from utils.archive import safe_extract_zip
 from utils.atomic_text import atomic_write_text
@@ -156,10 +156,7 @@ class ADBTesting(ADBModelCore):
 
     @staticmethod
     def _command_timed_out(command_result) -> bool:
-        if bool(getattr(command_result, "timed_out", False)):
-            return True
-        error = str(getattr(command_result, "error", "") or "").strip().lower()
-        return error.startswith("timeout(") or "timed out" in error
+        return command_outcome(command_result) == "timed_out"
 
     def _probe_current_package(self, device_ip: str) -> dict:
         """前台与连通探针共享截止时间和本设备批次取消，不查询已取消或替换的批次。"""

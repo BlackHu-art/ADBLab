@@ -205,6 +205,13 @@ def test_non_normal_window_has_no_resize_hits(qt_application, monkeypatch, state
     QTest.mouseClick(hit, Qt.MouseButton.LeftButton, pos=point)
     native_resize.assert_not_called()
 
+    window.showNormal()
+    qt_application.processEvents()
+    qt_application.processEvents()
+    hit, _ = _hit(window, scroll.scrollDelagate.vScrollBar.handle)
+    assert hit is scroll.scrollDelagate.vScrollBar.handle
+    assert window.childAt(QPoint(window.width() - 1, window.height() // 2)) in controller.zones
+
 
 @pytest.mark.parametrize("hide_first", [False, True], ids=["visible-page", "hidden-page"])
 def test_removed_scroll_page_and_window_release_without_late_callbacks(
@@ -271,3 +278,38 @@ def test_window_deletion_cancels_pending_scroll_mask_refresh(qt_application, mon
     assert not isValid(scroll)
     assert not isValid(controller) and not isValid(window)
     assert all(not isValid(zone) for zone in zones)
+
+
+def test_resize_burst_coalesces_masks_and_preserves_final_scrollbar_hit(
+    qt_application, monkeypatch,
+):
+    window, controller, scroll, _, _, _ = _window_with_scroll(qt_application, monkeypatch)
+    qt_application.processEvents()
+    refresh = Mock(wraps=controller._refresh_hit_masks)
+    monkeypatch.setattr(controller, "_refresh_hit_masks", refresh)
+    for width in range(810, 1010, 10):
+        window.resize(width, 620)
+    assert refresh.call_count == 0
+    qt_application.processEvents()
+    qt_application.processEvents()
+    assert 1 <= refresh.call_count <= 2
+    hit, _ = _hit(window, scroll.scrollDelagate.vScrollBar.handle)
+    assert hit is scroll.scrollDelagate.vScrollBar.handle
+    assert window.childAt(QPoint(window.width() - 1, 300)) in controller.zones
+
+
+def test_hidden_scrollbar_skips_geometry_walk_until_shown(qt_application, monkeypatch):
+    window, controller, scroll, _, stack, _ = _window_with_scroll(qt_application, monkeypatch)
+    bar = scroll.scrollDelagate.vScrollBar
+    stack.setCurrentIndex(1)
+    qt_application.processEvents()
+    qt_application.processEvents()
+    mapped = Mock(wraps=bar.mapTo)
+    monkeypatch.setattr(bar, "mapTo", mapped)
+    controller._refresh_hit_masks()
+    mapped.assert_not_called()
+    stack.setCurrentIndex(0)
+    qt_application.processEvents()
+    qt_application.processEvents()
+    hit, _ = _hit(window, bar.handle)
+    assert hit is bar.handle

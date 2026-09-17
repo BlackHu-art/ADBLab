@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import SmoothScrollArea
 
+from adblab.application.device_context import DeviceContextSnapshot
 from core.exec import CREATE_NEW_CONSOLE
 from gui.main_frame import MainFrame, _ScanThread
 from gui.pages.workspace_features import WorkspaceRoute
@@ -349,11 +350,9 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.update_current_package = Mock()
     fake_side_panel.current_package_text = Mock(return_value="")
     fake_side_panel.selected_devices = []
-    fake_side_panel._connected_device_cache = []
-    fake_side_panel._device_discovery_state = "empty"
-    fake_side_panel._devices_tab = SimpleNamespace(set_selected_devices=Mock())
-    fake_side_panel._tab_scroll_areas = {}
-    fake_side_panel._apps_tab = SimpleNamespace(
+    fake_side_panel.device_context_snapshot = lambda: DeviceContextSnapshot((), (), "empty")
+    fake_side_panel.set_selected_devices = Mock()
+    fake_side_panel.app_panel = SimpleNamespace(
         panel_header=QWidget(),
         apps_status_badge=QWidget(),
         diagnostic_results=Mock(),
@@ -367,12 +366,13 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         set_run_library=Mock(),
         set_device_labels=Mock(),
     )
-    fake_side_panel._advanced_tab = SimpleNamespace(
+    fake_side_panel._apps_tab = fake_side_panel.app_panel
+    fake_side_panel.system_panel = SimpleNamespace(
         panel_header=QWidget(),
         system_status_badge=QWidget(),
         category_stack=Mock(),
     )
-    fake_side_panel._scrcpy_tab = SimpleNamespace(
+    fake_side_panel.remote_panel = SimpleNamespace(
         panel_header=QWidget(),
         remote_status_badge=QWidget(),
         category_stack=Mock(),
@@ -382,13 +382,12 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
         apply_responsive_width=Mock(),
     )
 
-    def ensure_feature_page(index):
+    def take_overview_content(index):
         scroll = SmoothScrollArea()
         scroll.setWidget(QWidget())
-        fake_side_panel._tab_scroll_areas[index] = scroll
-        return Mock()
+        return scroll, scroll.takeWidget()
 
-    fake_side_panel._ensure_tab_loaded = ensure_feature_page
+    fake_side_panel.take_overview_content = take_overview_content
 
     with (
         patch("gui.main_frame.LogService"),
@@ -405,7 +404,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     try:
         assert created == {"central_widget_ready": True, "scan_thread": None}
         resolve.assert_not_called()
-        fake_side_panel._apps_tab.program_edit.textChanged.connect.assert_called_once_with(
+        fake_side_panel.app_panel.program_edit.textChanged.connect.assert_called_once_with(
             frame._invalidate_package_query
         )
     finally:
@@ -501,8 +500,7 @@ def test_main_frame_stop_scan_thread_uses_blocking_wait_on_close():
 
 def test_main_frame_disabling_continuous_scan_releases_scanning_state():
     panel = SimpleNamespace(
-        _device_discovery_state="scanning",
-        _connected_device_cache=["device-1"],
+        device_context_snapshot=lambda: DeviceContextSnapshot((), ("device-1",), "scanning"),
         set_device_discovery_state=Mock(),
     )
     frame = SimpleNamespace(
@@ -633,10 +631,11 @@ def test_main_frame_syncs_device_context_to_every_task_page():
     bar.device_labels.return_value = labels
     frame = SimpleNamespace(
         left_panel=SimpleNamespace(
-            selected_devices=["device-1"],
-            _connected_device_cache=["device-1", "device-2"],
-            _device_discovery_state="ready",
-            _apps_tab=SimpleNamespace(set_device_labels=Mock()),
+            device_context_snapshot=lambda: DeviceContextSnapshot(
+                ("device-1",), ("device-1", "device-2"), "ready",
+            ),
+            app_panel=SimpleNamespace(set_device_labels=Mock()),
+            remote_panel=None,
         ),
         adb_controller=SimpleNamespace(action_results=SimpleNamespace(set_target_labels=Mock())),
         _home_page=home,
@@ -664,7 +663,7 @@ def test_main_frame_syncs_device_context_to_every_task_page():
         {"ip": "device-2", "name": labels["device-2"]},
     ])
     frame.adb_controller.action_results.set_target_labels.assert_called_once_with(labels)
-    frame.left_panel._apps_tab.set_device_labels.assert_called_once_with(labels)
+    frame.left_panel.app_panel.set_device_labels.assert_called_once_with(labels)
     frame._sync_global_session_controls.assert_called_once_with()
     for page in pages.values():
         page.set_device_context.assert_called_once_with(*expected)
