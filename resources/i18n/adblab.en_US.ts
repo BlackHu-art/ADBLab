@@ -6310,5 +6310,125 @@ Android device management, apps and diagnostics</translation>
             <source>图标</source>
             <translation>Icon</translation>
         </message>
+        <message>
+            <source>开始</source>
+            <translation>Start</translation>
+        </message>
+        <message>
+            <source>跟随</source>
+            <translation>Follow</translation>
+        </message>
+        <message>
+            <source>换行</source>
+            <translation>Wrap</translation>
+        </message>
+        <message>
+            <source>待采集</source>
+            <translation>Ready</translation>
+        </message>
+        <message>
+            <source>日志缓存</source>
+            <translation>Log buffer</translation>
+        </message>
+        <message>
+            <source>包名无效</source>
+            <translation>Invalid package</translation>
+        </message>
+        <message>
+            <source>请连接设备</source>
+            <translation>Connect device</translation>
+        </message>
+        <message>
+            <source>请勾选设备</source>
+            <translation>Select device</translation>
+        </message>
+        <message>
+            <source>下次生效</source>
+            <translation>Next capture</translation>
+        </message>
+        <message>
+            <source>过滤已就绪</source>
+            <translation>Filter ready</translation>
+        </message>
+        <message>
+            <source>切换过滤</source>
+            <translation>Switching filter</translation>
+        </message>
+        <message>
+            <source>全部日志</source>
+            <translation>All logs</translation>
+        </message>
+        <message>
+            <source>查询应用</source>
+            <translation>Finding app</translation>
+        </message>
+        <message>
+            <source>查询失败</source>
+            <translation>Query failed</translation>
+        </message>
+        <message>
+            <source>启动失败</source>
+            <translation>Start failed</translation>
+        </message>
+        <message>
+            <source>停止中</source>
+            <translation>Stopping</translation>
+        </message>
+        <message>
+            <source>已清空</source>
+            <translation>Cleared</translation>
+        </message>
+        <message>
+            <source>换行已开</source>
+            <translation>Wrap on</translation>
+        </message>
+        <message>
+            <source>换行已关</source>
+            <translation>Wrap off</translation>
+        </message>
+        <message>
+            <source>已导出</source>
+            <translation>Exported</translation>
+        </message>
+        <message>
+            <source>已丢弃 {value0} 行</source>
+            <translation>Dropped {value0} lines</translation>
+        </message>
+        <message>
+            <source>停止超时</source>
+            <translation>Stop timed out</translation>
+        </message>
+        <message>
+            <source>清理失败</source>
+            <translation>Cleanup failed</translation>
+        </message>
+        <message>
+            <source>采集异常</source>
+            <translation>Unexpected end</translation>
+        </message>
+        <message>
+            <source>启动中</source>
+            <translation>Starting</translation>
+        </message>
+        <message>
+            <source>采集中</source>
+            <translation>Capturing</translation>
+        </message>
+        <message>
+            <source>查询重试</source>
+            <translation>Retrying query</translation>
+        </message>
+        <message>
+            <source>等待应用</source>
+            <translation>Waiting for app</translation>
+        </message>
+        <message>
+            <source>过滤生效</source>
+            <translation>Filter active</translation>
+        </message>
+        <message>
+            <source>未找到应用</source>
+            <translation>App not found</translation>
+        </message>
     </context>
 </TS>

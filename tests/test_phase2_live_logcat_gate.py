@@ -1323,7 +1323,7 @@ def test_page_reports_graceful_forced_and_orphan_cleanup_distinctly():
     dialog = LiveLogcatPage(device_ip="target", task_supervisor=adapter)
     dialog._supervisor_task_id = "task"
     messages = []
-    dialog.status_bar.setText = messages.append
+    compact_messages = []
 
     try:
         for disposition in (
@@ -1338,6 +1338,9 @@ def test_page_reports_graceful_forced_and_orphan_cleanup_distinctly():
                     disposition=disposition,
                 )
             )
+            messages.append(dialog.status_bar.text())
+            compact_messages.append(dialog.status_bar.compactText())
+            assert dialog.status_bar.toolTip() == messages[-1]
     finally:
         dialog._supervisor_task_id = None
         dialog.close()
@@ -1347,6 +1350,7 @@ def test_page_reports_graceful_forced_and_orphan_cleanup_distinctly():
         "已强制停止采集",
         "停止采集超时；任务仍受监督，请等待清理完成",
     ]
+    assert compact_messages == ["已停止", "强制停止", "停止超时"]
 
 
 def test_page_acknowledges_late_batch_without_touching_closed_ui():

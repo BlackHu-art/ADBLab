@@ -12,13 +12,13 @@ from qfluentwidgets import (
     InfoBadge,
     InfoLevel,
     LineEdit,
-    PushButton,
+    TransparentPushButton,
 )
 
 from adblab.application.supervision import TaskStopResult
 from adblab.presentation.qt_task_supervisor import QtTaskSupervisor
 from gui.dialogs.lifecycle import safe_disconnect
-from gui.dialogs.live_logcat_form import LiveLogcatForm
+from gui.dialogs.live_logcat_form import LiveLogcatForm, _LogcatStatusLabel
 from gui.dialogs.live_logcat_lifecycle import LiveLogcatLifecycle
 from gui.dialogs.live_logcat_stream import LiveLogcatStream
 from gui.dialogs.live_logcat_worker import (
@@ -38,13 +38,13 @@ class LiveLogcatPage(QWidget):
     MAX_BUFFER = 8000
     CLEANUP_RECHECK_MS = 100
     status_badge: InfoBadge
-    status_bar: BodyLabel
+    status_bar: _LogcatStatusLabel
     header_card: QWidget
     _level_label: BodyLabel
     _package_label: BodyLabel
     level_combo: ComboBox
     pkg_input: LineEdit
-    btn_get_pkg: PushButton
+    btn_get_pkg: TransparentPushButton
     _filters_layout: QGridLayout
 
     def __init__(
@@ -128,13 +128,13 @@ class LiveLogcatPage(QWidget):
         self._reflow_filters()
 
     def minimumSizeHint(self):
-        """最窄布局保留两行工具区，按钮以带提示的图标形式保持可达。"""
+        """最窄布局保留筛选输入，命令栏通过原生溢出菜单保持操作可达。"""
         size = super().minimumSizeHint()
         layout = self.layout()
         if not getattr(self, "_filter_controls", ()) or layout is None:
             return size
         side = max(32, self.btn_get_pkg.fontMetrics().height() + 16)
-        width = max(120 + 80 + side + 16, 6 * side + 48)
+        width = 120 + 80 + side + 16
         if not self.header_card.isHidden():
             width = max(width, self.header_card.minimumSizeHint().width())
         margins = layout.contentsMargins()
@@ -205,9 +205,11 @@ class LiveLogcatPage(QWidget):
             InfoLevel.SUCCESS if self._device_connected else InfoLevel.ERROR
         )
         if not self._device_connected and not active:
-            self.status_bar.setText(tr("设备已离线，请重新连接后开始采集"))
+            self.status_bar.setText(tr("设备已离线，请重新连接后开始采集"), tr("请连接设备"))
         elif not self._device_selected:
-            self.status_bar.setText(tr("请在顶部勾选当前设备后操作；已有采集仍可停止"))
+            self.status_bar.setText(
+                tr("请在顶部勾选当前设备后操作；已有采集仍可停止"), tr("请勾选设备"),
+            )
 
     def request_dispose(self, _reason: str = "user") -> bool:
         """非阻塞停止日志会话；资源归零后由 ``dispose_ready`` 通知宿主。"""
@@ -504,6 +506,7 @@ class LiveLogcatPage(QWidget):
         self._pending_visible_lines.clear()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        self._form_controller._material.stop()
         safe_disconnect(self._task_supervisor.task_stopped, self._on_task_stopped)
         if self.worker:
             w = self.worker

@@ -524,7 +524,7 @@ def test_dark_theme_updates_hidden_workspace_surfaces_before_navigation(qt_appli
         qt_application.processEvents()
 
         expected = BaseStyles.color("WINDOW_BG").lower()
-        assert frame._apps_page.autoFillBackground() == (not frame.isMicaEffectEnabled())
+        assert not frame._apps_page.autoFillBackground()
         assert frame._apps_page.palette().window().color().name() == expected
         assert frame._settings_page.viewport().palette().window().color().name() == expected
 
@@ -612,10 +612,12 @@ def test_theme_switch_keeps_mica_content_stack_edges_borderless(qt_application, 
         ):
             color = image.pixelColor(round(edge.x() * scale), round(edge.y() * scale))
             assert color.alpha() == 255
-            if frame.isMicaEffectEnabled():
-                assert color.name() != BaseStyles.color("WINDOW_BG").lower()
-            else:
-                assert color.name() == BaseStyles.color("WINDOW_BG").lower()
+            surface_point = frame._content_surface.mapTo(
+                frame, QPoint(frame._content_surface.width() - 3, 20)
+            )
+            assert color == image.pixelColor(
+                round(surface_point.x() * scale), round(surface_point.y() * scale)
+            )
             assert color == image.pixelColor(
                 round(adjacent.x() * scale), round(adjacent.y() * scale)
             )

@@ -17,6 +17,7 @@ from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceConnectionForm, DeviceContextBar, DevicePicker
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.test_navigation_rendering import _native_content_color
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     mapped_rect,
@@ -449,7 +450,7 @@ def test_device_popups_follow_fonts_and_compact_row_count(
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_main_window_device_bar_surface_tracks_theme_switch(frame, qt_application, theme):
     """从整窗取像素，防止原生窗口继承旧调色板导致白条或白色按钮。"""
-    # 本例验证实色表面；云母的半透明遮罩及圆角由独立材质测试覆盖。
+    # 关闭云母仍保留原生内容层，设备栏必须透出同一层而非重复刷根背景。
     frame.setMicaEffectEnabled(False)
     frame.show()
     BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
@@ -458,8 +459,8 @@ def test_main_window_device_bar_surface_tracks_theme_switch(frame, qt_applicatio
     QTest.qWait(200)
     bar = frame._global_device_bar
     assert bar.isVisible()
-    background = QColor(BaseStyles.color("WINDOW_BG"))
-    assert bar.palette().color(QPalette.ColorRole.Window) == background
+    assert bar.palette().color(QPalette.ColorRole.Window) == QColor(BaseStyles.color("WINDOW_BG"))
+    background = _native_content_color(frame.backgroundColor)
     rendered = frame.grab().toImage()
     point = bar._surface.mapTo(frame, QPoint(2, 2))
     scale = rendered.devicePixelRatio()

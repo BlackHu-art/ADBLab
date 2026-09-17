@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-13
+last_verified: 2026-09-17
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -177,6 +177,10 @@ QObject 树释放，不把 Qt 网络对象交给后台等待线程操作。
 - `BaseStyles` 协调主题、强调色和应用色板；`gui/window_effects.py` 管 Windows 材质，
   `gui/window_layout.py` 与 ScreenAdapter 管窗口尺寸及屏幕变化。配置键见
   [设置字段](DATA_FLOW.md#设置字段)，显示效果由对应 Qt 测试和实机检查验证。
+- 主窗口沿用参考 FluentWindow 的根背景与半透明内容层，关闭云母时仍保留内容层的层次；
+  页面承载容器保持透明，避免重复填充遮住材质。下拉框保留原生交互态，独立弹出菜单保留其阅读底板。
+  `gui/styles/reading_surface.py` 统一管理只读输出与详情框：实际宿主开启云母时透出内容层，
+  关闭或不支持时恢复原生 Fluent 样式；可编辑文本保留原生输入底板，切换材质不重建文档和阅读状态。
 - `NavigationThemeToggle` 在侧栏设置入口上方投影当前明暗，复用 MainFrame 的主题动作与
   设置持久化；它不参与导航选中或历史。设备任务页标题由全局设备栏消费页面的可访问名称。
   会话状态由 `WorkspaceFeatureHost` 提供，当前宿主的状态投影到顶部会话控件说明。

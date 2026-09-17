@@ -45,6 +45,7 @@ from gui.dialogs.performance_library import PerformanceLibrary
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
+from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from gui.widgets.content_section import ContentSection
 from gui.widgets.performance_progress import PerformanceProgress
@@ -826,6 +827,7 @@ class PerformancePage(QWidget):
                 package_worker.deleteLater()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        stop_reading_surface(self.log_view)
 
     def _poll_dispose_ready(self) -> None:
         """等待 runner、停止线程和包名查询线程全部真实退出。"""

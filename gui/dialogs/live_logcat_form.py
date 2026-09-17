@@ -2,8 +2,8 @@
 
 import weakref
 
-from PySide6.QtCore import QEvent, QSize
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
@@ -13,26 +13,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CaptionLabel,
     CardWidget,
     ComboBox,
+    CommandBar,
     FluentIcon,
     InfoBadge,
     InfoLevel,
     LineEdit,
     PlainTextEdit,
-    PrimaryPushButton,
-    PushButton,
-    TogglePushButton,
-    setCustomStyleSheet,
+    ProgressRing,
+    TransparentPushButton,
 )
 
 from gui.dialogs.live_logcat_highlighter import LogcatHighlighter
+from gui.dialogs.live_logcat_material import LogcatMaterial
 from gui.dialogs.live_logcat_worker import LEVEL_LABELS
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_label_role, configure_button
+from gui.styles.fluent import apply_focus_indicator, apply_label_role
 from gui.styles.typography import FontRole
 
 
@@ -53,6 +54,37 @@ class _LogcatOutput(PlainTextEdit):
             return super().event(event)
         finally:
             frame._updating_output = was_updating
+
+
+class _LogcatStatusLabel(CaptionLabel):
+    """顶部状态只占一行，省略仅影响绘制，悬停和辅助描述保留完整信息。"""
+
+    def setText(self, text: str, compact_text: str | None = None) -> None:
+        self._compact_text = text if compact_text is None else compact_text
+        super().setText(text)
+        self.setToolTip(text)
+        self.setAccessibleDescription(text)
+        self.update()
+
+    def compactText(self) -> str:
+        """显示摘要与完整诊断分开，避免在窄工具栏展示整段操作说明。"""
+        return getattr(self, "_compact_text", self.text())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(8, super().minimumSizeHint().height())
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setFont(self.font())
+        painter.setPen(BaseStyles.get_color("TEXT_SECONDARY"))
+        painter.drawText(
+            self.contentsRect(), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            self.fontMetrics().elidedText(
+                self.compactText().replace("\n", " "), Qt.TextElideMode.ElideRight,
+                self.contentsRect().width(),
+            ),
+        )
+        painter.end()
 
 
 class LiveLogcatForm:
@@ -129,7 +161,9 @@ class LiveLogcatForm:
             tr("输入包名后按 Enter 应用；清空后按 Enter 查看全部设备日志")
         )
         self._frame.pkg_input.returnPressed.connect(self._frame._submit_package_filter)
-        self._frame.btn_get_pkg = PushButton()
+        self._frame.btn_get_pkg = TransparentPushButton()
+        self._frame.btn_get_pkg.setAutoDefault(False)
+        self._frame.btn_get_pkg.setDefault(False)
         self._frame.btn_get_pkg.setText(tr("当前应用"))
         self._frame.btn_get_pkg.setIcon(FluentIcon.APPLICATION)
         self._frame.btn_get_pkg.setToolTip(tr("获取设备前台应用的包名，并应用到日志过滤"))
@@ -150,77 +184,70 @@ class LiveLogcatForm:
         btn_row = QHBoxLayout(self._frame.actions)
         btn_row.setContentsMargins(0, 0, 0, 0)
         btn_row.setSpacing(8)
-        self._frame.start_btn = PrimaryPushButton()
-        self._frame.start_btn.setText(tr("开始采集"))
-        self._frame.start_btn.setToolTip(tr("开始读取当前设备的日志，已有内容会清空"))
-        self._frame.start_btn.setIcon(FluentIcon.PLAY)
-        self._frame.stop_btn = PrimaryPushButton()
-        configure_button(
-            self._frame.stop_btn,
-            text=tr("停止采集"),
-            tooltip=tr("停止当前日志采集，保留页面与已显示的日志"))
-        self._frame.stop_btn.setIcon(FluentIcon.PAUSE)
-        self._frame.clear_btn = PushButton()
-        self._frame.clear_btn.setText(tr("清空"))
-        self._frame.clear_btn.setToolTip(tr("清空已缓冲和显示的日志，正在运行的采集继续"))
-        self._frame.clear_btn.setIcon(FluentIcon.BROOM)
-        self._frame.export_btn = PushButton()
-        self._frame.export_btn.setText(tr("导出"))
-        self._frame.export_btn.setToolTip(tr("将当前筛选后显示的日志保存为文本文件"))
-        self._frame.export_btn.setIcon(FluentIcon.SAVE)
-        self._frame.wrap_btn = TogglePushButton()
-        self._frame.wrap_btn.setText(tr("自动换行"))
-        self._frame.wrap_btn.setIcon(FluentIcon.ALIGNMENT)
-        self._frame.wrap_btn.setCheckable(True)
-        self._frame.wrap_btn.setChecked(False)
-        self._frame.wrap_btn.setToolTip(tr("开启后长日志自动换行；关闭后可横向滚动查看完整行"))
-        self._frame.start_btn.clicked.connect(self._frame._start)
-        self._frame.stop_btn.clicked.connect(self._frame._stop)
-        self._frame.clear_btn.clicked.connect(self._frame._clear)
-        self._frame.export_btn.clicked.connect(self._frame._export)
-        self._frame.wrap_btn.clicked.connect(self._frame._toggle_wrap)
-        self._frame.follow_btn = TogglePushButton(tr("跟随最新"))
-        self._frame.follow_btn.setIcon(FluentIcon.DOWN)
-        self._frame.follow_btn.setChecked(True)
-        self._frame.follow_btn.setToolTip(tr("上翻时暂停跟随；点击后回到最新日志，采集始终继续"))
-        self._frame.follow_btn.clicked.connect(self._frame._stream_controller._toggle_follow)
-        action_buttons = (
-            self._frame.start_btn,
-            self._frame.stop_btn,
-            self._frame.clear_btn,
-            self._frame.export_btn,
-            self._frame.wrap_btn,
-            self._frame.follow_btn,
-        )
-        # 顶层窗口默认会让动作按钮响应 Enter；包名输入框已独占 Enter 提交，
-        # 所有动作按钮必须关闭默认按钮语义，避免随后再次触发 Current Package 等操作。
-        for button in (self._frame.btn_get_pkg, *action_buttons):
-            button.setAutoDefault(False)
-            button.setDefault(False)
-        for button in (self._frame.start_btn, self._frame.stop_btn):
-            btn_row.addWidget(button)
-        btn_row.addStretch(1)
-        self._frame._action_specs = tuple((button, button.text()) for button in action_buttons)
-        for button, text in self._frame._action_specs:
-            button.setAccessibleName(text)
+        bar = self._frame._command_bar = CommandBar(self._frame.actions)
+        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        bar.setButtonTight(True)
+        bar.setIconSize(QSize(16, 16))
+        bar.moreButton.setToolTip(tr("更多"))
+        bar.moreButton.setAccessibleName(tr("更多"))
+        bar.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self._frame._command_icons = []
+        for name, icon, title, short_title, tooltip, callback in (
+            ("start", FluentIcon.PLAY, "开始采集", "开始", "开始读取当前设备的日志，已有内容会清空",
+             self._frame._start),
+            ("stop", FluentIcon.PAUSE, "停止采集", "停止",
+             "停止当前日志采集，保留页面与已显示的日志",
+             self._frame._stop),
+            ("follow", FluentIcon.DOWN, "跟随最新", "跟随",
+             "上翻时暂停跟随；点击后回到最新日志，采集始终继续",
+             self._frame._stream_controller._toggle_follow),
+            ("wrap", FluentIcon.ALIGNMENT, "自动换行", "换行",
+             "开启后长日志自动换行；关闭后可横向滚动查看完整行",
+             self._frame._toggle_wrap),
+            ("export", FluentIcon.SAVE, "导出", "导出", "将当前筛选后显示的日志保存为文本文件",
+             self._frame._export),
+            ("clear", FluentIcon.BROOM, "清空", "清空",
+             "清空已缓冲和显示的日志，正在运行的采集继续",
+             self._frame._clear),
+        ):
+            if name in ("follow", "export"):
+                bar.addSeparator()
+            action = Action(icon.icon(), tr(short_title), self._frame)
+            action.setProperty("accessibleName", tr(title))
+            action.setToolTip(tr(tooltip))
+            action.setCheckable(name in ("follow", "wrap"))
+            action.setChecked(name == "follow")
+            action.triggered.connect(callback)
+            setattr(self._frame, f"{name}_action", action)
+            setattr(self._frame, f"{name}_btn", bar.addAction(action))
+            self._frame._command_icons.append((action, icon))
+        btn_row.addWidget(bar, 1)
 
+        self._frame._status_group = QWidget(self._frame.actions)
+        status_layout = QHBoxLayout(self._frame._status_group)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(8)
         layout.addWidget(self._frame.actions)
         self._frame.status_bar = apply_label_role(
-            CaptionLabel(tr("点击开始采集，读取当前设备日志")), FontRole.UI,
+            _LogcatStatusLabel(), FontRole.UI_SMALL,
             color_key="TEXT_SECONDARY"
         )
+        self._frame.status_bar.setText(tr("点击开始采集，读取当前设备日志"), tr("待采集"))
         self._frame.status_bar.setAccessibleName(tr("日志采集状态"))
-        self._frame.status_bar.setWordWrap(True)
-
-        self._frame.reading_tools = QWidget(self._frame)
-        reading_row = QHBoxLayout(self._frame.reading_tools)
-        reading_row.setContentsMargins(0, 0, 0, 0)
-        reading_row.setSpacing(8)
-        for button in (self._frame.follow_btn, self._frame.wrap_btn,
-                       self._frame.export_btn, self._frame.clear_btn):
-            reading_row.addWidget(button)
-        btn_row.addWidget(self._frame.reading_tools)
-        self._frame.wrap_btn.clicked.connect(self._reflow_filters)
+        self._frame.status_bar.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred,
+        )
+        status_layout.addWidget(self._frame.status_bar, 1)
+        # 缓存占用是确定进度；批次刷新不启动动画，也不额外占用一行。
+        ring = self._frame.cache_ring = ProgressRing(self._frame._status_group, useAni=False)
+        ring.setFixedSize(28, 28)
+        ring.setStrokeWidth(3)
+        ring.setTextVisible(False)
+        ring.setRange(0, self._frame.MAX_BUFFER)
+        ring.setValue(0)
+        ring.setAccessibleName(tr("日志缓存"))
+        status_layout.addWidget(ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        btn_row.addWidget(self._frame._status_group)
 
         self._frame.output = _LogcatOutput(self._frame)
         self._frame.output.setReadOnly(True)
@@ -232,20 +259,7 @@ class LiveLogcatForm:
         self._frame.output.document().setMaximumBlockCount(self._frame.MAX_BUFFER)
         layout.addWidget(self._frame.output, 1)
 
-        self._frame.reading_status = apply_label_role(
-            CaptionLabel(), FontRole.UI, color_key="TEXT_SECONDARY"
-        )
-        self._frame.reading_status.setWordWrap(True)
-        self._frame.reading_status.setToolTip(
-            tr("仅保留最近 {limit} 行原始日志，超出后移除最旧记录；导出保存当前筛选结果").format(
-                limit=self._frame.MAX_BUFFER
-            )
-        )
-        footer = QHBoxLayout()
-        footer.setSpacing(16)
-        footer.addWidget(self._frame.status_bar, 1)
-        footer.addWidget(self._frame.reading_status, 1)
-        layout.addLayout(footer)
+        self._material = LogcatMaterial(self._frame, self._frame.output)
         self._frame.output.verticalScrollBar().valueChanged.connect(
             self._frame._stream_controller._on_output_scroll
         )
@@ -310,23 +324,27 @@ class LiveLogcatForm:
         self._frame._reflowing_filters = False
 
     def _reflow_action_buttons(self, available_width: int) -> None:
-        """操作保持在同一行；窄屏先收起阅读按钮文字，再收起采集按钮文字。"""
-        specs = getattr(self._frame, "_action_specs", ())
-        if not specs:
+        """命令栏按字体保留自然尺寸，次要命令通过原生溢出菜单保持可达。"""
+        bar = getattr(self._frame, "_command_bar", None)
+        if bar is None:
             return
-        for button, text in specs:
-            button.setText(text)
-            button.setMinimumWidth(0)
-            button.setMaximumWidth(16777215)
-        widths = [button.sizeHint().width() for button, _text in specs]
-        sides = [max(32, button.fontMetrics().height() + 16) for button, _text in specs]
-        compact_reading = sum(widths) + 6 * 8 > available_width
-        compact_capture = sum(widths[:2]) + sum(sides[2:]) + 6 * 8 > available_width
-        for index, (button, _text) in enumerate(specs):
-            compact = compact_capture if index < 2 else compact_reading
-            if compact:
-                button.setText("")
-            button.setFixedWidth(sides[index] if compact else widths[index])
+        for button in (*bar.commandButtons, bar.moreButton):
+            button.setFont(bar.font())
+            hint = button.sizeHint()
+            button.setFixedSize(
+                hint.width(), max(hint.height(), button.fontMetrics().height() + 16),
+            )
+            if button is not bar.moreButton:
+                button.setAccessibleName(button.action().property("accessibleName"))
+                button.setAccessibleDescription(button.action().toolTip())
+            apply_focus_indicator(button, selector="QToolButton")
+        bar.setFixedHeight(max(button.height() for button in (*bar.commandButtons, bar.moreButton)))
+        bar.updateGeometry()
+        if hasattr(self._frame, "_status_group"):
+            status = self._frame.status_bar
+            # 预留约六个全宽字符，长错误仅省略绘制，按钮不足时使用原生菜单。
+            preferred = status.fontMetrics().horizontalAdvance("\u3000" * 6) + 36
+            self._frame._status_group.setFixedWidth(min(preferred, max(100, available_width // 4)))
 
     def _apply_theme(self, _value=None):
         BS = BaseStyles
@@ -353,22 +371,17 @@ class LiveLogcatForm:
         for widget in (self._frame.level_combo, self._frame.pkg_input):
             widget.setMaximumHeight(16777215)
             widget.setMinimumHeight(widget.fontMetrics().height() + 16)
-        for label in (self._frame._level_label, self._frame._package_label,
-                      self._frame.status_bar, self._frame.reading_status):
+        for label in (self._frame._level_label, self._frame._package_label):
             label.setFont(ui_font)
-        # 使用日志专用表面，避免透明输入背景降低小字号日志的等级颜色对比度。
-        styles = []
-        for theme in ("Light", "Dark"):
-            styles.append(
-                "PlainTextEdit {"
-                f"background: {BS.color_for(theme, 'LOG_BACKGROUND')};"
-                f"color: {BS.color_for(theme, 'LOG_TEXT_COLOR')};"
-                f"border: 1px solid {BS.color_for(theme, 'BORDER_COLOR')};"
-                "border-radius: 6px;}"
-            )
-        setCustomStyleSheet(self._frame.output, *styles)
+        self._frame.status_bar.setFont(BS.font_for_role(FontRole.UI_SMALL))
+        self._frame.cache_ring.update()
+        self._frame._command_bar.setFont(ui_font)
+        for action, icon in self._frame._command_icons:
+            action.setIcon(icon.icon())
+        self._frame.btn_get_pkg.setIcon(FluentIcon.APPLICATION.icon())
         self._frame.output.setFont(log_font)
         self._frame.output.document().setDefaultFont(log_font)
+        self._material.refresh(force=True)
         self._frame.output.setMinimumHeight(
             max(180, self._frame.output.fontMetrics().lineSpacing() * 6 + 26)
         )
@@ -403,13 +416,12 @@ class LiveLogcatForm:
 
     def _apply_action_button_styles(self) -> None:
         """保留 Fluent 原生状态绘制，并使动作高度随真实字号增长。"""
-        for button in (self._frame.btn_get_pkg, self._frame.start_btn, self._frame.stop_btn,
-                       self._frame.clear_btn, self._frame.export_btn, self._frame.wrap_btn,
-                       self._frame.follow_btn):
-            button.setFont(BaseStyles.font_for_role(FontRole.UI))
-            button.setIconSize(QSize(18, 18))
-            button.setMaximumHeight(16777215)
-            button.setMinimumHeight(button.fontMetrics().height() + 16)
+        button = self._frame.btn_get_pkg
+        button.setFont(BaseStyles.font_for_role(FontRole.UI))
+        button.setIconSize(QSize(16, 16))
+        button.setMaximumHeight(16777215)
+        button.setMinimumHeight(button.fontMetrics().height() + 16)
+        apply_focus_indicator(button, selector="QPushButton")
 
     def resizeEvent(self, event):
         self._reflow_filters()
@@ -420,8 +432,8 @@ class LiveLogcatForm:
 
         self._frame._logcat_stopping = stopping
         has_device = self._frame._can_operate_device()
-        self._frame.start_btn.setEnabled(has_device and not running)
-        self._frame.stop_btn.setEnabled(running and not stopping)
+        self._frame.start_action.setEnabled(has_device and not running)
+        self._frame.stop_action.setEnabled(running and not stopping)
         package_lookup_active = bool(
             self._frame._pkg_worker is not None and self._frame._pkg_worker.isRunning()
         )

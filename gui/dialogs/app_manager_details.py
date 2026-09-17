@@ -26,8 +26,9 @@ from gui.feedback import report_feedback
 from gui.i18n import tr
 from gui.notifications import ToastLevel
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_label_role
+from gui.styles.fluent import apply_label_role, apply_reading_surface
 from gui.styles.icon_loader import get_themed_icon
+from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from models.app_manager_worker import AppManagerWorker
 
@@ -119,6 +120,7 @@ class AppDetailsPage(QWidget):
         dl = QVBoxLayout(dw)
         self.detail_text = TextEdit()
         self.detail_text.setReadOnly(True)
+        apply_reading_surface(self.detail_text)
         dl.addWidget(self.detail_text)
         self.tabs.addTab(dw, tr("应用详情"))
 
@@ -533,6 +535,7 @@ class AppDetailsPage(QWidget):
         self._active = False
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        stop_reading_surface(self.detail_text)
         for worker in self._running_workers():
             worker.abort()
         if self._running_workers():

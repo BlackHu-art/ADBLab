@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QColor, QIcon, QRegion, QResizeEvent
+from PySide6.QtGui import QIcon, QRegion, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -534,7 +534,6 @@ class MainFrame(FluentWindow):
 
         s = AppSettings.instance()
         BaseStyles.set_accent_color(str(s.get("accent_color", "#0F6CBD")))
-        self.setCustomBackgroundColor(QColor("#F3F3F3"), QColor("#202020"))
         self.setMicaEffectEnabled(bool(s.get("mica_enabled", True)))
         self.navigationInterface.setExpandWidth(220)
         self.navigationInterface.setMinimumExpandWidth(
@@ -2042,7 +2041,7 @@ class MainFrame(FluentWindow):
         self._refresh_window_chrome_theme()
 
     def _sync_material_surface_styles(self) -> None:
-        """按生效材质绘制内容与导航底层，确保切页及折叠中间帧同样正确。"""
+        """保持原生内容层次，由根窗口决定云母或实色背景。"""
 
         mica = self.isMicaEffectEnabled()
         home = getattr(self, "_home_page", None)
@@ -2055,14 +2054,12 @@ class MainFrame(FluentWindow):
         content_surface = getattr(self, "_content_surface", None)
         if content_surface is not None:
             light_style = (
-                "background-color: rgba(242, 244, 246, 0.20); "
+                "background-color: rgba(255, 255, 255, 0.5); "
                 "border: 1px solid rgba(0, 0, 0, 0.068);"
-                if mica else f"background-color: {light}; border: none;"
             )
             dark_style = (
                 "background-color: rgba(255, 255, 255, 0.0314); "
                 "border: 1px solid rgba(0, 0, 0, 0.18);"
-                if mica else f"background-color: {dark}; border: none;"
             )
             setCustomStyleSheet(
                 content_surface,
@@ -2072,7 +2069,7 @@ class MainFrame(FluentWindow):
                 f"border-bottom: none; border-top-left-radius: {corner_radius}px; }}",
             )
             self._update_content_surface_mask()
-        # 浅色使用轻量中性遮罩，避免白色与卡片再次合成后冲淡云母；深色保持原层次。
+        # 内容壳承接原生 FluentWindow 的表面；内层栈保持透明，避免重复叠色。
         for surface, selector, light_color, dark_color, border in (
             (
                 self.stackedWidget,
@@ -2160,6 +2157,7 @@ class MainFrame(FluentWindow):
         navigation = getattr(self, "navigationInterface", None)
         if navigation is not None:
             candidates.extend(navigation.findChildren(NavigationPanel))
+        shell_ids = {id(widget) for widget in candidates}
         for name in (
             "_home_page",
             "_devices_page",
@@ -2195,8 +2193,10 @@ class MainFrame(FluentWindow):
             seen.add(identity)
             roots.append(widget)
             widget.setPalette(palette)
-            # 云母由根窗口及内容栈统一合成，普通容器不能再次覆盖实色底板。
-            widget.setAutoFillBackground(not self.isMicaEffectEnabled())
+            # 页面留白始终透出共享内容层；只有窗口壳在关闭云母时填充根底色。
+            widget.setAutoFillBackground(
+                identity in shell_ids and not self.isMicaEffectEnabled()
+            )
             widget.update()
 
         # 壳层透明不等于沿用旧调色板；文字、图标仍需同步当前主题。
