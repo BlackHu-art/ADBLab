@@ -3,6 +3,42 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>将当前测试参数保存为命名方案</source>
+            <translation>將目前測試參數儲存為命名方案</translation>
+        </message>
+        <message>
+            <source>打开所选的报告或日志文件</source>
+            <translation>開啟所選的報告或日誌檔案</translation>
+        </message>
+        <message>
+            <source>打开所选报告或日志所在的文件夹</source>
+            <translation>開啟所選報告或日誌所在的資料夾</translation>
+        </message>
+        <message>
+            <source>展开或收起本次操作的完整结果</source>
+            <translation>展開或收起本次操作的完整結果</translation>
+        </message>
+        <message>
+            <source>将当前设备的完整结果复制到剪贴板</source>
+            <translation>將目前裝置的完整結果複製到剪貼簿</translation>
+        </message>
+        <message>
+            <source>将当前设备的完整结果保存到本地文件</source>
+            <translation>將目前裝置的完整結果儲存至本機檔案</translation>
+        </message>
+        <message>
+            <source>打开所选的操作结果文件</source>
+            <translation>開啟所選的操作結果檔案</translation>
+        </message>
+        <message>
+            <source>打开所选操作结果所在的文件夹</source>
+            <translation>開啟所選操作結果所在的資料夾</translation>
+        </message>
+        <message>
+            <source>无法启动文件传输，请重试。</source>
+            <translation>無法啟動檔案傳輸，請重試。</translation>
+        </message>
+        <message>
             <source>识别耗时较长，仍在继续…</source>
             <translation>識別需時較長，仍在繼續…</translation>
         </message>
@@ -4091,8 +4127,8 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>讓 ADBLab 保持在其他視窗上方</translation>
         </message>
         <message>
-            <source>让窗口和表面呈现半透明材质</source>
-            <translation>讓視窗與表面呈現半透明材質</translation>
+            <source>使用 Windows 云母材质，底色随主题和桌面壁纸变化</source>
+            <translation>使用 Windows 雲母材質，底色隨主題和桌面壁紙變化</translation>
         </message>
         <message>
             <source>让镜像窗口保持在其他窗口上方</source>
@@ -6301,6 +6337,186 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>Count</source>
             <translation>計數</translation>
+        </message>
+        <message>
+            <source>系统拒绝通过 ADB 清除应用数据。请在手机的应用信息页手动清除；若入口也受限，请联系设备管理员或系统厂商。</source>
+            <translation>系統拒絕透過 ADB 清除應用程式資料。請在手機的應用程式資訊頁手動清除；若該入口亦受限制，請聯絡裝置管理員或系統廠商。</translation>
+        </message>
+        <message>
+            <source>图标</source>
+            <translation>圖示</translation>
+        </message>
+        <message>
+            <source>开始</source>
+            <translation>開始</translation>
+        </message>
+        <message>
+            <source>跟随</source>
+            <translation>跟隨</translation>
+        </message>
+        <message>
+            <source>换行</source>
+            <translation>換行</translation>
+        </message>
+        <message>
+            <source>待采集</source>
+            <translation>待採集</translation>
+        </message>
+        <message>
+            <source>日志缓存</source>
+            <translation>日誌緩存</translation>
+        </message>
+        <message>
+            <source>包名无效</source>
+            <translation>包名無效</translation>
+        </message>
+        <message>
+            <source>请连接设备</source>
+            <translation>請連接設備</translation>
+        </message>
+        <message>
+            <source>请勾选设备</source>
+            <translation>請勾選設備</translation>
+        </message>
+        <message>
+            <source>下次生效</source>
+            <translation>下次生效</translation>
+        </message>
+        <message>
+            <source>过滤已就绪</source>
+            <translation>過濾已就緒</translation>
+        </message>
+        <message>
+            <source>切换过滤</source>
+            <translation>切換過濾</translation>
+        </message>
+        <message>
+            <source>全部日志</source>
+            <translation>全部日誌</translation>
+        </message>
+        <message>
+            <source>查询应用</source>
+            <translation>查詢應用</translation>
+        </message>
+        <message>
+            <source>查询失败</source>
+            <translation>查詢失敗</translation>
+        </message>
+        <message>
+            <source>启动失败</source>
+            <translation>啟動失敗</translation>
+        </message>
+        <message>
+            <source>停止中</source>
+            <translation>停止中</translation>
+        </message>
+        <message>
+            <source>已清空</source>
+            <translation>已清空</translation>
+        </message>
+        <message>
+            <source>换行已开</source>
+            <translation>換行已開</translation>
+        </message>
+        <message>
+            <source>换行已关</source>
+            <translation>換行已關</translation>
+        </message>
+        <message>
+            <source>已导出</source>
+            <translation>已匯出</translation>
+        </message>
+        <message>
+            <source>已丢弃 {value0} 行</source>
+            <translation>已丟棄 {value0} 行</translation>
+        </message>
+        <message>
+            <source>停止超时</source>
+            <translation>停止逾時</translation>
+        </message>
+        <message>
+            <source>清理失败</source>
+            <translation>清理失敗</translation>
+        </message>
+        <message>
+            <source>采集异常</source>
+            <translation>採集異常</translation>
+        </message>
+        <message>
+            <source>启动中</source>
+            <translation>啟動中</translation>
+        </message>
+        <message>
+            <source>采集中</source>
+            <translation>採集中</translation>
+        </message>
+        <message>
+            <source>查询重试</source>
+            <translation>查詢重試</translation>
+        </message>
+        <message>
+            <source>等待应用</source>
+            <translation>等待應用程式</translation>
+        </message>
+        <message>
+            <source>过滤生效</source>
+            <translation>篩選生效</translation>
+        </message>
+        <message>
+            <source>未找到应用</source>
+            <translation>找不到應用程式</translation>
+        </message>
+        <message>
+            <source>该操作正在进行，请等待完成。</source>
+            <translation>此操作正在進行，請等候完成。</translation>
+        </message>
+        <message>
+            <source>导出完成</source>
+            <translation>匯出完成</translation>
+        </message>
+        <message>
+            <source>结果文件已保存。</source>
+            <translation>結果檔案已儲存。</translation>
+        </message>
+        <message>
+            <source>发现应用异常</source>
+            <translation>發現應用程式異常</translation>
+        </message>
+        <message>
+            <source>可在设置中查看详情或导出诊断。</source>
+            <translation>可在設定中查看詳情或匯出診斷。</translation>
+        </message>
+        <message>
+            <source>部分操作失败</source>
+            <translation>部分操作失敗</translation>
+        </message>
+        <message>
+            <source>操作未完成，请查看任务了解原因。</source>
+            <translation>操作未完成，請查看工作了解原因。</translation>
+        </message>
+        <message>
+            <source>请查看任务中的注意事项。</source>
+            <translation>請查看工作中的注意事項。</translation>
+        </message>
+        <message>
+            <source>正在处理，请稍候。</source>
+            <translation>正在處理，請稍候。</translation>
+        </message>
+        <message>
+            <source>成功 {count} 台</source>
+            <translation>成功 {count} 台</translation>
+        </message>
+        <message>
+            <source>失败 {count} 台</source>
+            <translation>失敗 {count} 台</translation>
+        </message>
+        <message>
+            <source>未完成 {count} 台</source>
+            <translation>未完成 {count} 台</translation>
+        </message>
+        <message>
+            <source>详情已记录，可在任务中心查看。</source>
+            <translation>詳情已記錄，可在工作中心查看。</translation>
         </message>
     </context>
 </TS>

@@ -219,6 +219,70 @@ def test_file_transfer_keeps_native_boundary(adb, monkeypatch):
     adb._execution.run.assert_not_called()
 
 
+def test_native_file_transfer_requests_isolated_client(adb, monkeypatch):
+    process = Mock()
+    process.communicate.return_value = (b"copied\n", b"")
+    process.poll.return_value = 0
+    launch = Mock(return_value=process)
+    monkeypatch.setattr(androiddevice, "popen_native", launch, raising=False)
+    monkeypatch.setattr(
+        androiddevice.subprocess, "Popen",
+        Mock(side_effect=AssertionError("native client bypassed isolation")),
+    )
+
+    assert adb.run_adb_cmd("pull", "/device/file", "local file") == "copied"
+    launch.assert_called_once_with(
+        ["fake-adb", "-s", "device-test", "pull", "/device/file", "local file"],
+        isolate=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    process.communicate.assert_called_once_with(timeout=10)
+
+
+def test_native_device_listing_requests_isolation_and_keeps_online_filter(adb, monkeypatch):
+    launch = Mock(return_value=subprocess.CompletedProcess(
+        ["fake-adb", "devices"], 0,
+        "List of devices attached\na\tdevice\nb\toffline\nc\tunauthorized\n", "",
+    ))
+    monkeypatch.setattr(androiddevice, "run_native", launch, raising=False)
+    monkeypatch.setattr(
+        androiddevice.subprocess, "run",
+        Mock(side_effect=AssertionError("native client bypassed isolation")),
+    )
+
+    assert ADB.list_device() == ["a"]
+    launch.assert_called_once_with(
+        ["fake-adb", "devices"], isolate=True, capture_output=True, text=True,
+        encoding="utf-8", errors="ignore", timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+@pytest.mark.parametrize("method, arguments", [
+    ("kill_server", ["kill-server"]),
+    ("start_server", ["fork-server", "server", "-a"]),
+])
+def test_explicit_server_control_requests_isolated_client(adb, monkeypatch, method, arguments):
+    launch = Mock(return_value=subprocess.CompletedProcess(["fake-adb", *arguments], 0))
+    monkeypatch.setattr(androiddevice, "run_native", launch, raising=False)
+    monkeypatch.setattr(ADB, "killOccupy5037Process", Mock())
+    monkeypatch.setattr(
+        androiddevice.subprocess, "run",
+        Mock(side_effect=AssertionError("native client bypassed isolation")),
+    )
+
+    getattr(ADB, method)()
+    launch.assert_called_once_with(
+        ["fake-adb", *arguments], isolate=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False,
+    )
+
+
 def test_devices_uses_session_and_preserves_online_filter(adb, monkeypatch):
     RuntimeData.adb_execution = Mock()
     RuntimeData.adb_execution.run.return_value = ExecutionResult(

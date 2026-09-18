@@ -8,6 +8,7 @@ import yaml
 WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
 RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
+TEST_WORKFLOW = WORKFLOW_DIR / "Tests.yaml"
 PYINSTALLER_SPEC = Path("ADBLab.spec")
 ICON_DIR = Path("resources/icons")
 FIRST_PARTY_PYTHON_PATHS = (
@@ -72,7 +73,7 @@ def _declared_svg_names() -> set[str]:
 
 
 def test_all_actions_are_pinned_to_verified_commit_shas():
-    workflows = "\n".join(_read(path) for path in (BUILD_WORKFLOW, RETENTION_WORKFLOW))
+    workflows = "\n".join(_read(path) for path in WORKFLOW_DIR.glob("*.yaml"))
     matches = list(USES_PATTERN.finditer(workflows))
 
     assert matches, "Expected at least one GitHub Action reference"
@@ -133,38 +134,27 @@ def test_linux_build_installs_egl_before_qt_self_check():
 
 def test_windows_build_collects_current_scrcpy_bundle():
     """本地 spec 与 CI 必须收集同一个无版本号的 Windows 工具目录。"""
+    from scripts.packaging_manifest import resource_datas
 
-    packaging_configs = (_read(PYINSTALLER_SPEC), _read(BUILD_WORKFLOW))
-
-    for config in packaging_configs:
-        assert "scrcpy-win64-v3.3.1" not in config
-        assert "scrcpy-win64" in config
+    assert ("scrcpy-win64", "scrcpy-win64") in resource_datas("win32")
+    for platform in ("win32", "darwin", "linux"):
+        assert all("scrcpy-win64-v" not in source for source, _ in resource_datas(platform))
 
 
 def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses():
     """本地 spec 与 CI 不得重新整目录打包文档、截图或 MobilePerf 源码。"""
+    from scripts.packaging_manifest import SUBMODULE_PACKAGES, resource_datas
 
-    spec = _read(PYINSTALLER_SPEC)
-    workflow = _read(BUILD_WORKFLOW)
-    compact_spec = re.sub(r"\s+", "", spec)
-
-    assert "('resources','resources')" not in compact_spec
-    assert "('mobileperf','mobileperf')" not in compact_spec
-    assert '--add-data "resources;resources"' not in workflow
-    assert '--add-data "resources:resources"' not in workflow
-    assert '--add-data "mobileperf;mobileperf"' not in workflow
-    assert '--add-data "mobileperf:mobileperf"' not in workflow
-    assert "demo.gif" not in spec
-    assert "demo.gif" not in workflow
-
-    for source, destination in RUNTIME_RESOURCE_DATA:
+    common = {
+        *RUNTIME_RESOURCE_DATA, ("icon.ico", "."), ("build/runtime-helpers", "runtime-helpers"),
+    }
+    for platform in ("win32", "darwin", "linux"):
+        expected = common | ({("scrcpy-win64", "scrcpy-win64")} if platform == "win32" else set())
+        assert set(resource_datas(platform)) == expected
+        assert len(resource_datas(platform)) == len(expected)
+    for source, _destination in RUNTIME_RESOURCE_DATA:
         assert Path(source).exists(), f"Missing packaging source: {source}"
-        assert f"('{source}','{destination}')" in compact_spec
-        assert f'--add-data "{source};{destination}"' in workflow
-        assert f'--add-data "{source}:{destination}"' in workflow
-
-    assert "collect_submodules('mobileperf')" in spec
-    assert "--collect-submodules mobileperf" in workflow
+    assert SUBMODULE_PACKAGES == ("mobileperf", "qfluentwidgets")
 
 
 def test_declared_svg_icons_exist_with_exact_case():
@@ -234,3 +224,53 @@ def test_retention_workflow_only_reports_candidates():
         "--cleanup-tag",
     ):
         assert forbidden not in workflow
+
+
+def test_build_workflow_delegates_resources_to_shared_cli_and_keys_constraints():
+    workflow = yaml.safe_load(_read(BUILD_WORKFLOW))
+    job = workflow["jobs"]["build"]
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "python scripts/build_app.py" in commands
+    assert "--add-data" not in commands
+    assert "--collect-submodules" not in commands
+    assert all("datas" not in row for row in job["strategy"]["matrix"]["include"])
+    cache = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/cache@"))
+    assert "constraints.txt" in cache["with"]["key"]
+
+
+def test_independent_tests_workflow_runs_serial_checks_with_read_only_permissions():
+    workflow = yaml.safe_load(_read(TEST_WORKFLOW))
+    assert workflow["permissions"] == {"contents": "read"}
+    triggers = workflow.get("on", workflow.get(True))
+    assert set(triggers) == {"push", "pull_request", "workflow_dispatch"}
+    job = workflow["jobs"]["tests"]
+    assert job["runs-on"] == "windows-latest"
+    assert job["env"]["QT_QPA_PLATFORM"] == "offscreen"
+    steps = job["steps"]
+    commands = [step.get("run", "") for step in steps]
+    expected = (
+        "python -m pytest -q", "python -m ruff check .", "python -m pyright",
+        "python scripts/check_comment_language.py", "python scripts/check_doc_links.py",
+        "python scripts/check_source_text.py", "git diff --check",
+    )
+    for command in expected:
+        assert command in commands
+    assert not any("-n " in command or "PyInstaller" in command for command in commands)
+    guard_index = commands.index("python scripts/check_source_text.py")
+    assert guard_index < commands.index("python -m pytest -q")
+    cache = next(step for step in steps if step.get("uses", "").startswith("actions/cache@"))
+    assert "constraints.txt" in cache["with"]["key"]
+
+
+def test_source_integrity_guard_runs_before_build_and_other_local_hooks():
+    steps = yaml.safe_load(_read(BUILD_WORKFLOW))["jobs"]["build"]["steps"]
+    commands = [step.get("run", "") for step in steps]
+    guard = commands.index("python scripts/check_source_text.py")
+    assert guard < next(index for index, command in enumerate(commands) if "PyInstaller" in command
+                        or "scripts/build_app.py" in command)
+    config = yaml.safe_load(_read(Path(".pre-commit-config.yaml")))
+    hooks = config["repos"][0]["hooks"]
+    assert hooks[0]["id"] == "source-text"
+    assert hooks[0]["entry"].endswith("scripts/check_source_text.py")
+    assert hooks[0]["pass_filenames"] is False
+    assert [hook["id"] for hook in hooks[1:]] == ["ruff-check", "comment-language", "doc-links"]

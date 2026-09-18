@@ -3,10 +3,11 @@
 import weakref
 from functools import lru_cache
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QStandardItem
-from PySide6.QtWidgets import QListWidgetItem
+from PySide6.QtWidgets import QTreeWidgetItem
 
+from gui.dialogs.app_manager_rows import STATUS_ROLE, VERSION_ROLE, refresh_row_description
 from gui.dialogs.lifecycle import (
     alive_callback,
     alive_forwarding_callback,
@@ -141,27 +142,16 @@ class AppManagerViews:
         try:
             sorted_apps = sorted(apps, key=lambda x: (0 if x[3] == "User" else 1, x[0].lower()))
             for name, pkg, st, at in sorted_apps:
-                short_name = name[:18] + (".." if len(name) > 18 else "")
                 icon = self._frame._gen_icon(name, at, 48)
-                item = QListWidgetItem(icon, short_name)
-                item.setData(Qt.ItemDataRole.UserRole, pkg)
-                item.setData(Qt.ItemDataRole.UserRole + 1, at)
-                type_text = {
-                    "User": tr("用户"),
-                    "System": tr("系统"),
-                    "Vendor": tr("厂商"),
-                    "Other": tr("其他"),
-                }.get(at, at)
-                state_text = tr("已停用") if st == "Disabled" else tr("已启用")
-                item.setToolTip(
-                    tr("{value0}\n类型：{value1} | 状态：{value2}").format(
-                        value0=pkg, value1=type_text, value2=state_text
-                    )
-                )
-                item.setSizeHint(QSize(106, 72))
-                if st == "Disabled":
-                    item.setForeground(BaseStyles.get_color("TEXT_DISABLED"))
-                self._frame.icon_list.addItem(item)
+                item = QTreeWidgetItem(["", name, pkg, ""])
+                item.setIcon(0, icon)
+                item.setData(0, Qt.ItemDataRole.UserRole, pkg)
+                item.setData(0, Qt.ItemDataRole.UserRole + 1, at)
+                item.setData(0, STATUS_ROLE, st)
+                refresh_row_description(item)
+                color = "TEXT_DISABLED" if st == "Disabled" else "TEXT_PRIMARY"
+                item.setForeground(1, BaseStyles.get_color(color))
+                self._frame.icon_list.addTopLevelItem(item)
                 self._frame._detail_icon_by_pkg[pkg] = item
         finally:
             self._frame.icon_list.setUpdatesEnabled(True)
@@ -207,8 +197,10 @@ class AppManagerViews:
         self._frame._failed_detail_packages.discard(pkg)
         item = self._frame._detail_icon_by_pkg.get(pkg)
         if item:
-            item.setToolTip(f"{label}\n{pkg}\n{version}")
-            item.setText(label[:18] + (".." if len(label) > 18 else ""))
+            if label:
+                item.setText(1, label)
+            item.setData(0, VERSION_ROLE, version)
+            refresh_row_description(item)
             self._frame._icons_controller.decorate(pkg)
         row = self._frame._detail_row_by_pkg.get(pkg)
         if row is not None:
@@ -220,6 +212,7 @@ class AppManagerViews:
             if version and version_item:
                 version_item.setText(version)
                 version_item.setToolTip(version)
+        self._frame._filter()
 
     def _on_detail_worker_finished(self, packages=None, request_id=None):
         """未发布成功详情的包留待刷新重试，避免失败批次在定时器中不断重发。"""
@@ -287,9 +280,9 @@ class AppManagerViews:
         packages: list[str] = []
         if self._frame._view_mode:
             viewport = self._frame.icon_list.viewport().rect()
-            for i in range(self._frame.icon_list.count()):
-                item = self._frame.icon_list.item(i)
-                pkg = item.data(Qt.ItemDataRole.UserRole) if item else ""
+            for i in range(self._frame.icon_list.topLevelItemCount()):
+                item = self._frame.icon_list.topLevelItem(i)
+                pkg = item.data(0, Qt.ItemDataRole.UserRole) if item else ""
                 if (
                     item and not item.isHidden() and pkg
                     and viewport.intersects(self._frame.icon_list.visualItemRect(item))
@@ -408,7 +401,7 @@ class AppManagerViews:
         item = self._frame.icon_list.itemAt(pos)
         if not item:
             return
-        pkg = item.data(Qt.ItemDataRole.UserRole)
+        pkg = item.data(0, Qt.ItemDataRole.UserRole)
         if not pkg:
             return
         menu = self._frame._create_context_menu()
@@ -433,10 +426,10 @@ class AppManagerViews:
             for action in menu.actions():
                 if not action.isSeparator():
                     action.setEnabled(False)
-        menu.exec(self._frame.icon_list.mapToGlobal(pos))
+        menu.exec(self._frame.icon_list.viewport().mapToGlobal(pos))
 
     def _icon_double_click(self, item):
-        pkg = item.data(Qt.ItemDataRole.UserRole)
+        pkg = item.data(0, Qt.ItemDataRole.UserRole)
         if pkg:
             self._frame._show_details_for(pkg)
 
@@ -445,14 +438,14 @@ class AppManagerViews:
         ft = self._frame.type_filter.currentData()
         self._frame.proxy.set_filters(text, ft)
         # 表格筛选条件也必须同步应用到图标视图，避免两种视图展示不同结果。
-        for i in range(self._frame.icon_list.count()):
-            item = self._frame.icon_list.item(i)
-            pkg = (item.data(Qt.ItemDataRole.UserRole) or "").lower()
-            name = (item.text().split("\n")[0] or "").lower()
+        for i in range(self._frame.icon_list.topLevelItemCount()):
+            item = self._frame.icon_list.topLevelItem(i)
+            pkg = (item.data(0, Qt.ItemDataRole.UserRole) or "").lower()
+            name = (item.text(1) or "").lower()
             type_match = (
                 ft == "All"
-                or (ft == "User Apps" and item.data(Qt.ItemDataRole.UserRole + 1) == "User")
-                or (ft == "System Apps" and item.data(Qt.ItemDataRole.UserRole + 1) == "System")
+                or (ft == "User Apps" and item.data(0, Qt.ItemDataRole.UserRole + 1) == "User")
+                or (ft == "System Apps" and item.data(0, Qt.ItemDataRole.UserRole + 1) == "System")
             )
             text_match = not text or text in name or text in pkg
             item.setHidden(not (type_match and text_match))
@@ -482,15 +475,16 @@ class AppManagerViews:
         if self._frame._syncing_selection:
             return
         icon_packages = {
-            item.data(Qt.ItemDataRole.UserRole)
-            for index in range(self._frame.icon_list.count())
-            if (item := self._frame.icon_list.item(index)) is not None
-            and item.data(Qt.ItemDataRole.UserRole)
+            item.data(0, Qt.ItemDataRole.UserRole)
+            for index in range(self._frame.icon_list.topLevelItemCount())
+            if (item := self._frame.icon_list.topLevelItem(index)) is not None
+            and item.data(0, Qt.ItemDataRole.UserRole)
         }
         selected_icons = {
-            item.data(Qt.ItemDataRole.UserRole)
-            for item in self._frame.icon_list.selectedItems()
-            if item.data(Qt.ItemDataRole.UserRole)
+            item.data(0, Qt.ItemDataRole.UserRole)
+            for index in range(self._frame.icon_list.topLevelItemCount())
+            if (item := self._frame.icon_list.topLevelItem(index)).isSelected()
+            and item.data(0, Qt.ItemDataRole.UserRole)
         }
         self._frame.selected_packages.difference_update(icon_packages)
         self._frame.selected_packages.update(selected_icons)
@@ -511,9 +505,9 @@ class AppManagerViews:
             if package and checkbox_item:
                 table_rows.append((checkbox_item, package))
                 available_packages.add(package)
-        for index in range(self._frame.icon_list.count()):
-            item = self._frame.icon_list.item(index)
-            package = item.data(Qt.ItemDataRole.UserRole) if item else ""
+        for index in range(self._frame.icon_list.topLevelItemCount()):
+            item = self._frame.icon_list.topLevelItem(index)
+            package = item.data(0, Qt.ItemDataRole.UserRole) if item else ""
             if package:
                 icon_items.append((item, package))
                 available_packages.add(package)

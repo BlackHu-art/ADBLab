@@ -78,7 +78,7 @@ def _top_controls(dialog):
         dialog.search_input,
         dialog._type_label,
         dialog.type_filter,
-        dialog.selection_label,
+        dialog._summary_group,
         dialog.view_toggle,
         dialog.refresh_btn,
     )
@@ -224,8 +224,8 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
     signatures = []
     try:
         dialog.show()
-        for width in (776, 768):
-            # 视图切换只占图标按钮宽度，真实可容纳时不再被旧硬断点拆行。
+        for width in (1200, 776, 768):
+            # 顶部加入状态摘要后，大字体窄窗使用两行，宽窗仍按真实预算恢复一行。
             dialog.resize(width, 700)
             app.processEvents()
             controls = _top_controls(dialog)
@@ -253,7 +253,8 @@ def test_app_manager_top_controls_fit_at_776_and_768_with_22pt(monkeypatch):
         assert geometry_failures == []
         assert bounds_failures == []
         assert {position[0] for position in signatures[0]} == {0}
-        assert signatures[0] == signatures[1]
+        assert {position[0] for position in signatures[1]} == {0, 1}
+        assert signatures[1] == signatures[2]
     finally:
         dialog.close()
 

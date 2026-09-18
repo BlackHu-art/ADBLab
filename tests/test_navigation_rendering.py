@@ -4,10 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QWidget
-from qfluentwidgets import FluentWindow, NavigationDisplayMode
+from qfluentwidgets import FluentStyleSheet, FluentWindow, NavigationDisplayMode
+from qfluentwidgets.window.stacked_widget import StackedWidget
 
 from core.exec import CommandResult, CommandRunner
 from core.settings_manager import AppSettings
@@ -323,23 +324,56 @@ def theme_probe_frame(qt_application, monkeypatch):
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
+def _native_content_image(background):
+    """由实际安装的原生内容栈绘制参考层，避免复制项目遮罩作为预期。"""
+    root = QWidget()
+    root.resize(80, 80)
+    palette = root.palette()
+    palette.setColor(QPalette.ColorRole.Window, background)
+    root.setPalette(palette)
+    root.setAutoFillBackground(True)
+    stack = StackedWidget(root)
+    stack.setGeometry(root.rect())
+    FluentStyleSheet.FLUENT_WINDOW.apply(stack)
+    root.show()
+    QApplication.processEvents()
+    image = root.grab().toImage()
+    root.close()
+    root.deleteLater()
+    return image
+
+
+def _native_content_color(background):
+    image = _native_content_image(background)
+    scale = image.devicePixelRatio()
+    return image.pixelColor(round(20 * scale), round(3 * scale))
+
+
+@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+def test_non_mica_window_and_content_match_native_gallery(theme_probe_frame, theme_name):
+    """关闭云母后根窗口和内容层均与 Gallery 使用的原生 FluentWindow 一致。"""
+    frame = theme_probe_frame(theme_name, False)
+    native = FluentWindow()
+    try:
+        native.setMicaEffectEnabled(False)
+        assert frame.backgroundColor == native._normalBackgroundColor()
+        assert _navigation_background_pixel(frame) == native._normalBackgroundColor()
+        frame._on_nav_requested("settings")
+        animation = frame.stackedWidget.view._ani
+        animation.setCurrentTime(animation.duration())
+        assert not frame._settings_page.viewport().autoFillBackground()
+        assert not frame._apps_page.autoFillBackground()
+        _assert_stack_gap_matches_surface(frame, "native gallery")
+    finally:
+        native.close()
+        native.deleteLater()
+
+
 def _assert_stack_gap_matches_surface(frame, context):
     """整窗合成取顶部空白行，避开文字、控件和圆角的抗锯齿。"""
     image = frame.grab().toImage()
     scale = image.devicePixelRatio()
-    expected = QColor(BaseStyles.color("WINDOW_BG"))
-    if frame.isMicaEffectEnabled():
-        # 离屏使用已知根背景模拟系统材质，再核对当前设计遮罩的准确合成结果。
-        sample = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
-        sample.fill(frame.backgroundColor)
-        painter = QPainter(sample)
-        tint = (
-            QColor(255, 255, 255, 8) if BaseStyles.resolved_theme() == "Dark"
-            else QColor(242, 244, 246, 51)
-        )
-        painter.fillRect(sample.rect(), tint)
-        painter.end()
-        expected = sample.pixelColor(0, 0)
+    expected = _native_content_color(frame.backgroundColor)
     for fraction in (0.25, 0.5, 0.75):
         point = frame.stackedWidget.mapTo(
             frame, QPoint(round(frame.stackedWidget.width() * fraction), 2)
@@ -391,16 +425,15 @@ def test_mica_toggle_reveals_backdrop_and_restores_opaque_surfaces(
     _assert_stack_gap_matches_surface(frame, "mica disabled")
 
 
-def test_light_material_preserves_backdrop_color_instead_of_washing_it_out(
+def test_light_material_matches_native_gallery_for_different_backdrops(
     qt_application, monkeypatch, theme_probe_frame
 ):
-    """浅色阅读层保留至少七成底色差异，避免多层白色把云母冲淡。"""
+    """不同合成根底色上都只叠加一层原生内容表面，不增加自定义遮罩。"""
     frame = theme_probe_frame("Light", True)
     frame._on_nav_requested("settings")
     animation = frame.stackedWidget.view._ani
     animation.setCurrentTime(animation.duration())
     sources = (QColor("#DCE5EF"), QColor("#E8E2DC"))
-    samples = []
     for source in sources:
         monkeypatch.setattr(frame, "_normalBackgroundColor", lambda color=source: color)
         frame._refresh_window_chrome_theme()
@@ -408,18 +441,8 @@ def test_light_material_preserves_backdrop_color_instead_of_washing_it_out(
         point = frame.stackedWidget.mapTo(frame, QPoint(frame.stackedWidget.width() // 2, 2))
         rendered = frame.grab().toImage()
         scale = rendered.devicePixelRatio()
-        samples.append(rendered.pixelColor(round(point.x() * scale), round(point.y() * scale)))
-    # 比较颜色距离而非读取实现中的透明度，检出额外覆盖的实色或重复白色层。
-    source_distance = sum(
-        abs(a - b) for a, b in zip(sources[0].getRgb()[:3], sources[1].getRgb()[:3])
-    )
-    result_distance = sum(
-        abs(a - b) for a, b in zip(samples[0].getRgb()[:3], samples[1].getRgb()[:3])
-    )
-    assert result_distance >= source_distance * .7
-    assert all(
-        sample != source and sample.alpha() == 255 for sample, source in zip(samples, sources)
-    )
+        sample = rendered.pixelColor(round(point.x() * scale), round(point.y() * scale))
+        assert sample == _native_content_color(source)
 
 
 def test_unsupported_mica_request_keeps_opaque_surfaces(monkeypatch, theme_probe_frame):
@@ -470,12 +493,13 @@ def test_workspace_scroll_content_preserves_the_window_material(
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+@pytest.mark.parametrize("mica", [False, True])
 def test_all_navigation_pages_share_material_without_covering_reading_controls(
-    qt_application, monkeypatch, theme_probe_frame, theme_name
+    qt_application, monkeypatch, theme_probe_frame, theme_name, mica
 ):
     """审计全部主入口和实际懒页的布局留白，设备及命令由隔离替身提供。"""
     monkeypatch.setattr(CommandRunner, "run", lambda *_args, **_kwargs: CommandResult(True, ""))
-    frame = theme_probe_frame(theme_name, True)
+    frame = theme_probe_frame(theme_name, mica)
     frame._on_devices_updated(["material-probe-device"])
     frame.left_panel._devices_tab.set_selected_devices(["material-probe-device"])
     checked = []
@@ -542,17 +566,7 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
     view = frame._home_page.widget()
     tools = frame._home_page.tool_cards["app_mgr"].parentWidget()
     assert tools is not None and tools.isVisibleTo(frame)
-    expected = QColor(BaseStyles.color("WINDOW_BG"))
-    if frame.isMicaEffectEnabled():
-        composite = QImage(1, 1, QImage.Format.Format_ARGB32_Premultiplied)
-        composite.fill(frame.backgroundColor)
-        painter = QPainter(composite)
-        painter.fillRect(
-            composite.rect(),
-            QColor(255, 255, 255, 8) if theme_name == "Dark" else QColor(242, 244, 246, 51),
-        )
-        painter.end()
-        expected = composite.pixelColor(0, 0)
+    expected = _native_content_color(frame.backgroundColor)
     # 快捷卡片现在属于横幅；材质探针仍采样横幅与下方分区之间的真实空白。
     banner_bottom = frame._home_page.banner.mapTo(
         view, QPoint(0, frame._home_page.banner.height()),
@@ -569,7 +583,7 @@ def test_home_scroll_blank_uses_the_shared_material(theme_probe_frame, theme_nam
 def test_shared_content_keeps_round_corner_when_material_changes(
     qt_application, monkeypatch, theme_probe_frame, theme_name,
 ):
-    """内容壳的圆角不随云母开关改变；只有底色合成与边框跟随材质。"""
+    """内容壳在云母开关前后保留同一原生层次、边框和项目圆角。"""
     frame = theme_probe_frame(theme_name, True)
     backdrop = QColor("#315879")
     monkeypatch.setattr(frame, "_normalBackgroundColor", lambda: backdrop)
@@ -598,12 +612,9 @@ def test_shared_content_keeps_round_corner_when_material_changes(
             return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 
         assert sample(0, 0) == backdrop
-        if frame.isMicaEffectEnabled():
-            assert sample(20, 0) != sample(20, 3)
-            assert sample(0, 20) != sample(3, 20)
-            assert sample(20, 3) != frame.backgroundColor
-        else:
-            assert sample(20, 0) == sample(20, 3) == QColor(BaseStyles.color("WINDOW_BG"))
+        reference = _native_content_image(backdrop)
+        for x, y in ((20, 0), (20, 3), (0, 20), (3, 20)):
+            assert sample(x, y) == reference.pixelColor(round(x * scale), round(y * scale))
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])

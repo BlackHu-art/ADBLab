@@ -8,6 +8,7 @@ from qfluentwidgets import BodyLabel, ComboBox, PushButton
 
 from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
+from gui.styles.fluent import set_function_tooltip
 
 
 class ReportArtifactsView(QWidget):
@@ -31,6 +32,8 @@ class ReportArtifactsView(QWidget):
         actions = QHBoxLayout()
         self.open_button = PushButton(tr("打开文件"), self)
         self.folder_button = PushButton(tr("打开文件夹"), self)
+        set_function_tooltip(self.open_button, "打开所选的报告或日志文件")
+        set_function_tooltip(self.folder_button, "打开所选报告或日志所在的文件夹")
         self.open_button.clicked.connect(lambda: self._open(False))
         self.folder_button.clicked.connect(lambda: self._open(True))
         actions.addWidget(self.open_button)

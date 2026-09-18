@@ -9,10 +9,11 @@ import threading
 import zipfile
 from time import monotonic
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QCoreApplication, QThread, Signal
 
 from core.adb_query import query_timeout
 from core.exec import CommandRunner
+from services.app_data_errors import CLEAR_DATA_PERMISSION_MESSAGE, clear_data_error_code
 from services.app_icons import load_app_icons
 from utils.archive import safe_extract_zip
 
@@ -390,6 +391,14 @@ class AppManagerWorker(QThread):
             return
         r = self._adb("shell", "pm", "clear", pkg)
         if not r.success:
+            if clear_data_error_code(r.output, r.error):
+                # 用户提示不承诺能绕过系统策略；日志保留已有诊断供任务详情追溯。
+                diagnostic = "\n".join(dict.fromkeys(text for text in (r.output, r.error) if text))
+                self.log_message.emit(f"Failed to clear data for {pkg}: {diagnostic}")
+                self.operation_feedback.emit(
+                    "error", QCoreApplication.translate("ADBLab", CLEAR_DATA_PERMISSION_MESSAGE),
+                )
+                return
             self._report_failure(
                 f"Failed to clear data for {pkg}: {self._command_error(r, 'clear command failed')}"
             )

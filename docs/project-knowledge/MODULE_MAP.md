@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-13
+last_verified: 2026-09-17
 related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -17,7 +17,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 主窗口与顶层页面 | FluentWindow 组合根；负责页面注册、主题与屏幕适配、设备扫描、信号接线和异步关闭 | `gui/main_frame.py`、`gui/main_frame_actions.py`、`gui/pages/fluent_pages.py`、`gui/close_controller.py` | `test_main_window_layout.py`、`test_phase2_mainframe_shutdown_gate.py` |
 | 内嵌功能路由与会话 | WorkspaceRoute 映射、会话设备、内容宿主，以及页面的懒创建、激活、停用与释放 | `gui/pages/workspace_features.py`、`gui/features/base.py` | `test_workspace_feature_host.py`、`test_workspace_route_payload.py`、`test_workspace_device_recovery.py` |
 | 设备操作准入 | 固定会话的新命令要求设备已选且在线；停止使用原任务目标 | `gui/pages/workspace_features.py`、各功能页的 `set_device_selected` 与提交边界 | `test_session_device_admission.py`、`test_file_app_device_admission.py` |
-| 全局设备上下文与概览 | 功能页设备栏与会话投影；概览页内连接刷新、缓存元数据、设备卡选择与单设备工具入口 | `gui/widgets/device_context_bar.py`、`gui/pages/device_hub.py` | `test_global_device_context.py`、`test_device_hub_page.py` |
+| 全局设备上下文与概览 | 功能页设备栏与会话投影；概览页内连接刷新、缓存元数据、设备卡选择与单设备工具入口 | `adblab/application/device_context.py`、`gui/panels/side_panel.py`、`gui/widgets/device_context_bar.py`、`gui/pages/device_hub.py` | `test_global_device_context.py`、`test_device_hub_page.py` |
 | 一级功能与应用包工具 | 左栏语义导航、可访问名称映射、应用与诊断顶部常显的应用包卡、截图与屏幕页复用的设备工具；与单设备会话分开所有权 | `gui/main_frame.py`、`gui/panels/app_panel.py` | `test_flat_feature_navigation.py`、`test_workspace_consolidation.py` |
 | 侧栏主题入口 | 收起时图标切换、展开时原生深色开关；复用应用主题状态和设置持久化，不参与页面导航 | `gui/widgets/navigation_theme.py`、`gui/main_frame.py` | `test_navigation_theme.py` |
 | 自适应功能导航 | 独立宿主与分类栈的 Pivot/ComboBox 呈现、选择提交和焦点连续性；主窗口中隐藏，不拥有业务会话 | `gui/widgets/adaptive_navigation.py` | `test_adaptive_navigation.py`、`test_adaptive_category_stack.py` |
@@ -27,6 +27,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | 内嵌功能页 | App Manager、File Explorer、Live Logcat、Performance、Screenshot 与 Settings About 页面 | `gui/features/`、`gui/dialogs/app_manager*.py`、`gui/dialogs/file_explorer*.py`、`gui/dialogs/live_logcat*.py`、`gui/dialogs/performance_launcher*.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/screenshot_viewer_*.py` | `test_app_manager_selection.py`、`test_screenshot_page.py`、`test_model_performance_launcher.py` |
 | 瞬态交互与样式 | 窗口内非模态消息、模态输入与短操作表单、系统文件选择器，以及主题、字体、无边框内容分区和复合控件 | `gui/notifications.py`、`gui/dialogs/fluent_dialog.py`、`gui/styles/`、`gui/widgets/content_section.py`、`gui/widgets/preset_spin_box.py` | `test_fluent_dialog_contract.py`、`test_fluent_components.py`、`test_content_section.py`、`test_feature_typography.py` |
 | Controller 与业务用例 | Qt 信号路由、结果聚合、operation 身份/所有权/代次和批次状态机；不直接实现 UI | `controllers/`、`adblab/application/` | `test_phase1_operations.py`、`test_device_batch_use_case.py`、`test_phase2_install_batch_gate.py` |
+| Monkey 业务批次 | 纯应用层维护批次、停止屏障及一次性归档交付，Controller 适配模型与信号 | `adblab/application/monkey_batch.py`、`controllers/_app_monkey.py` | `test_monkey_batch_state.py`、`test_monkey_batch_cancellation.py`、`test_monkey_library.py` |
 | ADB model 与执行层 | 设备、应用、系统、网络、测试命令；短命令和长进程统一结果/停止边界 | `models/adb_*.py`、`core/exec.py`、`core/adb_bridge.py` | `test_model_*.py`、`test_process_utils.py`、`test_adb_execution_selection.py` |
 | ADB 自动适配 | 协议传输、后台能力验证与原生耗时比较、按设备选择短命令后端和查询预算，以及 Qt 启动/关闭接入；独立快速命令不注入 GUI 运行实例 | `core/adb_transport.py`、`core/adb_runtime.py`、`core/adb_query.py`、`utils/adb_resolver.py`、`services/adb_clients.py`、`gui/widgets/adb_client_card.py`（客户端卡与执行环境卡）、`adblab/presentation/qt_adb_runtime.py`、`utils/adb_debug.py`、`scripts/adb_fast.py` | `test_adb_resolver.py`、`test_adb_clients.py`、`test_adb_runtime.py`、`test_adb_debug.py`、`test_adb_query.py`、`test_adb_fast.py`、`test_qt_adb_runtime.py`、`test_adb_injection_argv.py` |
 | 设置、日志与设备存储 | schema 化 JSON 设置、内存/UI 日志、脱敏应用诊断、性能追踪、设备 YAML 原子读写 | `core/settings_manager.py`、`core/log_service.py`、`core/diagnostics.py`、`models/device_store.py`、`utils/console_colors.py` | `test_console_colors.py`、`test_settings_persistence.py`、`test_logging_contract.py`、`test_diagnostics.py`、`test_device_store_concurrency.py` |
@@ -37,7 +38,7 @@ related: [ARCHITECTURE.md, BUSINESS_FLOW.md, DEPENDENCY_MAP.md]
 | MobilePerf | GUI 适配层管理隔离子进程；移植内核负责指标采样和报告 | `services/mobileperf_runner.py`、`mobileperf/android/` | `test_model_mobileperf.py`、`test_mobileperf_runner_concurrency.py` |
 | 性能进度、会话与图表 | 各设备参数和运行状态投影、估算进度、后台结果发现与有界 CSV 指标解析、QtCharts 单位轴和可滚动图表 | `gui/widgets/performance_sessions.py`、`gui/widgets/performance_progress.py`、`gui/dialogs/performance_launcher_run.py`、`gui/dialogs/performance_result_tasks.py`、`services/perf_chart_data.py`、`gui/widgets/perf_chart_view.py` | `test_performance_sessions.py`、`test_performance_progress.py`、`test_perf_chart_data.py`、`test_performance_result_loading.py`、`test_performance_responsive.py` |
 | 堆转储归属 | 生成前登记设备与任务命名空间、成功拉取后精确清理 | `mobileperf/android/heap_ownership.py`、`mobileperf/android/tools/androiddevice.py` | `test_mobileperf_heap_ownership.py` |
-| 工具、构建与发布 | 用户/资源/ADB 路径、ZIP 安全、输入校验、PyInstaller 与 GitHub Actions | `utils/`、`ADBLab.spec`、`.github/workflows/` | `test_runtime_tools.py`、`test_ci_contracts.py` |
+| 工具、构建与发布 | 用户/资源/ADB 路径、ZIP 安全、输入校验、PyInstaller 与 GitHub Actions | `utils/`、`scripts/packaging_manifest.py`、`scripts/build_app.py`、`scripts/check_source_text.py`、`ADBLab.spec`、`.github/workflows/` | `test_runtime_tools.py`、`test_ci_contracts.py`、`test_build_app.py`、`test_source_text.py` |
 
 当前 UI 代码只使用安装的 PySide6-Fluent-Widgets；上游源码定位规则见
 [DEPENDENCY_MAP 的 Fluent 来源边界](DEPENDENCY_MAP.md#fluent-运行时来源边界)。

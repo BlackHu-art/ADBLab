@@ -122,7 +122,12 @@ def test_performance_page_build_config_uses_title_device_and_device_save_dir(tmp
     assert Path(cfg.save_path).name == "127.0.0.1_5555"
     assert dialog.serialnum_label.text() == "127.0.0.1:5555"
     assert dialog.serialnum_label.objectName() == "onlineDeviceLabel"
-    assert dialog.serialnum_label.lightColor.name() == BaseStyles.color("LOG_SUCCESS").lower()
+    assert dialog.serialnum_label.lightColor.name() == BaseStyles.color_for(
+        "Light", "LOG_SUCCESS",
+    ).lower()
+    assert dialog.serialnum_label.darkColor.name() == BaseStyles.color_for(
+        "Dark", "LOG_SUCCESS",
+    ).lower()
     dialog.close()
 
 

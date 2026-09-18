@@ -13,6 +13,7 @@ from adblab.application.action_results import (
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.envelope import OperationMetadata, split_operation_metadata
 from adblab.application.install_batch import InstallBatchUseCase
+from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from adblab.application.operations import OperationManager, OperationState
 from adblab.application.screen_record import ScreenRecordUseCase
 from controllers.signals import ADBControllerSignals
@@ -71,7 +72,7 @@ class _ADBControllerBase:
         # 由界面组装根注入，只负责生命周期托管，不建立 Qt 原生父子关系。
         self.window_owner = None
         self.last_save_dir = None
-        self._monkey_running = set()
+        self.monkey_batches = MonkeyBatchCoordinator()
         self._monkey_lock = threading.RLock()
         self.executor = ThreadPoolExecutor(max_workers=4)
         self._shutting_down = False

@@ -6,8 +6,14 @@ from collections.abc import Callable
 from typing import Literal
 
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer
-from PySide6.QtWidgets import QFrame, QLayout, QSizePolicy, QWidget
-from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition, LineEdit, PushButton
+from PySide6.QtWidgets import QFrame, QLayout, QLineEdit, QSizePolicy, QWidget
+from qfluentwidgets import (
+    FluentStyleSheet,
+    HyperlinkButton,
+    InfoBar,
+    InfoBarIcon,
+    InfoBarPosition,
+)
 from shiboken6 import isValid
 
 from gui.i18n import tr
@@ -20,12 +26,6 @@ _ICONS = {
     "success": InfoBarIcon.SUCCESS,
     "warning": InfoBarIcon.WARNING,
     "error": InfoBarIcon.ERROR,
-}
-_BACKGROUNDS = {
-    "info": ("#e8f2ff", "#153650"),
-    "success": ("#e5f5e7", "#1b3b29"),
-    "warning": ("#fff4ce", "#4b3b15"),
-    "error": ("#fde7e9", "#4c2429"),
 }
 
 
@@ -41,7 +41,7 @@ def _top_margin(owner: QWidget) -> int:
 
 
 class ToastNotification(InfoBar):
-    """复用 Fluent 外观，以单行展示消息；正文可横向阅读和完整选择复制。"""
+    """中性底色的单行浮条，仅状态图标着色；正文保留横向阅读和完整复制。"""
 
     def __init__(
         self, owner: QWidget, title: str, content: str, *, level: ToastLevel,
@@ -58,10 +58,12 @@ class ToastNotification(InfoBar):
         # 上游 singleShot 无法暂停；位置和计时由所属窗口的有界栈统一管理。
         super().__init__(
             _ICONS[level], title, content, orient=Qt.Orientation.Horizontal,
-            duration=-1, position=InfoBarPosition.TOP_RIGHT, parent=owner,
+            duration=-1, position=InfoBarPosition.BOTTOM_RIGHT, parent=owner,
         )
-        self.setCustomBackgroundColor(*_BACKGROUNDS[level])
         self.setObjectName("toastNotification")
+        # 沿用 Gallery 横向 InfoBar.info 的中性表面，状态图标保持真实业务级别。
+        self.setProperty("type", "Info")
+        FluentStyleSheet.INFO_BAR.apply(self)
         self.setAccessibleName(title)
         self.setAccessibleDescription(content)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
@@ -78,7 +80,7 @@ class ToastNotification(InfoBar):
         self.textLayout.setSpacing(8)
         self.textLayout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
         self.contentLabel.hide()
-        self.content_edit = LineEdit(self)
+        self.content_edit = QLineEdit(self)
         self.content_edit.setObjectName("toastContent")
         self.content_edit.setReadOnly(True)
         self.content_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
@@ -98,7 +100,7 @@ class ToastNotification(InfoBar):
         self.action_button = None
         if action_text and on_action:
             self.action_button = configure_button(
-                PushButton(self), text=action_text, tooltip=action_text,
+                HyperlinkButton(self), text=action_text, tooltip=action_text,
             )
             self.action_button.clicked.connect(self._activate_action)
             self.widgetLayout.setContentsMargins(8, 0, 0, 0)
@@ -109,6 +111,7 @@ class ToastNotification(InfoBar):
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.close)
         BaseStyles.fonts_changed.connect(self._refresh_style)
+        BaseStyles.theme_changed.connect(self._refresh_style)
         self._ready = True
         self._refresh_style()
 
@@ -124,8 +127,9 @@ class ToastNotification(InfoBar):
         if self.action_button is not None:
             self.action_button.setFont(font)
         self.content_edit.setStyleSheet(
-            "LineEdit, LineEdit:hover, LineEdit:focus "
+            "QLineEdit, QLineEdit:hover, QLineEdit:focus "
             "{ background: transparent; border: none; border-radius: 0; padding: 0; "
+            f"color: {'white' if BaseStyles.resolved_theme() == 'Dark' else 'black'}; "
             + font_qss(font) + " }"
         )
         self._adjustText()
@@ -154,7 +158,7 @@ class ToastNotification(InfoBar):
         fixed_width += self.closeButton.width() + 12
         gap = (8 if title else 0) + (8 if self.action_button is not None else 0)
         natural = fixed_width + gap + title_natural + body_natural + action_natural + 8
-        width = max(1, min(max(280, natural), 840, owner.width() - 48))
+        width = max(1, min(max(240, natural), 600, owner.width() - 48))
         available = max(1, width - fixed_width - gap)
         action_height = 0
         if self.action_button is not None:
@@ -165,7 +169,7 @@ class ToastNotification(InfoBar):
             ))
             action_height = self.action_button.sizeHint().height()
             available -= action_width
-        title_width = min(title_natural, available // 3)
+        title_width = min(title_natural, max(0, (available - 1) // 2))
         self.titleLabel.setVisible(bool(title))
         self.titleLabel.setFixedWidth(title_width)
         self.titleLabel.setFixedHeight(title_metrics.height())
@@ -247,15 +251,16 @@ class _ToastStack(QObject):
         self.notices = [n for n in self.notices if isValid(n) and not n._closed]
         while len(self.notices) > 1 and (
             len(self.notices) > 3
-            or sum(n.height() for n in self.notices) + 12 * (len(self.notices) - 1)
+            or sum(n.height() for n in self.notices) + 8 * (len(self.notices) - 1)
             > self.owner.height() - _top_margin(self.owner) - 24
         ):
             self.notices.pop(0).close()
-        top = _top_margin(self.owner)
-        for notice in self.notices:
+        bottom = self.owner.height() - 24
+        for notice in reversed(self.notices):
+            top = max(_top_margin(self.owner), bottom - notice.height())
             notice.move(max(0, self.owner.width() - notice.width() - 24), top)
             notice.raise_()
-            top += notice.height() + 12
+            bottom = top - 8
 
     def eventFilter(self, obj, event) -> bool:
         if obj is self.owner:
@@ -275,7 +280,7 @@ def show_toast(
     on_action: Callable[[], object] | None = None,
     key: str = "",
 ) -> ToastNotification | None:
-    """在调用页面所属窗口右上角提示并立即返回；仅供 GUI 线程的活页面使用。"""
+    """在调用页面所属窗口右下角提示并立即返回；仅供 GUI 线程的活页面使用。"""
     if not isValid(parent) or getattr(parent, "_closing", False):
         return None
     owner = parent.window() or parent

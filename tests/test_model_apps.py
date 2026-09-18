@@ -9,7 +9,8 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QTreeWidgetItem
 
 from adblab.application.device_batch import DeviceBatchUseCase
 from adblab.application.install_batch import InstallBatchUseCase, InstallRequest, InstallUnit
@@ -225,7 +226,7 @@ def _app_manager_for_unit_tests():
     dialog.proxy.rowCount.return_value = 0
     dialog.icon_list = Mock()
     dialog.icon_list.clear = Mock()
-    dialog.icon_list.addItem = Mock()
+    dialog.icon_list.addTopLevelItem = Mock()
     dialog._sync_selection_views = Mock()
     dialog._gen_icon = AppManagerPage._gen_icon
     dialog._on_detail = lambda *args: AppManagerPage._on_detail(dialog, *args)
@@ -259,7 +260,8 @@ def test_app_manager_populate_schedules_visible_details_only():
 
 def test_app_manager_detail_update_uses_cached_indexes():
     dialog = _app_manager_for_unit_tests()
-    icon_item = Mock()
+    icon_item = QTreeWidgetItem(["", "Demo", "com.example.demo", ""])
+    icon_item.setData(0, Qt.ItemDataRole.UserRole, "com.example.demo")
     name_item = Mock()
     version_item = Mock()
     dialog._detail_icon_by_pkg = {"com.example.demo": icon_item}
@@ -272,7 +274,9 @@ def test_app_manager_detail_update_uses_cached_indexes():
     AppManagerPage._on_detail(dialog, "com.example.demo", "Demo", "1.0 (1)", "2026-05-31")
 
     assert dialog._detail_cache["com.example.demo"] == ("Demo", "1.0 (1)", "2026-05-31")
-    icon_item.setToolTip.assert_called_once_with("Demo\ncom.example.demo\n1.0 (1)")
+    assert icon_item.text(1) == "Demo"
+    assert all(icon_item.toolTip(column) == "Demo\ncom.example.demo\n1.0 (1)"
+               for column in range(4))
     name_item.setText.assert_called_once_with("Demo")
     version_item.setText.assert_called_once_with("1.0 (1)")
     assert dialog.model.item.call_count == 2

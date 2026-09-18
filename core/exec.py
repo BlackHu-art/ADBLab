@@ -16,10 +16,11 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 from core.adb_runtime import AdbRuntime, native_capture
 from core.adb_transport import ExecutionResult
+from core.native_process import popen_native, run_native, stop_native_process
 from core.process_utils import kill_process_tree
 from utils import adb_debug
 
@@ -32,6 +33,8 @@ _adb_path_lock = threading.Lock()
 _active_commands = 0
 _active_lock = threading.Condition()
 _adb_runtime: AdbRuntime | None = None
+
+CommandOutcome = Literal["succeeded", "failed", "cancelled", "timed_out", "stale"]
 
 
 def install_adb_runtime(runtime: AdbRuntime | None) -> None:
@@ -47,20 +50,23 @@ def adb_runtime() -> AdbRuntime | None:
 
 def _normalise_result(raw: ExecutionResult, timeout: float) -> CommandResult:
     if raw.kind == "timeout":
-        return CommandResult(success=False, error=f"Timeout({timeout:g}s)")
+        return CommandResult(success=False, error=f"Timeout({timeout:g}s)", outcome="timed_out")
     if raw.kind == "cancelled":
-        return CommandResult(success=False, error="Cancelled")
+        return CommandResult(success=False, error="Cancelled", outcome="cancelled")
     if raw.kind == "stale":
-        return CommandResult(success=False, stale=True)
+        return CommandResult(success=False, stale=True, outcome="stale")
     stdout = raw.stdout.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
     stderr = raw.stderr.decode("utf-8", errors="ignore").replace("\r\n", "\n").replace("\r", "\n")
     if raw.kind != "completed":
-        return CommandResult(success=False, error=stderr.strip() or "ADB connection failed")
+        return CommandResult(
+            success=False, error=stderr.strip() or "ADB connection failed", outcome="failed",
+        )
     if raw.returncode:
         return CommandResult(
-            success=False, error=(stderr or stdout).strip(), returncode=raw.returncode
+            success=False, error=(stderr or stdout).strip(), returncode=raw.returncode,
+            outcome="failed",
         )
-    return CommandResult(success=True, output=stdout.strip(), returncode=0)
+    return CommandResult(success=True, output=stdout.strip(), returncode=0, outcome="succeeded")
 
 
 def resolve_adb_program() -> str | None:
@@ -110,6 +116,18 @@ def resolve_command(cmd: list[str]) -> list[str]:
     return resolved
 
 
+def _is_native_tool(command: list[str]) -> bool:
+    """仅隔离 ADB 和 scrcpy；已选择的改名 ADB 同样处理，本应用 worker 保持原环境。"""
+    if not command:
+        return False
+    program = command[0]
+    if os.path.basename(program).lower() in {"adb", "adb.exe", "scrcpy", "scrcpy.exe"}:
+        return True
+    return bool(_adb_path) and os.path.normcase(os.path.abspath(program)) == os.path.normcase(
+        os.path.abspath(_adb_path)
+    )
+
+
 @runtime_checkable
 class ExecHandle(Protocol):
     """进程句柄协议：描述 ``subprocess.Popen`` 与测试替身共同满足的结构面。
@@ -143,12 +161,47 @@ class CommandResult:
     error: str = ""
     returncode: int = 0
     stale: bool = False
+    outcome: CommandOutcome | None = None
+
+    def __post_init__(self) -> None:
+        """旧构造只在创建时归一状态，后续诊断文本修改不改变程序判断。"""
+        self.outcome = command_outcome(self)
+
+    @property
+    def cancelled(self) -> bool:
+        """返回执行器确认的取消状态，不依赖显示文案。"""
+        return self.outcome == "cancelled"
+
+    @property
+    def timed_out(self) -> bool:
+        """返回执行预算耗尽状态，远端普通错误不自动视为超时。"""
+        return self.outcome == "timed_out"
 
     @property
     def stdout(self) -> str:
         """为旧调用方保留 stdout 兼容属性。"""
 
         return self.output
+
+
+def command_outcome(result: object) -> CommandOutcome:
+    """读取明确状态；旧调用方和轻量适配结果仅在此兼容历史错误文本。"""
+    outcome = getattr(result, "outcome", None)
+    if isinstance(outcome, str) and outcome in (
+        "succeeded", "failed", "cancelled", "timed_out", "stale",
+    ):
+        return cast(CommandOutcome, outcome)
+    if getattr(result, "success", False) is True:
+        return "succeeded"
+    if getattr(result, "stale", False) is True:
+        return "stale"
+    error = str(getattr(result, "error", "") or "").strip()
+    if getattr(result, "cancelled", False) is True or error == "Cancelled":
+        return "cancelled"
+    if (getattr(result, "timed_out", False) is True
+            or error.lower().startswith("timeout(") or "timed out" in error.lower()):
+        return "timed_out"
+    return "failed"
 
 
 class CommandRunner:
@@ -199,8 +252,9 @@ class CommandRunner:
                 result = _normalise_result(raw, timeout)
             else:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
-                proc = subprocess.run(
+                proc = run_native(
                     resolved_cmd,
+                    isolate=_is_native_tool(resolved_cmd),
                     capture_output=True,
                     text=True,
                     shell=shell,
@@ -223,9 +277,11 @@ class CommandRunner:
                     timeout,
                 )
         except subprocess.TimeoutExpired:
-            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+            result = CommandResult(
+                success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
+            )
         except Exception as exc:
-            result = CommandResult(success=False, error=str(exc))
+            result = CommandResult(success=False, error=str(exc), outcome="failed")
         finally:
             _mark_finished()
         _log_if_slow(cmd, started_at, result, timeout)
@@ -248,7 +304,7 @@ class CommandRunner:
         try:
             resolved_cmd = resolve_command(cmd)
             if cancelled is not None and cancelled():
-                result = CommandResult(success=False, error="Cancelled")
+                result = CommandResult(success=False, error="Cancelled", outcome="cancelled")
             else:
                 with open(output_path, "wb") as output_file:
                     raw = None
@@ -272,8 +328,9 @@ class CommandRunner:
                             adb_debug.command(
                                 resolved_cmd, backend="native_client", timeout=remaining,
                             )
-                            proc = subprocess.run(
-                                resolved_cmd, stdout=output_file, stderr=subprocess.PIPE,
+                            proc = run_native(
+                                resolved_cmd, isolate=_is_native_tool(resolved_cmd),
+                                stdout=output_file, stderr=subprocess.PIPE,
                                 shell=shell, timeout=remaining, creationflags=CF,
                             )
                             raw = ExecutionResult(
@@ -283,9 +340,11 @@ class CommandRunner:
                 if result.success:
                     result.output = output_path
         except subprocess.TimeoutExpired:
-            result = CommandResult(success=False, error=f"Timeout({timeout}s)")
+            result = CommandResult(
+                success=False, error=f"Timeout({timeout}s)", outcome="timed_out",
+            )
         except Exception as exc:
-            result = CommandResult(success=False, error=str(exc))
+            result = CommandResult(success=False, error=str(exc), outcome="failed")
         finally:
             _mark_finished()
         _log_if_slow(cmd, started_at, result, timeout)
@@ -498,7 +557,7 @@ class ProcessRunner:
             popen_kwargs["env"] = env
         resolved_cmd = resolve_command(cmd)
         adb_debug.command(resolved_cmd, backend="native_client")
-        return subprocess.Popen(resolved_cmd, **popen_kwargs)
+        return popen_native(resolved_cmd, isolate=_is_native_tool(resolved_cmd), **popen_kwargs)
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""
@@ -549,13 +608,18 @@ class ProcessRunner:
             return False
 
         deadline = time.monotonic() + max(0.0, float(timeout))
-        attempted = self._kill_process_tree_bounded(proc, deadline)
-        if not attempted:
-            try:
-                proc.kill()
-                attempted = True
-            except OSError:
-                pass
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            # 隔离入口已用本次预算完成合作和强制清理，不能再开启 kill 的独立预算。
+            attempted = native_stopped
+        else:
+            attempted = self._kill_process_tree_bounded(proc, deadline)
+            if not attempted:
+                try:
+                    proc.kill()
+                    attempted = True
+                except OSError:
+                    pass
         remaining = max(0.0, deadline - time.monotonic())
         if remaining:
             try:
@@ -577,6 +641,9 @@ class ProcessRunner:
     def _kill_process_tree_bounded(proc: subprocess.Popen, deadline: float) -> bool:
         """在共享绝对截止时间内通过 psutil 终止进程树（ADR-0005 Step C）。"""
 
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            return native_stopped
         pid = getattr(proc, "pid", None)
         if not pid:
             return False
@@ -596,6 +663,9 @@ class ProcessRunner:
         if proc is None:
             return None
         deadline = time.monotonic() + max(0.0, float(timeout))
+        native_stopped = stop_native_process(proc, timeout=max(0.0, deadline - time.monotonic()))
+        if native_stopped is not None:
+            return proc.returncode if native_stopped else None
         try:
             if proc.poll() is not None:
                 return proc.returncode
@@ -713,9 +783,14 @@ class ProcessRunner:
                 if proc.poll() is not None:
                     stopped = True
                 else:
-                    tree_killed = cls._kill_process_tree_bounded(proc, deadline)
-                    if not tree_killed:
-                        proc.kill()
+                    native_stopped = stop_native_process(
+                        proc, timeout=max(0.0, deadline - time.monotonic()),
+                    )
+                    if native_stopped is None:
+                        tree_killed = cls._kill_process_tree_bounded(proc, deadline)
+                        if not tree_killed:
+                            proc.kill()
+                    # 隔离入口未确认时继续保留跟踪，后续成员只能使用共享截止时间的余量。
                     attempted = True
                     remaining = max(0.0, deadline - time.monotonic())
                     if remaining:

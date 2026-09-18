@@ -3,6 +3,42 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>将当前测试参数保存为命名方案</source>
+            <translation>Save the current test parameters as a named preset</translation>
+        </message>
+        <message>
+            <source>打开所选的报告或日志文件</source>
+            <translation>Open the selected report or log file</translation>
+        </message>
+        <message>
+            <source>打开所选报告或日志所在的文件夹</source>
+            <translation>Open the folder containing the selected report or log</translation>
+        </message>
+        <message>
+            <source>展开或收起本次操作的完整结果</source>
+            <translation>Show or hide the complete results of this operation</translation>
+        </message>
+        <message>
+            <source>将当前设备的完整结果复制到剪贴板</source>
+            <translation>Copy the complete results for the current device to the clipboard</translation>
+        </message>
+        <message>
+            <source>将当前设备的完整结果保存到本地文件</source>
+            <translation>Save the complete results for the current device to a local file</translation>
+        </message>
+        <message>
+            <source>打开所选的操作结果文件</source>
+            <translation>Open the selected operation result file</translation>
+        </message>
+        <message>
+            <source>打开所选操作结果所在的文件夹</source>
+            <translation>Open the folder containing the selected operation result</translation>
+        </message>
+        <message>
+            <source>无法启动文件传输，请重试。</source>
+            <translation>Could not start the file transfer. Please try again.</translation>
+        </message>
+        <message>
             <source>识别耗时较长，仍在继续…</source>
             <translation>Detection is taking longer and is still in progress…</translation>
         </message>
@@ -4091,8 +4127,8 @@ Android device management, app tools and diagnostics</translation>
             <translation>Keep ADBLab above other windows</translation>
         </message>
         <message>
-            <source>让窗口和表面呈现半透明材质</source>
-            <translation>Use translucent materials for the window and surfaces</translation>
+            <source>使用 Windows 云母材质，底色随主题和桌面壁纸变化</source>
+            <translation>Use Windows Mica, with a background tint that follows the theme and desktop wallpaper</translation>
         </message>
         <message>
             <source>让镜像窗口保持在其他窗口上方</source>
@@ -6301,6 +6337,186 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>Count</source>
             <translation>Count</translation>
+        </message>
+        <message>
+            <source>系统拒绝通过 ADB 清除应用数据。请在手机的应用信息页手动清除；若入口也受限，请联系设备管理员或系统厂商。</source>
+            <translation>The system refused to clear app data through ADB. Clear the data manually from the app info page on your phone. If that option is also restricted, contact your device administrator or system vendor.</translation>
+        </message>
+        <message>
+            <source>图标</source>
+            <translation>Icon</translation>
+        </message>
+        <message>
+            <source>开始</source>
+            <translation>Start</translation>
+        </message>
+        <message>
+            <source>跟随</source>
+            <translation>Follow</translation>
+        </message>
+        <message>
+            <source>换行</source>
+            <translation>Wrap</translation>
+        </message>
+        <message>
+            <source>待采集</source>
+            <translation>Ready</translation>
+        </message>
+        <message>
+            <source>日志缓存</source>
+            <translation>Log buffer</translation>
+        </message>
+        <message>
+            <source>包名无效</source>
+            <translation>Invalid package</translation>
+        </message>
+        <message>
+            <source>请连接设备</source>
+            <translation>Connect device</translation>
+        </message>
+        <message>
+            <source>请勾选设备</source>
+            <translation>Select device</translation>
+        </message>
+        <message>
+            <source>下次生效</source>
+            <translation>Next capture</translation>
+        </message>
+        <message>
+            <source>过滤已就绪</source>
+            <translation>Filter ready</translation>
+        </message>
+        <message>
+            <source>切换过滤</source>
+            <translation>Switching filter</translation>
+        </message>
+        <message>
+            <source>全部日志</source>
+            <translation>All logs</translation>
+        </message>
+        <message>
+            <source>查询应用</source>
+            <translation>Finding app</translation>
+        </message>
+        <message>
+            <source>查询失败</source>
+            <translation>Query failed</translation>
+        </message>
+        <message>
+            <source>启动失败</source>
+            <translation>Start failed</translation>
+        </message>
+        <message>
+            <source>停止中</source>
+            <translation>Stopping</translation>
+        </message>
+        <message>
+            <source>已清空</source>
+            <translation>Cleared</translation>
+        </message>
+        <message>
+            <source>换行已开</source>
+            <translation>Wrap on</translation>
+        </message>
+        <message>
+            <source>换行已关</source>
+            <translation>Wrap off</translation>
+        </message>
+        <message>
+            <source>已导出</source>
+            <translation>Exported</translation>
+        </message>
+        <message>
+            <source>已丢弃 {value0} 行</source>
+            <translation>Dropped {value0} lines</translation>
+        </message>
+        <message>
+            <source>停止超时</source>
+            <translation>Stop timed out</translation>
+        </message>
+        <message>
+            <source>清理失败</source>
+            <translation>Cleanup failed</translation>
+        </message>
+        <message>
+            <source>采集异常</source>
+            <translation>Unexpected end</translation>
+        </message>
+        <message>
+            <source>启动中</source>
+            <translation>Starting</translation>
+        </message>
+        <message>
+            <source>采集中</source>
+            <translation>Capturing</translation>
+        </message>
+        <message>
+            <source>查询重试</source>
+            <translation>Retrying query</translation>
+        </message>
+        <message>
+            <source>等待应用</source>
+            <translation>Waiting for app</translation>
+        </message>
+        <message>
+            <source>过滤生效</source>
+            <translation>Filter active</translation>
+        </message>
+        <message>
+            <source>未找到应用</source>
+            <translation>App not found</translation>
+        </message>
+        <message>
+            <source>该操作正在进行，请等待完成。</source>
+            <translation>This operation is still running. Please wait for it to finish.</translation>
+        </message>
+        <message>
+            <source>导出完成</source>
+            <translation>Export complete</translation>
+        </message>
+        <message>
+            <source>结果文件已保存。</source>
+            <translation>The result file has been saved.</translation>
+        </message>
+        <message>
+            <source>发现应用异常</source>
+            <translation>Application issue detected</translation>
+        </message>
+        <message>
+            <source>可在设置中查看详情或导出诊断。</source>
+            <translation>View details or export diagnostics in Settings.</translation>
+        </message>
+        <message>
+            <source>部分操作失败</source>
+            <translation>Some operations failed</translation>
+        </message>
+        <message>
+            <source>操作未完成，请查看任务了解原因。</source>
+            <translation>The operation could not be completed. See the task for details.</translation>
+        </message>
+        <message>
+            <source>请查看任务中的注意事项。</source>
+            <translation>See the task for items that need your attention.</translation>
+        </message>
+        <message>
+            <source>正在处理，请稍候。</source>
+            <translation>Working. Please wait.</translation>
+        </message>
+        <message>
+            <source>成功 {count} 台</source>
+            <translation>Succeeded: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>失败 {count} 台</source>
+            <translation>Failed: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>未完成 {count} 台</source>
+            <translation>Incomplete: {count} device(s)</translation>
+        </message>
+        <message>
+            <source>详情已记录，可在任务中心查看。</source>
+            <translation>Details were recorded. View them in Task Center.</translation>
         </message>
     </context>
 </TS>

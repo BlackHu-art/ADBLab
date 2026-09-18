@@ -186,6 +186,33 @@ def test_chart_axes_cover_each_unit_and_all_time_values(qt_application):
 
 
 @pytest.mark.ui
+@pytest.mark.parametrize("initial_theme", ["Light", "Dark"])
+def test_chart_axis_titles_follow_theme_round_trip(qt_application, initial_theme):
+    from PySide6.QtGui import QColor
+
+    from gui.styles import BaseStyles
+    from gui.widgets.perf_chart_view import PerfChartView
+
+    BaseStyles.switch_theme(initial_theme)
+    view = PerfChartView()
+    view.set_series({"cpu": [(0, 50), (5, 80)], "mem_total": [(0, 10000), (5, 12000)]})
+    other_theme = "Dark" if initial_theme == "Light" else "Light"
+    try:
+        for theme_name in (other_theme, initial_theme, other_theme):
+            BaseStyles.switch_theme(theme_name)
+            view._sync_theme_state()
+            qt_application.processEvents()
+
+            axes = view._chart.axes()
+            assert len(axes) == 3
+            expected = QColor(BaseStyles.color("TEXT_SECONDARY"))
+            assert all(axis.titleText() for axis in axes)
+            assert all(axis.titleBrush().color() == expected for axis in axes)
+    finally:
+        view.deleteLater()
+
+
+@pytest.mark.ui
 def test_narrow_large_font_chart_keeps_all_units_accessible(monkeypatch, qt_application):
     from PySide6.QtCore import Qt
 

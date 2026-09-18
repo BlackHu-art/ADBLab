@@ -2379,6 +2379,8 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
 ):
     """排队重排中经 SidePanel 与 supervisor 关闭 Remote，每类资源只清理一次。"""
 
+    from core.adb_bridge import ADBBridge
+
     class FakeSignal:
         def __init__(self):
             self.callbacks = []
@@ -2465,7 +2467,8 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
     executor = Mock()
     original_executor = remote._remote_executor
     original_executor.shutdown(wait=False, cancel_futures=True)
-    adb = Mock(path="adb")
+    adb = Mock(spec=ADBBridge, path="adb")
+    adb.input_sessions_running.return_value = False
     adb_close_calls = []
     adb.close_input_sessions.side_effect = lambda: adb_close_calls.append(True)
     remote._process = object()
@@ -2526,6 +2529,8 @@ def test_side_panel_supervised_remote_close_cleans_active_resources_once(
         assert worker not in RemotePanel._orphaned_launch_workers
         executor.shutdown.assert_called_once_with(wait=True, cancel_futures=True)
         assert len(adb_close_calls) == 1
+        adb.request_stop_input_sessions.assert_called_once_with()
+        adb.force_stop_input_sessions.assert_not_called()
         assert remote._process is None
         assert remote._launch_worker is None
         assert remote._remote_executor is None

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import threading
+import time
 
 from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices, QFontMetrics
@@ -32,6 +33,7 @@ from gui.dialogs.fluent_dialog import FluentMessageBox
 from gui.dialogs.lifecycle import (
     QThreadGroupShutdownTask,
     alive_callback,
+    is_qobject_alive,
     safe_disconnect,
 )
 from gui.dialogs.performance_launcher_form import (
@@ -45,6 +47,7 @@ from gui.dialogs.performance_library import PerformanceLibrary
 from gui.i18n import tr
 from gui.styles import BaseStyles
 from gui.styles.icon_loader import get_fluent_icon, get_themed_icon
+from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from gui.widgets.content_section import ContentSection
 from gui.widgets.performance_progress import PerformanceProgress
@@ -500,7 +503,7 @@ class PerformancePage(QWidget):
     def fetch_current_package(self):
         if self._configuration_locked:
             return
-        if self._package_worker and self._package_worker.isRunning():
+        if self._package_worker is not None:
             return
         if not self._can_operate_device():
             self.log_received.emit("WARNING", tr("请先勾选并连接当前设备，再获取当前应用"))
@@ -539,6 +542,12 @@ class PerformancePage(QWidget):
         )
 
     def _on_package_worker_finished(self, worker: CurrentPackageWorker):
+        """确认原生线程 join 后统一撤销引用并释放，拒绝重复或晚到回调。"""
+        if self._package_worker is not worker and worker not in self._disposing_package_workers:
+            return
+        if self._package_worker_active(worker):
+            QTimer.singleShot(25, alive_callback(self, "_on_package_worker_finished", worker))
+            return
         if self._package_worker is worker:
             self._package_worker = None
             self.get_package_btn.setText(tr("获取当前应用"))
@@ -553,7 +562,18 @@ class PerformancePage(QWidget):
                 self.package_feedback.hide()
         if self.get_package_btn:
             self._sync_device_actions()
-        worker.deleteLater()
+        if worker in self._disposing_package_workers:
+            self._disposing_package_workers.remove(worker)
+        if is_qobject_alive(worker):
+            worker.deleteLater()
+
+    @staticmethod
+    def _package_worker_active(worker: CurrentPackageWorker) -> bool:
+        """finished 可能早于线程尾部清理，非阻塞 join 才能解除释放屏障。"""
+        try:
+            return worker.isRunning() or not worker.wait(0)
+        except RuntimeError:
+            return False
 
     def build_config(self) -> MobilePerfRunConfig:
         return MobilePerfRunConfig(
@@ -730,17 +750,32 @@ class PerformancePage(QWidget):
                 wait=self._result_loader.wait, is_running=self._result_loader.is_running,
             )
             task_ids.append(result_task)
-        package_worker = self._package_worker
-        if package_worker is not None and package_worker.isRunning():
-            package_handle = QThreadGroupShutdownTask([package_worker])
+        package_workers = list(self._disposing_package_workers)
+        if self._package_worker is not None:
+            package_workers.append(self._package_worker)
+        if any(self._package_worker_active(worker) for worker in package_workers):
+            package_handle = QThreadGroupShutdownTask(list[QThread](package_workers))
+
+            def wait_packages(timeout: float) -> bool:
+                deadline = time.monotonic() + max(0.0, timeout)
+                for worker in package_workers:
+                    try:
+                        if not worker.wait(max(0, int((deadline - time.monotonic()) * 1000))):
+                            return False
+                    except RuntimeError:
+                        continue
+                return True
+
             package_task_id = f"{task_prefix}-package-worker"
             supervisor.register(
                 package_task_id,
                 owner_id=owner_id,
                 kind="performance_package_worker",
                 request_stop=package_handle.request_stop,
-                wait=package_handle.wait,
-                is_running=package_handle.is_running,
+                wait=wait_packages,
+                is_running=lambda: any(
+                    self._package_worker_active(worker) for worker in package_workers
+                ),
             )
             task_ids.append(package_task_id)
 
@@ -816,32 +851,26 @@ class PerformancePage(QWidget):
         package_worker = self._package_worker
         if package_worker is not None:
             self._package_worker = None
-            if package_worker.isRunning():
-                package_worker.requestInterruption()
-                safe_disconnect(package_worker.package_ready, self._on_current_package)
-                safe_disconnect(package_worker.log_ready, self.log_received.emit)
-                package_worker.setParent(None)
-                self._disposing_package_workers.append(package_worker)
-            else:
-                package_worker.deleteLater()
+            package_worker.requestInterruption()
+            safe_disconnect(package_worker.package_ready, self._on_current_package)
+            safe_disconnect(package_worker.log_ready, self.log_received.emit)
+            package_worker.setParent(None)
+            self._disposing_package_workers.append(package_worker)
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        stop_reading_surface(self.log_view)
 
     def _poll_dispose_ready(self) -> None:
         """等待 runner、停止线程和包名查询线程全部真实退出。"""
 
         if not self._runner.is_running() and not self._runner_finished_handled:
             self._mark_runner_finished()
-        retained: list[CurrentPackageWorker] = []
-        for worker in self._disposing_package_workers:
-            if worker.isRunning():
-                retained.append(worker)
-            else:
-                worker.deleteLater()
-        self._disposing_package_workers = retained
+        for worker in tuple(self._disposing_package_workers):
+            if not self._package_worker_active(worker):
+                self._on_package_worker_finished(worker)
         stop_thread = self._stop_thread
         resources_running = bool(
-            retained
+            self._disposing_package_workers
             or self._result_loader.is_running()
             or self._runner.is_running()
             or (stop_thread is not None and stop_thread.is_alive())

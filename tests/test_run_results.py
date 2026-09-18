@@ -4,9 +4,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QDateTime, QEvent, Qt, QThread
+from PySide6.QtCore import QCoreApplication, QDateTime, QEvent, QSignalBlocker, Qt, QThread
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
+from qfluentwidgets import SearchLineEdit
 from shiboken6 import isValid
 
 from core.settings_manager import AppSettings
@@ -113,6 +114,48 @@ def test_search_kind_and_state_filters_compose_and_distinguish_no_matches(make_p
     assert panel.table.rowCount() == 4
     panel.search_edit.clear()
     assert panel.table.rowCount() == 4
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("trigger", ["button", "enter"])
+def test_search_actions_and_clear_keep_result_filters(make_panel, qt_application, trigger):
+    """搜索图标和 Enter 应用本地组合筛选，清空只撤销文字且不触发参数复用。"""
+    records = (
+        _record(),
+        _record("beta", package_name="com.example.beta", kind="performance", state="failed"),
+        _record("gamma", package_name="com.example.gamma", kind="performance", state="failed"),
+        _record("other", package_name="com.example.beta", kind="performance", state="succeeded"),
+    )
+    panel, _controller = make_panel(records)
+    panel.resize(1000, 800)
+    panel.show()
+    qt_application.processEvents()
+    search = panel.search_edit
+    assert isinstance(search, SearchLineEdit)
+    reused = QSignalSpy(panel.reuse_requested)
+    panel.kind_combo.setCurrentIndex(2)
+    panel.state_combo.setCurrentIndex(2)
+    search.setText("BETA")
+    assert panel.table.rowCount() == 1
+    assert panel.selected_record.run_id == "beta"
+    # 暂停即时筛选仅用于区分显式搜索入口是否真正重新应用当前文字。
+    with QSignalBlocker(search):
+        search.setText(" gamma ")
+    assert panel.selected_record.run_id == "beta"
+    searched = QSignalSpy(search.searchSignal)
+    if trigger == "button":
+        QTest.mouseClick(search.searchButton, Qt.MouseButton.LeftButton)
+    else:
+        search.setFocus()
+        QTest.keyClick(search, Qt.Key.Key_Return)
+    assert searched.count() == 1
+    assert panel.selected_record.run_id == "gamma"
+    QTest.mouseClick(search.clearButton, Qt.MouseButton.LeftButton)
+    assert search.text() == ""
+    assert panel.table.rowCount() == 2
+    assert panel.kind_combo.currentData() == "performance"
+    assert panel.state_combo.currentData() == "failed"
+    assert reused.count() == 0
 
 
 def test_keyboard_selection_and_library_update_preserve_selected_run(make_panel, qt_application):

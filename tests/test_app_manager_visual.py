@@ -1,10 +1,18 @@
 """应用管理列表的主题绘制与中文筛选契约。"""
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QFont, QFontMetrics, QIcon
+from PySide6.QtCore import QPoint, QRect, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QStyle, QStyleOptionFrame, QStyleOptionViewItem, QWidget
+from PySide6.QtWidgets import (
+    QHeaderView,
+    QStyle,
+    QStyleOptionFrame,
+    QStyleOptionViewItem,
+    QVBoxLayout,
+    QWidget,
+)
+from qfluentwidgets import SearchLineEdit
 
 from gui.dialogs.app_manager import AppManagerPage
 from gui.pages.workspace_features import WorkspaceFeatureHost
@@ -13,36 +21,487 @@ from gui.styles.fonts import FontMixin
 from tests.ui_geometry_helpers import assert_scroll_target_reachable, wait_until
 
 
-@pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_app_manager_rows_keep_readable_background_after_theme_switch(qt_application, theme):
-    """主题切换后普通行与交替行均应使用当前主题的实色，不能残留反色条纹。"""
+@pytest.mark.ui
+def test_search_buttons_filter_both_views_and_clear_only_text_condition(
+    qt_application, monkeypatch,
+):
+    """原生搜索入口同步两种视图，清空保留类型条件，不重新加载设备应用。"""
+    calls = []
+    original_filter = AppManagerPage._filter
+
+    def filter_apps(page):
+        calls.append(page.search_input.text())
+        original_filter(page)
+
+    monkeypatch.setattr(AppManagerPage, "_filter", filter_apps)
+    loads = []
+    monkeypatch.setattr(AppManagerPage, "_load_apps", lambda page: loads.append(True))
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([
+            ("Alpha", "com.example.alpha", "Enabled", "User"),
+            ("Beta", "com.example.beta", "Enabled", "User"),
+            ("Beta System", "com.example.system", "Enabled", "System"),
+        ])
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        editor = page.search_input
+        assert isinstance(editor, SearchLineEdit)
+        page.type_filter.setCurrentIndex(page.type_filter.findData("User Apps"))
+        editor.setFocus()
+        QTest.keyClicks(editor, "beta")
+        assert page.proxy.rowCount() == 1
+        assert page.proxy.index(0, 1).data() == "Beta"
+        assert [page.icon_list.topLevelItem(i).isHidden() for i in range(3)] == [
+            True, False, True,
+        ]
+        calls.clear()
+        QTest.mouseClick(editor.searchButton, Qt.MouseButton.LeftButton)
+        assert calls == ["beta"]
+        QTest.keyClick(editor, Qt.Key.Key_Return)
+        assert calls == ["beta", "beta"]
+        assert editor.clearButton.isVisible()
+        QTest.mouseClick(editor.clearButton, Qt.MouseButton.LeftButton)
+        assert editor.text() == ""
+        assert calls == ["beta", "beta", ""]
+        assert page.proxy.rowCount() == 2
+        assert [page.icon_list.topLevelItem(i).isHidden() for i in range(3)] == [
+            False, False, True,
+        ]
+        assert loads == []
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+def test_icon_view_has_four_independent_resizable_columns(qt_application):
+    """图标只占首列，名称、包名和状态有独立模型列及可拖动边界。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([("示例应用", "com.example.app", "Enabled", "User")])
+        page._toggle_view()
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        view = page.icon_list
+        assert all(view.model().index(0, column).isValid() for column in range(4))
+        assert not view.model().index(0, 4).isValid()
+        item = view.topLevelItem(0)
+        assert [item.text(column) for column in range(4)] == [
+            "", "示例应用", "com.example.app", "已启用",
+        ]
+        assert not item.icon(0).isNull()
+        assert all(item.icon(column).isNull() for column in range(1, 4))
+        header = view.header()
+        assert not header.isHidden()
+        assert all(
+            header.sectionResizeMode(column) == QHeaderView.ResizeMode.Interactive
+            for column in range(4)
+        )
+        assert all(not view.isColumnHidden(column) for column in range(4))
+        before_width = header.sectionSize(1)
+        before_package_x = view.visualRect(view.model().index(0, 2)).left()
+        boundary = QPoint(
+            header.sectionViewportPosition(1) + before_width - 1, header.height() // 2,
+        )
+        QTest.mousePress(header.viewport(), Qt.MouseButton.LeftButton, pos=boundary)
+        QTest.mouseMove(header.viewport(), boundary + QPoint(70, 0))
+        QTest.mouseRelease(
+            header.viewport(), Qt.MouseButton.LeftButton, pos=boundary + QPoint(70, 0),
+        )
+        qt_application.processEvents()
+        assert abs(header.sectionSize(1) - before_width - 70) <= 2
+        assert abs(view.visualRect(view.model().index(0, 2)).left() - before_package_x - 70) <= 2
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+def test_icon_column_widths_survive_theme_toggle_and_refresh(qt_application):
+    """用户调整的四列宽度不被主题刷新、视图切换或数据刷新覆盖。"""
     previous_theme = BaseStyles.current_theme()
     page = AppManagerPage(device_ip="visual-demo")
+    try:
+        apps = [("示例应用", "com.example.app", "Enabled", "User")]
+        page._populate(apps)
+        page._toggle_view()
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        view = page.icon_list
+        assert all(view.model().index(0, column).isValid() for column in range(4))
+        assert not view.model().index(0, 4).isValid()
+        expected = [72, 280, 360, 140]
+        for column, width in enumerate(expected):
+            view.header().resizeSection(column, width)
+        BaseStyles.switch_theme("Light" if previous_theme == "Dark" else "Dark")
+        page._toggle_view()
+        page._toggle_view()
+        page._populate(apps)
+        qt_application.processEvents()
+        assert [view.columnWidth(column) for column in range(4)] == expected
+    finally:
+        page.close()
+        BaseStyles.switch_theme(previous_theme)
+
+
+@pytest.mark.ui
+def test_icon_selection_preserves_hidden_selected_apps(qt_application):
+    """筛选隐藏的已选应用仍属于选择集，Ctrl 点选可见行不会清除它。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([
+            ("Alpha", "com.example.alpha", "Enabled", "User"),
+            ("Beta", "com.example.beta", "Enabled", "User"),
+        ])
+        page._toggle_view()
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        view = page.icon_list
+        hidden = view.topLevelItem(0)
+        visible = view.topLevelItem(1)
+        hidden.setSelected(True)
+        page.search_input.setText("Beta")
+        qt_application.processEvents()
+        assert hidden.isHidden() and hidden.isSelected()
+        rect = view.visualRect(view.indexFromItem(visible, 1))
+        assert view.viewport().rect().contains(rect)
+        QTest.mouseClick(
+            view.viewport(), Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ControlModifier, rect.center(),
+        )
+        assert page.selected_packages == {"com.example.alpha", "com.example.beta"}
+        assert hidden.isSelected() and visible.isSelected()
+        assert all(
+            page.model.item(row, 0).checkState() == Qt.CheckState.Checked
+            for row in range(2)
+        )
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("current_column", [0, 2, 3])
+def test_icon_keyboard_search_uses_application_name_column(qt_application, current_column):
+    """任意当前列的字母定位都按名称累积匹配，不受空图标列和包名影响。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([
+            ("Alpha", "com.example.keep_alpha", "Enabled", "User"),
+            ("Basil", "com.example.keep_basil", "Enabled", "User"),
+            ("Beagle", "com.example.hidden", "Enabled", "User"),
+            ("Beryl", "com.example.keep_beryl", "Enabled", "User"),
+        ])
+        page._toggle_view()
+        page.resize(1000, 800)
+        page.show()
+        qt_application.processEvents()
+        view = page.icon_list
+        view.setCurrentItem(view.topLevelItem(0), current_column)
+        view.setFocus()
+        assert view.currentItem().text(0) == ""
+        QTest.keyClick(view, Qt.Key.Key_B)
+        assert view.currentItem().text(1) == "Basil"
+        QTest.keyClick(view, Qt.Key.Key_E)
+        assert view.currentItem().text(1) == "Beagle"
+        assert page.selected_packages == {"com.example.hidden"}
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_icon_selection_background_stays_inside_cell_after_horizontal_scroll(
+    qt_application, theme,
+):
+    """首列几乎滚出视口时，选中底板不能越界给名称列重复叠色。"""
+    previous_theme = BaseStyles.current_theme()
+    BaseStyles.switch_theme(theme)
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([("Alpha", "com.example.alpha", "Enabled", "User")])
+        page._toggle_view()
+        page.resize(520, 700)
+        page.show()
+        qt_application.processEvents()
+        view = page.icon_list
+        view.topLevelItem(0).setSelected(True)
+        view.horizontalScrollBar().setValue(view.columnWidth(0) - 2)
+        qt_application.processEvents()
+        name_rect = view.visualRect(view.model().index(0, 1))
+        assert name_rect.left() == 2
+        image = view.viewport().grab().toImage()
+        # 取文字上方、同一名称单元格的选中背景，避开图标和字符抗锯齿。
+        y = name_rect.top() + 5
+        assert image.pixelColor(name_rect.left(), y) == image.pixelColor(name_rect.left() + 16, y)
+    finally:
+        page.close()
+        BaseStyles.switch_theme(previous_theme)
+
+
+@pytest.mark.parametrize("column_widths", [[48, 160, 280, 100], [72, 320, 480, 140]])
+def test_icon_rows_align_icon_and_text_on_one_line(qt_application, column_widths):
+    """每个单元格只绘制自身内容，四列在不同行共享水平起点和垂直中线。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    page._populate([
+        ("一个较长的应用名称", "com.example.first", "Enabled", "User"),
+        ("应用二", "com.example.second", "Disabled", "System"),
+    ])
+    icon_image = QImage(32, 32, QImage.Format.Format_ARGB32)
+    icon_image.fill(QColor("#E600C8"))
+    for row in range(2):
+        page.icon_list.topLevelItem(row).setIcon(0, QIcon(QPixmap.fromImage(icon_image)))
+    drawn_rows = []
+    try:
+        for column, width in enumerate(column_widths):
+            page.icon_list.header().resizeSection(column, width)
+
+        class TextPainter(QPainter):
+            def drawText(self, rect, flags, text):
+                drawn.append((rect, text))
+                return super().drawText(rect, flags, text)
+
+        for row in range(2):
+            drawn = []
+            image = QImage(sum(column_widths), 58, QImage.Format.Format_ARGB32)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = TextPainter(image)
+            cell_rects = []
+            try:
+                for column in range(4):
+                    option = QStyleOptionViewItem()
+                    page.icon_list.initViewItemOption(option)
+                    option.rect = QRect(
+                        sum(column_widths[:column]), 0, column_widths[column], image.height(),
+                    )
+                    cell_rects.append(QRect(option.rect))
+                    before = len(drawn)
+                    page.icon_list.itemDelegate().paint(
+                        painter, option, page.icon_list.model().index(row, column),
+                    )
+                    assert len(drawn) - before == (0 if column == 0 else 1)
+            finally:
+                painter.end()
+            assert len(drawn) == 3
+            assert {rect.center().y() for rect, _ in drawn} == {image.rect().center().y()}
+            icon_pixels = [
+                y for y in range(image.height())
+                if image.pixelColor(cell_rects[0].center().x(), y) == QColor("#E600C8")
+            ]
+            assert (min(icon_pixels) + max(icon_pixels)) // 2 == image.rect().center().y()
+            assert all(cell.contains(rect) for cell, (rect, _) in zip(cell_rects[1:], drawn))
+            assert [
+                rect.left() - cell.left() for cell, (rect, _) in zip(cell_rects[1:], drawn)
+            ] == [12] * 3
+            drawn_rows.append(drawn)
+        assert [rect.left() for rect, _ in drawn_rows[0]] == [
+            rect.left() for rect, _ in drawn_rows[1]
+        ]
+        assert drawn_rows[0][-1][1] == "已启用"
+        assert drawn_rows[1][-1][1] == "已停用"
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("width,font_size", [(500, 12), (1000, 12), (720, 22)])
+def test_icon_view_uses_full_width_rows_after_resize(qt_application, monkeypatch, width, font_size):
+    """窄视口保留全部四列并支持横滚，窗口变宽不覆盖用户列宽或改变行高。"""
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda cls, role, size=None: QFont("Arial", size or font_size)),
+    )
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([
+            (f"示例应用 {row}", f"com.example.app{row}", "Enabled", "User")
+            for row in range(8)
+        ])
+        page._toggle_view()
+        page.resize(width, 900)
+        page.show()
+        view = page.icon_list
+        column_widths = [64, 300, 700, 150]
+        for column, column_width in enumerate(column_widths):
+            view.header().resizeSection(column, column_width)
+        qt_application.processEvents()
+        first, second = [view.visualItemRect(view.topLevelItem(row)) for row in (0, 1)]
+        assert second.top() >= first.bottom()
+        assert first.left() == second.left()
+        assert first.height() >= max(54, QFontMetrics(view.font()).height() + 20)
+        assert all(not view.isColumnHidden(column) for column in range(4))
+        scrollbar = view.horizontalScrollBar()
+        before_maximum = scrollbar.maximum()
+        assert before_maximum > 0
+        scrollbar.setValue(before_maximum)
+        qt_application.processEvents()
+        status_rect = view.visualRect(view.model().index(0, 3))
+        assert view.viewport().rect().contains(status_rect)
+        page.resize(width + 160, 900)
+        qt_application.processEvents()
+        assert scrollbar.maximum() < before_maximum
+        resized = view.visualItemRect(view.topLevelItem(0))
+        assert resized.height() == first.height()
+        assert [view.columnWidth(column) for column in range(4)] == column_widths
+    finally:
+        page.close()
+
+
+
+def test_icon_rows_keep_full_names_for_search_and_accessible_details(qt_application):
+    """省略仅发生在绘制，长名称尾部和晚到详情仍可搜索并供辅助技术读取。"""
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        name = "这是一个长度超过十八字符的应用名称末尾关键字"
+        package = "com.example.long_name"
+        page._populate([(name, package, "Disabled", "System")])
+        item = page.icon_list.topLevelItem(0)
+        assert item.text(1) == name
+        page.search_input.setText("末尾关键字")
+        assert not item.isHidden()
+        assert page.proxy.rowCount() == 1
+        updated_name = name + "更新"
+        page._on_detail(package, updated_name, "3.2.18", "")
+        assert item.text(1) == updated_name
+        description = item.data(0, Qt.ItemDataRole.AccessibleDescriptionRole)
+        assert all(value in description for value in (package, "3.2.18", "已停用", "系统"))
+        assert all(value in item.toolTip(1) for value in (updated_name, "已停用", "系统"))
+        page.search_input.setText("晚到名称")
+        assert item.isHidden() and page.proxy.rowCount() == 0
+        page._on_detail(package, "晚到名称", "3.2.19", "")
+        assert not item.isHidden() and page.proxy.rowCount() == 1
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_disabled_icon_rows_refresh_existing_foreground(qt_application, theme):
+    """已有停用项即时跟随主题，切换不重建列表或丢失选择。"""
+    previous = BaseStyles.current_theme()
+    BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        package = "com.example.disabled"
+        page._populate([("停用应用", package, "Disabled", "System")])
+        item = page.icon_list.topLevelItem(0)
+        item.setSelected(True)
+        BaseStyles.switch_theme(theme)
+        qt_application.processEvents()
+        assert page.icon_list.topLevelItem(0) is item
+        assert item.foreground(1).color() == BaseStyles.get_color("TEXT_DISABLED")
+        assert page.selected_packages == {package}
+        # 检查实际文本绘制的笔色，不能只验证模型中缓存的 ForegroundRole。
+        class TextPainter(QPainter):
+            def drawText(self, *args):
+                colors.append(self.pen().color())
+                return super().drawText(*args)
+
+        colors = []
+        image = QImage(500, 140, QImage.Format.Format_ARGB32)
+        image.fill(Qt.GlobalColor.transparent)
+        option = QStyleOptionViewItem()
+        page.icon_list.initViewItemOption(option)
+        option.rect = image.rect()
+        painter = TextPainter(image)
+        try:
+            page.icon_list.itemDelegate().paint(
+                painter, option, page.icon_list.indexFromItem(item, 1),
+            )
+        finally:
+            painter.end()
+        assert colors[0] == BaseStyles.get_color("TEXT_DISABLED")
+    finally:
+        page.close()
+        BaseStyles.switch_theme(previous)
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_icon_row_selection_indicator_follows_accent(qt_application, theme):
+    """强调色改变后已有选中行即时重绘，选择集合和条目身份保持不变。"""
+    previous_theme = BaseStyles.current_theme()
+    previous_accent = BaseStyles.accent_color()
+    BaseStyles.switch_theme(theme)
+    page = AppManagerPage(device_ip="visual-demo")
+    try:
+        page._populate([("示例应用", "com.example.app", "Enabled", "User")])
+        item = page.icon_list.topLevelItem(0)
+        item.setSelected(True)
+        colors = []
+        for accent in ("#0078D4", "#C239B3"):
+            BaseStyles.set_accent_color(accent)
+            qt_application.processEvents()
+            image = QImage(500, 140, QImage.Format.Format_ARGB32)
+            image.fill(Qt.GlobalColor.transparent)
+            option = QStyleOptionViewItem()
+            page.icon_list.initViewItemOption(option)
+            option.rect = image.rect()
+            option.state |= QStyle.StateFlag.State_Selected
+            painter = QPainter(image)
+            try:
+                page.icon_list.itemDelegate().paint(
+                    painter, option, page.icon_list.indexFromItem(item),
+                )
+            finally:
+                painter.end()
+            colors.append(image.pixelColor(5, image.height() // 2))
+            assert page.icon_list.topLevelItem(0) is item
+            assert page.selected_packages == {"com.example.app"}
+        assert colors[0].alpha() == colors[1].alpha() == 255
+        assert colors[0] != colors[1]
+    finally:
+        page.close()
+        BaseStyles.set_accent_color(previous_accent)
+        BaseStyles.switch_theme(previous_theme)
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_app_manager_rows_keep_readable_background_after_theme_switch(qt_application, theme):
+    """主题切换后列表透出页面底板，交替行仅保留随主题变化的轻量条纹。"""
+    previous_theme = BaseStyles.current_theme()
+    host = QWidget()
+    background = QColor("#f5f5f5" if theme == "Light" else "#252525")
+    palette = host.palette()
+    palette.setColor(QPalette.ColorRole.Window, background)
+    host.setPalette(palette)
+    host.setAutoFillBackground(True)
+    page = AppManagerPage(host, device_ip="visual-demo")
+    QVBoxLayout(host).addWidget(page)
     try:
         page._populate([
             (f"示例 {row}", f"com.example.app{row}", "Enabled", "User")
             for row in range(4)
         ])
-        page.resize(1000, 740)
-        page.show()
+        host.resize(1000, 740)
+        host.show()
         BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
         qt_application.processEvents()
         BaseStyles.switch_theme(theme)
-        QTest.qWait(20)
+        host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        host.setFocus()
+        QTest.mouseMove(host, QPoint(0, 0))
+        qt_application.processEvents()
         surface = page._master_panel.grab().toImage().pixelColor(0, 0)
-        # 普通布局留白透出工作区材质；下面的列表行仍需独立保持实色可读。
+        # 从完整宿主采样，包含透明视口实际透出的页面底板。
         assert surface.alpha() == 0
-        image = page.tree.viewport().grab().toImage()
+        image = host.grab().toImage()
         colors = []
         for row in range(4):
             rect = page.tree.visualRect(page.proxy.index(row, 1))
-            color = image.pixelColor(rect.right() - 8, rect.center().y())
+            position = page.tree.viewport().mapTo(host, QPoint(rect.right() - 8, rect.center().y()))
+            scale = image.devicePixelRatio()
+            color = image.pixelColor(round(position.x() * scale), round(position.y() * scale))
             assert color.alpha() == 255
             assert color.lightness() > 220 if theme == "Light" else color.lightness() < 70
+            if row % 2 == 0:
+                assert color == background
             colors.append(color.lightness())
-        assert 0 < abs(colors[0] - colors[1]) <= 20
+        assert 0 < abs(colors[0] - colors[1]) <= 6
+        assert colors[1] < colors[0] if theme == "Light" else colors[1] > colors[0]
     finally:
         page.close()
+        host.close()
+        host.deleteLater()
         BaseStyles.switch_theme(previous_theme)
         qt_application.processEvents()
 
@@ -65,9 +524,9 @@ def test_chinese_application_type_filter_preserves_source_values_and_selection(q
         assert page.model.item(1, 4).text() == "Disabled"
         assert page.model.item(1, 5).text() == "System"
         visible = [
-            page.icon_list.item(row).data(Qt.ItemDataRole.UserRole)
-            for row in range(page.icon_list.count())
-            if not page.icon_list.item(row).isHidden()
+            page.icon_list.topLevelItem(row).data(0, Qt.ItemDataRole.UserRole)
+            for row in range(page.icon_list.topLevelItemCount())
+            if not page.icon_list.topLevelItem(row).isHidden()
         ]
         assert visible == ["com.example.system"]
         assert page.selected_packages == {"com.example.user"}
@@ -155,8 +614,8 @@ def test_small_workspace_keeps_complete_application_rows(
         if icon_mode:
             view = page.icon_list
             rows = {}
-            for index in range(view.count()):
-                rect = view.visualItemRect(view.item(index))
+            for index in range(view.topLevelItemCount()):
+                rect = view.visualRect(view.model().index(index, 0))
                 rows.setdefault(rect.top(), rect)
             first_rows = [rows[top] for top in sorted(rows)[:2]]
             assert len(first_rows) == 2
@@ -235,7 +694,7 @@ def test_workspace_preparation_removes_duplicate_header_and_device_badge(qt_appl
 
 
 def test_workspace_filters_use_natural_widths_on_one_row_at_748(qt_application, monkeypatch):
-    """860px 整窗对应的 748px 筛选行仍为单行，类型与视图按钮不吸收多余宽度。"""
+    """扣除页面和面板留白后的 748px 筛选行仍为单行，固定控件不吸收多余宽度。"""
     monkeypatch.setattr(
         BaseStyles, "font_for_role",
         classmethod(lambda cls, role, size=None: QFont("Arial", size or 12)),
@@ -243,7 +702,7 @@ def test_workspace_filters_use_natural_widths_on_one_row_at_748(qt_application, 
     page = AppManagerPage(device_ip="visual-demo")
     try:
         page.prepare_for_workspace()
-        page.resize(764, 700)
+        page.resize(812, 700)
         page.show()
         qt_application.processEvents()
         assert page._action_layout_available_width() == 748

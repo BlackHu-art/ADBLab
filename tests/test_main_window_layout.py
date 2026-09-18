@@ -524,7 +524,7 @@ def test_dark_theme_updates_hidden_workspace_surfaces_before_navigation(qt_appli
         qt_application.processEvents()
 
         expected = BaseStyles.color("WINDOW_BG").lower()
-        assert frame._apps_page.autoFillBackground() == (not frame.isMicaEffectEnabled())
+        assert not frame._apps_page.autoFillBackground()
         assert frame._apps_page.palette().window().color().name() == expected
         assert frame._settings_page.viewport().palette().window().color().name() == expected
 
@@ -612,10 +612,12 @@ def test_theme_switch_keeps_mica_content_stack_edges_borderless(qt_application, 
         ):
             color = image.pixelColor(round(edge.x() * scale), round(edge.y() * scale))
             assert color.alpha() == 255
-            if frame.isMicaEffectEnabled():
-                assert color.name() != BaseStyles.color("WINDOW_BG").lower()
-            else:
-                assert color.name() == BaseStyles.color("WINDOW_BG").lower()
+            surface_point = frame._content_surface.mapTo(
+                frame, QPoint(frame._content_surface.width() - 3, 20)
+            )
+            assert color == image.pixelColor(
+                round(surface_point.x() * scale), round(surface_point.y() * scale)
+            )
             assert color == image.pixelColor(
                 round(adjacent.x() * scale), round(adjacent.y() * scale)
             )
@@ -1339,12 +1341,19 @@ def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
 
     from PySide6.QtGui import QPixmap
 
+    from adblab.application.action_results import capture_action_job
+    from controllers.action_catalog import ACTION_SIGNALS
+    from controllers.signals import ADBControllerSignals
     from gui import main_frame as main_frame_module
     from gui.features.media import ScreenshotPage
 
-    notices = []
+    notices, page_notices = [], []
     monkeypatch.setattr(
         main_frame_module, "show_toast",
+        lambda *args, **kwargs: page_notices.append((args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "gui.action_feedback.show_toast",
         lambda *args, **kwargs: notices.append((args, kwargs)),
     )
     image_paths = []
@@ -1355,12 +1364,28 @@ def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
         assert pixmap.save(str(path))
         image_paths.append(str(path))
 
-    frame = build_main_frame()
+    controller = Mock()
+    controller.signals = ADBControllerSignals()
+    frame = build_main_frame(controller=controller)
+
+    def finish_batch(paths):
+        jobs = []
+        frame._action_feedback.dispatch(
+            ACTION_SIGNALS["screenshot_requested"],
+            lambda devices: jobs.append(capture_action_job("screenshot_async", devices[0])),
+            (["demo-device"],),
+        )
+        controller.signals.screenshot_batch_ready.emit(paths)
+        controller.action_results.complete(
+            jobs[0], {"success": True, "available_artifacts": paths},
+        )
+        return jobs[0].request_id
+
     try:
         frame.show()
         top_levels = set(qt_application.topLevelWidgets())
         current_page = frame.stackedWidget.currentWidget()
-        frame._on_screenshot_batch_ready(image_paths[:2])
+        finish_batch(image_paths[:2])
 
         host = frame._workspace_feature_hosts["apps"]
         page = next(
@@ -1371,22 +1396,31 @@ def test_screenshot_batch_updates_inline_media_without_stealing_navigation(
         assert isinstance(page, ScreenshotPage)
         assert page.isWindow() is False
         assert page.image_paths == tuple(image_paths[:2])
+        assert page._device_tools is frame.left_panel.app_panel.text_screen_tools
         assert frame.stackedWidget.currentWidget() is current_page
         assert set(qt_application.topLevelWidgets()) == top_levels
 
-        frame._on_screenshot_batch_ready(image_paths[1:])
+        latest_request = finish_batch(image_paths[1:])
         assert page.image_paths == tuple(image_paths)
+        assert frame.stackedWidget.currentWidget() is current_page
+        assert page_notices == []
         assert len(notices) == 2
         args, options = notices[-1]
-        assert args == (frame, "截图已完成", "结果已加入“截图与屏幕”页面。")
+        assert args[:2] == (frame, "截图")
+        assert "成功 1 台" in args[2]
         assert options["level"] == "success"
-        assert options["action_text"] == "查看结果"
+        assert options["action_text"] == "查看任务"
         options["on_action"]()
+        assert frame.stackedWidget.currentWidget() is frame._tasks_page
+        assert frame._task_page.action_results._selected == latest_request
+        assert frame._task_page.action_results.artifacts.count() == 2
+        assert frame._open_workspace_feature("apps", "media")
         assert host.stack.currentWidget() is page
         frame._on_screenshot_batch_ready(image_paths)
         assert page.image_paths == tuple(image_paths)
         assert len(notices) == 2
     finally:
+        controller.action_results.close()
         frame._unbind_window_screen()
         frame._close_ready = True
         frame.close()

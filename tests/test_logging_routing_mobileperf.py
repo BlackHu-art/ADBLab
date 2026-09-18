@@ -10,6 +10,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from adblab.application.device_context import DeviceContextSnapshot
 from core.exec import ProcessRunner
 from gui.main_frame import MainFrame
 from gui.main_frame_actions import MainFrameActions
@@ -48,8 +49,8 @@ def test_main_frame_routes_business_log_signal_to_log_service():
         adb_controller=Mock(),
         run_library=Mock(),
         left_panel=SimpleNamespace(
-            _apps_tab=apps_panel,
-            _connected_device_cache=["device-secret"],
+            app_panel=apps_panel,
+            device_context_snapshot=lambda: DeviceContextSnapshot((), ("device-secret",), "ready"),
             on_device_refresh_superseded=Mock(),
             on_recording_target_finished=Mock(),
             on_monkey_target_finished=Mock(),

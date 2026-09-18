@@ -9,12 +9,12 @@ from datetime import datetime
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ComboBox, LineEdit, PlainTextEdit, PushButton
+from qfluentwidgets import BodyLabel, ComboBox, PlainTextEdit, PushButton, SearchLineEdit
 
 from adblab.application.action_results import ActionResult, ActionResults, artifact_name
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
-from gui.styles.fluent import apply_label_role, apply_reading_surface
+from gui.styles.fluent import apply_label_role, apply_reading_surface, set_function_tooltip
 
 STATE_LABELS = {
     "running": "执行中",
@@ -68,12 +68,13 @@ class ActionResultView(QWidget):
             row.addWidget(control, 1)
         layout.addLayout(row)
         self.detail_toggle = PushButton(tr("查看详情"))
+        set_function_tooltip(self.detail_toggle, "展开或收起本次操作的完整结果")
         self.detail_toggle.setCheckable(True)
         layout.addWidget(self.detail_toggle, 0, Qt.AlignmentFlag.AlignLeft)
         self.detail_host = QWidget()
         detail_layout = QVBoxLayout(self.detail_host)
         detail_layout.setContentsMargins(0, 0, 0, 0)
-        self.search = LineEdit()
+        self.search = SearchLineEdit()
         self.search.setPlaceholderText(tr("查找结果，按 Enter 查找下一处"))
         self.search.setAccessibleName(tr("查找结果"))
         detail_layout.addWidget(self.search)
@@ -91,6 +92,8 @@ class ActionResultView(QWidget):
         commands = QHBoxLayout()
         self.copy_button = PushButton(tr("复制完整结果"))
         self.export_button = PushButton(tr("导出结果"))
+        set_function_tooltip(self.copy_button, "将当前设备的完整结果复制到剪贴板")
+        set_function_tooltip(self.export_button, "将当前设备的完整结果保存到本地文件")
         commands.addWidget(self.copy_button)
         commands.addWidget(self.export_button)
         commands.addStretch(1)
@@ -106,6 +109,8 @@ class ActionResultView(QWidget):
         artifact_layout.setContentsMargins(0, 0, 0, 0)
         self.open_button = PushButton(tr("打开结果"))
         self.folder_button = PushButton(tr("打开文件夹"))
+        set_function_tooltip(self.open_button, "打开所选的操作结果文件")
+        set_function_tooltip(self.folder_button, "打开所选操作结果所在的文件夹")
         artifact_layout.addWidget(self.open_button)
         artifact_layout.addWidget(self.folder_button)
         artifact_layout.addStretch(1)
@@ -113,6 +118,8 @@ class ActionResultView(QWidget):
         self.history.currentIndexChanged.connect(self._choose_history)
         self.targets.currentIndexChanged.connect(self._render_detail)
         self.detail_toggle.toggled.connect(self._toggle_detail)
+        # 正文按原文查找，保留纯空格查询；原生 search() 会先 strip，不适用于此处。
+        self.search.searchButton.clicked.connect(self._find)
         self.search.returnPressed.connect(self._find)
         self.copy_button.clicked.connect(lambda: QApplication.clipboard().setText(self._detail))
         self.export_button.clicked.connect(

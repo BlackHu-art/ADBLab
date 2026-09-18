@@ -4,9 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPointF, Qt
-from PySide6.QtGui import QEnterEvent, QFont
+from PySide6.QtGui import QEnterEvent, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QLineEdit, QWidget
+from qfluentwidgets import InfoBar, InfoBarIcon, InfoBarPosition
 from shiboken6 import isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -46,7 +47,7 @@ def test_long_toast_preserves_text_and_fits_window_after_resize(
     assert notice.content_edit.text() == content.replace("\n", " ")
     assert notice.content_edit.toolTip() == content
     assert notice.geometry().right() == window.width() - 25
-    assert notice.y() == 24
+    assert notice.geometry().bottom() == window.height() - 25
     assert window.rect().contains(notice.geometry())
     assert not notice.titleLabel.wordWrap()
     assert notice.content_edit.cursorPosition() == 0
@@ -133,7 +134,7 @@ def test_single_line_body_keeps_full_diagnostic_beyond_default_line_edit_limit(
 
 
 @pytest.mark.parametrize("font_size", [12, 22])
-def test_standard_screenshot_notice_fits_complete_single_line(
+def test_screenshot_notice_preserves_full_text_and_action_in_compact_strip(
     window, qt_application, monkeypatch, font_size,
 ):
     monkeypatch.setattr(
@@ -149,9 +150,9 @@ def test_standard_screenshot_notice_fits_complete_single_line(
     assert notice.titleLabel.text() == "截图已完成"
     assert notice.action_button.text() == "查看结果"
     assert notice.content_edit.text() == content
-    assert notice.content_edit.width() > notice.content_edit.fontMetrics().horizontalAdvance(
-        content,
-    )
+    assert notice.width() <= 600
+    # 保留原生按钮内边距，22pt 大字体也只占一行浮条的高度。
+    assert notice.height() <= 64
     assert window.rect().contains(notice.geometry())
 
 
@@ -182,10 +183,12 @@ def test_duplicate_toasts_merge_and_stack_never_overflows(window, qt_application
     visible = [n for n in notices if isValid(n) and n.isVisible()]
     assert len(visible) == 3
     assert visible[-1].content == "第5项"
+    assert visible[-1].geometry().bottom() == window.height() - 25
     for index, notice in enumerate(visible):
         assert window.rect().contains(notice.geometry())
         if index:
             assert not notice.geometry().intersects(visible[index - 1].geometry())
+            assert notice.y() > visible[index - 1].geometry().bottom()
     window.resize(500, 260)
     qt_application.processEvents()
     for notice in notices:
@@ -267,13 +270,13 @@ def test_performance_missing_package_shows_toast_and_leaves_form_editable(
         page.close()
 
 
-def test_toast_sits_below_window_chrome_without_covering_close_button(window):
+def test_toast_sits_at_bottom_without_covering_window_chrome(window):
     window.titleBar = QWidget(window)
     window.titleBar.resize(window.width(), 48)
     window.titleBar.show()
     notice = show_toast(window, "提示", "短正文", duration=-1)
     assert notice is not None
-    assert notice.y() == 60
+    assert notice.geometry().bottom() == window.height() - 25
     assert notice.width() < 520
     assert not notice.geometry().intersects(window.titleBar.geometry())
 
@@ -297,19 +300,94 @@ def test_toast_keeps_device_selector_accessible(window):
     window._global_device_bar.setGeometry(20, 40, 800, 48)
     window._global_device_bar.show()
     notice = show_toast(window, "完成", "结果已记录", duration=-1)
-    assert notice.y() == 100
+    assert notice.geometry().bottom() == window.height() - 25
     assert not notice.geometry().intersects(window._global_device_bar.geometry())
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
-def test_severity_backgrounds_are_distinct_in_each_theme(window, theme):
+def test_toasts_use_neutral_surface_and_distinct_status_icons(window, theme):
     BaseStyles.switch_theme(theme)
+    reference = InfoBar(
+        InfoBarIcon.INFORMATION, "Lesson 3", "参考提示", duration=-1,
+        position=InfoBarPosition.NONE, parent=window,
+    )
+    reference.show()
+    rendered = reference.grab().toImage()
+    scale = rendered.devicePixelRatio()
+    expected = rendered.pixelColor(round(12 * scale), round(5 * scale)).name()
     colors = []
+    icons = []
     for level in ("info", "success", "warning", "error"):
         notice = show_toast(window, "操作", "状态", level=level, duration=-1)
+        icons.append(notice.icon)
         QTest.qWait(20)
         rendered = notice.grab().toImage()
         scale = rendered.devicePixelRatio()
         colors.append(rendered.pixelColor(round(12 * scale), round(5 * scale)).name())
         notice.close()
-    assert len(set(colors)) == 4, colors
+    assert set(colors) == {expected}, colors
+    assert len(set(icons)) == 4
+    reference.close()
+
+
+def test_visible_toast_follows_theme_without_losing_selection_or_bottom_anchor(
+    window, qt_application,
+):
+    BaseStyles.switch_theme("Light")
+    notice = show_toast(window, "提示", "保留已选择的正文", duration=-1)
+    qt_application.processEvents()
+    notice.content_edit.setFocus()
+    notice.content_edit.setSelection(0, 3)
+    selected = notice.content_edit.selectedText()
+    for theme in ("Dark", "Light"):
+        BaseStyles.switch_theme(theme)
+        qt_application.processEvents()
+        reference = InfoBar(
+            InfoBarIcon.INFORMATION, "Lesson 3", "参考提示", duration=-1,
+            position=InfoBarPosition.NONE, parent=window,
+        )
+        reference.show()
+        colors = []
+        for widget in (notice, reference):
+            image = widget.grab().toImage()
+            scale = image.devicePixelRatio()
+            colors.append(image.pixelColor(round(12 * scale), round(5 * scale)))
+        assert colors[0] == colors[1]
+        assert notice.content_edit.selectedText() == selected
+        assert notice.geometry().bottom() == window.height() - 25
+        reference.close()
+
+
+@pytest.mark.parametrize("theme", ["Light", "Dark"])
+def test_toast_action_remains_readable_and_callable_after_accent_change(
+    window, qt_application, theme,
+):
+    def luminance(color):
+        channels = [value / 12.92 if value <= .04045 else ((value + .055) / 1.055) ** 2.4
+                    for value in (color.redF(), color.greenF(), color.blueF())]
+        return sum(value * weight for value, weight in zip(channels, (.2126, .7152, .0722)))
+
+    BaseStyles.switch_theme(theme)
+    calls = []
+    notice = show_toast(
+        window, "安装应用", "已完成", duration=-1,
+        action_text="查看任务", on_action=lambda: calls.append("opened"),
+    )
+    previous_accent = BaseStyles.accent_color()
+    try:
+        for accent in ("#0F6CBD", "#7B3FB0"):
+            BaseStyles.set_accent_color(accent)
+            qt_application.processEvents()
+            button = notice.action_button
+            foreground = button.palette().color(QPalette.ColorRole.ButtonText)
+            rendered = notice.grab().toImage()
+            scale = rendered.devicePixelRatio()
+            background = rendered.pixelColor(round(12 * scale), round(5 * scale))
+            bright, dark = sorted((luminance(foreground), luminance(background)), reverse=True)
+            assert (bright + .05) / (dark + .05) >= 4.5
+            assert button.fontMetrics().horizontalAdvance(button.text()) < button.width()
+            assert notice.rect().contains(button.geometry())
+        QTest.mouseClick(notice.action_button, Qt.MouseButton.LeftButton)
+        assert calls == ["opened"]
+    finally:
+        BaseStyles.set_accent_color(previous_accent)

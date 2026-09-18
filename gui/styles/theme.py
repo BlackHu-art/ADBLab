@@ -29,7 +29,7 @@ def apply_dark_title_bar(window: QWidget) -> None:
 
 THEMES = {
     "Light": {
-        "WINDOW_BG": "#F3F3F3",
+        "WINDOW_BG": "#F0F4F9",
         "PANEL_BG": "#FBFBFB",
         "INPUT_BG": "#FFFFFF",
         "INPUT_BG_HOVER": "#F7F7F7",
@@ -92,13 +92,14 @@ THEMES = {
         "TOOLBAR_BG": "#292929",
         "LOG_BACKGROUND": "#202020",
         "LOG_TEXT_COLOR": "#F3F2F1",
-        "LOG_DEBUG": "#8B949E",
+        # 原生阅读底板比窗口更亮，等级色同时覆盖普通与悬停背景的可读性。
+        "LOG_DEBUG": "#9CA6B1",
         "LOG_INFO": "#58A6FF",
         "LOG_SUCCESS": "#3FB950",
         "LOG_WARNING": "#E3B341",
-        "LOG_ERROR": "#F85149",
-        "LOG_CRITICAL": "#FF6B9D",
-        "LOG_TIMESTAMP": "#8B949E",
+        "LOG_ERROR": "#FF827B",
+        "LOG_CRITICAL": "#FF80AB",
+        "LOG_TIMESTAMP": "#9CA6B1",
         "GROUP_TITLE_COLOR": "#60CDFF",
         "TITLE_COLOR": "#F3F2F1",
     },

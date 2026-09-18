@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-13
+last_verified: 2026-09-17
 owner: 待确认
 related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 ---
@@ -20,9 +20,10 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, DATA_FLOW.md]
 | Medium | AppSettings 只在进程内串行保存，多实例并发写入没有文件锁或冲突检测 | [AppSettings](../../core/settings_manager.py) 已有可重入锁、写锁和原子替换；确认是否支持多实例，再补进程间协调或显式单实例约束及测试 | Open |
 | Medium | App Manager 备份/恢复缺少 manifest、hash 与新版 Android 实机闭环 | [AppManagerWorker](../../models/app_manager_worker.py) 校验关键 CommandResult 和拉取 APK 数量，先暂存再原子发布 ZIP；恢复使用安全解压，取消后不启动后续安装或发布完整成功；页面业务批次串行，仍需完整性元数据和授权恢复测试 | Partial |
 | Medium | 写操作、传输和部分长任务仍不能按 operation 统一中止；MobilePerf 长任务仍有独立 Popen 边界 | 明确只读 model 查询、设备概览、App Manager、Logcat 辅助探测和 Remote 预检支持执行中取消；关闭等待 Executor、模型池和活动短命令，超时保留残留。MobilePerf 同步采集查询与间隔等待可取消。特殊调用保持原契约，真实拔线和平台差异仍需扩展验证 | Partial |
-| Medium | 仓库没有自动运行 pytest 的工作流，macOS/Linux 也缺少真实功能验证 | 当前 Build 的静态检查、构建和自检职责由 [CI 契约测试](../../tests/test_ci_contracts.py) 固定；独立测试工作流需另行决策，并补平台启动/ADB/scrcpy 降级检查，不能把构建成功视为功能验收 | Open |
+| Medium | macOS/Linux 缺少真实功能验证，依赖约束也未覆盖所有平台独有依赖 | [Tests](../../.github/workflows/Tests.yaml) 已配置 Windows/Python 3.11 串行 pytest，Build 保留静态检查、构建和自检；仍需补平台启动/ADB/scrcpy 降级检查与依赖闭包验收，不能把构建成功视为功能验收 | Partial |
 | Medium | 诊断、日志、bugreport、heapdump、截图和报告没有统一保留/清理策略 | 输出写入用户选择目录或用户数据目录；仍需数据分类、默认保留期、访问控制和可选清理 | 待确认 |
 | Low | Remote、MobilePerf 和录屏的长跑、断线、清理及 Android 厂商差异缺少授权实机矩阵 | 单元与故障注入覆盖主要状态机；建立可选硬件验收清单，不把离屏测试当作实机结论 | 待确认 |
+| Low | 完整 Qt 测试长序列曾出现下拉控件悬停超时，具体前置状态尚未定位 | [下拉材质测试](../../tests/test_dropdown_material.py) 在独立、紧邻前置及原失败节点组合中通过；活动 Popup 遮挡可复现相同症状，但尚未证明全量中的来源。失败时记录鼠标实际命中、活动窗口、Popup 和模态窗口，保留原交互与像素断言 | 待确认 |
 | Low | scrcpy 端口移交与 ADB 映射删除缺少跨应用原子操作 | 已为应用内会话保留独立端口并在删除前核对 scid；探测端口到 scrcpy 绑定、核对映射到删除之间仍可能被外部 ADB 客户端改写，不应视为跨应用独占保证 | Partial |
 
 | Medium | 稳态能力健康检查只保留一次 1 秒尝试，本机服务引导也只在运行实例首次初始化做一次 | 已评估「稳态重试」与「冷却期重试引导」，但会改变 `test_adb_runtime` 固定的行为与 [ADB_FAST](../guides/ADB_FAST.md) 语义，需先做产品决策；当前失败后按 `CHECK_INTERVAL` 在下一轮用完整能力预算恢复 | 待确认 |

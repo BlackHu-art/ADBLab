@@ -10,7 +10,7 @@ from collections.abc import Callable
 from typing import TypeVar
 
 from PySide6.QtGui import QAction, QColor, QFont
-from PySide6.QtWidgets import QAbstractButton, QWidget
+from PySide6.QtWidgets import QAbstractButton, QPlainTextEdit, QTextEdit, QWidget
 from qfluentwidgets import RoundMenu, setCustomStyleSheet
 
 from gui.i18n import tr
@@ -104,34 +104,33 @@ def apply_focus_indicator(widget: QWidget, *, selector: str | None = None) -> No
 
     name = selector or type(widget).__name__
     widget.setProperty("adblabFocusSelector", name)
+    if widget.property("adblabReadingSurface") and isinstance(widget, (QPlainTextEdit, QTextEdit)):
+        from gui.styles.reading_surface import ensure_reading_surface
+
+        ensure_reading_surface(widget)
+        return
     light = ThemeMixin.color_for("Light", "BORDER_FOCUS")
     dark = ThemeMixin.color_for("Dark", "BORDER_FOCUS")
     radius = ThemeMixin.RADIUS_MD
-    reading_style = ""
-    if widget.property("adblabReadingSurface"):
-        reading_selector = f'{name}[readOnly="true"]'
-        background = ThemeMixin.color_for("Light", "LOG_BACKGROUND")
-        reading_style = (
-            f"{reading_selector}, {reading_selector}:hover, {reading_selector}:focus "
-            f"{{ background-color: {background}; }}"
-        )
     setCustomStyleSheet(
         widget,
-        reading_style
-        + f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}",
+        f"{name}:focus {{ border: 2px solid {light}; border-radius: {radius}px; }}",
         f"{name}:focus {{ border: 2px solid {dark}; border-radius: {radius}px; }}",
     )
 
 
 def apply_reading_surface(widget: _WidgetT) -> _WidgetT:
-    """为只读长正文固定浅色阅读底板，焦点及强调色刷新时一并重建。
+    """只读长正文跟随宿主云母；编辑状态与关闭云母时使用 Fluent 原生表面。
 
-    通过 readOnly 属性限定背景规则，保留可编辑状态及深色背景的上游行为；
-    本函数不改变正文内容、字体、只读属性或选择复制能力。
+    不改变正文内容、字体、只读属性或选择复制能力；重复应用复用同一控制器。
     """
-    widget.setProperty("adblabReadingSurface", True)
+    if not isinstance(widget, (QPlainTextEdit, QTextEdit)):
+        raise TypeError("阅读表面仅支持 QPlainTextEdit 和 QTextEdit")
+    from gui.styles.reading_surface import ensure_reading_surface
+
     selector = widget.property("adblabFocusSelector")
-    apply_focus_indicator(widget, selector=str(selector) if selector else None)
+    widget.setProperty("adblabFocusSelector", str(selector) if selector else type(widget).__name__)
+    ensure_reading_surface(widget)
     return widget
 
 

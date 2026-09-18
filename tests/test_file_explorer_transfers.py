@@ -279,3 +279,95 @@ def test_root_pull_cancelled_copy_cleans_owned_path_on_fixed_device(monkeypatch)
     QApplication.processEvents()
     assert not page._transfers.is_running()
     assert page._disposed
+
+
+def test_batch_thread_start_failure_is_failed_and_next_item_still_runs(monkeypatch, qt_application):
+    from gui.dialogs.file_explorer import FileExplorerPage
+    from tests.ui_geometry_helpers import wait_until
+
+    starts = []
+    feedback = []
+
+    def start(worker):
+        starts.append(worker)
+        if len(starts) == 1:
+            raise RuntimeError("private path must not be disclosed")
+
+    monkeypatch.setattr(TransferWorker, "start", start)
+    monkeypatch.setattr(
+        "gui.dialogs.file_explorer_ops.report_feedback", lambda *a, **k: feedback.append(k)
+    )
+    page = FileExplorerPage(device_ip="device-test")
+    page._ops_controller._enqueue_batch(
+        "pull", [("a", "/a", "a"), ("b", "/b", "b")], page.current_path
+    )
+    wait_until(qt_application, lambda: len(starts) == 2)
+    second = starts[1]
+    second.result_ready.emit("second OK", False, "b")
+    second.finished.emit()
+    wait_until(qt_application, lambda: not page._workers)
+
+    results = page._ops_controller._last_batch_results
+    assert results[0][0:2] == ("a", "failed")
+    assert "private path" not in results[0][2]
+    assert results[1] == ("b", "succeeded", "second OK")
+    assert len(feedback) == 1
+    assert feedback[0]["level"] == "error"
+    assert not page._transfers.is_running()
+    page.close()
+
+
+@pytest.mark.parametrize("callback_failure", [None, "terminal", "cleanup"])
+def test_start_failure_delivers_terminal_and_cleanup_once_despite_callback_failure(
+    monkeypatch, qt_application, callback_failure,
+):
+    from PySide6.QtCore import Qt
+
+    from gui.dialogs.file_explorer import FileExplorerPage
+    from models.file_explorer_worker import ADBWorker
+    from tests.ui_geometry_helpers import wait_until
+
+    starts = []
+    results = []
+    calls = []
+    logs = []
+
+    def start(worker):
+        starts.append(worker)
+        if len(starts) == 1:
+            raise RuntimeError("failed to start")
+
+    def callback(name):
+        calls.append(name)
+        if callback_failure == name:
+            raise ValueError("private cleanup details")
+
+    monkeypatch.setattr(ADBWorker, "start", start)
+    monkeypatch.setattr("core.log_service.LogService.log", lambda *a, **k: logs.append(a))
+    page = FileExplorerPage(device_ip="device-test")
+    cleanup_token = page._transfers.hold_cleanup() if callback_failure == "cleanup" else None
+    first = page._run_adb("shell", "unused-first")
+    first.result_ready.connect(
+        lambda output, failed: results.append((output, failed)), Qt.ConnectionType.QueuedConnection,
+    )
+
+    def terminal():
+        assert results and results[-1][1] is True
+        callback("terminal")
+
+    page._transfers.enqueue(first, on_terminal=terminal, cleanup=lambda: callback("cleanup"))
+    second = page._run_adb("shell", "unused-second")
+    page._transfers.enqueue(second)
+    wait_until(qt_application, lambda: len(starts) == 2)
+    assert calls == ["terminal", "cleanup"]
+    page._prune_worker(first)
+    assert calls == ["terminal", "cleanup"]
+    page._prune_worker(second)
+    assert page._transfers.is_running() is (cleanup_token is not None)
+    if cleanup_token is not None:
+        page._transfers.release_cleanup(cleanup_token)
+    assert not page._transfers.is_running()
+    if callback_failure:
+        assert any("ValueError" in str(message) for message in logs)
+    assert all("private cleanup details" not in str(message) for message in logs)
+    page.close()

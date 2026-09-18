@@ -4,10 +4,12 @@ import ctypes
 import os
 from unittest.mock import Mock, patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtTest import QTest
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
 
 from gui import window_effects
@@ -117,6 +119,57 @@ def test_live_logcat_ignores_queued_status_after_close():
         dialog.close()
 
 
+@pytest.mark.parametrize(
+    "message,compact",
+    [
+        ("正在启动日志采集…", "启动中"),
+        ("正在采集", "采集中"),
+        ("正在采集，显示全部设备日志", "采集中"),
+        ("应用进程查询失败，正在重试；过滤期间不会显示其他应用日志", "查询重试"),
+        ("正在等待目标应用启动；过滤期间不会显示其他应用日志", "等待应用"),
+        ("正在采集 · 应用过滤生效（3 个进程）", "过滤生效"),
+        ("未找到前台应用，请在设备上打开应用后重试", "未找到应用"),
+        ("查询前台应用失败：synthetic detail", "查询失败"),
+        ("日志采集无法继续，请检查设备连接后重试", "采集异常"),
+        ("包名格式无效，请输入有效包名后按 Enter", "包名无效"),
+        ("synthetic unknown status", "synthetic unknown status"),
+    ],
+    ids=[
+        "starting", "collecting", "collecting-all", "retry-query", "waiting-app",
+        "filtered", "no-foreground-app", "query-failed", "capture-error",
+        "invalid-package", "unknown",
+    ],
+)
+def test_live_logcat_status_entries_show_compact_message_and_preserve_full_diagnostic(
+    qt_application, message, compact,
+):
+    """当前 worker 与普通状态入口共享摘要，旧 worker 晚到消息不得覆盖它们。"""
+    page = LiveLogcatPage(device_ip="demo-status-device")
+    worker = Mock()
+    stale_worker = Mock()
+    page.worker = worker
+    try:
+        for from_worker in (False, True):
+            page.status_bar.setText("previous synthetic status")
+            if from_worker:
+                page._stream_controller._on_worker_status(worker, message)
+            else:
+                page._on_status(message)
+            assert page.status_bar.compactText() == compact, from_worker
+            assert page.status_bar.text() == message
+            assert page.status_bar.toolTip() == message
+            assert page.status_bar.accessibleDescription() == message
+
+            page._stream_controller._on_worker_status(stale_worker, "stale synthetic status")
+            assert page.status_bar.compactText() == compact
+            assert page.status_bar.text() == message
+            assert page.status_bar.toolTip() == message
+            assert page.status_bar.accessibleDescription() == message
+    finally:
+        page.worker = None
+        page.close()
+
+
 def test_live_logcat_ignores_queued_line_after_close():
     _app = QApplication.instance() or QApplication([])
     dialog = LiveLogcatPage(device_ip="device-1")
@@ -201,24 +254,27 @@ def test_live_logcat_enter_applies_manual_package_filter_clear():
     worker.is_active.return_value = True
     worker.update_package.return_value = True
     dialog.worker = worker
-    action_buttons = (
-        dialog.btn_get_pkg,
-        dialog.start_btn,
-        dialog.stop_btn,
-        dialog.clear_btn,
-        dialog.export_btn,
-        dialog.wrap_btn,
-    )
+    command_spies = [QSignalSpy(action.triggered) for action in (
+        dialog.start_action,
+        dialog.stop_action,
+        dialog.follow_action,
+        dialog.clear_action,
+        dialog.export_action,
+        dialog.wrap_action,
+    )]
 
     try:
-        assert all(not button.autoDefault() for button in action_buttons)
-        assert all(not button.isDefault() for button in action_buttons)
+        dialog.show()
+        _app.processEvents()
+        assert not dialog.btn_get_pkg.autoDefault()
+        assert not dialog.btn_get_pkg.isDefault()
         dialog.pkg_input.setText("")
         with patch("gui.dialogs.live_logcat_stream.CurrentPackageWorker") as package_worker:
             QTest.keyClick(dialog.pkg_input, Qt.Key.Key_Return)
             package_worker.assert_not_called()
 
         worker.update_package.assert_called_once_with("")
+        assert all(spy.count() == 0 for spy in command_spies)
         assert dialog.status_bar.text() == "正在显示全部设备日志"
     finally:
         dialog.worker = None
@@ -339,7 +395,7 @@ def test_live_logcat_no_wrap_flush_preserves_horizontal_position_and_follows_tai
     app.processEvents()
 
     try:
-        dialog.wrap_btn.setChecked(False)
+        dialog.wrap_action.setChecked(False)
         dialog._toggle_wrap()
         long_line = "0123456789" * 120
         dialog.output.setPlainText("\n".join(f"{index:03d} {long_line}" for index in range(100)))
@@ -391,6 +447,51 @@ def _bounded_logcat_page(monkeypatch, *, maximum=100):
     page.show()
     QApplication.processEvents()
     return page
+
+
+def test_live_logcat_cache_ring_tracks_raw_capacity_across_filter_eviction_and_clear(
+    qt_application, monkeypatch,
+):
+    """容量来自原始缓存；筛选出的少量正文不能令进度环错误回退。"""
+    page = _bounded_logcat_page(monkeypatch, maximum=6)
+    ring = page.cache_ring
+    try:
+        assert (ring.minimum(), ring.maximum(), ring.value()) == (0, 6, 0)
+        assert not ring.isUseAni()
+        assert not ring.isTextVisible()
+        assert "缓存 0 / 6 行" in ring.toolTip()
+
+        for text, level in (("first info", "I"), ("retained error", "E"), ("warning", "W")):
+            page._on_line(text, level)
+        page._flush_pending_lines()
+        assert ring.value() == len(page.entries) == 3
+        assert "缓存 3 / 6 行" in ring.toolTip()
+
+        for index in range(4):
+            page._on_line(f"next info {index}", "I")
+        page._flush_pending_lines()
+        assert ring.value() == len(page.entries) == 6
+        assert page.output.toPlainText().splitlines()[0] == "retained error"
+        page.level_combo.setCurrentIndex(page.level_combo.findData("E"))
+        assert page.output.toPlainText() == "retained error"
+        assert ring.value() == 6
+        assert "缓存 6 / 6 行" in ring.toolTip()
+
+        page._on_line("info evicts last error", "I")
+        page._flush_pending_lines()
+        assert page.output.toPlainText() == ""
+        assert ring.value() == len(page.entries) == 6
+        assert "缓存 6 / 6 行" in ring.accessibleDescription()
+        assert page.clear_action.isEnabled()
+        page.clear_action.trigger()
+        assert not page.entries
+        assert ring.value() == 0
+        assert "缓存 0 / 6 行" in ring.toolTip()
+        assert "缓存 0 / 6 行" in ring.accessibleDescription()
+        assert "仅保留最近 6 行原始日志" in ring.accessibleDescription()
+        assert not page.clear_action.isEnabled()
+    finally:
+        page.close()
 
 
 def test_live_logcat_evicted_error_disappears_when_only_info_arrives(
@@ -569,7 +670,8 @@ def test_live_logcat_reactivation_applies_eviction_without_matching_new_lines(
         page.activate()
         qt_application.processEvents()
         assert page.output.toPlainText() == ""
-        assert "100 / 100" in page.reading_status.text()
+        assert page.cache_ring.value() == page.cache_ring.maximum() == 100
+        assert "100 / 100" in page.cache_ring.toolTip()
         assert page.output.placeholderText() == "当前等级下没有匹配的日志，可调整等级或等待新日志。"
         assert not page.export_btn.isEnabled()
     finally:

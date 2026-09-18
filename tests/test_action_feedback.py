@@ -3,9 +3,10 @@
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QThread
-from PySide6.QtTest import QSignalSpy
+from PySide6.QtCore import Qt, QThread
+from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import SearchLineEdit
 
 from adblab.application.action_results import ActionResults, ActionSpec, capture_action_job
 from controllers.action_catalog import ACTION_SIGNALS
@@ -13,6 +14,8 @@ from controllers.signals import ADBControllerSignals
 from gui.widgets.action_result_view import ActionResultView
 from tests.test_logging_contract import create_log_service  # noqa: F401  复用隔离单例的 fixture。
 from tests.test_main_window_layout import build_main_frame
+
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
@@ -179,6 +182,45 @@ def test_long_text_copy_export_search_and_artifacts_keep_complete_payload(qt_app
         view.close()
 
 
+@pytest.mark.parametrize("query", ["result", " "])
+def test_result_search_button_and_enter_find_once_and_clear_preserves_output(qt_application, query):
+    """正文搜索每次点击或回车只前进一处，清空搜索不清除操作结果。"""
+    view = ActionResultView()
+    store = ActionResults(view.present)
+    jobs = []
+    raw = "alpha result\nbeta result\ngamma result"
+    try:
+        store.run(
+            ActionSpec("report", "apps.reports", "报告", "text"),
+            ("demo",),
+            lambda: jobs.append(capture_action_job("report_async", "demo")),
+        )
+        store.complete(jobs[0], {"success": True, "output": raw})
+        view.resize(640, 600)
+        qt_application.processEvents()
+        assert isinstance(view.search, SearchLineEdit)
+        assert view.search.isVisible()
+        view.search.setFocus()
+        QTest.keyClicks(view.search, query)
+        assert not view.output.textCursor().hasSelection()
+        QTest.mouseClick(view.search.searchButton, Qt.MouseButton.LeftButton)
+        assert view.output.textCursor().selectionStart() == raw.index(query)
+        QTest.keyClick(view.search, Qt.Key.Key_Return)
+        assert view.output.textCursor().selectionStart() == raw.index(query, 12)
+        QTest.keyClick(view.search, Qt.Key.Key_Return)
+        assert view.output.textCursor().selectionStart() == raw.rindex(query)
+        QTest.mouseClick(view.search.searchButton, Qt.MouseButton.LeftButton)
+        assert view.output.textCursor().selectionStart() == raw.index(query)
+        assert view.search.clearButton.isVisible()
+        QTest.mouseClick(view.search.clearButton, Qt.MouseButton.LeftButton)
+        assert view.search.text() == ""
+        assert view.output.toPlainText() == raw
+        assert view._detail == raw
+    finally:
+        store.close()
+        view.close()
+
+
 def test_failure_before_submission_is_visible_and_repeated_jobs_are_ignored(qt_application):
     view = ActionResultView()
     store = ActionResults(view.present)
@@ -261,7 +303,9 @@ def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkey
     store.complete(jobs[0], {"success": False, "error": "请重新检测 ADB 环境"})
     assert store.recent()[0].spec.section == "settings.maintenance"
     assert notices[-1][1]["level"] == "error"
-    assert "请重新检测" in notices[-1][0][2]
+    assert "请重新检测" not in notices[-1][0][2]
+    assert "请重新检测 ADB 环境" in store.recent()[0].items[0].detail
+    assert notices[-1][1]["action_text"] == "查看任务"
     assert frame.stackedWidget.currentWidget() is frame._settings_page
     notices[-1][1]["on_action"]()
     assert frame._task_page.isVisibleTo(frame)
@@ -325,7 +369,36 @@ def test_toast_counts_devices_and_task_labels_survive_new_selection(result_frame
     assert result.targets == ("demo-c", "demo-a")
     assert notices[-1][1]["level"] == "warning"
     assert "成功 1 台 · 失败 1 台" in notices[-1][0][2]
+    assert "0 台" not in notices[-1][0][2]
     assert "设备 3 · Phone" in frame.left_panel._apps_tab.diagnostic_results.targets.itemText(0)
+
+
+@pytest.mark.parametrize("payload,level,summary", [
+    ({"success": True}, "success", "成功 2 台"),
+    ({"success": False, "error": "adb: transport error"}, "error", "失败 2 台"),
+    ({"success": False, "cancelled": True}, "info", "未完成 2 台"),
+])
+def test_terminal_toast_reports_only_relevant_device_counts(
+    result_frame, monkeypatch, payload, level, summary,
+):
+    notices, jobs = [], []
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
+    result_frame._action_feedback.dispatch(
+        ActionSpec("probe", "system.shell", "查询"),
+        lambda devices: jobs.extend(
+            capture_action_job("query_async", device) for device in devices
+        ),
+        (["demo-a", "demo-b"],),
+    )
+    for job in jobs:
+        result_frame.adb_controller.action_results.complete(job, payload)
+
+    message = notices[-1][0][2]
+    assert summary in message
+    assert "0 台" not in message
+    assert "adb: transport error" not in message
+    assert notices[-1][1]["level"] == level
+    assert notices[-1][1]["key"] == jobs[0].request_id
 
 
 def test_dispatch_copies_and_deduplicates_targets_before_handler(result_frame):
@@ -444,8 +517,9 @@ def test_task_notes_keep_order_and_severity_without_pretending_to_complete(resul
 
 
 @pytest.mark.parametrize("failed", [False, True])
-def test_file_result_records_task_notifies_and_refreshes_only_on_success(
-    result_frame, monkeypatch, failed,
+@pytest.mark.parametrize("handler", ["_on_transfer_done", "_on_file_op_done"])
+def test_file_result_records_task_notifies_and_refreshes_only_remote_changes(
+    result_frame, monkeypatch, failed, handler,
 ):
     from gui.dialogs.file_explorer import FileExplorerPage
 
@@ -454,12 +528,12 @@ def test_file_result_records_task_notifies_and_refreshes_only_on_success(
     notices = []
     monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append(kw))
     try:
-        page._ops_controller._on_transfer_done("Permission denied", failed, "文件已传输")
+        getattr(page._ops_controller, handler)("Permission denied", failed, "文件已传输")
         result = result_frame.adb_controller.action_results.recent()[0]
         assert result.spec.section == "devices.files"
         assert result.items[-1].state == ("failed" if failed else "succeeded")
         assert notices[-1]["level"] == ("error" if failed else "success")
-        assert page._refresh.call_count == (0 if failed else 1)
+        assert page._refresh.call_count == int(handler == "_on_file_op_done" and not failed)
     finally:
         page.close()
 
@@ -500,3 +574,38 @@ def test_later_success_does_not_replace_an_independent_failure_notice(result_fra
     presenter.record_notice("probe", "操作", "second item succeeded", "success", notify=True)
     notices = [n for n in result_frame.findChildren(ToastNotification) if n.isVisible()]
     assert {notice.level for notice in notices} == {"error", "success"}
+
+
+@pytest.mark.parametrize("content,summarized", [
+    ("请先填写应用包名，再启动测试。", False),
+    ("设备连接已断开，请重新连接后重试。", False),
+    ("  请先选择应用。\n", False),
+    ("x" * 160, False),
+    ("x" * 161, True),
+    ("ADB 执行失败\nPermission denied", True),
+])
+def test_page_notice_keeps_short_guidance_and_moves_long_details_to_exact_task(
+    result_frame, monkeypatch, content, summarized,
+):
+    notices = []
+    monkeypatch.setattr("gui.action_feedback.show_toast", lambda *a, **kw: notices.append((a, kw)))
+    original_page = result_frame.stackedWidget.currentWidget()
+    result_frame._action_feedback.record_notice(
+        "probe", "应用操作", content, "warning", notify=True,
+    )
+
+    result = result_frame.adb_controller.action_results.recent()[0]
+    assert content.strip() == result.items[-1].detail.strip()
+    message, options = notices[-1][0][2], notices[-1][1]
+    assert options["level"] == "warning"
+    assert options["action_text"] == "查看任务"
+    if summarized:
+        assert message == "详情已记录，可在任务中心查看。"
+        assert content not in message
+    else:
+        assert message == content.strip()
+    assert result_frame.stackedWidget.currentWidget() is original_page
+
+    options["on_action"]()
+    assert result_frame._task_page.isVisibleTo(result_frame)
+    assert result_frame._task_page.action_results._selected == result.request_id

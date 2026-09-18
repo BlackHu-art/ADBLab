@@ -1,7 +1,7 @@
 """使用官方 Fluent 图片翻页、命令栏和圆点分页构建截图页面。"""
 
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -91,11 +91,7 @@ class ScreenshotViewerUI:
         frame._path_label.setFont(BaseStyles.font_for_role(FontRole.MONO))
         for label in (frame._info_label, frame._nav_label, frame._zoom_label):
             label.setFont(small_font)
-        background = QColor(BaseStyles.color("PANEL_BG"))
-        overlay_style = (
-            f"background-color: rgba({background.red()}, {background.green()}, "
-            f"{background.blue()}, 225); border-radius: 6px;"
-        )
+        overlay_style = "background-color: transparent; border: none;"
         frame._details_bar.setStyleSheet(f"#screenshotDetails {{ {overlay_style} }}")
         frame._pager_bar.setStyleSheet(f"#screenshotPagerOverlay {{ {overlay_style} }}")
         frame._zoom_label.setStyleSheet(f"#zoomLabel {{ {overlay_style} padding: 5px 8px; }}")

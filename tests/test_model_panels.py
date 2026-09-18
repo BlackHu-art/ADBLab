@@ -290,25 +290,29 @@ def test_device_manager_return_pressed_requests_connect_with_normalized_target()
     assert emitted == ["10.0.0.195:5555"]
 
 
-def test_device_manager_rejects_incomplete_connect_target_before_signal_emit():
+def test_device_manager_rejects_incomplete_connect_target_before_signal_emit(monkeypatch):
     _app = QApplication.instance() or QApplication([])
     manager, widget, panel = _build_connect_device_manager()
     emitted = []
-    logs = []
+    notices = []
     panel.signals.connect_requested.connect(emitted.append)
-    panel.signals.log_message.connect(lambda level, message: logs.append((level, message)))
+    monkeypatch.setattr(
+        "gui.panels.device_manager.show_toast",
+        lambda *args, **kwargs: notices.append((args, kwargs)),
+    )
 
     try:
         manager.ip_entry.setText("10.0.0.195")
         manager.btn_connect_devices.click()
+        assert manager.ip_entry.selectedText() == "10.0.0.195"
     finally:
         widget.close()
         manager.close()
 
     assert emitted == []
-    assert logs
-    assert logs[-1][0] == "WARNING"
-    assert "IP and port" in logs[-1][1]
+    assert len(notices) == 1
+    assert notices[0][1]["level"] == "warning"
+    assert "IP and port" in notices[0][0][2]
 
 
 def test_base_panel_button_factory_adds_functional_help_and_icon_name():

@@ -1,5 +1,7 @@
 """验证用户操作结果脱离日志后的身份、终态与完整正文。"""
 
+import pytest
+
 from adblab.application.action_results import (
     ActionEnvelope,
     ActionResults,
@@ -146,6 +148,7 @@ def test_text_result_uses_output_and_omits_unrelated_device_metadata():
     assert events[-1].items[0].detail == "Query result"
 
 
+@pytest.mark.ui
 def test_async_model_preserves_action_identity_and_original_operation_protocol(qt_application):
     from core.perf_trace import split_perf
     from models.adb_model import ADBModelCore, async_command
@@ -200,6 +203,7 @@ def test_every_controller_signal_map_has_a_result_destination():
     assert names == set(ACTION_SIGNALS)
 
 
+@pytest.mark.ui
 def test_native_screenshot_partial_batch_keeps_last_successful_unit_successful(
     qt_application, tmp_path
 ):
@@ -254,6 +258,7 @@ def test_native_screenshot_partial_batch_keeps_last_successful_unit_successful(
     assert controller.operation_manager.active_count == 0
 
 
+@pytest.mark.ui
 def test_model_submission_error_ends_action_without_leaving_a_running_job(qt_application):
     from types import SimpleNamespace
     from unittest.mock import Mock
@@ -270,8 +275,6 @@ def test_model_submission_error_ends_action_without_leaving_a_running_job(qt_app
     events = []
     store = ActionResults(events.append)
     model.command_finished.connect(lambda _name, result: store.complete(result.job, result.payload))
-    import pytest
-
     with pytest.raises(RuntimeError):
         store.run(
             ActionSpec("query", "system.shell", "查询"),
@@ -288,6 +291,7 @@ def test_shutdown_during_modal_submission_does_not_access_cleared_request():
     assert store.recent() == ()
 
 
+@pytest.mark.ui
 def test_automatic_recording_pull_creates_one_media_result_per_device(qt_application, tmp_path):
     from types import SimpleNamespace
 

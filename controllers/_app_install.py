@@ -704,8 +704,12 @@ class ADBAppInstallMixin(_ADBControllerBase):
                 "clear_data", True, f"✅ clear data success {progress} {pkg} on {ip}"
             )
         else:
+            message = f"❌ clear data failed {progress} {pkg} on {ip}"
+            if user_message := result.get("user_message"):
+                # 终态通知只取详情首行；原始诊断由 ActionResults 从结果载荷追加。
+                message = f"❌ {user_message}\n{progress} {pkg} on {ip}"
             self._emit_operation(
-                "clear_data", False, f"❌ clear data failed {progress} {pkg} on {ip}"
+                "clear_data", False, message,
             )
 
     def restart_app(self, devices: list, package_name: str):

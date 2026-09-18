@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import HeaderCardWidget, PushButton, SmoothScrollArea
 
+from adblab.application.device_context import DeviceContextSnapshot
 from gui.panels.app_panel import AppPanel
 from gui.panels.device_manager import DeviceManager
 from gui.panels.remote_panel import RemotePanel
@@ -209,7 +210,48 @@ class SidePanel(QWidget):
     def device_widget(self) -> QWidget:
         return self._device_widget
 
+    @property
+    def app_panel(self) -> AppPanel | None:
+        """返回已加载的应用控制器，不因读取而创建页面。"""
+        return self._apps_tab
+
+    @property
+    def system_panel(self) -> SystemPanel | None:
+        """返回已加载的系统控制器，不因读取而创建页面。"""
+        return self._advanced_tab
+
+    @property
+    def remote_panel(self) -> RemotePanel | None:
+        """返回已加载的远程控制器，不改变其会话或资源归属。"""
+        return self._scrcpy_tab
+
     # ── MainFrame 使用的公共接口 ─────────────────────────────────────────
+
+    def device_context_snapshot(self) -> DeviceContextSnapshot:
+        """复制当前选择、最近在线列表和发现状态，不建立第二份可写状态。"""
+        return DeviceContextSnapshot(
+            selected_devices=tuple(self.selected_devices),
+            connected_devices=tuple(self._connected_device_cache),
+            discovery_state=self._device_discovery_state,
+        )
+
+    def set_selected_devices(self, devices: list[str]) -> None:
+        """向现有设备列表提交选择，继续由列表统一过滤并发布选择变化。"""
+        self._devices_tab.set_selected_devices(devices)
+
+    def connection_history(self) -> list[tuple[str, str]]:
+        """复制已加载的连接历史，调用方不能修改原控件或触发存储读取。"""
+        source = self._devices_tab.ip_entry
+        return [
+            (source.itemText(index), str(source.itemData(index) or ""))
+            for index in range(source.count())
+        ]
+
+    def take_overview_content(self, index: int) -> tuple[SmoothScrollArea, QWidget | None]:
+        """组合根取出原滚动区及内容并接管视觉归属，控制器仍由本协调器持有。"""
+        self._ensure_tab_loaded(index)
+        scroll = self._tab_scroll_areas[index]
+        return scroll, scroll.takeWidget()
 
     def update_device_list(self, devices: list[str] | None = None):
         self._devices_tab.update_device_list(devices)

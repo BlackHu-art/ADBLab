@@ -237,7 +237,7 @@ def test_double_click_does_not_start_unselected_session_and_reselection_restores
         page.table.cellDoubleClicked.emit(0, 0)
     else:
         page.close_details()
-        page._icon_double_click(page.icon_list.item(0))
+        page._icon_double_click(page.icon_list.topLevelItem(0))
         assert not page._details_open
     assert submitted_workers == []
     host.set_device_context(["device-a"], ["device-a", "device-b"])
@@ -417,7 +417,9 @@ def test_app_manager_large_font_selection_keeps_rows_at_fit_boundary(
     )
     required_width += page._top_layout.spacing() * (len(page._top_controls) - 1)
     margins = page._master_panel.layout().contentsMargins()
-    page.resize(required_width + margins.left() + margins.right() - 1, 900)
+    page_margins = page._page_layout.contentsMargins()
+    outer_width = page_margins.left() + page_margins.right()
+    page.resize(required_width + margins.left() + margins.right() + outer_width - 1, 900)
     page.show()
     initial = None
     for selected in (True, False, True):
@@ -435,7 +437,7 @@ def test_app_manager_large_font_selection_keeps_rows_at_fit_boundary(
             initial = row_positions
         assert row_positions == initial
         assert not page.status_badge.isVisibleTo(page)
-    page.resize(required_width + margins.left() + margins.right(), 900)
+    page.resize(required_width + margins.left() + margins.right() + outer_width, 900)
     page._reflow_top_controls()
     wait_for_stable_geometry(qt_application, (page, *page._top_controls, page.stack))
     assert {

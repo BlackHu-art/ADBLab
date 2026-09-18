@@ -6,6 +6,8 @@ from queue import Empty, SimpleQueue
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QRunnable, Qt, QThread, Signal
@@ -599,6 +601,50 @@ def test_feature_tasks_are_registered_before_host_shutdown():
     assert frame._workspace_feature_hosts == {"system": host}
     assert any(item.kind == "feature_worker" for item in frame._shutdown_residual)
     blocker.set()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("stage", ["registration", "dispose"])
+def test_feature_shutdown_failure_is_reported_and_other_hosts_still_stop(stage):
+    app = QApplication.instance() or QApplication([])
+    events = []
+
+    class FeatureHost:
+        registry = SimpleNamespace(pages=lambda: ())
+
+        def __init__(self, name):
+            self.name = name
+
+        def register_shutdown_tasks(self, *_args, **_kwargs):
+            events.append((self.name, "registration"))
+            if self.name == "first" and stage == "registration":
+                raise ValueError("private device details")
+
+        def shutdown(self):
+            events.append((self.name, "dispose"))
+            if self.name == "first" and stage == "dispose":
+                raise RuntimeError("private device details")
+
+    frame = _frame(lambda: None)
+    frame._workspace_feature_hosts = {name: FeatureHost(name) for name in ("first", "second")}
+    settings = Mock()
+    settings._save_timer = None
+    _bind_settings_finalizer(frame, settings)
+
+    frame.closeEvent(CloseEvent())
+    _drive_until(app, lambda: frame._close_ready, frame=frame)
+
+    assert frame._close_ready
+    assert ("second", "dispose") in events
+    failures = [
+        item for item in frame._shutdown_results if item.disposition == StopDisposition.FAILED
+    ]
+    assert len(failures) == 1
+    assert failures[0].error_type == ("ValueError" if stage == "registration" else "RuntimeError")
+    frame.adb_controller.archive_finished_monkey_runs.assert_called_once_with(resources_stopped=False)
+    errors = [str(call) for call in frame.log_service.log.call_args_list if call.args[0] == "ERROR"]
+    assert errors
+    assert all("private device details" not in message for message in errors)
 
 
 def test_mainframe_deadline_closes_with_residual_without_claiming_resource_zero():

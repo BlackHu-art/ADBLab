@@ -24,6 +24,10 @@ def _dispatch_cli(argv: list[str]) -> int | None:
     """分派已知 CLI 子模式；未命中时返回 None 以继续启动 GUI。"""
     if not argv:
         return None
+    if argv[0] == "--adblab-native-launch":
+        from core.native_launcher import launch
+
+        return launch(argv[1:])
     if argv[0] == "--mobileperf-worker":
         return _run_mobileperf_worker(argv[1:])
     if argv[0] == "--self-check":

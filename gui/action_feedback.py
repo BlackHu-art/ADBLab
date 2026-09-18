@@ -71,7 +71,7 @@ class ActionFeedbackPresenter(QObject):
         )
         if pending is not None:
             show_toast(
-                self.frame, tr(pending.spec.title), tr("该操作仍在执行，可在任务中心查看进度。"),
+                self.frame, tr(pending.spec.title), tr("该操作正在进行，请等待完成。"),
                 level="info", action_text=tr("查看任务"),
                 on_action=lambda: self.open_task(pending.request_id), key=pending.request_id,
             )
@@ -95,8 +95,8 @@ class ActionFeedbackPresenter(QObject):
         if not self.frame._closing:
             show_toast(
                 self.frame,
-                tr("结果已导出"),
-                tr("文件已保存，可打开查看。"),
+                tr("导出完成"),
+                tr("结果文件已保存。"),
                 level="success",
                 action_text=tr("打开文件夹"),
                 on_action=lambda: self.frame.run_library.open_artifact(path, True),
@@ -121,8 +121,8 @@ class ActionFeedbackPresenter(QObject):
         if notify and journal.entries[-1][1] in warning_levels and not self.frame._closing:
             show_toast(
                 self.frame,
-                tr("应用提示"),
-                tr("应用记录了异常，请在设置中查看摘要或导出诊断。"),
+                tr("发现应用异常"),
+                tr("可在设置中查看详情或导出诊断。"),
                 level="warning",
                 action_text=tr("查看设置"),
                 on_action=lambda: self.frame._on_nav_requested("settings"),
@@ -159,9 +159,9 @@ class ActionFeedbackPresenter(QObject):
                 "cancelled": "info", "recorded": "info", "warning": "warning",
             }
             labels = {
-                "succeeded": tr("操作已完成"), "partial": tr("部分操作失败，请查看任务详情"),
-                "failed": tr("操作失败，请查看任务详情"), "cancelled": tr("操作已取消"),
-                "recorded": tr("已记录操作说明"), "warning": tr("操作需要注意，请查看详情"),
+                "succeeded": tr("已完成"), "partial": tr("部分操作失败"),
+                "failed": tr("操作未完成，请查看任务了解原因。"), "cancelled": tr("操作已取消"),
+                "recorded": tr("已记录操作说明"), "warning": tr("请查看任务中的注意事项。"),
             }
             message = labels[result.state]
             if result.targets:
@@ -170,13 +170,17 @@ class ActionFeedbackPresenter(QObject):
                     # 批次收尾的语义失败没有逐台归属，不能把命令成功数冒充设备最终成功数。
                     message += tr(" · {count} 台目标设备").format(count=len(result.targets))
                 else:
-                    message += " · " + tr(
-                        "成功 {succeeded} 台 · 失败 {failed} 台 · 未完成 {cancelled} 台"
-                    ).format(**counts)
-            if result.state == "failed":
-                reason = next((item.detail for item in result.items if item.detail), result.message)
-                if reason:
-                    message += " · " + redact_diagnostic(reason.splitlines()[0])[:160]
+                    count_labels = {
+                        "succeeded": tr("成功 {count} 台"),
+                        "failed": tr("失败 {count} 台"),
+                        "cancelled": tr("未完成 {count} 台"),
+                    }
+                    summary = " · ".join(
+                        label.format(count=counts[state])
+                        for state, label in count_labels.items() if counts[state]
+                    )
+                    if summary:
+                        message += " · " + summary
             show_toast(
                 self.frame, tr(result.spec.title), message, level=levels[result.state],
                 action_text=tr("查看任务"), on_action=lambda: self.open_task(result.request_id),
@@ -190,7 +194,7 @@ class ActionFeedbackPresenter(QObject):
                        if item.request_id == request_id), None)
         if result is not None and result.state == "running":
             show_toast(
-                self.frame, tr(result.spec.title), tr("正在执行，可在任务中心查看进度。"),
+                self.frame, tr(result.spec.title), tr("正在处理，请稍候。"),
                 level="info", action_text=tr("查看任务"),
                 on_action=lambda: self.open_task(request_id), key=request_id,
             )
@@ -208,8 +212,15 @@ class ActionFeedbackPresenter(QObject):
             target_labels=(self.frame._global_device_bar.device_label(target),) if target else (),
         )
         if notify and result is not None:
+            detail = redact_diagnostic(result.items[-1].detail).strip()
+            lines = [line.strip() for line in detail.splitlines() if line.strip()]
+            # 短业务提示保留下一步指导；多行或长正文在原任务中完整阅读，避免通知承载技术输出。
+            summary = (
+                lines[0] if len(lines) == 1 and len(detail) <= 160
+                else tr("详情已记录，可在任务中心查看。")
+            )
             show_toast(
-                self.frame, tr(title), redact_diagnostic(result.items[-1].detail), level=level,
+                self.frame, tr(title), summary, level=level,
                 action_text=tr("查看任务"), on_action=lambda: self.open_task(result.request_id),
                 key=result.request_id + ":" + level,
             )

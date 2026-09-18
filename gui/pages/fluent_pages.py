@@ -997,7 +997,7 @@ class SettingsPage(ScrollArea):
         self.mica_card = _LocalizedSwitchSettingCard(
             FluentIcon.TRANSPARENT,
             tr("云母效果"),
-            tr("让窗口和表面呈现半透明材质") if is_mica_supported()
+            tr("使用 Windows 云母材质，底色随主题和桌面壁纸变化") if is_mica_supported()
             else tr("云母效果需要 Windows 11，当前系统使用实色背景"),
             parent=appearance,
         )

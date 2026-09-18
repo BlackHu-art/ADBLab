@@ -129,6 +129,26 @@ Remote 启动预检默认共用 20 秒预算，版本、响应、尺寸及可选
 设备概览和系统工具的模式重启均区分请求提交与设备启动完成；模式重启原生命令预留 30 秒，
 超时报告结果未知并要求刷新核实，不把超时当成功或自动重发。
 
+### Windows 冻结包中的原生工具隔离
+
+Windows 冻结运行时，应用的原生 ADB 与 scrcpy 启动边界通过
+[native_process.py](../../core/native_process.py) 调用同一应用可执行文件的内部入口
+`--adblab-native-launch`，再启动已选择的绝对路径工具；无需安装系统 Python。
+[native_launcher.py](../../core/native_launcher.py) 不导入 Qt 或应用业务模块，只在这个独立
+进程中清除继承的 DLL 搜索目录，并从子进程 PATH 移除 `sys._MEIPASS` 及其子目录。
+其他环境变量、ADB 客户端选择、自定义服务端点和 scrcpy 会话环境继续传递，主应用自身的
+DLL 搜索状态不变。工具仍通过真实操作系统标准句柄接收输入、输出二进制或文本，正常结束时
+返回工具退出码；取消或属主退出时回收本次启动的客户端，不因此停止独立的 ADB 服务。
+
+此边界覆盖短命令、原生查询、受控长进程以及 MobilePerf 的原生传输和异步日志入口。
+源码运行、非 Windows 平台、`shell=True` 调用及本应用的 MobilePerf worker 启动继续使用
+原有进程环境。已经选定的服务直连请求不经过这个入口，也不会因隔离而重放命令。
+每次原生调用会多一次内部入口启动，可能增加耗时；现有探测、采样与业务请求预算保持不变，
+不会为此自动增加重试、延长等待或重启服务。
+
+这一兼容隔离用于验证冻结运行库环境继承对原生工具的影响。是否能消除特定机器上的 ADB
+握手超时仍需目标环境验证，不能仅凭隔离实现或模拟测试认定故障根因及修复结果。
+
 ### 查看实际 ADB 路径与执行后端
 
 正常源码启动时，ADB 路径与执行诊断通过现有 `LogService.write_developer_console`
@@ -334,6 +354,7 @@ adbf -s <设备序列号> shell getprop ro.build.version.sdk
 | --- | --- | --- |
 | 独立命令与协议 | `tests/test_adb_fast.py` | 模拟 socket 分帧、设备选择、双流/退出码、总超时、取消、参数拒绝和连接清理 |
 | 应用自动选择 | `tests/test_adb_runtime.py`、`tests/test_qt_adb_runtime.py` | 延迟拒绝与首次服务启动、冷态复核、无效基准、每轮有界验证、自动与手动模式选择、恢复代次、共享预算、不重放、Qt 投递及关闭 |
+| Windows 冻结原生工具入口 | `tests/test_native_launcher.py`、`tests/test_native_process.py`、`tests/test_native_execution_boundary.py` | 环境隔离、标准句柄与二进制输出、参数和退出码、取消及属主退出、调用方准入与 worker 环境保留 |
 | Remote 投屏与输入 | `tests/test_scrcpy_adb_protocol.py`、`tests/test_scrcpy_session.py`、`tests/test_scrcpy_adb_bridge.py`、`tests/test_scrcpy_backend.py`、`tests/test_remote_input_backend.py`、`tests/test_remote_sessions.py` | 限定协议、流式输出、私有文件/端口归属、启动后端、取消不重放和逐台启动/停止 |
 | 截图采集与浏览 | `tests/test_screenshot_capture.py`、`tests/test_screenshot_io.py` | 完整 PNG 验证、失败保留原文件、临时文件清理、后台解码、缓存、删除快照和原生线程退出 |
 | MobilePerf 同步查询 | `tests/test_mobileperf_adb_execution.py`、`tests/test_mobileperf_query_budget.py` | 原始文本契约、有限超时、重连预算、执行中取消、异步兼容和收尾线程准入 |

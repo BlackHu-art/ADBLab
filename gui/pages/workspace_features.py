@@ -29,6 +29,7 @@ from qfluentwidgets import (
 )
 
 from gui.features import FeatureSessionKey, FeatureSessionRegistry
+from gui.features.contracts import optional_callback
 from gui.i18n import tr
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
@@ -586,11 +587,11 @@ class WorkspaceFeatureHost(QWidget):
     def _sync_page_device_context(self, page: QWidget | None, device_id: str) -> None:
         """先撤销操作资格再更新在线状态，避免重连回调沿用历史会话启动命令。"""
 
-        selected = getattr(page, "set_device_selected", None)
-        if callable(selected):
+        selected = optional_callback(page, "set_device_selected")
+        if selected is not None:
             selected(device_id in self._selected_devices)
-        connected = getattr(page, "set_device_connected", None)
-        if callable(connected):
+        connected = optional_callback(page, "set_device_connected")
+        if connected is not None:
             connected(device_id in self._connected_devices)
 
     def set_device_selection_locked(

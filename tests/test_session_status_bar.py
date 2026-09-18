@@ -124,7 +124,7 @@ def test_device_selection_preserves_bar_rows(
         close.setText(close_text)
     bar._apply_fonts()
     window.resize(width, 680)
-    controls = (bar.session_target, bar.session_combo)
+    controls = (bar.targets_button,)
     if close_text is not None:
         controls += (bar.close_button,)
     initial = None
@@ -140,12 +140,26 @@ def test_device_selection_preserves_bar_rows(
         assert rows == initial
         assert bar.session_combo.currentData() == "demo-device-01"
         assert bar.session_hint.isHidden()
+        assert bar.session_target.isHidden()
+        assert bar.session_combo.isHidden()
         assert status in bar.session_combo.accessibleDescription()
-        assert abs(bar.session_target.width() - bar.session_target.sizeHint().width()) <= 2
+        assert status in bar.accessibleDescription()
+        assert ("未勾选" in bar.targets_button.accessibleName()) == (not selected)
+        assert all(control.isVisible() for control in controls)
+        assert all(bar.rect().contains(mapped_rect(control, bar)) for control in controls)
         assert all(
-            mapped_rect(control, bar).top() == mapped_rect(bar.session_target, bar).top()
+            not mapped_rect(first, bar).intersects(mapped_rect(second, bar))
+            for first, second in combinations(controls, 2)
+        )
+        assert all(
+            mapped_rect(control, bar).top() == mapped_rect(bar.targets_button, bar).top()
             for control in controls
         )
+        if close_text is not None:
+            assert bar.close_button.width() >= bar.close_button.sizeHint().width()
+            assert status in bar.close_button.accessibleDescription()
+        else:
+            assert bar.close_button.isHidden()
     assert switched.count() == 0
 
 
@@ -155,22 +169,34 @@ def test_long_session_name_does_not_force_a_second_row(session_bar, qt_applicati
     name = "demo-device-with-a-long-display-name-" * 4 + "01"
     combo.clear()
     combo.addItem(name, userData="demo-a")
+    bar.set_device_labels({"demo-a": name})
     badge.setText("未选为操作目标")
     bar.set_context([], ["demo-a"], "ready")
     bar.set_session_context(combo, close, badge)
-    wait_for_stable_geometry(qt_application, (window, bar, bar.session_combo))
-    assert mapped_rect(bar.session_combo, bar).top() == mapped_rect(bar.session_target, bar).top()
+    wait_for_stable_geometry(qt_application, (window, bar, bar.targets_button, bar.close_button))
+    assert mapped_rect(bar.targets_button, bar).top() == mapped_rect(bar.close_button, bar).top()
     assert bar.session_combo.currentText() == name
     assert bar.session_combo.currentData() == "demo-a"
     assert bar.session_combo.itemText(0) == name
     assert name in bar.session_combo.accessibleDescription()
     assert "未选为操作目标" in bar.session_combo.accessibleDescription()
-    assert "…" in bar.session_combo.text()
+    assert bar.session_combo.isHidden()
+    assert bar.session_target.isHidden()
+    assert "…" in bar.targets_button.text()
     for width in (500, 1048):
         window.resize(width, 680)
-        wait_for_stable_geometry(qt_application, (window, bar, bar.session_combo))
+        wait_for_stable_geometry(
+            qt_application, (window, bar, bar.targets_button, bar.close_button),
+        )
         assert name in bar.session_combo.accessibleDescription()
         assert "未选为操作目标" in bar.session_combo.accessibleDescription()
+        assert name in bar.targets_button.accessibleName()
+        assert name in bar.targets_button.toolTip()
+        assert bar.rect().contains(mapped_rect(bar.targets_button, bar))
+        target_rect = mapped_rect(bar.targets_button, bar)
+        close_rect = mapped_rect(bar.close_button, bar)
+        assert not target_rect.intersects(close_rect)
+        assert target_rect.top() == close_rect.top()
 
 
 @pytest.mark.parametrize("width,font_size", [(452, 12), (452, 22), (1120, 22)])
@@ -189,7 +215,7 @@ def test_session_status_and_actions_fit_after_width_and_font_changes(
     bar._apply_fonts()
     bar.set_session_context(combo, close, badge)
     window.resize(width, 680)
-    controls = (bar.session_target, bar.session_combo, bar.close_button)
+    controls = (bar.targets_button, bar.close_button)
     wait_for_stable_geometry(qt_application, (window, bar, bar.session_row, *controls))
     assert window.width() == width
     for control in controls:
@@ -199,12 +225,16 @@ def test_session_status_and_actions_fit_after_width_and_font_changes(
     for first, second in combinations(controls, 2):
         assert not mapped_rect(first, bar).intersects(mapped_rect(second, bar))
     assert bar.session_hint.isHidden()
+    assert bar.session_target.isHidden()
+    assert bar.session_combo.isHidden()
     assert all(
-        mapped_rect(control, bar).top() == mapped_rect(bar.session_target, bar).top()
+        mapped_rect(control, bar).top() == mapped_rect(bar.targets_button, bar).top()
         for control in controls
     )
     assert bar.close_button.width() >= bar.close_button.sizeHint().width()
     assert status in bar.session_combo.accessibleDescription()
+    assert status in bar.accessibleDescription()
+    assert status in bar.close_button.accessibleDescription()
     assert "关闭应用管理" in bar.close_button.accessibleName()
 
 

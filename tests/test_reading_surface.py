@@ -1,13 +1,13 @@
-"""验证只读长正文的稳定底色、主题焦点样式与复制时的数据完整性。"""
+"""验证阅读框的原生回退、宿主材质与复制时的数据完整性。"""
 
 from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QObject, QPoint, Qt, Signal
-from PySide6.QtGui import QColor, QTextCursor
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QEnterEvent, QPalette, QTextCursor
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import PlainTextEdit, TextEdit
 
 from gui.dialogs.performance_launcher import PerformancePage
@@ -27,14 +27,25 @@ class _Library(QObject):
 
 
 def _background(reader):
-    image = reader.viewport().grab().toImage()
-    return image.pixelColor(3, image.height() - 4)
+    image = reader.grab().toImage()
+    point = reader.viewport().mapTo(reader, QPoint(3, reader.viewport().height() - 4))
+    scale = image.devicePixelRatio()
+    return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
 
 
 def _focus(reader, application):
+    application.setActiveWindow(reader.window())
     QTest.mouseClick(reader.viewport(), Qt.MouseButton.LeftButton, pos=QPoint(20, 20))
     application.processEvents()
     assert reader.hasFocus()
+
+
+def _composited_frame(host, reader):
+    image = host.grab().toImage()
+    point = reader.mapTo(host, QPoint())
+    scale = image.devicePixelRatio()
+    return image.copy(round(point.x() * scale), round(point.y() * scale),
+                      round(reader.width() * scale), round(reader.height() * scale))
 
 
 @pytest.fixture(params=("performance", "action_results", "summary", "parameters"))
@@ -65,26 +76,21 @@ def reading_widget(request, qt_application, monkeypatch, tmp_path):
     qt_application.processEvents()
 
 
-def test_long_readers_keep_light_background_when_focused_hovered_and_unfocused(
+def test_long_readers_match_native_light_focus_surface(
     qt_application, reading_widget,
 ):
     owner, reader = reading_widget
     BaseStyles.switch_theme("Light")
+    reference = PlainTextEdit(owner)
+    reference.setReadOnly(True)
+    reference.resize(250, 100)
+    reference.show()
     qt_application.processEvents()
-    expected = QColor(BaseStyles.color_for("Light", "LOG_BACKGROUND"))
+    _focus(reference, qt_application)
+    expected = _background(reference)
+    reference.close()
+    reference.deleteLater()
     _focus(reader, qt_application)
-    assert _background(reader) == expected, (reader.objectName(), _background(reader).name())
-    focus_target = (
-        owner.search if isinstance(owner, ActionResultView)
-        else owner.package_edit if isinstance(owner, PerformancePage) else owner.search_edit
-    )
-    focus_target.setFocus()
-    QTest.mouseMove(owner, QPoint(2, 2))
-    qt_application.processEvents()
-    assert not reader.hasFocus()
-    assert _background(reader) == expected
-    QTest.mouseMove(reader.viewport(), QPoint(20, 20))
-    qt_application.processEvents()
     assert _background(reader) == expected
 
 
@@ -107,9 +113,9 @@ def test_reading_surface_survives_theme_round_trip_focus_rebuild_and_accent_chan
         refresh_fluent_widget_style(reader)
         qt_application.processEvents()
         _focus(reader, qt_application)
-        assert _background(reader) == QColor(BaseStyles.color_for("Light", "LOG_BACKGROUND"))
-        assert "#9b327d" in str(reader.property("lightCustomQss")).lower()
-        assert "#9b327d" in str(reader.property("darkCustomQss")).lower()
+        assert _background(reader) == QColor("#ffffff")
+        assert "border: 2px" not in str(reader.property("lightCustomQss"))
+        assert "border: 2px" not in str(reader.property("darkCustomQss"))
         assert reader.toPlainText() == original_text
         assert reader.font() == original_font
     finally:
@@ -118,40 +124,235 @@ def test_reading_surface_survives_theme_round_trip_focus_rebuild_and_accent_chan
 
 
 @pytest.mark.parametrize("control_type", (PlainTextEdit, TextEdit))
-def test_dark_reading_background_matches_upstream_and_editable_input_is_unchanged(
-    qt_application, control_type,
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+@pytest.mark.parametrize("state", ("normal", "hover", "focus", "disabled"))
+def test_reading_surface_without_mica_matches_native_frame_and_background(
+    qt_application, control_type, theme, state,
 ):
     from gui.styles.fluent import apply_reading_surface
+    from tests.test_live_logcat_material import MaterialHost
 
-    host = QWidget()
-    layout = QVBoxLayout(host)
+    BaseStyles.switch_theme(theme)
+    host = MaterialHost(False)
+    host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    layout = QHBoxLayout(host)
     reader = control_type(host)
     reference = control_type(host)
     reader.setReadOnly(True)
     reference.setReadOnly(True)
+    reader.setPlainText("Native reading text 123")
+    reference.setPlainText("Native reading text 123")
     apply_reading_surface(reader)
     layout.addWidget(reader)
     layout.addWidget(reference)
-    host.resize(500, 500)
+    host.resize(640, 320)
     host.show()
-    BaseStyles.switch_theme("Dark")
     qt_application.processEvents()
-    _focus(reader, qt_application)
-    reader_dark = _background(reader)
-    _focus(reference, qt_application)
-    assert _background(reference) == reader_dark
-    BaseStyles.switch_theme("Light")
-    reader.setReadOnly(False)
-    reference.setReadOnly(False)
-    # 重建样式后重新匹配属性选择器，适配不能改变可编辑控件的上游白色焦点底。
-    reader.setStyle(qt_application.style())
+
+    def snapshot(control):
+        host.setFocus()
+        QTest.mouseMove(host, QPoint(2, 2))
+        if state == "focus":
+            _focus(control, qt_application)
+        elif state == "disabled":
+            control.setEnabled(False)
+        qt_application.processEvents()
+        # 原生鼠标移动异步到达；渲染对照通过正常事件明确外框和视口的同一悬停态。
+        for widget in (control, control.viewport()):
+            if state == "hover":
+                point = QPoint(20, 20)
+                event = QEnterEvent(
+                    QPointF(point), QPointF(widget.mapTo(host, point)),
+                    QPointF(widget.mapToGlobal(point)),
+                )
+            else:
+                event = QEvent(QEvent.Type.Leave)
+            qt_application.sendEvent(widget, event)
+            assert widget.underMouse() == (state == "hover")
+        return _composited_frame(host, control)
+
+    try:
+        assert snapshot(reader) == snapshot(reference)
+    finally:
+        host.close()
+
+
+@pytest.mark.parametrize("control_type", (PlainTextEdit, TextEdit))
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_mica_reader_returns_to_native_when_editable_and_transparent_when_readonly(
+    qt_application, control_type, theme,
+):
+    from gui.styles.fluent import apply_reading_surface
+    from tests.test_live_logcat_material import MaterialHost, surface_pixel
+
+    BaseStyles.switch_theme(theme)
+    host = MaterialHost(True)
+    layout = QHBoxLayout(host)
+    reader = control_type(host)
+    reference = control_type(host)
+    reader.setReadOnly(True)
+    apply_reading_surface(reader)
+    layout.addWidget(reader)
+    layout.addWidget(reference)
+    host.resize(640, 320)
+    host.show()
     qt_application.processEvents()
-    _focus(reader, qt_application)
-    reader_light = _background(reader)
-    _focus(reference, qt_application)
-    assert _background(reference) == reader_light
-    assert reader_light.name() == "#ffffff"
+    try:
+        assert surface_pixel(host, reader) == host.backdrop
+        reader.setReadOnly(False)
+        _focus(reader, qt_application)
+        editable = _composited_frame(host, reader)
+        _focus(reference, qt_application)
+        assert editable == _composited_frame(host, reference)
+        reader.setReadOnly(True)
+        _focus(reader, qt_application)
+        assert surface_pixel(host, reader) == host.backdrop
+    finally:
+        host.close()
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_repeated_surface_refresh_retains_native_text_palette(qt_application, theme):
+    from gui.styles.fluent import apply_reading_surface
+    from gui.styles.reading_surface import ensure_reading_surface
+
+    BaseStyles.switch_theme(theme)
+    host = QWidget()
+    reader = PlainTextEdit(host)
+    reference = PlainTextEdit(host)
+    reader.setReadOnly(True)
+    reference.setReadOnly(True)
+    apply_reading_surface(reader)
+    reference.ensurePolished()
+    material = ensure_reading_surface(reader)
+    material.refresh(force=True)
+    assert reader.palette().color(QPalette.ColorRole.Text) == reference.palette().color(
+        QPalette.ColorRole.Text,
+    )
     host.close()
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_app_details_rich_text_uses_material_and_stops_on_dispose(
+    qt_application, monkeypatch, theme,
+):
+    from gui.dialogs.app_manager_details import AppDetailsPage
+    from tests.test_live_logcat_material import MaterialHost, surface_pixel
+
+    def reject_worker(*_args, **_kwargs):
+        pytest.fail("阅读表面测试不得启动设备 worker")
+
+    monkeypatch.setattr("gui.dialogs.app_manager_details.AppManagerWorker.start", reject_worker)
+    BaseStyles.switch_theme(theme)
+    host = MaterialHost(True)
+    page = AppDetailsPage(host)
+    QVBoxLayout(host).addWidget(page)
+    page.detail_text.setHtml("<b>Package:</b> com.example.reading")
+    document = page.detail_text.document()
+    before = document.toHtml()
+    host.resize(820, 680)
+    host.show()
+    try:
+        qt_application.processEvents()
+        assert surface_pixel(host, page.detail_text) == host.backdrop
+        BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+        qt_application.processEvents()
+        assert surface_pixel(host, page.detail_text) == host.backdrop
+        assert page.detail_text.document() is document
+        assert document.toHtml() == before
+        material = page.detail_text._adblab_reading_surface
+        calls = []
+        monkeypatch.setattr(material, "_apply_surface", lambda *args: calls.append(args))
+        assert page.request_dispose("test")
+        host.setMicaEffectEnabled(False)
+        BaseStyles.switch_theme(theme)
+        material.refresh(force=True)
+        qt_application.processEvents()
+        assert calls == []
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+@pytest.mark.parametrize("theme", ("Light", "Dark"))
+def test_file_preview_switches_editing_material_and_stops_both_readers(
+    qt_application, monkeypatch, theme,
+):
+    from gui.dialogs.file_explorer import FileExplorerPage
+    from gui.styles import FontRole
+    from tests.test_live_logcat_material import MaterialHost, surface_pixel
+
+    def reject_worker(*_args, **_kwargs):
+        pytest.fail("阅读表面测试不得启动设备 worker")
+
+    monkeypatch.setattr("models.file_explorer_worker.ADBWorker.start", reject_worker)
+    BaseStyles.switch_theme(theme)
+    host = MaterialHost(True)
+    page = FileExplorerPage(host)
+    QVBoxLayout(host).addWidget(page)
+    host.resize(1000, 700)
+    host.show()
+
+    def card_background():
+        image = host.grab().toImage()
+        panel = page.preview_panel
+        point = panel.mapTo(host, QPoint(panel.width() - 5, panel.height() // 2))
+        scale = image.devicePixelRatio()
+        return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
+
+    try:
+        page._show_text_preview("sample.txt", "preview content", "/sample.txt", editable=False)
+        qt_application.processEvents()
+        reader = page.preview_text_edit
+        assert surface_pixel(host, reader) == card_background()
+        assert reader.isReadOnly()
+        assert reader.font() == BaseStyles.font_for_role(FontRole.MONO)
+        page._show_text_preview("sample.txt", "editable content", "/sample.txt", editable=True)
+        _focus(reader, qt_application)
+        assert surface_pixel(host, reader) != card_background()
+        reader.moveCursor(QTextCursor.MoveOperation.End)
+        QTest.keyClicks(reader, " changed")
+        assert reader.toPlainText() == "editable content changed"
+        reader.setReadOnly(True)
+        qt_application.processEvents()
+        assert surface_pixel(host, reader) == card_background()
+        assert reader.toPlainText() == "editable content changed"
+
+        page._show_output_preview("script.sh", "synthetic script error", error=True)
+        qt_application.processEvents()
+        assert surface_pixel(host, page.preview_output) == card_background()
+        assert page.preview_output.property("previewError")
+        assert page.preview_output.font() == BaseStyles.font_for_role(FontRole.LOG)
+        materials = [item._adblab_reading_surface for item in (reader, page.preview_output)]
+        calls = []
+        for material in materials:
+            monkeypatch.setattr(material, "_apply_surface", lambda *args: calls.append(args))
+        assert page.request_dispose("test")
+        host.setMicaEffectEnabled(False)
+        BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
+        for material in materials:
+            material.refresh(force=True)
+        qt_application.processEvents()
+        assert calls == []
+    finally:
+        host.close()
+        host.deleteLater()
+
+
+def test_performance_dispose_stops_reader_while_page_is_retained(qt_application, monkeypatch):
+    page = PerformancePage()
+    material = page.log_view._adblab_reading_surface
+    calls = []
+    monkeypatch.setattr(material, "_apply_surface", lambda *args: calls.append(args))
+    try:
+        assert page.request_dispose("test")
+        material.refresh(force=True)
+        BaseStyles.theme_changed.emit(BaseStyles.resolved_theme())
+        qt_application.processEvents()
+        assert calls == []
+    finally:
+        page.close()
+        page.deleteLater()
 
 
 def test_copy_from_reading_surface_preserves_text_parameters_and_log_cache(

@@ -4,7 +4,8 @@
 
 - 使用 pytest；`pyproject.toml` 把项目根加入 `pythonpath`。
 - 使用仓库 `.venv`，诊断导入问题时核实 `sys.executable`、PySide6 和 pytest 的实际来源。
-- `tests/conftest.py` 保持 session 级 QApplication，并在每个用例后恢复主题、字体和顶层窗口状态。
+- `tests/conftest.py` 按 `ui` marker 或显式 Qt 夹具依赖链，首次需要时创建 session 级 QApplication；
+  Qt 用例结束后恢复主题、字体、Timer 和顶层窗口状态。纯逻辑用例不会因全局夹具提前创建 Qt 应用。
 - Windows 离屏平台若未提供系统字体库，测试夹具只读注册现有 Windows 字体，确保中文字形和
   实际字体尺寸参与布局验证；生产应用仍使用正常的 Qt 字体发现机制。
 - 测试主要使用 monkeypatch、临时目录和轻量 fake/stub，不默认连接真实 Android 设备。
@@ -12,7 +13,10 @@
   少数文件在文件内就地 `pytestmark` 或函数级 `@pytest.mark` 标注；新增 Qt 测试文件时同步登记，
   混合文件按节点标记 Qt 用例，不能因为文件名像纯逻辑就漏标。
   `unit` marker 已注册但尚未系统分配，不能把 `not ui` 等同为显式 unit 集。
-- 当前全局 autouse 夹具仍初始化 QApplication，`not ui` 只改变测试选择，不承诺完全不导入 Qt。
+- `not ui` 只改变测试选择，不承诺完全不导入 Qt：全集收集及部分 Controller 模块仍会导入 Qt。
+  `test_test_collection.py` 另以禁止 Qt 导入的子进程验证明确的纯逻辑集合，并验证纯逻辑与 Qt
+  用例交替执行时的界面、归档存储隔离。显式依赖 `qt_application`、`isolated_ui_state` 或其 probe
+  的用例即使没有 `ui` marker，也会启用完整 Qt 清理。
 
 ## 测试域
 
@@ -54,8 +58,8 @@
 1. 用户明确要求“全量测试/完整测试套件”；“检查并验证”“完成长任务”不等同于该要求。
 2. 当前任务是正式发布验收，或已有明确的合并验收要求指定完整快照。
 3. 已沿调用链分析，但共享核心改动的影响范围仍无法可靠界定；说明具体无法界定的边界。
-4. 当前实际工作流要求完整测试。现有 Build 与本地 pre-commit 都不运行 pytest，不能假设存在
-   这项门禁；dev 推送 main 本身也不触发本地全量。
+4. 当前验收需复现 [Tests 工作流](../../.github/workflows/Tests.yaml) 的完整测试快照。
+   Build 与本地 pre-commit 仍不运行 pytest；普通局部修改及 dev 推送 main 本身不强制本地全量。
 
 执行全量前记录触发项、关联验证结论和代码已稳定的依据。多 agent 各自只跑直接与关联测试，
 主任务合并检查清单并决定一次集成验证，避免每个子任务重复全量。
@@ -99,7 +103,8 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
 - pytest `monkeypatch` 替换 subprocess、路径解析、设置和 platform/frozen 状态。
 - fake process 实现 `poll/terminate/kill/wait/stdout` 等协议，验证 ProcessRunner 和 MobilePerfRunner。
 - `tmp_path` 隔离 JSON/YAML/截图/报告/临时配置。
-- 全局 `isolated_run_library_storage` 夹具把归档服务和 Qt 协调器的存储入口指向 `tmp_path`；
+- 全局 `isolated_run_library_storage` 夹具把归档服务及已加载 Qt 协调器的存储入口指向 `tmp_path`；
+  第一次 Qt 用例按需加载并隔离协调器，不为纯逻辑测试主动导入 GUI。
   其他设置、设备历史及导出路径仍须由具体测试替换，不能由该夹具推断所有用户数据已隔离。
 - Qt 测试直接验证可观察行为，并替换外部 service；不依赖无业务意义的私有字段不存在断言。
 - fake/stub 必须实现被测边界实际消费的状态与失败语义，不能靠默认成功、随意的 `getattr`
@@ -204,8 +209,11 @@ packaging self-check、完整构建和实机测试按实际触及边界另选，
   覆盖率数字不能替代失败、取消、清理等行为断言。
 - **pytest-xdist**（并行）：仅对已确认隔离的指定测试文件使用 `-n 4`。`not ui` 含 integration，
   不能当作并行安全证明；Qt 与子进程生命周期组合默认串行，避免无界 `-n auto`。
-- **pre-commit**（本地钩子）：`.pre-commit-config.yaml` 已配置 ruff、中文注释门禁与
-  文档链接校验三个本地钩子；首次使用执行
+- **文本完整性**：`scripts/check_source_text.py` 只读检查 Git 工作区中的第一方 UTF-8 文本及真实
+  NUL 字节，包含生成的翻译 Python 模块；排除第三方副本和平台二进制。无效文本与枚举失败均返回
+  非零退出码；它不替代 Python 语法、词库一致性或行为测试。
+- **pre-commit**（本地钩子）：`.pre-commit-config.yaml` 已配置文本完整性、ruff、中文注释门禁与
+  文档链接校验四个本地钩子；首次使用执行
   `.\.venv\Scripts\python.exe -m pre_commit install`。
 
 当前 pre-commit 三个钩子使用全目录静态检查且不接收文件名，未运行 pytest；Build 也只有静态

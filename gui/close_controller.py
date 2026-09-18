@@ -106,11 +106,7 @@ class CloseController:
                     task_prefix=f"{self._frame._shutdown_owner_id}-feature-{index}",
                 )
             except Exception as exc:
-                self._frame.log_service.log(
-                    "ERROR",
-                    f"Feature shutdown task registration failed: {type(exc).__name__}",
-                    flush_immediately=True,
-                )
+                self._record_feature_shutdown_failure("registration", index, exc)
 
         controller_shutdown = ThreadedShutdownTask(
             self._frame.adb_controller.shutdown,
@@ -145,6 +141,24 @@ class CloseController:
             error_type=controller_shutdown.get_error_type,
         )
 
+    def _record_feature_shutdown_failure(self, stage: str, index: int, error: Exception) -> None:
+        """保留 GUI 阶段的失败事实，后续资源退出不能将它改报为成功。"""
+        failures = getattr(self._frame, "_shutdown_preparation_failures", ())
+        self._frame._shutdown_preparation_failures = (
+            *failures,
+            TaskStopResult(
+                task_id=f"{self._frame._shutdown_owner_id}-feature-{index}-{stage}",
+                owner_id=self._frame._shutdown_owner_id,
+                disposition=StopDisposition.FAILED,
+                error_type=type(error).__name__,
+            ),
+        )
+        self._frame.log_service.log(
+            "ERROR",
+            f"Feature shutdown {stage} failed: {type(error).__name__}",
+            flush_immediately=True,
+        )
+
     def _prepare_ui_for_shutdown(self):
         """先停止界面定时器并断开生产者信号，再广播资源停止请求。"""
         app_update = getattr(self._frame, "_app_update", None)
@@ -177,11 +191,13 @@ class CloseController:
                     )
             except (TypeError, RuntimeError, AttributeError):
                 pass
-        for host in getattr(self._frame, "_workspace_feature_hosts", {}).values():
+        for index, host in enumerate(
+            getattr(self._frame, "_workspace_feature_hosts", {}).values()
+        ):
             try:
                 host.shutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                self._record_feature_shutdown_failure("dispose", index, exc)
         shutdown_left_panel = getattr(self._frame.left_panel, "shutdown", None)
         if callable(shutdown_left_panel):
             shutdown_left_panel()
@@ -195,7 +211,10 @@ class CloseController:
         ):
             return
         self._frame._shutdown_finalizer_started = True
-        self._frame._shutdown_results = tuple(results)
+        self._frame._shutdown_results = (
+            *getattr(self._frame, "_shutdown_preparation_failures", ()),
+            *results,
+        )
         self._frame._shutdown_residual = tuple(residual)
         environment = getattr(self._frame, "_adb_environment", None)
         if environment is not None:

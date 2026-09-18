@@ -1,10 +1,11 @@
 """Logcat 嵌入模式、中文控件、日志可读性与阅读位置回归。"""
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QPoint, QRect, QSize
-from PySide6.QtGui import QColor, QFont, QTextCursor
-from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import QAbstractAnimation, QEvent, QPoint, QRect, QSize, Qt
+from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtTest import QSignalSpy, QTest
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
+from qfluentwidgets import CommandBar, ProgressRing, RoundMenu, TableWidget
 
 from gui.features.logcat import LiveLogcatPage
 from gui.styles import BaseStyles, FontRole
@@ -20,6 +21,78 @@ def _contrast(first, second):
         return sum(value * weight for value, weight in zip(values, (.2126, .7152, .0722)))
     values = sorted((luminance(first), luminance(second)))
     return (values[1] + .05) / (values[0] + .05)
+
+
+def _open_command_menu(page, qt_application):
+    """从用户可见的更多入口打开真实菜单，等待其几何动画结束。"""
+    assert page._command_bar.moreButton.isVisible()
+    assert page._command_bar.moreButton.toolTip()
+    assert page._command_bar.moreButton.accessibleName()
+    QTest.mouseClick(page._command_bar.moreButton, Qt.MouseButton.LeftButton)
+    menus = [menu for menu in page._command_bar.findChildren(RoundMenu) if menu.isVisible()]
+    assert len(menus) == 1
+    menu = menus[0]
+    wait_until(
+        qt_application, lambda: menu.aniManager.ani.state() == QAbstractAnimation.State.Stopped,
+    )
+    return menu
+
+
+def _menu_item_for_action(menu, action):
+    return next(menu.view.item(index) for index in range(menu.view.count())
+                if menu.view.item(index).data(Qt.ItemDataRole.UserRole) is action)
+
+
+def _click_menu_action(menu, action):
+    item = _menu_item_for_action(menu, action)
+    QTest.mouseClick(
+        menu.view.viewport(), Qt.MouseButton.LeftButton,
+        pos=menu.view.visualItemRect(item).center(),
+    )
+
+
+def _assert_commands_reachable(page, qt_application):
+    """六个操作必须由行内按钮和真实溢出菜单完整覆盖。"""
+    bar = page._command_bar
+    assert isinstance(bar, CommandBar)
+    expected = {getattr(page, f"{name}_action")
+                for name in ("start", "stop", "follow", "wrap", "export", "clear")}
+    assert set(bar.actions()) == expected
+    visible = {button.action() for button in bar.commandButtons if button.isVisible()}
+    if visible == expected:
+        assert not bar.moreButton.isVisible()
+        return
+    menu = _open_command_menu(page, qt_application)
+    try:
+        assert set(menu.actions()) | visible == expected
+        assert set(menu.actions()).isdisjoint(visible)
+        for action in menu.actions():
+            item = _menu_item_for_action(menu, action)
+            assert bool(item.flags() & Qt.ItemFlag.ItemIsEnabled) == action.isEnabled()
+    finally:
+        menu.close()
+        qt_application.processEvents()
+
+
+def _assert_single_line_status(page):
+    """状态与缓存环共用一行，窄屏和大字体下仍不侵占命令或正文。"""
+    status = page.status_bar
+    ring = page.cache_ring
+    assert isinstance(ring, ProgressRing)
+    assert ring.size() == QSize(28, 28)
+    assert not ring.isTextVisible()
+    assert not status.wordWrap()
+    assert status.width() <= page.actions.width() // 4 + 2
+    status_rect = QRect(status.mapTo(page.actions, QPoint()), status.size())
+    ring_rect = QRect(ring.mapTo(page.actions, QPoint()), ring.size())
+    assert page.actions.rect().contains(status_rect)
+    assert page.actions.rect().contains(ring_rect)
+    assert abs(status_rect.center().y() - ring_rect.center().y()) <= 1
+    assert status_rect.right() < ring_rect.left()
+    assert not status_rect.intersects(ring_rect)
+    group_rect = QRect(page._status_group.mapTo(page, QPoint()), page._status_group.size())
+    assert page.actions.geometry().contains(group_rect)
+    assert group_rect.bottom() < page.output.geometry().top()
 
 
 def test_logcat_main_window_embedded_mode_has_one_heading(qt_application):
@@ -72,55 +145,98 @@ def test_logcat_controls_follow_font_and_fit_narrow_content(
     ]
     assert page.start_btn.accessibleName() == "开始采集"
     assert page.stop_btn.accessibleName() == "停止采集"
+    assert page.follow_btn.accessibleName() == "跟随最新"
     assert page.wrap_btn.accessibleName() == "自动换行"
-    if width == 980:
-        assert page.start_btn.text() == "开始采集"
-        assert page.stop_btn.text() == "停止采集"
-    else:
-        assert page.follow_btn.text() == ""
-        assert page.follow_btn.toolTip()
-    controls = (page.level_combo, page.pkg_input, page.btn_get_pkg, page.start_btn,
-                page.stop_btn, page.clear_btn, page.export_btn, page.wrap_btn, page.status_bar,
-                page.follow_btn, page.reading_status)
-    for control in controls:
+    for name, text in (
+        ("start", "开始"), ("stop", "停止"), ("follow", "跟随"),
+        ("wrap", "换行"), ("export", "导出"), ("clear", "清空"),
+    ):
+        assert getattr(page, f"{name}_btn").text() == text
+    assert page.follow_btn.toolTip()
+    buttons = tuple(page._command_bar.commandButtons)
+    for button in buttons:
+        assert button.font().pointSize() == font_size
+        assert button.height() >= button.fontMetrics().height() + 12
+        assert button.isEnabled() == button.action().isEnabled()
+        assert button.isChecked() == button.action().isChecked()
+    controls = (page.level_combo, page.pkg_input, page.btn_get_pkg, page.status_bar)
+    visible_buttons = tuple(button for button in (*buttons, page._command_bar.moreButton)
+                            if button.isVisible())
+    for control in (*controls, *visible_buttons):
         assert control.isVisibleTo(owner)
         assert control.font().pointSize() == font_size
         assert control.height() >= control.fontMetrics().height()
         assert page.rect().contains(QRect(control.mapTo(page, QPoint()), control.size()))
     assert page.pkg_input.height() >= page.pkg_input.fontMetrics().height() + 14
     assert page.output.height() >= page.output.fontMetrics().lineSpacing() * 6
-    for row in (
-        (page.level_combo, page.pkg_input, page.btn_get_pkg),
-        (page.start_btn, page.stop_btn, page.follow_btn, page.wrap_btn,
-         page.export_btn, page.clear_btn),
-    ):
+    for row in ((page.level_combo, page.pkg_input, page.btn_get_pkg), visible_buttons):
         rects = [QRect(control.mapTo(page, QPoint()), control.size()) for control in row]
         assert max(rect.top() for rect in rects) < min(rect.bottom() for rect in rects)
         assert all(not left.intersects(right) for index, left in enumerate(rects)
                    for right in rects[index + 1:])
     assert page.level_combo.geometry().bottom() < page.actions.geometry().top()
     assert page.actions.geometry().bottom() < page.output.geometry().top()
-    assert page.status_bar.geometry().top() > page.output.geometry().bottom()
+    assert page.actions.rect().contains(QRect(
+        page._status_group.mapTo(page.actions, QPoint()), page._status_group.size(),
+    ))
+    assert page._status_group.geometry().left() > page._command_bar.geometry().right()
+    assert page.cache_ring.isVisibleTo(owner)
+    _assert_single_line_status(page)
+    _assert_commands_reachable(page, qt_application)
     page.wrap_btn.click()
-    if width == 420:
-        assert page.wrap_btn.text() == ""
+    assert page.wrap_action.isChecked()
+    assert page.wrap_btn.isChecked()
     page.close()
     owner.close()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
+@pytest.mark.parametrize("focused", [False, True])
 def test_logcat_output_background_and_all_levels_keep_readable_contrast(
-    qt_application, theme
+    qt_application, theme, focused
 ):
     page = LiveLogcatPage(device_ip="demo-a")
+    reference = TableWidget(page.output.parentWidget())
+    reference.setFrameShape(QFrame.Shape.NoFrame)
+    reference.resize(180, 100)
     page.resize(700, 500)
     page.show()
     BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
     BaseStyles.switch_theme(theme)
     qt_application.processEvents()
-    expected = QColor(BaseStyles.color("LOG_BACKGROUND"))
-    image = page.output.viewport().grab().toImage()
-    assert image.pixelColor(2, 2) == expected
+
+    def surface_color(editor):
+        image = page.grab().toImage()
+        point = editor.viewport().mapTo(page, editor.viewport().rect().center())
+        scale = image.devicePixelRatio()
+        return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
+
+    # 同一几何区域轮流绘制，避免参考框覆盖标题卡片或透出原输出框而重复叠色。
+    page.layout().setEnabled(False)
+    reference.setGeometry(page.output.geometry())
+    page.output.hide()
+    reference.setVisible(True)
+    if focused:
+        reference.setFocus()
+    else:
+        page.pkg_input.setFocus()
+    qt_application.processEvents()
+    for control in (reference, reference.viewport()):
+        qt_application.sendEvent(control, QEvent(QEvent.Type.Leave))
+        assert not control.underMouse()
+    expected = surface_color(reference)
+    reference.hide()
+    page.output.show()
+    if focused:
+        page.output.setFocus()
+    else:
+        page.pkg_input.setFocus()
+    qt_application.processEvents()
+    for control in (page.output, page.output.viewport()):
+        qt_application.sendEvent(control, QEvent(QEvent.Type.Leave))
+        assert not control.underMouse()
+    assert surface_color(page.output) == expected
+    page.layout().setEnabled(True)
     for level in "VDIWEFSU":
         text = f"09-05 18:10:12.345 1001 1001 {level} Demo: synthetic log text"
         page.output.setPlainText(text)
@@ -170,19 +286,21 @@ def test_logcat_reading_controls_pause_resume_and_clear_without_stopping_capture
             page._on_line(f"incoming record {index}", "W")
         page._flush_pending_lines()
         assert page.output.firstVisibleBlock().text() == anchor
-        assert "125 / 8000" in page.reading_status.text()
-        assert "5 行新日志" in page.reading_status.text()
+        assert page.cache_ring.value() == 125
+        assert "125 / 8000" in page.cache_ring.toolTip()
+        assert "5 行新日志" in page.cache_ring.toolTip()
         assert len(page.entries) == 125
         page.follow_btn.click()
         assert page.follow_btn.isChecked()
         assert bar.value() == bar.maximum()
-        assert "已暂停跟随" not in page.reading_status.text()
+        assert "已暂停跟随" not in page.cache_ring.toolTip()
         page._on_line("pending before clear", "I")
         page.clear_btn.click()
         page._flush_pending_lines()
         assert page.output.toPlainText() == ""
         assert not page.entries
-        assert "0 / 8000" in page.reading_status.text()
+        assert page.cache_ring.value() == 0
+        assert "0 / 8000" in page.cache_ring.toolTip()
         assert not page.export_btn.isEnabled()
         assert not page.clear_btn.isEnabled()
         assert page.follow_btn.isChecked()
@@ -219,7 +337,8 @@ def test_logcat_large_output_keeps_workspace_geometry_and_bounded_document(qt_ap
         assert page.output.document().blockCount() == page.MAX_BUFFER
         assert page.output.document().firstBlock().text().startswith("record 01000 ")
         assert page.output.document().lastBlock().text().startswith("record 08999 ")
-        assert "8000 / 8000" in page.reading_status.text()
+        assert page.cache_ring.value() == page.cache_ring.maximum() == page.MAX_BUFFER
+        assert "8000 / 8000" in page.cache_ring.toolTip()
         assert page.output.horizontalScrollBar().maximum() > 0
         frame.resize(860, 700)
         qt_application.processEvents()
@@ -229,12 +348,15 @@ def test_logcat_large_output_keeps_workspace_geometry_and_bounded_document(qt_ap
         qt_application.processEvents()
         output_rect = QRect(page.output.mapTo(outer.viewport(), QPoint()), page.output.size())
         assert outer.viewport().rect().contains(output_rect)
-        outer.ensureWidgetVisible(page.follow_btn, 0, 0)
+        follow_entry = (page.follow_btn if page.follow_btn.isVisible()
+                        else page._command_bar.moreButton)
+        outer.ensureWidgetVisible(follow_entry, 0, 0)
         qt_application.processEvents()
         button_rect = QRect(
-            page.follow_btn.mapTo(outer.viewport(), QPoint()), page.follow_btn.size()
+            follow_entry.mapTo(outer.viewport(), QPoint()), follow_entry.size()
         )
         assert outer.viewport().rect().contains(button_rect)
+        _assert_commands_reachable(page, qt_application)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
@@ -335,7 +457,7 @@ def test_logcat_resize_that_removes_scroll_range_keeps_reading_paused(qt_applica
         page._on_line("new record while paused", "I")
         page._flush_pending_lines()
         assert not page.follow_btn.isChecked()
-        assert "1 行新日志" in page.reading_status.text()
+        assert "1 行新日志" in page.cache_ring.toolTip()
     finally:
         page.close()
 
@@ -370,10 +492,16 @@ def test_logcat_large_font_small_workspace_can_reach_full_output_and_reading_too
         outer = host.content_scroll
         outer.verticalScrollBar().setValue(outer.verticalScrollBar().maximum())
         qt_application.processEvents()
-        for control in (page.output, page.follow_btn, page.wrap_btn,
-                        page.export_btn, page.clear_btn, page.reading_status):
+        output_rect = QRect(page.output.mapTo(outer.viewport(), QPoint()), page.output.size())
+        assert outer.viewport().rect().contains(output_rect)
+        for control in (page.actions, page.cache_ring):
+            outer.ensureWidgetVisible(control, 0, 0)
+            qt_application.processEvents()
             rect = QRect(control.mapTo(outer.viewport(), QPoint()), control.size())
             assert outer.viewport().rect().contains(rect)
+        _assert_commands_reachable(page, qt_application)
+        assert not page.follow_action.isChecked()
+        assert "1 行新日志" in page.cache_ring.toolTip()
         assert outer.horizontalScrollBar().maximum() == 0
     finally:
         frame._unbind_window_screen()
@@ -451,5 +579,126 @@ def test_logcat_level_combo_filters_history_pending_and_future_records(
         page._flush_pending_lines()
         assert displayed_records() == [text for text, _level in records]
         assert len(page.entries) == len(records)
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+def test_logcat_overflow_clear_tracks_content_and_dispatches_once(qt_application):
+    """空日志禁用清空，菜单打开后新增日志也能同步启用，并只清理一次。"""
+    page = LiveLogcatPage(device_ip="demo-a")
+    page.resize(420, 700)
+    page.show()
+    qt_application.processEvents()
+    try:
+        assert not page.clear_btn.isVisible()
+        menu = _open_command_menu(page, qt_application)
+        action = page.clear_action
+        spy = QSignalSpy(action.triggered)
+        item = _menu_item_for_action(menu, action)
+        assert not action.isEnabled()
+        assert not item.flags() & Qt.ItemFlag.ItemIsEnabled
+        _click_menu_action(menu, action)
+        assert spy.count() == 0
+        assert menu.isVisible()
+        page._on_line("incoming record", "I")
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        assert action.isEnabled()
+        assert item.flags() & Qt.ItemFlag.ItemIsEnabled
+        assert page.clear_btn.isEnabled()
+        _click_menu_action(menu, action)
+        assert spy.count() == 1
+        assert not page.entries
+        assert page.output.toPlainText() == ""
+        assert not action.isEnabled()
+        assert not page.clear_btn.isEnabled()
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("name", ["follow", "wrap"])
+def test_logcat_overflow_reading_action_toggles_once_and_returns_inline(
+    qt_application, monkeypatch, name,
+):
+    """大字体窄屏菜单与恢复宽屏后的按钮共享阅读状态，单击只切换一次。"""
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role", classmethod(lambda _cls, role, size=None: QFont(
+            "Consolas" if role in (FontRole.LOG, FontRole.MONO) else "Microsoft YaHei",
+            size or 22,
+        )),
+    )
+    page = LiveLogcatPage(device_ip="demo-a")
+    page.resize(420, 700)
+    page.show()
+    qt_application.processEvents()
+    try:
+        button = getattr(page, f"{name}_btn")
+        action = getattr(page, f"{name}_action")
+        assert not button.isVisible()
+        before = action.isChecked()
+        spy = QSignalSpy(action.triggered)
+        menu = _open_command_menu(page, qt_application)
+        _click_menu_action(menu, action)
+        qt_application.processEvents()
+        assert spy.count() == 1
+        assert action.isChecked() is not before
+        assert button.isChecked() == action.isChecked()
+        if name == "follow":
+            assert "已暂停跟随" in page.cache_ring.toolTip()
+        else:
+            assert page.output.lineWrapMode() == page.output.LineWrapMode.WidgetWidth
+        page.resize(1800, 700)
+        qt_application.processEvents()
+        assert button.isVisible()
+        assert button.isChecked() == action.isChecked()
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert spy.count() == 2
+        assert action.isChecked() == before
+        if name == "follow":
+            assert "已暂停跟随" not in page.cache_ring.toolTip()
+        else:
+            assert page.output.lineWrapMode() == page.output.LineWrapMode.NoWrap
+    finally:
+        page.close()
+
+
+@pytest.mark.ui
+def test_logcat_top_status_preserves_full_text_without_shrinking_output(qt_application):
+    """顶部绘制短状态，完整原因与暂停计数仍可从提示及辅助描述获取。"""
+    page = LiveLogcatPage(device_ip="demo-a")
+    page.resize(420, 700)
+    page.show()
+    qt_application.processEvents()
+    try:
+        output_size = page.output.size()
+        toolbar_height = page.actions.height()
+        assert page.status_bar.compactText() == "待采集"
+        message = "采集已停止：" + "连接状态发生变化，请检查设备连接。" * 12
+        page.status_bar.setText("已停止")
+        compact_image = page.status_bar.grab().toImage()
+        page.status_bar.setText(message, "已停止")
+        assert page.status_bar.grab().toImage() == compact_image
+        page.follow_btn.click()
+        for index in range(12):
+            page._on_line(f"incoming record {index}", "I")
+        page._flush_pending_lines()
+        qt_application.processEvents()
+        assert page.output.size() == output_size
+        assert page.actions.height() == toolbar_height
+        assert page.status_bar.text() == message
+        assert page.status_bar.compactText() == "已停止"
+        assert message in page.status_bar.toolTip()
+        assert page.status_bar.accessibleDescription() == message
+        assert page.cache_ring.value() == 12
+        for description in (page.cache_ring.toolTip(), page.cache_ring.accessibleDescription()):
+            assert "缓存 12 / 8000 行" in description
+            assert "已暂停跟随" in description
+            assert "12 行新日志" in description
+            assert "仅保留最近 8000 行原始日志" in description
+            assert "导出保存当前筛选结果" in description
+        assert page.status_bar.height() >= page.status_bar.fontMetrics().height()
+        _assert_single_line_status(page)
     finally:
         page.close()

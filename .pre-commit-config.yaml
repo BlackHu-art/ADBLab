@@ -3,6 +3,11 @@
 repos:
   - repo: local
     hooks:
+      - id: source-text
+        name: 源码文本完整性
+        entry: .venv/Scripts/python.exe scripts/check_source_text.py
+        language: system
+        pass_filenames: false
       - id: ruff-check
         name: ruff check
         entry: .venv/Scripts/python.exe -m ruff check .

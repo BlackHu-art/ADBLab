@@ -27,6 +27,7 @@ from qfluentwidgets import (
     PlainTextEdit,
     PushButton,
     RoundMenu,
+    SearchLineEdit,
     TableWidget,
     TransparentToolButton,
 )
@@ -49,7 +50,8 @@ from gui.dialogs.lifecycle import (
 )
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import add_menu_action, apply_label_role
+from gui.styles.fluent import add_menu_action, apply_label_role, apply_reading_surface
+from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from models.file_explorer_worker import ADBWorker, TransferWorker
 from services import file_explorer as explorer_service
@@ -218,10 +220,13 @@ class FileExplorerPage(QWidget):
         self.path_field.returnPressed.connect(
             lambda: self._navigate(self.path_field.text().strip())
         )
-        self.search_field = LineEdit()
+        self.search_field = SearchLineEdit()
         self.search_field.setPlaceholderText(tr("Search..."))
         self.search_field.setAccessibleName(tr("File search"))
         self.search_field.textChanged.connect(self._filter)
+        self.search_field.returnPressed.connect(self.search_field.search)
+        # 显式搜索沿用当前目录的本地筛选，不导航或重新读取设备目录。
+        self.search_field.searchSignal.connect(self._filter)
         layout.addLayout(self._path_layout)
 
         self._path_navigation = QWidget(self)
@@ -417,6 +422,7 @@ class FileExplorerPage(QWidget):
         text_layout = QVBoxLayout(self.preview_text_page)
         text_layout.setContentsMargins(0, 0, 0, 0)
         self.preview_text_edit = PlainTextEdit(self.preview_text_page)
+        apply_reading_surface(self.preview_text_edit)
         self.preview_text_edit.setAccessibleName(tr("File text preview"))
         text_layout.addWidget(self.preview_text_edit, 1)
         text_actions = QHBoxLayout()
@@ -439,6 +445,7 @@ class FileExplorerPage(QWidget):
 
         self.preview_output = PlainTextEdit(self.preview_stack)
         self.preview_output.setReadOnly(True)
+        apply_reading_surface(self.preview_output)
         self.preview_output.setAccessibleName(tr("Script output preview"))
         self.preview_stack.addWidget(self.preview_output)
 
@@ -1246,6 +1253,8 @@ class FileExplorerPage(QWidget):
         self._transfers.cancel_pending()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
+        stop_reading_surface(self.preview_text_edit)
+        stop_reading_surface(self.preview_output)
 
         workers = list(dict.fromkeys((*self._workers, *self._worker_ui_bindings)))
         for worker in workers:

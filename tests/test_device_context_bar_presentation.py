@@ -327,6 +327,7 @@ def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_upda
         _MainFrameSettings,
         build_main_frame,
     )
+    from tests.test_navigation_rendering import _native_content_color
 
     settings = _MainFrameSettings()
     settings.values.update({"theme": "Light", "mica_enabled": False})
@@ -364,7 +365,8 @@ def test_first_dark_theme_switch_keeps_device_bar_dark_after_native_palette_upda
         surface_color = image.pixelColor(
             round(surface_point.x() * scale), round(surface_point.y() * scale)
         )
-        assert surface_color == background
+        # 内层沿用原生 Fluent 内容遮罩，关闭云母仍保留相对于根背景的层次。
+        assert surface_color == _native_content_color(frame.backgroundColor)
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True

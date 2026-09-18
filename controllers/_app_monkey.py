@@ -7,9 +7,9 @@ import random
 import re
 import time
 import uuid
-from dataclasses import dataclass
 
 from adblab.application.cancellation import CancellationToken
+from adblab.application.monkey_batch import MonkeyRunSnapshot, MonkeyTargetCompletion
 from controllers._base import _ADBControllerBase
 from controllers.signals import ADBControllerSignals
 from core.log_service import LogLevel, LogService
@@ -18,26 +18,10 @@ from models.adb_testing import ADBTesting
 from utils.adb_values import normalize_android_package
 
 
-@dataclass(frozen=True)
-class _MonkeyRunSnapshot:
-    """在排队前固定归档身份与参数；页面后续修改不能改变这次运行。"""
-
-    batch_id: str
-    index: int
-    parameters: dict
-    started_at: float
-    device_label: str
-    app_version: str
-
-
-def _archive_monkey_target(controller, batch_id: str, device: str) -> None:
+def _archive_monkey_target(controller, completed: MonkeyTargetCompletion) -> None:
     """仅在批次释放时发布一次终态；归档持久化由组合根订阅者负责。"""
-    snapshots = _monkey_state_map(controller, "_monkey_run_snapshots")
-    snapshot = snapshots.get(device)
-    if not isinstance(snapshot, _MonkeyRunSnapshot) or snapshot.batch_id != batch_id:
-        return
-    snapshots.pop(device, None)
-    result = _monkey_state_map(controller, "_monkey_run_results").pop(device, {})
+    device, snapshot, result = completed.device, completed.snapshot, completed.result
+    batch_id = snapshot.batch_id
     controller.testing_model.monkey_run_archive_snapshot(device, batch_id, consume=True)
     signal_ = getattr(getattr(controller, "signals", None), "run_record_ready", None)
     if signal_ is None:
@@ -77,53 +61,27 @@ def _emit_monkey_target_finished(controller, batch_id: str, device: str) -> None
     if signal_ is not None and batch_id:
         signal_.emit(batch_id, device)
 
-def _monkey_state_map(controller, name: str) -> dict:
-    """返回 Controller 上指定的 Monkey 批次映射。"""
 
-    value = getattr(controller, name, None)
-    if not isinstance(value, dict):
-        value = {}
-        setattr(controller, name, value)
-    return value
+def _publish_monkey_completion(controller, completed: MonkeyTargetCompletion | None) -> None:
+    """发布已经被业务用例消费的结果，重复回调不会获得第二份可发布终态。"""
+    if completed is not None:
+        _archive_monkey_target(controller, completed)
+        _emit_monkey_target_finished(controller, completed.snapshot.batch_id, completed.device)
 
-def _finalize_monkey_target(controller, batch_id: str, device: str) -> bool:
-    """在运行终态和停止确认均满足后，原子释放设备批次。"""
 
-    lock = getattr(controller, "_monkey_lock", None)
-    if lock is not None:
-        lock.acquire()
-    try:
-        batch_map = _monkey_state_map(controller, "_monkey_batch_by_device")
-        current_batch = str(batch_map.get(device, ""))
-        if current_batch and current_batch != batch_id:
-            return False
-        if batch_id and not current_batch:
-            return False
-        batch_map.pop(device, None)
-        controller._monkey_running.discard(device)
-        for name in (
-            "_monkey_stop_requests",
-            "_monkey_stop_acks",
-            "_monkey_run_terminals",
-        ):
-            state_map = _monkey_state_map(controller, name)
-            if state_map.get(device) == batch_id:
-                state_map.pop(device, None)
-        _archive_monkey_target(controller, batch_id, device)
-        _emit_monkey_target_finished(controller, batch_id, device)
-        return True
-    finally:
-        if lock is not None:
-            lock.release()
+def _finalize_monkey_target(controller, batch_id: str, device: str) -> None:
+    """在组合锁内消费已满足屏障的目标，并沿用归档和设备完成信号。"""
+    with controller._monkey_lock:
+        _publish_monkey_completion(
+            controller, controller.monkey_batches.take_finished(device, batch_id),
+        )
 
 
 class ADBAppMonkeyMixin(_ADBControllerBase):
     """协调 Monkey 压测的启动、停止与批次状态。"""
 
-    # Monkey 状态（含 _monkey_stop_requests/_monkey_stop_acks/_monkey_run_terminals 与
-    # _monkey_batch_by_device/_monkey_running）均为 GUI 线程读写：启动/停止入口来自 UI 信号，
-    # 结果经 command_finished 的 AutoConnection 调度回 GUI 线程。_monkey_lock 仅覆盖启动占位
-    # 与回滚的原子段，未覆盖其余字典是已知且无害的。
+    # 业务状态由 monkey_batches 独占；入口和 command_finished 回调均在 GUI 线程。
+    # Controller 组合锁仍保护批次登记及归档交付，模型资源锁不跨层迁移。
 
     # 以下属性由 _ADBControllerBase 提供。
     testing_model: ADBTesting
@@ -145,21 +103,14 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         resources_stopped 必须来自关闭阶段的实际等待结果；仍有残留时只记录不完整，
         不将未收到结果的工作误报为成功或已取消。调用本方法不启动或等待任何进程。
         """
-        snapshots = _monkey_state_map(self, "_monkey_run_snapshots")
-        for device, snapshot in tuple(snapshots.items()):
+        for device, snapshot in self.monkey_batches.pending():
             result = self.testing_model.monkey_run_archive_snapshot(device, snapshot.batch_id)
-            if not isinstance(result, dict):
-                result = dict(_monkey_state_map(self, "_monkey_run_results").get(device, {}))
-            if not result.get("terminal"):
-                result.update(
-                    success=False, cancelled=resources_stopped,
-                    archive_incomplete=not resources_stopped,
-                    error=("Application closed before the test completed" if resources_stopped
-                           else "Application closed without confirming all test resources stopped"),
-                    finished_at=time.time(),
+            with self._monkey_lock:
+                completed = self.monkey_batches.finish_for_shutdown(
+                    device, snapshot.batch_id, result if isinstance(result, dict) else None,
+                    resources_stopped=resources_stopped, finished_at=time.time(),
                 )
-            _monkey_state_map(self, "_monkey_run_results")[device] = result
-            _finalize_monkey_target(self, snapshot.batch_id, device)
+                _publish_monkey_completion(self, completed)
 
     def prepare_monkey_targets(
         self, devices: list[str], package_name: str, request_id: str,
@@ -190,21 +141,10 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         devices = list(dict.fromkeys(device for device in devices if device))
         if not self._require_devices(devices, "kill_monkey"):
             return
-        batch_map = getattr(self, "_monkey_batch_by_device", {})
-        if not isinstance(batch_map, dict):
-            batch_map = {}
-        stop_requests = getattr(self, "_monkey_stop_requests", None)
-        if not isinstance(stop_requests, dict):
-            stop_requests = {}
-            self._monkey_stop_requests = stop_requests
         for idx, device_ip in enumerate(devices, 1):
-            current_batch = str(batch_map.get(device_ip, ""))
-            requested_batch = str(batch_id).strip() or current_batch
-            if batch_id and requested_batch != current_batch:
+            requested_batch = self.monkey_batches.request_stop(device_ip, str(batch_id).strip())
+            if requested_batch is None:
                 continue
-            if stop_requests.get(device_ip) == requested_batch:
-                continue
-            stop_requests[device_ip] = requested_batch
             try:
                 self.testing_model.kill_monkey_async(
                     device_ip,
@@ -212,7 +152,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                     batch_id=requested_batch,
                 )
             except Exception as exc:
-                stop_requests.pop(device_ip, None)
+                self.monkey_batches.stop_submission_failed(device_ip, requested_batch)
                 self._emit_operation(
                     "kill_monkey",
                     False,
@@ -220,54 +160,30 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 )
 
     def _process_kill_monkey_result(self, result: dict):
-        device_ip = result.get("device_ip")
+        device_ip = str(result.get("device_ip", ""))
         idx = result.get("index")
         result_batch = str(result.get("batch_id", ""))
-        batch_map = getattr(self, "_monkey_batch_by_device", {})
-        if not isinstance(batch_map, dict):
-            batch_map = {}
-        current_batch = str(batch_map.get(device_ip, ""))
-        stop_requests = getattr(self, "_monkey_stop_requests", {})
-        if current_batch and result_batch != current_batch:
-            if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == result_batch:
-                stop_requests.pop(device_ip, None)
+        if not self.monkey_batches.record_stop_result(
+            device_ip, result_batch,
+            success=bool(result.get("already_stopped") or result.get("success")),
+        ):
             return
-        if result_batch and not current_batch:
-            if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == result_batch:
-                stop_requests.pop(device_ip, None)
-            return
-        batch_id = current_batch or result_batch
-        stop_acks = _monkey_state_map(self, "_monkey_stop_acks")
-        run_terminals = _monkey_state_map(self, "_monkey_run_terminals")
         if result.get("already_stopped"):
             self._emit_operation(
                 "kill_monkey", True, f"ℹ️ {idx}. Monkey was not running on {device_ip}"
             )
-            stop_acks[device_ip] = batch_id
-            if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, str(device_ip))
-            return
-        if result.get("success"):
+        elif result.get("success"):
             self._emit_operation(
                 "kill_monkey", True, f"✅ {idx}. Monkey process killed on {device_ip}"
             )
-            stop_acks[device_ip] = batch_id
-            if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, str(device_ip))
         else:
-            if isinstance(stop_requests, dict) and stop_requests.get(device_ip) == batch_id:
-                stop_requests.pop(device_ip, None)
-            if stop_acks.get(device_ip) == batch_id:
-                stop_acks.pop(device_ip, None)
             self._emit_operation(
                 "kill_monkey",
                 False,
                 f"❌ {idx}. Failed to kill monkey on {device_ip}:"
                 f"\nError: {result.get('message', '')}",
             )
-            if run_terminals.get(device_ip) == batch_id:
-                _finalize_monkey_target(self, batch_id, str(device_ip))
-            return
+        _finalize_monkey_target(self, result_batch, str(device_ip))
 
     def run_monkey_test(self, devices: list, params: dict, batch_id: str = ""):
         devices = list(dict.fromkeys(device for device in devices if device))
@@ -292,22 +208,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             target_metadata = {}
         if not package_name:
             return self._emit_operation("monkey", False, "No package name provided")
-        # 同一设备只允许一个 Monkey 会话，避免重复启动后无法准确停止。
-        # 占位与会话登记在同一锁内原子完成；save_dir 失败时回滚占位。
-        if not hasattr(self, "_monkey_batch_by_device"):
-            self._monkey_batch_by_device = {}
-        with self._monkey_lock:
-            dupes = [d for d in devices if d in self._monkey_running]
-            if dupes:
-                self._emit_operation(
-                    "monkey", False, f"Monkey already running on: {', '.join(dupes)}"
-                )
-                for device in devices:
-                    _emit_monkey_target_finished(self, batch_id, device)
-                return
-            for d in devices:
-                self._monkey_running.add(d)
-                self._monkey_batch_by_device[d] = batch_id
+        snapshots = {}
         for idx, device_ip in enumerate(devices, 1):
             target_params = dict(params)
             if target_params["seed_mode"] == "random":
@@ -315,12 +216,22 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
             metadata = target_metadata.get(device_ip, {})
             if not isinstance(metadata, dict):
                 metadata = {}
-            _monkey_state_map(self, "_monkey_run_snapshots")[device_ip] = _MonkeyRunSnapshot(
+            snapshots[device_ip] = MonkeyRunSnapshot(
                 batch_id=batch_id, index=idx, parameters=dict(target_params),
                 started_at=time.time(),
                 device_label=str(metadata.get("device_label", f"Device {idx}")),
                 app_version=str(metadata.get("app_version", "")),
             )
+        # 所有目标一次登记，任何设备冲突都不留下半批占位。
+        with self._monkey_lock:
+            dupes = self.monkey_batches.reserve(snapshots)
+            if dupes:
+                self._emit_operation(
+                    "monkey", False, f"Monkey already running on: {', '.join(dupes)}"
+                )
+                for device in devices:
+                    _emit_monkey_target_finished(self, batch_id, device)
+                return
         try:
             save_dir = self._get_screenshot_dir()
         except (OSError, RuntimeError, ValueError) as exc:
@@ -330,10 +241,10 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 f"Failed to prepare Monkey output directory: {exc}",
             )
             for device in devices:
-                _monkey_state_map(self, "_monkey_run_results")[device] = {
-                    "success": False, "error": str(exc), "finished_at": time.time(),
-                }
-                _finalize_monkey_target(self, batch_id, device)
+                with self._monkey_lock:
+                    _publish_monkey_completion(self, self.monkey_batches.fail_start(
+                        device, batch_id, str(exc), finished_at=time.time(),
+                    ))
             return
         log = self.log_service.log
         pct_keys = [
@@ -360,7 +271,7 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
         )
         for idx, device_ip in enumerate(devices, 1):
             sanitized_name = re.sub(r"\W+", "_", device_ip)
-            snapshot = _monkey_state_map(self, "_monkey_run_snapshots")[device_ip]
+            snapshot = snapshots[device_ip]
             target_params = dict(snapshot.parameters)
             prepared = False
             try:
@@ -385,10 +296,10 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                     False,
                     f"Failed to submit Monkey test for {device_ip}: {exc}",
                 )
-                _monkey_state_map(self, "_monkey_run_results")[device_ip] = {
-                    "success": False, "error": str(exc), "finished_at": time.time(),
-                }
-                _finalize_monkey_target(self, batch_id, device_ip)
+                with self._monkey_lock:
+                    _publish_monkey_completion(self, self.monkey_batches.fail_start(
+                        device_ip, batch_id, str(exc), finished_at=time.time(),
+                    ))
 
     @staticmethod
     def _validated_monkey_params(params: dict) -> dict:
@@ -443,18 +354,8 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
     def _process_run_monkey_test_result(self, result: dict):
         device_ip = result.get("device_ip", "unknown")
         batch_id = str(result.get("batch_id", ""))
-        batch_map = getattr(self, "_monkey_batch_by_device", {})
-        if not isinstance(batch_map, dict):
-            batch_map = {}
-        current_batch = batch_map.get(device_ip, "")
-        if current_batch and batch_id != current_batch:
+        if not self.monkey_batches.record_terminal(device_ip, batch_id, result):
             return
-        if batch_id and not current_batch:
-            return
-        if current_batch:
-            batch_id = current_batch
-        if device_ip in _monkey_state_map(self, "_monkey_run_snapshots"):
-            _monkey_state_map(self, "_monkey_run_results")[device_ip] = dict(result)
         duration = result.get("duration", "N/A")
         monkey_log = result.get("monkey_log", "")
         logcat_log = result.get("logcat_log", "")
@@ -480,12 +381,5 @@ class ADBAppMonkeyMixin(_ADBControllerBase):
                 "╚════════════════════════════════════════════════════════════════╝"
             )
         emitted = self._emit_operation("monkey", bool(result.get("success")), message)
-        stop_requests = _monkey_state_map(self, "_monkey_stop_requests")
-        stop_acks = _monkey_state_map(self, "_monkey_stop_acks")
-        if stop_requests.get(device_ip) == batch_id:
-            run_terminals = _monkey_state_map(self, "_monkey_run_terminals")
-            run_terminals[device_ip] = batch_id
-            if stop_acks.get(device_ip) != batch_id:
-                return emitted
         _finalize_monkey_target(self, batch_id, device_ip)
         return emitted

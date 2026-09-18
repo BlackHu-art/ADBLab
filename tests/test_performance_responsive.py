@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt
+from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize, Qt, QThread
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import (
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import EditableComboBox, HeaderCardWidget, SmoothScrollArea
+from qfluentwidgets import EditableComboBox, HeaderCardWidget, PlainTextEdit, SmoothScrollArea
 from shiboken6 import isValid
 
 from core.settings_manager import DEFAULTS, AppSettings
@@ -178,7 +178,11 @@ def test_performance_keeps_persistent_configuration_cards_in_one_scroll_owner(
                     dialog.start_btn,
                 )
             )
-            assert dialog.findChildren(QScrollArea) == [dialog._config_scroll]
+            assert dialog.findChildren(QScrollArea) == [
+                dialog._config_scroll, dialog.chart_view._chart_scroll,
+            ]
+            assert not dialog.chart_view._chart_scroll.isVisibleTo(dialog)
+            assert dialog.chart_view._chart_scroll.widget() is dialog.chart_view._chart_view
             assert dialog._config_scroll.widget() is config_group
             qt_application.processEvents()
             diagnostic_fields = (
@@ -311,6 +315,15 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
     palette.setColor(QPalette.ColorRole.Window, base)
     host.setPalette(palette)
     host.setAutoFillBackground(True)
+    host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    reference_host = QWidget()
+    reference_host.setPalette(palette)
+    reference_host.setAutoFillBackground(True)
+    reference_host.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+    reference = PlainTextEdit(reference_host)
+    reference.setReadOnly(True)
+    QVBoxLayout(reference_host).addWidget(reference)
+    reference_host.resize(250, 180)
     dialog, _runner = _build_performance_page()
     layout = QVBoxLayout(host)
     layout.addWidget(dialog)
@@ -322,8 +335,33 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
         wait_for_stable_geometry(qt_application, (host, dialog, dialog._results_group))
         for current_theme in (theme, "Dark" if theme == "Light" else "Light", theme):
             BaseStyles.switch_theme(current_theme)
+            # 无云母的阅读框沿用 Fluent 原生绘制，在相同底色及焦点/悬停态下对照。
+            reference_host.show()
+            qt_application.setActiveWindow(reference_host)
+            reference_host.setFocus()
+            qt_application.processEvents()
+            for control in (reference, reference.viewport()):
+                qt_application.sendEvent(control, QEvent(QEvent.Type.Leave))
+                assert not control.underMouse()
+            assert not reference.hasFocus()
+            reference_image = reference_host.grab().toImage()
+            reference_point = reference.viewport().mapTo(
+                reference_host, QPoint(3, reference.viewport().height() // 2),
+            )
+            reference_scale = reference_image.devicePixelRatio()
+            expected_background = reference_image.pixelColor(
+                round(reference_point.x() * reference_scale),
+                round(reference_point.y() * reference_scale),
+            )
+            reference_host.hide()
+            qt_application.setActiveWindow(host)
+            host.setFocus()
             QTest.mouseMove(dialog._action_row, QPoint(4, 10))
             QTest.qWait(180)
+            for control in (dialog.log_view, dialog.log_view.viewport()):
+                qt_application.sendEvent(control, QEvent(QEvent.Type.Leave))
+                assert not control.underMouse()
+            assert not dialog.log_view.hasFocus()
             # 页头标签占满宽度，取文字自然宽度以外的空白，避免把字形当成底色。
             plan = dialog._configuration_sections[0]
             results = dialog._results_group
@@ -356,13 +394,12 @@ def test_performance_sections_inherit_blank_surface_but_keep_log_reading_backgro
                 round(position.x() * scale), round(position.y() * scale)
             )
             assert log_background != base
-            if current_theme == "Light":
-                assert log_background == QColor(
-                    BaseStyles.color_for("Light", "LOG_BACKGROUND")
-                )
+            assert log_background == expected_background
     finally:
         dialog.close()
         host.close()
+        reference_host.close()
+        reference_host.deleteLater()
         BaseStyles.switch_theme(original_theme)
 
 
@@ -408,7 +445,11 @@ def test_performance_bounds_configuration_and_results_in_one_scroll(
         assert dialog.width() <= 1200
         assert dialog.height() == 900
         config_group = dialog._config_group
-        assert dialog.findChildren(QScrollArea) == [dialog._config_scroll]
+        assert dialog.findChildren(QScrollArea) == [
+            dialog._config_scroll, dialog.chart_view._chart_scroll,
+        ]
+        assert not dialog.chart_view._chart_scroll.isVisibleTo(dialog)
+        assert dialog.chart_view._chart_scroll.widget() is dialog.chart_view._chart_view
         assert dialog._config_scroll.widget() is config_group
         assert config_group.isVisibleTo(dialog)
         assert_contained(dialog._config_scroll, dialog)
@@ -644,11 +685,7 @@ def test_late_package_callbacks_do_not_mutate_or_unlock_running_configuration(
 
     dialog, _runner = _build_performance_page(package="com.before")
 
-    class _FinishedWorker:
-        def deleteLater(self):
-            return None
-
-    worker = _FinishedWorker()
+    worker = QThread()
     dialog._package_worker = worker
     try:
         dialog._set_running(True)

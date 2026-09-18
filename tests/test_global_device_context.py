@@ -17,6 +17,7 @@ from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceConnectionForm, DeviceContextBar, DevicePicker
 from models.device_store import DeviceStore
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
+from tests.test_navigation_rendering import _native_content_color
 from tests.ui_geometry_helpers import (
     assert_scroll_target_reachable,
     mapped_rect,
@@ -39,6 +40,64 @@ def frame(monkeypatch):
         window._unbind_window_screen()
         window._close_ready = True
         window.close()
+
+
+def test_public_device_snapshot_preserves_admission_and_is_immutable(frame):
+    """设备真源继续由协调器拥有，快照不能被页面持有后改写。"""
+    from dataclasses import FrozenInstanceError
+
+    panel = frame.left_panel
+    frame._on_devices_updated(["demo-a", "demo-b"])
+    panel.set_selected_devices(["demo-a"])
+    snapshot = panel.device_context_snapshot()
+    assert snapshot.selected_devices == ("demo-a",)
+    assert snapshot.connected_devices == ("demo-a", "demo-b")
+    assert snapshot.discovery_state == "ready"
+    with pytest.raises(FrozenInstanceError):
+        snapshot.discovery_state = "empty"
+
+    panel.set_selected_devices(["demo-b"])
+    assert snapshot.selected_devices == ("demo-a",)
+    assert panel.device_context_snapshot().selected_devices == ("demo-b",)
+    panel.set_device_discovery_state("scanning")
+    assert panel.device_context_snapshot().selected_devices == ("demo-b",)
+    assert frame._remote_operation_devices() == []
+    panel.set_device_discovery_state("unavailable")
+    unavailable = panel.device_context_snapshot()
+    assert unavailable.selected_devices == ()
+    assert unavailable.connected_devices == ("demo-a", "demo-b")
+
+
+def test_connection_history_is_a_value_snapshot(frame):
+    panel = frame.left_panel
+    entry = panel._devices_tab.ip_entry
+    entry.clear()
+    entry.addItem("测试连接", userData="192.0.2.1:5555")
+    history = panel.connection_history()
+    assert history == [("测试连接", "192.0.2.1:5555")]
+    history.clear()
+    assert panel.connection_history() == [("测试连接", "192.0.2.1:5555")]
+
+
+def test_public_overview_transfer_preserves_widgets_and_controller_ownership(qt_application):
+    from gui.panels.side_panel import SidePanel
+
+    panel = SidePanel()
+    original_scroll = panel._tab_scroll_areas[0]
+    original_content = original_scroll.widget()
+    try:
+        scroll, content = panel.take_overview_content(0)
+        assert scroll is original_scroll
+        assert content is original_content
+        assert scroll.widget() is None
+        assert panel.app_panel.parent() is panel
+        assert panel.system_panel is None
+        assert panel.remote_panel is None
+        scroll.setWidget(content)
+        assert content.parent() is scroll.viewport()
+    finally:
+        panel.shutdown()
+        panel.close()
 
 
 def test_picker_updates_two_targets_once_and_refresh_does_not_emit(qt_application):
@@ -449,7 +508,7 @@ def test_device_popups_follow_fonts_and_compact_row_count(
 @pytest.mark.parametrize("theme", ["Light", "Dark"])
 def test_main_window_device_bar_surface_tracks_theme_switch(frame, qt_application, theme):
     """从整窗取像素，防止原生窗口继承旧调色板导致白条或白色按钮。"""
-    # 本例验证实色表面；云母的半透明遮罩及圆角由独立材质测试覆盖。
+    # 关闭云母仍保留原生内容层，设备栏必须透出同一层而非重复刷根背景。
     frame.setMicaEffectEnabled(False)
     frame.show()
     BaseStyles.switch_theme("Dark" if theme == "Light" else "Light")
@@ -458,8 +517,8 @@ def test_main_window_device_bar_surface_tracks_theme_switch(frame, qt_applicatio
     QTest.qWait(200)
     bar = frame._global_device_bar
     assert bar.isVisible()
-    background = QColor(BaseStyles.color("WINDOW_BG"))
-    assert bar.palette().color(QPalette.ColorRole.Window) == background
+    assert bar.palette().color(QPalette.ColorRole.Window) == QColor(BaseStyles.color("WINDOW_BG"))
+    background = _native_content_color(frame.backgroundColor)
     rendered = frame.grab().toImage()
     point = bar._surface.mapTo(frame, QPoint(2, 2))
     scale = rendered.devicePixelRatio()

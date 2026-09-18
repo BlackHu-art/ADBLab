@@ -875,6 +875,61 @@ def test_binding_column_minimums_match_weighted_plan_geometry_and_clear_when_nar
     assert layout.columnMinimumWidth(1) == 0
 
 
+def test_binding_updates_column_widths_without_replacing_layout_items(qt_application):
+    """度量或像素宽度变化不改变网格位置时，只更新尺寸约束。"""
+
+    class CountingGridLayout(QGridLayout):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.taken = 0
+            self.added = 0
+
+        def takeAt(self, index):
+            self.taken += 1
+            return super().takeAt(index)
+
+        def addWidget(self, *args, **kwargs):
+            self.added += 1
+            return super().addWidget(*args, **kwargs)
+
+    container = QWidget()
+    container.resize(200, 100)
+    layout = CountingGridLayout(container)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    widgets = (MetricWidget(40, 40), MetricWidget(40, 40))
+    coordinator = ResponsiveCoordinator()
+    binding = ResponsiveGridBinding(
+        container, layout, widgets, (WidthPolicy.NATURAL,) * 2,
+        (row_major_mode("two", 2, 0), row_major_mode("one", 1, 1)),
+        coordinator,
+        context_provider=lambda current: LayoutContext(
+            current.width(), current.height(), False, (), 0,
+        ),
+    )
+    first = binding.responsive_plan(binding.responsive_context())
+    binding.apply_responsive_plan(first)
+    items = tuple(layout.itemAt(index) for index in range(layout.count()))
+    writes = (layout.taken, layout.added)
+
+    for minimum, width in ((41, 201), (52, 212), (43, 203)):
+        widgets[0].minimum_hint_width = minimum
+        container.resize(width, 100)
+        plan = binding.responsive_plan(binding.responsive_context())
+        assert plan.mode == first.mode
+        assert plan.placements == first.placements
+        binding.apply_responsive_plan(plan)
+        assert [layout.columnMinimumWidth(index) for index in range(2)] == [minimum, 40]
+        assert (layout.taken, layout.added) == writes
+        assert tuple(layout.itemAt(index) for index in range(layout.count())) == items
+        assert binding.applied_plan is plan
+
+    container.show()
+    qt_application.processEvents()
+    assert widgets[0].width() >= 43
+    assert widgets[1].width() >= 40
+
+
 def test_binding_unregisters_when_container_is_destroyed(qt_application):
     container = QWidget()
     layout = QGridLayout(container)

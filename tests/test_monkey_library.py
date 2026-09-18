@@ -9,6 +9,7 @@ from unittest.mock import Mock
 import pytest
 from PySide6.QtTest import QSignalSpy
 
+from adblab.application.monkey_batch import MonkeyBatchCoordinator
 from controllers._app_monkey import ADBAppMonkeyMixin
 from controllers.signals import ADBControllerSignals
 from gui.panels.side_panel import SidePanel
@@ -60,7 +61,7 @@ def controller(qt_application, tmp_path):
     instance.log_service = Mock()
     instance._emit_operation = Mock()
     instance._get_screenshot_dir = Mock(return_value=str(tmp_path))
-    instance._monkey_running = set()
+    instance.monkey_batches = MonkeyBatchCoordinator()
     instance._monkey_lock = threading.RLock()
     yield instance
     instance.signals.deleteLater()
@@ -267,7 +268,7 @@ def test_each_target_gets_actual_random_seed_and_one_stable_record(
     assert len(first.artifacts) == 1 and first.app_version == "1.0 (10)"
     assert "demo-b" not in second.message and "demo-a" not in first.device_label
     assert first.started_at == 100.0 and first.finished_at == 120.0
-    assert not controller._monkey_run_snapshots and not controller._monkey_run_results
+    assert not controller.monkey_batches.pending()
 
 
 @pytest.mark.parametrize("ack_first", [True, False])
@@ -302,7 +303,7 @@ def test_start_failure_archives_per_target_and_releases_slots(controller, failur
     controller.run_monkey_test(["demo-a", "demo-b"], _parameters(), "batch-a")
     assert records.count() == 2
     assert all(records.at(index)[0].state == "failed" for index in range(2))
-    assert not controller._monkey_running and not controller._monkey_run_snapshots
+    assert not controller.monkey_batches.pending()
 
 
 def test_old_batch_result_cannot_replace_new_snapshot(controller):
@@ -357,4 +358,4 @@ def test_shutdown_without_terminal_distinguishes_confirmed_stop_and_residual_res
     record = records.at(0)[0]
     assert record.state == state and len(record.artifacts) == 1
     assert record.parameters["seed"] == 42 and record.finished_at >= 100
-    assert not controller._monkey_run_snapshots
+    assert not controller.monkey_batches.pending()

@@ -165,33 +165,21 @@ class ResponsiveGridBinding:
             layout.setHorizontalSpacing(plan.spacing)
         if layout.verticalSpacing() != plan.spacing:
             layout.setVerticalSpacing(plan.spacing)
-        structure = (
-            plan.mode.fingerprint,
-            tuple(placement.fingerprint for placement in plan.placements),
-            plan.column_widths,
-            plan.column_stretches,
-            plan.row_stretches,
+        previous_columns = max(
+            int(layout.property("responsiveColumnCount") or 0),
+            layout.columnCount(),
         )
-        current_structure = (
-            (
-                current.mode.fingerprint,
-                tuple(placement.fingerprint for placement in current.placements),
-                current.column_widths,
-                current.column_stretches,
-                current.row_stretches,
-            )
-            if current is not None
-            else None
+        previous_rows = max(
+            int(layout.property("responsiveRowCount") or 0),
+            layout.rowCount(),
         )
-        if structure != current_structure:
-            previous_columns = max(
-                int(layout.property("responsiveColumnCount") or 0),
-                layout.columnCount(),
-            )
-            previous_rows = max(
-                int(layout.property("responsiveRowCount") or 0),
-                layout.rowCount(),
-            )
+        # 像素宽度、字体度量和 stretch 只影响约束；位置不变时保留原布局项，
+        # 避免逐控件摘除重挂触发整棵窗口树重新布局。
+        if (
+            current is None
+            or current.mode.columns != plan.mode.columns
+            or current.placements != plan.placements
+        ):
             while layout.count():
                 layout.takeAt(0)
             for placement in plan.placements:
@@ -202,15 +190,20 @@ class ResponsiveGridBinding:
                     placement.row_span,
                     placement.column_span,
                 )
-            for column in range(max(previous_columns, plan.mode.columns)):
-                stretch = plan.column_stretches[column] if column < plan.mode.columns else 0
+        for column in range(max(previous_columns, plan.mode.columns)):
+            stretch = plan.column_stretches[column] if column < plan.mode.columns else 0
+            if layout.columnStretch(column) != stretch:
                 layout.setColumnStretch(column, stretch)
-                minimum_width = plan.column_widths[column] if column < plan.mode.columns else 0
+            minimum_width = plan.column_widths[column] if column < plan.mode.columns else 0
+            if layout.columnMinimumWidth(column) != minimum_width:
                 layout.setColumnMinimumWidth(column, minimum_width)
-            for row in range(max(previous_rows, len(plan.row_stretches))):
-                stretch = plan.row_stretches[row] if row < len(plan.row_stretches) else 0
+        for row in range(max(previous_rows, len(plan.row_stretches))):
+            stretch = plan.row_stretches[row] if row < len(plan.row_stretches) else 0
+            if layout.rowStretch(row) != stretch:
                 layout.setRowStretch(row, stretch)
+        if layout.property("responsiveColumnCount") != plan.mode.columns:
             layout.setProperty("responsiveColumnCount", plan.mode.columns)
+        if layout.property("responsiveRowCount") != len(plan.row_stretches):
             layout.setProperty("responsiveRowCount", len(plan.row_stretches))
         container = self._live_container()
         if self._use_provided_geometry:

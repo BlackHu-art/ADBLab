@@ -1,6 +1,7 @@
 """提供 Logcat 过滤、内容更新、采集与日志摄入的流式控制器。"""
 
 import os
+import re
 import tempfile
 import uuid
 import weakref
@@ -79,8 +80,8 @@ class LiveLogcatStream:
 
         if has_visible_content is None:
             has_visible_content = not self._frame.output.document().isEmpty()
-        self._frame.clear_btn.setEnabled(bool(self._frame.entries) or has_visible_content)
-        self._frame.export_btn.setEnabled(has_visible_content)
+        self._frame.clear_action.setEnabled(bool(self._frame.entries) or has_visible_content)
+        self._frame.export_action.setEnabled(has_visible_content)
         self._frame.output.setPlaceholderText(
             tr("当前等级下没有匹配的日志，可调整等级或等待新日志。")
             if self._frame.entries
@@ -97,7 +98,14 @@ class LiveLogcatStream:
             message += tr(" · 已暂停跟随（{count} 行新日志）").format(
                 count=self._frame._unseen_lines
             )
-        self._frame.reading_status.setText(message)
+        hint = tr("仅保留最近 {limit} 行原始日志，超出后移除最旧记录；导出保存当前筛选结果").format(
+            limit=self._frame.MAX_BUFFER,
+        )
+        ring = self._frame.cache_ring
+        ring.setRange(0, self._frame.MAX_BUFFER)
+        ring.setValue(len(self._frame.entries))
+        ring.setToolTip(f"{message}\n{hint}")
+        ring.setAccessibleDescription(ring.toolTip())
 
     def _on_output_scroll(self, _value):
         """手动上翻暂停跟随；程序追加和重排不改变用户的阅读选择。"""
@@ -105,7 +113,7 @@ class LiveLogcatStream:
             return
         bar = self._frame.output.verticalScrollBar()
         follow = bar.value() == bar.maximum()
-        self._frame.follow_btn.setChecked(follow)
+        self._frame.follow_action.setChecked(follow)
         if follow:
             self._frame._unseen_lines = 0
         self._refresh_reading_status()
@@ -140,7 +148,9 @@ class LiveLogcatStream:
             try:
                 requested = normalize_android_package(requested)
             except ValueError:
-                self._frame.status_bar.setText(tr("包名格式无效，请输入有效包名后按 Enter"))
+                self._frame.status_bar.setText(
+                    tr("包名格式无效，请输入有效包名后按 Enter"), tr("包名无效"),
+                )
                 return
         if self._frame._logcat_stopping:
             message = (
@@ -148,12 +158,14 @@ class LiveLogcatStream:
                 if requested
                 else tr("下次采集将显示全部设备日志")
             )
-            self._frame.status_bar.setText(message)
+            self._frame.status_bar.setText(message, tr("下次生效"))
             return
         worker = self._frame.worker
         if worker is not None and worker.is_active():
             if not self._frame._can_operate_device():
-                self._frame.status_bar.setText(tr("请在顶部勾选并连接当前设备后切换应用过滤"))
+                self._frame.status_bar.setText(
+                    tr("请在顶部勾选并连接当前设备后切换应用过滤"), tr("请连接设备"),
+                )
                 return
             if worker.update_package(requested):
                 # 旧代次尚未落屏的内容不能越过 Enter 提交形成的过滤边界。
@@ -167,14 +179,16 @@ class LiveLogcatStream:
                     if requested
                     else tr("正在显示全部设备日志")
                 )
-                self._frame.status_bar.setText(message)
+                self._frame.status_bar.setText(
+                    message, tr("切换过滤") if requested else tr("全部日志"),
+                )
             return
         message = (
             tr("应用过滤已就绪：{value0}").format(value0=requested)
             if requested
             else tr("将显示全部设备日志")
         )
-        self._frame.status_bar.setText(message)
+        self._frame.status_bar.setText(message, tr("过滤已就绪"))
 
     # ── 操作 ────────────────────────────────────────────────────────────
 
@@ -182,12 +196,14 @@ class LiveLogcatStream:
         if self._frame._closing or self._frame._logcat_stopping:
             return
         if not self._frame._can_operate_device():
-            self._frame.status_bar.setText(tr("请先勾选并连接当前设备，再获取当前应用"))
+            self._frame.status_bar.setText(
+                tr("请先勾选并连接当前设备，再获取当前应用"), tr("请连接设备"),
+            )
             self._frame._sync_device_actions()
             return
         if self._frame._pkg_worker and self._frame._pkg_worker.isRunning():
             return
-        self._frame.status_bar.setText(tr("正在获取设备前台应用…"))
+        self._frame.status_bar.setText(tr("正在获取设备前台应用…"), tr("查询应用"))
         self._frame.btn_get_pkg.setEnabled(False)
         worker = CurrentPackageWorker(self._frame.device_ip)
         worker._package_filter_revision = self._frame._package_filter_revision
@@ -211,7 +227,7 @@ class LiveLogcatStream:
             self._frame._disconnect_pkg_worker(worker)
             worker.deleteLater()
             self._frame._sync_device_actions()
-            self._frame.status_bar.setText(tr("无法启动应用查询，请稍后重试"))
+            self._frame.status_bar.setText(tr("无法启动应用查询，请稍后重试"), tr("查询失败"))
             return
         self._frame._pkg_worker = worker
         worker.start()
@@ -222,7 +238,9 @@ class LiveLogcatStream:
         if self._frame.worker and self._frame.worker.is_active():
             return
         if not self._frame._can_operate_device():
-            self._frame.status_bar.setText(tr("请先勾选并连接当前设备，再开始采集"))
+            self._frame.status_bar.setText(
+                tr("请先勾选并连接当前设备，再开始采集"), tr("请连接设备"),
+            )
             self._frame._set_running_actions(False)
             return
         self._frame._worker_release_timer.stop()
@@ -233,7 +251,7 @@ class LiveLogcatStream:
         self._frame._pending_evicted_visible = 0
         self._frame._line_flush_timer.stop()
         self._frame.output.clear()
-        self._frame.follow_btn.setChecked(True)
+        self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
         self._update_content_actions(False)
         pkg = self._frame.pkg_input.text().strip()
@@ -267,7 +285,7 @@ class LiveLogcatStream:
                 force_stop=worker.force_stop,
             )
         except Exception:
-            self._frame.status_bar.setText(tr("无法启动日志任务，请稍后重试"))
+            self._frame.status_bar.setText(tr("无法启动日志任务，请稍后重试"), tr("启动失败"))
             worker.deleteLater()
             return
         self._frame.worker = worker
@@ -277,7 +295,7 @@ class LiveLogcatStream:
 
     def _stop(self):
         if self._frame.worker and self._frame._supervisor_task_id:
-            self._frame.status_bar.setText(tr("正在停止采集…"))
+            self._frame.status_bar.setText(tr("正在停止采集…"), tr("停止中"))
             self._frame._set_running_actions(True, stopping=True)
             self._frame._task_supervisor.stop_async(self._frame._supervisor_task_id)
 
@@ -289,9 +307,9 @@ class LiveLogcatStream:
         self._frame._pending_evicted_visible = 0
         self._frame._line_flush_timer.stop()
         self._frame.output.clear()
-        self._frame.follow_btn.setChecked(True)
+        self._frame.follow_action.setChecked(True)
         self._frame._unseen_lines = 0
-        self._frame.status_bar.setText(tr("已清空日志；运行中的采集会继续"))
+        self._frame.status_bar.setText(tr("已清空日志；运行中的采集会继续"), tr("已清空"))
         self._update_content_actions(False)
 
     def _toggle_wrap(self):
@@ -308,13 +326,13 @@ class LiveLogcatStream:
         if self._frame.wrap_btn.isChecked():
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self._frame.wrap_btn.setText(tr("自动换行"))
-            self._frame.status_bar.setText(tr("已开启自动换行"))
+            self._frame.status_bar.setText(tr("已开启自动换行"), tr("换行已开"))
         else:
             self._frame.output.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
             self._frame.output.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            self._frame.wrap_btn.setText(tr("自动换行"))
-            self._frame.status_bar.setText(tr("已关闭自动换行，可横向滚动查看完整日志"))
+            self._frame.status_bar.setText(
+                tr("已关闭自动换行，可横向滚动查看完整日志"), tr("换行已关"),
+            )
 
     def _export(self):
         from core.settings_manager import AppSettings
@@ -343,7 +361,9 @@ class LiveLogcatStream:
                     except OSError:
                         pass
                     raise
-                self._frame.status_bar.setText(tr('日志已导出：{value0}').format(value0=os.path.basename(fp)))
+                self._frame.status_bar.setText(
+                    tr('日志已导出：{value0}').format(value0=os.path.basename(fp)), tr("已导出"),
+                )
             except OSError as e:
                 FluentMessageBox.critical(
                     self._frame,
@@ -411,7 +431,7 @@ class LiveLogcatStream:
             self._frame._pending_visible_lines.append(text)
         if getattr(self._frame, "_view_active", True):
             self._schedule_line_flush()
-        self._frame.clear_btn.setEnabled(True)
+        self._frame.clear_action.setEnabled(True)
 
     def _on_lines(self, worker: LogcatWorker, batch: LogcatBatch):
         try:
@@ -423,7 +443,8 @@ class LiveLogcatStream:
                 self._frame.status_bar.setText(
                     tr("正在采集；高负载下已丢弃 {value0} 行日志").format(
                         value0=batch.dropped_before
-                    )
+                    ),
+                    tr("已丢弃 {value0} 行").format(value0=batch.dropped_before),
                 )
             for text, level, pid in batch.lines:
                 self._on_line(text, level, pid)
@@ -433,7 +454,8 @@ class LiveLogcatStream:
     def _on_dropped(self, worker: LogcatWorker, count: int):
         if not self._frame._closing and self._frame.worker is worker:
             self._frame.status_bar.setText(
-                tr("正在采集；高负载下已丢弃 {value0} 行日志").format(value0=count)
+                tr("正在采集；高负载下已丢弃 {value0} 行日志").format(value0=count),
+                tr("已丢弃 {value0} 行").format(value0=count),
             )
 
     def _schedule_line_flush(self):
@@ -496,7 +518,22 @@ class LiveLogcatStream:
     def _on_status(self, msg: str):
         if self._frame._closing:
             return
-        self._frame.status_bar.setText(msg)
+        # 兼容 worker 现有的原始字符串信号，只为已知状态提供摘要；未知诊断保留原文。
+        compact = {
+            "正在启动日志采集…": tr("启动中"),
+            "正在采集": tr("采集中"),
+            "正在采集，显示全部设备日志": tr("采集中"),
+            "应用进程查询失败，正在重试；过滤期间不会显示其他应用日志": tr("查询重试"),
+            "正在等待目标应用启动；过滤期间不会显示其他应用日志": tr("等待应用"),
+            "未找到前台应用，请在设备上打开应用后重试": tr("未找到应用"),
+            "日志采集无法继续，请检查设备连接后重试": tr("采集异常"),
+            "包名格式无效，请输入有效包名后按 Enter": tr("包名无效"),
+        }.get(msg)
+        if re.fullmatch(r"正在采集 · 应用过滤生效（\d+ 个进程）", msg):
+            compact = tr("过滤生效")
+        elif msg.startswith("查询前台应用失败："):
+            compact = tr("查询失败")
+        self._frame.status_bar.setText(msg, compact)
 
     def _on_worker_status(self, worker: LogcatWorker, msg: str):
         if self._frame.worker is worker:
@@ -506,8 +543,12 @@ class LiveLogcatStream:
         if self._frame._closing or self._frame.worker is not worker:
             return
         if result.kind is LogcatTerminationKind.CANCELLED:
-            self._frame.status_bar.setText(tr("已请求停止采集"))
+            self._frame.status_bar.setText(tr("已请求停止采集"), tr("停止中"))
         elif result.kind is LogcatTerminationKind.START_FAILED:
-            self._frame.status_bar.setText(tr("日志采集启动失败，请检查设备连接后重试"))
+            self._frame.status_bar.setText(
+                tr("日志采集启动失败，请检查设备连接后重试"), tr("启动失败"),
+            )
         else:
-            self._frame.status_bar.setText(tr("日志采集意外结束，请检查设备连接后重新开始"))
+            self._frame.status_bar.setText(
+                tr("日志采集意外结束，请检查设备连接后重新开始"), tr("采集异常"),
+            )
