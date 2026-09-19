@@ -592,6 +592,8 @@ class AppPanel(BasePanel):
         self._recording_active_devices = ()
         self._recording_pending_count = 0
         self._recording_pending_devices = set()
+        # 与 _on_record_start 的重置保持一致，回调不依赖启动时的赋值顺序。
+        self._recording_retryable_devices = set()
         self._recording_batch_id = ""
         self._recording_stopping = False
         self._monkey_active_devices = ()
@@ -912,7 +914,7 @@ class AppPanel(BasePanel):
         )
 
     def _on_record_start(self):
-        if getattr(self, "_recording_running", False):
+        if getattr(self, "_recording_running", False) and not self._recording_can_replace():
             return
         devices = tuple(dict.fromkeys(device for device in self.selected_devices if device))
         if not devices:
@@ -921,6 +923,7 @@ class AppPanel(BasePanel):
         self._recording_active_devices = devices
         self._recording_pending_count = len(devices)
         self._recording_pending_devices = set(devices)
+        self._recording_retryable_devices = set()
         self._recording_batch_id = uuid.uuid4().hex
         self._recording_stopping = False
         self._recording_running = True
@@ -939,9 +942,28 @@ class AppPanel(BasePanel):
         batch_id = getattr(self, "_recording_batch_id", "")
         if not targets or not batch_id:
             return
+        # 提交后的目标重新进入等待态；一个目标失败不能把其他在途重试当作可替换历史。
+        self._recording_retryable_devices.difference_update(targets)
         self._recording_stopping = True
         self._update_action_states()
         self.signals.stop_screen_record_batch_requested.emit(list(targets), batch_id)
+
+    def _recording_can_replace(self) -> bool:
+        """全部待保存目标已失败且没有重试在途时，允许用户开始新录屏。"""
+        pending = getattr(self, "_recording_pending_devices", set())
+        return bool(
+            pending and pending <= getattr(self, "_recording_retryable_devices", set())
+            and not getattr(self, "_recording_stopping", False)
+        )
+
+    def on_recording_target_retryable(self, batch_id: str, device: str) -> None:
+        """只解锁当前批次待保存目标；不借用新选择，也不接受旧批次晚到失败。"""
+        if (batch_id != getattr(self, "_recording_batch_id", "")
+                or device not in getattr(self, "_recording_pending_devices", set())):
+            return
+        self._recording_retryable_devices.add(device)
+        self._recording_stopping = False
+        self._update_action_states()
 
     def on_recording_target_finished(self, batch_id: str, device: str) -> None:
         """仅消费当前批次中尚未完成的设备终态。"""
@@ -952,11 +974,17 @@ class AppPanel(BasePanel):
         if device not in pending_devices:
             return
         pending_devices.discard(device)
+        getattr(self, "_recording_retryable_devices", set()).discard(device)
         self._recording_pending_count = len(pending_devices)
+        self._recording_active_devices = tuple(
+            item for item in self._recording_active_devices if item in pending_devices
+        )
         if pending_devices:
+            self._update_action_states()
             return
         self._recording_pending_count = 0
         self._recording_pending_devices = set()
+        self._recording_retryable_devices = set()
         self._recording_active_devices = ()
         self._recording_batch_id = ""
         self._recording_stopping = False
@@ -1260,7 +1288,10 @@ class AppPanel(BasePanel):
         )
         self._set_action_enabled(
             "btn_screen_record",
-            has_device and not bool(getattr(self, "_recording_running", False)),
+            has_device and (
+                not bool(getattr(self, "_recording_running", False))
+                or self._recording_can_replace()
+            ),
             tr("请先选择设备") if not has_device else tr("屏幕录制已在运行"),
         )
         self._set_action_enabled(
@@ -1274,6 +1305,14 @@ class AppPanel(BasePanel):
                 else tr("当前没有正在运行的录屏")
             ),
         )
+        pending_recordings = getattr(self, "_recording_pending_devices", set())
+        retrying_save = bool(
+            pending_recordings
+            and pending_recordings <= getattr(self, "_recording_retryable_devices", set())
+        )
+        self.btn_stop_record.setText(tr("重试保存") if retrying_save else tr("停止录屏"))
+        if retrying_save:
+            self.btn_stop_record.setToolTip(tr("重新下载并保存原批次录屏"))
         monkey_running = bool(getattr(self, "_monkey_running", False))
         preparing = self._monkey_preparation is not None
         self.monkey_parameters_card.setEnabled(

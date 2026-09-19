@@ -4,7 +4,7 @@ import re
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QEvent, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, Qt, Signal
 from PySide6.QtWidgets import QWidget
 
 from gui.dialogs.app_manager import AppManagerPage
@@ -163,10 +163,57 @@ def test_permission_submission_uses_raw_names_after_translation(
     qt_application, monkeypatch, dialog_language, language,
 ):
     dialog_language(language)
+    created: list = []
+
+    class _FakePermissionWorker(QObject):
+        """复刻权限写入 worker 的最小信号面，用于驱动逐项串行批次。"""
+
+        app_details_loaded = Signal(dict)
+        permissions_loaded = Signal(list, list, list)
+        operation_done = Signal(str)
+        operation_feedback = Signal(str, str)
+        log_message = Signal(str)
+        finished = Signal()
+
+        def __init__(self, _device, operation, **kwargs):
+            super().__init__()
+            self.operation = operation
+            self.kwargs = kwargs
+            self.running = False
+            created.append(self)
+
+        def start(self) -> None:
+            self.running = True
+
+        def isRunning(self) -> bool:
+            return self.running
+
+        def abort(self) -> None:
+            self.running = False
+
+        def finish(self) -> None:
+            self.running = False
+            if self.operation == "modify_permission":
+                self.operation_done.emit("permissions_changed")
+            self.finished.emit()
+
+    monkeypatch.setattr(
+        "gui.dialogs.app_manager_details.AppManagerWorker", _FakePermissionWorker
+    )
+    monkeypatch.setattr(
+        "gui.dialogs.app_manager_details.report_feedback", lambda *args, **kwargs: None
+    )
     page = AppDetailsPage(device_ip="demo-device")
     page.package_name = "com.example.demo"
-    monkeypatch.setattr(page, "_rw", Mock())
     monkeypatch.setattr(page, "_can_operate", lambda: True)
+
+    def submitted_permissions() -> list:
+        return [
+            (worker.kwargs["permission"], worker.kwargs["action"])
+            for worker in created
+            if worker.operation == "modify_permission"
+        ]
+
     try:
         page._op([], ["android.permission.RECORD_AUDIO"], [("android.permission.CAMERA", True)])
         page.runtime_list.item(0).setCheckState(Qt.CheckState.Checked)
@@ -175,10 +222,18 @@ def test_permission_submission_uses_raw_names_after_translation(
         page.runtime_list.item(0).setText("Translated permission label")
         page.requested_list.item(0).setText("Another translated label")
         page._mp("grant")
-        permissions = [call.kwargs["permission"] for call in page._rw.call_args_list]
-        assert permissions == ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"]
-        assert all(call.kwargs["action"] == "grant" for call in page._rw.call_args_list)
+        assert submitted_permissions() == [("android.permission.CAMERA", "grant")]
+        created[0].finish()
+        qt_application.processEvents()
+        assert submitted_permissions() == [
+            ("android.permission.CAMERA", "grant"),
+            ("android.permission.RECORD_AUDIO", "grant"),
+        ]
     finally:
+        for worker in created:
+            if worker.running:
+                worker.finish()
+        qt_application.processEvents()
         page.close()
 
 

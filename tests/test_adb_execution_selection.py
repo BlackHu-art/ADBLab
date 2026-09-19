@@ -20,7 +20,7 @@ def missing_client(monkeypatch):
 
 def test_missing_client_short_command_cannot_fall_back_to_path(missing_client, monkeypatch):
     spawn = Mock(return_value=SimpleNamespace(returncode=0, stdout="", stderr=""))
-    monkeypatch.setattr(execution.subprocess, "run", spawn)
+    monkeypatch.setattr(execution, "run_native", spawn)
     result = execution.CommandRunner.run(["adb", "devices"])
     assert not result.success
     assert "ADB" in result.error
@@ -32,7 +32,7 @@ def test_missing_client_does_not_truncate_existing_output(missing_client, monkey
     target = tmp_path / "existing.png"
     target.write_bytes(b"previous image")
     spawn = Mock(return_value=SimpleNamespace(returncode=0, stderr=b""))
-    monkeypatch.setattr(execution.subprocess, "run", spawn)
+    monkeypatch.setattr(execution, "run_native", spawn)
     result = execution.CommandRunner.run_to_file(
         ["adb", "exec-out", "screencap", "-p"], str(target),
     )
@@ -234,7 +234,7 @@ def test_explicit_missing_adb_has_no_output_or_replacement_side_effect(
     if entry == "file":
         target = tmp_path / "output"
         target.write_bytes(b"old output")
-        monkeypatch.setattr(execution.subprocess, "run", Mock(side_effect=FileNotFoundError("ADB")))
+        monkeypatch.setattr(execution, "run_native", Mock(side_effect=FileNotFoundError("ADB")))
         result = execution.CommandRunner.run_to_file(cmd, str(target))
         assert not result.success
         assert target.read_bytes() == b"old output"

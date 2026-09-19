@@ -6530,5 +6530,17 @@ Android device management, apps and diagnostics</translation>
             <source>无法启动应用任务，请重试。</source>
             <translation>Unable to start the app operation. Please try again.</translation>
         </message>
+        <message>
+            <source>重试保存</source>
+            <translation>Retry saving</translation>
+        </message>
+        <message>
+            <source>重新下载并保存原批次录屏</source>
+            <translation>Download and save the original recording batch again</translation>
+        </message>
+        <message>
+            <source>Invalid UTF-8 text; editing is disabled</source>
+            <translation>Invalid UTF-8 text; editing is disabled</translation>
+        </message>
     </context>
 </TS>

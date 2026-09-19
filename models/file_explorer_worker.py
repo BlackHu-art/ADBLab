@@ -1,13 +1,19 @@
 """提供在 QThread 中执行 ADB Shell 和文件传输的后台任务。"""
 
 import os
+import posixpath
 import subprocess
+import tempfile
 import threading
 import time
+import uuid
+from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
 from core.exec import CommandRunner, ProcessRunner
+from core.log_service import LogService
+from services import file_explorer as explorer_service
 
 
 class ADBWorker(QThread):
@@ -41,6 +47,170 @@ class ADBWorker(QThread):
             self.result_ready.emit(result.output, False)
         else:
             self.result_ready.emit(result.error, True)
+
+
+class TextReadWorker(ADBWorker):
+    """正文通过无 PTY 的原始字节通道读取，本地文件仅由后台任务拥有。"""
+
+    result_ready = Signal(object, bool)
+
+    def __init__(self, device_ip: str, path: str, use_root: bool, byte_limit: int):
+        self._completion_marker = f"ADBLAB_TEXT_END_{uuid.uuid4().hex}".encode("ascii")
+        command = explorer_service.root_command(
+            explorer_service.head_command(path, byte_limit + 1)
+            + f" && printf %s {explorer_service.shell_quote(self._completion_marker.decode())}",
+            use_root,
+        )
+        super().__init__(device_ip, ["shell", "-T", command])
+        self.byte_limit = byte_limit
+
+    def run(self):
+        """在成功、失败与取消路径都关闭并删除原始字节暂存文件。"""
+        if self._aborted.is_set():
+            return
+        try:
+            with tempfile.TemporaryDirectory(prefix="adblab-text-read-") as temporary:
+                path = Path(temporary) / "content"
+                result = CommandRunner.run_to_file(
+                    ["adb", "-s", self.device_ip] + self.args, str(path),
+                    timeout=self.timeout, cancelled=self._aborted.is_set,
+                )
+                if self._aborted.is_set():
+                    return
+                if result.success:
+                    with path.open("rb") as stream:
+                        raw = stream.read(self.byte_limit + 1 + len(self._completion_marker))
+                    # 旧设备可能不传递远端退出码，完成标记防止把命令错误当成可编辑正文。
+                    if not raw.endswith(self._completion_marker):
+                        raise OSError("Unable to read complete text preview")
+                    raw = raw[:-len(self._completion_marker)]
+                    self.result_ready.emit(raw, False)
+                else:
+                    self.result_ready.emit(result.error, True)
+        except OSError as exc:
+            if not self._aborted.is_set():
+                self.result_ready.emit(str(exc), True)
+
+
+class TextSaveWorker(ADBWorker):
+    """固定设备和正文快照，在后台上传并发布；清理独立于已取消的操作。"""
+
+    def __init__(self, device_ip: str, path: str, content: bytes, use_root: bool):
+        super().__init__(device_ip, [], timeout=120)
+        self.path = path
+        self.content = content
+        self.use_root = use_root
+
+    def _shell(self, command: str, *, root: bool, cleanup: bool = False):
+        return CommandRunner.run(
+            ["adb", "-s", self.device_ip, "shell", explorer_service.root_command(command, root)],
+            timeout=15 if cleanup else 30,
+            cancelled=None if cleanup else self._aborted.is_set,
+        )
+
+    def run(self):
+        """上传正文不进入 argv；发布前任一步失败保留原文件，终态晚于清理。"""
+        if self._aborted.is_set():
+            return
+        owned: list[tuple[str, bool]] = []
+        error = ""
+        try:
+            resolved = self._shell(
+                explorer_service.resolve_text_target_command(self.path), root=self.use_root,
+            )
+            if not resolved.success:
+                raise OSError(resolved.error or "Unable to resolve writable text file")
+            if (not resolved.output.startswith("ADBLAB_TARGET:")
+                    or not resolved.output.endswith(":END")):
+                raise OSError("Unable to resolve writable text file")
+            target = resolved.output[len("ADBLAB_TARGET:"):-len(":END")]
+            if not target.startswith("/") or any(char in target for char in "\0\r\n"):
+                raise OSError("Invalid text file target")
+            token = uuid.uuid4().hex
+            directory = posixpath.join(posixpath.dirname(target), f".adblab-save-{token}")
+            upload_directory = (
+                f"/data/local/tmp/adblab-save-{token}" if self.use_root else directory
+            )
+            for remote, root in [(directory, self.use_root)] + (
+                [(upload_directory, False)] if self.use_root else []
+            ):
+                if self._aborted.is_set():
+                    return
+                # 即使命令返回在取消时丢失，归属标记仍允许收口本次已创建的目录。
+                owned.append((remote, root))
+                result = self._shell(
+                    explorer_service.prepare_text_directory_command(remote), root=root,
+                )
+                if not result.success:
+                    raise OSError(result.error or "Unable to prepare text save")
+            with tempfile.TemporaryDirectory(prefix="adblab-text-save-") as temporary:
+                local = Path(temporary) / "content"
+                local.write_bytes(self.content)
+                if self._aborted.is_set():
+                    return
+                uploaded = f"{upload_directory}/upload"
+                pushed = CommandRunner.run(
+                    ["adb", "-s", self.device_ip, "push", str(local), uploaded],
+                    timeout=self.timeout, cancelled=self._aborted.is_set,
+                )
+                if not pushed.success:
+                    raise OSError(pushed.error or "Unable to upload text")
+                if self._aborted.is_set():
+                    return
+                published = self._shell(
+                    explorer_service.publish_text_command(target, directory, uploaded),
+                    root=self.use_root,
+                )
+                if not published.success:
+                    raise OSError(published.error or "Unable to publish text")
+        except OSError as exc:
+            error = str(exc)
+        finally:
+            for remote, root in reversed(owned):
+                result = self._shell(
+                    explorer_service.cleanup_text_directory_command(remote),
+                    root=root, cleanup=True,
+                )
+                if not result.success:
+                    error = error or "Text save temporary cleanup failed"
+                    LogService().log("WARNING", "文本保存临时文件清理失败，请检查设备连接。")
+            if not self._aborted.is_set():
+                self.result_ready.emit(error or "OK", bool(error))
+
+
+class LocalTextSaveWorker(ADBWorker):
+    """本地另存为同样在后台写临时文件，取消或失败不覆盖旧文件。"""
+
+    def __init__(self, path: str, content: bytes):
+        super().__init__("", [])
+        self.path = path
+        self.content = content
+
+    def run(self):
+        """临时文件始终位于目标目录，发布后才发送成功。"""
+        if self._aborted.is_set():
+            return
+        temporary = ""
+        error = ""
+        try:
+            fd, temporary = tempfile.mkstemp(
+                prefix=".adblab-save-", dir=str(Path(self.path).parent),
+            )
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(self.content)
+            if self._aborted.is_set():
+                return
+            os.replace(temporary, self.path)
+        except OSError as exc:
+            error = str(exc)
+        finally:
+            if temporary:
+                try:
+                    Path(temporary).unlink(missing_ok=True)
+                except OSError as exc:
+                    error = error or str(exc)
+            if not self._aborted.is_set():
+                self.result_ready.emit(error or "OK", bool(error))
 
 
 class TransferWorker(QThread):

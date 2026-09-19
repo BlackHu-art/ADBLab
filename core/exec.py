@@ -578,6 +578,20 @@ class ProcessRunner:
             self._unregister_global(key, proc)
         return code
 
+    def release_finished(self, key: str, process: ExecHandle) -> bool:
+        """只解除已退出的指定实例；旧回调不能移除复用 key 的新进程。
+
+        此入口不等待进程、不关闭流；读取端由相应 reader 在退出时关闭。
+        """
+        if process.poll() is None:
+            return False
+        with self._lock:
+            if self._procs.get(key) is not process:
+                return False
+            self._procs.pop(key)
+        self._unregister_global(key, process)
+        return True
+
     def request_stop(self, key: str) -> bool:
         """请求进程正常终止，但不等待退出，也不提前移除跟踪记录。"""
 
@@ -818,7 +832,7 @@ class ProcessRunner:
             with self._global_lock:
                 self._global_procs[(self._instance_id, key)] = proc
 
-    def _unregister_global(self, key: str, proc: subprocess.Popen | None):
+    def _unregister_global(self, key: str, proc: ExecHandle | None):
         if proc is None:
             return
         with self._global_lock:

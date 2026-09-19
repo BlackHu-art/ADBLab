@@ -109,6 +109,7 @@ class FileExplorerPage(QWidget):
         self._list_controller = FileExplorerList(self)
         self._view_controller = FileExplorerView(self)
         self._ops_controller = FileExplorerOps(self)
+        self._preview_text_source: explorer_service.TextPreview | None = None
         self.device_ip = device_ip
         self._device_connected = bool(device_ip)
         self._device_selected = bool(device_ip)
@@ -294,6 +295,7 @@ class FileExplorerPage(QWidget):
         self.root_cb.setToolTip(tr("Use root access (su)"))
         self.root_cb.setAccessibleName(tr("Use root access"))
         self.root_cb.toggled.connect(self._list_controller.cancel_link_requests)
+        self.root_cb.toggled.connect(self._view_controller.invalidate_cache)
         command_layout = QHBoxLayout()
         command_layout.setContentsMargins(0, 0, 0, 0)
         command_layout.setSpacing(8)
@@ -464,6 +466,8 @@ class FileExplorerPage(QWidget):
     def _begin_preview_request(self, title: str) -> int:
         self._view_controller.cancel_preview()
         self._preview_request_id += 1
+        self._preview_text_source = None
+        self._preview_full_path = ""
         self._show_preview_loading(title)
         return self._preview_request_id
 
@@ -477,19 +481,30 @@ class FileExplorerPage(QWidget):
         full_path: str,
         *,
         editable: bool = True,
+        source: explorer_service.TextPreview | None = None,
     ) -> None:
         self._preview_active = True
         self._preview_name = name
         self._preview_full_path = full_path
+        self._preview_text_source = source or explorer_service.decode_text_preview(
+            content.encode("utf-8"), len(content.encode("utf-8")),
+        )
         self.preview_title.setText(name)
         self.preview_text_edit.setPlainText(content)
+        self.preview_text_edit.document().setModified(False)
         self.preview_text_edit.setReadOnly(not editable)
         self.preview_save_as_btn.setEnabled(editable)
-        self.preview_save_device_btn.setEnabled(editable and self._can_operate())
+        self.preview_save_device_btn.setEnabled(
+            editable and self._can_operate() and not self._ops_controller.saving,
+        )
         self.preview_stack.setCurrentWidget(self.preview_text_page)
         self._sync_preview_layout()
         if not editable:
-            self.status_bar.setText(tr("Preview truncated; editing is disabled"))
+            self.status_bar.setText(
+                tr("Preview truncated; editing is disabled")
+                if source is None or source.truncated
+                else tr("Invalid UTF-8 text; editing is disabled")
+            )
         else:
             self.status_bar.setText(tr('Previewing {value0}').format(value0=name))
         self.preview_text_edit.setFocus(Qt.FocusReason.OtherFocusReason)
@@ -498,6 +513,7 @@ class FileExplorerPage(QWidget):
         self._preview_active = True
         self._preview_name = name
         self._preview_full_path = ""
+        self._preview_text_source = None
         self.preview_title.setText(name)
         self.preview_image.set_image_source(pixmap, name, native_size)
         self.preview_stack.setCurrentWidget(self.preview_image)
@@ -507,6 +523,7 @@ class FileExplorerPage(QWidget):
         self._preview_active = True
         self._preview_name = name
         self._preview_full_path = ""
+        self._preview_text_source = None
         self.preview_title.setText(tr('Output: {value0}').format(value0=name))
         self.preview_output.setPlainText(output)
         self.preview_output.setProperty("previewError", bool(error))
@@ -521,6 +538,7 @@ class FileExplorerPage(QWidget):
 
     def _show_preview_error(self, title: str, message: str) -> None:
         self._preview_active = True
+        self._preview_text_source = None
         self.preview_title.setText(title)
         self.preview_output.setPlainText(message or tr("Unable to load preview"))
         self.preview_output.setProperty("previewError", True)
@@ -537,6 +555,7 @@ class FileExplorerPage(QWidget):
         self._preview_active = False
         self._preview_name = ""
         self._preview_full_path = ""
+        self._preview_text_source = None
         self.preview_title.setText(tr("Preview"))
         self.preview_stack.setCurrentWidget(self.preview_empty_page)
         self._sync_preview_layout()
@@ -544,14 +563,27 @@ class FileExplorerPage(QWidget):
             self.table.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def _save_preview_as(self) -> None:
-        if self._preview_name:
-            self._save_as(self._preview_name, self.preview_text_edit.toPlainText())
+        content = self._preview_bytes()
+        if self._preview_name and content is not None:
+            self._save_as(self._preview_name, content)
+
+    def _preview_bytes(self) -> bytes | None:
+        """只允许完整正文保存；未编辑时返回读取快照，避免 Qt 换行转换。"""
+        source = self._preview_text_source
+        if (source is None or not source.editable or self.preview_text_edit.isReadOnly()
+                or self.preview_stack.currentWidget() is not self.preview_text_page):
+            return None
+        return source.encode(
+            self.preview_text_edit.toPlainText(),
+            modified=self.preview_text_edit.document().isModified(),
+        )
 
     def _save_preview_to_device(self) -> None:
-        if self._preview_name and self._preview_full_path:
+        content = self._preview_bytes()
+        if self._preview_name and self._preview_full_path and content is not None:
             self._save_to_device(
                 self._preview_name,
-                self.preview_text_edit.toPlainText(),
+                content,
                 self._preview_full_path,
             )
 
@@ -602,6 +634,7 @@ class FileExplorerPage(QWidget):
         self.table.setEnabled(interactive)
         self.preview_save_device_btn.setEnabled(
             available and bool(self._preview_full_path) and not self.preview_text_edit.isReadOnly()
+            and not self._ops_controller.saving
         )
         self.operation_availability_changed.emit(available)
 
@@ -1200,6 +1233,7 @@ class FileExplorerPage(QWidget):
         self._refresh_status_badge()
         self._sync_directory_controls()
         if not self._device_selected:
+            self._ops_controller.cancel_save()
             self._transfers.cancel_pending()
             self.status_bar.setText(
                 tr("Select this device in the device bar to perform file operations")
@@ -1228,6 +1262,7 @@ class FileExplorerPage(QWidget):
             self._set_directory_loading(False)
         self._sync_directory_controls()
         if not connected:
+            self._ops_controller.cancel_save()
             self._transfers.cancel_pending()
             self.status_bar.setText(tr("Device offline; reconnect or choose another device"))
         elif (became_available and self._can_operate() and self._active

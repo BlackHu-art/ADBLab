@@ -16,6 +16,7 @@ from gui.dialogs.file_explorer_preview_tasks import (
 )
 from gui.i18n import tr
 from gui.styles.fluent import add_menu_action
+from models.file_explorer_worker import TextReadWorker
 from services import file_explorer as explorer_service
 
 MAX_TEXT_VIEW_BYTES = 2 * 1024 * 1024
@@ -70,6 +71,7 @@ class FileExplorerView:
         self._cache_generation = 0
         self._session_id = uuid.uuid4().hex
         self._request: _ImageRequest | None = None
+        self._text_request_id: int | None = None
 
     # ── 双击操作 ────────────────────────────────────────────────────────
 
@@ -104,10 +106,11 @@ class FileExplorerView:
             self._view_image(name, full)
         else:
             request_id = self._frame._begin_preview_request(name)
-            shell = self._frame._root(explorer_service.head_command(full, MAX_TEXT_VIEW_BYTES + 1))
-            w = self._frame._run_adb("shell", shell)
-            if w is None:
-                return
+            self._text_request_id = request_id
+            generation = self._cache_generation
+            w = self._frame._track_worker(TextReadWorker(
+                self._frame.device_ip, full, self._frame.root_cb.isChecked(), MAX_TEXT_VIEW_BYTES,
+            ))
             self._frame._connect_worker_ui(
                 w,
                 w.result_ready,
@@ -117,7 +120,7 @@ class FileExplorerView:
                     e,
                     full,
                     request_id=request_id,
-                ),
+                ) if generation == self._cache_generation else None,
             )
             self._frame._transfers.enqueue(w, preview=True)
 
@@ -298,6 +301,7 @@ class FileExplorerView:
 
     def cancel_preview(self) -> None:
         """只请求取消当前预览，资源由终态回调收口，不等待或中止普通传输。"""
+        self._text_request_id = None
         if self._request is not None:
             self._request.cancelled = True
             self._request = None
@@ -307,7 +311,7 @@ class FileExplorerView:
         """刷新或连接边界失效缓存，阻止旧请求重新写回这一代像素。"""
         self._cache_generation += 1
         self._cache.clear()
-        if self._request is not None:
+        if self._request is not None or self._text_request_id is not None:
             self._frame._close_preview()
 
     def _show_image(
@@ -341,7 +345,7 @@ class FileExplorerView:
     def _show_text_viewer(
         self,
         name: str,
-        content: str,
+        content: bytes | str,
         error: bool,
         full_path: str,
         *,
@@ -349,15 +353,19 @@ class FileExplorerView:
     ):
         if request_id is not None and not self._frame._preview_request_is_current(request_id):
             return
+        if request_id == self._text_request_id:
+            self._text_request_id = None
         if error:
-            self._frame._show_preview_error(name, content)
+            self._frame._show_preview_error(name, str(content))
             return
-        truncated = len(content.encode("utf-8", errors="ignore")) > MAX_TEXT_VIEW_BYTES
+        raw = content.encode("utf-8") if isinstance(content, str) else content
+        source = explorer_service.decode_text_preview(raw, MAX_TEXT_VIEW_BYTES)
         self._frame._show_text_preview(
             name,
-            content,
+            source.text,
             full_path,
-            editable=not truncated,
+            editable=source.editable,
+            source=source,
         )
 
     def _remove_temporary_file(self, path: str) -> None:

@@ -100,9 +100,12 @@ def test_file_double_click_menu_reaches_transfer_or_inline_preview(
         qt_application.processEvents()
         assert not page._workers
     elif name == "notes.txt":
-        assert worker.args[0] == "shell"
-        assert shlex.split(worker.args[1]) == ["head", "-c", "2097153", remote_path]
-        worker.result_ready.emit("permission denied" if failed else "file contents", failed)
+        assert worker.args[:2] == ["shell", "-T"]
+        command = shlex.split(worker.args[2])
+        assert command[:4] == ["head", "-c", "2097153", remote_path]
+        assert command[4:7] == ["&&", "printf", "%s"]
+        assert command[7].startswith("ADBLAB_TEXT_END_")
+        worker.result_ready.emit("permission denied" if failed else b"file contents", failed)
         qt_application.processEvents()
         expected = page.preview_output if failed else page.preview_text_page
         assert page.preview_stack.currentWidget() is expected

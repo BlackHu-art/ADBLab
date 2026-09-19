@@ -148,10 +148,12 @@ class ActionFeedbackPresenter(QObject):
         if result.state != "running" and result.request_id not in self._ended:
             self._ended.add(result.request_id)
             if len(self._ended) > 160:
-                self._ended = {
-                    item.request_id for item in self.frame.adb_controller.action_results.recent()
-                }
-                self._started.intersection_update(self._ended)
+                retained = self.frame.adb_controller.action_results.recent()
+                # 去重只保留真正发过终态通知的请求；在途身份仍保留延迟通知的幂等性。
+                self._ended.intersection_update(
+                    item.request_id for item in retained if item.state != "running"
+                )
+                self._started.intersection_update(item.request_id for item in retained)
             if result.state == "cancelled" and not result.items:
                 return
             levels: dict[str, ToastLevel] = {

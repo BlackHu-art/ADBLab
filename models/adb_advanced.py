@@ -8,6 +8,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -36,6 +37,9 @@ class _RecordingSession:
     owner_path: str = ""
     stop_pending: bool = False
     error: str = ""
+    # 下载失败的已完成录屏按设备最多保留一份；新录屏可替换，下载在途不可替换。
+    save_retryable: bool = False
+    pull_pending: bool = False
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -214,7 +218,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                         "error": "Model is shutting down",
                         "batch_id": batch_id,
                     }
-                if device_ip in self._record_sessions:
+                previous = self._record_sessions.get(device_ip)
+                if previous is not None and (not previous.save_retryable or previous.pull_pending):
                     raise RuntimeError("Recording is already active")
                 key = f"record_{device_ip}_{batch_id}"
                 proc = self._rec_procs.start(
@@ -335,52 +340,84 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         filename: str,
         batch_id: str = "",
     ) -> dict:
-        """在后台确认本批次完成后拉取，关闭取消等待但不删除未确认完整的远端文件。"""
+        """等待封口并原子发布视频；失败保留原文件及每设备一份可重试的原批次身份。
+
+        在途下载独占该会话。新录屏可替换已失败的保存状态，但不得复用旧远端路径；
+        关闭时只清理本次临时文件，不删除未成功发布的远端视频。
+        """
         local_path = os.path.join(save_dir, filename)
         with self._record_lifecycle_lock:
             session = self._record_sessions.get(device_ip)
-        if session is None or session.batch_id != batch_id or session.remote_path != remote_path:
-            return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
-                    "error": "No matching recording process"}
+            if (session is None or session.batch_id != batch_id
+                    or session.remote_path != remote_path):
+                return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                        "error": "No matching recording process"}
+            if session.pull_pending:
+                return {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                        "error": "Recording save is already pending"}
+            session.pull_pending = True
+        temporary_path = ""
+        result = {"success": False, "device_ip": device_ip, "batch_id": batch_id,
+                  "local_path": local_path}
+        complete = False
         try:
             completion = self._wait_recording_complete(session)
             if not completion["success"]:
-                return {**completion, "device_ip": device_ip, "batch_id": batch_id}
+                result.update(completion)
+                return result
+            complete = True
+            fd, temporary_path = tempfile.mkstemp(
+                prefix=".adblab-record-", suffix=".part", dir=save_dir,
+            )
+            os.close(fd)
             pull = self._run(
-                ["adb", "-s", device_ip, "pull", remote_path, local_path],
+                ["adb", "-s", device_ip, "pull", remote_path, temporary_path],
                 timeout=60, cancelled=self.is_shutting_down,
             )
+            if self.is_shutting_down() or pull.get("cancelled"):
+                result.update(cancelled=True, error=pull.get("error") or "Recording save cancelled")
+                return result
             if not pull["success"]:
-                return {
-                    "success": False,
-                    "device_ip": device_ip,
-                    "local_path": local_path,
-                    "error": f"pull failed: {pull.get('error', 'unknown error')}",
-                    "batch_id": batch_id,
-                }
+                result["error"] = f"pull failed: {pull.get('error', 'unknown error')}"
+                return result
+            os.replace(temporary_path, local_path)
+            temporary_path = ""
+            result["success"] = True
             cleanup = self._run(["adb", "-s", device_ip, "shell", "rm", shlex.quote(remote_path)])
-            result = {
-                "success": True,
-                "device_ip": device_ip,
-                "local_path": local_path,
-                "batch_id": batch_id,
-            }
             if not cleanup["success"]:
                 result["cleanup_error"] = cleanup.get("error", "unknown error")
             return result
         except Exception as exc:
-            return {
-                "success": False,
-                "device_ip": device_ip,
-                "local_path": local_path,
-                "error": str(exc),
-                "batch_id": batch_id,
-            }
+            # 发布后仅可能远端清理失败，本地成功事实不能被清理异常改写。
+            result["cleanup_error" if result["success"] else "error"] = str(exc)
+            return result
         finally:
-            # 清理失败时保留设备占用，防止新批次与残留的录屏进程并行。
+            if temporary_path:
+                try:
+                    os.unlink(temporary_path)
+                except FileNotFoundError:
+                    pass
+                except OSError as exc:
+                    result["cleanup_error"] = str(exc)
+            # 只释放本次进程跟踪；失败产物的身份随设备保留，关闭及保存成功则释放。
             self._rec_procs.stop(session.key)
             with self._record_lifecycle_lock:
-                if (self._record_sessions.get(device_ip) is session
+                session.pull_pending = False
+                session.save_retryable = (
+                    complete and not result["success"] and not self.is_shutting_down()
+                )
+                result["retryable"] = session.save_retryable
+                if session.save_retryable:
+                    # 按最近失败次序保留最多 64 份身份，不淘汰在途下载或删除远端产物。
+                    self._record_sessions.pop(device_ip)
+                    self._record_sessions[device_ip] = session
+                    failed_devices = [
+                        device for device, saved in self._record_sessions.items()
+                        if saved.save_retryable and not saved.pull_pending
+                    ]
+                    for expired in failed_devices[:-64]:
+                        self._record_sessions.pop(expired)
+                if (not session.save_retryable and self._record_sessions.get(device_ip) is session
                         and session.proc.poll() is not None):
                     self._record_sessions.pop(device_ip)
 
@@ -458,6 +495,9 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
         """后台关闭线程同时排空普通命令和录屏专用池，确保模型释放前不留回调。"""
         super().wait_for_commands()
         self._record_pool.waitForDone()
+        if self.is_shutting_down():
+            with self._record_lifecycle_lock:
+                self._record_sessions.clear()
 
     # 性能诊断
 

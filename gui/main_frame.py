@@ -2255,6 +2255,7 @@ class MainFrame(FluentWindow):
         CTL.screenshot_batch_ready.connect(self._on_screenshot_batch_ready)
         LP.log_message.connect(self.log_service.log)
         CTL.record_target_finished.connect(self.left_panel.on_recording_target_finished)
+        CTL.record_target_retryable.connect(self.left_panel.on_recording_target_retryable)
         CTL.monkey_target_finished.connect(self.left_panel.on_monkey_target_finished)
         apps_panel = self.left_panel.app_panel
         if apps_panel is None:

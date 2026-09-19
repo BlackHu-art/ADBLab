@@ -999,7 +999,8 @@ class MobilePerfRunner:
     def _default_project_root() -> Path:
         if getattr(sys, "frozen", False):
             return Path(resource_path("."))
-        return Path(__file__).resolve().parents[2]
+        # 源码 worker 通过 -m 导入 mobileperf，工作目录必须是包含该包的仓库根。
+        return Path(__file__).resolve().parents[1]
 
     @staticmethod
     def _is_frozen() -> bool:

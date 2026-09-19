@@ -220,9 +220,9 @@ CI 通过 `scripts/build_app.py` 生成 PyInstaller CLI 参数，和本地 `ADBL
 CLI 生成的 spec 位于 `build/app-spec`，资源、入口及图标路径按仓库根解析，避免默认名称
 `ADBLab` 覆盖受控的根目录 spec；生成文件不进入版本控制。
 
-独立 [Tests 工作流](../../.github/workflows/Tests.yaml) 在 push、pull request 或手动触发时，
-使用 Windows/Python 3.11 执行文本完整性、静态检查、文档检查和串行 pytest；它没有发布写权限，
-不构建应用。Build 保留编译发布职责且不执行 pytest。两者都在依赖安装及源码导入前检查文本完整性，
+CI 侧只保留 Build（编译发布）与 Retention Audit（手动只读审计）两个工作流；Build 在推送 main
+或手动触发时执行文本完整性、Windows 静态检查、三平台构建与产物自检，并在依赖安装及源码导入前
+检查文本完整性。CI 不运行 pytest，测试由开发者按 [测试指南](TESTING_GUIDE.md) 在本地选择执行；
 pip 缓存同时考虑 requirements 和 constraints 的变化。
 
 ### 提交版本规则

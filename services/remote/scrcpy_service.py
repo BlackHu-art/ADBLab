@@ -54,6 +54,7 @@ class _BridgeSession:
     thread: threading.Thread | None = None
     cleanup_failed: bool = False
     starting: bool = True
+    output_unclaimed: bool = False
 
 
 class ScrcpyService:
@@ -306,7 +307,7 @@ class ScrcpyService:
             session.process = process
             try:
                 session.thread = threading.Thread(
-                    target=self._finish_bridge_session, args=(process, session),
+                    target=self._finish_bridge_session, args=(key, process, session),
                     name="scrcpy-session-cleanup", daemon=True,
                 )
                 session.starting = False
@@ -315,6 +316,8 @@ class ScrcpyService:
                 session.starting = False
                 session.thread = None
                 session.cleanup_failed = True
+                # 启动没有返回句柄，界面尚不能创建 reader；重试清理必须接管这两个流。
+                session.output_unclaimed = True
                 self.process_runner.request_stop(key)
                 raise
         return process
@@ -333,12 +336,20 @@ class ScrcpyService:
             path.unlink()
         folder.rmdir()
 
-    def _finish_bridge_session(self, process: ExecHandle, session: _BridgeSession) -> None:
+    def _finish_bridge_session(
+        self, key: str, process: ExecHandle, session: _BridgeSession,
+    ) -> None:
         """后台等待父进程和 helper 租约释放，再清理本会话端口；失败保留诊断状态。"""
         import logging
 
         try:
             process.wait()
+            if session.output_unclaimed:
+                for stream in (process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+            # 进程退出与隧道清理分别归属；旧代次只能释放自身句柄，reader 自行关闭管道。
+            self.process_runner.release_finished(key, process)
             if session.folder is not None:
                 session_file = Path(session.environment["ADBLAB_SCRCPY_SESSION_FILE"])
                 while has_active_helpers(session_file):
@@ -365,7 +376,7 @@ class ScrcpyService:
                 assert session.process is not None
                 session.cleanup_failed = False
                 session.thread = threading.Thread(
-                    target=self._finish_bridge_session, args=(session.process, session),
+                    target=self._finish_bridge_session, args=(key, session.process, session),
                     name="scrcpy-session-cleanup", daemon=True,
                 )
                 try:

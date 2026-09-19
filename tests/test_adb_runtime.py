@@ -1143,7 +1143,7 @@ def test_failure_after_connection_never_replays(backend, monkeypatch, kind):
     execution.install_adb_runtime(runtime)
     monkeypatch.setattr(module, "capture", lambda *a, **k: ExecutionResult(kind=kind))
     native_run = Mock()
-    monkeypatch.setattr(execution.subprocess, "run", native_run)
+    monkeypatch.setattr(execution, "run_native", native_run)
     result = execution.CommandRunner.run(
         [ADB, "-s", "fake-device", "shell", "pm clear x"]
     )
@@ -1159,7 +1159,7 @@ def test_refused_connection_falls_back_once(backend, monkeypatch):
     execution.install_adb_runtime(runtime)
     monkeypatch.setattr(module, "capture", lambda *a, **k: ExecutionResult(kind="unavailable"))
     native = Mock(return_value=subprocess.CompletedProcess([], 0, "ok\n", ""))
-    monkeypatch.setattr(execution.subprocess, "run", native)
+    monkeypatch.setattr(execution, "run_native", native)
     result = execution.CommandRunner.run(
         [ADB, "-s", "fake-device", "shell", "echo ok"]
     )
@@ -1184,8 +1184,8 @@ def test_backends_share_result_contract(backend, monkeypatch, raw, expected):
     cmd = [ADB, "-s", "fake-device", "shell", "echo ok"]
     fast = execution.CommandRunner.run(cmd)
     monkeypatch.setattr(
-        execution.subprocess,
-        "run",
+        execution,
+        "run_native",
         lambda *a, **k: subprocess.CompletedProcess(
             [],
             raw.returncode,
@@ -1675,7 +1675,7 @@ def test_old_successful_listing_is_stale_after_runtime_refresh(
     runtime._changed = changed
     monkeypatch.setattr(module, "capture", capture)
     native_run = Mock()
-    monkeypatch.setattr(execution.subprocess, "run", native_run)
+    monkeypatch.setattr(execution, "run_native", native_run)
     run = execution.CommandRunner.run if use_runner else runtime.try_run
     worker = threading.Thread(
         target=lambda: results.append(run([ADB, "devices", *args], 30))

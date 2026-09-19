@@ -157,16 +157,17 @@ class ActionResultView(QWidget):
         )
         if ignored_diagnostic and result.request_id not in self._records:
             return
-        fresh = result.request_id not in self._records
+        previous = self._records.get(result.request_id)
+        fresh = previous is None
+        if not fresh and result.state != "running" and result != previous:
+            # 仅新终态或说明更新推进顺序；从通知重新打开旧快照不改变其保留优先级。
+            self._records.pop(result.request_id)
         self._records[result.request_id] = result
         if fresh:
             self._selected = result.request_id
-        ordered = sorted(
-            self._records.values(),
-            key=lambda item: item.finished_at or item.started_at,
-        )
         for request_id in expired_action_results(
-            ordered, capacity=20, text_budget=self.TEXT_BUDGET, protected=(self._selected,),
+            self._records.values(), capacity=20, text_budget=self.TEXT_BUDGET,
+            protected=(self._selected,),
         ):
             del self._records[request_id]
         if ignored_diagnostic:

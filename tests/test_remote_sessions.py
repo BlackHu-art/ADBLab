@@ -1,5 +1,6 @@
 """验证 Remote 逐台启动、追加、取消与逐台操作的用户可观察行为。"""
 
+import io
 import queue
 import threading
 import time
@@ -31,13 +32,25 @@ def test_scrcpy_tool_discovery_logs_remove_derived_runtime_paths(remote_session,
     assert remote._redact_remote_diagnostic(message) == f"DEBUG: Using {tool}: <path>"
 
 
+class _Pipe:
+    def __init__(self, lines):
+        self.lines = lines
+        self.closed = False
+
+    def __iter__(self):
+        return iter(self.lines.get, None)
+
+    def close(self):
+        self.closed = True
+
+
 class _Process:
     def __init__(self):
         self.returncode = None
         self.lines = queue.Queue()
         self.output_lines = queue.Queue()
-        self.stderr = iter(self.lines.get, None)
-        self.stdout = iter(self.output_lines.get, None)
+        self.stderr = _Pipe(self.lines)
+        self.stdout = _Pipe(self.output_lines)
 
     def poll(self):
         return self.returncode
@@ -433,7 +446,7 @@ def test_late_fps_from_stopped_process_cannot_replace_idle_status(remote_session
     remote._stop_scrcpy()
     assert _wait(qt_application, lambda: remote._session_state == remote._SESSION_IDLE)
     status = remote._status_label.text()
-    remote._scrcpy_controller._read_process_output(process, ["60 fps"])
+    remote._scrcpy_controller._read_process_output(process, io.StringIO("60 fps"))
     assert remote._status_label.text() == status
 
 
@@ -454,7 +467,7 @@ def test_recording_start_confirms_record_only_mode_and_redacts_output_path(
     assert _wait(qt_application, lambda: service.started == ["first"])
     process = service.processes["first"]
     remote._scrcpy_controller._read_process_output(
-        process, [f"INFO: Recording started to matroska file: {private_path}"],
+        process, io.StringIO(f"INFO: Recording started to matroska file: {private_path}"),
     )
     qt_application.processEvents()
     assert remote._session_rows["first"][1].text() == ("就绪" if no_window else "连接中")

@@ -39,7 +39,7 @@ def test_androiddevice_logs_only_safe_metadata_for_devices_commands_and_apps(mon
 
     monkeypatch.setattr(androiddevice, "logger", mock_logger)
     monkeypatch.setattr(ADB, "get_adb_path", staticmethod(lambda: "adb"))
-    monkeypatch.setattr(androiddevice.subprocess, "run", lambda *_args, **_kwargs: completed)
+    monkeypatch.setattr(androiddevice, "run_native", lambda *_args, **_kwargs: completed)
 
     assert ADB.list_device() == [serial_one, serial_two]
 

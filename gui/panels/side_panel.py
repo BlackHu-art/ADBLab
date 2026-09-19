@@ -364,6 +364,12 @@ class SidePanel(QWidget):
         if apps_tab:
             apps_tab.on_monkey_target_finished(batch_id, device)
 
+    def on_recording_target_retryable(self, batch_id: str, device: str) -> None:
+        """转发原录屏批次的保存失败，允许页面保留重试入口。"""
+        apps_tab = self._ensure_tab_loaded(0)
+        if apps_tab:
+            apps_tab.on_recording_target_retryable(batch_id, device)
+
     def on_operation_completed(self, operation: str, success: bool, message: str):
         apps_tab = self._ensure_tab_loaded(0)
         if apps_tab:

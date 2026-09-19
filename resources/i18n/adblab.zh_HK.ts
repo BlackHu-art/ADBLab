@@ -6530,5 +6530,17 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>无法启动应用任务，请重试。</source>
             <translation>無法啟動應用程式任務，請重試。</translation>
         </message>
+        <message>
+            <source>重试保存</source>
+            <translation>重試儲存</translation>
+        </message>
+        <message>
+            <source>重新下载并保存原批次录屏</source>
+            <translation>重新下載並儲存原批次錄影</translation>
+        </message>
+        <message>
+            <source>Invalid UTF-8 text; editing is disabled</source>
+            <translation>文字不是有效的 UTF-8 編碼，已停用編輯</translation>
+        </message>
     </context>
 </TS>

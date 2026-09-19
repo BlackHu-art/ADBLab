@@ -26,6 +26,7 @@ def _feedback_controller() -> SimpleNamespace:
         device_refresh_superseded=Mock(),
         record_finished=Mock(),
         record_target_finished=Mock(),
+        record_target_retryable=Mock(),
         monkey_target_finished=Mock(),
         monkey_preparation_finished=Mock(),
         operation_completed=Mock(),
@@ -53,6 +54,7 @@ def test_main_frame_routes_business_log_signal_to_log_service():
             device_context_snapshot=lambda: DeviceContextSnapshot((), ("device-secret",), "ready"),
             on_device_refresh_superseded=Mock(),
             on_recording_target_finished=Mock(),
+            on_recording_target_retryable=Mock(),
             on_monkey_target_finished=Mock(),
             on_operation_completed=Mock(),
         ),
@@ -73,6 +75,9 @@ def test_main_frame_routes_business_log_signal_to_log_service():
     MainFrame._connect_controller_feedback(frame, left_panel, controller)
 
     apps_panel.set_run_library.assert_called_once_with(frame.run_library)
+    controller.record_target_retryable.connect.assert_called_once_with(
+        frame.left_panel.on_recording_target_retryable
+    )
     controller.run_record_ready.connect.assert_called_once_with(frame.run_library.record_run)
     left_panel.log_message.connect.assert_called_once_with(log_service.log)
     business_log_handler = left_panel.log_message.connect.call_args.args[0]

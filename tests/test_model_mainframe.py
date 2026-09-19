@@ -344,6 +344,7 @@ def test_main_frame_init_defers_adb_bootstrap_until_ui_is_built():
     fake_side_panel.responsive_layout_settled = Mock()
     fake_side_panel.on_recording_finished = Mock()
     fake_side_panel.on_recording_target_finished = Mock()
+    fake_side_panel.on_recording_target_retryable = Mock()
     fake_side_panel.on_monkey_target_finished = Mock()
     fake_side_panel.on_operation_completed = Mock()
     fake_side_panel.on_device_refresh_superseded = Mock()

@@ -32,7 +32,7 @@ def test_checker_accepts_utf8_bom_and_generated_byte_literals(tmp_path, content)
 
 
 @pytest.mark.parametrize("name", [
-    "main.py", "docs/guide.md", "resources/i18n/app.ts", ".github/workflows/Tests.yaml",
+    "main.py", "docs/guide.md", "resources/i18n/app.ts", ".github/workflows/Build-exe.yaml",
     "config.yml", "pyproject.toml", "ADBLab.spec", "requirements-dev.txt", "constraints.txt",
     "gui/generated/translations_rc.py", "mobileperf/android/adb_execution.py",
 ])

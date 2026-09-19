@@ -8,7 +8,6 @@ import yaml
 WORKFLOW_DIR = Path(".github/workflows")
 BUILD_WORKFLOW = WORKFLOW_DIR / "Build-exe.yaml"
 RETENTION_WORKFLOW = WORKFLOW_DIR / "Auto-Clean.yaml"
-TEST_WORKFLOW = WORKFLOW_DIR / "Tests.yaml"
 PYINSTALLER_SPEC = Path("ADBLab.spec")
 ICON_DIR = Path("resources/icons")
 FIRST_PARTY_PYTHON_PATHS = (
@@ -97,7 +96,7 @@ def test_build_uses_read_only_default_permissions_and_scoped_release_write():
 
 
 def test_build_workflow_does_not_run_pytest_during_packaging():
-    """打包发布只执行静态检查和产物自检，pytest 留在独立的开发验证流程。"""
+    """打包发布只执行静态检查和产物自检，pytest 由开发者按测试指南在本地执行。"""
 
     workflow = _read(BUILD_WORKFLOW)
 
@@ -235,30 +234,6 @@ def test_build_workflow_delegates_resources_to_shared_cli_and_keys_constraints()
     assert "--collect-submodules" not in commands
     assert all("datas" not in row for row in job["strategy"]["matrix"]["include"])
     cache = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/cache@"))
-    assert "constraints.txt" in cache["with"]["key"]
-
-
-def test_independent_tests_workflow_runs_serial_checks_with_read_only_permissions():
-    workflow = yaml.safe_load(_read(TEST_WORKFLOW))
-    assert workflow["permissions"] == {"contents": "read"}
-    triggers = workflow.get("on", workflow.get(True))
-    assert set(triggers) == {"push", "pull_request", "workflow_dispatch"}
-    job = workflow["jobs"]["tests"]
-    assert job["runs-on"] == "windows-latest"
-    assert job["env"]["QT_QPA_PLATFORM"] == "offscreen"
-    steps = job["steps"]
-    commands = [step.get("run", "") for step in steps]
-    expected = (
-        "python -m pytest -q", "python -m ruff check .", "python -m pyright",
-        "python scripts/check_comment_language.py", "python scripts/check_doc_links.py",
-        "python scripts/check_source_text.py", "git diff --check",
-    )
-    for command in expected:
-        assert command in commands
-    assert not any("-n " in command or "PyInstaller" in command for command in commands)
-    guard_index = commands.index("python scripts/check_source_text.py")
-    assert guard_index < commands.index("python -m pytest -q")
-    cache = next(step for step in steps if step.get("uses", "").startswith("actions/cache@"))
     assert "constraints.txt" in cache["with"]["key"]
 
 

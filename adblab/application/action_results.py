@@ -379,6 +379,8 @@ class ActionResults:
                 else "failed"
             )
             request.result = replace(request.result, state=state, finished_at=time.time())
+            # 完成顺序独立于启动顺序和墙钟精度，长任务的刚完成结果不会优先被淘汰。
+            self._requests.move_to_end(request_id)
             self._last_completed_request = request_id
             self._failures.pop(request_id, None)
         self._update(request_id)
@@ -398,7 +400,7 @@ class ActionResults:
             self._publish(self._requests[request_id].result)
 
     def recent(self, section: str | None = None) -> tuple[ActionResult, ...]:
-        """读取最新快照；正文由结果控件按需呈现，不使用全局日志缓存。"""
+        """按最近提交或完成顺序读取快照；独立页面说明更新也进入最新位置。"""
         return tuple(
             request.result
             for request in reversed(self._requests.values())
@@ -432,6 +434,7 @@ class ActionResults:
                           state, text[:64000])
         request.result = replace(result, items=(*result.items[-199:], item),
                                  message=text[:200], finished_at=time.time())
+        self._requests.move_to_end(result.request_id)
         self._last_completed_request = result.request_id
         self._update(result.request_id)
         self._prune_history()

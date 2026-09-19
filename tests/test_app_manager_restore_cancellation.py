@@ -7,6 +7,38 @@ from core.exec import CommandResult
 from models.app_manager_worker import AppManagerWorker
 
 
+@pytest.mark.parametrize(
+    ("archive_name", "members", "expected_modes"),
+    [
+        ("ordinary.zip", ["one.apk", "two.apk"], ["install", "install"]),
+        ("base.apk-backup.zip", ["one.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["base.apk-folder/one.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["not-base.apk", "two.apk"], ["install", "install"]),
+        ("ordinary.zip", ["base.apk", "split.apk"], ["install-multiple"]),
+    ],
+)
+def test_restore_chooses_split_mode_only_from_exact_apk_basename(
+    tmp_path, archive_name, members, expected_modes,
+):
+    archive = tmp_path / archive_name
+    with zipfile.ZipFile(archive, "w") as zf:
+        for member in members:
+            zf.writestr(member, b"fake apk")
+    worker = AppManagerWorker("mock-device", "restore_apps")
+    modes, completed = [], []
+    worker.operation_done.connect(completed.append)
+
+    def install(*args, **_kwargs):
+        modes.append(args[0])
+        return CommandResult(success=True)
+
+    with patch.object(worker, "_adb", side_effect=install):
+        worker._restore_apps([str(archive)])
+
+    assert modes == expected_modes
+    assert completed == ["restore"]
+
+
 @pytest.mark.parametrize("cancel_phase", ["extract", "first_install", "last_install"])
 def test_restore_cancellation_stops_new_installs_and_success(tmp_path, cancel_phase):
     archive = tmp_path / "backup.zip"

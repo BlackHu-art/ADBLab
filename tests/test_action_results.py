@@ -108,6 +108,42 @@ def test_result_history_byte_budget_keeps_inflight_results_and_the_latest_comple
     assert pending.items[0].detail == body
 
 
+@pytest.mark.parametrize("capacity,text_budget", [(2, 32 * 1024 * 1024), (80, 4500)])
+def test_result_history_evicts_in_completion_order_with_equal_timestamps(
+    monkeypatch, capacity, text_budget,
+):
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    store = ActionResults(lambda _result: None, capacity=capacity, text_budget=text_budget)
+
+    def start(name):
+        return store.run(ActionSpec(name, "system.shell", name), (),
+                         lambda: capture_action_job("query_async"))
+
+    def finish(job):
+        store.complete(job, {"success": True, "output": "x" * 2000})
+
+    long_job = start("long")
+    finish(start("first"))
+    finish(start("second"))
+    finish(long_job)
+    finish(start("last"))
+    assert [result.spec.key for result in store.recent()] == ["last", "long"]
+
+
+def test_updated_notes_are_recent_without_reviving_finished_commands():
+    store = ActionResults(lambda _result: None, capacity=2)
+    notes = ActionSpec("notes:manager", "apps.manager", "记录", "notes")
+    original = store.record_note(notes, (), "old", "info")
+    other = ActionSpec("notes:other", "apps.manager", "其他", "notes")
+    store.record_note(other, (), "other", "info")
+    updated = store.record_note(notes, (), "new", "info")
+    store.record_note(ActionSpec("notes:last", "apps.manager", "最后", "notes"), (),
+                      "last", "info")
+    assert original.request_id == updated.request_id
+    assert [result.spec.key for result in store.recent()] == ["notes:last", "notes:manager"]
+    assert store.recent()[1].items[-1].detail == "new"
+
+
 def test_callback_semantic_failure_overrides_transport_success():
     events = []
     store = ActionResults(events.append)

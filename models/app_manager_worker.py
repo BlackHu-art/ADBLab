@@ -536,7 +536,9 @@ class AppManagerWorker(QThread):
                     ]
                     if not apks:
                         raise RuntimeError("backup contains no APK files")
-                    is_split = len(apks) > 1 and any("base.apk" in a.lower() for a in apks)
+                    is_split = len(apks) > 1 and any(
+                        os.path.basename(a).lower() == "base.apk" for a in apks
+                    )
                     if cancelled():
                         return
                     if is_split:

@@ -1,6 +1,5 @@
 """提供文件浏览器页的文件操作与传输控制器。"""
 
-import base64
 import os
 import uuid
 
@@ -21,6 +20,7 @@ from gui.i18n import tr
 from gui.styles import FontRole
 from gui.styles.fluent import apply_label_role
 from gui.styles.icon_loader import get_themed_icon
+from models.file_explorer_worker import LocalTextSaveWorker, TextSaveWorker
 from services import file_explorer as explorer_service
 
 
@@ -30,6 +30,18 @@ class FileExplorerOps:
     def __init__(self, frame):
         self._frame = frame
         self._last_batch_results = ()
+        self._save_worker: TextSaveWorker | None = None
+        self._local_save_worker: LocalTextSaveWorker | None = None
+
+    @property
+    def saving(self) -> bool:
+        """整个上传、发布和清理期间拒绝重复保存。"""
+        return self._save_worker is not None
+
+    def cancel_save(self) -> None:
+        """设备失选或离线后停止原请求，保留后台清理与页面监督。"""
+        if self._save_worker is not None:
+            self._save_worker.abort()
 
     # ── 查看与编辑文件 ──────────────────────────────────────────────────
 
@@ -40,27 +52,64 @@ class FileExplorerOps:
         return AppSettings.instance().save_directory
 
     def _save_as(self, name, content):
+        if self._local_save_worker is not None or self._frame._closing:
+            return
         fp, _ = QFileDialog.getSaveFileName(
             self._frame, tr("Save As"), os.path.join(self._global_save_dir(), name)
         )
-        if fp:
-            with open(fp, "w", encoding="utf-8") as f:
-                f.write(content)
+        if not fp or self._frame._closing:
+            return
+        payload = content.encode("utf-8") if isinstance(content, str) else content
+        request_id = self._frame._preview_request_id
+        worker = self._frame._track_worker(LocalTextSaveWorker(fp, payload))
+        self._local_save_worker = worker
+        self._frame.preview_save_as_btn.setEnabled(False)
+
+        def completed(output, failed):
+            if self._frame._preview_request_is_current(request_id):
+                self._frame.status_bar.setText(
+                    tr('Failed: {value0}').format(value0=output) if failed
+                    else tr('Saved {value0}').format(value0=name),
+                )
+
+        def finished():
+            self._local_save_worker = None
+            if not self._frame._closing:
+                self._frame.preview_save_as_btn.setEnabled(
+                    not self._frame.preview_text_edit.isReadOnly(),
+                )
+
+        self._frame._connect_worker_ui(worker, worker.result_ready, completed)
+        worker.finished.connect(finished, Qt.ConnectionType.QueuedConnection)
+        worker.start()
 
     def _save_to_device(self, name, content, full_path):
-        if not self._frame._can_operate():
+        if not self._frame._can_operate() or self.saving:
             return
-        b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-        cmd = self._frame._root(explorer_service.save_text_command(b64, full_path))
-        w = self._frame._run_adb("shell", cmd)
-        if w is None:
-            return
+        payload = content.encode("utf-8") if isinstance(content, str) else content
+        request_id = self._frame._preview_request_id
+        w = self._frame._track_worker(TextSaveWorker(
+            self._frame.device_ip, full_path, payload, self._frame.root_cb.isChecked(),
+        ))
+        self._save_worker = w
+        self._frame._sync_directory_controls()
+
+        def completed(output, failed):
+            if (self._frame._preview_request_is_current(request_id)
+                    and self._frame.device_ip == w.device_ip and self._frame._can_operate()
+                    and self._frame.root_cb.isChecked() == w.use_root):
+                self._on_save_result(output, failed, name)
+
+        def finished():
+            if self._save_worker is w:
+                self._save_worker = None
+                if not self._frame._closing:
+                    self._frame._sync_directory_controls()
+
         self._frame._connect_worker_ui(
-            w,
-            w.result_ready,
-            lambda o, e: self._on_save_result(o, e, name),
+            w, w.result_ready, completed,
         )
-        w.start()
+        self._frame._transfers.enqueue(w, on_terminal=finished)
 
     def _on_save_result(self, output, error, name):
         self._on_file_op_done(output, error, tr('Saved {value0}').format(value0=name))
