@@ -140,6 +140,38 @@ class ResponsiveCoordinator:
         reasons = tuple(self._reasons)
         self._start_generation(reasons)
 
+    def settle_now(self, reason: ReflowReason = ReflowReason.RESIZE) -> bool:
+        """在首次可见等边界同步落实一代计划，避免首帧沿用隐藏期的旧几何。
+
+        调用方必须在“几何已经更新、但首帧尚未绘制”的窗口内调用：本方法把待办代次
+        立即跑完，而不是等 0ms 定时器。收尾窗口（_finishing）属于上一代 apply 之后
+        的内部反馈吸收期，此处主动收尾当前代——直接另起代次会让 _finalize_generation
+        因代次不符提前返回、_finishing 无法复位，协调器将永久停摆。
+
+        契约：只有“已排定且尚未落实过计划”的代次会被复用，其余情况另起一代，因此
+        本方法可能让代次加一；继续收敛仍由既有的有界轮次负责。返回是否已同步执行。
+        """
+
+        if self._in_apply:
+            # 正在落实计划时再次进入属于该次 apply 的内部反馈，交给正常排代次路径，
+            # 避免 _apply_candidates 与 _plan_history 重入。
+            self.request_reflow(reason)
+            return False
+        if self._finishing:
+            # 等 1ms 收尾定时器会让首帧先画出旧几何；这里按正常收尾路径提前关闭窗口，
+            # 残留的定时器随后会因代次不符自动失效。
+            self._finalize_generation(self._generation)
+        # 只有“已排定且尚未落实过计划”的代次可以复用：此时历史为空，强制轮次不会
+        # 被判定成重复指纹。复用已收敛过一轮的代次会把这次轮次记进该代 _plan_history，
+        # 同一指纹随即被判为振荡并回退到最保守的一列布局——页面上就是“先堆叠、下一轮
+        # 再跳回网格”。因此其余状态一律另起一代，用空历史重算真实几何下的模式。
+        if self._state != "scheduled" or self._plan_history:
+            self._start_generation((reason,))
+        # 已排定或正在收敛时直接把待办的那一轮提前跑掉：本调用发生在几何刚刚
+        # 更新的边界上，等 0ms 定时器会让首帧先画出旧宽度上的计划。
+        self._run_round(self._generation)
+        return True
+
     def attach_top_level(self, top_level: QWidget) -> None:
         key = id(top_level)
         if key in self._attachments:

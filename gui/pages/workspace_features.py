@@ -33,6 +33,7 @@ from gui.features.contracts import optional_callback
 from gui.i18n import tr
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.adaptive_navigation import AdaptiveNavigation
+from gui.widgets.layout_settle import settle_widget_layout
 from gui.widgets.performance_sessions import PerformanceSessions
 
 
@@ -721,6 +722,7 @@ class WorkspaceFeatureHost(QWidget):
             previous_is_inactive=self._activating_route_from_background,
         )
         self.stack.setCurrentWidget(page)
+        self._settle_current_page_layout()
         self._sync_feature_controls(definition)
         self._sync_device_combo()
         self.route_changed.emit(
@@ -1106,6 +1108,15 @@ class WorkspaceFeatureHost(QWidget):
         if page_event or layout_event:
             self._schedule_content_extent_sync()
         return super().eventFilter(watched, event)
+
+    def _settle_current_page_layout(self) -> None:
+        """新当前页在隐藏期按创建宽度规划过，首帧前同步落到最终宽度。"""
+
+        host_layout = self.stack.layout()
+        if host_layout is not None:
+            host_layout.activate()
+        settle_widget_layout(self.stack.currentWidget())
+        self._sync_content_extent()
 
     def _on_current_page_changed(self, _index: int) -> None:
         self._sync_content_extent()

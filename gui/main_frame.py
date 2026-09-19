@@ -66,6 +66,7 @@ from gui.screen_adapter import QtScreenAdapter, ScreenAdapter
 from gui.styles.icon_loader import DEVICE_ICON
 from gui.widgets.device_context_bar import DeviceContextBar
 from gui.widgets.frameless_resize import FramelessResizeController
+from gui.widgets.layout_settle import settle_responsive_layout
 from gui.widgets.navigation_theme import NavigationThemeToggle
 from gui.widgets.responsive_controller import ReflowReason
 from gui.window_layout import (
@@ -1402,6 +1403,11 @@ class MainFrame(FluentWindow):
             history.append(target)
         self._update_navigation_back_button()
 
+    def _responsive_coordinator(self):
+        """返回左侧栏与各功能面板共享的响应式协调器，尚未创建时返回 None。"""
+
+        return getattr(self.left_panel, "_responsive_coordinator", None)
+
     def switchTo(
         self,
         interface,
@@ -1422,6 +1428,11 @@ class MainFrame(FluentWindow):
             record_history=_record_history,
         )
         super().switchTo(interface)
+        # 首次显示的页面可能仍带着构造期的旧几何：这里必须在首帧绘制前同时落实
+        # 宿主最终几何和对应的响应式计划，否则用户会看到一次布局跳动。退出流程
+        # 只需要页面可见性，不再为关闭路径同步跑一整代重规划。
+        if not getattr(self, "_closing", False):
+            settle_responsive_layout(interface, self._responsive_coordinator())
         route_key = getattr(interface, "objectName", lambda: "")()
         if next_section is not None:
             self._sync_workspace_navigation_selection(
