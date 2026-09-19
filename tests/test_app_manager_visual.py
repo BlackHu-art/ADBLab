@@ -370,6 +370,7 @@ def test_icon_rows_keep_full_names_for_search_and_accessible_details(qt_applicat
         page.search_input.setText("晚到名称")
         assert item.isHidden() and page.proxy.rowCount() == 0
         page._on_detail(package, "晚到名称", "3.2.19", "")
+        qt_application.processEvents()
         assert not item.isHidden() and page.proxy.rowCount() == 1
     finally:
         page.close()

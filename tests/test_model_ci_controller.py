@@ -246,6 +246,73 @@ def _device_metadata_controller():
     return controller
 
 
+def test_overview_fast_device_publishes_while_first_device_is_waiting():
+    controller = _device_metadata_controller()
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+    fast_published = threading.Event()
+
+    def query(device, **_kwargs):
+        if device == "device-1":
+            slow_started.set()
+            assert release_slow.wait(3), "slow query was not released"
+        return {"Model": device}
+
+    controller.signals.device_info_updated.emit.side_effect = (
+        lambda device, _record: fast_published.set() if device == "device-2" else None
+    )
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=query),
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        controller.executor = executor
+        controller._async_update_devices(["device-1", "device-2"], generation=1)
+        try:
+            assert slow_started.wait(2)
+            assert fast_published.wait(1), "fast device was blocked by the slow device"
+            write.assert_not_called()
+        finally:
+            release_slow.set()
+    assert [record["ip"] for record in write.call_args.args[0]] == ["device-1", "device-2"]
+
+
+def test_overview_queries_are_bounded_and_shutdown_rejects_queued_devices():
+    controller = _device_metadata_controller()
+    devices = [f"device-{index}" for index in range(8)]
+    controller._device_topology = tuple(devices)
+    first_three_started = threading.Event()
+    release_queries = threading.Event()
+    lock = threading.Lock()
+    seen = []
+
+    def query(device, *, cancelled):
+        with lock:
+            seen.append(device)
+            if len(seen) == 3:
+                first_three_started.set()
+        assert release_queries.wait(3)
+        assert cancelled()
+        return {"Model": device}
+
+    with (
+        patch("controllers._device.ADBDevice.get_device_overview_info", side_effect=query),
+        patch("controllers._device.DeviceStore.upsert_devices") as write,
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
+        controller.executor = executor
+        controller._async_update_devices(devices, generation=1)
+        try:
+            assert first_three_started.wait(1), "overview did not issue bounded concurrent queries"
+            controller._shutting_down = True
+        finally:
+            controller._shutting_down = True
+            release_queries.set()
+    assert len(seen) == 3
+    controller.signals.device_info_updated.emit.assert_not_called()
+    write.assert_not_called()
+
+
 def test_same_topology_refreshes_share_one_job_and_one_followup():
     controller = _device_metadata_controller()
     with (

@@ -288,6 +288,68 @@ def test_bounded_history_preserves_all_inflight_results(qt_application):
         view.close()
 
 
+def test_result_view_byte_budget_preserves_selected_text_and_inflight(qt_application):
+    view = ActionResultView()
+    view.TEXT_BUDGET = 2048
+    store = ActionResults(view.present)
+    jobs = []
+    raw = "完整正文" * 2000 + "end-marker"
+    try:
+        for key in ("background", "pending", "selected"):
+            store.run(
+                ActionSpec(key, "system.shell", "查询", "text"), (),
+                lambda: jobs.append(capture_action_job("query_async")),
+            )
+        store.complete(jobs[2], {"success": True, "output": raw})
+        assert view.select_request(jobs[2].request_id)
+        store.complete(jobs[0], {"success": True, "output": "其他结果" * 2000})
+        assert jobs[0].request_id not in view._records
+        assert jobs[1].request_id in view._records
+        assert view._selected == jobs[2].request_id
+        view.copy_button.click()
+        assert QApplication.clipboard().text() == raw
+        exported = QSignalSpy(view.export_requested)
+        view.export_button.click()
+        assert exported.at(0)[1] == raw
+        view.search.setText("end-marker")
+        view._find()
+        assert view.output.textCursor().selectedText() == "end-marker"
+    finally:
+        store.close()
+        view.close()
+
+
+def test_diagnostic_history_receives_old_terminal_without_reviving_running_records(
+    qt_application, monkeypatch,
+):
+    from itertools import count
+
+    ticks = count(1.0)
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: next(ticks))
+    view = ActionResultView(diagnostic=True)
+    store = ActionResults(view.present)
+    try:
+        for index in range(25):
+            jobs = []
+            store.run(
+                ActionSpec(f"old-{index}", "apps.diagnostics", "较早查询", "text"), (),
+                lambda: jobs.extend(capture_action_job("query_async") for _ in range(2)),
+            )
+            store.complete(jobs[0], {"success": True, "output": "较早的部分结果"})
+            store.run(
+                ActionSpec(f"new-{index}", "apps.diagnostics", "较新查询", "text"), (),
+                lambda: jobs.append(capture_action_job("query_async")),
+            )
+            store.complete(jobs[2], {"success": True, "output": "最新可见结果"})
+            store.complete(jobs[1], {"success": True, "output": "旧请求的晚到结果"})
+            assert view._detail == "最新可见结果"
+        assert not view.running_results()
+        assert len(view._records) <= 20
+    finally:
+        store.close()
+        view.close()
+
+
 def test_settings_adb_restart_notifies_and_opens_exact_task(result_frame, monkeypatch):
     frame = result_frame
     frame._on_nav_requested("settings")

@@ -10,6 +10,7 @@ import shlex
 import subprocess
 import threading
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -32,6 +33,7 @@ class _RecordingSession:
     batch_id: str
     remote_path: str
     deadline: float
+    owner_path: str = ""
     stop_pending: bool = False
     error: str = ""
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -46,6 +48,104 @@ def _recording_positive_integer(value: object, label: str) -> int:
     if number <= 0:
         raise ValueError(f"{label} must be a positive integer")
     return number
+
+
+def _recording_identity_script(remote_path: str) -> str:
+    """生成设备端身份核对函数；PID、启动时刻和唯一输出路径必须同时匹配。
+
+    读取 stat 时先去掉括号内的进程名，避免名称中的空格导致 starttime 字段错位。
+    检查和发信号仍有操作系统级时隙；绝不以进程名扩大停止范围。
+    """
+    return """recording_start() {
+    record_stat=$(cat "/proc/$1/stat") || return 1
+    record_tail=${record_stat##*) }
+    set -- $record_tail
+    [ "$#" -ge 20 ] || return 1
+    shift 19
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    printf '%s' "$1"
+}
+recording_owned() {
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    case "$started" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$pid" -gt 1 ] || return 1
+    record_args=$(cat "/proc/$pid/cmdline" | tr '\\000' '\\n') || return 1
+    record_exe=${record_args%%'
+'*}
+    record_output=${record_args##*'
+'}
+    case "$record_exe" in screenrecord|*/screenrecord) ;; *) return 1 ;; esac
+    [ "$record_output" = __ADBLAB_OUTPUT__ ] || return 1
+    [ "$(recording_start "$pid")" = "$started" ]
+}
+""".replace("__ADBLAB_OUTPUT__", shlex.quote(remote_path))
+
+
+def _recording_launch_script(owner_path: str, remote_path: str) -> str:
+    """独占登记设备进程；包装 Shell 等待录屏封口并负责精确清理自己的登记文件。"""
+    return _recording_identity_script(remote_path) + f"""
+umask 077
+owner={shlex.quote(owner_path)}
+(set -C; : > "$owner") || exit 1
+trap 'rm -f -- "$owner"' EXIT
+pid=
+started=
+recording_interrupt() {{
+    trap '' HUP INT TERM
+    pid=${{pid:-$!}}
+    if [ -n "$pid" ]; then
+        [ -n "$started" ] || started=$(recording_start "$pid")
+        attempt=0
+        while [ "$attempt" -lt 20 ]; do
+            if recording_owned; then kill -2 "$pid"; break; fi
+            [ -n "$started" ] && [ "$(recording_start "$pid")" = "$started" ] || break
+            attempt=$((attempt + 1))
+            sleep 0.05
+        done
+        wait "$pid"
+    fi
+    exit 130
+}}
+trap recording_interrupt HUP INT TERM
+screenrecord "$@" &
+pid=$!
+started=$(recording_start "$pid")
+if [ -z "$started" ] || ! printf '%s %s\\n' "$pid" "$started" > "$owner"; then
+    if recording_owned; then kill -2 "$pid"; fi
+    wait "$pid"
+    exit 1
+fi
+wait "$pid"
+status=$?
+exit "$status"
+"""
+
+
+def _recording_stop_script(owner_path: str, remote_path: str) -> str:
+    """只读取本会话登记并定向停止；未登记、格式错误或 PID 复用均拒绝发信号。"""
+    return _recording_identity_script(remote_path) + f"""
+set -f
+attempt=0
+while :; do
+    owner_record=$(cat {shlex.quote(owner_path)} 2>/dev/null)
+    [ -n "$owner_record" ] && break
+    attempt=$((attempt + 1))
+    [ "$attempt" -ge 20 ] && break
+    sleep 0.05
+done
+set -- $owner_record
+if [ "$#" -ne 2 ]; then
+    printf '%s\\n' 'Recording ownership unavailable; no device process was signalled' >&2
+    exit 1
+fi
+pid=$1
+started=$2
+if ! recording_owned; then
+    printf '%s\\n' 'Recording ownership changed; no device process was signalled' >&2
+    exit 1
+fi
+kill -2 "$pid"
+"""
 
 
 class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
@@ -86,14 +186,17 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 height = str(_recording_positive_integer(height, "Recording height"))
             sanitized = re.sub(r"\W+", "_", device_ip)
             timestamp = datetime.now().strftime("%H%M%S_%f")
-            filename = f"record_{sanitized}_{timestamp}.mp4"
+            identity = uuid.uuid4().hex
+            filename = f"record_{sanitized}_{timestamp}_{identity[:8]}.mp4"
             remote_path = f"/sdcard/{filename}"
+            owner_path = f"/data/local/tmp/adblab-record-{identity}"
             cmd = [
                 "adb",
                 "-s",
                 device_ip,
                 "shell",
-                "screenrecord",
+                "sh", "-c", shlex.quote(_recording_launch_script(owner_path, remote_path)),
+                "adblab-record",
                 "--time-limit",
                 str(duration),
                 "--bit-rate",
@@ -121,6 +224,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 )
                 session = _RecordingSession(
                     proc, key, batch_id, remote_path, time.monotonic() + duration + 30,
+                    owner_path=owner_path,
                 )
                 self._record_sessions[device_ip] = session
             if proc.poll() not in (None, 0):
@@ -195,7 +299,8 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             if remaining <= 0 or self.is_shutting_down():
                 raise RuntimeError("Recording stop cancelled or timed out")
             signal_result = self._run(
-                ["adb", "-s", device_ip, "shell", "pkill", "-2", "screenrecord"],
+                ["adb", "-s", device_ip, "shell",
+                 _recording_stop_script(session.owner_path, session.remote_path)],
                 timeout=remaining, cancelled=self.is_shutting_down,
             )
             if not signal_result.get("success"):

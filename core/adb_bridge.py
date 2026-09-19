@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from core.adb_dimensions import parse_wm_size
 from core.exec import (
     CommandResult,
     CommandRunner,
@@ -384,11 +385,7 @@ class ADBBridge:
                 if cancelled is None
                 else self.shell("wm size", device_id=device_id, cancelled=cancelled)
             )
-            raw = result.output if result.success else result.error
-            for prefix in ("Physical size:", "Override size:"):
-                if prefix in raw:
-                    return raw[raw.find(prefix) :].split(":")[1].strip().split("x")
-            return None
+            return parse_wm_size(result.output) if result.success else None
         except Exception:
             return None
 

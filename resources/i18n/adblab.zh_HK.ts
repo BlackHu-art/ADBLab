@@ -6518,5 +6518,17 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <source>详情已记录，可在任务中心查看。</source>
             <translation>詳情已記錄，可在工作中心查看。</translation>
         </message>
+        <message>
+            <source>Link</source>
+            <translation>符號連結</translation>
+        </message>
+        <message>
+            <source>链接目标不存在或无法访问，请刷新后重试。</source>
+            <translation>連結目標不存在或無法存取，請重新整理後再試。</translation>
+        </message>
+        <message>
+            <source>无法启动应用任务，请重试。</source>
+            <translation>無法啟動應用程式任務，請重試。</translation>
+        </message>
     </context>
 </TS>

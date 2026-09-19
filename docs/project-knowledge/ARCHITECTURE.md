@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-17
+last_verified: 2026-09-19
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -119,6 +119,9 @@ flowchart LR
   旧构造只在创建时归一；旧适配结果的兼容判断集中在 `command_outcome()`。超时不向调用者抛出
   `subprocess.TimeoutExpired`。`ProcessRunner` 管长进程、同键替换、停止和全局兜底；只有确认
   退出才移除 tracking，停止失败或并发启动冲突产生的残留仍需登记。
+  `native_capture` 的取消或超时另有最多 0.5 秒清理预算，用于确认自有客户端退出和排空管道；
+  无法确认客户端退出时返回执行失败。独立服务后代持有输出管道不能让调用无限等待；Windows
+  正在读取的线程暂时持有流，待写端关闭后自行释放，不为取得 EOF 终止独立 ADB 服务。
 - GUI 在事件循环中安装 `AdbRuntime`；默认本机设备列表和已验证的指定设备 shell 可通过
   `adb_transport` 直接访问已有服务。后台探测与业务调用分离，原生和快速路径共用结果转换。
   未安装运行实例的工具仍走原生。能力、回退范围和设置入口见 [ADB 自动适配](../guides/ADB_FAST.md)。
@@ -148,7 +151,7 @@ flowchart LR
 | 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
 | QtTaskSupervisor cleanup QThreadPool | 执行单资源及 owner 级停止和等待，与普通命令全局池分离 |
 | 应用关闭与 finalizer 独立线程 | 应用整体停止和最终落盘分别使用独立通道，避免排在 owner 清理任务之后；共用关闭截止时间 |
-| Controller ThreadPoolExecutor | 设备信息等后台查询；Controller.shutdown() 收口 |
+| Controller ThreadPoolExecutor | 设备信息等后台查询；概览批次拥有最多三槽子查询池并等待其退出，Controller.shutdown() 收口；代次与并发额度见 [设备数据流](DATA_FLOW.md) |
 | Remote executor / warmup / readers | 停止输入准入，先终止持久输入进程解除管道背压，再等待执行器及预热生产者；启动中及终止失败的会话仍计入残留资源 |
 | Remote 启动协调器 / scrcpy helper | 单个可追加 QThread 最多并发三台预检，逐台信号交回 GUI 启动；每台独立进程与会话，helper 父进程监测、文件锁租约及后台端口清理纳入停止屏障 |
 | RunLibraryController 串行线程 | 测试库读写、正文原子导出、诊断快照写入及附件探测，空闲退出；系统关联程序回到 GUI 线程打开，关闭时排空最后提交记录 |

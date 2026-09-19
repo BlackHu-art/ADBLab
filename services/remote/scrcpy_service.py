@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from core.adb_dimensions import parse_wm_size
 from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
@@ -130,10 +131,9 @@ class ScrcpyService:
                 timeout=query_timeout(device, 5, adb_path=adb),
                 deadline=deadline, cancelled=cancelled,
             )
-            for prefix in ("Override size:", "Physical size:"):
-                for line in (result.output or "").splitlines():
-                    if prefix in line:
-                        return line.split(":", 1)[1].strip()
+            dimensions = parse_wm_size(result.output or "") if result.success else None
+            if dimensions:
+                return "x".join(dimensions)
         except (InterruptedError, TimeoutError):
             raise
         except Exception:

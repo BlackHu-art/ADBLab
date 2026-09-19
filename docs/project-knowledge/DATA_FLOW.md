@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-12
+last_verified: 2026-09-19
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -63,6 +63,9 @@ sequenceDiagram
 手动刷新由 `ADBController.refresh_devices()` 调用异步 `ADBDevice.get_connected_devices_async()`，
 经 CommandRunner 返回成功列表后复用同一发布链路；不会把定时扫描已取得的列表再查询一次。
 同拓扑并发刷新合并为一个活动任务及一次待处理刷新；概览和兼容补查共用截止时间与关闭信号。
+同一 Controller 的设备概览查询最多三台并行，不同拓扑代次共享并发额度；每台返回即发布，
+慢设备不阻塞其他设备的显示。批次拥有子查询池，父任务等待子池退出，关闭后排队项不再查询。
+全部查询汇合后仍按原设备顺序写入缓存。
 概览写盘由仅后台使用的写锁串行，并在锁内重查拓扑代次，防止旧查询晚写覆盖新结果。
 DeviceStore 缓存当前设备属性，仅保存 IP 连接历史；发现列表与批量目标保持进程内状态。隐藏 DeviceManager 的列表复选是
 兼容状态源，全局栏提交选择，DeviceHubPage 只显示快照。单设备会话的选择独立于该复选集合。

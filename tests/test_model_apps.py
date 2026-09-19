@@ -213,6 +213,8 @@ def _app_manager_for_unit_tests():
     dialog._detail_timer.isActive.return_value = False
     dialog._detail_timer.start = Mock()
     dialog._detail_timer.stop = Mock()
+    dialog._detail_filter_timer = Mock(spec_set=["stop", "start", "isActive"])
+    dialog._detail_filter_timer.isActive.return_value = False
     dialog._filter = Mock()
     dialog._form_controller = Mock(spec_set=["_update_view_geometry"])
     dialog._icons_controller = Mock(spec_set=["reset", "decorate", "schedule"])

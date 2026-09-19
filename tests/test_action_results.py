@@ -71,6 +71,43 @@ def test_progress_is_not_success_and_multiple_targets_finish_once():
     assert len(events) == count
 
 
+def test_result_history_byte_budget_evicts_old_records_without_truncating_latest(monkeypatch):
+    monkeypatch.setattr("adblab.application.action_results.time.time", lambda: 1.0)
+    store = ActionResults(lambda _result: None, capacity=80, text_budget=2048)
+    spec = ActionSpec("query", "system.shell", "查询", "text")
+    bodies = [f"result-{index}:" + "正文" * 1000 for index in range(3)]
+    for body in bodies:
+        jobs = []
+        store.run(spec, (), lambda: jobs.append(capture_action_job("query_async")))
+        store.complete(jobs[0], {"success": True, "output": body})
+    results = store.recent()
+    assert len(results) == 1
+    assert results[0].items[0].detail == bodies[-1]
+
+
+def test_result_history_byte_budget_keeps_inflight_results_and_the_latest_completion():
+    store = ActionResults(lambda _result: None, capacity=80, text_budget=2048)
+    running = []
+    store.run(
+        ActionSpec("batch", "system.shell", "批次"), ("one", "two"),
+        lambda: running.extend(
+            capture_action_job("query_async", target) for target in ("one", "two")
+        ),
+    )
+    body = "未完成批次正文" * 1000
+    store.complete(running[0], {"success": True, "output": body})
+    finished = []
+    store.run(
+        ActionSpec("query", "system.shell", "查询"), (),
+        lambda: finished.append(capture_action_job("query_async")),
+    )
+    store.complete(finished[0], {"success": True, "output": "最新结果"})
+    assert len(store.recent()) == 2
+    assert store.accepts(running[1])
+    pending = next(result for result in store.recent() if result.state == "running")
+    assert pending.items[0].detail == body
+
+
 def test_callback_semantic_failure_overrides_transport_success():
     events = []
     store = ActionResults(events.append)

@@ -293,6 +293,7 @@ class FileExplorerPage(QWidget):
         self.root_cb.setText(tr("Root"))
         self.root_cb.setToolTip(tr("Use root access (su)"))
         self.root_cb.setAccessibleName(tr("Use root access"))
+        self.root_cb.toggled.connect(self._list_controller.cancel_link_requests)
         command_layout = QHBoxLayout()
         command_layout.setContentsMargins(0, 0, 0, 0)
         command_layout.setSpacing(8)
@@ -994,7 +995,7 @@ class FileExplorerPage(QWidget):
             return
         is_dir = self._file_type_at(row) == "Folder"
         menu = self._create_context_menu()
-        if is_dir:
+        if is_dir or self._file_type_at(row) == "Link":
             add_menu_action(menu, tr("Open"), callback=lambda: self._on_double_click(row, 0))
         else:
             is_image = self._ext(name).lower() in self.IMAGE_EXTS
@@ -1193,6 +1194,7 @@ class FileExplorerPage(QWidget):
         """同步操作资格，保留浏览缓存和原会话资源，不自动换设备。"""
         selected = bool(selected and self.device_ip)
         if selected != self._device_selected:
+            self._list_controller.cancel_link_requests()
             self._view_controller.invalidate_cache()
         self._device_selected = selected
         self._refresh_status_badge()
@@ -1209,6 +1211,7 @@ class FileExplorerPage(QWidget):
         connected = bool(connected and self.device_ip)
         became_available = connected and not self._device_connected
         if connected != self._device_connected:
+            self._list_controller.cancel_link_requests()
             self._view_controller.invalidate_cache()
         self._device_connected = connected
         self.setProperty("deviceConnected", connected)
@@ -1244,6 +1247,7 @@ class FileExplorerPage(QWidget):
             return ready
         self._disposing = True
         self._closing = True
+        self._list_controller.cancel_link_requests()
         self._active = False
         self._sync_directory_controls()
         self._active_refresh = None

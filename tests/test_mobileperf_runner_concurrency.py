@@ -102,6 +102,90 @@ class _SnapshotRaceProcess(_StoppableProcess):
         return 0
 
 
+class _QuietAfterLineStream:
+    """输出单条状态后保持管道开启，只有测试结束进程时才交付 EOF。"""
+
+    def __init__(self):
+        self.quiet = threading.Event()
+        self.release = threading.Event()
+
+    def __iter__(self):
+        yield "sampling started\n"
+        self.quiet.set()
+        if not self.release.wait(5):
+            raise TimeoutError("test did not finish the quiet process")
+
+    def close(self):
+        pass
+
+
+def test_mobileperf_quiet_stdout_delivers_status_before_process_exit(tmp_path):
+    stream = _QuietAfterLineStream()
+    process = _StoppableProcess(stream, None)
+    process_runner = _TrackingProcessRunner([process])
+    runner = MobilePerfRunner(process_runner=process_runner, project_root=tmp_path)
+    received, delivered, finished = [], threading.Event(), threading.Event()
+
+    def on_log(text):
+        received.append(text)
+        delivered.set()
+
+    runner.start(
+        MobilePerfRunConfig(package="com.example.quiet"),
+        on_log=on_log, on_finished=finished.set,
+    )
+    try:
+        assert stream.quiet.wait(1)
+        assert delivered.wait(1), "pending status waited for another stdout line"
+        assert received == ["sampling started"]
+        assert process.poll() is None
+        assert not finished.is_set()
+    finally:
+        process.returncode = 0
+        stream.release.set()
+        runner.stop(timeout=0)
+    assert finished.wait(1)
+    assert received == ["sampling started"]
+    assert not runner.is_running()
+
+
+def test_mobileperf_timed_log_callback_remains_in_finish_and_stop_barrier(tmp_path):
+    stream = _QuietAfterLineStream()
+    process = _StoppableProcess(stream, None)
+    runner = MobilePerfRunner(
+        process_runner=_TrackingProcessRunner([process]), project_root=tmp_path,
+    )
+    callback_entered, release_callback, finished = (
+        threading.Event(), threading.Event(), threading.Event(),
+    )
+
+    def on_log(_text):
+        callback_entered.set()
+        if not release_callback.wait(5):
+            raise TimeoutError("test did not release callback")
+
+    runner.start(
+        MobilePerfRunConfig(package="com.example.quiet"),
+        on_log=on_log, on_finished=finished.set,
+    )
+    context = runner._active_context
+    try:
+        assert callback_entered.wait(1), "quiet status callback was not scheduled"
+        process.returncode = 0
+        stream.release.set()
+        runner.stop(timeout=0)
+        assert not finished.is_set()
+        assert runner.is_running()
+    finally:
+        process.returncode = 0
+        stream.release.set()
+        release_callback.set()
+        runner.stop(timeout=0)
+    assert finished.wait(1)
+    runner._join_context_readers(context, timeout=1)
+    assert not runner.is_running()
+
+
 class _TrackingProcessRunner:
     """维护 key 与进程映射，用于检测旧代停止是否误伤新代。"""
 

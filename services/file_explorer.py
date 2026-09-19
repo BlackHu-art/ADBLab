@@ -21,6 +21,7 @@ class FileEntry:
     modified: str
     size: int
     is_dir: bool
+    is_symlink: bool = False
 
 
 @dataclass(frozen=True)
@@ -197,7 +198,7 @@ def _looks_iso_date(value: str) -> bool:
 
 
 def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
-    """解析 adb shell `ls -la` 输出，并保持文件夹优先、名称升序。"""
+    """解析列表并保留链接身份；ls 的链接权限位不能证明目标是目录。"""
     rows: list[FileEntry] = []
     symlink_targets: dict[str, str] = {}
     for line in output.splitlines():
@@ -220,20 +221,32 @@ def parse_ls_output(output: str) -> tuple[list[FileEntry], dict[str, str]]:
         if not name or name in (".", ".."):
             continue
 
-        is_dir = entry["perms"].startswith(("d", "l"))
+        is_dir = entry["perms"].startswith("d")
         rows.append(
             FileEntry(
                 name=name,
-                file_type="Folder" if is_dir else extension_label(name),
+                file_type="Folder" if is_dir else "Link" if is_symlink else extension_label(name),
                 size_text="-" if is_dir else format_size(entry["size"]),
                 modified=entry["modified"],
                 size=safe_int(entry["size"]),
                 is_dir=is_dir,
+                is_symlink=is_symlink,
             )
         )
 
-    rows.sort(key=lambda item: (not item.is_dir, item.name.lower()))
+    rows.sort(key=lambda item: (not (item.is_dir or item.is_symlink), item.name.lower()))
     return rows, symlink_targets
+
+
+def link_target_type_command(path: str) -> str:
+    """单次只读查询链接目标类型，路径始终按设备 shell 参数引用。"""
+    quoted = shell_quote(path)
+    return (
+        f"if [ -d {quoted} ]; then printf directory; "
+        f"elif [ -f {quoted} ]; then printf file; "
+        f"elif [ -L {quoted} ] && [ ! -e {quoted} ]; then printf missing; "
+        "else printf unavailable; fi"
+    )
 
 
 

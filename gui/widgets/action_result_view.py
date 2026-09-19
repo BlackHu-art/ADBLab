@@ -11,7 +11,12 @@ from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, ComboBox, PlainTextEdit, PushButton, SearchLineEdit
 
-from adblab.application.action_results import ActionResult, ActionResults, artifact_name
+from adblab.application.action_results import (
+    ActionResult,
+    ActionResults,
+    artifact_name,
+    expired_action_results,
+)
 from gui.i18n import tr
 from gui.styles import BaseStyles, FontRole
 from gui.styles.fluent import apply_label_role, apply_reading_surface, set_function_tooltip
@@ -33,6 +38,7 @@ class ActionResultView(QWidget):
     artifact_requested = Signal(str, bool)
     export_requested = Signal(str, str)
     reveal_requested = Signal(object)
+    TEXT_BUDGET = 16 * 1024 * 1024
 
     def __init__(self, parent=None, *, diagnostic: bool = False):
         super().__init__(parent)
@@ -146,21 +152,26 @@ class ActionResultView(QWidget):
     def present(self, result: ActionResult) -> None:
         """新请求显示在原分区；同一请求的后台更新保持用户的设备和阅读位置。"""
         self._latest_started = max(self._latest_started, result.started_at)
-        if self._diagnostic and (
+        ignored_diagnostic = self._diagnostic and (
             not result.items or result.started_at < self._latest_started
-        ):
+        )
+        if ignored_diagnostic and result.request_id not in self._records:
             return
         fresh = result.request_id not in self._records
         self._records[result.request_id] = result
         if fresh:
             self._selected = result.request_id
-        ended = sorted(
-            (item for item in self._records.values() if item.state != "running"),
+        ordered = sorted(
+            self._records.values(),
             key=lambda item: item.finished_at or item.started_at,
         )
-        for item in ended[:-20]:
-            if item.request_id != self._selected:
-                del self._records[item.request_id]
+        for request_id in expired_action_results(
+            ordered, capacity=20, text_budget=self.TEXT_BUDGET, protected=(self._selected,),
+        ):
+            del self._records[request_id]
+        if ignored_diagnostic:
+            # 旧请求终态必须解除在途保护，但晚到正文不能抢占较新诊断的阅读位置。
+            return
         blocker = QSignalBlocker(self.history)
         self.history.clear()
         for item in reversed(self._records.values()):

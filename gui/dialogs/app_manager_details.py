@@ -1,6 +1,7 @@
 """应用管理详情页，展示单个应用信息并管理运行时权限。"""
 
 import html
+from collections import deque
 from typing import cast
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
@@ -65,6 +66,10 @@ class AppDetailsPage(QWidget):
         self._dispose_signal_emitted = False
         self._close_after_dispose = False
         self._shutdown_registered = False
+        self._permission_pending: deque[str] = deque()
+        self._permission_batch: tuple[int, str, str] | None = None
+        self._permission_worker = None
+        self._permission_cancelled = False
         self.load_state = "idle"
         self.setObjectName("appDetailsPage")
         self.setProperty("masterDetailRole", "detail")
@@ -242,6 +247,8 @@ class AppDetailsPage(QWidget):
         connected = bool(connected and self.device_ip)
         changed = connected != self._device_connected
         self._device_connected = connected
+        if not connected:
+            self._cancel_permission_pending()
         self.setProperty("deviceConnected", connected)
         self._sync_operation_controls()
         if changed:
@@ -259,16 +266,17 @@ class AppDetailsPage(QWidget):
         self._device_selected = bool(selected and self.device_ip)
         if not self._device_selected:
             self._pending_reload = False
+            self._cancel_permission_pending()
         self._sync_operation_controls()
 
     def _sync_operation_controls(self) -> None:
-        allowed = self._can_operate()
+        allowed = self._can_operate() and self._permission_batch is None
         self.grant_btn.setEnabled(allowed)
         self.revoke_btn.setEnabled(allowed)
         self.retry_btn.setEnabled(allowed)
 
     def retry_load(self) -> None:
-        if self._dispose_requested or not self.package_name:
+        if self._dispose_requested or not self.package_name or self._permission_batch is not None:
             return
         self._cancel_current_generation()
         if self._running_workers():
@@ -397,6 +405,8 @@ class AppDetailsPage(QWidget):
         )
 
     def _mp(self, action):
+        if self._permission_batch is not None:
+            return
         if not self._can_operate():
             self.log_message.emit(
                 tr("请在顶部设备栏勾选当前在线设备后修改权限。")
@@ -414,7 +424,7 @@ class AppDetailsPage(QWidget):
             assert item is not None  # stub Optional 收窄
             if item.checkState() == Qt.CheckState.Checked:
                 rq.append(item.data(Qt.ItemDataRole.UserRole))
-        sel = rc + rq
+        sel = list(dict.fromkeys(rc + rq))
         if not sel:
             FluentMessageBox.warning(
                 self,
@@ -422,14 +432,46 @@ class AppDetailsPage(QWidget):
                 tr("请先选择要授权或撤销的权限。"),
             )
             return
-        for perm in sel:
-            self._rw(
+        self._permission_pending = deque(sel)
+        self._permission_batch = (self._load_generation, self.package_name, action)
+        self._permission_cancelled = False
+        self._sync_operation_controls()
+        self._start_next_permission()
+
+    def _cancel_permission_pending(self) -> None:
+        """只撤销尚未启动的权限写入，在途 worker 仍由原页面和关闭屏障持有。"""
+        self._permission_pending.clear()
+        self._permission_cancelled = True
+        if self._permission_worker is None:
+            self._permission_batch = None
+
+    def _start_next_permission(self) -> None:
+        """逐项创建权限 worker，所有成功与失败汇合后最多读取一次最终权限快照。"""
+        batch = self._permission_batch
+        if batch is None or self._permission_worker is not None:
+            return
+        generation, package, action = batch
+        current = (
+            not self._permission_cancelled and self._can_operate()
+            and generation == self._load_generation and package == self.package_name
+        )
+        if not current:
+            self._permission_pending.clear()
+        while self._permission_pending:
+            permission = self._permission_pending.popleft()
+            self._permission_worker = self._rw(
                 "modify_permission",
-                package_name=self.package_name,
-                permission=perm,
+                _generation=generation,
+                package_name=package,
+                permission=permission,
                 action=action,
-                operation_done=alive_callback(self, "_rp"),
             )
+            if self._permission_worker is not None:
+                return
+        self._permission_batch = None
+        self._sync_operation_controls()
+        if current:
+            self._rp()
 
     def _rw(self, op, *, _generation=None, _finished_part=None, **kw):
         if not self._can_operate():
@@ -479,7 +521,21 @@ class AppDetailsPage(QWidget):
             alive_callback(self, "_prune_worker", w), Qt.ConnectionType.QueuedConnection
         )
         self._workers.append(w)
-        w.start()
+        try:
+            w.start()
+        except RuntimeError:
+            # 启动失败不会有 finished；显式归还对象，批次才能继续汇合其余项目。
+            self._workers.remove(w)
+            w.deleteLater()
+            message = tr("无法启动应用任务，请重试。")
+            self.log_message.emit(message)
+            report_feedback(
+                self, "apps.manager", tr("应用管理"), message,
+                level="error", notify=True, target=self.device_ip,
+            )
+            if _finished_part is not None:
+                self._on_load_part_finished(generation, str(_finished_part))
+            return None
         return w
 
     def _prune_worker(self, worker):
@@ -487,6 +543,9 @@ class AppDetailsPage(QWidget):
             self._workers.remove(worker)
         if is_qobject_alive(worker) and hasattr(worker, "deleteLater"):
             worker.deleteLater()
+        if worker is self._permission_worker:
+            self._permission_worker = None
+            self._start_next_permission()
         if (
             self._pending_reload
             and not self._closing
@@ -496,6 +555,7 @@ class AppDetailsPage(QWidget):
         self._maybe_finish_dispose()
 
     def _cancel_current_generation(self) -> None:
+        self._cancel_permission_pending()
         self._load_generation += 1
         self._pending_load_parts = set()
         self._pending_reload = False
@@ -533,6 +593,7 @@ class AppDetailsPage(QWidget):
         self._dispose_requested = True
         self._closing = True
         self._active = False
+        self._cancel_permission_pending()
         safe_disconnect(BaseStyles.theme_changed, self._apply_theme)
         safe_disconnect(BaseStyles.fonts_changed, self._apply_theme)
         stop_reading_surface(self.detail_text)

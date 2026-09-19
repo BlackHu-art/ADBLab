@@ -87,3 +87,37 @@ def test_backup_last_pull_cancellation_preserves_old_zip_and_emits_no_success(tm
     assert old.read_bytes() == b"previous backup"
     assert done == []
     assert feedback and all(level != "success" for level, _ in feedback)
+
+
+def test_backup_cancel_during_compression_preserves_old_zip(tmp_path):
+    from pathlib import Path
+    from shutil import make_archive
+
+    worker = AppManagerWorker("mock-device", "backup_app")
+    previous = tmp_path / "backup_org.example.app.zip"
+    previous.write_bytes(b"previous backup")
+    done, feedback = [], []
+    worker.operation_done.connect(done.append)
+    worker.operation_feedback.connect(lambda level, message: feedback.append((level, message)))
+
+    def adb(*args, **kwargs):
+        if args[0] == "shell":
+            return CommandResult(success=True, output="package:/app/base.apk")
+        (Path(args[2]) / "base.apk").write_bytes(b"new apk")
+        return CommandResult(success=True)
+
+    def compress(*args):
+        archive = make_archive(*args)
+        worker.abort()
+        return archive
+
+    with (
+        patch.object(worker, "_adb", side_effect=adb),
+        patch("models.app_manager_worker.shutil.make_archive", side_effect=compress),
+    ):
+        worker._backup_app("org.example.app", str(tmp_path))
+
+    assert previous.read_bytes() == b"previous backup"
+    assert list(tmp_path.iterdir()) == [previous]
+    assert done == []
+    assert feedback and all(level != "success" for level, _ in feedback)

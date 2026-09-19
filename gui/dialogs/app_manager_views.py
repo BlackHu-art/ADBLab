@@ -106,6 +106,7 @@ class AppManagerViews:
         ):
             return
         previous_selection = set(getattr(self._frame, "selected_packages", set()))
+        self._frame._detail_filter_timer.stop()
         self._frame._icons_controller.reset()
         self._frame._apps_data = apps
         self._frame._app_labels = {}
@@ -212,7 +213,9 @@ class AppManagerViews:
             if version and version_item:
                 version_item.setText(version)
                 version_item.setToolTip(version)
-        self._frame._filter()
+        # 单条详情只更新对应模型行，全列表筛选合并到本轮事件交付之后。
+        if not self._frame._detail_filter_timer.isActive():
+            self._frame._detail_filter_timer.start(0)
 
     def _on_detail_worker_finished(self, packages=None, request_id=None):
         """未发布成功详情的包留待刷新重试，避免失败批次在定时器中不断重发。"""
@@ -434,6 +437,7 @@ class AppManagerViews:
             self._frame._show_details_for(pkg)
 
     def _filter(self):
+        self._frame._detail_filter_timer.stop()
         text = self._frame.search_input.text().strip().lower()
         ft = self._frame.type_filter.currentData()
         self._frame.proxy.set_filters(text, ft)

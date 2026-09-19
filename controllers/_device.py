@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from _thread import LockType
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from PySide6.QtCore import QTimer
@@ -36,6 +36,7 @@ class ADBDeviceMixin(_ADBControllerBase):
     signals: ADBControllerSignals
     _overview_refresh: _OverviewRefresh | None = None
     _overview_store_lock: LockType | None = None
+    _overview_query_slots: threading.BoundedSemaphore | None = None
     log_service: LogService
     executor: ThreadPoolExecutor
 
@@ -128,6 +129,9 @@ class ADBDeviceMixin(_ADBControllerBase):
             if self._overview_store_lock is None:
                 self._overview_store_lock = threading.Lock()
             store_lock = self._overview_store_lock
+            if self._overview_query_slots is None:
+                self._overview_query_slots = threading.BoundedSemaphore(3)
+            query_slots = self._overview_query_slots
 
         def _is_current_topology() -> bool:
             if getattr(self, "_shutting_down", False):
@@ -139,11 +143,14 @@ class ADBDeviceMixin(_ADBControllerBase):
                     and topology == self._device_topology
                 )
 
-        def _update_batch():
-            records = []
-            for ip in devices:
+        def _query_device(ip):
+            # 旧拓扑尚在退出时仍共享命令额度；等待额度期间也响应取消。
+            while not query_slots.acquire(timeout=0.05):
                 if not _is_current_topology():
-                    return
+                    return None
+            try:
+                if not _is_current_topology():
+                    return None
                 try:
                     info = ADBDevice.get_device_overview_info(
                         ip, cancelled=lambda: not _is_current_topology(),
@@ -159,16 +166,38 @@ class ADBDeviceMixin(_ADBControllerBase):
                         "CPU Architecture": info.get("CPU Architecture", ""),
                         "Hardware": info.get("Hardware", ""),
                     }
-                    records.append(record)
                 except Exception:
                     record = {}
                     self.log_service.log(
                         "WARNING", "设备概览属性读取失败，将清除本轮缺失的动态指标",
                     )
-                if not _is_current_topology():
-                    return
-                # 已完成的设备不等待后续查询；扩展字段仅在窗口内存中展示。
-                self.signals.device_info_updated.emit(ip, record)
+                return record
+            finally:
+                query_slots.release()
+
+        def _update_batch():
+            records_by_device = {}
+            # 子池由当前 Controller 任务拥有；退出上下文先收口查询，再结束监督中的父任务。
+            with ThreadPoolExecutor(
+                max_workers=min(3, len(devices)), thread_name_prefix="adblab-overview",
+            ) as queries:
+                pending = {queries.submit(_query_device, ip): ip for ip in devices}
+                try:
+                    for future in as_completed(pending):
+                        if not _is_current_topology():
+                            return
+                        ip = pending[future]
+                        record = future.result()
+                        if record is None or not _is_current_topology():
+                            return
+                        if record:
+                            records_by_device[ip] = record
+                        # 先完成的设备立即发布，不受前面慢设备的查询顺序阻挡。
+                        self.signals.device_info_updated.emit(ip, record)
+                finally:
+                    for future in pending:
+                        future.cancel()
+            records = [records_by_device[ip] for ip in devices if ip in records_by_device]
             if records:
                 # 设备属性查询可能持续数秒；拓扑已变化时旧结果不得再写盘或刷新 UI，
                 # 否则已离线设备会被晚到的补全任务重新显示。

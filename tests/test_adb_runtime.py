@@ -416,8 +416,9 @@ def test_shutdown_cancels_slow_initial_service_bootstrap(host_transport, monkeyp
             return False
 
         def communicate(self, timeout=None):
-            if timeout is None:
-                assert self.killed
+            assert timeout is not None
+            if self.killed:
+                assert 0 <= timeout <= 0.5
                 self.drained = True
                 return b"", b""
             assert 0 < timeout <= 0.1
@@ -432,6 +433,10 @@ def test_shutdown_cancels_slow_initial_service_bootstrap(host_transport, monkeyp
         def kill(self):
             self.killed = True
             self.returncode = -9
+
+        def wait(self, timeout=None):
+            assert self.killed and timeout is not None and 0 <= timeout <= 0.5
+            return self.returncode
 
     proc = BootstrapProcess()
     commands = []

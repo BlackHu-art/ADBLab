@@ -212,3 +212,93 @@ def test_timeout_does_not_wait_for_independent_server_to_close_pipe(frozen_launc
             pid = int(marker.read_text())
             if psutil.pid_exists(pid):
                 psutil.Process(pid).kill()
+
+
+@pytest.mark.parametrize("isolated", [False, True])
+@pytest.mark.parametrize("ending", ["timeout", "cancelled", "client_exited"])
+def test_native_capture_bounds_cleanup_when_descendant_holds_pipes(
+    request, monkeypatch, tmp_path, isolated, ending,
+):
+    from core import adb_runtime, native_process
+
+    if isolated:
+        request.getfixturevalue("frozen_launcher")
+    else:
+        monkeypatch.setattr(native_process, "_should_isolate", lambda *_args: False)
+    processes = []
+    spawn = adb_runtime.popen_native
+
+    def capture_process(*args, **kwargs):
+        process = spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    monkeypatch.setattr(adb_runtime, "popen_native", capture_process)
+    # 连续调用覆盖取消后的 reader 归属，不让上一轮资源污染下一轮。
+    for attempt in range(2):
+        marker = tmp_path / f"server-{attempt}.pid"
+        daemon = "import time;time.sleep(3)"
+        command = [
+            NATIVE_PYTHON, "-c", "import subprocess,time,pathlib;"
+            f"server=subprocess.Popen([{NATIVE_PYTHON!r},'-c',{daemon!r}]);"
+            f"pathlib.Path({str(marker)!r}).write_text(str(server.pid));"
+            + ("time.sleep(30)" if ending != "client_exited" else ""),
+        ]
+        started = time.monotonic()
+        server = None
+        try:
+            result = adb_runtime.native_capture(
+                command, 0.5, lambda: ending == "cancelled" and marker.exists(),
+            )
+            elapsed = time.monotonic() - started
+            assert result.kind == ("cancelled" if ending == "cancelled" else "timeout")
+            assert elapsed < 1.5
+            assert marker.exists(), "合成后代必须已启动才能验证管道继承"
+            server = psutil.Process(int(marker.read_text()))
+            assert server.is_running(), "短命令取消不能杀死独立服务"
+            assert processes[-1].poll() is not None
+        finally:
+            if server is None and marker.exists():
+                try:
+                    server = psutil.Process(int(marker.read_text()))
+                except psutil.NoSuchProcess:
+                    server = None
+            if server is not None:
+                server.kill()
+                server.wait(timeout=3)
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait(timeout=3)
+                for name in ("stdout", "stderr"):
+                    reader = getattr(process, name + "_thread", None)
+                    if reader is not None:
+                        reader.join(timeout=2)
+                        assert not reader.is_alive()
+                    stream = getattr(process, name, None)
+                    if stream is not None:
+                        assert stream.closed
+
+
+def test_native_capture_reports_unconfirmed_cleanup_as_transport_failure(monkeypatch):
+    from core import adb_runtime
+
+    class UnconfirmedProcess:
+        killed = False
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout):
+            assert self.killed and 0 <= timeout <= 0.5
+            raise subprocess.TimeoutExpired("test-client", timeout)
+
+    process = UnconfirmedProcess()
+    monkeypatch.setattr(adb_runtime, "popen_native", lambda *_args, **_kwargs: process)
+    cancellation = iter((False, True))
+    result = adb_runtime.native_capture(["test-client"], 1, lambda: next(cancellation))
+    assert result.kind == "transport"
+    assert result.stderr == b"ADB process failed"

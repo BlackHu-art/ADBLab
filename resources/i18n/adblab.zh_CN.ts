@@ -6518,5 +6518,17 @@ Android 设备管理、应用操作与诊断工作台</translation>
             <source>详情已记录，可在任务中心查看。</source>
             <translation>详情已记录，可在任务中心查看。</translation>
         </message>
+        <message>
+            <source>Link</source>
+            <translation>符号链接</translation>
+        </message>
+        <message>
+            <source>链接目标不存在或无法访问，请刷新后重试。</source>
+            <translation>链接目标不存在或无法访问，请刷新后重试。</translation>
+        </message>
+        <message>
+            <source>无法启动应用任务，请重试。</source>
+            <translation>无法启动应用任务，请重试。</translation>
+        </message>
     </context>
 </TS>

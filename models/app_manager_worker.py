@@ -487,6 +487,11 @@ class AppManagerWorker(QThread):
                 ) as archive_tmp:
                     archive_base = os.path.join(archive_tmp, f"backup_{pkg}")
                     staged_path = shutil.make_archive(archive_base, "zip", tmp)
+                    # 压缩可能耗时较长；发布前再次核对取消，不能覆盖用户保留的旧备份。
+                    if self._cancelled():
+                        self.log_message.emit(f"Backup aborted for {pkg}")
+                        self.operation_feedback.emit("info", f"Backup aborted: {pkg}")
+                        return
                     os.replace(staged_path, final_path)
             except Exception as exc:
                 self._report_failure(f"Backup failed for {pkg}: {exc}")
