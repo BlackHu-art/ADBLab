@@ -26,6 +26,9 @@ from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
 
 _port_lock = threading.Lock()
 _reserved_ports: set[int] = set()
+# 等待 helper 释放租约的上限：helper 正常在父进程消失后约 1 秒退出，慢链路下上传
+# 仍可能更久；超预算按清理失败登记，端口与会话目录留给既有重试入口处理。
+_HELPER_EXIT_BUDGET = 30.0
 
 
 def _reserve_port() -> int:
@@ -352,8 +355,11 @@ class ScrcpyService:
             self.process_runner.release_finished(key, process)
             if session.folder is not None:
                 session_file = Path(session.environment["ADBLAB_SCRCPY_SESSION_FILE"])
+                helper_deadline = time.monotonic() + _HELPER_EXIT_BUDGET
                 while has_active_helpers(session_file):
-                    time.sleep(0.05)
+                    if time.monotonic() >= helper_deadline:
+                        raise TimeoutError("Scrcpy helper did not release its lease in time.")
+                    time.sleep(0.1)
                 cleanup_session_tunnels(session.environment, timeout=3.0)
                 self._remove_session_folder(session.folder)
             self._release_port(session)

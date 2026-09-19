@@ -47,6 +47,7 @@ class ScreenshotViewerNav:
         if frame._display_path != self._current_path():
             had_image = frame._display_pixmap is not None
             frame._original_pixmap = frame._display_pixmap = None
+            frame._display_image = None
             frame._display_path = ""
             frame._empty_label.setText(tr("Loading preview…"))
             if not had_image:
@@ -128,6 +129,8 @@ class ScreenshotViewerNav:
             )
             if angle else pixmap
         )
+        # 同一份显示像素同时以 QImage 暴露给绘制路径，旋转只在下达显示时做一次。
+        frame._display_image = frame._display_pixmap.toImage()
         # 当前像素只归页面持有，不能再写入每个历史 item 绕过页内缓存预算。
         frame._image_stack.setCurrentWidget(frame._view)
         if frame._fit_to_window:
@@ -139,6 +142,7 @@ class ScreenshotViewerNav:
     def _show_placeholder(self, text: str):
         frame = self._frame
         frame._original_pixmap = frame._display_pixmap = None
+        frame._display_image = None
         frame._display_path = ""
         frame._current_idx = 0
         frame._fit_to_window = True

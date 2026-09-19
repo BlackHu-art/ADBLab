@@ -40,6 +40,8 @@ class _RecordingSession:
     # 下载失败的已完成录屏按设备最多保留一份；新录屏可替换，下载在途不可替换。
     save_retryable: bool = False
     pull_pending: bool = False
+    # 本批次申请时长；下载预算按它放大，避免长录屏固定 60 秒必然超时。
+    duration: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -229,7 +231,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
                 )
                 session = _RecordingSession(
                     proc, key, batch_id, remote_path, time.monotonic() + duration + 30,
-                    owner_path=owner_path,
+                    owner_path=owner_path, duration=duration,
                 )
                 self._record_sessions[device_ip] = session
             if proc.poll() not in (None, 0):
@@ -372,7 +374,7 @@ class ADBAdvanced(ADBModelCore, ADBNetworkMixin, ADBSystemMixin):
             os.close(fd)
             pull = self._run(
                 ["adb", "-s", device_ip, "pull", remote_path, temporary_path],
-                timeout=60, cancelled=self.is_shutting_down,
+                timeout=max(60, session.duration * 2 + 60), cancelled=self.is_shutting_down,
             )
             if self.is_shutting_down() or pull.get("cancelled"):
                 result.update(cancelled=True, error=pull.get("error") or "Recording save cancelled")

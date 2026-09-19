@@ -579,7 +579,9 @@ class RemotePanel(BasePanel):
     # ── 状态指示 ────────────────────────────────────────────────────────
 
     def _update_status(self, text: str, color: str | None):
-        self._status_label.setStyleSheet("font-weight: bold;")
+        # 字重只在缺失时补写：轮询每 500ms 调用一次，重复设置样式表会触发全量样式重算。
+        if self._status_label.styleSheet() != "font-weight: bold;":
+            self._status_label.setStyleSheet("font-weight: bold;")
         del color
         localized = {
             "Checking...": tr("正在检查…"),

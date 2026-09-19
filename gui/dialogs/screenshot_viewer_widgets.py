@@ -108,6 +108,14 @@ class ScreenshotFlipView(HorizontalFlipView):
             return QImage()
         owner = self.owner()
         if owner is not None and index == owner._current_idx:
+            # 页面在下达显示时已产出当前帧 QImage；路径一致就直接复用，
+            # 避免绘制与拖动每帧把整幅 QPixmap 再深拷贝一次。
+            image = owner._display_image
+            if (
+                image is not None and not image.isNull()
+                and owner._display_path == owner._image_paths[index]
+            ):
+                return image
             pixmap = owner._display_pixmap
             if pixmap is not None and not pixmap.isNull():
                 return pixmap.toImage()

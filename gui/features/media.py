@@ -6,7 +6,7 @@ import os
 from collections.abc import Iterable, Mapping
 
 from PySide6.QtCore import QEvent, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QPixmap, QWheelEvent
+from PySide6.QtGui import QImage, QPixmap, QWheelEvent
 from PySide6.QtWidgets import QBoxLayout, QWidget
 from qfluentwidgets import HeaderCardWidget
 from shiboken6 import isValid
@@ -54,6 +54,8 @@ class ScreenshotPage(QWidget):
         self._fit_to_window = True
         self._original_pixmap: QPixmap | None = None
         self._display_pixmap: QPixmap | None = None
+        # 当前帧的显示像素由页面额外持有一份，避免绘制路径每帧从 QPixmap 重拷贝。
+        self._display_image: QImage | None = None
         self._display_path = ""
         self._rotation_by_path: dict[str, int] = {}
         self._reported_image_count = 0
@@ -271,6 +273,7 @@ class ScreenshotPage(QWidget):
         self._release_device_tools()
         self._disconnect_style_signals()
         self._original_pixmap = self._display_pixmap = None
+        self._display_image = None
         self._display_path = ""
         self._image_paths.clear()
         self._path_versions.clear()

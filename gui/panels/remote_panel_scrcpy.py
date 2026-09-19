@@ -236,8 +236,8 @@ class RemotePanelScrcpy:
             status = "Error" if any(s.state == "failed" for s in sessions.values()) else "Idle"
             frame._frozen_session_config = None
             frame._watchdog.stop()
+        # 行状态已由上面的 _set_session_state 刷新；这里不再重复整表重写。
         frame._update_status(status, None)
-        self._refresh_session_rows()
 
     def _refresh_session_rows(self) -> None:
         form = getattr(self._frame, "_form_controller", None)

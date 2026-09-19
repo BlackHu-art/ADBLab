@@ -228,6 +228,11 @@ class SurfaceStatsCollector:
                 s = traceback.format_exc()
                 logger.debug(s)
 
+    def _pause_interval(self) -> None:
+        """按采样间隔等待；stop_event 置位时立即返回，停止不因此变慢。"""
+
+        self.stop_event.wait(self.frequency)
+
     def _collector_thread(self):
         """循环采集帧数据。
 
@@ -250,6 +255,7 @@ class SurfaceStatsCollector:
                         # Activity 切换且旧窗口消失时，刷新焦点窗口后重新采集。
                         self.focus_window = self.get_focus_activity()
                         logger.debug("refresh_period is None or timestamps is None")
+                        self._pause_interval()
                         continue
                     # 只保留晚于上次采样点的新帧。
                     timestamps += [
@@ -269,6 +275,7 @@ class SurfaceStatsCollector:
                         cur_focus_window = self.get_focus_activity()
                         if self.focus_window != cur_focus_window:
                             self.focus_window = cur_focus_window
+                            self._pause_interval()
                             continue
                     logger.debug(timestamps)
                     self.data_queue.put((refresh_period, timestamps, time.time()))
@@ -280,6 +287,8 @@ class SurfaceStatsCollector:
                 logger.error("an exception hanpend in fps _collector_thread , reason unkown!")
                 s = traceback.format_exc()
                 logger.debug(s)
+                # 畸形帧数据会持续抛异常；没有这次等待就退化成高频空转与日志刷屏。
+                self._pause_interval()
         self.data_queue.put("Stop")
 
     def _clear_surfaceflinger_latency_data(self):
