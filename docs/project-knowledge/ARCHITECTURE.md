@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-19
+last_verified: 2026-09-21
 related: [MODULE_MAP.md, BUSINESS_FLOW.md, DATA_FLOW.md, DEPENDENCY_MAP.md]
 ---
 
@@ -149,7 +149,7 @@ flowchart LR
 | `QtAdbRuntime` / `AdbRuntime` | 窗口拥有 Qt 适配器；唯一后台线程检测服务和设备能力，活动快速请求独占短连接；后台通知抵达 GUI 后读取最新快照，模式与实际能力分别投影；关闭先取消探测和在途请求，清理后最终封闭 |
 | 功能页 QThread/worker | 应用、文件、Logcat、包查询；由页面与 TaskSupervisor 管理释放屏障 |
 | FileTransferCoordinator / 文件预览线程 | 页面串行调度传输，预览优先排队但不抢占运行中的普通传输；动态监督 worker、子进程及准备前登记的清理义务，后台等待实际 join 和进程退出；图片线程交付 QImage，GUI 拥有有界像素缓存；文本读取保留原始字节，保存和另存为也由受监督的后台任务执行 |
-| 截图读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；停止后以非阻塞 join 确认释放，快照删除与读取均由 TaskSupervisor 监督 |
+| 截图校验/读取/删除 QThread | 页面独占有界像素缓存；只通过信号向 GUI 交付 QImage，当前图先显示；本地图校验、快照删除与读取均由 TaskSupervisor 监督，停止后以非阻塞 join 确认释放 |
 | QtTaskSupervisor cleanup QThreadPool | 执行单资源及 owner 级停止和等待，与普通命令全局池分离 |
 | 应用关闭与 finalizer 独立线程 | 应用整体停止和最终落盘分别使用独立通道，避免排在 owner 清理任务之后；共用关闭截止时间 |
 | Controller ThreadPoolExecutor | 设备信息等后台查询；概览批次拥有最多三槽子查询池并等待其退出，Controller.shutdown() 收口；代次与并发额度见 [设备数据流](DATA_FLOW.md) |

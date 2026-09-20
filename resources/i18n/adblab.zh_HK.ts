@@ -3,6 +3,10 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>Year unavailable; sorted by month, day and time after dated entries</source>
+            <translation>缺少年份；排在完整日期之後，按月、日和時間排序</translation>
+        </message>
+        <message>
             <source>清空反向规则</source>
             <translation>清空反向規則</translation>
         </message>

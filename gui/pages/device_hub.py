@@ -635,6 +635,17 @@ class DeviceHubPage(QWidget):
         self._refresh_cards()
         self._refresh_summary()
 
+    def update_device_metadata(self, record: Mapping[str, object]) -> None:
+        """原位替换单设备展示快照；不重排卡片或触碰其他设备的选择和布局。"""
+        device_id = str(record.get("ip", ""))
+        if device_id not in self._connected:
+            return
+        snapshot = dict(record)
+        if self._metadata.get(device_id) == snapshot:
+            return
+        self._metadata[device_id] = snapshot
+        self._cards[device_id].set_snapshot(snapshot, device_id in self._selected, self._state)
+
     def set_device_context(self, selected, connected, state) -> None:
         """保持原三参数接口；同设备刷新原位更新，移除卡片延迟释放以避开信号栈。"""
         self._selected = tuple(dict.fromkeys(str(device) for device in selected if device))

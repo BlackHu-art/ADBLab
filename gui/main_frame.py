@@ -95,6 +95,25 @@ def _debug_log(owner, event: str, **fields) -> None:
     log_service.log("DEBUG", message)
 
 
+class _ScannedDevices(list[str]):
+    """随列表保留捕获代次，Qt 排队和界面防抖都不能把旧结果变成新快照。"""
+
+    def __init__(self, devices: list[str], token: tuple[int, int] | None):
+        super().__init__(devices)
+        self.discovery_token = token
+
+
+class _ScanDiscoveryState(str):
+    """失败状态与设备列表使用同一代次，晚到错误也不能回退已恢复的界面。"""
+
+    discovery_token: tuple[int, int] | None
+
+    def __new__(cls, state: str, token: tuple[int, int] | None):
+        value = super().__new__(cls, state)
+        value.discovery_token = token
+        return value
+
+
 class _ScanThread(QThread):
     """以低频率轮询 ``adb devices`` 的长生命周期线程。
 
@@ -105,14 +124,15 @@ class _ScanThread(QThread):
 
     SCAN_CALL_TIMEOUT_S = 15.0
 
-    devices_changed = Signal(list)
-    discovery_state_changed = Signal(str)
+    devices_changed = Signal(object)
+    discovery_state_changed = Signal(object)
 
     def __init__(self, parent=None, interval_ms: int = 15000):
         super().__init__(parent)
         self._stop_flag = False
         self._interval_ms = max(3000, int(interval_ms))
         self._snapshot_invalidated = threading.Event()
+        self.discovery_token: Callable[[], tuple[int, int] | None] = lambda: None
 
     def stop(self):
         self._stop_flag = True
@@ -127,6 +147,7 @@ class _ScanThread(QThread):
 
         runner: ProcessRunner | None = None
         last_devices = None  # 首次轮询必须发布设备列表。
+        last_token = None
         last_state = "scanning"
         while not self._stop_flag:
             runtime = adb_runtime()
@@ -140,6 +161,7 @@ class _ScanThread(QThread):
                     return
                 continue
             try:
+                token = self.discovery_token()
                 deadline = time.monotonic() + self.SCAN_CALL_TIMEOUT_S
                 admission = (
                     runtime.wait_for_device_check(
@@ -172,8 +194,8 @@ class _ScanThread(QThread):
                 if self._stop_flag:
                     return
                 if output is None:
-                    if last_state != "unavailable":
-                        self.discovery_state_changed.emit("unavailable")
+                    if last_state != "unavailable" or token != last_token:
+                        self.discovery_state_changed.emit(_ScanDiscoveryState("unavailable", token))
                     last_state = "unavailable"
                 else:
                     devices = parse_connected_devices(output)
@@ -184,15 +206,18 @@ class _ScanThread(QThread):
                         device_set != last_devices
                         or last_state == "unavailable"
                         or self._snapshot_invalidated.is_set()
+                        or token != last_token
                     ):
                         self._snapshot_invalidated.clear()
                         last_devices = device_set
-                        self.devices_changed.emit(devices)
+                        self.devices_changed.emit(_ScannedDevices(devices, token))
                     last_state = "ready" if devices else "empty"
+                last_token = token
             except Exception:
-                if not self._stop_flag and last_state != "unavailable":
-                    self.discovery_state_changed.emit("unavailable")
+                if not self._stop_flag and (last_state != "unavailable" or token != last_token):
+                    self.discovery_state_changed.emit(_ScanDiscoveryState("unavailable", token))
                 last_state = "unavailable"
+                last_token = token
             if self._sleep_interruptibly(self._interval_ms):
                 return
 
@@ -349,7 +374,8 @@ class MainFrame(FluentWindow):
         self._scan_refresh_timer = QTimer(self)
         self._scan_refresh_timer.setSingleShot(True)
         self._scan_refresh_timer.timeout.connect(self._publish_scanned_devices)
-        self._pending_scanned_devices = []
+        self._pending_scanned_devices: list[str] | None = None
+        self._pending_scan_token: tuple[int, int] | None = None
         self._initial_refresh_timer = QTimer(self)
         self._initial_refresh_timer.setSingleShot(True)
         self._initial_refresh_timer.timeout.connect(self.adb_controller.refresh_devices)
@@ -460,6 +486,7 @@ class MainFrame(FluentWindow):
             set_discovery_state("scanning")
         self._scan_thread = _ScanThread(interval_ms=interval_ms)
         scan_thread = self._scan_thread
+        scan_thread.discovery_token = self.adb_controller.device_discovery_token
         scan_thread.devices_changed.connect(self._schedule_scan_refresh)
         discovery_state_changed = getattr(
             scan_thread,
@@ -467,7 +494,7 @@ class MainFrame(FluentWindow):
             None,
         )
         if discovery_state_changed is not None and callable(set_discovery_state):
-            discovery_state_changed.connect(set_discovery_state)
+            discovery_state_changed.connect(self._on_scan_discovery_state)
         finished = getattr(scan_thread, "finished", None)
         if finished is not None:
             finished.connect(lambda: self._on_scan_thread_finished(scan_thread))
@@ -500,17 +527,35 @@ class MainFrame(FluentWindow):
         elif thread:
             self._scan_thread = None
 
+    def _on_scan_discovery_state(self, state: str) -> None:
+        """错误状态也经过发现准入，避免过期失败撤销刚完成的手动刷新。"""
+        if self._closing:
+            return
+        token = getattr(state, "discovery_token", None)
+        if token is not None:
+            current = self.adb_controller.device_discovery_token()
+            if token != current or current[1]:
+                return
+        self.left_panel.set_device_discovery_state(str(state))
+
     def _schedule_scan_refresh(self, devices: list[str]):
         """合并扫描线程通知，更新界面时不再发起第二次 ADB 轮询。"""
         if getattr(self, "_closing", False):
             return
         self._pending_scanned_devices = list(devices)
+        self._pending_scan_token = getattr(devices, "discovery_token", None)
         self._scan_refresh_timer.start(self.DEVICE_SCAN_DEBOUNCE_MS)
 
     def _publish_scanned_devices(self):
-        if getattr(self, "_closing", False):
+        if getattr(self, "_closing", False) or self._pending_scanned_devices is None:
             return
-        self.adb_controller.publish_detected_devices(list(self._pending_scanned_devices))
+        devices = self._pending_scanned_devices
+        self._pending_scanned_devices = None
+        token = getattr(self, "_pending_scan_token", None)
+        if token is None:
+            self.adb_controller.publish_detected_devices(devices)
+        else:
+            self.adb_controller.publish_detected_devices(devices, discovery_token=token)
 
     def set_continuous_scan(self, enabled: bool):
         self._continuous_scan_enabled = bool(enabled)
@@ -1011,6 +1056,7 @@ class MainFrame(FluentWindow):
             FluentIcon.CAMERA,
             create_screenshot_page,
             requires_device=False,
+            defer_payload_while_disposing=True,
             close_label=tr("清除截图结果"),
         )
 
@@ -1742,26 +1788,38 @@ class MainFrame(FluentWindow):
             setter = getattr(page, "set_device_context", None)
             if callable(setter):
                 setter(selected, connected, state)
+        self._sync_device_metadata(connected)
+        self._sync_global_session_controls()
+
+    def _sync_device_metadata(self, devices: list[str], *, incremental: bool = False) -> None:
+        """展示元数据独立于设备选择上下文；单设备响应只刷新该设备卡片。"""
+        panel = self.left_panel
+        bar = getattr(self, "_global_device_bar", None)
         hub = getattr(self, "_device_hub", None)
         if hub is not None:
-            records = {info["ip"]: info for info in DeviceStore.get_full_devices_info(connected)}
-            for device in connected:
+            records = {info["ip"]: info for info in DeviceStore.get_full_devices_info(devices)}
+            for device in devices:
                 records.setdefault(device, {"ip": device}).update(
                     self._device_metadata.get(device, {})
                 )
             if bar is not None:
-                bar.set_device_labels({device: _device_name(device, records[device])
-                                       for device in connected})
-                self.adb_controller.action_results.set_target_labels(bar.device_labels())
-                apps = panel.app_panel
-                if apps is not None:
-                    apps.set_device_labels(bar.device_labels())
-                for host in self._workspace_feature_hosts.values():
-                    host.performance_sessions.set_device_labels(bar.device_labels())
+                names = {device: _device_name(device, records[device]) for device in devices}
+                if bar.set_device_labels(names):
+                    # 电量等指标不改变显示名称，不应反复重建选择器和会话标签。
+                    labels = bar.device_labels()
+                    self.adb_controller.action_results.set_target_labels(labels)
+                    apps = panel.app_panel
+                    if apps is not None:
+                        apps.set_device_labels(labels)
+                    for host in self._workspace_feature_hosts.values():
+                        host.performance_sessions.set_device_labels(labels)
                 records = {device: {**info, "name": bar.device_label(device)}
                            for device, info in records.items()}
-            hub.set_device_metadata(list(records.values()))
-        self._sync_global_session_controls()
+            if incremental:
+                for record in records.values():
+                    hub.update_device_metadata(record)
+            else:
+                hub.set_device_metadata(list(records.values()))
 
     def _on_device_info_updated(self, device: str, info: dict) -> None:
         """只保留在线设备的展示字段；补充信息不写入用户配置或缓存唯一标识。"""
@@ -1786,7 +1844,7 @@ class MainFrame(FluentWindow):
             value = str(info.get(field, "")).strip()
             if value and value.casefold() not in ("unknown", "n/a", "-"):
                 metadata[field] = value
-        self._sync_device_context()
+        self._sync_device_metadata([device], incremental=True)
 
     def _open_device_tool(self, section: str, feature: str, device_id: str) -> None:
         """概览快捷入口只接受已选在线目标，多选时保持其他目标不变。"""
@@ -2343,12 +2401,19 @@ class MainFrame(FluentWindow):
             return
         page = self._workspace_feature_hosts["apps"].update_feature("media", payload)
         if page is None:
-            self.log_service.log("WARNING", "Screenshot result page is still closing")
+            self.log_service.log(
+                "DEBUG", "Screenshot results queued until the previous page closes",
+            )
             return
 
     def _on_operation_completed(self, operation: str, success: bool, message: str) -> None:
         """转发操作结果，并将刷新失败映射为明确的 ADB 不可用状态。"""
 
+        if operation == "refresh":
+            self._pending_scanned_devices = None
+            timer = getattr(self, "_scan_refresh_timer", None)
+            if timer is not None:
+                timer.stop()
         if operation == "get_package" and not success:
             self._finish_package_query()
         self.left_panel.on_operation_completed(operation, success, message)

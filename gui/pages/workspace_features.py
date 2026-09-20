@@ -73,6 +73,7 @@ class _FeatureDefinition:
     requires_device: bool
     close_label: str
     show_close_action: bool
+    defer_payload_while_disposing: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +252,7 @@ class WorkspaceFeatureHost(QWidget):
         self._last_device_by_feature: dict[str, str] = {}
         self._generation_by_pair: dict[tuple[str, str], int] = {}
         self._page_keys: dict[QWidget, FeatureSessionKey] = {}
+        self._deferred_payloads: dict[FeatureSessionKey, list[object]] = {}
         self._synchronizing_controls = False
         self._shutting_down = False
         self._active = True
@@ -478,6 +480,7 @@ class WorkspaceFeatureHost(QWidget):
         requires_device: bool = True,
         close_label: str = "关闭会话",
         show_close_action: bool = True,
+        defer_payload_while_disposing: bool = False,
     ) -> None:
         key = key.strip()
         if (
@@ -492,6 +495,7 @@ class WorkspaceFeatureHost(QWidget):
             factory=factory,
             requires_device=requires_device,
             show_close_action=show_close_action,
+            defer_payload_while_disposing=defer_payload_while_disposing,
             close_label=(
                 tr("关闭会话")
                 if not str(close_label).strip() or close_label == "关闭会话"
@@ -703,6 +707,7 @@ class WorkspaceFeatureHost(QWidget):
         generation = self._generation_by_pair.get(pair, 0)
         key = FeatureSessionKey(feature, device_id, generation)
         if self.registry.is_disposing(key):
+            self._defer_payload(key, definition, payload)
             self._show_disposing_session(key, definition)
             return True
         page, created = self.registry.get_or_create(key, definition.factory)
@@ -759,6 +764,7 @@ class WorkspaceFeatureHost(QWidget):
         generation = self._generation_by_pair.get(pair, 0)
         key = FeatureSessionKey(feature, device_id, generation)
         if self.registry.is_disposing(key):
+            self._defer_payload(key, definition, payload)
             return None
         page, created = self.registry.get_or_create(key, definition.factory)
         if created:
@@ -881,6 +887,7 @@ class WorkspaceFeatureHost(QWidget):
     def shutdown(self) -> None:
         self._shutting_down = True
         self._pending_route = None
+        self._deferred_payloads.clear()
         self.registry.request_dispose_all("application_shutdown")
 
     def activate(self) -> None:
@@ -1180,11 +1187,16 @@ class WorkspaceFeatureHost(QWidget):
         return ""
 
     def _resume_pending_route_if_possible(self) -> bool:
-        """只在前台且存在唯一自动候选时恢复待打开路由。"""
+        """前台恢复待打开路由；只有依赖设备的功能才要求唯一自动候选。"""
 
         route = self._pending_route
         if route is None or not self._active:
             return False
+        definition = self._definitions.get(route.feature) or self._overview_definitions.get(
+            route.feature,
+        )
+        if definition is not None and not definition.requires_device:
+            return self.open_route(route)
         device_id = self._automatic_device_candidate()
         if not device_id:
             return False
@@ -1234,14 +1246,38 @@ class WorkspaceFeatureHost(QWidget):
             )
         )
 
+    def _defer_payload(
+        self, key: FeatureSessionKey, definition: _FeatureDefinition, payload,
+    ) -> None:
+        """仅为显式声明的结果页保留新到数据，不替普通业务会话重放操作。"""
+        if (
+            not self._shutting_down
+            and definition.defer_payload_while_disposing
+            and payload is not None
+        ):
+            self._deferred_payloads.setdefault(key, []).append(payload)
+
     def _on_session_removed(self, key: FeatureSessionKey, page: QWidget) -> None:
         if self.stack.indexOf(page) >= 0:
             self.stack.removeWidget(page)
         self._page_keys.pop(page, None)
         pair = (key.feature, key.device_id)
         self._generation_by_pair[pair] = key.generation + 1
+        pending = self._deferred_payloads.pop(key, [])
         if self._last_device_by_feature.get(key.feature) == key.device_id:
             self._last_device_by_feature.pop(key.feature, None)
+        if not self._shutting_down and pending:
+            # 先向新一代页面补齐结果；后台更新不能覆盖当前路由或其待选设备请求。
+            for payload in pending:
+                self.update_feature(key.feature, payload, preferred_device=key.device_id)
+            if self._current_feature == key.feature and self.registry.current_key is None:
+                if self._active:
+                    self.open_feature(key.feature, preferred_device=key.device_id)
+                else:
+                    self._pending_route = WorkspaceRoute(
+                        self.section_key, key.feature, key.device_id,
+                    )
+            return
         if (
             self._active_device_id == key.device_id
             and key.device_id not in self._connected_devices

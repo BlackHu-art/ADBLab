@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-19
+last_verified: 2026-09-21
 related: [BUSINESS_FLOW.md, DEPENDENCY_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -62,6 +62,9 @@ sequenceDiagram
 
 手动刷新由 `ADBController.refresh_devices()` 调用异步 `ADBDevice.get_connected_devices_async()`，
 经 CommandRunner 返回成功列表后复用同一发布链路；不会把定时扫描已取得的列表再查询一次。
+连续扫描在查询前捕获 Controller 的发现代次，列表与失败状态携带同一代次穿过 Qt 队列与防抖。
+手动刷新起止使旧代次失效，手动刷新在途时拒收连续扫描结果，避免旧快照覆盖较新的刷新。
+单台元数据返回只更新该设备卡片，拓扑和选择上下文不重复广播到全部页面。
 同拓扑并发刷新合并为一个活动任务及一次待处理刷新；概览和兼容补查共用截止时间与关闭信号。
 同一 Controller 的设备概览查询最多三台并行，不同拓扑代次共享并发额度；每台返回即发布，
 慢设备不阻塞其他设备的显示。批次拥有子查询池，父任务等待子池退出，关闭后排队项不再查询。

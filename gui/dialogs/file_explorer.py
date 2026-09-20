@@ -50,7 +50,12 @@ from gui.dialogs.lifecycle import (
 )
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import add_menu_action, apply_label_role, apply_reading_surface
+from gui.styles.fluent import (
+    add_menu_action,
+    apply_label_role,
+    apply_reading_surface,
+    create_transient_menu,
+)
 from gui.styles.reading_surface import stop_reading_surface
 from gui.styles.typography import FontRole
 from models.file_explorer_worker import ADBWorker, TransferWorker
@@ -668,9 +673,7 @@ class FileExplorerPage(QWidget):
     def _create_context_menu(self) -> RoundMenu:
         """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        menu = RoundMenu(parent=self)
-        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
-        return menu
+        return create_transient_menu(self)
 
     # ── 主题 ────────────────────────────────────────────────────────────
 

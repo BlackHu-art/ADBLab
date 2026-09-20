@@ -589,15 +589,15 @@ class DeviceContextBar(QWidget):
         self.targets_button.setToolTip(description)
         self._sync_compact_mode()
 
-    def set_device_labels(self, labels: dict[str, str]) -> None:
-        """设备名称只用于展示，选中值仍采用原始设备身份。"""
+    def set_device_labels(self, labels: dict[str, str]) -> bool:
+        """仅名称变化时刷新展示并返回真；选中值仍采用原始设备身份。"""
+        if all(self._device_labels.get(device) == name for device, name in labels.items()):
+            return False
         self._device_labels.update(labels)
         if self._picker is not None:
-            self._picker.set_context(
-                self._picker_selection(), self._connected, labels=self.device_labels(),
-            )
             self._sync_picker_session()
         self._sync_target_presentation()
+        return True
 
     def _sync_picker_session(self) -> None:
         if self._picker is not None:

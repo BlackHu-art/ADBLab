@@ -4,6 +4,7 @@ Fluent 按钮直接使用 FluentIcon，保留强调、禁用和选中状态的�
 Qt 窗口与菜单通过 qicon() 使用相同图标和主题。
 """
 
+from functools import lru_cache
 from pathlib import Path
 
 from PySide6.QtCore import QRectF
@@ -12,6 +13,18 @@ from qfluentwidgets import FluentIcon, FluentIconBase, Theme
 from qfluentwidgets.common.icon import SvgIconEngine, getIconColor
 
 from utils.resource_path import resource_path
+
+
+@lru_cache(maxsize=4)
+def _device_svg(path: str) -> str:
+    """打包资源在进程内不可变，只在首次使用对应路径时读取。"""
+    return Path(path).read_text(encoding="utf-8")
+
+
+@lru_cache(maxsize=32)
+def _tinted_device_icon(path: str, tint: str) -> QIcon:
+    """按已解析的主题色缓存矢量引擎，保持不同 DPI 的绘制精度。"""
+    return QIcon(SvgIconEngine(_device_svg(path).replace("currentColor", tint)))
 
 
 class DeviceIcon(FluentIconBase):
@@ -23,9 +36,8 @@ class DeviceIcon(FluentIconBase):
 
     def icon(self, theme=Theme.AUTO, color: QColor | str | None = None) -> QIcon:
         """颜色由当前主题或调用方确定，禁用和选中状态仍由 Fluent 引擎处理。"""
-        svg = Path(self.path(theme)).read_text(encoding="utf-8")
         tint = QColor(color if color is not None else getIconColor(theme)).name()
-        return QIcon(SvgIconEngine(svg.replace("currentColor", tint)))
+        return QIcon(_tinted_device_icon(self.path(theme), tint))
 
     def render(self, painter, rect, theme=Theme.AUTO, indexes=None, **attributes):
         """导航与图标控件直接绘制时使用同一份主题着色。"""

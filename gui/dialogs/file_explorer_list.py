@@ -54,6 +54,33 @@ class FileSizeItem(QTableWidgetItem):
         return self._size < other._size
 
 
+class FileModifiedItem(QTableWidgetItem):
+    """日期显示保留原文；无年份与不可解析项独立置后，不伪造准确时间。"""
+
+    def __init__(self, text: str, group: int):
+        super().__init__(text)
+        self._group = group
+        self._key = explorer_service.modified_sort_key(text)
+        if self._key[0] == 1:
+            self.setToolTip(tr(
+                "Year unavailable; sorted by month, day and time after dated entries",
+            ))
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if not isinstance(other, FileModifiedItem):
+            return super().__lt__(other)
+        left_group = self._group, self._key[0]
+        right_group = other._group, other._key[0]
+        if left_group != right_group:
+            table = self.tableWidget()
+            descending = (
+                table is not None
+                and table.horizontalHeader().sortIndicatorOrder() == Qt.SortOrder.DescendingOrder
+            )
+            return left_group > right_group if descending else left_group < right_group
+        return self._key[1:] < other._key[1:]
+
+
 class FileExplorerList:
     """组合进 FileExplorerPage 的列表控制器，通过 ``self._frame`` 访问页面。"""
 
@@ -280,7 +307,7 @@ class FileExplorerList:
         self._frame.table.setItem(row, self._frame.NAME_COL, name_item)
         group = 0 if name == ".." else 1 if file_type == "Folder" else 2
         self._frame.table.setItem(row, self._frame.SIZE_COL, FileSizeItem(size, size_bytes, group))
-        self._frame.table.setItem(row, self._frame.MODIFIED_COL, QTableWidgetItem(modified))
+        self._frame.table.setItem(row, self._frame.MODIFIED_COL, FileModifiedItem(modified, group))
 
     def _file_name_at(self, row: int) -> str:
         item = self._frame.table.item(row, self._frame.NAME_COL)

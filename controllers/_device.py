@@ -94,16 +94,32 @@ class ADBDeviceMixin(_ADBControllerBase):
         self.signals.devices_updated.emit(devices)
         self._async_update_devices(devices, generation=generation)
 
-    def publish_detected_devices(self, devices: list[str]):
+    def publish_detected_devices(
+        self, devices: list[str], *, discovery_token: tuple[int, int] | None = None,
+    ):
+        """仅接纳最新发现区间捕获的扫描，阻止防抖和信号队列中的旧快照回退拓扑。"""
+        if getattr(self, "_shutting_down", False):
+            return
+        if discovery_token is not None:
+            current = self.device_discovery_token()
+            if discovery_token != current or current[1]:
+                return
         self._process_device_list(list(devices or []))
 
     def refresh_devices(self):
         if getattr(self, "_shutting_down", False):
             return
+        with self._device_topology_lock:
+            self._discovery_generation = getattr(self, "_discovery_generation", 0) + 1
+            self._discovery_refresh_pending = getattr(self, "_discovery_refresh_pending", 0) + 1
+            generation = self._discovery_generation
         try:
             self.device_model.get_connected_devices_async()
         except Exception as e:
-            self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
+            # async_command 可能先同步发出失败结果再抛出；同次提交只能收口一次。
+            if self.device_discovery_token()[0] == generation:
+                self._finish_device_discovery()
+                self._emit_operation("refresh", False, f"Failed to refresh devices: {str(e)}")
 
     def _async_update_devices(self, devices: list, *, generation: int):
         """逐台发布当前拓扑的概览快照，最后统一落盘；旧代次与关闭后的结果不发布。"""

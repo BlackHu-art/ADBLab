@@ -72,6 +72,8 @@ class AppManagerIcons(QObject):
         """新列表快照使旧缓存失效，应用升级后不会继续显示旧图标。"""
         self.pause()
         self._epoch += 1
+        for package in self.cache:
+            self._restore_placeholder(package)
         self.cache.clear()
         self.failures.clear()
         self._pending.clear()
@@ -87,6 +89,14 @@ class AppManagerIcons(QObject):
         elif package in self.failures and tr("图标未读取") not in item.toolTip(0):
             for column in range(4):
                 item.setToolTip(column, item.toolTip(column) + tr("\n图标未读取，点击刷新重试。"))
+
+    def _restore_placeholder(self, package: str) -> None:
+        """LRU 淘汰同时归还行项目的真实像素引用，缓存上限覆盖两个持有者。"""
+        item = self.page._detail_icon_by_pkg.get(package)
+        if item is not None:
+            item.setIcon(0, self.page._gen_icon(
+                item.text(1), item.data(0, Qt.ItemDataRole.UserRole + 1), 48,
+            ))
 
     def _visible_packages(self) -> list[str]:
         view = self.page.icon_list
@@ -140,7 +150,8 @@ class AppManagerIcons(QObject):
         else:
             self.cache[package] = QIcon(QPixmap.fromImage(image))
             while len(self.cache) > self.CACHE_LIMIT:
-                self.cache.popitem(last=False)
+                evicted, _icon = self.cache.popitem(last=False)
+                self._restore_placeholder(evicted)
         self.decorate(package)
 
     @Slot()

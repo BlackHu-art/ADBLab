@@ -471,28 +471,41 @@ class AppManagerViews:
             self._frame.selected_packages.add(package)
         else:
             self._frame.selected_packages.discard(package)
-        self._frame._sync_selection_views()
+        self._sync_selection_packages({package})
 
     def _on_icon_selection_changed(self):
         """将图标选择写回唯一选择集，再同步到表格复选框。"""
 
         if self._frame._syncing_selection:
             return
-        icon_packages = {
-            item.data(0, Qt.ItemDataRole.UserRole)
-            for index in range(self._frame.icon_list.topLevelItemCount())
-            if (item := self._frame.icon_list.topLevelItem(index)) is not None
-            and item.data(0, Qt.ItemDataRole.UserRole)
-        }
+        # selectionModel 保留隐藏行的选择；selectedItems 会遗漏筛选后隐藏的项目。
         selected_icons = {
-            item.data(0, Qt.ItemDataRole.UserRole)
-            for index in range(self._frame.icon_list.topLevelItemCount())
-            if (item := self._frame.icon_list.topLevelItem(index)).isSelected()
-            and item.data(0, Qt.ItemDataRole.UserRole)
+            package for index in self._frame.icon_list.selectionModel().selectedRows(0)
+            if (package := index.data(Qt.ItemDataRole.UserRole))
         }
-        self._frame.selected_packages.difference_update(icon_packages)
+        changed = self._frame.selected_packages ^ selected_icons
+        self._frame.selected_packages.clear()
         self._frame.selected_packages.update(selected_icons)
-        self._frame._sync_selection_views()
+        self._sync_selection_packages(changed)
+
+    def _sync_selection_packages(self, packages):
+        """单项或选择差量只触达包名映射中的行，不扫描两份完整列表。"""
+        self._frame._syncing_selection = True
+        try:
+            for package in packages:
+                selected = package in self._frame.selected_packages
+                row = self._frame._detail_row_by_pkg.get(package)
+                if row is not None:
+                    checkbox = self._frame.model.item(row, 0)
+                    state = Qt.CheckState.Checked if selected else Qt.CheckState.Unchecked
+                    if checkbox is not None and checkbox.checkState() != state:
+                        checkbox.setCheckState(state)
+                item = self._frame._detail_icon_by_pkg.get(package)
+                if item is not None and item.isSelected() != selected:
+                    item.setSelected(selected)
+        finally:
+            self._frame._syncing_selection = False
+        self._frame._update_selection_ui()
 
     def _sync_selection_views(self):
         """以 selected_packages 为真源同步表格、图标和操作按钮。"""

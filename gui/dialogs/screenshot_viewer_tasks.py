@@ -1,4 +1,4 @@
-"""在受监督线程中读取截图或删除固定图库快照，不接触 GUI 对象。"""
+"""在受监督线程中校验、读取截图或删除固定图库快照，不接触 GUI 对象。"""
 
 from __future__ import annotations
 
@@ -116,6 +116,7 @@ class ScreenshotDeleteWorker(QThread):
         self.versions = versions
         self.deleted: list[str] = []
         self.failed: list[str] = []
+        self.errors: dict[str, str] = {}
         self._aborted = threading.Event()
         self._superseded: set[str] = set()
         self._path_lock = threading.Lock()
@@ -141,7 +142,44 @@ class ScreenshotDeleteWorker(QThread):
                 os.remove(path)
             except FileNotFoundError:
                 self.deleted.append(path)
-            except OSError:
+            except OSError as exc:
                 self.failed.append(path)
+                self.errors[path] = str(exc)
             else:
                 self.deleted.append(path)
+
+
+class ScreenshotValidateWorker(QThread):
+    """后台校验固定的本地文件选择；结果在原生 join 后由页面统一消费。"""
+
+    def __init__(
+        self, paths: tuple[str, ...], reader_factory: Callable[[str], Any], parent=None,
+    ):
+        super().__init__(parent)
+        self.paths = paths
+        self.reader_factory = reader_factory
+        self.accepted: list[str] = []
+        self.rejected: list[str] = []
+        self._aborted = threading.Event()
+
+    @property
+    def cancelled(self) -> bool:
+        """完成后仍保留取消事实，防止部分校验结果在关闭时追加到图库。"""
+        return self._aborted.is_set()
+
+    def abort(self) -> None:
+        """等待当前文件系统调用返回后取消，不开始剩余文件的探测。"""
+        self._aborted.set()
+        self.requestInterruption()
+
+    def run(self) -> None:
+        for path in self.paths:
+            if self.cancelled or self.isInterruptionRequested():
+                break
+            try:
+                valid = os.path.isfile(path) and self.reader_factory(path).canRead()
+            except (OSError, RuntimeError):
+                valid = False
+            if self.cancelled or self.isInterruptionRequested():
+                break
+            (self.accepted if valid else self.rejected).append(path)

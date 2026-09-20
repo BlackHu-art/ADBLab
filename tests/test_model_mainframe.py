@@ -648,6 +648,7 @@ def test_main_frame_syncs_device_context_to_every_task_page():
         _pending_package_device="",
         _device_metadata={"device-1": {"Model": "Current model"}},
     )
+    frame._sync_device_metadata = lambda devices: MainFrame._sync_device_metadata(frame, devices)
 
     with patch(
         "gui.main_frame.DeviceStore.get_full_devices_info",

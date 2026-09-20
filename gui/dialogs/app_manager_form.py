@@ -38,7 +38,7 @@ from gui.dialogs.app_manager_material import AppManagerMaterial
 from gui.dialogs.app_manager_rows import STATUS_ROLE, AppManagerIconView, AppManagerRowDelegate
 from gui.i18n import tr
 from gui.styles import BaseStyles
-from gui.styles.fluent import apply_focus_indicator, apply_label_role
+from gui.styles.fluent import apply_focus_indicator, apply_label_role, create_transient_menu
 from gui.styles.icon_loader import get_themed_icon
 from gui.styles.typography import FontRole
 
@@ -682,6 +682,4 @@ class AppManagerForm:
     def _create_context_menu(self) -> RoundMenu:
         """创建跟随 qfluentwidgets 主题的上下文菜单。"""
 
-        menu = RoundMenu(parent=self._frame)
-        menu.setFont(BaseStyles.font_for_role(FontRole.UI))
-        return menu
+        return create_transient_menu(self._frame)

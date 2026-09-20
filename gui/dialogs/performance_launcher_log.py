@@ -18,8 +18,6 @@ class PerformanceLauncherLog:
     def _append_log(self, level: str, message: str):
         if self._frame._closing:
             return
-        scrollbar = self._frame.log_view.verticalScrollBar()
-        at_bottom = scrollbar.value() >= scrollbar.maximum() - 20
         message_lines = str(message).splitlines() or [str(message)]
         rows = [self._format_log_line(level, line) for line in message_lines if line.strip()]
         if not rows:
@@ -29,6 +27,10 @@ class PerformanceLauncherLog:
             del self._frame._pending_log_rows[
                 : len(self._frame._pending_log_rows) - self._frame.MAX_PENDING_LOG_ROWS
             ]
+        if not self._frame._view_active:
+            return
+        scrollbar = self._frame.log_view.verticalScrollBar()
+        at_bottom = scrollbar.value() >= scrollbar.maximum() - 20
         self._frame._pending_log_scroll_to_bottom = (
             self._frame._pending_log_scroll_to_bottom or at_bottom
         )
@@ -38,8 +40,9 @@ class PerformanceLauncherLog:
             self._frame._log_flush_timer.start(self._frame.LOG_RENDER_DEBOUNCE_MS)
 
     def _flush_pending_logs(self):
-        if not self._frame._pending_log_rows:
+        if not self._frame._view_active or not self._frame._pending_log_rows:
             return
+        self._frame._log_flush_timer.stop()
         rows = self._frame._pending_log_rows
         at_bottom = self._frame._pending_log_scroll_to_bottom
         self._frame._pending_log_rows = []

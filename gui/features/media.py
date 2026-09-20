@@ -17,6 +17,7 @@ from gui.dialogs.screenshot_viewer_tasks import (
     ScreenshotDeleteWorker,
     ScreenshotIOShutdownTask,
     ScreenshotReadWorker,
+    ScreenshotValidateWorker,
 )
 from gui.dialogs.screenshot_viewer_ui import ScreenshotViewerUI
 from gui.dialogs.screenshot_viewer_widgets import ScreenshotFlipView, ScreenshotPipsPager
@@ -26,7 +27,7 @@ from gui.styles import BaseStyles
 
 
 class ScreenshotPage(QWidget):
-    """浏览截图批次；像素读取和批量删除由页面监督，完成释放后才移除会话。"""
+    """浏览截图批次；校验、读取和删除由页面监督，完成释放后才移除会话。"""
 
     dispose_ready = Signal(object)
     back_requested = Signal()
@@ -63,8 +64,11 @@ class ScreenshotPage(QWidget):
         self._disposed = False
         self._disposing = False
         self._close_when_disposed = False
-        self._workers: set[ScreenshotReadWorker | ScreenshotDeleteWorker] = set()
+        self._workers: set[
+            ScreenshotReadWorker | ScreenshotDeleteWorker | ScreenshotValidateWorker
+        ] = set()
         self._delete_worker: ScreenshotDeleteWorker | None = None
+        self._add_worker: ScreenshotValidateWorker | None = None
         self._io_finish_timer = QTimer(self)
         self._io_finish_timer.setSingleShot(True)
         self._io_finish_timer.timeout.connect(self._reap_io_workers)
@@ -287,7 +291,9 @@ class ScreenshotPage(QWidget):
         if self._close_when_disposed:
             self.close()
 
-    def _start_io_worker(self, worker: ScreenshotReadWorker | ScreenshotDeleteWorker) -> None:
+    def _start_io_worker(
+        self, worker: ScreenshotReadWorker | ScreenshotDeleteWorker | ScreenshotValidateWorker,
+    ) -> None:
         """登记并启动页面独占 worker，结束信号仅安排主线程收口。"""
         if self._disposing or self._disposed:
             worker.deleteLater()
@@ -302,6 +308,8 @@ class ScreenshotPage(QWidget):
             self._workers.discard(worker)
             if isinstance(worker, ScreenshotReadWorker):
                 self._nav_controller._worker = None
+            elif isinstance(worker, ScreenshotValidateWorker):
+                self._add_worker = None
             else:
                 self._delete_worker = None
             worker.deleteLater()
@@ -326,6 +334,8 @@ class ScreenshotPage(QWidget):
             self._workers.discard(worker)
             if isinstance(worker, ScreenshotReadWorker):
                 self._nav_controller.read_finished(worker)
+            elif isinstance(worker, ScreenshotValidateWorker):
+                self._actions_controller.add_finished(worker)
             else:
                 self._actions_controller.delete_finished(worker)
             worker.deleteLater()
@@ -341,7 +351,7 @@ class ScreenshotPage(QWidget):
         owner_id: str,
         task_prefix: str,
     ) -> tuple[str, ...]:
-        """把本次快照中的解码和删除线程纳入应用关闭监督。"""
+        """把本次快照中的校验、解码和删除线程纳入应用关闭监督。"""
         workers: list[QThread] = list(self._workers)
         if not workers:
             return ()
@@ -509,13 +519,11 @@ class ScreenshotPage(QWidget):
     ):
         return self._actions_controller._flash_status(text, timeout_ms, level=level)
 
-    @staticmethod
-    def _format_size(path: str) -> str:
-        return ScreenshotViewerNav._format_size(path)
+    def _format_size(self, path: str) -> str:
+        return self._nav_controller._format_size(path)
 
-    @staticmethod
-    def _format_modified_time(path: str) -> str:
-        return ScreenshotViewerNav._format_modified_time(path)
+    def _format_modified_time(self, path: str) -> str:
+        return self._nav_controller._format_modified_time(path)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Type.Resize and watched is getattr(self, "_canvas_frame", None):

@@ -51,6 +51,8 @@ class _ADBControllerBase:
         self._device_topology_lock = threading.Lock()
         self._device_topology_generation = 0
         self._device_topology: tuple[str, ...] = ()
+        self._discovery_generation = 0
+        self._discovery_refresh_pending = 0
         self.operation_manager = OperationManager()
         self.install_batch_use_case = InstallBatchUseCase(
             self.operation_manager,
@@ -173,6 +175,22 @@ class _ADBControllerBase:
             return False
         return True
 
+    def device_discovery_token(self) -> tuple[int, int]:
+        """为扫描捕获线程安全的代次；手动刷新在途时不接纳连续扫描结果。"""
+        with self._device_topology_lock:
+            return (
+                getattr(self, "_discovery_generation", 0),
+                getattr(self, "_discovery_refresh_pending", 0),
+            )
+
+    def _finish_device_discovery(self) -> None:
+        """成功、失败和过期响应都关闭准入区间，并使区间内捕获的扫描失效。"""
+        with self._device_topology_lock:
+            self._discovery_generation = getattr(self, "_discovery_generation", 0) + 1
+            self._discovery_refresh_pending = max(
+                0, getattr(self, "_discovery_refresh_pending", 0) - 1,
+            )
+
     def _handle_async_response(self, method_name: str, result):
         if getattr(self, "_shutting_down", False):
             return
@@ -217,6 +235,7 @@ class _ADBControllerBase:
                 return self._route_operation_response(op_type, result, operation_metadata)
 
             if op_type == "get_connected_devices":
+                self._finish_device_discovery()
                 if isinstance(result, dict) and result.get("stale"):
                     # 过期刷新在结果库按取消收尾，不能撤销更新列表建立的发现状态。
                     self.signals.device_refresh_superseded.emit()

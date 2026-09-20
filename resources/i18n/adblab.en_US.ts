@@ -3,6 +3,10 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>Year unavailable; sorted by month, day and time after dated entries</source>
+            <translation>Year unavailable; sorted by month, day and time after dated entries</translation>
+        </message>
+        <message>
             <source>清空反向规则</source>
             <translation>Clear reverse rules</translation>
         </message>

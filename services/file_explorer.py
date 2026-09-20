@@ -9,9 +9,43 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass
+from datetime import datetime
 
 SHELL_DANGER = re.compile(r'[;&|`$(){}!<>"\'\n\r]')
 _VALID_MODE = re.compile(r"^[0-7]{3,4}$")
+_MONTH_NUMBERS = {name: month for month, name in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1,
+)}
+
+
+def modified_sort_key(value: str) -> tuple[int, tuple[int, ...], str]:
+    """完整日期、缺年日期、未知格式分组；缺年仅比较月日，不推断当前年份。"""
+    value = value.strip()
+    iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2}) (\d{1,2}):(\d{2})(?::(\d{2}))?", value)
+    month = re.fullmatch(
+        r"([A-Za-z]{3})\s+(\d{1,2})(?:\s+(\d{4}|\d{1,2}:\d{2}(?::\d{2})?))?", value,
+    )
+    group = 0
+    if iso:
+        parts = tuple(int(part or 0) for part in iso.groups())
+    elif month and month[1].lower() in _MONTH_NUMBERS:
+        suffix = month[3] or ""
+        has_year = suffix.isdigit() and len(suffix) == 4
+        group = 0 if has_year else 1
+        time_parts = [int(part) for part in suffix.split(":")] if ":" in suffix else []
+        time_parts += [0] * (3 - len(time_parts))
+        parts = (int(suffix) if has_year else 0, _MONTH_NUMBERS[month[1].lower()],
+                 int(month[2]), *time_parts)
+    else:
+        return 2, (), value.casefold()
+    try:
+        # 2000 仅用于校验未知年份的月日（允许 2 月 29 日），绝不进入排序键。
+        datetime(
+            parts[0] if group == 0 else 2000, parts[1], parts[2], parts[3], parts[4], parts[5],
+        )
+    except ValueError:
+        return 2, (), value.casefold()
+    return group, parts, value.casefold()
 
 
 @dataclass(frozen=True)

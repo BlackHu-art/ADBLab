@@ -668,6 +668,7 @@ def test_connect_device_result_refreshes_when_already_connected():
 
 def test_publish_detected_devices_uses_device_list_processing():
     controller = Mock()
+    controller._shutting_down = False
 
     ADBDeviceMixin.publish_detected_devices(controller, ("device-1", "device-2"))
 
@@ -721,6 +722,7 @@ def test_kill_monkey_result_logs_ack_but_waits_for_run_terminal():
 
 def _connected_devices_controller():
     controller = _ADBControllerBase.__new__(_ADBControllerBase)
+    controller._device_topology_lock = threading.Lock()
     controller.log_service = Mock()
     controller._settings = Mock()
     controller._settings.get.return_value = 10_000
@@ -832,6 +834,7 @@ def test_connected_devices_non_dict_result_reports_invalid_format():
 
 def test_refresh_devices_sync_failure_reports_error_without_clearing_list():
     controller = ADBDeviceMixin.__new__(ADBDeviceMixin)
+    controller._device_topology_lock = threading.Lock()
     controller._shutting_down = False
     controller.device_model = Mock()
     controller.device_model.get_connected_devices_async.side_effect = RuntimeError(

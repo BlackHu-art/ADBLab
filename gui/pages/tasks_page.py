@@ -4,12 +4,12 @@
 ActionResult 快照，包含普通长命令的在途入口与本次操作历史。Monkey/性能的跨会话
 结果由共享测试库异步更新；未注入测试库时保留 TaskHistoryStore 兼容入口。页面可见时
 以 1000ms ``QTimer`` 轮询并做不可变快照 diff，无变化
-不重建控件；隐藏时停表。取消按钮走双路径：``OperationManager.request_cancel`` +
-注入的资源停止回调 ``stop_hook``。
+不更新控件；活动行按任务身份复用，隐藏时停表。取消按钮走双路径：
+``OperationManager.request_cancel`` + 注入的资源停止回调 ``stop_hook``。
 
 构造契约：``panel`` 预留为 SidePanel 兼容入口；在途视图
 需要注入 ``operation_manager`` 才能读取可取消任务，普通命令快照不依赖此注入。
-``refresh()`` 是本页对组合根的稳定契约：同步重读在途快照与历史并按 diff 决定重建。
+``refresh()`` 是本页对组合根的稳定契约：同步重读在途快照与历史并按 diff 更新。
 """
 
 from __future__ import annotations
@@ -174,9 +174,15 @@ class _StatusBadge(InfoBadge):
 class _ActiveTaskRow(QWidget):
     """窄宽度下把任务信息和取消控件分行，保留原控件及任务身份。"""
 
-    def __init__(self, summary: BodyLabel, controls: tuple[QWidget, ...]) -> None:
+    def __init__(
+        self, summary: BodyLabel, badge: _StatusBadge,
+        progress: ProgressBar, cancel: PrimaryPushButton,
+    ) -> None:
         super().__init__()
         self._summary = summary
+        self._badge = badge
+        self._progress = progress
+        self._snapshot: OperationSnapshot | None = None
         summary.setWordWrap(True)
         summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._controls = QWidget(self)
@@ -184,13 +190,25 @@ class _ActiveTaskRow(QWidget):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         controls_layout.setSpacing(8)
         controls_layout.addStretch(1)
-        for control in controls:
+        for control in (badge, progress, cancel):
             controls_layout.addWidget(control)
         self._row_layout = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
         self._row_layout.setContentsMargins(0, 2, 0, 2)
         self._row_layout.setSpacing(8)
         self._row_layout.addWidget(summary, 1)
         self._row_layout.addWidget(self._controls)
+
+    def update_snapshot(self, snapshot: OperationSnapshot) -> None:
+        """原位更新变化字段，避免轮询销毁正在按下或聚焦的取消按钮。"""
+        previous = self._snapshot
+        if previous is None or previous.state != snapshot.state:
+            self._badge.set_status(
+                tr(_STATE_LABELS.get(snapshot.state, snapshot.state.value)),
+                _STATE_TONES.get(snapshot.state, "neutral"),
+            )
+        if previous is None or previous.progress != snapshot.progress:
+            self._progress.setValue(int(snapshot.progress))
+        self._snapshot = snapshot
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -231,8 +249,10 @@ class TaskCenterPage(QWidget):
         self._stop_hook = stop_hook
         self._history_limit = history_limit
 
-        # diff 缓存：首次为 None，保证首帧必渲染；此后仅快照变化才重建。
+        # diff 缓存：首次为 None，保证首帧必渲染；活动行仅随任务进入或退出创建/释放。
         self._active_cache: tuple[OperationSnapshot, ...] | None = None
+        self._active_rows: dict[str, _ActiveTaskRow] = {}
+        self._active_empty_state: QWidget | None = None
         self._history_cache: tuple[TaskHistoryEntry, ...] | None = None
 
         self._active_card = self._make_card(tr("在途任务"))
@@ -320,7 +340,7 @@ class TaskCenterPage(QWidget):
         self._scroll.ensureWidgetVisible(self.action_results, 0, 12)
 
     def refresh(self) -> None:
-        """重读在途快照与历史，并按 diff 决定是否重建控件。"""
+        """重读在途快照与历史，原位更新活动行并按需重建历史。"""
 
         active = (
             self._operation_manager.active_snapshot() if self._operation_manager is not None else ()
@@ -345,7 +365,18 @@ class TaskCenterPage(QWidget):
     # ── 在途视图 ────────────────────────────────────────────────────────
 
     def _render_active_rows(self, active: tuple[OperationSnapshot, ...]) -> None:
-        self._clear_layout(self._active_card.viewLayout)
+        layout = self._active_card.viewLayout
+        current_ids = {snapshot.operation_id for snapshot in active}
+        for operation_id in self._active_rows.keys() - current_ids:
+            row = self._active_rows.pop(operation_id)
+            layout.removeWidget(row)
+            row.hide()
+            row.deleteLater()
+        if active and self._active_empty_state is not None:
+            layout.removeWidget(self._active_empty_state)
+            self._active_empty_state.hide()
+            self._active_empty_state.deleteLater()
+            self._active_empty_state = None
         if self._idle_label is not None:
             # 测试结果是常驻内容；空在途状态只占一行，避免把结果操作推到首屏之外。
             self._active_card.setVisible(bool(active))
@@ -353,17 +384,23 @@ class TaskCenterPage(QWidget):
             if not active:
                 return
         if not active:
-            self._active_card.viewLayout.addWidget(
-                self._empty_state(
+            if self._active_empty_state is None:
+                self._active_empty_state = self._empty_state(
                     tr("暂无在途任务"),
                     tr("执行过程与完整结果在本次操作中回看，完成时通过右上角通知提示。"),
                 )
-            )
+                layout.addWidget(self._active_empty_state)
             return
-        for snapshot in active:
-            self._active_card.viewLayout.addWidget(self._make_active_row(snapshot))
+        for index, snapshot in enumerate(active):
+            row = self._active_rows.get(snapshot.operation_id)
+            if row is None:
+                row = self._make_active_row(snapshot)
+                self._active_rows[snapshot.operation_id] = row
+            row.update_snapshot(snapshot)
+            if layout.indexOf(row) != index:
+                layout.insertWidget(index, row)
 
-    def _make_active_row(self, snapshot: OperationSnapshot) -> QWidget:
+    def _make_active_row(self, snapshot: OperationSnapshot) -> _ActiveTaskRow:
         summary = apply_label_role(
             BodyLabel(
                 f"{_operation_label(snapshot.kind)} · {self._short_id(snapshot.operation_id)}"
@@ -391,7 +428,7 @@ class TaskCenterPage(QWidget):
             danger=True,
         )
         cancel.clicked.connect(lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid))
-        return _ActiveTaskRow(summary, (badge, progress, cancel))
+        return _ActiveTaskRow(summary, badge, progress, cancel)
 
     # ── 历史视图 ────────────────────────────────────────────────────────
 
