@@ -5,8 +5,36 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from gui.widgets.preset_spin_box import StrictIntComboBox
+from gui.widgets.preset_spin_box import StrictIntComboBox, StrictIntLineEdit
 from tests.ui_geometry_helpers import wait_until
+
+
+@pytest.mark.parametrize("invalid", ["", "bad", "１２", "101", "-1"])
+def test_integer_line_edit_error_recovers_without_committing_invalid_input(
+    qt_application, invalid,
+):
+    field = StrictIntLineEdit(minimum=0, maximum=100, value=42)
+    changed = QSignalSpy(field.valueChanged)
+    validity = QSignalSpy(field.validityChanged)
+    field.show()
+    try:
+        field.setText(invalid)
+        assert not field.commit_value()
+        assert field.text() == invalid and field.value() == 42
+        assert changed.count() == 0
+        assert field.isError()
+        assert validity.count() == 1 and validity.at(0) == [False]
+        field.setEnabled(False)
+        field.setEnabled(True)
+        assert field.isError()
+        field.setText("77")
+        assert not field.isError()
+        assert field.value() == 42
+        assert field.commit_value()
+        assert field.value() == 77 and changed.count() == 1
+        assert validity.count() == 2 and validity.at(1) == [True]
+    finally:
+        field.close()
 
 
 def test_first_preset_can_be_clicked_after_initial_nonfirst_value(qt_application):

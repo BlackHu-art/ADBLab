@@ -7,6 +7,7 @@ import re
 import uuid
 from datetime import datetime
 
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtWidgets import QFileDialog
 
 from controllers._app_install import ADBAppInstallMixin
@@ -66,9 +67,9 @@ class ADBAppMixin(ADBAppInstallMixin, ADBAppMonkeyMixin):
     def parse_apk_info(self):
         apk_path, _ = QFileDialog.getOpenFileName(
             getattr(self, "window_owner", None),
-            "Select APK File",
+            QCoreApplication.translate("ADBLab", "Select APK File"),
             "",
-            "APK Files (*.apk);;All Files (*)",
+            QCoreApplication.translate("ADBLab", "APK Files (*.apk);;All Files (*)"),
         )
         if not apk_path:
             return

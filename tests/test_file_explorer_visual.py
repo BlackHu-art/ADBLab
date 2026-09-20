@@ -14,7 +14,9 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QScrollArea, QStyleOptionViewItem
 from qfluentwidgets import CommandBar, RoundMenu
 
+from gui.dialogs.file_explorer_list import file_explorer_icon
 from gui.features.file_explorer import FileExplorerPage
+from gui.i18n import install_translators
 from gui.styles import BaseStyles
 from tests.test_main_window_layout import _FakeScreen, _FakeScreenAdapter, build_main_frame
 from tests.ui_geometry_helpers import mapped_rect, wait_for_stable_geometry, wait_until
@@ -252,6 +254,60 @@ def test_file_explorer_theme_round_trip_refreshes_icons_without_replacing_rows(q
             assert page._file_type_at(row) == "TXT"
     finally:
         page.close()
+
+
+@pytest.mark.parametrize("refresh_kind", ["theme", "font"])
+def test_localized_file_type_icons_survive_style_refresh(
+    qt_application, monkeypatch, refresh_kind,
+):
+    """中文类型标签不能改变目录和链接图标，样式刷新须保留选择及原始类型。"""
+    translators = install_translators(qt_application, "zh_CN")
+    page = FileExplorerPage(device_ip="visual-demo")
+    try:
+        page._on_ls_result("\n".join([
+            "drwxr-xr-x 2 shell shell 4096 Sep 05 Documents",
+            "lrwxrwxrwx 1 shell shell 12 Sep 05 alias -> Documents",
+            "-rw-r--r-- 1 shell shell 1024 Sep 05 notes.txt",
+        ]), False)
+        page.show()
+        qt_application.processEvents()
+        items = {
+            page._file_name_at(row): page.table.item(row, page.TYPE_COL)
+            for row in range(page.table.rowCount())
+        }
+        selected_row = next(row for row in range(page.table.rowCount())
+                            if page._file_name_at(row) == "Documents")
+        page.table.selectRow(selected_row)
+        assert items["Documents"].text() != "Folder"
+        assert items["alias"].text() != "Link"
+        if refresh_kind == "theme":
+            BaseStyles.switch_theme("Light" if BaseStyles.current_theme() == "Dark" else "Dark")
+        else:
+            monkeypatch.setattr(BaseStyles, "font_for_role", classmethod(
+                lambda cls, role, size=None: QFont("Microsoft YaHei", size or 22),
+            ))
+            BaseStyles.fonts_changed.emit(BaseStyles.current_font_config())
+        qt_application.processEvents()
+        for name, icon_name, raw_type in (
+            ("..", "arrow-u-up-left.svg", "Folder"),
+            ("Documents", "folder.svg", "Folder"),
+            ("alias", "link.svg", "Link"),
+            ("notes.txt", "file-txt.svg", "TXT"),
+        ):
+            item = items[name]
+            assert page.table.item(item.row(), page.TYPE_COL) is item
+            assert item.data(Qt.ItemDataRole.UserRole) == raw_type
+            actual = item.icon().pixmap(QSize(24, 24)).toImage()
+            expected = file_explorer_icon(icon_name).pixmap(QSize(24, 24)).toImage()
+            assert not actual.isNull() and actual == expected
+        assert items["Documents"].isSelected()
+        assert page.current_path == "/storage/emulated/0"
+        assert page.history == [] and page.forward_stack == []
+    finally:
+        page.close()
+        for translator in translators:
+            qt_application.removeTranslator(translator)
+            translator.deleteLater()
 
 
 def test_file_explorer_workspace_has_one_header_and_keeps_standalone_title(

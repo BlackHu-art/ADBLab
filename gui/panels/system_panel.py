@@ -149,7 +149,7 @@ class SystemPanel(BasePanel):
             tr("反向规则"), "list-bullets.svg", tooltip=tr("显示当前反向端口转发规则")
         )
         self.btn_remove_rev = self._b(
-            tr("移除反向"), "x-circle.svg", tooltip=tr("移除输入的反向端口转发规则")
+            tr("清空反向规则"), "x-circle.svg", tooltip=tr("移除所选设备的全部反向转发规则")
         )
         self._add_responsive_row(
             gl3,

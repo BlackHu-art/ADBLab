@@ -116,7 +116,7 @@ class ActionFeedbackPresenter(QObject):
             content = tr("本次保留 {count} 条异常摘要；最近：{message}").format(
                 count=len(warnings), message=warnings[-1][2][:100],
             )
-        self.frame._settings_page.diagnostics_card.setContent(content)
+        self.frame._settings_page.update_diagnostics_summary(content)
         # 运行时 INFO 也会刷新诊断文件，不能据此重复提示之前保留的异常。
         if notify and journal.entries[-1][1] in warning_levels and not self.frame._closing:
             show_toast(

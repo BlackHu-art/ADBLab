@@ -18,12 +18,13 @@ from collections.abc import Callable
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QHideEvent, QShowEvent
+from PySide6.QtGui import QHideEvent, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QBoxLayout,
     QFrame,
     QHBoxLayout,
     QLayout,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -168,6 +169,42 @@ class _StatusBadge(InfoBadge):
         """按当前语义级别同步 InfoBadge 配色（主题色由 qfluentwidgets 自管理）。"""
 
         self.setLevel(self._TONE_LEVELS.get(self._tone, InfoLevel.INFOAMTION))
+
+
+class _ActiveTaskRow(QWidget):
+    """窄宽度下把任务信息和取消控件分行，保留原控件及任务身份。"""
+
+    def __init__(self, summary: BodyLabel, controls: tuple[QWidget, ...]) -> None:
+        super().__init__()
+        self._summary = summary
+        summary.setWordWrap(True)
+        summary.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._controls = QWidget(self)
+        controls_layout = QHBoxLayout(self._controls)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+        controls_layout.addStretch(1)
+        for control in controls:
+            controls_layout.addWidget(control)
+        self._row_layout = QBoxLayout(QBoxLayout.Direction.TopToBottom, self)
+        self._row_layout.setContentsMargins(0, 2, 0, 2)
+        self._row_layout.setSpacing(8)
+        self._row_layout.addWidget(summary, 1)
+        self._row_layout.addWidget(self._controls)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        required = (
+            self._summary.fontMetrics().horizontalAdvance(self._summary.text())
+            + self._controls.sizeHint().width() + self._row_layout.spacing()
+        )
+        direction = (
+            QBoxLayout.Direction.LeftToRight if self.width() >= required
+            else QBoxLayout.Direction.TopToBottom
+        )
+        if self._row_layout.direction() != direction:
+            self._row_layout.setDirection(direction)
+            self.updateGeometry()
 
 
 class TaskCenterPage(QWidget):
@@ -327,11 +364,6 @@ class TaskCenterPage(QWidget):
             self._active_card.viewLayout.addWidget(self._make_active_row(snapshot))
 
     def _make_active_row(self, snapshot: OperationSnapshot) -> QWidget:
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 2, 0, 2)
-        layout.setSpacing(8)
-
         summary = apply_label_role(
             BodyLabel(
                 f"{_operation_label(snapshot.kind)} · {self._short_id(snapshot.operation_id)}"
@@ -340,19 +372,16 @@ class TaskCenterPage(QWidget):
         )
         summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         summary.setToolTip(snapshot.operation_id)
-        layout.addWidget(summary, 1)
 
         badge = _StatusBadge(
             tr(_STATE_LABELS.get(snapshot.state, snapshot.state.value)),
             tone=_STATE_TONES.get(snapshot.state, "neutral"),
         )
-        layout.addWidget(badge)
 
         progress = ProgressBar()
         progress.setRange(0, 100)
         progress.setValue(int(snapshot.progress))
         progress.setFixedWidth(120)
-        layout.addWidget(progress)
 
         cancel = PrimaryPushButton()
         configure_button(
@@ -362,8 +391,7 @@ class TaskCenterPage(QWidget):
             danger=True,
         )
         cancel.clicked.connect(lambda _checked=False, oid=snapshot.operation_id: self._cancel(oid))
-        layout.addWidget(cancel)
-        return row
+        return _ActiveTaskRow(summary, (badge, progress, cancel))
 
     # ── 历史视图 ────────────────────────────────────────────────────────
 

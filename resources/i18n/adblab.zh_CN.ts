@@ -3,6 +3,26 @@
     <context>
         <name>ADBLab</name>
         <message>
+            <source>清空反向规则</source>
+            <translation>清空反向规则</translation>
+        </message>
+        <message>
+            <source>移除所选设备的全部反向转发规则</source>
+            <translation>移除所选设备的全部反向转发规则</translation>
+        </message>
+        <message>
+            <source>Select APK File</source>
+            <translation>选择 APK 文件</translation>
+        </message>
+        <message>
+            <source>Select APK files to install</source>
+            <translation>选择要安装的 APK 文件</translation>
+        </message>
+        <message>
+            <source>APK Files (*.apk);;All Files (*)</source>
+            <translation>APK 文件 (*.apk);;所有文件 (*)</translation>
+        </message>
+        <message>
             <source>将当前测试参数保存为命名方案</source>
             <translation>将当前测试参数保存为命名方案</translation>
         </message>

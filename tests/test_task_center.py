@@ -5,14 +5,79 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from PySide6.QtCore import QPoint
+from PySide6.QtCore import QPoint, QSize, Qt
 from PySide6.QtGui import QColor
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QPushButton
 
 from adblab.application.operations import OperationManager
 from gui.pages.tasks_page import TaskCenterPage
 from gui.styles import BaseStyles
 from services.task_history import TaskHistoryStore
+
+
+@pytest.mark.parametrize("width", [720, 860])
+def test_large_font_active_task_cancel_remains_reachable_in_main_frame(
+    qt_application, monkeypatch, width,
+):
+    from core.settings_manager import AppSettings
+    from tests.test_main_window_layout import (
+        _FakeScreen,
+        _FakeScreenAdapter,
+        _MainFrameSettings,
+        build_main_frame,
+    )
+    from tests.ui_geometry_helpers import (
+        assert_scroll_target_reachable,
+        assert_text_fits,
+        wait_for_stable_geometry,
+        wait_until,
+    )
+
+    settings = _MainFrameSettings()
+    settings.values.update({"ui_font_size": 22, "font_family": "Microsoft YaHei"})
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr("models.device_store.DeviceStore.get_full_devices_info", lambda *_args: [])
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda *_args: [])
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
+    BaseStyles.reload_from_settings()
+    adapter = _FakeScreenAdapter(_FakeScreen("test-screen", QSize(width, 650)))
+    frame = build_main_frame(screen_adapter=adapter, settings=settings)
+    manager = OperationManager()
+    operations = [manager.begin(kind) for kind in ("batch_install", "screenshot")]
+    for operation in operations:
+        manager.mark_running(operation.operation_id)
+    page = frame._task_page
+    page._operation_manager = manager
+    stop_hook = Mock()
+    page._stop_hook = stop_hook
+    try:
+        frame.show()
+        frame._bind_window_screen()
+        frame._on_nav_requested("tasks")
+        page.refresh()
+        wait_until(qt_application, lambda: page.isVisibleTo(frame))
+        wait_for_stable_geometry(qt_application, (frame, page, page._scroll.widget()))
+        assert frame.width() == width
+        assert page._scroll.widget().width() <= page._scroll.viewport().width() + 2
+        for operation in operations:
+            button = next(
+                button for button in page.findChildren(QPushButton)
+                if button.text() == "取消" and operation.operation_id in button.toolTip()
+            )
+            assert_scroll_target_reachable(page._scroll, button)
+            assert_text_fits(button)
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            assert manager.get(operation.operation_id).cancel_requested
+            stop_hook.assert_any_call(operation.operation_id)
+        assert stop_hook.call_count == 2
+    finally:
+        page.shutdown()
+        frame._unbind_window_screen()
+        frame._close_ready = True
+        frame.close()
 
 
 @pytest.mark.parametrize("theme", ["Light", "Dark"])

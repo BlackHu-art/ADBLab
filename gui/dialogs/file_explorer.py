@@ -695,7 +695,7 @@ class FileExplorerPage(QWidget):
         for row in range(self.table.rowCount()):
             item = self.table.item(row, self.TYPE_COL)
             if item is not None:
-                item.setIcon(self._file_type_icon(self._file_name_at(row), item.text()))
+                item.setIcon(self._file_type_icon(self._file_name_at(row), self._file_type_at(row)))
 
     def _apply_theme(self, _value=None):
         bs = BaseStyles

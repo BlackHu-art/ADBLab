@@ -89,6 +89,11 @@ class SettingsCardPresentation:
             label.setMaximumHeight(16777215)
             height = max(label.fontMetrics().height(), label.heightForWidth(text_width))
             label.setFixedHeight(height)
+            # 本层已按实际列宽测高；文本更新会重新启用 QLabel 的自动测高，
+            # 关闭该提示，避免布局项缓存的旧行高覆盖本次固定高度。
+            policy = label.sizePolicy()
+            policy.setHeightForWidth(False)
+            label.setSizePolicy(policy)
             text_height += height + (6 if text_height else 0)
         action_height = max(self.control.minimumHeight(), self.control.sizeHint().height())
         height = (

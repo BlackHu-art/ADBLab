@@ -224,6 +224,8 @@ class FileExplorerList:
                 )
         finally:
             self._frame.table.setSortingEnabled(True)
+            # 列表重建和排序会复用行位置，必须按等待期间最新的搜索词重算隐藏状态。
+            self._filter(self._frame.search_field.text())
             self._frame.table.setUpdatesEnabled(True)
             self._set_loading(False)
 

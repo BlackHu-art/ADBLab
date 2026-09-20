@@ -265,6 +265,8 @@ class RunResultsWidget(QWidget):
         )
 
     def _selection_changed(self) -> None:
+        previous_id = self._selected.run_id if self._selected is not None else ""
+        previous_path = self.artifact_combo.currentData()
         rows = self.table.selectionModel().selectedRows()
         row = rows[0].row() if rows else -1
         self._selected = (
@@ -272,7 +274,18 @@ class RunResultsWidget(QWidget):
         )
         self.details.setVisible(self._selected is not None)
         self.reuse_button.setEnabled(self._selected is not None)
-        self.artifact_combo.clear()
+        # 重建下拉时保留同一运行的附件路径，避免后台归档刷新改变用户的打开目标。
+        with QSignalBlocker(self.artifact_combo):
+            self.artifact_combo.clear()
+            if self._selected is not None:
+                for artifact in self._selected.artifacts:
+                    self.artifact_combo.addItem(artifact.label, userData=artifact.path)
+                if not self._selected.artifacts:
+                    self.artifact_combo.addItem(tr("无可用附件"), userData=None)
+                elif self._selected.run_id == previous_id:
+                    selected_index = self.artifact_combo.findData(previous_path)
+                    if selected_index >= 0:
+                        self.artifact_combo.setCurrentIndex(selected_index)
         if self._selected is None:
             self._update_artifact_actions()
             return
@@ -292,10 +305,6 @@ class RunResultsWidget(QWidget):
         self.parameters_edit.setPlainText(
             json.dumps(record.parameters, ensure_ascii=False, indent=2)
         )
-        for artifact in record.artifacts:
-            self.artifact_combo.addItem(artifact.label, userData=artifact.path)
-        if not record.artifacts:
-            self.artifact_combo.addItem(tr("无可用附件"), userData=None)
         self._update_artifact_actions()
 
     def _update_artifact_actions(self, *_args) -> None:

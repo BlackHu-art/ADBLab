@@ -1048,6 +1048,8 @@ def test_transfer_worker_pre_aborted_does_not_start_process(tmp_path):
 
 
 def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
+    from PySide6.QtWidgets import QLineEdit, QTableWidget
+
     _app = QApplication.instance() or QApplication([])
     dialog = SimpleNamespace()
     dialog.current_path = "/sdcard"
@@ -1055,7 +1057,9 @@ def test_file_explorer_ls_result_prefills_rows_without_insert_loop():
     dialog.NAME_COL = FileExplorerPage.NAME_COL
     dialog.SIZE_COL = FileExplorerPage.SIZE_COL
     dialog.MODIFIED_COL = FileExplorerPage.MODIFIED_COL
-    dialog.table = Mock()
+    dialog.table = Mock(wraps=QTableWidget(0, 4))
+    dialog.search_field = QLineEdit()
+    dialog.search_field.setText("readme")
     dialog.status_bar = Mock()
     dialog.symlink_targets = {}
     dialog._file_type_icon = Mock(return_value=QIcon())
@@ -1088,6 +1092,10 @@ drwxr-xr-x 2 shell shell 4096 May 30 DCIM
     assert type_item.text() == "Folder"
     assert type_item.data(Qt.ItemDataRole.AccessibleTextRole) == "Folder"
     assert first_row_calls[1].args[2].text() == ".."
+    assert {
+        dialog.table.item(row, dialog.NAME_COL).text()
+        for row in range(dialog.table.rowCount()) if not dialog.table.isRowHidden(row)
+    } == {"..", "readme.txt"}
     dialog.status_bar.setText.assert_called_once_with("/sdcard  |  1 folders, 1 files")
 
 

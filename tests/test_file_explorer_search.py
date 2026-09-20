@@ -7,6 +7,7 @@ from qfluentwidgets import SearchLineEdit
 
 from gui.dialogs.file_explorer import FileExplorerPage
 from gui.dialogs.file_explorer_list import FileExplorerList
+from models.file_explorer_worker import ADBWorker
 
 pytestmark = pytest.mark.ui
 
@@ -72,5 +73,86 @@ def test_file_search_actions_keep_parent_row_and_clear_without_device_io(
         assert started == []
         assert page.current_path == initial_path
         assert page.history == [] and page.forward_stack == []
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("order", [Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder])
+@pytest.mark.parametrize("new_names,visible", [
+    (["zeta.keep", "aardvark.txt", "middle.keep", "delta.txt"], {"..", "zeta.keep", "middle.keep"}),
+    (["new.keep", "other.txt"], {"..", "new.keep"}),
+    ([], {".."}),
+])
+def test_directory_refresh_reapplies_latest_search_after_reordering_rows(
+    qt_application, monkeypatch, order, new_names, visible,
+):
+    """刷新期间的新搜索词作用于新目录项，行数变化和排序不能复用旧行的隐藏状态。"""
+    started = []
+    monkeypatch.setattr(ADBWorker, "start", lambda worker: started.append(worker))
+    page = FileExplorerPage(device_ip="search-demo")
+    try:
+        page._on_ls_result("\n".join(
+            f"-rw-r--r-- 1 shell shell 1024 Sep 05 {name}"
+            for name in ("alpha.keep", "beta.txt", "gamma.keep")
+        ), False)
+        page.table.sortByColumn(page.NAME_COL, order)
+        page._refresh()
+        assert len(started) == 1 and page._directory_loading
+        page.search_field.setText("alpha")
+        page.search_field.setText("  KEEP ")
+        started[0].result_ready.emit("\n".join(
+            f"-rw-r--r-- 1 shell shell 1024 Sep 05 {name}" for name in new_names
+        ), False)
+        qt_application.processEvents()
+        assert not page._directory_loading
+        assert page.search_field.text() == "  KEEP "
+        assert [page._file_name_at(row) for row in range(page.table.rowCount())] == sorted(
+            ["..", *new_names], reverse=order == Qt.SortOrder.DescendingOrder,
+        )
+        assert {
+            page._file_name_at(row) for row in range(page.table.rowCount())
+            if not page.table.isRowHidden(row)
+        } == visible
+        page.search_field.clear()
+        assert all(not page.table.isRowHidden(row) for row in range(page.table.rowCount()))
+        assert page.history == [] and page.forward_stack == []
+        assert len(started) == 1
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("result_kind", ["failed", "stale"])
+def test_rejected_directory_result_preserves_filtered_cached_rows(
+    qt_application, monkeypatch, result_kind,
+):
+    """失败和过期结果不改变已经按最新搜索词筛选的缓存目录。"""
+    started = []
+    monkeypatch.setattr(ADBWorker, "start", lambda worker: started.append(worker))
+    page = FileExplorerPage(device_ip="search-demo")
+    try:
+        page._on_ls_result("\n".join([
+            "-rw-r--r-- 1 shell shell 1024 Sep 05 old.keep",
+            "-rw-r--r-- 1 shell shell 1024 Sep 05 other.txt",
+        ]), False)
+        page._refresh()
+        if result_kind == "stale":
+            page._refresh()
+        page.search_field.setText("keep")
+        before = [
+            (page._file_name_at(row), page.table.isRowHidden(row))
+            for row in range(page.table.rowCount())
+        ]
+        started[0].result_ready.emit(
+            "permission denied" if result_kind == "failed"
+            else "-rw-r--r-- 1 shell shell 1024 Sep 05 stale.keep",
+            result_kind == "failed",
+        )
+        qt_application.processEvents()
+        assert [
+            (page._file_name_at(row), page.table.isRowHidden(row))
+            for row in range(page.table.rowCount())
+        ] == before
+        assert page.search_field.text() == "keep"
+        assert page._directory_loading is (result_kind == "stale")
     finally:
         page.close()

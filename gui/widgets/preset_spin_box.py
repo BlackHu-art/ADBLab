@@ -220,12 +220,6 @@ class StrictIntLineEdit(LineEdit):
         valid = bool(valid)
         changed = valid != self._input_valid
         self._input_valid = valid
-        invalid = not valid
-        if self.property("inputInvalid") != invalid:
-            self.setProperty("inputInvalid", invalid)
-            style = self.style()
-            style.unpolish(self)
-            style.polish(self)
-            self.update()
+        self.setError(not valid)
         if changed:
             self.validityChanged.emit(valid)

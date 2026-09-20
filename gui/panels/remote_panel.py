@@ -423,8 +423,13 @@ class RemotePanel(BasePanel):
             self.orientation,
         ):
             combo.currentTextChanged.connect(self._on_custom_setting_changed)
-        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self._start_scrcpy)
-        QShortcut(QKeySequence("Ctrl+Shift+Return"), self).activated.connect(self._stop_scrcpy)
+        # 协调器本身隐藏；快捷键归属可见页面，随页面显隐和销毁自动停止响应。
+        QShortcut(QKeySequence("Ctrl+Return"), self.category_stack).activated.connect(
+            self._start_scrcpy
+        )
+        QShortcut(QKeySequence("Ctrl+Shift+Return"), self.category_stack).activated.connect(
+            self._stop_scrcpy
+        )
         # 启动时应用已加载预设；此时仍处于 loading 状态，不会重复保存。
         idx = self.preset.currentIndex()
         if idx in self._PRESETS:

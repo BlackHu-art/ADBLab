@@ -73,10 +73,13 @@ class AppSortProxy(QSortFilterProxyModel):
         col = left.column()
         ld = self.sourceModel().data(left)
         rd = self.sourceModel().data(right)
-        if col == 2 and ld in self.STATUS_ORDER:
-            return self.STATUS_ORDER[ld] < self.STATUS_ORDER[rd]
-        if col == 3 and ld in self.TYPE_ORDER:
-            return self.TYPE_ORDER[ld] < self.TYPE_ORDER[rd]
+        order = self.STATUS_ORDER if col == 4 else self.TYPE_ORDER if col == 5 else None
+        if order is not None:
+            # 未知业务值在升序中排到已知值之后，同组仍沿用 Qt 的文本比较。
+            left_order = order.get(ld, len(order))
+            right_order = order.get(rd, len(order))
+            if left_order != right_order:
+                return left_order < right_order
         return super().lessThan(left, right)
 
 

@@ -213,6 +213,37 @@ def test_chart_axis_titles_follow_theme_round_trip(qt_application, initial_theme
 
 
 @pytest.mark.ui
+@pytest.mark.parametrize("width", [500, 1100])
+def test_chart_axis_title_font_follows_size_round_trip(monkeypatch, qt_application, width):
+    from gui.styles import BaseStyles, FontRole
+    from gui.widgets.perf_chart_view import PerfChartView
+    from tests.ui_geometry_helpers import wait_for_stable_geometry
+
+    view = PerfChartView()
+    view.set_series({"cpu": [(0, 50), (5, 80)], "mem_total": [(0, 10000), (5, 12000)]})
+    view.resize(width, 500)
+    view.show()
+    try:
+        for size in (12, 22, 12):
+            monkeypatch.setattr(BaseStyles, "DEFAULT_FONT_SIZE", size)
+            view._sync_theme_state()
+            wait_for_stable_geometry(qt_application, (view, view._chart_view))
+            expected = BaseStyles.font_for_role(FontRole.UI_SMALL)
+            for axis in view._chart.axes():
+                assert axis.titleFont() == expected
+                assert axis.labelsFont() == expected
+                assert axis.isTitleVisible() and axis.titleText()
+                assert not axis.labelsTruncated(), (size, axis.titleText(), view._chart.plotArea())
+            assert view._chart.plotArea().width() >= 240
+            scroll = view._chart_scroll.horizontalScrollBar()
+            scroll.setValue(scroll.maximum())
+            assert scroll.value() == scroll.maximum()
+    finally:
+        view.close()
+        view.deleteLater()
+
+
+@pytest.mark.ui
 def test_narrow_large_font_chart_keeps_all_units_accessible(monkeypatch, qt_application):
     from PySide6.QtCore import Qt
 

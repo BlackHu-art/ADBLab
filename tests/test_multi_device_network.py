@@ -9,6 +9,22 @@ from controllers._media import ADBMediaMixin
 from models.adb_network import ADBNetworkMixin
 
 
+def test_reverse_clear_removes_all_rules_only_on_requested_devices():
+    controller = Mock()
+    controller._require_devices.return_value = True
+    ADBFileMixin.remove_reverse(controller, ["demo-a", "demo-b"])
+    assert controller.advanced_model.remove_all_reverse_async.call_args_list == [
+        call("demo-a"), call("demo-b"),
+    ]
+    model = ADBNetworkMixin()
+    model._run = Mock(return_value={"success": True})
+    result = ADBNetworkMixin.remove_all_reverse_async.__wrapped__(model, "demo-a")
+    assert result["success"] is True
+    model._run.assert_called_once_with(
+        ["adb", "-s", "demo-a", "reverse", "--remove-all"], device_ip="demo-a",
+    )
+
+
 def test_forward_rejects_multiple_devices_before_submitting_any_command():
     controller = Mock()
     controller._require_devices.return_value = True
