@@ -529,7 +529,8 @@ class MainFrame(FluentWindow):
     def _setup_window(self):
         self.setWindowTitle("ADBLab")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
-        # 主标题栏省略品牌图标；windowIcon 仍供任务栏和系统切换器使用。
+        # 标题栏品牌区域留空，系统窗口名称和图标仍供任务栏及辅助技术使用。
+        getattr(self.titleBar, "titleLabel").hide()
         getattr(self.titleBar, "iconLabel").hide()
         from core.settings_manager import AppSettings
 

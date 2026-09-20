@@ -206,13 +206,51 @@ def populate_device_workbench(frame, count=8):
     return frame._device_hub.device_cards
 
 
-def test_main_title_bar_hides_icon_without_clearing_window_icon(qt_application):
-    """主标题栏不显示图标，同时保留系统任务栏使用的窗口图标。"""
-
-    frame = build_main_frame()
+@pytest.mark.parametrize("theme,width,font_size", [("Light", 1120, 12), ("Dark", 720, 22)])
+def test_main_title_bar_keeps_brand_area_empty_without_clearing_window_metadata(
+    qt_application, monkeypatch, theme, width, font_size,
+):
+    """标题栏品牌区域留空，系统窗口信息和标题栏操作仍保留。"""
+    settings = _MainFrameSettings()
+    settings.values.update(ui_font_size=font_size, mica_enabled=False, window_width=width)
+    monkeypatch.setattr(AppSettings, "instance", classmethod(lambda _cls: settings))
+    monkeypatch.setattr("models.device_store.DeviceStore.get_basic_devices_info", lambda: [])
+    monkeypatch.setattr(
+        "models.device_store.DeviceStore.get_full_devices_info", lambda _devices: [],
+    )
+    monkeypatch.setattr(
+        "gui.widgets.adb_client_card.AdbClientSettingCard.start_detection", lambda _self: None,
+    )
+    BaseStyles.reload_from_settings()
+    BaseStyles.switch_theme(theme)
+    frame = build_main_frame(
+        settings=settings,
+        screen_adapter=_FakeScreenAdapter(_FakeScreen("titlebar-test", QSize(width, 900))),
+    )
     try:
-        assert frame.titleBar.iconLabel.isHidden()
+        frame.show()
+        qt_application.processEvents()
+        bar = frame.titleBar
+        icon = bar.iconLabel
+        assert icon.isHidden()
+        assert bar.titleLabel.isHidden()
+        assert frame.windowTitle() == "ADBLab"
         assert not frame.windowIcon().isNull()
+        assert bar.canDrag(QPoint(60, bar.height() // 2))
+        assert all(button.isVisibleTo(frame) for button in (bar.minBtn, bar.maxBtn, bar.closeBtn))
+        frame._bind_window_screen()
+        for notification in (
+            frame._screen_adapter.emit_logical_dpi_changed,
+            frame._screen_adapter.emit_screen_changed,
+        ):
+            notification(frame._bound_screen)
+            qt_application.processEvents()
+            assert icon.isHidden()
+            assert bar.titleLabel.isHidden()
+        frame.setWindowTitle("ADBLab - title update")
+        assert icon.isHidden()
+        assert bar.titleLabel.isHidden()
+        assert frame.windowTitle() == "ADBLab - title update"
     finally:
         frame._unbind_window_screen()
         frame._close_ready = True
