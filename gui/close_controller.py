@@ -187,7 +187,7 @@ class CloseController:
             try:
                 if discovery_state_changed is not None:
                     discovery_state_changed.disconnect(
-                        self._frame.left_panel.set_device_discovery_state
+                        self._frame._on_scan_discovery_state
                     )
             except (TypeError, RuntimeError, AttributeError):
                 pass

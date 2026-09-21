@@ -1,16 +1,19 @@
 # ADR-0003 Phase 2：拆分自 tests/test_model_execution.py。
 
 import os
-from types import SimpleNamespace
+import warnings
+from types import MethodType, SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import SmoothScrollArea
 
 from adblab.application.device_context import DeviceContextSnapshot
 from core.exec import CREATE_NEW_CONSOLE
+from gui.close_controller import CloseController
 from gui.main_frame import MainFrame, _ScanThread
 from gui.pages.workspace_features import WorkspaceRoute
 
@@ -296,6 +299,49 @@ def test_main_frame_starts_scan_thread_with_debounced_refresh():
     frame.adb_controller.refresh_devices.assert_not_called()
     assert frame._scan_thread.interval_ms == 12000
     assert frame._scan_thread.started is True
+
+
+def test_main_frame_shutdown_disconnects_scan_callbacks_without_warning(qt_application):
+    """真实扫描信号经启动入口连接后，关闭必须解除回调而非仅靠关闭标记忽略结果。"""
+    visible_states = []
+    frame = SimpleNamespace(
+        _scan_thread=None,
+        _closing=False,
+        _initial_refresh_timer=QTimer(),
+        _scan_refresh_timer=QTimer(),
+        DEVICE_SCAN_DEBOUNCE_MS=300,
+        left_panel=SimpleNamespace(set_device_discovery_state=visible_states.append),
+        adb_controller=SimpleNamespace(device_discovery_token=lambda: (0, False)),
+    )
+    frame._schedule_scan_refresh = Mock(wraps=MethodType(MainFrame._schedule_scan_refresh, frame))
+    frame._on_scan_discovery_state = Mock(
+        wraps=MethodType(MainFrame._on_scan_discovery_state, frame)
+    )
+    with (
+        patch.object(_ScanThread, "start"),
+        patch("core.settings_manager.AppSettings") as settings_cls,
+    ):
+        settings_cls.instance.return_value.get.return_value = 15000
+        MainFrame._start_scan_thread(frame)
+
+    thread = frame._scan_thread
+    thread.discovery_state_changed.emit("unavailable")
+    thread.devices_changed.emit(["test-device"])
+    assert visible_states == ["scanning", "unavailable"]
+    assert frame._pending_scanned_devices == ["test-device"]
+    assert frame._scan_refresh_timer.isActive()
+
+    frame._closing = True
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        CloseController(frame)._prepare_ui_for_shutdown()
+
+    thread.discovery_state_changed.emit("ready")
+    thread.devices_changed.emit([])
+    assert frame._on_scan_discovery_state.call_count == 1
+    assert frame._schedule_scan_refresh.call_count == 1
+    assert not frame._scan_refresh_timer.isActive()
+    assert not [item for item in caught if issubclass(item.category, RuntimeWarning)]
 
 
 def test_adb_bootstrap_schedules_environment_without_blocking():
