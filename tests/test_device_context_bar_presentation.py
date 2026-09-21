@@ -4,13 +4,34 @@ import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QRect, Qt
 from PySide6.QtGui import QColor, QFont, QPalette
 from PySide6.QtTest import QSignalSpy, QTest
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import ComboBox, PushButton
 from shiboken6 import isValid
 
 from gui.pages.device_hub import DeviceHubPage
 from gui.styles import BaseStyles
 from gui.widgets.device_context_bar import DeviceContextBar
+from tests.ui_geometry_helpers import wait_until
+
+
+@pytest.fixture
+def native_window_api():
+    """原生激活和键盘路由只能由 Windows 平台验证，离屏事件不能替代。"""
+    if QApplication.platformName() != "windows":
+        pytest.skip("需要 Windows 原生窗口验证激活与键盘路由")
+    import ctypes
+    from ctypes import wintypes
+
+    api = ctypes.WinDLL("user32")
+    for name in ("GetActiveWindow", "GetFocus"):
+        function = getattr(api, name)
+        function.argtypes = []
+        function.restype = wintypes.HWND
+    api.PostMessageW.argtypes = [
+        wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM,
+    ]
+    api.PostMessageW.restype = wintypes.BOOL
+    return api
 
 
 @pytest.fixture
@@ -44,6 +65,143 @@ def connection_anchor(bar_window, qt_application):
     window.layout().insertWidget(1, surface)
     qt_application.processEvents()
     return anchor
+
+
+@pytest.mark.parametrize("kind", ["picker", "connection"])
+def test_native_device_popup_keeps_owner_active(
+    bar_window, connection_anchor, qt_application, native_window_api, kind,
+):
+    """设备弹层不得抢走主 HWND 的激活，否则 DWM 会把主窗口云母退回实色。"""
+    window, bar = bar_window
+    window.raise_()
+    window.activateWindow()
+    hwnd = int(window.winId())
+    wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
+    if kind == "picker":
+        bar.open_picker()
+        popup = bar._picker_flyout
+    else:
+        bar.open_connection([], connection_anchor)
+        popup = bar._connection_flyout
+    wait_until(qt_application, lambda: popup.isVisible())
+    qt_application.processEvents()
+
+    assert QApplication.activePopupWidget() is popup
+    assert native_window_api.GetActiveWindow() == hwnd
+    bar.dismiss_popups()
+    qt_application.processEvents()
+    assert native_window_api.GetActiveWindow() == hwnd
+    assert bar._picker_flyout is None and bar._connection_flyout is None
+
+
+@pytest.mark.parametrize("kind", ["picker", "connection"])
+def test_native_device_popup_routes_keyboard_without_activating(
+    bar_window, connection_anchor, qt_application, native_window_api, kind,
+):
+    """从主 HWND 投递键盘消息，确保保留云母时复选、输入和关闭仍由弹层消费。"""
+    window, bar = bar_window
+    window.raise_()
+    window.activateWindow()
+    hwnd = int(window.winId())
+    wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
+    if kind == "picker":
+        bar.open_picker()
+        popup = bar._picker_flyout
+        field = bar._picker.device_list
+        field.setCurrentRow(1)
+        field.setFocus()
+        changed = QSignalSpy(bar.selection_requested)
+    else:
+        bar.open_connection([], connection_anchor)
+        popup = bar._connection_flyout
+        field = bar._connection.address
+        changed = QSignalSpy(bar.connect_requested)
+    wait_until(qt_application, field.hasFocus)
+    # Qt Popup 应在保留主原生焦点的同时，把输入路由给弹层内的焦点控件。
+    assert native_window_api.GetFocus() == hwnd
+    if kind == "picker":
+        assert native_window_api.PostMessageW(hwnd, 0x0100, 0x20, 1)  # WM_KEYDOWN / Space
+        assert native_window_api.PostMessageW(hwnd, 0x0101, 0x20, 1)  # WM_KEYUP / Space
+        wait_until(qt_application, lambda: changed.count() == 1)
+        assert changed.at(0)[0] == ["demo-a", "demo-b"]
+        key = 0x1B  # Escape
+    else:
+        for char in "192.0.2.1:5555":
+            assert native_window_api.PostMessageW(hwnd, 0x0102, ord(char), 1)  # WM_CHAR
+        wait_until(qt_application, lambda: field.text() == "192.0.2.1:5555")
+        key = 0x0D  # Return
+    assert native_window_api.PostMessageW(hwnd, 0x0100, key, 1)
+    assert native_window_api.PostMessageW(hwnd, 0x0101, key, 1)
+    wait_until(qt_application, lambda: not isValid(popup) or not popup.isVisible())
+    if kind == "connection":
+        assert changed.count() == 1 and changed.at(0)[0] == "192.0.2.1:5555"
+    assert native_window_api.GetActiveWindow() == hwnd
+
+
+def test_native_connection_history_menu_keeps_outer_popup_and_owner_active(
+    bar_window, connection_anchor, qt_application, native_window_api,
+):
+    """内层历史菜单选择与 Esc 只关闭当前层，连接表单继续持有输入。"""
+    window, bar = bar_window
+    window.activateWindow()
+    hwnd = int(window.winId())
+    wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
+    bar.open_connection([("演示连接", "192.0.2.2:5555")], connection_anchor)
+    form, popup = bar._connection, bar._connection_flyout
+    field = form.address
+    field.dropButton.click()
+    menu = field.dropMenu
+    wait_until(qt_application, lambda: menu.isVisible())
+    viewport = menu.view.viewport()
+    QTest.mouseClick(
+        viewport, Qt.MouseButton.LeftButton,
+        pos=menu.view.visualItemRect(menu.view.item(0)).center(),
+    )
+    wait_until(qt_application, lambda: field.text() == "192.0.2.2:5555")
+    assert popup.isVisible() and bar._connection is form
+    assert native_window_api.GetActiveWindow() == hwnd
+
+    field.dropButton.click()
+    wait_until(qt_application, lambda: field.dropMenu is not None and field.dropMenu.isVisible())
+    assert native_window_api.PostMessageW(hwnd, 0x0100, 0x1B, 1)
+    assert native_window_api.PostMessageW(hwnd, 0x0101, 0x1B, 1)
+    wait_until(qt_application, lambda: field.dropMenu is None)
+    assert popup.isVisible()
+    assert native_window_api.PostMessageW(hwnd, 0x0100, 0x1B, 1)
+    assert native_window_api.PostMessageW(hwnd, 0x0101, 0x1B, 1)
+    wait_until(qt_application, lambda: bar._connection_flyout is None)
+    assert native_window_api.GetActiveWindow() == hwnd
+
+
+@pytest.mark.parametrize("kind", ["picker", "connection"])
+def test_native_outside_click_closes_device_popup_and_allows_reopen(
+    bar_window, connection_anchor, qt_application, native_window_api, kind,
+):
+    """从主 HWND 分发弹层外点击，关闭后清理引用并允许立即再次打开。"""
+    window, bar = bar_window
+    window.activateWindow()
+    hwnd = int(window.winId())
+    wait_until(qt_application, lambda: native_window_api.GetActiveWindow() == hwnd)
+
+    def open_popup():
+        if kind == "picker":
+            bar.open_picker()
+            return bar._picker_flyout
+        bar.open_connection([], connection_anchor)
+        return bar._connection_flyout
+
+    popup = open_popup()
+    point = QPoint(window.width() - 20, window.height() - 20)
+    assert not popup.geometry().contains(window.mapToGlobal(point))
+    coordinates = point.x() | (point.y() << 16)
+    assert native_window_api.PostMessageW(hwnd, 0x0201, 1, coordinates)  # WM_LBUTTONDOWN
+    assert native_window_api.PostMessageW(hwnd, 0x0202, 0, coordinates)  # WM_LBUTTONUP
+    wait_until(
+        qt_application, lambda: bar._picker_flyout is None and bar._connection_flyout is None,
+    )
+    replacement = open_popup()
+    assert replacement is not popup and replacement.isVisible()
+    assert native_window_api.GetActiveWindow() == hwnd
 
 
 @pytest.mark.parametrize("kind", ["picker", "connection"])

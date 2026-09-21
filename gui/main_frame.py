@@ -577,6 +577,9 @@ class MainFrame(FluentWindow):
         # 标题栏品牌区域留空，系统窗口名称和图标仍供任务栏及辅助技术使用。
         getattr(self.titleBar, "titleLabel").hide()
         getattr(self.titleBar, "iconLabel").hide()
+        title_bar_height = 40
+        self.titleBar.setFixedHeight(title_bar_height)
+        self.widgetLayout.setContentsMargins(0, title_bar_height, 0, 0)
         from core.settings_manager import AppSettings
 
         s = AppSettings.instance()

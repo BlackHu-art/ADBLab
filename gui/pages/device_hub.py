@@ -1,9 +1,10 @@
 """以缓存设备快照组织工作台，所有选择与设备动作交回主窗口协调。"""
 
 from collections.abc import Iterable, Mapping
+from math import ceil
 
 from PySide6.QtCore import QEvent, QRect, QSignalBlocker, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QMouseEvent, QPainter
+from PySide6.QtGui import QColor, QFontMetricsF, QMouseEvent, QPainter
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -127,7 +128,7 @@ class _DeviceField(QWidget):
         self.caption.setFont(BaseStyles.font_for_role(FontRole.UI_SMALL))
         role = FontRole.MONO if isinstance(self.value, _DeviceIdentifier) else FontRole.UI
         self.value.setFont(BaseStyles.font_for_role(role))
-        self.caption.setFixedHeight(self.caption.fontMetrics().height())
+        self.caption.setFixedHeight(ceil(QFontMetricsF(self.caption.font()).height()))
         if self.icon is not None:
             edge = max(18, min(24, self.caption.fontMetrics().height() - 3))
             self.icon.setFixedSize(edge, edge)
@@ -145,10 +146,11 @@ class _DeviceField(QWidget):
         return self._full_value
 
     def _sync_height(self) -> None:
-        height = self.value.fontMetrics().height()
+        # 分数缩放下整数度量可能少算一像素，行高向上取整以保留完整字形。
+        height = ceil(QFontMetricsF(self.value.font()).height())
         self.value.setFixedHeight(height)
         self.setFixedHeight(max(
-            height, self.caption.fontMetrics().height(),
+            height, self.caption.height(),
             self.icon.height() if self.icon is not None else 0,
         ))
         if not isinstance(self.value, _DeviceIdentifier):
@@ -197,9 +199,9 @@ class _DeviceCard(QWidget):
         identity_layout = QHBoxLayout(self.identity)
         identity_layout.setContentsMargins(0, 0, 0, 0)
         identity_layout.setSpacing(12)
-        identity_layout.addWidget(self.selection, 0, Qt.AlignmentFlag.AlignTop)
-        identity_layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
-        identity_layout.addWidget(self.name_label, 1, Qt.AlignmentFlag.AlignTop)
+        identity_layout.addWidget(self.selection, 0, Qt.AlignmentFlag.AlignVCenter)
+        identity_layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        identity_layout.addWidget(self.name_label, 1, Qt.AlignmentFlag.AlignVCenter)
         self.status_container = QWidget(self)
         status_layout = QVBoxLayout(self.status_container)
         status_layout.setContentsMargins(0, 0, 0, 0)
@@ -213,7 +215,7 @@ class _DeviceCard(QWidget):
         self.summary_container = QWidget(self)
         self._summary_layout = QGridLayout(self.summary_container)
         self._summary_layout.setContentsMargins(0, 0, 0, 0)
-        self._summary_layout.setHorizontalSpacing(16)
+        self._summary_layout.setHorizontalSpacing(0)
         self._summary_layout.setVerticalSpacing(8)
         self.summary_fields = {
             key: _DeviceField(title, self.summary_container, icon=icon)
@@ -231,7 +233,7 @@ class _DeviceCard(QWidget):
         self.detail_parameters = QWidget(self.details_container)
         self._details_layout = QGridLayout(self.detail_parameters)
         self._details_layout.setContentsMargins(0, 0, 0, 0)
-        self._details_layout.setHorizontalSpacing(16)
+        self._details_layout.setHorizontalSpacing(0)
         self._details_layout.setVerticalSpacing(8)
         self.detail_fields = {
             key: _DeviceField(title, self.detail_parameters)
@@ -483,40 +485,35 @@ class _DeviceCard(QWidget):
             else QBoxLayout.Direction.LeftToRight
         )
         self.status_container.setMinimumWidth(0 if stacked_header else status_width)
-        metrics = self.name_label.fontMetrics()
         summary_fields = tuple(self.summary_fields.values())
-        summary_caption_width = max(
+        detail_fields = (*self.detail_fields.values(), self.identifier_field)
+        # 摘要图标也占据标签区；两组字段共享数值起点和列宽，避免展开后列线错开。
+        summary_offset = max(
             field.caption.fontMetrics().horizontalAdvance(field.caption.text())
+            + (field.icon.width() + 8 if field.icon is not None else 0) + 8
             for field in summary_fields
         )
+        value_offset = max(summary_offset, max(
+            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
+            + 8 for field in detail_fields
+        ))
+        detail_metrics = self.detail_fields["CPU Architecture"].value.fontMetrics()
         metric_width = max(
             160,
-            summary_caption_width + 16 + max(
-                field.icon.width() for field in summary_fields if field.icon is not None
-            ) + self.summary_fields["system"].value.fontMetrics().horizontalAdvance(
+            summary_offset + self.summary_fields["system"].value.fontMetrics().horizontalAdvance(
                 "Android 14 · API 34"
             ),
+            value_offset + detail_metrics.horizontalAdvance("arm64-v8a"),
         )
         columns = max(1, min(4, (available + 16) // (metric_width + 16)))
         # 四项摘要在大字号下成对换行，避免三项之后只剩一个孤立指标。
         if columns == 3:
             columns = 2
-        self._place_fields(self._summary_layout, summary_fields, columns)
+        self._place_fields(self._summary_layout, summary_fields, columns, value_offset)
         self.summary_container.setVisible(any(
             not field.isHidden() for field in self.summary_fields.values()
         ))
-        detail_caption_width = max(
-            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
-            for field in (*self.detail_fields.values(), self.identifier_field)
-        )
-        detail_width = max(
-            160, detail_caption_width + 8 + metrics.horizontalAdvance("arm64-v8a"),
-        )
-        detail_columns = max(1, min(3, (available + 16) // (detail_width + 16)))
-        self._place_fields(
-            self._details_layout, (*self.detail_fields.values(), self.identifier_field),
-            detail_columns,
-        )
+        self._place_fields(self._details_layout, detail_fields, columns, value_offset)
         for label in (self.name_label, self.status_label, self.battery_label):
             if not label.isHidden():
                 self._sync_label_height(label)
@@ -524,19 +521,24 @@ class _DeviceCard(QWidget):
         self.updateGeometry()
 
     @staticmethod
-    def _place_fields(layout: QGridLayout, fields: tuple[_DeviceField, ...], columns: int) -> None:
+    def _place_fields(
+        layout: QGridLayout, fields: tuple[_DeviceField, ...], columns: int, value_offset: int,
+    ) -> None:
         visible = tuple(field for field in fields if not field.isHidden())
-        caption_width = max((
-            field.caption.fontMetrics().horizontalAdvance(field.caption.text())
-            for field in visible
-        ), default=0)
         for field in fields:
             layout.removeWidget(field)
-        for column in range(4):
-            layout.setColumnStretch(column, 1 if column < columns else 0)
+        # 用独立间隔列保留空字段旁的留白，避免 Qt 合并空列间距后两组列线漂移。
+        for column in range(7):
+            active = column < columns * 2 - 1
+            layout.setColumnStretch(column, 1 if active and column % 2 == 0 else 0)
+            layout.setColumnMinimumWidth(column, 16 if active and column % 2 else 0)
         for index, field in enumerate(visible):
-            field.caption.setFixedWidth(caption_width)
-            layout.addWidget(field, index // columns, index % columns, Qt.AlignmentFlag.AlignTop)
+            field.caption.setFixedWidth(
+                value_offset - 8 - (field.icon.width() + 8 if field.icon is not None else 0)
+            )
+            layout.addWidget(
+                field, index // columns, (index % columns) * 2, Qt.AlignmentFlag.AlignTop,
+            )
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)

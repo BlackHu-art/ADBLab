@@ -34,7 +34,12 @@ def _settle_cards(qt_application, page):
     for card in page.device_cards:
         widgets.extend((
             card, card.action_container, card.files_button, card.remote_button, card.apps_button,
+            card.selection, card.icon, card.name_label,
         ))
+        for field in (
+            *card.summary_fields.values(), *card.detail_fields.values(), card.identifier_field,
+        ):
+            widgets.extend((field, field.caption, field.value))
     wait_for_stable_geometry(qt_application, widgets)
 
 
@@ -75,6 +80,74 @@ def test_normalized_device_metrics_have_named_summary_fields_and_hidden_details(
         assert not card.details_container.isVisible()
         assert not card.identifier.isVisible()
         assert not any(field.isVisible() for field in card.detail_fields.values())
+
+
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_device_identity_controls_share_a_vertical_center(qt_application, monkeypatch, font_size):
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
+    )
+    window, page = _show_page(qt_application, 790)
+    page.set_device_metadata(_rich_metadata())
+    for width in (790, 380, 790):
+        window.resize(width, 1100)
+        _settle_cards(qt_application, page)
+        for card in page.device_cards:
+            centers = [
+                widget.mapTo(card, widget.rect().center()).y()
+                for widget in (card.selection, card.icon, card.name_label)
+            ]
+            assert max(centers) - min(centers) <= 2
+
+
+@pytest.mark.parametrize("font_size", [12, 22])
+def test_summary_and_details_share_columns_and_value_alignment_after_resize(
+    qt_application, monkeypatch, font_size,
+):
+    monkeypatch.setattr(
+        BaseStyles, "font_for_role",
+        classmethod(lambda _cls, _role, size=None: QFont("Microsoft YaHei", size or font_size)),
+    )
+    window, page = _show_page(qt_application, 790)
+    records = _rich_metadata()
+    page.set_device_metadata(records)
+    card = page.device_cards[0]
+    card.details_button.click()
+    for width in (790, 1000, 380, 790):
+        window.resize(width, 1100)
+        _settle_cards(qt_application, page)
+        summary_fields = list(card.summary_fields.values())
+        detail_fields = [*card.detail_fields.values(), card.identifier_field]
+        summary_columns = {field.mapTo(card, QPoint()).x() for field in summary_fields}
+        detail_columns = {field.mapTo(card, QPoint()).x() for field in detail_fields}
+        assert summary_columns == detail_columns
+        for column in summary_columns:
+            values = [
+                field.value.mapTo(card, QPoint()).x()
+                for field in (*summary_fields, *detail_fields)
+                if field.mapTo(card, QPoint()).x() == column
+            ]
+            assert max(values) - min(values) <= 2
+    window.resize(1000, 1100)
+    records[0].pop("Hardware")
+    records[0].pop("Resolution")
+    page.set_device_metadata(records)
+    _settle_cards(qt_application, page)
+    visible_summary_columns = {
+        field.mapTo(card, QPoint()).x() for field in summary_fields if field.isVisible()
+    }
+    visible_detail_columns = {
+        field.mapTo(card, QPoint()).x() for field in detail_fields if field.isVisible()
+    }
+    assert visible_summary_columns <= visible_detail_columns
+    for column in visible_summary_columns:
+        values = [
+            field.value.mapTo(card, QPoint()).x()
+            for field in (*summary_fields, *detail_fields)
+            if field.isVisible() and field.mapTo(card, QPoint()).x() == column
+        ]
+        assert max(values) - min(values) <= 2
 
 
 def test_details_expand_without_selection_and_survive_metadata_and_state_updates(qt_application):

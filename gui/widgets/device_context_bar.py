@@ -40,6 +40,17 @@ from gui.styles.icon_loader import DEVICE_ICON
 from utils.adb_targets import normalize_adb_connect_target
 
 
+class _DeviceFlyout(Flyout):
+    """保留原生弹层输入路由，避免 Windows 主窗口失活后云母退回实色。"""
+
+    def showEvent(self, event) -> None:
+        if QApplication.platformName() == "windows":
+            # Qt.Popup 已接管弹层输入；上游额外 activateWindow 会抢走主 HWND 激活。
+            QWidget.showEvent(self, event)
+        else:
+            super().showEvent(event)
+
+
 class _SessionComboBox(ComboBox):
     """只省略按钮上的长名称，候选、设备值和辅助技术保留完整内容。"""
 
@@ -795,7 +806,7 @@ class DeviceContextBar(QWidget):
     def _show_popup(self, view: FlyoutViewBase, anchor: QWidget, *, align_right: bool) -> Flyout:
         """原生 Popup 处理焦点和 Esc，显式位置避免居中弹层越过应用内容边界。"""
 
-        flyout = Flyout.make(view, parent=self)
+        flyout = _DeviceFlyout.make(view, parent=self)
         bounds = self._popup_bounds(anchor)
         margins = flyout.hBoxLayout.contentsMargins()
         if isinstance(view, DevicePicker):

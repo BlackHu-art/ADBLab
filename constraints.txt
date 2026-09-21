@@ -4,6 +4,7 @@
 altgraph==0.17.5
 cfgv==3.5.0
 colorama==0.4.6
+colorthief==0.2.1
 coverage==7.15.4
 darkdetect==0.8.0
 distlib==0.4.3
@@ -12,8 +13,10 @@ filelock==3.32.7
 identify==2.6.19
 iniconfig==2.3.0
 nodeenv==1.10.0
+numpy==2.4.6
 packaging==26.3
 pefile==2024.8.26
+pillow==12.3.0
 platformdirs==4.11.9
 pluggy==1.6.0
 pre-commit==4.6.2
@@ -35,6 +38,7 @@ pywin32==312
 pywin32-ctypes==0.2.3
 pyyaml==6.0.2
 ruff==0.16.3
+scipy==1.17.1
 setuptools==82.0.0
 shiboken6==6.8.1.1
 typing-extensions==4.16.0

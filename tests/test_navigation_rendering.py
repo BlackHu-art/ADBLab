@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from PySide6.QtCore import QAbstractAnimation, QCoreApplication, QEvent, QPoint, QSize
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QApplication, QWidget
 from qfluentwidgets import FluentStyleSheet, FluentWindow, NavigationDisplayMode
@@ -30,6 +30,43 @@ def _navigation_background_pixel(frame, panel_point=None):
     image = frame.grab().toImage()
     scale = image.devicePixelRatio()
     return image.pixelColor(round(point.x() * scale), round(point.y() * scale))
+
+
+@pytest.mark.parametrize("theme_name", ["Light", "Dark"])
+@pytest.mark.parametrize("mica", [False, True])
+def test_navigation_menu_uses_real_acrylic_blur(
+    qt_application, monkeypatch, theme_probe_frame, theme_name, mica,
+):
+    """只替换屏幕取图；真实依赖、模糊及覆盖绘制共同保证菜单不会退回实色。"""
+    from qfluentwidgets.components.widgets.acrylic_label import AcrylicBrush
+
+    source = QImage(32, 32, QImage.Format.Format_RGB32)
+    source.fill(QColor("black"))
+    painter = QPainter(source)
+    painter.fillRect(16, 0, 16, 32, QColor("white"))
+    painter.end()
+    monkeypatch.setattr(
+        AcrylicBrush, "grabImage",
+        lambda brush, _rect: brush.setImage(QPixmap.fromImage(source)),
+    )
+    frame = theme_probe_frame(theme_name, mica, width=900)
+    panel = frame.navigationInterface.panel
+    assert panel.acrylicBrush.isAvailable(), "运行依赖必须包含 Acrylic 图像处理能力"
+
+    frame._expand_navigation_panel(use_animation=False)
+    qt_application.processEvents()
+
+    assert panel.displayMode == NavigationDisplayMode.MENU
+    blurred = panel.acrylicBrush.image.toImage()
+    assert not blurred.isNull()
+    assert blurred.size() == source.size()
+    assert 0 < blurred.pixelColor(15, 16).red() < 255
+    assert 0 < blurred.pixelColor(16, 16).red() < 255
+    first_background = _navigation_background_pixel(frame, QPoint(2, 20))
+
+    source.fill(QColor("#315879"))
+    panel.acrylicBrush.setImage(QPixmap.fromImage(source))
+    assert _navigation_background_pixel(frame, QPoint(2, 20)) != first_background
 
 
 @pytest.mark.parametrize("theme_name", ["Light", "Dark"])

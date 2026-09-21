@@ -82,6 +82,17 @@ def _self_check_packaging() -> int:
     importable("mobileperf.android.startup")
     importable("gui.generated.translations_rc")
 
+    # Fluent 会吞掉图像依赖的导入失败；主包可导入仍可能让覆盖菜单退回实色。
+    try:
+        from qfluentwidgets.components.widgets.acrylic_label import isAcrylicAvailable
+
+        check(
+            "ui:acrylic", isAcrylicAvailable,
+            "" if isAcrylicAvailable else "Acrylic image dependencies unavailable",
+        )
+    except (ImportError, OSError) as exc:
+        check("ui:acrylic", False, type(exc).__name__)
+
     from PySide6.QtCore import QCoreApplication, QFile
 
     # TLS 插件发现需要 Qt 应用对象；自检只加载后端，不访问更新服务。
