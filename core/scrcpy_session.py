@@ -21,6 +21,14 @@ from core.adb_transport import Connection
 from core.scrcpy_adb_protocol import ScrcpyAdbProtocol
 
 
+def session_owner_pid(environment: Mapping[str, str]) -> int:
+    """先校验归属进程字段，允许 helper 在读取易被清理的会话目录前观察存活。"""
+    raw_owner = environment.get("ADBLAB_SCRCPY_OWNER_PID", "")
+    if not re.fullmatch(r"[1-9][0-9]{0,9}", raw_owner) or int(raw_owner) <= 1:
+        raise ValueError("A live scrcpy owner process is required.")
+    return int(raw_owner)
+
+
 def session_configuration(
     environment: Mapping[str, str],
 ) -> tuple[str, Path, int, tuple[int, int], Path]:
@@ -28,10 +36,8 @@ def session_configuration(
     serial = environment.get("ADBLAB_SCRCPY_SERIAL", "")
     raw_server = environment.get("ADBLAB_SCRCPY_SERVER", "")
     raw_session = environment.get("ADBLAB_SCRCPY_SESSION_FILE", "")
-    raw_owner = environment.get("ADBLAB_SCRCPY_OWNER_PID", "")
     raw_ports = environment.get("ADBLAB_SCRCPY_PORT_RANGE", "")
-    if not re.fullmatch(r"[1-9][0-9]{0,9}", raw_owner) or int(raw_owner) <= 1:
-        raise ValueError("A live scrcpy owner process is required.")
+    owner = session_owner_pid(environment)
     if not re.fullmatch(r"[0-9]{1,5}:[0-9]{1,5}", raw_ports):
         raise ValueError("A fixed scrcpy port range is required.")
     first, last = (int(item) for item in raw_ports.split(":"))
@@ -45,7 +51,7 @@ def session_configuration(
         serial, server, scid="00000000", port_range=(first, last),
         session_token=session_token(session),
     )
-    return serial, server.resolve(), int(raw_owner), (first, last), session
+    return serial, server.resolve(), owner, (first, last), session
 
 
 def session_token(session_file: Path) -> str:

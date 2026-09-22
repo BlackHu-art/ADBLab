@@ -244,6 +244,195 @@ def test_lifetime_rejects_missing_parent_before_work(environment, monkeypatch):
             pytest.fail("missing parent admitted work")
 
 
+def test_cli_orphaned_parent_cancels_before_directory_validation(
+    environment, monkeypatch, capsys,
+):
+    module = bridge()
+    monkeypatch.setattr(module.os, "getppid", lambda: 1)
+    Path(environment["ADBLAB_SCRCPY_SESSION_FILE"]).parent.rmdir()
+    assert module.main(["devices", "-l"]) == 130
+    assert "cancelled" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "exit_phase",
+    ["before_configuration", "configuration_read", "after_configuration", "lease_open"],
+)
+def test_cli_late_helper_cancels_after_parent_exit_and_directory_cleanup(
+    environment, monkeypatch, capsys, exit_phase,
+):
+    module = bridge()
+    directory = Path(environment["ADBLAB_SCRCPY_SESSION_FILE"]).parent
+    alive = [exit_phase != "before_configuration"]
+    watches = []
+
+    class ProcessWatch:
+        def __init__(self, pid):
+            self.closed = False
+            watches.append(self)
+
+        def alive(self):
+            return alive[0]
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(module, "_ProcessWatch", ProcessWatch)
+    if exit_phase == "before_configuration":
+        directory.rmdir()
+    elif exit_phase in {"configuration_read", "after_configuration"}:
+        original = module.session_configuration
+
+        def configuration(env):
+            if exit_phase == "after_configuration":
+                result = original(env)
+            alive[0] = False
+            directory.rmdir()
+            if exit_phase == "configuration_read":
+                return original(env)
+            return result
+
+        monkeypatch.setattr(module, "session_configuration", configuration)
+    else:
+        original_open = Path.open
+
+        def open_after_exit(path, *args, **kwargs):
+            if path.suffix == ".lease":
+                alive[0] = False
+                directory.rmdir()
+            return original_open(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", open_after_exit)
+
+    def fail(*args, **kwargs):
+        pytest.fail("late helper reached ADB after its parent exited")
+
+    monkeypatch.setattr(socket, "create_connection", fail)
+    assert module.main(["devices", "-l"]) == 130
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "cancelled" in output.err
+    assert "I/O failed" not in output.err and "private scrcpy session" not in output.err
+    assert watches and all(watch.closed for watch in watches)
+    assert not directory.exists()
+
+
+@pytest.mark.parametrize("cleanup_denied", [False, True])
+def test_cli_parent_exit_after_lease_acquisition_cancels_and_releases_lock(
+    environment, monkeypatch, capsys, cleanup_denied,
+):
+    module = bridge()
+    session = importlib.import_module("core.scrcpy_session")
+    alive = [True]
+
+    class ProcessWatch:
+        def __init__(self, pid):
+            pass
+
+        def alive(self):
+            return alive[0]
+
+        def close(self):
+            pass
+
+    original_lock = session._lock
+
+    def lock_then_exit(lease):
+        result = original_lock(lease)
+        alive[0] = False
+        return result
+
+    def fail(*args, **kwargs):
+        pytest.fail("cancelled helper reached ADB")
+
+    monkeypatch.setattr(module, "_ProcessWatch", ProcessWatch)
+    monkeypatch.setattr(session, "_lock", lock_then_exit)
+    monkeypatch.setattr(socket, "create_connection", fail)
+    if cleanup_denied:
+        original_unlink = Path.unlink
+
+        def deny_lease_cleanup(path, *args, **kwargs):
+            if path.suffix == ".lease":
+                raise PermissionError("lease cleanup denied")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "unlink", deny_lease_cleanup)
+    assert module.main(["devices", "-l"]) == 130
+    assert "cancelled" in capsys.readouterr().err
+    session_file = Path(environment["ADBLAB_SCRCPY_SESSION_FILE"])
+    assert not session.has_active_helpers(session_file)
+    assert len(list(session_file.parent.iterdir())) == int(cleanup_denied)
+
+
+def test_cli_active_helper_reports_lease_io_failure(environment, monkeypatch, capsys):
+    module = bridge()
+    original_open = Path.open
+
+    def deny_lease(path, *args, **kwargs):
+        if path.suffix == ".lease":
+            raise PermissionError("lease access denied")
+        return original_open(path, *args, **kwargs)
+
+    def fail(*args, **kwargs):
+        pytest.fail("helper without lease reached ADB")
+
+    monkeypatch.setattr(Path, "open", deny_lease)
+    monkeypatch.setattr(socket, "create_connection", fail)
+    assert module.main(["devices", "-l"]) == 1
+    assert "I/O failed" in capsys.readouterr().err
+
+
+def test_cli_active_helper_reports_missing_directory(environment, monkeypatch, capsys):
+    module = bridge()
+    Path(environment["ADBLAB_SCRCPY_SESSION_FILE"]).parent.rmdir()
+
+    def fail(*args, **kwargs):
+        pytest.fail("invalid session reached ADB")
+
+    monkeypatch.setattr(socket, "create_connection", fail)
+    assert module.main(["devices", "-l"]) == 2
+    assert "private scrcpy session" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("owner", ["", "1", "-1", "not-a-pid", "12345678901"])
+def test_cli_rejects_invalid_owner_before_process_watch(
+    environment, monkeypatch, capsys, owner,
+):
+    module = bridge()
+    monkeypatch.setenv("ADBLAB_SCRCPY_OWNER_PID", owner)
+
+    def fail(*args, **kwargs):
+        pytest.fail("invalid owner reached process observation")
+
+    monkeypatch.setattr(module, "_ProcessWatch", fail)
+    assert module.main(["devices", "-l"]) == 2
+    assert "live scrcpy owner" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process observation errors")
+@pytest.mark.parametrize("error,expected", [(87, 130), (5, 2)])
+def test_cli_distinguishes_exited_process_from_process_access_denied(
+    environment, monkeypatch, capsys, error, expected,
+):
+    import ctypes
+
+    class Function:
+        def __call__(self, *args):
+            ctypes.set_last_error(error)
+            return 0
+
+    class Kernel:
+        OpenProcess = Function()
+        WaitForSingleObject = Function()
+        CloseHandle = Function()
+
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *args, **kwargs: Kernel())
+    assert bridge().main(["devices", "-l"]) == expected
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert ("cancelled" in output.err) == (expected == 130)
+
+
 def test_cli_idle_shell_exits_when_real_parent_dies(environment):
     module = bridge()
     module.session_scid(environment, "reverse", ["localabstract:scrcpy_1234abcd", "tcp:27183"])

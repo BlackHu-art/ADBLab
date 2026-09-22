@@ -20,6 +20,7 @@ from core.scrcpy_session import (
     helper_lease,
     mark_server_pending,
     session_configuration,
+    session_owner_pid,
     session_scid,
     session_token,
 )
@@ -57,6 +58,9 @@ class _ProcessWatch:
             self.api.CloseHandle.restype = wintypes.BOOL
             self.handle = self.api.OpenProcess(0x00100000, False, pid)
             if not self.handle:
+                if ctypes.get_last_error() == 87:
+                    # 有效 PID 已不存在时按会话取消收口；权限等观察失败仍显式报错。
+                    raise CommandCancelled
                 raise ValueError("Scrcpy parent or owner process is unavailable.")
 
     def alive(self) -> bool:
@@ -81,8 +85,11 @@ class _ProcessWatch:
 @contextmanager
 def helper_lifetime(environment: Mapping[str, str]) -> Iterator[CancelCheck]:
     """CLI 资源归属入口；全部命令检查 scrcpy 直接父进程和 ADBLab owner 的存活。"""
-    owner = int(environment["ADBLAB_SCRCPY_OWNER_PID"])
+    owner = session_owner_pid(environment)
     parent = os.getppid()
+    if parent == 1:
+        # POSIX 在 helper 初始化前重新托管到 init，说明原 scrcpy 已经退出。
+        raise CommandCancelled
     watches: list[_ProcessWatch] = []
     try:
         for pid in {owner, parent}:
@@ -92,10 +99,21 @@ def helper_lifetime(environment: Mapping[str, str]) -> Iterator[CancelCheck]:
             # POSIX 的重新托管可在 PID 再利用之前表明原直接父进程已经消失。
             return os.getppid() != parent or any(not watch.alive() for watch in watches)
 
-        with helper_lease(Path(environment["ADBLAB_SCRCPY_SESSION_FILE"])):
+        try:
             if cancelled():
                 raise CommandCancelled
-            yield cancelled
+            _, _, _, _, session_file = session_configuration(environment)
+            if cancelled():
+                raise CommandCancelled
+            with helper_lease(session_file):
+                if cancelled():
+                    raise CommandCancelled
+                yield cancelled
+        except (OSError, ValueError) as exc:
+            # 父进程退出与目录清理可发生在校验或租约创建期间；活跃会话错误仍原样传播。
+            if cancelled():
+                raise CommandCancelled from exc
+            raise
     finally:
         for watch in watches:
             watch.close()
@@ -147,16 +165,16 @@ def _main(argv: list[str] | None = None) -> int:
         if args == ["--probe-server"]:
             host_version(timeout=3.0)
             return 0
-        serial, server, _, ports, session_file = session_configuration(environment)
-        selected = None
-        if args[:1] == ["-s"] and len(args) >= 3:
-            selected, args = args[1], args[2:]
-        if not args or (selected is not None and selected != serial):
-            raise ValueError("Command target does not match this scrcpy launch.")
-        command, command_args = args[0], args[1:]
-        if command not in {"start-server", "devices"} and selected != serial:
-            raise ValueError("An explicit scrcpy device selector is required.")
         with helper_lifetime(environment) as cancelled:
+            serial, server, _, ports, session_file = session_configuration(environment)
+            selected = None
+            if args[:1] == ["-s"] and len(args) >= 3:
+                selected, args = args[1], args[2:]
+            if not args or (selected is not None and selected != serial):
+                raise ValueError("Command target does not match this scrcpy launch.")
+            command, command_args = args[0], args[1:]
+            if command not in {"start-server", "devices"} and selected != serial:
+                raise ValueError("An explicit scrcpy device selector is required.")
             if cancelled():
                 raise CommandCancelled
             scid = session_scid(environment, command, command_args)
