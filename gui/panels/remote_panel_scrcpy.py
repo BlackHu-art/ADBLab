@@ -55,6 +55,13 @@ class RemotePanelScrcpy:
         if not devices:
             return
         exe = frame._scrcpy_service.resolve_executable()
+        if os.environ.get("SCRCPY_PATH", "").strip() and (
+            not os.path.isfile(exe) or (os.name != "nt" and not os.access(exe, os.X_OK))
+        ):
+            frame._log("WARNING", tr(
+                "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
+            ))
+            return
         if not os.path.isfile(exe):
             frame._log("WARNING", tr("未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。"))
             return

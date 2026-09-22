@@ -228,8 +228,9 @@ class CommandRunner:
         *,
         cancelled: Callable[[], bool] | None = None,
         native_only: bool = False,
+        native_tool: bool = False,
     ) -> CommandResult:
-        """执行有超时上限的短命令，并将退出码和输出归一为 ``CommandResult``。"""
+        """执行短命令并归一结果；native_tool 仅声明原生工具隔离，不禁用 ADB 快速通道。"""
 
         started_at = _mark_started()
         result: CommandResult
@@ -254,7 +255,7 @@ class CommandRunner:
                 adb_debug.command(resolved_cmd, backend="native_client", timeout=remaining)
                 proc = run_native(
                     resolved_cmd,
-                    isolate=_is_native_tool(resolved_cmd),
+                    isolate=native_tool or _is_native_tool(resolved_cmd),
                     capture_output=True,
                     text=True,
                     shell=shell,
@@ -472,10 +473,12 @@ class ProcessRunner:
         bufsize: int = -1,
         creationflags: int | None = None,
         env: dict[str, str] | None = None,
+        native_tool: bool = False,
     ) -> subprocess.Popen:
         """启动子进程；旧进程未退出或同 key 并发启动冲突时抛出 RuntimeError。
 
         并发失败方只清理自身进程；未能退出的进程保留内部 key，供后续统一清理。
+        native_tool 为改名后的原生工具显式请求隔离，默认沿用既有工具识别。
         """
 
         resolved_cmd = resolve_command(cmd)
@@ -496,6 +499,7 @@ class ProcessRunner:
             bufsize=bufsize,
             creationflags=creationflags,
             env=env,
+            native_tool=native_tool,
         )
 
         # spawn 在锁外进行，此处用一次原子 compare-and-swap 决定唯一获胜者：
@@ -534,8 +538,9 @@ class ProcessRunner:
         bufsize: int = -1,
         creationflags: int | None = None,
         env: dict[str, str] | None = None,
+        native_tool: bool = False,
     ) -> subprocess.Popen:
-        """启动不进入活动进程表的子进程，调用方必须自行管理其生命周期。"""
+        """启动不纳入活动表的子进程；调用方管理生命周期，native_tool 显式请求隔离。"""
 
         popen_kwargs = {
             "creationflags": CF if creationflags is None else creationflags,
@@ -557,7 +562,9 @@ class ProcessRunner:
             popen_kwargs["env"] = env
         resolved_cmd = resolve_command(cmd)
         adb_debug.command(resolved_cmd, backend="native_client")
-        return popen_native(resolved_cmd, isolate=_is_native_tool(resolved_cmd), **popen_kwargs)
+        return popen_native(
+            resolved_cmd, isolate=native_tool or _is_native_tool(resolved_cmd), **popen_kwargs,
+        )
 
     def stop(self, key: str, timeout: float = 5.0) -> int | None:
         """停止指定 key 的子进程，返回 exit code 或 None。"""

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from utils import adb_debug
 from utils.resource_path import resource_path
 from utils.runtime_tools import bundled_tool_path
-from utils.tool_manifest import get_tool_bundle
+from utils.tool_manifest import get_tool_bundle, macos_tool_candidates
 
 _adb_path: str | None = None
 _resolved: bool = False
@@ -18,9 +18,9 @@ _resolved: bool = False
 CLIENT_PREFERENCE_AUTO = "auto"
 CLIENT_SOURCE_TOKENS = frozenset({
     CLIENT_PREFERENCE_AUTO, "bundled", "runtime_cache", "env", "sdk_home", "sdk_root",
-    "sdk_local", "PATH",
+    "sdk_local", "PATH", "sdk_macos", "homebrew_arm64", "homebrew_x64",
 })
-SDK_SOURCE_TOKENS = frozenset({"sdk_home", "sdk_root", "sdk_local"})
+SDK_SOURCE_TOKENS = frozenset({"sdk_home", "sdk_root", "sdk_local", "sdk_macos"})
 _client_preference = CLIENT_PREFERENCE_AUTO
 
 
@@ -132,7 +132,7 @@ _PRE_VALIDATED_SOURCES = frozenset({"PATH"})
 
 
 def _candidates() -> list[tuple[str, str]]:
-    """返回有序候选：当前平台内置 → ADB_PATH → Android SDK → 系统 PATH。"""
+    """保留原有候选顺序，再追加 macOS 默认 SDK 与 Homebrew 安装位置。"""
 
     candidates: list[tuple[str, str]] = []
     bundled = _bundled_candidate()
@@ -145,13 +145,21 @@ def _candidates() -> list[tuple[str, str]]:
     found = shutil.which("adb")
     if found:
         candidates.append(("PATH", found))
+    if sys.platform == "darwin":
+        candidates.append((
+            "sdk_macos", os.path.expanduser("~/Library/Android/sdk/platform-tools/adb"),
+        ))
+        candidates.extend(
+            (source, path) for source, path in macos_tool_candidates("adb")
+            if os.path.isfile(path)
+        )
     return candidates
 
 
 def list_adb_candidates() -> list[AdbCandidate]:
     """返回设置界面展示并可探测的候选（含不可用项）。
 
-    只包含应用内置、环境变量 ADB_PATH 与系统 PATH：Android SDK 位置仍留在
+    包含应用内置、环境变量 ADB_PATH、系统 PATH 和已安装的 Homebrew：Android SDK 位置仍留在
     自动解析链里做兜底，但不参与界面展示与版本探测，避免冷启动时逐个启动
     多个 adb 客户端拖慢识别。
     """
@@ -179,7 +187,8 @@ def resolve_adb_path() -> str | None:
     """查找可用的 ADB 可执行文件，并在首次解析后缓存结果。
 
     先看当前平台内置工具，再按显式 ADB_PATH、Android SDK platform-tools、系统 PATH
-    的顺序兜底；未交付内置包的架构只使用环境中的工具。需要重新扫描时清除解析缓存。
+    的顺序兜底，macOS 最后追加默认 SDK 和 Homebrew；未交付内置包的架构只使用外部工具。
+    需要重新扫描时清除解析缓存。
     """
 
     global _adb_path, _resolved

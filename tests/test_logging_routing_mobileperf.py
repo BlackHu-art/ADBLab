@@ -64,7 +64,7 @@ def test_main_frame_routes_business_log_signal_to_log_service():
         _invalidate_package_query=Mock(),
         _closing=False,
         _device_metadata={},
-        _sync_device_context=Mock(),
+        _sync_device_metadata=Mock(),
     )
     frame._on_device_info_updated = lambda device, info: MainFrame._on_device_info_updated(
         frame, device, info
@@ -99,7 +99,7 @@ def test_main_frame_routes_business_log_signal_to_log_service():
     device_info_handler = controller.device_info_updated.connect.call_args.args[0]
     device_info_handler("device-secret", {"serial": "device-secret", "Model": "Demo model"})
     assert frame._device_metadata == {"device-secret": {"Model": "Demo model"}}
-    frame._sync_device_context.assert_called_once_with()
+    frame._sync_device_metadata.assert_called_once_with(["device-secret"], incremental=True)
     log_service.log.assert_called_once_with("INFO", "Operation ready")
     assert "device-secret" not in str(log_service.log.call_args_list)
 

@@ -6215,8 +6215,8 @@ Android device management, apps and diagnostics</translation>
             <translation>Automatic (recommended)</translation>
         </message>
         <message>
-            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项</source>
-            <translation>Uses the first available of bundled → ADB_PATH → Android SDK → system PATH</translation>
+            <source>按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项；macOS 最后检查默认 SDK 和 Homebrew</source>
+            <translation>Use the first available: bundled → ADB_PATH → Android SDK → system PATH; on macOS, check the default SDK and Homebrew last</translation>
         </message>
         <message>
             <source>应用自带</source>
@@ -6577,6 +6577,22 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。</source>
             <translation>scrcpy was not found. Prepare the tool bundle for this platform or install scrcpy on the system.</translation>
+        </message>
+        <message>
+            <source>Android SDK（macOS 默认目录）</source>
+            <translation>Android SDK (default macOS location)</translation>
+        </message>
+        <message>
+            <source>Homebrew（Apple Silicon）</source>
+            <translation>Homebrew (Apple Silicon)</translation>
+        </message>
+        <message>
+            <source>Homebrew（Intel）</source>
+            <translation>Homebrew (Intel)</translation>
+        </message>
+        <message>
+            <source>SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。</source>
+            <translation>The file specified by SCRCPY_PATH is missing or not executable. Correct or unset this environment variable and retry.</translation>
         </message>
     </context>
 </TS>

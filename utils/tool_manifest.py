@@ -59,3 +59,11 @@ def get_tool_bundle(platform: str | None = None, machine: str | None = None) -> 
     if platform == "linux":
         return LINUX_BUNDLE
     return None
+
+
+def macos_tool_candidates(tool: str, machine: str | None = None) -> list[tuple[str, str]]:
+    """仅生成 Homebrew 标准位置；当前架构前缀优先，存在性与能力由调用方检查。"""
+    machine = (host_platform.machine() if machine is None else machine).lower()
+    arm = ("homebrew_arm64", f"/opt/homebrew/bin/{tool}")
+    intel = ("homebrew_x64", f"/usr/local/bin/{tool}")
+    return [arm, intel] if machine in {"arm64", "aarch64"} else [intel, arm]

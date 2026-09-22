@@ -1,6 +1,23 @@
+import ntpath
+from types import SimpleNamespace
+
 import pytest
 
 from services import file_explorer as explorer_service
+
+
+@pytest.mark.parametrize("name", ["C:notes.txt", "D:资料.txt", "normal.txt"])
+def test_device_paths_keep_android_semantics_on_windows(monkeypatch, name):
+    # 只替换被测模块的本机路径接口，避免改变 pytest 使用的全局 os.path。
+    monkeypatch.setattr(explorer_service, "os", SimpleNamespace(path=ntpath), raising=False)
+    assert explorer_service.safe_name(name)
+    rows, _links = explorer_service.parse_ls_output(
+        f"-rw-r--r-- 1 shell shell 12 May 30 12:34 {name}\n",
+    )
+    assert explorer_service.device_path("/data/local/tmp", rows[0].name) == (
+        f"/data/local/tmp/{name}"
+    )
+    assert explorer_service.device_path("/data/local", "tmp", name) == f"/data/local/tmp/{name}"
 
 
 def test_parse_ls_output_sorts_folders_first_and_tracks_symlinks():

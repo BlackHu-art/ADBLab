@@ -5,7 +5,6 @@ UI 层只负责交互和展示；这里的函数必须保持无 Qt 依赖，方�
 
 from __future__ import annotations
 
-import os
 import posixpath
 import re
 from dataclasses import dataclass
@@ -144,7 +143,8 @@ def safe_name(name: str) -> bool:
 
 
 def device_path(*parts: str) -> str:
-    return os.path.join(*parts).replace("\\", "/")
+    """Android 路径遵循 POSIX 规则，文件名中的冒号不能被宿主解释为盘符。"""
+    return posixpath.join(*parts)
 
 
 def root_command(cmd: str, use_root: bool) -> str:

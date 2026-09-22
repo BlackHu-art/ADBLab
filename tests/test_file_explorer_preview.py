@@ -1,5 +1,6 @@
 """文件预览的版本判断、像素归属和真实请求生命周期回归。"""
 
+import ntpath
 import shlex
 import threading
 import time
@@ -14,6 +15,23 @@ from gui.dialogs.file_explorer_image import FileExplorerImagePreview
 from services import file_explorer as service
 
 pytestmark = pytest.mark.ui
+
+
+def test_preview_uses_full_android_path_for_colon_filename(qt_application, monkeypatch):
+    from gui.dialogs.file_explorer import FileExplorerPage
+    from models.file_explorer_worker import ADBWorker
+
+    monkeypatch.setattr(ADBWorker, "start", lambda _worker: None)
+    monkeypatch.setattr(service, "os", SimpleNamespace(path=ntpath), raising=False)
+    page = FileExplorerPage(device_ip="device-test")
+    observed = []
+    monkeypatch.setattr(page._view_controller, "_view_image", lambda *args: observed.append(args))
+    try:
+        page.current_path = "/data/local/tmp"
+        page._view_controller._view_file("C:photo.png", is_image=True)
+        assert observed == [("C:photo.png", "/data/local/tmp/C:photo.png")]
+    finally:
+        page.close()
 
 
 def test_real_decoder_completion_advances_nested_preview_stages(qt_application, monkeypatch):

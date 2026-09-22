@@ -91,11 +91,12 @@ def test_failed_atomic_save_preserves_disk_and_retry_saves_latest_state(
     assert json.loads(isolated_settings.read_text(encoding="utf-8"))["theme"] == "System"
 
 
-def test_adb_client_preference_round_trips_and_rejects_invalid_values(isolated_settings):
+@pytest.mark.parametrize("source", ["sdk_home", "sdk_macos", "homebrew_arm64", "homebrew_x64"])
+def test_adb_client_preference_round_trips_and_rejects_invalid_values(isolated_settings, source):
     """客户端选择接受自动、命名来源或绝对路径；其它输入回退自动。"""
 
     settings = settings_manager.AppSettings.instance()
-    settings.update({"adb_client": "sdk_home"})
+    settings.update({"adb_client": source})
     pending_timer = settings._save_timer
     if pending_timer is not None:
         pending_timer.cancel()
@@ -103,10 +104,11 @@ def test_adb_client_preference_round_trips_and_rejects_invalid_values(isolated_s
 
     settings_manager.AppSettings._instance = None
     reloaded = settings_manager.AppSettings.instance()
-    assert reloaded.get("adb_client") == "sdk_home"
+    assert reloaded.get("adb_client") == source
 
-    settings.update({"adb_client": "  C:/tools/adb.exe  "})
-    assert settings.get("adb_client") == "C:/tools/adb.exe"
+    custom = str(isolated_settings.parent / "tools/adb")
+    settings.update({"adb_client": f"  {custom}  "})
+    assert settings.get("adb_client") == custom
 
     settings.update({"adb_client": "not-a-source"})
     assert settings.get("adb_client") == "auto"

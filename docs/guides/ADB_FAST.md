@@ -51,9 +51,9 @@ ADB 服务”；完成后以实际服务响应确认结果。扫描与业务命�
 
 设置页的 **ADB 维护** 区是单列三张卡：**ADB 客户端**、**ADB 执行环境**、**重启本机 ADB 服务**。
 **ADB 客户端** 折叠态显示当前选择，展开后按需识别本机 ADB 环境：只列出**实际配置的**来源（应用内置、环境变量
-ADB_PATH、系统 PATH），未配置的来源不占位，已配置但不可用的来源保留并标注原因（文件不存在、
+ADB_PATH、系统 PATH、macOS 中实际存在的 Homebrew 路径），未配置的来源不占位，已配置但不可用的来源保留并标注原因（文件不存在、
 无法执行、超时、不是 ADB 程序），另提供 **自定义 adb**（文件选择器）与 **重新识别本地 ADB 环境**。Android SDK
-的三个位置仍留在自动解析链里兜底，但不参与展示与版本探测，避免冷启动时逐个启动多个 adb 客户端。
+各位置（包括 macOS 默认 SDK）仍留在自动解析链里兜底，但不参与展示与版本探测，避免冷启动时逐个启动多个 adb 客户端。
 识别只在后台串行运行 `adb version`（单项 10 秒预算、可取消），不连接 5037 服务；识别期间
 只锁「重新识别」按钮，候选选择与自定义文件始终可用，超过 3 秒提示仍在继续，不中断当前客户端。
 同一候选快照逐项回填版本或失败原因，已完成的项不必等待剩余候选；路径变化时清除旧版本显示。
@@ -149,6 +149,13 @@ DLL 搜索状态不变。工具仍通过真实操作系统标准句柄接收输�
 这一兼容隔离用于验证冻结运行库环境继承对原生工具的影响。是否能消除特定机器上的 ADB
 握手超时仍需目标环境验证，不能仅凭隔离实现或模拟测试认定故障根因及修复结果。
 
+### Linux 冻结包中的原生工具环境
+
+显式标为原生工具的 ADB/scrcpy 在 Linux 冻结运行时使用环境副本：有
+`LD_LIBRARY_PATH_ORIG` 时恢复它（包括空串），没有时移除 `LD_LIBRARY_PATH`。
+这避免 PyInstaller 的随包库影响外部工具加载；父环境、选定的 ADB 路径及其他变量保持不变。
+应用自身的 MobilePerf worker 保留冻结环境；源码运行、其他平台与 shell 模式不走该清理。
+
 ### 查看实际 ADB 路径与执行后端
 
 正常源码启动时，ADB 路径与执行诊断通过现有 `LogService.write_developer_console`
@@ -172,7 +179,8 @@ DLL 搜索状态不变。工具仍通过真实操作系统标准句柄接收输�
 
 `resolve_candidate` 按顺序显示每个候选的来源、路径和存在性，`resolve_result` 显示最终
 选择及 `bundled`、`runtime_cache`、`env`、`sdk`、`PATH` 或 `missing` 来源；候选顺序为
-当前平台内置 → `ADB_PATH` → Android SDK platform-tools → PATH；平台与架构不匹配时不使用
+当前平台内置 → `ADB_PATH` → Android SDK platform-tools → PATH → macOS 默认 SDK →
+macOS Homebrew（本机架构前缀优先）；平台与架构不匹配时不使用
 内置二进制。解析结果有进程内缓存，「重新检测」会先清缓存再重扫，安装或移除
 platform-tools 后无需重启应用。正常 Windows onedir 的资源根是
 `sys._MEIPASS` 指向的 `_internal`，因此候选路径为 `_internal/runtime-tools/windows-x86_64/adb.exe`，
@@ -274,6 +282,11 @@ GUI 只封闭旧会话准入并摘除映射，既有 Remote 单线程队列负�
 关闭监督同时跟踪各代模式线程；子进程已经退出但写入尚未结束时仍报告运行资源未释放，
 停止按本次快照和既有等待预算收口，不把后来启动的新会话纳入旧停止请求。
 直接运行 MobilePerf 命令行时默认自动选择，也可在该进程环境中指定 `fast` 或 `native`。
+
+父子进程日志通道固定使用 UTF-8；父进程设置 `PYTHONIOENCODING=utf-8`，避免系统编码影响中文
+与 emoji。Windows windowed worker 在参数解析及日志模块导入前，从真实标准句柄恢复缺失的
+stdout/stderr；仅拥有不可继承的句柄副本，流保留到进程退出。没有有效输出句柄时启动失败，
+不继续采集并丢弃日志。既有业务日志、诊断分流与脱敏规则不变。
 
 [采集执行器](../../mobileperf/android/adb_execution.py) 归 `StartUp.run()` 所有，经当前
 `RuntimeData` 交给本次运行创建的 ADB 适配对象。每个 worker 只验证自己的目标设备，首次

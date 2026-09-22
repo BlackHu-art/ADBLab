@@ -104,7 +104,8 @@ service/model 构造。
 `services/remote/scrcpy_args.py` 将 `ScrcpyConfig` 转为参数数组，`ScrcpyService.build_launch_plan()`
 先检查版本、ADB 预检和可选编码器，再由 `ProcessRunner.start()` 启动。stdout/stderr 均排空，
 INFO 中的纹理/录制就绪与 FPS 更新页面状态，错误与开发诊断统一脱敏。
-Windows 使用内置可执行文件，非 Windows 使用 PATH；没有网络服务端暴露。
+非空 `SCRCPY_PATH` 显式覆盖路径；默认 Windows/Linux x86_64 使用内置可执行文件，
+环境工具按 PATH/macOS Homebrew 策略发现，详见 [构建与运行](../guides/BUILD_AND_RUN.md#配置)；没有网络服务端暴露。
 受支持计划由 `start_plan()` 通过子进程 `ADB` 指向随包独立 CLI；它复用 `core/adb_transport.py`，
 专用协议、会话归属及失败不重放边界见 [ADB_FAST](../guides/ADB_FAST.md#remote-投屏与输入)。
 CLI 仅依赖 Python 标准库，构建复用现有 PyInstaller，不新增生产依赖。

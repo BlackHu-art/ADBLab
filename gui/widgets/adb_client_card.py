@@ -53,7 +53,7 @@ PROBE_TIMEOUT_MS = 10000
 DETECTION_GRACE_MS = 5000
 
 # 候选行按实际配置的来源动态生成：未配置的来源不占位（不出现"未设置"噪音行）；
-# Android SDK 三处仍留在自动解析链里兜底，但不展示、不探测。
+# Android SDK 位置仍留在自动解析链里兜底，但不展示、不探测。
 
 _SOURCE_LABELS = {
     "bundled": "应用自带",
@@ -62,6 +62,9 @@ _SOURCE_LABELS = {
     "sdk_home": "Android SDK（ANDROID_HOME）",
     "sdk_root": "Android SDK（ANDROID_SDK_ROOT）",
     "sdk_local": "Android SDK（%LOCALAPPDATA%）",
+    "sdk_macos": "Android SDK（macOS 默认目录）",
+    "homebrew_arm64": "Homebrew（Apple Silicon）",
+    "homebrew_x64": "Homebrew（Intel）",
     "PATH": "系统 PATH",
     "custom": "自定义 adb",
 }
@@ -280,7 +283,10 @@ class AdbClientSettingCard(SimpleExpandGroupSettingCard):
             self._auto_row, self._auto_radio, _detail = self._build_radio_row(
                 CLIENT_PREFERENCE_AUTO,
                 tr("{system} 下自动选择（推荐）").format(system=self._host_system),
-                tr("按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项"),
+                tr(
+                    "按 应用自带 → 环境变量 ADB_PATH → Android SDK → 系统 PATH 使用第一个可用项；"
+                    "macOS 最后检查默认 SDK 和 Homebrew"
+                ),
             )
         for key in list(self._rows):
             if key in keys:

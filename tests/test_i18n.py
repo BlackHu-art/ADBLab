@@ -231,6 +231,28 @@ def test_adb_host_summary_and_recommendation_use_bundled_translations(
         card.close()
 
 
+@pytest.mark.parametrize("language,default_sdk,invalid_override", [
+    ("en_US", "Android SDK (default macOS location)",
+     "The file specified by SCRCPY_PATH is missing or not executable. "
+     "Correct or unset this environment variable and retry."),
+    ("zh_HK", "Android SDK（macOS 預設目錄）",
+     "SCRCPY_PATH 指定的檔案不存在或無法執行，請修正或清除此環境變數後重試。"),
+    ("zh_CN", "Android SDK（macOS 默认目录）",
+     "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。"),
+])
+def test_macos_tool_sources_and_explicit_override_have_bundled_translations(
+    installed_translators, language, default_sdk, invalid_override,
+):
+    installed_translators(language)
+    assert i18n.tr("Android SDK（macOS 默认目录）") == default_sdk
+    assert i18n.tr(
+        "SCRCPY_PATH 指定的文件不存在或不可执行，请修正或清除该环境变量后重试。",
+    ) == invalid_override
+    for source in ("Homebrew（Apple Silicon）", "Homebrew（Intel）"):
+        expected = source.replace("（", " (").replace("）", ")") if language == "en_US" else source
+        assert i18n.tr(source) == expected
+
+
 @pytest.mark.parametrize("language", ["zh_CN", "en_US", "zh_HK"])
 def test_visible_ui_literals_have_catalog_entries(language):
     root = Path(__file__).resolve().parents[1]

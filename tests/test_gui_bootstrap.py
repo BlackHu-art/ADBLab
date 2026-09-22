@@ -15,6 +15,32 @@ import main
 from core import settings_manager
 
 
+@pytest.mark.parametrize("platform_plugin", ["offscreen", "adblab-invalid-platform"])
+def test_gui_self_check_runs_real_qt_and_honors_platform(tmp_path, platform_plugin):
+    """独立进程实际加载指定 QPA 插件；失败插件不能被静默替换成离屏模式。"""
+    environment = dict(os.environ, QT_QPA_PLATFORM=platform_plugin)
+    environment["XDG_CONFIG_HOME"] = str(tmp_path / "config")
+    environment["XDG_DATA_HOME"] = str(tmp_path / "data")
+    code = (
+        "import sys;"
+        "exec('import resource;resource.setrlimit(resource.RLIMIT_CORE,(0,0))' "
+        "if sys.platform != 'win32' else 'pass');"
+        "import main;"
+        "main.user_data_root=lambda: (_ for _ in ()).throw(AssertionError('user data accessed'));"
+        "sys.exit(main._dispatch_cli(['--self-check','gui']))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], cwd=os.path.dirname(main.__file__),
+        env=environment, capture_output=True, timeout=15,
+    )
+    if platform_plugin == "offscreen":
+        assert result.returncode == 0, result.stderr.decode(errors="replace")
+    else:
+        assert result.returncode != 0
+        assert b"adblab-invalid-platform" in result.stderr
+    assert not (tmp_path / "config").exists()
+
+
 @pytest.mark.parametrize("available", [False, True])
 @pytest.mark.ui
 def test_packaging_check_reports_acrylic_capability(

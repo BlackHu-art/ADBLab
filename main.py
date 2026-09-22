@@ -36,6 +36,9 @@ def _dispatch_cli(argv: list[str]) -> int | None:
 
 def _run_mobileperf_worker(argv: list[str]) -> int:
     """在隔离子进程中运行 MobilePerf 采集内核。"""
+    from core.worker_stdio import prepare_worker_stdio
+
+    prepare_worker_stdio()
     parser = argparse.ArgumentParser(description="Run mobileperf collection")
     parser.add_argument("--config", default=None, help="Path to mobileperf config file")
     args = parser.parse_args(argv)
@@ -48,13 +51,27 @@ def _run_mobileperf_worker(argv: list[str]) -> int:
 
 
 def _run_self_check(argv: list[str]) -> int:
-    """解析并执行无需启动 Qt 界面的自检子命令。"""
+    """分派资源检查或最小 GUI 探针，不加载主窗口及设备业务。"""
     parser = argparse.ArgumentParser(description="Run ADBLab self checks")
-    parser.add_argument("target", choices=["packaging"])
+    parser.add_argument("target", choices=["packaging", "gui"])
     args = parser.parse_args(argv)
     if args.target == "packaging":
         return _self_check_packaging()
-    return 1
+    return _self_check_gui()
+
+
+def _self_check_gui() -> int:
+    """在独立进程验证真实 QPA 插件与事件循环；由调用方提供显示环境和超时。"""
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    app = QApplication([])
+    window = QWidget()
+    window.setWindowTitle("ADBLab GUI self-check")
+    window.resize(320, 160)
+    window.show()
+    QTimer.singleShot(100, app.quit)
+    return app.exec()
 
 
 def _self_check_packaging() -> int:
