@@ -1,11 +1,12 @@
 """ADB 设置重置和候选刷新回归。"""
 
+import platform
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QWidget
 
 from core.exec import CommandResult
 from core.settings_manager import DEFAULTS, AppSettings
@@ -26,6 +27,82 @@ def _assert_unique_selected_auto(card):
     assert [button for button in buttons if button.isChecked()] == [recommended]
     assert recommended.isEnabled()
     assert card.selection() == "auto"
+
+
+@pytest.mark.parametrize("system,release,expected", [
+    ("Windows", None, "Windows 下自动选择"),
+    ("Darwin", None, "macOS 下自动选择"),
+    ("Linux", {"ID": "ubuntu"}, "Ubuntu 下自动选择"),
+    ("Linux", {"ID": "debian"}, "Linux 下自动选择"),
+    ("Linux", {"ID": "linuxmint", "ID_LIKE": "ubuntu debian"}, "Linux 下自动选择"),
+    ("Linux", {}, "Linux 下自动选择"),
+    ("Linux", OSError("unavailable"), "Linux 下自动选择"),
+    ("Linux", UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"), "Linux 下自动选择"),
+])
+def test_auto_choice_shows_host_system_in_summary_and_recommended_row(
+    monkeypatch, qt_application, system, release, expected,
+):
+    monkeypatch.setattr(platform, "system", lambda: system)
+
+    def read_release():
+        if release is None:
+            pytest.fail("Windows 和 macOS 不应读取 Linux 发行版信息")
+        if isinstance(release, Exception):
+            raise release
+        return release
+
+    monkeypatch.setattr(platform, "freedesktop_os_release", read_release)
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: [])
+    monkeypatch.setattr(cards.AdbClientSettingCard, "start_detection", lambda self: None)
+    card = cards.AdbClientSettingCard()
+    card.resize(750, 600)
+    card.show()
+    try:
+        assert card.card.contentLabel.isVisibleTo(card)
+        assert card.card.contentLabel.text() == expected
+        card.setExpand(True)
+        qt_application.processEvents()
+        labels = card.client_button("auto").parentWidget().findChildren(QLabel)
+        assert any(
+            label.isVisibleTo(card) and label.text() == f"{expected}（推荐）"
+            for label in labels
+        )
+        _assert_unique_selected_auto(card)
+    finally:
+        card.close()
+
+
+def test_host_label_preserves_manual_selection_and_busy_status(monkeypatch, qt_application):
+    monkeypatch.setattr(platform, "system", lambda: "Linux")
+    monkeypatch.setattr(platform, "freedesktop_os_release", lambda: {"ID": "ubuntu"})
+    candidates = [AdbCandidate("PATH", "C:/fixture/path/adb.exe")]
+    monkeypatch.setattr(cards, "list_adb_candidates", lambda: candidates)
+    card = cards.AdbClientSettingCard()
+    selected = []
+    card.client_selected.connect(selected.append)
+    try:
+        card.apply_probes([ClientProbe("PATH", candidates[0].path, True, True, "1.0.41")])
+        card.set_selection("PATH")
+        assert card.card.contentLabel.text() == "系统 PATH · 1.0.41"
+        assert card.selection() == "PATH"
+        assert card.client_button("PATH").isChecked()
+
+        card.set_custom_path("C:/fixture/custom/adb.exe")
+        card.set_selection("C:/fixture/custom/adb.exe")
+        assert card.card.contentLabel.text() == "自定义 · C:/fixture/custom/adb.exe"
+        assert card.client_button("custom").isChecked()
+
+        card.set_busy(True)
+        card.set_selection("auto")
+        assert card.card.contentLabel.text() == "正在识别本地 ADB 环境…可继续选择"
+        assert not card.rescan_button().isEnabled()
+        card.set_busy(False)
+        assert card.card.contentLabel.text() == "Ubuntu 下自动选择"
+        assert card.custom_path() == "C:/fixture/custom/adb.exe"
+        assert selected == []
+        _assert_unique_selected_auto(card)
+    finally:
+        card.close()
 
 
 @pytest.mark.parametrize("sources", [(), ("bundled",), ("bundled", "PATH")])
@@ -51,6 +128,7 @@ def test_auto_choice_stays_unique_and_selected_through_repeated_refresh(
 def test_clicking_recommended_auto_survives_settings_feedback_and_rescan(
     monkeypatch, qt_application, initial_selection,
 ):
+    monkeypatch.setattr(platform, "system", lambda: "Windows")
     values = dict(DEFAULTS, adb_client=initial_selection)
     writes = []
 
@@ -76,8 +154,10 @@ def test_clicking_recommended_auto_survives_settings_feedback_and_rescan(
         card._on_probes(card._generation, candidates, probes)
         card.client_button("auto").click()
         _assert_unique_selected_auto(card)
+        assert card.card.contentLabel.text() == "Windows 下自动选择"
         card._on_probes(card._generation, candidates, probes)
         _assert_unique_selected_auto(card)
+        assert card.card.contentLabel.text() == "Windows 下自动选择"
         assert values["adb_client"] == "auto"
         assert preferences == ["auto"]
         assert writes == ([] if initial_selection == "auto" else [("adb_client", "auto")])

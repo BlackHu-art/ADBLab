@@ -28,6 +28,7 @@ from gui.panels.remote_panel_form import RemotePanelForm
 from gui.panels.remote_panel_input import RemotePanelInput
 from gui.panels.remote_panel_scrcpy import RemotePanelScrcpy
 from services.remote import RemoteControlService, RemoteInputEngine, ScrcpyConfig, ScrcpyService
+from services.remote.types import ScrcpyToolError
 
 if TYPE_CHECKING:
     from gui.widgets.category_stack import AdaptiveCategoryStack
@@ -244,6 +245,11 @@ class ScrcpyLaunchWorker(QThread):
                     try:
                         plan = future.result()
                     except InterruptedError:
+                        continue
+                    except ScrcpyToolError as exc:
+                        if not self._config_cancelled(config):
+                            self.plan_failed.emit(config, exc.code)
+                            self.log_message.emit("ERROR", str(exc))
                         continue
                     except Exception as exc:
                         if not self._config_cancelled(config):

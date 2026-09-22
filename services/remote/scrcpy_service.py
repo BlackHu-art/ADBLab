@@ -17,12 +17,13 @@ from core.adb_dimensions import parse_wm_size
 from core.adb_query import query_timeout
 from core.exec import CommandRunner, ExecHandle, ProcessRunner, adb_runtime
 from core.scrcpy_session import cleanup_session_tunnels, has_active_helpers
-from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
+from utils.runtime_tools import bundled_tool_path
 from utils.scrcpy_bridge import resolve_scrcpy_bridge
+from utils.tool_manifest import get_tool_bundle
 from utils.user_data import user_data_root
 
 from .scrcpy_args import build_scrcpy_args
-from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan
+from .types import PreflightResult, ScrcpyConfig, ScrcpyLaunchPlan, ScrcpyToolError
 
 _port_lock = threading.Lock()
 _reserved_ports: set[int] = set()
@@ -36,8 +37,9 @@ def _reserve_port() -> int:
     with _port_lock:
         for _attempt in range(64):
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
-                if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
-                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                exclusive_option = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+                if exclusive_option is not None:
+                    probe.setsockopt(socket.SOL_SOCKET, exclusive_option, 1)
                 probe.bind(("127.0.0.1", 0))
                 port = probe.getsockname()[1]
                 if port not in _reserved_ports:
@@ -101,8 +103,14 @@ class ScrcpyService:
 
     def resolve_executable(self) -> str:
         """解析 scrcpy 可执行文件路径，UI 层不直接关心平台和打包目录。"""
-        if platform.system() == "Windows":
-            return bundled_tool_path(WINDOWS_TOOL_BUNDLE, "scrcpy.exe")
+        platform_key = {"Windows": "win32", "Linux": "linux", "Darwin": "darwin"}.get(
+            platform.system(), "unsupported",
+        )
+        bundle = get_tool_bundle(platform_key)
+        if bundle is not None:
+            executable = bundled_tool_path(bundle.directory, bundle.scrcpy)
+            if platform_key == "win32" or os.path.isfile(executable):
+                return executable
         return shutil.which("scrcpy") or "scrcpy"
 
     def version(
@@ -116,12 +124,14 @@ class ScrcpyService:
             result = self.run_command(
                 [exe, "--version"], timeout=3, deadline=deadline, cancelled=cancelled,
             )
-            match = re.search(r"(\d+\.\d+(?:\.\d+)?)", result.output)
-            version = match.group(1) if match else "unknown"
+            match = re.search(r"\bscrcpy\s+(\d+\.\d+(?:\.\d+)?)", result.output)
+            if not result.success or match is None:
+                raise ScrcpyToolError()
+            version = match.group(1)
         except (InterruptedError, TimeoutError):
             raise
-        except Exception:
-            version = "unknown"
+        except (OSError, ScrcpyToolError) as error:
+            raise ScrcpyToolError() from error
         self._version_cache[exe] = version
         return version
 

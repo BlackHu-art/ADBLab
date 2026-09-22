@@ -1,6 +1,6 @@
 ---
 status: current
-last_verified: 2026-09-17
+last_verified: 2026-09-22
 related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 ---
 
@@ -57,8 +57,8 @@ related: [ARCHITECTURE.md, MODULE_MAP.md, RISKS_AND_DEBT.md]
 
 | 外部依赖 | 用途 | 解析/调用位置 | 缺失行为 |
 | --- | --- | --- | --- |
-| ADB | 几乎所有设备操作 | `utils/adb_resolver.py`（内置 → `ADB_PATH` → Android SDK platform-tools → PATH，进程内缓存，重新检测可失效；可用配置 `adb_client` 固定客户端）、`services/adb_clients.py`（候选只跑一次 `adb version`，不连 5037 服务）、CommandRunner、MobilePerf ADB | 操作失败，由设置页 ADB 状态与探测状态提示未找到客户端，不阻止窗口启动；自检在 Windows 检查内置文件 |
-| scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py` | Remote 启动失败；非 Windows 要求 PATH 提供 |
+| ADB | 几乎所有设备操作 | `utils/adb_resolver.py`（当前平台内置 → `ADB_PATH` → Android SDK platform-tools → PATH，进程内缓存，重新检测可失效；可用配置 `adb_client` 固定客户端）、`services/adb_clients.py`（候选只跑一次 `adb version`，不连 5037 服务）、CommandRunner、MobilePerf ADB | 操作失败，由设置页提示未找到客户端，不阻止窗口启动；支持内置包的平台自检文件、权限和版本命令 |
+| scrcpy | 投屏和视频流 | `services/remote/scrcpy_service.py`、`utils/tool_manifest.py` | Remote 启动失败；工具准备和平台范围见 [构建指南](../guides/BUILD_AND_RUN.md#linux-本地开发) |
 | Android device | 命令执行和数据源 | 各 ADB model | 返回 device not found/offline 等错误 |
 | aapt | 本地 APK 元数据解析 | `models/adb_app.py` | 解析功能返回失败 |
 | Java + `resources/chkbugreport-0.5-215.jar` | bugreport 转换 | `models/adb_testing.py` | 转换失败，但原始 bugreport 可能仍存在 |

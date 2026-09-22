@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+from utils.tool_manifest import get_tool_bundle
+
 COMMON_DATA = (
     ("resources/icons", "resources/icons"),
     ("resources/images/gallery_header.png", "resources/images"),
@@ -20,14 +22,15 @@ COMMON_DATA = (
     ("icon.ico", "."),
     ("build/runtime-helpers", "runtime-helpers"),
 )
-WINDOWS_DATA = (("scrcpy-win64", "scrcpy-win64"),)
 SUBMODULE_PACKAGES = ("mobileperf", "qfluentwidgets")
 
 
 def resource_datas(platform: str | None = None) -> list[tuple[str, str]]:
-    """返回当前目标平台的独立列表，Windows 工具不进入其他平台产物。"""
+    """返回当前平台工具的资源列表，平台与架构不匹配的二进制不进入产物。"""
     platform = sys.platform if platform is None else platform
-    return [*COMMON_DATA, *(WINDOWS_DATA if platform == "win32" else ())]
+    bundle = get_tool_bundle(platform)
+    tool_data = [(bundle.directory, bundle.directory)] if bundle else []
+    return [*COMMON_DATA, *tool_data]
 
 
 def collection_options(platform: str | None = None, *, root: Path | None = None) -> list[str]:

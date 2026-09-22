@@ -56,7 +56,7 @@ class RemotePanelScrcpy:
             return
         exe = frame._scrcpy_service.resolve_executable()
         if not os.path.isfile(exe):
-            frame._log("WARNING", "scrcpy executable is unavailable")
+            frame._log("WARNING", tr("未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。"))
             return
         configs = []
         frozen = getattr(frame, "_frozen_session_config", None)

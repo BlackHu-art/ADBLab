@@ -6017,6 +6017,14 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
             <translation>自動選擇</translation>
         </message>
         <message>
+            <source>{system} 下自动选择</source>
+            <translation>{system} 下自動選擇</translation>
+        </message>
+        <message>
+            <source>{system} 下自动选择（推荐）</source>
+            <translation>{system} 下自動選擇（推薦）</translation>
+        </message>
+        <message>
             <source>手动快速</source>
             <translation>手動快速</translation>
         </message>
@@ -6565,6 +6573,10 @@ Android 裝置管理、應用程式操作與診斷工作台</translation>
         <message>
             <source>Invalid UTF-8 text; editing is disabled</source>
             <translation>文字不是有效的 UTF-8 編碼，已停用編輯</translation>
+        </message>
+        <message>
+            <source>未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。</source>
+            <translation>未找到 scrcpy，請準備目前平台工具包或安裝系統 scrcpy。</translation>
         </message>
     </context>
 </TS>

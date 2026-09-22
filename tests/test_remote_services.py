@@ -818,13 +818,14 @@ def test_scrcpy_service_resolves_bundled_windows_executable():
     bundled_tool = Mock(return_value="C:/ADBLab/scrcpy.exe")
     with (
         patch("services.remote.scrcpy_service.platform.system", return_value="Windows"),
+        patch("utils.tool_manifest.host_platform.machine", return_value="AMD64"),
         patch(
             "services.remote.scrcpy_service.bundled_tool_path",
             bundled_tool,
         ),
     ):
         assert service.resolve_executable() == "C:/ADBLab/scrcpy.exe"
-    bundled_tool.assert_called_once_with("scrcpy-win64", "scrcpy.exe")
+    bundled_tool.assert_called_once_with("runtime-tools/windows-x86_64", "scrcpy.exe")
 
 
 def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
@@ -832,6 +833,7 @@ def test_scrcpy_service_resolves_path_scrcpy_on_non_windows():
 
     with (
         patch("services.remote.scrcpy_service.platform.system", return_value="Linux"),
+        patch("services.remote.scrcpy_service.bundled_tool_path", return_value="/missing/scrcpy"),
         patch("services.remote.scrcpy_service.shutil.which", return_value="/usr/bin/scrcpy"),
     ):
         assert service.resolve_executable() == "/usr/bin/scrcpy"
@@ -1065,7 +1067,7 @@ def test_remote_window_manager_focus_accepts_already_foreground_window():
 
     with (
         patch("services.remote.window_manager.sys.platform", "win32"),
-        patch("services.remote.window_manager.ctypes.windll") as windll,
+        patch("services.remote.window_manager.ctypes.windll", create=True) as windll,
         patch.object(manager, "_find_window", return_value=123),
     ):
         windll.user32 = user32
@@ -1083,7 +1085,7 @@ def test_remote_window_manager_focus_retries_after_set_foreground():
 
     with (
         patch("services.remote.window_manager.sys.platform", "win32"),
-        patch("services.remote.window_manager.ctypes.windll") as windll,
+        patch("services.remote.window_manager.ctypes.windll", create=True) as windll,
         patch.object(manager, "_find_window", return_value=123),
     ):
         windll.user32 = user32
@@ -1300,11 +1302,13 @@ def test_remote_user_stop_claim_prevents_shutdown_and_supervisor_duplicate_termi
     supervisor_thread = None
     supervisor_results = []
     try:
-        with patch(
-            "gui.panels.remote_panel.threading.Thread",
-            side_effect=capture_stop_thread,
+        with (
+            patch("gui.panels.remote_panel.threading.Thread", side_effect=capture_stop_thread),
+            patch("core.exec.time") as process_clock,
         ):
+            process_clock.monotonic.return_value = 100.0
             remote._stop_scrcpy()
+            assert process.wait_entered.wait(1.0)
 
         assert len(stop_threads) == 1
         assert process.wait_entered.wait(1.0)
@@ -2605,7 +2609,9 @@ def test_remote_panel_start_scrcpy_resolves_executable_via_service():
         RemotePanel._start_scrcpy(panel)
 
     panel._scrcpy_service.resolve_executable.assert_called_once_with()
-    panel._log.assert_called_once_with("WARNING", "scrcpy executable is unavailable")
+    panel._log.assert_called_once_with(
+        "WARNING", "未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。",
+    )
 
 
 def test_remote_panel_start_ignores_shortcut_while_stopping_after_worker_exits():

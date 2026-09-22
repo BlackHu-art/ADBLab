@@ -9,8 +9,9 @@ import pytest
 from utils.app_metadata import APP_VERSION
 
 
-def test_bundled_tool_path_copies_frozen_runtime_outside_meipass(tmp_path, monkeypatch):
-    source = tmp_path / "_MEI123" / "scrcpy-win64"
+@pytest.mark.parametrize("bundle_dir", ["scrcpy-win64", "runtime-tools/windows-x86_64"])
+def test_bundled_tool_path_copies_frozen_runtime_outside_meipass(tmp_path, monkeypatch, bundle_dir):
+    source = tmp_path / "_MEI123" / bundle_dir
     source.mkdir(parents=True)
     (source / "adb.exe").write_text("adb", encoding="utf-8")
     (source / "AdbWinApi.dll").write_text("dll", encoding="utf-8")
@@ -23,17 +24,19 @@ def test_bundled_tool_path_copies_frozen_runtime_outside_meipass(tmp_path, monke
 
     from utils.runtime_tools import bundled_tool_path
 
-    path = Path(bundled_tool_path("scrcpy-win64", "adb.exe"))
+    path = Path(bundled_tool_path(bundle_dir, "adb.exe"))
 
     expected = (
-        local_appdata / "ADBLab" / "runtime" / APP_VERSION / "scrcpy-win64" / "adb.exe"
+        local_appdata / "ADBLab" / "runtime" / APP_VERSION / bundle_dir / "adb.exe"
     )
     assert path == expected
     assert expected.read_text(encoding="utf-8") == "adb"
+    assert (expected.parent / "AdbWinApi.dll").read_text(encoding="utf-8") == "dll"
     assert str(tmp_path / "_MEI123") not in str(path)
 
 
-def test_bundled_tool_path_uses_project_resource_in_development(monkeypatch):
+@pytest.mark.parametrize("bundle_dir", ["scrcpy-win64", "runtime-tools/windows-x86_64"])
+def test_bundled_tool_path_uses_project_resource_in_development(monkeypatch, bundle_dir):
     monkeypatch.delattr(sys, "frozen", raising=False)
 
     from utils import runtime_tools
@@ -45,13 +48,14 @@ def test_bundled_tool_path_uses_project_resource_in_development(monkeypatch):
     )
 
     assert os.path.normpath(
-        runtime_tools.bundled_tool_path("scrcpy-win64", "scrcpy.exe")
-    ) == os.path.normpath("C:/repo/scrcpy-win64/scrcpy.exe")
+        runtime_tools.bundled_tool_path(bundle_dir, "scrcpy.exe")
+    ) == os.path.normpath(f"C:/repo/{bundle_dir}/scrcpy.exe")
 
 
-def test_bundled_tool_path_uses_onedir_bundle_without_copy(tmp_path, monkeypatch):
+@pytest.mark.parametrize("bundle_dir", ["scrcpy-win64", "runtime-tools/windows-x86_64"])
+def test_bundled_tool_path_uses_onedir_bundle_without_copy(tmp_path, monkeypatch, bundle_dir):
     dist = tmp_path / "dist" / "ADBLab"
-    source = dist / "_internal" / "scrcpy-win64"
+    source = dist / "_internal" / bundle_dir
     source.mkdir(parents=True)
     (source / "adb.exe").write_text("adb", encoding="utf-8")
     local_appdata = tmp_path / "LocalAppData"
@@ -69,7 +73,7 @@ def test_bundled_tool_path_uses_onedir_bundle_without_copy(tmp_path, monkeypatch
         lambda relative: str(dist / "_internal" / relative),
     )
 
-    path = Path(runtime_tools.bundled_tool_path("scrcpy-win64", "adb.exe"))
+    path = Path(runtime_tools.bundled_tool_path(bundle_dir, "adb.exe"))
 
     assert path == source / "adb.exe"
     assert not (local_appdata / "ADBLab").exists()
@@ -86,6 +90,8 @@ def test_resolve_adb_path_prefers_runtime_tool_path(monkeypatch):
     from utils import adb_resolver
 
     _clear_adb_candidates(monkeypatch)
+    monkeypatch.setattr(adb_resolver.sys, "platform", "win32")
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "AMD64")
     monkeypatch.setattr(adb_resolver, "_adb_path", None)
     monkeypatch.setattr(adb_resolver, "_resolved", False)
     monkeypatch.setattr(
@@ -95,7 +101,7 @@ def test_resolve_adb_path_prefers_runtime_tool_path(monkeypatch):
     )
     monkeypatch.setattr(adb_resolver.os.path, "isfile", lambda path: True)
 
-    assert adb_resolver.resolve_adb_path() == "C:/runtime/scrcpy-win64/adb.exe"
+    assert adb_resolver.resolve_adb_path() == "C:/runtime/runtime-tools/windows-x86_64/adb.exe"
 
 
 def test_resolve_adb_path_uses_path_on_non_windows(monkeypatch):

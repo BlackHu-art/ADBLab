@@ -3,6 +3,15 @@
 from dataclasses import dataclass, field
 
 
+class ScrcpyToolError(RuntimeError):
+    """工具启动失败携带安全提示和稳定错误码，不将底层路径暴露到界面。"""
+
+    code = "scrcpy_unavailable"
+
+    def __init__(self):
+        super().__init__("无法运行 scrcpy，请检查工具执行权限、CPU 架构或系统运行库。")
+
+
 @dataclass(frozen=True)
 class ScrcpyConfig:
     """描述一次 scrcpy 启动所需的可执行文件、设备和视频选项。"""

@@ -131,24 +131,33 @@ def test_linux_build_installs_egl_before_qt_self_check():
     assert install_index < qt_import_index
 
 
-def test_windows_build_collects_current_scrcpy_bundle():
+def test_windows_build_collects_current_scrcpy_bundle(monkeypatch):
     """本地 spec 与 CI 必须收集同一个无版本号的 Windows 工具目录。"""
     from scripts.packaging_manifest import resource_datas
 
-    assert ("scrcpy-win64", "scrcpy-win64") in resource_datas("win32")
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
+    assert (
+        "runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64",
+    ) in resource_datas("win32")
     for platform in ("win32", "darwin", "linux"):
         assert all("scrcpy-win64-v" not in source for source, _ in resource_datas(platform))
 
 
-def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses():
+def test_packaging_uses_explicit_resource_allowlist_and_keeps_licenses(monkeypatch):
     """本地 spec 与 CI 不得重新整目录打包文档、截图或 MobilePerf 源码。"""
     from scripts.packaging_manifest import SUBMODULE_PACKAGES, resource_datas
 
+    monkeypatch.setattr("utils.tool_manifest.host_platform.machine", lambda: "x86_64")
     common = {
         *RUNTIME_RESOURCE_DATA, ("icon.ico", "."), ("build/runtime-helpers", "runtime-helpers"),
     }
     for platform in ("win32", "darwin", "linux"):
-        expected = common | ({("scrcpy-win64", "scrcpy-win64")} if platform == "win32" else set())
+        tools = {
+            "win32": {("runtime-tools/windows-x86_64", "runtime-tools/windows-x86_64")},
+            "linux": {("runtime-tools/linux-x86_64", "runtime-tools/linux-x86_64")},
+            "darwin": set(),
+        }
+        expected = common | tools[platform]
         assert set(resource_datas(platform)) == expected
         assert len(resource_datas(platform)) == len(expected)
     for source, _destination in RUNTIME_RESOURCE_DATA:

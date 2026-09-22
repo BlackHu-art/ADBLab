@@ -51,9 +51,10 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
 - 不需要在仓库内创建普通运行配置。首次读取后，AppSettings 会把旧 `resources/app_settings.json` 迁移到用户配置目录。
 - Windows 用户数据根默认是 `%LOCALAPPDATA%\ADBLab`；具体由 `utils/user_data.py` 决定。
 - 默认保存目录由 `AppSettings.save_directory` 返回；未配置或目录不存在时使用用户主目录下 `ADBLab`。
-- ADB 解析器已按平台门控：Windows 依次尝试内置 `scrcpy-win64/adb.exe`、`ADB_PATH`
+- ADB 解析器按平台和架构门控：Windows x64 使用 `runtime-tools/windows-x86_64/adb.exe`，Linux x86_64 使用
+  `runtime-tools/linux-x86_64/adb`；依次尝试当前平台内置工具、`ADB_PATH`
   环境变量、Android SDK platform-tools（`ANDROID_HOME`/`ANDROID_SDK_ROOT`/`%LOCALAPPDATA%\Android\Sdk`）、
-  最后回退 PATH；非 Windows 按同一顺序但不使用内置的 Windows PE。
+  最后回退 PATH；macOS 和未提供内置包的架构使用环境工具，不执行其他平台二进制。
 - 解析结果在进程内缓存，包含明确缺失结果；应用执行要求可用绝对路径，缺失时直接失败，
   不交给裸命令名重新搜索 PATH。设置页「重新检测」清空解析与执行两层缓存，并作废客户端
   探测缓存；安装或移除 platform-tools 后无需重启应用。重检合并、持久输入退休和子进程
@@ -62,9 +63,15 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
   当前运行生效。支持范围、恢复和自定义服务环境的处理见 [ADB_FAST](ADB_FAST.md#应用内自动选择)。
 - 设置页「ADB 维护 → 客户端」可固定使用的 ADB 客户端，配置键 `adb_client` 默认 `auto`
   （按内置 → `ADB_PATH` → Android SDK → PATH 顺序）；取值也支持命名来源
-  （`bundled`/`env`/`PATH`，旧配置里的 `sdk_home`/`sdk_root`/`sdk_local` 仍被接受）或绝对路径；界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
+  （`bundled`/`runtime_cache`/`env`/`PATH`，旧配置里的 `sdk_home`/`sdk_root`/`sdk_local` 仍被接受）或绝对路径；
+  `bundled` 与 `runtime_cache` 兼容源码和 onefile 间的内置选择，不迁移用户设置。
+  界面只列出内置与环境来源，Android SDK 位置仍在自动链里兜底。切换时清空解析与短命令两层
   缓存并重新检测；所选客户端缺失时按选择如实失败，不会静默改用其它 adb。
-- Remote 的非 Windows scrcpy 必须由 PATH 提供。主应用启动 MobilePerf 和 scrcpy 时分别冻结
+  自动选项及折叠摘要显示宿主系统，如「Windows 下自动选择」「Ubuntu 下自动选择」
+  「macOS 下自动选择」；其他 Linux 发行版或发行版信息不可读时显示 Linux。
+  该名称只说明当前桌面环境，不改变下方执行环境的能力检测、测速及后端选择。
+- Remote 优先使用当前平台内置 scrcpy；Linux 内置包未准备时及未提供内置包的平台使用 PATH。
+  主应用启动 MobilePerf 和 scrcpy 时分别冻结
   `ADB_PATH` / `ADB` 子进程环境；所选 ADB 缺失会在启动前失败，详情见
   [Remote 投屏与输入](ADB_FAST.md#remote-投屏与输入) 与 [MobilePerf 采集进程](ADB_FAST.md#mobileperf-采集进程)。
 - 开发控制台的输出级别由 `console_log_level` 控制（默认 `DEBUG` 保留现状，可选
@@ -74,6 +81,59 @@ PyCharm 等 IDE 执行 `pip install -r requirements.txt` 时会报 `No module na
   纳入 `DEFAULTS`，可跨会话保存与恢复；主应用不再读取任何外部服务配置。
 
 ## 启动
+
+### Windows 本地开发
+
+使用项目 Python 3.11 虚拟环境安装依赖后，首次运行先准备当前平台工具。准备脚本下载
+官方 `scrcpy-win64-v4.1.zip`，校验固定 SHA256 后安全解压到
+`runtime-tools/windows-x86_64/`；该生成目录不进入 Git：
+
+```powershell
+./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py
+./.venv/Scripts/python.exe main.py
+```
+
+离线准备及只读校验：
+
+```powershell
+./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py --archive C:/downloads/scrcpy-win64-v4.1.zip
+./.venv/Scripts/python.exe scripts/prepare_runtime_tools.py --check
+```
+
+Windows 包完整保留 ADB、scrcpy/server、DLL、图标、启动辅助文件与许可证。准备脚本先复用
+通过校验的现有目录；此时不读取 `--archive`。复制失败会停止构建，且可能留下部分修复的文件，
+不保证整包回滚；工具被占用时关闭相关程序后重试。应用运行时不下载，发行包继续内置完整工具。
+如果自定义 ADB 路径仍指向旧的 `scrcpy-win64/`，需在客户端设置中重新选择；命名的「应用自带」
+选择会自动使用新目录。独立 helper 的构建与 native 回退见下文 [scrcpy 专用 ADB 入口](#scrcpy-专用-adb-入口)。
+
+### Linux 本地开发
+
+使用 Python 3.11 的项目虚拟环境安装 `requirements.txt`（开发测试使用 `requirements-dev.txt`），
+随后准备工具并启动。PyCharm 等 IDE 使用同一 `.venv/bin/python`，不需要修改系统 PATH：
+
+```bash
+.venv/bin/python scripts/prepare_runtime_tools.py
+.venv/bin/python main.py
+```
+
+准备脚本按共享清单下载官方 `scrcpy-linux-x86_64-v4.1.tar.gz`，校验 SHA256 后安全解压。
+包内为 scrcpy/server 4.1 和 ADB 37.0.0；文件及准备清单位于 Git 忽略的 `runtime-tools/`，
+再次准备会校验已存在文件并复用。可以离线准备或只读校验：
+
+```bash
+.venv/bin/python scripts/prepare_runtime_tools.py --archive /path/to/scrcpy-linux-x86_64-v4.1.tar.gz
+.venv/bin/python scripts/prepare_runtime_tools.py --check
+```
+
+应用启动时不联网下载工具。当前二进制已在 Ubuntu 24.04 x86_64 验证版本命令，要求 glibc 2.35
+及 libudev 等系统库；实际桌面显示、USB 权限与设备授权仍需按部署环境验证。Linux ARM/macOS
+未交付内置包，需要兼容的系统 ADB/scrcpy。Windows 开发环境按上一节准备工具。
+完整产物打包与自检可使用：
+
+```bash
+.venv/bin/python scripts/build_app.py --name ADBLab-linux-x64 --onefile
+./dist/ADBLab-linux-x64 --self-check packaging
+```
 
 GUI 启动命令来自 README，并由 `main.py` 入口确认：
 
@@ -191,7 +251,7 @@ CI 同样先构建再收集整个 `runtime-helpers` 目录。`--self-check packa
 
 - 入口为 `main.py`。
 - 通过白名单收集图标、`resources/images/gallery_header.png`、图库许可、迁移种子、Bugreport JAR、
-  应用图标 DEX 工具、二维码、第三方许可、`icon.ico` 和 `scrcpy-win64/`，不把旧演示图或无关
+  应用图标 DEX 工具、二维码、第三方许可、`icon.ico` 和当前平台工具目录，不把旧演示图或无关
   文档带入产物。
 - 通过 hidden imports 收集全部 `mobileperf` 与 `qfluentwidgets` 子模块，不再把 `mobileperf/`
   源码目录作为 data 重复打包；运行配置由 `MobilePerfRunner` 临时生成。
@@ -209,12 +269,12 @@ packaging self-check；触及启动入口、依赖、资源或运行时路径时
 
 1. 从 `utils.app_metadata.APP_RELEASE_TAG` 读取版本。
 2. 使用 Python 3.11 安装 `requirements-build.txt`（包含运行依赖和 PyInstaller）。Linux 在源码自检前
-   通过 apt 安装 `libegl1` 及其依赖，提供 Qt/Fluent 导入所需的 `libEGL.so.1`；仅安装 Python wheel
-   无法补齐该系统库。
-3. Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
+   通过 apt 安装 `libegl1` 和 `libudev1`，提供 Qt/Fluent 导入所需的 `libEGL.so.1` 及工具的设备访问库；
+   仅安装 Python wheel 无法补齐这些系统库。
+3. 准备当前平台工具。Windows 额外安装 `requirements-dev.txt`，运行 `python -m ruff check .` 和
    `python -m pyright`；编译发布工作流不执行 pytest。macOS/Linux 运行 source packaging self-check。
 4. PyInstaller 构建 Windows onedir、macOS/Linux onefile。
-5. Windows 运行打包后 self-check。
+5. Windows/Linux 运行打包后 self-check；检查内置文件、可执行权限及版本命令，系统工具不参与兜底。
 6. 压缩并上传三平台制品。
 7. Release job 单独使用 `contents: write`；现存同版本 Release 或远端 tag 会使发布失败，防止直接
    覆盖。发布完成后执行 "Retain latest 5 version tags"，删除超出最新 5 个的旧版本 tag 及其
@@ -226,6 +286,8 @@ CI 通过 `scripts/build_app.py` 生成 PyInstaller CLI 参数，和本地 `ADBL
 与图标选择仍由 workflow matrix 决定；`--dry-run` 只显示命令，不构建或写入产物。
 CLI 生成的 spec 位于 `build/app-spec`，资源、入口及图标路径按仓库根解析，避免默认名称
 `ADBLab` 覆盖受控的根目录 spec；生成文件不进入版本控制。
+CLI 与本地 spec 在构建前运行工具准备脚本，任一准备步骤失败即停止构建。onefile 继续把工具复制到
+稳定的用户缓存运行；缓存缺失时补齐文件，丢失可执行权限时修复权限，保留仍在运行的有效工具文件。
 
 CI 侧只保留 Build（编译发布）与 Retention Audit（手动只读审计）两个工作流；Build 在推送 main
 或手动触发时执行文本完整性、Windows 静态检查、三平台构建与产物自检，并在依赖安装及源码导入前

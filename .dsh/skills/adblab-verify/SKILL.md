@@ -64,7 +64,7 @@ PyInstaller 构建（`.venv\Scripts\python.exe -m PyInstaller ADBLab.spec --noco
 - 用 pwsh 工具 `Get-Content`/`Select-String` 打印 UTF-8 中文源码会乱码（控制台代码页 GBK）。
   判定文件内容或编码必须用 read 工具；乱码不是文件损坏，不要据此"修复"文件。
 - 中文提交信息、路径带空格（本仓库位于 `Program Files (x86)`）时注意引号。
-- `mobileperf/extlib/`、`reference/`、`scrcpy-win64/`、`resources/icons/` 不参与 lint/覆盖率，
+- `mobileperf/extlib/`、`reference/`、`runtime-tools/`、`resources/icons/` 不参与 lint/覆盖率，
   也不要在未授权时改动。
 
 ## 6. 汇报纪律

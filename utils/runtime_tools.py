@@ -13,7 +13,6 @@ from utils.app_metadata import APP_NAME, APP_VERSION
 from utils.resource_path import resource_path
 
 _copy_lock = threading.Lock()
-WINDOWS_TOOL_BUNDLE = "scrcpy-win64"
 
 
 def bundled_tool_path(bundle_dir: str, *relative_parts: str, verify_tree: bool = False) -> str:
@@ -45,17 +44,24 @@ def _ensure_runtime_copy(
 ) -> None:
     """进程内串行补齐缓存；可选整树校验识别同长度旧文件和缺失的嵌套依赖。"""
     with _copy_lock:
-        if target_dir.exists():
-            required_files = list(source_dir.iterdir())
-            if required_files and all(
-                _cache_entry_ok(
-                    source_dir / item.name, target_dir / item.name, verify_tree=verify_tree,
-                )
-                for item in required_files
-            ):
-                return
-        target_dir.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for source in source_dir.iterdir():
+            _repair_cache_entry(source, target_dir / source.name, verify_tree=verify_tree)
+
+
+def _repair_cache_entry(source: Path, target: Path, *, verify_tree: bool) -> None:
+    """只修复失效项；权限丢失只改 mode，避免覆盖 Linux 正在执行的有效 ADB。"""
+    if _cache_entry_ok(source, target, verify_tree=verify_tree):
+        return
+    if source.is_dir():
+        target.mkdir(parents=True, exist_ok=True)
+        for child in source.iterdir():
+            _repair_cache_entry(child, target / child.name, verify_tree=verify_tree)
+    elif (target.is_file() and source.stat().st_size == target.stat().st_size
+          and (not verify_tree or _file_digest(source) == _file_digest(target))):
+        target.chmod(source.stat().st_mode & 0o777)
+    else:
+        shutil.copy2(source, target)
 
 
 def _cache_entry_ok(source: Path, target: Path, *, verify_tree: bool = False) -> bool:
@@ -70,6 +76,7 @@ def _cache_entry_ok(source: Path, target: Path, *, verify_tree: bool = False) ->
             )
         return (
             target.is_file() and target.stat().st_size == source.stat().st_size
+            and (os.name == "nt" or not source.stat().st_mode & 0o111 or os.access(target, os.X_OK))
             and (not verify_tree or _file_digest(source) == _file_digest(target))
         )
     except OSError:

@@ -425,9 +425,10 @@ def test_adb_client_card_lists_only_configured_sources(qt_application):
         card.close()
 
 
-def test_adb_client_card_detection_finishes_and_unlocks_actions(qt_application):
+def test_adb_client_card_detection_finishes_and_unlocks_actions(qt_application, monkeypatch):
     """回归：识别完成后必须退出忙态，标题回到当前选择且控件可用。"""
 
+    monkeypatch.setattr("gui.widgets.adb_client_card.host_system_name", lambda: "Windows")
     card = AdbClientSettingCard()
     try:
         card.set_busy(True)
@@ -440,7 +441,7 @@ def test_adb_client_card_detection_finishes_and_unlocks_actions(qt_application):
             ),
         ])
 
-        assert card.card.contentLabel.text() == "自动选择"
+        assert card.card.contentLabel.text() == "Windows 下自动选择"
         assert card.rescan_button().isEnabled()
         assert card.choose_button().isEnabled()
         assert card.client_button("bundled").isEnabled()

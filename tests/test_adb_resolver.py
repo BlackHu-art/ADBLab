@@ -132,7 +132,7 @@ def test_non_windows_never_uses_bundled_windows_binary(monkeypatch):
     _isolate_environment(monkeypatch)
     monkeypatch.setattr(adb_resolver.sys, "platform", "linux")
     monkeypatch.setattr(
-        adb_resolver, "bundled_tool_path", lambda bundle, name: "/repo/scrcpy-win64/adb.exe"
+        adb_resolver, "bundled_tool_path", lambda bundle, name: f"/repo/{bundle}/{name}"
     )
     _which(monkeypatch, "/usr/bin/adb")
     _existing_paths(monkeypatch, ["/repo/scrcpy-win64/adb.exe"])
@@ -143,6 +143,7 @@ def test_non_windows_never_uses_bundled_windows_binary(monkeypatch):
 def test_invalidate_cache_rescans_after_client_installation(monkeypatch):
     _isolate_environment(monkeypatch)
     monkeypatch.setattr(adb_resolver.sys, "platform", "linux")
+    monkeypatch.setattr(adb_resolver, "bundled_tool_path", lambda *args: "/missing-tools/adb")
     _which(monkeypatch, None)
     assert adb_resolver.resolve_adb_path() is None
 
@@ -174,7 +175,7 @@ def test_list_adb_candidates_keeps_unavailable_entries(monkeypatch):
     assert by_source["PATH"].exists is True
 
 
-def test_preference_pins_single_candidate_without_fallback(monkeypatch):
+def test_preference_pins_single_candidate_without_fallback(monkeypatch, tmp_path):
     """选择命名来源后只使用该来源；缺失时返回 None，不静默换用其它 adb。"""
 
     _prepare_windows(monkeypatch)
@@ -187,9 +188,10 @@ def test_preference_pins_single_candidate_without_fallback(monkeypatch):
     adb_resolver.set_client_preference("env")  # ADB_PATH 未设置
     assert adb_resolver.resolve_adb_path() is None
 
-    adb_resolver.set_client_preference("C:/custom/adb.exe")
-    _existing_paths(monkeypatch, ["C:/custom/adb.exe"])
-    assert _same_path(adb_resolver.resolve_adb_path(), "C:/custom/adb.exe")
+    custom = str(tmp_path / "custom-adb.exe")
+    adb_resolver.set_client_preference(custom)
+    _existing_paths(monkeypatch, [custom])
+    assert _same_path(adb_resolver.resolve_adb_path(), custom)
 
     adb_resolver.set_client_preference("auto")
     _existing_paths(monkeypatch, ["C:/bundle/adb.exe"])

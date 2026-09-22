@@ -8,7 +8,8 @@ from dataclasses import dataclass
 
 from utils import adb_debug
 from utils.resource_path import resource_path
-from utils.runtime_tools import WINDOWS_TOOL_BUNDLE, bundled_tool_path
+from utils.runtime_tools import bundled_tool_path
+from utils.tool_manifest import get_tool_bundle
 
 _adb_path: str | None = None
 _resolved: bool = False
@@ -77,11 +78,14 @@ def _adb_executable_name() -> str:
     return "adb.exe" if sys.platform == "win32" else "adb"
 
 
-def _bundled_candidate() -> tuple[str, str]:
-    """返回 Windows 内置候选；来源区分随包资源与 onefile 运行时缓存副本。"""
+def _bundled_candidate() -> tuple[str, str] | None:
+    """返回当前平台内置候选；来源区分随包资源与 onefile 运行时缓存副本。"""
 
-    bundled = bundled_tool_path(WINDOWS_TOOL_BUNDLE, "adb.exe")
-    source_path = resource_path(os.path.join(WINDOWS_TOOL_BUNDLE, "adb.exe"))
+    bundle = get_tool_bundle()
+    if bundle is None:
+        return None
+    bundled = bundled_tool_path(bundle.directory, bundle.adb)
+    source_path = resource_path(os.path.join(bundle.directory, bundle.adb))
     source = (
         "bundled" if os.path.normcase(os.path.abspath(bundled)) == os.path.normcase(
             os.path.abspath(source_path)
@@ -128,11 +132,12 @@ _PRE_VALIDATED_SOURCES = frozenset({"PATH"})
 
 
 def _candidates() -> list[tuple[str, str]]:
-    """返回有序候选：Windows 内置 → ADB_PATH → Android SDK → 系统 PATH。"""
+    """返回有序候选：当前平台内置 → ADB_PATH → Android SDK → 系统 PATH。"""
 
     candidates: list[tuple[str, str]] = []
-    if sys.platform == "win32":
-        candidates.append(_bundled_candidate())
+    bundled = _bundled_candidate()
+    if bundled is not None:
+        candidates.append(bundled)
     environment = _environment_candidate()
     if environment is not None:
         candidates.append(environment)
@@ -165,15 +170,16 @@ def _preferred_candidates(
 
     if os.path.isabs(preferred):
         return [("custom", preferred)]
+    if preferred in {"bundled", "runtime_cache"}:
+        return [item for item in candidates if item[0] in {"bundled", "runtime_cache"}]
     return [item for item in candidates if item[0] == preferred]
 
 
 def resolve_adb_path() -> str | None:
     """查找可用的 ADB 可执行文件，并在首次解析后缓存结果。
 
-    Windows 先看内置 adb.exe，再按显式 ADB_PATH、Android SDK platform-tools、系统
-    PATH 的顺序兜底；非 Windows 直接使用环境中的 adb，避免把仓库内 Windows 二进制
-    当成 adb 执行。需要重新扫描时先调用 invalidate_adb_path_cache()。
+    先看当前平台内置工具，再按显式 ADB_PATH、Android SDK platform-tools、系统 PATH
+    的顺序兜底；未交付内置包的架构只使用环境中的工具。需要重新扫描时清除解析缓存。
     """
 
     global _adb_path, _resolved
@@ -193,6 +199,8 @@ def resolve_adb_path() -> str | None:
         candidates = _preferred_candidates(candidates, _client_preference)
     for name, candidate in candidates:
         exists = name in _PRE_VALIDATED_SOURCES or bool(candidate) and os.path.isfile(candidate)
+        if exists and name not in _PRE_VALIDATED_SOURCES and sys.platform != "win32":
+            exists = os.access(candidate, os.X_OK)
         adb_debug.event("resolve_candidate", source=name, candidate=candidate, exists=exists)
         if exists:
             selected, source = candidate, name

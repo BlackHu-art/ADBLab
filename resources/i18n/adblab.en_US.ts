@@ -6017,6 +6017,14 @@ Check for the latest stable release</translation>
             <translation>Automatic selection</translation>
         </message>
         <message>
+            <source>{system} 下自动选择</source>
+            <translation>Automatic selection on {system}</translation>
+        </message>
+        <message>
+            <source>{system} 下自动选择（推荐）</source>
+            <translation>Automatic selection on {system} (recommended)</translation>
+        </message>
+        <message>
             <source>手动快速</source>
             <translation>Manual fast mode</translation>
         </message>
@@ -6565,6 +6573,10 @@ Android device management, apps and diagnostics</translation>
         <message>
             <source>Invalid UTF-8 text; editing is disabled</source>
             <translation>Invalid UTF-8 text; editing is disabled</translation>
+        </message>
+        <message>
+            <source>未找到 scrcpy，请准备当前平台工具包或安装系统 scrcpy。</source>
+            <translation>scrcpy was not found. Prepare the tool bundle for this platform or install scrcpy on the system.</translation>
         </message>
     </context>
 </TS>
